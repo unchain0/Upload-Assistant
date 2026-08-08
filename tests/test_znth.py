@@ -1,9 +1,43 @@
 """Regression tests for Zenith-specific names."""
 
 import asyncio
+from typing import Any
 
 from src.meta import Meta
 from src.trackers.UNIT3D.znth import Zenith
+
+
+def _tracker() -> Zenith:
+    return Zenith({"DEFAULT": {}, "TRACKERS": {"ZENITH": {}}})
+
+
+def _movie_meta(**kwargs: Any) -> Meta:
+    base: dict[str, Any] = {
+        "category": "MOVIE",
+        "filelist": ["Movie.2024.mkv"],
+        "name": "Example Movie 2024",
+        "screens": 3,
+        "unattended": True,
+        "unattended_confirm": False,
+        "imdb_info": {"status": ""},
+    }
+    base.update(kwargs)
+    return Meta(**base)
+
+
+def _tv_meta(**kwargs: Any) -> Meta:
+    base: dict[str, Any] = {
+        "category": "TV",
+        "filelist": ["Show.S01E01.mkv"],
+        "name": "Example TV",
+        "tv_pack": False,
+        "screens": 3,
+        "imdb_info": {"status": "Ended"},
+        "unattended": True,
+        "unattended_confirm": False,
+    }
+    base.update(kwargs)
+    return Meta(**base)
 
 
 def test_zenith_supports_music_and_uses_its_music_naming_guide():
@@ -90,3 +124,57 @@ def test_zenith_music_type_id_comes_from_the_analyzed_codec():
     type_data = asyncio.run(Zenith({"DEFAULT": {}, "TRACKERS": {"ZENITH": {}}}).get_type_id(meta))
 
     assert type_data == {"type_id": "7"}
+
+
+def test_zenith_rejects_movie_uploads_with_less_than_three_screenshots():
+    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(screens=2))) is False
+
+
+def test_zenith_rejects_movie_with_invalid_video_container_extension():
+    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(filelist=["Movie.2024.avi"]))) is False
+
+
+def test_zenith_allows_hdtv_release_with_ts_container():
+    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(type="HDTV", filelist=["Show.S01E01.ts"]))) is True
+
+
+def test_zenith_rejects_sdtv_release_with_mkv_container():
+    assert asyncio.run(_tracker().get_additional_checks(_tv_meta(type="SDTV", filelist=["Show.S01E01.mkv"]))) is False
+
+
+def test_zenith_rejects_archive_files_in_movie_upload():
+    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(filelist=["Movie.2024.part01.rar"]))) is False
+
+
+def test_zenith_rejects_ongoing_tv_pack():
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(
+                _tv_meta(
+                    tv_pack=True,
+                    filelist=["Show.S01E01.mkv", "Show.S01E02.mkv"],
+                    imdb_info={"status": "Returning Series"},
+                )
+            )
+        )
+        is False
+    )
+
+
+def test_zenith_rejects_single_episode_for_ended_tv_series():
+    assert asyncio.run(_tracker().get_additional_checks(_tv_meta(filelist=["Show.S01E01.mkv"]))) is False
+
+
+def test_zenith_allows_tv_pack_for_ended_series():
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(
+                _tv_meta(
+                    tv_pack=True,
+                    filelist=["Show.S01E01.mkv", "Show.S01E02.mkv"],
+                    imdb_info={"status": "Ended"},
+                )
+            )
+        )
+        is True
+    )

@@ -1,5 +1,6 @@
 import re
 import unicodedata
+from pathlib import Path
 from typing import Any, cast
 
 from src.book_prep import extract_first_author as _primary_name
@@ -45,6 +46,23 @@ class Zenith(UNIT3D):
     banned_url = f"{base_url}/api/bannedReleaseGroups"
     supported_categories = ("TV", "MOVIE", "BOOK", "GAME", "MUSIC")
     tracker_urls = ("https://znth.cx",)
+    _ARCHIVE_EXTENSIONS: set[str] = {
+        ".rar",
+        ".r00",
+        ".r01",
+        ".r02",
+        ".r03",
+        ".r04",
+        ".r05",
+        ".r06",
+        ".r07",
+        ".r08",
+        ".r09",
+        ".zip",
+        ".7z",
+    }
+    _KNOWN_VIDEO_EXTENSIONS: set[str] = {".mkv", ".mp4", ".avi", ".mov", ".m4v", ".mpg", ".mpeg", ".m2ts", ".ts", ".wmv", ".flv"}
+    _VIDEO_EXTENSIONS: set[str] = {".mkv", ".mp4", ".ts", ".ps", ".mpg"}
 
     _banned_authors_raw = (
         "J.R.R. Tolkien",
@@ -151,8 +169,135 @@ class Zenith(UNIT3D):
                     return True
         return False
 
+    @staticmethod
+    def _is_path_like_file(filename: Any) -> bool:
+        return bool(str(filename).strip())
+
+    @staticmethod
+    def _extract_tv_seasons(filelist: list[Any]) -> set[int]:
+        seasons: set[int] = set()
+        season_pattern = re.compile(r"[sS](\d{1,3})(?:[eE]\d{1,3}(?:[eE]\d{1,3})?)?")
+        for item in filelist:
+            seasons.update(int(match) for match in season_pattern.findall(str(item)))
+        return seasons
+
+    @staticmethod
+    def _count_tv_episodes(filelist: list[Any]) -> int:
+        episodes: set[tuple[int, int]] = set()
+        episode_pattern = re.compile(r"[sS](\d{1,3})[eE](\d{1,3})(?:[eE](\d{1,3}))?")
+        for item in filelist:
+            for match in episode_pattern.findall(str(item)):
+                episodes.add((int(match[0]), int(match[1])))
+                if match[2]:
+                    episodes.add((int(match[0]), int(match[2])))
+        return len(episodes)
+
+    @classmethod
+    def _collect_video_paths(cls, filelist: list[Any]) -> list[Path]:
+        return [
+            Path(str(item))
+            for item in filelist
+            if cls._is_path_like_file(item) and Path(str(item)).suffix.lower() in cls._VIDEO_EXTENSIONS
+        ]
+
+    @staticmethod
+    def _contains_archive_file(filelist: list[Any]) -> str:
+        for item in filelist:
+            path = Path(str(item))
+            if path.suffix.lower() in Zenith._ARCHIVE_EXTENSIONS:
+                return path.name
+        return ""
+
+    @staticmethod
+    def _is_tv_series_ended(meta: Meta) -> bool | None:
+        status_text = str(meta.imdb_info.get("status", "") if isinstance(meta.imdb_info, dict) else "").casefold().strip()
+        if not status_text:
+            return None
+
+        ended_values = {"ended", "canceled", "cancelled", "finished", "completed"}
+        ongoing_values = {"returning", "continuing", "in production", "upcoming", "ongoing"}
+
+        if any(value in status_text for value in ended_values):
+            return True
+        if any(value in status_text for value in ongoing_values):
+            return False
+        return None
+
+    @staticmethod
+    def _disc_is_supported(meta: Meta) -> bool:
+        disctype = str(meta.is_disc or "").upper().strip().replace(" ", "").replace("-", "")
+        if not disctype:
+            return True
+        if disctype in {"BDMV", "3DBDMV", "VIDEO_TS"}:
+            return True
+        return False
+
+    @staticmethod
+    def _video_extensions_for_type(meta: Meta) -> set[str]:
+        media_type = str(meta.type or "").upper().strip()
+        if media_type in {"HDTV", "UHDTV"}:
+            return {".ts"}
+        if media_type == "SDTV":
+            return {".ps", ".mpg"}
+        return {".mkv", ".mp4"}
+
+    @staticmethod
+    def _contains_disallowed_video_file(filelist: list[Any], allowed: set[str]) -> str:
+        for item in filelist:
+            path = Path(str(item))
+            suffix = path.suffix.lower()
+            if suffix not in Zenith._KNOWN_VIDEO_EXTENSIONS:
+                continue
+            if suffix not in allowed:
+                return path.name
+        return ""
+
     async def get_additional_checks(self, meta: Meta) -> bool:
-        if meta.category == "BOOK" and not _is_misc(meta):
+        category = str(meta.category or "").upper()
+
+        if category in {"MOVIE", "TV"}:
+            filelist = [item for item in (meta.filelist or []) if self._is_path_like_file(item)]
+            if meta.screens < 3:
+                logger.info(f"{self.tracker}: [bold red]Video uploads require at least 3 screenshots on {self.tracker}.[/bold red]")
+                return False
+
+            if meta.is_disc and not self._disc_is_supported(meta):
+                logger.info(f"{self.tracker}: [bold red]Full-disc uploads on {self.tracker} must use BDMV or VIDEO_TS structures.[/bold red]")
+                return False
+
+            if not meta.is_disc:
+                video_extensions = self._video_extensions_for_type(meta)
+                disallowed_container_file = self._contains_disallowed_video_file(filelist, video_extensions)
+                if disallowed_container_file:
+                    logger.info(
+                        f"{self.tracker}: [bold red]Video container '{Path(disallowed_container_file).suffix}' is not allowed for this release type on {self.tracker}.[/bold red]"
+                    )
+                    return False
+
+            archive_file = self._contains_archive_file(filelist)
+            if archive_file:
+                logger.info(f"{self.tracker}: [bold red]Archive or multipart files are not allowed. Found: {archive_file}[/bold red]")
+                return False
+
+            if category == "TV":
+                seasons = self._extract_tv_seasons(filelist)
+                if len(seasons) > 1:
+                    logger.info(f"{self.tracker}: [bold red]TV uploads must target a single season on {self.tracker}.[/bold red]")
+                    return False
+
+                if meta.tv_pack:
+                    tv_pack_ended = self._is_tv_series_ended(meta)
+                    if tv_pack_ended is not True:
+                        logger.info(f"{self.tracker}: [bold red]TV season packs are restricted to ended series on {self.tracker}.[/bold red]")
+                        return False
+                elif self._count_tv_episodes(filelist) > 1:
+                    logger.info(f"{self.tracker}: [bold red]Non-pack TV uploads should contain a single episode on {self.tracker}.[/bold red]")
+                    return False
+                elif self._is_tv_series_ended(meta) is True:
+                    logger.info(f"{self.tracker}: [bold red]Completed TV seasons must be uploaded as season packs on {self.tracker}.[/bold red]")
+                    return False
+
+        if category == "BOOK" and not _is_misc(meta):
             if not meta.isbn and not meta.asin:
                 logger.info(f"{self.tracker}: [bold red]ISBN or ASIN is required for ebooks and audiobooks. Skipping upload...[/bold red]")
                 return False
