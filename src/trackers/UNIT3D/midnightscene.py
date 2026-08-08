@@ -218,7 +218,7 @@ class MidnightScene(UNIT3D):
                 return True
             if marker == "upscale":
                 continue
-            if f"{marker}" in uuid:
+            if re.search(rf"(?:^|[._ -]){re.escape(marker)}(?:$|[._ -])", uuid):
                 return True
         return False
 
