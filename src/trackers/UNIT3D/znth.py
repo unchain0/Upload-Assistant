@@ -294,8 +294,9 @@ class Zenith(UNIT3D):
 
     @classmethod
     def _contains_source_or_type_token(cls, title: str) -> bool:
-        haystack = f" {title.upper()} "
-        return any(token in haystack for token in cls._VIDEO_SOURCE_HINTS + cls._VIDEO_CODEC_HINTS + cls._VIDEO_AUDIO_CODEC_HINTS + cls._VIDEO_CHANNEL_HINTS)
+        haystack = f" {str(title).upper()} "
+        tokens = [str(token).upper() for token in (cls._VIDEO_SOURCE_HINTS + cls._VIDEO_CODEC_HINTS + cls._VIDEO_AUDIO_CODEC_HINTS + cls._VIDEO_CHANNEL_HINTS)]
+        return any(re.search(rf"(?:^|[\\s._-]){re.escape(token)}(?:$|[\\s._-])", haystack) for token in tokens)
 
     @staticmethod
     def _has_reasonable_music_path_length(file_path: Path) -> bool:
