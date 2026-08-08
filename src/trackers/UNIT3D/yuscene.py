@@ -187,18 +187,19 @@ class YUSCENE(UNIT3D):
     @staticmethod
     def _contains_other_tracker_mention(value: str) -> str:
         lowered = str(value or "").lower()
+        url_pattern = re.compile(r"(?:https?:)?//[^\s]+")
 
-        if urls := re.findall(r"https?://\S+", lowered):
+        if urls := url_pattern.findall(lowered):
             for raw_url in urls:
                 parsed_url: ParseResult = urlparse(raw_url)
-                host = parsed_url.netloc.rsplit("@", 1)[-1].partition(":")[0].lower()
+                host = parsed_url.netloc.rsplit("@", 1)[-1].partition(":")[0].lower().rstrip(".")
                 if host:
                     for forbidden in YUSCENE._TRACKER_DOMAINS:
                         if host == forbidden or host.endswith(f".{forbidden}"):
                             return forbidden
 
         tracker_terms_pattern = re.compile(r"(?<![a-z0-9])(?:" + "|".join(map(re.escape, YUSCENE._TRACKER_KEYWORDS)) + r")(?![a-z0-9])")
-        if match := tracker_terms_pattern.search(lowered):
+        if match := tracker_terms_pattern.search(url_pattern.sub(" ", lowered)):
             return match.group(0)
         return ""
 
@@ -218,9 +219,8 @@ class YUSCENE(UNIT3D):
             genre_values.extend(str(value) for value in meta.combined_genres)
         genre_tokens = {re.sub(r"\s+", " ", value.casefold()).strip() for value in genre_values if value.strip()}
         adult_keywords = {"xxx", "erotic", "porn", "adult", "orgy", "hentai", "adult animation", "softcore"}
-        if meta.adult_media:
-            if not await self._confirm_or_skip("Adult content is not allowed.", meta):
-                return False
+        if meta.adult_media and not await self._confirm_or_skip("Adult content is not allowed.", meta):
+            return False
 
         if genre_tokens.intersection(adult_keywords):
             logger.info(f"{self.tracker}: [bold red]Porn/xxx is not allowed at {self.tracker}.[/bold red]")
@@ -231,52 +231,56 @@ class YUSCENE(UNIT3D):
         release_name = str(meta.name or "")
         filelist = [item for item in (meta.filelist or []) if self._is_path_like_file(item)]
 
-        if category in {"MOVIE", "TV"} and self._has_banned_title_chars(release_name):
-            if not await self._confirm_or_skip("The release name contains unsupported characters or extra spaces.", meta):
-                return False
+        if category in {"MOVIE", "TV"} and self._has_banned_title_chars(release_name) and not await self._confirm_or_skip(
+            "The release name contains unsupported characters or extra spaces.", meta
+        ):
+            return False
 
-        if category in {"MOVIE", "TV", "BOOK"} and self._contains_other_tracker_mention(release_name):
-            if not await self._confirm_or_skip("The title contains tracker references or tracker domain names.", meta):
-                return False
+        if category in {"MOVIE", "TV", "BOOK"} and self._contains_other_tracker_mention(release_name) and not await self._confirm_or_skip(
+            "The title contains tracker references or tracker domain names.", meta
+        ):
+            return False
 
-        if category in {"MOVIE", "TV"} and meta.keep_folder and len(filelist) <= 1:
-            if not await self._confirm_or_skip("Single-file Movie/TV uploads should not be inside a folder for this tracker.", meta):
-                return False
+        if category in {"MOVIE", "TV"} and meta.keep_folder and len(filelist) <= 1 and not await self._confirm_or_skip(
+            "Single-file Movie/TV uploads should not be inside a folder for this tracker.", meta
+        ):
+            return False
 
-        if category in {"MOVIE", "TV"} and not meta.is_disc and not meta.mediainfo:
-            if not await self._confirm_or_skip("Movie/TV uploads on this tracker require mediainfo in parser field.", meta):
-                return False
+        if category in {"MOVIE", "TV"} and not meta.is_disc and not meta.mediainfo and not await self._confirm_or_skip(
+            "Movie/TV uploads on this tracker require mediainfo in parser field.", meta
+        ):
+            return False
 
         if category == "TV" and meta.tv_pack:
             tv_pack_ended = self.common.is_tv_series_ended(meta, self._TV_ENDED_STATUSES, self._TV_ONGOING_STATUSES)
-            if tv_pack_ended is False:
-                if not await self._confirm_or_skip("TV collections are only allowed for ended series on this tracker.", meta):
-                    return False
-            if tv_pack_ended is None:
-                if not await self._confirm_or_skip("Unable to confirm TV series status. TV packs are allowed only for ended series at YUSCENE.", meta):
-                    return False
-
-        if category in {"MOVIE", "TV"} and meta.screens < 3:
-            if not await self._confirm_or_skip("YUSCENE requires at least 3 screenshots for Movie/TV uploads.", meta):
+            if tv_pack_ended is False and not await self._confirm_or_skip("TV collections are only allowed for ended series on this tracker.", meta):
                 return False
+            if tv_pack_ended is None and not await self._confirm_or_skip(
+                "Unable to confirm TV series status. TV packs are allowed only for ended series at YUSCENE.", meta
+            ):
+                return False
+
+        if category in {"MOVIE", "TV"} and meta.screens < 3 and not await self._confirm_or_skip(
+            "YUSCENE requires at least 3 screenshots for Movie/TV uploads.", meta
+        ):
+            return False
 
         if category in {"MOVIE", "TV"}:
             extra_file = self._contains_video_extras(filelist)
-            if extra_file:
-                if not await self._confirm_or_skip(f"Extra file '{extra_file}' is not allowed for this tracker.", meta):
-                    return False
+            if extra_file and not await self._confirm_or_skip(f"Extra file '{extra_file}' is not allowed for this tracker.", meta):
+                return False
 
         if category != "GAME":
             archive = self._contains_archive_file(filelist)
-            if archive:
-                if not await self._confirm_or_skip(f"Archive/RAR files are not allowed for {category} on {self.tracker}.", meta):
-                    return False
+            if archive and not await self._confirm_or_skip(f"Archive/RAR files are not allowed for {category} on {self.tracker}.", meta):
+                return False
 
         if category == "MOVIE":
             packed_keywords = ["boxset", "box set", "complete", "collection"]
-            if any(keyword in release_name.lower() for keyword in packed_keywords):
-                if not await self._confirm_or_skip("Movie boxset-style naming is not accepted. Upload each movie separately.", meta):
-                    return False
+            if any(keyword in release_name.lower() for keyword in packed_keywords) and not await self._confirm_or_skip(
+                "Movie boxset-style naming is not accepted. Upload each movie separately.", meta
+            ):
+                return False
 
         return True
 

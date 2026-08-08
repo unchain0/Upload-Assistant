@@ -2,6 +2,7 @@
 
 import asyncio
 from typing import Any
+from unittest.mock import patch
 
 from src.meta import Meta
 from src.trackers.UNIT3D.znth import Zenith
@@ -180,6 +181,11 @@ def test_zenith_rejects_ongoing_tv_pack():
 
 def test_zenith_handles_none_name_in_movie_checks():
     assert asyncio.run(_tracker().get_additional_checks(_movie_meta(name=None))) is False
+
+
+def test_zenith_confirmed_unattended_adult_upload_does_not_prompt():
+    with patch("src.trackers.common.cli_ui.ask_yes_no", side_effect=AssertionError("prompt should not run")):
+        assert asyncio.run(_tracker().get_additional_checks(_movie_meta(adult_media=True, unattended=True, unattended_confirm=True))) is True
 
 
 def test_zenith_does_not_accept_source_hints_inside_unrelated_words():

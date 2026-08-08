@@ -309,9 +309,11 @@ class Common:
             check_subtitle=True,
             prompt_on_failure=False,
         )
-        if not subtitles and (not meta.unattended or meta.unattended_confirm):
-            return await self.prompt_user_for_confirmation(f"{tracker}: No Portuguese audio or subtitles found. Do you want to proceed with the upload?")
-        return subtitles
+        if subtitles:
+            return True
+        if meta.unattended:
+            return bool(meta.unattended_confirm)
+        return await self.prompt_user_for_confirmation(f"{tracker}: No Portuguese audio or subtitles found. Do you want to proceed with the upload?")
 
     def _strip_bbcode_and_markup(self, text: str) -> str:
         without_bbcode = re.sub(r"\[[^\]]+\]", " ", text)
@@ -3416,14 +3418,10 @@ class Common:
         :return: True if the user confirms or if the media is not adult, False otherwise.
         """
         if meta.adult_media:
-            if not meta.unattended or (meta.unattended and meta.unattended_confirm):
-                logger.info(f"[bold red]Pornography is not allowed at {tracker}.[/bold red]")
-                if cli_ui.ask_yes_no("Do you want to upload anyway?", default=False):
-                    pass
-                else:
-                    return False
-            else:
-                return False
+            logger.info(f"[bold red]Pornography is not allowed at {tracker}.[/bold red]")
+            if meta.unattended:
+                return bool(meta.unattended_confirm)
+            return cli_ui.ask_yes_no("Do you want to upload anyway?", default=False)
 
         return True
 

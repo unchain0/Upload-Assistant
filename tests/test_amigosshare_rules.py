@@ -128,10 +128,10 @@ def test_movie_does_not_treat_title_words_as_language_markers():
     assert not asyncio.run(run_checks(meta))
 
 
-def test_movie_prompts_when_unattended_confirmation_is_enabled():
+def test_movie_unattended_confirmation_does_not_prompt():
     meta = make_meta(unattended=True, unattended_confirm=True)
 
-    assert asyncio.run(run_checks(meta, confirm_result=True))
+    assert asyncio.run(run_checks(meta))
 
 
 def test_book_and_game_bypass_video_language_validation():

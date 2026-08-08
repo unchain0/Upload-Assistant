@@ -1,8 +1,8 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
 import re
 from pathlib import Path
-from urllib.parse import urlparse
 from typing import Any
+from urllib.parse import ParseResult, urlparse
 
 from src.console import logger
 from src.meta import Meta
@@ -29,6 +29,28 @@ class PolishTorrent(UNIT3D):
     supported_categories = ("TV", "MOVIE")
     _ARCHIVE_EXTENSIONS: frozenset[str] = frozenset({".rar", ".r00", ".r01", ".r02", ".r03", ".r04", ".r05", ".r06", ".r07", ".r08", ".r09", ".zip", ".7z"})
     _SCREENSHOT_EXTENSIONS: tuple[str, ...] = (".png", ".tiff", ".tif")
+    _TRACKER_DOMAINS: frozenset[str] = frozenset({"1337x.to", "eztv.re", "katcr.co", "katcr.to", "nyaa.si", "rarbg.to", "rutracker.net", "thepiratebay.org", "torrentdownloads.me", "yts.mx"})
+    _TRACKER_TERMS: tuple[str, ...] = (
+        "yify",
+        "yts",
+        "rarbg",
+        "tpb",
+        "thepiratebay",
+        "1337x",
+        "kat",
+        "nyaa",
+        "nzbgeek",
+        "torrentdownloads",
+        "rutor",
+        "limetorrents",
+        "kickasstorrents",
+        "torrentz",
+        "torrentproject",
+        "rutracker",
+        "zooqle",
+        "eztv",
+        "showrss",
+    )
 
     def __init__(self, config: Config) -> None:
         super().__init__(config, tracker_name="POLISHTORRENT")
@@ -61,10 +83,12 @@ class PolishTorrent(UNIT3D):
         return raw_value.strip()
 
     @staticmethod
-    def _image_extension(url: str) -> str:
-        parsed = urlparse(url)
-        path = Path(parsed.path)
-        return path.suffix.lower()
+    def _image_extension(url: str) -> str | None:
+        try:
+            parsed = urlparse(url)
+        except ValueError:
+            return None
+        return Path(parsed.path).suffix.lower()
 
     @staticmethod
     def _is_allowed_screenshot_image(image: dict[str, Any]) -> bool:
@@ -72,16 +96,17 @@ class PolishTorrent(UNIT3D):
         web_url = PolishTorrent._extract_image_url(image, "web_url")
         img_url = PolishTorrent._extract_image_url(image, "img_url")
 
+        extensions: list[str] = []
         for source_url in (raw_url, web_url, img_url):
             if not source_url:
                 continue
             extension = PolishTorrent._image_extension(source_url)
+            if extension is None:
+                return False
             if not extension:
                 continue
-            if extension in PolishTorrent._SCREENSHOT_EXTENSIONS:
-                return True
-            return False
-        return True
+            extensions.append(extension)
+        return not extensions or all(extension in PolishTorrent._SCREENSHOT_EXTENSIONS for extension in extensions)
 
     @staticmethod
     def _has_valid_screenshot_thumb_and_full(image: dict[str, Any]) -> bool:
@@ -97,37 +122,20 @@ class PolishTorrent(UNIT3D):
     def _has_banned_title_chars(value: str) -> bool:
         if re.search(r"[.()\[\]]", value):
             return True
-        if bool(re.search(r"\s{2,}", value)):
-            return True
-        return False
+        return bool(re.search(r"\s{2,}", value))
 
     @staticmethod
     def _contains_other_tracker_mention(value: str) -> bool:
         lowered = value.lower()
-        tracker_terms = (
-            "yify",
-            "yts",
-            "rarbg",
-            "tpb",
-            "thepiratebay",
-            "1337x",
-            "kat",
-            "nyaa",
-            "nzbgeek",
-            "torrentdownloads",
-            "rutor",
-            "limetorrents",
-            "kickasstorrents",
-            "torrentz",
-            "torrentproject",
-            "nyaa.si",
-            "rutracker",
-            "zooqle",
-            "eztv",
-            "showrss",
-        )
-        tracker_pattern = re.compile(r"(?<![a-z0-9])(?:" + "|".join(map(re.escape, tracker_terms)) + r")(?![a-z0-9])")
-        return bool(tracker_pattern.search(lowered))
+        url_pattern = re.compile(r"(?:https?:)?//[^\s]+")
+        for raw_url in url_pattern.findall(lowered):
+            parsed_url: ParseResult = urlparse(raw_url)
+            host = parsed_url.netloc.rsplit("@", 1)[-1].partition(":")[0].lower().rstrip(".")
+            if any(host == forbidden or host.endswith(f".{forbidden}") for forbidden in PolishTorrent._TRACKER_DOMAINS):
+                return True
+
+        tracker_pattern = re.compile(r"(?<![a-z0-9])(?:" + "|".join(map(re.escape, PolishTorrent._TRACKER_TERMS)) + r")(?![a-z0-9])")
+        return bool(tracker_pattern.search(url_pattern.sub(" ", lowered)))
 
     @staticmethod
     def _is_tv_pack_ended(meta: Meta) -> bool | None:

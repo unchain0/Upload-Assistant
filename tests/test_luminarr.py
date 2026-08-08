@@ -112,6 +112,10 @@ def test_luminarr_rejects_non_discs_without_three_screenshots():
     assert asyncio.run(_tracker().get_additional_checks(_movie_meta(screens=2))) is False
 
 
+def test_luminarr_treats_missing_screenshot_count_as_zero():
+    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(screens=None))) is False
+
+
 def test_luminarr_rejects_pornography_metadata():
     assert asyncio.run(_tracker().get_additional_checks(_movie_meta(adult_media=True))) is False
 

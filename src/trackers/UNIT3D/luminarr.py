@@ -169,7 +169,11 @@ class Luminarr(UNIT3D):
             logger.info(f"{self.tracker}: [bold red]only allows MKV containers for non-disc uploads.[/bold red]")
             return False
 
-        if category in {"TV", "MOVIE"} and meta.screens < 3:
+        try:
+            screens = int(meta.screens)
+        except (TypeError, ValueError):
+            screens = 0
+        if category in {"TV", "MOVIE"} and screens < 3:
             logger.info(f"{self.tracker}: [bold red]{self.tracker} requires at least 3 screenshots in the description for Movie/TV uploads.[/bold red]")
             return False
 

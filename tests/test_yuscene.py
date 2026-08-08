@@ -128,6 +128,14 @@ def test_yuscene_allows_urls_in_description_when_tracker_reference_check_targets
     )
 
 
+def test_yuscene_ignores_tracker_tokens_in_legitimate_url_paths():
+    assert YUSCENE._contains_other_tracker_mention("https://images.example/kat/rutracker/screen.png") == ""
+
+
+def test_yuscene_detects_protocol_relative_tracker_domain_with_trailing_dot():
+    assert YUSCENE._contains_other_tracker_mention("//rutracker.net./release") == "rutracker.net"
+
+
 def test_yuscene_blocks_disallowed_tracker_domains_in_title():
     assert asyncio.run(_tracker().get_additional_checks(_movie_meta(name="Example Movie 2024 from rutracker.net"))) is False
 
