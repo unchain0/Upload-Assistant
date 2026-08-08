@@ -58,6 +58,16 @@ def read_paths_from_stdin(argv: Sequence[str], stream: TextIO) -> tuple[list[str
             continue
         paths.append(path)
 
+    if paths:
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for raw_path in paths:
+            if raw_path in seen:
+                continue
+            seen.add(raw_path)
+            deduped.append(raw_path)
+        paths = deduped
+
     if not paths:
         raise ValueError(f"{PATHS_FROM_STDIN_OPTION} did not receive any paths")
     return args, paths

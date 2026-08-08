@@ -4,7 +4,6 @@ import contextlib
 import ntpath
 import os
 import re
-import sys
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, cast
@@ -21,7 +20,7 @@ from src.cleanup import cleanup_manager
 from src.clients import Clients
 from src.console import logger
 from src.edition import get_edition
-from src.exceptions import NoAudioMediaError
+from src.exceptions import ItemProcessingError, NoAudioMediaError
 from src.exportmi import export_info, get_conformance_error, mi_resolution, validate_mediainfo
 from src.get_source import get_source
 from src.imdb import imdb_manager
@@ -214,10 +213,10 @@ async def detect_disc_and_category(prep_instance: Any, meta: Meta) -> tuple[str,
                         )
                     except EOFError, KeyboardInterrupt:
                         logger.error("[bold red]Category selection cancelled or failed.[/bold red]")
-                        sys.exit(1)
+                        raise ItemProcessingError("Could not determine if release is MUSIC or BOOK from interactive cancellation.", str(meta.path or "")) from None
                     if choice is None:
                         logger.error("[bold red]Category selection cancelled or failed.[/bold red]")
-                        sys.exit(1)
+                        raise ItemProcessingError("Could not determine if release is MUSIC or BOOK from interactive selection.", str(meta.path or ""))
                     if choice.startswith("1") or choice.lower() == "music":
                         meta.category = "MUSIC"
                         meta.audiobook = False
@@ -229,12 +228,15 @@ async def detect_disc_and_category(prep_instance: Any, meta: Meta) -> tuple[str,
                     logger.error("[bold red]Could not confidently distinguish MUSIC from AUDIOBOOK in unattended mode.[/bold red]")
                     logger.error("[yellow]Specify one of: -c book or -c music[/yellow]")
                     logger.error("[yellow]Skipping this release instead of assigning an unsafe category.[/yellow]")
-                    sys.exit(1)
+                    raise ItemProcessingError(
+                        "Could not determine if release is MUSIC or BOOK from mixed audio signals. Specify --category music or --category book.",
+                        str(meta.path or ""),
+                    )
 
     # Fallback auto-detect BOOK category if category/manual_category is not already set and it's not a disc
     if not meta.category and not meta.manual_category and not meta.is_disc:
         is_book = False
-        video_extensions = {".mkv", ".mp4", ".ts"}
+        video_extensions = {".mkv", ".mp4", ".ts", ".avi"}
 
         path_to_check = meta.path
         if path_to_check and Path(path_to_check).exists():
@@ -298,7 +300,7 @@ async def detect_disc_and_category(prep_instance: Any, meta: Meta) -> tuple[str,
             ".xcz",
             ".xex",
         }
-        video_extensions = {".mkv", ".mp4", ".ts"}
+        video_extensions = {".mkv", ".mp4", ".ts", ".avi"}
         game_groups = {"tenoke", "rune", "flt", "plaza", "codex", "skidrow", "prophet", "gog", "darkzer0", "doge", "tinyiso", "razor1911", "outlaws", "alias", "simplex"}
 
         path_to_check = meta.path
@@ -632,6 +634,7 @@ def calculate_source_size(_prep_instance: Any, meta: Meta, videopath: str) -> No
 
 
 async def validate_media(_prep_instance: Any, meta: Meta) -> None:
+    tmp_dir = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}"
     conform_issues = await get_conformance_error(meta)
     if conform_issues:
         upload = False
@@ -644,22 +647,21 @@ async def validate_media(_prep_instance: Any, meta: Meta) -> None:
                 logger.info("\n[red]Exiting on user request (Ctrl+C)[/red]")
                 await cleanup_manager.cleanup()
                 cleanup_manager.reset_terminal()
-                sys.exit(1)
-        if upload is False:
-            logger.info("[red]Not uploading. Check if the file has finished downloading and can be played back properly (uncorrupted).")
-            tmp_dir = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}"
-            # Cleanup meta so we don't reuse it later
-            if Path(tmp_dir).exists():
-                try:
-                    for file in (p.name for p in Path(tmp_dir).iterdir()):
-                        file_path = Path(tmp_dir) / file
-                        if file_path.is_file() and file.endswith((".txt", ".json")):
-                            file_path.unlink()
-                            logger.debug(f"[yellow]Removed temporary metadata file: {file_path}[/yellow]")
-                except Exception as e:
-                    logger.error(f"[red]Error cleaning up temporary metadata files: {e}[/red]", extra={"highlighter": None})
-            logger.info("[red]Not uploading due to conformance errors.[/red]")
-            raise Exception("Conformance errors found in mediainfo")
+                raise ItemProcessingError("Conformance check skipped by user request", str(meta.path or "")) from None
+            if upload is False:
+                logger.info("[red]Not uploading. Check if the file has finished downloading and can be played back properly (uncorrupted).")
+                # Cleanup meta so we don't reuse it later
+                if Path(tmp_dir).exists():
+                    try:
+                        for file in (p.name for p in Path(tmp_dir).iterdir()):
+                            file_path = Path(tmp_dir) / file
+                            if file_path.is_file() and file.endswith((".txt", ".json")):
+                                file_path.unlink()
+                                logger.debug(f"[yellow]Removed temporary metadata file: {file_path}[/yellow]")
+                    except Exception as e:
+                        logger.error(f"[red]Error cleaning up temporary metadata files: {e}[/red]", extra={"highlighter": None})
+                logger.info("[red]Not uploading due to conformance errors.[/red]")
+                raise ItemProcessingError("Conformance errors found in mediainfo", str(meta.path or ""))
 
     meta.valid_mi = True
     if not meta.is_disc and meta.category not in ("BOOK", "GAME"):
@@ -1131,7 +1133,7 @@ async def finalize_metadata(
             title = meta.title.lower().strip()
         except KeyError:
             logger.info("[red]Title is missing from TMDB....")
-            sys.exit(1)
+            raise ItemProcessingError("Title is missing from TMDB metadata.", str(videopath)) from None
         aka = meta.imdb_info.get("title", "").strip().lower()
         imdb_aka = meta.imdb_info.get("aka", "").strip().lower()
         year = str(meta.imdb_info.get("year", ""))

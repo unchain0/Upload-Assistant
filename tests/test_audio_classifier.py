@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from src.meta import Meta
+from src.exceptions import ItemProcessingError
 from src.prep_helpers import detect_disc_and_category
 
 
@@ -120,5 +121,5 @@ def test_ambiguous_audio_folder_fails_in_unattended_mode(tmp_path):
     meta = Meta(path=str(tmp_path), unattended=True, unattended_confirm=False)
     prep = SimpleNamespace(disc_info_manager=SimpleNamespace(get_disc=AsyncMock(return_value=("", str(tmp_path), {}, []))))
 
-    with pytest.raises(SystemExit):
+    with pytest.raises(ItemProcessingError, match="Could not determine if release is MUSIC or BOOK"):
         asyncio.run(detect_disc_and_category(prep, meta))

@@ -53,3 +53,23 @@ async def test_queue_uses_multiple_explicit_existing_paths(tmp_path: Path) -> No
     queue, _ = await QueueManager.handle_queue(" ".join(paths), Meta(), paths, str(tmp_path))
 
     assert queue == paths
+
+
+def test_read_paths_from_stdin_deduplicates_repeated_paths() -> None:
+    stream = io.StringIO("/media/First.mkv\n/media/First.mkv\n/media/Second.mkv\n/media/Second.mkv\n")
+
+    remaining_args, paths = read_paths_from_stdin(["--paths-from-stdin", "-debug"], stream)
+
+    assert remaining_args == ["-debug"]
+    assert paths == ["/media/First.mkv", "/media/Second.mkv"]
+
+
+@pytest.mark.asyncio
+async def test_queue_manager_deduplicates_paths(tmp_path: Path) -> None:
+    first = tmp_path / "First.mkv"
+    second = tmp_path / "Second.mkv"
+    first.touch()
+    second.touch()
+    queue, _ = await QueueManager.handle_queue(str(first), Meta(), [str(first), str(second), str(first)], str(tmp_path))
+
+    assert queue == [str(first), str(second)]
