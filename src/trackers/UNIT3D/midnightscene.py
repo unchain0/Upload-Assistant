@@ -239,7 +239,7 @@ class MidnightScene(UNIT3D):
     async def get_additional_checks(self, meta: Meta) -> bool:
         # Block explicit adult uploads
         if meta.adult_media:
-            logger.info(f"{self.tracker}: Adult content is not accepted on this tracker.[/yellow]")
+            logger.info(f"{self.tracker}: [yellow]Adult content is not accepted on this tracker.[/yellow]")
             return False
 
         # Minimum screenshot requirement for TV/Movie rule page requires samples in description
