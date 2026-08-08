@@ -756,6 +756,11 @@ class AmigosShare:
             logger.info(f"{self.tracker}: [bold red]Ignorando upload na categoria BOOK devido ao tamanho ser menor ou igual a 1MB.[/bold red]")
             return False
 
+        description = get_base_description(meta)
+        if not await self.common.check_portuguese_description_requirements(description, self.tracker, meta):
+            logger.info(f"{self.tracker}: [bold red]Descrição não identificada como português. Pulando upload.[/bold red]")
+            return False
+
         if meta.category in ("BOOK", "GAME"):
             return True
 

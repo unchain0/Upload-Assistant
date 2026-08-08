@@ -19,10 +19,13 @@ from src.trackers.amigosshare import AmigosShare  # noqa: E402
 
 
 def make_meta(**overrides):
+    workspace_root = Path(__file__).resolve().parent.parent
     values = {
         "category": "MOVIE",
         "anime": False,
         "imdb_id": "1234567",
+        "base_dir": str(workspace_root),
+        "uuid": "unit-test",
         "source_size": 2 * 1024 * 1024,
         "language_checked": True,
         "audio_languages": [],
@@ -30,6 +33,7 @@ def make_meta(**overrides):
         "subtitle_files": [],
         "unattended": False,
         "unattended_confirm": False,
+        "description": "Sinopse de teste em português para validação do tracker.",
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -136,6 +140,24 @@ def test_book_and_game_bypass_video_language_validation():
 
     assert asyncio.run(run_checks(book_meta, guard_language_call=True))
     assert asyncio.run(run_checks(game_meta, guard_language_call=True))
+
+
+def test_book_blocks_non_portuguese_description_when_unattended():
+    meta = make_meta(category="BOOK", imdb_id=None, source_size=2 * 1024 * 1024, unattended=True, description="This release contains a Portuguese tracker release with title and files.")
+
+    assert not asyncio.run(run_checks(meta))
+
+
+def test_book_allows_non_portuguese_description_with_confirmation():
+    meta = make_meta(category="BOOK", imdb_id=None, source_size=2 * 1024 * 1024, description="This release contains a Portuguese tracker release with title and files.")
+
+    assert asyncio.run(run_checks(meta, confirm_result=True))
+
+
+def test_book_blocks_non_portuguese_description_in_unattended_without_confirmation():
+    meta = make_meta(category="BOOK", imdb_id=None, source_size=2 * 1024 * 1024, unattended=True, description="This release contains a Portuguese tracker release with title and files.")
+
+    assert not asyncio.run(run_checks(meta))
 
 
 def test_book_size_rejection_happens_before_other_checks():

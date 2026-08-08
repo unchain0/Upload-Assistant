@@ -69,6 +69,73 @@ class Common:
             "vamos",
         }
     )
+    PORTUGUESE_DESCRIPTION_WORDS: frozenset[str] = frozenset(
+        {
+            "ainda",
+            "agora",
+            "além",
+            "ano",
+            "as",
+            "ao",
+            "aos",
+            "aquele",
+            "aqueles",
+            "aquela",
+            "aquelas",
+            "à",
+            "ate",
+            "até",
+            "bem",
+            "essa",
+            "esse",
+            "esta",
+            "estas",
+            "está",
+            "estava",
+            "estão",
+            "estao",
+            "este",
+            "estes",
+            "estou",
+            "eu",
+            "exemplo",
+            "foi",
+            "for",
+            "fiz",
+            "ficou",
+            "hoje",
+            "isso",
+            "já",
+            "mais",
+            "muito",
+            "nao",
+            "nada",
+            "não",
+            "onde",
+            "para",
+            "por",
+            "porque",
+            "qual",
+            "quando",
+            "que",
+            "quem",
+            "se",
+            "segundo",
+            "sem",
+            "tambem",
+            "também",
+            "temos",
+            "você",
+            "voce",
+            "vida",
+            "vou",
+            "vários",
+            "varios",
+            "vão",
+            "vao",
+        }
+    )
+    PORTUGUESE_DESCRIPTION_MARKERS = re.compile(r"[à-úÀ-ÚãõçâêîôûÁÉÍÓÚ]")
     LANGUAGE_EQUIVALENCE_GROUPS: tuple[set[str], ...] = (
         {"chinese", "mandarin", "zh", "zho", "chi", "cmn", "chinese simplified", "chinese traditional", "zh hans", "zh hant"},
         {"english", "eng", "en", "en us", "en gb", "english cc", "english sdh", "english forced"},
@@ -211,6 +278,31 @@ class Common:
         if not subtitles and (not meta.unattended or meta.unattended_confirm):
             return await self.prompt_user_for_confirmation(f"{tracker}: No Portuguese audio or subtitles found. Do you want to proceed with the upload?")
         return subtitles
+
+    def _strip_bbcode_and_markup(self, text: str) -> str:
+        without_bbcode = re.sub(r"\[[^\]]+\]", " ", text)
+        return re.sub(r"<[^>]+>", " ", without_bbcode)
+
+    def is_portuguese_description(self, description: str) -> bool:
+        description = self._strip_bbcode_and_markup(description or "")
+        if not description.strip():
+            return False
+
+        if self.PORTUGUESE_DESCRIPTION_MARKERS.search(description):
+            return True
+
+        normalized = self._normalize_language_token(description)
+        words = set(re.findall(r"[a-z]+", normalized))
+        return len(words & self.PORTUGUESE_DESCRIPTION_WORDS) >= 3
+
+    async def check_portuguese_description_requirements(self, description: str, tracker: str, meta: Meta) -> bool:
+        if self.is_portuguese_description(description):
+            return True
+
+        if meta.unattended and not meta.unattended_confirm:
+            return False
+
+        return await self.prompt_user_for_confirmation(f"{tracker}: Description does not appear to be in Portuguese. Do you want to proceed with the upload?")
 
     def _format_language_for_display(self, language: str) -> str:
         if not language:
