@@ -1,5 +1,7 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
+import re
 from typing import Any
+from pathlib import Path
 
 from src.get_desc import DescriptionBuilder
 from src.meta import Meta
@@ -27,11 +29,63 @@ class Samaritano(UNIT3D):
     supported_categories = ("TV", "MOVIE", "BOOK", "GAME")
     tracker_urls = ("https://samaritano.cc",)
     allows_bloated_audio = True
+    _VIDEO_EXTENSIONS: tuple[str, ...] = (
+        ".mkv",
+        ".mp4",
+        ".avi",
+        ".mov",
+        ".m4v",
+        ".mpg",
+        ".mpeg",
+        ".m2ts",
+        ".ts",
+        ".wmv",
+        ".flv",
+    )
 
     def __init__(self, config: Config) -> None:
         super().__init__(config, tracker_name="SAMARITANO")
         self.config: Config = config
         self.common = Common(config)
+
+    @staticmethod
+    def _extract_tv_seasons(filelist: list[Any]) -> set[int]:
+        seasons: set[int] = set()
+        season_pattern = re.compile(r"[sS](\d{1,3})(?:[eE]\d{1,3}(?:[eE]\d{1,3})?)?")
+        for item in filelist:
+            seasons.update(int(match) for match in season_pattern.findall(str(item)))
+        return seasons
+
+    @staticmethod
+    def _count_tv_episodes(filelist: list[Any]) -> int:
+        episodes: set[tuple[int, int]] = set()
+        episode_pattern = re.compile(r"[sS](\d{1,3})[eE](\d{1,3})(?:[eE](\d{1,3}))?")
+        for item in filelist:
+            for match in episode_pattern.findall(str(item)):
+                season = int(match[0])
+                episodes.add((season, int(match[1])))
+                if match[2]:
+                    episodes.add((season, int(match[2])))
+        return len(episodes)
+
+    @staticmethod
+    def _video_file_count(filelist: list[Any]) -> int:
+        return sum(1 for item in filelist if Path(str(item)).suffix.lower() in Samaritano._VIDEO_EXTENSIONS)
+
+    @staticmethod
+    def _is_tv_series_ended(meta: Meta) -> bool | None:
+        status_text = str(meta.imdb_info.get("status", "") if isinstance(meta.imdb_info, dict) else "").casefold().strip()
+        if not status_text:
+            return None
+
+        ended_values = {"ended", "canceled", "cancelled", "finished", "completed"}
+        ongoing_values = {"returning", "continuing", "in production", "upcoming", "ongoing"}
+
+        if any(status in status_text for status in ended_values):
+            return True
+        if any(status in status_text for status in ongoing_values):
+            return False
+        return None
 
     async def get_resolution_id(self, meta: Meta, resolution: str = "", reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
         resolution_id = {
@@ -161,6 +215,30 @@ class Samaritano(UNIT3D):
     async def get_additional_checks(self, meta: Meta) -> bool:
         if meta.category == "BOOK":
             return True
+
+        if meta.category == "MOVIE":
+            filelist = [item for item in (meta.filelist or []) if str(item).strip() != ""]
+            if self._video_file_count(filelist) > 1:
+                return False
+            return await self.common.check_portuguese_video_requirements(meta, self.tracker)
+
+        if meta.category == "TV":
+            filelist = [item for item in (meta.filelist or []) if str(item).strip() != ""]
+            seasons = self._extract_tv_seasons(filelist)
+            episode_count = self._count_tv_episodes(filelist)
+
+            if seasons and len(seasons) > 1:
+                return False
+
+            if meta.tv_pack:
+                if self._is_tv_series_ended(meta) is not True:
+                    return False
+                if not seasons:
+                    return True
+                return True
+
+            if episode_count > 1:
+                return False
 
         return await self.common.check_portuguese_video_requirements(meta, self.tracker)
 

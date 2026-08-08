@@ -1,4 +1,5 @@
 import asyncio
+from typing import Any
 
 import pytest
 
@@ -53,3 +54,106 @@ def test_capybarabr_formats_dvdrips_with_resolution_before_audio_and_codec() -> 
     name = asyncio.run(CapybaraBR({"TRACKERS": {}}).get_name(meta))["name"]
 
     assert name == "Example Movie 2001 480p DVDRip DD2.0 x264-DDOS"  # noqa: S101
+
+
+def _movie_meta(**kwargs: Any) -> Meta:
+    base: dict[str, Any] = {
+        "category": "MOVIE",
+        "filelist": ["Example.Movie.2024.mkv"],
+        "unattended": True,
+        "unattended_confirm": False,
+        "audio_languages": ["Portuguese"],
+        "name": "Example Movie 2024",
+        "imdb_info": {"status": ""},
+    }
+    base.update(kwargs)
+    return Meta(**base)
+
+
+def _tv_meta(**kwargs: Any) -> Meta:
+    base: dict[str, Any] = {
+        "category": "TV",
+        "filelist": ["Show.S01E01.mkv"],
+        "tv_pack": False,
+        "unattended": True,
+        "unattended_confirm": False,
+        "audio_languages": ["Portuguese"],
+        "imdb_info": {"status": "Ended"},
+    }
+    base.update(kwargs)
+    return Meta(**base)
+
+
+def test_samaritano_rejects_movie_with_multiple_video_files():
+    assert (
+        asyncio.run(
+            Samaritano({"TRACKERS": {}}).get_additional_checks(
+                _movie_meta(
+                    filelist=["Example.Movie.2024.mkv", "Example.Movie.Extra.2024.mkv"],
+                )
+            )
+        )
+        is False
+    )
+
+
+def test_samaritano_accepts_single_movie_video_upload():
+    assert asyncio.run(Samaritano({"TRACKERS": {}}).get_additional_checks(_movie_meta())) is True
+
+
+def test_samaritano_rejects_tv_pack_for_non_ended_series():
+    assert (
+        asyncio.run(
+            Samaritano({"TRACKERS": {}}).get_additional_checks(
+                _tv_meta(
+                    tv_pack=True,
+                    filelist=["Show.S01E01.mkv", "Show.S01E02.mkv"],
+                    imdb_info={"status": "Returning Series"},
+                )
+            )
+        )
+        is False
+    )
+
+
+def test_samaritano_rejects_tv_uploads_with_multiple_seasons():
+    assert (
+        asyncio.run(
+            Samaritano({"TRACKERS": {}}).get_additional_checks(
+                _tv_meta(
+                    tv_pack=True,
+                    filelist=["Show.S01E01.mkv", "Show.S02E01.mkv"],
+                    imdb_info={"status": "Ended"},
+                )
+            )
+        )
+        is False
+    )
+
+
+def test_samaritano_rejects_tv_uploads_with_multiple_episodes_without_pack():
+    assert (
+        asyncio.run(
+            Samaritano({"TRACKERS": {}}).get_additional_checks(
+                _tv_meta(
+                    filelist=["Show.S01E01.mkv", "Show.S01E02.mkv", "Show.S01E03.mkv"],
+                )
+            )
+        )
+        is False
+    )
+
+
+def test_samaritano_accepts_tv_pack_for_ended_series():
+    assert (
+        asyncio.run(
+            Samaritano({"TRACKERS": {}}).get_additional_checks(
+                _tv_meta(
+                    tv_pack=True,
+                    filelist=["Show.S01E01.mkv", "Show.S01E02.mkv", "Show.S01E03.mkv"],
+                    imdb_info={"status": "Ended"},
+                )
+            )
+        )
+        is True
+    )
