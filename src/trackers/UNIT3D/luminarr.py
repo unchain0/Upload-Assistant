@@ -159,7 +159,7 @@ class Luminarr(UNIT3D):
             return False
 
         if self._has_bootleg_marker(meta.name):
-            logger.info(f"{self.tracker}: [bold red]Release markers indicate this is likely a bootleg/unauthorized source.")
+            logger.info(f"{self.tracker}: [bold red]Release markers indicate this is likely a bootleg/unauthorized source.[/bold red]")
             return False
 
         filelist = [item for item in (meta.filelist or []) if self._is_path_like_file(item)]
