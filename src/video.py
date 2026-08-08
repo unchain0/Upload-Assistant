@@ -3,7 +3,6 @@ import contextlib
 import json
 import os
 import re
-import sys
 from pathlib import Path
 from typing import Any, cast
 
@@ -12,6 +11,7 @@ import cli_ui
 
 from src.cleanup import cleanup_manager
 from src.console import logger
+from src.exceptions import ItemProcessingError
 from src.exportmi import mi_resolution
 from src.meta import Meta
 
@@ -137,7 +137,7 @@ class VideoManager:
             except Exception:
                 entries = []
 
-            video_exts = {".mkv", ".mp4", ".ts"}
+            video_exts = {".mkv", ".mp4", ".ts", ".avi"}
             for file in entries:
                 fname_lower = file.lower()
                 ext = Path(file).suffix.lower()
@@ -167,7 +167,7 @@ class VideoManager:
                             logger.info("\n[red]Exiting on user request (Ctrl+C)[/red]")
                             await cleanup_manager.cleanup()
                             cleanup_manager.reset_terminal()
-                            sys.exit(1)
+                            raise ItemProcessingError("User cancelled sample file prompt.", videoloc) from None
             for file in filelist:
                 if any(tag in file for tag in ["{tmdb-", "{imdb-", "{tvdb-"]):
                     logger.info(f"[bold red]This looks like some *arr renamed file which is not allowed: [yellow]{file}")
@@ -178,18 +178,18 @@ class VideoManager:
                             logger.info("[red]Exiting on user request[/red]")
                             await cleanup_manager.cleanup()
                             cleanup_manager.reset_terminal()
-                            sys.exit(1)
+                            raise ItemProcessingError("ARR renamed file rejected by user input.", videoloc)
                     except EOFError:
                         logger.info("\n[red]Exiting on user request (Ctrl+C)[/red]")
                         await cleanup_manager.cleanup()
                         cleanup_manager.reset_terminal()
-                        sys.exit(1)
+                        raise ItemProcessingError("User cancelled filename check prompt.", videoloc) from None
             try:
                 video = sorted(filelist, key=os.path.getsize, reverse=True)[0] if sorted_filelist else sorted(filelist)[0]
             except IndexError:
                 logger.info("[bold red]No Video files found")
                 if mode == "cli":
-                    raise SystemExit(1) from None
+                    raise ItemProcessingError("No Video files found", videoloc) from None
                 return "", []
         else:
             video = videoloc
@@ -203,12 +203,12 @@ class VideoManager:
                         logger.info("[red]Exiting on user request[/red]")
                         await cleanup_manager.cleanup()
                         cleanup_manager.reset_terminal()
-                        sys.exit(1)
+                        raise ItemProcessingError("ARR renamed file rejected by user input.", videoloc)
                 except EOFError:
                     logger.info("\n[red]Exiting on user request (Ctrl+C)[/red]")
                     await cleanup_manager.cleanup()
                     cleanup_manager.reset_terminal()
-                    sys.exit(1)
+                    raise ItemProcessingError("User cancelled filename check prompt.", videoloc) from None
         filelist = sorted(filelist, key=os.path.getsize, reverse=True) if sorted_filelist else sorted(filelist)
         return video, filelist
 

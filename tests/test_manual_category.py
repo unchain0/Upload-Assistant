@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
 
 from src.meta import Meta
+from src.exceptions import ItemProcessingError
 from src.prep_helpers import detect_disc_and_category
 from src.video import video_manager
 
@@ -25,8 +27,18 @@ def test_manual_music_category_routes_to_music_before_media_processing(tmp_path)
     assert meta.category == "MUSIC"
 
 
-def test_missing_cli_video_exits_with_failure_status(tmp_path):
-    with pytest.raises(SystemExit) as error:
+def test_missing_cli_video_reports_item_level_failure_in_batch(tmp_path):
+    with pytest.raises(ItemProcessingError, match="No Video files found"):
         asyncio.run(video_manager.get_video(str(tmp_path), "cli"))
 
-    assert error.value.code == 1
+
+def test_folder_scan_includes_avi_files(tmp_path: Path) -> None:
+    media_dir = tmp_path / "media"
+    media_dir.mkdir()
+    expected = media_dir / "movie.avi"
+    expected.write_bytes(b"avi data")
+
+    path, filelist = asyncio.run(video_manager.get_video(str(media_dir), "cli"))
+
+    assert path == str(expected)
+    assert filelist == [str(expected)]

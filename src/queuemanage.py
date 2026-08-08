@@ -19,6 +19,18 @@ type QueueItem = dict[str, Any]
 type QueueList = list[str] | list[QueueItem]
 
 
+def _dedupe_paths(paths: Sequence[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for value in paths:
+        current = str(value)
+        if current in seen:
+            continue
+        seen.add(current)
+        deduped.append(current)
+    return deduped
+
+
 async def _read_json_file(path: str) -> Any:
     content = await asyncio.to_thread(Path(path).read_text, encoding="utf-8")
     return json.loads(content)
@@ -66,6 +78,7 @@ class QueueManager:
 
         # Extract paths and IMDb IDs, filtering out processed paths
         queue: list[QueueItem] = []
+        seen_paths: set[str] = set()
         for item in search_results:
             path = item.get("path")
             try:
@@ -73,10 +86,11 @@ class QueueManager:
             except KeyError:
                 imdb_id = 0
 
-            if path and imdb_id is not None and path not in processed_paths:
+            if path and imdb_id is not None and path not in processed_paths and path not in seen_paths:
                 # Set tracker and imdb_id in meta for this queue item
                 queue_item: QueueItem = {"path": path, "imdb_id": imdb_id, "tracker": site_upload}
                 queue.append(queue_item)
+                seen_paths.add(path)
 
         logger.info(f"[cyan]Found {len(queue)} unprocessed items for {site_upload} upload[/cyan]")
 
@@ -385,8 +399,9 @@ class QueueManager:
         paths: Sequence[str],
         base_dir: str,
     ) -> tuple[QueueList, str | None]:
-        allowed_extensions = [".mkv", ".mp4", ".ts"]
+        allowed_extensions = [".mkv", ".mp4", ".ts", ".avi"]
         queue: list[Any] = []
+        seen_paths: set[str] = set()
 
         if meta.site_upload:
             logger.info(f"[bold yellow]Processing site upload queue for tracker: {meta.site_upload}[/bold yellow]")
@@ -435,8 +450,9 @@ class QueueManager:
 
                         queue_item: QueueItem = {"path": item_path, "args": cleaned_args, "line": line_stripped}
 
-                        if line_stripped not in processed_files and item_path not in processed_files:
+                        if line_stripped not in processed_files and item_path not in processed_files and item_path not in seen_paths:
                             queue.append(queue_item)
+                            seen_paths.add(item_path)
                     except ValueError as e:
                         logger.error(f"[red]Error parsing line (shlex) in queue file: {line_stripped}. Error: {e}[/red]")
                     except Exception as e:
@@ -496,11 +512,12 @@ class QueueManager:
         elif meta.queue:
             if Path(log_file).exists():
                 existing_queue = cast(list[str], await _read_json_file(log_file))
+                existing_queue = _dedupe_paths(existing_queue)
 
                 if Path(path).exists():
-                    current_files = await QueueManager.gather_files_recursive(path, allowed_extensions=allowed_extensions)
+                    current_files = _dedupe_paths(await QueueManager.gather_files_recursive(path, allowed_extensions=allowed_extensions))
                 else:
-                    current_files = await QueueManager.resolve_queue_with_glob_or_split(path, paths, allowed_extensions=allowed_extensions)
+                    current_files = _dedupe_paths(await QueueManager.resolve_queue_with_glob_or_split(path, paths, allowed_extensions=allowed_extensions))
 
                 existing_set = set(existing_queue)
                 current_set = set(current_files)
@@ -545,18 +562,18 @@ class QueueManager:
                             try:
                                 indices = [int(x) for x in selected.split(",") if x.strip().isdigit()]
                                 selected_files = [file for i, file in enumerate(sorted(new_files), 1) if i in indices]
-                                queue = list(existing_queue) + selected_files
+                                queue = _dedupe_paths(list(existing_queue) + selected_files)
                                 logger.info(f"[bold green]Queue updated with selected new files ({len(queue)} items).")
                                 await _write_json_file(log_file, queue, indent=4)
                                 logger.info(f"[bold green]Queue log file updated: {log_file}[/bold green]")
                             except Exception as e:
                                 logger.info(f"[bold red]Failed to update queue with selected files: {e}. Using the existing queue.")
-                                queue = existing_queue
+                                queue = list(existing_queue)
                         elif edit_choice == "e":
                             edited_content = cast(str | None, click.edit(cast(Any, json.dumps(current_files, indent=4))))
                             if edited_content:
                                 try:
-                                    queue = json.loads(edited_content.strip())
+                                    queue = _dedupe_paths(json.loads(edited_content.strip()))
                                     logger.info("[bold green]Successfully updated the queue from the editor.")
                                     await _write_json_file(log_file, queue, indent=4)
                                 except json.JSONDecodeError as e:
@@ -572,10 +589,10 @@ class QueueManager:
                             logger.info(f"[bold green]New queue log file created: {log_file}[/bold green]")
                         else:
                             logger.info("[bold green]Keeping the existing queue as is.")
-                            queue = existing_queue
+                            queue = list(existing_queue)
                     else:
                         # In unattended mode, just use the existing queue
-                        queue = existing_queue
+                        queue = list(existing_queue)
                         logger.info("[bold yellow]New or removed files detected, but unattended mode is active. Using existing queue.")
                 else:
                     # No changes detected
@@ -589,15 +606,15 @@ class QueueManager:
                             edited_content = cast(str | None, click.edit(cast(Any, json.dumps(existing_queue, indent=4))))
                             if edited_content:
                                 try:
-                                    queue = json.loads(edited_content.strip())
+                                    queue = _dedupe_paths(json.loads(edited_content.strip()))
                                     logger.info("[bold green]Successfully updated the queue from the editor.")
                                     await _write_json_file(log_file, queue, indent=4)
                                 except json.JSONDecodeError as e:
                                     logger.info(f"[bold red]Failed to parse the edited content: {e}. Using the original queue.")
-                                    queue = existing_queue
+                                    queue = list(existing_queue)
                             else:
                                 logger.info("[bold red]No changes were made. Using the original queue.")
-                                queue = existing_queue
+                                queue = list(existing_queue)
                         elif edit_choice == "d":
                             logger.info("[bold yellow]Discarding the existing queue log. Creating a new queue.")
                             queue = current_files
@@ -605,15 +622,15 @@ class QueueManager:
                             logger.info(f"[bold green]New queue log file created: {log_file}[/bold green]")
                         else:
                             logger.info("[bold green]Keeping the existing queue as is.")
-                            queue = existing_queue
+                            queue = list(existing_queue)
                     else:
                         logger.info("[bold green]Keeping the existing queue as is.")
-                        queue = existing_queue
+                        queue = list(existing_queue)
             else:
                 if Path(path).exists():
-                    queue = await QueueManager.gather_files_recursive(path, allowed_extensions=allowed_extensions)
+                    queue = _dedupe_paths(await QueueManager.gather_files_recursive(path, allowed_extensions=allowed_extensions))
                 else:
-                    queue = await QueueManager.resolve_queue_with_glob_or_split(path, paths, allowed_extensions=allowed_extensions)
+                    queue = _dedupe_paths(await QueueManager.resolve_queue_with_glob_or_split(path, paths, allowed_extensions=allowed_extensions))
 
                 logger.info(f"[cyan]A new queue log file will be created:[/cyan] [green]{log_file}[/green]")
                 logger.info(f"[cyan]The new queue will contain {len(queue)} items.[/cyan]")
@@ -625,7 +642,7 @@ class QueueManager:
                     edited_content = cast(str | None, click.edit(cast(Any, json.dumps(queue, indent=4))))
                     if edited_content:
                         try:
-                            queue = json.loads(edited_content.strip())
+                            queue = _dedupe_paths(json.loads(edited_content.strip()))
                             logger.info("[bold green]Successfully updated the queue from the editor.")
                         except json.JSONDecodeError as e:
                             logger.info(f"[bold red]Failed to parse the edited content: {e}. Using the original queue.")
@@ -637,7 +654,7 @@ class QueueManager:
                 logger.info(f"[bold green]Queue log file created: {log_file}[/bold green]")
 
         elif len(paths) > 1:
-            queue = list(dict.fromkeys(paths))
+            queue = _dedupe_paths(paths)
             md_text = "\n - ".join(queue)
             logger.info("\n[bold green]Queuing these files:[/bold green]")
             logger.info(f"- {md_text.rstrip()}\n\n")
@@ -662,7 +679,7 @@ class QueueManager:
                     logger.info(f"[red]Path: [bold red]{path}[/bold red] does not exist")
 
             elif Path(path).parent.exists() and len(paths) != 1:
-                queue = list(paths)
+                queue = _dedupe_paths(paths)
                 md_text = "\n - ".join(queue)
                 logger.info("\n[bold green]Queuing these files:[/bold green]")
                 logger.info(f"- {md_text.rstrip()}\n\n")
@@ -688,7 +705,7 @@ class QueueManager:
             queue_name = meta.queue
             log_file = await QueueManager.get_log_file(base_dir, meta.queue)
             processed_files = await QueueManager.load_processed_files(log_file)
-            queue = [file for file in queue if file not in processed_files]
+            queue = [file for file in _dedupe_paths(queue) if file not in processed_files]
             if not queue:
                 logger.info(f"[bold yellow]All files in the {meta.queue} queue have already been processed.")
                 exit(0)

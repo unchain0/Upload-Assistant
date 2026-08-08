@@ -48,6 +48,7 @@ from src.disc_menus import process_disc_menus
 from src.dupe_checking import DupeChecker
 from src.early_tasks import cancel_and_drain_early_artifact_tasks, get_early_artifact_tasks, start_early_artifact_tasks
 from src.early_tasks import is_usenet_only as _is_usenet_only
+from src.exceptions import ItemProcessingError
 from src.get_desc import gen_desc
 from src.get_name import NameManager
 from src.get_tracker_data import TrackerDataManager
@@ -1124,6 +1125,8 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
     prep = Prep(screens=meta.screens, img_host=meta.imghost, config=config, publish_preview=_publish_webui_preview_target)
     try:
         meta = await prep.gather_prep(meta=meta, mode="cli")
+    except ItemProcessingError:
+        raise
     except Exception as e:
         logger.info(f"Error in gather_prep: {e}")
         logger.info(traceback.format_exc())
@@ -1202,7 +1205,7 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
         logger.info("\n[red]Exiting on user request (Ctrl+C)[/red]")
         await cleanup_manager.cleanup()
         cleanup_manager.reset_terminal()
-        sys.exit(1)
+        raise KeyboardInterrupt from None
     while confirm is False:
         try:
             editargs_str = CLI_UI.ask_string("Input args that need correction e.g. (--tag NTb --category tv --tmdb 12345)")
@@ -1210,7 +1213,7 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
             logger.info("\n[red]Exiting on user request (Ctrl+C)[/red]")
             await cleanup_manager.cleanup()
             cleanup_manager.reset_terminal()
-            sys.exit(1)
+            raise KeyboardInterrupt from None
 
         if editargs_str == "continue":
             break
@@ -1253,19 +1256,21 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
             logger.info("\n[red]Exiting on user request (Ctrl+C)[/red]")
             await cleanup_manager.cleanup()
             cleanup_manager.reset_terminal()
-            sys.exit(1)
+            raise KeyboardInterrupt from None
 
-    if meta.remove_trackers:
+        current_trackers = cast(list[str], meta.trackers) if isinstance(meta.trackers, list) else (
+            [meta.trackers.strip()] if isinstance(meta.trackers, str) and meta.trackers.strip() else []
+        )
         removed: list[str] = []
-        remove_trackers_list = [t for t in meta.remove_trackers if t] if isinstance(meta.remove_trackers, list) else [str(meta.remove_trackers)]
-        current_trackers = meta.trackers if isinstance(meta.trackers, list) else [meta.trackers]
-        for tracker in remove_trackers_list:
-            if tracker in current_trackers:
-                if meta.debug:
-                    logger.debug(f"[DEBUG] Would have removed {tracker} found in client")
-                else:
+        if meta.remove_trackers:
+            remove_trackers_list = [t for t in meta.remove_trackers if t] if isinstance(meta.remove_trackers, list) else [str(meta.remove_trackers)]
+            for tracker in remove_trackers_list:
+                if tracker in current_trackers:
                     current_trackers.remove(tracker)
                     removed.append(tracker)
+                else:
+                    if meta.debug:
+                        logger.debug(f"[DEBUG] Would have removed {tracker} found in client")
         meta.trackers = current_trackers
         if removed:
             logger.info(f"[yellow]Removing trackers already in your client: {', '.join(removed)}[/yellow]")
@@ -2401,16 +2406,22 @@ async def do_the_thing(base_dir: str) -> None:
 
         queue, log_file = await QueueManager.handle_queue(path, meta, paths, base_dir)
         queue_list = cast(list[Any], queue)
+        queue_size = len(queue_list)
+        is_batch = queue_size > 1 or bool(meta.queue) or bool(meta.site_upload_queue) or bool(meta.args_line_queue)
 
         processed_files_count = 0
         skipped_files_count = 0
+        failed_items: list[tuple[str, str]] = []
         base_meta = meta.copy()
 
         for queue_item in queue_list:
-            total_files = len(queue_list)
+            total_files = queue_size
             current_item_path: str = ""
             tmp_path = ""
             current_release_log_path.set(None)
+            item_error: str = ""
+            item_abort: Exception | None = None
+            meta_success: bool = False
             try:
                 meta = base_meta.copy()
 
@@ -2503,18 +2514,78 @@ async def do_the_thing(base_dir: str) -> None:
                         await merge_meta(meta, saved_meta)
                         _publish_webui_preview_target(path, meta.uuid or None)
 
+            except KeyboardInterrupt:
+                raise
+            except SystemExit as exc:
+                if is_batch and not _shutdown_requested:
+                    item_error = str(exc) or "SystemExit"
+                    item_abort = exc
+                else:
+                    raise
             except Exception as e:
                 logger.info(f"[red]Exception: '{path}': {e}")
-                cleanup_manager.reset_terminal()
+                item_error = str(e)
+                item_abort = e
 
+            if item_error:
+                if is_batch and not _shutdown_requested:
+                    failed_items.append((current_item_path, item_error))
+                else:
+                    if item_abort is not None:
+                        raise item_abort
+                    raise RuntimeError(item_error)
+                await cleanup_manager.cleanup()
+                gc.collect()
+                cleanup_manager.reset_terminal()
+                continue
             start_time = time.time()
 
             logger.info(f"[green]Gathering info for {Path(path).name}")
 
             try:
                 meta_success = await process_meta(meta, base_dir)
+            except KeyboardInterrupt:
+                raise
+            except SystemExit as exc:
+                if is_batch and not _shutdown_requested:
+                    item_error = str(exc) or "SystemExit"
+                    item_abort = exc
+                else:
+                    raise
+            except ItemProcessingError as exc:
+                if is_batch and not _shutdown_requested:
+                    item_error = str(exc)
+                    item_abort = exc
+                    meta_success = False
+                else:
+                    raise
+            except Exception as exc:
+                item_error = str(exc)
+                item_abort = exc
+                meta_success = False
             finally:
                 await cancel_and_drain_early_artifact_tasks(meta.uuid)
+            if item_error:
+                if is_batch and not _shutdown_requested:
+                    failed_items.append((current_item_path, item_error))
+                    if "queue" in meta and meta.queue is not None:
+                        processed_files_count += 1
+                        skipped_files_count += 1
+                        logger.info(f"[cyan]Processed {processed_files_count}/{total_files} files with {skipped_files_count} skipped uploading.\n\n")
+                        if log_file and (not meta.debug or "debug" in Path(log_file).name):
+                            if meta.site_upload_queue:
+                                await QueueManager.save_processed_path(log_file, current_item_path)
+                            else:
+                                await save_processed_file(log_file, current_item_path)
+                    await cleanup_manager.cleanup()
+                    gc.collect()
+                    cleanup_manager.reset_terminal()
+                    continue
+                if item_abort is not None:
+                    raise item_abort
+                raise RuntimeError(item_error)
+            if not meta_success and not item_error:
+                item_error = "Metadata preparation failed."
             if not meta_success:
                 if "queue" in meta and meta.queue is not None:
                     processed_files_count += 1
@@ -2793,6 +2864,15 @@ async def do_the_thing(base_dir: str) -> None:
             await cleanup_manager.cleanup()
             gc.collect()
             cleanup_manager.reset_terminal()
+
+        if is_batch:
+            failed_count = len(failed_items)
+            success_count = max(queue_size - failed_count, 0)
+            logger.info(f"[bold green]Batch summary: total enfileirado {queue_size}, processados com sucesso {success_count}, skipped/failed {failed_count}[/bold green]")
+            if failed_items:
+                logger.info("[bold red]Itens com falha:[/bold red]")
+                for failed_path, failed_reason in failed_items:
+                    logger.info(f"- {failed_path}: {failed_reason}")
         current_release_log_path.set(None)
 
     except Exception as e:

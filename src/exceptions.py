@@ -44,3 +44,9 @@ class ManualDateError(Exception):
 
 class NoAudioMediaError(Exception):
     pass
+
+
+class ItemProcessingError(Exception):
+    def __init__(self, message: str, item_path: str | None = None) -> None:
+        self.item_path = item_path
+        super().__init__(message)
