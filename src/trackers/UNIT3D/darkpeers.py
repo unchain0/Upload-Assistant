@@ -123,6 +123,8 @@ class DarkPeers(UNIT3D):
                 return False
             if not self.validate_video_files(meta):
                 return False
+            if not self.validate_screenshot_count(meta):
+                return False
             if (
                 meta.keep_folder
                 and (category == "MOVIE" or not self._is_single_tv_season(meta))
@@ -268,6 +270,12 @@ class DarkPeers(UNIT3D):
             logger.info(f"{self.tracker}: [bold red]does not permit archives in Movie/TV uploads: {archive}. Skipping upload.")
             return False
         return True
+
+    def validate_screenshot_count(self, meta: Meta) -> bool:
+        if 3 <= int(meta.screens) <= 5:
+            return True
+        logger.info(f"{self.tracker}: [bold red]Movie and TV uploads require between 3 and 5 screenshots. Skipping upload.")
+        return False
 
     def validate_tv_scope(self, meta: Meta) -> bool:
         name = " ".join((str(meta.name or ""), Path(str(meta.path or "")).name)).casefold()

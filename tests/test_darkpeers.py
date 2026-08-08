@@ -184,6 +184,13 @@ def test_darkpeers_hdt_remux_allowed_and_non_remux_blocked():
     assert _additional_checks(hdt_encode) is False
 
 
+def test_darkpeers_movie_tv_require_between_three_and_five_screens():
+    assert _additional_checks(Meta(category="MOVIE", audio_languages=["English"], resolution="1080p", screens=2)) is False
+    assert _additional_checks(Meta(category="TV", type="WEBDL", audio_languages=["English"], resolution="1080p", screens=3)) is True
+    assert _additional_checks(Meta(category="TV", type="WEBDL", audio_languages=["English"], resolution="1080p", screens=5)) is True
+    assert _additional_checks(Meta(category="MOVIE", type="WEBDL", audio_languages=["English"], resolution="1080p", screens=6)) is False
+
+
 def test_darkpeers_hardcoded_subs_blocked_in_interactive_and_unattended():
     subs_interactive = Meta(category="MOVIE", type="WEBDL", tag="-GRP", hardcoded_subs=True, unattended=False, audio_languages=["English"], resolution="1080p", screens=3)
     subs_unattended = Meta(category="MOVIE", type="WEBDL", tag="-GRP", hardcoded_subs=True, unattended=True, audio_languages=["English"], resolution="1080p", screens=3)
