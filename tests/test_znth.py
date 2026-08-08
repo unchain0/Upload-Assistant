@@ -15,7 +15,7 @@ def _movie_meta(**kwargs: Any) -> Meta:
     base: dict[str, Any] = {
         "category": "MOVIE",
         "filelist": ["Movie.2024.mkv"],
-        "name": "Example Movie 2024",
+        "name": "Example Movie 2024 1080p WEB-DL H.264 DD 5.1",
         "screens": 3,
         "unattended": True,
         "unattended_confirm": False,
@@ -29,7 +29,7 @@ def _tv_meta(**kwargs: Any) -> Meta:
     base: dict[str, Any] = {
         "category": "TV",
         "filelist": ["Show.S01E01.mkv"],
-        "name": "Example TV",
+        "name": "Example TV S01 1080p AMZN WEB-DL DD+ 5.1",
         "tv_pack": False,
         "screens": 3,
         "imdb_info": {"status": "Ended"},
@@ -61,6 +61,23 @@ def test_zenith_supports_music_and_uses_its_music_naming_guide():
 
     assert "MUSIC" in tracker.supported_categories
     assert asyncio.run(tracker.get_name(meta))["name"] == "Salem - King Night (2010) - [WEB FLAC 24bit-44.1kHz Single]-FiVE0"
+
+
+def _book_meta(**kwargs: Any) -> Meta:
+    base: dict[str, Any] = {
+        "category": "BOOK",
+        "book_language_iso": "ENG",
+        "isbn": "9780000000000",
+        "type": "EPUB",
+        "format": "EPUB",
+        "title": "Example Book",
+        "name": "Example Book",
+        "year": 2020,
+        "unattended": True,
+        "unattended_confirm": False,
+    }
+    base.update(kwargs)
+    return Meta(**base)
 
 
 def test_zenith_music_name_omits_calculated_lossless_bitrate():
@@ -177,4 +194,41 @@ def test_zenith_allows_tv_pack_for_ended_series():
             )
         )
         is True
+    )
+
+
+def test_zenith_rejects_music_with_invalid_track_structure():
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(
+                Meta(category="MUSIC", filelist=["01.My-Track.flac"], unattended=True, unattended_confirm=False)
+            )
+        )
+        is False
+    )
+
+
+def test_zenith_allows_music_with_valid_track_structure():
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(
+                Meta(category="MUSIC", filelist=["Disc1/01 - My Track.flac"], unattended=True, unattended_confirm=False)
+            )
+        )
+        is True
+    )
+
+
+def test_zenith_rejects_book_with_invalid_language_code():
+    assert asyncio.run(_tracker().get_additional_checks(_book_meta(book_language_iso="en", title="Valid Title", name="Valid Title"))) is False
+
+
+def test_zenith_rejects_banned_book_work():
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(
+                _book_meta(title="Four Against Darkness Expanded Edition", name="Four Against Darkness Expanded Edition")
+            )
+        )
+        is False
     )

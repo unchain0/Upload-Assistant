@@ -63,6 +63,37 @@ class Zenith(UNIT3D):
     }
     _KNOWN_VIDEO_EXTENSIONS: set[str] = {".mkv", ".mp4", ".avi", ".mov", ".m4v", ".mpg", ".mpeg", ".m2ts", ".ts", ".wmv", ".flv"}
     _VIDEO_EXTENSIONS: set[str] = {".mkv", ".mp4", ".ts", ".ps", ".mpg"}
+    _VIDEO_RESOLUTIONS: tuple[str, ...] = ("480i", "480p", "576i", "576p", "720p", "1080i", "1080p", "2160p", "4320p", "360p")
+    _AUDIO_TRACK_PATTERN: re.Pattern[str] = re.compile(r"^\d{1,3}(?:-\d{1,2})? - .+")
+    _VIDEO_SOURCE_HINTS: tuple[str, ...] = (
+        "WEB-DL",
+        "WEBRIP",
+        "HDTV",
+        "UHDTV",
+        "BluRay",
+        "Blu-ray",
+        "Blu-ray",
+        "UHD Blu-ray",
+        "Blu-ray",
+        "WEB",
+        "AMZN",
+        "NF",
+        "ATVP",
+        "HMAX",
+    )
+    _VIDEO_CODEC_HINTS: tuple[str, ...] = ("H.264", "H.265", "XviD", "x264", "x265", "AV1", "VC-1", "MPEG-2", "MPEG2", "VP9", "HEVC")
+    _VIDEO_AUDIO_CODEC_HINTS: tuple[str, ...] = ("DD", "DD+", "DD+", "AAC", "AC3", "DTS", "DTS-HD", "TrueHD", "FLAC", "OPUS", "AAC", "ALAC")
+    _VIDEO_CHANNEL_HINTS: tuple[str, ...] = (
+        "1.0",
+        "2.0",
+        "3.0",
+        "4.0",
+        "5.1",
+        "6.1",
+        "7.1",
+        "9.1",
+    )
+    _BANNED_BOOK_WORKS: tuple[str, ...] = ("FOUR AGAINST DARKNESS EXPANDED EDITION",)
 
     _banned_authors_raw = (
         "J.R.R. Tolkien",
@@ -252,11 +283,63 @@ class Zenith(UNIT3D):
                 return path.name
         return ""
 
+    @classmethod
+    def _has_video_resolution(cls, title: str) -> bool:
+        normalized = str(title).replace(".", " ").upper().replace("HD", " HD ")
+        return any(f" {res.upper()} " in f" {normalized} " for res in cls._VIDEO_RESOLUTIONS)
+
+    @classmethod
+    def _has_tv_pattern(cls, title: str) -> bool:
+        return bool(re.search(r"\bS\d{1,2}(?:E\d{1,3}(?:E\d{1,3})?|\s)?\b", title, re.IGNORECASE))
+
+    @classmethod
+    def _contains_source_or_type_token(cls, title: str) -> bool:
+        haystack = f" {title.upper()} "
+        return any(token in haystack for token in cls._VIDEO_SOURCE_HINTS + cls._VIDEO_CODEC_HINTS + cls._VIDEO_AUDIO_CODEC_HINTS + cls._VIDEO_CHANNEL_HINTS)
+
+    @staticmethod
+    def _has_reasonable_music_path_length(file_path: Path) -> bool:
+        return len(str(file_path)) <= 180 and not any(part.startswith(" ") for part in str(file_path).replace("\\", "/").split("/"))
+
+    @classmethod
+    def _validate_music_track_naming(cls, filelist: list[Any]) -> str:
+        audio_suffixes = {".flac", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".alac", ".pcm", ".m4b"}
+        for item in filelist:
+            path = Path(str(item))
+            if path.suffix.lower() not in audio_suffixes:
+                continue
+            if not cls._has_reasonable_music_path_length(path):
+                return path.name
+
+            filename = path.name
+            stem = path.stem
+            if " " not in stem or stem.startswith(".") or "." in stem:
+                return filename
+
+            if not any(ch.isalpha() or ch.isdigit() for ch in stem):
+                return filename
+
+            if len(filelist) > 1 and not cls._AUDIO_TRACK_PATTERN.match(stem):
+                return filename
+
+        return ""
+
+    @staticmethod
+    def _is_valid_language3(meta: Meta) -> bool:
+        code = _iso_639_2_code(meta.book_language_iso)
+        return bool(code and code.isalpha() and len(code) == 3)
+
+    @classmethod
+    def _is_banned_book_work(cls, meta: Meta) -> bool:
+        title = (meta.title or meta.name or "").upper()
+        author = (meta.author or "").upper()
+        return any(work in title or work in author for work in cls._BANNED_BOOK_WORKS)
+
     async def get_additional_checks(self, meta: Meta) -> bool:
         category = str(meta.category or "").upper()
+        filelist = [item for item in (meta.filelist or []) if self._is_path_like_file(item)]
 
         if category in {"MOVIE", "TV"}:
-            filelist = [item for item in (meta.filelist or []) if self._is_path_like_file(item)]
             if meta.screens < 3:
                 logger.info(f"{self.tracker}: [bold red]Video uploads require at least 3 screenshots on {self.tracker}.[/bold red]")
                 return False
@@ -315,6 +398,38 @@ class Zenith(UNIT3D):
 
             if meta.author and self._is_banned_author(meta.author):
                 logger.info(f"{self.tracker}: [bold red]Author '{meta.author}' is banned on {self.tracker}. Skipping upload...[/bold red]")
+                return False
+
+            if self._is_banned_book_work(meta):
+                logger.info(f"{self.tracker}: [bold red]Title/author '{meta.title or meta.name}' is blocked by banned works list on {self.tracker}. Skipping upload...[/bold red]")
+                return False
+
+            if not self._is_valid_language3(meta):
+                logger.info(f"{self.tracker}: [bold red]Books and audiobooks require a valid 3-letter language code. Skipping upload...[/bold red]")
+                return False
+
+        if category == "MUSIC":
+            invalid_track = self._validate_music_track_naming(filelist)
+            if invalid_track:
+                logger.info(f"{self.tracker}: [bold red]Invalid music filename structure for {invalid_track}. Skipping upload...[/bold red]")
+                return False
+
+        if category in {"MOVIE", "TV"}:
+            # Enforce title format tokens used by Zenith naming guide.
+            if not self._has_video_resolution(meta.name):
+                logger.info(f"{self.tracker}: [bold red]Release title does not include a supported resolution on {self.tracker}. Skipping upload...[/bold red]")
+                return False
+
+            if category == "TV":
+                if not self._has_tv_pattern(meta.name) and not self._has_tv_pattern(meta.episode_title):
+                    logger.info(f"{self.tracker}: [bold red]TV release title is missing Sxx(Eyy) season/episode token on {self.tracker}. Skipping upload...[/bold red]")
+                    return False
+            elif re.search(r"\bS\d{1,2}E\d{1,3}\b", meta.name, re.IGNORECASE):
+                logger.info(f"{self.tracker}: [bold red]Movie title appears to contain TV episode tokens on {self.tracker}. Skipping upload...[/bold red]")
+                return False
+
+            if not self._contains_source_or_type_token(meta.name):
+                logger.info(f"{self.tracker}: [bold red]Release title is missing source/type metadata required by {self.tracker} naming rules.[/bold red]")
                 return False
 
         return self.common.check_and_confirm_adult_media_upload(meta, self.tracker)
