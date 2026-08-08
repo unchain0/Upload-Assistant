@@ -210,7 +210,7 @@ class Luminarr(UNIT3D):
             return False
 
         if not meta.is_disc:
-            archive = self._contains_extension(meta.filelist, self._ARCHIVE_EXTENSIONS)
+            archive = self._contains_extension(filelist, self._ARCHIVE_EXTENSIONS)
             if archive:
                 logger.info(f"{self.tracker}: [bold red]Archive or multipart files are not allowed for {self.tracker}. Found: {archive}[/bold red]")
                 return False
