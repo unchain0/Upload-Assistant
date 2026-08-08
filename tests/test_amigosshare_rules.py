@@ -154,6 +154,32 @@ def test_book_allows_non_portuguese_description_with_confirmation():
     assert asyncio.run(run_checks(meta, confirm_result=True))
 
 
+def test_book_allows_non_portuguese_description_in_confirmed_unattended_mode_without_prompt():
+    meta = make_meta(
+        category="BOOK",
+        imdb_id=None,
+        source_size=2 * 1024 * 1024,
+        unattended=True,
+        unattended_confirm=True,
+        description="This release contains an English description with technical details.",
+    )
+
+    assert asyncio.run(run_checks(meta))
+
+
+@pytest.mark.parametrize(
+    "description",
+    [
+        "La película está disponible con audio original y subtítulos.",
+        "Le résumé présente une édition française avec des sous-titres.",
+    ],
+)
+def test_book_does_not_treat_spanish_or_french_accents_as_portuguese(description: str):
+    meta = make_meta(category="BOOK", imdb_id=None, source_size=2 * 1024 * 1024, unattended=True, description=description)
+
+    assert not asyncio.run(run_checks(meta))
+
+
 def test_book_blocks_non_portuguese_description_in_unattended_without_confirmation():
     meta = make_meta(category="BOOK", imdb_id=None, source_size=2 * 1024 * 1024, unattended=True, description="This release contains a Portuguese tracker release with title and files.")
 

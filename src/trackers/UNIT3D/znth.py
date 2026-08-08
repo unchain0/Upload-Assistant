@@ -46,7 +46,7 @@ class Zenith(UNIT3D):
     banned_url = f"{base_url}/api/bannedReleaseGroups"
     supported_categories = ("TV", "MOVIE", "BOOK", "GAME", "MUSIC")
     tracker_urls = ("https://znth.cx",)
-    _ARCHIVE_EXTENSIONS: set[str] = {
+    _ARCHIVE_EXTENSIONS: frozenset[str] = frozenset({
         ".rar",
         ".r00",
         ".r01",
@@ -60,9 +60,9 @@ class Zenith(UNIT3D):
         ".r09",
         ".zip",
         ".7z",
-    }
-    _KNOWN_VIDEO_EXTENSIONS: set[str] = {".mkv", ".mp4", ".avi", ".mov", ".m4v", ".mpg", ".mpeg", ".m2ts", ".ts", ".wmv", ".flv"}
-    _VIDEO_EXTENSIONS: set[str] = {".mkv", ".mp4", ".ts", ".ps", ".mpg"}
+    })
+    _KNOWN_VIDEO_EXTENSIONS: frozenset[str] = frozenset({".mkv", ".mp4", ".avi", ".mov", ".m4v", ".mpg", ".mpeg", ".m2ts", ".ts", ".wmv", ".flv"})
+    _VIDEO_EXTENSIONS: frozenset[str] = frozenset({".mkv", ".mp4", ".ts", ".ps", ".mpg"})
     _VIDEO_RESOLUTIONS: tuple[str, ...] = ("480i", "480p", "576i", "576p", "720p", "1080i", "1080p", "2160p", "4320p", "360p")
     _AUDIO_TRACK_PATTERN: re.Pattern[str] = re.compile(r"^\d{1,3}(?:-\d{1,2})? - .+")
     _VIDEO_SOURCE_HINTS: tuple[str, ...] = (
@@ -72,9 +72,7 @@ class Zenith(UNIT3D):
         "UHDTV",
         "BluRay",
         "Blu-ray",
-        "Blu-ray",
         "UHD Blu-ray",
-        "Blu-ray",
         "WEB",
         "AMZN",
         "NF",
@@ -82,7 +80,9 @@ class Zenith(UNIT3D):
         "HMAX",
     )
     _VIDEO_CODEC_HINTS: tuple[str, ...] = ("H.264", "H.265", "XviD", "x264", "x265", "AV1", "VC-1", "MPEG-2", "MPEG2", "VP9", "HEVC")
-    _VIDEO_AUDIO_CODEC_HINTS: tuple[str, ...] = ("DD", "DD+", "DD+", "AAC", "AC3", "DTS", "DTS-HD", "TrueHD", "FLAC", "OPUS", "AAC", "ALAC")
+    _VIDEO_AUDIO_CODEC_HINTS: tuple[str, ...] = ("DD", "DD+", "AAC", "AC3", "DTS", "DTS-HD", "TrueHD", "FLAC", "OPUS", "ALAC")
+    _TV_ENDED_STATUSES: frozenset[str] = frozenset({"ended", "canceled", "cancelled", "finished", "completed"})
+    _TV_ONGOING_STATUSES: frozenset[str] = frozenset({"returning", "continuing", "in production", "upcoming", "ongoing"})
     _VIDEO_CHANNEL_HINTS: tuple[str, ...] = (
         "1.0",
         "2.0",
@@ -204,31 +204,12 @@ class Zenith(UNIT3D):
     def _is_path_like_file(filename: Any) -> bool:
         return bool(str(filename).strip())
 
-    @staticmethod
-    def _extract_tv_seasons(filelist: list[Any]) -> set[int]:
-        seasons: set[int] = set()
-        season_pattern = re.compile(r"[sS](\d{1,3})(?:[eE]\d{1,3}(?:[eE]\d{1,3})?)?")
-        for item in filelist:
-            seasons.update(int(match) for match in season_pattern.findall(str(item)))
-        return seasons
-
-    @staticmethod
-    def _count_tv_episodes(filelist: list[Any]) -> int:
-        episodes: set[tuple[int, int]] = set()
-        episode_pattern = re.compile(r"[sS](\d{1,3})[eE](\d{1,3})(?:[eE](\d{1,3}))?")
-        for item in filelist:
-            for match in episode_pattern.findall(str(item)):
-                episodes.add((int(match[0]), int(match[1])))
-                if match[2]:
-                    episodes.add((int(match[0]), int(match[2])))
-        return len(episodes)
-
     @classmethod
     def _collect_video_paths(cls, filelist: list[Any]) -> list[Path]:
         return [
             Path(str(item))
             for item in filelist
-            if cls._is_path_like_file(item) and Path(str(item)).suffix.lower() in cls._VIDEO_EXTENSIONS
+            if cls._is_path_like_file(item) and Path(str(item)).suffix.lower() in cls._KNOWN_VIDEO_EXTENSIONS
         ]
 
     @staticmethod
@@ -240,28 +221,11 @@ class Zenith(UNIT3D):
         return ""
 
     @staticmethod
-    def _is_tv_series_ended(meta: Meta) -> bool | None:
-        status_text = str(meta.imdb_info.get("status", "") if isinstance(meta.imdb_info, dict) else "").casefold().strip()
-        if not status_text:
-            return None
-
-        ended_values = {"ended", "canceled", "cancelled", "finished", "completed"}
-        ongoing_values = {"returning", "continuing", "in production", "upcoming", "ongoing"}
-
-        if any(value in status_text for value in ended_values):
-            return True
-        if any(value in status_text for value in ongoing_values):
-            return False
-        return None
-
-    @staticmethod
     def _disc_is_supported(meta: Meta) -> bool:
         disctype = str(meta.is_disc or "").upper().strip().replace(" ", "").replace("-", "")
         if not disctype:
             return True
-        if disctype in {"BDMV", "3DBDMV", "VIDEO_TS"}:
-            return True
-        return False
+        return disctype in {"BDMV", "3DBDMV", "VIDEO_TS"}
 
     @staticmethod
     def _video_extensions_for_type(meta: Meta) -> set[str]:
@@ -290,26 +254,24 @@ class Zenith(UNIT3D):
 
     @classmethod
     def _has_tv_pattern(cls, title: str) -> bool:
-        return bool(re.search(r"\bS\d{1,2}(?:E\d{1,3}(?:E\d{1,3})?|\s)?\b", title, re.IGNORECASE))
+        return bool(re.search(r"\bS\d{1,2}(?:E\d{1,3}(?:E\d{1,3})?|\s)?\b", str(title or ""), re.IGNORECASE))
 
     @classmethod
     def _contains_source_or_type_token(cls, title: str) -> bool:
-        haystack = f" {str(title).upper()} "
-        tokens = [str(token).upper() for token in (cls._VIDEO_SOURCE_HINTS + cls._VIDEO_CODEC_HINTS + cls._VIDEO_AUDIO_CODEC_HINTS + cls._VIDEO_CHANNEL_HINTS)]
-        return any(re.search(rf"(?:^|[\\s._-]){re.escape(token)}(?:$|[\\s._-])", haystack) for token in tokens)
+        haystack = str(title or "").upper()
+        tokens = cls._VIDEO_SOURCE_HINTS + cls._VIDEO_CODEC_HINTS + cls._VIDEO_AUDIO_CODEC_HINTS + cls._VIDEO_CHANNEL_HINTS
+        return any(re.search(rf"(?<![A-Z0-9]){re.escape(token.upper())}(?![A-Z0-9])", haystack) for token in tokens)
 
     @staticmethod
-    def _has_reasonable_music_path_length(file_path: Path) -> bool:
+    def _has_valid_music_path_format(file_path: Path) -> bool:
         return len(str(file_path)) <= 180 and not any(part.startswith(" ") for part in str(file_path).replace("\\", "/").split("/"))
 
     @classmethod
     def _validate_music_track_naming(cls, filelist: list[Any]) -> str:
         audio_suffixes = {".flac", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".alac", ".pcm", ".m4b"}
-        for item in filelist:
-            path = Path(str(item))
-            if path.suffix.lower() not in audio_suffixes:
-                continue
-            if not cls._has_reasonable_music_path_length(path):
+        audio_paths = [Path(str(item)) for item in filelist if Path(str(item)).suffix.lower() in audio_suffixes]
+        for path in audio_paths:
+            if not cls._has_valid_music_path_format(path):
                 return path.name
 
             filename = path.name
@@ -320,7 +282,7 @@ class Zenith(UNIT3D):
             if not any(ch.isalpha() or ch.isdigit() for ch in stem):
                 return filename
 
-            if len(filelist) > 1 and not cls._AUDIO_TRACK_PATTERN.match(stem):
+            if len(audio_paths) > 1 and not cls._AUDIO_TRACK_PATTERN.match(stem):
                 return filename
 
         return ""
@@ -341,6 +303,7 @@ class Zenith(UNIT3D):
         filelist = [item for item in (meta.filelist or []) if self._is_path_like_file(item)]
 
         if category in {"MOVIE", "TV"}:
+            video_paths = self._collect_video_paths(filelist)
             if meta.screens < 3:
                 logger.info(f"{self.tracker}: [bold red]Video uploads require at least 3 screenshots on {self.tracker}.[/bold red]")
                 return False
@@ -351,7 +314,7 @@ class Zenith(UNIT3D):
 
             if not meta.is_disc:
                 video_extensions = self._video_extensions_for_type(meta)
-                disallowed_container_file = self._contains_disallowed_video_file(filelist, video_extensions)
+                disallowed_container_file = self._contains_disallowed_video_file(video_paths, video_extensions)
                 if disallowed_container_file:
                     logger.info(
                         f"{self.tracker}: [bold red]Video container '{Path(disallowed_container_file).suffix}' is not allowed for this release type on {self.tracker}.[/bold red]"
@@ -364,20 +327,20 @@ class Zenith(UNIT3D):
                 return False
 
             if category == "TV":
-                seasons = self._extract_tv_seasons(filelist)
+                seasons = self.common.extract_tv_seasons(filelist)
                 if len(seasons) > 1:
                     logger.info(f"{self.tracker}: [bold red]TV uploads must target a single season on {self.tracker}.[/bold red]")
                     return False
 
                 if meta.tv_pack:
-                    tv_pack_ended = self._is_tv_series_ended(meta)
+                    tv_pack_ended = self.common.is_tv_series_ended(meta, self._TV_ENDED_STATUSES, self._TV_ONGOING_STATUSES)
                     if tv_pack_ended is not True:
                         logger.info(f"{self.tracker}: [bold red]TV season packs are restricted to ended series on {self.tracker}.[/bold red]")
                         return False
-                elif self._count_tv_episodes(filelist) > 1:
+                elif self.common.count_tv_episodes(filelist) > 1:
                     logger.info(f"{self.tracker}: [bold red]Non-pack TV uploads should contain a single episode on {self.tracker}.[/bold red]")
                     return False
-                elif self._is_tv_series_ended(meta) is True:
+                elif self.common.is_tv_series_ended(meta, self._TV_ENDED_STATUSES, self._TV_ONGOING_STATUSES) is True:
                     logger.info(f"{self.tracker}: [bold red]Completed TV seasons must be uploaded as season packs on {self.tracker}.[/bold red]")
                     return False
 
@@ -417,19 +380,20 @@ class Zenith(UNIT3D):
 
         if category in {"MOVIE", "TV"}:
             # Enforce title format tokens used by Zenith naming guide.
-            if not self._has_video_resolution(meta.name):
+            release_name = str(meta.name or "")
+            if not self._has_video_resolution(release_name):
                 logger.info(f"{self.tracker}: [bold red]Release title does not include a supported resolution on {self.tracker}. Skipping upload...[/bold red]")
                 return False
 
             if category == "TV":
-                if not self._has_tv_pattern(meta.name) and not self._has_tv_pattern(meta.episode_title):
+                if not self._has_tv_pattern(release_name) and not self._has_tv_pattern(meta.episode_title):
                     logger.info(f"{self.tracker}: [bold red]TV release title is missing Sxx(Eyy) season/episode token on {self.tracker}. Skipping upload...[/bold red]")
                     return False
-            elif re.search(r"\bS\d{1,2}E\d{1,3}\b", meta.name, re.IGNORECASE):
+            elif re.search(r"\bS\d{1,2}E\d{1,3}\b", release_name, re.IGNORECASE):
                 logger.info(f"{self.tracker}: [bold red]Movie title appears to contain TV episode tokens on {self.tracker}. Skipping upload...[/bold red]")
                 return False
 
-            if not self._contains_source_or_type_token(meta.name):
+            if not self._contains_source_or_type_token(release_name):
                 logger.info(f"{self.tracker}: [bold red]Release title is missing source/type metadata required by {self.tracker} naming rules.[/bold red]")
                 return False
 

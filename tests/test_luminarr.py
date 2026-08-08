@@ -65,6 +65,19 @@ def test_luminarr_rejects_bootleg_markers_in_release_name():
     assert asyncio.run(_tracker().get_additional_checks(_movie_meta(name="Example Movie Cam"))) is False
 
 
+def test_luminarr_accepts_release_with_none_name_when_no_bootleg_marker_present():
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(
+                _movie_meta(
+                    name=None,
+                )
+            )
+        )
+        is True
+    )
+
+
 def test_luminarr_rejects_low_resolution_unless_confirmed():
     assert asyncio.run(_tracker().get_additional_checks(_movie_meta(resolution="480p"))) is False
 
@@ -115,6 +128,10 @@ def test_luminarr_rejects_original_audio_missing_for_foreign_audio_release():
         )
         is False
     )
+
+
+def test_luminarr_accepts_english_subtitle_alias():
+    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(subtitle_languages=["eng"]))) is True
 
 
 def test_luminarr_rejects_nested_single_file_for_movie():

@@ -108,7 +108,7 @@ class MidnightScene(UNIT3D):
         "preair",
     )
 
-    video_min_height_by_rule = {"480p", "480i", "576p", "576i", "sd"}
+    video_min_height_by_rule: frozenset[str] = frozenset({"480p", "480i", "576p", "576i", "sd"})
 
     def __init__(self, config: Config) -> None:
         super().__init__(config, tracker_name="MIDNIGHTSCENE")
@@ -262,7 +262,10 @@ class MidnightScene(UNIT3D):
                 return False
 
         # TV/Movie rule requires 720p/1080p/2160p or best available
-        if meta.category in {"TV", "MOVIE"} and meta.resolution.lower() in self.video_min_height_by_rule and not meta.is_disc:
+        resolution = str(meta.resolution or "").lower()
+        resolution_match = re.fullmatch(r"(\d{3,4})[pi]?", resolution)
+        is_low_resolution = resolution in self.video_min_height_by_rule or bool(resolution_match and int(resolution_match.group(1)) < 720)
+        if meta.category in {"TV", "MOVIE"} and is_low_resolution and not meta.is_disc:
             logger.info(f"{self.tracker}: [yellow]Low-resolution releases should be uploaded only when no higher quality exists.[/yellow]")
             if not await self._confirm_or_skip("This release is below 720p.", meta):
                 return False

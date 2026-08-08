@@ -2,6 +2,7 @@
 import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import ParseResult, urlparse
 
 from src.console import logger
 from src.meta import Meta
@@ -75,8 +76,8 @@ class YUSCENE(UNIT3D):
     supported_categories = ("TV", "MOVIE", "BOOK", "GAME", "MUSIC")
     tracker_urls = ("https://yu-scene.net",)
 
-    _ARCHIVE_EXTENSIONS: set[str] = {".rar", ".r00", ".r01", ".r02", ".r03", ".r04", ".r05", ".r06", ".r07", ".r08", ".r09"}
-    _EXTRA_FILE_EXTENSIONS: set[str] = {
+    _ARCHIVE_EXTENSIONS: frozenset[str] = frozenset({".rar", ".r00", ".r01", ".r02", ".r03", ".r04", ".r05", ".r06", ".r07", ".r08", ".r09"})
+    _EXTRA_FILE_EXTENSIONS: frozenset[str] = frozenset({
         ".nfo",
         ".srt",
         ".sub",
@@ -90,8 +91,8 @@ class YUSCENE(UNIT3D):
         ".webp",
         ".gif",
         ".bmp",
-    }
-    _VIDEO_EXTENSIONS: set[str] = {
+    })
+    _VIDEO_EXTENSIONS: frozenset[str] = frozenset({
         ".mkv",
         ".mp4",
         ".avi",
@@ -103,7 +104,50 @@ class YUSCENE(UNIT3D):
         ".ts",
         ".wmv",
         ".flv",
-    }
+    })
+    _TV_ENDED_STATUSES: frozenset[str] = frozenset({"ended", "canceled", "cancelled", "finished", "completed", "completed (ended)", "ended (ended)"})
+    _TV_ONGOING_STATUSES: frozenset[str] = frozenset({"returning series", "in production", "ongoing", "planned", "pilot", "in development"})
+
+    _TRACKER_KEYWORDS: frozenset[str] = frozenset({
+        "yify",
+        "yts",
+        "rarbg",
+        "tpb",
+        "thepiratebay",
+        "1337x",
+        "kat",
+        "nyaa",
+        "eztv",
+        "rutor",
+        "torrentz",
+        "nyaa.si",
+        "kickasstorrents",
+        "limetorrents",
+        "rutracker",
+        "torrentdownloads",
+    })
+
+    _TRACKER_DOMAINS: frozenset[str] = frozenset({
+        "piratebay.org",
+        "tpb.party",
+        "thepiratebay.org",
+        "yts.mx",
+        "yts.rs",
+        "rarbg.to",
+        "1337x.to",
+        "kickasstorrents.to",
+        "kickasstorrents.info",
+        "katcr.co",
+        "katcr.to",
+        "nyaa.si",
+        "nyaa.land",
+        "rutor.info",
+        "limetorrents.cc",
+        "torrentz2.eu",
+        "rutracker.net",
+        "eztv.re",
+        "torrentdownloads.me",
+    })
 
     def __init__(self, config: Config) -> None:
         super().__init__(config, tracker_name="YUSCENE")
@@ -142,15 +186,20 @@ class YUSCENE(UNIT3D):
 
     @staticmethod
     def _contains_other_tracker_mention(value: str) -> str:
-        lowered = value.lower()
-        track_words = ["yify", "yts", "rarbg", "tpb", "piratebay", "1337x"]
-        tracker_words = ["kat", "thepiratebay", "nyaa", "eztv", "rutor", "torrentz", "nyaa.si", "kickasstorrents", "limetorrents"]
-        if "http://" in lowered or "https://" in lowered or "www." in lowered:
-            return "possible link text"
-        if any(term in lowered for term in track_words):
-            return next((term for term in track_words if term in lowered), "tracker term")
-        if any(term in lowered for term in tracker_words):
-            return next((term for term in tracker_words if term in lowered), "tracker term")
+        lowered = str(value or "").lower()
+
+        if urls := re.findall(r"https?://\S+", lowered):
+            for raw_url in urls:
+                parsed_url: ParseResult = urlparse(raw_url)
+                host = parsed_url.netloc.rsplit("@", 1)[-1].partition(":")[0].lower()
+                if host:
+                    for forbidden in YUSCENE._TRACKER_DOMAINS:
+                        if host == forbidden or host.endswith(f".{forbidden}"):
+                            return forbidden
+
+        tracker_terms_pattern = re.compile(r"(?<![a-z0-9])(?:" + "|".join(map(re.escape, YUSCENE._TRACKER_KEYWORDS)) + r")(?![a-z0-9])")
+        if match := tracker_terms_pattern.search(lowered):
+            return match.group(0)
         return ""
 
     @staticmethod
@@ -161,40 +210,33 @@ class YUSCENE(UNIT3D):
             return True
         return bool(re.search(r"\s{2,}", value))
 
-    @staticmethod
-    def _is_tv_pack_ended(meta: Meta) -> bool | None:
-        status_text = str(meta.imdb_info.get("status", "") if isinstance(meta.imdb_info, dict) else "").casefold().strip()
-        ended_values = {"ended", "canceled", "cancelled", "finished", "completed", "completed (ended)", "in development", "ended (ended)"}
-        ongoing_values = {"returning series", "in production", "ongoing", "planned", "pilot"}
-        if any(value in status_text for value in ended_values):
-            return True
-        if any(value in status_text for value in ongoing_values):
-            return False
-        return None
-
     async def get_additional_checks(self, meta: Meta) -> bool:
-        genres = f"{', '.join(meta.keywords)} {meta.combined_genres}"
-        adult_keywords = ["xxx", "erotic", "porn", "adult", "orgy", "hentai", "adult animation", "softcore"]
+        genre_values = [str(value) for value in (meta.keywords or [])]
+        if isinstance(meta.combined_genres, str):
+            genre_values.extend(re.split(r"[,;/|]", meta.combined_genres))
+        elif isinstance(meta.combined_genres, (list, tuple, set)):
+            genre_values.extend(str(value) for value in meta.combined_genres)
+        genre_tokens = {re.sub(r"\s+", " ", value.casefold()).strip() for value in genre_values if value.strip()}
+        adult_keywords = {"xxx", "erotic", "porn", "adult", "orgy", "hentai", "adult animation", "softcore"}
         if meta.adult_media:
             if not await self._confirm_or_skip("Adult content is not allowed.", meta):
                 return False
 
-        if any(re.search(rf"(^|,\s*){re.escape(keyword)}(\s*,|$)", genres, re.IGNORECASE) for keyword in adult_keywords):
+        if genre_tokens.intersection(adult_keywords):
             logger.info(f"{self.tracker}: [bold red]Porn/xxx is not allowed at {self.tracker}.[/bold red]")
             if not await self._confirm_or_skip("Adult content is not allowed.", meta):
                 return False
 
         category = str(meta.category or "").upper()
         release_name = str(meta.name or "")
-        release_context = " ".join(part for part in (release_name, str(meta.description or "")) if part)
         filelist = [item for item in (meta.filelist or []) if self._is_path_like_file(item)]
 
         if category in {"MOVIE", "TV"} and self._has_banned_title_chars(release_name):
             if not await self._confirm_or_skip("The release name contains unsupported characters or extra spaces.", meta):
                 return False
 
-        if category in {"MOVIE", "TV", "BOOK"} and self._contains_other_tracker_mention(release_context):
-            if not await self._confirm_or_skip("The title/description contains tracker references, links, or tracker names.", meta):
+        if category in {"MOVIE", "TV", "BOOK"} and self._contains_other_tracker_mention(release_name):
+            if not await self._confirm_or_skip("The title contains tracker references or tracker domain names.", meta):
                 return False
 
         if category in {"MOVIE", "TV"} and meta.keep_folder and len(filelist) <= 1:
@@ -206,7 +248,7 @@ class YUSCENE(UNIT3D):
                 return False
 
         if category == "TV" and meta.tv_pack:
-            tv_pack_ended = self._is_tv_pack_ended(meta)
+            tv_pack_ended = self.common.is_tv_series_ended(meta, self._TV_ENDED_STATUSES, self._TV_ONGOING_STATUSES)
             if tv_pack_ended is False:
                 if not await self._confirm_or_skip("TV collections are only allowed for ended series on this tracker.", meta):
                     return False

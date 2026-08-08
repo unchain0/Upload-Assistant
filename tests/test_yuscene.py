@@ -40,7 +40,7 @@ def _tv_meta(**kwargs: Any) -> Meta:
 
 
 def test_yuscene_blocks_adult_keywords_when_unattended():
-    assert asyncio.run(_tracker().get_additional_checks(Meta(category="MOVIE", keywords=["Porn"], unattended=True, unattended_confirm=False))) is False
+    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(keywords=["Porn"], unattended=True, unattended_confirm=False))) is False
 
 
 def test_yuscene_blocks_adult_media_flag():
@@ -95,6 +95,10 @@ def test_yuscene_blocks_tv_pack_when_series_still_ongoing():
     )
 
 
+def test_yuscene_does_not_classify_in_development_series_as_ended():
+    assert asyncio.run(_tracker().get_additional_checks(_tv_meta(tv_pack=True, imdb_info={"status": "In Development"}))) is False
+
+
 def test_yuscene_blocks_title_chars_for_movie():
     assert asyncio.run(_tracker().get_additional_checks(_movie_meta(name="Example.Movie 2024"))) is False
 
@@ -105,6 +109,27 @@ def test_yuscene_allows_movies_without_forbidden_title_chars():
 
 def test_yuscene_blocks_other_tracker_mentions():
     assert asyncio.run(_tracker().get_additional_checks(_movie_meta(name="Example Movie 2024 yify"))) is False
+
+
+def test_yuscene_does_not_match_ambiguous_tracker_alias_inside_names():
+    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(name="Katniss Everdeen 2024"))) is True
+
+
+def test_yuscene_allows_urls_in_description_when_tracker_reference_check_targets_title_only():
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(
+                _movie_meta(
+                    description="Screens: https://i.imgur.com/example1.jpg\nhttps://www.imdb.com/title/tt1234567/",
+                )
+            )
+        )
+        is True
+    )
+
+
+def test_yuscene_blocks_disallowed_tracker_domains_in_title():
+    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(name="Example Movie 2024 from rutracker.net"))) is False
 
 
 def test_yuscene_blocks_low_screenshot_count():

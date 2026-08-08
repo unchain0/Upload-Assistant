@@ -26,19 +26,21 @@ class Luminarr(UNIT3D):
     torrent_url = f"{base_url}/torrents/"
     supported_categories = ("TV", "MOVIE")
     tracker_urls = ("https://luminarr.me",)
-    _DISC_TYPES = {"BDMV", "DVD", "HDDVD_TS", "VIDEO_TS"}
-    _ARCHIVE_EXTENSIONS: set[str] = {".rar", ".r00", ".r01", ".r02", ".r03", ".r04", ".r05", ".r06", ".r07", ".r08", ".r09"}
-    _EXTRA_FILE_EXTENSIONS: set[str] = {".nfo", ".srt", ".sub", ".ssa", ".ass", ".vtt", ".idx", ".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
-    _VIDEO_EXTENSIONS: set[str] = {".mkv", ".mp4", ".avi", ".mov", ".m4v", ".mpg", ".mpeg", ".m2ts", ".ts", ".wmv", ".flv"}
+    _DISC_TYPES: frozenset[str] = frozenset({"BDMV", "DVD", "HDDVD_TS", "VIDEO_TS"})
+    _ARCHIVE_EXTENSIONS: frozenset[str] = frozenset({".rar", ".r00", ".r01", ".r02", ".r03", ".r04", ".r05", ".r06", ".r07", ".r08", ".r09"})
+    _EXTRA_FILE_EXTENSIONS: frozenset[str] = frozenset({".nfo", ".srt", ".sub", ".ssa", ".ass", ".vtt", ".idx", ".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"})
+    _VIDEO_EXTENSIONS: frozenset[str] = frozenset({".mkv", ".mp4", ".avi", ".mov", ".m4v", ".mpg", ".mpeg", ".m2ts", ".ts", ".wmv", ".flv"})
     _BOOTLEG_MARKERS: tuple[str, ...] = ("cam", "telesync", "tele-sync", "telecine", "tc", "r5")
+    _TV_ENDED_STATUSES: frozenset[str] = frozenset({"ended", "canceled", "cancelled", "finished", "completed"})
+    _TV_ONGOING_STATUSES: frozenset[str] = frozenset({"returning", "continuing", "in production", "upcoming", "ongoing"})
 
     @staticmethod
     def _is_path_like_file(filename: Any) -> bool:
         return str(filename).strip() != ""
 
     @staticmethod
-    def _normalize_path(path_text: str) -> str:
-        return re.sub(r"[._]", " ", path_text.lower())
+    def _normalize_path(path_text: Any) -> str:
+        return re.sub(r"[._]", " ", str(path_text or "").lower())
 
     def __init__(self, config: dict[str, Any]) -> None:
         super().__init__(config, tracker_name="LUMINARR")
@@ -46,7 +48,7 @@ class Luminarr(UNIT3D):
         self.common = Common(config)
 
     @staticmethod
-    def _contains_extension(files: list[Any], extensions: set[str]) -> str:
+    def _contains_extension(files: list[Any], extensions: set[str] | frozenset[str]) -> str:
         for item in files:
             filename = Path(str(item))
             if filename.suffix.lower() in extensions:
@@ -90,48 +92,10 @@ class Luminarr(UNIT3D):
         return parts[0]
 
     @staticmethod
-    def _extract_tv_seasons(files: list[Any]) -> set[int]:
-        seasons: set[int] = set()
-        season_pattern = re.compile(r"[sS](\d{1,3})(?:[eE]\d{1,3}(?:[eE]\d{1,3})?)?")
-        for item in files:
-            filename = str(item)
-            seasons.update(int(match) for match in season_pattern.findall(filename))
-        return seasons
-
-    @staticmethod
-    def _count_tv_episodes(files: list[Any]) -> int:
-        episodes: set[tuple[int, int]] = set()
-        episode_pattern = re.compile(r"[sS](\d{1,3})[eE](\d{1,3})(?:[eE](\d{1,3}))?")
-        for item in files:
-            filename = str(item)
-            for season, first, second in episode_pattern.findall(filename):
-                episodes.add((int(season), int(first)))
-                if second:
-                    episodes.add((int(season), int(second)))
-        return len(episodes)
-
-    @staticmethod
     def _has_bootleg_marker(value: str) -> bool:
         normalized = Luminarr._normalize_path(value)
         normalized = f" {normalized} "
         return any(re.search(rf"(?:^|[\s-]){re.escape(marker)}(?:$|[\s-])", normalized) for marker in Luminarr._BOOTLEG_MARKERS)
-
-    @staticmethod
-    def _is_tv_pack_allowed(meta: Meta) -> bool | None:
-        if not isinstance(meta.imdb_info, dict):
-            return None
-
-        status_text = str(meta.imdb_info.get("status", "")).casefold().strip()
-        if not status_text:
-            return None
-
-        ended_values = {"ended", "canceled", "cancelled", "finished", "completed"}
-        ongoing_values = {"returning", "continuing", "in production", "upcoming", "ongoing"}
-        if any(status in status_text for status in ended_values):
-            return True
-        if any(status in status_text for status in ongoing_values):
-            return False
-        return None
 
     async def _confirm_or_skip(self, message: str, meta: Meta) -> bool:
         if meta.unattended:
@@ -158,7 +122,7 @@ class Luminarr(UNIT3D):
             logger.info(f"{self.tracker}: [bold red]Pornography is not allowed.[/bold red]")
             return False
 
-        if self._has_bootleg_marker(meta.name):
+        if self._has_bootleg_marker(str(meta.name or "")):
             logger.info(f"{self.tracker}: [bold red]Release markers indicate this is likely a bootleg/unauthorized source.[/bold red]")
             return False
 
@@ -166,20 +130,20 @@ class Luminarr(UNIT3D):
         video_paths = self._collect_video_paths(filelist)
         if not meta.is_disc and video_paths:
             if len(video_paths) == 1 and self._is_nested_relative_path(video_paths[0]):
-                logger.info(f"{self.tracker}: [bold red]Single-file Movie/TV uploads must not be inside a folder.")
+                logger.info(f"{self.tracker}: [bold red]Single-file Movie/TV uploads must not be inside a folder.[/bold red]")
                 return False
 
             if len(video_paths) > 1 and any(self._top_level_folder(path) == "" for path in video_paths):
-                logger.info(f"{self.tracker}: [bold red]For multi-file Movie/TV uploads, all files must be placed in one top-level folder.")
+                logger.info(f"{self.tracker}: [bold red]For multi-file Movie/TV uploads, all files must be placed in one top-level folder.[/bold red]")
                 return False
 
             top_folders = {self._top_level_folder(path) for path in video_paths if self._top_level_folder(path)}
             if len(video_paths) > 1 and len(top_folders) != 1:
-                logger.info(f"{self.tracker}: [bold red]Multi-file uploads must use a single top-level folder.")
+                logger.info(f"{self.tracker}: [bold red]Multi-file uploads must use a single top-level folder.[/bold red]")
                 return False
 
             if category in {"MOVIE", "TV"} and meta.is_disc != "BDMV" and len(video_paths) != 1 and not meta.tv_pack:
-                logger.info(f"{self.tracker}: [bold red]Movie and non-collection TV uploads should contain one video file per title.")
+                logger.info(f"{self.tracker}: [bold red]Movie and non-collection TV uploads should contain one video file per title.[/bold red]")
                 return False
 
         if meta.is_disc not in Luminarr._DISC_TYPES and not await self.common.check_language_requirements(
@@ -221,17 +185,17 @@ class Luminarr(UNIT3D):
                 return False
 
         if category == "TV":
-            seasons = self._extract_tv_seasons(filelist)
+            seasons = self.common.extract_tv_seasons(filelist)
             if len(seasons) > 1:
                 logger.info(f"{self.tracker}: [bold red]TV uploads must target a single season or a single episode on {self.tracker}.[/bold red]")
                 return False
 
-            tv_pack_allowed = self._is_tv_pack_allowed(meta)
+            tv_pack_allowed = self.common.is_tv_series_ended(meta, self._TV_ENDED_STATUSES, self._TV_ONGOING_STATUSES)
             if meta.tv_pack and not tv_pack_allowed:
                 logger.info(f"{self.tracker}: [bold red]TV season packs are restricted to ended shows on {self.tracker}.[/bold red]")
                 return False
 
-            if not meta.tv_pack and self._count_tv_episodes(filelist) > 1:
+            if not meta.tv_pack and self.common.count_tv_episodes(filelist) > 1:
                 logger.info(f"{self.tracker}: [bold red]Non-pack TV uploads must be a single episode on {self.tracker}.[/bold red]")
                 return False
 

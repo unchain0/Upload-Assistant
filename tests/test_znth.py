@@ -40,6 +40,23 @@ def _tv_meta(**kwargs: Any) -> Meta:
     return Meta(**base)
 
 
+def _book_meta(**kwargs: Any) -> Meta:
+    base: dict[str, Any] = {
+        "category": "BOOK",
+        "book_language_iso": "ENG",
+        "isbn": "9780000000000",
+        "type": "EPUB",
+        "format": "EPUB",
+        "title": "Example Book",
+        "name": "Example Book",
+        "year": 2020,
+        "unattended": True,
+        "unattended_confirm": False,
+    }
+    base.update(kwargs)
+    return Meta(**base)
+
+
 def test_zenith_supports_music_and_uses_its_music_naming_guide():
     meta = Meta(
         category="MUSIC",
@@ -61,23 +78,6 @@ def test_zenith_supports_music_and_uses_its_music_naming_guide():
 
     assert "MUSIC" in tracker.supported_categories
     assert asyncio.run(tracker.get_name(meta))["name"] == "Salem - King Night (2010) - [WEB FLAC 24bit-44.1kHz Single]-FiVE0"
-
-
-def _book_meta(**kwargs: Any) -> Meta:
-    base: dict[str, Any] = {
-        "category": "BOOK",
-        "book_language_iso": "ENG",
-        "isbn": "9780000000000",
-        "type": "EPUB",
-        "format": "EPUB",
-        "title": "Example Book",
-        "name": "Example Book",
-        "year": 2020,
-        "unattended": True,
-        "unattended_confirm": False,
-    }
-    base.update(kwargs)
-    return Meta(**base)
 
 
 def test_zenith_music_name_omits_calculated_lossless_bitrate():
@@ -176,6 +176,14 @@ def test_zenith_rejects_ongoing_tv_pack():
         )
         is False
     )
+
+
+def test_zenith_handles_none_name_in_movie_checks():
+    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(name=None))) is False
+
+
+def test_zenith_does_not_accept_source_hints_inside_unrelated_words():
+    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(name="Example Movie 2024 1080p WEDDING"))) is False
 
 
 def test_zenith_rejects_single_episode_for_ended_tv_series():

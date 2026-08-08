@@ -2,6 +2,8 @@
 
 import asyncio
 
+import pytest
+
 from src.meta import Meta
 from src.trackers.UNIT3D.midnightscene import MidnightScene
 
@@ -71,3 +73,17 @@ def test_midnightscene_keeps_dual_audio_with_english_audio():
     )
 
     assert asyncio.run(_tracker().get_name(meta)) == {"name": "Example Show S01 1080p BluRay Dual-Audio FLAC 2.0 x265-ExampleGroup"}
+
+
+@pytest.mark.parametrize("resolution", ["360p", "360i"])
+def test_midnightscene_requires_confirmation_for_every_resolution_below_720p(resolution: str):
+    meta = Meta(
+        category="MOVIE",
+        name="Example Movie",
+        resolution=resolution,
+        screens=3,
+        unattended=True,
+        unattended_confirm=False,
+    )
+
+    assert asyncio.run(_tracker().get_additional_checks(meta)) is False

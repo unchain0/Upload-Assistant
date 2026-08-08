@@ -135,7 +135,7 @@ class Common:
             "vao",
         }
     )
-    PORTUGUESE_DESCRIPTION_MARKERS = re.compile(r"[à-úÀ-ÚãõçâêîôûÁÉÍÓÚ]")
+    PORTUGUESE_DESCRIPTION_MARKERS = re.compile(r"[ãõÃÕ]")
     LANGUAGE_EQUIVALENCE_GROUPS: tuple[set[str], ...] = (
         {"chinese", "mandarin", "zh", "zho", "chi", "cmn", "chinese simplified", "chinese traditional", "zh hans", "zh hant"},
         {"english", "eng", "en", "en us", "en gb", "english cc", "english sdh", "english forced"},
@@ -215,6 +215,40 @@ class Common:
         for value in values:
             expanded.update(self._expand_language_candidates(value, alias_lookup))
         return expanded
+
+    @staticmethod
+    def extract_tv_seasons(filelist: list[Any]) -> set[int]:
+        seasons: set[int] = set()
+        season_pattern = re.compile(r"[sS](\d{1,3})(?:[eE]\d{1,3}(?:[eE]\d{1,3})?)?")
+        for item in filelist:
+            seasons.update(int(match) for match in season_pattern.findall(str(item)))
+        return seasons
+
+    @staticmethod
+    def count_tv_episodes(filelist: list[Any]) -> int:
+        episodes: set[tuple[int, int]] = set()
+        episode_pattern = re.compile(r"[sS](\d{1,3})[eE](\d{1,3})(?:[eE](\d{1,3}))?")
+        for item in filelist:
+            for season, first, second in episode_pattern.findall(str(item)):
+                episodes.add((int(season), int(first)))
+                if second:
+                    episodes.add((int(season), int(second)))
+        return len(episodes)
+
+    @staticmethod
+    def is_tv_series_ended(
+        meta: Meta,
+        ended_values: set[str] | frozenset[str],
+        ongoing_values: set[str] | frozenset[str],
+    ) -> bool | None:
+        status_text = str(meta.imdb_info.get("status", "") if isinstance(meta.imdb_info, dict) else "").casefold().strip()
+        if not status_text:
+            return None
+        if any(value in status_text for value in ended_values):
+            return True
+        if any(value in status_text for value in ongoing_values):
+            return False
+        return None
 
     @staticmethod
     def _read_subtitle_text(path: Path) -> str:
@@ -299,8 +333,8 @@ class Common:
         if self.is_portuguese_description(description):
             return True
 
-        if meta.unattended and not meta.unattended_confirm:
-            return False
+        if meta.unattended:
+            return bool(meta.unattended_confirm)
 
         return await self.prompt_user_for_confirmation(f"{tracker}: Description does not appear to be in Portuguese. Do you want to proceed with the upload?")
 
@@ -3248,7 +3282,9 @@ class Common:
             languages_to_check = [lang.lower() for lang in languages_to_check]
             audio_languages = [lang.lower() for lang in meta_audio_languages]
             subtitle_languages = [lang.lower() for lang in meta_subtitle_languages]
-            audio_languages_normalized = {self._normalize_language_token(lang) for lang in meta_audio_languages if isinstance(lang, str) and lang.strip()}
+            required_languages_expanded = self._expand_language_list(languages_to_check, alias_lookup)
+            audio_languages_expanded = self._expand_language_list(meta_audio_languages, alias_lookup)
+            subtitle_languages_expanded = self._expand_language_list(meta_subtitle_languages, alias_lookup)
             language_display = None
             original_ok = False
             if original_language:
@@ -3264,7 +3300,7 @@ class Common:
                     first_lang = first_lang.strip()
                     language_display = self._format_language_for_display(first_lang)
                     original_language_expanded = self._expand_language_candidates(first_lang, alias_lookup)
-                    original_ok = bool(original_language_expanded.intersection(audio_languages_normalized))
+                    original_ok = bool(original_language_expanded.intersection(audio_languages_expanded))
 
                     if meta.debug and not original_ok:
                         logger.info(f"[blue]Debug: Original language expanded candidates: {', '.join(sorted(original_language_expanded)) or 'None'}[/blue]")
@@ -3282,8 +3318,8 @@ class Common:
                     )
                 return False
 
-            audio_ok = not check_audio or any(lang in audio_languages for lang in languages_to_check)
-            subtitle_ok = not check_subtitle or any(lang in subtitle_languages for lang in languages_to_check)
+            audio_ok = not check_audio or bool(required_languages_expanded.intersection(audio_languages_expanded))
+            subtitle_ok = not check_subtitle or bool(required_languages_expanded.intersection(subtitle_languages_expanded))
 
             logger.debug(f"[blue]Debug: Audio Languages Found: {audio_languages}[/blue]")
             logger.debug(f"[blue]Debug: Subtitle Languages Found: {subtitle_languages}[/blue]")
