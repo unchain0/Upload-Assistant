@@ -144,10 +144,13 @@ class YUSCENE(UNIT3D):
     def _contains_other_tracker_mention(value: str) -> str:
         lowered = value.lower()
         track_words = ["yify", "yts", "rarbg", "tpb", "piratebay", "1337x"]
+        tracker_words = ["kat", "thepiratebay", "nyaa", "eztv", "rutor", "torrentz", "nyaa.si", "kickasstorrents", "limetorrents"]
         if "http://" in lowered or "https://" in lowered or "www." in lowered:
             return "possible link text"
         if any(term in lowered for term in track_words):
             return next((term for term in track_words if term in lowered), "tracker term")
+        if any(term in lowered for term in tracker_words):
+            return next((term for term in tracker_words if term in lowered), "tracker term")
         return ""
 
     @staticmethod
@@ -161,17 +164,21 @@ class YUSCENE(UNIT3D):
     @staticmethod
     def _is_tv_pack_ended(meta: Meta) -> bool | None:
         status_text = str(meta.imdb_info.get("status", "") if isinstance(meta.imdb_info, dict) else "").casefold().strip()
-        ended_values = {"ended", "canceled", "cancelled", "finished", "completed", "completed (ended)"}
-        ongoing_values = {"returning series", "in production", "pilot", "ongoing", "planned"}
-        if status_text in ended_values:
+        ended_values = {"ended", "canceled", "cancelled", "finished", "completed", "completed (ended)", "in development", "ended (ended)"}
+        ongoing_values = {"returning series", "in production", "ongoing", "planned", "pilot"}
+        if any(value in status_text for value in ended_values):
             return True
-        if status_text in ongoing_values:
+        if any(value in status_text for value in ongoing_values):
             return False
         return None
 
     async def get_additional_checks(self, meta: Meta) -> bool:
         genres = f"{', '.join(meta.keywords)} {meta.combined_genres}"
         adult_keywords = ["xxx", "erotic", "porn", "adult", "orgy", "hentai", "adult animation", "softcore"]
+        if meta.adult_media:
+            if not await self._confirm_or_skip("Adult content is not allowed.", meta):
+                return False
+
         if any(re.search(rf"(^|,\s*){re.escape(keyword)}(\s*,|$)", genres, re.IGNORECASE) for keyword in adult_keywords):
             logger.info(f"{self.tracker}: [bold red]Porn/xxx is not allowed at {self.tracker}.[/bold red]")
             if not await self._confirm_or_skip("Adult content is not allowed.", meta):
@@ -179,17 +186,16 @@ class YUSCENE(UNIT3D):
 
         category = str(meta.category or "").upper()
         release_name = str(meta.name or "")
+        release_context = " ".join(part for part in (release_name, str(meta.description or "")) if part)
         filelist = [item for item in (meta.filelist or []) if self._is_path_like_file(item)]
 
         if category in {"MOVIE", "TV"} and self._has_banned_title_chars(release_name):
             if not await self._confirm_or_skip("The release name contains unsupported characters or extra spaces.", meta):
                 return False
 
-        if category in {"MOVIE", "TV"}:
-            mentioned = self._contains_other_tracker_mention(release_name)
-            if mentioned:
-                if not await self._confirm_or_skip(f"The title mentions '{mentioned}', which may violate tracker rules.", meta):
-                    return False
+        if category in {"MOVIE", "TV", "BOOK"} and self._contains_other_tracker_mention(release_context):
+            if not await self._confirm_or_skip("The title/description contains tracker references, links, or tracker names.", meta):
+                return False
 
         if category in {"MOVIE", "TV"} and meta.keep_folder and len(filelist) <= 1:
             if not await self._confirm_or_skip("Single-file Movie/TV uploads should not be inside a folder for this tracker.", meta):
@@ -205,7 +211,12 @@ class YUSCENE(UNIT3D):
                 if not await self._confirm_or_skip("TV collections are only allowed for ended series on this tracker.", meta):
                     return False
             if tv_pack_ended is None:
-                logger.info(f"{self.tracker}: [yellow]TV series status is not available to verify TV pack rules.[/yellow]")
+                if not await self._confirm_or_skip("Unable to confirm TV series status. TV packs are allowed only for ended series at YUSCENE.", meta):
+                    return False
+
+        if category in {"MOVIE", "TV"} and meta.screens < 3:
+            if not await self._confirm_or_skip("YUSCENE requires at least 3 screenshots for Movie/TV uploads.", meta):
+                return False
 
         if category in {"MOVIE", "TV"}:
             extra_file = self._contains_video_extras(filelist)
