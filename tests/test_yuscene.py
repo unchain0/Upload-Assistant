@@ -132,6 +132,10 @@ def test_yuscene_ignores_tracker_tokens_in_legitimate_url_paths():
     assert YUSCENE._contains_other_tracker_mention("https://images.example/kat/rutracker/screen.png") == ""
 
 
+def test_yuscene_tracker_detection_handles_malformed_urls():
+    assert YUSCENE._contains_other_tracker_mention("https://[") == ""
+
+
 def test_yuscene_detects_protocol_relative_tracker_domain_with_trailing_dot():
     assert YUSCENE._contains_other_tracker_mention("//rutracker.net./release") == "rutracker.net"
 

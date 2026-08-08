@@ -191,7 +191,10 @@ class YUSCENE(UNIT3D):
 
         if urls := url_pattern.findall(lowered):
             for raw_url in urls:
-                parsed_url: ParseResult = urlparse(raw_url)
+                try:
+                    parsed_url: ParseResult = urlparse(raw_url)
+                except ValueError:
+                    continue
                 host = parsed_url.netloc.rsplit("@", 1)[-1].partition(":")[0].lower().rstrip(".")
                 if host:
                     for forbidden in YUSCENE._TRACKER_DOMAINS:

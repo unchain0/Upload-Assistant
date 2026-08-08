@@ -2679,8 +2679,8 @@ class Common:
             return True
 
     async def prompt_user_for_confirmation(self, message: str, meta: Meta | None = None) -> bool:
-        if meta and meta.unattended and not meta.unattended_confirm:
-            return False
+        if meta and meta.unattended:
+            return bool(meta.unattended_confirm)
         response = (await prompt_in_thread(cli_ui.ask_string, f"{message} (Y/n): ", default="") or "").strip().lower()
         return response == "" or response == "y"
 

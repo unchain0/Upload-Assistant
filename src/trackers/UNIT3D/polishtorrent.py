@@ -29,7 +29,9 @@ class PolishTorrent(UNIT3D):
     supported_categories = ("TV", "MOVIE")
     _ARCHIVE_EXTENSIONS: frozenset[str] = frozenset({".rar", ".r00", ".r01", ".r02", ".r03", ".r04", ".r05", ".r06", ".r07", ".r08", ".r09", ".zip", ".7z"})
     _SCREENSHOT_EXTENSIONS: tuple[str, ...] = (".png", ".tiff", ".tif")
-    _TRACKER_DOMAINS: frozenset[str] = frozenset({"1337x.to", "eztv.re", "katcr.co", "katcr.to", "nyaa.si", "rarbg.to", "rutracker.net", "thepiratebay.org", "torrentdownloads.me", "yts.mx"})
+    _TRACKER_DOMAINS: frozenset[str] = frozenset(
+        {"1337x.to", "eztv.re", "katcr.co", "katcr.to", "limetorrents.cc", "nyaa.si", "rarbg.to", "rutracker.net", "thepiratebay.org", "torrentdownloads.me", "yts.mx"}
+    )
     _TRACKER_TERMS: tuple[str, ...] = (
         "yify",
         "yts",
@@ -88,6 +90,8 @@ class PolishTorrent(UNIT3D):
             parsed = urlparse(url)
         except ValueError:
             return None
+        if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+            return None
         return Path(parsed.path).suffix.lower()
 
     @staticmethod
@@ -129,7 +133,10 @@ class PolishTorrent(UNIT3D):
         lowered = value.lower()
         url_pattern = re.compile(r"(?:https?:)?//[^\s]+")
         for raw_url in url_pattern.findall(lowered):
-            parsed_url: ParseResult = urlparse(raw_url)
+            try:
+                parsed_url: ParseResult = urlparse(raw_url)
+            except ValueError:
+                continue
             host = parsed_url.netloc.rsplit("@", 1)[-1].partition(":")[0].lower().rstrip(".")
             if any(host == forbidden or host.endswith(f".{forbidden}") for forbidden in PolishTorrent._TRACKER_DOMAINS):
                 return True

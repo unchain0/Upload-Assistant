@@ -1,5 +1,7 @@
 # ruff: noqa: S101
 
+import pytest
+
 from src.trackers.UNIT3D.polishtorrent import PolishTorrent
 
 
@@ -22,7 +24,17 @@ def test_polishtorrent_rejects_mixed_or_malformed_screenshot_links():
     assert PolishTorrent._is_allowed_screenshot_image(malformed) is False
 
 
+@pytest.mark.parametrize(
+    "url",
+    ["not-a-url.png", "/relative/full.png", "ftp://images.example/full.png", "https:///full.png", "not a URL"],
+)
+def test_polishtorrent_rejects_non_http_absolute_screenshot_links(url):
+    assert PolishTorrent._is_allowed_screenshot_image({"raw_url": url}) is False
+
+
 def test_polishtorrent_tracker_detection_ignores_url_paths_but_rejects_domains():
     assert PolishTorrent._contains_other_tracker_mention("https://images.example/kat/rutracker/screen.png") is False
     assert PolishTorrent._contains_other_tracker_mention("//rutracker.net./release") is True
+    assert PolishTorrent._contains_other_tracker_mention("https://limetorrents.cc/release") is True
+    assert PolishTorrent._contains_other_tracker_mention("https://[") is False
     assert PolishTorrent._contains_other_tracker_mention("mirrored from YIFY") is True
