@@ -2,6 +2,7 @@
 import re
 from typing import Any
 
+from src.console import logger
 from src.languages import languages_manager
 from src.meta import Meta
 from src.trackers.common import Common
@@ -92,6 +93,22 @@ class MidnightScene(UNIT3D):
     requests_url = f"{base_url}/api/requests/filter"
     supported_categories = ("TV", "MOVIE", "GAME", "MUSIC")
     tracker_urls = ("midnightscene.cc",)
+
+    banned_release_markers: tuple[str, ...] = (
+        "cam",
+        "telesync",
+        "ts",
+        "telecine",
+        "tc",
+        "r5",
+        "dvdscr",
+        "dvdrip",
+        "vodrip",
+        "screener",
+        "preair",
+    )
+
+    video_min_height_by_rule = {"480p", "480i", "576p", "576i", "sd"}
 
     def __init__(self, config: Config) -> None:
         super().__init__(config, tracker_name="MIDNIGHTSCENE")
@@ -191,6 +208,82 @@ class MidnightScene(UNIT3D):
             val = type_id.get(meta_type, "0")
 
         return {"type_id": val}
+
+    @staticmethod
+    def _contains_unofficial_release_tag(meta: Meta) -> bool:
+        title = str(meta.scene_name or meta.name or "").lower()
+        uuid = str(meta.uuid).lower()
+        for marker in MidnightScene.banned_release_markers:
+            if re.search(rf"(?:^|[._ -]){re.escape(marker)}(?:$|[._ -])", title):
+                return True
+            if marker == "upscale":
+                continue
+            if f"{marker}" in uuid:
+                return True
+        return False
+
+    @staticmethod
+    def _files_contain(path_values: list[Any], suffixes: set[str]) -> bool:
+        for path in path_values:
+            filename = str(path).lower()
+            if any(filename.endswith(suffix) for suffix in suffixes):
+                return True
+        return False
+
+    async def _confirm_or_skip(self, message: str, meta: Meta) -> bool:
+        if meta.unattended:
+            return bool(meta.unattended_confirm)
+        logger.info(f"{self.tracker}: [red]{message}[/red]")
+        return await self.common.prompt_user_for_confirmation("Do you want to continue anyway?", meta)
+
+    async def get_additional_checks(self, meta: Meta) -> bool:
+        # Block explicit adult uploads
+        if meta.adult_media:
+            logger.info(f"{self.tracker}: Adult content is not accepted on this tracker.[/yellow]")
+            return False
+
+        # Minimum screenshot requirement for TV/Movie rule page requires samples in description
+        if meta.category in {"TV", "MOVIE"} and meta.screens < 3:
+            logger.info(f"{self.tracker}: [bold yellow]MidnightScene requires at least 3 sample images for TV and Movie uploads.[/bold yellow]")
+            if not await self._confirm_or_skip("Less than 3 sample images were provided.", meta):
+                return False
+
+        # Reject clearly upscaled or unofficially sourced releases
+        release_name = str(meta.name or "")
+        title = release_name.lower()
+        if "upscale" in str(meta.uuid).lower() and "upscale" not in title:
+            logger.info(f"{self.tracker}: [yellow]Upscaled content is not accepted without explicit marking in the title.[/yellow]")
+            if not await self._confirm_or_skip("This looks like an upscaled release.", meta):
+                return False
+
+        if self._contains_unofficial_release_tag(meta):
+            logger.info(f"{self.tracker}: [yellow]Unofficial source tags (telesync/cam/etc) are not accepted.[/yellow]")
+            if not await self._confirm_or_skip("Unofficial source tag detected in release title/uuid.", meta):
+                return False
+
+        # TV/Movie rule requires 720p/1080p/2160p or best available
+        if meta.category in {"TV", "MOVIE"} and meta.resolution.lower() in self.video_min_height_by_rule and not meta.is_disc:
+            logger.info(f"{self.tracker}: [yellow]Low-resolution releases should be uploaded only when no higher quality exists.[/yellow]")
+            if not await self._confirm_or_skip("This release is below 720p.", meta):
+                return False
+
+        # Game uploads are scene-only, provided as original RAR with NFO+SFV
+        if meta.category == "GAME":
+            if not meta.scene:
+                logger.info(f"{self.tracker}: [yellow]Only Scene releases are allowed for GAME on MidnightScene.[/yellow]")
+                if not await self._confirm_or_skip("Game release is not marked as Scene.", meta):
+                    return False
+
+            files = [str(item) for item in (meta.filelist or [])]
+            has_rar = self._files_contain(files, {".rar", ".r01", ".r00", ".r02", ".r03", ".r04", ".r05", ".r06", ".r07", ".r08", ".r09"})
+            has_sfv = self._files_contain(files, {".sfv"})
+            has_nfo = self._files_contain(files, {".nfo"})
+            if not has_rar or not has_sfv or not has_nfo:
+                logger.info(f"{self.tracker}: [yellow]Game uploads must be scene RAR with NFO and SFV.[/yellow]")
+                if not await self._confirm_or_skip("Game payload is missing required RAR/NFO/SFV format.", meta):
+                    return False
+
+        return True
 
     async def get_name(self, meta: Meta):
         if meta.category == "MUSIC":
