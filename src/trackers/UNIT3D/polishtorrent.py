@@ -195,7 +195,7 @@ class PolishTorrent(UNIT3D):
 
         try:
             screenshot_count = int(meta.screens)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             screenshot_count = 0
 
         if category in {"MOVIE", "TV"} and screenshot_count < 3:

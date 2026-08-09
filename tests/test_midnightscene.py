@@ -12,7 +12,7 @@ def _tracker() -> MidnightScene:
     return MidnightScene({"DEFAULT": {}, "TRACKERS": {"MIDNIGHTSCENE": {}}})
 
 
-@pytest.mark.parametrize("screens", [None, "invalid"])
+@pytest.mark.parametrize("screens", [None, "invalid", float("inf")])
 def test_midnightscene_rejects_malformed_screenshot_counts(screens):
     meta = Meta(category="MOVIE", screens=screens, unattended=True, unattended_confirm=False)
 

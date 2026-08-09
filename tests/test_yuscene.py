@@ -56,6 +56,7 @@ def test_yuscene_rejects_malformed_filelist_and_screenshot_counts():
     assert asyncio.run(_tracker().get_additional_checks(_movie_meta(filelist=""))) is False
     assert asyncio.run(_tracker().get_additional_checks(_movie_meta(screens=None))) is False
     assert asyncio.run(_tracker().get_additional_checks(_movie_meta(screens="2"))) is False
+    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(screens=float("inf")))) is False
 
 
 def test_yuscene_blocks_adult_media_flag():

@@ -276,7 +276,11 @@ class DarkPeers(UNIT3D):
         return True
 
     def validate_screenshot_count(self, meta: Meta) -> bool:
-        if 3 <= int(meta.screens) <= 5:
+        try:
+            screens = int(meta.screens)
+        except (TypeError, ValueError, OverflowError):
+            screens = 0
+        if 3 <= screens <= 5:
             return True
         logger.info(f"{self.tracker}: [bold red]Movie and TV uploads require between 3 and 5 screenshots. Skipping upload.")
         return False

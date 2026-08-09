@@ -175,7 +175,7 @@ class Luminarr(UNIT3D):
 
         try:
             screens = int(meta.screens)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             screens = 0
         if category in {"TV", "MOVIE"} and screens < 3:
             logger.info(f"{self.tracker}: [bold red]{self.tracker} requires at least 3 screenshots in the description for Movie/TV uploads.[/bold red]")

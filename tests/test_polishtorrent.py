@@ -57,6 +57,7 @@ def test_polishtorrent_rejects_malformed_filelist_and_screenshot_counts():
     assert asyncio.run(tracker.get_additional_checks(_movie_meta(image_list=1))) is False
     assert asyncio.run(tracker.get_additional_checks(_movie_meta(screens=None))) is False
     assert asyncio.run(tracker.get_additional_checks(_movie_meta(screens="2"))) is False
+    assert asyncio.run(tracker.get_additional_checks(_movie_meta(screens=float("inf")))) is False
 
 
 @pytest.mark.parametrize(

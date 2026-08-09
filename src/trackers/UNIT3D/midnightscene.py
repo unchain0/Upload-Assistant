@@ -250,7 +250,7 @@ class MidnightScene(UNIT3D):
         # Minimum screenshot requirement for TV/Movie rule page requires samples in description
         try:
             screenshot_count = int(meta.screens)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             screenshot_count = 0
 
         if meta.category in {"TV", "MOVIE"} and screenshot_count < 3:

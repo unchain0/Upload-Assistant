@@ -310,7 +310,7 @@ class Zenith(UNIT3D):
             video_paths = self._collect_video_paths(filelist)
             try:
                 screenshot_count = int(meta.screens)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 screenshot_count = 0
             if screenshot_count < 3:
                 logger.info(f"{self.tracker}: [bold red]Video uploads require at least 3 screenshots on {self.tracker}.[/bold red]")
