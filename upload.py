@@ -2881,15 +2881,15 @@ async def do_the_thing(base_dir: str) -> None:
             partial_count = len(partial_items)
             success_count = max(queue_size - failed_count - partial_count, 0)
             logger.info(
-                f"[bold green]Batch summary: total enfileirado {queue_size}, processados com sucesso {success_count}, "
-                f"parciais {partial_count}, skipped/failed {failed_count}[/bold green]"
+                f"[bold green]Batch summary: total queued {queue_size}, fully successful {success_count}, "
+                f"partial {partial_count}, skipped/failed {failed_count}[/bold green]"
             )
             if partial_items:
-                logger.info("[bold yellow]Itens com upload parcial:[/bold yellow]")
+                logger.info("[bold yellow]Items with partial uploads:[/bold yellow]")
                 for partial_path, failed_trackers in partial_items:
-                    logger.info(f"- {partial_path}: falhou em {failed_trackers}")
+                    logger.info(f"- {partial_path}: failed on {failed_trackers}")
             if failed_items:
-                logger.info("[bold red]Itens com falha:[/bold red]")
+                logger.info("[bold red]Failed items:[/bold red]")
                 for failed_path, failed_reason in failed_items:
                     logger.info(f"- {failed_path}: {failed_reason}")
         current_release_log_path.set(None)

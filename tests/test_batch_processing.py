@@ -88,7 +88,7 @@ async def test_batch_continues_when_first_item_fails(tmp_path: Path, monkeypatch
 
     assert process_meta_mock.call_count == 2
     assert any(
-        "Batch summary: total enfileirado 2, processados com sucesso 1, parciais 0, skipped/failed 1" in message
+        "Batch summary: total queued 2, fully successful 1, partial 0, skipped/failed 1" in message
         for message in info_messages
     )
     assert any("first_fail.mkv" in message and "No Video files found" in message for message in info_messages)
@@ -110,7 +110,7 @@ async def test_batch_continues_when_intermediate_item_fails(tmp_path: Path, monk
 
     assert process_meta_mock.call_count == 3
     assert any(
-        "Batch summary: total enfileirado 3, processados com sucesso 2, parciais 0, skipped/failed 1" in message
+        "Batch summary: total queued 3, fully successful 2, partial 0, skipped/failed 1" in message
         for message in info_messages
     )
     assert any("middle_fail.mkv" in message and "No Video files found" in message for message in info_messages)
@@ -130,7 +130,7 @@ async def test_batch_fails_all_items_without_aborting(tmp_path: Path, monkeypatc
 
     assert process_meta_mock.call_count == 2
     assert any(
-        "Batch summary: total enfileirado 2, processados com sucesso 0, parciais 0, skipped/failed 2" in message
+        "Batch summary: total queued 2, fully successful 0, partial 0, skipped/failed 2" in message
         for message in info_messages
     )
     assert any("bad_one.mkv" in message and "No Video files found" in message for message in info_messages)
@@ -208,5 +208,5 @@ async def test_batch_summary_reports_partial_tracker_failure(tmp_path: Path, mon
 
     await upload.do_the_thing(upload.base_dir)
 
-    assert any("processados com sucesso 1, parciais 1, skipped/failed 0" in message for message in info_messages)
+    assert any("fully successful 1, partial 1, skipped/failed 0" in message for message in info_messages)
     assert any("partial.epub" in message and "BAD" in message for message in info_messages)
