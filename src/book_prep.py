@@ -14,6 +14,7 @@ import contextlib
 import os
 import re
 import sys
+import zipfile
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -283,6 +284,49 @@ def missing_book_fields(meta: Meta) -> list[str]:
     return missing
 
 
+def _validated_isbns(value: str) -> set[str]:
+    patterns = re.findall(r"(?<!\d)(?:97[89](?:[- ]?\d){10}|\d(?:[- ]?\d){8}[- ]?[\dXx])(?!\d)", value)
+    return {validated for candidate in patterns if (validated := validate_isbn_checksum(candidate))}
+
+
+def _epub_content_identifiers(path: str) -> tuple[set[str], set[str]]:
+    isbns: set[str] = set()
+    asins: set[str] = set()
+    try:
+        with zipfile.ZipFile(path) as archive:
+            for member in archive.infolist():
+                if member.file_size > 2 * 1024 * 1024 or Path(member.filename).suffix.lower() not in {".opf", ".xhtml", ".html", ".htm", ".xml", ".ncx"}:
+                    continue
+                text = archive.read(member).decode("utf-8", errors="ignore")
+                isbns.update(_validated_isbns(text))
+                asins.update(re.findall(r"\bB0[A-Z0-9]{8}\b", text.upper()))
+    except (OSError, zipfile.BadZipFile):
+        return set(), set()
+    return isbns, asins
+
+
+def _reconcile_epub_identifiers(meta: Meta, epub_meta: dict[str, Any], path: str) -> None:
+    primary_isbn = validate_isbn_checksum(str(epub_meta.get("isbn", "")))
+    filename_isbns = _validated_isbns(Path(path).stem)
+    content_isbns, content_asins = _epub_content_identifiers(path)
+    corroborated = filename_isbns & content_isbns
+
+    if len(corroborated) == 1:
+        epub_meta["isbn"] = next(iter(corroborated))
+    else:
+        candidates: set[str] = set(filename_isbns | content_isbns)
+        if primary_isbn:
+            candidates.add(primary_isbn)
+        if len(candidates) > 1:
+            values = ", ".join(sorted(candidates))
+            raise ItemProcessingError(f"Conflicting EPUB ISBNs could not be resolved ({values}). Re-run with --isbn using the identifier for this exact edition.", path)
+        if candidates:
+            epub_meta["isbn"] = next(iter(candidates))
+
+    if not meta.book_asin and not meta.asin and len(content_asins) == 1:
+        epub_meta["asin"] = next(iter(content_asins))
+
+
 async def gather_book_prep(
     meta: Meta,
     videopath: str,
@@ -377,6 +421,8 @@ async def gather_book_prep(
         meta.epubmeta_output = _get_epubmeta_output(videopath)
         epub_meta = _extract_epub_metadata(videopath)
         if epub_meta:
+            if not cli_overrides["isbn"]:
+                _reconcile_epub_identifiers(meta, epub_meta, videopath)
             logger.debug(f"[cyan]EPUB metadata extracted: {epub_meta}[/cyan]")
             apply_source_metadata(epub_meta)
 
