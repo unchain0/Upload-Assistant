@@ -632,7 +632,9 @@ async def _prompt_game_meta(meta: Meta) -> None:
     torrent name is rebuilt so the confirmation screen and the per-tracker
     uploads reflect the new values.
     """
-    game_required_fields = ["title", "year", "platform"]
+    from src.prep_game import required_game_fields
+
+    game_required_fields = required_game_fields(meta)
     game_missing: list[str] = []
     for f in game_required_fields:
         val = getattr(meta, f, None)

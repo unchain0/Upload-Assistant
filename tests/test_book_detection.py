@@ -1,5 +1,7 @@
 """Regression tests for automatic ebook category detection."""
 
+# ruff: noqa: S101
+
 from __future__ import annotations
 
 import asyncio
@@ -101,6 +103,19 @@ def test_dmg_is_auto_detected_as_game_software(tmp_path):
     installer.write_bytes(b"installer")
     meta = Meta(path=str(installer))
     prep = SimpleNamespace(disc_info_manager=SimpleNamespace(get_disc=AsyncMock(return_value=("", str(installer), {}, []))))
+
+    asyncio.run(detect_disc_and_category(prep, meta))
+
+    assert meta.category == "GAME"
+
+
+def test_pkg_takes_precedence_over_text_sidecar(tmp_path):
+    release = tmp_path / "Guitar_Pro_8.1.5-31_[atb]"
+    release.mkdir()
+    (release / "Guitar Pro 8.1.5-31 [atb].pkg").write_bytes(b"installer")
+    (release / "Read.txt").write_text("install PKG\nUse Serial", encoding="utf-8")
+    meta = Meta(path=str(release))
+    prep = SimpleNamespace(disc_info_manager=SimpleNamespace(get_disc=AsyncMock(return_value=("", str(release), {}, []))))
 
     asyncio.run(detect_disc_and_category(prep, meta))
 

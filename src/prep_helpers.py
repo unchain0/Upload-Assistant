@@ -34,6 +34,38 @@ from src.video import video_manager
 guessit_module: Any = cast(Any, guessit)
 
 _URL_TOKEN_RE = re.compile(r"https?://[^\s<>'\"()]+", re.IGNORECASE)
+_GAME_EXTENSIONS = {
+    ".3ds",
+    ".3dsx",
+    ".cci",
+    ".cdi",
+    ".chd",
+    ".cia",
+    ".cso",
+    ".dmg",
+    ".exe",
+    ".gcm",
+    ".gdi",
+    ".hdf",
+    ".iso",
+    ".nca",
+    ".nds",
+    ".nsp",
+    ".nsz",
+    ".pbp",
+    ".pkg",
+    ".rap",
+    ".srl",
+    ".szs",
+    ".vpk",
+    ".wbfs",
+    ".wud",
+    ".wux",
+    ".xbe",
+    ".xci",
+    ".xcz",
+    ".xex",
+}
 
 
 def _is_igdb_url(url: str) -> bool:
@@ -244,17 +276,20 @@ async def detect_disc_and_category(prep_instance: Any, meta: Meta) -> tuple[str,
                 has_books = False
                 has_audio = False
                 has_video = False
+                has_game_package = False
                 for _root, _, files in os.walk(path_to_check):
                     for file in files:
                         ext = Path(file).suffix.lower()
-                        if ext in BOOK_EXTENSIONS:
+                        if ext in _GAME_EXTENSIONS:
+                            has_game_package = True
+                        elif ext in BOOK_EXTENSIONS:
                             has_books = True
                         elif ext in AUDIOBOOK_EXTENSIONS:
                             has_audio = True
                         elif ext in video_extensions:
                             has_video = True
                 # If we have books/audio files and NO video files, classify as BOOK
-                if (has_books or has_audio) and not has_video:
+                if (has_books or has_audio) and not has_video and not has_game_package:
                     is_book = True
             else:
                 ext = Path(path_to_check).suffix.lower()
@@ -268,38 +303,6 @@ async def detect_disc_and_category(prep_instance: Any, meta: Meta) -> tuple[str,
     # Auto-detect GAME category if category/manual_category is not already set and it's not a disc
     if not meta.category and not meta.manual_category and not meta.is_disc:
         is_game = False
-        game_extensions = {
-            ".3ds",
-            ".3dsx",
-            ".cci",
-            ".cdi",
-            ".chd",
-            ".cia",
-            ".cso",
-            ".dmg",
-            ".exe",
-            ".gcm",
-            ".gdi",
-            ".hdf",
-            ".iso",
-            ".nca",
-            ".nds",
-            ".nsp",
-            ".nsz",
-            ".pbp",
-            ".pkg",
-            ".rap",
-            ".srl",
-            ".szs",
-            ".vpk",
-            ".wbfs",
-            ".wud",
-            ".wux",
-            ".xbe",
-            ".xci",
-            ".xcz",
-            ".xex",
-        }
         video_extensions = {".mkv", ".mp4", ".ts", ".avi"}
         game_groups = {"tenoke", "rune", "flt", "plaza", "codex", "skidrow", "prophet", "gog", "darkzer0", "doge", "tinyiso", "razor1911", "outlaws", "alias", "simplex"}
 
@@ -321,7 +324,7 @@ async def detect_disc_and_category(prep_instance: Any, meta: Meta) -> tuple[str,
                     for file in files:
                         file_lower = file.lower()
                         ext = Path(file_lower).suffix
-                        if ext in game_extensions:
+                        if ext in _GAME_EXTENSIONS:
                             has_game_ext = True
                         elif ext in video_extensions:
                             has_video = True
@@ -340,7 +343,7 @@ async def detect_disc_and_category(prep_instance: Any, meta: Meta) -> tuple[str,
                                             has_steam_link = True
             else:
                 ext = Path(base_name_lower).suffix
-                if ext in game_extensions:
+                if ext in _GAME_EXTENSIONS:
                     has_game_ext = True
 
             if has_steam_link or ((has_game_ext or has_game_group) and not has_video):

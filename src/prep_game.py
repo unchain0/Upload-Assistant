@@ -62,6 +62,22 @@ def extract_release_group(value: str) -> str:
     return dash_match.group(1) if dash_match else ""
 
 
+def required_game_fields(meta: Meta) -> list[str]:
+    fields = ["title", "platform"]
+    if not meta.software:
+        fields.insert(1, "year")
+    return fields
+
+
+def _is_desktop_installer(meta: Meta) -> bool:
+    if meta.console_game or str(meta.platform or "").upper() not in {"PC", "MAC", "LINUX"}:
+        return False
+    paths = [str(item) for item in meta.filelist]
+    if meta.path:
+        paths.append(str(meta.path))
+    return any(Path(path).suffix.lower() in {".dmg", ".exe", ".pkg"} for path in paths)
+
+
 def extract_version_from_text(text: str) -> str | None:
     if not text:
         return None
@@ -629,7 +645,10 @@ async def gather_game_prep(
     if not selected_game:
         results = await igdb.search_game(title_query)
         if not results:
+            meta.software = _is_desktop_installer(meta)
             logger.info(f"[yellow]IGDB: No games found matching '{title_query}'[/yellow]")
+            if meta.software:
+                logger.info("[green]Desktop software package detected; game-only metadata requirements will not be applied.[/green]")
             return
 
         # Sort results based on platform match if platform is known/detected

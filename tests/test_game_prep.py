@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from src.meta import Meta
-from src.prep_game import clean_game_title, detect_platform_from_files, extract_release_group, gather_game_prep
+from src.prep_game import clean_game_title, detect_platform_from_files, extract_release_group, gather_game_prep, required_game_fields
 
 
 def test_game_title_fallback_removes_locale_build_date_and_extension() -> None:
@@ -56,3 +56,28 @@ async def test_software_game_prep_uses_raw_filename_metadata(tmp_path) -> None:
     assert meta.game_version == "v1.0.0"
     assert meta.tag == "-HCiSO"
     assert meta.platform == "MAC"
+
+
+@pytest.mark.asyncio
+async def test_guitar_pro_pkg_is_prepared_as_mac_software(tmp_path) -> None:
+    release = tmp_path / "Guitar_Pro_8.1.5-31_[atb]"
+    release.mkdir()
+    package = release / "Guitar Pro 8.1.5-31 [atb].pkg"
+    package.write_bytes(b"installer")
+    meta = Meta(path=str(release), filelist=[str(package)], unattended=True)
+
+    with patch("src.prep_game.IGDBAPI.search_game", new=AsyncMock(return_value=[])):
+        await gather_game_prep(
+            meta,
+            str(package),
+            str(tmp_path),
+            {"DEFAULT": {"twitch_client_id": "client", "twitch_client_secret": "secret"}},
+        )
+
+    assert meta.category == "GAME"
+    assert meta.software is True
+    assert meta.title == "Guitar Pro"
+    assert meta.game_version == "v8.1.5-31"
+    assert meta.tag == "-atb"
+    assert meta.platform == "MAC"
+    assert required_game_fields(meta) == ["title", "platform"]

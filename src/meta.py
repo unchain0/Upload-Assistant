@@ -160,6 +160,7 @@ class Meta:
     game_subcategory: str = ""
     game_system: str = ""
     game_version: str = ""
+    software: bool = False
     genre_ids: int | None = None
     genre: str = ""
     genres: list[str] = field(default_factory=list)

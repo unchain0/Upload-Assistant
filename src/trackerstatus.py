@@ -16,6 +16,7 @@ from src.dupe_checking import DupeChecker
 from src.imdb import imdb_manager
 from src.meta import Meta
 from src.metadata_searching import get_douban_id
+from src.prep_game import required_game_fields
 from src.torrentcreate import TorrentCreator
 from src.trackers.AVISTAZ.routing import AvistaZNetworkRouter
 from src.trackers.common import Common
@@ -162,7 +163,7 @@ class TrackerStatusManager:
 
                 # Check for missing required GAME fields in unattended mode
                 elif local_meta.get("category") == "GAME" and local_meta.get("unattended", False):
-                    game_required_fields = ["title", "year", "platform"]
+                    game_required_fields = required_game_fields(meta)
                     game_missing: list[str] = []
                     for f in game_required_fields:
                         val = local_meta.get(f)
