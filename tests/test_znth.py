@@ -120,7 +120,15 @@ def test_zenith_accepts_numbered_scene_music_filenames():
 
     assert Zenith._validate_music_track_naming(files) == ""
     assert Zenith._validate_music_track_naming(["01. After Hours & Josh Heuston - Into You.flac"]) == ""
+    assert Zenith._validate_music_track_naming(["Ye-The Life of Pablo-01-Ultralight Beam.flac"]) == ""
     assert Zenith._validate_music_track_naming(["simon_and_garfunkel-the_sound_of_silence.flac"]) != ""
+
+
+def test_zenith_validates_torrent_relative_music_path_length(tmp_path):
+    root = tmp_path / ("Long Lidarr Library Prefix " * 4) / "Sweet Trip - Album (2021) - WEB FLAC"
+    track = root / "03. The Weight of Comfort, This Rain is Comfort, This Rain is You.flac"
+
+    assert Zenith._validate_music_track_naming([str(track)], root) == ""
 
 
 def test_zenith_music_additional_data_sends_valid_external_ids():

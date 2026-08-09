@@ -26,7 +26,9 @@ class DarkPeers(UNIT3D):
     display_name = "DarkPeers"
     allows_bloated_audio = True
     reject_episode_if_season_pack_exists = True
-    _AUDIO_TRACK_PATTERN = re.compile(r"^(?:\d{1,3}(?:-\d{1,2})?\.\s+.+|\d{1,3}(?:-\d{1,2})?\s+-\s+.+|\d{1,3}(?:-\d{1,2})?-(?!-).+)$")
+    _AUDIO_TRACK_PATTERN = re.compile(
+        r"^(?:\d{1,3}(?:-\d{1,2})?\.\s+.+|\d{1,3}(?:-\d{1,2})?\s+-\s+.+|\d{1,3}(?:-\d{1,2})?-(?!-).+|.+-\d{1,3}(?:-\d{1,2})?-(?!-).+)$"
+    )
     _AUDIO_CODEC_PATTERN = re.compile(r"\s+(?:DTS Headphone:X|DTS-HD MA|DTS-HD HRA|DTS-ES|DTS:X|TrueHD|DD\+ EX|DD EX|DD\+|DD|LPCM|FLAC|ALAC|AAC|Opus|MP3|MP2|Vorbis)(?=\s|$)")
     _DUB_ELEMENT_PATTERN = re.compile(
         r"\s+(?:(?:[A-Z][A-Za-z]*(?:\s+[A-Z][A-Za-z]*){0,2}\s+)?(?:MULTi|Dubbed)|Dual-Audio)"

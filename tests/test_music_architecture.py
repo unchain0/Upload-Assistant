@@ -810,6 +810,31 @@ def test_common_album_artist_avoids_feature_conflict_and_compilation(tmp_path):
     assert "artist" not in release.conflicts
 
 
+def test_featured_album_artist_text_keeps_common_primary_artist(tmp_path):
+    release = MusicRelease(root=str(tmp_path))
+    for index, album_artist in enumerate(("Kanye West", "Kanye West feat. Chance the Rapper"), start=1):
+        release.tracks.append(
+            AudioTrack(
+                path=f"{index}.flac",
+                relative_path=f"{index}.flac",
+                format="FLAC",
+                codec="FLAC",
+                artist=album_artist,
+                album_artist=album_artist,
+                album="The Life of Pablo",
+                title=f"Track {index}",
+                track_number=index,
+                tags={"albumartist": [album_artist]},
+            )
+        )
+
+    MusicReleaseAnalyzer()._derive_release_fields(release, "Ye - The Life of Pablo (2016) - 16bit 44.1kHz Digital Media")
+
+    assert release.get("artist") == "Kanye West"
+    assert release.get("release_type") == "EP"
+    assert "artist" not in release.conflicts
+
+
 def test_conflicting_file_tag_albums_remain_authoritative_over_directory(tmp_path):
     release = MusicRelease(root=str(tmp_path))
     for index, album in enumerate(("K-POP", "K-POP (Instrumental)"), start=1):

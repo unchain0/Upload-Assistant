@@ -1018,7 +1018,7 @@ async def _prompt_music_meta(meta: Meta) -> None:
         return
     if meta.unattended:
         logger.info(
-            f"[yellow]MUSIC upload: metadata requiring confirmation: {', '.join(fields_to_prompt)}. The tracker upload will be skipped until required values are supplied.[/yellow]"
+            f"[yellow]MUSIC metadata requires confirmation for: {', '.join(fields_to_prompt)}. Trackers that require confirmed values may skip this upload.[/yellow]"
         )
         return
 
@@ -2915,11 +2915,13 @@ async def do_the_thing(base_dir: str) -> None:
                             skipped_files_count += 1
                             item_outcomes[item_index] = (current_item_path, "skipped", "Debug mode")
                             logger.info(f"[cyan]Processed {processed_files_count}/{total_files} files in debug mode; no tracker upload was attempted.[/cyan]")
-                        elif "limit_queue" in meta and meta.limit_queue > 0:
-                            logger.info(f"[cyan]Successfully uploaded {processed_files_count - skipped_files_count} of {meta.limit_queue} in limit with {total_files} files.")
                         else:
                             item_outcomes[item_index] = (current_item_path, "successful", "")
-                            logger.info(f"[cyan]Successfully uploaded {processed_files_count - skipped_files_count}/{total_files} files.")
+                            fully_successful_count = sum(outcome == "successful" for _, outcome, _ in item_outcomes.values())
+                            if "limit_queue" in meta and meta.limit_queue > 0:
+                                logger.info(f"[cyan]Successfully uploaded {fully_successful_count} of {meta.limit_queue} in limit with {total_files} files.")
+                            else:
+                                logger.info(f"[cyan]Successfully uploaded {fully_successful_count}/{total_files} files.")
                         if log_file and (not meta.debug or "debug" in Path(log_file).name):
                             if meta.site_upload_queue:
                                 await QueueManager.save_processed_path(log_file, current_item_path)

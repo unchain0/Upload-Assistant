@@ -67,7 +67,7 @@ def _split_main_artists(values: list[str]) -> list[str]:
     """
     artists: list[str] = []
     for value in values:
-        parts = re.split(r"\s+&\s+", value)
+        parts = re.split(r"\s+&\s+|\s+(?:feat(?:uring)?|ft)\.?\s+|\s*;\s*", value, flags=re.I)
         for part in parts:
             cleaned = _clean(part)
             if cleaned and cleaned not in artists:

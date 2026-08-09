@@ -64,7 +64,9 @@ class Zenith(UNIT3D):
     _KNOWN_VIDEO_EXTENSIONS: frozenset[str] = frozenset({".mkv", ".mp4", ".avi", ".mov", ".m4v", ".mpg", ".mpeg", ".m2ts", ".ts", ".wmv", ".flv"})
     _VIDEO_EXTENSIONS: frozenset[str] = frozenset({".mkv", ".mp4", ".ts", ".ps", ".mpg"})
     _VIDEO_RESOLUTIONS: tuple[str, ...] = ("480i", "480p", "576i", "576p", "720p", "1080i", "1080p", "2160p", "4320p", "360p")
-    _AUDIO_TRACK_PATTERN: re.Pattern[str] = re.compile(r"^(?:\d{1,3}(?:-\d{1,2})?\.\s+.+|\d{1,3}(?:-\d{1,2})?\s+-\s+.+|\d{1,3}(?:-\d{1,2})?-(?!-).+)$")
+    _AUDIO_TRACK_PATTERN: re.Pattern[str] = re.compile(
+        r"^(?:\d{1,3}(?:-\d{1,2})?\.\s+.+|\d{1,3}(?:-\d{1,2})?\s+-\s+.+|\d{1,3}(?:-\d{1,2})?-(?!-).+|.+-\d{1,3}(?:-\d{1,2})?-(?!-).+)$"
+    )
     _VIDEO_SOURCE_HINTS: tuple[str, ...] = (
         "WEB-DL",
         "WEBRIP",
@@ -282,10 +284,19 @@ class Zenith(UNIT3D):
         return len(str(file_path)) <= 180 and not any(part.startswith(" ") for part in str(file_path).replace("\\", "/").split("/"))
 
     @classmethod
-    def _validate_music_track_naming(cls, filelist: list[Any]) -> str:
+    def _validate_music_track_naming(cls, filelist: list[Any], release_root: str | Path | None = None) -> str:
         audio_suffixes = {".flac", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".alac", ".pcm", ".m4b"}
         audio_paths = [Path(str(item)) for item in filelist if Path(str(item)).suffix.lower() in audio_suffixes]
-        for path in audio_paths:
+        root = Path(release_root) if release_root else None
+        if root and root.is_file():
+            root = root.parent
+        for source_path in audio_paths:
+            path = source_path
+            if root and source_path.is_absolute():
+                try:
+                    path = source_path.relative_to(root)
+                except ValueError:
+                    path = Path(source_path.name)
             if not cls._has_valid_music_path_format(path):
                 return path.name
 
@@ -416,7 +427,7 @@ class Zenith(UNIT3D):
                 return False
 
         if category == "MUSIC":
-            invalid_track = self._validate_music_track_naming(filelist)
+            invalid_track = self._validate_music_track_naming(filelist, meta.path)
             if invalid_track:
                 logger.info(f"{self.tracker}: [bold red]Invalid music filename structure for {invalid_track}. Skipping upload...[/bold red]")
                 return False

@@ -368,6 +368,8 @@ async def test_batch_summary_reports_partial_tracker_failure(tmp_path: Path, mon
     await upload.do_the_thing(upload.base_dir)
 
     assert any("total queued 2, fully successful 1, partial 1, skipped/failed 0" in message for message in info_messages)
+    assert any("Successfully uploaded 1/2 files" in message for message in info_messages)
+    assert not any("Successfully uploaded 2/2 files" in message for message in info_messages)
 
 
 @pytest.mark.asyncio
