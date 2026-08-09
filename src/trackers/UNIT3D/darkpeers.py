@@ -356,9 +356,14 @@ class DarkPeers(UNIT3D):
                 logger.info(f"{self.tracker}: [bold red]Audiobooks require a valid ISBN-10 or ISBN-13. Re-run with --isbn. Skipping upload.[/bold red]")
                 return False
             meta.isbn = validated_isbn
+        elif meta.isbn or meta.book_isbn:
+            validated_isbn = validate_isbn_checksum(str(meta.isbn or meta.book_isbn or ""))
+            if not validated_isbn:
+                logger.info(f"{self.tracker}: [bold red]Ebooks require a valid ISBN-10, ISBN-13, or ASIN in the upload title. Re-run with --isbn or --asin. Skipping upload.[/bold red]")
+                return False
+            meta.isbn = validated_isbn
         identifier = self._book_identifier(meta)
-        is_collection = len(meta.filelist or []) > 1 or "collection" in str(meta.name or "").casefold()
-        if not identifier and not is_collection:
+        if not identifier:
             return await self._missing_required("a valid ISBN/ASIN", meta)
         publisher = str(meta.publisher or meta.book_publisher or "").strip()
         if not publisher:

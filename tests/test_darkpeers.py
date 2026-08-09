@@ -213,6 +213,52 @@ def test_darkpeers_book_name_preserves_alphanumeric_asin():
     assert _name(meta) == "Author - Book Title 2026 EPUB B01N5AX3TQ"
 
 
+def test_darkpeers_rejects_ebook_without_identifier_even_with_multiple_files():
+    meta = Meta(
+        category="BOOK",
+        unattended=True,
+        author="David Bohm",
+        publisher="Routledge",
+        title="Wholeness and the Implicate Order",
+        year=1980,
+        type="AZW3",
+        filelist=["book.azw3", "cover.jpg"],
+    )
+
+    assert _additional_checks(meta) is False
+
+
+def test_darkpeers_normalizes_valid_ebook_isbn_before_building_title():
+    meta = Meta(
+        category="BOOK",
+        unattended=True,
+        author="David Bohm",
+        publisher="Routledge",
+        title="Wholeness and the Implicate Order",
+        year=1980,
+        type="AZW3",
+        isbn="978-0-415-28979-5",
+    )
+
+    assert _additional_checks(meta) is True
+    assert _name(meta) == "David Bohm - Wholeness and the Implicate Order 1980 AZW3 9780415289795"
+
+
+def test_darkpeers_rejects_invalid_ebook_isbn_instead_of_rendering_it():
+    meta = Meta(
+        category="BOOK",
+        unattended=True,
+        author="David Bohm",
+        publisher="Routledge",
+        title="Wholeness and the Implicate Order",
+        year=1980,
+        type="AZW3",
+        isbn="9780415289794",
+    )
+
+    assert _additional_checks(meta) is False
+
+
 def test_darkpeers_replaces_generic_dual_audio_with_rule_matrix_label():
     meta = Meta(category="MOVIE", name="Anime 2026 1080p WEB-DL Dual-Audio-TEAM", language_checked=True, original_language="Japanese", audio_languages=["Japanese", "French"])
 
