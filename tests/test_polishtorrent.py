@@ -68,6 +68,7 @@ def test_polishtorrent_rejects_non_http_absolute_screenshot_links(url):
 def test_polishtorrent_tracker_detection_ignores_url_paths_but_rejects_domains():
     assert PolishTorrent._contains_other_tracker_mention("https://images.example/kat/rutracker/screen.png") is False
     assert PolishTorrent._contains_other_tracker_mention("//rutracker.net./release") is True
+    assert PolishTorrent._contains_other_tracker_mention("https://rutracker.net?mirror=1") is True
     assert PolishTorrent._contains_other_tracker_mention("https://limetorrents.cc/release") is True
     assert PolishTorrent._contains_other_tracker_mention("https://[") is False
     assert PolishTorrent._contains_other_tracker_mention("mirrored from YIFY") is True

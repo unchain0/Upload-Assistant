@@ -41,6 +41,11 @@ def _tv_meta(**kwargs: Any) -> Meta:
     return Meta(**base)
 
 
+def test_zenith_rejects_malformed_filelist_and_screenshot_count():
+    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(filelist=1))) is False
+    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(screens=None))) is False
+
+
 def _book_meta(**kwargs: Any) -> Meta:
     base: dict[str, Any] = {
         "category": "BOOK",

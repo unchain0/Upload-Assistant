@@ -300,11 +300,19 @@ class Zenith(UNIT3D):
 
     async def get_additional_checks(self, meta: Meta) -> bool:
         category = str(meta.category or "").upper()
-        filelist = [item for item in (meta.filelist or []) if self._is_path_like_file(item)]
+        raw_filelist = meta.filelist or []
+        if not isinstance(raw_filelist, (list, tuple, set)):
+            logger.info(f"{self.tracker}: [bold red]File list metadata is invalid.[/bold red]")
+            return False
+        filelist = [item for item in raw_filelist if self._is_path_like_file(item)]
 
         if category in {"MOVIE", "TV"}:
             video_paths = self._collect_video_paths(filelist)
-            if meta.screens < 3:
+            try:
+                screenshot_count = int(meta.screens)
+            except (TypeError, ValueError):
+                screenshot_count = 0
+            if screenshot_count < 3:
                 logger.info(f"{self.tracker}: [bold red]Video uploads require at least 3 screenshots on {self.tracker}.[/bold red]")
                 return False
 

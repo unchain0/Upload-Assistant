@@ -3,6 +3,7 @@ import re
 from typing import Any
 from pathlib import Path
 
+from src.console import logger
 from src.get_desc import DescriptionBuilder
 from src.meta import Meta
 from src.trackers.common import Common
@@ -216,16 +217,21 @@ class Samaritano(UNIT3D):
         if meta.category == "BOOK":
             return True
 
+        raw_filelist = meta.filelist or []
+        if not isinstance(raw_filelist, (list, tuple, set)):
+            logger.info(f"{self.tracker}: [bold red]File list metadata is invalid.[/bold red]")
+            return False
+
         if meta.category == "MOVIE":
-            filelist = [item for item in (meta.filelist or []) if str(item).strip() != ""]
+            filelist = [item for item in raw_filelist if str(item).strip() != ""]
             if self._video_file_count(filelist) > 1:
                 return False
             return await self.common.check_portuguese_video_requirements(meta, self.tracker)
 
         if meta.category == "TV":
-            filelist = [item for item in (meta.filelist or []) if str(item).strip() != ""]
-            seasons = self._extract_tv_seasons(filelist)
-            episode_count = self._count_tv_episodes(filelist)
+            filelist = [item for item in raw_filelist if str(item).strip() != ""]
+            seasons = self.common.extract_tv_seasons(filelist)
+            episode_count = self.common.count_tv_episodes(filelist)
 
             if seasons and len(seasons) > 1:
                 return False

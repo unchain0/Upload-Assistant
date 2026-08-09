@@ -190,7 +190,7 @@ class YUSCENE(UNIT3D):
 
         if urls := url_pattern.findall(lowered):
             for raw_url in urls:
-                authority_match = re.match(r"(?:https?:)?//([^/\s]+)", raw_url)
+                authority_match = re.match(r"(?:https?:)?//([^/?#\s]+)", raw_url)
                 if authority_match is None:
                     continue
                 host = authority_match.group(1).rsplit("@", 1)[-1].partition(":")[0].lower().rstrip(".")

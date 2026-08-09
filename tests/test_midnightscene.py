@@ -12,6 +12,13 @@ def _tracker() -> MidnightScene:
     return MidnightScene({"DEFAULT": {}, "TRACKERS": {"MIDNIGHTSCENE": {}}})
 
 
+@pytest.mark.parametrize("screens", [None, "invalid"])
+def test_midnightscene_rejects_malformed_screenshot_counts(screens):
+    meta = Meta(category="MOVIE", screens=screens, unattended=True, unattended_confirm=False)
+
+    assert asyncio.run(_tracker().get_additional_checks(meta)) is False
+
+
 def test_midnightscene_music_category_and_format_type_ids():
     tracker = _tracker()
     meta = Meta(category="MUSIC", format="FLAC")

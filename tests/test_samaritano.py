@@ -8,6 +8,12 @@ from src.trackers.UNIT3D.capybarabr import CapybaraBR
 from src.trackers.UNIT3D.samaritano import Samaritano
 
 
+def test_samaritano_rejects_malformed_filelist() -> None:
+    meta = Meta(category="MOVIE", filelist=1, unattended=True, unattended_confirm=False)
+
+    assert asyncio.run(Samaritano({"TRACKERS": {}}).get_additional_checks(meta)) is False  # noqa: S101
+
+
 @pytest.mark.parametrize(
     "tracker_class",
     [CapybaraBR, Samaritano],

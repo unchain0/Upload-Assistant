@@ -243,7 +243,12 @@ class MidnightScene(UNIT3D):
             return False
 
         # Minimum screenshot requirement for TV/Movie rule page requires samples in description
-        if meta.category in {"TV", "MOVIE"} and meta.screens < 3:
+        try:
+            screenshot_count = int(meta.screens)
+        except (TypeError, ValueError):
+            screenshot_count = 0
+
+        if meta.category in {"TV", "MOVIE"} and screenshot_count < 3:
             logger.info(f"{self.tracker}: [bold yellow]MidnightScene requires at least 3 sample images for TV and Movie uploads.[/bold yellow]")
             if not await self._confirm_or_skip("Less than 3 sample images were provided.", meta):
                 return False

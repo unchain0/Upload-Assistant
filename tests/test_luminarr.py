@@ -53,6 +53,10 @@ def _tv_meta(**kwargs: Any) -> Meta:
     return Meta(**base)
 
 
+def test_luminarr_rejects_malformed_filelist():
+    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(filelist=1))) is False
+
+
 def test_luminarr_requires_tmdb_identifier():
     assert asyncio.run(_tracker().get_additional_checks(_movie_meta(tmdb=0, tmdb_id=None, imdb_id=0))) is False
 

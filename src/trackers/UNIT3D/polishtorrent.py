@@ -132,7 +132,7 @@ class PolishTorrent(UNIT3D):
         lowered = value.lower()
         url_pattern = re.compile(r"(?:https?:)?//[^\s]+")
         for raw_url in url_pattern.findall(lowered):
-            authority_match = re.match(r"(?:https?:)?//([^/\s]+)", raw_url)
+            authority_match = re.match(r"(?:https?:)?//([^/?#\s]+)", raw_url)
             if authority_match is None:
                 continue
             host = authority_match.group(1).rsplit("@", 1)[-1].partition(":")[0].lower().rstrip(".")

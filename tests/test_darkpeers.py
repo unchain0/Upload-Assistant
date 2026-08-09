@@ -12,6 +12,12 @@ def _name(meta: Meta) -> str:
     return asyncio.run(DarkPeers(config).get_name(meta))["name"]
 
 
+def test_darkpeers_rejects_malformed_video_filelist():
+    tracker = DarkPeers({"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}})
+
+    assert tracker.validate_video_files(Meta(filelist=1)) is False
+
+
 def test_darkpeers_music_name_uses_required_folder_style():
     meta = Meta(
         category="MUSIC",

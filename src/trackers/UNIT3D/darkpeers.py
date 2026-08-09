@@ -265,7 +265,11 @@ class DarkPeers(UNIT3D):
         return False
 
     def validate_video_files(self, meta: Meta) -> bool:
-        archive = next((Path(str(item)).name for item in meta.filelist or [] if Path(str(item)).suffix.lower() in {".rar", ".zip", ".7z"}), "")
+        filelist = meta.filelist or []
+        if not isinstance(filelist, (list, tuple, set)):
+            logger.info(f"{self.tracker}: [bold red]File list metadata is invalid. Skipping upload.[/bold red]")
+            return False
+        archive = next((Path(str(item)).name for item in filelist if Path(str(item)).suffix.lower() in {".rar", ".zip", ".7z"}), "")
         if archive:
             logger.info(f"{self.tracker}: [bold red]does not permit archives in Movie/TV uploads: {archive}. Skipping upload.")
             return False

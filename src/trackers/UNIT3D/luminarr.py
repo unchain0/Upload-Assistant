@@ -126,7 +126,11 @@ class Luminarr(UNIT3D):
             logger.info(f"{self.tracker}: [bold red]Release markers indicate this is likely a bootleg/unauthorized source.[/bold red]")
             return False
 
-        filelist = [item for item in (meta.filelist or []) if self._is_path_like_file(item)]
+        raw_filelist = meta.filelist or []
+        if not isinstance(raw_filelist, (list, tuple, set)):
+            logger.info(f"{self.tracker}: [bold red]File list metadata is invalid.[/bold red]")
+            return False
+        filelist = [item for item in raw_filelist if self._is_path_like_file(item)]
         video_paths = self._collect_video_paths(filelist)
         if not meta.is_disc and video_paths:
             if len(video_paths) == 1 and self._is_nested_relative_path(video_paths[0]):
