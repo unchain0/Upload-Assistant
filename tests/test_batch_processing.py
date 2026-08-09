@@ -272,6 +272,19 @@ def test_failed_tracker_names_include_attempted_failure_after_upload_flag_is_cle
     assert upload._failed_tracker_names(statuses) == ["LUMINARR"]
 
 
+def test_failed_tracker_names_excludes_late_duplicate() -> None:
+    statuses = {
+        "ZENITH": {
+            "dupe": True,
+            "upload": False,
+            "status_message": "Duplicate detected during upload: this release name already exists on the tracker.",
+        },
+        "SAMARITANO": {"upload": True, "upload_success": False},
+    }
+
+    assert upload._failed_tracker_names(statuses) == ["SAMARITANO"]
+
+
 @pytest.mark.asyncio
 async def test_batch_failed_items_lists_skipped_terminal_outcomes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     queue = [str(tmp_path / "missing-year.pdf"), str(tmp_path / "duplicate.mp3")]

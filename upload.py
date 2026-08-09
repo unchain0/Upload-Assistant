@@ -1122,6 +1122,7 @@ def _failed_tracker_names(tracker_status: Mapping[str, Any]) -> list[str]:
         tracker
         for tracker, status in tracker_status.items()
         if isinstance(status, Mapping)
+        and status.get("dupe") is not True
         and (status.get("upload") is True or status.get("upload_success") is False)
         and status.get("upload_success") is not True
     ]
@@ -2860,7 +2861,20 @@ async def do_the_thing(base_dir: str) -> None:
                         tracker_statuses = [status for status in meta.tracker_status.values() if isinstance(status, Mapping)]
                         upload_succeeded = any(status.get("upload_success") is True for status in tracker_statuses)
                         failed_trackers = _failed_tracker_names(meta.tracker_status)
-                        if not upload_succeeded and not meta.debug:
+                        duplicate_trackers = [
+                            tracker
+                            for tracker, status in meta.tracker_status.items()
+                            if isinstance(status, Mapping) and status.get("dupe") is True
+                        ]
+                        if not upload_succeeded and duplicate_trackers and not failed_trackers and not meta.debug:
+                            skipped_files_count += 1
+                            duplicate_reason = f"Release already exists on trackers ({', '.join(duplicate_trackers)})"
+                            item_outcomes[item_index] = (current_item_path, "skipped", duplicate_reason)
+                            logger.info(
+                                f"[yellow]Processed {processed_files_count}/{total_files} files; "
+                                f"release already exists on {', '.join(duplicate_trackers)}.[/yellow]"
+                            )
+                        elif not upload_succeeded and not meta.debug:
                             skipped_files_count += 1
                             failure_reason = f"No tracker upload succeeded ({', '.join(failed_trackers) or 'no eligible trackers'})"
                             failed_items.append((current_item_path, failure_reason))

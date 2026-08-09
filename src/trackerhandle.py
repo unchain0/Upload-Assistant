@@ -245,7 +245,10 @@ async def process_trackers(
                     is_uploaded = False
 
                 status = meta.tracker_status.setdefault(tracker_class.tracker, {})
-                if is_uploaded and "data error" not in str(status.get("status_message", "")):
+                if status.get("dupe") is True:
+                    status.pop("upload_success", None)
+                    logger.info(f"[yellow]{tracker}: release already exists on the tracker. Skipping duplicate upload.[/yellow]")
+                elif is_uploaded and "data error" not in str(status.get("status_message", "")):
                     status["upload_success"] = True
                     if not getattr(tracker_class, "is_usenet", False):
                         await client.add_to_client(meta, tracker_class.tracker)
@@ -286,7 +289,10 @@ async def process_trackers(
                     is_uploaded = False
 
                 status = meta.tracker_status.setdefault(tracker_class.tracker, {})
-                if is_uploaded and "data error" not in str(status.get("status_message", "")):
+                if status.get("dupe") is True:
+                    status.pop("upload_success", None)
+                    logger.info(f"[yellow]{tracker}: release already exists on the tracker. Skipping duplicate upload.[/yellow]")
+                elif is_uploaded and "data error" not in str(status.get("status_message", "")):
                     status["upload_success"] = True
                     if not getattr(tracker_class, "is_usenet", False):
                         await client.add_to_client(meta, tracker_class.tracker)

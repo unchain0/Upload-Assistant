@@ -545,8 +545,8 @@ class UNIT3D:
                             status["dupe"] = True
                             status["upload"] = False
                             status["status_message"] = "Duplicate detected during upload: this release name already exists on the tracker."
-                        else:
-                            meta.tracker_status[self.tracker]["status_message"] = f"data error: HTTP {e.response.status_code} - {e.response.text}"
+                            return False
+                        meta.tracker_status[self.tracker]["status_message"] = f"data error: HTTP {e.response.status_code} - {e.response.text}"
                     else:
                         # Retry other HTTP errors
                         if attempt < max_retries - 1:
