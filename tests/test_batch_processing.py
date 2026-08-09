@@ -4,6 +4,7 @@ from __future__ import annotations
 import signal
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -179,6 +180,22 @@ async def test_site_check_batch_reports_completed_checks_instead_of_failures(tmp
     assert process_meta_mock.call_count == 2
     assert any("skipped/failed 0, site checks completed 2" in message for message in info_messages)
     assert not any("Failed items:" in message for message in info_messages)
+
+
+@pytest.mark.parametrize("mode", [{"debug": True}, {"site_check": True}])
+@pytest.mark.asyncio
+async def test_cross_seed_processing_has_no_side_effects_in_read_only_modes(monkeypatch: pytest.MonkeyPatch, mode: dict[str, bool]) -> None:
+    download_torrent = AsyncMock()
+    add_to_client = AsyncMock()
+    monkeypatch.setattr(upload, "Common", lambda _config: SimpleNamespace(download_tracker_torrent=download_torrent))
+    monkeypatch.setattr(upload.client, "add_to_client", add_to_client)
+    meta = Meta(**mode)
+    meta["DARKPEERS_cross_seed"] = "https://example.test/download/1"
+
+    await upload.process_cross_seeds(meta)
+
+    download_torrent.assert_not_awaited()
+    add_to_client.assert_not_awaited()
 
 
 @pytest.mark.asyncio

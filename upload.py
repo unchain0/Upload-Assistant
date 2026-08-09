@@ -3037,6 +3037,10 @@ async def do_the_thing(base_dir: str) -> None:
 
 
 async def process_cross_seeds(meta: Meta) -> None:
+    if meta.debug or meta.site_check:
+        logger.debug("[cyan]Skipping cross-seed processing in debug/site-check mode[/cyan]")
+        return
+
     all_trackers: set[str] = set(api_trackers) | set(http_trackers) | set(other_api_trackers)
 
     # Get list of trackers to exclude (already in client)
@@ -3052,13 +3056,13 @@ async def process_cross_seeds(meta: Meta) -> None:
 
     # Validate tracker configs and build list of valid unchecked trackers
     valid_unchecked_trackers: list[str] = []
-    for tracker in all_trackers:
+    trackers_to_check = sorted(all_trackers) if config["DEFAULT"].get("cross_seed_check_everything", False) else []
+    for tracker in trackers_to_check:
         if tracker in dupe_checked_trackers or meta.get(f"{tracker}_cross_seed", None) is not None or tracker in remove_list:
             continue
 
         tracker_config = config.get("TRACKERS", {}).get(tracker, {})
         if not tracker_config:
-            logger.debug(f"[yellow]Tracker {tracker} not found in config, skipping[/yellow]")
             continue
 
         api_key = tracker_config.get("api_key", "")
@@ -3070,7 +3074,6 @@ async def process_cross_seeds(meta: Meta) -> None:
 
         # Skip if both api_key and announce_url are empty
         if not api_key and not announce_url:
-            logger.debug(f"[yellow]Tracker {tracker} has no api_key or announce_url set, skipping[/yellow]")
             continue
 
         # Skip trackers with placeholder announce URLs
@@ -3083,7 +3086,7 @@ async def process_cross_seeds(meta: Meta) -> None:
         valid_unchecked_trackers.append(tracker)
 
     # Search for cross-seeds on unchecked trackers
-    if valid_unchecked_trackers and config["DEFAULT"].get("cross_seed_check_everything", False):
+    if valid_unchecked_trackers:
         logger.info(f"[cyan]Checking for cross-seeds on unchecked trackers: {valid_unchecked_trackers}[/cyan]")
 
         try:
@@ -3153,7 +3156,7 @@ async def process_cross_seeds(meta: Meta) -> None:
         meta.unattended = original_unattended
 
     # Filter to only trackers with cross-seed data
-    valid_trackers = [tracker for tracker in all_trackers if meta.get(f"{tracker}_cross_seed", None) is not None]
+    valid_trackers = sorted(tracker for tracker in all_trackers if meta.get(f"{tracker}_cross_seed", None) is not None)
 
     if not valid_trackers:
         logger.debug("[yellow]No trackers found with cross-seed data[/yellow]")
