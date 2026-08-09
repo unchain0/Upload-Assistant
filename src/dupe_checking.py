@@ -336,6 +336,12 @@ class DupeChecker:
                         remember_match("season_pack_contains_episode")
                         return False
 
+                if tracker_name == "LUMINARR" and season_episode_match and not is_season and (
+                    not target_resolution or target_resolution.casefold() in normalized.casefold()
+                ):
+                    remember_match("luminarr_same_episode_resolution")
+                    return False
+
             if meta.category == "GAME":
                 target_title = meta.title or meta.name
                 if not target_title.strip():

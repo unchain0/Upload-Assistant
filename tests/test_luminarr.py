@@ -3,6 +3,9 @@
 import asyncio
 from typing import Any
 
+import pytest
+
+from src.dupe_checking import DupeChecker
 from src.meta import Meta
 from src.trackers.UNIT3D.luminarr import Luminarr
 
@@ -257,6 +260,52 @@ def test_luminarr_accepts_bd_release_when_bdinfo_is_present():
 
 def test_luminarr_disc_types_do_not_require_mediainfo_encoding_settings():
     assert asyncio.run(_tracker().get_additional_checks(_movie_meta(is_disc="DVD", filelist=["VIDEO_TS"], valid_mi_settings=False))) is True
+
+
+@pytest.mark.asyncio
+async def test_luminarr_keeps_existing_same_episode_and_resolution_as_dupe():
+    meta = _tv_meta(
+        name="My Adventures with Superman S03E09 1080p AMZN WEB-DL Portuguese Multi DD+ 5.1 H.264-C76",
+        uuid="My.Adventures.with.Superman.S03E09.1080p.AMZN.WEB-DL.DDP5.1.H.264.DUAL-C76",
+        season="S03",
+        episode="E09",
+        source="AMZN",
+        type="WEBDL",
+        resolution="1080p",
+    )
+    tiered: dict[str, Any] = {
+        "name": "My Adventures with Superman S03E09 1080p AMZN WEB-DL DDP5.1 H.264-NTb",
+        "size": 1,
+        "files": ["My.Adventures.with.Superman.S03E09.1080p.AMZN.WEB-DL.DDP5.1.H.264-NTb.mkv"],
+        "id": 123,
+        "res": "1080p",
+        "type": "WEB-DL",
+    }
+
+    result = await DupeChecker({"DEFAULT": {}}).filter_dupes([tiered], meta, "LUMINARR")
+
+    assert len(result) == 1
+    assert result[0].get("name") == tiered["name"]
+    assert meta.get("LUMINARR_matched_reason") == "luminarr_same_episode_resolution"
+
+
+@pytest.mark.asyncio
+async def test_luminarr_does_not_block_different_episode_or_resolution():
+    meta = _tv_meta(
+        name="My Adventures with Superman S03E09 1080p AMZN WEB-DL Portuguese Multi DD+ 5.1 H.264-C76",
+        uuid="My.Adventures.with.Superman.S03E09.1080p.AMZN.WEB-DL.DDP5.1.H.264.DUAL-C76",
+        season="S03",
+        episode="E09",
+        source="AMZN",
+        type="WEBDL",
+        resolution="1080p",
+    )
+    candidates: list[dict[str, Any]] = [
+        {"name": "My Adventures with Superman S03E08 1080p AMZN WEB-DL DDP5.1 H.264-NTb", "size": 1},
+        {"name": "My Adventures with Superman S03E09 2160p AMZN WEB-DL DDP5.1 H.265-NTb", "size": 1},
+    ]
+
+    assert await DupeChecker({"DEFAULT": {}}).filter_dupes(candidates, meta, "LUMINARR") == []
 
 
 def test_luminarr_rejects_tv_uploads_with_multiple_seasons():
