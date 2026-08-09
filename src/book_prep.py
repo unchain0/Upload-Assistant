@@ -232,6 +232,9 @@ def book_identity_from_path(path: str) -> tuple[str, str]:
         return "", ""
     author, title = parts
     title = re.sub(r"_\s+", ": ", title).strip()
+    title_parts = re.split(r"\s+-\s+", title)
+    if len(title_parts) > 1 and validate_isbn_checksum(title_parts[-1]):
+        title = " - ".join(title_parts[:-1]).strip()
     return author.strip(), title
 
 
@@ -325,6 +328,49 @@ async def gather_book_prep(
         "keywords": bool(meta.keywords),
         "overview": bool(meta.overview),
     }
+    source_metadata_fields: set[str] = set()
+
+    def apply_source_metadata(extracted: dict[str, Any]) -> None:
+        override_keys = {
+            "title": "title",
+            "author": "author",
+            "narrator": "narrator",
+            "publisher": "publisher",
+            "isbn": "isbn",
+            "asin": "asin",
+            "year": "year",
+            "keywords": "keywords",
+            "overview": "overview",
+        }
+        for key, val in extracted.items():
+            if not val:
+                continue
+            if key == "book_language_raw":
+                if cli_overrides["book_language"]:
+                    continue
+                full, iso3 = resolve_book_language(str(val))
+                if is_valid_book_language(full, iso3):
+                    meta.book_language = full
+                    meta.book_language_iso = iso3
+                    source_metadata_fields.update({"book_language", "book_language_iso"})
+                continue
+            override_key = override_keys.get(key)
+            if override_key and cli_overrides[override_key]:
+                continue
+            if key == "isbn":
+                val = validate_isbn_checksum(str(val))
+                if not val:
+                    continue
+            if key == "year":
+                meta[key] = int(val)
+                meta.search_year = int(val)
+                source_metadata_fields.add("search_year")
+            else:
+                meta[key] = val
+            source_metadata_fields.add(key)
+
+    def source_has(key: str) -> bool:
+        return key in source_metadata_fields or (key == "search_year" and "year" in source_metadata_fields) or (key == "book_language_iso" and "book_language" in source_metadata_fields)
 
     # Extract EPUB metadata directly if the file is an EPUB
     if videopath.lower().endswith(".epub") and Path(videopath).is_file():
@@ -332,40 +378,14 @@ async def gather_book_prep(
         epub_meta = _extract_epub_metadata(videopath)
         if epub_meta:
             logger.debug(f"[cyan]EPUB metadata extracted: {epub_meta}[/cyan]")
-            for key, val in epub_meta.items():
-                if key == "book_language_raw":
-                    full, iso3 = resolve_book_language(val)
-                    if is_valid_book_language(full, iso3) and not meta.book_language:
-                        meta.book_language = full
-                        meta.book_language_iso = iso3
-                else:
-                    if not meta.get(key) and val:
-                        if key == "year":
-                            meta[key] = int(val)
-                        else:
-                            meta[key] = val
-                        if key == "year":
-                            meta.search_year = int(val)
+            apply_source_metadata(epub_meta)
 
     # Extract CBR/CBZ metadata directly if the file is a CBR/CBZ
     if videopath.lower().endswith((".cbr", ".cbz")) and Path(videopath).is_file():
         cbr_cbz_meta = _extract_cbr_cbz_metadata(videopath)
         if cbr_cbz_meta:
             logger.debug(f"[cyan]CBR/CBZ metadata extracted: {cbr_cbz_meta}[/cyan]")
-            for key, val in cbr_cbz_meta.items():
-                if key == "book_language_raw":
-                    full, iso3 = resolve_book_language(val)
-                    if is_valid_book_language(full, iso3) and not meta.book_language:
-                        meta.book_language = full
-                        meta.book_language_iso = iso3
-                else:
-                    if not meta.get(key) and val:
-                        if key == "year":
-                            meta[key] = int(val)
-                        else:
-                            meta[key] = val
-                        if key == "year":
-                            meta.search_year = int(val)
+            apply_source_metadata(cbr_cbz_meta)
 
     # AZW and AZW3 are Kindle variants of the MOBI family.  The extractor may
     # not support every DRM/KFX variant, but it safely returns no metadata then.
@@ -373,20 +393,7 @@ async def gather_book_prep(
         mobi_meta = _extract_mobi_metadata(videopath)
         if mobi_meta:
             logger.debug(f"[cyan]MOBI metadata extracted: {mobi_meta}[/cyan]")
-            for key, val in mobi_meta.items():
-                if key == "book_language_raw":
-                    full, iso3 = resolve_book_language(val)
-                    if is_valid_book_language(full, iso3) and not meta.book_language:
-                        meta.book_language = full
-                        meta.book_language_iso = iso3
-                else:
-                    if not meta.get(key) and val:
-                        if key == "year":
-                            meta[key] = int(val)
-                        else:
-                            meta[key] = val
-                        if key == "year":
-                            meta.search_year = int(val)
+            apply_source_metadata(mobi_meta)
 
     # Extract ISBN from PDF directly if the file is a PDF
     if videopath.lower().endswith(".pdf") and Path(videopath).is_file():
@@ -648,6 +655,8 @@ async def gather_book_prep(
                             or (key == "overview" and cli_overrides["overview"])
                         ):
                             is_override = True
+                        if source_has(key):
+                            is_override = True
 
                         if not is_override:
                             if key == "year":
@@ -696,6 +705,8 @@ async def gather_book_prep(
                             or (key == "overview" and cli_overrides["overview"])
                         ):
                             is_override = True
+                        if source_has(key):
+                            is_override = True
 
                         # Do not overwrite fields already populated by MAM, except for artwork (prefer Google Books cover)
                         if (
@@ -743,6 +754,8 @@ async def gather_book_prep(
                     or (key == "keywords" and cli_overrides["keywords"])
                     or (key == "overview" and cli_overrides["overview"])
                 ):
+                    is_override = True
+                if source_has(key):
                     is_override = True
 
                 # Do not overwrite fields already populated by MAM
