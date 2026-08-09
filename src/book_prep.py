@@ -234,6 +234,7 @@ async def gather_book_prep(
     cli_overrides = {
         "title": bool(meta.book_title),
         "author": bool(meta.book_author),
+        "narrator": bool(meta.narrator),
         "publisher": bool(meta.book_publisher),
         "isbn": bool(meta.book_isbn),
         "asin": bool(meta.book_asin),
@@ -546,6 +547,7 @@ async def gather_book_prep(
                         if (
                             (key == "title" and cli_overrides["title"])
                             or (key == "author" and cli_overrides["author"])
+                            or (key == "narrator" and cli_overrides["narrator"])
                             or (key == "publisher" and cli_overrides["publisher"])
                             or (key == "isbn" and cli_overrides["isbn"])
                             or (key == "asin" and cli_overrides["asin"])

@@ -322,6 +322,7 @@ class Args:
         parser.add_argument("-year", "--year", dest="manual_year", nargs=1, required=False, help="Override the year found", type=int, default=0)
         parser.add_argument("-author", "--author", nargs="*", required=False, help="Book/Audiobook author name (overrides auto-detected value)", type=str, dest="book_author")
         parser.add_argument("-btitle", "--book-title", nargs="*", required=False, help="Book/Audiobook title (overrides auto-detected value)", type=str, dest="book_title")
+        parser.add_argument("-narrator", "--narrator", nargs="*", required=False, help="Audiobook narrator name (overrides auto-detected value)", type=str, dest="narrator")
         parser.add_argument("--book-cover", nargs=1, required=False, help="BOOK: public artwork URL or local cover image path", dest="book_cover")
         parser.add_argument("--comic", "-comic", action="store_true", required=False, help="Identify the book upload as a Comic", dest="comic", default=False)
         parser.add_argument("--manga", "-manga", action="store_true", required=False, help="Identify the book upload as a Manga", dest="manga", default=False)
