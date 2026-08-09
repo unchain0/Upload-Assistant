@@ -35,7 +35,7 @@ from torf import Torrent as _Torrent  # pyright: ignore[reportMissingImports,rep
 
 from bin.get_mkbrr import MkbrrBinaryManager
 from src.add_comparison import ComparisonManager
-from src.args import Args, read_paths_from_stdin
+from src.args import Args, partition_existing_paths, read_paths_from_stdin
 from src.artwork import is_public_http_url, is_valid_cover_image
 from src.audio_spectrogram import process_audio_spectrograms
 from src.book_prep import detect_newspaper, is_valid_book_language, missing_book_fields, resolve_book_language
@@ -2265,13 +2265,14 @@ async def do_the_thing(base_dir: str) -> None:
         raise SystemExit(2) from exc
 
     if pasted_paths:
-        missing_paths = [path for path in pasted_paths if not Path(path).expanduser().exists()]
+        resolved_pasted_paths, missing_paths = partition_existing_paths(pasted_paths)
         if missing_paths:
-            logger.error("[red]Error: The following pasted paths do not exist:[/red]")
+            logger.warning("[yellow]Skipping pasted paths that do not exist:[/yellow]")
             for missing_path in missing_paths:
-                logger.error(f"[red]  - {missing_path}[/red]")
+                logger.warning(f"[yellow]  - {missing_path}[/yellow]")
+        if not resolved_pasted_paths:
+            logger.error("[red]Error: None of the pasted paths exist.[/red]")
             raise SystemExit(2)
-        resolved_pasted_paths = [str(Path(path).expanduser().resolve()) for path in pasted_paths]
         sys.argv[1:] = [*resolved_pasted_paths, *remaining_args]
 
     paths: list[str] = []
@@ -2302,6 +2303,7 @@ async def do_the_thing(base_dir: str) -> None:
             meta.path = None  # Clear the dummy path after parsing
         else:
             meta, _help, _before_args = cast(tuple[Meta, Any, Any], parser.parse(sys.argv[1:], meta))
+        meta.paths_from_stdin = bool(pasted_paths)
 
         # Dynamically set logging level to DEBUG if debug argument is passed or enabled in config
         if meta.debug or bool(config["DEFAULT"].get("debug", False)):
@@ -3281,6 +3283,7 @@ async def main() -> None:
 
 if __name__ == "__main__":
     check_python_version()
+    exit_code = 0
 
     # Register signal handlers only when run as main script (not when imported)
     signal.signal(signal.SIGINT, _handle_shutdown_signal)
@@ -3289,12 +3292,14 @@ if __name__ == "__main__":
 
     try:
         asyncio.run(main())
-    except KeyboardInterrupt, SystemExit:
+    except (KeyboardInterrupt, SystemExit) as exc:
         if not _shutdown_requested:
             logger.info("\n[yellow]Shutting down...[/yellow]")
+        exit_code = (exc.code if isinstance(exc.code, int) else 1) if isinstance(exc, SystemExit) else 130
     except BaseException as e:
         if not _shutdown_requested:
             logger.info(f"[bold red]Critical error: {e}[/bold red]")
+        exit_code = 1
     finally:
         # Only run async cleanup for non-webui mode (webui doesn't use asyncio)
         if not _is_webui_mode:
@@ -3314,4 +3319,4 @@ if __name__ == "__main__":
         if _shutdown_requested or _is_webui_mode:
             logger.info("[green]Shutdown complete[/green]")
 
-        sys.exit(0)
+        sys.exit(exit_code)

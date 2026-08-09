@@ -419,7 +419,7 @@ class QueueManager:
 
         log_file = Path(base_dir) / "tmp" / f"{(meta.queue if meta.queue is not None else 'default')}_queue.log"
 
-        if path.endswith(".txt") and not meta.unit3d:
+        if path.endswith(".txt") and not meta.unit3d and not meta.paths_from_stdin:
             logger.info(f"[bold yellow]Detected a text file for queue input: {path}[/bold yellow]")
             if Path(path).exists():
                 queue_name = Path(path).stem

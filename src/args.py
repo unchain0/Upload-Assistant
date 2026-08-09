@@ -36,6 +36,18 @@ MUSIC_RELEASE_TYPE_CHOICES = (
 PATHS_FROM_STDIN_OPTION = "--paths-from-stdin"
 
 
+def partition_existing_paths(paths: Sequence[str]) -> tuple[list[str], list[str]]:
+    existing: list[str] = []
+    missing: list[str] = []
+    for raw_path in paths:
+        path = Path(raw_path).expanduser()
+        if path.exists():
+            existing.append(str(path.resolve()))
+        else:
+            missing.append(raw_path)
+    return existing, missing
+
+
 def read_paths_from_stdin(argv: Sequence[str], stream: TextIO) -> tuple[list[str], list[str]]:
     args = list(argv)
     option_count = args.count(PATHS_FROM_STDIN_OPTION)

@@ -316,6 +316,7 @@ class Meta:
     page_count: int | None = None
     path_to_menu_screenshots: str = ""
     path: str | None = None
+    paths_from_stdin: bool = False
     personalrelease: bool = False
     piece_size_constraints_enabled: str | bool = False
     platform: str = ""

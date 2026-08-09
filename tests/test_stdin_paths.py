@@ -1,9 +1,10 @@
+# ruff: noqa: S101
 import io
 from pathlib import Path
 
 import pytest
 
-from src.args import read_paths_from_stdin
+from src.args import partition_existing_paths, read_paths_from_stdin
 from src.meta import Meta
 from src.queuemanage import QueueManager
 from web_ui.server import _validate_upload_assistant_args
@@ -37,6 +38,27 @@ def test_read_paths_from_stdin_rejects_empty_input() -> None:
         read_paths_from_stdin(["--paths-from-stdin"], io.StringIO("\n"))
 
 
+def test_partition_existing_paths_keeps_valid_entries_from_mixed_batch(tmp_path: Path) -> None:
+    valid = tmp_path / "Valid Book.epub"
+    valid.touch()
+    missing = tmp_path / "Missing Book.epub"
+
+    existing, absent = partition_existing_paths([str(missing), str(valid)])
+
+    assert existing == [str(valid.resolve())]
+    assert absent == [str(missing)]
+
+
+def test_partition_existing_paths_reports_fully_invalid_batch(tmp_path: Path) -> None:
+    first = tmp_path / "First.epub"
+    second = tmp_path / "Second.epub"
+
+    existing, absent = partition_existing_paths([str(first), str(second)])
+
+    assert existing == []
+    assert absent == [str(first), str(second)]
+
+
 def test_webui_rejects_paths_from_stdin_instead_of_reading_process_stdin() -> None:
     with pytest.raises(ValueError, match="only available in CLI mode"):
         _validate_upload_assistant_args(["--paths-from-stdin"])
@@ -53,6 +75,18 @@ async def test_queue_uses_multiple_explicit_existing_paths(tmp_path: Path) -> No
     queue, _ = await QueueManager.handle_queue(" ".join(paths), Meta(), paths, str(tmp_path))
 
     assert queue == paths
+
+
+@pytest.mark.asyncio
+async def test_stdin_txt_path_is_content_not_queue_manifest(tmp_path: Path) -> None:
+    document = tmp_path / "Pocket PC Serials.txt"
+    document.write_text("not/a/queued/path", encoding="utf-8")
+    meta = Meta(paths_from_stdin=True)
+
+    queue, _ = await QueueManager.handle_queue(str(document), meta, [str(document)], str(tmp_path))
+
+    assert queue == [str(document)]
+    assert not meta.args_line_queue
 
 
 def test_read_paths_from_stdin_deduplicates_repeated_paths() -> None:
