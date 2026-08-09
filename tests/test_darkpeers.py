@@ -157,6 +157,49 @@ def test_darkpeers_requires_audiobook_year_and_runtime_before_verification():
     assert _additional_checks(Meta(**base, year=1991)) is False
 
 
+def test_darkpeers_rejects_audiobook_without_valid_isbn_even_with_asin():
+    base = {
+        "category": "BOOK",
+        "audiobook": True,
+        "author": "Kim Harrison",
+        "narrator": "Gigi Bermingham",
+        "publisher": "Harper Audio",
+        "year": 2008,
+        "type": "MP3",
+        "audiobook_duration": 59365,
+        "asin": "B0012JQ8JO",
+    }
+    adapter = DarkPeers({"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}})
+    adapter.common.prompt_user_for_confirmation = AsyncMock(return_value=True)
+
+    assert asyncio.run(adapter.get_additional_checks(Meta(**base))) is False
+    assert asyncio.run(adapter.get_additional_checks(Meta(**base, isbn="9780061452988"))) is False
+    adapter.common.prompt_user_for_confirmation.assert_not_awaited()
+
+
+def test_darkpeers_validated_audiobook_isbn_is_rendered_in_description():
+    meta = Meta(
+        category="BOOK",
+        audiobook=True,
+        author="Kim Harrison",
+        narrator="Gigi Bermingham",
+        publisher="Harper Audio",
+        year=2008,
+        type="MP3",
+        audiobook_duration=59365,
+        audiobook_duration_formatted="16h 29m 25s",
+        audiobook_bitrate=64,
+        isbn="978-0-06-145298-7",
+    )
+    adapter = DarkPeers({"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}})
+    adapter.common.prompt_user_for_confirmation = AsyncMock(return_value=True)
+
+    assert asyncio.run(adapter.get_additional_checks(meta)) is True
+    description = asyncio.run(adapter.get_description(meta))["description"]
+    assert meta.isbn == "9780061452987"
+    assert "[tr][td][b]ISBN[/b][/td][td]9780061452987[/td][/tr]" in description
+
+
 def test_darkpeers_book_name_never_uses_publisher_as_author():
     meta = Meta(category="BOOK", publisher="Publisher Name", title="Book Title", year=2026, type="EPUB", isbn="978-0-123456-47-2")
 

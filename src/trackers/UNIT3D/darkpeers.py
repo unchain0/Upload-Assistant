@@ -6,6 +6,7 @@ from typing import Any, ClassVar, cast
 
 import httpx
 
+from src.book_extractors import validate_isbn_checksum
 from src.console import logger
 from src.get_desc import DescriptionBuilder
 from src.languages import languages_manager
@@ -342,6 +343,12 @@ class DarkPeers(UNIT3D):
         if format_name not in allowed:
             logger.info(f"{self.tracker}: [bold red]does not support {format_name or 'an unspecified'} book format. Skipping upload.")
             return False
+        if meta.audiobook:
+            validated_isbn = validate_isbn_checksum(str(meta.isbn or meta.book_isbn or ""))
+            if not validated_isbn:
+                logger.info(f"{self.tracker}: [bold red]Audiobooks require a valid ISBN-10 or ISBN-13. Re-run with --isbn. Skipping upload.[/bold red]")
+                return False
+            meta.isbn = validated_isbn
         identifier = self._book_identifier(meta)
         is_collection = len(meta.filelist or []) > 1 or "collection" in str(meta.name or "").casefold()
         if not identifier and not is_collection:
@@ -358,7 +365,7 @@ class DarkPeers(UNIT3D):
         if meta.audiobook:
             details = (
                 f"Narrator: {meta.narrator}; Runtime: {meta.audiobook_duration_formatted or meta.audiobook_duration}; "
-                f"Publisher: {publisher}; Year: {meta.year}; ISBN/ASIN: {identifier}"
+                f"Publisher: {publisher}; Year: {meta.year}; ISBN: {identifier}"
             )
             if meta.unattended:
                 logger.info(
