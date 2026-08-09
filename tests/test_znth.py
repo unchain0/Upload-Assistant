@@ -181,7 +181,7 @@ def test_zenith_accepts_numbered_scene_music_filenames():
     assert Zenith._validate_music_track_naming(files) == ""
     assert Zenith._validate_music_track_naming(["01. After Hours & Josh Heuston - Into You.flac"]) == ""
     assert Zenith._validate_music_track_naming(["Ye-The Life of Pablo-01-Ultralight Beam.flac"]) == ""
-    assert Zenith._validate_music_track_naming(["simon_and_garfunkel-the_sound_of_silence.flac"]) != ""
+    assert Zenith._validate_music_track_naming(["simon_and_garfunkel-the_sound_of_silence.flac"]) == ""
 
 
 def test_zenith_validates_torrent_relative_music_path_length(tmp_path: Path):
@@ -338,12 +338,19 @@ def test_zenith_allows_tv_pack_for_ended_series():
 
 
 def test_zenith_rejects_music_with_invalid_track_structure():
+    meta = _compliant_music_meta(filelist=["01.My-Track.flac", "02 - Other Track.flac"], personalrelease=True)
+    meta.music_release["tracks"].append(
+        {
+            "relative_path": "02 - Other Track.flac",
+            "artist": "Artist",
+            "album": "Album",
+            "title": "Other Track",
+            "track_number": 2,
+        }
+    )
+
     assert (
-        asyncio.run(
-            _tracker().get_additional_checks(
-                Meta(category="MUSIC", filelist=["01.My-Track.flac"], unattended=True, unattended_confirm=False)
-            )
-        )
+        asyncio.run(_tracker().get_additional_checks(meta))
         is False
     )
 
@@ -352,11 +359,77 @@ def test_zenith_allows_music_with_valid_track_structure():
     assert (
         asyncio.run(
             _tracker().get_additional_checks(
-                Meta(category="MUSIC", filelist=["Disc1/01 - My Track.flac"], unattended=True, unattended_confirm=False)
+                _compliant_music_meta(filelist=["Disc1/01 - My Track.flac"], personalrelease=True)
             )
         )
         is True
     )
+
+
+def _compliant_music_meta(**kwargs: Any) -> Meta:
+    values: dict[str, Any] = {
+        "category": "MUSIC",
+        "path": "/library/Artist - Album (2024) - [WEB FLAC]",
+        "filelist": ["01 - My Track.flac"],
+        "unattended": True,
+        "unattended_confirm": False,
+        "music_release": {
+            "fields": {
+                "artist": {"value": "Artist"},
+                "album": {"value": "Album"},
+            },
+            "tracks": [
+                {
+                    "relative_path": "01 - My Track.flac",
+                    "artist": "Artist",
+                    "album": "Album",
+                    "title": "My Track",
+                    "track_number": 1,
+                }
+            ],
+        },
+    }
+    values.update(kwargs)
+    return Meta(**values)
+
+
+def test_zenith_preserves_non_original_music_filenames():
+    meta = _compliant_music_meta(filelist=["Artist-Album-01-My.Track.flac"])
+
+    assert asyncio.run(_tracker().get_additional_checks(meta)) is True
+
+
+def test_zenith_rejects_music_directory_without_artist_and_album():
+    meta = _compliant_music_meta(path="/library/Unsorted Download")
+
+    assert asyncio.run(_tracker().get_additional_checks(meta)) is False
+
+
+def test_zenith_accepts_verified_artist_alias_in_music_directory():
+    meta = _compliant_music_meta(path="/library/Ye - Album (2024) - [WEB FLAC]")
+    meta.music_release["conflicts"] = {"artist": ["Artist", "Ye"]}
+
+    assert asyncio.run(_tracker().get_additional_checks(meta)) is True
+
+
+def test_zenith_rejects_music_track_missing_required_tag():
+    meta = _compliant_music_meta()
+    meta.music_release["tracks"][0]["track_number"] = None
+
+    assert asyncio.run(_tracker().get_additional_checks(meta)) is False
+
+
+def test_zenith_counts_release_folder_in_music_path_limit():
+    folder = f"Artist - Album - {'x' * 165}"
+    meta = _compliant_music_meta(path=f"/library/{folder}")
+
+    assert asyncio.run(_tracker().get_additional_checks(meta)) is False
+
+
+def test_zenith_allows_unnumbered_filename_for_original_single_track_release():
+    meta = _compliant_music_meta(filelist=["Alive.flac"], personalrelease=True)
+
+    assert asyncio.run(_tracker().get_additional_checks(meta)) is True
 
 
 def test_zenith_rejects_book_with_invalid_language_code():

@@ -284,8 +284,68 @@ class Zenith(UNIT3D):
     def _has_valid_music_path_format(file_path: Path) -> bool:
         return len(str(file_path)) <= 180 and not any(part.startswith(" ") for part in str(file_path).replace("\\", "/").split("/"))
 
+    @staticmethod
+    def _normalized_music_component(value: Any) -> str:
+        normalized = unicodedata.normalize("NFKC", str(value or "")).casefold()
+        return " ".join("".join(char if char.isalnum() else " " for char in normalized).split())
+
     @classmethod
-    def _validate_music_track_naming(cls, filelist: list[Any], release_root: str | Path | None = None) -> str:
+    def _music_release_error(cls, meta: Meta, filelist: list[Any]) -> str:
+        release = cast(dict[str, Any], meta.music_release) if isinstance(meta.music_release, dict) else {}
+        artist = cls._music_field(release, "artist", meta.artist)
+        album = cls._music_field(release, "album", meta.title)
+        root = Path(str(meta.path or ""))
+        root_name = root.name
+        normalized_root = cls._normalized_music_component(root_name)
+
+        if not root_name or root.suffix.lower() in {".flac", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".alac"}:
+            return "music uploads must be inside a directory"
+        artist_values = [artist]
+        artists = cls._music_field(release, "artists", [])
+        if isinstance(artists, list):
+            artist_values.extend(artists)
+        conflicts = release.get("conflicts")
+        if isinstance(conflicts, dict) and isinstance(conflicts.get("artist"), list):
+            artist_values.extend(cast(list[Any], conflicts["artist"]))
+        normalized_artists = {cls._normalized_music_component(value) for value in artist_values if cls._normalized_music_component(value)}
+        artist_matches = any(value in normalized_root for value in normalized_artists)
+        artist_matches = artist_matches or ("various artists" in normalized_artists and "va" in normalized_root.split())
+        if not normalized_artists or not artist_matches:
+            return "music directory must contain the artist name"
+
+        normalized_album = cls._normalized_music_component(album)
+        if not normalized_album or normalized_album not in normalized_root:
+            return "music directory must contain the album name"
+
+        tracks_raw = release.get("tracks")
+        tracks = cast(list[Any], tracks_raw) if isinstance(tracks_raw, list) else []
+        if not tracks:
+            return "music metadata does not contain any audio tracks"
+        audio_suffixes = {".flac", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".alac", ".pcm"}
+        audio_file_count = sum(Path(str(item)).suffix.lower() in audio_suffixes for item in filelist)
+        if len(tracks) != audio_file_count:
+            return f"music metadata contains {len(tracks)} tracks for {audio_file_count} audio files"
+        for index, raw_track in enumerate(tracks, start=1):
+            if not isinstance(raw_track, dict):
+                return f"music track {index} metadata is invalid"
+            track = cast(dict[str, Any], raw_track)
+            missing = [
+                label
+                for label, value in (
+                    ("Artist", track.get("artist")),
+                    ("Album", track.get("album")),
+                    ("Title", track.get("title")),
+                    ("Track Number", track.get("track_number")),
+                )
+                if value in (None, "", 0)
+            ]
+            if missing:
+                filename = Path(str(track.get("relative_path") or track.get("path") or f"track {index}")).name
+                return f"{filename} is missing required tags: {', '.join(missing)}"
+        return ""
+
+    @classmethod
+    def _validate_music_track_naming(cls, filelist: list[Any], release_root: str | Path | None = None, *, enforce_filenames: bool = True) -> str:
         audio_suffixes = {".flac", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".alac", ".pcm", ".m4b"}
         audio_paths = [Path(str(item)) for item in filelist if Path(str(item)).suffix.lower() in audio_suffixes]
         root = Path(release_root) if release_root else None
@@ -298,12 +358,19 @@ class Zenith(UNIT3D):
                     path = source_path.relative_to(root)
                 except ValueError:
                     path = Path(source_path.name)
-            if not cls._has_valid_music_path_format(path):
+            torrent_path = path
+            if root and (not path.parts or path.parts[0] != root.name):
+                torrent_path = Path(root.name) / path
+            if not cls._has_valid_music_path_format(torrent_path):
                 return path.name
+            if not enforce_filenames:
+                continue
 
             filename = path.name
             stem = path.stem
             if cls._AUDIO_TRACK_PATTERN.match(stem):
+                continue
+            if len(audio_paths) == 1 and not stem.startswith(".") and any(ch.isalpha() or ch.isdigit() for ch in stem):
                 continue
             if " " not in stem or stem.startswith(".") or "." in stem:
                 return filename
@@ -493,9 +560,14 @@ class Zenith(UNIT3D):
                 return False
 
         if category == "MUSIC":
-            invalid_track = self._validate_music_track_naming(filelist, meta.path)
+            release_error = self._music_release_error(meta, filelist)
+            if release_error:
+                logger.info(f"{self.tracker}: [bold red]{release_error}. Skipping upload...[/bold red]")
+                return False
+            invalid_track = self._validate_music_track_naming(filelist, meta.path, enforce_filenames=meta.personalrelease)
             if invalid_track:
-                logger.info(f"{self.tracker}: [bold red]Invalid music filename structure for {invalid_track}. Skipping upload...[/bold red]")
+                reason = "filename structure" if meta.personalrelease else "path structure"
+                logger.info(f"{self.tracker}: [bold red]Invalid music {reason} for {invalid_track}. Skipping upload...[/bold red]")
                 return False
 
         if category in {"MOVIE", "TV"}:
