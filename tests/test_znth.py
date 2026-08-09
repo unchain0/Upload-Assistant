@@ -186,6 +186,17 @@ def test_zenith_allows_hdtv_release_with_ts_container():
     assert asyncio.run(_tracker().get_additional_checks(_movie_meta(type="HDTV", filelist=["Show.S01E01.ts"]))) is True
 
 
+def test_zenith_allows_encoded_hdtv_release_with_mkv_container():
+    meta = _tv_meta(
+        type="HDTV",
+        video_encode="x264",
+        filelist=["Treasure.And.Dirt.S01E03.1080p.HDTV.H264-DARKFLiX.mkv"],
+        imdb_info={"status": "Continuing"},
+    )
+
+    assert asyncio.run(_tracker().get_additional_checks(meta)) is True
+
+
 def test_zenith_rejects_sdtv_release_with_mkv_container():
     assert asyncio.run(_tracker().get_additional_checks(_tv_meta(type="SDTV", filelist=["Show.S01E01.mkv"]))) is False
 

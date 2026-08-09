@@ -262,6 +262,33 @@ def test_available_screens_caps_global_minimum_to_generated_files(tmp_path: Path
     assert upload.available_screens(Meta(base_dir=str(tmp_path), uuid="release"), 4) == (2, 2)
 
 
+def test_failed_tracker_names_include_attempted_failure_after_upload_flag_is_cleared() -> None:
+    statuses = {
+        "LUMINARR": {"upload": False, "upload_success": False},
+        "SKIPPED": {"upload": False, "skipped": True},
+        "GOOD": {"upload": True, "upload_success": True},
+    }
+
+    assert upload._failed_tracker_names(statuses) == ["LUMINARR"]
+
+
+@pytest.mark.asyncio
+async def test_batch_failed_items_lists_skipped_terminal_outcomes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    queue = [str(tmp_path / "missing-year.pdf"), str(tmp_path / "duplicate.mp3")]
+
+    def fake_process_meta(meta: Meta, _base_dir: str) -> bool:
+        meta.we_are_uploading = False
+        return True
+
+    info_messages, _ = _configure_do_the_thing_stubs(monkeypatch, queue, fake_process_meta)
+    monkeypatch.setattr(sys, "argv", ["upload.py", *queue])
+
+    await upload.do_the_thing(upload.base_dir)
+
+    assert any("missing-year.pdf" in message and "Uploading is disabled" in message for message in info_messages)
+    assert any("duplicate.mp3" in message and "Uploading is disabled" in message for message in info_messages)
+
+
 @pytest.mark.asyncio
 async def test_process_meta_stops_before_trackers_for_invalid_automatic_tv_metadata(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     class FakePrep:

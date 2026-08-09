@@ -77,6 +77,11 @@ class MyAnonamouseManager:
             if cleaned_asin:
                 metadata["asin"] = cleaned_asin
 
+        publication_value = item.get("year") or item.get("release_year") or item.get("publication_year") or item.get("published")
+        publication_match = re.search(r"\b(?:18|19|20)\d{2}\b", str(publication_value or ""))
+        if publication_match:
+            metadata["year"] = int(publication_match.group(0))
+
         # Language
         lang = item.get("lang_code")
         if lang:

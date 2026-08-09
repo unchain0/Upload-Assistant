@@ -35,6 +35,24 @@ def normalize_version(version_str: str) -> str:
     return version_str
 
 
+def clean_game_title(value: str) -> str:
+    title = Path(str(value or "")).name
+    title = re.sub(r"(?i)\.(?:dmg|pkg|iso|rar|zip|7z)$", "", title)
+    title = re.sub(r"\[[^\]]+\]$", "", title).strip(" ._-")
+    if "-" in title:
+        prefix, suffix = title.rsplit("-", 1)
+        if suffix and len(suffix) < 15 and not re.search(r"\s", suffix):
+            title = prefix
+    title = re.sub(r"(?<![A-Za-z0-9])\d+(?:\.\d+){1,3}\s*$", "", title)
+    title = re.sub(r"[._-]+", " ", title)
+    title = re.sub(r"(?i)\b(?:update|patch|build|version)\b.*", "", title)
+    title = re.sub(r"(?i)\bv\d+(?:\.\d+)*\b.*", "", title)
+    title = re.sub(r"\b(?:19|20)\d{6}\b\s*$", "", title)
+    title = re.sub(r"(?i)\b[a-z]{2}(?:US|GB|CA|AU|BR|DE|ES|FR|IT|JP)\b\s*$", "", title)
+    title = re.sub(r"\s+", " ", title).strip()
+    return title.title() if title and title == title.lower() else title
+
+
 def extract_version_from_text(text: str) -> str | None:
     if not text:
         return None
@@ -299,6 +317,8 @@ async def detect_platform_from_files(
         return "PC"
     if any("binaries/win64" in f or "binaries/win32" in f or "engine/binaries" in f for f in files_lower):
         return "PC"
+    if any(b.endswith(".dmg") for b in basenames_lower):
+        return "MAC"
 
     # --- 2. Basename/Path text keyword checks (if no extensions matched) ---
     path_to_search = path_to_check or (filelist[0] if filelist else "")
@@ -399,6 +419,11 @@ async def gather_game_prep(
     meta.sd = 0
     meta.valid_mi_settings = True
 
+    title_source = str(meta.title or meta.filename or meta.path or videopath or "")
+    fallback_title = clean_game_title(title_source)
+    if fallback_title and not meta.title:
+        meta.title = fallback_title
+
     cli_overrides = {
         "title": bool(meta.title),
         "year": ("manual_year" in meta and meta.manual_year) or 0 > 0,
@@ -479,9 +504,9 @@ async def gather_game_prep(
         return
 
     # Use title in meta (cleaned folder/file name) or extract from videopath
-    title_query = meta.title or meta.filename
+    title_query = clean_game_title(str(meta.title or meta.filename or ""))
     if not title_query and videopath:
-        title_query = Path(videopath).stem
+        title_query = clean_game_title(videopath)
 
     # Clean game release suffixes to get a clean search term for IGDB
     if title_query:

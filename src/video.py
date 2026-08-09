@@ -47,7 +47,10 @@ class VideoManager:
                     dv = "DV"
         else:
             mi_dict = cast(dict[str, Any], mi)
-            video_track = mi_dict["media"]["track"][1]
+            tracks = mi_dict.get("media", {}).get("track", [])
+            video_track = next((track for track in tracks if isinstance(track, dict) and str(track.get("@type", "")).casefold() == "video"), None)
+            if video_track is None:
+                return ""
             with contextlib.suppress(Exception):
                 hdr_mi = video_track["colour_primaries"]
                 if hdr_mi in ("BT.2020", "REC.2020"):

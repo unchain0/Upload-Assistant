@@ -241,6 +241,9 @@ class Zenith(UNIT3D):
     def _video_extensions_for_type(meta: Meta) -> set[str]:
         media_type = str(meta.type or "").upper().strip()
         if media_type in {"HDTV", "UHDTV"}:
+            encode = str(meta.video_encode or "").casefold().replace(".", "")
+            if encode in {"x264", "x265", "xvid"}:
+                return {".mkv", ".mp4", ".avi"}
             return {".ts"}
         if media_type == "SDTV":
             return {".ps", ".mpg"}

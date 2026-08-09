@@ -11,6 +11,7 @@ import pytest
 from src.book_extractors import validate_isbn_checksum
 from src.book_prep import resolve_book_filelist
 from src.meta import Meta
+from src.myanonamouse import MyAnonamouseManager
 from src.prep_helpers import detect_disc_and_category
 
 
@@ -93,3 +94,20 @@ def test_scene_game_iso_is_still_auto_detected_as_game(tmp_path):
     asyncio.run(detect_disc_and_category(prep, meta))
 
     assert meta.category == "GAME"
+
+
+def test_dmg_is_auto_detected_as_game_software(tmp_path):
+    installer = tmp_path / "Native_Instruments_SuperStarSaw_1.0.0_[HCiSO].dmg"
+    installer.write_bytes(b"installer")
+    meta = Meta(path=str(installer))
+    prep = SimpleNamespace(disc_info_manager=SimpleNamespace(get_disc=AsyncMock(return_value=("", str(installer), {}, []))))
+
+    asyncio.run(detect_disc_and_category(prep, meta))
+
+    assert meta.category == "GAME"
+
+
+def test_myanonamouse_uses_explicit_publication_year():
+    metadata = MyAnonamouseManager()._parse_torrent_info({"title": "80's Adventures", "publication_year": "2021"})
+
+    assert metadata["year"] == 2021
