@@ -777,7 +777,12 @@ class AmigosShare:
 
     @staticmethod
     def _has_serial_or_key(description: str) -> bool:
-        return bool(re.search(r"(?i)\b(?:serial|cd[ ._-]?key|product[ ._-]?key|license[ ._-]?key)\s*[:=]", description))
+        return bool(re.search(r"(?i)\b(?:serial(?:[ ._-]+(?:key|number))?|cd[ ._-]?key|product[ ._-]?key|license[ ._-]?key)\s*[:=]", description))
+
+    @classmethod
+    def _is_archive_file(cls, path: Path) -> bool:
+        name = path.name.casefold()
+        return path.suffix.casefold() in cls._ARCHIVE_EXTENSIONS or bool(re.search(r"(?:\.r\d{2,}|\.7z\.\d+)$", name))
 
     @staticmethod
     def _is_advertising_file(path: Path) -> bool:
@@ -790,7 +795,7 @@ class AmigosShare:
         resolution = re.search(r"(?<![A-Za-z0-9])(?:2160|1080|720|576|480|360|240)[pi]?(?![A-Za-z0-9])", name, re.IGNORECASE)
         source = re.search(r"(?<![A-Za-z0-9])(?:UHD[ ._-]?BluRay|BluRay|BDRip|BRRip|WEB[ ._-]?DL|WEBRip|DVDRip|DVD|HDTV)(?![A-Za-z0-9])", name, re.IGNORECASE)
         codec = re.search(r"(?<![A-Za-z0-9])(?:H[ .]?26[45]|x26[45]|HEVC|AVC|MPEG[ ._-]?2|XviD|DivX)(?![A-Za-z0-9])", name, re.IGNORECASE)
-        release = re.search(r"-[A-Za-z0-9][A-Za-z0-9._-]*$", name)
+        release = re.search(r"^-[A-Za-z0-9][A-Za-z0-9._-]*$", name[codec.end() :]) if codec else None
         return bool(resolution and source and codec and release)
 
     @staticmethod
@@ -841,7 +846,7 @@ class AmigosShare:
             return False
         paths = [Path(str(item)) for item in raw_filelist if str(item).strip()]
 
-        if category != "GAME" and any(path.suffix.casefold() in self._ARCHIVE_EXTENSIONS for path in paths):
+        if category != "GAME" and any(self._is_archive_file(path) for path in paths):
             logger.info(f"{self.tracker}: [bold red]Archives are allowed only for games.[/bold red]")
             return False
         if any(self._is_advertising_file(path) for path in paths):
@@ -900,6 +905,9 @@ class AmigosShare:
             if category == "TV":
                 episode_count = self.common.count_tv_episodes(list(raw_filelist))
                 tv_pack = bool(getattr(meta, "tv_pack", False))
+                if not getattr(meta, "is_disc", None) and episode_count == 0:
+                    logger.info(f"{self.tracker}: [bold red]No valid TV episode marker was found in the uploaded files.[/bold red]")
+                    return False
                 status = self.common.is_tv_series_ended(meta, self._TV_ENDED_STATUSES, self._TV_ONGOING_STATUSES)
                 if tv_pack and status is not True and not await self._confirm_rule_exception(
                     "Packs are allowed only after the season or series has ended. Do you want to continue?", meta

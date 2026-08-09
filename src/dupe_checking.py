@@ -327,14 +327,14 @@ class DupeChecker:
                         if not target_episode_numbers.issubset(pack_episode_numbers):
                             await log_exclusion(f"season pack does not contain episode {target_episode}", each)
                             return True
-                    meta.season_pack_exists = True
-                    meta.season_pack_name = each
-                    meta.season_pack_link = entry.get("link")
-                    meta.season_pack_id = entry.get("id")
-                    logger.debug(f"[yellow]Season pack detected for episode upload: {each}")
-                    logger.debug(f"[yellow]Your episode {target_season}{target_episode} is contained in existing season pack")
-                    remember_match("season_pack_contains_episode")
-                    return False
+                        meta.season_pack_exists = True
+                        meta.season_pack_name = each
+                        meta.season_pack_link = entry.get("link")
+                        meta.season_pack_id = entry.get("id")
+                        logger.debug(f"[yellow]Season pack detected for episode upload: {each}")
+                        logger.debug(f"[yellow]Your episode {target_season}{target_episode} is contained in existing season pack")
+                        remember_match("season_pack_contains_episode")
+                        return False
 
             if meta.category == "GAME":
                 target_title = meta.title or meta.name

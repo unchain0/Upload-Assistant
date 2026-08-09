@@ -169,6 +169,25 @@ async def test_dupe_filter_does_not_block_episode_missing_from_partial_pack() ->
 
 
 @pytest.mark.asyncio
+async def test_dupe_filter_does_not_mark_season_pack_without_file_evidence() -> None:
+    meta = Meta(
+        category="TV",
+        name="Treasure & Dirt S01E06 1080p HDTV x264-DARKFLiX",
+        uuid="Treasure.And.Dirt.S01E06.1080p.HDTV.H264-DARKFLiX",
+        season="S01",
+        episode="E06",
+        resolution="1080p",
+        source="HDTV",
+        type="HDTV",
+    )
+    season_pack = {"name": "Treasure & Dirt S01 1080p HDTV x264-GROUP", "files": [], "id": 125}
+
+    await DupeChecker({"DEFAULT": {}}).filter_dupes([season_pack], meta, "OTHER")
+
+    assert meta.season_pack_exists is False
+
+
+@pytest.mark.asyncio
 async def test_unit3d_episode_search_includes_all_season_pack_qualities(monkeypatch: pytest.MonkeyPatch) -> None:
     captured_params: list[tuple[str, object]] = []
 
@@ -182,7 +201,7 @@ async def test_unit3d_episode_search_includes_all_season_pack_qualities(monkeypa
             return {"data": []}
 
     class Client:
-        async def __aenter__(self) -> Client:
+        async def __aenter__(self) -> "Client":  # noqa: UP037
             return self
 
         async def __aexit__(self, *_args: object) -> None:

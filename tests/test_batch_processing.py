@@ -19,11 +19,13 @@ _DEFAULT_META_QUEUE = object()
 
 def _configure_do_the_thing_stubs(
     monkeypatch: pytest.MonkeyPatch,
-    queue: list[str],
+    queue: list[Any],
     process_meta: Any,
     meta_queue: list[str] | object | None = _DEFAULT_META_QUEUE,
+    meta_overrides: dict[str, Any] | None = None,
 ) -> tuple[list[str], AsyncMock]:
-    queue_paths = [str(path) for path in queue]
+    queue_items = list(queue)
+    queue_paths = [str(item.get("path", item)) if isinstance(item, dict) else str(item) for item in queue_items]
     for path in queue_paths:
         Path(path).touch()
 
@@ -32,11 +34,13 @@ def _configure_do_the_thing_stubs(
     def fake_parse(argv: list[str], meta: Meta) -> tuple[Meta, Any, list[str]]:
         first = argv[0] if argv else queue_paths[0]
         parsed_queue = [] if meta_queue is _DEFAULT_META_QUEUE else meta_queue
-        parsed = Meta(path=first, queue=parsed_queue, base_dir=upload.base_dir, trackers=[], site_check=False)
+        values: dict[str, Any] = {"path": first, "queue": parsed_queue, "base_dir": upload.base_dir, "trackers": [], "site_check": False}
+        values.update(meta_overrides or {})
+        parsed = Meta(**values)
         return parsed, None, []
 
     async def fake_handle_queue(_path: str, _meta: Meta, _paths: list[str], _base_dir: str) -> tuple[list[str], str | None]:
-        return list(queue_paths), None
+        return list(queue_items), None
 
     class _NoopCleanup:
         async def cleanup(self) -> None:
@@ -246,7 +250,7 @@ async def test_batch_summary_reports_partial_tracker_failure(tmp_path: Path, mon
 
     await upload.do_the_thing(upload.base_dir)
 
-    assert any("fully successful 1, partial 1, skipped/failed 0" in message for message in info_messages)
+    assert any("total queued 2, fully successful 1, partial 1, skipped/failed 0" in message for message in info_messages)
 
 
 @pytest.mark.asyncio
@@ -271,3 +275,95 @@ async def test_batch_records_tracker_outcomes_without_meta_queue(tmp_path: Path,
 
     assert any("total queued 2, fully successful 1, partial 1, skipped/failed 0" in message for message in info_messages)
     assert any("partial.epub" in message and "BAD" in message for message in info_messages)
+
+
+@pytest.mark.asyncio
+async def test_site_upload_queue_failure_uses_original_item_identifier(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = str(tmp_path / "site-item.mkv")
+    queue = [{"path": path, "tracker": "SITE", "imdb_id": 1}]
+    info_messages, _ = _configure_do_the_thing_stubs(
+        monkeypatch, queue, lambda *_args: True, meta_overrides={"site_upload_queue": True}
+    )
+    monkeypatch.setattr(upload.QueueManager, "process_site_upload_item", AsyncMock(side_effect=RuntimeError("site queue failure")))
+    monkeypatch.setattr(sys, "argv", ["upload.py", path])
+
+    await upload.do_the_thing(upload.base_dir)
+
+    assert any(path in message and "site queue failure" in message for message in info_messages)
+
+
+@pytest.mark.asyncio
+async def test_args_line_queue_failure_uses_original_item_identifier(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = str(tmp_path / "args-item.mkv")
+    line = f'"{path}" -tk SITE'
+    queue = [{"path": path, "line": line, "args": [path, "-tk", "SITE"]}]
+    info_messages, _ = _configure_do_the_thing_stubs(
+        monkeypatch, queue, lambda *_args: True, meta_overrides={"args_line_queue": True}
+    )
+
+    def fail_item_parse(argv: list[str], meta: Meta) -> tuple[Meta, Any, list[str]]:
+        if meta.args_line_queue:
+            raise RuntimeError("args queue failure")
+        return Meta(path=argv[0], args_line_queue=True, base_dir=upload.base_dir, trackers=[]), None, []
+
+    monkeypatch.setattr(upload, "parser", type("Parser", (), {"parse": staticmethod(fail_item_parse)})())
+    monkeypatch.setattr(sys, "argv", ["upload.py", path])
+
+    await upload.do_the_thing(upload.base_dir)
+
+    assert any(line in message and "args queue failure" in message for message in info_messages)
+
+
+@pytest.mark.asyncio
+async def test_limit_queue_records_unprocessed_items(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    queue = [str(tmp_path / f"item-{index}.mkv") for index in range(5)]
+
+    def fake_process_meta(meta: Meta, _base_dir: str) -> bool:
+        meta.we_are_uploading = True
+        meta.trackers = ["GOOD"]
+        meta.tracker_status = {"GOOD": {"upload": True}}
+        return True
+
+    async def fake_process_trackers(meta: Meta, *_args: Any, **_kwargs: Any) -> None:
+        meta.tracker_status["GOOD"]["upload_success"] = True
+
+    info_messages, process_meta_mock = _configure_do_the_thing_stubs(
+        monkeypatch, queue, fake_process_meta, meta_overrides={"limit_queue": 1}
+    )
+    monkeypatch.setattr(upload, "process_trackers", fake_process_trackers)
+    monkeypatch.setattr(sys, "argv", ["upload.py", *queue])
+
+    await upload.do_the_thing(upload.base_dir)
+
+    assert process_meta_mock.call_count == 1
+    assert any("total queued 5, fully successful 1, partial 0, skipped/failed 4" in message for message in info_messages)
+    assert any("item-4.mkv" in message and "Queue limit of 1" in message for message in info_messages)
+
+
+@pytest.mark.asyncio
+async def test_batch_reports_torrent_success_with_usenet_preparation_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    queue = [str(tmp_path / "mixed.epub"), str(tmp_path / "torrent-only.epub")]
+
+    def fake_process_meta(meta: Meta, _base_dir: str) -> bool:
+        meta.we_are_uploading = True
+        meta.trackers = ["GOOD", "NZB"] if "mixed" in str(meta.path) else ["GOOD"]
+        meta.tracker_status = {tracker: {"upload": True} for tracker in meta.trackers}
+        return True
+
+    async def fake_process_trackers(meta: Meta, *_args: Any, **_kwargs: Any) -> None:
+        for tracker in meta.trackers:
+            meta.tracker_status[tracker]["upload_success"] = True
+
+    class UsenetTracker:
+        is_usenet = True
+
+    info_messages, _ = _configure_do_the_thing_stubs(monkeypatch, queue, fake_process_meta)
+    monkeypatch.setitem(upload.tracker_class_map, "NZB", UsenetTracker)
+    monkeypatch.setattr(upload, "process_trackers", fake_process_trackers)
+    monkeypatch.setattr("src.usenetcreate.prepare_and_upload_usenet", AsyncMock(side_effect=RuntimeError("Usenet preparation failed")))
+    monkeypatch.setattr(sys, "argv", ["upload.py", *queue])
+
+    await upload.do_the_thing(upload.base_dir)
+
+    assert any("total queued 2, fully successful 1, partial 1, skipped/failed 0" in message for message in info_messages)
+    assert any("mixed.epub" in message and "NZB" in message for message in info_messages)

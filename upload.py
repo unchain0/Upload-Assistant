@@ -2442,9 +2442,14 @@ async def do_the_thing(base_dir: str) -> None:
         item_outcomes: dict[int, tuple[str, str, str]] = {}
         base_meta = meta.copy()
 
+        def queue_item_identifier(queue_item: Any) -> str:
+            if isinstance(queue_item, Mapping):
+                return str(queue_item.get("line") or queue_item.get("path") or queue_item)
+            return str(queue_item)
+
         for item_index, queue_item in enumerate(queue_list):
             total_files = queue_size
-            current_item_path: str = ""
+            current_item_path = queue_item_identifier(queue_item)
             tmp_path = ""
             current_release_log_path.set(None)
             item_error: str = ""
@@ -2457,7 +2462,7 @@ async def do_the_thing(base_dir: str) -> None:
                     # Extract path and metadata from site upload queue item
                     queue_item_mapping = cast(Mapping[str, Any], queue_item)
                     path = await QueueManager.process_site_upload_item(queue_item_mapping, meta)
-                    current_item_path = path  # Store for logging
+                    current_item_path = path
                     meta.item_args = [path]
                 elif meta.args_line_queue and isinstance(queue_item, dict) and "args" in queue_item:
                     # Extract path and arguments from custom args queue item
@@ -2484,7 +2489,7 @@ async def do_the_thing(base_dir: str) -> None:
                     # value for the preview and processing target instead of
                     # relying on a partially parsed Meta copy.
                     path = str(queue_item_mapping.get("path") or meta.path or "")
-                    current_item_path = str(queue_item_mapping.get("line") or path or "")
+                    current_item_path = path
                     meta.item_args = args_list
                 else:
                     # Regular queue processing
@@ -2551,7 +2556,7 @@ async def do_the_thing(base_dir: str) -> None:
                 else:
                     raise
             except Exception as e:
-                logger.info(f"[red]Exception: '{path}': {e}")
+                logger.info(f"[red]Exception: '{current_item_path}': {e}")
                 item_error = str(e)
                 item_abort = e
 
@@ -2762,8 +2767,9 @@ async def do_the_thing(base_dir: str) -> None:
                                     logger.info("[bold red]Usenet upload failed.[/bold red]")
                                     status_map = meta.tracker_status
                                     for t in usenet_trackers:
-                                        status_map.setdefault(t, {})["status_message"] = "data error: Usenet upload failed, NZB missing"
-                                        status_map[t]["upload"] = False
+                                        status_map.setdefault(t, {}).update(
+                                            status_message="data error: Usenet upload failed, NZB missing", upload=True, upload_success=False
+                                        )
                             except Exception as e:
                                 logger.info(f"[bold red]Error in Usenet upload pipeline: {e}[/bold red]")
                                 import traceback
@@ -2771,8 +2777,9 @@ async def do_the_thing(base_dir: str) -> None:
                                 logger.info(traceback.format_exc())
                                 status_map = meta.tracker_status
                                 for t in usenet_trackers:
-                                    status_map.setdefault(t, {})["status_message"] = f"data error: Usenet upload failed: {e}"
-                                    status_map[t]["upload"] = False
+                                    status_map.setdefault(t, {}).update(
+                                        status_message=f"data error: Usenet upload failed: {e}", upload=True, upload_success=False
+                                    )
                         elif has_usenet_trackers:
                             logger.info("[yellow]Skipping NNTP Usenet post because no Usenet indexers passed the upload checks.[/yellow]")
 
@@ -2899,6 +2906,11 @@ async def do_the_thing(base_dir: str) -> None:
                 item_outcomes[item_index] = (current_item_path, "skipped" if meta.site_check else "successful", "Site check only" if meta.site_check else "")
 
             if "limit_queue" in meta and meta.limit_queue > 0 and (processed_files_count - skipped_files_count) >= meta.limit_queue:
+                for remaining_index in range(item_index + 1, queue_size):
+                    remaining_path = queue_item_identifier(queue_list[remaining_index])
+                    reason = f"Queue limit of {meta.limit_queue} successful upload(s) reached"
+                    item_outcomes[remaining_index] = (remaining_path, "skipped", reason)
+                    failed_items.append((remaining_path, reason))
                 if sanitize_meta:
                     try:
                         await asyncio.sleep(0.2)  # We can't race the status prints
@@ -2921,7 +2933,7 @@ async def do_the_thing(base_dir: str) -> None:
             cleanup_manager.reset_terminal()
 
         if is_batch:
-            total_count = len(item_outcomes)
+            total_count = queue_size
             success_count = sum(outcome == "successful" for _path, outcome, _detail in item_outcomes.values())
             partial_count = sum(outcome == "partial" for _path, outcome, _detail in item_outcomes.values())
             failed_count = sum(outcome in {"failed", "skipped"} for _path, outcome, _detail in item_outcomes.values())

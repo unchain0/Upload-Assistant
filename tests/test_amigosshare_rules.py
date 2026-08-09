@@ -226,6 +226,9 @@ def test_imdb_rejection_happens_before_language_validation():
 
 def test_amigosshare_rejects_archives_except_for_games():
     assert not asyncio.run(run_checks(make_meta(filelist=["release.rar"]), guard_language_call=True))
+    assert not asyncio.run(
+        run_checks(make_meta(filelist=["Filme.2024.1080p.WEB-DL.H.264-GRP.mkv", "Filme.r02"]), guard_language_call=True)
+    )
     assert asyncio.run(run_checks(make_meta(category="GAME", imdb_id=None, filelist=["Jogo.rar"]), guard_language_call=True))
 
 
@@ -248,8 +251,9 @@ def test_amigosshare_enforces_adult_size_and_screenshot_per_video():
     assert not asyncio.run(run_checks(make_meta(adult_media=True, filelist=files, screens=1), guard_language_call=True))
 
 
-def test_amigosshare_rejects_serial_keys_in_description():
-    meta = make_meta(description="Descrição em português. CD-Key: ABCD-EFGH-IJKL")
+@pytest.mark.parametrize("label", ["CD-Key", "Serial Key", "Serial Number"])
+def test_amigosshare_rejects_serial_keys_in_description(label: str):
+    meta = make_meta(description=f"Descrição em português. {label}: ABCD-EFGH-IJKL")
 
     assert not asyncio.run(run_checks(meta, guard_language_call=True))
 
@@ -264,9 +268,11 @@ def test_amigosshare_rejects_standalone_game_cracks_and_unreleased_builds():
 
 def test_amigosshare_rejects_invalid_video_filename_and_accepts_nogroup():
     invalid = make_meta(audio_languages=["portuguese"], filelist=["Filme.mkv"])
+    missing_group = make_meta(audio_languages=["portuguese"], filelist=["Filme.2024.1080p.WEB-DL.H.264.mkv"])
     valid = make_meta(audio_languages=["portuguese"], filelist=["Filme.2024.1080p.BluRay.H.264-NoGroup.mkv"])
 
     assert not asyncio.run(run_checks(invalid, guard_language_call=True))
+    assert not asyncio.run(run_checks(missing_group, guard_language_call=True))
     assert asyncio.run(run_checks(valid))
 
 
@@ -300,6 +306,12 @@ def test_amigosshare_rejects_multi_episode_non_pack_and_standalone_extras():
 
     assert not asyncio.run(run_checks(make_meta(category="TV", filelist=files, imdb_info={"status": "Returning Series"}), guard_language_call=True))
     assert not asyncio.run(run_checks(make_meta(category="TV", filelist=extras, imdb_info={"status": "Returning Series"}), guard_language_call=True))
+
+
+def test_amigosshare_rejects_tv_upload_without_episode_markers():
+    files = ["Serie.Special.2024.1080p.WEB-DL.H.264-GRP.mkv"]
+
+    assert not asyncio.run(run_checks(make_meta(category="TV", filelist=files), guard_language_call=True))
 
 
 def test_amigosshare_small_general_torrent_requires_confirmation():
