@@ -1,7 +1,10 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
+import html
 import re
 from pathlib import Path
 from typing import Any
+
+import httpx
 
 from src.console import logger
 from src.meta import Meta
@@ -226,6 +229,60 @@ class YUSCENE(UNIT3D):
         )
         return self._english_word_count(author) >= 1 and self._english_word_count(title) >= 1 and self._english_word_count(description) >= 8
 
+    async def _translate_book_metadata_to_english(self, meta: Meta) -> bool:
+        api_key = str(self.config.get("DEFAULT", {}).get("google_translate_api_key", "")).strip()
+        if not api_key:
+            return False
+
+        original_author = str(meta.author or meta.book_author or "").strip()
+        original_title = str(meta.title or meta.book_title or "").strip()
+        original_overview = next(
+            (
+                str(value).strip()
+                for value in (meta.book_overview, meta.overview, meta.description, meta.description_file_content)
+                if str(value or "").strip()
+            ),
+            "",
+        )
+        source_values = [original_author, original_title, re.sub(r"<[^>]+>", " ", original_overview).strip()]
+        if not all(source_values):
+            return False
+
+        try:
+            async with httpx.AsyncClient(follow_redirects=True) as client:
+                response = await client.post(
+                    "https://translation.googleapis.com/language/translate/v2",
+                    params={"key": api_key},
+                    json={"q": source_values, "target": "en", "format": "text"},
+                    timeout=20.0,
+                )
+                response.raise_for_status()
+                payload = response.json()
+            raw_translations = payload.get("data", {}).get("translations", []) if isinstance(payload, dict) else []
+            translated_values = [html.unescape(str(item.get("translatedText", "")).strip()) for item in raw_translations if isinstance(item, dict)]
+        except (httpx.HTTPError, TypeError, ValueError) as error:
+            logger.info(f"{self.tracker}: [bold red]English book metadata translation failed: {error}[/bold red]")
+            return False
+
+        if len(translated_values) != len(source_values) or not all(translated_values):
+            return False
+
+        translated_author, translated_title, translated_overview = translated_values
+        meta.author = meta.book_author = translated_author
+        meta.title = meta.book_title = translated_title
+        meta.book_overview = meta.overview = translated_overview
+
+        release_name = str(meta.name or "")
+        if release_name:
+            release_name = release_name.replace(original_author, translated_author, 1).replace(original_title, translated_title, 1)
+            meta.name = release_name
+
+        if not self._has_english_book_metadata(meta):
+            return False
+
+        logger.info(f"{self.tracker}: [green]Translated BOOK author, title, and description to English for tracker compliance.[/green]")
+        return True
+
     async def get_additional_checks(self, meta: Meta) -> bool:
         raw_keywords = meta.keywords or []
         genre_values: list[str]
@@ -257,12 +314,14 @@ class YUSCENE(UNIT3D):
             return False
         filelist = [item for item in raw_filelist if self._is_path_like_file(item)]
 
-        if category == "BOOK" and not self._has_english_book_metadata(meta):
+        if category == "BOOK" and not self._has_english_book_metadata(meta) and not await self._translate_book_metadata_to_english(meta):
             logger.info(
                 f"{self.tracker}: [bold red]BOOK uploads require an English author, title, and description. "
-                "Provide verified English metadata with --author, --book-title, and --book-overview before uploading.[/bold red]"
+                "Configure google_translate_api_key or provide verified English metadata with --author, --book-title, and --book-overview before uploading.[/bold red]"
             )
             return False
+
+        release_name = str(meta.name or "")
 
         if category in {"MOVIE", "TV"} and self._has_banned_title_chars(release_name) and not await self._confirm_or_skip(
             "The release name contains unsupported characters or extra spaces.", meta

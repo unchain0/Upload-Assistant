@@ -2,6 +2,7 @@
 
 import asyncio
 from typing import Any
+from unittest.mock import AsyncMock, Mock, patch
 
 from src.meta import Meta
 from src.trackers.UNIT3D.yuscene import YUSCENE
@@ -91,6 +92,40 @@ def test_yuscene_rejects_book_without_english_title_and_description():
     )
 
     assert asyncio.run(_tracker().get_additional_checks(meta)) is False
+
+
+def test_yuscene_translates_non_english_book_metadata_before_upload():
+    meta = _book_meta(
+        author="宮沢 賢治",
+        title="宮沢賢治童話全集",
+        name="宮沢 賢治 - 宮沢賢治童話全集 2016 JAPANESE AUDIOBOOK",
+        book_overview="※本タイトルは30時間を超えるため、宮沢賢治の童話を収録しています。",
+    )
+    tracker = YUSCENE({"DEFAULT": {"google_translate_api_key": "translation-key"}, "TRACKERS": {"YUSCENE": {}}})
+    response = Mock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {
+        "data": {
+            "translations": [
+                {"translatedText": "Kenji Miyazawa"},
+                {"translatedText": "Complete Collection of Children's Stories"},
+                {
+                    "translatedText": (
+                        "This complete audiobook collection presents the celebrated children's stories written by Kenji Miyazawa."
+                    )
+                },
+            ]
+        }
+    }
+
+    with patch("src.trackers.UNIT3D.yuscene.httpx.AsyncClient.post", new=AsyncMock(return_value=response)) as translate:
+        assert asyncio.run(tracker.get_additional_checks(meta)) is True
+
+    translate.assert_awaited_once()
+    assert meta.author == "Kenji Miyazawa"
+    assert meta.title == "Complete Collection of Children's Stories"
+    assert meta.book_overview.startswith("This complete audiobook collection")
+    assert meta.name == "Kenji Miyazawa - Complete Collection of Children's Stories 2016 JAPANESE AUDIOBOOK"
 
 
 def test_yuscene_accepts_verified_english_book_metadata_with_original_text_optional():
