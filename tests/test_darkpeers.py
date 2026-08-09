@@ -218,6 +218,38 @@ def test_darkpeers_replaces_generic_dual_audio_with_rule_matrix_label():
     assert _name(meta) == "Anime 2026 1080p WEB-DL French MULTi-TEAM"
 
 
+def test_darkpeers_replaces_language_multi_with_dual_audio_for_original_and_english():
+    meta = Meta(
+        category="TV",
+        name="Tomb Raider King AKA Dogul Wang S01E03 1080p CR WEB-DL Korean MULTi DD+ 2.0 H.264-AnoZu",
+        language_checked=True,
+        original_language="Korean",
+        audio_languages=["Korean", "English"],
+    )
+
+    assert _name(meta) == "Tomb Raider King AKA Dogul Wang S01E03 1080p CR WEB-DL Dual-Audio DD+ 2.0 H.264-AnoZu"
+
+
+def test_darkpeers_applies_dub_matrix_to_existing_title_element():
+    cases = [
+        (["Korean", "English", "French"], "Korean MULTi", "MULTi", "Korean"),
+        (["English"], "Korean MULTi", "Dubbed", "Korean"),
+        (["English", "French"], "Dual-Audio", "French MULTi", "English"),
+        (["Korean"], "Dual-Audio", "", "Korean"),
+    ]
+
+    for languages, existing, expected, original in cases:
+        meta = Meta(
+            category="TV",
+            name=f"Example S01E01 1080p WEB-DL {existing} DD+ 2.0 H.264-GROUP",
+            language_checked=True,
+            original_language=original,
+            audio_languages=languages,
+        )
+        expected_element = f" {expected}" if expected else ""
+        assert _name(meta) == f"Example S01E01 1080p WEB-DL{expected_element} DD+ 2.0 H.264-GROUP"
+
+
 def test_darkpeers_preserves_detected_original_scene_name():
     meta = Meta(category="MOVIE", name="Generated Name", scene=True, scene_name="Original.Release.2026-GRP", language_checked=True)
 

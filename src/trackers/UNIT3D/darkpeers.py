@@ -27,6 +27,11 @@ class DarkPeers(UNIT3D):
     allows_bloated_audio = True
     reject_episode_if_season_pack_exists = True
     _AUDIO_TRACK_PATTERN = re.compile(r"^(?:\d{1,3}(?:-\d{1,2})?\.\s+.+|\d{1,3}(?:-\d{1,2})?\s+-\s+.+|\d{1,3}(?:-\d{1,2})?-(?!-).+)$")
+    _AUDIO_CODEC_PATTERN = re.compile(r"\s+(?:DTS Headphone:X|DTS-HD MA|DTS-HD HRA|DTS-ES|DTS:X|TrueHD|DD\+ EX|DD EX|DD\+|DD|LPCM|FLAC|ALAC|AAC|Opus|MP3|MP2|Vorbis)(?=\s|$)")
+    _DUB_ELEMENT_PATTERN = re.compile(
+        r"\s+(?:(?:[A-Z][A-Za-z]*(?:\s+[A-Z][A-Za-z]*){0,2}\s+)?(?:MULTi|Dubbed)|Dual-Audio)"
+        r"(?=\s+(?:DTS Headphone:X|DTS-HD MA|DTS-HD HRA|DTS-ES|DTS:X|TrueHD|DD\+ EX|DD EX|DD\+|DD|LPCM|FLAC|ALAC|AAC|Opus|MP3|MP2|Vorbis)(?:\s|$)|-[A-Za-z0-9]+$)"
+    )
     _VIDEO_EXTENSIONS: ClassVar[set[str]] = {".avi", ".m2ts", ".mkv", ".mp4", ".mpg", ".mpeg", ".ts", ".vob"}
     base_url = "https://darkpeers.org"
     banned_groups = (
@@ -467,8 +472,10 @@ class DarkPeers(UNIT3D):
         audio = self._languages(meta.audio_languages)
         original = self._normalise_language(meta.original_language)
         accepted = self._accepted_languages()
-        if not audio or (len(audio) == 1 and original in audio):
+        if not audio:
             return "SKIPPED"
+        if len(audio) == 1 and original in audio:
+            return ""
         if audio == {"english"} and original and original != "english":
             return "Dubbed"
         if len(audio) == 1:
@@ -477,7 +484,7 @@ class DarkPeers(UNIT3D):
                 return f"{only.title()} Dubbed"
             return "SKIPPED"
         if original and original in audio:
-            if "english" in audio and len(audio) == 2:
+            if original != "english" and "english" in audio and len(audio) == 2:
                 return "Dual-Audio"
             if len(audio) >= 3:
                 return "MULTi"
@@ -510,10 +517,26 @@ class DarkPeers(UNIT3D):
             dp_name = await self._tv_name(meta, dp_name)
 
         audio = await self.get_audio(meta)
-        if audio and audio != "SKIPPED" and "Dual-Audio" in dp_name:
-            dp_name = dp_name.replace("Dual-Audio", audio)
+        dp_name = self._apply_dub_element(dp_name, audio)
 
         return {"name": dp_name}
+
+    @classmethod
+    def _apply_dub_element(cls, name: str, audio: str) -> str:
+        if audio == "SKIPPED":
+            return " ".join(name.split())
+        existing = cls._DUB_ELEMENT_PATTERN.search(name)
+        replacement = f" {audio}" if audio else ""
+        if existing:
+            normalized = f"{name[: existing.start()]}{replacement}{name[existing.end() :]}"
+            return " ".join(normalized.split())
+        if not replacement:
+            return " ".join(name.split())
+        codec_match = cls._AUDIO_CODEC_PATTERN.search(name)
+        if not codec_match:
+            return " ".join(name.split())
+        normalized = f"{name[: codec_match.start()]}{replacement}{name[codec_match.start() :]}"
+        return " ".join(normalized.split())
 
     async def _tv_name(self, meta: Meta, name: str) -> str:
         title = str(meta.title or "").strip()
