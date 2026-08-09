@@ -1116,8 +1116,11 @@ def _movie_tv_identity_error(meta: Meta) -> str | None:
         return None
 
     imdb_info_id = meta.imdb_info.get("imdbID") if isinstance(meta.imdb_info, dict) else None
-    identity_values = (meta.tmdb, meta.tmdb_id, meta.imdb, meta.imdb_id, imdb_info_id, meta.tvdb_id, meta.tvmaze_id, meta.mal_id)
-    if not any(str(value or "").strip().lower() not in {"", "0", "tt0", "none"} for value in identity_values):
+    numeric_ids = (meta.tmdb, meta.tmdb_id, meta.tvdb_id, meta.tvmaze_id, meta.mal_id)
+    imdb_ids = (meta.imdb, meta.imdb_id, imdb_info_id)
+    has_numeric_id = any(re.fullmatch(r"[1-9]\d*", str(value or "").strip()) for value in numeric_ids)
+    has_imdb_id = any(re.fullmatch(r"tt[1-9]\d{6,9}", str(value or "").strip(), re.IGNORECASE) for value in imdb_ids)
+    if not has_numeric_id and not has_imdb_id:
         return f"Unattended {meta.category} metadata has no valid TMDb, IMDb, TVDB, TVmaze, or MAL identifier. Refusing to process the upload."
 
     return None
@@ -2564,6 +2567,14 @@ async def do_the_thing(base_dir: str) -> None:
                 if is_batch and not _shutdown_requested:
                     failed_items.append((current_item_path, item_error))
                     item_outcomes[item_index] = (current_item_path, "failed", item_error)
+                    processed_files_count += 1
+                    skipped_files_count += 1
+                    logger.info(f"[cyan]Processed {processed_files_count}/{total_files} files with {skipped_files_count} skipped uploading.\n\n")
+                    if log_file and (not meta.debug or "debug" in Path(log_file).name):
+                        if meta.site_upload_queue:
+                            await QueueManager.save_processed_path(log_file, current_item_path)
+                        else:
+                            await save_processed_file(log_file, current_item_path)
                 else:
                     if item_abort is not None:
                         raise item_abort
@@ -2603,15 +2614,14 @@ async def do_the_thing(base_dir: str) -> None:
                 if is_batch and not _shutdown_requested:
                     failed_items.append((current_item_path, item_error))
                     item_outcomes[item_index] = (current_item_path, "failed", item_error)
-                    if "queue" in meta and meta.queue is not None:
-                        processed_files_count += 1
-                        skipped_files_count += 1
-                        logger.info(f"[cyan]Processed {processed_files_count}/{total_files} files with {skipped_files_count} skipped uploading.\n\n")
-                        if log_file and (not meta.debug or "debug" in Path(log_file).name):
-                            if meta.site_upload_queue:
-                                await QueueManager.save_processed_path(log_file, current_item_path)
-                            else:
-                                await save_processed_file(log_file, current_item_path)
+                    processed_files_count += 1
+                    skipped_files_count += 1
+                    logger.info(f"[cyan]Processed {processed_files_count}/{total_files} files with {skipped_files_count} skipped uploading.\n\n")
+                    if log_file and (not meta.debug or "debug" in Path(log_file).name):
+                        if meta.site_upload_queue:
+                            await QueueManager.save_processed_path(log_file, current_item_path)
+                        else:
+                            await save_processed_file(log_file, current_item_path)
                     await cleanup_manager.cleanup()
                     gc.collect()
                     cleanup_manager.reset_terminal()
@@ -2625,7 +2635,6 @@ async def do_the_thing(base_dir: str) -> None:
                 if is_batch:
                     failed_items.append((current_item_path, item_error))
                     item_outcomes[item_index] = (current_item_path, "failed", item_error)
-                if "queue" in meta and meta.queue is not None:
                     processed_files_count += 1
                     skipped_files_count += 1
                     logger.info(f"[cyan]Processed {processed_files_count}/{total_files} files with {skipped_files_count} skipped uploading.\n\n")
@@ -2647,7 +2656,6 @@ async def do_the_thing(base_dir: str) -> None:
                     logger.info("we are not uploading.......")
                     if is_batch:
                         item_outcomes[item_index] = (current_item_path, "skipped", "Uploading is disabled")
-                    if "queue" in meta and meta.queue is not None:
                         processed_files_count += 1
                         skipped_files_count += 1
                         logger.info(f"[cyan]Processed {processed_files_count}/{total_files} files with {skipped_files_count} skipped uploading.\n\n")
@@ -2861,6 +2869,7 @@ async def do_the_thing(base_dir: str) -> None:
                             item_outcomes[item_index] = (current_item_path, "partial", failed_tracker_names)
                             logger.info(f"[yellow]Upload completed partially; failed trackers: {', '.join(failed_trackers)}.[/yellow]")
                         elif meta.debug:
+                            skipped_files_count += 1
                             item_outcomes[item_index] = (current_item_path, "skipped", "Debug mode")
                             logger.info(f"[cyan]Processed {processed_files_count}/{total_files} files in debug mode; no tracker upload was attempted.[/cyan]")
                         elif "limit_queue" in meta and meta.limit_queue > 0:

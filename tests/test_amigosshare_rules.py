@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 
 data_config = types.ModuleType("data.config")
@@ -166,6 +167,43 @@ def test_amigosshare_rejects_video_category_without_video_files() -> None:
     meta = make_meta(filelist=["release.nfo"])
 
     assert not asyncio.run(run_checks(meta, guard_language_call=True))
+
+
+def test_amigosshare_excludes_sample_files_from_tv_episode_count() -> None:
+    meta = make_meta(
+        category="TV",
+        audio_languages=["portuguese"],
+        filelist=[
+            "Show.S01E01.1080p.WEB-DL.DDP.5.1.H.264-GRP.mkv",
+            "Show.S01E02.sample.mkv",
+        ],
+        imdb_info={"status": "continuing"},
+    )
+
+    assert asyncio.run(run_checks(meta))
+
+
+@pytest.mark.asyncio
+async def test_amigosshare_request_search_handles_http_errors_but_propagates_parser_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = tracker()
+    meta = make_meta(search_requests=True)
+    client.cookie_validator.load_session_cookies = AsyncMock(return_value=None)
+    try:
+        request = httpx.Request("GET", client.requests_url)
+        client.session.get = AsyncMock(side_effect=httpx.ConnectError("network failure", request=request))
+        assert await client.get_requests(meta) == []
+
+        response = SimpleNamespace(text="<html></html>", raise_for_status=lambda: None)
+        client.session.get = AsyncMock(return_value=response)
+
+        def fail_parse(*_args, **_kwargs):
+            raise ValueError("parser failure")
+
+        monkeypatch.setattr("src.trackers.amigosshare.BeautifulSoup", fail_parse)
+        with pytest.raises(ValueError, match="parser failure"):
+            await client.get_requests(meta)
+    finally:
+        await client.session.aclose()
 
 
 def test_book_blocks_non_portuguese_description_when_unattended():

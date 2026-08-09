@@ -213,10 +213,10 @@ class Common:
     @staticmethod
     def count_tv_episodes(filelist: list[Any]) -> int:
         episodes: set[tuple[int, int]] = set()
-        episode_pattern = re.compile(r"(?<![A-Za-z0-9])[sS](\d{1,3})((?:[eE]\d{1,3})+)")
+        episode_pattern = re.compile(r"(?<![A-Za-z0-9])[sS](\d{1,3})[eE](\d{1,3})((?:[-_. ]?[eE]\d{1,3})*)")
         for item in filelist:
-            for season, episode_tokens in episode_pattern.findall(str(item)):
-                for episode in re.findall(r"[eE](\d{1,3})", episode_tokens):
+            for season, first_episode, remaining_episodes in episode_pattern.findall(str(item)):
+                for episode in (first_episode, *re.findall(r"[eE](\d{1,3})", remaining_episodes)):
                     episodes.add((int(season), int(episode)))
         return len(episodes)
 

@@ -207,6 +207,40 @@ def test_movie_tv_identity_validation_rejects_invalid_automatic_metadata() -> No
     assert upload._movie_tv_identity_error(Meta(category="BOOK", title="", unattended=True)) is None
 
 
+@pytest.mark.parametrize(
+    "identity",
+    [
+        {"tmdb": "unknown"},
+        {"tmdb_id": "12x"},
+        {"imdb": "N/A"},
+        {"imdb_id": "1234567"},
+        {"imdb_info": {"imdbID": "tt0"}},
+        {"tvdb_id": "none"},
+        {"tvdb_id": "-1"},
+        {"tvmaze_id": "N/A"},
+        {"tvmaze_id": "1.5"},
+        {"mal_id": "unknown"},
+        {"mal_id": "abc"},
+    ],
+)
+def test_movie_tv_identity_validation_rejects_provider_placeholders_and_malformed_ids(identity: dict[str, Any]) -> None:
+    assert upload._movie_tv_identity_error(Meta(category="TV", title="Known Show", unattended=True, **identity)) is not None
+
+
+@pytest.mark.parametrize(
+    "identity",
+    [
+        {"tmdb_id": "123"},
+        {"imdb_info": {"imdbID": "tt1234567"}},
+        {"tvdb_id": 123},
+        {"tvmaze_id": "123"},
+        {"mal_id": 123},
+    ],
+)
+def test_movie_tv_identity_validation_accepts_provider_specific_ids(identity: dict[str, Any]) -> None:
+    assert upload._movie_tv_identity_error(Meta(category="TV", title="Known Show", unattended=True, **identity)) is None
+
+
 @pytest.mark.asyncio
 async def test_process_meta_stops_before_trackers_for_invalid_automatic_tv_metadata(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     class FakePrep:
@@ -338,6 +372,57 @@ async def test_limit_queue_records_unprocessed_items(tmp_path: Path, monkeypatch
     assert process_meta_mock.call_count == 1
     assert any("total queued 5, fully successful 1, partial 0, skipped/failed 4" in message for message in info_messages)
     assert any("item-4.mkv" in message and "Queue limit of 1" in message for message in info_messages)
+
+
+@pytest.mark.asyncio
+async def test_debug_items_do_not_consume_success_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    queue = [str(tmp_path / f"debug-{index}.mkv") for index in range(2)]
+
+    def fake_process_meta(meta: Meta, _base_dir: str) -> bool:
+        meta.we_are_uploading = True
+        meta.trackers = ["DEBUG"]
+        meta.tracker_status = {"DEBUG": {"upload": True}}
+        return True
+
+    info_messages, process_meta_mock = _configure_do_the_thing_stubs(
+        monkeypatch,
+        queue,
+        fake_process_meta,
+        meta_overrides={"debug": True, "limit_queue": 1},
+    )
+    monkeypatch.setattr(upload, "process_trackers", AsyncMock(return_value=None))
+    monkeypatch.setattr(sys, "argv", ["upload.py", *queue])
+
+    await upload.do_the_thing(upload.base_dir)
+
+    assert process_meta_mock.call_count == 2
+    assert any("total queued 2, fully successful 0, partial 0, skipped/failed 2" in message for message in info_messages)
+
+
+@pytest.mark.asyncio
+async def test_batch_metadata_failure_without_meta_queue_updates_progress_and_persists_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = str(tmp_path / "failed.mkv")
+    second_path = str(tmp_path / "second-failed.mkv")
+    queue = [path, second_path]
+    log_file = str(tmp_path / "processed.log")
+    info_messages, _ = _configure_do_the_thing_stubs(
+        monkeypatch,
+        queue,
+        lambda *_args: False,
+        meta_queue=None,
+    )
+    monkeypatch.setattr(upload.QueueManager, "handle_queue", AsyncMock(return_value=(queue, log_file)))
+    save_processed = AsyncMock(return_value=None)
+    monkeypatch.setattr(upload, "save_processed_file", save_processed)
+    monkeypatch.setattr(sys, "argv", ["upload.py", *queue])
+
+    await upload.do_the_thing(upload.base_dir)
+
+    assert any("Processed 2/2 files with 2 skipped uploading" in message for message in info_messages)
+    assert save_processed.await_args_list[0].args == (log_file, path)
+    assert save_processed.await_args_list[1].args == (log_file, second_path)
 
 
 @pytest.mark.asyncio

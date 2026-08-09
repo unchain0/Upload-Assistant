@@ -903,7 +903,7 @@ class AmigosShare:
                 return False
 
             if category == "TV":
-                episode_count = self.common.count_tv_episodes(list(raw_filelist))
+                episode_count = self.common.count_tv_episodes(video_paths)
                 tv_pack = bool(getattr(meta, "tv_pack", False))
                 if not getattr(meta, "is_disc", None) and episode_count == 0:
                     logger.info(f"{self.tracker}: [bold red]No valid TV episode marker was found in the uploaded files.[/bold red]")
@@ -1255,7 +1255,7 @@ class AmigosShare:
 
             return results
 
-        except Exception as e:
+        except httpx.HTTPError as e:
             logger.info(f"{self.tracker}: [bold red]An error occurred while searching requests on {self.tracker}: {e}[/bold red]")
             import traceback
 
