@@ -1104,6 +1104,25 @@ def book_screens(meta: Meta, min_successful_uploads: int) -> tuple[int, int]:
     return actual_screens, capped_min
 
 
+def _movie_tv_identity_error(meta: Meta) -> str | None:
+    if meta.category not in {"MOVIE", "TV"}:
+        return None
+
+    title = str(meta.title or "").strip()
+    if not title or not re.search(r"\w", title, re.UNICODE):
+        return f"{meta.category} metadata has no valid title. Refusing to process the upload."
+
+    if not meta.unattended:
+        return None
+
+    imdb_info_id = meta.imdb_info.get("imdbID") if isinstance(meta.imdb_info, dict) else None
+    identity_values = (meta.tmdb, meta.tmdb_id, meta.imdb, meta.imdb_id, imdb_info_id, meta.tvdb_id, meta.tvmaze_id, meta.mal_id)
+    if not any(str(value or "").strip().lower() not in {"", "0", "tt0", "none"} for value in identity_values):
+        return f"Unattended {meta.category} metadata has no valid TMDb, IMDb, TVDB, TVmaze, or MAL identifier. Refusing to process the upload."
+
+    return None
+
+
 async def process_meta(meta: Meta, base_dir: str) -> bool:
     """Process the metadata for each queued path."""
     if not meta.imghost:
@@ -1130,6 +1149,12 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
     except Exception as e:
         logger.info(f"Error in gather_prep: {e}")
         logger.info(traceback.format_exc())
+        return False
+
+    identity_error = _movie_tv_identity_error(meta)
+    if identity_error:
+        logger.info(f"[bold red]{identity_error}[/bold red]")
+        await cancel_and_drain_early_artifact_tasks(meta.uuid)
         return False
 
     # Load covers.json if it exists and not already present in meta

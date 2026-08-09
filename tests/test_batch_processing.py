@@ -1,3 +1,4 @@
+# ruff: noqa: ARG001, ARG005, S101
 from __future__ import annotations
 
 import signal
@@ -190,6 +191,39 @@ def test_sigterm_signal_maps_to_keyboard_interrupt(monkeypatch: pytest.MonkeyPat
     with pytest.raises(KeyboardInterrupt):
         upload._handle_shutdown_signal(signal.SIGTERM, None)
     assert upload._shutdown_requested is True
+
+
+def test_movie_tv_identity_validation_rejects_invalid_automatic_metadata() -> None:
+    assert upload._movie_tv_identity_error(Meta(category="TV", title="", unattended=True)) == "TV metadata has no valid title. Refusing to process the upload."
+    assert upload._movie_tv_identity_error(Meta(category="MOVIE", title="Known Title", unattended=True)) == (
+        "Unattended MOVIE metadata has no valid TMDb, IMDb, TVDB, TVmaze, or MAL identifier. Refusing to process the upload."
+    )
+    assert upload._movie_tv_identity_error(Meta(category="TV", title="Known Show", tmdb=123, unattended=True)) is None
+    assert upload._movie_tv_identity_error(Meta(category="TV", title="Manual Show", unattended=False)) is None
+    assert upload._movie_tv_identity_error(Meta(category="BOOK", title="", unattended=True)) is None
+
+
+@pytest.mark.asyncio
+async def test_process_meta_stops_before_trackers_for_invalid_automatic_tv_metadata(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakePrep:
+        def __init__(self, **_kwargs: Any) -> None:
+            pass
+
+        async def gather_prep(self, meta: Meta, mode: str) -> Meta:
+            del mode
+            meta.category = "TV"
+            meta.title = ""
+            meta.tmdb = None
+            meta.imdb = ""
+            return meta
+
+    cancel_tasks = AsyncMock(return_value=None)
+    monkeypatch.setattr(upload, "Prep", FakePrep)
+    monkeypatch.setattr(upload, "cancel_and_drain_early_artifact_tasks", cancel_tasks)
+    meta = Meta(base_dir=str(tmp_path), uuid="invalid-tv", imghost="imgbb", unattended=True, trackers=["PEERGARDEN"])
+
+    assert await upload.process_meta(meta, str(tmp_path)) is False
+    cancel_tasks.assert_awaited_once_with("invalid-tv")
 
 
 @pytest.mark.asyncio
