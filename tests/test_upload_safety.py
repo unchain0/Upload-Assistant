@@ -23,6 +23,20 @@ def test_spaces_outside_torrent_content_are_ignored() -> None:
     assert content_paths_with_spaces(meta) == []
 
 
+def test_windows_spaces_outside_torrent_content_are_ignored() -> None:
+    path = r"C:\data\My Media\Movie.2026.1080p.WEB-DL-GROUP.mkv"
+    meta = Meta(path=path, filelist=[path])
+
+    assert content_paths_with_spaces(meta) == []
+
+
+def test_windows_single_file_with_spaces_is_blocked() -> None:
+    path = r"C:\data\daily\Movie With Spaces.mkv"
+    meta = Meta(path=path, filelist=[path])
+
+    assert content_paths_with_spaces(meta) == ["Movie With Spaces.mkv"]
+
+
 def test_nested_content_folder_with_spaces_is_blocked() -> None:
     meta = Meta(path="Release", filelist=["Release/Season 01/Episode.S01E01.mkv"])
 

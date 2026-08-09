@@ -1,5 +1,6 @@
 # Upload Assistant © 2026 Audionut & wastaken7 — Licensed under UAPL v1.0
-from pathlib import Path
+import re
+from pathlib import PurePath, PurePosixPath, PureWindowsPath
 from typing import Any
 
 from src.meta import Meta
@@ -9,10 +10,16 @@ def _has_whitespace(value: str) -> bool:
     return any(character.isspace() for character in value)
 
 
+def _content_path(value: str) -> PurePath:
+    if re.match(r"^[A-Za-z]:[\\/]", value) or value.startswith(("\\\\", "//")):
+        return PureWindowsPath(value)
+    return PurePosixPath(value.replace("\\", "/"))
+
+
 def content_paths_with_spaces(meta: Meta) -> list[str]:
     suspicious: list[str] = []
     root_text = str(meta.path or "").strip()
-    root = Path(root_text.replace("\\", "/")) if root_text else None
+    root = _content_path(root_text) if root_text else None
 
     def remember(parts: tuple[str, ...]) -> None:
         for part in parts:
@@ -31,7 +38,7 @@ def content_paths_with_spaces(meta: Meta) -> list[str]:
         item_text = str(item or "").strip()
         if not item_text:
             continue
-        item_path = Path(item_text.replace("\\", "/"))
+        item_path = _content_path(item_text)
         if not item_path.is_absolute():
             remember(item_path.parts)
             continue
