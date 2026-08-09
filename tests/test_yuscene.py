@@ -259,3 +259,17 @@ def test_yuscene_allows_movie_with_three_screenshots():
         )
         is True
     )
+
+
+def test_yuscene_rejects_game_package_without_valid_type_mapping():
+    meta = Meta(category="GAME", type="GAME", filelist=["dungeon_antiqua_2_enUS_20260717_.pkg"], unattended=True)
+
+    assert asyncio.run(_tracker().get_additional_checks(meta)) is False
+    assert asyncio.run(_tracker().get_type_id(meta)) == {"type_id": "0"}
+
+
+def test_yuscene_maps_rar_game_release_to_archive_type():
+    meta = Meta(category="GAME", type="GAME", filelist=["release.rar", "release.r00"], unattended=True)
+
+    assert asyncio.run(_tracker().get_additional_checks(meta)) is True
+    assert asyncio.run(_tracker().get_type_id(meta)) == {"type_id": "22"}

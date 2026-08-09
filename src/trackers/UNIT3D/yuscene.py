@@ -371,6 +371,9 @@ class YUSCENE(UNIT3D):
             archive = self._contains_archive_file(filelist)
             if archive and not await self._confirm_or_skip(f"Archive/RAR files are not allowed for {category} on {self.tracker}.", meta):
                 return False
+        elif (await self.get_type_id(meta)).get("type_id") == "0":
+            logger.info(f"{self.tracker}: [bold red]No valid tracker type is available for this GAME package format. Skipping upload.[/bold red]")
+            return False
 
         if category == "MOVIE":
             packed_keywords = ["boxset", "box set", "complete", "collection"]
@@ -451,6 +454,10 @@ class YUSCENE(UNIT3D):
 
         if meta.category == "MUSIC" and not str(type or "").strip():
             resolved_type = meta.format.upper()
+
+        game_files = list(meta.filelist) if isinstance(meta.filelist, (list, tuple, set)) else []
+        if meta.category == "GAME" and not str(type or "").strip() and self._contains_archive_file(game_files):
+            resolved_type = "RAR"
 
         val = type_id.get(resolved_type or "", "0")
         if meta.category == "BOOK" and val == "0":

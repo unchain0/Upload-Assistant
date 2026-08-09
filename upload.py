@@ -1508,7 +1508,7 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
                 elif meta.path_to_menu_screenshots or config["DEFAULT"].get("auto_dvd_menus", False):
                     await process_disc_menus(meta, config)
 
-            should_process_spectrogram = meta.category != "BOOK" or bool(meta.audiobook)
+            should_process_spectrogram = meta.category not in {"BOOK", "GAME"} or bool(meta.audiobook)
             if should_process_spectrogram and (meta.audio_spectrogram or meta.audio_spectrogram_tracks or config["DEFAULT"].get("add_audio_spectrogram", False)):
                 try:
                     await process_audio_spectrograms(meta, config, uploadscreens_manager)

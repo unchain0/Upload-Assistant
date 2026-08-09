@@ -15,3 +15,13 @@ def test_game_title_fallback_removes_version_and_scene_group() -> None:
 
 def test_dmg_platform_is_detected_as_mac() -> None:
     assert asyncio.run(detect_platform_from_files(["Native_Instruments_SuperStarSaw.dmg"])) == "MAC"
+
+
+def test_generic_pkg_platform_is_detected_as_mac() -> None:
+    assert asyncio.run(detect_platform_from_files(["dungeon_antiqua_2_enUS_20260717_.pkg"])) == "MAC"
+
+
+def test_pkg_platform_preserves_explicit_playstation_evidence() -> None:
+    assert asyncio.run(detect_platform_from_files(["UP0001-NPUB12345_00-GAME.pkg"])) == "PS3"
+    assert asyncio.run(detect_platform_from_files(["Game-CUSA12345.pkg"])) == "PS4"
+    assert asyncio.run(detect_platform_from_files(["Game-PPSA12345.pkg"])) == "PS5"

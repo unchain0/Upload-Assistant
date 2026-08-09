@@ -294,7 +294,11 @@ async def detect_platform_from_files(
             return "PS4"
         if "ps5" in all_paths_str or "playstation 5" in all_paths_str:
             return "PS5"
-        return "PS3"
+        if "ps3" in all_paths_str or "playstation 3" in all_paths_str:
+            return "PS3"
+        if any(re.search(r"(?:^|[^a-z0-9])(?:np|bl|bc)[a-z]{2}\d{5}(?:[^a-z0-9]|$)", pkg) for pkg in pkg_files):
+            return "PS3"
+        return "MAC"
 
     # Xbox 360
     if any(b.endswith(".xex") for b in basenames_lower) or any(b == "default.xex" for b in basenames_lower):
@@ -877,11 +881,15 @@ async def gather_game_prep(
                     if desc_unescaped:
                         meta.localized_overviews = {"brazilian": desc_unescaped}
 
-                # Extract PC system requirements
-                pc_reqs = app_data.get("pc_requirements", {})
-                if isinstance(pc_reqs, dict):
-                    minimum = pc_reqs.get("minimum", "")
-                    recommended = pc_reqs.get("recommended", "")
+                requirements_key = {
+                    "PC": "pc_requirements",
+                    "MAC": "mac_requirements",
+                    "LINUX": "linux_requirements",
+                }.get(str(meta.platform or "").upper())
+                platform_reqs = app_data.get(requirements_key, {}) if requirements_key else {}
+                if isinstance(platform_reqs, dict):
+                    minimum = platform_reqs.get("minimum", "")
+                    recommended = platform_reqs.get("recommended", "")
                     if minimum:
                         meta.requirements_minimum = minimum
                     if recommended:
