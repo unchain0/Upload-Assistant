@@ -443,7 +443,22 @@ class UNIT3D:
         base_dir = meta.base_dir
         uuid = meta.uuid
         specified_dir = Path(base_dir) / "tmp" / uuid
-        nfo_files = [str(p) for p in specified_dir.glob("*.nfo")]
+        nfo_files: list[str] = []
+        if meta.category == "GAME":
+            source_path = Path(str(meta.path or ""))
+            source_dir = source_path if source_path.is_dir() else source_path.parent
+            candidates = [meta.scene_nfo_file, *(meta.filelist if isinstance(meta.filelist, (list, tuple, set)) else [])]
+            for candidate in candidates:
+                candidate_path = Path(str(candidate or ""))
+                if candidate_path.suffix.lower() != ".nfo":
+                    continue
+                if not candidate_path.is_file() and not candidate_path.is_absolute():
+                    candidate_path = source_dir / candidate_path
+                if candidate_path.is_file() and str(candidate_path) not in nfo_files:
+                    nfo_files.append(str(candidate_path))
+
+        if not nfo_files:
+            nfo_files = [str(p) for p in specified_dir.glob("*.nfo")]
         if not nfo_files and meta.keep_nfo and (meta.keep_folder or meta.isdir):
             search_dir = Path(str(meta.path)).parent
             nfo_files = [str(p) for p in search_dir.glob("*.nfo")]
@@ -451,7 +466,7 @@ class UNIT3D:
         if nfo_files:
             async with aiofiles.open(nfo_files[0], "rb") as f:
                 nfo_bytes = await f.read()
-            files["nfo"] = ("nfo_file.nfo", nfo_bytes, "text/plain")
+            files["nfo"] = (Path(nfo_files[0]).name, nfo_bytes, "text/plain")
 
         if meta.category not in ("MOVIE", "TV", "GAME"):
             cover_path = meta.artwork_path
