@@ -170,7 +170,7 @@ class Luminarr(UNIT3D):
                 return False
 
         if meta.is_disc not in Luminarr._DISC_TYPES and not await self.common.check_language_requirements(
-            meta, self.tracker, languages_to_check=["english"], check_subtitle=True, prompt_on_failure=False
+            meta, self.tracker, languages_to_check=["english"], check_audio=True, check_subtitle=True, prompt_on_failure=False
         ):
             return False
 

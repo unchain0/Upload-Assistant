@@ -68,3 +68,28 @@ def test_text_sidecars_are_excluded_when_a_richer_book_format_exists(tmp_path):
 
     assert videopath == str(book.resolve())
     assert filelist == [str(book.resolve())]
+
+
+def test_scene_tv_rar_is_not_auto_detected_as_game(tmp_path):
+    release = tmp_path / "Il.Etait.Une.Fois.Dans.Le.Trouble.S07E12.FRENCH.1080p.WEB.H264-BAWLS"
+    release.mkdir()
+    (release / "release.rar").write_bytes(b"archive")
+    (release / "release.nfo").write_text("TV release", encoding="utf-8")
+    meta = Meta(path=str(release))
+    prep = SimpleNamespace(disc_info_manager=SimpleNamespace(get_disc=AsyncMock(return_value=("", str(release), {}, []))))
+
+    asyncio.run(detect_disc_and_category(prep, meta))
+
+    assert meta.category != "GAME"
+
+
+def test_scene_game_iso_is_still_auto_detected_as_game(tmp_path):
+    release = tmp_path / "Cellar.Keeper-TENOKE"
+    release.mkdir()
+    (release / "tenoke-cellar.keeper.iso").write_bytes(b"disc")
+    meta = Meta(path=str(release))
+    prep = SimpleNamespace(disc_info_manager=SimpleNamespace(get_disc=AsyncMock(return_value=("", str(release), {}, []))))
+
+    asyncio.run(detect_disc_and_category(prep, meta))
+
+    assert meta.category == "GAME"

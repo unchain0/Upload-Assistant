@@ -115,6 +115,7 @@ def test_zenith_accepts_numbered_scene_music_filenames():
     ]
 
     assert Zenith._validate_music_track_naming(files) == ""
+    assert Zenith._validate_music_track_naming(["01. After Hours & Josh Heuston - Into You.flac"]) == ""
     assert Zenith._validate_music_track_naming(["simon_and_garfunkel-the_sound_of_silence.flac"]) != ""
 
 
@@ -167,6 +168,10 @@ def test_zenith_rejects_movie_uploads_with_less_than_three_screenshots():
 
 def test_zenith_rejects_movie_with_invalid_video_container_extension():
     assert asyncio.run(_tracker().get_additional_checks(_movie_meta(filelist=["Movie.2024.avi"]))) is False
+
+
+def test_zenith_accepts_dvdrip_with_avi_container():
+    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(type="DVDRIP", filelist=["Movie.2024.avi"]))) is True
 
 
 def test_zenith_rejects_tagged_video_filename_renamed_with_spaces():

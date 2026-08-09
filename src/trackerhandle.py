@@ -253,7 +253,8 @@ async def process_trackers(
                 else:
                     status["upload_success"] = False
                     print_tracker_result(tracker, tracker_class, status, False)
-                    logger.info(f"[red]{tracker} upload failed or returned data error.[/red]")
+                    failure_detail = str(status.get("status_message") or "No error details were returned by the tracker.")
+                    logger.info(f"[red]{tracker} upload failed or returned data error: {failure_detail}[/red]")
 
         elif tracker in other_api_trackers or tracker in http_trackers:
             tracker_status = meta.tracker_status
@@ -293,7 +294,8 @@ async def process_trackers(
                 else:
                     status["upload_success"] = False
                     print_tracker_result(tracker, tracker_class, status, False)
-                    logger.info(f"[red]{tracker} upload failed or returned data error.[/red]")
+                    failure_detail = str(status.get("status_message") or "No error details were returned by the tracker.")
+                    logger.info(f"[red]{tracker} upload failed or returned data error: {failure_detail}[/red]")
 
         elif tracker == "MANUAL":
             if meta.unattended:

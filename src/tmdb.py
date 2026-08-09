@@ -72,6 +72,7 @@ class TmdbManager:
         mode: str = "non_cli",
         category_preference: str | None = None,
         imdb_info: dict[str, Any] | None = None,
+        unattended: bool = False,
     ) -> tuple[str, int | str, str, bool]:
         return await get_tmdb_from_imdb(
             imdb_id=imdb_id,
@@ -82,6 +83,7 @@ class TmdbManager:
             mode=mode,
             category_preference=category_preference,
             imdb_info=imdb_info,
+            unattended=unattended,
         )
 
     async def get_tmdb_id(
@@ -286,6 +288,7 @@ async def get_tmdb_from_imdb(
     mode: str = "non_cli",
     category_preference: str | None = None,
     imdb_info: dict[str, Any] | None = None,
+    unattended: bool = False,
 ) -> tuple[str, int | str, str, bool]:
     """Fetches TMDb ID using IMDb or TVDb ID.
 
@@ -366,18 +369,18 @@ async def get_tmdb_from_imdb(
 
     # Try as movie first
     fallback_movie_title = str(imdb_info.get("original title") or imdb_info.get("localized title") or "")
-    tmdb_id, category = await get_tmdb_id(title, year, "MOVIE", secondary_title=fallback_movie_title, debug=debug)
+    tmdb_id, category = await get_tmdb_id(title, year, "MOVIE", secondary_title=fallback_movie_title, debug=debug, unattended=unattended)
 
     # If no results, try as TV
     if tmdb_id == 0:
-        tmdb_id, category = await get_tmdb_id(title, year, "TV", secondary_title=fallback_movie_title, debug=debug)
+        tmdb_id, category = await get_tmdb_id(title, year, "TV", secondary_title=fallback_movie_title, debug=debug, unattended=unattended)
 
     # Extract necessary values from the result
     tmdb_id = tmdb_id or 0
     category = category or "MOVIE"
 
     # **User Prompt for Manual TMDb ID Entry**
-    if tmdb_id in ("None", "", None, 0, "0") and mode == "cli":
+    if tmdb_id in ("None", "", None, 0, "0") and mode == "cli" and not unattended:
         logger.info("[yellow]Unable to find a matching TMDb entry[/yellow]")
         tmdb_input = await prompt_in_thread(cli_ui.ask_string, "Please enter TMDb ID (format: tv/12345 or movie/12345): ", default="") or ""
         category, tmdb_id = _get_parser().parse_tmdb_id(tmdb_input, category)
@@ -916,6 +919,8 @@ async def get_tmdb_id(
 
     # No match found, prompt user if in CLI mode
     logger.info("[bold red]Unable to find TMDb match using any search[/bold red]")
+    if unattended:
+        return 0, category
     try:
         tmdb_input = await prompt_in_thread(cli_ui.ask_string, "Please enter TMDb ID in this format: tv/12345 or movie/12345")
     except EOFError:

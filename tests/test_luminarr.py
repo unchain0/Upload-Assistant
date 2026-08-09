@@ -158,6 +158,10 @@ def test_luminarr_accepts_english_subtitle_alias():
     assert asyncio.run(_tracker().get_additional_checks(_movie_meta(subtitle_languages=["eng"]))) is True
 
 
+def test_luminarr_accepts_english_audio_without_english_subtitles():
+    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(subtitle_languages=["Serbian", "Croatian"]))) is True
+
+
 def test_luminarr_rejects_nested_single_file_for_movie():
     assert (
         asyncio.run(

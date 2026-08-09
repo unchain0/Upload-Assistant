@@ -57,6 +57,7 @@ def test_darkpeers_accepts_numbered_scene_music_filenames():
 
     assert pattern.match("01-simon_and_garfunkel-the_sound_of_silence-repack-remastered")
     assert pattern.match("01 - The Sound of Silence")
+    assert pattern.match("01. After Hours & Josh Heuston - Into You")
     assert not pattern.match("simon_and_garfunkel-the_sound_of_silence")
 
 

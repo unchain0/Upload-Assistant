@@ -25,7 +25,7 @@ class DarkPeers(UNIT3D):
     display_name = "DarkPeers"
     allows_bloated_audio = True
     reject_episode_if_season_pack_exists = True
-    _AUDIO_TRACK_PATTERN = re.compile(r"^(?:\d{1,3}(?:-\d{1,2})?\s+-\s+.+|\d{1,3}(?:-\d{1,2})?-(?!-).+)$")
+    _AUDIO_TRACK_PATTERN = re.compile(r"^(?:\d{1,3}(?:-\d{1,2})?\.\s+.+|\d{1,3}(?:-\d{1,2})?\s+-\s+.+|\d{1,3}(?:-\d{1,2})?-(?!-).+)$")
     _VIDEO_EXTENSIONS: ClassVar[set[str]] = {".avi", ".m2ts", ".mkv", ".mp4", ".mpg", ".mpeg", ".ts", ".vob"}
     base_url = "https://darkpeers.org"
     banned_groups = (

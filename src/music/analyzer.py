@@ -547,7 +547,7 @@ class MusicReleaseAnalyzer:
                             compilation_artists.append(artist)
                 if compilation_artists:
                     release.set_field("artists", compilation_artists, MetadataSource.INFERRED, 1.0, force=True)
-                    release.set_field("artist", " & ".join(compilation_artists), MetadataSource.INFERRED, 1.0, force=True)
+                    release.set_field("artist", "Various Artists", MetadataSource.INFERRED, 1.0, force=True)
         elif count == 1:
             value = "Single"
         elif "ep" in album.split() or 2 <= count <= 6:

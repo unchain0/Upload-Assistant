@@ -64,7 +64,7 @@ class Zenith(UNIT3D):
     _KNOWN_VIDEO_EXTENSIONS: frozenset[str] = frozenset({".mkv", ".mp4", ".avi", ".mov", ".m4v", ".mpg", ".mpeg", ".m2ts", ".ts", ".wmv", ".flv"})
     _VIDEO_EXTENSIONS: frozenset[str] = frozenset({".mkv", ".mp4", ".ts", ".ps", ".mpg"})
     _VIDEO_RESOLUTIONS: tuple[str, ...] = ("480i", "480p", "576i", "576p", "720p", "1080i", "1080p", "2160p", "4320p", "360p")
-    _AUDIO_TRACK_PATTERN: re.Pattern[str] = re.compile(r"^(?:\d{1,3}(?:-\d{1,2})?\s+-\s+.+|\d{1,3}(?:-\d{1,2})?-(?!-).+)$")
+    _AUDIO_TRACK_PATTERN: re.Pattern[str] = re.compile(r"^(?:\d{1,3}(?:-\d{1,2})?\.\s+.+|\d{1,3}(?:-\d{1,2})?\s+-\s+.+|\d{1,3}(?:-\d{1,2})?-(?!-).+)$")
     _VIDEO_SOURCE_HINTS: tuple[str, ...] = (
         "WEB-DL",
         "WEBRIP",
@@ -244,6 +244,8 @@ class Zenith(UNIT3D):
             return {".ts"}
         if media_type == "SDTV":
             return {".ps", ".mpg"}
+        if media_type == "DVDRIP":
+            return {".avi", ".mkv", ".mp4"}
         return {".mkv", ".mp4"}
 
     @staticmethod

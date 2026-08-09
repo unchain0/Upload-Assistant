@@ -630,7 +630,7 @@ async def _prompt_game_meta(meta: Meta) -> None:
     torrent name is rebuilt so the confirmation screen and the per-tracker
     uploads reflect the new values.
     """
-    game_required_fields = ["title", "year", "platform", "game_version", "game_subcategory"]
+    game_required_fields = ["title", "year", "platform"]
     game_missing: list[str] = []
     for f in game_required_fields:
         val = getattr(meta, f, None)
@@ -1085,19 +1085,7 @@ async def _prompt_music_meta(meta: Meta) -> None:
         meta.name_notag, meta.name, meta.clean_name, meta.potential_missing = await name_manager.get_name(meta)
 
 
-def book_screens(meta: Meta, min_successful_uploads: int) -> tuple[int, int]:
-    """Count non-poster PNG screenshots for a BOOK upload and cap the upload minimum.
-
-    Args:
-        meta: The metadata dictionary (needs ``base_dir`` and ``uuid``).
-        min_successful_uploads: The configured minimum number of successful image uploads.
-
-    Returns:
-        A ``(actual_screens, capped_min)`` tuple where *actual_screens* is the
-        number of non-poster PNGs found and *capped_min* is
-        ``min(min_successful_uploads, actual_screens)`` so the upload loop never
-        requires more images than actually exist.
-    """
+def available_screens(meta: Meta, min_successful_uploads: int) -> tuple[int, int]:
     screenshot_files = list(screenshots_dir(meta.base_dir, meta.uuid).glob("*.png"))
     actual_screens = len(screenshot_files)
     capped_min = min(min_successful_uploads, actual_screens)
@@ -1122,6 +1110,9 @@ def _movie_tv_identity_error(meta: Meta) -> str | None:
     has_imdb_id = any(re.fullmatch(r"tt[1-9]\d{6,9}", str(value or "").strip(), re.IGNORECASE) for value in imdb_ids)
     if not has_numeric_id and not has_imdb_id:
         return f"Unattended {meta.category} metadata has no valid TMDb, IMDb, TVDB, TVmaze, or MAL identifier. Refusing to process the upload."
+
+    if meta.category == "TV" and meta.anime and not meta.tv_pack and meta.episode_int and meta.tvdb_id and not meta.tvdb_episode_id:
+        return "Unattended anime episode could not be mapped to a TVDB episode. Refusing to process the upload."
 
     return None
 
@@ -1789,8 +1780,12 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
                     default_cfg_obj = config.get("DEFAULT", {})
                     default_cfg = cast(dict[str, Any], default_cfg_obj) if isinstance(default_cfg_obj, dict) else {}
                     min_successful_uploads = int(default_cfg.get("min_successful_image_uploads", 3))
+                    actual_screens, available_minimum = available_screens(meta, min_successful_uploads)
                     if meta.category == "BOOK":
-                        meta.screens, min_successful_uploads = book_screens(meta, min_successful_uploads)
+                        meta.screens = actual_screens
+                        min_successful_uploads = available_minimum
+                    elif actual_screens:
+                        min_successful_uploads = available_minimum
 
                     host_order: list[str] = []
                     for host_index in range(1, 10):

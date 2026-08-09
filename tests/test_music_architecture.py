@@ -283,7 +283,7 @@ def test_compilation_uses_multiple_artists_not_various_artists_literal():
 
     assert release.get("release_type") == "Compilation"
     assert release.get("artists") == ["Artist One", "Artist Two", "Artist Three", "Artist Four"]
-    assert release.get("artist") != "Various Artists"
+    assert release.get("artist") == "Various Artists"
 
 
 def test_featured_track_artists_do_not_turn_a_stable_album_artist_into_a_compilation():

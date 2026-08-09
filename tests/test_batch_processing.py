@@ -241,6 +241,27 @@ def test_movie_tv_identity_validation_accepts_provider_specific_ids(identity: di
     assert upload._movie_tv_identity_error(Meta(category="TV", title="Known Show", unattended=True, **identity)) is None
 
 
+def test_movie_tv_identity_validation_rejects_unmapped_anime_episode() -> None:
+    meta = Meta(category="TV", title="Rilakkuma and Kaoru", unattended=True, anime=True, episode_int=19, tvdb_id=347929)
+
+    assert upload._movie_tv_identity_error(meta) == "Unattended anime episode could not be mapped to a TVDB episode. Refusing to process the upload."
+
+
+def test_movie_tv_identity_validation_accepts_mapped_anime_episode() -> None:
+    meta = Meta(category="TV", title="Known Anime", unattended=True, anime=True, episode_int=1, tvdb_id=123, tvdb_episode_id=456)
+
+    assert upload._movie_tv_identity_error(meta) is None
+
+
+def test_available_screens_caps_global_minimum_to_generated_files(tmp_path: Path) -> None:
+    screenshot_dir = tmp_path / "tmp" / "release" / "screenshots"
+    screenshot_dir.mkdir(parents=True)
+    (screenshot_dir / "one.png").write_bytes(b"image")
+    (screenshot_dir / "two.png").write_bytes(b"image")
+
+    assert upload.available_screens(Meta(base_dir=str(tmp_path), uuid="release"), 4) == (2, 2)
+
+
 @pytest.mark.asyncio
 async def test_process_meta_stops_before_trackers_for_invalid_automatic_tv_metadata(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     class FakePrep:

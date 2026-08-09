@@ -288,7 +288,6 @@ async def detect_disc_and_category(prep_instance: Any, meta: Meta) -> tuple[str,
             ".pbp",
             ".pkg",
             ".rap",
-            ".rar",
             ".srl",
             ".szs",
             ".vpk",
@@ -1029,6 +1028,7 @@ async def search_metadata(
             mode=(meta.mode if meta.mode is not None else "non_cli"),
             category_preference=meta.category,
             imdb_info=meta.imdb_info,
+            unattended=meta.unattended,
         )
 
         meta.category = category
@@ -1106,6 +1106,7 @@ async def search_metadata(
             mode=(meta.mode if meta.mode is not None else "non_cli"),
             category_preference=meta.category,
             imdb_info=meta.imdb_info,
+            unattended=meta.unattended,
         )
 
         meta.category = category
