@@ -55,7 +55,6 @@ from src.get_tracker_data import TrackerDataManager
 from src.qbitwait import Wait
 from src.queuemanage import QueueManager
 from src.rehostimages import check_tracker_image_hosts
-from src.spectrogram_policy import should_process_audio_spectrogram
 from src.takescreens import TakeScreensManager, download_artwork_from_meta
 from src.temp_paths import artwork_dir, screenshots_dir
 from src.torrentcreate import TorrentCreator
@@ -1510,7 +1509,8 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
                 elif meta.path_to_menu_screenshots or config["DEFAULT"].get("auto_dvd_menus", False):
                     await process_disc_menus(meta, config)
 
-            if should_process_audio_spectrogram(meta, config):
+            should_process_spectrogram = meta.category not in {"BOOK", "GAME"} or bool(meta.audiobook)
+            if should_process_spectrogram and (meta.audio_spectrogram or meta.audio_spectrogram_tracks or config["DEFAULT"].get("add_audio_spectrogram", False)):
                 try:
                     await process_audio_spectrograms(meta, config, uploadscreens_manager)
                 except Exception as e:
