@@ -18,6 +18,7 @@ from src.meta import Meta
 from src.metadata_searching import get_douban_id
 from src.torrentcreate import TorrentCreator
 from src.trackers.AVISTAZ.routing import AvistaZNetworkRouter
+from src.trackers.common import Common
 from src.trackers.passthepopcorn import PassThePopcorn
 from src.trackersetup import TrackerSetup, tracker_class_map
 from src.uphelper import UploadHelper
@@ -35,6 +36,16 @@ class TrackerStatusManager:
     def __init__(self, config: dict[str, Any]) -> None:
         self.config = config
         self.trackers_config = cast(Mapping[str, Mapping[str, Any]], config.get("TRACKERS", {}))
+
+    @staticmethod
+    def _block_completed_episode_uploads(meta: Meta, results: list[tuple[str, dict[str, bool], str | None, Any]]) -> bool:
+        if not Common.is_completed_tv_episode(meta):
+            return False
+        for _tracker_name, status, _display_name, _tracker_class in results:
+            if not status["dupe"]:
+                status["skipped"] = True
+                status["upload"] = False
+        return True
 
     async def process_all_trackers(self, meta: Meta) -> int:
         tracker_status: dict[str, dict[str, Any]] = {}
@@ -327,6 +338,9 @@ class TrackerStatusManager:
             logger.info("[yellow]Searching for existing torrents on selected trackers...")
         tasks = [process_single_tracker(tracker_name, meta) for tracker_name in meta.trackers]
         results = await asyncio.gather(*tasks)
+
+        if self._block_completed_episode_uploads(meta, results):
+            logger.info("[bold red]Individual episodes from completed TV series are not eligible for upload. Upload the complete season pack instead.[/bold red]")
 
         # Collect passed trackers and skip reasons
         passed_trackers: list[tuple[str, str | None, Any]] = []

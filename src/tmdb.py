@@ -987,6 +987,7 @@ async def tmdb_other_meta(
     release_date = None
     first_air_date = None
     last_air_date = None
+    series_status = ""
     youtube = None
     networks = []
 
@@ -1078,6 +1079,7 @@ async def tmdb_other_meta(
                 year = datetime.strptime(media_data["last_air_date"], "%Y-%m-%d").replace(tzinfo=UTC).year if media_data["last_air_date"] else 0
             first_air_date = media_data.get("first_air_date", None)
             last_air_date = media_data.get("last_air_date", None)
+            series_status = str(media_data.get("status") or "")
             runtime_list = media_data.get("episode_run_time", [60])
             runtime = runtime_list[0] if runtime_list else 60
             tmdb_type = media_data.get("type", "Scripted")
@@ -1273,6 +1275,7 @@ async def tmdb_other_meta(
         "release_date": release_date,
         "first_air_date": first_air_date,
         "last_air_date": last_air_date,
+        "series_status": series_status,
         "imdb_id": imdb_id,
         "tvdb_id": tvdb_id,
         "origin_country": origin_country,

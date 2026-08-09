@@ -30,6 +30,8 @@ from src.usenetcreate import verify_nzb_has_password
 
 
 class Common:
+    TV_ENDED_STATUSES: frozenset[str] = frozenset({"ended", "canceled", "cancelled", "finished", "completed"})
+    TV_ONGOING_STATUSES: frozenset[str] = frozenset({"returning series", "in production", "ongoing", "planned", "pilot", "in development"})
     PORTUGUESE_SUBTITLE_EXTENSIONS: frozenset[str] = frozenset({".ass", ".ssa", ".srt", ".sub", ".vtt"})
     PORTUGUESE_SUBTITLE_WORDS: frozenset[str] = frozenset(
         {
@@ -230,14 +232,23 @@ class Common:
         ended_values: set[str] | frozenset[str],
         ongoing_values: set[str] | frozenset[str],
     ) -> bool | None:
-        status_text = str(meta.imdb_info.get("status", "") if isinstance(meta.imdb_info, dict) else "").casefold().strip()
-        if not status_text:
-            return None
-        if any(value in status_text for value in ended_values):
-            return True
-        if any(value in status_text for value in ongoing_values):
-            return False
+        imdb_status = meta.imdb_info.get("status", "") if isinstance(meta.imdb_info, dict) else ""
+        for raw_status in (getattr(meta, "series_status", ""), imdb_status):
+            status_text = str(raw_status or "").casefold().strip()
+            if any(value in status_text for value in ended_values):
+                return True
+            if any(value in status_text for value in ongoing_values):
+                return False
         return None
+
+    @classmethod
+    def is_completed_tv_episode(cls, meta: Meta) -> bool:
+        return (
+            meta.category == "TV"
+            and not meta.tv_pack
+            and int(meta.episode_int or 0) > 0
+            and cls.is_tv_series_ended(meta, cls.TV_ENDED_STATUSES, cls.TV_ONGOING_STATUSES) is True
+        )
 
     @staticmethod
     def _read_subtitle_text(path: Path) -> str:

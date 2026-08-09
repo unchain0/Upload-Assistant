@@ -385,6 +385,7 @@ class Meta:
     season_pack_link: str | None = None
     season_pack_name: str = ""
     season: int | str | None = 0
+    series_status: str = ""
     secondary_title: str | None = None
     service_longname: str = ""
     service: str | None = None
