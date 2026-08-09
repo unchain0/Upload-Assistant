@@ -1,3 +1,5 @@
+# ruff: noqa: S101
+
 import asyncio
 from typing import Any
 
@@ -11,9 +13,9 @@ from src.trackers.UNIT3D.samaritano import Samaritano
 def test_samaritano_rejects_malformed_filelists_before_category_dispatch() -> None:
     tracker = Samaritano({"TRACKERS": {}})
 
-    assert asyncio.run(tracker.get_additional_checks(Meta(category="MOVIE", filelist=1))) is False  # noqa: S101
-    assert asyncio.run(tracker.get_additional_checks(Meta(category="BOOK", filelist=1))) is False  # noqa: S101
-    assert asyncio.run(tracker.get_additional_checks(Meta(category="BOOK", filelist=None))) is True  # noqa: S101
+    assert asyncio.run(tracker.get_additional_checks(Meta(category="MOVIE", filelist=1))) is False
+    assert asyncio.run(tracker.get_additional_checks(Meta(category="BOOK", filelist=1))) is False
+    assert asyncio.run(tracker.get_additional_checks(Meta(category="BOOK", filelist=None))) is True
 
 
 @pytest.mark.parametrize(
@@ -42,8 +44,8 @@ def test_brazilian_trackers_audio_tags_require_portuguese(tracker_class: type[Ca
 
     name = asyncio.run(tracker_class({"TRACKERS": {}}).get_name(meta))["name"]
 
-    assert (" DUAL-" in name) == (expected_tag == "DUAL")  # noqa: S101
-    assert (" MULTI-" in name) == (expected_tag == "MULTI")  # noqa: S101
+    assert (" DUAL-" in name) == (expected_tag == "DUAL")
+    assert (" MULTI-" in name) == (expected_tag == "MULTI")
 
 
 def test_capybarabr_formats_dvdrips_with_resolution_before_audio_and_codec() -> None:
@@ -61,7 +63,7 @@ def test_capybarabr_formats_dvdrips_with_resolution_before_audio_and_codec() -> 
 
     name = asyncio.run(CapybaraBR({"TRACKERS": {}}).get_name(meta))["name"]
 
-    assert name == "Example Movie 2001 480p DVDRip DD2.0 x264-DDOS"  # noqa: S101
+    assert name == "Example Movie 2001 480p DVDRip DD2.0 x264-DDOS"
 
 
 def _movie_meta(**kwargs: Any) -> Meta:
@@ -94,6 +96,15 @@ def _tv_meta(**kwargs: Any) -> Meta:
 
 def _tracker() -> Samaritano:
     return Samaritano({"TRACKERS": {}})
+
+
+def test_samaritano_maps_mac_software_to_programs_without_game_name_formatting():
+    meta = Meta(category="GAME", software=True, name="Guitar Pro v8.1.5-31 MAC-atb", platform="MAC", type="GAME")
+    tracker = _tracker()
+
+    assert asyncio.run(tracker.get_name(meta)) == {"name": "Guitar Pro v8.1.5-31 MAC-atb"}
+    assert asyncio.run(tracker.get_category_id(meta)) == {"category_id": "9"}
+    assert asyncio.run(tracker.get_type_id(meta)) == {"type_id": "76"}
 
 
 def test_samaritano_rejects_movie_with_multiple_video_files():

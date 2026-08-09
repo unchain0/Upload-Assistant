@@ -317,6 +317,9 @@ class Zenith(UNIT3D):
 
     async def get_additional_checks(self, meta: Meta) -> bool:
         category = str(meta.category or "").upper()
+        if meta.software:
+            logger.info(f"{self.tracker}: [yellow]Software uploads are not mapped to a dedicated tracker category. Skipping upload.[/yellow]")
+            return False
         raw_filelist = [] if meta.filelist is None else meta.filelist
         if not isinstance(raw_filelist, (list, tuple, set)):
             logger.info(f"{self.tracker}: [bold red]File list metadata is invalid.[/bold red]")

@@ -16,7 +16,7 @@ from src.dupe_checking import DupeChecker
 from src.imdb import imdb_manager
 from src.meta import Meta
 from src.metadata_searching import get_douban_id
-from src.prep_game import required_game_fields
+from src.prep_game import missing_game_fields
 from src.torrentcreate import TorrentCreator
 from src.trackers.AVISTAZ.routing import AvistaZNetworkRouter
 from src.trackers.common import Common
@@ -163,16 +163,12 @@ class TrackerStatusManager:
 
                 # Check for missing required GAME fields in unattended mode
                 elif local_meta.get("category") == "GAME" and local_meta.get("unattended", False):
-                    game_required_fields = required_game_fields(meta)
-                    game_missing: list[str] = []
-                    for f in game_required_fields:
-                        val = local_meta.get(f)
-                        if not val or str(val).strip().lower() in ("", "none", "null") or (f == "platform" and "," in str(val)):
-                            game_missing.append(f)
+                    game_missing = missing_game_fields(Meta(**local_meta))
                     if game_missing:
-                        logger.info(f"[yellow]{tracker_name}: Skipping upload because required GAME fields are missing: {', '.join(game_missing)}[/yellow]")
+                        kind = "SOFTWARE" if local_meta.get("software") else "GAME"
+                        logger.info(f"[yellow]{tracker_name}: Skipping upload because required {kind} fields are missing: {', '.join(game_missing)}[/yellow]")
                         local_tracker_status["skipped"] = True
-                        local_tracker_status["skip_reason"] = f"Required GAME fields missing: {', '.join(game_missing)}"
+                        local_tracker_status["skip_reason"] = f"Required {kind} fields missing: {', '.join(game_missing)}"
 
                 if not local_tracker_status["banned"] and not local_tracker_status["skipped"]:
                     claimed = await tracker_setup.get_torrent_claims(local_meta, tracker_name)

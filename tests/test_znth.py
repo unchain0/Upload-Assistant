@@ -48,6 +48,10 @@ def test_zenith_rejects_malformed_filelist_and_screenshot_count():
     assert asyncio.run(_tracker().get_additional_checks(_movie_meta(screens=float("inf")))) is False
 
 
+def test_zenith_rejects_software_without_dedicated_category():
+    assert asyncio.run(_tracker().get_additional_checks(Meta(category="GAME", software=True))) is False
+
+
 def _book_meta(**kwargs: Any) -> Meta:
     base: dict[str, Any] = {
         "category": "BOOK",

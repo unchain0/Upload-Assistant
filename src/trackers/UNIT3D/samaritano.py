@@ -73,6 +73,8 @@ class Samaritano(UNIT3D):
         return {"resolution_id": resolved_id}
 
     async def get_name(self, meta: Meta) -> dict[str, str]:
+        if meta.software:
+            return {"name": meta.name}
         cbr = CapybaraBR(self.config)
         cbr.tracker = self.tracker
         return await cbr.get_name(meta)
@@ -108,6 +110,8 @@ class Samaritano(UNIT3D):
                 resolved_category = "HQS_E_MANGAS"
             else:
                 resolved_category = "LIVROS"
+        elif resolved_category == "GAME" and meta.software:
+            resolved_category = "PROGRAMAS"
 
         category_id = cat_map.get(resolved_category, "0")
         return {"category_id": category_id}
@@ -148,6 +152,9 @@ class Samaritano(UNIT3D):
         resolved_type = type if type is not None and type != "" else meta.type
         if isinstance(resolved_type, str):
             resolved_type = resolved_type.upper().strip().lstrip(".")
+
+        if meta.software:
+            return {"type_id": type_id["PC"] if str(meta.platform or "").upper() in {"PC", "WINDOWS"} else type_id["OUTRO"]}
 
         if resolved_type == "GAME" or (meta.category == "GAME" and resolved_type not in type_id):
             platform = meta.platform.lower()

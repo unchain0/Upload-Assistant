@@ -787,9 +787,15 @@ class DescriptionBuilder:
         str_official_supported_languages = "Officially Supported Languages" if not use_pt_br else "Idiomas Oficialmente Suportados"
         str_language = "Language" if not use_pt_br else "Idioma"
         str_support = "Support" if not use_pt_br else "Suporte"
+        str_content_type = "Content Type" if not use_pt_br else "Tipo de Conteúdo"
+        str_package = "Package" if not use_pt_br else "Pacote"
+        str_release_group = "Release Group" if not use_pt_br else "Grupo de Lançamento"
+        str_installation = "Installation and Usage Instructions" if not use_pt_br else "Instruções de Instalação e Uso"
 
         # 1. Technical Details
         fields: list[tuple[str, str]] = []
+        if meta.software:
+            fields.append((str_content_type, "Software"))
         if meta.platform:
             fields.append((str_platform, meta.platform))
         if meta.game_version:
@@ -800,6 +806,12 @@ class DescriptionBuilder:
             fields.append((str_developer, meta.developer))
         if meta.publisher:
             fields.append((str_publisher, meta.publisher))
+        if meta.software:
+            package_formats = sorted({Path(str(item)).suffix.upper().lstrip(".") for item in meta.filelist if Path(str(item)).suffix.lower() in {".dmg", ".exe", ".pkg"}})
+            if package_formats:
+                fields.append((str_package, ", ".join(package_formats)))
+            if meta.tag:
+                fields.append((str_release_group, str(meta.tag).lstrip("-")))
         if meta.steam_url:
             fields.append(("Steam", f"[url]{meta.steam_url}[/url]"))
 
@@ -833,6 +845,12 @@ class DescriptionBuilder:
 
         if overview_text:
             game_parts.append(overview_text)
+
+        if meta.software and meta.software_notes:
+            notes = html_to_bbcode(meta.software_notes)
+            notes = re.sub(r"<[^>]+>", "", notes).strip()
+            if notes:
+                game_parts.append(f"{header}{str_installation}{header_end}{notes}")
 
         # 3. System Requirements Section
         req_min = meta.requirements_minimum

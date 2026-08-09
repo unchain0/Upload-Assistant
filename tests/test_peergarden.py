@@ -1,5 +1,7 @@
 """Regression tests for PeerGarden tracker mappings."""
 
+# ruff: noqa: S101
+
 from __future__ import annotations
 
 import asyncio
@@ -124,6 +126,12 @@ def test_peergarden_has_exact_match_only_attr():
     tracker = PeerGarden({"DEFAULT": {}, "TRACKERS": {"PEERGARDEN": {}}})
     assert getattr(tracker, "exact_match_only", False) is True
     assert getattr(tracker, "allows_dupes", False) is True
+
+
+def test_peergarden_rejects_software_without_dedicated_category():
+    tracker = PeerGarden({"DEFAULT": {}, "TRACKERS": {"PEERGARDEN": {}}})
+
+    assert asyncio.run(tracker.get_additional_checks(Meta(category="GAME", software=True))) is False
 
 
 def test_peergarden_filter_dupes_allows_different_release_group_or_encode():

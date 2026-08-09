@@ -69,6 +69,24 @@ def required_game_fields(meta: Meta) -> list[str]:
     return fields
 
 
+def missing_game_fields(meta: Meta) -> list[str]:
+    missing = [field for field in required_game_fields(meta) if not str(getattr(meta, field, "") or "").strip()]
+    if not meta.software:
+        return missing
+
+    software_fields = {
+        "game_version": meta.game_version,
+        "developer": meta.developer,
+        "publisher": meta.publisher,
+        "cover": meta.artwork_path or meta.artwork_url,
+        "languages": meta.languages,
+        "overview": meta.overview,
+        "installation instructions": meta.software_notes,
+    }
+    missing.extend(label for label, value in software_fields.items() if not value)
+    return missing
+
+
 def _is_desktop_installer(meta: Meta) -> bool:
     if meta.console_game or str(meta.platform or "").upper() not in {"PC", "MAC", "LINUX"}:
         return False
@@ -76,6 +94,23 @@ def _is_desktop_installer(meta: Meta) -> bool:
     if meta.path:
         paths.append(str(meta.path))
     return any(Path(path).suffix.lower() in {".dmg", ".exe", ".pkg"} for path in paths)
+
+
+async def _read_software_notes(meta: Meta) -> str:
+    for item in meta.filelist:
+        path = Path(str(item))
+        if path.suffix.lower() not in {".md", ".nfo", ".txt"} or not path.is_file():
+            continue
+        try:
+            if path.stat().st_size > 64 * 1024:
+                continue
+            async with aiofiles.open(path, encoding="utf-8", errors="replace") as handle:
+                notes = (await handle.read()).strip()
+            if notes:
+                return notes
+        except OSError:
+            continue
+    return ""
 
 
 def extract_version_from_text(text: str) -> str | None:
@@ -648,6 +683,7 @@ async def gather_game_prep(
             meta.software = _is_desktop_installer(meta)
             logger.info(f"[yellow]IGDB: No games found matching '{title_query}'[/yellow]")
             if meta.software:
+                meta.software_notes = await _read_software_notes(meta)
                 logger.info("[green]Desktop software package detected; game-only metadata requirements will not be applied.[/green]")
             return
 

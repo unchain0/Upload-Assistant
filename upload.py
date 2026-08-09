@@ -632,19 +632,14 @@ async def _prompt_game_meta(meta: Meta) -> None:
     torrent name is rebuilt so the confirmation screen and the per-tracker
     uploads reflect the new values.
     """
-    from src.prep_game import required_game_fields
+    from src.prep_game import missing_game_fields
 
-    game_required_fields = required_game_fields(meta)
-    game_missing: list[str] = []
-    for f in game_required_fields:
-        val = getattr(meta, f, None)
-        if not val or str(val).strip().lower() in ("", "none", "null") or (f == "platform" and "," in str(val)):
-            game_missing.append(f)
+    game_missing = missing_game_fields(meta)
     if not game_missing:
         pass
-    elif meta.unattended:
+    elif meta.unattended or meta.software:
         logger.info(
-            f"[yellow]GAME upload: the following required fields are missing: "
+            f"[yellow]{'SOFTWARE' if meta.software else 'GAME'} upload: the following required fields are missing: "
             f"{', '.join(game_missing)}. "
             f"Re-run with appropriate CLI arguments, "
             f"or trackers that require them will be skipped.[/yellow]"

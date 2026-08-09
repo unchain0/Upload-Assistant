@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from src.meta import Meta
-from src.prep_game import clean_game_title, detect_platform_from_files, extract_release_group, gather_game_prep, required_game_fields
+from src.prep_game import clean_game_title, detect_platform_from_files, extract_release_group, gather_game_prep, missing_game_fields, required_game_fields
 
 
 def test_game_title_fallback_removes_locale_build_date_and_extension() -> None:
@@ -64,7 +64,9 @@ async def test_guitar_pro_pkg_is_prepared_as_mac_software(tmp_path) -> None:
     release.mkdir()
     package = release / "Guitar Pro 8.1.5-31 [atb].pkg"
     package.write_bytes(b"installer")
-    meta = Meta(path=str(release), filelist=[str(package)], unattended=True)
+    notes = release / "Read.txt"
+    notes.write_text("install PKG\nUse Serial", encoding="utf-8")
+    meta = Meta(path=str(release), filelist=[str(package), str(notes)], unattended=True)
 
     with patch("src.prep_game.IGDBAPI.search_game", new=AsyncMock(return_value=[])):
         await gather_game_prep(
@@ -80,4 +82,6 @@ async def test_guitar_pro_pkg_is_prepared_as_mac_software(tmp_path) -> None:
     assert meta.game_version == "v8.1.5-31"
     assert meta.tag == "-atb"
     assert meta.platform == "MAC"
+    assert meta.software_notes == "install PKG\nUse Serial"
     assert required_game_fields(meta) == ["title", "platform"]
+    assert missing_game_fields(meta) == ["developer", "publisher", "cover", "languages", "overview"]
