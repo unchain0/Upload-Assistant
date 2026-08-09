@@ -1,7 +1,6 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
-import re
-from typing import Any
 from pathlib import Path
+from typing import Any
 
 from src.console import logger
 from src.get_desc import DescriptionBuilder
@@ -30,6 +29,8 @@ class Samaritano(UNIT3D):
     supported_categories = ("TV", "MOVIE", "BOOK", "GAME")
     tracker_urls = ("https://samaritano.cc",)
     allows_bloated_audio = True
+    _TV_ENDED_STATUSES: frozenset[str] = frozenset({"ended", "canceled", "cancelled", "finished", "completed"})
+    _TV_ONGOING_STATUSES: frozenset[str] = frozenset({"returning", "continuing", "in production", "upcoming", "ongoing"})
     _VIDEO_EXTENSIONS: tuple[str, ...] = (
         ".mkv",
         ".mp4",
@@ -50,43 +51,8 @@ class Samaritano(UNIT3D):
         self.common = Common(config)
 
     @staticmethod
-    def _extract_tv_seasons(filelist: list[Any]) -> set[int]:
-        seasons: set[int] = set()
-        season_pattern = re.compile(r"[sS](\d{1,3})(?:[eE]\d{1,3}(?:[eE]\d{1,3})?)?")
-        for item in filelist:
-            seasons.update(int(match) for match in season_pattern.findall(str(item)))
-        return seasons
-
-    @staticmethod
-    def _count_tv_episodes(filelist: list[Any]) -> int:
-        episodes: set[tuple[int, int]] = set()
-        episode_pattern = re.compile(r"[sS](\d{1,3})[eE](\d{1,3})(?:[eE](\d{1,3}))?")
-        for item in filelist:
-            for match in episode_pattern.findall(str(item)):
-                season = int(match[0])
-                episodes.add((season, int(match[1])))
-                if match[2]:
-                    episodes.add((season, int(match[2])))
-        return len(episodes)
-
-    @staticmethod
     def _video_file_count(filelist: list[Any]) -> int:
         return sum(1 for item in filelist if Path(str(item)).suffix.lower() in Samaritano._VIDEO_EXTENSIONS)
-
-    @staticmethod
-    def _is_tv_series_ended(meta: Meta) -> bool | None:
-        status_text = str(meta.imdb_info.get("status", "") if isinstance(meta.imdb_info, dict) else "").casefold().strip()
-        if not status_text:
-            return None
-
-        ended_values = {"ended", "canceled", "cancelled", "finished", "completed"}
-        ongoing_values = {"returning", "continuing", "in production", "upcoming", "ongoing"}
-
-        if any(status in status_text for status in ended_values):
-            return True
-        if any(status in status_text for status in ongoing_values):
-            return False
-        return None
 
     async def get_resolution_id(self, meta: Meta, resolution: str = "", reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
         resolution_id = {
@@ -214,6 +180,11 @@ class Samaritano(UNIT3D):
         return data
 
     async def get_additional_checks(self, meta: Meta) -> bool:
+        raw_filelist = [] if meta.filelist is None else meta.filelist
+        if not isinstance(raw_filelist, (list, tuple, set)):
+            logger.info(f"{self.tracker}: [bold red]File list metadata is invalid.[/bold red]")
+            return False
+
         if meta.category == "BOOK":
             return True
 
@@ -225,6 +196,7 @@ class Samaritano(UNIT3D):
         if meta.category == "MOVIE":
             filelist = [item for item in raw_filelist if str(item).strip() != ""]
             if self._video_file_count(filelist) > 1:
+                logger.info(f"{self.tracker}: [bold red]Movie uploads must contain only one video file.[/bold red]")
                 return False
             return await self.common.check_portuguese_video_requirements(meta, self.tracker)
 
@@ -233,17 +205,16 @@ class Samaritano(UNIT3D):
             seasons = self.common.extract_tv_seasons(filelist)
             episode_count = self.common.count_tv_episodes(filelist)
 
-            if seasons and len(seasons) > 1:
+            if len(seasons) > 1:
+                logger.info(f"{self.tracker}: [bold red]TV uploads must contain only one season.[/bold red]")
                 return False
 
             if meta.tv_pack:
-                if self._is_tv_series_ended(meta) is not True:
+                if self.common.is_tv_series_ended(meta, self._TV_ENDED_STATUSES, self._TV_ONGOING_STATUSES) is not True:
                     return False
-                if not seasons:
-                    return True
-                return True
+                return await self.common.check_portuguese_video_requirements(meta, self.tracker)
 
-            if episode_count > 1:
+            if not meta.tv_pack and episode_count > 1:
                 return False
 
         return await self.common.check_portuguese_video_requirements(meta, self.tracker)

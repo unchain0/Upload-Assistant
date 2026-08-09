@@ -7,6 +7,13 @@ from src.meta import Meta
 from src.trackers.UNIT3D.darkpeers import DarkPeers
 
 
+def test_darkpeers_rejects_malformed_filelists_for_all_categories():
+    tracker = DarkPeers({"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}})
+
+    for category in ("MOVIE", "TV", "BOOK", "GAME"):
+        assert asyncio.run(tracker.get_additional_checks(Meta(category=category, filelist=1))) is False
+
+
 def _name(meta: Meta) -> str:
     config = {"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}}
     return asyncio.run(DarkPeers(config).get_name(meta))["name"]
@@ -195,6 +202,10 @@ def test_darkpeers_movie_tv_require_between_three_and_five_screens():
     assert _additional_checks(Meta(category="TV", type="WEBDL", audio_languages=["English"], resolution="1080p", screens=3)) is True
     assert _additional_checks(Meta(category="TV", type="WEBDL", audio_languages=["English"], resolution="1080p", screens=5)) is True
     assert _additional_checks(Meta(category="MOVIE", type="WEBDL", audio_languages=["English"], resolution="1080p", screens=6)) is False
+
+
+def test_darkpeers_movie_tv_invalid_screens_value_is_treated_as_missing():
+    assert _additional_checks(Meta(category="MOVIE", audio_languages=["English"], resolution="1080p", screens="many")) is False
 
 
 def test_darkpeers_hardcoded_subs_blocked_in_interactive_and_unattended():

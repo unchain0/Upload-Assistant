@@ -8,10 +8,12 @@ from src.trackers.UNIT3D.capybarabr import CapybaraBR
 from src.trackers.UNIT3D.samaritano import Samaritano
 
 
-def test_samaritano_rejects_malformed_filelist() -> None:
-    meta = Meta(category="MOVIE", filelist=1, unattended=True, unattended_confirm=False)
+def test_samaritano_rejects_malformed_filelists_before_category_dispatch() -> None:
+    tracker = Samaritano({"TRACKERS": {}})
 
-    assert asyncio.run(Samaritano({"TRACKERS": {}}).get_additional_checks(meta)) is False  # noqa: S101
+    assert asyncio.run(tracker.get_additional_checks(Meta(category="MOVIE", filelist=1))) is False  # noqa: S101
+    assert asyncio.run(tracker.get_additional_checks(Meta(category="BOOK", filelist=1))) is False  # noqa: S101
+    assert asyncio.run(tracker.get_additional_checks(Meta(category="BOOK", filelist=None))) is True  # noqa: S101
 
 
 @pytest.mark.parametrize(
@@ -90,10 +92,14 @@ def _tv_meta(**kwargs: Any) -> Meta:
     return Meta(**base)
 
 
+def _tracker() -> Samaritano:
+    return Samaritano({"TRACKERS": {}})
+
+
 def test_samaritano_rejects_movie_with_multiple_video_files():
     assert (
         asyncio.run(
-            Samaritano({"TRACKERS": {}}).get_additional_checks(
+            _tracker().get_additional_checks(
                 _movie_meta(
                     filelist=["Example.Movie.2024.mkv", "Example.Movie.Extra.2024.mkv"],
                 )
@@ -104,7 +110,7 @@ def test_samaritano_rejects_movie_with_multiple_video_files():
 
 
 def test_samaritano_accepts_single_movie_video_upload():
-    assert asyncio.run(Samaritano({"TRACKERS": {}}).get_additional_checks(_movie_meta())) is True
+    assert asyncio.run(_tracker().get_additional_checks(_movie_meta())) is True
 
 
 def test_samaritano_rejects_tv_pack_for_non_ended_series():
@@ -162,4 +168,22 @@ def test_samaritano_accepts_tv_pack_for_ended_series():
             )
         )
         is True
+    )
+
+
+def test_samaritano_rejects_tv_pack_for_ended_series_without_portuguese():
+    assert (
+        asyncio.run(
+            Samaritano({"TRACKERS": {}}).get_additional_checks(
+                _tv_meta(
+                    tv_pack=True,
+                    filelist=["Show.S01E01.mkv", "Show.S01E02.mkv", "Show.S01E03.mkv"],
+                    audio_languages=["English"],
+                    imdb_info={"status": "Ended"},
+                    unattended=True,
+                    unattended_confirm=False,
+                )
+            )
+        )
+        is False
     )

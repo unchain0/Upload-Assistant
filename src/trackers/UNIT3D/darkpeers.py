@@ -115,6 +115,10 @@ class DarkPeers(UNIT3D):
         group = str(meta.tag or "").lstrip("-").strip().upper()
         release_type = str(meta.type or "").strip().upper()
         category = str(meta.category or "").strip().upper()
+        filelist = [] if meta.filelist is None else meta.filelist
+        if not isinstance(filelist, (list, tuple, set)):
+            logger.info(f"{self.tracker}: [bold red]File list metadata is invalid. Skipping upload.[/bold red]")
+            return False
 
         if category in {"MOVIE", "TV"}:
             if not await self.validate_video_languages(meta):
