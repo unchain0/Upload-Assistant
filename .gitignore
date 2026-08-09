@@ -3,6 +3,9 @@ data/config.json
 data/config.py
 data/config*
 data/cookies/
+data/access_log.log
+data/session_secret
+data/sessions/
 data/tags.json
 data/tvdb/
 data/cache/*
