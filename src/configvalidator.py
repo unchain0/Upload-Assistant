@@ -84,6 +84,7 @@ DEFAULT_KEY_TYPES: dict[str, tuple[type, ...]] = {
     "use_radarr": (bool,),
     "mkbrr": (bool,),
     "mkbrr_threads": (str, int),
+    "auto_zentag": (bool,),
     "user_overrides": (bool,),
     "ping_unit3d": (bool,),
     "get_bluray_info": (bool,),

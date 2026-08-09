@@ -69,6 +69,7 @@ from src.trackersetup import TrackerSetup, api_trackers, http_trackers, other_ap
 from src.trackerstatus import TrackerStatusManager
 from src.uphelper import UploadHelper
 from src.uploadscreens import UploadScreensManager
+from src.zentag import prepare_zenith_audiobook
 
 base_dir = str(Path(__file__).resolve().parent)
 CLI_UI: Any = cli_ui
@@ -1145,6 +1146,13 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
         if str(ua).lower() == "true":
             meta.unattended = True
             logger.info("[yellow]Running in Auto Mode")
+
+    prepared_book = await prepare_zenith_audiobook(meta, base_dir, config)
+    if prepared_book:
+        meta.path = prepared_book
+        meta.keep_folder = True
+        meta.allow_spaces = True
+
     prep = Prep(screens=meta.screens, img_host=meta.imghost, config=config, publish_preview=_publish_webui_preview_target)
     try:
         meta = await prep.gather_prep(meta=meta, mode="cli")
