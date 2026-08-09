@@ -17,3 +17,28 @@ def test_common_confirmation_does_not_prompt_when_unattended():
                 assert await common.prompt_user_for_confirmation("Continue?", meta) is confirmed
 
     asyncio.run(run_checks())
+
+
+def test_common_adult_confirmation_uses_async_prompt_only_when_attended():
+    common = Common({"TRACKERS": {}})
+
+    async def run_checks():
+        with patch.object(common, "prompt_user_for_confirmation", new=AsyncMock(return_value=True)) as prompt:
+            assert await common.check_and_confirm_adult_media_upload(Meta(adult_media=True), "TEST") is True
+            prompt.assert_awaited_once()
+
+        with patch.object(common, "prompt_user_for_confirmation", new=AsyncMock(side_effect=AssertionError("interactive prompt called"))):
+            assert await common.check_and_confirm_adult_media_upload(
+                Meta(adult_media=True, unattended=True, unattended_confirm=True), "TEST"
+            ) is True
+
+    asyncio.run(run_checks())
+
+
+def test_common_tv_patterns_ignore_markers_embedded_in_codec_tokens():
+    assert Common.extract_tv_seasons(["Movie.DTS5.1.mkv"]) == set()
+    assert Common.count_tv_episodes(["Movie.DTS5E1.mkv"]) == 0
+    assert Common.extract_tv_seasons(["Show.S01E02.mkv"]) == {1}
+    assert Common.count_tv_episodes(["Show.S01E02.mkv"]) == 1
+    assert Common.extract_tv_seasons(["Show_S01E02.mkv"]) == {1}
+    assert Common.count_tv_episodes(["Show_S01E02.mkv"]) == 1

@@ -185,6 +185,19 @@ def test_zenith_rejects_ongoing_tv_pack():
     )
 
 
+def test_zenith_handles_unknown_tv_pack_status_by_confirmation_policy():
+    files = ["Show.S01E01.mkv", "Show.S01E02.mkv"]
+    assert asyncio.run(_tracker().get_additional_checks(_tv_meta(tv_pack=True, filelist=files, imdb_info={}))) is False
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(
+                _tv_meta(tv_pack=True, filelist=files, imdb_info={}, unattended_confirm=True)
+            )
+        )
+        is True
+    )
+
+
 def test_zenith_handles_none_name_in_movie_checks():
     assert asyncio.run(_tracker().get_additional_checks(_movie_meta(name=None))) is False
 

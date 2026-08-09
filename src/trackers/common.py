@@ -73,7 +73,6 @@ class Common:
         {
             "ainda",
             "agora",
-            "além",
             "ano",
             "as",
             "ao",
@@ -82,17 +81,13 @@ class Common:
             "aqueles",
             "aquela",
             "aquelas",
-            "à",
             "ate",
-            "até",
             "bem",
             "essa",
             "esse",
             "esta",
             "estas",
-            "está",
             "estava",
-            "estão",
             "estao",
             "este",
             "estes",
@@ -105,12 +100,10 @@ class Common:
             "ficou",
             "hoje",
             "isso",
-            "já",
             "mais",
             "muito",
             "nao",
             "nada",
-            "não",
             "onde",
             "para",
             "por",
@@ -123,15 +116,11 @@ class Common:
             "segundo",
             "sem",
             "tambem",
-            "também",
             "temos",
-            "você",
             "voce",
             "vida",
             "vou",
-            "vários",
             "varios",
-            "vão",
             "vao",
         }
     )
@@ -219,7 +208,7 @@ class Common:
     @staticmethod
     def extract_tv_seasons(filelist: list[Any]) -> set[int]:
         seasons: set[int] = set()
-        season_pattern = re.compile(r"[sS](\d{1,3})(?:[eE]\d{1,3}(?:[eE]\d{1,3})?)?")
+        season_pattern = re.compile(r"(?<![A-Za-z0-9])[sS](\d{1,3})(?:[eE]\d{1,3}(?:[eE]\d{1,3})?)?")
         for item in filelist:
             seasons.update(int(match) for match in season_pattern.findall(str(item)))
         return seasons
@@ -227,7 +216,7 @@ class Common:
     @staticmethod
     def count_tv_episodes(filelist: list[Any]) -> int:
         episodes: set[tuple[int, int]] = set()
-        episode_pattern = re.compile(r"[sS](\d{1,3})[eE](\d{1,3})(?:[eE](\d{1,3}))?")
+        episode_pattern = re.compile(r"(?<![A-Za-z0-9])[sS](\d{1,3})[eE](\d{1,3})(?:[eE](\d{1,3}))?")
         for item in filelist:
             for season, first, second in episode_pattern.findall(str(item)):
                 episodes.add((int(season), int(first)))
@@ -3409,7 +3398,7 @@ class Common:
 
         return f"{resolution} @ {video_bitrate} kbps - {audio} @ {audio_bitrate} kbps"
 
-    def check_and_confirm_adult_media_upload(self, meta: Meta, tracker: str) -> bool:
+    async def check_and_confirm_adult_media_upload(self, meta: Meta, tracker: str) -> bool:
         """
         Check if the media is categorized as adult/pornographic and prompt the user for confirmation before uploading to a non-adult tracker.
 
@@ -3421,7 +3410,7 @@ class Common:
             logger.info(f"[bold red]Pornography is not allowed at {tracker}.[/bold red]")
             if meta.unattended:
                 return bool(meta.unattended_confirm)
-            return cli_ui.ask_yes_no("Do you want to upload anyway?", default=False)
+            return await self.prompt_user_for_confirmation("Do you want to upload anyway?", meta)
 
         return True
 

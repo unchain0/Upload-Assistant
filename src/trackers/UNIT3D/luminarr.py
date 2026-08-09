@@ -93,7 +93,8 @@ class Luminarr(UNIT3D):
 
     @staticmethod
     def _has_bootleg_marker(value: str) -> bool:
-        normalized = Luminarr._normalize_path(value)
+        value_without_tc_group = re.sub(r"-TC$", "", str(value).strip(), flags=re.IGNORECASE)
+        normalized = Luminarr._normalize_path(value_without_tc_group)
         normalized = f" {normalized} "
         return any(re.search(rf"(?:^|[\s-]){re.escape(marker)}(?:$|[\s-])", normalized) for marker in Luminarr._BOOTLEG_MARKERS)
 
@@ -146,7 +147,7 @@ class Luminarr(UNIT3D):
                 logger.info(f"{self.tracker}: [bold red]Multi-file uploads must use a single top-level folder.[/bold red]")
                 return False
 
-            if category in {"MOVIE", "TV"} and meta.is_disc != "BDMV" and len(video_paths) != 1 and not meta.tv_pack:
+            if len(video_paths) != 1 and not meta.tv_pack:
                 logger.info(f"{self.tracker}: [bold red]Movie and non-collection TV uploads should contain one video file per title.[/bold red]")
                 return False
 
@@ -211,8 +212,8 @@ class Luminarr(UNIT3D):
             logger.info(f"{self.tracker}: [bold red]Full Blu-ray disc uploads require BDInfo information on {self.tracker}.[/bold red]")
             return False
 
-        if meta.is_disc != "BDMV" and not meta.valid_mi_settings:
+        if meta.is_disc not in Luminarr._DISC_TYPES and not meta.valid_mi_settings:
             logger.info(f"{self.tracker}: [bold red]No encoding settings in mediainfo, skipping {self.tracker} upload.[/bold red]")
             return False
 
-        return self.common.check_and_confirm_adult_media_upload(meta, self.tracker)
+        return await self.common.check_and_confirm_adult_media_upload(meta, self.tracker)

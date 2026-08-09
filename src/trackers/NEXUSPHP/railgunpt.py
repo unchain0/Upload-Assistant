@@ -32,6 +32,7 @@ class RailgunPT(NEXUSPHP):
     _VIDEO_CODEC_TOKENS: tuple[str, ...] = ("avc", "h.264", "h264", "hevc", "h.265", "h265", "mpeg-2", "mpeg2", "vc-1", "vc1", "x264", "x265", "xvid")
     _PACK_SOURCE_TOKENS: tuple[str, ...] = ("bluray", "hddvd", "hdtv", "uhdtv", "dvd", "webdl", "webrip")
     _PACK_CODEC_TOKENS: tuple[str, ...] = ("x264", "x265", "h264", "h265", "hevc", "avc", "mpeg2", "vc1", "xvid")
+    _DISC_TYPES: frozenset[str] = frozenset({"bdmv", "dvd", "hddvd_ts", "video_ts"})
 
     def __init__(self, config: Config) -> None:
         super().__init__(config, "RAILGUNPT")
@@ -39,6 +40,22 @@ class RailgunPT(NEXUSPHP):
     @staticmethod
     def _normalized_token(value: Any) -> str:
         return re.sub(r"[^a-z0-9]+", "", str(value or "").casefold())
+
+    @staticmethod
+    def _metadata_values(value: Any) -> list[Any]:
+        if isinstance(value, str):
+            return [value]
+        if isinstance(value, (list, tuple, set)):
+            return list(value)
+        return []
+
+    @staticmethod
+    def _title_contains_token(title: str, token: Any) -> bool:
+        parts = re.findall(r"[a-z0-9]+", str(token or "").casefold())
+        if not parts:
+            return False
+        pattern = r"[\s._-]*".join(re.escape(part) for part in parts)
+        return bool(re.search(rf"(?<![a-z0-9]){pattern}(?![a-z0-9])", title.casefold()))
 
     @staticmethod
     def _contains_marker(value: str, markers: tuple[str, ...]) -> bool:
@@ -77,13 +94,12 @@ class RailgunPT(NEXUSPHP):
         return release_type == "encode" and source in {"bluray", "uhdbluray", "hddvd", "hdtv", "uhdtv"}
 
     def _title_has_required_video_tokens(self, meta: Meta, title: str) -> bool:
-        normalized_title = self._normalized_token(title)
-        resolution = self._normalized_token(meta.resolution)
-        if resolution and resolution not in normalized_title:
+        resolution = str(meta.resolution or "").strip()
+        if resolution and not self._title_contains_token(title, resolution):
             return False
-        if not any(self._normalized_token(token) in normalized_title for token in self._SOURCE_TOKENS):
+        if not any(self._title_contains_token(title, token) for token in self._SOURCE_TOKENS):
             return False
-        if not any(self._normalized_token(token) in normalized_title for token in self._VIDEO_CODEC_TOKENS):
+        if not any(self._title_contains_token(title, token) for token in self._VIDEO_CODEC_TOKENS):
             return False
         if str(meta.category or "").upper() == "MOVIE" and meta.year and str(meta.year) not in title:
             return False
@@ -103,8 +119,8 @@ class RailgunPT(NEXUSPHP):
             logger.info(f"{self.tracker}: [bold red]Pornographic or sensitive adult content is not allowed.[/bold red]")
             return False
 
-        genre_values = [str(value).casefold().strip() for value in (meta.genres or [])]
-        keyword_values = [str(value).casefold().strip() for value in (meta.keywords or [])]
+        genre_values = [str(value).casefold().strip() for value in self._metadata_values(meta.genres)]
+        keyword_values = [str(value).casefold().strip() for value in self._metadata_values(meta.keywords)]
         if {"politics", "political", "political propaganda"}.intersection(genre_values + keyword_values):
             logger.info(f"{self.tracker}: [bold red]Politically sensitive content is not allowed.[/bold red]")
             return False
@@ -169,7 +185,7 @@ class RailgunPT(NEXUSPHP):
             logger.info(f"{self.tracker}: [bold red]Title must include the required year/season, resolution, source, and video codec information.[/bold red]")
             return False
 
-        if category == "MOVIE" and len(main_video_paths) > 1:
+        if category == "MOVIE" and len(main_video_paths) > 1 and disc_type not in self._DISC_TYPES:
             pack_markers = ("boxset", "box set", "collection", "trilogy")
             if not any(marker in release_name.casefold() for marker in pack_markers):
                 logger.info(f"{self.tracker}: [bold red]Movie packs must be identifiable official box-set collections.[/bold red]")
@@ -193,8 +209,8 @@ class RailgunPT(NEXUSPHP):
         tv_shows = 403
 
         category = str(meta.category or "").upper()
-        genres = ", ".join(str(value) for value in (meta.genres or [])).lower()
-        keywords = ", ".join(str(value) for value in (meta.keywords or [])).lower()
+        genres = ", ".join(str(value) for value in self._metadata_values(meta.genres)).lower()
+        keywords = ", ".join(str(value) for value in self._metadata_values(meta.keywords)).lower()
 
         if "documentary" in genres or "documentary" in keywords:
             return documentaries

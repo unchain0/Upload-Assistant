@@ -324,6 +324,24 @@ class DarkPeers(UNIT3D):
             return await self._missing_required("publisher", meta)
         if meta.audiobook and not str(meta.narrator or "").strip():
             return await self._missing_required("audiobook narrator", meta)
+        if meta.audiobook and not meta.year:
+            return await self._missing_required("audiobook release year", meta)
+        if meta.audiobook and not meta.audiobook_duration:
+            return await self._missing_required("audiobook runtime", meta)
+        if meta.audiobook:
+            details = (
+                f"Narrator: {meta.narrator}; Runtime: {meta.audiobook_duration_formatted or meta.audiobook_duration}; "
+                f"Publisher: {publisher}; Year: {meta.year}; ISBN/ASIN: {identifier}"
+            )
+            if meta.unattended:
+                logger.info(
+                    f"{self.tracker}: [bold red]Audiobook edition metadata cannot be verified safely in unattended mode. "
+                    f"Run attended and verify that narrator/runtime match publisher, year, and ISBN. {details}[/bold red]"
+                )
+                return False
+            logger.info(f"{self.tracker}: [yellow]Verify that all audiobook edition fields describe the same recording. {details}[/yellow]")
+            if not await self.common.prompt_user_for_confirmation("Do these audiobook edition details match the files?", meta):
+                return False
         if not meta.audiobook and format_name == "PDF" and not bool(meta.get("page_count", None) or meta.get("book_page_count", None)):
             return await self._missing_required("PDF page count", meta)
         return True

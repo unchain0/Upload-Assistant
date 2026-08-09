@@ -59,6 +59,12 @@ def test_railgunpt_rejects_unsupported_and_sensitive_content():
     assert _check(_movie_meta(category="BOOK")) is False
     assert _check(_movie_meta(adult_media=True)) is False
     assert _check(_movie_meta(keywords=["Political"])) is False
+    assert _check(_movie_meta(keywords="Political")) is False
+
+
+def test_railgunpt_normalizes_scalar_category_metadata():
+    assert _tracker().get_category(_movie_meta(genres="Documentary")) == 404
+    assert _tracker().get_category(_movie_meta(keywords="Animation")) == 405
 
 
 def test_railgunpt_enforces_video_minimum_size():
@@ -104,6 +110,10 @@ def test_railgunpt_requires_descriptive_movie_title(name: str):
     assert _check(_movie_meta(name=name)) is False
 
 
+def test_railgunpt_rejects_video_tokens_embedded_in_words():
+    assert _check(_movie_meta(name="Example Movie 2024 1080p NotBluRayish x264codec-GRP")) is False
+
+
 def test_railgunpt_requires_tv_season_episode_or_pack_token():
     assert _check(_tv_meta(name="Example Show 1080p HDTV x264-GRP")) is False
     assert _check(_tv_meta(name="Example Show S01 1080p HDTV x264-GRP", tv_pack=True)) is True
@@ -121,6 +131,12 @@ def test_railgunpt_requires_official_boxset_marker_for_multi_movie_uploads():
     files = ["Movie.One.2020.1080p.BluRay.x264.mkv", "Movie.Two.2022.1080p.BluRay.x264.mkv"]
     assert _check(_movie_meta(filelist=files)) is False
     assert _check(_movie_meta(name="Example Collection 2024 1080p BluRay x264-GRP", filelist=files)) is True
+
+
+def test_railgunpt_allows_multi_file_disc_layout_without_collection_marker():
+    files = ["BDMV/STREAM/00001.m2ts", "BDMV/STREAM/00002.m2ts"]
+    assert _check(_movie_meta(is_disc="BDMV", filelist=files)) is True
+    assert _check(_movie_meta(is_disc="unknown", filelist=files)) is False
 
 
 def test_railgunpt_rejects_invalid_filelist_metadata():

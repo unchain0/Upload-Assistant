@@ -69,6 +69,12 @@ def test_luminarr_rejects_bootleg_markers_in_release_name():
     assert asyncio.run(_tracker().get_additional_checks(_movie_meta(name="Example Movie Cam"))) is False
 
 
+def test_luminarr_allows_tc_as_trailing_release_group():
+    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(name="Example Movie 2024-TC"))) is True
+    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(name="Example Movie TC 2024-GRP"))) is False
+    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(name="Example Movie TC 2024-TC"))) is False
+
+
 def test_luminarr_accepts_release_with_none_name_when_no_bootleg_marker_present():
     assert (
         asyncio.run(
@@ -182,6 +188,10 @@ def test_luminarr_accepts_bd_release_when_bdinfo_is_present():
         )
         is True
     )
+
+
+def test_luminarr_disc_types_do_not_require_mediainfo_encoding_settings():
+    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(is_disc="DVD", filelist=["VIDEO_TS"], valid_mi_settings=False))) is True
 
 
 def test_luminarr_rejects_tv_uploads_with_multiple_seasons():

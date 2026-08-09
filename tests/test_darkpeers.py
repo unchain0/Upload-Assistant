@@ -99,6 +99,45 @@ def test_darkpeers_audiobook_name_includes_format_bitrate_isbn_and_tag():
     assert _name(meta) == "Ernest Cline - Ready Player One 2011 MP3 64 9780307887436-GROUP"
 
 
+def test_darkpeers_requires_attended_audiobook_edition_verification():
+    values = {
+        "category": "BOOK",
+        "audiobook": True,
+        "author": "Mary Stewart",
+        "title": "The Gabriel Hounds",
+        "narrator": "Davina Porter",
+        "publisher": "Recorded Books",
+        "year": 1991,
+        "type": "MP3",
+        "isbn": "9781664616110",
+        "audiobook_duration": 39875,
+        "audiobook_duration_formatted": "11h 04m 35s",
+    }
+    adapter = DarkPeers({"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}})
+
+    assert asyncio.run(adapter.get_additional_checks(Meta(**values, unattended=True))) is False
+
+    adapter.common.prompt_user_for_confirmation = AsyncMock(return_value=True)
+    assert asyncio.run(adapter.get_additional_checks(Meta(**values))) is True
+    adapter.common.prompt_user_for_confirmation.assert_awaited_once_with("Do these audiobook edition details match the files?", Meta(**values))
+
+
+def test_darkpeers_requires_audiobook_year_and_runtime_before_verification():
+    base = {
+        "category": "BOOK",
+        "audiobook": True,
+        "author": "Mary Stewart",
+        "narrator": "Davina Porter",
+        "publisher": "Recorded Books",
+        "type": "MP3",
+        "isbn": "9781664616110",
+        "unattended": True,
+    }
+
+    assert _additional_checks(Meta(**base, audiobook_duration=39875)) is False
+    assert _additional_checks(Meta(**base, year=1991)) is False
+
+
 def test_darkpeers_book_name_never_uses_publisher_as_author():
     meta = Meta(category="BOOK", publisher="Publisher Name", title="Book Title", year=2026, type="EPUB", isbn="978-0-123456-47-2")
 

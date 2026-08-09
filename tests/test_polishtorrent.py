@@ -76,3 +76,24 @@ def test_polishtorrent_tracker_detection_ignores_url_paths_but_rejects_domains()
     assert PolishTorrent._contains_other_tracker_mention("https://limetorrents.cc/release") is True
     assert PolishTorrent._contains_other_tracker_mention("https://[") is False
     assert PolishTorrent._contains_other_tracker_mention("mirrored from YIFY") is True
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["Example.Movie.2024.1080p.WEB-DL.H264", "Example Movie (2024) 1080p WEB-DL H264", "Example Movie 2024 1080p WEB-DL DD5.1 H264"],
+)
+def test_polishtorrent_rejects_banned_release_title_punctuation(name):
+    assert asyncio.run(PolishTorrent({"TRACKERS": {}}).get_additional_checks(_movie_meta(name=name))) is False
+
+
+def test_polishtorrent_does_not_infer_boxset_from_video_count_or_complete_word():
+    files = ["Movie.One.2024.mkv", "Movie.Two.2024.mkv"]
+    assert PolishTorrent._is_boxset_style("A Complete Unknown", files) is False
+
+
+def test_polishtorrent_tv_pack_status_and_disc_folder_handling():
+    tracker = PolishTorrent({"TRACKERS": {}})
+    unknown_pack = _movie_meta(category="TV", tv_pack=True, imdb_info={}, name="Example Show S01 1080p WEB-DL H264")
+    assert PolishTorrent._is_tv_pack_ended(unknown_pack) is None
+    assert asyncio.run(tracker.get_additional_checks(unknown_pack)) is False
+    assert asyncio.run(tracker.get_additional_checks(_movie_meta(is_disc="BDMV", keep_folder=True, mediainfo=None, filelist=["BDMV"]))) is True

@@ -188,11 +188,6 @@ class Samaritano(UNIT3D):
         if meta.category == "BOOK":
             return True
 
-        raw_filelist = [] if meta.filelist is None else meta.filelist
-        if not isinstance(raw_filelist, (list, tuple, set)):
-            logger.info(f"{self.tracker}: [bold red]File list metadata is invalid.[/bold red]")
-            return False
-
         if meta.category == "MOVIE":
             filelist = [item for item in raw_filelist if str(item).strip() != ""]
             if self._video_file_count(filelist) > 1:
@@ -211,10 +206,12 @@ class Samaritano(UNIT3D):
 
             if meta.tv_pack:
                 if self.common.is_tv_series_ended(meta, self._TV_ENDED_STATUSES, self._TV_ONGOING_STATUSES) is not True:
+                    logger.info(f"{self.tracker}: [bold red]TV season packs are allowed only for ended series.[/bold red]")
                     return False
                 return await self.common.check_portuguese_video_requirements(meta, self.tracker)
 
             if not meta.tv_pack and episode_count > 1:
+                logger.info(f"{self.tracker}: [bold red]Non-pack TV uploads must contain only one episode.[/bold red]")
                 return False
 
         return await self.common.check_portuguese_video_requirements(meta, self.tracker)

@@ -52,6 +52,8 @@ class PolishTorrent(UNIT3D):
         "eztv",
         "showrss",
     )
+    _TV_ENDED_STATUSES: frozenset[str] = frozenset({"ended", "canceled", "cancelled", "finished", "completed"})
+    _TV_ONGOING_STATUSES: frozenset[str] = frozenset({"returning", "continuing", "in production", "upcoming", "ongoing", "pilot"})
 
     def __init__(self, config: Config) -> None:
         super().__init__(config, tracker_name="POLISHTORRENT")
@@ -144,31 +146,13 @@ class PolishTorrent(UNIT3D):
 
     @staticmethod
     def _is_tv_pack_ended(meta: Meta) -> bool | None:
-        if not isinstance(meta.imdb_info, dict):
-            return None
-
-        status_text = str(meta.imdb_info.get("status", "")).casefold().strip()
-        if not status_text:
-            return None
-
-        ended_values = {"ended", "canceled", "cancelled", "finished", "completed"}
-        ongoing_values = {"returning", "continuing", "in production", "upcoming", "ongoing", "pilot"}
-
-        if any(value in status_text for value in ended_values):
-            return True
-        if any(value in status_text for value in ongoing_values):
-            return False
-        return None
+        return Common.is_tv_series_ended(meta, PolishTorrent._TV_ENDED_STATUSES, PolishTorrent._TV_ONGOING_STATUSES)
 
     @staticmethod
-    def _is_boxset_style(name: str, filelist: list[Any]) -> bool:
-        normalized = f" {name.lower()} "
-        boxset_keywords = ["boxset", "box set", "collection", "complete", "kolekc", "całość", "kolekcja", "odcinki"]
-        if any(keyword in normalized for keyword in boxset_keywords):
-            return True
-
-        video_count = len(PolishTorrent._video_filelist(filelist))
-        return video_count > 1
+    def _is_boxset_style(name: str, _filelist: list[Any]) -> bool:
+        boxset_keywords = ("boxset", "box set", "collection", "kolekcja", "całość")
+        pattern = re.compile(r"(?<!\w)(?:" + "|".join(map(re.escape, boxset_keywords)) + r")(?!\w)", re.IGNORECASE)
+        return bool(pattern.search(name))
 
     async def get_additional_checks(self, meta: Meta) -> bool:
         category = str(meta.category or "").upper()
@@ -243,11 +227,11 @@ class PolishTorrent(UNIT3D):
 
         if category in {"MOVIE", "TV"}:
             video_paths = self._video_filelist(filelist)
-            if len(video_paths) <= 1 and meta.keep_folder:
+            if not meta.is_disc and len(video_paths) <= 1 and meta.keep_folder:
                 logger.info(f"{self.tracker}: [bold red]Single-file Movie/TV uploads should be uploaded without a folder on {self.tracker}.[/bold red]")
                 return False
 
-        return self.common.check_and_confirm_adult_media_upload(meta, self.tracker)
+        return True
 
     async def get_category_id(self, meta: Meta, category: str = "", reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
         category_id = {

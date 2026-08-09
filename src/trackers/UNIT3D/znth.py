@@ -342,9 +342,16 @@ class Zenith(UNIT3D):
 
                 if meta.tv_pack:
                     tv_pack_ended = self.common.is_tv_series_ended(meta, self._TV_ENDED_STATUSES, self._TV_ONGOING_STATUSES)
-                    if tv_pack_ended is not True:
+                    if tv_pack_ended is False:
                         logger.info(f"{self.tracker}: [bold red]TV season packs are restricted to ended series on {self.tracker}.[/bold red]")
                         return False
+                    if tv_pack_ended is None:
+                        logger.info(f"{self.tracker}: [yellow]Unable to confirm whether this TV series has ended.[/yellow]")
+                        if meta.unattended:
+                            if not meta.unattended_confirm:
+                                return False
+                        elif not await self.common.prompt_user_for_confirmation("Do you want to upload this TV pack anyway?", meta):
+                            return False
                 elif self.common.count_tv_episodes(filelist) > 1:
                     logger.info(f"{self.tracker}: [bold red]Non-pack TV uploads should contain a single episode on {self.tracker}.[/bold red]")
                     return False
@@ -405,7 +412,7 @@ class Zenith(UNIT3D):
                 logger.info(f"{self.tracker}: [bold red]Release title is missing source/type metadata required by {self.tracker} naming rules.[/bold red]")
                 return False
 
-        return self.common.check_and_confirm_adult_media_upload(meta, self.tracker)
+        return await self.common.check_and_confirm_adult_media_upload(meta, self.tracker)
 
     async def get_search_urls(self, meta: Meta, request_params: ParamsList) -> list[tuple[str, ParamsList, bool]]:
         urls = await super().get_search_urls(meta, request_params)
@@ -570,7 +577,7 @@ class Zenith(UNIT3D):
     def _music_sample_rate(value: Any) -> str:
         try:
             return f"{float(value) / 1000:g}kHz"
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             return ""
 
     @classmethod
@@ -608,7 +615,7 @@ class Zenith(UNIT3D):
                 bitrate_kbps = round(float(bitrate) / 1000)
                 bitrate_mode = str(first_track.get("bitrate_mode") or "").upper().strip()
                 format_parts.append(f"{bitrate_kbps} {bitrate_mode}".strip())
-            except TypeError, ValueError:
+            except (TypeError, ValueError):
                 pass
         release_type = str(cls._music_field(release, "release_type", "")).casefold()
         if release_type == "single":
