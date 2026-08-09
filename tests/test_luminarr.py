@@ -67,6 +67,57 @@ def test_luminarr_accepts_valid_movie_metadata():
     assert asyncio.run(_tracker().get_additional_checks(_movie_meta())) is True
 
 
+def test_luminarr_rejects_primary_mp3_audio():
+    mediainfo = {
+        "media": {
+            "track": [
+                {"@type": "General"},
+                {"@type": "Video", "Format": "AVC"},
+                {"@type": "Audio", "Format": "MPEG Audio", "Format_Profile": "Layer 3", "Title": "English"},
+            ]
+        }
+    }
+
+    tracker = _tracker()
+    meta = _tv_meta(type="HDTV", mediainfo=mediainfo)
+
+    assert tracker._invalid_audio_reason(meta) == "MP3 is permitted only for supplementary audio tracks (for example, commentary) under rule 6.2.5.3."
+    assert asyncio.run(tracker.get_additional_checks(meta)) is False
+
+
+def test_luminarr_allows_mp3_for_commentary_only():
+    mediainfo = {
+        "media": {
+            "track": [
+                {"@type": "General"},
+                {"@type": "Video", "Format": "AVC"},
+                {"@type": "Audio", "Format": "AAC", "Title": "English"},
+                {"@type": "Audio", "Format": "MPEG Audio", "CodecID": "A_MPEG/L3", "Title": "Director Commentary"},
+            ]
+        }
+    }
+
+    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(type="WEBDL", mediainfo=mediainfo))) is True
+
+
+def test_luminarr_rejects_primary_vorbis_audio():
+    mediainfo = {"media": {"track": [{"@type": "Audio", "Format": "Vorbis", "Title": "English"}]}}
+
+    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(type="WEBDL", mediainfo=mediainfo))) is False
+
+
+def test_luminarr_allows_primary_mp2_for_hdtv():
+    mediainfo = {"media": {"track": [{"@type": "Audio", "Format": "MPEG Audio", "Format_Profile": "Layer 2", "Title": "English"}]}}
+
+    assert asyncio.run(_tracker().get_additional_checks(_tv_meta(type="HDTV", mediainfo=mediainfo))) is True
+
+
+def test_luminarr_rejects_primary_mp2_for_webdl():
+    mediainfo = {"media": {"track": [{"@type": "Audio", "Format": "MPEG Audio", "Format_Profile": "Layer 2", "Title": "English"}]}}
+
+    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(type="WEBDL", mediainfo=mediainfo))) is False
+
+
 def test_luminarr_rejects_tagged_video_filename_renamed_with_spaces():
     renamed = "Oh Boy Was I Wrong About Her S01E01 REPACK 1080p CR WEB-DL DDP2.0 H.264-Kitsune.mkv"
     original = "Oh.Boy.Was.I.Wrong.About.Her.S01E01.REPACK.1080p.CR.WEB-DL.DDP2.0.H.264-Kitsune.mkv"

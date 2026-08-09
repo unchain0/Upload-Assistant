@@ -1,7 +1,7 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from src.console import logger
 from src.meta import Meta
@@ -108,6 +108,58 @@ class Luminarr(UNIT3D):
         normalized = f" {normalized} "
         return any(re.search(rf"(?:^|[\s-]){re.escape(marker)}(?:$|[\s-])", normalized) for marker in Luminarr._BOOTLEG_MARKERS)
 
+    @staticmethod
+    def _audio_codec(track: dict[str, Any]) -> str:
+        format_name = str(track.get("Format") or "").strip().upper()
+        profile = " ".join(
+            str(track.get(key) or "")
+            for key in ("Format_Profile", "CodecID", "CodecID_Hint")
+        ).upper()
+        if format_name == "MPEG AUDIO":
+            if "LAYER 3" in profile or "MPEG/L3" in profile:
+                return "MP3"
+            if "LAYER 2" in profile or "MPEG/L2" in profile:
+                return "MP2"
+        if format_name in {"VORBIS", "OGG VORBIS"}:
+            return "VORBIS"
+        return format_name
+
+    @staticmethod
+    def _is_supplementary_audio(track: dict[str, Any]) -> bool:
+        if track.get("is_commentary") is True:
+            return True
+        description = " ".join(
+            str(track.get(key) or "")
+            for key in ("Title", "title", "ServiceKind", "ServiceKind_String")
+        ).casefold()
+        return any(marker in description for marker in ("commentary", "audio description", "descriptive audio", "isolated score"))
+
+    @staticmethod
+    def _allows_primary_mp2(meta: Meta) -> bool:
+        release_type = str(meta.type or "").upper()
+        source = str(meta.source or "").upper()
+        return release_type in {"HDTV", "SDTV"} or (release_type == "REMUX" and "DVD" in source)
+
+    def _invalid_audio_reason(self, meta: Meta) -> str:
+        mediainfo = meta.mediainfo if isinstance(meta.mediainfo, dict) else {}
+        media = cast(dict[str, Any], mediainfo.get("media")) if isinstance(mediainfo.get("media"), dict) else {}
+        tracks = cast(list[Any], media.get("track")) if isinstance(media.get("track"), list) else []
+        audio_tracks: list[dict[str, Any]] = []
+        for track in tracks:
+            if not isinstance(track, dict):
+                continue
+            track_map = cast(dict[str, Any], track)
+            if track_map.get("@type") == "Audio":
+                audio_tracks.append(track_map)
+
+        for track in audio_tracks:
+            codec = self._audio_codec(track)
+            if codec in {"MP3", "VORBIS"} and not self._is_supplementary_audio(track):
+                return f"{codec} is permitted only for supplementary audio tracks (for example, commentary) under rule 6.2.5.3."
+            if codec == "MP2" and not self._is_supplementary_audio(track) and not self._allows_primary_mp2(meta):
+                return "MP2 primary audio is permitted only when untouched in HDTV/SDTV or DVD releases under rule 6.2.5.3."
+        return ""
+
     async def _confirm_or_skip(self, message: str, meta: Meta) -> bool:
         if meta.unattended:
             return bool(meta.unattended_confirm)
@@ -191,6 +243,12 @@ class Luminarr(UNIT3D):
         if not meta.is_disc and meta.container != "mkv":
             logger.info(f"{self.tracker}: [bold red]only allows MKV containers for non-disc uploads.[/bold red]")
             return False
+
+        if meta.is_disc not in Luminarr._DISC_TYPES:
+            invalid_audio_reason = self._invalid_audio_reason(meta)
+            if invalid_audio_reason:
+                logger.info(f"{self.tracker}: [bold red]{invalid_audio_reason} Skipping upload.[/bold red]")
+                return False
 
         try:
             screens = int(meta.screens)
