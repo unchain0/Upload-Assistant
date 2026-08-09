@@ -1219,7 +1219,7 @@ async def finalize_metadata(
                 config=prep_instance.config,
             )
             meta.tvmaze_id = tvmaze_res if isinstance(tvmaze_res, int) else tvmaze_res[0]
-        if meta.tvdb_id == 0:
+        if meta.tvdb_id == 0 and not both_ids_searched:
             logger.debug("[yellow]No TVDB ID found, attempting to fetch...[/yellow]")
             try:
                 series_results, series_id = await prep_instance.tvdb_handler.search_tvdb_series(filename=filename, year=meta.year)

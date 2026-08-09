@@ -203,6 +203,25 @@ async def test_unit3d_episode_search_includes_all_season_pack_qualities(monkeypa
     assert ("name", " S01") in captured_params
     assert not any(key in {"resolutions[]", "types[]"} for key, _value in captured_params)
 
+    captured_params.clear()
+    movie = Meta(category="MOVIE", tmdb=27073, resolution="480p", type="ENCODE")
+    assert await tracker.search_existing(movie) == []
+    assert ("tmdbId", "27073") in captured_params
+    assert not any(key in {"resolutions[]", "types[]"} for key, _value in captured_params)
+    assert UNIT3D._is_duplicate_name_error('{"data":{"name":["The name has already been taken."]}}') is True
+
+
+@pytest.mark.asyncio
+async def test_dupe_filter_keeps_exact_name_before_quality_filters() -> None:
+    name = "Full Contact AKA Hap do Ko Fei 1992 480p BluRay Dual-Audio AAC 1.0 x264-gazer"
+    meta = Meta(category="MOVIE", name=name, uuid=name, resolution="480p", source="BluRay", type="ENCODE")
+    candidate = {"name": name, "size": 1, "type": "REMUX", "res": "1080p"}
+
+    result = await DupeChecker({"DEFAULT": {}}).filter_dupes([candidate], meta, "DARKPEERS")
+
+    assert len(result) == 1
+    assert result[0]["name"] == name
+
 
 @pytest.mark.asyncio
 async def test_dupe_filter_resets_season_pack_state_between_trackers() -> None:

@@ -210,6 +210,9 @@ class DupeChecker:
             each = entry.get("name", "")
             sized = entry.get("size")  # This may come as a string, such as "1.5 GB"
 
+            if each.strip().casefold() == str(meta.name or "").strip().casefold():
+                return False
+
             if is_exact_match_only:
                 is_exact = await DupeChecker.is_exact_match(entry, meta)
                 if not is_exact:

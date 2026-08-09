@@ -1,3 +1,4 @@
+# ruff: noqa: S101
 """Regression tests for Zenith-specific names."""
 
 import asyncio
@@ -105,6 +106,16 @@ def test_zenith_music_name_omits_calculated_lossless_bitrate():
     name = asyncio.run(Zenith({"DEFAULT": {}, "TRACKERS": {"ZENITH": {}}}).get_name(meta))["name"]
 
     assert name == "Kanye West - 808s & Heartbreak (2008) - [CD FLAC 16bit-44.1kHz]"
+
+
+def test_zenith_accepts_numbered_scene_music_filenames():
+    files = [
+        "01-simon_and_garfunkel-the_sound_of_silence_(electric_version)-repack-remastered.flac",
+        "02-simon_and_garfunkel-leaves_that_are_green-repack-remastered.flac",
+    ]
+
+    assert Zenith._validate_music_track_naming(files) == ""
+    assert Zenith._validate_music_track_naming(["simon_and_garfunkel-the_sound_of_silence.flac"]) != ""
 
 
 def test_zenith_music_additional_data_sends_valid_external_ids():

@@ -1,3 +1,4 @@
+# ruff: noqa: S101
 """Regression tests for DarkPeers-specific BOOK and MUSIC title rules."""
 
 import asyncio
@@ -40,6 +41,14 @@ def test_darkpeers_music_name_uses_required_folder_style():
     )
 
     assert _name(meta) == "Taylor Swift - Red (2012) - WEB FLAC 16-44.1"
+
+
+def test_darkpeers_accepts_numbered_scene_music_filenames():
+    pattern = DarkPeers._AUDIO_TRACK_PATTERN
+
+    assert pattern.match("01-simon_and_garfunkel-the_sound_of_silence-repack-remastered")
+    assert pattern.match("01 - The Sound of Silence")
+    assert not pattern.match("simon_and_garfunkel-the_sound_of_silence")
 
 
 def test_darkpeers_only_includes_audio_spectrograms_for_music():

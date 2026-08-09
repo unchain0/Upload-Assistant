@@ -57,7 +57,6 @@ class UNIT3D:
 
     async def search_existing(self, meta: Meta) -> list[dict[str, Any]]:
         dupes: list[dict[str, Any]] = []
-        params_list: ParamsList | None = None
         category = meta.category
 
         # Ensure tracker_status keys exist before any potential writes
@@ -69,7 +68,6 @@ class UNIT3D:
         }
 
         if category in ("MOVIE", "TV"):
-            is_individual_tv_episode = category == "TV" and bool(meta.episode) and not bool(meta.tv_pack)
             params_dict: dict[str, str] = {
                 "name": "",
                 "perPage": "100",
@@ -82,31 +80,8 @@ class UNIT3D:
                 # for manually constructed metadata without a TMDB ID.
                 params_dict["categories[]"] = (await self.get_category_id(meta))["category_id"]
 
-            if self.tracker not in ["OLDTOONSWORLD"] and not is_individual_tv_episode:
-                resolutions = await self.get_resolution_id(meta)
-                resolution_id = resolutions["resolution_id"]
-                if resolution_id in ["3", "4"]:
-                    # Convert params to list of tuples to support duplicate keys
-                    params_list = list(params_dict.items())
-                    params_list.append(("resolutions[]", "3"))
-                    params_list.append(("resolutions[]", "4"))
-                else:
-                    params_dict["resolutions[]"] = resolution_id
-
-            if self.tracker not in ["SEEDPOOL", "SKIPTHECOMMERCIALS"] and not is_individual_tv_episode:
-                type_id = (await self.get_type_id(meta))["type_id"]
-                if params_list is not None:
-                    params_list.append(("types[]", type_id))
-                else:
-                    params_dict["types[]"] = type_id
-
             if meta.category == "TV":
-                season_value = f" {meta.season}"
-                if params_list is not None:
-                    # Update the 'name' parameter in the list
-                    params_list = [(k, (v + season_value if k == "name" and isinstance(v, str) else v)) for k, v in params_list]
-                else:
-                    params_dict["name"] = params_dict["name"] + season_value
+                params_dict["name"] = f" {meta.season}"
 
         else:
             params_dict = {
@@ -115,8 +90,7 @@ class UNIT3D:
                 "perPage": "100",
             }
 
-        request_params: ParamsList
-        request_params = params_list if params_list is not None else list(params_dict.items())
+        request_params: ParamsList = list(params_dict.items())
 
         urls_to_check = await self.get_search_urls(meta, request_params)
 
@@ -551,7 +525,13 @@ class UNIT3D:
                             )
                         return False  # Auth/permission error
                     if e.response.status_code in [401, 404, 422]:
-                        meta.tracker_status[self.tracker]["status_message"] = f"data error: HTTP {e.response.status_code} - {e.response.text}"
+                        if self._is_duplicate_name_error(e.response.text):
+                            status = meta.tracker_status[self.tracker]
+                            status["dupe"] = True
+                            status["upload"] = False
+                            status["status_message"] = "Duplicate detected during upload: this release name already exists on the tracker."
+                        else:
+                            meta.tracker_status[self.tracker]["status_message"] = f"data error: HTTP {e.response.status_code} - {e.response.text}"
                     else:
                         # Retry other HTTP errors
                         if attempt < max_retries - 1:
@@ -604,6 +584,14 @@ class UNIT3D:
             return True  # Debug mode - simulated success
 
         return False
+
+    @staticmethod
+    def _is_duplicate_name_error(response_text: str) -> bool:
+        normalized = str(response_text or "").casefold()
+        return '"name"' in normalized and any(
+            phrase in normalized
+            for phrase in ("already been taken", "already exists", "já se encontra registado", "ja se encontra registado")
+        )
 
     async def get_torrent_id(self, response_data: dict[str, Any]) -> str:
         """Matches /12345.abcde and returns 12345"""

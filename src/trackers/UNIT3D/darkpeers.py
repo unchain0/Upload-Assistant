@@ -25,6 +25,7 @@ class DarkPeers(UNIT3D):
     display_name = "DarkPeers"
     allows_bloated_audio = True
     reject_episode_if_season_pack_exists = True
+    _AUDIO_TRACK_PATTERN = re.compile(r"^(?:\d{1,3}(?:-\d{1,2})?\s+-\s+.+|\d{1,3}(?:-\d{1,2})?-(?!-).+)$")
     base_url = "https://darkpeers.org"
     banned_groups = (
         "ARCADE",
@@ -390,7 +391,7 @@ class DarkPeers(UNIT3D):
             if len(relative) > 180 or filename.startswith(" ") or any(part.startswith(" ") for part in relative.split("/")):
                 logger.info(f"{self.tracker}: [bold red]invalid music path: {relative}. Skipping upload.")
                 return False
-            if re.search(r"\b\w+\.\w+\.\d{1,2}\.\w+", filename) or not re.match(r"(?:\d{1,2}|\d{1,2}-\d{1,2})\s+-\s+.+", filename):
+            if re.search(r"\b\w+\.\w+\.\d{1,2}\.\w+", filename) or not self._AUDIO_TRACK_PATTERN.match(Path(filename).stem):
                 logger.info(f"{self.tracker}: [bold red]music filename must include a track number and title: {filename}. Skipping upload.")
                 return False
         return True
