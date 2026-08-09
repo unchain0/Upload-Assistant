@@ -787,6 +787,23 @@ class QbittorrentClientMixin:
                 dst = Path(tracker_dir) / src_name
                 linking_success = await async_link_directory(src=src, dst=dst, use_hardlink=use_hardlink)
 
+            if not linking_success:
+                isolated_tracker_dir = Path(tracker_dir) / torrent.infohash.lower()
+                await asyncio.to_thread(os.makedirs, isolated_tracker_dir, exist_ok=True)
+                logger.info(f"[yellow]Link destination is occupied by different content; retrying in isolated directory: {isolated_tracker_dir}")
+                if cross:
+                    linking_success = await create_cross_seed_links(
+                        meta=meta,
+                        torrent=torrent,
+                        tracker_dir=str(isolated_tracker_dir),
+                        use_hardlink=use_hardlink,
+                    )
+                else:
+                    dst = isolated_tracker_dir / src_name
+                    linking_success = await async_link_directory(src=src, dst=dst, use_hardlink=use_hardlink)
+                if linking_success:
+                    tracker_dir = isolated_tracker_dir
+
             allow_fallback = client.get("allow_fallback", True)
             if not linking_success and allow_fallback:
                 logger.info(f"[yellow]Using original path without linking: {src}")
@@ -2039,10 +2056,6 @@ async def create_cross_seed_links(meta: Meta, torrent: Torrent, tracker_dir: str
         dest_parent = str(Path(dest_file_path).parent)
         if dest_parent:
             await asyncio.to_thread(os.makedirs, dest_parent, exist_ok=True)
-        if await asyncio.to_thread(os.path.exists, dest_file_path):
-            logger.debug(f"[yellow]Cross-seed link already exists, keeping: {dest_file_path}")
-            continue
-
         linked = await async_link_directory(source_file, dest_file_path, use_hardlink=use_hardlink)
         if not linked:
             logger.info(f"[bold red]Linking failed for cross-seed file: {relative_path}")
@@ -2057,13 +2070,20 @@ async def async_link_directory(src: str, dst: str, use_hardlink: bool = True) ->
         # Create destination directory
         await asyncio.to_thread(os.makedirs, str(Path(dst).parent), exist_ok=True)
 
-        # Check if destination already exists
-        if await asyncio.to_thread(os.path.exists, dst):
-            logger.debug(f"[yellow]Skipping linking, path already exists: {dst}")
-            return True
+        destination_exists = await asyncio.to_thread(os.path.lexists, dst)
+        if destination_exists:
+            try:
+                if await asyncio.to_thread(os.path.samefile, src, dst):
+                    logger.debug(f"[green]Existing link already points to source: {dst}")
+                    return True
+            except OSError:
+                pass
 
         # Handle file linking
         if await asyncio.to_thread(os.path.isfile, src):
+            if destination_exists:
+                logger.info(f"[yellow]Link destination contains different content: {dst}")
+                return False
             if use_hardlink:
                 try:
                     await asyncio.to_thread(os.link, src, dst)
@@ -2087,6 +2107,9 @@ async def async_link_directory(src: str, dst: str, use_hardlink: bool = True) ->
 
         # Handle directory linking
         else:
+            if destination_exists and (not await asyncio.to_thread(os.path.isdir, dst) or await asyncio.to_thread(os.path.islink, dst)):
+                logger.info(f"[yellow]Directory link destination contains different content: {dst}")
+                return False
             if use_hardlink:
                 # For hardlinks, we need to recreate the directory structure
                 await asyncio.to_thread(os.makedirs, dst, exist_ok=True)
@@ -2113,6 +2136,14 @@ async def async_link_directory(src: str, dst: str, use_hardlink: bool = True) ->
 
                 def _try_hardlink(src_path: str, dst_path: str, rel_path: str) -> bool:
                     try:
+                        if os.path.lexists(dst_path):
+                            try:
+                                if Path(src_path).samefile(dst_path):
+                                    return True
+                            except OSError:
+                                pass
+                            logger.info(f"[yellow]Hard link destination contains different content: {dst_path}")
+                            return False
                         os.link(src_path, dst_path)
                         if rel_path == os.path.relpath(all_items[0][0], src):
                             logger.debug(f"[green]Hard link created for file: {dst_path} -> {src_path}")

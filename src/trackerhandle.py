@@ -18,14 +18,44 @@ from src.dupe_checking import DupeChecker
 from src.get_desc import DescriptionBuilder
 from src.manualpackage import ManualPackageManager
 from src.meta import Meta
+from src.prep import Prep
 from src.qbitwait import Wait
 from src.rehostimages import check_tracker_image_hosts
 from src.tracker_images import screenshot_requirement_error
 from src.trackers.passthepopcorn import PassThePopcorn
 from src.trackers.torrenthr import TorrentHR
+from src.trackers.UNIT3D.znth import prepare_zenith_music_layout
 from src.trackersetup import TrackerSetup
+from src.zentag import prepare_zenith_audiobook
 
 type StatusDict = dict[str, Any]
+
+
+async def prepare_tracker_meta(shared_meta: Meta, tracker: str, config: dict[str, Any]) -> Meta:
+    tracker_meta = shared_meta.copy()
+    tracker_meta.trackers = [tracker]
+    tracker_meta.tracker_status = shared_meta.tracker_status
+
+    if tracker != "ZENITH":
+        return tracker_meta
+
+    prepared_book = await prepare_zenith_audiobook(tracker_meta, str(tracker_meta.base_dir), config)
+    if prepared_book:
+        prepared_meta = tracker_meta.copy()
+        prepared_meta.path = prepared_book
+        prepared_meta.keep_folder = True
+        prepared_meta.allow_spaces = True
+        prepared_meta.uuid = f"{prepared_meta.uuid}-zenith"
+        prep = Prep(screens=prepared_meta.screens, img_host=prepared_meta.imghost, config=config)
+        try:
+            tracker_meta = await prep.gather_prep(meta=prepared_meta, mode="cli")
+            tracker_meta.trackers = [tracker]
+            tracker_meta.tracker_status = shared_meta.tracker_status
+        except Exception as error:
+            logger.warning(f"[yellow]ZENITH: failed to prepare isolated zentag metadata; using the original release: {error}[/yellow]")
+
+    prepare_zenith_music_layout(tracker_meta)
+    return tracker_meta
 
 
 async def check_mod_q_and_draft(
@@ -145,7 +175,7 @@ async def process_trackers(
         except Exception as e:
             logger.error(f"[red]Error printing {tracker} result: {e}[/red]")
 
-    async def process_single_tracker(tracker: str) -> None:
+    async def process_single_tracker(tracker: str, shared_meta: Meta = meta) -> None:
         """
         try:
             _ = meta.base64.b64decode(b"dWFfc2lnbmF0dXJl").decode("utf-8")
@@ -153,13 +183,14 @@ async def process_trackers(
             sys.exit()
         """
 
+        tracker = tracker.replace(" ", "").upper().strip()
+        meta = await prepare_tracker_meta(shared_meta, tracker, config)
+
         tracker_class: Any = None
         if tracker not in {"MANUAL", "TORRENTHR", "PASSTHEPOPCORN"}:
             tracker_class = tracker_class_map[tracker](config=config)
         if meta.name.endswith("DUPE?"):
             meta.name = meta.name.replace(" DUPE?", "")
-
-        tracker = tracker.replace(" ", "").upper().strip()
 
         disabled_reason = disabled_trackers.get(tracker)
         if disabled_reason:

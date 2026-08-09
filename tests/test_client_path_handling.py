@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, patch
 from src.clients import Clients
 from src.meta import Meta
 from src.torrent_clients.path_utils import coerce_str_list, is_path_under, map_save_path, tracker_directory
-from src.torrent_clients.qbittorrent import create_cross_seed_links
+from src.torrent_clients.qbittorrent import async_link_directory, create_cross_seed_links
 
 
 def test_qbittorrent_coerce_str_list_parses_stringified_paths() -> None:
@@ -106,3 +106,47 @@ def test_cross_seed_links_normalize_component_paths(tmp_path: Path) -> None:
             return await create_cross_seed_links(meta, torrent, str(tmp_path / "tracker"), use_hardlink=False)
 
     assert asyncio.run(exercise())
+
+
+def test_async_link_directory_reuses_matching_hardlink(tmp_path: Path) -> None:
+    source = tmp_path / "source.m4b"
+    destination = tmp_path / "links" / "source.m4b"
+    source.write_bytes(b"audiobook")
+    destination.parent.mkdir()
+    os.link(source, destination)
+
+    assert asyncio.run(async_link_directory(str(source), str(destination)))
+    assert source.samefile(destination)
+
+
+def test_async_link_directory_rejects_stale_file(tmp_path: Path) -> None:
+    source = tmp_path / "source.m4b"
+    destination = tmp_path / "links" / "source.m4b"
+    source.write_bytes(b"current audiobook")
+    destination.parent.mkdir()
+    destination.write_bytes(b"stale audiobook")
+
+    assert not asyncio.run(async_link_directory(str(source), str(destination)))
+    assert destination.read_bytes() == b"stale audiobook"
+
+
+def test_async_link_directory_repairs_partial_tree_and_rejects_stale_files(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    destination = tmp_path / "links" / "source"
+    source.mkdir()
+    destination.mkdir(parents=True)
+    first_source = source / "01.mp3"
+    second_source = source / "02.mp3"
+    first_destination = destination / "01.mp3"
+    second_destination = destination / "02.mp3"
+    first_source.write_bytes(b"first")
+    second_source.write_bytes(b"second")
+    os.link(first_source, first_destination)
+
+    assert asyncio.run(async_link_directory(str(source), str(destination)))
+    assert second_source.samefile(second_destination)
+
+    second_destination.unlink()
+    second_destination.write_bytes(b"stale")
+    assert not asyncio.run(async_link_directory(str(source), str(destination)))
+    assert second_destination.read_bytes() == b"stale"
