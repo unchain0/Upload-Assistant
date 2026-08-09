@@ -536,13 +536,14 @@ class QbittorrentClientMixin:
                     continue
 
                 # **Use `torrent_storage_dir` if available**
+                torrent_file_path = Path(extracted_torrent_dir) / f"{torrent_hash}.torrent"
                 if torrent_storage_dir:
                     torrent_file_path = Path(torrent_storage_dir) / f"{torrent_hash}.torrent"
                     if not Path(torrent_file_path).exists():
                         logger.info(f"[yellow]Torrent file not found in storage directory: {torrent_file_path}")
-                        continue
-                else:
-                    # **Fetch from qBittorrent API if no `torrent_storage_dir`**
+                        torrent_file_path = Path(extracted_torrent_dir) / f"{torrent_hash}.torrent"
+
+                if not Path(torrent_file_path).exists():
                     logger.debug(f"[cyan]Exporting .torrent file for {torrent_hash}")
 
                     torrent_file_content = None
@@ -619,7 +620,8 @@ class QbittorrentClientMixin:
                         return torrent_hash
                 else:
                     logger.debug(f"[bold red]{torrent_hash} failed validation")
-                    torrent_file_path.unlink()
+                    if Path(torrent_file_path).is_relative_to(Path(extracted_torrent_dir)):
+                        torrent_file_path.unlink(missing_ok=True)
 
             # **Return the best match if `prefer_small_pieces` is enabled**
             if best_match:

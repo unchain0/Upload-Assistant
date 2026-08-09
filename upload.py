@@ -1479,7 +1479,8 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
                 elif meta.path_to_menu_screenshots or config["DEFAULT"].get("auto_dvd_menus", False):
                     await process_disc_menus(meta, config)
 
-            if meta.audio_spectrogram or meta.audio_spectrogram_tracks or config["DEFAULT"].get("add_audio_spectrogram", False):
+            should_process_spectrogram = meta.category != "BOOK" or bool(meta.audiobook)
+            if should_process_spectrogram and (meta.audio_spectrogram or meta.audio_spectrogram_tracks or config["DEFAULT"].get("add_audio_spectrogram", False)):
                 try:
                     await process_audio_spectrograms(meta, config, uploadscreens_manager)
                 except Exception as e:
@@ -2412,6 +2413,7 @@ async def do_the_thing(base_dir: str) -> None:
         processed_files_count = 0
         skipped_files_count = 0
         failed_items: list[tuple[str, str]] = []
+        partial_items: list[tuple[str, str]] = []
         base_meta = meta.copy()
 
         for queue_item in queue_list:
@@ -2800,9 +2802,18 @@ async def do_the_thing(base_dir: str) -> None:
                         processed_files_count += 1
                         tracker_statuses = [status for status in meta.tracker_status.values() if isinstance(status, Mapping)]
                         upload_succeeded = any(status.get("upload_success") is True for status in tracker_statuses)
+                        failed_trackers = [
+                            tracker
+                            for tracker, status in meta.tracker_status.items()
+                            if isinstance(status, Mapping) and status.get("upload") is True and status.get("upload_success") is not True
+                        ]
                         if not upload_succeeded and not meta.debug:
                             skipped_files_count += 1
+                            failed_items.append((current_item_path, f"No tracker upload succeeded ({', '.join(failed_trackers) or 'no eligible trackers'})"))
                             logger.info(f"[yellow]Processed {processed_files_count}/{total_files} files; no tracker upload succeeded.[/yellow]")
+                        elif failed_trackers and not meta.debug:
+                            partial_items.append((current_item_path, ", ".join(failed_trackers)))
+                            logger.info(f"[yellow]Upload completed partially; failed trackers: {', '.join(failed_trackers)}.[/yellow]")
                         elif meta.debug:
                             logger.info(f"[cyan]Processed {processed_files_count}/{total_files} files in debug mode; no tracker upload was attempted.[/cyan]")
                         elif "limit_queue" in meta and meta.limit_queue > 0:
@@ -2867,8 +2878,16 @@ async def do_the_thing(base_dir: str) -> None:
 
         if is_batch:
             failed_count = len(failed_items)
-            success_count = max(queue_size - failed_count, 0)
-            logger.info(f"[bold green]Batch summary: total enfileirado {queue_size}, processados com sucesso {success_count}, skipped/failed {failed_count}[/bold green]")
+            partial_count = len(partial_items)
+            success_count = max(queue_size - failed_count - partial_count, 0)
+            logger.info(
+                f"[bold green]Batch summary: total enfileirado {queue_size}, processados com sucesso {success_count}, "
+                f"parciais {partial_count}, skipped/failed {failed_count}[/bold green]"
+            )
+            if partial_items:
+                logger.info("[bold yellow]Itens com upload parcial:[/bold yellow]")
+                for partial_path, failed_trackers in partial_items:
+                    logger.info(f"- {partial_path}: falhou em {failed_trackers}")
             if failed_items:
                 logger.info("[bold red]Itens com falha:[/bold red]")
                 for failed_path, failed_reason in failed_items:

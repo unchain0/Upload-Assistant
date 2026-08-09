@@ -1,6 +1,8 @@
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from torf import Torrent
 
 from src.clients import Clients
 from src.meta import Meta
@@ -104,6 +106,37 @@ async def test_reuse_validation_rejects_same_basenames_in_different_layouts(tmp_
     valid, _ = await client.is_valid_torrent(meta, str(torrent_path), "hash", "qbit", {})
 
     assert not valid  # noqa: S101
+
+
+@pytest.mark.asyncio
+async def test_reuse_validation_normalizes_binary_md5sum_in_working_copy(tmp_path):
+    import bencodepy
+
+    book = tmp_path / "book.epub"
+    book.write_bytes(b"book")
+    torrent_path = tmp_path / "client-storage" / "candidate.torrent"
+    torrent_path.parent.mkdir()
+    original_metainfo = bencodepy.encode(
+        {
+            b"announce": b"https://example.invalid/announce",
+            b"info": {
+                b"length": 4,
+                b"md5sum": b"\xe9\xd9E\xa4H\x12 \xaf\x1f\xe3\x87\xedX\x8d\xcfV",
+                b"name": b"book.epub",
+                b"piece length": 32768,
+                b"pieces": b"\x00" * 20,
+            },
+        }
+    )
+    torrent_path.write_bytes(original_metainfo)
+    meta = Meta(path=str(book), filelist=[str(book)], subtitle_files=[], is_disc="", keep_folder=False, isdir=False, uuid="book.epub", base_dir=str(tmp_path), debug=False)
+
+    valid, resolved_path = await Clients({"DEFAULT": {}, "TORRENT_CLIENTS": {}}).is_valid_torrent(meta, str(torrent_path), "hash", "qbit", {})
+
+    assert valid  # noqa: S101
+    assert resolved_path != str(torrent_path)  # noqa: S101
+    assert torrent_path.read_bytes() == original_metainfo  # noqa: S101
+    assert Torrent.read(resolved_path).files == [Path("book.epub")]  # noqa: S101
 
 
 @pytest.mark.asyncio

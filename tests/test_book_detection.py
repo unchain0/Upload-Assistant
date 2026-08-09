@@ -8,9 +8,14 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from src.book_extractors import validate_isbn_checksum
 from src.book_prep import resolve_book_filelist
 from src.meta import Meta
 from src.prep_helpers import detect_disc_and_category
+
+
+def test_validate_isbn_checksum_rejects_mam_numeric_id() -> None:
+    assert validate_isbn_checksum("465097588") is None
 
 
 @pytest.mark.parametrize("extension", [".azw", ".azw3", ".fb2", ".html", ".chm", ".djvu", ".doc", ".docx", ".kfx", ".lit", ".pdb", ".txt", ".rtf"])

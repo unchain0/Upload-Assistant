@@ -41,6 +41,7 @@ from src.book_extractors import (
 from src.book_extractors import (
     normalize_series_index as _normalize_series_index,
 )
+from src.book_extractors import validate_isbn_checksum
 from src.console import logger
 from src.exportmi import export_info
 from src.meta import Meta
@@ -564,6 +565,15 @@ async def gather_book_prep(
                                 meta.search_year = int(val)
         except Exception as ex:
             logger.debug(f"[yellow]Warning: MyAnonamouse API lookup failed: {ex}[/yellow]")
+
+    if meta.isbn:
+        validated_isbn = validate_isbn_checksum(str(meta.isbn))
+        if validated_isbn:
+            meta.isbn = validated_isbn
+        else:
+            logger.warning(f"[yellow]Ignoring invalid ISBN metadata: {meta.isbn}[/yellow]")
+            meta.isbn = ""
+            meta.book_isbn = ""
 
     # Google Books API search using ISBN (online lookup takes precedence)
     google_books_data = None

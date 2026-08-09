@@ -7,6 +7,7 @@ import urllib.parse
 from pathlib import Path
 from typing import Any, cast
 
+import bencodepy
 import defusedxml.xmlrpc
 import httpx
 import qbittorrentapi
@@ -27,6 +28,36 @@ class Clients(QbittorrentClientMixin, RtorrentClientMixin, DelugeClientMixin, Tr
         """Initialize torrent-client operations with the application config."""
         self.config = config
         self._tracker_comment_hosts: dict[str, tuple[str, ...]] | None = None
+
+    @staticmethod
+    def _read_torrent_compat(torrent_path: str, normalized_path: Path) -> tuple[Torrent, str]:
+        try:
+            return Torrent.read(torrent_path), torrent_path
+        except Exception as original_error:
+            metainfo = bencodepy.decode(Path(torrent_path).read_bytes())
+            if not isinstance(metainfo, dict) or not isinstance(metainfo.get(b"info"), dict):
+                raise original_error
+
+            info = metainfo[b"info"]
+            entries = [info]
+            files = info.get(b"files", [])
+            if isinstance(files, list):
+                entries.extend(entry for entry in files if isinstance(entry, dict))
+
+            changed = False
+            for entry in entries:
+                md5sum = entry.get(b"md5sum")
+                if isinstance(md5sum, bytes):
+                    entry[b"md5sum"] = md5sum.hex().encode("ascii")
+                    changed = True
+
+            if not changed:
+                raise original_error
+
+            normalized_path.parent.mkdir(parents=True, exist_ok=True)
+            normalized_path.write_bytes(bencodepy.encode(metainfo))
+            logger.info(f"[yellow]Normalized legacy binary md5sum metadata in a working copy: {normalized_path}[/yellow]")
+            return Torrent.read(normalized_path), str(normalized_path)
 
     @staticmethod
     def _matches_tracker_host(host: str, tracker_hosts: dict[str, tuple[str, ...]]) -> str | None:
@@ -410,7 +441,7 @@ class Clients(QbittorrentClientMixin, RtorrentClientMixin, DelugeClientMixin, Tr
                         continue
 
                 # Validate the .torrent file
-                valid, resolved_path = await self.is_valid_torrent(meta, torrent_path, hash_value_str, torrent_client, client)
+                valid, resolved_path = await self.is_valid_torrent(meta, str(torrent_path), hash_value_str, torrent_client, client)
 
                 if valid:
                     return resolved_path
@@ -564,7 +595,8 @@ class Clients(QbittorrentClientMixin, RtorrentClientMixin, DelugeClientMixin, Tr
         # Check if torrent file exists
         if Path(torrent_path).exists():
             try:
-                torrent = Torrent.read(torrent_path)
+                normalized_path = Path(meta.base_dir) / "tmp" / meta_uuid / Path(torrent_path).name
+                torrent, torrent_path = self._read_torrent_compat(torrent_path, normalized_path)
             except Exception as e:
                 logger.info(f"[bold red]Error reading torrent file: {e}")
                 return valid, torrent_path
@@ -591,7 +623,7 @@ class Clients(QbittorrentClientMixin, RtorrentClientMixin, DelugeClientMixin, Tr
                     # If one file, check for folder
                     if len(torrent.files) == len(cand) == 1:
                         if Path(torrent.files[0]).name == Path(cand[0]).name:
-                            if str(torrent.files[0]) == Path(torrent.files[0]).name:
+                            if "length" in torrent.metainfo["info"]:
                                 valid = True
                                 break
                             wrong_file = True
