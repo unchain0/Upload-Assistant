@@ -79,6 +79,10 @@ AUDIOBOOK_EXTENSIONS = frozenset(
 _TEXT_SIDECAR_STEMS = frozenset({"cover", "folder", "index", "info", "readme"})
 
 
+def _normalized_book_stem(path: str) -> str:
+    return re.sub(r"[\W_]+", " ", Path(path).stem.casefold()).strip()
+
+
 def resolve_book_filelist(
     meta: Meta,
     videoloc: str,
@@ -108,9 +112,24 @@ def resolve_book_filelist(
             sys.exit(1)
         richer_book_files = [file for file in filelist if Path(file).suffix.lower() in BOOK_EXTENSIONS - {".txt", ".html", ".htm"}]
         if richer_book_files:
-            filelist = [file for file in filelist if not (Path(file).suffix.lower() in {".txt", ".html", ".htm"} and Path(file).stem.casefold() in _TEXT_SIDECAR_STEMS)]
+            richer_stems = {_normalized_book_stem(file) for file in richer_book_files}
+            filelist = [
+                file
+                for file in filelist
+                if not (
+                    Path(file).suffix.lower() in {".txt", ".html", ".htm"}
+                    and (
+                        Path(file).stem.casefold() in _TEXT_SIDECAR_STEMS
+                        or any(richer_stem == _normalized_book_stem(file) or richer_stem.startswith(f"{_normalized_book_stem(file)} ") for richer_stem in richer_stems)
+                    )
+                )
+            ]
         ebook_files = [file for file in filelist if Path(file).suffix.lower() in BOOK_EXTENSIONS]
-        if len(ebook_files) > 1:
+        audiobook_files = [file for file in filelist if Path(file).suffix.lower() in AUDIOBOOK_EXTENSIONS]
+        if ebook_files and audiobook_files:
+            raise ItemProcessingError("Ebook and audiobook files were found in the same path. Upload each media type separately.")
+        ebook_titles = {_normalized_book_stem(file) for file in ebook_files}
+        if len(ebook_titles) > 1:
             filenames = ", ".join(Path(file).name for file in ebook_files)
             raise ItemProcessingError(f"Multiple ebook files were found in one path ({filenames}). Upload each book separately.")
         videopath = sorted(filelist, key=os.path.getsize, reverse=True)[0]
@@ -212,7 +231,7 @@ def book_identity_from_path(path: str) -> tuple[str, str]:
     if len(parts) != 2:
         return "", ""
     author, title = parts
-    title = re.sub(r"_\s*", ": ", title).strip()
+    title = re.sub(r"_\s+", ": ", title).strip()
     return author.strip(), title
 
 

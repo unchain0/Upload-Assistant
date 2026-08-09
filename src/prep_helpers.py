@@ -587,6 +587,8 @@ async def process_media_files(prep_instance: Any, meta: Meta, videoloc: str, bdi
                     meta.resolution, meta.hfr = await video_manager.get_resolution(guessit_fn(video), meta.uuid, base_dir, meta)
 
                 meta.sd = await video_manager.is_sd(meta.resolution)
+        except ItemProcessingError:
+            raise
         except Exception as e:
             logger.error(f"[red]Error processing Mediainfo: {e}[/red]")
             raise Exception(f"Error processing Mediainfo: {e}") from e

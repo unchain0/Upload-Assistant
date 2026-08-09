@@ -305,11 +305,12 @@ def test_failed_tracker_names_excludes_late_duplicate() -> None:
 
 
 @pytest.mark.asyncio
-async def test_batch_failed_items_lists_skipped_terminal_outcomes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_batch_summary_lists_skipped_terminal_outcomes_separately(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     queue = [str(tmp_path / "missing-year.pdf"), str(tmp_path / "duplicate.mp3")]
 
     def fake_process_meta(meta: Meta, _base_dir: str) -> bool:
         meta.we_are_uploading = False
+        meta.tracker_status = {"TRACKER": {"skipped": True, "skip_reason": "Required BOOK fields missing: year"}}
         return True
 
     info_messages, _ = _configure_do_the_thing_stubs(monkeypatch, queue, fake_process_meta)
@@ -317,8 +318,10 @@ async def test_batch_failed_items_lists_skipped_terminal_outcomes(tmp_path: Path
 
     await upload.do_the_thing(upload.base_dir)
 
-    assert any("missing-year.pdf" in message and "Uploading is disabled" in message for message in info_messages)
-    assert any("duplicate.mp3" in message and "Uploading is disabled" in message for message in info_messages)
+    assert any("Skipped items:" in message for message in info_messages)
+    assert any("missing-year.pdf" in message and "Required BOOK fields missing: year" in message for message in info_messages)
+    assert any("duplicate.mp3" in message and "Required BOOK fields missing: year" in message for message in info_messages)
+    assert not any("Failed items:" in message for message in info_messages)
 
 
 @pytest.mark.asyncio

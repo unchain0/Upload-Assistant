@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -82,6 +83,26 @@ def test_multiple_ebooks_in_one_path_are_rejected(tmp_path) -> None:
         resolve_book_filelist(Meta(), str(tmp_path))
 
 
+def test_same_ebook_in_multiple_formats_is_accepted(tmp_path) -> None:
+    stem = "Jordan B. Peterson - 12 Rules for Life_ An Antidote to Chaos"
+    for extension in (".azw3", ".epub", ".mobi"):
+        (tmp_path / f"{stem}{extension}").write_bytes(extension.encode())
+    (tmp_path / "Jordan B. Peterson - 12 Rules for Life.txt").write_text("sidecar")
+
+    _, filelist, _, _ = resolve_book_filelist(Meta(), str(tmp_path))
+
+    assert len(filelist) == 3
+    assert {Path(file).suffix for file in filelist} == {".azw3", ".epub", ".mobi"}
+
+
+def test_mixed_ebook_and_audiobook_release_is_rejected(tmp_path) -> None:
+    (tmp_path / "Everything Is F_cked.epub").write_bytes(b"ebook")
+    (tmp_path / "Everything Is F_cked.mp3").write_bytes(b"audio")
+
+    with pytest.raises(ItemProcessingError, match="Upload each media type separately"):
+        resolve_book_filelist(Meta(), str(tmp_path))
+
+
 def test_book_identity_falls_back_to_directory_name(tmp_path) -> None:
     release = tmp_path / "Ian Stewart - How to Cut a Cake_ And Other Mathematical Conundrums"
     release.mkdir()
@@ -94,6 +115,7 @@ def test_book_identity_rejects_unrelated_enriched_title_for_same_author(tmp_path
     meta = Meta(author="Gary John Bishop", title="Stop Doing That Sh*t: End Self-Sabotage and Demand Your Life Back")
 
     assert book_identity_conflict(meta, str(release)) is not None
+    assert book_identity_from_path(str(release))[1].startswith("Wise as Fu_k;")
 
 
 def test_book_identity_accepts_matching_enriched_title(tmp_path) -> None:

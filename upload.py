@@ -2573,10 +2573,13 @@ async def do_the_thing(base_dir: str) -> None:
 
             if item_error:
                 if is_batch and not _shutdown_requested:
-                    failed_items.append((current_item_path, item_error))
-                    item_outcomes[item_index] = (current_item_path, "failed", item_error)
+                    outcome = "skipped" if isinstance(item_abort, ItemProcessingError) else "failed"
+                    if outcome == "failed":
+                        failed_items.append((current_item_path, item_error))
+                    item_outcomes[item_index] = (current_item_path, outcome, item_error)
                     processed_files_count += 1
                     skipped_files_count += 1
+                    logger.info(f"[yellow]Skipping {current_item_path}: {item_error}[/yellow]")
                     logger.info(f"[cyan]Processed {processed_files_count}/{total_files} files with {skipped_files_count} skipped uploading.\n\n")
                     if log_file and (not meta.debug or "debug" in Path(log_file).name):
                         if meta.site_upload_queue:
@@ -2620,10 +2623,13 @@ async def do_the_thing(base_dir: str) -> None:
                 await cancel_and_drain_early_artifact_tasks(meta.uuid)
             if item_error:
                 if is_batch and not _shutdown_requested:
-                    failed_items.append((current_item_path, item_error))
-                    item_outcomes[item_index] = (current_item_path, "failed", item_error)
+                    outcome = "skipped" if isinstance(item_abort, ItemProcessingError) else "failed"
+                    if outcome == "failed":
+                        failed_items.append((current_item_path, item_error))
+                    item_outcomes[item_index] = (current_item_path, outcome, item_error)
                     processed_files_count += 1
                     skipped_files_count += 1
+                    logger.info(f"[yellow]Skipping {current_item_path}: {item_error}[/yellow]")
                     logger.info(f"[cyan]Processed {processed_files_count}/{total_files} files with {skipped_files_count} skipped uploading.\n\n")
                     if log_file and (not meta.debug or "debug" in Path(log_file).name):
                         if meta.site_upload_queue:
@@ -2661,11 +2667,29 @@ async def do_the_thing(base_dir: str) -> None:
                 if config["DEFAULT"].get("cross_seeding", True):
                     await process_cross_seeds(meta)
                 if not meta.site_check:
-                    logger.info("we are not uploading.......")
+                    logger.info("[yellow]No eligible uploads remain after tracker checks.[/yellow]")
                     if is_batch:
                         tracker_statuses = [status for status in meta.tracker_status.values() if isinstance(status, Mapping)]
                         skip_reasons = list(dict.fromkeys(str(status.get("skip_reason")) for status in tracker_statuses if status.get("skip_reason")))
-                        item_outcomes[item_index] = (current_item_path, "skipped", "; ".join(skip_reasons) or "Uploading is disabled")
+                        duplicate_trackers = [
+                            tracker
+                            for tracker, status in meta.tracker_status.items()
+                            if isinstance(status, Mapping) and status.get("dupe") is True
+                        ]
+                        skipped_trackers = [
+                            tracker
+                            for tracker, status in meta.tracker_status.items()
+                            if isinstance(status, Mapping) and status.get("skipped") is True
+                        ]
+                        if skip_reasons:
+                            skip_detail = "; ".join(skip_reasons)
+                        elif duplicate_trackers:
+                            skip_detail = f"Release already exists on trackers ({', '.join(duplicate_trackers)})"
+                        elif skipped_trackers:
+                            skip_detail = f"No eligible trackers after checks ({', '.join(skipped_trackers)})"
+                        else:
+                            skip_detail = "No eligible trackers after checks"
+                        item_outcomes[item_index] = (current_item_path, "skipped", skip_detail)
                         processed_files_count += 1
                         skipped_files_count += 1
                         logger.info(f"[cyan]Processed {processed_files_count}/{total_files} files with {skipped_files_count} skipped uploading.\n\n")
@@ -2965,23 +2989,35 @@ async def do_the_thing(base_dir: str) -> None:
             success_count = sum(outcome == "successful" for _path, outcome, _detail in item_outcomes.values())
             checked_count = sum(outcome == "checked" for _path, outcome, _detail in item_outcomes.values())
             partial_count = sum(outcome == "partial" for _path, outcome, _detail in item_outcomes.values())
+            skipped_count = sum(outcome == "skipped" for _path, outcome, _detail in item_outcomes.values())
+            failed_only_count = sum(outcome == "failed" for _path, outcome, _detail in item_outcomes.values())
             failed_count = sum(outcome in {"failed", "skipped"} for _path, outcome, _detail in item_outcomes.values())
             logger.info(
                 f"[bold green]Batch summary: total queued {total_count}, fully successful {success_count}, "
-                f"partial {partial_count}, skipped/failed {failed_count}, site checks completed {checked_count}[/bold green]"
+                f"partial {partial_count}, skipped/failed {failed_count}, site checks completed {checked_count}, "
+                f"skipped {skipped_count}, failed {failed_only_count}[/bold green]"
             )
             if partial_items:
                 logger.info("[bold yellow]Items with partial uploads:[/bold yellow]")
                 for partial_path, failed_trackers in partial_items:
                     logger.info(f"- {partial_path}: failed on {failed_trackers}")
-            unsuccessful_items = [
+            skipped_items = [
                 (path, detail)
                 for _index, (path, outcome, detail) in sorted(item_outcomes.items())
-                if outcome in {"failed", "skipped"}
+                if outcome == "skipped"
             ]
-            if unsuccessful_items:
+            if skipped_items:
+                logger.info("[bold yellow]Skipped items:[/bold yellow]")
+                for skipped_path, skipped_reason in skipped_items:
+                    logger.info(f"- {skipped_path}: {skipped_reason}")
+            failed_summary_items = [
+                (path, detail)
+                for _index, (path, outcome, detail) in sorted(item_outcomes.items())
+                if outcome == "failed"
+            ]
+            if failed_summary_items:
                 logger.info("[bold red]Failed items:[/bold red]")
-                for failed_path, failed_reason in unsuccessful_items:
+                for failed_path, failed_reason in failed_summary_items:
                     logger.info(f"- {failed_path}: {failed_reason}")
         current_release_log_path.set(None)
 

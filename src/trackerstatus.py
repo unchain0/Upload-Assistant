@@ -151,6 +151,7 @@ class TrackerStatusManager:
                     if book_missing:
                         logger.info(f"[yellow]{tracker_name}: Skipping upload because required BOOK fields are missing: {', '.join(book_missing)}[/yellow]")
                         local_tracker_status["skipped"] = True
+                        local_tracker_status["skip_reason"] = f"Required BOOK fields missing: {', '.join(book_missing)}"
 
                 # Check for missing required GAME fields in unattended mode
                 elif local_meta.get("category") == "GAME" and local_meta.get("unattended", False):
