@@ -16,6 +16,7 @@ class Meta:
     aither_trumpable: list[Any] | None = field(default_factory=list)
     aither: str | None = None
     aka: str = ""
+    allow_spaces: bool = False
     anime: bool = False
     anon: bool = False
     ant_user_tags: bool | None = None

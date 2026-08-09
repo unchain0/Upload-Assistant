@@ -22,6 +22,7 @@ from src.trackers.common import Common
 from src.trackers.passthepopcorn import PassThePopcorn
 from src.trackersetup import TrackerSetup, tracker_class_map
 from src.uphelper import UploadHelper
+from src.upload_safety import blocks_automatic_upload, content_paths_with_spaces
 
 
 def merge_tracker_status(processed: dict[str, dict[str, Any]], existing: Mapping[str, Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -38,7 +39,7 @@ class TrackerStatusManager:
         self.trackers_config = cast(Mapping[str, Mapping[str, Any]], config.get("TRACKERS", {}))
 
     @staticmethod
-    def _block_completed_episode_uploads(meta: Meta, results: list[tuple[str, dict[str, bool], str | None, Any]]) -> bool:
+    def _block_completed_episode_uploads(meta: Meta, results: list[tuple[str, dict[str, Any], str | None, Any]]) -> bool:
         if not Common.is_completed_tv_episode(meta):
             return False
         for _tracker_name, status, _display_name, _tracker_class in results:
@@ -50,6 +51,26 @@ class TrackerStatusManager:
     async def process_all_trackers(self, meta: Meta) -> int:
         tracker_status: dict[str, dict[str, Any]] = {}
         successful_trackers = 0
+        if blocks_automatic_upload(meta):
+            suspicious_paths = content_paths_with_spaces(meta)
+            displayed_paths = ", ".join(suspicious_paths[:5])
+            if len(suspicious_paths) > 5:
+                displayed_paths = f"{displayed_paths}, and {len(suspicious_paths) - 5} more"
+            reason = f"Content file/folder names contain spaces and may have been renamed: {displayed_paths}. Use --allow-spaces to explicitly permit this upload."
+            trackers = [meta.trackers] if isinstance(meta.trackers, str) else list(meta.trackers)
+            for tracker in trackers:
+                tracker_status[str(tracker)] = {
+                    "banned": False,
+                    "skipped": True,
+                    "dupe": False,
+                    "upload": False,
+                    "other": False,
+                    "skip_reason": reason,
+                }
+            meta.tracker_status = merge_tracker_status(tracker_status, meta.tracker_status)
+            logger.info(f"[bold red]{reason} All tracker uploads were skipped.[/bold red]")
+            return 0
+
         client: Any = Clients(config=self.config)
         tracker_setup: Any = TrackerSetup(config=self.config)
         tracker_setup.filter_unsupported_trackers(meta)
@@ -94,9 +115,9 @@ class TrackerStatusManager:
                         break
                     cli_ui.error("Invalid IMDB ID format. Expected format: tt1234567")
 
-        async def process_single_tracker(tracker_name: str, shared_meta: Meta) -> tuple[str, dict[str, bool], str | None, Any]:
+        async def process_single_tracker(tracker_name: str, shared_meta: Meta) -> tuple[str, dict[str, Any], str | None, Any]:
             local_meta = copy.deepcopy(shared_meta)  # Ensure each task gets its own copy of meta
-            local_tracker_status = {"banned": False, "skipped": False, "dupe": False, "upload": False, "other": False}
+            local_tracker_status: dict[str, Any] = {"banned": False, "skipped": False, "dupe": False, "upload": False, "other": False}
             display_name = None
             tracker_class = None
 
