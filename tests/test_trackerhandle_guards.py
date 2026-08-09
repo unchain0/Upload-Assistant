@@ -1,3 +1,4 @@
+# ruff: noqa: S101
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
 from typing import Any
 
@@ -19,6 +20,7 @@ class FakeTracker:
     tracker = "TEST"
     upload_calls = 0
     fail_with_modqueue = False
+    requires_book_cover = True
 
     def __init__(self, config: dict[str, Any]) -> None:
         self.config = config
@@ -62,6 +64,7 @@ def _config(minimum: int = 4) -> dict[str, Any]:
 def tracker_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
     FakeTracker.upload_calls = 0
     FakeTracker.fail_with_modqueue = False
+    FakeTracker.requires_book_cover = True
     monkeypatch.setattr(trackerhandle.TrackerSetup, "trackers_enabled", lambda _self, _meta: ["TEST"])
 
     async def keep_images(_meta: Meta, _tracker: Any) -> None:
@@ -91,6 +94,30 @@ async def test_tracker_upload_runs_when_configured_minimum_is_met() -> None:
     assert FakeTracker.upload_calls == 1
     assert meta.tracker_status["TEST"]["upload_success"] is True
     assert client.added == ["TEST"]
+
+
+@pytest.mark.asyncio
+async def test_book_without_cover_is_blocked_by_default() -> None:
+    meta = _meta()
+    meta.category = "BOOK"
+    meta.artwork_path = ""
+
+    await trackerhandle.process_trackers(meta, _config(), FakeClient(), ["TEST"], {"TEST": FakeTracker}, [], [])
+
+    assert FakeTracker.upload_calls == 0
+    assert "valid cover image" in meta.tracker_status["TEST"]["status_message"]
+
+
+@pytest.mark.asyncio
+async def test_tracker_can_allow_book_without_cover() -> None:
+    FakeTracker.requires_book_cover = False
+    meta = _meta()
+    meta.category = "BOOK"
+    meta.artwork_path = ""
+
+    await trackerhandle.process_trackers(meta, _config(), FakeClient(), ["TEST"], {"TEST": FakeTracker}, [], [])
+
+    assert FakeTracker.upload_calls == 1
 
 
 @pytest.mark.asyncio

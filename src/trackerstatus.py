@@ -34,6 +34,17 @@ def merge_tracker_status(processed: dict[str, dict[str, Any]], existing: Mapping
     return merged
 
 
+def missing_book_fields_for_tracker(meta: Meta, tracker_class: Any) -> list[str]:
+    from src.book_prep import missing_book_fields
+
+    missing = missing_book_fields(meta)
+    required_fields = getattr(tracker_class, "required_book_fields", None)
+    if required_fields is None:
+        return missing
+    required = {str(field) for field in required_fields}
+    return [field for field in missing if field in required]
+
+
 class TrackerStatusManager:
     def __init__(self, config: dict[str, Any]) -> None:
         self.config = config
@@ -145,9 +156,7 @@ class TrackerStatusManager:
 
                 # Check for missing required BOOK fields in unattended mode
                 if local_meta.get("category") == "BOOK" and local_meta.get("unattended", False):
-                    from src.book_prep import missing_book_fields
-
-                    book_missing = missing_book_fields(Meta(**local_meta))
+                    book_missing = missing_book_fields_for_tracker(Meta(**local_meta), tracker_class)
                     if book_missing:
                         logger.info(f"[yellow]{tracker_name}: Skipping upload because required BOOK fields are missing: {', '.join(book_missing)}[/yellow]")
                         local_tracker_status["skipped"] = True

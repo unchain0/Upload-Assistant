@@ -262,7 +262,7 @@ def book_identity_conflict(meta: Meta, path: str) -> str | None:
         return re.sub(r"[^a-z0-9]+", "", value.casefold())
 
     if normalize(path_author) != normalize(str(meta.author)):
-        return None
+        return f"Book metadata author '{meta.author}' conflicts with source author '{path_author}'"
 
     path_tokens = _identity_tokens(path_title)
     metadata_tokens = _identity_tokens(str(meta.title))

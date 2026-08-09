@@ -149,6 +149,13 @@ def test_book_identity_accepts_matching_enriched_title(tmp_path) -> None:
     assert book_identity_conflict(meta, str(release)) is None
 
 
+def test_book_identity_rejects_conflicting_author(tmp_path) -> None:
+    release = tmp_path / "Brian Kernighan - The C Programming Language"
+    meta = Meta(author="Dennis Ritchie", title="The C Programming Language")
+
+    assert book_identity_conflict(meta, str(release)) == "Book metadata author 'Dennis Ritchie' conflicts with source author 'Brian Kernighan'"
+
+
 def test_unattended_audiobook_requires_complete_edition_metadata() -> None:
     meta = Meta(
         audiobook=True,

@@ -8,6 +8,7 @@ import asyncio
 
 from src.meta import Meta
 from src.trackers.UNIT3D.peergarden import PeerGarden
+from src.trackerstatus import missing_book_fields_for_tracker
 
 
 def test_peergarden_reverse_book_category_mapping():
@@ -126,6 +127,26 @@ def test_peergarden_has_exact_match_only_attr():
     tracker = PeerGarden({"DEFAULT": {}, "TRACKERS": {"PEERGARDEN": {}}})
     assert getattr(tracker, "exact_match_only", False) is True
     assert getattr(tracker, "allows_dupes", False) is True
+
+
+def test_peergarden_book_policy_only_requires_truthful_title():
+    tracker = PeerGarden({"DEFAULT": {}, "TRACKERS": {"PEERGARDEN": {}}})
+    meta = Meta(category="BOOK", title="The C Programming Language", unattended=True)
+
+    assert missing_book_fields_for_tracker(meta, tracker) == []
+    assert tracker.requires_book_cover is False
+
+
+def test_peergarden_book_policy_still_requires_title():
+    tracker = PeerGarden({"DEFAULT": {}, "TRACKERS": {"PEERGARDEN": {}}})
+
+    assert missing_book_fields_for_tracker(Meta(category="BOOK", unattended=True), tracker) == ["title"]
+
+
+def test_default_book_policy_keeps_global_required_fields():
+    meta = Meta(category="BOOK", title="The C Programming Language", unattended=True)
+
+    assert missing_book_fields_for_tracker(meta, object()) == ["author", "year", "book_language"]
 
 
 def test_peergarden_rejects_software_without_dedicated_category():

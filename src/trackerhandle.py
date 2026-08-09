@@ -168,7 +168,8 @@ async def process_trackers(
             logger.info(f"[yellow]{tracker}: skipped for the remainder of this run: {escape(str(disabled_reason))}[/yellow]")
             return
 
-        if meta.category == "BOOK" and not is_valid_cover_image(meta.artwork_path):
+        requires_book_cover = bool(getattr(tracker_class, "requires_book_cover", True))
+        if meta.category == "BOOK" and requires_book_cover and not is_valid_cover_image(meta.artwork_path):
             status = meta.tracker_status.setdefault(tracker, {})
             status["upload"] = False
             status["status_message"] = "Skipped: BOOK uploads require a valid cover image"

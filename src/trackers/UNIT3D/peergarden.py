@@ -33,6 +33,8 @@ class PeerGarden(UNIT3D):
     tracker_urls = ("peergarden",)
     allows_dupes = True
     exact_match_only = True
+    required_book_fields = ("title",)
+    requires_book_cover = False
 
     def __init__(self, config: Config) -> None:
         """Initialize the PeerGarden tracker adapter."""
