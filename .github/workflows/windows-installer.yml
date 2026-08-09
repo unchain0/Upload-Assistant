@@ -45,18 +45,18 @@ jobs:
           }
 
       - name: Checkout source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref || github.sha }}
           fetch-depth: 0
 
       - name: Set up Python for the Windows wheelhouse
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.14"
 
       - name: Restore FFmpeg archive cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: build/cache/ffmpeg.zip
           key: ffmpeg-windows-x64-${{ hashFiles('.github/workflows/windows-installer.yml') }}
