@@ -69,6 +69,16 @@ class Luminarr(UNIT3D):
         return [Path(str(item)) for item in files if Path(str(item)).suffix.lower() in Luminarr._VIDEO_EXTENSIONS]
 
     @staticmethod
+    def _renamed_tagged_video_file(video_paths: list[Path], tag: str | None) -> str:
+        group = str(tag or "").lstrip("-").strip().casefold()
+        if not group:
+            return ""
+        return next(
+            (path.name for path in video_paths if any(char.isspace() for char in path.stem) and path.stem.casefold().endswith(f"-{group}")),
+            "",
+        )
+
+    @staticmethod
     def _is_nested_relative_path(path: Path) -> bool:
         if path.is_absolute():
             return False
@@ -134,6 +144,14 @@ class Luminarr(UNIT3D):
         filelist = [item for item in raw_filelist if self._is_path_like_file(item)]
         video_paths = self._collect_video_paths(filelist)
         if not meta.is_disc and video_paths:
+            renamed_file = self._renamed_tagged_video_file(video_paths, meta.tag)
+            if renamed_file:
+                logger.info(
+                    f"{self.tracker}: [bold red]Tagged release file appears to have been renamed with spaces: {renamed_file}. "
+                    "Restore the original filename before uploading.[/bold red]"
+                )
+                return False
+
             if len(video_paths) == 1 and self._is_nested_relative_path(video_paths[0]):
                 logger.info(f"{self.tracker}: [bold red]Single-file Movie/TV uploads must not be inside a folder.[/bold red]")
                 return False

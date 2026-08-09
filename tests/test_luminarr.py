@@ -1,3 +1,5 @@
+# ruff: noqa: S101
+
 import asyncio
 from typing import Any
 
@@ -63,6 +65,14 @@ def test_luminarr_requires_tmdb_identifier():
 
 def test_luminarr_accepts_valid_movie_metadata():
     assert asyncio.run(_tracker().get_additional_checks(_movie_meta())) is True
+
+
+def test_luminarr_rejects_tagged_video_filename_renamed_with_spaces():
+    renamed = "Oh Boy Was I Wrong About Her S01E01 REPACK 1080p CR WEB-DL DDP2.0 H.264-Kitsune.mkv"
+    original = "Oh.Boy.Was.I.Wrong.About.Her.S01E01.REPACK.1080p.CR.WEB-DL.DDP2.0.H.264-Kitsune.mkv"
+
+    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(tag="-Kitsune", filelist=[renamed]))) is False
+    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(tag="-Kitsune", filelist=[original]))) is True
 
 
 def test_luminarr_rejects_bootleg_markers_in_release_name():

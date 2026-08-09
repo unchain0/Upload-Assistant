@@ -213,6 +213,16 @@ class Zenith(UNIT3D):
         ]
 
     @staticmethod
+    def _renamed_tagged_video_file(video_paths: list[Path], tag: str | None) -> str:
+        group = str(tag or "").lstrip("-").strip().casefold()
+        if not group:
+            return ""
+        return next(
+            (path.name for path in video_paths if any(char.isspace() for char in path.stem) and path.stem.casefold().endswith(f"-{group}")),
+            "",
+        )
+
+    @staticmethod
     def _contains_archive_file(filelist: list[Any]) -> str:
         for item in filelist:
             path = Path(str(item))
@@ -310,6 +320,14 @@ class Zenith(UNIT3D):
 
         if category in {"MOVIE", "TV"}:
             video_paths = self._collect_video_paths(filelist)
+            if not meta.is_disc:
+                renamed_file = self._renamed_tagged_video_file(video_paths, meta.tag)
+                if renamed_file:
+                    logger.info(
+                        f"{self.tracker}: [bold red]Tagged release file appears to have been renamed with spaces: {renamed_file}. "
+                        "Restore the original filename before uploading.[/bold red]"
+                    )
+                    return False
             try:
                 screenshot_count = int(meta.screens)
             except (TypeError, ValueError, OverflowError):

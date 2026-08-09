@@ -169,6 +169,14 @@ def test_zenith_rejects_movie_with_invalid_video_container_extension():
     assert asyncio.run(_tracker().get_additional_checks(_movie_meta(filelist=["Movie.2024.avi"]))) is False
 
 
+def test_zenith_rejects_tagged_video_filename_renamed_with_spaces():
+    renamed = "KAIJU GIRL CARAMELISE S01E01 REPACK 1080p CR WEB-DL DDP2.0 H.264-Kitsune.mkv"
+    original = "KAIJU.GIRL.CARAMELISE.S01E01.REPACK.1080p.CR.WEB-DL.DDP2.0.H.264-Kitsune.mkv"
+
+    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(tag="-Kitsune", filelist=[renamed]))) is False
+    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(tag="-Kitsune", filelist=[original]))) is True
+
+
 def test_zenith_allows_hdtv_release_with_ts_container():
     assert asyncio.run(_tracker().get_additional_checks(_movie_meta(type="HDTV", filelist=["Show.S01E01.ts"]))) is True
 
