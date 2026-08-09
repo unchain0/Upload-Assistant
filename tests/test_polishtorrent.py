@@ -1,8 +1,26 @@
 # ruff: noqa: S101
 
+import asyncio
+
 import pytest
 
+from src.meta import Meta
 from src.trackers.UNIT3D.polishtorrent import PolishTorrent
+
+
+def _movie_meta(**kwargs):
+    values = {
+        "category": "MOVIE",
+        "filelist": ["Example.Movie.2024.mkv"],
+        "image_list": [],
+        "mediainfo": {"media": {"track": []}},
+        "name": "Example Movie 2024 1080p WEB-DL H264",
+        "screens": 3,
+        "unattended": True,
+        "unattended_confirm": False,
+    }
+    values.update(kwargs)
+    return Meta(**values)
 
 
 def test_polishtorrent_accepts_png_and_tiff_screenshot_links():
@@ -22,6 +40,21 @@ def test_polishtorrent_rejects_mixed_or_malformed_screenshot_links():
 
     assert PolishTorrent._is_allowed_screenshot_image(mixed) is False
     assert PolishTorrent._is_allowed_screenshot_image(malformed) is False
+
+
+def test_polishtorrent_rejects_extensionless_screenshot_links_through_public_validation():
+    image = {"raw_url": "https://images.example/full", "img_url": "https://images.example/thumb"}
+
+    assert PolishTorrent._is_allowed_screenshot_image(image) is False
+    assert asyncio.run(PolishTorrent({"TRACKERS": {}}).get_additional_checks(_movie_meta(image_list=[image]))) is False
+
+
+def test_polishtorrent_rejects_malformed_filelist_and_screenshot_counts():
+    tracker = PolishTorrent({"TRACKERS": {}})
+
+    assert asyncio.run(tracker.get_additional_checks(_movie_meta(filelist=1))) is False
+    assert asyncio.run(tracker.get_additional_checks(_movie_meta(screens=None))) is False
+    assert asyncio.run(tracker.get_additional_checks(_movie_meta(screens="2"))) is False
 
 
 @pytest.mark.parametrize(

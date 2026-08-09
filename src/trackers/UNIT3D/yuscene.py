@@ -2,7 +2,6 @@
 import re
 from pathlib import Path
 from typing import Any
-from urllib.parse import ParseResult, urlparse
 
 from src.console import logger
 from src.meta import Meta
@@ -191,11 +190,10 @@ class YUSCENE(UNIT3D):
 
         if urls := url_pattern.findall(lowered):
             for raw_url in urls:
-                try:
-                    parsed_url: ParseResult = urlparse(raw_url)
-                except ValueError:
+                authority_match = re.match(r"(?:https?:)?//([^/\s]+)", raw_url)
+                if authority_match is None:
                     continue
-                host = parsed_url.netloc.rsplit("@", 1)[-1].partition(":")[0].lower().rstrip(".")
+                host = authority_match.group(1).rsplit("@", 1)[-1].partition(":")[0].lower().rstrip(".")
                 if host:
                     for forbidden in YUSCENE._TRACKER_DOMAINS:
                         if host == forbidden or host.endswith(f".{forbidden}"):
@@ -215,7 +213,14 @@ class YUSCENE(UNIT3D):
         return bool(re.search(r"\s{2,}", value))
 
     async def get_additional_checks(self, meta: Meta) -> bool:
-        genre_values = [str(value) for value in (meta.keywords or [])]
+        raw_keywords = meta.keywords or []
+        genre_values: list[str]
+        if isinstance(raw_keywords, str):
+            genre_values = [raw_keywords]
+        elif isinstance(raw_keywords, (list, tuple, set)):
+            genre_values = [str(value) for value in raw_keywords]
+        else:
+            genre_values = []
         if isinstance(meta.combined_genres, str):
             genre_values.extend(re.split(r"[,;/|]", meta.combined_genres))
         elif isinstance(meta.combined_genres, (list, tuple, set)):
@@ -232,7 +237,11 @@ class YUSCENE(UNIT3D):
 
         category = str(meta.category or "").upper()
         release_name = str(meta.name or "")
-        filelist = [item for item in (meta.filelist or []) if self._is_path_like_file(item)]
+        raw_filelist = meta.filelist or []
+        if not isinstance(raw_filelist, (list, tuple, set)):
+            logger.info(f"{self.tracker}: [bold red]File list metadata is invalid.[/bold red]")
+            return False
+        filelist = [item for item in raw_filelist if self._is_path_like_file(item)]
 
         if category in {"MOVIE", "TV"} and self._has_banned_title_chars(release_name) and not await self._confirm_or_skip(
             "The release name contains unsupported characters or extra spaces.", meta
@@ -263,7 +272,12 @@ class YUSCENE(UNIT3D):
             ):
                 return False
 
-        if category in {"MOVIE", "TV"} and meta.screens < 3 and not await self._confirm_or_skip(
+        try:
+            screenshot_count = int(meta.screens)
+        except (TypeError, ValueError):
+            screenshot_count = 0
+
+        if category in {"MOVIE", "TV"} and screenshot_count < 3 and not await self._confirm_or_skip(
             "YUSCENE requires at least 3 screenshots for Movie/TV uploads.", meta
         ):
             return False

@@ -2,7 +2,6 @@
 import re
 from pathlib import Path
 from typing import Any
-from urllib.parse import ParseResult, urlparse
 
 from src.console import logger
 from src.meta import Meta
@@ -86,13 +85,11 @@ class PolishTorrent(UNIT3D):
 
     @staticmethod
     def _image_extension(url: str) -> str | None:
-        try:
-            parsed = urlparse(url)
-        except ValueError:
+        match = re.fullmatch(r"https?://(?:[a-z0-9-]+\.)*[a-z0-9-]+(?::\d+)?(/[^\s]*)?", url, re.IGNORECASE)
+        if match is None:
             return None
-        if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
-            return None
-        return Path(parsed.path).suffix.lower()
+        path = (match.group(1) or "").split("?", 1)[0].split("#", 1)[0]
+        return Path(path).suffix.lower()
 
     @staticmethod
     def _is_allowed_screenshot_image(image: dict[str, Any]) -> bool:
@@ -101,13 +98,15 @@ class PolishTorrent(UNIT3D):
         img_url = PolishTorrent._extract_image_url(image, "img_url")
 
         extensions: list[str] = []
-        for source_url in (raw_url, web_url, img_url):
+        for source_url, extension_required in ((raw_url, True), (web_url, False), (img_url, True)):
             if not source_url:
                 continue
             extension = PolishTorrent._image_extension(source_url)
             if extension is None:
                 return False
             if not extension:
+                if extension_required:
+                    return False
                 continue
             extensions.append(extension)
         return not extensions or all(extension in PolishTorrent._SCREENSHOT_EXTENSIONS for extension in extensions)
@@ -133,11 +132,10 @@ class PolishTorrent(UNIT3D):
         lowered = value.lower()
         url_pattern = re.compile(r"(?:https?:)?//[^\s]+")
         for raw_url in url_pattern.findall(lowered):
-            try:
-                parsed_url: ParseResult = urlparse(raw_url)
-            except ValueError:
+            authority_match = re.match(r"(?:https?:)?//([^/\s]+)", raw_url)
+            if authority_match is None:
                 continue
-            host = parsed_url.netloc.rsplit("@", 1)[-1].partition(":")[0].lower().rstrip(".")
+            host = authority_match.group(1).rsplit("@", 1)[-1].partition(":")[0].lower().rstrip(".")
             if any(host == forbidden or host.endswith(f".{forbidden}") for forbidden in PolishTorrent._TRACKER_DOMAINS):
                 return True
 
@@ -181,7 +179,11 @@ class PolishTorrent(UNIT3D):
 
         release_name = str(meta.name or "")
         release_context = " ".join(part for part in (release_name, str(meta.description or ""), str(meta.description_file_content or "")) if part)
-        filelist = [item for item in (meta.filelist or []) if self._is_path_like_file(item)]
+        raw_filelist = meta.filelist or []
+        if not isinstance(raw_filelist, (list, tuple, set)):
+            logger.info(f"{self.tracker}: [bold red]File list metadata is invalid.[/bold red]")
+            return False
+        filelist = [item for item in raw_filelist if self._is_path_like_file(item)]
 
         if category in {"MOVIE", "TV"} and self._has_banned_title_chars(release_name):
             logger.info(f"{self.tracker}: [bold red]Release name contains banned characters or extra spaces. Remove . ( ) [ ] and extra spaces.[/bold red]")
@@ -191,7 +193,12 @@ class PolishTorrent(UNIT3D):
             logger.info(f"{self.tracker}: [bold red]Do not include links or other tracker references in title/description.[/bold red]")
             return False
 
-        if category in {"MOVIE", "TV"} and meta.screens < 3:
+        try:
+            screenshot_count = int(meta.screens)
+        except (TypeError, ValueError):
+            screenshot_count = 0
+
+        if category in {"MOVIE", "TV"} and screenshot_count < 3:
             logger.info(f"{self.tracker}: [bold red]{self.tracker} requires at least 3 screenshots for Movie/TV uploads.[/bold red]")
             return False
 
