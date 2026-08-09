@@ -44,6 +44,7 @@ from src.book_extractors import (
 )
 from src.book_extractors import validate_isbn_checksum
 from src.console import logger
+from src.exceptions import ItemProcessingError
 from src.exportmi import export_info
 from src.meta import Meta
 
@@ -108,6 +109,10 @@ def resolve_book_filelist(
         richer_book_files = [file for file in filelist if Path(file).suffix.lower() in BOOK_EXTENSIONS - {".txt", ".html", ".htm"}]
         if richer_book_files:
             filelist = [file for file in filelist if not (Path(file).suffix.lower() in {".txt", ".html", ".htm"} and Path(file).stem.casefold() in _TEXT_SIDECAR_STEMS)]
+        ebook_files = [file for file in filelist if Path(file).suffix.lower() in BOOK_EXTENSIONS]
+        if len(ebook_files) > 1:
+            filenames = ", ".join(Path(file).name for file in ebook_files)
+            raise ItemProcessingError(f"Multiple ebook files were found in one path ({filenames}). Upload each book separately.")
         videopath = sorted(filelist, key=os.path.getsize, reverse=True)[0]
     else:
         videopath = videoloc
@@ -197,6 +202,18 @@ def _unescape_meta_val(val: Any) -> str | None:
     import html
 
     return html.unescape(str(val)).strip()
+
+
+def book_identity_from_path(path: str) -> tuple[str, str]:
+    source = Path(path)
+    name = source.name if source.is_dir() else source.stem
+    name = re.sub(r"\s*\[AUDIOBOOK\]\s*$", "", name, flags=re.IGNORECASE).strip()
+    parts = re.split(r"\s+-\s+", name, maxsplit=1)
+    if len(parts) != 2:
+        return "", ""
+    author, title = parts
+    title = re.sub(r"_\s*", ": ", title).strip()
+    return author.strip(), title
 
 
 async def gather_book_prep(
@@ -480,6 +497,12 @@ async def gather_book_prep(
                                     break
         except Exception as ex:
             logger.debug(f"[yellow]Warning: Error extracting embedded book metadata: {ex}[/yellow]")
+
+    fallback_author, fallback_title = book_identity_from_path(str(meta.path or videopath))
+    if not meta.author and fallback_author:
+        meta.author = fallback_author
+    if not meta.title and fallback_title:
+        meta.title = fallback_title
 
     # Series fallback from filename (embedded Calibre/MediaInfo tags take precedence)
     if not meta.book_series:

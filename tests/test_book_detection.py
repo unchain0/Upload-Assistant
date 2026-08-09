@@ -11,7 +11,8 @@ from unittest.mock import AsyncMock
 import pytest
 
 from src.book_extractors import extract_isbn_from_pdf, extract_pdf_page_count, validate_isbn_checksum
-from src.book_prep import resolve_book_filelist
+from src.book_prep import book_identity_from_path, resolve_book_filelist
+from src.exceptions import ItemProcessingError
 from src.meta import Meta
 from src.myanonamouse import MyAnonamouseManager
 from src.prep_helpers import detect_disc_and_category
@@ -71,6 +72,21 @@ def test_text_sidecars_are_excluded_when_a_richer_book_format_exists(tmp_path):
 
     assert videopath == str(book.resolve())
     assert filelist == [str(book.resolve())]
+
+
+def test_multiple_ebooks_in_one_path_are_rejected(tmp_path) -> None:
+    (tmp_path / "Steve Jobs.pdf").write_bytes(b"pdf")
+    (tmp_path / "Einstein.pdf").write_bytes(b"pdf")
+
+    with pytest.raises(ItemProcessingError, match="Upload each book separately"):
+        resolve_book_filelist(Meta(), str(tmp_path))
+
+
+def test_book_identity_falls_back_to_directory_name(tmp_path) -> None:
+    release = tmp_path / "Ian Stewart - How to Cut a Cake_ And Other Mathematical Conundrums"
+    release.mkdir()
+
+    assert book_identity_from_path(str(release)) == ("Ian Stewart", "How to Cut a Cake: And Other Mathematical Conundrums")
 
 
 def test_scene_tv_rar_is_not_auto_detected_as_game(tmp_path):
