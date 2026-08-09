@@ -233,6 +233,7 @@ def _unescape_meta_val(val: Any) -> str | None:
 
 _AUTHOR_PARTICLES = frozenset({"al", "da", "de", "del", "della", "di", "dos", "du", "la", "le", "of", "van", "von", "y"})
 _BOOK_FORMAT_SUFFIX = re.compile(r"\s*(?:\.(?:azw3?|cb[rz]|djvu|epub|fb2|html?|kfx|lit|mobi|pdf|rtf|txt)|\((?:azw3?|cb[rz]|djvu|epub|fb2|kfx|mobi|pdf)\))\s*$", re.IGNORECASE)
+_BOOK_PART_ONLY = re.compile(r"^(?:vol(?:ume)?|book|part|tome)\s*[#.]?\s*\d+(?:\.\d+)?$", re.IGNORECASE)
 
 
 def _author_likelihood(value: str) -> int:
@@ -257,6 +258,8 @@ def book_identity_from_path(path: str) -> tuple[str, str]:
     if len(parts) != 2:
         return "", ""
     first, second = parts
+    if _BOOK_PART_ONLY.fullmatch(second.strip()):
+        return "", re.sub(r"_\s+", ": ", name).strip()
     author, title = (second, first) if _author_likelihood(second) > _author_likelihood(first) else (first, second)
     title = re.sub(r"_\s+", ": ", title).strip()
     title_parts = re.split(r"\s+-\s+", title)

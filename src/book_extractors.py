@@ -61,7 +61,8 @@ def extract_epub_metadata(epub_path: str) -> dict[str, Any]:
             root = ET.fromstring(opf_data)
 
             title = ""
-            author = ""
+            creators: list[tuple[str, str, str]] = []
+            creator_roles: dict[str, str] = {}
             language = ""
             date = ""
             identifier = ""
@@ -75,7 +76,11 @@ def extract_epub_metadata(epub_path: str) -> dict[str, Any]:
                 if tag_local == "title":
                     title = (elem.text or "").strip()
                 elif tag_local == "creator":
-                    author = (elem.text or "").strip()
+                    creator = (elem.text or "").strip()
+                    creator_id = elem.attrib.get("id", "").strip()
+                    inline_role = next((value.strip().lower() for key, value in elem.attrib.items() if key.split("}")[-1] == "role"), "")
+                    if creator:
+                        creators.append((creator_id, creator, inline_role))
                 elif tag_local == "language":
                     language = (elem.text or "").strip()
                 elif tag_local == "date":
@@ -94,13 +99,25 @@ def extract_epub_metadata(epub_path: str) -> dict[str, Any]:
                     publisher = (elem.text or "").strip()
                 elif tag_local == "meta":
                     meta_name = (elem.attrib.get("name") or "").lower()
-                    if meta_name == "calibre:series":
+                    property_name = (elem.attrib.get("property") or "").lower()
+                    refined_id = (elem.attrib.get("refines") or "").lstrip("#").strip()
+                    if property_name == "role" and refined_id:
+                        creator_roles[refined_id] = (elem.text or elem.attrib.get("content") or "").strip().lower()
+                    elif meta_name == "calibre:series":
                         series = (elem.attrib.get("content") or "").strip()
                     elif meta_name == "calibre:series_index":
                         series_index = (elem.attrib.get("content") or "").strip()
 
             if title:
                 metadata["title"] = title
+            author = next(
+                (
+                    creator
+                    for creator_id, creator, inline_role in creators
+                    if inline_role == "aut" or creator_roles.get(creator_id) == "aut"
+                ),
+                creators[0][1] if creators else "",
+            )
             if author:
                 metadata["author"] = author
             if language:

@@ -5,13 +5,14 @@
 from __future__ import annotations
 
 import asyncio
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
-from src.book_extractors import extract_isbn_from_pdf, extract_pdf_page_count, validate_isbn_checksum
+from src.book_extractors import extract_epub_metadata, extract_isbn_from_pdf, extract_pdf_page_count, validate_isbn_checksum
 from src.book_prep import book_identity_conflict, book_identity_from_path, missing_book_fields, resolve_book_filelist
 from src.exceptions import ItemProcessingError
 from src.meta import Meta
@@ -150,6 +151,40 @@ def test_book_identity_detects_title_before_author_and_removes_extension(tmp_pat
     release.touch()
 
     assert book_identity_from_path(str(release)) == ("Simon Sinek", "Comece pelo porque")
+
+
+def test_book_identity_does_not_treat_series_title_as_author_before_volume(tmp_path) -> None:
+    release = tmp_path / "Infinite Dendrogram - Volume 17.epub"
+    release.touch()
+
+    assert book_identity_from_path(str(release)) == ("", "Infinite Dendrogram - Volume 17")
+
+
+@pytest.mark.parametrize("author_first", [True, False])
+def test_epub_creator_roles_select_author_regardless_of_element_order(tmp_path, author_first: bool) -> None:
+    creators = {
+        "author": '<dc:creator id="creator01">Sakon Kaidou</dc:creator>',
+        "editor": '<dc:creator id="creator04">Sarah Tilson</dc:creator>',
+    }
+    ordered_creators = [creators["author"], creators["editor"]] if author_first else [creators["editor"], creators["author"]]
+    opf = f'''<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" xmlns:dc="http://purl.org/dc/elements/1.1/" version="3.0">
+  <metadata>
+    <dc:title>Infinite Dendrogram: Volume 18</dc:title>
+    {''.join(ordered_creators)}
+    <meta property="role" refines="#creator01" scheme="marc:relators">aut</meta>
+    <meta property="role" refines="#creator04" scheme="marc:relators">edt</meta>
+  </metadata>
+</package>'''
+    epub = tmp_path / "book.epub"
+    with zipfile.ZipFile(epub, "w") as archive:
+        archive.writestr(
+            "META-INF/container.xml",
+            '<?xml version="1.0"?><container xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf"/></rootfiles></container>',
+        )
+        archive.writestr("OEBPS/content.opf", opf)
+
+    assert extract_epub_metadata(str(epub))["author"] == "Sakon Kaidou"
 
 
 def test_book_identity_rejects_unrelated_enriched_title_for_same_author(tmp_path) -> None:
