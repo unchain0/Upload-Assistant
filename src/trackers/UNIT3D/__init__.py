@@ -69,6 +69,7 @@ class UNIT3D:
         }
 
         if category in ("MOVIE", "TV"):
+            is_individual_tv_episode = category == "TV" and bool(meta.episode) and not bool(meta.tv_pack)
             params_dict: dict[str, str] = {
                 "name": "",
                 "perPage": "100",
@@ -81,7 +82,7 @@ class UNIT3D:
                 # for manually constructed metadata without a TMDB ID.
                 params_dict["categories[]"] = (await self.get_category_id(meta))["category_id"]
 
-            if self.tracker not in ["OLDTOONSWORLD"]:
+            if self.tracker not in ["OLDTOONSWORLD"] and not is_individual_tv_episode:
                 resolutions = await self.get_resolution_id(meta)
                 resolution_id = resolutions["resolution_id"]
                 if resolution_id in ["3", "4"]:
@@ -92,7 +93,7 @@ class UNIT3D:
                 else:
                     params_dict["resolutions[]"] = resolution_id
 
-            if self.tracker not in ["SEEDPOOL", "SKIPTHECOMMERCIALS"]:
+            if self.tracker not in ["SEEDPOOL", "SKIPTHECOMMERCIALS"] and not is_individual_tv_episode:
                 type_id = (await self.get_type_id(meta))["type_id"]
                 if params_list is not None:
                     params_list.append(("types[]", type_id))

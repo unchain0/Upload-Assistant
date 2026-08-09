@@ -312,6 +312,27 @@ class DupeChecker:
                 if entry.get("id"):
                     meta[matched_torrent_id] = entry.get("id")
 
+            if meta.category == "TV" and target_episode:
+                season_episode_match, is_season = await DupeChecker.is_season_episode_match(normalized, target_season, target_episode)
+                if season_episode_match and is_season:
+                    target_episode_numbers = {int(value) for value in re.findall(r"\d+", str(target_episode))}
+                    if files and target_season_number is not None and target_episode_numbers:
+                        pack_episode_numbers: set[int] = set()
+                        episode_pattern = re.compile(rf"(?i)(?<!\w)S0*{target_season_number}E(\d+)")
+                        for file_name in files:
+                            pack_episode_numbers.update(int(value) for value in episode_pattern.findall(file_name))
+                        if not target_episode_numbers.issubset(pack_episode_numbers):
+                            await log_exclusion(f"season pack does not contain episode {target_episode}", each)
+                            return True
+                    meta.season_pack_exists = True
+                    meta.season_pack_name = each
+                    meta.season_pack_link = entry.get("link")
+                    meta.season_pack_id = entry.get("id")
+                    logger.debug(f"[yellow]Season pack detected for episode upload: {each}")
+                    logger.debug(f"[yellow]Your episode {target_season}{target_episode} is contained in existing season pack")
+                    remember_match("season_pack_contains_episode")
+                    return False
+
             if meta.category == "GAME":
                 target_title = meta.title or meta.name
                 if not target_title.strip():
@@ -786,18 +807,6 @@ class DupeChecker:
                 if not season_episode_match:
                     await log_exclusion("season/episode mismatch", each)
                     return True
-
-                # Check if uploading an episode but a matching season pack exists
-                if is_season and target_episode:
-                    # We're uploading an episode and found a matching season pack
-                    meta.season_pack_exists = True
-                    meta.season_pack_name = each
-                    meta.season_pack_link = entry.get("link")
-                    meta.season_pack_id = entry.get("id")
-                    logger.debug(f"[yellow]Season pack detected for episode upload: {each}")
-                    logger.debug(f"[yellow]Your episode {target_season}{target_episode} is contained in existing season pack")
-                    remember_match("season_pack_contains_episode")
-                    return False
 
             if is_hdtv and any(web_term in normalized for web_term in ["web-dl", "web -dl", "webdl", "web dl"]):
                 return False

@@ -6,6 +6,7 @@ import pytest
 
 from src.dupe_checking import DupeChecker
 from src.meta import Meta
+from src.trackers.UNIT3D import UNIT3D
 from src.uphelper import DupeEntry, UploadHelper
 
 
@@ -44,6 +45,7 @@ async def test_bdinfo_comparison_prompt_uses_rich_markup(monkeypatch: pytest.Mon
 
     async def prompt_yes_no(value: str, *, default: bool = False) -> bool:
         nonlocal question
+        del default
         question = value
         return False
 
@@ -58,15 +60,13 @@ async def test_bdinfo_comparison_prompt_uses_rich_markup(monkeypatch: pytest.Mon
 
 
 @pytest.mark.asyncio
-async def test_dupe_check_rejects_episode_when_tracker_prefers_existing_season_pack() -> None:
+async def test_dupe_check_rejects_episode_when_existing_season_pack_is_found() -> None:
     class SeasonPackTracker:
-        reject_episode_if_season_pack_exists = True
-
         async def get_name(self, meta: Meta) -> dict[str, str]:
             return {"name": meta.name}
 
     helper = UploadHelper({"DEFAULT": {}})
-    helper.tracker_class_map = {"DARKPEERS": lambda config: SeasonPackTracker()}
+    helper.tracker_class_map = {"DARKPEERS": lambda **_kwargs: SeasonPackTracker()}
     meta = Meta(category="TV", name="Yowayowa Sensei S01E01", season_pack_exists=True, season_pack_name="Yowayowa Sensei S01 1080p WEB-DL")
     dupes: list[DupeEntry | str] = [meta.season_pack_name]
 
@@ -79,8 +79,6 @@ async def test_dupe_check_rejects_episode_when_tracker_prefers_existing_season_p
 @pytest.mark.asyncio
 async def test_dupe_check_honors_skip_dupe_check_for_existing_season_pack() -> None:
     class SeasonPackTracker:
-        reject_episode_if_season_pack_exists = True
-
         async def get_name(self, meta: Meta) -> dict[str, str]:
             return {"name": meta.name}
 
@@ -95,22 +93,115 @@ async def test_dupe_check_honors_skip_dupe_check_for_existing_season_pack() -> N
 
 
 @pytest.mark.asyncio
-async def test_dupe_check_keeps_existing_prompt_policy_for_other_trackers(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_dupe_check_rejects_existing_season_pack_for_every_tracker() -> None:
     class SeasonPackTracker:
-        reject_episode_if_season_pack_exists = False
-
         async def get_name(self, meta: Meta) -> dict[str, str]:
             return {"name": meta.name}
 
     helper = UploadHelper({"DEFAULT": {}})
-    helper.tracker_class_map = {"OTHER": lambda config: SeasonPackTracker()}
-    monkeypatch.setattr(helper, "prompt_yes_no", lambda question, default=False: asyncio.sleep(0, result=True))
+    helper.tracker_class_map = {"OTHER": lambda **_kwargs: SeasonPackTracker()}
     meta = Meta(category="TV", name="Show S01E01", season_pack_exists=True, season_pack_name="Show S01")
 
     dupes: list[DupeEntry | str] = [meta.season_pack_name]
     is_dupe, _ = await helper.dupe_check(dupes, meta, "OTHER")
 
-    assert is_dupe is False
+    assert is_dupe is True
+
+
+@pytest.mark.asyncio
+async def test_dupe_filter_detects_season_pack_before_quality_filters() -> None:
+    meta = Meta(
+        category="TV",
+        name="Treasure & Dirt S01E06 1080p HDTV x264-DARKFLiX",
+        uuid="Treasure.And.Dirt.S01E06.1080p.HDTV.H264-DARKFLiX",
+        season="S01",
+        episode="E06",
+        resolution="1080p",
+        source="HDTV",
+        type="HDTV",
+        filelist=["Treasure.And.Dirt.S01E06.mkv"],
+    )
+    season_pack: DupeEntry = {
+        "name": "Treasure & Dirt S01 720p WEB-DL x265-GROUP",
+        "size": 1,
+        "files": [f"Treasure.And.Dirt.S01E{episode:02}.mkv" for episode in range(1, 7)],
+        "file_count": 6,
+        "trumpable": False,
+        "link": "https://example.com/torrents/123",
+        "download": None,
+        "flags": [],
+        "id": 123,
+        "type": "WEB-DL",
+        "res": "720p",
+        "internal": 0,
+        "bd_info": None,
+        "description": None,
+    }
+
+    result = await DupeChecker({"DEFAULT": {}}).filter_dupes([season_pack], meta, "OTHER")
+
+    assert result == [season_pack]
+    assert meta.season_pack_exists is True
+    assert meta.season_pack_id == 123
+
+
+@pytest.mark.asyncio
+async def test_dupe_filter_does_not_block_episode_missing_from_partial_pack() -> None:
+    meta = Meta(
+        category="TV",
+        name="Treasure & Dirt S01E06 1080p HDTV x264-DARKFLiX",
+        uuid="Treasure.And.Dirt.S01E06.1080p.HDTV.H264-DARKFLiX",
+        season="S01",
+        episode="E06",
+        resolution="1080p",
+        source="HDTV",
+        type="HDTV",
+        filelist=["Treasure.And.Dirt.S01E06.mkv"],
+    )
+    partial_pack = {
+        "name": "Treasure & Dirt S01 1080p HDTV x264-GROUP",
+        "files": [f"Treasure.And.Dirt.S01E{episode:02}.mkv" for episode in range(1, 6)],
+        "id": 124,
+    }
+
+    assert await DupeChecker({"DEFAULT": {}}).filter_dupes([partial_pack], meta, "OTHER") == []
+    assert meta.season_pack_exists is False
+
+
+@pytest.mark.asyncio
+async def test_unit3d_episode_search_includes_all_season_pack_qualities(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured_params: list[tuple[str, object]] = []
+
+    class Response:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, list[object]]:
+            return {"data": []}
+
+    class Client:
+        async def __aenter__(self) -> Client:
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+        async def get(self, *, url: str, headers: dict[str, str], params: list[tuple[str, object]]) -> Response:
+            del url, headers
+            captured_params.extend(params)
+            return Response()
+
+    monkeypatch.setattr("src.trackers.UNIT3D.httpx.AsyncClient", lambda **_kwargs: Client())
+    tracker = UNIT3D({"TRACKERS": {"TEST": {}}}, "TEST")
+    tracker.search_url = "https://example.com/api/torrents/filter"
+    meta = Meta(category="TV", tmdb=325785, season="S01", episode="E03", resolution="1080p", type="HDTV", tv_pack=False)
+
+    assert await tracker.search_existing(meta) == []
+    assert ("tmdbId", "325785") in captured_params
+    assert ("name", " S01") in captured_params
+    assert not any(key in {"resolutions[]", "types[]"} for key, _value in captured_params)
 
 
 @pytest.mark.asyncio
