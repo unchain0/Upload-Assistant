@@ -304,7 +304,7 @@ class DarkPeers(UNIT3D):
 
     @staticmethod
     def _is_local_path_name(value: str) -> bool:
-        return bool(value) and (Path(value).is_absolute() or bool(re.match(r"^[A-Za-z]:[\\/]", value)))
+        return bool(value) and (value.startswith(("/", "\\")) or Path(value).is_absolute() or bool(re.match(r"^[A-Za-z]:[\\/]", value)))
 
     def validate_screenshot_count(self, meta: Meta) -> bool:
         try:
