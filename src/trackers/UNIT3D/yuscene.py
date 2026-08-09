@@ -212,6 +212,20 @@ class YUSCENE(UNIT3D):
             return True
         return bool(re.search(r"\s{2,}", value))
 
+    @staticmethod
+    def _english_word_count(value: Any) -> int:
+        return len(re.findall(r"[A-Za-z]+(?:'[A-Za-z]+)?", str(value or "")))
+
+    def _has_english_book_metadata(self, meta: Meta) -> bool:
+        author = str(meta.author or meta.book_author or "").strip()
+        title = str(meta.title or meta.book_title or "").strip()
+        description = " ".join(
+            str(value or "")
+            for value in (meta.book_overview, meta.overview, meta.description, meta.description_file_content)
+            if str(value or "").strip()
+        )
+        return self._english_word_count(author) >= 1 and self._english_word_count(title) >= 1 and self._english_word_count(description) >= 8
+
     async def get_additional_checks(self, meta: Meta) -> bool:
         raw_keywords = meta.keywords or []
         genre_values: list[str]
@@ -242,6 +256,13 @@ class YUSCENE(UNIT3D):
             logger.info(f"{self.tracker}: [bold red]File list metadata is invalid.[/bold red]")
             return False
         filelist = [item for item in raw_filelist if self._is_path_like_file(item)]
+
+        if category == "BOOK" and not self._has_english_book_metadata(meta):
+            logger.info(
+                f"{self.tracker}: [bold red]BOOK uploads require an English author, title, and description. "
+                "Provide verified English metadata with --author, --book-title, and --book-overview before uploading.[/bold red]"
+            )
+            return False
 
         if category in {"MOVIE", "TV"} and self._has_banned_title_chars(release_name) and not await self._confirm_or_skip(
             "The release name contains unsupported characters or extra spaces.", meta

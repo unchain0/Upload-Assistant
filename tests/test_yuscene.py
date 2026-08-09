@@ -1,3 +1,5 @@
+# ruff: noqa: S101
+
 import asyncio
 from typing import Any
 
@@ -39,6 +41,20 @@ def _tv_meta(**kwargs: Any) -> Meta:
     return Meta(**base)
 
 
+def _book_meta(**kwargs: Any) -> Meta:
+    base: dict[str, Any] = {
+        "category": "BOOK",
+        "author": "Kenji Miyazawa",
+        "title": "Complete Collection of Children's Stories",
+        "book_overview": "This complete audiobook collection presents the celebrated children's stories written by Kenji Miyazawa.",
+        "filelist": ["audiobook.m4b"],
+        "unattended": True,
+        "unattended_confirm": False,
+    }
+    base.update(kwargs)
+    return Meta(**base)
+
+
 def test_yuscene_blocks_adult_keywords_when_unattended():
     assert asyncio.run(_tracker().get_additional_checks(_movie_meta(keywords=["Porn"], unattended=True, unattended_confirm=False))) is False
 
@@ -65,6 +81,29 @@ def test_yuscene_blocks_adult_media_flag():
 
 def test_yuscene_accepts_non_adult_movie_in_unattended_mode():
     assert asyncio.run(_tracker().get_additional_checks(_movie_meta())) is True
+
+
+def test_yuscene_rejects_book_without_english_title_and_description():
+    meta = _book_meta(
+        author="宮沢 賢治",
+        title="宮沢賢治童話全集",
+        book_overview="※本タイトルは30時間を超えるため、宮沢賢治の童話を収録しています。",
+    )
+
+    assert asyncio.run(_tracker().get_additional_checks(meta)) is False
+
+
+def test_yuscene_accepts_verified_english_book_metadata_with_original_text_optional():
+    meta = _book_meta(
+        author="Kenji Miyazawa 宮沢 賢治",
+        title="Complete Collection of Children's Stories 宮沢賢治童話全集",
+        book_overview=(
+            "This complete audiobook collection presents the celebrated children's stories written by Kenji Miyazawa. "
+            "Original Japanese title: 宮沢賢治童話全集."
+        ),
+    )
+
+    assert asyncio.run(_tracker().get_additional_checks(meta)) is True
 
 
 def test_yuscene_blocks_archive_files_for_non_games():
