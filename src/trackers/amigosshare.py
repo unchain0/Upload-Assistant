@@ -632,11 +632,9 @@ class AmigosShare:
 
     def get_game_name(self, meta: Meta) -> str:
         """Build the torrent name for GAME category."""
-        tag = meta.tag
-        if tag:
-            tag = tag.lstrip("-")
+        tag = str(meta.tag or "NoGroup").lstrip("-")
 
-        name = f"{meta.title} - [{tag}]"
+        name = f"{meta.title} [{tag}]"
         return re.sub(r"\s{2,}", " ", name).strip()
 
     def get_game_type(self, meta: Meta) -> str:

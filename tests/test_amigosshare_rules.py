@@ -292,3 +292,12 @@ def test_amigosshare_small_general_torrent_requires_confirmation():
 
     assert not asyncio.run(run_checks(unattended, guard_language_call=True))
     assert asyncio.run(run_checks(attended, confirm_result=True))
+
+
+def test_amigosshare_game_name_follows_tracker_display_pattern():
+    client = tracker()
+    try:
+        assert client.get_game_name(SimpleNamespace(title="Dead Island: Retro Revenge", tag="-CODEX")) == "Dead Island: Retro Revenge [CODEX]"
+        assert client.get_game_name(SimpleNamespace(title="Jogo Antigo", tag="")) == "Jogo Antigo [NoGroup]"
+    finally:
+        asyncio.run(client.session.aclose())
