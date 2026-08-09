@@ -237,6 +237,11 @@ class MidnightScene(UNIT3D):
         return await self.common.prompt_user_for_confirmation("Do you want to continue anyway?", meta)
 
     async def get_additional_checks(self, meta: Meta) -> bool:
+        filelist = [] if meta.filelist is None else meta.filelist
+        if not isinstance(filelist, (list, tuple, set)):
+            logger.info(f"{self.tracker}: [bold red]File list metadata is invalid.[/bold red]")
+            return False
+
         # Block explicit adult uploads
         if meta.adult_media:
             logger.info(f"{self.tracker}: [yellow]Adult content is not accepted on this tracker.[/yellow]")
@@ -282,7 +287,7 @@ class MidnightScene(UNIT3D):
                 if not await self._confirm_or_skip("Game release is not marked as Scene.", meta):
                     return False
 
-            files = [str(item) for item in (meta.filelist or [])]
+            files = [str(item) for item in filelist]
             has_rar = self._files_contain(files, {".rar", ".r01", ".r00", ".r02", ".r03", ".r04", ".r05", ".r06", ".r07", ".r08", ".r09"})
             has_sfv = self._files_contain(files, {".sfv"})
             has_nfo = self._files_contain(files, {".nfo"})

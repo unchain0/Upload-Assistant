@@ -135,7 +135,7 @@ class PolishTorrent(UNIT3D):
             authority_match = re.match(r"(?:https?:)?//([^/?#\s]+)", raw_url)
             if authority_match is None:
                 continue
-            host = authority_match.group(1).rsplit("@", 1)[-1].partition(":")[0].lower().rstrip(".")
+            host = authority_match.group(1).rsplit("@", 1)[-1].partition(":")[0].lower().strip("()[]{}<>").rstrip(".")
             if any(host == forbidden or host.endswith(f".{forbidden}") for forbidden in PolishTorrent._TRACKER_DOMAINS):
                 return True
 
@@ -179,7 +179,7 @@ class PolishTorrent(UNIT3D):
 
         release_name = str(meta.name or "")
         release_context = " ".join(part for part in (release_name, str(meta.description or ""), str(meta.description_file_content or "")) if part)
-        raw_filelist = meta.filelist or []
+        raw_filelist = [] if meta.filelist is None else meta.filelist
         if not isinstance(raw_filelist, (list, tuple, set)):
             logger.info(f"{self.tracker}: [bold red]File list metadata is invalid.[/bold red]")
             return False
@@ -202,13 +202,17 @@ class PolishTorrent(UNIT3D):
             logger.info(f"{self.tracker}: [bold red]{self.tracker} requires at least 3 screenshots for Movie/TV uploads.[/bold red]")
             return False
 
-        if category in {"MOVIE", "TV"} and meta.image_list:
-            if not all(PolishTorrent._is_allowed_screenshot_image(entry) for entry in meta.image_list):
+        image_list = [] if meta.image_list is None else meta.image_list
+        if not isinstance(image_list, (list, tuple)):
+            logger.info(f"{self.tracker}: [bold red]Screenshot metadata is invalid.[/bold red]")
+            return False
+        if category in {"MOVIE", "TV"} and image_list:
+            if not all(PolishTorrent._is_allowed_screenshot_image(entry) for entry in image_list):
                 logger.info(
                     f"{self.tracker}: [bold red]{self.tracker} requires screenshot uploads in .PNG or .TIFF and the current image metadata contains unsupported formats.[/bold red]"
                 )
                 return False
-            if not all(PolishTorrent._has_valid_screenshot_thumb_and_full(entry) for entry in meta.image_list):
+            if not all(PolishTorrent._has_valid_screenshot_thumb_and_full(entry) for entry in image_list):
                 logger.info(
                     f"{self.tracker}: [bold red]{self.tracker} requires thumbnail and full-size screenshot links (img_url + raw/web_url) in screenshot metadata.[/bold red]"
                 )

@@ -217,7 +217,7 @@ class Samaritano(UNIT3D):
         if meta.category == "BOOK":
             return True
 
-        raw_filelist = meta.filelist or []
+        raw_filelist = [] if meta.filelist is None else meta.filelist
         if not isinstance(raw_filelist, (list, tuple, set)):
             logger.info(f"{self.tracker}: [bold red]File list metadata is invalid.[/bold red]")
             return False

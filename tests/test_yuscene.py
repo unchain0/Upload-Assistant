@@ -47,8 +47,13 @@ def test_yuscene_blocks_string_adult_keyword_when_unattended():
     assert asyncio.run(_tracker().get_additional_checks(_movie_meta(keywords="Porn"))) is False
 
 
+def test_yuscene_blocks_delimited_adult_keyword_when_unattended():
+    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(keywords="Porn, Action"))) is False
+
+
 def test_yuscene_rejects_malformed_filelist_and_screenshot_counts():
     assert asyncio.run(_tracker().get_additional_checks(_movie_meta(filelist=1))) is False
+    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(filelist=""))) is False
     assert asyncio.run(_tracker().get_additional_checks(_movie_meta(screens=None))) is False
     assert asyncio.run(_tracker().get_additional_checks(_movie_meta(screens="2"))) is False
 

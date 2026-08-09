@@ -126,7 +126,7 @@ class Luminarr(UNIT3D):
             logger.info(f"{self.tracker}: [bold red]Release markers indicate this is likely a bootleg/unauthorized source.[/bold red]")
             return False
 
-        raw_filelist = meta.filelist or []
+        raw_filelist = [] if meta.filelist is None else meta.filelist
         if not isinstance(raw_filelist, (list, tuple, set)):
             logger.info(f"{self.tracker}: [bold red]File list metadata is invalid.[/bold red]")
             return False

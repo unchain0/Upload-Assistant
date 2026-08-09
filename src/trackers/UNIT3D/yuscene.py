@@ -216,7 +216,7 @@ class YUSCENE(UNIT3D):
         raw_keywords = meta.keywords or []
         genre_values: list[str]
         if isinstance(raw_keywords, str):
-            genre_values = [raw_keywords]
+            genre_values = re.split(r"[,;/|]", raw_keywords)
         elif isinstance(raw_keywords, (list, tuple, set)):
             genre_values = [str(value) for value in raw_keywords]
         else:
@@ -227,17 +227,17 @@ class YUSCENE(UNIT3D):
             genre_values.extend(str(value) for value in meta.combined_genres)
         genre_tokens = {re.sub(r"\s+", " ", value.casefold()).strip() for value in genre_values if value.strip()}
         adult_keywords = {"xxx", "erotic", "porn", "adult", "orgy", "hentai", "adult animation", "softcore"}
-        if meta.adult_media and not await self._confirm_or_skip("Adult content is not allowed.", meta):
-            return False
-
-        if genre_tokens.intersection(adult_keywords):
+        if meta.adult_media:
+            if not await self._confirm_or_skip("Adult content is not allowed.", meta):
+                return False
+        elif genre_tokens.intersection(adult_keywords):
             logger.info(f"{self.tracker}: [bold red]Porn/xxx is not allowed at {self.tracker}.[/bold red]")
             if not await self._confirm_or_skip("Adult content is not allowed.", meta):
                 return False
 
         category = str(meta.category or "").upper()
         release_name = str(meta.name or "")
-        raw_filelist = meta.filelist or []
+        raw_filelist = [] if meta.filelist is None else meta.filelist
         if not isinstance(raw_filelist, (list, tuple, set)):
             logger.info(f"{self.tracker}: [bold red]File list metadata is invalid.[/bold red]")
             return False

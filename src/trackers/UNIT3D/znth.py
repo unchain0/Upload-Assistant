@@ -300,7 +300,7 @@ class Zenith(UNIT3D):
 
     async def get_additional_checks(self, meta: Meta) -> bool:
         category = str(meta.category or "").upper()
-        raw_filelist = meta.filelist or []
+        raw_filelist = [] if meta.filelist is None else meta.filelist
         if not isinstance(raw_filelist, (list, tuple, set)):
             logger.info(f"{self.tracker}: [bold red]File list metadata is invalid.[/bold red]")
             return False

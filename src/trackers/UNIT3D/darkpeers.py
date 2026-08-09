@@ -265,7 +265,7 @@ class DarkPeers(UNIT3D):
         return False
 
     def validate_video_files(self, meta: Meta) -> bool:
-        filelist = meta.filelist or []
+        filelist = [] if meta.filelist is None else meta.filelist
         if not isinstance(filelist, (list, tuple, set)):
             logger.info(f"{self.tracker}: [bold red]File list metadata is invalid. Skipping upload.[/bold red]")
             return False
