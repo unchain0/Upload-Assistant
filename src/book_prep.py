@@ -77,6 +77,11 @@ AUDIOBOOK_EXTENSIONS = frozenset(
         ".aaxc",
     }
 )
+
+
+def _reject_plain_text_only(filelist: list[str]) -> None:
+    if filelist and all(Path(file).suffix.lower() == ".txt" for file in filelist):
+        raise ItemProcessingError("Plain-text TXT files are not supported as standalone book uploads.")
 _TEXT_SIDECAR_STEMS = frozenset({"cover", "folder", "index", "info", "readme"})
 
 
@@ -111,6 +116,7 @@ def resolve_book_filelist(
         if not filelist:
             logger.info("[bold red]No Book or Audiobook files found!")
             sys.exit(1)
+        _reject_plain_text_only(filelist)
         richer_book_files = [file for file in filelist if Path(file).suffix.lower() in BOOK_EXTENSIONS - {".txt", ".html", ".htm"}]
         if richer_book_files:
             richer_stems = {_normalized_book_stem(file) for file in richer_book_files}
@@ -137,6 +143,7 @@ def resolve_book_filelist(
     else:
         videopath = videoloc
         filelist.append(videoloc)
+        _reject_plain_text_only(filelist)
 
     meta.filelist = filelist
     meta.imdb_id = 0
@@ -268,9 +275,9 @@ def missing_book_fields(meta: Meta) -> list[str]:
     missing: list[str] = []
     for field in ("title", "author", "year", "book_language"):
         value = getattr(meta, field, None)
-        if not value or str(value).strip().lower() in {"", "none", "null"}:
-            missing.append(field)
-        elif field == "book_language" and not is_valid_book_language(str(value), str(meta.book_language_iso or "")):
+        invalid_value = not value or str(value).strip().lower() in {"", "none", "null"}
+        invalid_language = field == "book_language" and not is_valid_book_language(str(value), str(meta.book_language_iso or ""))
+        if invalid_value or invalid_language:
             missing.append(field)
 
     if meta.audiobook:

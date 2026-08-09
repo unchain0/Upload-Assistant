@@ -35,7 +35,7 @@ def test_azw_files_are_detected_as_books(extension, tmp_path):
     assert meta.category == "BOOK"
 
 
-@pytest.mark.parametrize("extension", [".azw", ".azw3", ".fb2", ".html", ".chm", ".djvu", ".doc", ".docx", ".kfx", ".lit", ".pdb", ".txt", ".rtf"])
+@pytest.mark.parametrize("extension", [".azw", ".azw3", ".fb2", ".html", ".chm", ".djvu", ".doc", ".docx", ".kfx", ".lit", ".pdb", ".rtf"])
 def test_azw_files_are_included_when_resolving_book_directories(extension, tmp_path):
     book = tmp_path / f"example{extension}"
     book.write_bytes(b"Kindle ebook")
@@ -73,6 +73,30 @@ def test_text_sidecars_are_excluded_when_a_richer_book_format_exists(tmp_path):
 
     assert videopath == str(book.resolve())
     assert filelist == [str(book.resolve())]
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "Pocket PC Serials.txt",
+        "10 Security Enhancements.txt",
+        "A very small tut for RealMedia.txt",
+    ],
+)
+def test_standalone_plain_text_book_is_rejected(filename: str, tmp_path: Path) -> None:
+    document = tmp_path / filename
+    document.write_text("plain text", encoding="utf-8")
+
+    with pytest.raises(ItemProcessingError, match="Plain-text TXT files are not supported"):
+        resolve_book_filelist(Meta(), str(document))
+
+
+def test_plain_text_only_book_directory_is_rejected(tmp_path: Path) -> None:
+    (tmp_path / "First.txt").write_text("first", encoding="utf-8")
+    (tmp_path / "Second.txt").write_text("second", encoding="utf-8")
+
+    with pytest.raises(ItemProcessingError, match="Plain-text TXT files are not supported"):
+        resolve_book_filelist(Meta(), str(tmp_path))
 
 
 def test_multiple_ebooks_in_one_path_are_rejected(tmp_path) -> None:
