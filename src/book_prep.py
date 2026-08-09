@@ -276,6 +276,20 @@ def _normalized_book_identity(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", value.casefold())
 
 
+def _matching_isbn_metadata(meta: Meta, *providers: dict[str, Any] | None) -> dict[str, Any] | None:
+    current_isbn = validate_isbn_checksum(str(meta.isbn or ""))
+    if not current_isbn:
+        return None
+    return next(
+        (
+            provider
+            for provider in providers
+            if provider and validate_isbn_checksum(str(provider.get("isbn") or "")) == current_isbn
+        ),
+        None,
+    )
+
+
 def book_identity_conflict(meta: Meta, path: str) -> str | None:
     path_author, path_title = book_identity_from_path(path)
     if not path_author or not path_title or not meta.author or not meta.title:
@@ -383,6 +397,8 @@ async def gather_book_prep(
 
     # Check if the file format is CBR or CBZ and automatically set comic to True
     file_ext = Path(videopath).suffix.lstrip(".").upper()
+    explicit_comic = bool(meta.comic)
+    explicit_manga = bool(meta.manga)
     if file_ext in ("CBR", "CBZ"):
         meta.comic = True
 
@@ -848,6 +864,30 @@ async def gather_book_prep(
                         meta[key] = val
                     if key == "year" and "search_year" not in openlibrary_data:
                         meta.search_year = int(val)
+
+    exact_edition = _matching_isbn_metadata(meta, google_books_data, openlibrary_data)
+    if exact_edition:
+        edition_fields = (
+            "title",
+            "author",
+            "publisher",
+            "year",
+            "search_year",
+            "book_language",
+            "book_language_iso",
+            "overview",
+            "keywords",
+            "genres",
+        )
+        for key in edition_fields:
+            val = exact_edition.get(key)
+            override_key = "book_language" if key == "book_language_iso" else key
+            if val and not cli_overrides.get(override_key, False):
+                meta[key] = int(val) if key in {"year", "search_year"} else val
+
+    if file_ext not in {"CBR", "CBZ"}:
+        meta.comic = explicit_comic
+        meta.manga = explicit_manga
 
     meta.title = _strip_book_format_suffix(str(meta.title or ""))
     if (
