@@ -650,6 +650,16 @@ class Clients(QbittorrentClientMixin, RtorrentClientMixin, DelugeClientMixin, Tr
                             break
                         logger.debug(f"Multiple file match status: valid={valid}")
 
+            if valid:
+                verify_path = filelist[0] if len(filelist) == 1 and Path(filelist[0]).is_file() else meta_path
+                try:
+                    valid = bool(await asyncio.to_thread(torrent.verify, str(verify_path), threads=1))
+                except Exception as error:
+                    logger.debug(f"Torrent content verification failed: {error}")
+                    valid = False
+                if not valid:
+                    logger.info("[yellow]Existing torrent matches the file layout but not the current content; forcing a fresh torrent hash[/yellow]")
+
         else:
             logger.info(f"[bold yellow]{torrent_path} was not found")
 

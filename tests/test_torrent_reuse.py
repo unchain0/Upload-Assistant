@@ -1,3 +1,4 @@
+import hashlib
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -141,7 +142,7 @@ async def test_reuse_validation_normalizes_binary_md5sum_in_working_copy(tmp_pat
                 b"md5sum": b"\xe9\xd9E\xa4H\x12 \xaf\x1f\xe3\x87\xedX\x8d\xcfV",
                 b"name": b"book.epub",
                 b"piece length": 32768,
-                b"pieces": b"\x00" * 20,
+                b"pieces": hashlib.sha1(b"book").digest(),  # noqa: S324
             },
         }
     )
@@ -155,6 +156,22 @@ async def test_reuse_validation_normalizes_binary_md5sum_in_working_copy(tmp_pat
     assert torrent_path.read_bytes() == original_metainfo  # noqa: S101
     normalized_path = tmp_path / "tmp" / "book.epub" / "candidate.torrent"
     assert Torrent.read(normalized_path).files == [Path("book.epub")]  # noqa: S101
+
+
+@pytest.mark.asyncio
+async def test_reuse_validation_rejects_same_size_content_changes(tmp_path):
+    book = tmp_path / "book.epub"
+    book.write_bytes(b"original")
+    torrent_path = tmp_path / "candidate.torrent"
+    torrent = Torrent(path=book, piece_size=32768)
+    torrent.generate(threads=1)
+    torrent.write(torrent_path)
+    book.write_bytes(b"modified")
+    meta = Meta(path=str(book), filelist=[str(book)], subtitle_files=[], is_disc="", keep_folder=False, isdir=False, uuid="book.epub", base_dir=str(tmp_path), debug=False)
+
+    valid, _ = await Clients({"DEFAULT": {}, "TORRENT_CLIENTS": {}}).is_valid_torrent(meta, str(torrent_path), "hash", "qbit", {})
+
+    assert not valid  # noqa: S101
 
 
 @pytest.mark.asyncio
