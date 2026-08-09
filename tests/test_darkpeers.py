@@ -26,6 +26,15 @@ def test_darkpeers_rejects_malformed_video_filelist():
     assert tracker.validate_video_files(Meta(filelist=1)) is False
 
 
+def test_darkpeers_rejects_tagged_video_filename_renamed_with_spaces():
+    tracker = DarkPeers({"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}})
+    renamed = "Oh Boy Was I Wrong About Her S01E01 Beginning with a Summer Day REPACK 1080p CR WEB-DL DDP2.0 H.264-Kitsune.mkv"
+    original = "Oh.Boy.Was.I.Wrong.About.Her.S01E01.Beginning.with.a.Summer.Day.REPACK.1080p.CR.WEB-DL.DDP2.0.H.264-Kitsune.mkv"
+
+    assert tracker.validate_video_files(Meta(tag="-Kitsune", filelist=[renamed])) is False
+    assert tracker.validate_video_files(Meta(tag="-Kitsune", filelist=[original])) is True
+
+
 def test_darkpeers_music_name_uses_required_folder_style():
     meta = Meta(
         category="MUSIC",
@@ -169,6 +178,30 @@ def test_darkpeers_preserves_detected_original_scene_name():
     meta = Meta(category="MOVIE", name="Generated Name", scene=True, scene_name="Original.Release.2026-GRP", language_checked=True)
 
     assert _name(meta) == "Original.Release.2026-GRP"
+
+
+def test_darkpeers_ignores_absolute_scene_name_when_building_upload_title():
+    meta = Meta(
+        category="MOVIE",
+        name="Full Contact AKA Hap do Ko Fei 1992 480p BluRay Dual-Audio AAC 1.0 x264-gazer",
+        scene=True,
+        scene_name="/home/seedbox/data/torrents/Full.Contact.1992.OAR.BDRip.x264-GAZER/full.contact.1992.oar.bdrip.x264-gazer.mkv",
+        language_checked=True,
+    )
+
+    assert _name(meta) == "Full Contact AKA Hap do Ko Fei 1992 480p BluRay Dual-Audio AAC 1.0 x264-gazer"
+
+
+def test_darkpeers_rejects_local_path_as_generated_video_title():
+    meta = Meta(
+        category="MOVIE",
+        name="/home/seedbox/data/torrents/full.contact.1992.oar.bdrip.x264-gazer.mkv",
+        audio_languages=["English"],
+        resolution="480p",
+        screens=3,
+    )
+
+    assert _additional_checks(meta) is False
 
 
 def test_darkpeers_tv_name_omits_year_without_an_exact_title_match():

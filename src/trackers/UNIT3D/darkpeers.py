@@ -26,6 +26,7 @@ class DarkPeers(UNIT3D):
     allows_bloated_audio = True
     reject_episode_if_season_pack_exists = True
     _AUDIO_TRACK_PATTERN = re.compile(r"^(?:\d{1,3}(?:-\d{1,2})?\s+-\s+.+|\d{1,3}(?:-\d{1,2})?-(?!-).+)$")
+    _VIDEO_EXTENSIONS: ClassVar[set[str]] = {".avi", ".m2ts", ".mkv", ".mp4", ".mpg", ".mpeg", ".ts", ".vob"}
     base_url = "https://darkpeers.org"
     banned_groups = (
         "ARCADE",
@@ -122,6 +123,9 @@ class DarkPeers(UNIT3D):
             return False
 
         if category in {"MOVIE", "TV"}:
+            if self._is_local_path_name(str(meta.name or "")):
+                logger.info(f"{self.tracker}: [bold red]Generated upload title contains a local file path. Skipping upload.[/bold red]")
+                return False
             if not await self.validate_video_languages(meta):
                 return False
             if not await self.validate_video_resolution(meta):
@@ -278,7 +282,29 @@ class DarkPeers(UNIT3D):
         if archive:
             logger.info(f"{self.tracker}: [bold red]does not permit archives in Movie/TV uploads: {archive}. Skipping upload.")
             return False
+        group = str(meta.tag or "").lstrip("-").strip().casefold()
+        renamed = next(
+            (
+                Path(str(item)).name
+                for item in filelist
+                if group
+                and Path(str(item)).suffix.casefold() in self._VIDEO_EXTENSIONS
+                and any(char.isspace() for char in Path(str(item)).stem)
+                and Path(str(item)).stem.casefold().endswith(f"-{group}")
+            ),
+            "",
+        )
+        if renamed:
+            logger.info(
+                f"{self.tracker}: [bold red]Tagged release file appears to have been renamed with spaces: {renamed}. "
+                "Restore the original filename before uploading.[/bold red]"
+            )
+            return False
         return True
+
+    @staticmethod
+    def _is_local_path_name(value: str) -> bool:
+        return bool(value) and (Path(value).is_absolute() or bool(re.match(r"^[A-Za-z]:[\\/]", value)))
 
     def validate_screenshot_count(self, meta: Meta) -> bool:
         try:
@@ -470,7 +496,8 @@ class DarkPeers(UNIT3D):
 
         # DP prohibits retags.  When the preparation stage identified a scene
         # release, submit its recorded release name rather than rebuilding it.
-        dp_name = str(meta.scene_name or meta.name or "")
+        scene_name = str(meta.scene_name or "")
+        dp_name = scene_name if scene_name and not self._is_local_path_name(scene_name) else str(meta.name or "")
 
         if meta.category == "TV":
             dp_name = await self._tv_name(meta, dp_name)
