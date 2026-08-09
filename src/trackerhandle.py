@@ -20,6 +20,7 @@ from src.manualpackage import ManualPackageManager
 from src.meta import Meta
 from src.qbitwait import Wait
 from src.rehostimages import check_tracker_image_hosts
+from src.tracker_images import screenshot_requirement_error
 from src.trackers.passthepopcorn import PassThePopcorn
 from src.trackers.torrenthr import TorrentHR
 from src.trackersetup import TrackerSetup
@@ -73,6 +74,18 @@ async def process_trackers(
     tracker_setup = TrackerSetup(config=config)
     tracker_setup_any = cast(Any, tracker_setup)
     enabled_trackers = list(cast(Sequence[str], tracker_setup_any.trackers_enabled(meta)))
+    runtime_state_value = config.setdefault("_runtime", {})
+    if isinstance(runtime_state_value, dict):
+        runtime_state = cast(dict[str, Any], runtime_state_value)
+    else:
+        runtime_state = {}
+        config["_runtime"] = runtime_state
+    disabled_trackers_value = runtime_state.setdefault("disabled_trackers", {})
+    if isinstance(disabled_trackers_value, dict):
+        disabled_trackers = cast(dict[str, str], disabled_trackers_value)
+    else:
+        disabled_trackers = {}
+        runtime_state["disabled_trackers"] = disabled_trackers
     manual_packager = ManualPackageManager(config)
     tracker_label_width = max(
         (len(str(tracker).replace(" ", "").upper().strip()) for tracker in enabled_trackers),
@@ -147,6 +160,13 @@ async def process_trackers(
             meta.name = meta.name.replace(" DUPE?", "")
 
         tracker = tracker.replace(" ", "").upper().strip()
+
+        disabled_reason = disabled_trackers.get(tracker)
+        if disabled_reason:
+            status = meta.tracker_status.setdefault(tracker, {})
+            status.update(upload=False, skipped=True, status_message=f"Skipped for the remainder of this run: {disabled_reason}")
+            logger.info(f"[yellow]{tracker}: skipped for the remainder of this run: {escape(str(disabled_reason))}[/yellow]")
+            return
 
         if meta.category == "BOOK" and not is_valid_cover_image(meta.artwork_path):
             status = meta.tracker_status.setdefault(tracker, {})
@@ -228,6 +248,12 @@ async def process_trackers(
                             print_tracker_result(tracker, tracker_class, status, False)
                             return
                         await check_tracker_image_hosts(meta, tracker_class)
+                        screenshot_error = screenshot_requirement_error(meta, config, tracker)
+                        if screenshot_error:
+                            status = meta.tracker_status.setdefault(tracker, {})
+                            status.update(upload=False, skipped=True, status_message=screenshot_error)
+                            logger.info(f"[yellow]{tracker}: {escape(screenshot_error)} Skipping upload.[/yellow]")
+                            return
                         upload_start_time = time.time()
                         is_uploaded = await tracker_class.upload(meta)
                         upload_duration = time.time() - upload_start_time
@@ -257,6 +283,8 @@ async def process_trackers(
                     status["upload_success"] = False
                     print_tracker_result(tracker, tracker_class, status, False)
                     failure_detail = str(status.get("status_message") or "No error details were returned by the tracker.")
+                    if "modqueue limit reached" in failure_detail.lower():
+                        disabled_trackers[tracker] = failure_detail
                     logger.info(f"[red]{tracker} upload failed or returned data error: {failure_detail}[/red]")
 
         elif tracker in other_api_trackers or tracker in http_trackers:
@@ -272,6 +300,12 @@ async def process_trackers(
                             print_tracker_result(tracker, tracker_class, status, False)
                             return
                         await check_tracker_image_hosts(meta, tracker_class)
+                        screenshot_error = screenshot_requirement_error(meta, config, tracker)
+                        if screenshot_error:
+                            status = meta.tracker_status.setdefault(tracker, {})
+                            status.update(upload=False, skipped=True, status_message=screenshot_error)
+                            logger.info(f"[yellow]{tracker}: {escape(screenshot_error)} Skipping upload.[/yellow]")
+                            return
                         upload_start_time = time.time()
                         is_uploaded = await tracker_class.upload(meta)
                         upload_duration = time.time() - upload_start_time
@@ -301,6 +335,8 @@ async def process_trackers(
                     status["upload_success"] = False
                     print_tracker_result(tracker, tracker_class, status, False)
                     failure_detail = str(status.get("status_message") or "No error details were returned by the tracker.")
+                    if "modqueue limit reached" in failure_detail.lower():
+                        disabled_trackers[tracker] = failure_detail
                     logger.info(f"[red]{tracker} upload failed or returned data error: {failure_detail}[/red]")
 
         elif tracker == "MANUAL":

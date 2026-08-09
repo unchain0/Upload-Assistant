@@ -253,13 +253,13 @@ def test_movie_tv_identity_validation_accepts_mapped_anime_episode() -> None:
     assert upload._movie_tv_identity_error(meta) is None
 
 
-def test_available_screens_caps_global_minimum_to_generated_files(tmp_path: Path) -> None:
+def test_available_screens_preserves_configured_minimum(tmp_path: Path) -> None:
     screenshot_dir = tmp_path / "tmp" / "release" / "screenshots"
     screenshot_dir.mkdir(parents=True)
     (screenshot_dir / "one.png").write_bytes(b"image")
     (screenshot_dir / "two.png").write_bytes(b"image")
 
-    assert upload.available_screens(Meta(base_dir=str(tmp_path), uuid="release"), 4) == (2, 2)
+    assert upload.available_screens(Meta(base_dir=str(tmp_path), uuid="release"), 4) == (2, 4)
 
 
 def test_failed_tracker_names_include_attempted_failure_after_upload_flag_is_cleared() -> None:

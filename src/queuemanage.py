@@ -11,6 +11,7 @@ from typing import Any, cast
 
 import cli_ui
 import click
+from rich.markup import escape
 
 from src.console import logger
 from src.meta import Meta
@@ -97,7 +98,7 @@ class QueueManager:
         if queue:
             # Display the queue
             paths_only = [item["path"] for item in queue]
-            md_text = "\n - ".join(paths_only)
+            md_text = "\n - ".join(escape(path) for path in paths_only)
             logger.info("\n[bold green]Queuing these files for site upload:[/bold green]")
             logger.info(f"- {md_text.rstrip()}\n\n")
             logger.info(f"[yellow]Tracker: {site_upload}[/yellow]")
@@ -369,7 +370,7 @@ class QueueManager:
             else:
                 paths_or_lines.append(str(item))
 
-        md_text = "\n - ".join(paths_or_lines)
+        md_text = "\n - ".join(escape(path) for path in paths_or_lines)
         logger.info("\n[bold green]Queuing these files:[/bold green]")
         logger.info(f"- {md_text.rstrip()}\n\n")
         logger.info("\n\n")
@@ -655,7 +656,7 @@ class QueueManager:
 
         elif len(paths) > 1:
             queue = _dedupe_paths(paths)
-            md_text = "\n - ".join(queue)
+            md_text = "\n - ".join(escape(path) for path in queue)
             logger.info("\n[bold green]Queuing these files:[/bold green]")
             logger.info(f"- {md_text.rstrip()}\n\n")
             logger.info("\n\n")
@@ -671,7 +672,7 @@ class QueueManager:
                 globs = [str(p) for p in parent_dir.glob(pattern)]
                 queue = globs
                 if queue:
-                    md_text = "\n - ".join(queue)
+                    md_text = "\n - ".join(escape(path) for path in queue)
                     logger.info("\n[bold green]Queuing these files:[/bold green]")
                     logger.info(f"- {md_text.rstrip()}\n\n")
                     logger.info("\n\n")
@@ -680,14 +681,14 @@ class QueueManager:
 
             elif Path(path).parent.exists() and len(paths) != 1:
                 queue = _dedupe_paths(paths)
-                md_text = "\n - ".join(queue)
+                md_text = "\n - ".join(escape(path) for path in queue)
                 logger.info("\n[bold green]Queuing these files:[/bold green]")
                 logger.info(f"- {md_text.rstrip()}\n\n")
                 logger.info("\n\n")
             elif not Path(path).parent.exists():
                 queue = await QueueManager._resolve_split_path(path)
                 if queue:
-                    md_text = "\n - ".join(queue)
+                    md_text = "\n - ".join(escape(path) for path in queue)
                     logger.info("\n[bold green]Queuing these files:[/bold green]")
                     logger.info(f"- {md_text.rstrip()}\n\n")
                     logger.info("\n\n")

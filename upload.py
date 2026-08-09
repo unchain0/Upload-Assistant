@@ -30,6 +30,7 @@ import logging
 import aiofiles
 import cli_ui  # pyright: ignore[reportMissingImports]
 import requests
+from rich.markup import escape
 from torf import Torrent as _Torrent  # pyright: ignore[reportMissingImports,reportUnknownVariableType]
 
 from bin.get_mkbrr import MkbrrBinaryManager
@@ -58,6 +59,7 @@ from src.rehostimages import check_tracker_image_hosts
 from src.takescreens import TakeScreensManager, download_artwork_from_meta
 from src.temp_paths import artwork_dir, screenshots_dir
 from src.torrentcreate import TorrentCreator
+from src.tracker_images import configured_screenshot_minimum, screenshot_requirement_error
 from src.trackerhandle import process_trackers
 from src.trackers.alpharatio import AlphaRatio
 from src.trackers.common import Common
@@ -1088,8 +1090,7 @@ async def _prompt_music_meta(meta: Meta) -> None:
 def available_screens(meta: Meta, min_successful_uploads: int) -> tuple[int, int]:
     screenshot_files = list(screenshots_dir(meta.base_dir, meta.uuid).glob("*.png"))
     actual_screens = len(screenshot_files)
-    capped_min = min(min_successful_uploads, actual_screens)
-    return actual_screens, capped_min
+    return actual_screens, min_successful_uploads
 
 
 def _movie_tv_identity_error(meta: Meta) -> str | None:
@@ -1647,13 +1648,14 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
             if manual_frames_count > 0:
                 meta.screens = manual_frames_count
             cutoff = meta.cutoff
+            configured_minimum = configured_screenshot_minimum(config) if meta.category in {"MOVIE", "TV"} else 0
             # Remote images can be reviewed in the WebUI.  Replacements and
             # additions remain local until this normal hosting stage, even if
             # the original remote list already satisfies the cutoff.
             from src.screenshot_review import staged_remote_uploads
 
             reviewed_uploads = staged_remote_uploads(Path(meta.base_dir) / "tmp" / meta.uuid, cast(list[dict[str, Any]], meta.image_list or []))
-            if (len(meta.image_list) < cutoff or reviewed_uploads) and meta.skip_imghost_upload is False and meta.category not in ("GAME", "MUSIC"):
+            if (len(meta.image_list) < max(cutoff, configured_minimum) or reviewed_uploads) and meta.skip_imghost_upload is False and meta.category not in ("GAME", "MUSIC"):
                 # Validate and (if needed) rehost images to tracker-approved hosts before uploading any new screenshots.
                 trackers_with_image_host_requirements = {
                     "AURA4K",
@@ -1790,13 +1792,11 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
                 try:
                     default_cfg_obj = config.get("DEFAULT", {})
                     default_cfg = cast(dict[str, Any], default_cfg_obj) if isinstance(default_cfg_obj, dict) else {}
-                    min_successful_uploads = int(default_cfg.get("min_successful_image_uploads", 3))
-                    actual_screens, available_minimum = available_screens(meta, min_successful_uploads)
+                    min_successful_uploads = configured_screenshot_minimum(config)
+                    actual_screens, required_minimum = available_screens(meta, min_successful_uploads)
                     if meta.category == "BOOK":
                         meta.screens = actual_screens
-                        min_successful_uploads = available_minimum
-                    elif actual_screens:
-                        min_successful_uploads = available_minimum
+                        min_successful_uploads = min(required_minimum, actual_screens)
 
                     host_order: list[str] = []
                     for host_index in range(1, 10):
@@ -1883,6 +1883,10 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
 
             elif meta.skip_imghost_upload is True and not meta.image_list:
                 meta.image_list = []
+
+            screenshot_error = screenshot_requirement_error(meta, config)
+            if screenshot_error:
+                raise ItemProcessingError(screenshot_error, meta.path)
 
             # Host book cover if it's a BOOK and save to covers.json
             if meta.category == "BOOK":
@@ -2591,7 +2595,7 @@ async def do_the_thing(base_dir: str) -> None:
                 continue
             start_time = time.time()
 
-            logger.info(f"[green]Gathering info for {Path(path).name}")
+            logger.info(f"[green]Gathering info for {escape(Path(path).name)}")
 
             try:
                 meta_success = await process_meta(meta, base_dir)
