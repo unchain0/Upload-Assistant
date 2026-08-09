@@ -1068,7 +1068,33 @@ class DescriptionBuilder:
             body = "\n".join(table_lines)
         else:
             body = "\n".join(f"[b]{label}:[/b] {field_value}" for label, field_value in music_fields)
-        return f"{header}{text['details']}{header_end}\n{body}"
+
+        track_lines: list[str] = []
+        primary_artist = display(value("artist"))
+        disc_count = max((int(track.get("disc_number") or 1) for track in tracks if isinstance(track, dict)), default=1)
+        for index, track in enumerate(tracks, start=1):
+            if not isinstance(track, dict):
+                continue
+            try:
+                track_number = int(track.get("track_number") or index)
+            except (TypeError, ValueError):
+                track_number = index
+            try:
+                disc_number = int(track.get("disc_number") or 1)
+            except (TypeError, ValueError):
+                disc_number = 1
+            number = f"{disc_number}-{track_number:02d}" if disc_count > 1 else f"{track_number:02d}"
+            title = display(track.get("title"))
+            artist = display(track.get("artist"))
+            credit = f"{artist} - " if artist and artist.casefold() != primary_artist.casefold() else ""
+            if title:
+                track_lines.append(f"{number}. {credit}{title}")
+
+        tracklist = ""
+        if track_lines:
+            tracklist_header = "Lista de Faixas" if use_pt_br else "Tracklist"
+            tracklist = f"\n\n{header}{tracklist_header}{header_end}\n" + "\n".join(track_lines)
+        return f"{header}{text['details']}{header_end}\n{body}{tracklist}"
 
     async def general_description_generator(
         self,

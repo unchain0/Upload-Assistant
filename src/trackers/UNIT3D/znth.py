@@ -13,6 +13,17 @@ from src.trackers.UNIT3D import UNIT3D, ParamsList
 Config = dict[str, Any]
 
 
+def prepare_zenith_music_layout(meta: Meta) -> None:
+    raw_trackers = [meta.trackers] if isinstance(meta.trackers, str) else meta.trackers
+    trackers = {str(tracker).strip().upper() for tracker in raw_trackers if str(tracker).strip()}
+    if str(meta.category or "").upper() != "MUSIC" or "ZENITH" not in trackers:
+        return
+    meta.keep_folder = True
+    meta.rehash = True
+    meta.reuse_torrent_path = None
+    meta.base_reuse_torrent_path = None
+
+
 def _iso_639_2_code(iso3: str) -> str:
     """Uppercase 3-letter language code (e.g. 'ENG') from a normalized ISO 639-2 code, or ''."""
     code = (iso3 or "").strip().upper()
@@ -304,9 +315,11 @@ class Zenith(UNIT3D):
         artists = cls._music_field(release, "artists", [])
         if isinstance(artists, list):
             artist_values.extend(artists)
-        conflicts = release.get("conflicts")
-        if isinstance(conflicts, dict) and isinstance(conflicts.get("artist"), list):
-            artist_values.extend(cast(list[Any], conflicts["artist"]))
+        conflicts_raw = release.get("conflicts")
+        conflicts = cast(dict[str, Any], conflicts_raw) if isinstance(conflicts_raw, dict) else {}
+        artist_conflicts = conflicts.get("artist")
+        if isinstance(artist_conflicts, list):
+            artist_values.extend(artist_conflicts)
         normalized_artists = {cls._normalized_music_component(value) for value in artist_values if cls._normalized_music_component(value)}
         artist_matches = any(value in normalized_root for value in normalized_artists)
         artist_matches = artist_matches or ("various artists" in normalized_artists and "va" in normalized_root.split())

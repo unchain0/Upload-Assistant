@@ -65,6 +65,7 @@ from src.trackers.alpharatio import AlphaRatio
 from src.trackers.common import Common
 from src.trackers.digitalcore import DigitalCore
 from src.trackers.passthepopcorn import PassThePopcorn
+from src.trackers.UNIT3D.znth import prepare_zenith_music_layout
 from src.trackersetup import TrackerSetup, api_trackers, http_trackers, other_api_trackers, tracker_class_map
 from src.trackerstatus import TrackerStatusManager
 from src.uphelper import UploadHelper
@@ -1162,6 +1163,8 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
         logger.info(f"Error in gather_prep: {e}")
         logger.info(traceback.format_exc())
         return False
+
+    prepare_zenith_music_layout(meta)
 
     identity_error = _movie_tv_identity_error(meta)
     if identity_error:

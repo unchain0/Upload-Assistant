@@ -3,11 +3,18 @@
 
 import asyncio
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import patch
 
+import torf  # pyright: ignore[reportMissingImports]
+
+from src.get_desc import DescriptionBuilder
 from src.meta import Meta
-from src.trackers.UNIT3D.znth import Zenith
+from src.torrentcreate import TorrentCreator
+from src.trackers.UNIT3D.znth import Zenith, prepare_zenith_music_layout
+
+TORF: Any = cast(Any, torf)
+TORRENT_CREATOR: Any = cast(Any, TorrentCreator)
 
 
 def _tracker() -> Zenith:
@@ -430,6 +437,55 @@ def test_zenith_allows_unnumbered_filename_for_original_single_track_release():
     meta = _compliant_music_meta(filelist=["Alive.flac"], personalrelease=True)
 
     assert asyncio.run(_tracker().get_additional_checks(meta)) is True
+
+
+def test_zenith_music_layout_policy_forces_folder_rehash():
+    meta = _compliant_music_meta(trackers=["ZENITH", "PEERGARDEN"], keep_folder=False, rehash=False)
+    meta.reuse_torrent_path = "reused.torrent"
+    meta.base_reuse_torrent_path = "reused.torrent"
+
+    prepare_zenith_music_layout(meta)
+
+    assert meta.keep_folder is True
+    assert meta.rehash is True
+    assert meta.reuse_torrent_path is None
+    assert meta.base_reuse_torrent_path is None
+
+
+def test_zenith_single_track_torrent_preserves_release_folder(tmp_path: Path):
+    release = tmp_path / "Artist - Album (2024) - [WEB FLAC Single]"
+    release.mkdir()
+    track = release / "Alive.flac"
+    track.write_bytes(b"audio")
+    meta = _compliant_music_meta(
+        path=str(release),
+        filelist=[str(track)],
+        trackers=["ZENITH"],
+        isdir=True,
+        keep_folder=False,
+        rehash=False,
+        base_dir=str(tmp_path),
+        uuid="zenith-single",
+        max_piece_size=1,
+        mkbrr=False,
+    )
+    (tmp_path / "tmp" / meta.uuid).mkdir(parents=True)
+
+    prepare_zenith_music_layout(meta)
+    asyncio.run(TORRENT_CREATOR.create_torrent(meta, release, "BASE"))
+    torrent = TORF.Torrent.read(tmp_path / "tmp" / meta.uuid / "BASE.torrent")
+
+    assert torrent.metainfo["info"]["name"] == release.name
+    assert torrent.metainfo["info"]["files"][0]["path"] == [track.name]
+
+
+def test_zenith_music_description_contains_required_tracklist():
+    meta = _compliant_music_meta()
+
+    description = DescriptionBuilder("ZENITH", {"DEFAULT": {}, "TRACKERS": {"ZENITH": {}}})._build_music_desc_section(meta)
+
+    assert "[h2]Tracklist[/h2]" in description
+    assert "01. My Track" in description
 
 
 def test_zenith_rejects_book_with_invalid_language_code():
