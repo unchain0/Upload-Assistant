@@ -2,6 +2,7 @@
 """Regression tests for Zenith-specific names."""
 
 import asyncio
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
@@ -56,7 +57,11 @@ def _book_meta(**kwargs: Any) -> Meta:
     base: dict[str, Any] = {
         "category": "BOOK",
         "book_language_iso": "ENG",
+        "filelist": ["Example Book/Example Book.epub"],
         "isbn": "9780000000000",
+        "isdir": True,
+        "keep_folder": True,
+        "path": "Example Book",
         "type": "EPUB",
         "format": "EPUB",
         "title": "Example Book",
@@ -67,6 +72,61 @@ def _book_meta(**kwargs: Any) -> Meta:
     }
     base.update(kwargs)
     return Meta(**base)
+
+
+def _audiobook_meta(**kwargs: Any) -> Meta:
+    expected = "宮沢 賢治 - 宮沢賢治童話全集 (2016) JPN {パンローリング} [WEB] M4B AAC 63kbps"
+    base: dict[str, Any] = {
+        "category": "BOOK",
+        "audiobook": True,
+        "author": "宮沢 賢治",
+        "title": "宮沢賢治童話全集",
+        "year": 2016,
+        "book_language_iso": "JPN",
+        "asin": "B07ZHYPJK1",
+        "narrator": "パンローリング",
+        "source": "WEB",
+        "type": "M4B",
+        "format": "M4B",
+        "audiobook_bitrate": 63,
+        "name": expected,
+        "path": expected,
+        "filelist": [f"{expected}/{expected}.m4b"],
+        "mediainfo": {"media": {"track": [{"@type": "Audio", "Language": "jpn"}]}},
+        "isdir": True,
+        "keep_folder": True,
+        "unattended": True,
+        "unattended_confirm": False,
+    }
+    base.update(kwargs)
+    return Meta(**base)
+
+
+def test_zenith_rejects_single_file_book_without_directory():
+    meta = _audiobook_meta(path="宮沢賢治童話全集 [B07ZHYPJK1].m4b", filelist=["宮沢賢治童話全集 [B07ZHYPJK1].m4b"], isdir=False)
+
+    assert asyncio.run(_tracker().get_additional_checks(meta)) is False
+
+
+def test_zenith_rejects_single_file_book_when_torrent_would_flatten_directory():
+    assert asyncio.run(_tracker().get_additional_checks(_audiobook_meta(keep_folder=False))) is False
+
+
+def test_zenith_rejects_improper_single_file_audiobook_name():
+    expected_folder = _audiobook_meta().path
+    meta = _audiobook_meta(filelist=[f"{expected_folder}/宮沢賢治童話全集 [B07ZHYPJK1].m4b"])
+
+    assert asyncio.run(_tracker().get_additional_checks(meta)) is False
+
+
+def test_zenith_rejects_audiobook_when_audio_track_language_disagrees():
+    meta = _audiobook_meta(mediainfo={"media": {"track": [{"@type": "Audio", "Language": "en"}]}})
+
+    assert asyncio.run(_tracker().get_additional_checks(meta)) is False
+
+
+def test_zenith_accepts_compliant_single_file_audiobook_layout():
+    assert asyncio.run(_tracker().get_additional_checks(_audiobook_meta())) is True
 
 
 def test_zenith_supports_music_and_uses_its_music_naming_guide():
@@ -124,9 +184,9 @@ def test_zenith_accepts_numbered_scene_music_filenames():
     assert Zenith._validate_music_track_naming(["simon_and_garfunkel-the_sound_of_silence.flac"]) != ""
 
 
-def test_zenith_validates_torrent_relative_music_path_length(tmp_path):
-    root = tmp_path / ("Long Lidarr Library Prefix " * 4) / "Sweet Trip - Album (2021) - WEB FLAC"
-    track = root / "03. The Weight of Comfort, This Rain is Comfort, This Rain is You.flac"
+def test_zenith_validates_torrent_relative_music_path_length(tmp_path: Path):
+    root: Path = tmp_path / ("Long Lidarr Library Prefix " * 4) / "Sweet Trip - Album (2021) - WEB FLAC"
+    track: Path = root / "03. The Weight of Comfort, This Rain is Comfort, This Rain is You.flac"
 
     assert Zenith._validate_music_track_naming([str(track)], root) == ""
 

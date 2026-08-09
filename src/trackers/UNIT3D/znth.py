@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from src.book_prep import extract_first_author as _primary_name
+from src.book_prep import resolve_book_language
 from src.console import logger
 from src.meta import Meta
 from src.trackers.common import Common
@@ -326,6 +327,54 @@ class Zenith(UNIT3D):
         author = (meta.author or "").upper()
         return any(work in title or work in author for work in cls._BANNED_BOOK_WORKS)
 
+    @staticmethod
+    def _audiobook_layout_error(meta: Meta, filelist: list[Any], expected_name: str) -> str:
+        root = Path(str(meta.path or ""))
+        if root.name != expected_name:
+            return f"audiobook directory must be named '{expected_name}'"
+
+        audio_extensions = {".m4b", ".mp3", ".flac"}
+        audio_paths = [Path(str(item)) for item in filelist if Path(str(item)).suffix.lower() in audio_extensions]
+        if not audio_paths:
+            return "audiobook does not contain a supported audio file"
+
+        if len(audio_paths) == 1:
+            if audio_paths[0].stem != expected_name:
+                return f"single audiobook file must be named '{expected_name}{audio_paths[0].suffix.lower()}'"
+            return ""
+
+        if any(path.suffix.lower() == ".m4b" for path in audio_paths):
+            return "M4B audiobooks must contain one file unless the retail source is split into Disc folders"
+
+        title_year = f"{meta.title} ({meta.year})"
+        track_pattern = re.compile(rf"^\d+\.\s+.+\s+-\s+{re.escape(title_year)}$", re.IGNORECASE)
+        invalid = next((path.name for path in audio_paths if not track_pattern.fullmatch(path.stem)), "")
+        return f"multi-file audiobook track has invalid name: {invalid}" if invalid else ""
+
+    @staticmethod
+    def _audiobook_language_error(meta: Meta) -> str:
+        media = cast(dict[str, Any], meta.mediainfo.get("media", {}))
+        tracks = cast(list[Any], media.get("track", []))
+        audio_tracks: list[dict[str, Any]] = []
+        for value in tracks:
+            if not isinstance(value, dict):
+                continue
+            track = cast(dict[str, Any], value)
+            if track.get("@type") == "Audio":
+                audio_tracks.append(track)
+        if not audio_tracks:
+            return "MediaInfo does not contain an audio track"
+
+        expected = _iso_639_2_code(meta.book_language_iso)
+        for track in audio_tracks:
+            raw_language = str(track.get("Language") or track.get("language") or "").strip()
+            _language, actual = resolve_book_language(raw_language)
+            if not actual:
+                return "audio track is missing the required language metadata"
+            if actual.upper() != expected:
+                return f"audio track language is {actual.upper()}, but the audiobook metadata is {expected}"
+        return ""
+
     async def get_additional_checks(self, meta: Meta) -> bool:
         category = str(meta.category or "").upper()
         if meta.software:
@@ -399,6 +448,14 @@ class Zenith(UNIT3D):
                     return False
 
         if category == "BOOK" and not _is_misc(meta):
+            if not meta.isdir:
+                logger.info(f"{self.tracker}: [bold red]Books and audiobooks must be uploaded inside a directory. Use zentag to create a compliant copy.[/bold red]")
+                return False
+            if len(filelist) == 1 and not meta.keep_folder:
+                logger.info(
+                    f"{self.tracker}: [bold red]Single-file book torrents must retain their directory. Re-run with --keep-folder after preparing the release with zentag.[/bold red]"
+                )
+                return False
             if not meta.isbn and not meta.asin:
                 logger.info(f"{self.tracker}: [bold red]ISBN or ASIN is required for ebooks and audiobooks. Skipping upload...[/bold red]")
                 return False
@@ -409,6 +466,15 @@ class Zenith(UNIT3D):
                     return False
                 if book_format not in ("MP3", "FLAC", "M4B"):
                     logger.info(f"{self.tracker}: [bold red]Audiobooks must be MP3, FLAC, or M4B. Skipping upload...[/bold red]")
+                    return False
+                expected_name = (await self.get_name(meta))["name"]
+                layout_error = self._audiobook_layout_error(meta, filelist, expected_name)
+                if layout_error:
+                    logger.info(f"{self.tracker}: [bold red]Invalid audiobook layout: {layout_error}. Use zentag transform before uploading.[/bold red]")
+                    return False
+                language_error = self._audiobook_language_error(meta)
+                if language_error:
+                    logger.info(f"{self.tracker}: [bold red]Invalid audiobook metadata: {language_error}. Use zentag transform before uploading.[/bold red]")
                     return False
             elif book_format not in ("EPUB", "PDF", "MOBI", "AZW3", "DJVU"):
                 logger.info(f"{self.tracker}: [bold red]Ebooks must be EPUB, PDF, MOBI, AZW3, or DJVU. Skipping upload...[/bold red]")
