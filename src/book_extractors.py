@@ -365,6 +365,23 @@ def validate_isbn_checksum(candidate: str) -> str | None:
     return None
 
 
+def extract_pdf_page_count(pdf_path: str) -> int | None:
+    try:
+        import fitz
+    except ImportError:
+        return None
+
+    if not Path(pdf_path).is_file():
+        return None
+
+    try:
+        with fitz.open(pdf_path) as doc:
+            return len(doc) or None
+    except Exception as error:
+        logger.debug(f"[yellow]Warning: Error reading PDF page count: {error}[/yellow]")
+        return None
+
+
 def extract_isbn_from_pdf(pdf_path: str) -> str | None:
     """Search for and extract a valid ISBN from a PDF file using PyMuPDF (fitz)."""
     try:
@@ -405,8 +422,9 @@ def extract_isbn_from_pdf(pdf_path: str) -> str | None:
                 if not isinstance(text, str) or not text:
                     continue
 
-                # Find ISBN candidates
-                candidates = re.findall(r"\b(?:ISBN(?:-1[03])?:?\s*)?((?:97[89][- ]?)?\d(?:[- ]?\d){8,11}[- ]?[\dX])\b", text, re.IGNORECASE)
+                labelled = re.findall(r"\bISBN(?:-1[03])?:?\s*((?:97[89][- ]?)?\d(?:[- ]?\d){8,11}[- ]?[\dX])\b", text, re.IGNORECASE)
+                bare_isbn13 = re.findall(r"\b(97[89](?:[- ]?\d){10})\b", text)
+                candidates = list(dict.fromkeys([*labelled, *bare_isbn13]))
                 for cand in candidates:
                     validated = validate_isbn_checksum(cand)
                     if validated:

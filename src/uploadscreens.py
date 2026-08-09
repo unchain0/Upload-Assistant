@@ -47,6 +47,7 @@ class UploadScreensManager:
     def __init__(self, config: dict[str, Any]) -> None:
         """Initialize screenshot uploads with the application configuration."""
         self.config = config
+        self.unavailable_hosts: set[str] = set()
 
     async def upload_screens(
         self,
@@ -74,6 +75,7 @@ class UploadScreensManager:
             retry_mode=retry_mode,
             max_retries=max_retries,
             allowed_hosts=allowed_hosts,
+            unavailable_hosts=self.unavailable_hosts,
         )
 
 
@@ -629,6 +631,7 @@ async def _upload_screens(
     retry_mode: bool = False,
     max_retries: int = 3,
     allowed_hosts: list[str] | None = None,
+    unavailable_hosts: set[str] | None = None,
 ) -> tuple[list[ImageDict], int]:
     """Select screenshots, throttle uploads, and collect successful results."""
     default_config = config.get("DEFAULT", {})
@@ -648,6 +651,30 @@ async def _upload_screens(
     # Treat empty allowed host list as no restriction
     if not allowed_hosts:
         allowed_hosts = None
+
+    if unavailable_hosts is not None and img_host in unavailable_hosts:
+        next_host_num = img_host_num + 1
+        while next_host_num <= 9:
+            next_host = str(default_config.get(f"img_host_{next_host_num}") or "").strip().lower()
+            if next_host and next_host not in unavailable_hosts and (allowed_hosts is None or next_host in allowed_hosts):
+                meta.imghost = next_host
+                logger.info(f"[yellow]Skipping unavailable image host '{img_host}' for the remainder of this run.[/yellow]")
+                return await _upload_screens(
+                    config,
+                    meta,
+                    screens,
+                    next_host_num,
+                    i,
+                    total_screens,
+                    custom_img_list,
+                    return_dict,
+                    retry_mode=retry_mode,
+                    max_retries=max_retries,
+                    allowed_hosts=allowed_hosts,
+                    unavailable_hosts=unavailable_hosts,
+                )
+            next_host_num += 1
+        return meta.image_list, len(meta.image_list)
 
     # Check if current host is allowed, if not find an approved one
     if allowed_hosts is not None and img_host not in allowed_hosts:
@@ -871,7 +898,7 @@ async def _upload_screens(
                     if future and future in running_tasks:
                         future.cancel()
                         running_tasks.discard(future)
-                    return None
+                    raise
 
                 except Exception as e:
                     logger.error(f"[red]Error during upload for image {index}: {e!s}[/red]")
@@ -886,7 +913,6 @@ async def _upload_screens(
         return None
 
     try:
-        max_retries = 3
         results: list[tuple[int, dict[str, Any]]] = []
         try:
             upload_results = await asyncio.gather(*[async_upload(task, max_retries) for task in upload_tasks])
@@ -903,6 +929,8 @@ async def _upload_screens(
         logger.debug(f"[blue]retry_mode: {retry_mode}, using_custom_img_list: {using_custom_img_list}[/blue]")
         logger.debug(f"[blue]successfully_uploaded={len(successfully_uploaded)}, meta.image_list={len(image_list)}, cutoff={meta.cutoff}[/blue]")
         if len(successfully_uploaded) < len(upload_tasks):
+            if not successfully_uploaded and unavailable_hosts is not None:
+                unavailable_hosts.add(img_host)
             # Preserve partial successes before recursing so the next host only
             # needs to handle failed source files and the accumulated list is
             # not lost when fallback completes.
@@ -938,7 +966,9 @@ async def _upload_screens(
                     custom_img_list,
                     return_dict,
                     retry_mode=True,
+                    max_retries=max_retries,
                     allowed_hosts=allowed_hosts,
+                    unavailable_hosts=unavailable_hosts,
                 )
             logger.info("[red]No more image hosts available. Aborting upload process.")
             return image_list, len(image_list)
@@ -980,7 +1010,7 @@ async def _upload_screens(
             with contextlib.suppress(asyncio.CancelledError):
                 await task
 
-        return image_list, len(image_list)
+        raise
 
     finally:
         # Cleanup

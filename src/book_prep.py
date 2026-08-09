@@ -32,6 +32,7 @@ from src.book_extractors import (
 from src.book_extractors import (
     extract_mobi_metadata as _extract_mobi_metadata,
 )
+from src.book_extractors import extract_pdf_page_count as _extract_pdf_page_count
 from src.book_extractors import (
     extract_series_from_filename as _extract_series_from_filename,
 )
@@ -308,6 +309,9 @@ async def gather_book_prep(
 
     # Extract ISBN from PDF directly if the file is a PDF
     if videopath.lower().endswith(".pdf") and Path(videopath).is_file():
+        page_count = _extract_pdf_page_count(videopath)
+        if page_count:
+            meta.page_count = page_count
         pdf_isbn = _extract_isbn_from_pdf(videopath)
         if pdf_isbn and not meta.isbn:
             meta.isbn = pdf_isbn

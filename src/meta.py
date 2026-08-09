@@ -313,6 +313,7 @@ class Meta:
     overview_meta: str = ""
     overview: str = ""
     part: str = ""
+    page_count: int | None = None
     path_to_menu_screenshots: str = ""
     path: str | None = None
     personalrelease: bool = False

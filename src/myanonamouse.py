@@ -6,11 +6,32 @@ from typing import Any
 
 import httpx
 
+from src.book_extractors import validate_isbn_checksum
 from src.book_prep import is_valid_book_language, resolve_book_language
 from src.console import logger
 from src.metadata_cache import cache_for, is_cache_miss
 
 mam_color = "[#eac117]MyAnonamouse[/#eac117]"
+
+
+def _normalize_mam_isbn(value: Any) -> str | None:
+    cleaned = re.sub(r"[-\s]", "", str(value or "")).upper()
+    candidates = [cleaned]
+    if len(cleaned) == 9 and cleaned.isdigit():
+        candidates.insert(0, f"0{cleaned}")
+    return next((isbn for candidate in candidates if (isbn := validate_isbn_checksum(candidate))), None)
+
+
+def _clean_mam_title(value: Any, author: str = "") -> str:
+    title = html.unescape(str(value or "")).strip()
+    if not re.search(r"\.(?:epub|pdf|mobi|azw3?|fb2|cb[rz])$", title, re.IGNORECASE):
+        return title
+    title = re.sub(r"\.(?:epub|pdf|mobi|azw3?|fb2|cb[rz])$", "", title, flags=re.IGNORECASE).strip()
+    title = re.sub(r"\s*\((?:epub|pdf|mobi|azw3?|fb2|cb[rz])\)\s*$", "", title, flags=re.IGNORECASE)
+    title = re.sub(r"\s+-\s+(?:97[89]\d{10}|\d{9}[\dX])\s*$", "", title, flags=re.IGNORECASE)
+    if author:
+        title = re.sub(rf"^{re.escape(author)}\s+-\s+", "", title, flags=re.IGNORECASE)
+    return title.strip()
 
 
 class MyAnonamouseManager:
@@ -21,8 +42,6 @@ class MyAnonamouseManager:
 
         # Title & Name
         title = item.get("title") or item.get("name")
-        if title:
-            metadata["title"] = html.unescape(str(title)).strip()
 
         # Authors
         author_info = item.get("author_info")
@@ -64,11 +83,12 @@ class MyAnonamouseManager:
             metadata["overview"] = unescaped_desc
 
         # ISBN
-        isbn = item.get("isbn")
+        if title:
+            metadata["title"] = _clean_mam_title(title, metadata.get("author", ""))
+
+        isbn = _normalize_mam_isbn(item.get("isbn"))
         if isbn:
-            cleaned_isbn = re.sub(r"[-\s]", "", str(isbn))
-            if cleaned_isbn:
-                metadata["isbn"] = cleaned_isbn
+            metadata["isbn"] = isbn
 
         # ASIN
         asin = item.get("asin") or item.get("ASIN")
@@ -77,7 +97,14 @@ class MyAnonamouseManager:
             if cleaned_asin:
                 metadata["asin"] = cleaned_asin
 
-        publication_value = item.get("year") or item.get("release_year") or item.get("publication_year") or item.get("published")
+        publication_value = next(
+            (
+                item.get(field)
+                for field in ("year", "release_year", "publication_year", "published", "publish_date", "publication_date", "released")
+                if item.get(field)
+            ),
+            None,
+        )
         publication_match = re.search(r"\b(?:18|19|20)\d{2}\b", str(publication_value or ""))
         if publication_match:
             metadata["year"] = int(publication_match.group(0))

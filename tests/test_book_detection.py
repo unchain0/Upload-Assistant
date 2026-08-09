@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from src.book_extractors import validate_isbn_checksum
+from src.book_extractors import extract_isbn_from_pdf, extract_pdf_page_count, validate_isbn_checksum
 from src.book_prep import resolve_book_filelist
 from src.meta import Meta
 from src.myanonamouse import MyAnonamouseManager
@@ -126,3 +126,39 @@ def test_myanonamouse_uses_explicit_publication_year():
     metadata = MyAnonamouseManager()._parse_torrent_info({"title": "80's Adventures", "publication_year": "2021"})
 
     assert metadata["year"] == 2021
+
+
+def test_myanonamouse_restores_valid_leading_zero_isbn() -> None:
+    metadata = MyAnonamouseManager()._parse_torrent_info({"title": "The Quantum Labyrinth", "isbn": 465097588})
+
+    assert metadata["isbn"] == "0465097588"
+
+
+def test_myanonamouse_does_not_replace_metadata_with_invalid_isbn() -> None:
+    metadata = MyAnonamouseManager()._parse_torrent_info({"title": "Example", "isbn": 123})
+
+    assert "isbn" not in metadata
+
+
+def test_myanonamouse_cleans_filename_title() -> None:
+    metadata = MyAnonamouseManager()._parse_torrent_info(
+        {
+            "title": "Jon Gertner - The Idea Factory - Bell Labs And The Great Age Of American Innovation - 9781101561089.epub",
+            "author_info": {"1": "Jon Gertner"},
+        }
+    )
+
+    assert metadata["title"] == "The Idea Factory - Bell Labs And The Great Age Of American Innovation"
+
+
+def test_pdf_extraction_counts_pages_and_ignores_unlabelled_isbn10(tmp_path) -> None:
+    fitz = pytest.importorskip("fitz")
+    pdf = tmp_path / "book.pdf"
+    with fitz.open() as document:
+        page = document.new_page()
+        page.insert_text((72, 72), "Reference number 4959787066")
+        document.new_page()
+        document.save(pdf)
+
+    assert extract_pdf_page_count(str(pdf)) == 2
+    assert extract_isbn_from_pdf(str(pdf)) is None

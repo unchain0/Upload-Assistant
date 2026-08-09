@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from src.meta import Meta
-from src.uploadscreens import _build_image_start_limiter, _upload_screens
+from src.uploadscreens import UploadScreensManager, _build_image_start_limiter, _upload_screens
 
 
 def test_image_start_limiter_staggers_concurrent_starts() -> None:
@@ -197,3 +197,56 @@ def test_upload_screens_normalizes_image_upload_delay_before_limiter(
     delays, uploaded_count = asyncio.run(exercise())
     assert delays == [expected_delay]
     assert uploaded_count == 1
+
+
+def test_upload_screens_propagates_cancellation(tmp_path: Path) -> None:
+    async def blocked_upload(_: object) -> dict[str, str]:
+        await asyncio.Event().wait()
+        return {"status": "failed", "reason": "unreachable"}
+
+    async def exercise() -> None:
+        meta = Meta({"base_dir": str(tmp_path), "uuid": "test", "imghost": "onlyimage"})
+        config = {"DEFAULT": {"img_host_1": "onlyimage", "image_upload_concurrency": 1, "image_upload_delay": 0}, "TRACKERS": {}}
+        with (
+            patch("src.uploadscreens.screenshots_dir", return_value=tmp_path),
+            patch("src.uploadscreens.os.chdir"),
+            patch("src.uploadscreens.upload_image_task", new=blocked_upload),
+        ):
+            task = asyncio.create_task(_upload_screens(config, meta, 1, 1, 0, 1, ["image.png"], {}))
+            await asyncio.sleep(0)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+    asyncio.run(exercise())
+
+
+def test_upload_manager_skips_host_after_complete_failure(tmp_path: Path) -> None:
+    calls: list[str] = []
+
+    async def fake_upload(args: object) -> dict[str, str]:
+        assert isinstance(args, list)
+        host = str(args[1])
+        calls.append(host)
+        if host == "onlyimage":
+            return {"status": "failed", "reason": "No URLs received"}
+        return {"status": "success", "img_url": "https://img.test/1", "raw_url": "https://img.test/1", "web_url": "https://img.test/1"}
+
+    async def exercise() -> None:
+        config = {
+            "DEFAULT": {"img_host_1": "onlyimage", "img_host_2": "imgbb", "image_upload_concurrency": 1, "image_upload_delay": 0},
+            "TRACKERS": {},
+        }
+        manager = UploadScreensManager(config)
+        with (
+            patch("src.uploadscreens.screenshots_dir", return_value=tmp_path),
+            patch("src.uploadscreens.os.chdir"),
+            patch("src.uploadscreens.upload_image_task", new=fake_upload),
+        ):
+            first = Meta({"base_dir": str(tmp_path), "uuid": "one", "imghost": "onlyimage"})
+            await manager.upload_screens(first, 1, 1, 0, 1, ["image.png"], {}, max_retries=0)
+            second = Meta({"base_dir": str(tmp_path), "uuid": "two", "imghost": "onlyimage"})
+            await manager.upload_screens(second, 1, 1, 0, 1, ["image.png"], {}, max_retries=0)
+
+    asyncio.run(exercise())
+    assert calls == ["onlyimage", "imgbb", "imgbb"]
