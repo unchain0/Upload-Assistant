@@ -150,6 +150,7 @@ class TrackerStatusManager:
                     if game_missing:
                         logger.info(f"[yellow]{tracker_name}: Skipping upload because required GAME fields are missing: {', '.join(game_missing)}[/yellow]")
                         local_tracker_status["skipped"] = True
+                        local_tracker_status["skip_reason"] = f"Required GAME fields missing: {', '.join(game_missing)}"
 
                 if not local_tracker_status["banned"] and not local_tracker_status["skipped"]:
                     claimed = await tracker_setup.get_torrent_claims(local_meta, tracker_name)

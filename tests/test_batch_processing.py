@@ -500,3 +500,26 @@ async def test_batch_reports_torrent_success_with_usenet_preparation_failure(tmp
 
     assert any("total queued 2, fully successful 1, partial 1, skipped/failed 0" in message for message in info_messages)
     assert any("mixed.epub" in message and "NZB" in message for message in info_messages)
+
+
+@pytest.mark.asyncio
+async def test_batch_summary_preserves_required_game_field_reason(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    queue = [str(tmp_path / "Native_Instruments_SuperStarSaw_1.0.0_[HCiSO].dmg"), str(tmp_path / "another.dmg")]
+
+    def fake_process_meta(meta: Meta, _base_dir: str) -> bool:
+        meta.we_are_uploading = False
+        meta.tracker_status = {
+            "ZENITH": {
+                "upload": False,
+                "skipped": True,
+                "skip_reason": "Required GAME fields missing: year",
+            }
+        }
+        return True
+
+    info_messages, _ = _configure_do_the_thing_stubs(monkeypatch, queue, fake_process_meta)
+    monkeypatch.setattr(sys, "argv", ["upload.py", *queue])
+
+    await upload.do_the_thing(upload.base_dir)
+
+    assert any("Native_Instruments_SuperStarSaw" in message and "Required GAME fields missing: year" in message for message in info_messages)

@@ -1,8 +1,12 @@
 # ruff: noqa: S101
 
 import asyncio
+from unittest.mock import AsyncMock, patch
 
-from src.prep_game import clean_game_title, detect_platform_from_files
+import pytest
+
+from src.meta import Meta
+from src.prep_game import clean_game_title, detect_platform_from_files, extract_release_group, gather_game_prep
 
 
 def test_game_title_fallback_removes_locale_build_date_and_extension() -> None:
@@ -11,6 +15,7 @@ def test_game_title_fallback_removes_locale_build_date_and_extension() -> None:
 
 def test_game_title_fallback_removes_version_and_scene_group() -> None:
     assert clean_game_title("Native_Instruments_SuperStarSaw_1.0.0_[HCiSO].dmg") == "Native Instruments SuperStarSaw"
+    assert extract_release_group("Native_Instruments_SuperStarSaw_1.0.0_[HCiSO].dmg") == "HCiSO"
 
 
 def test_dmg_platform_is_detected_as_mac() -> None:
@@ -25,3 +30,29 @@ def test_pkg_platform_preserves_explicit_playstation_evidence() -> None:
     assert asyncio.run(detect_platform_from_files(["UP0001-NPUB12345_00-GAME.pkg"])) == "PS3"
     assert asyncio.run(detect_platform_from_files(["Game-CUSA12345.pkg"])) == "PS4"
     assert asyncio.run(detect_platform_from_files(["Game-PPSA12345.pkg"])) == "PS5"
+
+
+@pytest.mark.asyncio
+async def test_software_game_prep_uses_raw_filename_metadata(tmp_path) -> None:
+    release_path = tmp_path / "Native_Instruments_SuperStarSaw_1.0.0_[HCiSO].dmg"
+    meta = Meta(
+        path=str(release_path),
+        filename="Native Instruments SuperStarSaw 1 0 0 [HCiSO] dmg",
+        title="Native Instruments SuperStarSaw 1 0 0 [HCiSO] dmg",
+        filelist=[str(release_path)],
+        unattended=True,
+    )
+
+    with patch("src.prep_game.IGDBAPI.search_game", new=AsyncMock(return_value=[])) as search:
+        await gather_game_prep(
+            meta,
+            str(release_path),
+            str(tmp_path),
+            {"DEFAULT": {"twitch_client_id": "client", "twitch_client_secret": "secret"}},
+        )
+
+    search.assert_awaited_once_with("Native Instruments SuperStarSaw")
+    assert meta.title == "Native Instruments SuperStarSaw"
+    assert meta.game_version == "v1.0.0"
+    assert meta.tag == "-HCiSO"
+    assert meta.platform == "MAC"

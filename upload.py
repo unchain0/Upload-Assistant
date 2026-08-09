@@ -2660,7 +2660,9 @@ async def do_the_thing(base_dir: str) -> None:
                 if not meta.site_check:
                     logger.info("we are not uploading.......")
                     if is_batch:
-                        item_outcomes[item_index] = (current_item_path, "skipped", "Uploading is disabled")
+                        tracker_statuses = [status for status in meta.tracker_status.values() if isinstance(status, Mapping)]
+                        skip_reasons = list(dict.fromkeys(str(status.get("skip_reason")) for status in tracker_statuses if status.get("skip_reason")))
+                        item_outcomes[item_index] = (current_item_path, "skipped", "; ".join(skip_reasons) or "Uploading is disabled")
                         processed_files_count += 1
                         skipped_files_count += 1
                         logger.info(f"[cyan]Processed {processed_files_count}/{total_files} files with {skipped_files_count} skipped uploading.\n\n")

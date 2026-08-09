@@ -53,6 +53,15 @@ def clean_game_title(value: str) -> str:
     return title.title() if title and title == title.lower() else title
 
 
+def extract_release_group(value: str) -> str:
+    release_name = re.sub(r"(?i)\.(?:dmg|pkg|iso|rar|zip|7z)$", "", Path(str(value or "")).name)
+    bracket_match = re.search(r"\[([A-Za-z0-9]+)\]$", release_name)
+    if bracket_match:
+        return bracket_match.group(1)
+    dash_match = re.search(r"-([A-Za-z0-9]+)$", release_name)
+    return dash_match.group(1) if dash_match else ""
+
+
 def extract_version_from_text(text: str) -> str | None:
     if not text:
         return None
@@ -423,10 +432,14 @@ async def gather_game_prep(
     meta.sd = 0
     meta.valid_mi_settings = True
 
-    title_source = str(meta.title or meta.filename or meta.path or videopath or "")
+    title_source = str(meta.path or videopath or meta.filename or meta.title or "")
     fallback_title = clean_game_title(title_source)
-    if fallback_title and not meta.title:
+    if fallback_title:
         meta.title = fallback_title
+    if not meta.tag:
+        release_group = extract_release_group(title_source)
+        if release_group:
+            meta.tag = f"-{release_group}"
 
     cli_overrides = {
         "title": bool(meta.title),
@@ -459,8 +472,11 @@ async def gather_game_prep(
         version = normalize_version(meta.game_version)
         logger.info(f"[green]Game version (manual override): {version}[/green]")
     else:
-        # Attempt to extract from directory name first
         if path_to_check:
+            version = extract_version_from_text(Path(path_to_check).name)
+
+        # Attempt to extract from directory name first
+        if not version and path_to_check:
             search_dir = path_to_check if Path(path_to_check).is_dir() else str(Path(path_to_check).parent)
             if search_dir:
                 folder_name = Path(search_dir).name
@@ -508,7 +524,7 @@ async def gather_game_prep(
         return
 
     # Use title in meta (cleaned folder/file name) or extract from videopath
-    title_query = clean_game_title(str(meta.title or meta.filename or ""))
+    title_query = clean_game_title(str(meta.path or videopath or meta.filename or meta.title or ""))
     if not title_query and videopath:
         title_query = clean_game_title(videopath)
 
