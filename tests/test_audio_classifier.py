@@ -10,6 +10,7 @@ import pytest
 
 from src.meta import Meta
 from src.exceptions import ItemProcessingError
+from src.audio_classifier import detect_audio_category
 from src.prep_helpers import detect_disc_and_category
 
 
@@ -123,3 +124,25 @@ def test_ambiguous_audio_folder_fails_in_unattended_mode(tmp_path):
 
     with pytest.raises(ItemProcessingError, match="Could not determine if release is MUSIC or BOOK"):
         asyncio.run(detect_disc_and_category(prep, meta))
+
+
+def test_untagged_flac_release_in_lidarr_is_music(tmp_path):
+    release = tmp_path / "lidarr" / "Sweet Trip - A Tiny House (2021) - WEB FLAC"
+    release.mkdir(parents=True)
+    (release / "track.flac").write_bytes(b"not tagged")
+
+    result = asyncio.run(detect_audio_category(Meta(), release))
+
+    assert result.category == "MUSIC"
+    assert "Lidarr library path" in result.evidence
+
+
+def test_structured_untagged_flac_release_name_is_music(tmp_path):
+    release = tmp_path / "Ross From Friends - Tread (2021) [FLAC]"
+    release.mkdir()
+    (release / "track.flac").write_bytes(b"not tagged")
+
+    result = asyncio.run(detect_audio_category(Meta(), release))
+
+    assert result.category == "MUSIC"
+    assert "structured artist/album music release name" in result.evidence

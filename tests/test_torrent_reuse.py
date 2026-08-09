@@ -1,5 +1,6 @@
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from torf import Torrent
@@ -7,6 +8,22 @@ from torf import Torrent
 from src.clients import Clients
 from src.meta import Meta
 from src.torrentcreate import TorrentCreator
+
+
+@pytest.mark.asyncio
+async def test_qbittorrent_search_propagates_keyboard_interrupt(tmp_path, monkeypatch):
+    config = {
+        "DEFAULT": {"default_torrent_client": "qbit", "prefer_max_16_torrent": False},
+        "TRACKERS": {},
+        "TORRENT_CLIENTS": {"qbit": {"torrent_client": "qbit", "enable_search": True}},
+    }
+    clients = Clients(config)
+    monkeypatch.setattr(clients, "init_qbittorrent_client", AsyncMock(return_value=object()))
+    monkeypatch.setattr(clients, "search_qbit_for_torrent", AsyncMock(side_effect=KeyboardInterrupt))
+    meta = Meta(base_dir=str(tmp_path), uuid="interrupt", client="qbit")
+
+    with pytest.raises(KeyboardInterrupt):
+        await clients._search_single_client_for_torrent(meta, "qbit", False, False, False, None)
 
 
 @pytest.mark.asyncio

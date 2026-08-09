@@ -268,6 +268,20 @@ async def detect_audio_category(_meta: Any, path: Path | str) -> AudioCategoryRe
         book_score += 2.0
         book_evidence.append(f"parent directory hint ('{path_obj.name}')")
 
+    path_components = {part.casefold() for part in path_obj.parts}
+    if "lidarr" in path_components:
+        music_score += 6.0
+        music_evidence.append("Lidarr library path")
+
+    release_name = path_obj.name.replace("_", " ")
+    has_artist_album_shape = bool(re.search(r"\S\s+-\s+\S", release_name))
+    has_music_release_marker = bool(
+        re.search(r"(?:\b(?:16|24)BIT\b|\b(?:WEB|CD)[ ._-]*(?:FLAC|MP3|AAC)\b|\[(?:FLAC|MP3|AAC)\])", release_name, re.I)
+    )
+    if has_artist_album_shape and has_music_release_marker:
+        music_score += 3.0
+        music_evidence.append("structured artist/album music release name")
+
     # B. Metadata and Technical characteristics inspection
     sample_files = audio_files[:30]
     genres_found: set[str] = set()

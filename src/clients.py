@@ -466,9 +466,9 @@ class Clients(QbittorrentClientMixin, RtorrentClientMixin, DelugeClientMixin, Tr
 
             except KeyboardInterrupt:
                 logger.info("[bold red]Search cancelled by user")
-                found_hash = None
                 if qbt_session:
                     await qbt_session.aclose()
+                raise
             except TimeoutError:
                 if qbt_session:
                     await qbt_session.aclose()
