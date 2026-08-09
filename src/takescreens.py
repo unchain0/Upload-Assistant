@@ -941,6 +941,18 @@ async def load_local_cover_if_exists(path: str, dest_path: str) -> bool:
 async def extract_embedded_cover_from_audiobook(meta: Meta, dest_path: str, confirmed_only: bool = False) -> bool:
     import mutagen
 
+    def _extract_mp4_cover_without_chapters(audio_path: str) -> bool:
+        from mutagen.mp4 import Atoms, MP4Tags
+
+        with Path(audio_path).open("rb") as fileobj:
+            tags = MP4Tags(Atoms(fileobj), fileobj)
+        covers = tags.get("covr", [])
+        if not covers:
+            return False
+        with Path(dest_path).open("wb") as output:
+            output.write(bytes(covers[0]))
+        return True
+
     def _extract():
         filelist = meta.filelist
         if not filelist:
@@ -1010,6 +1022,12 @@ async def extract_embedded_cover_from_audiobook(meta: Meta, dest_path: str, conf
                             f.write(bytes(item))
                         return True
             except Exception as e:
+                if ext in {".m4a", ".m4b"}:
+                    try:
+                        if _extract_mp4_cover_without_chapters(audio_path):
+                            return True
+                    except Exception as fallback_error:
+                        logger.debug(f"[yellow]MP4 cover fallback failed for {audio_path}: {fallback_error}[/yellow]")
                 logger.debug(f"[yellow]Error extracting from {audio_path}: {e}[/yellow]")
         return False
 

@@ -38,7 +38,7 @@ from src.add_comparison import ComparisonManager
 from src.args import Args, read_paths_from_stdin
 from src.artwork import is_public_http_url, is_valid_cover_image
 from src.audio_spectrogram import process_audio_spectrograms
-from src.book_prep import detect_newspaper, is_valid_book_language, resolve_book_language
+from src.book_prep import detect_newspaper, is_valid_book_language, missing_book_fields, resolve_book_language
 from src.cleanup import cleanup_manager
 from src.clients import Clients
 from src.cogs.redaction import PathAwareEncoder, Redaction
@@ -536,18 +536,7 @@ async def _prompt_book_meta(meta: Meta) -> None:
     torrent name is rebuilt so the confirmation screen and the per-tracker
     uploads reflect the new values.
     """
-    book_required_fields = ["title", "author", "year", "book_language"]
-    if meta.audiobook and ("CAPYBARABR" in meta.trackers or "ZENITH" in meta.trackers):
-        book_required_fields.append("narrator")
-    book_missing: list[str] = []
-    for f in book_required_fields:
-        val = getattr(meta, f, None)
-        if not val or str(val).strip().lower() in ("", "none", "null"):
-            book_missing.append(f)
-        elif f == "book_language":
-            iso = meta.book_language_iso
-            if not is_valid_book_language(str(val), iso):
-                book_missing.append(f)
+    book_missing = missing_book_fields(meta)
     has_artwork = bool(is_valid_cover_image(meta.artwork_path) or _is_http_url(meta.artwork_url))
     if not has_artwork:
         book_missing.append("artwork")
@@ -559,7 +548,7 @@ async def _prompt_book_meta(meta: Meta) -> None:
         logger.info(
             f"[yellow]BOOK upload: the following required fields are missing: "
             f"{', '.join(book_missing)}. "
-            f"Re-run with -btitle / -author / -year / -blang / --book-cover to supply them, "
+            f"Re-run with -btitle / -author / -year / -blang / --narrator / --publisher / --isbn / --asin / --book-cover to supply them, "
             f"or trackers that require them will be skipped.[/yellow]"
         )
         return
@@ -582,6 +571,18 @@ async def _prompt_book_meta(meta: Meta) -> None:
                         name_needs_rebuild = True
                         break
                     logger.info("[red]Invalid language. Please try again.[/red]")
+            elif field == "isbn_or_asin":
+                value = (CLI_UI.ask_string("Enter ISBN or ASIN (leave blank to skip): ") or "").strip()
+                if value:
+                    from src.book_extractors import validate_isbn_checksum
+
+                    validated_isbn = validate_isbn_checksum(value)
+                    if validated_isbn:
+                        meta.isbn = validated_isbn
+                    elif re.fullmatch(r"[A-Z0-9]{10}", value.upper()):
+                        meta.asin = value.upper()
+                    else:
+                        logger.info("[red]Invalid ISBN or ASIN. Skipping identifier.[/red]")
             elif field == "year":
                 while True:
                     value = (CLI_UI.ask_string("Enter year (leave blank to skip): ") or "").strip()
@@ -2930,7 +2931,7 @@ async def do_the_thing(base_dir: str) -> None:
                         await save_processed_file(log_file, current_item_path)
 
             if is_batch and item_index not in item_outcomes:
-                item_outcomes[item_index] = (current_item_path, "skipped" if meta.site_check else "successful", "Site check only" if meta.site_check else "")
+                item_outcomes[item_index] = (current_item_path, "checked" if meta.site_check else "successful", "Site check completed" if meta.site_check else "")
 
             if "limit_queue" in meta and meta.limit_queue > 0 and (processed_files_count - skipped_files_count) >= meta.limit_queue:
                 for remaining_index in range(item_index + 1, queue_size):
@@ -2962,11 +2963,12 @@ async def do_the_thing(base_dir: str) -> None:
         if is_batch:
             total_count = queue_size
             success_count = sum(outcome == "successful" for _path, outcome, _detail in item_outcomes.values())
+            checked_count = sum(outcome == "checked" for _path, outcome, _detail in item_outcomes.values())
             partial_count = sum(outcome == "partial" for _path, outcome, _detail in item_outcomes.values())
             failed_count = sum(outcome in {"failed", "skipped"} for _path, outcome, _detail in item_outcomes.values())
             logger.info(
                 f"[bold green]Batch summary: total queued {total_count}, fully successful {success_count}, "
-                f"partial {partial_count}, skipped/failed {failed_count}[/bold green]"
+                f"partial {partial_count}, skipped/failed {failed_count}, site checks completed {checked_count}[/bold green]"
             )
             if partial_items:
                 logger.info("[bold yellow]Items with partial uploads:[/bold yellow]")

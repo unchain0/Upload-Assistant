@@ -216,6 +216,51 @@ def book_identity_from_path(path: str) -> tuple[str, str]:
     return author.strip(), title
 
 
+_IDENTITY_STOPWORDS = frozenset({"a", "an", "and", "as", "book", "for", "in", "life", "of", "the", "through", "to", "with", "you", "your"})
+
+
+def _identity_tokens(value: str) -> set[str]:
+    return {token for token in re.findall(r"[a-z0-9]+", value.casefold()) if len(token) > 2 and token not in _IDENTITY_STOPWORDS}
+
+
+def book_identity_conflict(meta: Meta, path: str) -> str | None:
+    path_author, path_title = book_identity_from_path(path)
+    if not path_author or not path_title or not meta.author or not meta.title:
+        return None
+
+    def normalize(value: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "", value.casefold())
+
+    if normalize(path_author) != normalize(str(meta.author)):
+        return None
+
+    path_tokens = _identity_tokens(path_title)
+    metadata_tokens = _identity_tokens(str(meta.title))
+    if len(path_tokens) < 2 or len(metadata_tokens) < 2 or path_tokens & metadata_tokens:
+        return None
+    return f"Book metadata title '{meta.title}' conflicts with source title '{path_title}' for author '{meta.author}'"
+
+
+def missing_book_fields(meta: Meta) -> list[str]:
+    missing: list[str] = []
+    for field in ("title", "author", "year", "book_language"):
+        value = getattr(meta, field, None)
+        if not value or str(value).strip().lower() in {"", "none", "null"}:
+            missing.append(field)
+        elif field == "book_language" and not is_valid_book_language(str(value), str(meta.book_language_iso or "")):
+            missing.append(field)
+
+    if meta.audiobook:
+        for field in ("narrator", "publisher"):
+            value = getattr(meta, field, None)
+            if not value or str(value).strip().lower() in {"", "none", "null"}:
+                missing.append(field)
+        asin = str(meta.asin or "").strip().upper()
+        if not validate_isbn_checksum(str(meta.isbn or "")) and not re.fullmatch(r"[A-Z0-9]{10}", asin):
+            missing.append("isbn_or_asin")
+    return missing
+
+
 async def gather_book_prep(
     meta: Meta,
     videopath: str,
@@ -698,6 +743,11 @@ async def gather_book_prep(
                         meta[key] = val
                     if key == "year" and "search_year" not in openlibrary_data:
                         meta.search_year = int(val)
+
+    if meta.unattended and not cli_overrides["title"]:
+        conflict = book_identity_conflict(meta, str(meta.path or videopath))
+        if conflict:
+            raise ItemProcessingError(conflict, str(meta.path or videopath))
 
     if meta.audiobook:
         filelist = meta.filelist

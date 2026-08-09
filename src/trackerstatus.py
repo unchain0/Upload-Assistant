@@ -145,18 +145,9 @@ class TrackerStatusManager:
 
                 # Check for missing required BOOK fields in unattended mode
                 if local_meta.get("category") == "BOOK" and local_meta.get("unattended", False):
-                    from src.book_prep import is_valid_book_language
+                    from src.book_prep import missing_book_fields
 
-                    book_required_fields = ["title", "author", "year", "book_language"]
-                    book_missing: list[str] = []
-                    for f in book_required_fields:
-                        val = local_meta.get(f)
-                        if not val or str(val).strip().lower() in ("", "none", "null"):
-                            book_missing.append(f)
-                        elif f == "book_language":
-                            iso = local_meta.get("book_language_iso", "")
-                            if not is_valid_book_language(str(val), str(iso)):
-                                book_missing.append(f)
+                    book_missing = missing_book_fields(Meta(**local_meta))
                     if book_missing:
                         logger.info(f"[yellow]{tracker_name}: Skipping upload because required BOOK fields are missing: {', '.join(book_missing)}[/yellow]")
                         local_tracker_status["skipped"] = True

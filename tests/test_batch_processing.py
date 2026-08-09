@@ -163,6 +163,25 @@ async def test_single_item_failure_still_aborts(tmp_path: Path, monkeypatch: pyt
 
 
 @pytest.mark.asyncio
+async def test_site_check_batch_reports_completed_checks_instead_of_failures(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    queue = [str(tmp_path / "first.mkv"), str(tmp_path / "second.mkv")]
+
+    info_messages, process_meta_mock = _configure_do_the_thing_stubs(
+        monkeypatch,
+        queue,
+        lambda _meta, _base_dir: True,
+        meta_overrides={"site_check": True, "debug": True},
+    )
+    monkeypatch.setattr(sys, "argv", ["upload.py", *queue])
+
+    await upload.do_the_thing(upload.base_dir)
+
+    assert process_meta_mock.call_count == 2
+    assert any("skipped/failed 0, site checks completed 2" in message for message in info_messages)
+    assert not any("Failed items:" in message for message in info_messages)
+
+
+@pytest.mark.asyncio
 async def test_ctrl_c_stops_batch_processing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     queue = [str(tmp_path / "first_ok.mkv"), str(tmp_path / "second_ok.mkv")]
 

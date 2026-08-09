@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from src.book_extractors import extract_isbn_from_pdf, extract_pdf_page_count, validate_isbn_checksum
-from src.book_prep import book_identity_from_path, resolve_book_filelist
+from src.book_prep import book_identity_conflict, book_identity_from_path, missing_book_fields, resolve_book_filelist
 from src.exceptions import ItemProcessingError
 from src.meta import Meta
 from src.myanonamouse import MyAnonamouseManager
@@ -87,6 +87,54 @@ def test_book_identity_falls_back_to_directory_name(tmp_path) -> None:
     release.mkdir()
 
     assert book_identity_from_path(str(release)) == ("Ian Stewart", "How to Cut a Cake: And Other Mathematical Conundrums")
+
+
+def test_book_identity_rejects_unrelated_enriched_title_for_same_author(tmp_path) -> None:
+    release = tmp_path / "Gary John Bishop - Wise as Fu_k; Simple Truths to Guide You Through the Sh_tstorms of Life"
+    meta = Meta(author="Gary John Bishop", title="Stop Doing That Sh*t: End Self-Sabotage and Demand Your Life Back")
+
+    assert book_identity_conflict(meta, str(release)) is not None
+
+
+def test_book_identity_accepts_matching_enriched_title(tmp_path) -> None:
+    release = tmp_path / "Jordan B. Peterson - 12 Rules for Life_ An Antidote to Chaos"
+    meta = Meta(author="Jordan B. Peterson", title="12 Rules for Life: An Antidote to Chaos")
+
+    assert book_identity_conflict(meta, str(release)) is None
+
+
+def test_unattended_audiobook_requires_complete_edition_metadata() -> None:
+    meta = Meta(
+        audiobook=True,
+        title="Meditations",
+        author="Marcus Aurelius",
+        year=2011,
+        book_language="English",
+        book_language_iso="eng",
+        asin="invalid",
+    )
+
+    assert missing_book_fields(meta) == ["narrator", "publisher", "isbn_or_asin"]
+
+
+@pytest.mark.asyncio
+async def test_m4b_cover_fallback_ignores_malformed_chapter_title(tmp_path, monkeypatch) -> None:
+    import mutagen
+    import mutagen.mp4
+
+    from src.takescreens import extract_embedded_cover_from_audiobook
+
+    audiobook = tmp_path / "book.m4b"
+    artwork = tmp_path / "cover.jpg"
+    audiobook.write_bytes(b"m4b")
+    monkeypatch.setattr(mutagen, "File", lambda _path: (_ for _ in ()).throw(ValueError("chapter 0 title: invalid UTF-8")))
+    monkeypatch.setattr(mutagen.mp4, "Atoms", lambda _fileobj: object())
+    monkeypatch.setattr(mutagen.mp4, "MP4Tags", lambda _atoms, _fileobj: {"covr": [b"cover-bytes"]})
+
+    result = await extract_embedded_cover_from_audiobook(Meta(filelist=[str(audiobook)]), str(artwork))
+
+    assert result is True
+    assert artwork.read_bytes() == b"cover-bytes"
 
 
 def test_scene_tv_rar_is_not_auto_detected_as_game(tmp_path):
