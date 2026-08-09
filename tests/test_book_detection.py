@@ -23,6 +23,17 @@ def test_validate_isbn_checksum_rejects_mam_numeric_id() -> None:
     assert validate_isbn_checksum("465097588") is None
 
 
+def test_mam_title_cleanup_removes_book_extension() -> None:
+    metadata = MyAnonamouseManager()._parse_torrent_info(
+        {
+            "title": "Comece pelo porque - Simon Sinek.pdf",
+            "author_info": '{"1": "Comece pelo porque"}',
+        }
+    )
+
+    assert metadata["title"] == "Simon Sinek"
+
+
 @pytest.mark.parametrize("extension", [".azw", ".azw3", ".fb2", ".html", ".chm", ".djvu", ".doc", ".docx", ".kfx", ".lit", ".pdb", ".txt", ".rtf"])
 def test_azw_files_are_detected_as_books(extension, tmp_path):
     book = tmp_path / f"example{extension}"
@@ -132,6 +143,13 @@ def test_book_identity_falls_back_to_directory_name(tmp_path) -> None:
     release.mkdir()
 
     assert book_identity_from_path(str(release)) == ("Ian Stewart", "How to Cut a Cake: And Other Mathematical Conundrums")
+
+
+def test_book_identity_detects_title_before_author_and_removes_extension(tmp_path) -> None:
+    release = tmp_path / "Comece pelo porque - Simon Sinek.pdf"
+    release.touch()
+
+    assert book_identity_from_path(str(release)) == ("Simon Sinek", "Comece pelo porque")
 
 
 def test_book_identity_rejects_unrelated_enriched_title_for_same_author(tmp_path) -> None:

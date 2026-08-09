@@ -24,8 +24,6 @@ def _normalize_mam_isbn(value: Any) -> str | None:
 
 def _clean_mam_title(value: Any, author: str = "") -> str:
     title = html.unescape(str(value or "")).strip()
-    if not re.search(r"\.(?:epub|pdf|mobi|azw3?|fb2|cb[rz])$", title, re.IGNORECASE):
-        return title
     title = re.sub(r"\.(?:epub|pdf|mobi|azw3?|fb2|cb[rz])$", "", title, flags=re.IGNORECASE).strip()
     title = re.sub(r"\s*\((?:epub|pdf|mobi|azw3?|fb2|cb[rz])\)\s*$", "", title, flags=re.IGNORECASE)
     title = re.sub(r"\s+-\s+(?:97[89]\d{10}|\d{9}[\dX])\s*$", "", title, flags=re.IGNORECASE)

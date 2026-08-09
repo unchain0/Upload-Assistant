@@ -231,6 +231,24 @@ def _unescape_meta_val(val: Any) -> str | None:
     return html.unescape(str(val)).strip()
 
 
+_AUTHOR_PARTICLES = frozenset({"al", "da", "de", "del", "della", "di", "dos", "du", "la", "le", "of", "van", "von", "y"})
+_BOOK_FORMAT_SUFFIX = re.compile(r"\s*(?:\.(?:azw3?|cb[rz]|djvu|epub|fb2|html?|kfx|lit|mobi|pdf|rtf|txt)|\((?:azw3?|cb[rz]|djvu|epub|fb2|kfx|mobi|pdf)\))\s*$", re.IGNORECASE)
+
+
+def _author_likelihood(value: str) -> int:
+    words = re.findall(r"[^\W\d_]+(?:['-][^\W\d_]+)*", value, flags=re.UNICODE)
+    if not 2 <= len(words) <= 6:
+        return 0
+    substantive = [word for word in words if word.casefold() not in _AUTHOR_PARTICLES]
+    if not substantive or any(not word[0].isupper() for word in substantive):
+        return -1
+    return 3 if len(substantive) <= 3 else 1
+
+
+def _strip_book_format_suffix(value: str) -> str:
+    return _BOOK_FORMAT_SUFFIX.sub("", value).strip()
+
+
 def book_identity_from_path(path: str) -> tuple[str, str]:
     source = Path(path)
     name = source.name if source.is_dir() else source.stem
@@ -238,7 +256,8 @@ def book_identity_from_path(path: str) -> tuple[str, str]:
     parts = re.split(r"\s+-\s+", name, maxsplit=1)
     if len(parts) != 2:
         return "", ""
-    author, title = parts
+    first, second = parts
+    author, title = (second, first) if _author_likelihood(second) > _author_likelihood(first) else (first, second)
     title = re.sub(r"_\s+", ": ", title).strip()
     title_parts = re.split(r"\s+-\s+", title)
     if len(title_parts) > 1 and validate_isbn_checksum(title_parts[-1]):
@@ -253,15 +272,16 @@ def _identity_tokens(value: str) -> set[str]:
     return {token for token in re.findall(r"[a-z0-9]+", value.casefold()) if len(token) > 2 and token not in _IDENTITY_STOPWORDS}
 
 
+def _normalized_book_identity(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", value.casefold())
+
+
 def book_identity_conflict(meta: Meta, path: str) -> str | None:
     path_author, path_title = book_identity_from_path(path)
     if not path_author or not path_title or not meta.author or not meta.title:
         return None
 
-    def normalize(value: str) -> str:
-        return re.sub(r"[^a-z0-9]+", "", value.casefold())
-
-    if normalize(path_author) != normalize(str(meta.author)):
+    if _normalized_book_identity(path_author) != _normalized_book_identity(str(meta.author)):
         return f"Book metadata author '{meta.author}' conflicts with source author '{path_author}'"
 
     path_tokens = _identity_tokens(path_title)
@@ -828,6 +848,18 @@ async def gather_book_prep(
                         meta[key] = val
                     if key == "year" and "search_year" not in openlibrary_data:
                         meta.search_year = int(val)
+
+    meta.title = _strip_book_format_suffix(str(meta.title or ""))
+    if (
+        fallback_author
+        and fallback_title
+        and not cli_overrides["author"]
+        and not cli_overrides["title"]
+        and _normalized_book_identity(str(meta.author or "")) == _normalized_book_identity(fallback_title)
+        and _normalized_book_identity(meta.title) == _normalized_book_identity(fallback_author)
+    ):
+        meta.author = fallback_author
+        meta.title = fallback_title
 
     if meta.unattended and not cli_overrides["title"]:
         conflict = book_identity_conflict(meta, str(meta.path or videopath))
