@@ -129,7 +129,7 @@ class RailgunPT(NEXUSPHP):
             source_size = int(meta.source_size)
         except (TypeError, ValueError, OverflowError):
             source_size = 0
-        if 0 < source_size < 100 * 1024 * 1024:
+        if source_size < 100 * 1024 * 1024:
             logger.info(f"{self.tracker}: [bold red]Video torrents must be at least 100 MiB.[/bold red]")
             return False
 
@@ -157,13 +157,16 @@ class RailgunPT(NEXUSPHP):
             logger.info(f"{self.tracker}: [bold red]An individual sample cannot be uploaded as the main torrent.[/bold red]")
             return False
         main_video_paths = [path for path in video_paths if "sample" not in path.stem.casefold()]
+        if not meta.is_disc and not main_video_paths:
+            logger.info(f"{self.tracker}: [bold red]A non-disc upload must contain at least one recognized video file.[/bold red]")
+            return False
 
         release_context = " ".join(str(value or "") for value in (meta.name, meta.type, meta.source, meta.uuid))
         if self._contains_marker(release_context, self._LOW_QUALITY_MARKERS):
             logger.info(f"{self.tracker}: [bold red]CAM/TC/TS/SCR/R5 and similar low-quality sources are not allowed.[/bold red]")
             return False
-        codec_context = " ".join(str(value or "") for value in (meta.video_codec, meta.video_encode))
-        if "realvideo" in codec_context.casefold() or self._normalized_token(codec_context) in {"rv", "rv10", "rv20", "rv30", "rv40"}:
+        codec_values = (str(meta.video_codec or ""), str(meta.video_encode or ""))
+        if any("realvideo" in value.casefold() or self._normalized_token(value) in {"rv", "rv10", "rv20", "rv30", "rv40"} for value in codec_values):
             logger.info(f"{self.tracker}: [bold red]RealVideo encodes are not allowed.[/bold red]")
             return False
 
@@ -192,10 +195,16 @@ class RailgunPT(NEXUSPHP):
                 return False
 
         if meta.tv_pack and len(main_video_paths) > 1:
-            resolutions = {match.group(1).casefold() for path in main_video_paths if (match := re.search(r"\b(480[pi]|576[pi]|720p|1080[pi]|2160p)\b", path.name, re.IGNORECASE))}
-            sources = self._pack_tokens(main_video_paths, self._PACK_SOURCE_TOKENS)
-            codecs = self._pack_tokens(main_video_paths, self._PACK_CODEC_TOKENS)
-            if any(len(values) > 1 for values in (resolutions, sources, codecs)):
+            resolutions = [match.group(1).casefold() if (match := re.search(r"\b(480[pi]|576[pi]|720p|1080[pi]|2160p)\b", path.name, re.IGNORECASE)) else "" for path in main_video_paths]
+            sources = [self._pack_tokens([path], self._PACK_SOURCE_TOKENS) for path in main_video_paths]
+            codecs = [self._pack_tokens([path], self._PACK_CODEC_TOKENS) for path in main_video_paths]
+            if (
+                not all(resolutions)
+                or len(set(resolutions)) > 1
+                or any(len(values) != 1 for values in sources + codecs)
+                or len({next(iter(values)) for values in sources}) > 1
+                or len({next(iter(values)) for values in codecs}) > 1
+            ):
                 logger.info(f"{self.tracker}: [bold red]Packed videos must use the same source type, resolution, and video codec.[/bold red]")
                 return False
 

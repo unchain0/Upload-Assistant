@@ -13,11 +13,14 @@ import upload
 from src.exceptions import ItemProcessingError
 from src.meta import Meta
 
+_DEFAULT_META_QUEUE = object()
+
 
 def _configure_do_the_thing_stubs(
     monkeypatch: pytest.MonkeyPatch,
     queue: list[str],
     process_meta: Any,
+    meta_queue: list[str] | object | None = _DEFAULT_META_QUEUE,
 ) -> tuple[list[str], AsyncMock]:
     queue_paths = [str(path) for path in queue]
     for path in queue_paths:
@@ -27,7 +30,8 @@ def _configure_do_the_thing_stubs(
 
     def fake_parse(argv: list[str], meta: Meta) -> tuple[Meta, Any, list[str]]:
         first = argv[0] if argv else queue_paths[0]
-        parsed = Meta(path=first, queue=[], base_dir=upload.base_dir, trackers=[], site_check=False)
+        parsed_queue = [] if meta_queue is _DEFAULT_META_QUEUE else meta_queue
+        parsed = Meta(path=first, queue=parsed_queue, base_dir=upload.base_dir, trackers=[], site_check=False)
         return parsed, None, []
 
     async def fake_handle_queue(_path: str, _meta: Meta, _paths: list[str], _base_dir: str) -> tuple[list[str], str | None]:
@@ -88,7 +92,7 @@ async def test_batch_continues_when_first_item_fails(tmp_path: Path, monkeypatch
 
     assert process_meta_mock.call_count == 2
     assert any(
-        "Batch summary: total queued 2, fully successful 1, partial 0, skipped/failed 1" in message
+        "Batch summary: total queued 2, fully successful 0, partial 0, skipped/failed 2" in message
         for message in info_messages
     )
     assert any("first_fail.mkv" in message and "No Video files found" in message for message in info_messages)
@@ -110,7 +114,7 @@ async def test_batch_continues_when_intermediate_item_fails(tmp_path: Path, monk
 
     assert process_meta_mock.call_count == 3
     assert any(
-        "Batch summary: total queued 3, fully successful 2, partial 0, skipped/failed 1" in message
+        "Batch summary: total queued 3, fully successful 0, partial 0, skipped/failed 3" in message
         for message in info_messages
     )
     assert any("middle_fail.mkv" in message and "No Video files found" in message for message in info_messages)
@@ -209,4 +213,27 @@ async def test_batch_summary_reports_partial_tracker_failure(tmp_path: Path, mon
     await upload.do_the_thing(upload.base_dir)
 
     assert any("fully successful 1, partial 1, skipped/failed 0" in message for message in info_messages)
+
+
+@pytest.mark.asyncio
+async def test_batch_records_tracker_outcomes_without_meta_queue(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    queue = [str(tmp_path / "partial.epub"), str(tmp_path / "complete.epub")]
+
+    def fake_process_meta(meta: Meta, _base_dir: str) -> Any:
+        meta.we_are_uploading = True
+        meta.trackers = ["GOOD", "BAD"] if "partial" in str(meta.path) else ["GOOD"]
+        meta.tracker_status = {tracker: {"upload": True} for tracker in meta.trackers}
+        return True
+
+    async def fake_process_trackers(meta: Meta, *_args: Any, **_kwargs: Any) -> None:
+        for tracker in meta.trackers:
+            meta.tracker_status[tracker]["upload_success"] = tracker == "GOOD"
+
+    info_messages, _ = _configure_do_the_thing_stubs(monkeypatch, queue, fake_process_meta, meta_queue=None)
+    monkeypatch.setattr(upload, "process_trackers", fake_process_trackers)
+    monkeypatch.setattr(sys, "argv", ["upload.py", *queue])
+
+    await upload.do_the_thing(upload.base_dir)
+
+    assert any("total queued 2, fully successful 1, partial 1, skipped/failed 0" in message for message in info_messages)
     assert any("partial.epub" in message and "BAD" in message for message in info_messages)

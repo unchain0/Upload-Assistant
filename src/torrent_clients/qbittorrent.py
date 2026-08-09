@@ -593,6 +593,7 @@ class QbittorrentClientMixin:
                     torrent_path = None
 
                 if valid:
+                    torrent_file_path = Path(torrent_path or torrent_file_path)
                     if meta.subtitle_files and not self._torrent_includes_all_local_subtitles(str(torrent_file_path), meta):
                         if self._torrent_has_no_subtitles(str(torrent_file_path)):
                             video_only_fallback = torrent_hash
@@ -609,7 +610,7 @@ class QbittorrentClientMixin:
                             best_piece_size_raw_value: Any = best_match.get("piece_size") if best_match else None
                             best_piece_size: int | None = best_piece_size_raw_value if isinstance(best_piece_size_raw_value, int) else None
                             if best_match is None or (best_piece_size is not None and piece_size < best_piece_size):
-                                best_match = {"hash": torrent_hash, "torrent_path": torrent_path if torrent_path else torrent_file_path, "piece_size": piece_size}
+                                best_match = {"hash": torrent_hash, "torrent_path": torrent_file_path, "piece_size": piece_size}
                                 logger.info(f"[green]Updated best match: {best_match}")
                         except Exception as e:
                             logger.info(f"[bold red]Error reading torrent data for {torrent_hash}: {e}")

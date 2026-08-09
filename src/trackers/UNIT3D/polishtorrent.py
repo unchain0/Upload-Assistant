@@ -72,7 +72,8 @@ class PolishTorrent(UNIT3D):
     def _contains_archive_file(filelist: list[Any]) -> str:
         for item in filelist:
             path = Path(str(item))
-            if path.suffix.lower() in PolishTorrent._ARCHIVE_EXTENSIONS:
+            lowered_name = path.name.casefold()
+            if path.suffix.lower() in PolishTorrent._ARCHIVE_EXTENSIONS or re.search(r"(?:\.r\d{2,}|(?:\.rar|\.zip|\.7z)\.\d{3,})$", lowered_name):
                 return path.name
         return ""
 
@@ -190,7 +191,10 @@ class PolishTorrent(UNIT3D):
         if not isinstance(image_list, (list, tuple)):
             logger.info(f"{self.tracker}: [bold red]Screenshot metadata is invalid.[/bold red]")
             return False
-        if category in {"MOVIE", "TV"} and image_list:
+        if category in {"MOVIE", "TV"}:
+            if len(image_list) < screenshot_count:
+                logger.info(f"{self.tracker}: [bold red]{self.tracker} requires metadata for every required screenshot.[/bold red]")
+                return False
             if not all(PolishTorrent._is_allowed_screenshot_image(entry) for entry in image_list):
                 logger.info(
                     f"{self.tracker}: [bold red]{self.tracker} requires screenshot uploads in .PNG or .TIFF and the current image metadata contains unsupported formats.[/bold red]"

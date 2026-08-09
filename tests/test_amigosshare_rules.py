@@ -58,11 +58,14 @@ async def run_checks(
     *,
     confirm_result: bool | None = None,
     guard_language_call: bool = False,
+    guard_video_language_call: bool = False,
 ) -> bool:
     client = tracker()
     try:
         if guard_language_call:
             client.common.check_language_requirements = AsyncMock(side_effect=AssertionError("language check should not run"))
+        if guard_video_language_call:
+            client.common.check_portuguese_video_requirements = AsyncMock(side_effect=AssertionError("video language check should not run"))
 
         if confirm_result is not None:
             client.common.prompt_user_for_confirmation = AsyncMock(return_value=confirm_result)
@@ -148,8 +151,21 @@ def test_book_and_game_bypass_video_language_validation():
     book_meta = make_meta(category="BOOK", imdb_id=None, source_size=2 * 1024 * 1024, filelist=["Livro.pdf"])
     game_meta = make_meta(category="GAME", imdb_id=None, filelist=["Jogo.iso"])
 
-    assert asyncio.run(run_checks(book_meta, guard_language_call=True))
-    assert asyncio.run(run_checks(game_meta, guard_language_call=True))
+    assert asyncio.run(run_checks(book_meta, guard_video_language_call=True))
+    assert asyncio.run(run_checks(game_meta, guard_video_language_call=True))
+
+
+@pytest.mark.parametrize("companion", ["release.nfo", "README.txt"])
+def test_amigosshare_rejects_standalone_crack_with_documentation(companion: str) -> None:
+    meta = make_meta(category="GAME", imdb_id=None, filelist=["Crack.exe", companion])
+
+    assert not asyncio.run(run_checks(meta, guard_video_language_call=True))
+
+
+def test_amigosshare_rejects_video_category_without_video_files() -> None:
+    meta = make_meta(filelist=["release.nfo"])
+
+    assert not asyncio.run(run_checks(meta, guard_language_call=True))
 
 
 def test_book_blocks_non_portuguese_description_when_unattended():

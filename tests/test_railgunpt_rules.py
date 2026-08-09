@@ -70,7 +70,8 @@ def test_railgunpt_normalizes_scalar_category_metadata():
 def test_railgunpt_enforces_video_minimum_size():
     assert _check(_movie_meta(source_size=100 * 1024 * 1024)) is True
     assert _check(_movie_meta(source_size=100 * 1024 * 1024 - 1)) is False
-    assert _check(_movie_meta(source_size=0)) is True
+    assert _check(_movie_meta(source_size=0)) is False
+    assert _check(_movie_meta(source_size=-1)) is False
 
 
 @pytest.mark.parametrize("marker", ["CAM", "TC", "TS", "SCR", "DVDSCR", "R5", "HalfCD"])
@@ -89,7 +90,10 @@ def test_railgunpt_rejects_archives_spam_realvideo_and_individual_samples():
     assert _check(_movie_meta(filelist=["release.rar"])) is False
     assert _check(_movie_meta(filelist=["downloaded from tracker.url"])) is False
     assert _check(_movie_meta(filelist=["movie.rmvb"], video_codec="RealVideo")) is False
+    assert _check(_movie_meta(video_codec="RV40", video_encode="x264")) is False
+    assert _check(_movie_meta(video_codec="AVC", video_encode="RealVideo 10")) is False
     assert _check(_movie_meta(filelist=["sample.mkv"])) is False
+    assert _check(_movie_meta(filelist=["release.nfo"])) is False
 
 
 def test_railgunpt_allows_permitted_archived_attachments_and_main_samples():
@@ -121,6 +125,9 @@ def test_railgunpt_requires_tv_season_episode_or_pack_token():
 
 def test_railgunpt_enforces_pack_consistency():
     files = ["Show.S01E01.1080p.HDTV.x264-GRP.mkv", "Show.S01E02.720p.HDTV.x264-GRP.mkv"]
+    assert _check(_tv_meta(name="Example Show S01 1080p HDTV x264-GRP", tv_pack=True, filelist=files)) is False
+
+    files = ["Show.S01E01.1080p.HDTV.x264-GRP.mkv", "Show.S01E02.1080p.HDTV-GRP.mkv"]
     assert _check(_tv_meta(name="Example Show S01 1080p HDTV x264-GRP", tv_pack=True, filelist=files)) is False
 
     files = ["Show.S01E01.1080p.HDTV.x264-GRP.mkv", "Show.S01E02.1080p.WEB-DL.x265-GRP.mkv"]

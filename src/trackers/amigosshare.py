@@ -853,7 +853,12 @@ class AmigosShare:
                 logger.info(f"{self.tracker}: [bold red]Demos, betas, freeware e software open source não são permitidos como torrent.[/bold red]")
                 return False
             standalone_markers = ("crack", "keygen", "patch", "update", "traducao", "tradução")
-            if paths and all(any(marker in path.stem.casefold() for marker in standalone_markers) for path in paths):
+            payload_paths = [
+                path
+                for path in paths
+                if path.suffix.casefold() != ".nfo" and path.name.casefold() not in {"readme", "readme.txt", "readme.md"}
+            ]
+            if payload_paths and all(any(marker in path.stem.casefold() for marker in standalone_markers) for path in payload_paths):
                 logger.info(f"{self.tracker}: [bold red]Cracks, keygens, patches e updates não podem ser lançados separadamente.[/bold red]")
                 return False
 
@@ -875,6 +880,9 @@ class AmigosShare:
         if category in ("MOVIE", "TV"):
             video_paths = [path for path in paths if path.suffix.casefold() in self._VIDEO_EXTENSIONS and "sample" not in path.stem.casefold()]
             if not getattr(meta, "is_disc", None):
+                if not video_paths:
+                    logger.info(f"{self.tracker}: [bold red]No recognized video file was found.[/bold red]")
+                    return False
                 invalid_name = next((path.name for path in video_paths if not self._has_valid_video_filename(path)), "")
                 if invalid_name:
                     logger.info(f"{self.tracker}: [bold red]Arquivo de vídeo fora do padrão técnico do ASC: {invalid_name}.[/bold red]")

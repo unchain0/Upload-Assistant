@@ -42,3 +42,4 @@ def test_common_tv_patterns_ignore_markers_embedded_in_codec_tokens():
     assert Common.count_tv_episodes(["Show.S01E02.mkv"]) == 1
     assert Common.extract_tv_seasons(["Show_S01E02.mkv"]) == {1}
     assert Common.count_tv_episodes(["Show_S01E02.mkv"]) == 1
+    assert Common.count_tv_episodes(["Show.S01E01E02E03.mkv"]) == 3

@@ -2414,9 +2414,10 @@ async def do_the_thing(base_dir: str) -> None:
         skipped_files_count = 0
         failed_items: list[tuple[str, str]] = []
         partial_items: list[tuple[str, str]] = []
+        item_outcomes: dict[int, tuple[str, str, str]] = {}
         base_meta = meta.copy()
 
-        for queue_item in queue_list:
+        for item_index, queue_item in enumerate(queue_list):
             total_files = queue_size
             current_item_path: str = ""
             tmp_path = ""
@@ -2532,6 +2533,7 @@ async def do_the_thing(base_dir: str) -> None:
             if item_error:
                 if is_batch and not _shutdown_requested:
                     failed_items.append((current_item_path, item_error))
+                    item_outcomes[item_index] = (current_item_path, "failed", item_error)
                 else:
                     if item_abort is not None:
                         raise item_abort
@@ -2570,6 +2572,7 @@ async def do_the_thing(base_dir: str) -> None:
             if item_error:
                 if is_batch and not _shutdown_requested:
                     failed_items.append((current_item_path, item_error))
+                    item_outcomes[item_index] = (current_item_path, "failed", item_error)
                     if "queue" in meta and meta.queue is not None:
                         processed_files_count += 1
                         skipped_files_count += 1
@@ -2589,6 +2592,9 @@ async def do_the_thing(base_dir: str) -> None:
             if not meta_success and not item_error:
                 item_error = "Metadata preparation failed."
             if not meta_success:
+                if is_batch:
+                    failed_items.append((current_item_path, item_error))
+                    item_outcomes[item_index] = (current_item_path, "failed", item_error)
                 if "queue" in meta and meta.queue is not None:
                     processed_files_count += 1
                     skipped_files_count += 1
@@ -2609,6 +2615,8 @@ async def do_the_thing(base_dir: str) -> None:
                     await process_cross_seeds(meta)
                 if not meta.site_check:
                     logger.info("we are not uploading.......")
+                    if is_batch:
+                        item_outcomes[item_index] = (current_item_path, "skipped", "Uploading is disabled")
                     if "queue" in meta and meta.queue is not None:
                         processed_files_count += 1
                         skipped_files_count += 1
@@ -2678,6 +2686,8 @@ async def do_the_thing(base_dir: str) -> None:
 
                 if successful_trackers < skip_uploading_int and not meta.debug:
                     logger.info(f"[red]Not enough successful trackers ({successful_trackers}/{skip_uploading_int}). No uploads being processed.[/red]")
+                    if is_batch:
+                        item_outcomes[item_index] = (current_item_path, "skipped", "Not enough eligible trackers")
                 else:
                     trackers_upper = [(t).upper() for t in meta.trackers]
                     # Partition trackers into torrent trackers and Usenet indexers
@@ -2798,7 +2808,7 @@ async def do_the_thing(base_dir: str) -> None:
                     if config["DEFAULT"].get("cross_seeding", True):
                         await process_cross_seeds(meta)
 
-                    if "queue" in meta and meta.queue is not None:
+                    if is_batch:
                         processed_files_count += 1
                         tracker_statuses = [status for status in meta.tracker_status.values() if isinstance(status, Mapping)]
                         upload_succeeded = any(status.get("upload_success") is True for status in tracker_statuses)
@@ -2809,16 +2819,22 @@ async def do_the_thing(base_dir: str) -> None:
                         ]
                         if not upload_succeeded and not meta.debug:
                             skipped_files_count += 1
-                            failed_items.append((current_item_path, f"No tracker upload succeeded ({', '.join(failed_trackers) or 'no eligible trackers'})"))
+                            failure_reason = f"No tracker upload succeeded ({', '.join(failed_trackers) or 'no eligible trackers'})"
+                            failed_items.append((current_item_path, failure_reason))
+                            item_outcomes[item_index] = (current_item_path, "failed", failure_reason)
                             logger.info(f"[yellow]Processed {processed_files_count}/{total_files} files; no tracker upload succeeded.[/yellow]")
                         elif failed_trackers and not meta.debug:
-                            partial_items.append((current_item_path, ", ".join(failed_trackers)))
+                            failed_tracker_names = ", ".join(failed_trackers)
+                            partial_items.append((current_item_path, failed_tracker_names))
+                            item_outcomes[item_index] = (current_item_path, "partial", failed_tracker_names)
                             logger.info(f"[yellow]Upload completed partially; failed trackers: {', '.join(failed_trackers)}.[/yellow]")
                         elif meta.debug:
+                            item_outcomes[item_index] = (current_item_path, "skipped", "Debug mode")
                             logger.info(f"[cyan]Processed {processed_files_count}/{total_files} files in debug mode; no tracker upload was attempted.[/cyan]")
                         elif "limit_queue" in meta and meta.limit_queue > 0:
                             logger.info(f"[cyan]Successfully uploaded {processed_files_count - skipped_files_count} of {meta.limit_queue} in limit with {total_files} files.")
                         else:
+                            item_outcomes[item_index] = (current_item_path, "successful", "")
                             logger.info(f"[cyan]Successfully uploaded {processed_files_count - skipped_files_count}/{total_files} files.")
                         if log_file and (not meta.debug or "debug" in Path(log_file).name):
                             if meta.site_upload_queue:
@@ -2854,6 +2870,9 @@ async def do_the_thing(base_dir: str) -> None:
                     else:
                         await save_processed_file(log_file, current_item_path)
 
+            if is_batch and item_index not in item_outcomes:
+                item_outcomes[item_index] = (current_item_path, "skipped" if meta.site_check else "successful", "Site check only" if meta.site_check else "")
+
             if "limit_queue" in meta and meta.limit_queue > 0 and (processed_files_count - skipped_files_count) >= meta.limit_queue:
                 if sanitize_meta:
                     try:
@@ -2877,11 +2896,12 @@ async def do_the_thing(base_dir: str) -> None:
             cleanup_manager.reset_terminal()
 
         if is_batch:
-            failed_count = len(failed_items)
-            partial_count = len(partial_items)
-            success_count = max(queue_size - failed_count - partial_count, 0)
+            total_count = len(item_outcomes)
+            success_count = sum(outcome == "successful" for _path, outcome, _detail in item_outcomes.values())
+            partial_count = sum(outcome == "partial" for _path, outcome, _detail in item_outcomes.values())
+            failed_count = sum(outcome in {"failed", "skipped"} for _path, outcome, _detail in item_outcomes.values())
             logger.info(
-                f"[bold green]Batch summary: total queued {queue_size}, fully successful {success_count}, "
+                f"[bold green]Batch summary: total queued {total_count}, fully successful {success_count}, "
                 f"partial {partial_count}, skipped/failed {failed_count}[/bold green]"
             )
             if partial_items:

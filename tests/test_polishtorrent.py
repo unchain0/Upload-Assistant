@@ -9,10 +9,14 @@ from src.trackers.UNIT3D.polishtorrent import PolishTorrent
 
 
 def _movie_meta(**kwargs):
+    images = [
+        {"raw_url": f"https://images.example/full-{index}.png", "img_url": f"https://images.example/thumb-{index}.png"}
+        for index in range(3)
+    ]
     values = {
         "category": "MOVIE",
         "filelist": ["Example.Movie.2024.mkv"],
-        "image_list": [],
+        "image_list": images,
         "mediainfo": {"media": {"track": []}},
         "name": "Example Movie 2024 1080p WEB-DL H264",
         "screens": 3,
@@ -58,6 +62,12 @@ def test_polishtorrent_rejects_malformed_filelist_and_screenshot_counts():
     assert asyncio.run(tracker.get_additional_checks(_movie_meta(screens=None))) is False
     assert asyncio.run(tracker.get_additional_checks(_movie_meta(screens="2"))) is False
     assert asyncio.run(tracker.get_additional_checks(_movie_meta(screens=float("inf")))) is False
+    assert asyncio.run(tracker.get_additional_checks(_movie_meta(image_list=[]))) is False
+
+
+@pytest.mark.parametrize("archive", ["release.r10", "release.r99", "release.7z.001", "release.rar.002"])
+def test_polishtorrent_rejects_extended_multipart_archives(archive: str) -> None:
+    assert asyncio.run(PolishTorrent({"TRACKERS": {}}).get_additional_checks(_movie_meta(filelist=["movie.mkv", archive]))) is False
 
 
 @pytest.mark.parametrize(
