@@ -30,6 +30,7 @@ jobs:
     env:
       PYTHON_MINOR: "3.14"
       FFMPEG_URL: "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+      FFMPEG_FALLBACK_URL: "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
     steps:
       - name: Validate manual release attachment
         if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
@@ -54,6 +55,12 @@ jobs:
         with:
           python-version: "3.14"
 
+      - name: Restore FFmpeg archive cache
+        uses: actions/cache@v4
+        with:
+          path: build/cache/ffmpeg.zip
+          key: ffmpeg-windows-x64-${{ hashFiles('.github/workflows/windows-installer.yml') }}
+
       - name: Prepare installer payload
         shell: pwsh
         env:
@@ -61,8 +68,40 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force -Path build/payload/source | Out-Null
+          New-Item -ItemType Directory -Force -Path build/cache | Out-Null
           git archive --format=zip --output build/payload/source.zip HEAD
           Expand-Archive -LiteralPath build/payload/source.zip -DestinationPath build/payload/source -Force
+
+          function Test-FfmpegArchive([string]$Path) {
+            if (-not (Test-Path -LiteralPath $Path)) { return $false }
+            try {
+              Add-Type -AssemblyName System.IO.Compression.FileSystem
+              $archive = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path -LiteralPath $Path))
+              try {
+                return $null -ne ($archive.Entries | Where-Object { $_.FullName -match '(^|/)bin/ffmpeg\.exe$' } | Select-Object -First 1)
+              }
+              finally {
+                $archive.Dispose()
+              }
+            }
+            catch {
+              return $false
+            }
+          }
+
+          function Invoke-DownloadWithRetry([string]$Uri, [string]$OutFile, [int]$Attempts = 3) {
+            for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+              try {
+                Invoke-WebRequest -Uri $Uri -OutFile $OutFile -UseBasicParsing
+                return
+              }
+              catch {
+                Remove-Item -LiteralPath $OutFile -Force -ErrorAction SilentlyContinue
+                if ($attempt -eq $Attempts) { throw }
+                Start-Sleep -Seconds ([math]::Pow(2, $attempt))
+              }
+            }
+          }
 
           $index = Invoke-WebRequest -Uri 'https://www.python.org/ftp/python/' -UseBasicParsing
           $versions = [regex]::Matches($index.Content, "$env:PYTHON_MINOR\.\d+/") |
@@ -71,8 +110,33 @@ jobs:
             Sort-Object { [version]$_ } -Descending
           if (-not $versions) { throw "No Python $env:PYTHON_MINOR release was found." }
           $pythonVersion = $versions[0]
-          Invoke-WebRequest -Uri "https://www.python.org/ftp/python/$pythonVersion/python-$pythonVersion-amd64.exe" -OutFile build/payload/python-installer.exe -UseBasicParsing
-          Invoke-WebRequest -Uri $env:FFMPEG_URL -OutFile build/payload/ffmpeg.zip -UseBasicParsing
+          Invoke-DownloadWithRetry -Uri "https://www.python.org/ftp/python/$pythonVersion/python-$pythonVersion-amd64.exe" -OutFile build/payload/python-installer.exe
+
+          $cachedFfmpeg = 'build/cache/ffmpeg.zip'
+          $payloadFfmpeg = 'build/payload/ffmpeg.zip'
+          if (Test-FfmpegArchive -Path $cachedFfmpeg) {
+            Copy-Item -LiteralPath $cachedFfmpeg -Destination $payloadFfmpeg -Force
+          }
+          else {
+            Remove-Item -LiteralPath $cachedFfmpeg -Force -ErrorAction SilentlyContinue
+            $downloaded = $false
+            foreach ($uri in @($env:FFMPEG_URL, $env:FFMPEG_FALLBACK_URL)) {
+              try {
+                Invoke-DownloadWithRetry -Uri $uri -OutFile $payloadFfmpeg
+                if (-not (Test-FfmpegArchive -Path $payloadFfmpeg)) {
+                  throw "Downloaded archive from $uri does not contain bin/ffmpeg.exe."
+                }
+                $downloaded = $true
+                break
+              }
+              catch {
+                Write-Warning "FFmpeg download failed from $uri`: $($_.Exception.Message)"
+                Remove-Item -LiteralPath $payloadFfmpeg -Force -ErrorAction SilentlyContinue
+              }
+            }
+            if (-not $downloaded) { throw 'Unable to download a valid FFmpeg archive from any configured source.' }
+            Copy-Item -LiteralPath $payloadFfmpeg -Destination $cachedFfmpeg -Force
+          }
           New-Item -ItemType Directory -Force -Path build/payload/wheels | Out-Null
           python -m pip wheel --wheel-dir build/payload/wheels pip -r requirements.txt
           "UA_VERSION=$env:UA_VERSION" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
