@@ -289,6 +289,16 @@ def _author_identity_tokens(value: str) -> set[str]:
     return set(re.findall(r"[^\W_]+", value.casefold(), flags=re.UNICODE))
 
 
+def _prefer_descriptive_source_title(current_title: str, author: str, source_title: str) -> str:
+    current_identity = _normalized_book_identity(current_title)
+    author_identity = _normalized_book_identity(author)
+    source_tokens = _identity_tokens(source_title)
+    current_tokens = _identity_tokens(current_title)
+    if current_identity and current_identity == author_identity and current_tokens < source_tokens:
+        return source_title
+    return current_title
+
+
 def _matching_isbn_metadata(meta: Meta, *providers: dict[str, Any] | None) -> dict[str, Any] | None:
     current_isbn = validate_isbn_checksum(str(meta.isbn or ""))
     if not current_isbn:
@@ -679,8 +689,8 @@ async def gather_book_prep(
     fallback_author, fallback_title = book_identity_from_path(str(meta.path or videopath))
     if not meta.author and fallback_author:
         meta.author = fallback_author
-    if not meta.title and fallback_title:
-        meta.title = fallback_title
+    if fallback_title:
+        meta.title = _prefer_descriptive_source_title(str(meta.title or ""), str(meta.author or ""), fallback_title)
 
     local_title = str(meta.title or "").strip()
     local_author = str(meta.author or "").strip()

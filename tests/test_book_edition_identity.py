@@ -336,6 +336,20 @@ def test_book_identity_accepts_distinctive_mononym_among_source_contributors() -
     assert conflict is None
 
 
+def test_generic_author_title_prefers_descriptive_source_title() -> None:
+    title = book_prep._prefer_descriptive_source_title(
+        "Seneca",
+        "Seneca",
+        "Seneca: Selected Dialogues and Consolations",
+    )
+
+    assert title == "Seneca: Selected Dialogues and Consolations"
+
+
+def test_generic_author_title_is_preserved_without_descriptive_source() -> None:
+    assert book_prep._prefer_descriptive_source_title("Seneca", "Seneca", "Seneca") == "Seneca"
+
+
 def test_filename_title_requires_support_from_edition_overview() -> None:
     filename_title = book_prep._strip_book_format_suffix("The Rebel An Essay on Man in Revolt")
     overview = "The Rebel is an essay in which Albert Camus examines rebellion and man in revolt."
