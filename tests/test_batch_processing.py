@@ -498,7 +498,10 @@ async def test_debug_items_do_not_consume_success_limit(tmp_path: Path, monkeypa
     await upload.do_the_thing(upload.base_dir)
 
     assert process_meta_mock.call_count == 2
-    assert any("total queued 2, fully successful 0, partial 0, skipped/failed 2" in message for message in info_messages)
+    assert any(
+        "total queued 2, fully successful 0, partial 0, skipped/failed 0, site checks completed 2" in message
+        for message in info_messages
+    )
 
 
 @pytest.mark.asyncio

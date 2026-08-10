@@ -279,13 +279,14 @@ async def process_trackers(
                             status["status_message"] = "Skipped due to new dupe found after bandwidth wait"
                             print_tracker_result(tracker, tracker_class, status, False)
                             return
-                        await check_tracker_image_hosts(meta, tracker_class)
-                        screenshot_error = screenshot_requirement_error(meta, config, tracker)
-                        if screenshot_error:
-                            status = meta.tracker_status.setdefault(tracker, {})
-                            status.update(upload=False, skipped=True, status_message=screenshot_error)
-                            logger.info(f"[yellow]{tracker}: {escape(screenshot_error)} Skipping upload.[/yellow]")
-                            return
+                        if not meta.debug:
+                            await check_tracker_image_hosts(meta, tracker_class)
+                            screenshot_error = screenshot_requirement_error(meta, config, tracker)
+                            if screenshot_error:
+                                status = meta.tracker_status.setdefault(tracker, {})
+                                status.update(upload=False, skipped=True, status_message=screenshot_error)
+                                logger.info(f"[yellow]{tracker}: {escape(screenshot_error)} Skipping upload.[/yellow]")
+                                return
                         upload_start_time = time.time()
                         is_uploaded = await tracker_class.upload(meta)
                         upload_duration = time.time() - upload_start_time
@@ -308,7 +309,7 @@ async def process_trackers(
                     logger.info(f"[yellow]{tracker}: release already exists on the tracker. Skipping duplicate upload.[/yellow]")
                 elif is_uploaded and "data error" not in str(status.get("status_message", "")):
                     status["upload_success"] = True
-                    if not getattr(tracker_class, "is_usenet", False):
+                    if not meta.debug and not getattr(tracker_class, "is_usenet", False):
                         await client.add_to_client(meta, tracker_class.tracker)
                     print_tracker_result(tracker, tracker_class, status, True)
                 else:
@@ -331,13 +332,14 @@ async def process_trackers(
                             status["status_message"] = "Skipped due to new dupe found after bandwidth wait"
                             print_tracker_result(tracker, tracker_class, status, False)
                             return
-                        await check_tracker_image_hosts(meta, tracker_class)
-                        screenshot_error = screenshot_requirement_error(meta, config, tracker)
-                        if screenshot_error:
-                            status = meta.tracker_status.setdefault(tracker, {})
-                            status.update(upload=False, skipped=True, status_message=screenshot_error)
-                            logger.info(f"[yellow]{tracker}: {escape(screenshot_error)} Skipping upload.[/yellow]")
-                            return
+                        if not meta.debug:
+                            await check_tracker_image_hosts(meta, tracker_class)
+                            screenshot_error = screenshot_requirement_error(meta, config, tracker)
+                            if screenshot_error:
+                                status = meta.tracker_status.setdefault(tracker, {})
+                                status.update(upload=False, skipped=True, status_message=screenshot_error)
+                                logger.info(f"[yellow]{tracker}: {escape(screenshot_error)} Skipping upload.[/yellow]")
+                                return
                         upload_start_time = time.time()
                         is_uploaded = await tracker_class.upload(meta)
                         upload_duration = time.time() - upload_start_time
@@ -360,7 +362,7 @@ async def process_trackers(
                     logger.info(f"[yellow]{tracker}: release already exists on the tracker. Skipping duplicate upload.[/yellow]")
                 elif is_uploaded and "data error" not in str(status.get("status_message", "")):
                     status["upload_success"] = True
-                    if not getattr(tracker_class, "is_usenet", False):
+                    if not meta.debug and not getattr(tracker_class, "is_usenet", False):
                         await client.add_to_client(meta, tracker_class.tracker)
                     print_tracker_result(tracker, tracker_class, status, True)
                 else:
@@ -421,7 +423,8 @@ async def process_trackers(
                 if is_uploaded:
                     status = meta.tracker_status.setdefault("TORRENTHR", {})
                     status["upload_success"] = True
-                    await client.add_to_client(meta, "TORRENTHR")
+                    if not meta.debug:
+                        await client.add_to_client(meta, "TORRENTHR")
                     print_tracker_result(tracker, thr, status, True)
                 else:
                     status = meta.tracker_status.setdefault("TORRENTHR", {})
@@ -436,7 +439,8 @@ async def process_trackers(
                 try:
                     ptp = PassThePopcorn(config=config)
                     group_id = meta.ptp_groupid
-                    await check_tracker_image_hosts(meta, ptp)
+                    if not meta.debug:
+                        await check_tracker_image_hosts(meta, ptp)
                     ptp_url, ptp_data = await ptp.fill_upload_form(group_id, meta)
                     is_uploaded = False
                     try:
@@ -451,7 +455,8 @@ async def process_trackers(
                     status = meta.tracker_status.setdefault(ptp.tracker, {})
                     if is_uploaded and "data error" not in str(status.get("status_message", "")):
                         status["upload_success"] = True
-                        await client.add_to_client(meta, "PASSTHEPOPCORN")
+                        if not meta.debug:
+                            await client.add_to_client(meta, "PASSTHEPOPCORN")
                         print_tracker_result(tracker, ptp, status, True)
                     else:
                         status["upload_success"] = False

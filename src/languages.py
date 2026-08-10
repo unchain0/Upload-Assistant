@@ -267,8 +267,6 @@ class LanguagesManager:
                             else:
                                 meta.unattended_audio_skip = True
                                 status_dict["skip_upload"] = True
-                                if meta.debug:
-                                    meta.audio_languages = ["English, Portuguese"]
 
                         if audio_languages:
                             audio_languages = [lang.split()[0] for lang in audio_languages]

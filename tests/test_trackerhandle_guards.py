@@ -97,6 +97,27 @@ async def test_tracker_upload_runs_when_configured_minimum_is_met() -> None:
 
 
 @pytest.mark.asyncio
+async def test_debug_runs_tracker_payload_without_rehosting_or_client_injection(monkeypatch: pytest.MonkeyPatch) -> None:
+    meta = _meta(images=0)
+    meta.debug = True
+    client = FakeClient()
+    rehost_calls = 0
+
+    async def count_rehost(_meta: Meta, _tracker: Any) -> None:
+        nonlocal rehost_calls
+        rehost_calls += 1
+
+    monkeypatch.setattr(trackerhandle, "check_tracker_image_hosts", count_rehost)
+
+    await trackerhandle.process_trackers(meta, _config(), client, ["TEST"], {"TEST": FakeTracker}, [], [])
+
+    assert FakeTracker.upload_calls == 1
+    assert meta.tracker_status["TEST"]["upload_success"] is True
+    assert rehost_calls == 0
+    assert client.added == []
+
+
+@pytest.mark.asyncio
 async def test_book_without_cover_is_blocked_by_default() -> None:
     meta = _meta()
     meta.category = "BOOK"

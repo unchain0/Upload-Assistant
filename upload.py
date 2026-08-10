@@ -1510,7 +1510,9 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
                     await process_disc_menus(meta, config)
 
             should_process_spectrogram = meta.category not in {"BOOK", "GAME"} or bool(meta.audiobook)
-            if should_process_spectrogram and (meta.audio_spectrogram or meta.audio_spectrogram_tracks or config["DEFAULT"].get("add_audio_spectrogram", False)):
+            if meta.debug and should_process_spectrogram and (meta.audio_spectrogram or meta.audio_spectrogram_tracks or config["DEFAULT"].get("add_audio_spectrogram", False)):
+                logger.info("[yellow]Debug mode: audio spectrogram hosting skipped.[/yellow]")
+            elif should_process_spectrogram and (meta.audio_spectrogram or meta.audio_spectrogram_tracks or config["DEFAULT"].get("add_audio_spectrogram", False)):
                 try:
                     await process_audio_spectrograms(meta, config, uploadscreens_manager)
                 except Exception as e:
@@ -1654,7 +1656,12 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
             from src.screenshot_review import staged_remote_uploads
 
             reviewed_uploads = staged_remote_uploads(Path(meta.base_dir) / "tmp" / meta.uuid, cast(list[dict[str, Any]], meta.image_list or []))
-            if (len(meta.image_list) < max(cutoff, configured_minimum) or reviewed_uploads) and meta.skip_imghost_upload is False and meta.category not in ("GAME", "MUSIC"):
+            if (
+                not meta.debug
+                and (len(meta.image_list) < max(cutoff, configured_minimum) or reviewed_uploads)
+                and meta.skip_imghost_upload is False
+                and meta.category not in ("GAME", "MUSIC")
+            ):
                 # Validate and (if needed) rehost images to tracker-approved hosts before uploading any new screenshots.
                 trackers_with_image_host_requirements = {
                     "AURA4K",
@@ -1883,12 +1890,20 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
             elif meta.skip_imghost_upload is True and not meta.image_list:
                 meta.image_list = []
 
-            screenshot_error = screenshot_requirement_error(meta, config)
-            if screenshot_error:
-                raise ItemProcessingError(screenshot_error, meta.path)
+            if meta.debug and meta.category in {"MOVIE", "TV"}:
+                local_screens, required_screens = available_screens(meta, configured_screenshot_minimum(config))
+                if local_screens < required_screens:
+                    raise ItemProcessingError(
+                        f"Minimum of {required_screens} local screenshots required in debug mode, but only {local_screens} were captured.",
+                        meta.path,
+                    )
+            else:
+                screenshot_error = screenshot_requirement_error(meta, config)
+                if screenshot_error:
+                    raise ItemProcessingError(screenshot_error, meta.path)
 
             # Host book cover if it's a BOOK and save to covers.json
-            if meta.category == "BOOK":
+            if meta.category == "BOOK" and not meta.debug:
                 artwork_path = meta.artwork_path
                 artwork_url = meta.artwork_url
                 if not artwork_path and artwork_url:
@@ -2915,8 +2930,7 @@ async def do_the_thing(base_dir: str) -> None:
                             item_outcomes[item_index] = (current_item_path, "partial", failed_tracker_names)
                             logger.info(f"[yellow]Upload completed partially; failed trackers: {', '.join(failed_trackers)}.[/yellow]")
                         elif meta.debug:
-                            skipped_files_count += 1
-                            item_outcomes[item_index] = (current_item_path, "skipped", "Debug mode")
+                            item_outcomes[item_index] = (current_item_path, "checked", "Debug checks completed")
                             logger.info(f"[cyan]Processed {processed_files_count}/{total_files} files in debug mode; no tracker upload was attempted.[/cyan]")
                         else:
                             item_outcomes[item_index] = (current_item_path, "successful", "")
@@ -2962,7 +2976,8 @@ async def do_the_thing(base_dir: str) -> None:
             if is_batch and item_index not in item_outcomes:
                 item_outcomes[item_index] = (current_item_path, "checked" if meta.site_check else "successful", "Site check completed" if meta.site_check else "")
 
-            if "limit_queue" in meta and meta.limit_queue > 0 and (processed_files_count - skipped_files_count) >= meta.limit_queue:
+            successful_outcomes = sum(outcome == "successful" for _path, outcome, _detail in item_outcomes.values())
+            if "limit_queue" in meta and meta.limit_queue > 0 and successful_outcomes >= meta.limit_queue:
                 for remaining_index in range(item_index + 1, queue_size):
                     remaining_path = queue_item_identifier(queue_list[remaining_index])
                     reason = f"Queue limit of {meta.limit_queue} successful upload(s) reached"

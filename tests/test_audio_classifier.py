@@ -8,9 +8,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src.meta import Meta
-from src.exceptions import ItemProcessingError
 from src.audio_classifier import detect_audio_category
+from src.exceptions import ItemProcessingError
+from src.meta import Meta
 from src.prep_helpers import detect_disc_and_category
 
 
@@ -146,3 +146,24 @@ def test_structured_untagged_flac_release_name_is_music(tmp_path):
 
     assert result.category == "MUSIC"
     assert "structured artist/album music release name" in result.evidence
+
+
+def test_scene_single_without_tags_is_music(tmp_path):
+    release = tmp_path / "Eskila-Tequetom-(7490926)-SINGLE-WEB-2026-LiBi"
+    release.mkdir()
+    (release / "01-eskila-tequetom.mp3").write_bytes(b"not tagged")
+
+    result = asyncio.run(detect_audio_category(Meta(), release))
+
+    assert result.category == "MUSIC"
+    assert "scene music release name" in result.evidence
+
+
+def test_dated_single_long_track_is_music(tmp_path):
+    track = tmp_path / "The Bruenigs - 2026-08-10 - Summers End.mp3"
+    track.write_bytes(b"not tagged")
+
+    result = asyncio.run(detect_audio_category(Meta(), track))
+
+    assert result.category == "MUSIC"
+    assert "dated artist/title music release name" in result.evidence
