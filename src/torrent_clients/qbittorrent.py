@@ -804,7 +804,13 @@ class QbittorrentClientMixin:
             tracker_dir = tracker_directory(link_target, link_dir_name, tracker)
             await asyncio.to_thread(os.makedirs, tracker_dir, exist_ok=True)
 
-            if cross:
+            torrent_info_raw = getattr(torrent, "metainfo", {}).get("info", {})
+            torrent_info = torrent_info_raw if isinstance(torrent_info_raw, dict) else {}
+            torrent_is_multi_file = bool(torrent_info.get("files"))
+            source_is_directory = Path(src).is_dir()
+            requires_file_mapping = source_is_directory != torrent_is_multi_file
+
+            if cross or requires_file_mapping:
                 linking_success = await create_cross_seed_links(meta=meta, torrent=torrent, tracker_dir=tracker_dir, use_hardlink=use_hardlink)
             else:
                 src_name = Path(src.rstrip(os.sep)).name
@@ -815,7 +821,7 @@ class QbittorrentClientMixin:
                 isolated_tracker_dir = Path(tracker_dir) / torrent.infohash.lower()
                 await asyncio.to_thread(os.makedirs, isolated_tracker_dir, exist_ok=True)
                 logger.info(f"[yellow]Link destination is occupied by different content; retrying in isolated directory: {isolated_tracker_dir}")
-                if cross:
+                if cross or requires_file_mapping:
                     linking_success = await create_cross_seed_links(
                         meta=meta,
                         torrent=torrent,
