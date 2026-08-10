@@ -785,6 +785,34 @@ def test_lidarr_directory_derivation_removes_technical_suffix_and_uuid(tmp_path)
     assert release.get("year") == "2023"
 
 
+def test_single_file_dated_recording_uses_stem_and_title_as_album(tmp_path, monkeypatch):
+    source = tmp_path / "The Bruenigs - 2026-08-10 - Summers End.mp3"
+    source.write_bytes(b"audio")
+    track = AudioTrack(
+        path=str(source),
+        relative_path=source.name,
+        format="MP3",
+        codec="MP3",
+        artist="The Bruenigs",
+        title="Summers End",
+        date="2026",
+        duration=3334,
+    )
+
+    def read_track(*_args):
+        return track
+
+    monkeypatch.setattr(MusicReleaseAnalyzer, "_read_track", read_track)
+
+    release = MusicReleaseAnalyzer().analyze(source)
+
+    assert release.get("artist") == "The Bruenigs"
+    assert release.get("album") == "Summers End"
+    assert release.get("year") == "2026"
+    assert not release.get("release_type")
+    assert any("long one-track release" in warning for warning in release.warnings)
+
+
 def test_common_album_artist_avoids_feature_conflict_and_compilation(tmp_path):
     release = MusicRelease(root=str(tmp_path))
     for index, album_artist in enumerate(("Kanye West", "Kanye West & Featured Artist"), start=1):

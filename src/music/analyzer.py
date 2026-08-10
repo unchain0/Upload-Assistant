@@ -131,7 +131,8 @@ class MusicReleaseAnalyzer:
             else:
                 self._classify_auxiliary(release, file, root)
 
-        self._derive_release_fields(release, supplied.name)
+        display_name = supplied.stem if supplied.is_file() else supplied.name
+        self._derive_release_fields(release, display_name)
         return release
 
     def _read_track(self, path: Path, root: Path) -> AudioTrack | None:
@@ -427,7 +428,14 @@ class MusicReleaseAnalyzer:
             if trailing_year:
                 release.set_field("year", trailing_year.group(1), MetadataSource.DIRECTORY, 0.9)
                 name_without_metadata = name_without_metadata[: trailing_year.start()].rstrip()
-            match = re.search(r"(?:^|\d{4}\s*-?\s*)(.+?)\s+-\s+(.+?)$", name_without_metadata)
+            dated_recording = re.fullmatch(r"(.+?)\s+-\s+((?:19|20)\d{2})-\d{2}-\d{2}\s+-\s+(.+)", name_without_metadata)
+            if dated_recording:
+                release.set_field("artist", dated_recording.group(1).strip(), MetadataSource.DIRECTORY, 0.55)
+                release.set_field("year", dated_recording.group(2), MetadataSource.DIRECTORY, 0.9)
+                release.set_field("album", dated_recording.group(3).strip(), MetadataSource.DIRECTORY, 0.55)
+                match = None
+            else:
+                match = re.search(r"(?:^|\d{4}\s*-?\s*)(.+?)\s+-\s+(.+?)$", name_without_metadata)
             if match:
                 release.set_field("artist", match.group(1).strip(), MetadataSource.DIRECTORY, 0.55)
                 release.set_field("album", match.group(2).strip(), MetadataSource.DIRECTORY, 0.55)
@@ -567,8 +575,11 @@ class MusicReleaseAnalyzer:
                 if compilation_artists:
                     release.set_field("artists", compilation_artists, MetadataSource.INFERRED, 1.0, force=True)
                     release.set_field("artist", "Various Artists", MetadataSource.INFERRED, 1.0, force=True)
-        elif count == 1:
+        elif count == 1 and (release.tracks[0].duration or 0) <= 20 * 60:
             value = "Single"
+        elif count == 1:
+            release.warnings.append("A long one-track release cannot be safely classified as an official single without external metadata.")
+            return
         elif "ep" in album.split() or 2 <= count <= 6:
             value = "EP"
         else:

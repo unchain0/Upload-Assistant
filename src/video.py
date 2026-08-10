@@ -190,9 +190,11 @@ class VideoManager:
             try:
                 video = sorted(filelist, key=os.path.getsize, reverse=True)[0] if sorted_filelist else sorted(filelist)[0]
             except IndexError:
-                logger.info("[bold red]No Video files found")
+                archive_only = any(re.search(r"\.(?:rar|r\d{2,3})$", entry, re.I) for entry in entries)
+                reason = "Video exists only inside an archive; archive-only video uploads are unsupported" if archive_only else "No Video files found"
+                logger.info(f"[bold red]{reason}")
                 if mode == "cli":
-                    raise ItemProcessingError("No Video files found", videoloc) from None
+                    raise ItemProcessingError(reason, videoloc) from None
                 return "", []
         else:
             video = videoloc

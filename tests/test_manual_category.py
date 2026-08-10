@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-from types import SimpleNamespace
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
-from src.meta import Meta
 from src.exceptions import ItemProcessingError
+from src.meta import Meta
 from src.prep_helpers import detect_disc_and_category
 from src.video import video_manager
 
@@ -29,6 +29,17 @@ def test_manual_music_category_routes_to_music_before_media_processing(tmp_path)
 
 def test_missing_cli_video_reports_item_level_failure_in_batch(tmp_path):
     with pytest.raises(ItemProcessingError, match="No Video files found"):
+        asyncio.run(video_manager.get_video(str(tmp_path), "cli"))
+
+
+def test_archive_only_video_reports_safe_item_level_failure(tmp_path):
+    (tmp_path / "Release.rar").write_bytes(b"archive")
+    (tmp_path / "Release.r00").write_bytes(b"part")
+    sample = tmp_path / "Sample"
+    sample.mkdir()
+    (sample / "sample.mkv").write_bytes(b"sample")
+
+    with pytest.raises(ItemProcessingError, match="Video exists only inside an archive"):
         asyncio.run(video_manager.get_video(str(tmp_path), "cli"))
 
 
