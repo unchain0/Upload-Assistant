@@ -202,7 +202,7 @@ class Prep:
         # 8. Set Final Metadata and tags
         await prep_helpers.finalize_metadata(self, meta, videopath, bdinfo, mi, filename, untouched_filename, video)
 
-        await languages_manager.infer_single_audio_language(meta)
+        await languages_manager.apply_confirmed_single_audio_language(meta)
         await languages_manager.process_desc_language(meta)
 
         # Ensure the background capture is complete before the upload stage

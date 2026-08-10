@@ -31,7 +31,7 @@ async def test_debug_does_not_invent_missing_audio_languages(tmp_path: Path) -> 
 
 
 @pytest.mark.asyncio
-async def test_single_untagged_audio_inherits_confirmed_original_language(tmp_path: Path) -> None:
+async def test_single_untagged_audio_uses_explicitly_confirmed_language(tmp_path: Path) -> None:
     release_dir = tmp_path / "tmp" / "mandarin-release"
     release_dir.mkdir(parents=True)
     mediainfo = "General\nFormat : MPEG-4\n\nVideo\nFormat : AVC\n\nAudio\nFormat : AAC\n"
@@ -44,10 +44,11 @@ async def test_single_untagged_audio_inherits_confirmed_original_language(tmp_pa
         path="The.Rap.of.China.2026.S09E06.1080p.WEB-DL.H264.AAC-PTerWEB.mp4",
         category="TV",
         original_language="zh",
+        manual_language="zh",
         mediainfo={"media": {"track": [{"@type": "General"}, {"@type": "Audio", "Format": "AAC"}]}},
     )
 
-    inferred = await LanguagesManager().infer_single_audio_language(meta)
+    inferred = await LanguagesManager().apply_confirmed_single_audio_language(meta)
 
     assert inferred is True
     assert meta.mediainfo["media"]["track"][1]["Language"] == "Chinese"
@@ -63,8 +64,23 @@ async def test_ambiguous_release_does_not_infer_audio_language(tmp_path: Path, r
         uuid=release_name,
         category="TV",
         original_language="zh",
+        manual_language="zh",
         mediainfo={"media": {"track": [{"@type": "Audio", "Format": "AAC"}]}},
     )
 
-    assert await LanguagesManager().infer_single_audio_language(meta) is False
+    assert await LanguagesManager().apply_confirmed_single_audio_language(meta) is False
+    assert "Language" not in meta.mediainfo["media"]["track"][0]
+
+
+@pytest.mark.asyncio
+async def test_tmdb_original_language_does_not_fill_an_untagged_audio_track(tmp_path: Path) -> None:
+    meta = Meta(
+        base_dir=str(tmp_path),
+        uuid="malayalam-release",
+        category="TV",
+        original_language="ml",
+        mediainfo={"media": {"track": [{"@type": "Audio", "Format": "AAC"}]}},
+    )
+
+    assert await LanguagesManager().apply_confirmed_single_audio_language(meta) is False
     assert "Language" not in meta.mediainfo["media"]["track"][0]

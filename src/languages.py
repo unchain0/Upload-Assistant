@@ -51,12 +51,12 @@ class LanguagesManager:
         lines.insert(insert_at, f"Language                                : {language}")
         return "\n".join(lines) + ("\n" if content.endswith("\n") else "")
 
-    async def infer_single_audio_language(self, meta: Meta) -> bool:
+    async def apply_confirmed_single_audio_language(self, meta: Meta) -> bool:
         if meta.category not in ("MOVIE", "TV") or meta.is_disc == "BDMV":
             return False
 
-        original_language = str(meta.original_language or "").strip()
-        if not original_language or original_language.lower() in ("und", "unknown", "undefined"):
+        confirmed_language = str(meta.manual_language or "").strip()
+        if not confirmed_language or confirmed_language.lower() in ("und", "unknown", "undefined"):
             return False
 
         release_name = " ".join(str(value or "") for value in (meta.uuid, meta.path, meta.name))
@@ -73,7 +73,7 @@ class LanguagesManager:
         if current_language and current_language.lower() not in ("und", "unknown", "undefined"):
             return False
 
-        language = self._language_display_name(original_language)
+        language = self._language_display_name(confirmed_language)
         audio_track["Language"] = language
         release_dir = Path(meta.base_dir) / "tmp" / meta.uuid
 
@@ -93,7 +93,7 @@ class LanguagesManager:
             async with aiofiles.open(json_path, "w", encoding="utf-8") as destination:
                 await destination.write(json.dumps(meta.mediainfo, indent=4))
 
-        logger.info(f"[cyan]Inferred {language} for the single untagged audio track from confirmed original-language metadata.[/cyan]")
+        logger.info(f"[cyan]Applied user-confirmed language {language} to the single untagged audio track in the upload MediaInfo.[/cyan]")
         return True
 
     async def parse_blu_ray(self, meta: Meta) -> dict[str, Any]:
