@@ -14,6 +14,7 @@ from src.prep_game import (
     gather_game_prep,
     missing_game_fields,
     required_game_fields,
+    resolve_game_filelist,
 )
 
 
@@ -39,6 +40,25 @@ def test_dmg_platform_is_detected_as_mac() -> None:
 
 def test_generic_pkg_platform_is_detected_as_mac() -> None:
     assert asyncio.run(detect_platform_from_files(["dungeon_antiqua_2_enUS_20260717_.pkg"])) == "MAC"
+
+
+def test_windows_installer_platform_is_detected_as_pc() -> None:
+    assert asyncio.run(detect_platform_from_files(["RAM Saver Professional 26.7.1 Incl Keygen.exe"])) == "PC"
+    assert asyncio.run(detect_platform_from_files(["RAM Saver Professional 26.7.1.msi"])) == "PC"
+
+
+def test_game_filelist_places_selected_installer_first(tmp_path) -> None:
+    release = tmp_path / "RAM Saver Professional 26.7.1 Incl Keygen - KhanPC"
+    release.mkdir()
+    notes = release / "How to Install.txt"
+    notes.write_text("Install the application.\n", encoding="utf-8")
+    installer = release / "ramsaverpro.exe"
+    installer.write_bytes(b"installer")
+
+    videopath, filelist, _, _ = resolve_game_filelist(Meta(), str(release))
+
+    assert videopath == str(installer.resolve())
+    assert filelist[0] == videopath
 
 
 def test_pkg_platform_preserves_explicit_playstation_evidence() -> None:
@@ -119,3 +139,30 @@ async def test_guitar_pro_pkg_is_prepared_as_mac_software(tmp_path) -> None:
     assert meta.software_notes == "install PKG\nUse Serial"
     assert required_game_fields(meta) == ["title", "platform"]
     assert missing_game_fields(meta) == ["developer", "publisher", "cover", "languages", "overview"]
+
+
+@pytest.mark.asyncio
+async def test_windows_installer_is_prepared_as_pc_software(tmp_path) -> None:
+    release = tmp_path / "RAM Saver Professional 26.7.1 Incl Keygen - KhanPC"
+    release.mkdir()
+    installer = release / "ramsaverpro.exe"
+    installer.write_bytes(b"installer")
+    notes = release / "How to Install.txt"
+    notes.write_text("Install the application.\n", encoding="utf-8")
+    meta = Meta(path=str(release), filelist=[str(installer), str(notes)], unattended=True)
+
+    with patch("src.prep_game.IGDBAPI.search_game", new=AsyncMock(return_value=[])) as search:
+        await gather_game_prep(
+            meta,
+            str(installer),
+            str(tmp_path),
+            {"DEFAULT": {"twitch_client_id": "client", "twitch_client_secret": "secret"}},
+        )
+
+    search.assert_awaited_once_with("RAM Saver Professional")
+    assert meta.software is True
+    assert meta.title == "RAM Saver Professional"
+    assert meta.game_version == "v26.7.1"
+    assert meta.tag == "-KhanPC"
+    assert meta.platform == "PC"
+    assert meta.software_notes == "Install the application."

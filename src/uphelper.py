@@ -541,7 +541,8 @@ class UploadHelper:
             lines.append("[bold red]DEBUG: True - Will not actually upload![/bold red]")
             lines.append(f"Prep material saved to {meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}")
         lines.append("")
-        lines.append(("Title", f"{meta.title} ({meta.year})"))
+        display_title = f"{meta.title} ({meta.year})" if meta.year else meta.title
+        lines.append(("Title", display_title))
         lines.append(("Category", meta.category))
         edition = meta.edition
 
@@ -581,8 +582,8 @@ class UploadHelper:
             lines.append(("Cover", poster))
 
         elif meta.category == "GAME":
-            notes = meta.description_link or meta.description_file or ""
-            if notes:
+            notes = "Included" if meta.software_notes else meta.description_link or meta.description_file or ""
+            if notes and not meta.software_notes:
                 # don't leak links or file paths
                 notes = notes[:16] if notes.startswith("http") else f"./{Path(notes).name}"
             if meta.platform == "PC":

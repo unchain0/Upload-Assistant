@@ -45,6 +45,11 @@ def clean_game_title(value: str) -> str:
         prefix, suffix = title.rsplit("-", 1)
         if suffix and len(suffix) < 15 and not re.search(r"\s", suffix):
             title = prefix
+    title = re.sub(
+        rf"(?i)(?<![A-Za-z0-9]){_VERSION_PATTERN}\s+(?:(?:incl(?:uded)?|with)\s+)?(?:keygen|crack(?:ed)?|serial)\b.*",
+        "",
+        title,
+    )
     title = re.sub(r"(?<![A-Za-z0-9])\d+(?:\.\d+){1,3}\s*$", "", title)
     title = re.sub(r"[._-]+", " ", title)
     title = re.sub(r"(?i)\b(?:update|patch|build|version)\b.*", "", title)
@@ -60,7 +65,7 @@ def extract_release_group(value: str) -> str:
     bracket_match = re.search(r"\[([A-Za-z0-9]+)\]$", release_name)
     if bracket_match:
         return bracket_match.group(1)
-    dash_match = re.search(r"-([A-Za-z0-9]+)$", release_name)
+    dash_match = re.search(r"-\s*([A-Za-z0-9]+)$", release_name)
     return dash_match.group(1) if dash_match else ""
 
 
@@ -95,7 +100,7 @@ def _is_desktop_installer(meta: Meta) -> bool:
     paths = [str(item) for item in meta.filelist]
     if meta.path:
         paths.append(str(meta.path))
-    return any(Path(path).suffix.lower() in {".dmg", ".exe", ".pkg"} for path in paths)
+    return any(Path(path).suffix.lower() in {".dmg", ".exe", ".msi", ".pkg"} for path in paths)
 
 
 async def _read_software_notes(meta: Meta) -> str:
@@ -376,6 +381,8 @@ async def detect_platform_from_files(
         return "PC"
     if any("binaries/win64" in f or "binaries/win32" in f or "engine/binaries" in f for f in files_lower):
         return "PC"
+    if any(b.endswith((".exe", ".msi")) for b in basenames_lower):
+        return "PC"
     if any(b.endswith(".dmg") for b in basenames_lower):
         return "MAC"
 
@@ -451,6 +458,8 @@ def resolve_game_filelist(
         videopath = videoloc
         filelist.append(videoloc)
 
+    if videopath in filelist:
+        filelist = [videopath, *(item for item in filelist if item != videopath)]
     meta.filelist = filelist
     meta.imdb_id = 0
 
