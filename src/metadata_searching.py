@@ -712,7 +712,10 @@ async def get_tvmaze_tvdb(
         elif isinstance(tvdb_result, Exception):
             logger.info(f"[yellow]TVDb series data retrieval failed: {tvdb_result}[/yellow]")
 
-    if not tvdb and tvmaze and isinstance(tvmaze_result, tuple):
+    tmdb_only_identity = bool(tmdb and tmdb != 0) and not bool(imdb and imdb != 0)
+    if tmdb_only_identity:
+        tvmaze = 0
+    if not tvdb and tvmaze and isinstance(tvmaze_result, tuple) and not tmdb_only_identity:
         tvmaze_tuple = cast(tuple[Any, Any, Any], tvmaze_result)
         if len(tvmaze_tuple) == 3:
             tvdb = tvmaze_tuple[2] if isinstance(tvmaze_tuple[2], int) else 0

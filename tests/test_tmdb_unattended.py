@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 import src.tmdb as tmdb
+from src import metadata_searching
 
 
 class _EmptyResponse:
@@ -44,3 +46,36 @@ async def test_get_tmdb_from_imdb_never_prompts_when_unattended() -> None:
     assert category == "MOVIE"
     assert tmdb_id == 0
     prompt.assert_not_awaited()
+
+
+def test_quickie_imdb_id_requires_tmdb_confirmation() -> None:
+    assert tmdb._reconcile_tmdb_imdb_id(8484866, None, True) == (0, False, 0)
+
+
+def test_quickie_imdb_id_uses_tmdb_mismatch_as_authoritative() -> None:
+    assert tmdb._reconcile_tmdb_imdb_id(8484866, "tt27497198", True) == (8484866, True, 27497198)
+
+
+def test_manual_imdb_id_is_preserved_without_tmdb_confirmation() -> None:
+    assert tmdb._reconcile_tmdb_imdb_id(8484866, None, False) == (8484866, False, 0)
+
+
+def test_manual_imdb_id_reports_but_does_not_apply_tmdb_mismatch() -> None:
+    assert tmdb._reconcile_tmdb_imdb_id(8484866, "tt27497198", False) == (8484866, False, 27497198)
+
+
+@pytest.mark.asyncio
+async def test_tmdb_only_identity_does_not_inherit_tvmaze_external_ids() -> None:
+    tvdb_handler = SimpleNamespace(get_tvdb_by_external_id=AsyncMock(return_value=(None, None)))
+    with patch.object(metadata_searching.tvmaze_manager, "search_tvmaze", new=AsyncMock(return_value=(123, 8484866, 333734))):
+        tvmaze_id, tvdb_id, _data, _name = await metadata_searching.get_tvmaze_tvdb(
+            "The Rap of China",
+            "2026",
+            0,
+            326694,
+            tvdb_handler,
+        )
+
+    assert tvmaze_id == 0
+    assert tvdb_id == 0
+    tvdb_handler.get_tvdb_by_external_id.assert_awaited_once_with(imdb=0, tmdb=326694, tv_movie=False)
