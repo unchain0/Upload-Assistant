@@ -660,6 +660,11 @@ class DescriptionBuilder:
         narrator = meta.narrator
         overview = meta.overview
         publisher = meta.publisher
+        language = meta.book_language
+        page_count = meta.page_count
+        series = meta.book_series
+        series_index = meta.book_series_index
+        source = str(meta.manual_source or meta.source or "").strip()
         year = str(meta.year) if meta.year is not None else ""
 
         use_pt_br = self.tracker in ("AMIGOSSHARE", "BRASILTRACKER", "CAPYBARABR", "SAMARITANO", "BJSHARE")
@@ -674,6 +679,10 @@ class DescriptionBuilder:
         str_narrator = "Narrator" if not use_pt_br else "Narrador"
         str_overview = "Overview" if not use_pt_br else "Visão Geral"
         str_publisher = "Publisher" if not use_pt_br else "Editora"
+        str_language = "Language" if not use_pt_br else "Idioma"
+        str_page_count = "Page Count" if not use_pt_br else "Número de Páginas"
+        str_series = "Series" if not use_pt_br else "Série"
+        str_source = "Source" if not use_pt_br else "Fonte"
         str_technical_details = "Technical Details" if not use_pt_br else "Detalhes Técnicos"
         str_year = "Release Year" if not use_pt_br else "Ano de Lançamento"
 
@@ -691,6 +700,15 @@ class DescriptionBuilder:
             fields.append((str_narrator, narrator))
         if publisher:
             fields.append((str_publisher, publisher))
+        if language:
+            fields.append((str_language, language))
+        if series:
+            series_value = f"{series} #{series_index}" if series_index else series
+            fields.append((str_series, series_value))
+        if source:
+            fields.append((str_source, source))
+        if page_count:
+            fields.append((str_page_count, str(page_count)))
         if isbn:
             fields.append((str_isbn, isbn))
         if asin:

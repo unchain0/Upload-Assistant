@@ -345,35 +345,44 @@ class DarkPeers(UNIT3D):
         author = str(meta.author or meta.book_author or "").strip()
         if not author:
             return await self._missing_required("author", meta)
+        if not str(meta.title or meta.book_title or "").strip():
+            return await self._missing_required("title", meta)
+        if not meta.year:
+            return await self._missing_required("release year", meta)
         format_name = self._book_format(meta)
         allowed = self._AUDIOBOOK_FORMATS if meta.audiobook else self._BOOK_FORMATS
         if format_name not in allowed:
             logger.info(f"{self.tracker}: [bold red]does not support {format_name or 'an unspecified'} book format. Skipping upload.")
             return False
+        collection = self._is_book_collection(meta)
         if meta.audiobook:
             validated_isbn = validate_isbn_checksum(str(meta.isbn or meta.book_isbn or ""))
-            if not validated_isbn:
+            if not validated_isbn and not collection:
                 logger.info(f"{self.tracker}: [bold red]Audiobooks require a valid ISBN-10 or ISBN-13. Re-run with --isbn. Skipping upload.[/bold red]")
                 return False
-            meta.isbn = validated_isbn
-        elif meta.isbn or meta.book_isbn:
+            meta.isbn = validated_isbn or ""
+        elif not collection:
             validated_isbn = validate_isbn_checksum(str(meta.isbn or meta.book_isbn or ""))
             if not validated_isbn:
-                logger.info(f"{self.tracker}: [bold red]Ebooks require a valid ISBN-10, ISBN-13, or ASIN in the upload title. Re-run with --isbn or --asin. Skipping upload.[/bold red]")
+                logger.info(f"{self.tracker}: [bold red]Individual eBooks require a valid ISBN-10 or ISBN-13 in the upload title. Re-run with --isbn. Skipping upload.[/bold red]")
                 return False
             meta.isbn = validated_isbn
         identifier = self._book_identifier(meta)
-        if not identifier:
-            return await self._missing_required("a valid ISBN/ASIN", meta)
+        if not identifier and not collection:
+            return await self._missing_required("a valid ISBN", meta)
         publisher = str(meta.publisher or meta.book_publisher or "").strip()
         if not publisher:
             return await self._missing_required("publisher", meta)
         if meta.audiobook and not str(meta.narrator or "").strip():
             return await self._missing_required("audiobook narrator", meta)
-        if meta.audiobook and not meta.year:
-            return await self._missing_required("audiobook release year", meta)
         if meta.audiobook and not meta.audiobook_duration:
             return await self._missing_required("audiobook runtime", meta)
+        if meta.audiobook and format_name in {"MP3", "AAC", "OPUS", "VORBIS"}:
+            if not meta.audiobook_bitrate:
+                return await self._missing_required("lossy audiobook bitrate", meta)
+            if int(meta.audiobook_bitrate) < 64:
+                logger.info(f"{self.tracker}: [bold red]Speech-only audiobooks require a bitrate of at least 64 kbps. Skipping upload.[/bold red]")
+                return False
         if meta.audiobook:
             details = (
                 f"Narrator: {meta.narrator}; Runtime: {meta.audiobook_duration_formatted or meta.audiobook_duration}; "
@@ -390,7 +399,64 @@ class DarkPeers(UNIT3D):
                 return False
         if not meta.audiobook and format_name == "PDF" and not bool(meta.get("page_count", None) or meta.get("book_page_count", None)):
             return await self._missing_required("PDF page count", meta)
+        if not meta.audiobook and not str(meta.manual_source or meta.source or "").strip():
+            return await self._missing_required("eBook source", meta)
+        return self._validate_book_file_layout(meta, format_name)
+
+    @staticmethod
+    def _is_book_collection(meta: Meta) -> bool:
+        files = [Path(str(item)) for item in meta.filelist or []]
+        book_files = [item for item in files if item.suffix.upper().lstrip(".") in DarkPeers._BOOK_FORMATS | DarkPeers._AUDIOBOOK_FORMATS]
+        label = " ".join((str(meta.title or ""), str(meta.name or ""), Path(str(meta.path or "")).name))
+        marked = bool(re.search(r"\b(?:collection|complete|books?\s+\d+\s*-\s*\d+|series\s+pack)\b", label, re.IGNORECASE))
+        return marked and len(book_files) >= 5
+
+    def _validate_book_file_layout(self, meta: Meta, format_name: str) -> bool:
+        source_path = Path(str(meta.path or ""))
+        if meta.audiobook and source_path.exists() and source_path.is_file():
+            logger.info(f"{self.tracker}: [bold red]Audiobooks must be uploaded inside a single descriptive folder. Skipping upload.[/bold red]")
+            return False
+
+        files = [Path(str(item)) for item in meta.filelist or []]
+        if meta.audiobook:
+            audio_files = [item for item in files if item.suffix.upper().lstrip(".") in self._AUDIOBOOK_FORMATS]
+            if format_name == "M4B" and len(audio_files) == 1:
+                expected = self._normalized_book_filename(f"{meta.author} {meta.title} {meta.year}")
+                actual = self._normalized_book_filename(audio_files[0].stem)
+                if actual != expected:
+                    logger.info(
+                        f"{self.tracker}: [bold red]single-file M4B must be named "
+                        f"'Author - Title - Year.m4b': {audio_files[0].name}. Skipping upload.[/bold red]"
+                    )
+                    return False
+            if len(audio_files) > 1:
+                invalid = next((item.name for item in audio_files if not re.match(r"^(?:\d{1,3}|chapter\s*\d+|(?:disc|part)\s*\d+)", item.stem, re.IGNORECASE)), "")
+                if invalid:
+                    logger.info(f"{self.tracker}: [bold red]Audiobook files must use logical chapter, disc, or part numbering: {invalid}. Skipping upload.[/bold red]")
+                    return False
+            return True
+
+        if source_path.exists():
+            author_tokens = set(re.findall(r"[a-z0-9]+", str(meta.author or meta.book_author or "").casefold()))
+            title_tokens = set(re.findall(r"[a-z0-9]+", str(meta.title or meta.book_title or "").casefold()))
+            ebook_files = [item for item in files if item.suffix.upper().lstrip(".") in self._BOOK_FORMATS]
+            invalid = next(
+                (
+                    item.name
+                    for item in ebook_files
+                    if not author_tokens.issubset(set(re.findall(r"[a-z0-9]+", item.stem.casefold())))
+                    or not title_tokens.issubset(set(re.findall(r"[a-z0-9]+", item.stem.casefold())))
+                ),
+                "",
+            )
+            if invalid:
+                logger.info(f"{self.tracker}: [bold red]eBook filename must include the author and title: {invalid}. Skipping upload.[/bold red]")
+                return False
         return True
+
+    @staticmethod
+    def _normalized_book_filename(value: str) -> str:
+        return " ".join(re.findall(r"[\w]+", value.casefold()))
 
     @staticmethod
     def _book_format(meta: Meta) -> str:
@@ -430,13 +496,27 @@ class DarkPeers(UNIT3D):
             return False
         audio_suffixes = {".flac", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".alac"}
         paths = [track.relative_path for track in release.tracks] or [str(item) for item in meta.filelist or [] if Path(str(item)).suffix.lower() in audio_suffixes]
+        album = str(release.get("album", meta.title or "")).strip()
+        root = Path(str(meta.path or ""))
+        if root.exists() and not root.is_dir():
+            logger.info(f"{self.tracker}: [bold red]Music uploads must be contained in a descriptive folder. Skipping upload.[/bold red]")
+            return False
+        if root.is_dir() and album and re.sub(r"\W+", " ", album.casefold()).strip() not in re.sub(r"\W+", " ", root.name.casefold()).strip():
+            logger.info(f"{self.tracker}: [bold red]Music folder name must include the album title. Skipping upload.[/bold red]")
+            return False
+        release_type = str(release.get("release_type", "")).casefold()
+        unnumbered_single = len(paths) == 1 and release_type == "single"
         for path in paths:
             relative = str(path).replace("\\", "/")
             filename = Path(relative).name
-            if len(relative) > 180 or filename.startswith(" ") or any(part.startswith(" ") for part in relative.split("/")):
+            full_relative = "/".join(part for part in (root.name if root.is_dir() else "", relative) if part)
+            if len(full_relative) > 180 or filename.startswith(" ") or any(part.startswith(" ") for part in relative.split("/")):
                 logger.info(f"{self.tracker}: [bold red]invalid music path: {relative}. Skipping upload.")
                 return False
-            if re.search(r"\b\w+\.\w+\.\d{1,2}\.\w+", filename) or not self._AUDIO_TRACK_PATTERN.match(Path(filename).stem):
+            if any(char in filename for char in ':?<>|*"'):
+                logger.info(f"{self.tracker}: [bold red]music filename contains prohibited filesystem characters: {filename}. Skipping upload.")
+                return False
+            if re.search(r"\b\w+\.\w+\.\d{1,2}\.\w+", filename) or (not unnumbered_single and not self._AUDIO_TRACK_PATTERN.match(Path(filename).stem)):
                 logger.info(f"{self.tracker}: [bold red]music filename must include a track number and title: {filename}. Skipping upload.")
                 return False
         return True
@@ -454,10 +534,9 @@ class DarkPeers(UNIT3D):
         return True
 
     async def _missing_required(self, field: str, meta: Meta) -> bool:
-        if meta.unattended and not meta.unattended_confirm:
-            logger.info(f"{self.tracker}: [bold red]missing required {field}. Skipping unattended upload.")
-            return False
-        return await self._confirm_or_skip(f"is missing required {field}; confirm it is present in the final description.", meta)
+        _ = meta
+        logger.info(f"{self.tracker}: [bold red]missing required {field}. Skipping upload.[/bold red]")
+        return False
 
     async def _confirm_or_skip(self, message: str, meta: Meta) -> bool:
         logger.info(f"{self.tracker}: [bold red]{message}[/bold red]")
@@ -555,8 +634,10 @@ class DarkPeers(UNIT3D):
     async def _tv_title_needs_year(self, meta: Meta) -> bool:
         title = str(meta.title or "").strip()
         api_key = str(self.config.get("DEFAULT", {}).get("tmdb_api", "")).strip()
-        if not title or not api_key:
+        if not title:
             return False
+        if not api_key:
+            return True
         try:
             logger.info(f"{self.tracker}: Checking if TMDb has multiple shows with the title '{title}'...")
             async with httpx.AsyncClient() as client:
@@ -567,7 +648,7 @@ class DarkPeers(UNIT3D):
                 response.raise_for_status()
                 payload_raw: Any = response.json()
         except httpx.HTTPError, ValueError, TypeError:
-            return False
+            return True
 
         title_key = " ".join(title.casefold().split())
         current_id = str(meta.tmdb_id or "")

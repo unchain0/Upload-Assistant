@@ -132,6 +132,7 @@ def test_darkpeers_requires_attended_audiobook_edition_verification():
         "isbn": "9781664616110",
         "audiobook_duration": 39875,
         "audiobook_duration_formatted": "11h 04m 35s",
+        "audiobook_bitrate": 64,
     }
     adapter = DarkPeers({"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}})
 
@@ -183,6 +184,7 @@ def test_darkpeers_validated_audiobook_isbn_is_rendered_in_description():
         category="BOOK",
         audiobook=True,
         author="Kim Harrison",
+        title="The Outlaw Demon Wails",
         narrator="Gigi Bermingham",
         publisher="Harper Audio",
         year=2008,
@@ -213,6 +215,12 @@ def test_darkpeers_book_name_preserves_alphanumeric_asin():
     assert _name(meta) == "Author - Book Title 2026 EPUB B01N5AX3TQ"
 
 
+def test_darkpeers_rejects_asin_as_individual_ebook_identifier():
+    meta = Meta(category="BOOK", unattended=True, author="Author", publisher="Publisher", title="Book Title", year=2026, type="EPUB", asin="B01N5AX3TQ", source="WEB")
+
+    assert _additional_checks(meta) is False
+
+
 def test_darkpeers_rejects_ebook_without_identifier_even_with_multiple_files():
     meta = Meta(
         category="BOOK",
@@ -228,6 +236,22 @@ def test_darkpeers_rejects_ebook_without_identifier_even_with_multiple_files():
     assert _additional_checks(meta) is False
 
 
+def test_darkpeers_required_book_fields_cannot_be_bypassed_by_unattended_confirm():
+    meta = Meta(
+        category="BOOK",
+        unattended=True,
+        unattended_confirm=True,
+        author="David Bohm",
+        publisher="Routledge",
+        title="Wholeness and the Implicate Order",
+        year=1980,
+        type="AZW3",
+        source="WEB",
+    )
+
+    assert _additional_checks(meta) is False
+
+
 def test_darkpeers_normalizes_valid_ebook_isbn_before_building_title():
     meta = Meta(
         category="BOOK",
@@ -238,6 +262,7 @@ def test_darkpeers_normalizes_valid_ebook_isbn_before_building_title():
         year=1980,
         type="AZW3",
         isbn="978-0-415-28979-5",
+        source="WEB",
     )
 
     assert _additional_checks(meta) is True
@@ -257,6 +282,134 @@ def test_darkpeers_rejects_invalid_ebook_isbn_instead_of_rendering_it():
     )
 
     assert _additional_checks(meta) is False
+
+
+def test_darkpeers_allows_explicit_multi_file_collection_without_isbn():
+    meta = Meta(
+        category="BOOK",
+        unattended=True,
+        author="Author",
+        publisher="Publisher",
+        title="Author Collection",
+        year=2026,
+        type="EPUB",
+        source="WEB",
+        filelist=[
+            "Author - Author Collection - Book One.epub",
+            "Author - Author Collection - Book Two.epub",
+            "Author - Author Collection - Book Three.epub",
+            "Author - Author Collection - Book Four.epub",
+            "Author - Author Collection - Book Five.epub",
+        ],
+    )
+
+    assert _additional_checks(meta) is True
+
+
+def test_darkpeers_lossy_audiobook_requires_bitrate_and_minimum():
+    base = {
+        "category": "BOOK",
+        "audiobook": True,
+        "author": "Author",
+        "publisher": "Publisher",
+        "narrator": "Narrator",
+        "title": "Book",
+        "year": 2026,
+        "type": "MP3",
+        "isbn": "9780061452987",
+        "audiobook_duration": 3600,
+    }
+    adapter = DarkPeers({"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}})
+    adapter.common.prompt_user_for_confirmation = AsyncMock(return_value=True)
+
+    assert asyncio.run(adapter.get_additional_checks(Meta(**base))) is False
+    assert asyncio.run(adapter.get_additional_checks(Meta(**base, audiobook_bitrate=63))) is False
+    assert asyncio.run(adapter.get_additional_checks(Meta(**base, audiobook_bitrate=64))) is True
+
+
+def test_darkpeers_book_description_includes_required_technical_fields():
+    meta = Meta(
+        category="BOOK",
+        author="Author",
+        publisher="Publisher",
+        title="Book",
+        year=2026,
+        type="PDF",
+        isbn="9780061452987",
+        source="SCAN",
+        book_language="French",
+        book_series="Series",
+        book_series_index="2",
+        page_count=320,
+    )
+    description = asyncio.run(DarkPeers({"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}}).get_description(meta))["description"]
+
+    for expected in ("French", "Series #2", "SCAN", "320"):
+        assert expected in description
+
+
+def test_darkpeers_allows_unnumbered_official_single_filename(tmp_path):
+    root = tmp_path / "Artist - Song Title (2026) - WEB FLAC Single"
+    root.mkdir()
+    track = root / "Song Title.flac"
+    track.touch()
+    meta = Meta(
+        category="MUSIC",
+        path=str(root),
+        music_release={
+            "root": str(root),
+            "fields": {
+                "artist": {"value": "Artist"},
+                "album": {"value": "Song Title"},
+                "release_year": {"value": "2026"},
+                "release_type": {"value": "Single"},
+                "media": {"value": "WEB"},
+            },
+            "tracks": [
+                {
+                    "path": str(track),
+                    "relative_path": "Song Title.flac",
+                    "format": "FLAC",
+                    "codec": "FLAC",
+                    "title": "Song Title",
+                    "track_number": 1,
+                }
+            ],
+        },
+    )
+
+    assert DarkPeers({"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}}).validate_music(meta) is True
+
+
+def test_darkpeers_rejects_small_collection_without_isbn():
+    meta = Meta(
+        category="BOOK",
+        unattended=True,
+        author="Author",
+        publisher="Publisher",
+        title="Author Collection",
+        year=2026,
+        type="EPUB",
+        source="WEB",
+        filelist=["Author - Author Collection - One.epub", "Author - Author Collection - Two.epub"],
+    )
+
+    assert _additional_checks(meta) is False
+
+
+def test_darkpeers_requires_exact_single_file_m4b_name():
+    adapter = DarkPeers({"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}})
+    values = {
+        "category": "BOOK",
+        "audiobook": True,
+        "author": "Author",
+        "title": "Book",
+        "year": 2026,
+        "type": "M4B",
+    }
+
+    assert adapter._validate_book_file_layout(Meta(**values, filelist=["Author - Book - 2026.m4b"]), "M4B") is True
+    assert adapter._validate_book_file_layout(Meta(**values, filelist=["Book.m4b"]), "M4B") is False
 
 
 def test_darkpeers_replaces_generic_dual_audio_with_rule_matrix_label():
@@ -465,7 +618,18 @@ def test_darkpeers_confirmed_folder_check_continues_to_evo_validation():
 
 
 def test_darkpeers_book_language_is_unrestricted_but_author_is_required_unattended():
-    portuguese = Meta(category="BOOK", unattended=True, author="Autor", publisher="Editora", type="EPUB", isbn="978-0-123456-47-2", book_language="Portuguese")
+    portuguese = Meta(
+        category="BOOK",
+        unattended=True,
+        author="Autor",
+        publisher="Editora",
+        title="Livro",
+        year=2026,
+        type="EPUB",
+        isbn="978-0-123456-47-2",
+        book_language="Portuguese",
+        source="WEB",
+    )
     no_author = Meta(category="BOOK", unattended=True, publisher="Editora", type="EPUB", isbn="978-0-123456-47-2")
 
     assert _additional_checks(portuguese) is True
