@@ -449,6 +449,11 @@ class DupeChecker:
             if meta.category == "BOOK":
                 import unicodedata
 
+                if await DupeChecker.is_exact_match(entry, meta):
+                    remember_match("exact_payload")
+                    logger.debug(f"[cyan]Exact book payload duplicate matched: {each}")
+                    return False
+
                 target_title = meta.title or meta.name
                 if not target_title.strip():
                     await log_exclusion("empty target book title", each)
@@ -494,8 +499,9 @@ class DupeChecker:
                     dupe_candidates = get_main_title_candidates(clean_each)
 
                     if target_candidates and dupe_candidates:
-                        target_main = target_candidates[0]
-                        dupe_main = dupe_candidates[0]
+                        clean_author = clean_book_title(str(meta.author or ""))
+                        target_main = next((candidate for candidate in target_candidates if candidate != clean_author), target_candidates[0])
+                        dupe_main = next((candidate for candidate in dupe_candidates if candidate != clean_author), dupe_candidates[0])
 
                         if (target_main == dupe_main) or re.search(rf"\b{re.escape(target_main)}\b", norm_each_str) or re.search(rf"\b{re.escape(dupe_main)}\b", norm_target):
                             is_title_match = True

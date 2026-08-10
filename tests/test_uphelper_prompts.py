@@ -260,3 +260,65 @@ async def test_dupe_filter_resets_season_pack_state_between_trackers() -> None:
     assert meta.season_pack_id is None
     assert meta.season_pack_link is None
     assert meta.season_pack_name == ""
+
+
+@pytest.mark.asyncio
+async def test_book_dupe_filter_ignores_author_segment_before_main_title() -> None:
+    meta = Meta(
+        category="BOOK",
+        author="James Clear",
+        title="Atomic Habits: Tiny Changes, Remarkable Results-Penguin Publishing Group (2018)",
+        type="PDF",
+        filelist=["Atomic Habits.pdf"],
+    )
+    candidate = {
+        "name": "James Clear - Atomic Habits: An Easy & Proven Way to Build Good Habits & Break Bad Ones 2018 ENG PDF",
+        "type": "PDF",
+        "files": ["Atomic Habits.pdf"],
+        "file_count": 1,
+        "size": 13_883_392,
+    }
+
+    result = await DupeChecker({"DEFAULT": {}}).filter_dupes([candidate], meta, "YUSCENE")
+
+    assert len(result) == 1
+    assert result[0]["name"].startswith("James Clear - Atomic Habits:")
+
+
+@pytest.mark.asyncio
+async def test_book_dupe_filter_accepts_exact_payload_with_different_title_metadata() -> None:
+    meta = Meta(
+        category="BOOK",
+        author="James Clear",
+        title="Atomic Habits",
+        type="PDF",
+        filelist=["Atomic Habits.pdf"],
+        source_size=13_883_392,
+    )
+    candidate = {
+        "name": "Completely Different Catalog Title 2018 ENG PDF",
+        "type": "PDF",
+        "files": ["Atomic Habits.pdf"],
+        "file_count": 1,
+        "size": 13_883_392,
+    }
+
+    result = await DupeChecker({"DEFAULT": {}}).filter_dupes([candidate], meta, "YUSCENE")
+
+    assert len(result) == 1
+
+
+@pytest.mark.asyncio
+async def test_book_dupe_filter_does_not_match_different_book_by_same_author() -> None:
+    meta = Meta(category="BOOK", author="James Clear", title="Atomic Habits", type="PDF", filelist=["Atomic Habits.pdf"])
+    candidate = {
+        "name": "James Clear - The Clear Habit Journal 2023 ENG PDF",
+        "type": "PDF",
+        "files": ["The Clear Habit Journal.pdf"],
+        "file_count": 1,
+        "size": 10_000_000,
+    }
+
+    result = await DupeChecker({"DEFAULT": {}}).filter_dupes([candidate], meta, "YUSCENE")
+
+    assert result == []
