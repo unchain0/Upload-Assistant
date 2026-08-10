@@ -250,3 +250,43 @@ def test_upload_manager_skips_host_after_complete_failure(tmp_path: Path) -> Non
 
     asyncio.run(exercise())
     assert calls == ["onlyimage", "imgbb", "imgbb"]
+
+
+def test_upload_screens_does_not_retry_ambiguous_onlyimage_failure(tmp_path: Path) -> None:
+    calls: list[str] = []
+
+    async def fake_upload(args: object) -> dict[str, str]:
+        assert isinstance(args, list)
+        host = str(args[1])
+        calls.append(host)
+        if host == "onlyimage":
+            return {"status": "failed", "reason": "OnlyImage upload outcome unknown after timeout"}
+        return {
+            "status": "success",
+            "img_url": "https://img.test/image.png",
+            "raw_url": "https://img.test/image.png",
+            "web_url": "https://img.test/image.png",
+        }
+
+    async def exercise() -> tuple[list[dict[str, str]], int]:
+        config = {
+            "DEFAULT": {
+                "img_host_1": "onlyimage",
+                "img_host_2": "imgbb",
+                "image_upload_concurrency": 1,
+                "image_upload_delay": 0,
+            },
+            "TRACKERS": {},
+        }
+        meta = Meta({"base_dir": str(tmp_path), "uuid": "test", "imghost": "onlyimage"})
+        with (
+            patch("src.uploadscreens.screenshots_dir", return_value=tmp_path),
+            patch("src.uploadscreens.os.chdir"),
+            patch("src.uploadscreens.upload_image_task", new=fake_upload),
+        ):
+            return await _upload_screens(config, meta, 1, 1, 0, 1, ["image.png"], {}, max_retries=3)
+
+    image_list, uploaded_count = asyncio.run(exercise())
+    assert uploaded_count == 1
+    assert len(image_list) == 1
+    assert calls == ["onlyimage", "imgbb"]

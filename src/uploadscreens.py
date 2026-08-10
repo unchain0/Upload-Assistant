@@ -266,10 +266,10 @@ async def upload_image_task(args: Sequence[Any]) -> dict[str, Any]:
 
             except httpx.TimeoutException:
                 logger.info("[red]Request timed out. The server took too long to respond.")
-                return {"status": "failed", "reason": "Request timed out"}
+                return {"status": "failed", "reason": "OnlyImage upload outcome unknown after timeout"}
             except httpx.RequestError as e:
                 logger.info(f"[red]Request failed with error: {e}")
-                return {"status": "failed", "reason": str(e)}
+                return {"status": "failed", "reason": f"OnlyImage upload outcome unknown: {e}"}
             except ValueError as e:
                 logger.info(f"[red]Invalid JSON response from OnlyImage: {e}")
                 return {"status": "failed", "reason": "Invalid JSON response"}
@@ -866,6 +866,12 @@ async def _upload_screens(
                                     uploaded_image_files.add(str(Path(str(task_args[0])).resolve()))
                             return (index, result)
                         reason = result.get("reason", "Unknown error")
+                        if "upload outcome unknown" in reason.lower():
+                            logger.warning(
+                                f"[yellow]Not retrying image {index} on {img_host}: the host may already have stored it. "
+                                "Trying the next configured image host instead.[/yellow]"
+                            )
+                            return None
                         if "duplicate" in reason.lower():
                             logger.info(f"[yellow]Skipping host because duplicate image {index}: {reason}[/yellow]")
                             return None
@@ -881,16 +887,12 @@ async def _upload_screens(
                         return None
 
                     except TimeoutError:
-                        logger.info(f"[red]Upload task {index} timed out after 60 seconds[/red]")
+                        logger.warning(
+                            f"[yellow]Upload task {index} timed out after 60 seconds. Not retrying on {img_host} because the host may already have stored it.[/yellow]"
+                        )
                         if future in running_tasks:
                             future.cancel()
                             running_tasks.discard(future)
-
-                        if retry_count < max_retries:
-                            retry_count += 1
-                            logger.info(f"[yellow]Retry {retry_count}/{max_retries} for image {index} after timeout[/yellow]")
-                            await asyncio.sleep(1.1 * retry_count)
-                            continue
                         return None
 
                 except asyncio.CancelledError:
