@@ -482,6 +482,10 @@ class DupeChecker:
                             candidates.append(p_clean)
                     return candidates
 
+                def normalize_main_candidate(candidate: str) -> str:
+                    without_release_suffix = re.sub(r"\b(?:19|20)\d{2}\b.*$", "", candidate)
+                    return re.sub(r"\s+", " ", without_release_suffix).strip()
+
                 clean_target = clean_book_title(target_title)
                 clean_each = clean_book_title(each)
 
@@ -500,10 +504,10 @@ class DupeChecker:
 
                     if target_candidates and dupe_candidates:
                         clean_author = clean_book_title(str(meta.author or ""))
-                        target_main = next((candidate for candidate in target_candidates if candidate != clean_author), target_candidates[0])
-                        dupe_main = next((candidate for candidate in dupe_candidates if candidate != clean_author), dupe_candidates[0])
+                        target_main = normalize_main_candidate(next((candidate for candidate in target_candidates if candidate != clean_author), target_candidates[0]))
+                        dupe_main = normalize_main_candidate(next((candidate for candidate in dupe_candidates if candidate != clean_author), dupe_candidates[0]))
 
-                        if (target_main == dupe_main) or re.search(rf"\b{re.escape(target_main)}\b", norm_each_str) or re.search(rf"\b{re.escape(dupe_main)}\b", norm_target):
+                        if target_main == dupe_main:
                             is_title_match = True
 
                 if not is_title_match:

@@ -328,3 +328,19 @@ async def test_book_dupe_filter_does_not_match_different_book_by_same_author() -
     result = await DupeChecker({"DEFAULT": {}}).filter_dupes([candidate], meta, "YUSCENE")
 
     assert result == []
+
+
+@pytest.mark.asyncio
+async def test_book_dupe_filter_does_not_match_workbook_derivative() -> None:
+    meta = Meta(category="BOOK", author="James Clear", title="Atomic Habits", type="PDF", filelist=["Atomic Habits.pdf"])
+    candidate = {
+        "name": "James Clear - WORKBOOK For Atomic Habits 2021 ENG PDF",
+        "type": "PDF",
+        "files": ["Workbook for Atomic Habits.pdf"],
+        "file_count": 1,
+        "size": 11_000_000,
+    }
+
+    result = await DupeChecker({"DEFAULT": {}}).filter_dupes([candidate], meta, "YUSCENE")
+
+    assert result == []
