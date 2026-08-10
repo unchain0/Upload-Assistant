@@ -9,6 +9,7 @@ import pytest
 
 import src.tmdb as tmdb
 from src import metadata_searching
+from src.prep_helpers import _distinct_aka
 
 
 class _EmptyResponse:
@@ -79,3 +80,12 @@ async def test_tmdb_only_identity_does_not_inherit_tvmaze_external_ids() -> None
     assert tvmaze_id == 0
     assert tvdb_id == 0
     tvdb_handler.get_tvdb_by_external_id.assert_awaited_once_with(imdb=0, tmdb=326694, tv_movie=False)
+
+
+def test_equivalent_aka_is_removed_after_metadata_reconciliation() -> None:
+    assert _distinct_aka("The Rap of China", "AKA The Rap of China", 2026) == ""
+    assert _distinct_aka("The Rap of China", "AKA The Rap of China (2026)", 2026) == ""
+
+
+def test_distinct_transliterated_aka_is_preserved() -> None:
+    assert _distinct_aka("The Great Ruler", "AKA Da Zhu Zai Nian Fan", 2023) == "AKA Da Zhu Zai Nian Fan"

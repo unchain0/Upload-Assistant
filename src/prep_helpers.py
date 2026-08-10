@@ -1131,6 +1131,19 @@ async def search_metadata(
         meta.imdb_info = imdb_info
 
 
+def _distinct_aka(title: Any, aka: Any, year: Any = None) -> str:
+    aka_text = str(aka or "").strip()
+    candidate = re.sub(r"^AKA\s*[:\-]?\s*", "", aka_text, flags=re.I).strip()
+    year_text = str(year or "").strip()
+
+    def identity(value: str) -> str:
+        if year_text:
+            value = re.sub(rf"\s*[\[(]?{re.escape(year_text)}[\])]?\s*$", "", value)
+        return "".join(character for character in value.casefold() if character.isalnum())
+
+    return "" if not candidate or identity(str(title or "")) == identity(candidate) else aka_text
+
+
 async def finalize_metadata(
     prep_instance: Any, meta: Meta, videopath: str, bdinfo: dict[str, Any], mi: dict[str, Any] | None, filename: str, _untouched_filename: str, video: str
 ) -> None:
@@ -1291,6 +1304,8 @@ async def finalize_metadata(
                 should_use_tvdb_series_name = series_name and not _tvdb_title_drops_existing_leading_article(meta.title, series_name)
                 if should_use_tvdb_series_name:
                     meta.title = series_name
+
+    meta.aka = _distinct_aka(meta.title, meta.aka, meta.year)
 
     # bluray.com data if config
     get_bluray_info = prep_instance.config["DEFAULT"].get("get_bluray_info", False)
