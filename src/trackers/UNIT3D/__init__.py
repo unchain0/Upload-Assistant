@@ -84,8 +84,13 @@ class UNIT3D:
                 params_dict["name"] = f" {meta.season}"
 
         else:
+            search_name = meta.title or meta.name
+            if category == "BOOK" and ":" in search_name:
+                main_title = search_name.split(":", 1)[0].strip()
+                if len(main_title.split()) >= 2:
+                    search_name = main_title
             params_dict = {
-                "name": meta.title or meta.name,
+                "name": search_name,
                 "categories[]": (await self.get_category_id(meta))["category_id"],
                 "perPage": "100",
             }

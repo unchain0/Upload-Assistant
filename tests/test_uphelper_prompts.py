@@ -227,6 +227,12 @@ async def test_unit3d_episode_search_includes_all_season_pack_qualities(monkeypa
     assert await tracker.search_existing(movie) == []
     assert ("tmdbId", "27073") in captured_params
     assert not any(key in {"resolutions[]", "types[]"} for key, _value in captured_params)
+
+    captured_params.clear()
+    book = Meta(category="BOOK", title="Atomic Habits: Tiny Changes, Remarkable Results")
+    assert await tracker.search_existing(book) == []
+    assert ("name", "Atomic Habits") in captured_params
+
     assert UNIT3D._is_duplicate_name_error('{"data":{"name":["The name has already been taken."]}}') is True
     assert UNIT3D._is_duplicate_name_error('{"data":{"name":["The name field already exists."]}}') is True
     assert UNIT3D._is_duplicate_name_error('{"data":{"name":["O valor indicado para o campo name já se encontra registado."]}}') is True
