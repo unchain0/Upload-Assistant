@@ -136,10 +136,12 @@ def resolve_book_filelist(
         audiobook_files = [file for file in filelist if Path(file).suffix.lower() in AUDIOBOOK_EXTENSIONS]
         if ebook_files and audiobook_files:
             raise ItemProcessingError("Ebook and audiobook files were found in the same path. Upload each media type separately.")
-        ebook_titles = {_normalized_book_stem(file) for file in ebook_files}
-        if len(ebook_titles) > 1:
+        if len(ebook_files) > 1:
             filenames = ", ".join(Path(file).name for file in ebook_files)
-            raise ItemProcessingError(f"Multiple ebook files were found in one path ({filenames}). Upload each book separately.")
+            raise ItemProcessingError(
+                f"Multiple ebook files were found in one path ({filenames}). "
+                "Upload each ebook file and format separately."
+            )
         videopath = sorted(filelist, key=os.path.getsize, reverse=True)[0]
     else:
         videopath = videoloc

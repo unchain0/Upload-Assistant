@@ -107,3 +107,30 @@ async def test_queue_manager_deduplicates_paths(tmp_path: Path) -> None:
     queue, _ = await QueueManager.handle_queue(str(first), Meta(), [str(first), str(second), str(first)], str(tmp_path))
 
     assert queue == [str(first), str(second)]
+
+
+@pytest.mark.asyncio
+async def test_queue_splits_same_ebook_in_distinct_formats(tmp_path: Path) -> None:
+    release = tmp_path / "How to Live_ An Ancient Guide to a Happy Life (eng)"
+    release.mkdir()
+    stem = "How to Live_ An Ancient Guide to a Happy Life - Seneca & James S. Romm"
+    epub = release / f"{stem}.epub"
+    pdf = release / f"{stem}.pdf"
+    epub.write_bytes(b"epub")
+    pdf.write_bytes(b"pdf")
+
+    queue, _ = await QueueManager.handle_queue(str(release), Meta(), [str(release)], str(tmp_path))
+
+    assert queue == [str(epub.resolve()), str(pdf.resolve())]
+
+
+@pytest.mark.asyncio
+async def test_queue_does_not_split_distinct_ebooks(tmp_path: Path) -> None:
+    release = tmp_path / "Books"
+    release.mkdir()
+    (release / "First Book.epub").write_bytes(b"epub")
+    (release / "Second Book.pdf").write_bytes(b"pdf")
+
+    queue, _ = await QueueManager.handle_queue(str(release), Meta(), [str(release)], str(tmp_path))
+
+    assert queue == [str(release)]

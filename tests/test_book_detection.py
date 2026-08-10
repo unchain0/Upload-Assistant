@@ -115,20 +115,17 @@ def test_multiple_ebooks_in_one_path_are_rejected(tmp_path) -> None:
     (tmp_path / "Steve Jobs.pdf").write_bytes(b"pdf")
     (tmp_path / "Einstein.pdf").write_bytes(b"pdf")
 
-    with pytest.raises(ItemProcessingError, match="Upload each book separately"):
+    with pytest.raises(ItemProcessingError, match="Upload each ebook file and format separately"):
         resolve_book_filelist(Meta(), str(tmp_path))
 
 
-def test_same_ebook_in_multiple_formats_is_accepted(tmp_path) -> None:
-    stem = "Jordan B. Peterson - 12 Rules for Life_ An Antidote to Chaos"
-    for extension in (".azw3", ".epub", ".mobi"):
+def test_same_ebook_in_multiple_formats_is_rejected(tmp_path) -> None:
+    stem = "How to Live_ An Ancient Guide to a Happy Life - Seneca & James S. Romm"
+    for extension in (".epub", ".pdf"):
         (tmp_path / f"{stem}{extension}").write_bytes(extension.encode())
-    (tmp_path / "Jordan B. Peterson - 12 Rules for Life.txt").write_text("sidecar")
 
-    _, filelist, _, _ = resolve_book_filelist(Meta(), str(tmp_path))
-
-    assert len(filelist) == 3
-    assert {Path(file).suffix for file in filelist} == {".azw3", ".epub", ".mobi"}
+    with pytest.raises(ItemProcessingError, match="Upload each ebook file and format separately"):
+        resolve_book_filelist(Meta(), str(tmp_path))
 
 
 def test_mixed_ebook_and_audiobook_release_is_rejected(tmp_path) -> None:
