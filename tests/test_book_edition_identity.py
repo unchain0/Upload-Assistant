@@ -325,6 +325,17 @@ def test_book_identity_removes_trailing_source_isbn() -> None:
     assert title == "The Idea Factory - Bell Labs And The Great Age Of American Innovation"
 
 
+def test_book_identity_accepts_distinctive_mononym_among_source_contributors() -> None:
+    meta = Meta(author="Seneca", title="How to Live: An Ancient Guide to the Happy Life")
+
+    conflict = book_prep.book_identity_conflict(
+        meta,
+        "How to Live_ An Ancient Guide to a Happy Life - Seneca & James S. Romm.pdf",
+    )
+
+    assert conflict is None
+
+
 def test_filename_title_requires_support_from_edition_overview() -> None:
     filename_title = book_prep._strip_book_format_suffix("The Rebel An Essay on Man in Revolt")
     overview = "The Rebel is an essay in which Albert Camus examines rebellion and man in revolt."

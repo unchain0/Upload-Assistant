@@ -309,7 +309,8 @@ def book_identity_conflict(meta: Meta, path: str) -> str | None:
     path_author_tokens = _author_identity_tokens(path_author)
     metadata_author_tokens = _author_identity_tokens(str(meta.author))
     shorter_author, longer_author = sorted((path_author_tokens, metadata_author_tokens), key=len)
-    authors_match = path_author_tokens == metadata_author_tokens or (len(shorter_author) >= 2 and shorter_author < longer_author)
+    distinctive_mononym = len(shorter_author) == 1 and len(next(iter(shorter_author), "")) >= 5
+    authors_match = path_author_tokens == metadata_author_tokens or ((len(shorter_author) >= 2 or distinctive_mononym) and shorter_author < longer_author)
     if not authors_match:
         return f"Book metadata author '{meta.author}' conflicts with source author '{path_author}'"
 
