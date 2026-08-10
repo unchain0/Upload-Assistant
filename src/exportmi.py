@@ -15,6 +15,33 @@ from src.exceptions import NoAudioMediaError
 from src.meta import Meta
 
 
+def _declared_resolution_is_compatible(declared: Any, res: str, width: str | int, scan: str) -> bool:
+    dimensions = {
+        "480p": (854, 480),
+        "480i": (854, 480),
+        "576p": (1024, 576),
+        "576i": (1024, 576),
+        "720p": (1280, 720),
+        "1080p": (1920, 1080),
+        "1080i": (1920, 1080),
+        "1440p": (2560, 1440),
+        "2160p": (3840, 2160),
+        "4320p": (7680, 4320),
+        "8640p": (15360, 8640),
+    }
+    declared_text = str(declared or "").lower()
+    nominal = dimensions.get(declared_text)
+    if nominal is None or not declared_text.endswith(scan):
+        return False
+    try:
+        actual_width = int(width)
+        actual_height = int(res.rsplit("x", 1)[1][:-1])
+    except (IndexError, TypeError, ValueError):
+        return False
+    nominal_width, nominal_height = nominal
+    return nominal_height * 0.70 <= actual_height <= nominal_height * 1.05 and actual_width <= nominal_width * 1.25
+
+
 def validate_file_path(file_path: str) -> str:
     if not file_path:
         raise ValueError("File path cannot be empty")
@@ -121,6 +148,10 @@ async def mi_resolution(
         "4320p": "4320p",
         "OTHER": "OTHER",
     }
+    declared_resolution = guess.get("screen_size") if isinstance(guess, dict) else None
+    if _declared_resolution_is_compatible(declared_resolution, res, width, scan):
+        return str(declared_resolution).lower()
+
     resolution = res_map.get(res)
     if resolution is None:
         width_map = {
