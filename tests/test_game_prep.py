@@ -166,3 +166,30 @@ async def test_windows_installer_is_prepared_as_pc_software(tmp_path) -> None:
     assert meta.tag == "-KhanPC"
     assert meta.platform == "PC"
     assert meta.software_notes == "Install the application."
+
+
+@pytest.mark.asyncio
+async def test_scene_game_uses_local_nfo_and_extracts_installation_steps(tmp_path) -> None:
+    release = tmp_path / "Cellar.Keeper-TENOKE"
+    release.mkdir()
+    iso = release / "tenoke-cellar.keeper.iso"
+    iso.touch()
+    nfo = release / "tenoke-cellar.keeper.nfo"
+    nfo.write_text(
+        "TENOKE\n│ 1. Extract and burn or mount the .iso │\n"
+        "│ 2. Run SETUP.exe and install the game │\n"
+        "│ 3. Copy crack to install dir │\n"
+        "│ 4. Play │\n",
+        encoding="utf-8",
+    )
+    meta = Meta(path=str(release), filelist=[str(iso), str(nfo)], platform="PC", manual_platform="PC", unattended=True)
+
+    await gather_game_prep(meta, str(iso), str(tmp_path), {"DEFAULT": {}})
+
+    assert meta.scene_nfo_file == str(nfo)
+    assert meta.software_notes == (
+        "1. Extract and burn or mount the .iso\n"
+        "2. Run SETUP.exe and install the game\n"
+        "3. Copy crack to install dir\n"
+        "4. Play"
+    )

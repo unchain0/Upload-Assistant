@@ -63,7 +63,7 @@ class SceneManager:
         Path(details_cache_dir).mkdir(parents=True, exist_ok=True)
 
         async with httpx.AsyncClient() as client:
-            if "scene" not in meta and not lower:
+            if not meta.scene and not lower:
                 # Cache file for search
                 search_cache_file = Path(search_cache_dir) / f"{quoted_base}.json"
                 response_json = None
@@ -140,7 +140,7 @@ class SceneManager:
                             save_path = Path(meta.base_dir) / "tmp" / meta.uuid
                             Path(save_path).mkdir(parents=True, exist_ok=True)
                             nfo_file_path = Path(save_path) / f"{release_lower}.nfo"
-                            meta.scene_nfo_file = nfo_file_path
+                            meta.scene_nfo_file = str(nfo_file_path)
 
                             # Check if NFO already exists (Local Cache)
                             if Path(nfo_file_path).exists():

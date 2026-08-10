@@ -113,8 +113,19 @@ async def _read_software_notes(meta: Meta) -> str:
                 continue
             async with aiofiles.open(path, encoding="utf-8", errors="replace") as handle:
                 notes = (await handle.read()).strip()
-            if notes:
+            if not notes:
+                continue
+            if path.suffix.lower() != ".nfo":
                 return notes
+            instructions = []
+            for line in notes.splitlines():
+                match = re.search(r"(\d+\.\s+.+)", line)
+                if match:
+                    instruction = match.group(1).rstrip(" \t|│║�")
+                    if re.search(r"\b(?:extract|burn|mount|run|setup|install|copy|crack|play|usage)\b", instruction, re.IGNORECASE):
+                        instructions.append(instruction)
+            if instructions:
+                return "\n".join(instructions)
         except OSError:
             continue
     return ""
@@ -486,6 +497,13 @@ async def gather_game_prep(
     meta.hfr = False
     meta.sd = 0
     meta.valid_mi_settings = True
+
+    local_nfo_files = [Path(str(item)) for item in meta.filelist if Path(str(item)).suffix.lower() == ".nfo" and Path(str(item)).is_file()]
+    if local_nfo_files:
+        if not meta.scene_nfo_file:
+            meta.scene_nfo_file = str(local_nfo_files[0])
+        if not meta.software_notes:
+            meta.software_notes = await _read_software_notes(meta)
 
     title_source = str(meta.path or videopath or meta.filename or meta.title or "")
     fallback_title = clean_game_title(title_source)
