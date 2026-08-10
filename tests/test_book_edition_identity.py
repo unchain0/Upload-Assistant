@@ -126,7 +126,9 @@ async def test_exact_isbn_metadata_replaces_divergent_embedded_identity(tmp_path
         return {}
 
     async def mam_stub(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
-        return dict(edition)
+        tracker_edition = dict(edition)
+        tracker_edition["year"] = 2015
+        return tracker_edition
 
     async def google_stub(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
         return dict(edition)

@@ -880,6 +880,7 @@ async def gather_book_prep(
                         meta.search_year = int(val)
 
     exact_edition = _matching_isbn_metadata(meta, mam_data, google_books_data, openlibrary_data)
+    exact_year = _matching_isbn_metadata(meta, google_books_data, openlibrary_data, mam_data)
     exact_publisher = _matching_isbn_metadata(meta, mam_data, openlibrary_data, google_books_data)
     if exact_edition:
         edition_fields = (
@@ -897,7 +898,12 @@ async def gather_book_prep(
         for key in edition_fields:
             if key == "publisher" and source_has(key):
                 continue
-            provider = exact_publisher if key == "publisher" and exact_publisher else exact_edition
+            if key in {"year", "search_year"} and exact_year:
+                provider = exact_year
+            elif key == "publisher" and exact_publisher:
+                provider = exact_publisher
+            else:
+                provider = exact_edition
             val = provider.get(key)
             override_key = "book_language" if key == "book_language_iso" else key
             if val and not cli_overrides.get(override_key, False):

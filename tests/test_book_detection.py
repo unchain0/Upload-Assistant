@@ -187,6 +187,27 @@ def test_epub_creator_roles_select_author_regardless_of_element_order(tmp_path, 
     assert extract_epub_metadata(str(epub))["author"] == "Sakon Kaidou"
 
 
+def test_epub_modification_date_is_not_used_as_release_year(tmp_path: Path) -> None:
+    opf = '''<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf"
+         xmlns:dc="http://purl.org/dc/elements/1.1/"
+         xmlns:opf="http://www.idpf.org/2007/opf" version="2.0">
+  <metadata>
+    <dc:title>Black Summoner: Volume 5</dc:title>
+    <dc:date opf:event="modification">2022-01-13</dc:date>
+  </metadata>
+</package>'''
+    epub = tmp_path / "book.epub"
+    with zipfile.ZipFile(epub, "w") as archive:
+        archive.writestr(
+            "META-INF/container.xml",
+            '<?xml version="1.0"?><container xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf"/></rootfiles></container>',
+        )
+        archive.writestr("OEBPS/content.opf", opf)
+
+    assert "year" not in extract_epub_metadata(str(epub))
+
+
 def test_book_identity_rejects_unrelated_enriched_title_for_same_author(tmp_path) -> None:
     release = tmp_path / "Gary John Bishop - Wise as Fu_k; Simple Truths to Guide You Through the Sh_tstorms of Life"
     meta = Meta(author="Gary John Bishop", title="Stop Doing That Sh*t: End Self-Sabotage and Demand Your Life Back")

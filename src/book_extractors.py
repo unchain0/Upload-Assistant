@@ -84,7 +84,9 @@ def extract_epub_metadata(epub_path: str) -> dict[str, Any]:
                 elif tag_local == "language":
                     language = (elem.text or "").strip()
                 elif tag_local == "date":
-                    date = (elem.text or "").strip()
+                    event = str(get_attr_ignore_ns(elem, "event") or "").strip().casefold()
+                    if event not in {"modification", "modified", "dcterms:modified"}:
+                        date = (elem.text or "").strip()
                 elif tag_local == "identifier":
                     val = (elem.text or "").strip()
                     if val.lower().startswith("urn:isbn:"):
