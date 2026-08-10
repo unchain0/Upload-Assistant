@@ -15,6 +15,7 @@ import os
 import re
 import sys
 import zipfile
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -916,10 +917,14 @@ async def gather_book_prep(
             else:
                 provider = exact_edition
             val = provider.get(key)
-            if key == "title" and local_title:
+            if key == "title" and local_title and val:
                 local_author_tokens = _author_identity_tokens(local_author)
                 provider_author_tokens = _author_identity_tokens(str(exact_edition.get("author") or ""))
-                if not local_author_tokens or not provider_author_tokens or local_author_tokens == provider_author_tokens:
+                authors_match = bool(local_author_tokens and provider_author_tokens and local_author_tokens == provider_author_tokens)
+                overview_tokens = _identity_tokens(str(exact_edition.get("overview") or meta.overview or ""))
+                local_title_supported = len(_identity_tokens(local_title) & overview_tokens) >= 2
+                title_similarity = SequenceMatcher(None, _normalized_book_identity(local_title), _normalized_book_identity(str(val))).ratio()
+                if title_similarity < 0.72 and (authors_match or local_title_supported):
                     val = local_title
             override_key = "book_language" if key == "book_language_iso" else key
             if val and not cli_overrides.get(override_key, False):

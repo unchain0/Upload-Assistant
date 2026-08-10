@@ -199,6 +199,46 @@ async def test_exact_isbn_preserves_matching_local_edition_title_over_original_w
 
 
 @pytest.mark.asyncio
+async def test_exact_isbn_replaces_noisy_local_title_variant(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = tmp_path / "How to Live_ An Ancient Guide to a Happy Life - Seneca & James S. Romm.epub"
+    source.touch()
+    meta = Meta(path=str(source), filelist=[str(source)], skip_auto_torrent=True)
+    embedded = {
+        "title": "How to Live_ An Ancient Guide to a Happy Life - Seneca & James S. Romm",
+        "author": "Seneca",
+        "isbn": "9780691255224",
+        "year": "2026",
+        "book_language_raw": "en",
+    }
+    edition = {
+        "title": "How to Live: An Ancient Guide to the Happy Life",
+        "author": "Seneca",
+        "publisher": "Princeton University Press",
+        "isbn": "9780691255224",
+        "year": 2026,
+        "book_language": "English",
+        "book_language_iso": "eng",
+    }
+
+    async def export_stub(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {}
+
+    async def edition_stub(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return edition
+
+    monkeypatch.setattr(book_prep, "_get_epubmeta_output", lambda _path: "")
+    monkeypatch.setattr(book_prep, "_extract_epub_metadata", lambda _path: embedded)
+    monkeypatch.setattr(book_prep, "_epub_content_identifiers", lambda _path: ({"9780691255224"}, set()))
+    monkeypatch.setattr(book_prep, "export_info", export_stub)
+    monkeypatch.setattr("src.google_books.google_books_manager.search_by_isbn", edition_stub)
+    monkeypatch.setattr("src.openlibrary.openlibrary_manager.search_by_isbn", edition_stub)
+
+    await book_prep.gather_book_prep(meta, str(source), str(tmp_path), {"DEFAULT": {}})
+
+    assert meta.title == "How to Live: An Ancient Guide to the Happy Life"
+
+
+@pytest.mark.asyncio
 async def test_explicit_epub_comic_flag_is_preserved(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     source = tmp_path / "Another World Survival.epub"
     source.touch()
