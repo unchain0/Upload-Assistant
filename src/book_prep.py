@@ -678,6 +678,9 @@ async def gather_book_prep(
     if not meta.title and fallback_title:
         meta.title = fallback_title
 
+    local_title = str(meta.title or "").strip()
+    local_author = str(meta.author or "").strip()
+
     # Series fallback from filename (embedded Calibre/MediaInfo tags take precedence)
     if not meta.book_series:
         fname_series, fname_index = _extract_series_from_filename(Path(videopath).name)
@@ -908,6 +911,11 @@ async def gather_book_prep(
             else:
                 provider = exact_edition
             val = provider.get(key)
+            if key == "title" and local_title:
+                local_author_tokens = _author_identity_tokens(local_author)
+                provider_author_tokens = _author_identity_tokens(str(exact_edition.get("author") or ""))
+                if not local_author_tokens or not provider_author_tokens or local_author_tokens == provider_author_tokens:
+                    val = local_title
             override_key = "book_language" if key == "book_language_iso" else key
             if val and not cli_overrides.get(override_key, False):
                 meta[key] = int(val) if key in {"year", "search_year"} else val
