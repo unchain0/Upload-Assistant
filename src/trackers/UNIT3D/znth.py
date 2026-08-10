@@ -528,10 +528,17 @@ class Zenith(UNIT3D):
                     return False
 
         if category == "BOOK" and not _is_misc(meta):
-            if not meta.isdir:
+            book_format = _book_format(meta)
+            defer_to_zentag = bool(
+                meta.get("defer_zentag_validation", False)
+                and meta.audiobook
+                and book_format == "M4B"
+                and not meta.get("zentag_prepared", False)
+            )
+            if not meta.isdir and not defer_to_zentag:
                 logger.info(f"{self.tracker}: [bold red]Books and audiobooks must be uploaded inside a directory. Use zentag to create a compliant copy.[/bold red]")
                 return False
-            if len(filelist) == 1 and not meta.keep_folder:
+            if len(filelist) == 1 and not meta.keep_folder and not defer_to_zentag:
                 logger.info(
                     f"{self.tracker}: [bold red]Single-file book torrents must retain their directory. Re-run with --keep-folder after preparing the release with zentag.[/bold red]"
                 )
@@ -539,7 +546,6 @@ class Zenith(UNIT3D):
             if not meta.isbn and not meta.asin:
                 logger.info(f"{self.tracker}: [bold red]ISBN or ASIN is required for ebooks and audiobooks. Skipping upload...[/bold red]")
                 return False
-            book_format = _book_format(meta)
             if meta.audiobook:
                 if not meta.narrator:
                     logger.info(f"{self.tracker}: [bold red]Narrator is required for audiobooks. Skipping upload...[/bold red]")
@@ -547,15 +553,16 @@ class Zenith(UNIT3D):
                 if book_format not in ("MP3", "FLAC", "M4B"):
                     logger.info(f"{self.tracker}: [bold red]Audiobooks must be MP3, FLAC, or M4B. Skipping upload...[/bold red]")
                     return False
-                expected_name = (await self.get_name(meta))["name"]
-                layout_error = self._audiobook_layout_error(meta, filelist, expected_name)
-                if layout_error:
-                    logger.info(f"{self.tracker}: [bold red]Invalid audiobook layout: {layout_error}. Use zentag transform before uploading.[/bold red]")
-                    return False
-                language_error = self._audiobook_language_error(meta)
-                if language_error:
-                    logger.info(f"{self.tracker}: [bold red]Invalid audiobook metadata: {language_error}. Use zentag transform before uploading.[/bold red]")
-                    return False
+                if not defer_to_zentag:
+                    expected_name = (await self.get_name(meta))["name"]
+                    layout_error = self._audiobook_layout_error(meta, filelist, expected_name)
+                    if layout_error:
+                        logger.info(f"{self.tracker}: [bold red]Invalid audiobook layout: {layout_error}. Use zentag transform before uploading.[/bold red]")
+                        return False
+                    language_error = self._audiobook_language_error(meta)
+                    if language_error:
+                        logger.info(f"{self.tracker}: [bold red]Invalid audiobook metadata: {language_error}. Use zentag transform before uploading.[/bold red]")
+                        return False
             elif book_format not in ("EPUB", "PDF", "MOBI", "AZW3", "DJVU"):
                 logger.info(f"{self.tracker}: [bold red]Ebooks must be EPUB, PDF, MOBI, AZW3, or DJVU. Skipping upload...[/bold red]")
                 return False

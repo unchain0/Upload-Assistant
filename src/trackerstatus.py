@@ -23,7 +23,8 @@ from src.trackers.common import Common
 from src.trackers.passthepopcorn import PassThePopcorn
 from src.trackersetup import TrackerSetup, tracker_class_map
 from src.uphelper import UploadHelper
-from src.upload_safety import blocks_automatic_upload, content_paths_with_spaces
+from src.upload_safety import blocks_automatic_upload, book_metadata_cjk_fields, content_paths_with_spaces
+from src.zentag import should_prepare_zenith_audiobook
 
 
 def merge_tracker_status(processed: dict[str, dict[str, Any]], existing: Mapping[str, Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -142,6 +143,8 @@ class TrackerStatusManager:
 
             if tracker_name in tracker_class_map:
                 tracker_class = tracker_class_map[tracker_name](config=self.config)
+                if tracker_name == "ZENITH" and should_prepare_zenith_audiobook(Meta(**local_meta), self.config):
+                    local_meta["defer_zentag_validation"] = True
                 if tracker_name in {"TORRENTHR", "PASSTHEPOPCORN"} and local_meta.get("imdb_id", 0) == 0:
                     local_tracker_status["skipped"] = True
 
@@ -185,6 +188,17 @@ class TrackerStatusManager:
                                 should_continue = tracker_class.get_additional_checks(local_meta)
                             if not should_continue:
                                 local_tracker_status["skipped"] = True
+                                local_meta.skipping = tracker_name
+
+                        if not local_tracker_status["skipped"]:
+                            cjk_fields = book_metadata_cjk_fields(Meta(**local_meta))
+                            can_prepare_zenith = tracker_name == "ZENITH" and should_prepare_zenith_audiobook(Meta(**local_meta), self.config)
+                            if cjk_fields and not can_prepare_zenith:
+                                fields = ", ".join(cjk_fields)
+                                reason = f"BOOK metadata contains CJK characters in: {fields}. Provide verified English metadata before uploading."
+                                logger.info(f"{tracker_name}: [bold red]{reason}[/bold red]")
+                                local_tracker_status["skipped"] = True
+                                local_tracker_status["skip_reason"] = reason
                                 local_meta.skipping = tracker_name
 
                         if not local_tracker_status["skipped"]:

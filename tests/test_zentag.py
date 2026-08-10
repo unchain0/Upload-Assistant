@@ -67,14 +67,24 @@ async def test_failed_zentag_validation_keeps_original_for_other_trackers(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_debug_never_runs_zentag(tmp_path: Path, monkeypatch: Any) -> None:
+async def test_debug_runs_zentag_without_uploading(tmp_path: Path, monkeypatch: Any) -> None:
     source = tmp_path / "Book.m4b"
     source.write_bytes(b"m4b")
+    output = tmp_path / "zentag-output" / "Author - Book"
 
-    async def forbidden(_base_dir: str) -> str:
-        raise AssertionError("zentag must not run in debug mode")
+    async def fake_binary(_base_dir: str) -> str:
+        return "/bin/zentag"
 
-    monkeypatch.setattr(zentag.ZentagBinaryManager, "ensure_binary", staticmethod(forbidden))
+    async def fake_transform(_command: list[str]) -> tuple[int, str, str]:
+        output.mkdir(parents=True)
+        return 0, f"Wrote {zentag.json.dumps(str(output))}\n", ""
+
+    async def fake_process(_command: list[str]) -> tuple[int, str, str]:
+        return 0, "[]", ""
+
+    monkeypatch.setattr(zentag.ZentagBinaryManager, "ensure_binary", staticmethod(fake_binary))
+    monkeypatch.setattr(zentag, "_run_transform", fake_transform)
+    monkeypatch.setattr(zentag, "_run_process", fake_process)
     meta = Meta(path=str(source), trackers=["ZENITH"], unattended=True, debug=True)
 
-    assert await zentag.prepare_zenith_audiobook(meta, str(tmp_path), {"DEFAULT": {}}) is None
+    assert await zentag.prepare_zenith_audiobook(meta, str(tmp_path), {"DEFAULT": {}}) == str(output.resolve())

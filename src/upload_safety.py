@@ -5,6 +5,8 @@ from typing import Any
 
 from src.meta import Meta
 
+_CJK_PATTERN = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+
 
 def _has_whitespace(value: str) -> bool:
     return any(character.isspace() for character in value)
@@ -57,3 +59,15 @@ def content_paths_with_spaces(meta: Meta) -> list[str]:
 
 def blocks_automatic_upload(meta: Meta) -> bool:
     return not meta.allow_spaces and bool(content_paths_with_spaces(meta))
+
+
+def book_metadata_cjk_fields(meta: Meta) -> list[str]:
+    if str(meta.category or "").upper() != "BOOK":
+        return []
+    values: dict[str, str] = {
+        "release name": str(meta.name or ""),
+        "author": str(meta.author or meta.book_author or ""),
+        "title": str(meta.title or meta.book_title or ""),
+        "description": str(meta.book_overview or meta.overview or ""),
+    }
+    return [field for field, value in values.items() if _CJK_PATTERN.search(value)]

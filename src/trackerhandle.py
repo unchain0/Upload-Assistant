@@ -26,7 +26,8 @@ from src.trackers.passthepopcorn import PassThePopcorn
 from src.trackers.torrenthr import TorrentHR
 from src.trackers.UNIT3D.znth import prepare_zenith_music_layout
 from src.trackersetup import TrackerSetup
-from src.zentag import prepare_zenith_audiobook
+from src.upload_safety import book_metadata_cjk_fields
+from src.zentag import prepare_zenith_audiobook, should_prepare_zenith_audiobook
 
 type StatusDict = dict[str, Any]
 
@@ -39,7 +40,12 @@ async def prepare_tracker_meta(shared_meta: Meta, tracker: str, config: dict[str
     if tracker != "ZENITH":
         return tracker_meta
 
+    preparation_required = should_prepare_zenith_audiobook(tracker_meta, config)
     prepared_book = await prepare_zenith_audiobook(tracker_meta, str(tracker_meta.base_dir), config)
+    if preparation_required and not prepared_book:
+        status = shared_meta.tracker_status.setdefault(tracker, {})
+        status.update(upload=False, skipped=True, status_message="Automatic zentag preparation failed; the original audiobook will not be uploaded")
+        return tracker_meta
     if prepared_book:
         prepared_meta = tracker_meta.copy()
         prepared_meta.path = prepared_book
@@ -51,8 +57,11 @@ async def prepare_tracker_meta(shared_meta: Meta, tracker: str, config: dict[str
             tracker_meta = await prep.gather_prep(meta=prepared_meta, mode="cli")
             tracker_meta.trackers = [tracker]
             tracker_meta.tracker_status = shared_meta.tracker_status
+            tracker_meta.update({"zentag_prepared": True})
         except Exception as error:
-            logger.warning(f"[yellow]ZENITH: failed to prepare isolated zentag metadata; using the original release: {error}[/yellow]")
+            logger.warning(f"[yellow]ZENITH: failed to prepare isolated zentag metadata; the original release will not be uploaded: {error}[/yellow]")
+            status = shared_meta.tracker_status.setdefault(tracker, {})
+            status.update(upload=False, skipped=True, status_message=f"Prepared zentag metadata failed validation: {error}")
 
     prepare_zenith_music_layout(tracker_meta)
     return tracker_meta
@@ -189,6 +198,17 @@ async def process_trackers(
         tracker_class: Any = None
         if tracker not in {"MANUAL", "TORRENTHR", "PASSTHEPOPCORN"}:
             tracker_class = tracker_class_map[tracker](config=config)
+
+        if tracker == "ZENITH" and meta.get("zentag_prepared", False) and not await tracker_class.get_additional_checks(meta):
+            status = meta.tracker_status.setdefault(tracker, {})
+            status.update(upload=False, skipped=True, status_message="Prepared zentag audiobook failed Zenith validation")
+
+        cjk_fields = book_metadata_cjk_fields(meta)
+        if cjk_fields:
+            fields = ", ".join(cjk_fields)
+            status = meta.tracker_status.setdefault(tracker, {})
+            status.update(upload=False, skipped=True, status_message=f"BOOK metadata contains CJK characters in: {fields}")
+            logger.info(f"[yellow]{tracker}: BOOK metadata still contains CJK characters in {fields}; skipping upload.[/yellow]")
         if meta.name.endswith("DUPE?"):
             meta.name = meta.name.replace(" DUPE?", "")
 

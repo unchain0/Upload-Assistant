@@ -22,6 +22,15 @@ def _contains_m4b(source: Path) -> bool:
     return source.is_dir() and any(path.is_file() for path in source.rglob("*.m4b"))
 
 
+def should_prepare_zenith_audiobook(meta: Meta, config: dict[str, Any]) -> bool:
+    if meta.site_check or not meta.unattended or not _zenith_selected(meta):
+        return False
+    if not config.get("DEFAULT", {}).get("auto_zentag", True):
+        return False
+    source = Path(str(meta.path or "")).expanduser().resolve()
+    return _contains_m4b(source)
+
+
 async def _run_process(command: list[str]) -> tuple[int, str, str]:
     process = await asyncio.create_subprocess_exec(
         *command,
@@ -93,9 +102,7 @@ def _written_output(stdout: str, output_root: Path) -> Path | None:
 
 
 async def prepare_zenith_audiobook(meta: Meta, base_dir: str, config: dict[str, Any]) -> str | None:
-    if meta.debug or meta.site_check or not meta.unattended or not _zenith_selected(meta):
-        return None
-    if not config.get("DEFAULT", {}).get("auto_zentag", True):
+    if not should_prepare_zenith_audiobook(meta, config):
         return None
 
     source = Path(str(meta.path or "")).expanduser().resolve()
