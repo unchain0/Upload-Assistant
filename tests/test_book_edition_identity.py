@@ -283,3 +283,10 @@ def test_book_identity_removes_trailing_source_isbn() -> None:
 
     assert author == "Jon Gertner"
     assert title == "The Idea Factory - Bell Labs And The Great Age Of American Innovation"
+
+
+def test_filename_title_requires_support_from_edition_overview() -> None:
+    filename_title = book_prep._strip_book_format_suffix("The Rebel An Essay on Man in Revolt")
+    overview = "The Rebel is an essay in which Albert Camus examines rebellion and man in revolt."
+
+    assert len(book_prep._identity_tokens(filename_title) & book_prep._identity_tokens(overview)) >= 2

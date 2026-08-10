@@ -887,6 +887,11 @@ async def gather_book_prep(
     exact_year = _matching_isbn_metadata(meta, google_books_data, openlibrary_data, mam_data)
     exact_publisher = _matching_isbn_metadata(meta, mam_data, openlibrary_data, google_books_data)
     if exact_edition:
+        if not local_title:
+            filename_title = _strip_book_format_suffix(Path(videopath).stem)
+            overview_tokens = _identity_tokens(str(exact_edition.get("overview") or meta.overview or ""))
+            if len(_identity_tokens(filename_title) & overview_tokens) >= 2:
+                local_title = filename_title
         edition_fields = (
             "title",
             "author",
