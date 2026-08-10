@@ -52,6 +52,7 @@ async def prepare_tracker_meta(shared_meta: Meta, tracker: str, config: dict[str
         prepared_meta.keep_folder = True
         prepared_meta.allow_spaces = True
         prepared_meta.uuid = f"{prepared_meta.uuid}-zenith"
+        prepared_meta.update({"trusted_book_layout": True})
         prep = Prep(screens=prepared_meta.screens, img_host=prepared_meta.imghost, config=config)
         try:
             tracker_meta = await prep.gather_prep(meta=prepared_meta, mode="cli")

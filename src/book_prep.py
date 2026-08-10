@@ -925,7 +925,7 @@ async def gather_book_prep(
         meta.author = fallback_author
         meta.title = fallback_title
 
-    if meta.unattended and not cli_overrides["title"]:
+    if meta.unattended and not cli_overrides["title"] and not meta.get("trusted_book_layout", False):
         conflict = book_identity_conflict(meta, str(meta.path or videopath))
         if conflict:
             raise ItemProcessingError(conflict, str(meta.path or videopath))

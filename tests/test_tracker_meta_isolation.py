@@ -39,6 +39,7 @@ async def test_zentag_preparation_is_isolated_from_other_trackers(tmp_path: Path
 
         async def gather_prep(self, meta: Meta, mode: str) -> Meta:
             assert mode == "cli"
+            assert meta.get("trusted_book_layout") is True
             meta.filelist = [str(prepared / "01 - Book.m4b")]
             return meta
 
