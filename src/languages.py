@@ -1,4 +1,5 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
+import json
 import re
 import sys
 from pathlib import Path
@@ -24,6 +25,76 @@ class LanguagesManager:
                 seen.add(value)
                 deduped.append(value)
         return deduped
+
+    @staticmethod
+    def _language_display_name(language: str) -> str:
+        try:
+            return langcodes.Language.get(language).display_name("en")
+        except (LanguageTagError, ValueError):
+            return language.strip().title()
+
+    @staticmethod
+    def _add_language_to_audio_section(content: str, language: str) -> str:
+        lines = content.splitlines()
+        section_header = re.compile(r"^(General|Video|Audio|Text|Menu)(?:\s*#\d+)?$", re.IGNORECASE)
+        audio_start = next((index for index, line in enumerate(lines) if re.fullmatch(r"Audio(?:\s*#\d+)?", line.strip(), re.IGNORECASE)), None)
+        if audio_start is None:
+            return content
+
+        audio_end = next((index for index in range(audio_start + 1, len(lines)) if section_header.fullmatch(lines[index].strip())), len(lines))
+        if any(re.match(r"^Language\s*:", line.strip(), re.IGNORECASE) for line in lines[audio_start + 1 : audio_end]):
+            return content
+
+        insert_at = audio_end
+        while insert_at > audio_start + 1 and not lines[insert_at - 1].strip():
+            insert_at -= 1
+        lines.insert(insert_at, f"Language                                : {language}")
+        return "\n".join(lines) + ("\n" if content.endswith("\n") else "")
+
+    async def infer_single_audio_language(self, meta: Meta) -> bool:
+        if meta.category not in ("MOVIE", "TV") or meta.is_disc == "BDMV":
+            return False
+
+        original_language = str(meta.original_language or "").strip()
+        if not original_language or original_language.lower() in ("und", "unknown", "undefined"):
+            return False
+
+        release_name = " ".join(str(value or "") for value in (meta.uuid, meta.path, meta.name))
+        if meta.dual_audio or re.search(r"\b(?:DUAL(?:[ ._-]?AUDIO)?|MULTI(?:[ ._-]?AUDIO)?|DUBBED)\b", release_name, re.IGNORECASE):
+            return False
+
+        tracks = meta.mediainfo.get("media", {}).get("track", [])
+        audio_tracks = [track for track in tracks if track.get("@type") == "Audio"]
+        if len(audio_tracks) != 1:
+            return False
+
+        audio_track = audio_tracks[0]
+        current_language = str(audio_track.get("Language") or "").strip()
+        if current_language and current_language.lower() not in ("und", "unknown", "undefined"):
+            return False
+
+        language = self._language_display_name(original_language)
+        audio_track["Language"] = language
+        release_dir = Path(meta.base_dir) / "tmp" / meta.uuid
+
+        for filename in ("MEDIAINFO.txt", "MEDIAINFO_CLEANPATH.txt"):
+            mediainfo_path = release_dir / filename
+            if not mediainfo_path.exists():
+                continue
+            async with aiofiles.open(mediainfo_path, encoding="utf-8") as source:
+                content = await source.read()
+            updated = self._add_language_to_audio_section(content, language)
+            if updated != content:
+                async with aiofiles.open(mediainfo_path, "w", newline="", encoding="utf-8") as destination:
+                    await destination.write(updated)
+
+        json_path = release_dir / "MediaInfo.json"
+        if json_path.exists():
+            async with aiofiles.open(json_path, "w", encoding="utf-8") as destination:
+                await destination.write(json.dumps(meta.mediainfo, indent=4))
+
+        logger.info(f"[cyan]Inferred {language} for the single untagged audio track from confirmed original-language metadata.[/cyan]")
+        return True
 
     async def parse_blu_ray(self, meta: Meta) -> dict[str, Any]:
         try:

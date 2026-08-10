@@ -28,3 +28,43 @@ async def test_debug_does_not_invent_missing_audio_languages(tmp_path: Path) -> 
 
     assert meta.audio_languages == []
     assert meta.unattended_audio_skip is True
+
+
+@pytest.mark.asyncio
+async def test_single_untagged_audio_inherits_confirmed_original_language(tmp_path: Path) -> None:
+    release_dir = tmp_path / "tmp" / "mandarin-release"
+    release_dir.mkdir(parents=True)
+    mediainfo = "General\nFormat : MPEG-4\n\nVideo\nFormat : AVC\n\nAudio\nFormat : AAC\n"
+    for filename in ("MEDIAINFO.txt", "MEDIAINFO_CLEANPATH.txt"):
+        (release_dir / filename).write_text(mediainfo, encoding="utf-8")
+    (release_dir / "MediaInfo.json").write_text("{}", encoding="utf-8")
+    meta = Meta(
+        base_dir=str(tmp_path),
+        uuid="mandarin-release",
+        path="The.Rap.of.China.2026.S09E06.1080p.WEB-DL.H264.AAC-PTerWEB.mp4",
+        category="TV",
+        original_language="zh",
+        mediainfo={"media": {"track": [{"@type": "General"}, {"@type": "Audio", "Format": "AAC"}]}},
+    )
+
+    inferred = await LanguagesManager().infer_single_audio_language(meta)
+
+    assert inferred is True
+    assert meta.mediainfo["media"]["track"][1]["Language"] == "Chinese"
+    assert "Language                                : Chinese" in (release_dir / "MEDIAINFO_CLEANPATH.txt").read_text(encoding="utf-8")
+    assert '"Language": "Chinese"' in (release_dir / "MediaInfo.json").read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("release_name", ["Show.S01.DUAL-GROUP", "Show.S01.MULTI-GROUP", "Show.S01.DUBBED-GROUP"])
+async def test_ambiguous_release_does_not_infer_audio_language(tmp_path: Path, release_name: str) -> None:
+    meta = Meta(
+        base_dir=str(tmp_path),
+        uuid=release_name,
+        category="TV",
+        original_language="zh",
+        mediainfo={"media": {"track": [{"@type": "Audio", "Format": "AAC"}]}},
+    )
+
+    assert await LanguagesManager().infer_single_audio_language(meta) is False
+    assert "Language" not in meta.mediainfo["media"]["track"][0]
