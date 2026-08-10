@@ -155,6 +155,54 @@ async def test_exact_isbn_metadata_replaces_divergent_embedded_identity(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_exact_isbn_title_prefers_edition_catalog_over_original_work_title(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = tmp_path / "Albert Camus - The First Man.epub"
+    source.touch()
+    meta = Meta(path=str(source), filelist=[str(source)], skip_auto_torrent=True)
+    embedded = {
+        "title": "Le premier homme",
+        "author": "Albert Camus",
+        "isbn": "0679439374",
+        "year": "1995",
+        "book_language_raw": "en",
+    }
+    mam = {
+        "title": "Le premier homme",
+        "author": "Albert Camus",
+        "publisher": "Knopf",
+        "isbn": "0679439374",
+        "year": 1995,
+        "book_language": "English",
+        "book_language_iso": "eng",
+    }
+    google = {**mam, "title": "The First Man"}
+
+    async def export_stub(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {}
+
+    async def mam_stub(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return mam
+
+    async def google_stub(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return google
+
+    async def no_result(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr(book_prep, "_get_epubmeta_output", lambda _path: "")
+    monkeypatch.setattr(book_prep, "_extract_epub_metadata", lambda _path: embedded)
+    monkeypatch.setattr(book_prep, "_epub_content_identifiers", lambda _path: ({"0679439374"}, set()))
+    monkeypatch.setattr(book_prep, "export_info", export_stub)
+    monkeypatch.setattr("src.myanonamouse.myanonamouse_manager.search_by_id", mam_stub)
+    monkeypatch.setattr("src.google_books.google_books_manager.search_by_isbn", google_stub)
+    monkeypatch.setattr("src.openlibrary.openlibrary_manager.search_by_isbn", no_result)
+
+    await book_prep.gather_book_prep(meta, str(source), str(tmp_path), {"DEFAULT": {}})
+
+    assert meta.title == "The First Man"
+
+
+@pytest.mark.asyncio
 async def test_explicit_epub_comic_flag_is_preserved(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     source = tmp_path / "Another World Survival.epub"
     source.touch()
