@@ -102,8 +102,6 @@ class MidnightScene(UNIT3D):
         "tc",
         "r5",
         "dvdscr",
-        "dvdrip",
-        "vodrip",
         "screener",
         "preair",
     )

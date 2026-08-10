@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from src.meta import Meta
-from src.uploadscreens import UploadScreensManager, _build_image_start_limiter, _upload_screens
+from src.uploadscreens import UploadScreensManager, _build_image_start_limiter, _summarize_host_error, _upload_screens
 
 
 def test_image_start_limiter_staggers_concurrent_starts() -> None:
@@ -25,6 +25,15 @@ def test_image_start_limiter_staggers_concurrent_starts() -> None:
 
     starts = sorted(asyncio.run(exercise()))
     assert all(later - earlier >= 0.015 for earlier, later in pairwise(starts))
+
+
+def test_image_host_error_does_not_dump_html_response() -> None:
+    html = "<!DOCTYPE html><html><head><title>We're sorry, but something went wrong (500)</title></head><body>internal details</body></html>"
+
+    summary = _summarize_host_error(html)
+
+    assert summary == "We're sorry, but something went wrong (500) internal details"
+    assert "<!DOCTYPE" not in summary
 
 
 def test_upload_screens_does_not_reupload_source_on_fallback(tmp_path: Path) -> None:

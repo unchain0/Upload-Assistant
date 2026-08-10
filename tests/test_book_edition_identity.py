@@ -176,11 +176,58 @@ async def test_epub_with_unresolved_isbn_conflict_is_rejected(tmp_path: Path, mo
     source = tmp_path / "The Idea Factory.epub"
     source.touch()
     monkeypatch.setattr(book_prep, "_get_epubmeta_output", lambda _path: "")
-    monkeypatch.setattr(book_prep, "_extract_epub_metadata", lambda _path: {"title": "The Idea Factory", "isbn": "9780143122791"})
+    monkeypatch.setattr(book_prep, "_extract_epub_metadata", lambda _path: {"title": "The Idea Factory"})
     monkeypatch.setattr(book_prep, "_epub_content_identifiers", lambda _path: ({"9780143122791", "9781101561089"}, set()))
 
     with pytest.raises(book_prep.ItemProcessingError, match="Conflicting EPUB ISBNs"):
         await book_prep.gather_book_prep(Meta(path=str(source), filelist=[str(source)]), str(source), str(tmp_path), {"DEFAULT": {}})
+
+
+def test_epub_primary_isbn_wins_over_incidental_body_numbers(monkeypatch: pytest.MonkeyPatch) -> None:
+    epub_meta = {"isbn": "9780134076454"}
+    monkeypatch.setattr(book_prep, "_epub_content_identifiers", lambda _path: ({"9780134076423", "9780134076454", "0000000000"}, set()))
+
+    book_prep._reconcile_epub_identifiers(Meta(), epub_meta, "Computer Science.epub")
+
+    assert epub_meta["isbn"] == "9780134076454"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("source_publisher", "expected"), [("Seven Seas", "Seven Seas"), ("", "Seven Seas Entertainment")])
+async def test_exact_edition_publisher_prefers_source_then_openlibrary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source_publisher: str, expected: str
+) -> None:
+    source = tmp_path / "No Game No Life Vol 2.cbz"
+    source.touch()
+    meta = Meta(path=str(source), filelist=[str(source)], skip_auto_torrent=True)
+    source_metadata = {
+        "title": "No Game, No Life Vol. 2",
+        "author": "Yuu Kamiya",
+        "publisher": source_publisher,
+        "isbn": "9781642750379",
+        "year": "2019",
+        "book_language_raw": "en",
+    }
+    google = {**source_metadata, "publisher": "National Geographic Books"}
+    openlibrary = {**source_metadata, "publisher": "Seven Seas Entertainment"}
+
+    async def export_stub(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {}
+
+    async def google_stub(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return google
+
+    async def openlibrary_stub(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return openlibrary
+
+    monkeypatch.setattr(book_prep, "_extract_cbr_cbz_metadata", lambda _path: source_metadata)
+    monkeypatch.setattr(book_prep, "export_info", export_stub)
+    monkeypatch.setattr("src.google_books.google_books_manager.search_by_isbn", google_stub)
+    monkeypatch.setattr("src.openlibrary.openlibrary_manager.search_by_isbn", openlibrary_stub)
+
+    await book_prep.gather_book_prep(meta, str(source), str(tmp_path), {"DEFAULT": {}})
+
+    assert meta.publisher == expected
 
 
 def test_book_identity_removes_trailing_source_isbn() -> None:

@@ -9,6 +9,7 @@ from typing import Any, cast
 
 import cli_ui
 import langcodes
+from langcodes.tag_parser import LanguageTagError
 
 from src.console import logger
 from src.meta import Meta
@@ -21,6 +22,28 @@ class LossyDtsDuplicateError(ValueError):
 
 
 TrackDict = dict[str, Any]
+
+
+def _canonical_language_code(value: Any) -> str:
+    language = str(value or "").strip()
+    if not language:
+        return ""
+    try:
+        return str(langcodes.Language.get(language).language or "").lower()
+    except (ValueError, LanguageTagError):
+        try:
+            return str(langcodes.find(language).language or "").lower()
+        except LookupError:
+            return language.casefold()
+
+
+def _languages_equivalent(left: str, right: str) -> bool:
+    if not left or not right:
+        return False
+    if left == right:
+        return True
+    variants = ({"zh", "cmn", "cn"}, {"no", "nb"})
+    return any(left in group and right in group for group in variants)
 
 
 class AudioManager:
@@ -372,7 +395,7 @@ async def _get_audio_v2(
             # if not meta.original_language.startswith('en'):
             if not meta.is_disc:
                 eng, orig, non_en_non_commentary = False, False, False
-                orig_lang = meta.original_language.lower() if meta.original_language else ""
+                orig_lang = _canonical_language_code(meta.original_language)
                 logger.debug(f"DEBUG: Original Language: {orig_lang}")
                 try:
                     tracks = cast(list[TrackDict], cast(Mapping[str, Any], mi_map.get("media", {})).get("track", []))
@@ -404,23 +427,18 @@ async def _get_audio_v2(
                     # First pass: collect all audio languages and set flags
                     non_eng_non_orig_languages: list[str] = []
                     for t in audio_tracks:
-                        audio_language = str(t.get("Language") or "")
-                        logger.debug(f"DEBUG: Audio Language = {audio_language}")
-                        audio_language = audio_language.lower().strip()
-                        if audio_language.startswith("en"):
+                        audio_language = str(t.get("Language") or "").lower().strip()
+                        audio_language_code = _canonical_language_code(audio_language)
+                        logger.debug(f"DEBUG: Audio Language = {audio_language} ({audio_language_code})")
+                        if audio_language_code == "en":
                             logger.debug(f"DEBUG: Found English audio track: {audio_language}")
                             eng = True
 
-                        if audio_language and "en" not in audio_language and audio_language.startswith(orig_lang):
+                        if _languages_equivalent(audio_language_code, orig_lang):
                             logger.debug(f"DEBUG: Found original language audio track: {audio_language}")
                             orig = True
 
-                        variants = ["zh", "cn", "cmn", "no", "nb"]
-                        if any(audio_language.startswith(var) for var in variants) and any(orig_lang.startswith(var) for var in variants):
-                            logger.debug(f"DEBUG: Found original language audio track with variant: {audio_language}")
-                            orig = True
-
-                        if audio_language and not audio_language.startswith(orig_lang) and not audio_language.startswith("en") and not audio_language.startswith("zx"):
+                        if audio_language and not _languages_equivalent(audio_language_code, orig_lang) and audio_language_code not in ("en", "zxx"):
                             non_en_non_commentary = True
                             non_eng_non_orig_languages.append(audio_language)
 

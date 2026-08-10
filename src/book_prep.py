@@ -243,6 +243,9 @@ def _author_likelihood(value: str) -> int:
     substantive = [word for word in words if word.casefold() not in _AUTHOR_PARTICLES]
     if not substantive or any(not word[0].isupper() for word in substantive):
         return -1
+    comma_groups = [re.findall(r"[^\W\d_]+(?:['-][^\W\d_]+)*", group, flags=re.UNICODE) for group in value.split(",")]
+    if len(comma_groups) > 1 and all(2 <= len(group) <= 3 for group in comma_groups):
+        return 4
     return 3 if len(substantive) <= 3 else 1
 
 
@@ -279,6 +282,10 @@ def _normalized_book_identity(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", value.casefold())
 
 
+def _author_identity_tokens(value: str) -> set[str]:
+    return set(re.findall(r"[^\W_]+", value.casefold(), flags=re.UNICODE))
+
+
 def _matching_isbn_metadata(meta: Meta, *providers: dict[str, Any] | None) -> dict[str, Any] | None:
     current_isbn = validate_isbn_checksum(str(meta.isbn or ""))
     if not current_isbn:
@@ -298,7 +305,11 @@ def book_identity_conflict(meta: Meta, path: str) -> str | None:
     if not path_author or not path_title or not meta.author or not meta.title:
         return None
 
-    if _normalized_book_identity(path_author) != _normalized_book_identity(str(meta.author)):
+    path_author_tokens = _author_identity_tokens(path_author)
+    metadata_author_tokens = _author_identity_tokens(str(meta.author))
+    shorter_author, longer_author = sorted((path_author_tokens, metadata_author_tokens), key=len)
+    authors_match = path_author_tokens == metadata_author_tokens or (len(shorter_author) >= 2 and shorter_author < longer_author)
+    if not authors_match:
         return f"Book metadata author '{meta.author}' conflicts with source author '{path_author}'"
 
     path_tokens = _identity_tokens(path_title)
@@ -353,19 +364,19 @@ def _reconcile_epub_identifiers(meta: Meta, epub_meta: dict[str, Any], path: str
     primary_isbn = validate_isbn_checksum(str(epub_meta.get("isbn", "")))
     filename_isbns = _validated_isbns(Path(path).stem)
     content_isbns, content_asins = _epub_content_identifiers(path)
-    corroborated = filename_isbns & content_isbns
 
-    if len(corroborated) == 1:
-        epub_meta["isbn"] = next(iter(corroborated))
-    else:
-        candidates: set[str] = set(filename_isbns | content_isbns)
-        if primary_isbn:
-            candidates.add(primary_isbn)
-        if len(candidates) > 1:
-            values = ", ".join(sorted(candidates))
-            raise ItemProcessingError(f"Conflicting EPUB ISBNs could not be resolved ({values}). Re-run with --isbn using the identifier for this exact edition.", path)
-        if candidates:
-            epub_meta["isbn"] = next(iter(candidates))
+    if len(filename_isbns) == 1:
+        epub_meta["isbn"] = next(iter(filename_isbns))
+    elif len(filename_isbns) > 1:
+        values = ", ".join(sorted(filename_isbns))
+        raise ItemProcessingError(f"Conflicting EPUB ISBNs could not be resolved ({values}). Re-run with --isbn using the identifier for this exact edition.", path)
+    elif primary_isbn:
+        epub_meta["isbn"] = primary_isbn
+    elif len(content_isbns) == 1:
+        epub_meta["isbn"] = next(iter(content_isbns))
+    elif len(content_isbns) > 1:
+        values = ", ".join(sorted(content_isbns))
+        raise ItemProcessingError(f"Conflicting EPUB ISBNs could not be resolved ({values}). Re-run with --isbn using the identifier for this exact edition.", path)
 
     if not meta.book_asin and not meta.asin and len(content_asins) == 1:
         epub_meta["asin"] = next(iter(content_asins))
@@ -868,7 +879,8 @@ async def gather_book_prep(
                     if key == "year" and "search_year" not in openlibrary_data:
                         meta.search_year = int(val)
 
-    exact_edition = _matching_isbn_metadata(meta, google_books_data, openlibrary_data)
+    exact_edition = _matching_isbn_metadata(meta, mam_data, google_books_data, openlibrary_data)
+    exact_publisher = _matching_isbn_metadata(meta, mam_data, openlibrary_data, google_books_data)
     if exact_edition:
         edition_fields = (
             "title",
@@ -883,7 +895,10 @@ async def gather_book_prep(
             "genres",
         )
         for key in edition_fields:
-            val = exact_edition.get(key)
+            if key == "publisher" and source_has(key):
+                continue
+            provider = exact_publisher if key == "publisher" and exact_publisher else exact_edition
+            val = provider.get(key)
             override_key = "book_language" if key == "book_language_iso" else key
             if val and not cli_overrides.get(override_key, False):
                 meta[key] = int(val) if key in {"year", "search_year"} else val

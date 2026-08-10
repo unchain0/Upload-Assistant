@@ -209,6 +209,20 @@ def test_book_identity_rejects_conflicting_author(tmp_path) -> None:
     assert book_identity_conflict(meta, str(release)) == "Book metadata author 'Dennis Ritchie' conflicts with source author 'Brian Kernighan'"
 
 
+@pytest.mark.parametrize(
+    ("source_author", "metadata_author"),
+    [
+        ("David D Friedman", "Friedman, David D."),
+        ("Cole Knaflic, Mike Cisneros, Alex Velez", "Cole Nussbaumer Knaflic, Mike Cisneros, Alex Velez"),
+    ],
+)
+def test_book_identity_accepts_equivalent_author_variants(tmp_path, source_author: str, metadata_author: str) -> None:
+    release = tmp_path / f"{source_author} - Matching Book"
+    meta = Meta(author=metadata_author, title="Matching Book")
+
+    assert book_identity_conflict(meta, str(release)) is None
+
+
 def test_unattended_audiobook_requires_complete_edition_metadata() -> None:
     meta = Meta(
         audiobook=True,

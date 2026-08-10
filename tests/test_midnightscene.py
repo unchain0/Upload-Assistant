@@ -1,3 +1,4 @@
+# ruff: noqa: S101
 """Regression tests for MidnightScene naming support."""
 
 import asyncio
@@ -80,6 +81,16 @@ def test_midnightscene_keeps_dual_audio_with_english_audio():
     )
 
     assert asyncio.run(_tracker().get_name(meta)) == {"name": "Example Show S01 1080p BluRay Dual-Audio FLAC 2.0 x265-ExampleGroup"}
+
+
+def test_midnightscene_does_not_treat_dvdrip_as_an_unofficial_source():
+    meta = Meta(
+        category="MOVIE",
+        name="The Green Slime 1968 NTSC x264 DVDRip DD 2.0",
+        uuid="The.Green.Slime.1968.DVDRip.x264-angrybunny-[CG].mkv",
+    )
+
+    assert MidnightScene._contains_unofficial_release_tag(meta) is False
 
 
 @pytest.mark.parametrize("resolution", ["360p", "360i"])

@@ -23,6 +23,12 @@ from src.temp_paths import screenshots_dir
 type ImageDict = dict[str, Any]
 
 
+def _summarize_host_error(error: Any, limit: int = 300) -> str:
+    text = re.sub(r"<[^>]*>", " ", str(error or "Unknown error"))
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[:limit]
+
+
 def _build_image_start_limiter(delay: float) -> Callable[[], Awaitable[None]]:
     """Create an async wait function that spaces image-upload starts."""
     start_lock = asyncio.Lock()
@@ -1037,7 +1043,7 @@ async def imgbox_upload(
                     async for submission in cast(Any, gallery).add([image]):
                         submission_data = cast(dict[str, Any], submission)
                         if not submission_data.get("success"):
-                            logger.error(f"[red]Error uploading to imgbox: [yellow]{submission_data.get('error')}[/yellow][/red]")
+                            logger.error(f"[red]Error uploading to imgbox: [yellow]{_summarize_host_error(submission_data.get('error'))}[/yellow][/red]")
                         else:
                             web_url = cast(str | None, submission_data.get("web_url"))
                             img_url = cast(str | None, submission_data.get("thumbnail_url"))

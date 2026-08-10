@@ -273,6 +273,30 @@ class QbittorrentClientMixin:
             raise _RetryableProxyResponseError(f"proxy returned HTTP {response.status_code}")
         raise _ProxyResponseError(f"proxy returned HTTP {response.status_code}")
 
+    async def _post_proxy_command(
+        self,
+        qbt_session: httpx.AsyncClient,
+        url: str,
+        data: dict[str, str],
+        operation_name: str,
+        accepted_statuses: tuple[int, ...] = (200,),
+    ) -> httpx.Response:
+        async def post_command() -> httpx.Response:
+            response = await qbt_session.post(url, data=data)
+            if response.status_code not in accepted_statuses:
+                self._raise_for_proxy_response(response)
+            return response
+
+        return cast(
+            httpx.Response,
+            await self.retry_qbt_operation(
+                post_command,
+                operation_name,
+                max_retries=2,
+                retryable_errors=(TimeoutError, httpx.HTTPError, _RetryableProxyResponseError),
+            ),
+        )
+
     async def _add_torrent_via_proxy(self, qbt_session: httpx.AsyncClient, qbt_proxy_url: str, infohash: str, data: dict[str, str], files: dict[str, Any]) -> None:
         add_attempt = 0
 
@@ -969,14 +993,21 @@ class QbittorrentClientMixin:
                 if proxy_url:
                     if qbt_session is None:
                         raise RuntimeError("qbt_session cannot be None")
-                    response = await qbt_session.post(f"{qbt_proxy_url}/api/v2/torrents/start", data={"hashes": torrent.infohash})
+                    response = await self._post_proxy_command(
+                        qbt_session,
+                        f"{qbt_proxy_url}/api/v2/torrents/start",
+                        {"hashes": torrent.infohash},
+                        "Start torrent via qBittorrent proxy",
+                        accepted_statuses=(200, 404),
+                    )
                     if response.status_code == 404:
                         logger.debug("[cyan]Start endpoint returned 404, trying legacy resume endpoint (pre-v5.0.0)...")
-                        resume_response = await qbt_session.post(f"{qbt_proxy_url}/api/v2/torrents/resume", data={"hashes": torrent.infohash})
-                        if resume_response.status_code != 200:
-                            logger.info(f"[yellow]Failed to resume torrent via proxy (resume): {resume_response.status_code}")
-                    elif response.status_code != 200:
-                        logger.info(f"[yellow]Failed to resume torrent via proxy: {response.status_code}")
+                        await self._post_proxy_command(
+                            qbt_session,
+                            f"{qbt_proxy_url}/api/v2/torrents/resume",
+                            {"hashes": torrent.infohash},
+                            "Resume torrent via qBittorrent proxy",
+                        )
                 else:
                     if qbt_client is None:
                         raise RuntimeError("qbt_client cannot be None")

@@ -95,3 +95,19 @@ async def test_proxy_retry_checks_for_existing_torrent_before_second_post(monkey
 
     assert session.post_calls == 1  # noqa: S101
     assert session.get_calls == 2  # noqa: S101
+
+
+@pytest.mark.asyncio
+async def test_proxy_command_retries_transient_http_status(monkeypatch):
+    client = QbittorrentClientMixin()
+    session = FakeProxySession(post_responses=[httpx.Response(502), httpx.Response(200)], get_responses=[])
+
+    async def no_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+
+    response = await client._post_proxy_command(session, "https://qbit-proxy.example/api/v2/torrents/start", {"hashes": "abc123"}, "Start torrent")
+
+    assert response.status_code == 200  # noqa: S101
+    assert session.post_calls == 2  # noqa: S101
