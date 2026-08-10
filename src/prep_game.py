@@ -23,6 +23,8 @@ from src.meta import Meta
 from src.metadata_cache import cache_for, is_cache_miss
 from src.temp_paths import artwork_dir
 
+_VERSION_PATTERN = r"\d+(?:[.\-]\d+)*(?:[a-z]\d*)?"
+
 
 def normalize_version(version_str: str) -> str:
     version_str = version_str.strip()
@@ -46,7 +48,7 @@ def clean_game_title(value: str) -> str:
     title = re.sub(r"(?<![A-Za-z0-9])\d+(?:\.\d+){1,3}\s*$", "", title)
     title = re.sub(r"[._-]+", " ", title)
     title = re.sub(r"(?i)\b(?:update|patch|build|version)\b.*", "", title)
-    title = re.sub(r"(?i)\bv\d+(?:\.\d+)*\b.*", "", title)
+    title = re.sub(rf"(?i)\bv{_VERSION_PATTERN}\b.*", "", title)
     title = re.sub(r"\b(?:19|20)\d{6}\b\s*$", "", title)
     title = re.sub(r"(?i)\b[a-z]{2}(?:US|GB|CA|AU|BR|DE|ES|FR|IT|JP)\b\s*$", "", title)
     title = re.sub(r"\s+", " ", title).strip()
@@ -118,15 +120,11 @@ def extract_version_from_text(text: str) -> str | None:
         return None
 
     # 1. Match version/update/build prefixes:
-    m = re.search(r"(?i)(?<![a-zA-Z0-9])(?:update|version|ver|build)[.:=\-_\s]*[vV]?(\d+(?:[.\-]\d+)+)(?![a-zA-Z0-9])", text)
+    m = re.search(rf"(?i)(?<![a-zA-Z0-9])(?:update|version|ver|build)[.:=\-_\s]*[vV]?({_VERSION_PATTERN})(?![a-zA-Z0-9])", text)
     if m:
         return normalize_version(m.group(1))
 
-    m = re.search(r"(?i)(?<![a-zA-Z0-9])(?:update|version|ver|build)[.:=\-_\s]*[vV]?(\d+)(?![a-zA-Z0-9])", text)
-    if m:
-        return normalize_version(m.group(1))
-
-    m = re.search(r"(?i)(?<![a-zA-Z0-9])[vV](\d+(?:[.\-]\d+)*)(?![a-zA-Z0-9])", text)
+    m = re.search(rf"(?i)(?<![a-zA-Z0-9])[vV]({_VERSION_PATTERN})(?![a-zA-Z0-9])", text)
     if m:
         return normalize_version(m.group(1))
 
@@ -160,16 +158,13 @@ def extract_version_from_nfo(nfo_path: str) -> str | None:
 
         # First pass: look for strong patterns
         for line in lines:
-            m = re.search(r"(?i)(?<![a-zA-Z0-9])(?:update|version|ver|build)[.:=\-_\s]*[vV]?(\d+(?:[.\-]\d+)+)(?![a-zA-Z0-9])", line)
-            if m:
-                return normalize_version(m.group(1))
-            m = re.search(r"(?i)(?<![a-zA-Z0-9])(?:update|version|ver|build)[.:=\-_\s]*[vV]?(\d+)(?![a-zA-Z0-9])", line)
+            m = re.search(rf"(?i)(?<![a-zA-Z0-9])(?:update|version|ver|build)[.:=\-_\s]*[vV]?({_VERSION_PATTERN})(?![a-zA-Z0-9])", line)
             if m:
                 return normalize_version(m.group(1))
 
         # Second pass: look for any vX.Y pattern
         for line in lines:
-            m = re.search(r"(?i)(?<![a-zA-Z0-9])[vV](\d+(?:[.\-]\d+)+)(?![a-zA-Z0-9])", line)
+            m = re.search(rf"(?i)(?<![a-zA-Z0-9])[vV]({_VERSION_PATTERN})(?![a-zA-Z0-9])", line)
             if m:
                 return normalize_version(m.group(0))
 

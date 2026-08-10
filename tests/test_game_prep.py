@@ -6,7 +6,15 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from src.meta import Meta
-from src.prep_game import clean_game_title, detect_platform_from_files, extract_release_group, gather_game_prep, missing_game_fields, required_game_fields
+from src.prep_game import (
+    clean_game_title,
+    detect_platform_from_files,
+    extract_release_group,
+    extract_version_from_text,
+    gather_game_prep,
+    missing_game_fields,
+    required_game_fields,
+)
 
 
 def test_game_title_fallback_removes_locale_build_date_and_extension() -> None:
@@ -16,6 +24,13 @@ def test_game_title_fallback_removes_locale_build_date_and_extension() -> None:
 def test_game_title_fallback_removes_version_and_scene_group() -> None:
     assert clean_game_title("Native_Instruments_SuperStarSaw_1.0.0_[HCiSO].dmg") == "Native Instruments SuperStarSaw"
     assert extract_release_group("Native_Instruments_SuperStarSaw_1.0.0_[HCiSO].dmg") == "HCiSO"
+
+
+def test_game_title_and_version_support_compact_letter_suffix() -> None:
+    release = "Factory.Town.2.Paradise.v133f.MacOS.dmg"
+
+    assert extract_version_from_text(release) == "v133f"
+    assert clean_game_title(release) == "Factory Town 2 Paradise"
 
 
 def test_dmg_platform_is_detected_as_mac() -> None:
@@ -55,6 +70,25 @@ async def test_software_game_prep_uses_raw_filename_metadata(tmp_path) -> None:
     assert meta.title == "Native Instruments SuperStarSaw"
     assert meta.game_version == "v1.0.0"
     assert meta.tag == "-HCiSO"
+    assert meta.platform == "MAC"
+
+
+@pytest.mark.asyncio
+async def test_game_prep_extracts_compact_letter_version_from_dmg(tmp_path) -> None:
+    release_path = tmp_path / "Factory.Town.2.Paradise.v133f.MacOS.dmg"
+    meta = Meta(path=str(release_path), filelist=[str(release_path)], unattended=True)
+
+    with patch("src.prep_game.IGDBAPI.search_game", new=AsyncMock(return_value=[])) as search:
+        await gather_game_prep(
+            meta,
+            str(release_path),
+            str(tmp_path),
+            {"DEFAULT": {"twitch_client_id": "client", "twitch_client_secret": "secret"}},
+        )
+
+    search.assert_awaited_once_with("Factory Town 2 Paradise")
+    assert meta.title == "Factory Town 2 Paradise"
+    assert meta.game_version == "v133f"
     assert meta.platform == "MAC"
 
 
