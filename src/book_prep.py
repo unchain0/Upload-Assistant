@@ -363,9 +363,20 @@ def _epub_content_identifiers(path: str) -> tuple[set[str], set[str]]:
     asins: set[str] = set()
     try:
         with zipfile.ZipFile(path) as archive:
-            for member in archive.infolist():
-                if member.file_size > 2 * 1024 * 1024 or Path(member.filename).suffix.lower() not in {".opf", ".xhtml", ".html", ".htm", ".xml", ".ncx"}:
+            members = archive.infolist()
+            if len(members) > 4096:
+                return set(), set()
+            total_size = 0
+            for member in members:
+                if Path(member.filename).suffix.lower() not in {".opf", ".xhtml", ".html", ".htm", ".xml", ".ncx"}:
                     continue
+                if member.file_size > 2 * 1024 * 1024:
+                    continue
+                if member.file_size > max(member.compress_size, 1) * 100:
+                    return set(), set()
+                total_size += member.file_size
+                if total_size > 16 * 1024 * 1024:
+                    return set(), set()
                 text = archive.read(member).decode("utf-8", errors="ignore")
                 isbns.update(_validated_isbns(text))
                 asins.update(re.findall(r"\bB0[A-Z0-9]{8}\b", text.upper()))

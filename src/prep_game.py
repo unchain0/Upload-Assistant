@@ -43,7 +43,7 @@ def clean_game_title(value: str) -> str:
     title = re.sub(r"\[[^\]]+\]$", "", title).strip(" ._-")
     if "-" in title:
         prefix, suffix = title.rsplit("-", 1)
-        if suffix and len(suffix) < 15 and not re.search(r"\s", suffix):
+        if (suffix.isupper() or suffix.isdigit()) and len(suffix) < 15 and not re.search(r"\s", suffix):
             title = prefix
     title = re.sub(
         rf"(?i)(?<![A-Za-z0-9]){_VERSION_PATTERN}\s+(?:(?:incl(?:uded)?|with)\s+)?(?:keygen|crack(?:ed)?|serial)\b.*",

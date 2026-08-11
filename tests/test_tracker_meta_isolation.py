@@ -62,6 +62,25 @@ async def test_zentag_preparation_is_isolated_from_other_trackers(tmp_path: Path
     assert meta.filelist == [str(original)]
 
 
+@pytest.mark.asyncio
+async def test_tracker_prepared_metadata_is_reused_for_upload() -> None:
+    original = Meta(
+        author="宮沢 賢治",
+        title="宮沢賢治童話全集",
+        trackers=["YUSCENE"],
+        tracker_status={},
+        tracker_prepared_meta={
+            "YUSCENE": Meta(author="Kenji Miyazawa", title="Complete Collection of Children's Stories")
+        },
+    )
+
+    prepared = await trackerhandle.prepare_tracker_meta(original, "YUSCENE", {"DEFAULT": {}})
+
+    assert prepared.author == "Kenji Miyazawa"
+    assert prepared.title == "Complete Collection of Children's Stories"
+    assert original.author == "宮沢 賢治"
+
+
 def test_cjk_book_metadata_is_detected_before_upload() -> None:
     meta = Meta(
         category="BOOK",

@@ -33,7 +33,9 @@ type StatusDict = dict[str, Any]
 
 
 async def prepare_tracker_meta(shared_meta: Meta, tracker: str, config: dict[str, Any]) -> Meta:
-    tracker_meta = shared_meta.copy()
+    prepared_by_tracker = shared_meta.get("tracker_prepared_meta", {})
+    prepared = prepared_by_tracker.get(tracker) if isinstance(prepared_by_tracker, dict) else None
+    tracker_meta = prepared.copy() if isinstance(prepared, Meta) else Meta(prepared) if isinstance(prepared, dict) else shared_meta.copy()
     tracker_meta.trackers = [tracker]
     tracker_meta.tracker_status = shared_meta.tracker_status
 

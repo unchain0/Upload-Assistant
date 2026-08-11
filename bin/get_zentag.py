@@ -1,9 +1,7 @@
 # Upload Assistant © 2026 Audionut & wastaken7 — Licensed under UAPL v1.0
 import hashlib
 import io
-import os
 import platform
-import shutil
 import stat
 import tarfile
 import zipfile
@@ -25,13 +23,17 @@ class ZentagBinaryManager:
         "zentag_0.3.0_windows_amd64.zip": "a49112e047361267ad404b664cb7501b4c3acde0dde27f689cc3079bb802cdd0",
         "zentag_0.3.0_windows_arm64.zip": "0acf0fc3b126a0fd654c547894e27eae71720a47bc1d023abf7e26fec494a48e",
     }
+    BINARY_CHECKSUMS: ClassVar[dict[str, str]] = {
+        "zentag_0.3.0_darwin_amd64.tar.gz": "7f906ed61292397cb4b59135df87908a07faa9560d3b70428df99803d46988aa",
+        "zentag_0.3.0_darwin_arm64.tar.gz": "fb1f8c6b4804145569f90951e1383058e894f222af85e8f54f73a9d8a90771bc",
+        "zentag_0.3.0_linux_amd64.tar.gz": "e5bc42ef5b9f090e58d703e45eafa3902cf530cdddba78f991979707588bb691",
+        "zentag_0.3.0_linux_arm64.tar.gz": "5bddec5a217bc00bf18ebe8f7e39a36f8aca00f51abef208547096760aa62786",
+        "zentag_0.3.0_windows_amd64.zip": "40d0e68fd875b59b672e36461a924c3ec862318ee0a188ebbf6d5c3e4ca4abaa",
+        "zentag_0.3.0_windows_arm64.zip": "213f586572a4017a6ae6abab65c3478b9fc08578a9d5f6e329bdc57fd5f47a06",
+    }
 
     @classmethod
     async def ensure_binary(cls, base_dir: str | Path) -> str:
-        installed = shutil.which("zentag")
-        if installed:
-            return installed
-
         system = platform.system().lower()
         machine = platform.machine().lower()
         arch = "arm64" if machine in {"arm64", "aarch64"} else "amd64" if machine in {"x86_64", "amd64"} else ""
@@ -46,7 +48,9 @@ class ZentagBinaryManager:
         target_dir.mkdir(parents=True, exist_ok=True)
         binary = target_dir / ("zentag.exe" if os_name == "windows" else "zentag")
         marker = target_dir / cls.VERSION
-        if binary.is_file() and marker.is_file() and (os_name == "windows" or os.access(binary, os.X_OK)):
+        expected_binary = cls.BINARY_CHECKSUMS.get(asset, "")
+        cached_digest = hashlib.sha256(binary.read_bytes()).hexdigest() if binary.is_file() else ""
+        if expected_binary and cached_digest == expected_binary and marker.is_file() and marker.read_text(encoding="utf-8").strip() == cls.VERSION:
             return str(binary)
 
         release_url = f"https://github.com/znth-cx/zentag/releases/download/{cls.VERSION}"
@@ -71,6 +75,9 @@ class ZentagBinaryManager:
                 if extracted is None:
                     raise RuntimeError(f"zentag binary not found in {asset}")
                 payload = extracted.read()
+
+        if not expected_binary or hashlib.sha256(payload).hexdigest() != expected_binary:
+            raise RuntimeError(f"zentag binary checksum verification failed for {asset}")
 
         binary.write_bytes(payload)
         if os_name != "windows":

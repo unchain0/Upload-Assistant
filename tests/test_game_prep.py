@@ -27,6 +27,10 @@ def test_game_title_fallback_removes_version_and_scene_group() -> None:
     assert extract_release_group("Native_Instruments_SuperStarSaw_1.0.0_[HCiSO].dmg") == "HCiSO"
 
 
+def test_game_title_fallback_preserves_hyphenated_title() -> None:
+    assert clean_game_title("Half-Life") == "Half Life"
+
+
 def test_game_title_and_version_support_compact_letter_suffix() -> None:
     release = "Factory.Town.2.Paradise.v133f.MacOS.dmg"
 

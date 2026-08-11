@@ -1,13 +1,64 @@
 # ruff: noqa: S101
+import hashlib
+import io
+import tarfile
 from pathlib import Path
 from typing import Any, cast
 
 import pytest as _pytest  # pyright: ignore[reportMissingImports]
 
+import bin.get_zentag as get_zentag
 import src.zentag as zentag
 from src.meta import Meta
 
 pytest: Any = cast(Any, _pytest)
+
+
+@pytest.mark.asyncio
+async def test_tampered_cached_zentag_is_replaced_with_verified_binary(tmp_path: Path, monkeypatch: Any) -> None:
+    asset = "zentag_0.3.0_linux_amd64.tar.gz"
+    payload = b"verified-zentag"
+    archive_buffer = io.BytesIO()
+    with tarfile.open(fileobj=archive_buffer, mode="w:gz") as archive:
+        member = tarfile.TarInfo("zentag")
+        member.size = len(payload)
+        archive.addfile(member, io.BytesIO(payload))
+    archive_payload = archive_buffer.getvalue()
+
+    target = tmp_path / "bin" / "zentag" / "linux" / "amd64"
+    target.mkdir(parents=True)
+    binary = target / "zentag"
+    binary.write_bytes(b"tampered")
+    (target / zentag.ZentagBinaryManager.VERSION).write_text(zentag.ZentagBinaryManager.VERSION, encoding="utf-8")
+
+    class Response:
+        content = archive_payload
+
+        @staticmethod
+        def raise_for_status() -> None:
+            return None
+
+    class Client:
+        def __init__(self, **_kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> Client:
+            return self
+
+        async def __aexit__(self, *_args: Any) -> None:
+            return None
+
+        async def get(self, _url: str) -> Response:
+            return Response()
+
+    monkeypatch.setattr(get_zentag.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(get_zentag.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(zentag.ZentagBinaryManager, "CHECKSUMS", {asset: hashlib.sha256(archive_payload).hexdigest()})
+    monkeypatch.setattr(zentag.ZentagBinaryManager, "BINARY_CHECKSUMS", {asset: hashlib.sha256(payload).hexdigest()})
+    monkeypatch.setattr(get_zentag, "HTTPX", type("HTTPXStub", (), {"AsyncClient": Client}))
+
+    assert await zentag.ZentagBinaryManager.ensure_binary(tmp_path) == str(binary)
+    assert binary.read_bytes() == payload
 
 
 @pytest.mark.asyncio

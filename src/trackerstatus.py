@@ -202,6 +202,11 @@ class TrackerStatusManager:
                                 local_meta.skipping = tracker_name
 
                         if not local_tracker_status["skipped"]:
+                            async with meta_lock:
+                                prepared_meta = meta.setdefault("tracker_prepared_meta", {})
+                                prepared_meta[tracker_name] = local_meta.copy()
+
+                        if not local_tracker_status["skipped"]:
                             try:
                                 dupes: list[Any] = cast(list[Any], await tracker_class.search_existing(local_meta))
                                 # set trackers here so that they are not double checked later with cross seeding
