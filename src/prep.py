@@ -35,6 +35,7 @@ try:
     from src.music.prep import enrich_music_from_discogs as _enrich_music_from_discogs_fn
     from src.music.prep import enrich_music_from_orpheus as _enrich_music_from_orpheus_fn
     from src.music.prep import gather_music_prep as _gather_music_prep_fn
+    from src.podcast_prep import gather_podcast_prep as _gather_podcast_prep_fn
     from src.prep_game import gather_game_prep as _gather_game_prep_fn
     from src.prep_game import resolve_game_filelist as _resolve_game_filelist_fn
     from src.radarr import RadarrManager
@@ -144,6 +145,14 @@ class Prep:
         use_sonarr, use_radarr, client, skip_tracker_descriptions, hash_ids, tracker_ids = prep_helpers.init_meta(self, meta, mode)
         await self._publish_initial_webui_snapshot(meta)
 
+        if meta.category == "PODCAST" or (isinstance(meta.manual_category, str) and meta.manual_category.strip().upper() == "PODCAST"):
+            meta.category = "PODCAST"
+            await _gather_podcast_prep_fn(meta)
+            prep_helpers.calculate_source_size(self, meta, str(meta.path or ""))
+            await prep_helpers.process_trackers_and_torrent(self, meta, client, hash_ids, tracker_ids, "", "")
+            logger.debug(f"Podcast metadata processed in {time.time() - meta_start_time:.2f} seconds")
+            return meta
+
         # 2. Disc and Category Detection
         videoloc, bdinfo = await prep_helpers.detect_disc_and_category(self, meta)
 
@@ -227,7 +236,7 @@ class Prep:
         """Generate local screenshots while metadata and tracker IDs are fetched."""
         if meta.keep_images:
             return
-        if meta.category in ("MUSIC", "GAME", "BOOK") or meta.screens <= 0:
+        if meta.category in ("MUSIC", "PODCAST", "GAME", "BOOK") or meta.screens <= 0:
             return
 
         try:
