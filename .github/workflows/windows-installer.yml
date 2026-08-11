@@ -29,8 +29,8 @@ jobs:
     runs-on: windows-2025
     env:
       PYTHON_MINOR: "3.14"
-      FFMPEG_URL: "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
-      FFMPEG_SHA256: "c91c9bd5e396b7d65f4520e789bd0321b7747c0df3fa6e1cfb4b1bc31bb10f4e"
+      FFMPEG_URL: "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-10-13-17/ffmpeg-N-126039-g6bbc22dc09-win64-gpl.zip"
+      FFMPEG_SHA256: "25e35886ed2e7b9aa01525f80155ef54be1144dd83cce8809c7d8d96e1b34fac"
     steps:
       - name: Validate manual release attachment
         if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''

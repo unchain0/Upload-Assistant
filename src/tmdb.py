@@ -436,6 +436,7 @@ async def get_tmdb_id(
     ) -> tuple[int, str]:
         _ = untouched_filename
         _ = path
+        _ = debug
         search_results: dict[str, Any] = {"results": []}
         original_category = category
         category = new_category or original_category

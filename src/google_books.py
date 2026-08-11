@@ -146,8 +146,10 @@ class GoogleBooksManager:
                         metadata = self._parse_volume_info(data, isbn)
                         if metadata:
                             await cache.set("google_books", "isbn_exact", clean_isbn, metadata)
-                        if metadata:
                             logger.info(f"{google_color_str}: ISBN match found: {clean_isbn}")
+                        else:
+                            logger.info(f"{google_color_str}: ISBN match not found: {clean_isbn}")
+                            await cache.set("google_books", "isbn_exact", clean_isbn, {"not_found": True}, negative=True)
                         return metadata
                     logger.info(f"{google_color_str}: No items found for ISBN: {clean_isbn}")
                     await cache.set("google_books", "isbn_exact", clean_isbn, {"not_found": True}, negative=True)
