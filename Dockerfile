@@ -47,7 +47,9 @@ RUN rm -rf /Upload-Assistant/defaults \
     && mkdir -p /Upload-Assistant/defaults \
     && cp -a data /Upload-Assistant/defaults/ \
     && find /Upload-Assistant/defaults/ -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null \
-    && chmod 1777 /Upload-Assistant/data
+    && cp -n /Upload-Assistant/data/example_config.py /Upload-Assistant/data/config.py \
+    && find /Upload-Assistant/data -type d -exec chmod 0755 {} + \
+    && find /Upload-Assistant/data -type f -exec chmod 0644 {} +
 
 # Download only the required mkbrr binary (requires full repo for src imports)
 RUN python3 -c "from bin.get_mkbrr import MkbrrBinaryManager; MkbrrBinaryManager.download_mkbrr_for_docker()"

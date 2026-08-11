@@ -43,7 +43,7 @@ def test_description_section_uses_dynamic_hdr_plot_images() -> None:
     assert "https://host/plot.png" in section  # noqa: S101
 
 
-def test_existing_versioned_binary_does_not_download(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_unverified_cached_dynamic_hdr_binary_is_rejected(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     binary_dir = tmp_path / "bin" / "dovi_tool" / "windows" / "amd64"
     binary_dir.mkdir(parents=True)
     binary = binary_dir / "dovi_tool.exe"
@@ -56,13 +56,12 @@ def test_existing_versioned_binary_does_not_download(tmp_path: Path, monkeypatch
 
     class NoDownloadClient:
         def __init__(self, *_args, **_kwargs) -> None:
-            raise AssertionError("The downloader must not be initialized when the versioned binary exists")
+            raise RuntimeError("download attempted")
 
     monkeypatch.setattr(get_dynamic_hdr_tools.httpx, "AsyncClient", NoDownloadClient)
 
-    result = asyncio.run(get_dynamic_hdr_tools.get_tool(str(tmp_path), "dovi"))
-
-    assert result == str(binary)  # noqa: S101
+    with pytest.raises(RuntimeError, match="download attempted"):
+        asyncio.run(get_dynamic_hdr_tools.get_tool(str(tmp_path), "dovi"))
 
 
 def test_zero_byte_cached_dynamic_hdr_binary_is_rejected(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]

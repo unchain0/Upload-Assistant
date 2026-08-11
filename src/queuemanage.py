@@ -35,6 +35,13 @@ def _dedupe_paths(paths: Sequence[str]) -> list[str]:
     return deduped
 
 
+def _queue_log_path(tmp_dir: str | Path, queue_name: str, suffix: str) -> Path:
+    normalized = queue_name.replace(" ", "_")
+    if not normalized or normalized in {".", ".."} or "\0" in normalized or any(separator in normalized for separator in ("/", "\\")):
+        raise ValueError(f"Invalid queue name: {queue_name!r}")
+    return Path(tmp_dir) / f"{normalized}{suffix}"
+
+
 def _expand_multi_format_ebook_directories(queue: QueueList) -> QueueList:
     if not all(isinstance(item, str) for item in queue):
         return queue
@@ -71,19 +78,21 @@ async def _write_json_file(path: str | Path, data: Any, indent: int = 4) -> None
     content = json.dumps(data, indent=indent)
 
     def write_securely() -> None:
-        destination = Path(path)
-        if os.name == "nt":
-            destination.write_text(content, encoding="utf-8")
-            return
+        destination = path if isinstance(path, Path) else Path(path)
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
         try:
             descriptor = os.open(destination, flags, 0o600)
         except FileExistsError:
             attributes = destination.lstat()
-            if not stat.S_ISREG(attributes.st_mode) or attributes.st_uid != os.geteuid():
+            is_reparse_point = bool(
+                getattr(attributes, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+            )
+            wrong_owner = os.name != "nt" and attributes.st_uid != os.geteuid()
+            if not stat.S_ISREG(attributes.st_mode) or is_reparse_point or wrong_owner:
                 raise PermissionError(f"Refusing to replace untrusted queue log: {destination}") from None
             descriptor = os.open(destination, os.O_WRONLY | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0))
-        os.fchmod(descriptor, 0o600)
+        if os.name != "nt":
+            os.fchmod(descriptor, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8") as output:
             output.write(content)
 
@@ -103,7 +112,8 @@ class QueueManager:
             return [], None
 
         # Get the search results file path
-        search_results_file = Path(base_dir) / "tmp" / f"{site_upload}_search_results.json"
+        tmp_dir = ensure_temp_root(base_dir)
+        search_results_file = _queue_log_path(tmp_dir, site_upload, "_search_results.json")
 
         if not Path(search_results_file).exists():
             logger.info(f"[red]Search results file not found: {search_results_file}[/red]")
@@ -116,7 +126,7 @@ class QueueManager:
             return [], None
 
         # Get processed files log
-        processed_files_log = Path(base_dir) / "tmp" / f"{site_upload}_processed_paths.log"
+        processed_files_log = _queue_log_path(tmp_dir, site_upload, "_processed_paths.log")
         processed_paths: set[str] = set()
 
         if Path(processed_files_log).exists():
@@ -191,8 +201,7 @@ class QueueManager:
         """
         Returns the path to the log file for the given base directory and queue name.
         """
-        safe_queue_name = queue_name.replace(" ", "_")
-        return Path(base_dir) / "tmp" / f"{safe_queue_name}_processed_files.log"
+        return _queue_log_path(ensure_temp_root(base_dir), queue_name, "_processed_files.log")
 
     @staticmethod
     async def load_processed_files(log_file: str) -> set[str]:
@@ -425,7 +434,7 @@ class QueueManager:
 
         if save_to_log and base_dir and queue_name:
             tmp_dir = ensure_temp_root(base_dir)
-            log_file = Path(tmp_dir) / f"{queue_name}_queue.log"
+            log_file = _queue_log_path(tmp_dir, queue_name, "_queue.log")
 
             try:
                 await _write_json_file(log_file, paths_or_lines, indent=4)
@@ -457,7 +466,7 @@ class QueueManager:
             logger.info(f"[yellow]No unprocessed items found for {meta.site_upload} upload[/yellow]")
             return [], None
 
-        log_file = Path(base_dir) / "tmp" / f"{(meta.queue if meta.queue is not None else 'default')}_queue.log"
+        log_file = _queue_log_path(ensure_temp_root(base_dir), meta.queue or "default", "_queue.log")
 
         if path.endswith(".txt") and not meta.unit3d and not meta.paths_from_stdin:
             logger.info(f"[bold yellow]Detected a text file for queue input: {path}[/bold yellow]")
@@ -503,7 +512,7 @@ class QueueManager:
                     logger.info(f"[bold yellow]All items in the {queue_name} queue have already been processed.[/bold yellow]")
                     exit(0)
 
-                queue_log = Path(base_dir) / "tmp" / f"{queue_name}_queue.log"
+                queue_log = _queue_log_path(ensure_temp_root(base_dir), queue_name, "_queue.log")
                 try:
                     await _write_json_file(queue_log, [item["line"] for item in queue], indent=4)
                 except OSError as e:

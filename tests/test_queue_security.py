@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from src.queuemanage import _write_json_file
+from src.queuemanage import QueueManager, _write_json_file
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX file modes do not apply on Windows")
@@ -31,3 +31,21 @@ def test_queue_log_writer_rejects_symlink(tmp_path: Path) -> None:
         asyncio.run(_write_json_file(log, ["new"]))
 
     assert target.read_text(encoding="utf-8") == "protected"
+
+
+def test_queue_log_writer_rejects_symlink_on_windows_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    target = tmp_path / "target"
+    target.write_text("protected", encoding="utf-8")
+    log = tmp_path / "queue.log"
+    log.symlink_to(target)
+    monkeypatch.setattr("src.queuemanage.os.name", "nt")
+
+    with pytest.raises(PermissionError, match="untrusted queue log"):
+        asyncio.run(_write_json_file(log, ["new"]))
+
+    assert target.read_text(encoding="utf-8") == "protected"
+
+
+def test_queue_name_cannot_escape_temp_directory(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="Invalid queue name"):
+        asyncio.run(QueueManager.get_log_file(str(tmp_path), "../escape"))

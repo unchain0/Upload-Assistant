@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import platform
 import shutil
 import stat
@@ -92,9 +91,6 @@ async def get_tool(base_dir: str, tool: str) -> str:
     target_dir = tool_install_dir(base_dir, command, f"{system}/{machine}")
     binary = target_dir / f"{command}{extension}"
     version_file = target_dir / TOOLS[tool]["version"]
-    binary_valid = binary.is_file() and binary.stat().st_size > 0 and (system == "windows" or os.access(binary, os.X_OK))
-    if binary_valid and version_file.is_file():
-        return str(binary)
 
     staging = target_dir / ".download"
     shutil.rmtree(staging, ignore_errors=True)

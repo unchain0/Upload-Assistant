@@ -26,6 +26,8 @@ restore_data() {
     if [ ! -f /Upload-Assistant/data/config.py ] && [ -f /Upload-Assistant/data/example_config.py ]; then
         cp /Upload-Assistant/data/example_config.py /Upload-Assistant/data/config.py
     fi
+    chmod go-rwx /Upload-Assistant/data 2>/dev/null || true
+    find /Upload-Assistant/data -type f -exec chmod go-rwx {} + 2>/dev/null || true
 }
 
 # ── Fix directory ownership (only possible when running as root) ──────
@@ -37,7 +39,7 @@ if [ "$(id -u)" = "0" ]; then
     #   session_secret file inside it; the runtime user must be able to write
     # - /root/.config/upload-assistant: webui-auth mount; when PUID is set,
     #   the runtime user must traverse /root and write there
-    for dir in /Upload-Assistant/data /Upload-Assistant/tmp /Upload-Assistant/session_secret /root/.config/upload-assistant /Upload-Assistant/bin/mkbrr /Upload-Assistant/bin/MI /Upload-Assistant/bin/bdinfo /Upload-Assistant/bin/dovi_tool /Upload-Assistant/bin/hdr10plus_tool /Upload-Assistant/bin/nyuu /Upload-Assistant/bin/7z /Upload-Assistant/bin/par2 /Upload-Assistant/bin/pesto /Upload-Assistant/bin/zentag; do
+    for dir in /Upload-Assistant/data /Upload-Assistant/tmp /Upload-Assistant/session_secret /root/.config/upload-assistant; do
         # If the path already exists as a non-directory (e.g. a file bind-mount),
         # fix its ownership but don't try mkdir -p (which would fail under set -e).
         if [ -e "$dir" ] && [ ! -d "$dir" ]; then
@@ -84,6 +86,8 @@ if [ "$(id -u)" = "0" ]; then
                 if [ ! -f /Upload-Assistant/data/config.py ] && [ -f /Upload-Assistant/data/example_config.py ]; then
                     cp /Upload-Assistant/data/example_config.py /Upload-Assistant/data/config.py
                 fi
+                chmod go-rwx /Upload-Assistant/data 2>/dev/null || true
+                find /Upload-Assistant/data -type f -exec chmod go-rwx {} + 2>/dev/null || true
             }
             restore_data
             exec python /Upload-Assistant/upload.py "$@"
