@@ -126,6 +126,8 @@ async def test_unattended_zenith_ebook_is_organized_inside_directory(tmp_path: P
 
     async def fake_process(command: list[str]) -> tuple[int, str, str]:
         calls.append(command)
+        if "check" in command:
+            return 0, "[]", ""
         output.mkdir(parents=True)
         output_file.write_bytes(b"pdf")
         return 0, f"Wrote {output_file}\n", ""
@@ -149,6 +151,42 @@ async def test_unattended_zenith_ebook_is_organized_inside_directory(tmp_path: P
     assert calls[0][3:5] == ["ebook", str(source)]
     assert calls[0][calls[0].index("--isbn") + 1] == "1612680208"
     assert calls[0][calls[0].index("--language") + 1] == "eng"
+    assert calls[1][-2:] == [str(output), "--json"]
+
+
+@pytest.mark.asyncio
+async def test_zenith_ebook_with_compliance_violations_is_rejected(tmp_path: Path, monkeypatch: Any) -> None:
+    source = tmp_path / "Book.pdf"
+    source.write_bytes(b"pdf")
+    output = tmp_path / "zentag-output" / "Author - Book [ENG PDF]"
+    output_file = output / "Author - Book (2026) [ENG PDF 9780000000002].pdf"
+
+    async def fake_binary(_base_dir: str) -> str:
+        return "/bin/zentag"
+
+    async def fake_process(command: list[str]) -> tuple[int, str, str]:
+        if "check" in command:
+            return 0, '[{"rule":"ebook-naming"}]', ""
+        output.mkdir(parents=True)
+        output_file.write_bytes(b"pdf")
+        return 0, f"Wrote {output_file}\n", ""
+
+    monkeypatch.setattr(zentag.ZentagBinaryManager, "ensure_binary", staticmethod(fake_binary))
+    monkeypatch.setattr(zentag, "_run_process", fake_process)
+    meta = Meta(
+        path=str(source),
+        filelist=[str(source)],
+        trackers=["ZENITH"],
+        unattended=True,
+        category="BOOK",
+        author="Author",
+        title="Book",
+        year=2026,
+        isbn="9780000000002",
+        book_language_iso="eng",
+    )
+
+    assert await zentag.prepare_zenith_ebook(meta, str(tmp_path), {"DEFAULT": {"auto_zentag": True}}) is None
 
 
 @pytest.mark.asyncio

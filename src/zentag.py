@@ -211,7 +211,15 @@ async def prepare_zenith_ebook(meta: Meta, base_dir: str, config: dict[str, Any]
         output = _written_output(stdout, output_root)
         if output is None:
             raise RuntimeError("zentag did not report a valid ebook output directory")
-        logger.info(f"[green]ZENITH: zentag prepared ebook: {output}[/green]")
+
+        check_code, check_stdout, check_stderr = await _run_process([binary, "--config", str(config_path), "check", str(output), "--json"])
+        if check_code != 0:
+            raise RuntimeError(check_stderr.strip() or check_stdout.strip() or "zentag ebook compliance check failed")
+        violations = json.loads(check_stdout or "[]")
+        if violations:
+            raise RuntimeError(f"zentag ebook compliance check returned {len(violations)} violation(s)")
+
+        logger.info(f"[green]ZENITH: zentag prepared and validated ebook: {output}[/green]")
         return str(output)
     except (TimeoutError, OSError, RuntimeError, ValueError, json.JSONDecodeError) as error:
         logger.warning(f"[yellow]ZENITH: automatic ebook preparation failed; keeping the original for other trackers: {error}[/yellow]")
