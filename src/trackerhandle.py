@@ -48,7 +48,7 @@ async def prepare_tracker_meta(shared_meta: Meta, tracker: str, config: dict[str
         prepared_book = await prepare_zenith_ebook(tracker_meta, str(tracker_meta.base_dir), config)
     if preparation_required and not prepared_book:
         status = shared_meta.tracker_status.setdefault(tracker, {})
-        status.update(upload=False, skipped=True, status_message="Automatic zentag preparation failed; the original audiobook will not be uploaded")
+        status.update(upload=False, skipped=True, status_message="Automatic zentag preparation failed; the original book will not be uploaded")
         return tracker_meta
     if prepared_book:
         prepared_meta = tracker_meta.copy()

@@ -62,6 +62,26 @@ async def test_tampered_cached_zentag_is_replaced_with_verified_binary(tmp_path:
 
 
 @pytest.mark.asyncio
+async def test_noninteractive_zentag_process_does_not_inherit_terminal_stdin(monkeypatch: Any) -> None:
+    captured: dict[str, Any] = {}
+
+    class Process:
+        returncode = 0
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            return b"ok", b""
+
+    async def fake_create(*_command: str, **kwargs: Any) -> Process:
+        captured.update(kwargs)
+        return Process()
+
+    monkeypatch.setattr(zentag.asyncio, "create_subprocess_exec", fake_create)
+
+    assert await zentag._run_process(["zentag", "ebook", "book.pdf"]) == (0, "ok", "")
+    assert captured["stdin"] == zentag.asyncio.subprocess.DEVNULL
+
+
+@pytest.mark.asyncio
 async def test_unattended_zenith_m4b_is_transformed_and_validated(tmp_path: Path, monkeypatch: Any) -> None:
     source = tmp_path / "Book [B07ZHYPJK1].m4b"
     source.write_bytes(b"m4b")

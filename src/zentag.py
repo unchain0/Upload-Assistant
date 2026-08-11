@@ -51,6 +51,7 @@ def should_prepare_zenith_ebook(meta: Meta, config: dict[str, Any]) -> bool:
 async def _run_process(command: list[str]) -> tuple[int, str, str]:
     process = await asyncio.create_subprocess_exec(
         *command,
+        stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -187,7 +188,7 @@ async def prepare_zenith_ebook(meta: Meta, base_dir: str, config: dict[str, Any]
         binary = await ZentagBinaryManager.ensure_binary(base_dir)
         output_root, config_path = _zentag_paths(source, base_dir)
         command = [binary, "--config", str(config_path), "ebook", str(source)]
-        values = {
+        values: dict[str, object] = {
             "--author": meta.author or meta.book_author,
             "--title": meta.title or meta.book_title,
             "--year": meta.year,

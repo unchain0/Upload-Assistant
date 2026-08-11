@@ -569,6 +569,39 @@ async def test_batch_reports_torrent_success_with_usenet_preparation_failure(tmp
 
 
 @pytest.mark.asyncio
+async def test_usenet_pipeline_exception_preserves_completed_indexer_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    queue = [str(tmp_path / "mixed.epub")]
+    captured: dict[str, Meta] = {}
+
+    def fake_process_meta(meta: Meta, _base_dir: str) -> bool:
+        meta.we_are_uploading = True
+        meta.trackers = ["NZB_OK", "NZB_FAIL"]
+        meta.tracker_status = {tracker: {"upload": True} for tracker in meta.trackers}
+        captured["meta"] = meta
+        return True
+
+    async def fake_process_trackers(meta: Meta, *_args: Any, **_kwargs: Any) -> None:
+        meta.tracker_status["NZB_OK"].update(upload_success=True, status_message="uploaded")
+        raise RuntimeError("second indexer failed")
+
+    class UsenetTracker:
+        is_usenet = True
+
+    _configure_do_the_thing_stubs(monkeypatch, queue, fake_process_meta)
+    monkeypatch.setitem(upload.tracker_class_map, "NZB_OK", UsenetTracker)
+    monkeypatch.setitem(upload.tracker_class_map, "NZB_FAIL", UsenetTracker)
+    monkeypatch.setattr(upload, "process_trackers", fake_process_trackers)
+    monkeypatch.setattr("src.usenetcreate.prepare_and_upload_usenet", AsyncMock(return_value=str(tmp_path / "release.nzb")))
+    monkeypatch.setattr(sys, "argv", ["upload.py", *queue])
+
+    await upload.do_the_thing(upload.base_dir)
+
+    status = captured["meta"].tracker_status
+    assert status["NZB_OK"]["upload_success"] is True
+    assert status["NZB_FAIL"]["upload_success"] is False
+
+
+@pytest.mark.asyncio
 async def test_batch_summary_preserves_required_game_field_reason(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     queue = [str(tmp_path / "Native_Instruments_SuperStarSaw_1.0.0_[HCiSO].dmg"), str(tmp_path / "another.dmg")]
 

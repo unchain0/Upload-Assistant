@@ -2849,7 +2849,10 @@ async def do_the_thing(base_dir: str) -> None:
                                 logger.info(traceback.format_exc())
                                 status_map = meta.tracker_status
                                 for t in usenet_trackers:
-                                    status_map.setdefault(t, {}).update(
+                                    tracker_status = status_map.setdefault(t, {})
+                                    if tracker_status.get("upload_success") is True:
+                                        continue
+                                    tracker_status.update(
                                         status_message=f"data error: Usenet upload failed: {e}", upload=True, upload_success=False
                                     )
                         elif has_usenet_trackers:

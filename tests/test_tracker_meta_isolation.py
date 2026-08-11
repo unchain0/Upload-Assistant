@@ -11,13 +11,17 @@ from src.upload_safety import book_metadata_cjk_fields
 
 
 @pytest.mark.asyncio
-async def test_zentag_preparation_is_isolated_from_other_trackers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    original = tmp_path / "readarr" / "Book.m4b"
+@pytest.mark.parametrize("suffix", ["m4b", "pdf"])
+async def test_zentag_preparation_is_isolated_from_other_trackers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, suffix: str
+) -> None:
+    original = tmp_path / "readarr" / f"Book.{suffix}"
     original.parent.mkdir()
     original.write_bytes(b"original")
     prepared = tmp_path / "zentag-output" / "Author - Book"
     prepared.mkdir(parents=True)
-    (prepared / "01 - Book.m4b").write_bytes(b"retagged")
+    prepared_file = prepared / f"01 - Book.{suffix}"
+    prepared_file.write_bytes(b"retagged")
     shared_status: dict[str, dict[str, Any]] = {}
     meta = Meta(
         path=str(original),
@@ -30,8 +34,11 @@ async def test_zentag_preparation_is_isolated_from_other_trackers(tmp_path: Path
         unattended=True,
     )
 
-    async def prepare_stub(*_args: Any, **_kwargs: Any) -> str:
-        return str(prepared)
+    async def prepare_audio_stub(*_args: Any, **_kwargs: Any) -> str | None:
+        return str(prepared) if suffix == "m4b" else None
+
+    async def prepare_ebook_stub(*_args: Any, **_kwargs: Any) -> str | None:
+        return str(prepared) if suffix == "pdf" else None
 
     class PrepStub:
         def __init__(self, **_kwargs: Any) -> None:
@@ -40,10 +47,11 @@ async def test_zentag_preparation_is_isolated_from_other_trackers(tmp_path: Path
         async def gather_prep(self, meta: Meta, mode: str) -> Meta:
             assert mode == "cli"
             assert meta.get("trusted_book_layout") is True
-            meta.filelist = [str(prepared / "01 - Book.m4b")]
+            meta.filelist = [str(prepared_file)]
             return meta
 
-    monkeypatch.setattr(trackerhandle, "prepare_zenith_audiobook", prepare_stub)
+    monkeypatch.setattr(trackerhandle, "prepare_zenith_audiobook", prepare_audio_stub)
+    monkeypatch.setattr(trackerhandle, "prepare_zenith_ebook", prepare_ebook_stub)
     monkeypatch.setattr(trackerhandle, "Prep", PrepStub)
 
     peergarden_meta = await trackerhandle.prepare_tracker_meta(meta, "PEERGARDEN", {"DEFAULT": {}})
@@ -53,7 +61,7 @@ async def test_zentag_preparation_is_isolated_from_other_trackers(tmp_path: Path
     assert peergarden_meta.filelist == [str(original)]
     assert peergarden_meta.keep_folder is False
     assert zenith_meta.path == str(prepared)
-    assert zenith_meta.filelist == [str(prepared / "01 - Book.m4b")]
+    assert zenith_meta.filelist == [str(prepared_file)]
     assert zenith_meta.keep_folder is True
     assert zenith_meta.uuid == "release-id-zenith"
     assert zenith_meta.get("zentag_prepared") is True
@@ -94,9 +102,12 @@ def test_cjk_book_metadata_is_detected_before_upload() -> None:
 
 
 @pytest.mark.asyncio
-async def test_failed_required_zentag_preparation_disables_zenith(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    source = tmp_path / "Book.m4b"
-    source.write_bytes(b"m4b")
+@pytest.mark.parametrize("suffix", ["m4b", "pdf"])
+async def test_failed_required_zentag_preparation_disables_zenith(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, suffix: str
+) -> None:
+    source = tmp_path / f"Book.{suffix}"
+    source.write_bytes(suffix.encode())
     status: dict[str, dict[str, Any]] = {"ZENITH": {"upload": True}}
     meta = Meta(
         path=str(source),
