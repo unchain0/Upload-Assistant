@@ -195,6 +195,9 @@ async def export_info(
     base_dir: str,
     is_dvd: bool = False,
 ) -> dict[str, Any]:
+    async def parse_mediainfo(**kwargs: Any) -> Any:
+        return await asyncio.to_thread(MediaInfo.parse, video, **kwargs)
+
     def filter_mediainfo(data: dict[str, Any]) -> dict[str, Any]:
         media = data.get("media")
         if not isinstance(media, dict):
@@ -474,20 +477,20 @@ async def export_info(
 
         except subprocess.TimeoutExpired:
             logger.info("[bold red]Specialized MediaInfo timed out (30s) - falling back to standard MediaInfo[/bold red]")
-            media_info = MediaInfo.parse(video, output="STRING", full=False)
+            media_info = await parse_mediainfo(output="STRING", full=False)
         except ValueError as e:
             logger.info(f"[bold red]Path validation error: {e}[/bold red]")
             logger.info("[bold yellow]Falling back to standard MediaInfo for text...")
-            media_info = MediaInfo.parse(video, output="STRING", full=False)
+            media_info = await parse_mediainfo(output="STRING", full=False)
         except (subprocess.CalledProcessError, Exception) as e:
             logger.info(f"[bold red]Error getting text from specialized MediaInfo: {e}")
             if result is not None:
                 logger.debug(f"[red]Subprocess stderr: {result.stderr}[/red]")
                 logger.debug(f"[red]Subprocess returncode: {result.returncode}[/red]")
             logger.info("[bold yellow]Falling back to standard MediaInfo for text...")
-            media_info = MediaInfo.parse(video, output="STRING", full=False)
+            media_info = await parse_mediainfo(output="STRING", full=False)
     else:
-        media_info = MediaInfo.parse(video, output="STRING", full=False)
+        media_info = await parse_mediainfo(output="STRING", full=False)
 
     # Filter out unwanted lines from media info regardless of type
     media_info_str = media_info
@@ -520,11 +523,11 @@ async def export_info(
         except ValueError as e:
             logger.info(f"[bold red]Path validation error: {e}[/bold red]")
             logger.info("[bold yellow]Falling back to standard MediaInfo for JSON...")
-            media_info_json = MediaInfo.parse(video, output="JSON")
+            media_info_json = await parse_mediainfo(output="JSON")
             media_info_dict = json.loads(media_info_json)
         except subprocess.TimeoutExpired:
             logger.info("[bold red]Specialized MediaInfo timed out (30s) - falling back to standard MediaInfo[/bold red]")
-            media_info_json = MediaInfo.parse(video, output="JSON")
+            media_info_json = await parse_mediainfo(output="JSON")
             media_info_dict = json.loads(media_info_json)
         except (subprocess.CalledProcessError, json.JSONDecodeError, Exception) as e:
             logger.info(f"[bold red]Error getting JSON from specialized MediaInfo: {e}")
@@ -534,11 +537,11 @@ async def export_info(
                 if result2.stdout:
                     logger.debug(f"[red]Subprocess stdout preview: {result2.stdout[:200]}...[/red]")
             logger.info("[bold yellow]Falling back to standard MediaInfo for JSON...[/bold yellow]")
-            media_info_json = MediaInfo.parse(video, output="JSON")
+            media_info_json = await parse_mediainfo(output="JSON")
             media_info_dict = json.loads(media_info_json)
     else:
         # Use standard MediaInfo library for non-DVD or when specialized CLI not available
-        media_info_json = MediaInfo.parse(video, output="JSON")
+        media_info_json = await parse_mediainfo(output="JSON")
         media_info_dict = json.loads(media_info_json)
 
     filtered_info = filter_mediainfo(media_info_dict)

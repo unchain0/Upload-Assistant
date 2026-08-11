@@ -1,5 +1,6 @@
 import asyncio
 import io
+import json
 import os
 import wave
 import zipfile
@@ -15,6 +16,7 @@ from PIL import Image
 from torf import Torrent
 
 from src.args import Args
+from src.exportmi import export_info
 from src.meta import Meta
 from src.podcast_prep import gather_podcast_prep
 from src.torrentcreate import TorrentCreator
@@ -151,6 +153,78 @@ async def test_podcast_prep_offloads_per_file_media_scanning(tmp_path: Path) -> 
 
     offloaded_functions = [call.args[0].__name__ for call in to_thread.await_args_list]
     assert offloaded_functions == ["_source_files", "_media_files", "_audio_bitrate"]  # noqa: S101
+
+
+@pytest.mark.asyncio
+async def test_export_info_offloads_standard_mediainfo_parsing(tmp_path: Path) -> None:
+    release_dir = tmp_path / "tmp" / "mediainfo-offload"
+    release_dir.mkdir(parents=True)
+    media = tmp_path / "episode.mp3"
+    media.write_bytes(b"audio")
+
+    def parse_media(_path: str, *, output: str, **_kwargs: object) -> str:
+        if output == "STRING":
+            return "General\nComplete name : episode.mp3"
+        return json.dumps({"media": {"@ref": "episode.mp3", "track": []}})
+
+    async def run_in_thread(function: Callable[..., object], *args: object, **kwargs: object) -> object:
+        return function(*args, **kwargs)
+
+    with (
+        patch("src.exportmi.MediaInfo.parse", side_effect=parse_media),
+        patch("src.exportmi.asyncio.to_thread", new=AsyncMock(side_effect=run_in_thread)) as to_thread,
+    ):
+        result = await export_info(str(media), True, "mediainfo-offload", str(tmp_path))
+
+    assert result["media"]["track"] == []  # noqa: S101
+    assert to_thread.await_count == 2  # noqa: S101
+
+
+@pytest.mark.asyncio
+async def test_unwalled_single_episode_directory_keeps_folder_torrent(tmp_path: Path) -> None:
+    content = tmp_path / "Example Show"
+    content.mkdir()
+    episode = content / "001 - Pilot.mp3"
+    episode.write_bytes(b"audio")
+    cover = tmp_path / "cover.jpg"
+    banner = tmp_path / "banner.jpg"
+    _jpg(cover, (500, 500), "red")
+    _jpg(banner, (960, 540), "blue")
+    meta = Meta(
+        path=str(content),
+        base_dir=str(tmp_path),
+        uuid="single-folder",
+        category="PODCAST",
+        podcast_title="Example Show [2026/MP3 - 128kbps]",
+        podcast_cover=str(cover),
+        podcast_banner=str(banner),
+        debug=True,
+        max_piece_size=1,
+        trackers=["UNWALLED"],
+    )
+    (tmp_path / "tmp" / meta.uuid).mkdir(parents=True)
+
+    with (
+        patch("src.podcast_prep._detected_media_kind", return_value="audio"),
+        patch("src.podcast_prep.export_info", new=AsyncMock(return_value={"media": {"track": []}})),
+    ):
+        await gather_podcast_prep(meta)
+    await TorrentCreator.create_torrent(meta, content, "BASE")
+
+    filename = await _tracker().get_upload_torrent_filename(meta)
+    torrent = Torrent.read(tmp_path / "tmp" / meta.uuid / f"{filename}.torrent")
+
+    assert meta.keep_folder is True  # noqa: S101
+    assert torrent.name == content.name  # noqa: S101
+
+
+@pytest.mark.asyncio
+async def test_unwalled_preserves_ampersands_in_final_title() -> None:
+    tracker = _tracker()
+    meta = Meta(name="Science & Society [2026/MP3 - 128kbps]")
+
+    assert tracker.get_search_name(meta) == meta.name  # noqa: S101
+    assert await tracker.get_name(meta) == {"name": meta.name}  # noqa: S101
 
 
 def test_podcast_prep_includes_allowed_companion_files(tmp_path: Path) -> None:

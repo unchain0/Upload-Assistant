@@ -130,10 +130,10 @@ class Unwalled(UnwalledValidationMixin, UNIT3D):
         return await super().get_resolution_id(meta, resolution, reverse, mapping_only)
 
     def get_search_name(self, meta: Meta) -> str:
-        return re.sub(r"\s+", " ", (meta.podcast_title or meta.name).replace("&", "and")).strip()
+        return re.sub(r"\s+", " ", meta.podcast_title or meta.name).strip()
 
     async def get_name(self, meta: Meta) -> dict[str, str]:
-        name = re.sub(r"\s+", " ", (meta.podcast_title or meta.name).replace("&", "and")).strip()
+        name = re.sub(r"\s+", " ", meta.podcast_title or meta.name).strip()
         return {"name": name}
 
     @staticmethod

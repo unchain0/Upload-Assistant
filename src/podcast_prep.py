@@ -190,6 +190,7 @@ async def gather_podcast_prep(meta: Meta) -> None:
     meta.category = "PODCAST"
     meta.filelist = [str(path) for path in torrent_files]
     meta.isdir = root.is_dir()
+    meta.keep_folder = root.is_dir()
     meta.tmdb_id = 0
     meta.imdb_id = 0
     meta.tvdb_id = 0
