@@ -113,6 +113,26 @@ async def test_game_prep_extracts_compact_letter_version_from_dmg(tmp_path) -> N
 
 
 @pytest.mark.asyncio
+async def test_game_prep_replaces_prepopulated_inferred_title_with_igdb_name(tmp_path) -> None:
+    release_path = tmp_path / "Inferred.Release.Name-TENOKE"
+    meta = Meta(path=str(release_path), title="Inferred Release Name", filelist=[str(release_path)], unattended=True)
+    result = {"id": 1, "name": "Canonical IGDB Title"}
+
+    with (
+        patch("src.prep_game.IGDBAPI.search_game", new=AsyncMock(return_value=[result])),
+        patch("src.prep_game.IGDBAPI.cache_game_details", new=AsyncMock()),
+    ):
+        await gather_game_prep(
+            meta,
+            str(release_path),
+            str(tmp_path),
+            {"DEFAULT": {"twitch_client_id": "client", "twitch_client_secret": "secret"}},
+        )
+
+    assert meta.title == "Canonical IGDB Title"
+
+
+@pytest.mark.asyncio
 async def test_guitar_pro_pkg_is_prepared_as_mac_software(tmp_path) -> None:
     release = tmp_path / "Guitar_Pro_8.1.5-31_[atb]"
     release.mkdir()

@@ -505,7 +505,6 @@ async def gather_game_prep(
         if not meta.software_notes:
             meta.software_notes = await _read_software_notes(meta)
 
-    title_was_provided = bool(meta.title)
     title_source = str(meta.path or videopath or meta.filename or meta.title or "")
     fallback_title = clean_game_title(title_source)
     if fallback_title:
@@ -516,7 +515,7 @@ async def gather_game_prep(
             meta.tag = f"-{release_group}"
 
     cli_overrides = {
-        "title": title_was_provided,
+        "title": False,
         "year": ("manual_year" in meta and meta.manual_year) or 0 > 0,
         "platform": bool(meta.manual_platform),
     }
