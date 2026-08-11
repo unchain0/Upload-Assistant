@@ -65,6 +65,7 @@ RUN find bin/mkbrr -name "mkbrr" -print0 | xargs -0 chmod +x && \
 RUN chown -R 1000:1000 /Upload-Assistant/bin/mkbrr \
     && chown -R 1000:1000 /Upload-Assistant/bin/MI \
     && chown -R 1000:1000 /Upload-Assistant/bin/bdinfo \
+    && find /Upload-Assistant/bin/mkbrr /Upload-Assistant/bin/MI /Upload-Assistant/bin/bdinfo -type d -exec chmod 1777 {} + \
     && chmod -R o+rX /Upload-Assistant/bin/mkbrr \
     && chmod -R o+rX /Upload-Assistant/bin/MI \
     && chmod -R o+rX /Upload-Assistant/bin/bdinfo

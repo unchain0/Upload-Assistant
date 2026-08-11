@@ -3,10 +3,12 @@
 import os
 from pathlib import Path
 
+import pytest
+
 from src.temp_paths import artwork_dir, ensure_temp_root, menu_screenshots_dir, screenshots_dir, spectrograms_dir
 
 
-def test_temp_root_accepts_writable_directory_owned_by_another_user(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_temp_root_accepts_writable_directory_owned_by_another_user(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     temp_root = tmp_path / "tmp"
     temp_root.mkdir()
     original_chmod = Path.chmod
