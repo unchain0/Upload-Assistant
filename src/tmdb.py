@@ -708,7 +708,7 @@ async def get_tmdb_id(
                                         return tmdb_id, category
 
                         # Put unattended handling here, since it will work based on the sorted results
-                        if unattended and not debug:
+                        if unattended:
                             tmdb_id = int(sorted_results[0]["id"])
                             return tmdb_id, category
 

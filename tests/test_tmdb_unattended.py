@@ -33,6 +33,32 @@ class _EmptyClient:
         return _EmptyResponse()
 
 
+class _MultipleResultsResponse:
+    status_code = 200
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> dict[str, list[dict[str, object]]]:
+        return {
+            "results": [
+                {"id": 651, "name": "60 Minutes", "original_name": "60 Minutes", "first_air_date": "1968-09-24"},
+                {"id": 133713, "name": "60 Minutes", "original_name": "60 Minutes", "first_air_date": "2021-09-16"},
+            ]
+        }
+
+
+class _MultipleResultsClient:
+    async def __aenter__(self) -> _MultipleResultsClient:
+        return self
+
+    async def __aexit__(self, *_args: object) -> None:
+        return None
+
+    async def get(self, *_args: object, **_kwargs: object) -> _MultipleResultsResponse:
+        return _MultipleResultsResponse()
+
+
 @pytest.mark.asyncio
 async def test_get_tmdb_from_imdb_never_prompts_when_unattended() -> None:
     prompt = AsyncMock(return_value="movie/123")
@@ -46,6 +72,20 @@ async def test_get_tmdb_from_imdb_never_prompts_when_unattended() -> None:
 
     assert category == "MOVIE"
     assert tmdb_id == 0
+    prompt.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_get_tmdb_id_never_prompts_in_unattended_debug_mode() -> None:
+    prompt = AsyncMock(return_value="2")
+    with (
+        patch.object(tmdb.httpx, "AsyncClient", return_value=_MultipleResultsClient()),
+        patch.object(tmdb, "prompt_in_thread", new=prompt),
+    ):
+        tmdb_id, category = await tmdb.get_tmdb_id("60 Minutes", 2026, "TV", debug=True, unattended=True)
+
+    assert tmdb_id == 651
+    assert category == "TV"
     prompt.assert_not_awaited()
 
 
