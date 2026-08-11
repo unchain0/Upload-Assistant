@@ -1490,6 +1490,12 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
             meta.manual_frames = ""
         manual_frames = meta.manual_frames
 
+        if dynamic_hdr_plot_enabled(meta, config):
+            try:
+                await process_dynamic_hdr_plots(meta, config, uploadscreens_manager)
+            except Exception as e:
+                logger.error(f"[red]Error processing dynamic HDR plots: {e}[/red]")
+
         if meta.comparison:
             await ComparisonManager(meta, config).add_comparison()
 
@@ -1541,12 +1547,6 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
                     await process_audio_spectrograms(meta, config, uploadscreens_manager)
                 except Exception as e:
                     logger.error(f"[red]Error processing audio spectrograms: {e}[/red]")
-
-            if dynamic_hdr_plot_enabled(meta, config):
-                try:
-                    await process_dynamic_hdr_plots(meta, config, uploadscreens_manager)
-                except Exception as e:
-                    logger.error(f"[red]Error processing dynamic HDR plots: {e}[/red]")
 
             # Take Screenshots
             try:

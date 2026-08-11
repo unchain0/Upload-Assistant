@@ -81,7 +81,7 @@ class PestoBinaryManager:
         temp_file = bin_dir / f"temp_{file_pattern}"
         try:
             async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
-                await download_verified_asset(client, download_url, temp_file, file_pattern)
+                await download_verified_asset(client, download_url, temp_file, f"{version}/{file_pattern}")
 
             logger.debug(f"[green]Downloaded Pesto package: {file_pattern}[/green]")
 

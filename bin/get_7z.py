@@ -94,7 +94,8 @@ class SevenZipBinaryManager:
         temp_file = bin_dir / f"temp_{file_pattern}"
         try:
             async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
-                await download_verified_asset(client, download_url, temp_file, file_pattern)
+                integrity_key = f"{version}/{file_pattern}" if file_pattern.endswith(".exe") else file_pattern
+                await download_verified_asset(client, download_url, temp_file, integrity_key)
 
             logger.debug(f"[green]Downloaded 7-Zip package: {file_pattern}[/green]")
 

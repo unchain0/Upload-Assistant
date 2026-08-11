@@ -537,6 +537,9 @@ class QbittorrentClientMixin:
             # **Step 2: Extract and Save .torrent Files**
             processed_hashes: set[str] = set()
             video_only_fallback: str | None = None
+            first_valid_torrent: str | None = None
+            preferred_torrent: tuple[str, int] | None = None
+            prefer_max_16 = bool(self.config["DEFAULT"].get("prefer_max_16_torrent", False))
             torrent_hash: str | None = None
             for matching_torrent in matching_torrents:
                 try:
@@ -620,13 +623,31 @@ class QbittorrentClientMixin:
                         else:
                             logger.debug(f"[yellow]Skipping partial-subtitle torrent as fallback: {torrent_hash}")
                         continue
-                    logger.debug(f"[green]Returning first valid torrent: {torrent_hash}")
-                    return torrent_hash
+                    if not prefer_max_16:
+                        logger.debug(f"[green]Returning first valid torrent: {torrent_hash}")
+                        return torrent_hash
+                    if first_valid_torrent is None:
+                        first_valid_torrent = torrent_hash
+                    try:
+                        piece_size = Torrent.read(str(torrent_file_path)).piece_size
+                    except Exception as exc:
+                        logger.debug(f"[yellow]Unable to inspect piece size for {torrent_hash}: {exc}")
+                        continue
+                    if piece_size <= 16 * 1024 * 1024 and (preferred_torrent is None or piece_size < preferred_torrent[1]):
+                        preferred_torrent = (torrent_hash, piece_size)
+                        logger.debug(f"[green]Keeping preferred qBittorrent candidate: {torrent_hash} ({piece_size} bytes)")
+                    continue
                 logger.debug(f"[bold red]{torrent_hash} failed validation")
                 if Path(torrent_file_path).is_relative_to(Path(extracted_torrent_dir)):
                     torrent_file_path.unlink(missing_ok=True)
 
-            if video_only_fallback:
+            if preferred_torrent:
+                result = preferred_torrent[0]
+                logger.info(f"[green]Using preferred qBittorrent torrent with pieces up to 16 MiB: {result}")
+            elif first_valid_torrent:
+                result = first_valid_torrent
+                logger.info(f"[yellow]No valid torrent met the 16 MiB preference; using first valid torrent: {result}")
+            elif video_only_fallback:
                 logger.info(f"[yellow]No matching torrent with all local subtitles found; using video-only fallback: {video_only_fallback}")
                 result = video_only_fallback
             else:

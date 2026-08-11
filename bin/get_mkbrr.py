@@ -1,7 +1,6 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
 import os
 import platform
-import shutil
 import stat
 import tarfile
 import zipfile
@@ -41,7 +40,7 @@ class MkbrrBinaryManager:
                 logger.debug(f"[blue]Using existing mkbrr binary: {binary_path}[/blue]")
                 return str(binary_path)
 
-        return shutil.which("mkbrr")
+        return None
 
     @staticmethod
     async def ensure_mkbrr_binary(base_dir: str | Path, version: str) -> str:

@@ -620,6 +620,7 @@ class BrasilTracker:
             custom_header=True,
             custom_signature=False,
             description=False,
+            dynamic_hdr_plot=False,
             game=True,
             languages=False,
             logo=True,

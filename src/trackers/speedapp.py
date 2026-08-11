@@ -213,6 +213,7 @@ class SpeedApp:
             custom_header=True,
             custom_signature=False,
             description=False,
+            dynamic_hdr_plot=False,
             game=False,
             languages=False,
             logo=True,

@@ -71,7 +71,7 @@ RUN chown -R 1000:1000 /Upload-Assistant/bin/mkbrr \
 # Dynamic HDR tools are downloaded on demand by the application.
 RUN mkdir -p /Upload-Assistant/bin/dovi_tool /Upload-Assistant/bin/hdr10plus_tool \
     && chown -R 1000:1000 /Upload-Assistant/bin/dovi_tool /Upload-Assistant/bin/hdr10plus_tool \
-    && chmod -R o+rX /Upload-Assistant/bin/dovi_tool /Upload-Assistant/bin/hdr10plus_tool
+    && chmod 1777 /Upload-Assistant/bin/dovi_tool /Upload-Assistant/bin/hdr10plus_tool
 
 # Create tmp directory; world-writable so any UID can use it
 RUN mkdir -p /Upload-Assistant/tmp && chmod 1777 /Upload-Assistant/tmp
