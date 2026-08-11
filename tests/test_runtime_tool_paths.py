@@ -32,3 +32,12 @@ def test_trusted_executable_rejects_shared_writable_parent(tmp_path: Path) -> No
     binary.touch(mode=0o755)
 
     assert runtime_tool_paths.trusted_executable(binary) is False
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX mode checks do not apply on Windows")
+def test_trusted_executable_rejects_shared_writable_file(tmp_path: Path) -> None:
+    binary = tmp_path / "mkbrr"
+    binary.touch(mode=0o755)
+    binary.chmod(0o777)
+
+    assert runtime_tool_paths.trusted_executable(binary) is False

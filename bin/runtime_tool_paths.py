@@ -45,5 +45,7 @@ def trusted_executable(path: Path) -> bool:
         return False
     if os.name == "nt":
         return True
+    if path.stat().st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        return False
     parent_mode = path.parent.stat().st_mode
     return not parent_mode & (stat.S_IWGRP | stat.S_IWOTH)

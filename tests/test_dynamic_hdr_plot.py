@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from bin import get_dynamic_hdr_tools
-from src.dynamic_hdr_plot import _formats, _generate_plot, _run, _source_files, dynamic_hdr_plot_enabled, process_dynamic_hdr_plots
+from src.dynamic_hdr_plot import _formats, _generate_plot, _run, _source_files, _terminate_process, dynamic_hdr_plot_enabled, process_dynamic_hdr_plots
 from src.get_desc import DescriptionBuilder
 from src.meta import Meta
 
@@ -47,7 +47,7 @@ def test_existing_versioned_binary_does_not_download(tmp_path: Path, monkeypatch
     binary_dir = tmp_path / "bin" / "dovi_tool" / "windows" / "amd64"
     binary_dir.mkdir(parents=True)
     binary = binary_dir / "dovi_tool.exe"
-    binary.touch()
+    binary.write_bytes(b"tool")
     (binary_dir / "2.3.3").write_text("dovi_tool 2.3.3\n", encoding="utf-8")
 
     monkeypatch.setattr(get_dynamic_hdr_tools.shutil, "which", lambda _: None)
@@ -63,6 +63,25 @@ def test_existing_versioned_binary_does_not_download(tmp_path: Path, monkeypatch
     result = asyncio.run(get_dynamic_hdr_tools.get_tool(str(tmp_path), "dovi"))
 
     assert result == str(binary)  # noqa: S101
+
+
+def test_zero_byte_cached_dynamic_hdr_binary_is_rejected(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    binary_dir = tmp_path / "bin" / "dovi_tool" / "windows" / "amd64"
+    binary_dir.mkdir(parents=True)
+    (binary_dir / "dovi_tool.exe").touch()
+    (binary_dir / "2.3.3").write_text("dovi_tool 2.3.3\n", encoding="utf-8")
+    monkeypatch.setattr(get_dynamic_hdr_tools.shutil, "which", lambda _: None)
+    monkeypatch.setattr(get_dynamic_hdr_tools.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(get_dynamic_hdr_tools.platform, "machine", lambda: "AMD64")
+
+    class DownloadAttempt:
+        def __init__(self, *_args, **_kwargs) -> None:
+            raise RuntimeError("download attempted")
+
+    monkeypatch.setattr(get_dynamic_hdr_tools.httpx, "AsyncClient", DownloadAttempt)
+
+    with pytest.raises(RuntimeError, match="download attempted"):
+        asyncio.run(get_dynamic_hdr_tools.get_tool(str(tmp_path), "dovi"))
 
 
 def test_downloaded_asset_checksum_is_verified(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -220,3 +239,33 @@ def test_dynamic_hdr_cancellation_kills_and_reaps_process(monkeypatch) -> None: 
 
     assert process.killed is True  # noqa: S101
     assert process.wait_calls == 2  # noqa: S101
+
+
+def test_windows_dynamic_hdr_cleanup_kills_target_when_taskkill_fails(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    class Process:
+        returncode = None
+        pid = 42
+
+        def __init__(self) -> None:
+            self.killed = False
+            self.waited = False
+
+        def kill(self) -> None:
+            self.killed = True
+
+        async def wait(self) -> int:
+            self.waited = True
+            self.returncode = -9
+            return self.returncode
+
+    async def fail_taskkill(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise OSError("taskkill unavailable")
+
+    process = Process()
+    monkeypatch.setattr("src.dynamic_hdr_plot.os.name", "nt")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fail_taskkill)
+
+    asyncio.run(_terminate_process(process))  # type: ignore[arg-type]
+
+    assert process.killed is True  # noqa: S101
+    assert process.waited is True  # noqa: S101

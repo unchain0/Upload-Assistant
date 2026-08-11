@@ -71,14 +71,21 @@ async def _terminate_process(process: asyncio.subprocess.Process) -> None:
         return
     pid = getattr(process, "pid", None)
     if os.name == "nt" and pid is not None:
-        killer = await asyncio.create_subprocess_exec(
-            "taskkill", "/F", "/T", "/PID", str(pid), stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
-        )
         try:
-            await asyncio.wait_for(killer.wait(), timeout=5)
-        except TimeoutError:
-            with suppress(ProcessLookupError):
-                killer.kill()
+            killer = await asyncio.create_subprocess_exec(
+                "taskkill", "/F", "/T", "/PID", str(pid), stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
+            )
+            try:
+                await asyncio.wait_for(killer.wait(), timeout=5)
+            except TimeoutError:
+                with suppress(ProcessLookupError):
+                    killer.kill()
+        except OSError:
+            pass
+        finally:
+            if process.returncode is None:
+                with suppress(ProcessLookupError):
+                    process.kill()
     elif pid is not None:
         with suppress(ProcessLookupError):
             os.killpg(pid, signal.SIGKILL)
