@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from bin import get_dynamic_hdr_tools
-from src.dynamic_hdr_plot import _formats, _generate_plot, _run, _source_files, dynamic_hdr_plot_enabled
+from src.dynamic_hdr_plot import _formats, _generate_plot, _run, _source_files, dynamic_hdr_plot_enabled, process_dynamic_hdr_plots
 from src.get_desc import DescriptionBuilder
 from src.meta import Meta
 
@@ -76,6 +76,14 @@ def test_downloaded_asset_checksum_is_verified(monkeypatch) -> None:  # type: ig
         get_dynamic_hdr_tools._verify_checksum(asset, b"tampered")
 
 
+def test_unsupported_dynamic_hdr_architecture_is_rejected(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(get_dynamic_hdr_tools.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(get_dynamic_hdr_tools.platform, "machine", lambda: "armv7l")
+
+    with pytest.raises(RuntimeError, match="not supported on linux armv7l"):
+        get_dynamic_hdr_tools._asset_name("dovi")
+
+
 def test_mp4_is_remuxed_to_annex_b_hevc(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     source = tmp_path / "release.mp4"
     source.touch()
@@ -120,6 +128,32 @@ def test_tracker_override_enables_dynamic_hdr_plot() -> None:
     config = {"DEFAULT": {"add_dynamic_hdr_plot": False}, "TRACKERS": {"TEST": {"add_dynamic_hdr_plot": True}}}
 
     assert dynamic_hdr_plot_enabled(meta, config)  # noqa: S101
+
+
+def test_debug_mode_does_not_upload_dynamic_hdr_images(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    source = tmp_path / "release.mkv"
+    source.touch()
+    generated_plot = tmp_path / "plot.png"
+
+    async def fake_get_tool(_base_dir: str, _kind: str) -> str:
+        return "dovi_tool"
+
+    async def fake_generate(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        generated_plot.touch()
+        return generated_plot
+
+    class UploadManager:
+        async def upload_screens(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
+            raise AssertionError("debug mode must not upload images")
+
+    monkeypatch.setattr("src.dynamic_hdr_plot.get_tool", fake_get_tool)
+    monkeypatch.setattr("src.dynamic_hdr_plot._generate_plot", fake_generate)
+    meta = Meta(base_dir=str(tmp_path), uuid="debug-hdr", filelist=[str(source)], hdr="DV", debug=True)
+
+    generated = asyncio.run(process_dynamic_hdr_plots(meta, {"DEFAULT": {}}, UploadManager()))
+
+    assert generated == [str(generated_plot)]  # noqa: S101
+    assert meta.dynamic_hdr_plot_images == []  # noqa: S101
 
 
 def test_dynamic_hdr_tool_timeout_is_reported(monkeypatch) -> None:  # type: ignore[no-untyped-def]

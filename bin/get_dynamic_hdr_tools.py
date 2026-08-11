@@ -13,7 +13,7 @@ from pathlib import Path
 
 import httpx
 
-from bin.download_integrity import download_bounded_asset
+from bin.download_integrity import download_bounded_asset, sha256_file
 from src.console import logger
 
 TOOLS = {
@@ -39,7 +39,12 @@ def _asset_name(tool: str) -> tuple[str, str]:
     """Return the release asset name and executable extension for this host."""
     system, machine = platform.system().lower(), platform.machine().lower()
     version = TOOLS[tool]["version"]
-    arch = "aarch64" if machine in {"arm64", "aarch64"} else "x86_64"
+    if machine in {"arm64", "aarch64"}:
+        arch = "aarch64"
+    elif machine in {"amd64", "x86_64"}:
+        arch = "x86_64"
+    else:
+        raise RuntimeError(f"Dynamic HDR plots are not supported on {system} {machine}")
     if system == "windows":
         return f"{tool}_tool-{version}-{arch}-pc-windows-msvc.zip", ".exe"
     if system == "darwin":
@@ -62,8 +67,7 @@ def _verify_checksum_file(asset: str, path: Path) -> None:
     expected_checksum = ASSET_SHA256.get(asset)
     if expected_checksum is None:
         raise RuntimeError(f"Missing checksum for {asset}")
-    with path.open("rb") as asset_file:
-        actual_checksum = hashlib.file_digest(asset_file, "sha256").hexdigest()
+    actual_checksum = sha256_file(path)
     if actual_checksum != expected_checksum:
         raise RuntimeError(f"Checksum mismatch for {asset}")
 
@@ -85,7 +89,7 @@ def _safe_extract(archive: Path, destination: Path) -> None:
                 target = (destination / member.name).resolve()
                 if not target.is_relative_to(destination_resolved) or member.issym() or member.islnk():
                     raise RuntimeError(f"Unsafe archive member: {member.name}")
-            contents.extractall(destination, members=members, filter="data")
+            contents.extractall(destination, members=members)  # noqa: S202 - members are validated above.
 
 
 async def get_tool(base_dir: str, tool: str) -> str:

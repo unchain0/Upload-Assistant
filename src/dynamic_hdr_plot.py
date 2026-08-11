@@ -168,7 +168,7 @@ async def process_dynamic_hdr_plots(meta: Meta, config: dict[str, Any], uploadsc
             logger.warning(f"[yellow]{detail}[/yellow]")
         publish_progress(progress_id, "Generating dynamic HDR plots", current=position, total=len(jobs), detail=detail, group="dynamic_hdr", unit="plots")
 
-    if generated and uploadscreens_manager and not meta.skip_imghost_upload:
+    if generated and uploadscreens_manager and not meta.skip_imghost_upload and not meta.debug:
         try:
             images, _ = await uploadscreens_manager.upload_screens(meta, len(generated), 1, 0, len(generated), generated, {})
             if images:

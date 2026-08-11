@@ -52,10 +52,18 @@ def verify_downloaded_asset(path: Path, asset: str) -> None:
     expected = SHA256_BY_ASSET.get(asset)
     if expected is None:
         raise RuntimeError(f"No SHA-256 checksum is pinned for {asset}")
-    with path.open("rb") as asset_file:
-        actual = hashlib.file_digest(asset_file, "sha256").hexdigest()
+    actual = sha256_file(path)
     if actual != expected:
         raise RuntimeError(f"SHA-256 checksum mismatch for {asset}")
+
+
+def sha256_file(path: Path) -> str:
+    """Hash a file incrementally without requiring newer hashlib helpers."""
+    digest = hashlib.sha256()
+    with path.open("rb") as asset_file:
+        for chunk in iter(lambda: asset_file.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _validate_declared_size(response: Any, max_bytes: int) -> None:
