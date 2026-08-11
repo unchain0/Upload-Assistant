@@ -12,7 +12,7 @@ from pathlib import Path
 import aiofiles
 import httpx
 
-from bin.download_integrity import MAX_EXTRACTED_BYTES, download_verified_asset, safe_extract_tar
+from bin.download_integrity import MAX_EXTRACTED_BYTES, download_verified_asset, promote_files_with_rollback, safe_extract_tar
 
 try:
     from src.console import console, logger
@@ -82,16 +82,13 @@ class NyuuBinaryManager:
 
         logger.info("[yellow]Binary 'nyuu' not found. Attempting to download automatically...[/yellow]")
 
-        # Cleanup old files
-        if binary_path.exists():
-            binary_path.unlink()
-        if version_path.exists():
-            version_path.unlink()
-
         download_url = f"https://github.com/animetosho/Nyuu/releases/download/{version}/{file_pattern}"
         logger.debug(f"[blue]Nyuu Download URL: {download_url}[/blue]")
 
         temp_file = bin_dir / f"temp_{file_pattern}"
+        staging_dir = bin_dir / ".nyuu-staging"
+        shutil.rmtree(staging_dir, ignore_errors=True)
+        staging_dir.mkdir()
         try:
             async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
                 await download_verified_asset(client, download_url, temp_file, file_pattern)
@@ -103,67 +100,44 @@ class NyuuBinaryManager:
                     from bin.get_7z import SevenZipBinaryManager
 
                     path_7z = await SevenZipBinaryManager.ensure_7z_binary(base_dir)
-                staging_dir = bin_dir / ".nyuu-staging"
-                shutil.rmtree(staging_dir, ignore_errors=True)
-                staging_dir.mkdir()
+                command = [path_7z, "e", "-y", "-r", f"-o{staging_dir}", str(temp_file), "nyuu.exe"]
+                process = await asyncio.create_subprocess_exec(
+                    *command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+                )
                 try:
-                    command = [path_7z, "e", "-y", "-r", f"-o{staging_dir}", str(temp_file), "nyuu.exe"]
-                    process = await asyncio.create_subprocess_exec(
-                        *command,
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE,
-                        creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
-                    )
-                    try:
-                        _stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=120)
-                    except TimeoutError:
-                        with suppress(ProcessLookupError):
-                            process.kill()
-                        await process.communicate()
-                        raise RuntimeError("7z extraction timed out after 120 seconds") from None
-                    except BaseException:
-                        with suppress(ProcessLookupError):
-                            process.kill()
-                        await process.communicate()
-                        raise
-                    if process.returncode != 0:
-                        raise RuntimeError(f"7z extraction failed: {stderr.decode(errors='replace')}")
-                    extracted = [candidate for candidate in staging_dir.rglob("nyuu.exe") if candidate.is_file()]
-                    if len(extracted) != 1:
-                        raise RuntimeError("Downloaded archive must contain exactly one nyuu.exe executable")
-                    if extracted[0].stat().st_size > MAX_EXTRACTED_BYTES:
-                        raise RuntimeError("Extracted nyuu.exe exceeds the allowed size")
-                    shutil.move(str(extracted[0]), str(binary_path))
-                finally:
-                    shutil.rmtree(staging_dir, ignore_errors=True)
+                    _stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=120)
+                except TimeoutError:
+                    await NyuuBinaryManager._terminate_process_tree(process)
+                    raise RuntimeError("7z extraction timed out after 120 seconds") from None
+                except BaseException:
+                    await NyuuBinaryManager._terminate_process_tree(process)
+                    raise
+                if process.returncode != 0:
+                    raise RuntimeError(f"7z extraction failed: {stderr.decode(errors='replace')}")
             else:
-                try:
-                    with tarfile.open(temp_file, "r:xz") as tar_ref:
-                        safe_extract_tar(tar_ref, bin_dir, max_bytes=MAX_EXTRACTED_BYTES)
+                with tarfile.open(temp_file, "r:xz") as tar_ref:
+                    safe_extract_tar(tar_ref, staging_dir, max_bytes=MAX_EXTRACTED_BYTES)
 
-                    if not binary_path.exists():
-                        for p in bin_dir.rglob("nyuu"):
-                            if p.is_file():
-                                shutil.move(str(p), str(binary_path))
-                                break
-                finally:
-                    temp_file.unlink(missing_ok=True)
-
-            if not binary_path.is_file():
+            extracted = [candidate for candidate in staging_dir.rglob(binary_name) if candidate.is_file()]
+            if len(extracted) != 1:
                 raise RuntimeError(f"Downloaded archive does not contain the expected {binary_name} executable")
-
-            # Cleanup extra directories/files leftover from extraction
-            for p in list(bin_dir.iterdir()):
-                if p.is_dir():
-                    shutil.rmtree(p)
-                elif p.is_file() and p.name not in (binary_name, version):
-                    p.unlink()
+            staged_binary = extracted[0]
+            if staged_binary.stat().st_size > MAX_EXTRACTED_BYTES:
+                raise RuntimeError(f"Extracted {binary_name} exceeds the allowed size")
 
             if system != "windows":
-                binary_path.chmod(binary_path.stat().st_mode | stat.S_IEXEC)
+                staged_binary.chmod(staged_binary.stat().st_mode | stat.S_IEXEC)
 
-            async with aiofiles.open(version_path, "w", encoding="utf-8") as version_file:
+            staged_version = staging_dir / version
+            async with aiofiles.open(staged_version, "w", encoding="utf-8") as version_file:
                 await version_file.write(f"Nyuu version {version} installed successfully.")
+            promote_files_with_rollback(
+                [(staged_binary, binary_path), (staged_version, version_path)],
+                staging_dir / ".backup",
+            )
 
             return str(binary_path)
 
@@ -171,3 +145,27 @@ class NyuuBinaryManager:
             raise Exception(f"Failed to setup Nyuu binary: {e}") from e
         finally:
             temp_file.unlink(missing_ok=True)
+            shutil.rmtree(staging_dir, ignore_errors=True)
+
+    @staticmethod
+    async def _terminate_process_tree(process: asyncio.subprocess.Process) -> None:
+        pid = getattr(process, "pid", None)
+        if platform.system().lower() == "windows" and pid is not None:
+            try:
+                tree_killer = await asyncio.create_subprocess_exec(
+                    "taskkill",
+                    "/F",
+                    "/T",
+                    "/PID",
+                    str(pid),
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                await asyncio.wait_for(tree_killer.communicate(), timeout=10)
+            except (OSError, TimeoutError):
+                pass
+        if process.returncode is None:
+            with suppress(ProcessLookupError):
+                process.kill()
+        with suppress(ProcessLookupError, TimeoutError):
+            await asyncio.wait_for(process.communicate(), timeout=10)

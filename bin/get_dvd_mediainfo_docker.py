@@ -12,7 +12,7 @@ import zipfile
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from bin.download_integrity import download_verified_asset_sync, extract_zip_regular_member
+from bin.download_integrity import download_verified_asset_sync, extract_zip_regular_member, promote_files_with_rollback
 
 try:
     from src.console import console, logger
@@ -82,8 +82,13 @@ def extract_linux_binaries(cli_archive: Path, lib_archive: Path, output_dir: Pat
             if library_member not in archive.namelist():
                 raise RuntimeError("MediaInfo archive does not contain the required library")
             extract_zip_regular_member(archive, library_member, staging / "libmediainfo.so.0")
-        (staging / "mediainfo").replace(output_dir / "mediainfo")
-        (staging / "libmediainfo.so.0").replace(output_dir / "libmediainfo.so.0")
+        promote_files_with_rollback(
+            [
+                (staging / "mediainfo", output_dir / "mediainfo"),
+                (staging / "libmediainfo.so.0", output_dir / "libmediainfo.so.0"),
+            ],
+            staging / ".backup",
+        )
         (output_dir / "libmediainfo.so.0").chmod(0o644)
     finally:
         shutil.rmtree(staging, ignore_errors=True)

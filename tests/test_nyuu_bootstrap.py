@@ -29,6 +29,28 @@ def test_nyuu_archive_without_binary_does_not_write_version_marker(tmp_path: Pat
     assert not (output / "nyuu").exists()  # noqa: S101
 
 
+def test_nyuu_failed_update_preserves_existing_installation(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    async def fail_download(*_args, **_kwargs) -> None:  # type: ignore[no-untyped-def]
+        raise RuntimeError("download failed")
+
+    output = tmp_path / "bin" / "nyuu" / "linux" / "amd64"
+    output.mkdir(parents=True)
+    binary = output / "nyuu"
+    binary.write_bytes(b"working binary")
+    binary.chmod(0o700)
+    marker = output / "v0.4.2"
+    marker.write_text("stale marker")
+    monkeypatch.setattr(get_nyuu, "download_verified_asset", fail_download)
+    monkeypatch.setattr(get_nyuu.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(get_nyuu.platform, "machine", lambda: "x86_64")
+
+    with pytest.raises(Exception, match="download failed"):
+        asyncio.run(NyuuBinaryManager.ensure_nyuu_binary(tmp_path, version="v0.4.3"))
+
+    assert binary.read_bytes() == b"working binary"  # noqa: S101
+    assert marker.read_text() == "stale marker"  # noqa: S101
+
+
 def test_windows_nyuu_extracts_only_expected_executable(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     async def write_archive(_client, _url, destination, _asset_name):  # type: ignore[no-untyped-def]
         destination.write_bytes(b"verified archive")

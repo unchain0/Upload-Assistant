@@ -6,7 +6,7 @@ import zipfile
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from bin.download_integrity import download_verified_asset_sync, extract_zip_regular_member
+from bin.download_integrity import download_verified_asset_sync, extract_zip_regular_member, promote_files_with_rollback
 from src.console import logger
 
 MEDIAINFO_VERSION = "23.04"
@@ -54,8 +54,13 @@ def extract_linux(cli_archive: Path, lib_archive: Path, output_dir: Path) -> Non
             if library_member not in archive.namelist():
                 raise RuntimeError("MediaInfo archive does not contain the required library")
             extract_zip_regular_member(archive, library_member, staging / "libmediainfo.so.0")
-        (staging / "mediainfo").replace(output_dir / "mediainfo")
-        (staging / "libmediainfo.so.0").replace(output_dir / "libmediainfo.so.0")
+        promote_files_with_rollback(
+            [
+                (staging / "mediainfo", output_dir / "mediainfo"),
+                (staging / "libmediainfo.so.0", output_dir / "libmediainfo.so.0"),
+            ],
+            staging / ".backup",
+        )
     finally:
         shutil.rmtree(staging, ignore_errors=True)
 

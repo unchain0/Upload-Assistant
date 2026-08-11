@@ -123,6 +123,31 @@ def safe_extract_tar(archive: tarfile.TarFile, destination: Path, *, max_bytes: 
             shutil.copyfileobj(source, output, length=1024 * 1024)
 
 
+def promote_files_with_rollback(replacements: list[tuple[Path, Path]], backup_dir: Path) -> None:
+    """Promote staged files together, restoring every previous target on failure."""
+    shutil.rmtree(backup_dir, ignore_errors=True)
+    backup_dir.mkdir(parents=True)
+    backups: list[tuple[Path, Path]] = []
+    promoted: list[Path] = []
+    try:
+        for _source, target in replacements:
+            if target.exists():
+                backup = backup_dir / target.name
+                target.replace(backup)
+                backups.append((backup, target))
+        for source, target in replacements:
+            source.replace(target)
+            promoted.append(target)
+    except BaseException:
+        for target in reversed(promoted):
+            target.unlink(missing_ok=True)
+        for backup, target in reversed(backups):
+            backup.replace(target)
+        raise
+    finally:
+        shutil.rmtree(backup_dir, ignore_errors=True)
+
+
 def verify_downloaded_asset(path: Path, asset: str) -> None:
     """Fail closed unless a downloaded executable archive matches its pinned hash."""
     expected = SHA256_BY_ASSET.get(asset)

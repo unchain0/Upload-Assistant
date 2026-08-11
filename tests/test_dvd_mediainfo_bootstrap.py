@@ -54,6 +54,34 @@ def test_extract_linux_does_not_bless_stale_cli_when_library_is_missing(tmp_path
     assert not (output / "libmediainfo.so.0").exists()  # noqa: S101
 
 
+def test_extract_linux_restores_existing_pair_when_second_promotion_fails(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    cli_archive = tmp_path / "cli.zip"
+    lib_archive = tmp_path / "lib.zip"
+    output = tmp_path / "output"
+    output.mkdir()
+    (output / "mediainfo").write_bytes(b"old-cli")
+    (output / "libmediainfo.so.0").write_bytes(b"old-lib")
+    with zipfile.ZipFile(cli_archive, "w") as archive:
+        _write_member(archive, "bin/mediainfo", b"new-cli")
+    with zipfile.ZipFile(lib_archive, "w") as archive:
+        _write_member(archive, "lib/libmediainfo.so.0.0.0", b"new-lib")
+
+    original_replace = Path.replace
+
+    def fail_library_promotion(source: Path, target: Path) -> Path:
+        if source.name == "libmediainfo.so.0" and source.parent.name == ".mediainfo-staging":
+            raise OSError("simulated promotion failure")
+        return original_replace(source, target)
+
+    monkeypatch.setattr(Path, "replace", fail_library_promotion)
+
+    with pytest.raises(OSError, match="simulated promotion failure"):
+        extract_linux(cli_archive, lib_archive, output)
+
+    assert (output / "mediainfo").read_bytes() == b"old-cli"  # noqa: S101
+    assert (output / "libmediainfo.so.0").read_bytes() == b"old-lib"  # noqa: S101
+
+
 def test_specialized_mediainfo_timeout_kills_and_reaps_process(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     class Process:
         returncode = None
