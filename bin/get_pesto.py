@@ -1,14 +1,13 @@
 # Upload Assistant © 2026 Audionut & wastaken7 — Licensed under UAPL v1.0
 import os
 import platform
-import shutil
 import stat
 from pathlib import Path
 
 import aiofiles
 import httpx
 
-from bin.download_integrity import download_verified_asset
+from bin.download_integrity import download_verified_asset, promote_files_with_rollback
 
 try:
     from src.console import console, logger
@@ -62,18 +61,13 @@ class PestoBinaryManager:
         binary_exists = binary_path.exists() and binary_path.is_file()
         binary_executable = system == "windows" or os.access(binary_path, os.X_OK)
         binary_valid = binary_exists and binary_executable
+        version_markers = [candidate for candidate in bin_dir.glob("v*") if candidate.is_file()]
 
-        if version_path.exists() and version_path.is_file() and binary_valid:
+        if version_path.exists() and version_path.is_file() and binary_valid and version_markers == [version_path]:
             logger.debug("[blue]Pesto binary is up to date[/blue]")
             return str(binary_path)
 
         logger.info("[yellow]Binary 'pesto' not found. Attempting to download automatically...[/yellow]")
-
-        # Cleanup old files
-        if binary_path.exists():
-            binary_path.unlink()
-        if version_path.exists():
-            version_path.unlink()
 
         download_url = f"https://github.com/franzopl/pesto/releases/download/{version}/{file_pattern}"
         logger.debug(f"[blue]Pesto Download URL: {download_url}[/blue]")
@@ -85,14 +79,20 @@ class PestoBinaryManager:
 
             logger.debug(f"[green]Downloaded Pesto package: {file_pattern}[/green]")
 
-            # Pesto has raw binaries, just move it to target location
-            shutil.move(str(temp_file), str(binary_path))
+            staged_binary = bin_dir / f".{binary_name}.staged"
+            temp_file.replace(staged_binary)
+            if system != "windows":
+                staged_binary.chmod(staged_binary.stat().st_mode | stat.S_IEXEC)
 
-            if system != "windows" and binary_path.exists():
-                binary_path.chmod(binary_path.stat().st_mode | stat.S_IEXEC)
-
-            async with aiofiles.open(version_path, "w", encoding="utf-8") as version_file:
+            staged_version = bin_dir / f".{version}.staged"
+            async with aiofiles.open(staged_version, "w", encoding="utf-8") as version_file:
                 await version_file.write(f"Pesto version {version} installed successfully.")
+            stale_markers = [candidate for candidate in version_markers if candidate != version_path]
+            promote_files_with_rollback(
+                [(staged_binary, binary_path), (staged_version, version_path)],
+                bin_dir / ".pesto-backup",
+                remove_targets=stale_markers,
+            )
 
             return str(binary_path)
 
@@ -100,3 +100,5 @@ class PestoBinaryManager:
             raise Exception(f"Failed to setup Pesto binary: {e}") from e
         finally:
             temp_file.unlink(missing_ok=True)
+            (bin_dir / f".{binary_name}.staged").unlink(missing_ok=True)
+            (bin_dir / f".{version}.staged").unlink(missing_ok=True)

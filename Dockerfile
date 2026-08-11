@@ -73,6 +73,12 @@ RUN mkdir -p /Upload-Assistant/bin/dovi_tool /Upload-Assistant/bin/hdr10plus_too
     && chown -R 1000:1000 /Upload-Assistant/bin/dovi_tool /Upload-Assistant/bin/hdr10plus_tool \
     && chmod 1777 /Upload-Assistant/bin/dovi_tool /Upload-Assistant/bin/hdr10plus_tool
 
+# Nyuu and 7-Zip are also downloaded on demand. Keep only these dedicated
+# install directories writable for arbitrary container UIDs.
+RUN mkdir -p /Upload-Assistant/bin/nyuu /Upload-Assistant/bin/7z /Upload-Assistant/bin/par2 /Upload-Assistant/bin/pesto /Upload-Assistant/bin/zentag \
+    && chown -R 1000:1000 /Upload-Assistant/bin/nyuu /Upload-Assistant/bin/7z /Upload-Assistant/bin/par2 /Upload-Assistant/bin/pesto /Upload-Assistant/bin/zentag \
+    && chmod 1777 /Upload-Assistant/bin/nyuu /Upload-Assistant/bin/7z /Upload-Assistant/bin/par2 /Upload-Assistant/bin/pesto /Upload-Assistant/bin/zentag
+
 # Create tmp directory; world-writable so any UID can use it
 RUN mkdir -p /Upload-Assistant/tmp && chmod 1777 /Upload-Assistant/tmp
 ENV TMPDIR=/Upload-Assistant/tmp

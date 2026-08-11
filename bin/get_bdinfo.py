@@ -11,7 +11,7 @@ from pathlib import Path
 import aiofiles
 import httpx
 
-from bin.download_integrity import MAX_EXTRACTED_BYTES, download_verified_asset, safe_extract_tar, safe_extract_zip
+from bin.download_integrity import MAX_EXTRACTED_BYTES, download_verified_asset, promote_files_with_rollback, safe_extract_tar, safe_extract_zip
 
 try:
     from src.console import console, logger
@@ -101,27 +101,15 @@ class BDInfoBinaryManager:
             logger.debug("[blue]bdinfo version is up to date[/blue]")
             return str(binary_path)
 
-        # Remove any old binary/version markers
-        if binary_path.exists() and binary_path.is_file():
-            if system != "windows":
-                Path(binary_path).chmod(0o600)
-            binary_path.unlink()
-            logger.debug(f"[blue]Removed existing binary at: {binary_path}[/blue]")
-
-        if version_path.exists():
-            if system != "windows":
-                Path(version_path).chmod(0o644)
-            version_path.unlink()
-            logger.debug(f"[blue]Removed existing version file at: {version_path}[/blue]")
-
-        cleanup_old_version_files()
-
         # Construct download URL using autobrr/go-bdinfo release asset filename.
         download_url = f"https://github.com/autobrr/go-bdinfo/releases/download/{version}/{file_pattern}"
         logger.debug(f"[blue]Download URL: {download_url}[/blue]")
 
         try:
             temp_archive = bin_dir / f"temp_{file_pattern}"
+            staging = bin_dir / ".bdinfo-staging"
+            shutil.rmtree(staging, ignore_errors=True)
+            staging.mkdir()
             async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
                 await download_verified_asset(client, download_url, temp_archive, file_pattern)
             logger.debug(f"[green]Downloaded {file_pattern}[/green]")
@@ -130,36 +118,35 @@ class BDInfoBinaryManager:
             try:
                 if file_pattern.endswith(".zip"):
                     with zipfile.ZipFile(temp_archive, "r") as zip_ref:
-                        safe_extract_zip(zip_ref, bin_dir, max_bytes=MAX_EXTRACTED_BYTES)
+                        safe_extract_zip(zip_ref, staging, max_bytes=MAX_EXTRACTED_BYTES)
 
                 elif file_pattern.endswith(".tar.gz"):
                     with tarfile.open(temp_archive, "r:gz") as tar_ref:
-                        safe_extract_tar(tar_ref, bin_dir, max_bytes=MAX_EXTRACTED_BYTES)
+                        safe_extract_tar(tar_ref, staging, max_bytes=MAX_EXTRACTED_BYTES)
 
-                # If extraction created a nested directory (common for GitHub release zips),
-                # search for the bdinfo executable and move it to the expected binary path.
-                if not binary_path.exists():
-                    binary_basename = binary_name
-                    found = None
-                    for p in bin_dir.rglob(binary_basename):
-                        if p.is_file():
-                            found = p
-                            break
-
-                    if found:
-                        # Move to target location
-                        shutil.move(str(found), str(binary_path))
-
-                if not binary_path.is_file():
+                candidates = [candidate for candidate in staging.rglob(binary_name) if candidate.is_file()]
+                if len(candidates) != 1:
                     raise RuntimeError(f"Downloaded archive does not contain the expected {binary_name} executable")
-
+                staged_binary = candidates[0]
                 if system != "windows":
-                    binary_path.chmod(binary_path.stat().st_mode | stat.S_IEXEC)
+                    staged_binary.chmod(staged_binary.stat().st_mode | stat.S_IEXEC)
 
-                async with aiofiles.open(version_path, "w", encoding="utf-8") as version_file:
+                staged_version = staging / version
+                async with aiofiles.open(staged_version, "w", encoding="utf-8") as version_file:
                     await version_file.write(f"autobrr/go-bdinfo version {version} installed successfully.")
+                stale_markers = [
+                    candidate
+                    for candidate in bin_dir.iterdir()
+                    if candidate.is_file() and candidate.name.startswith("v") and candidate != version_path
+                ]
+                promote_files_with_rollback(
+                    [(staged_binary, binary_path), (staged_version, version_path)],
+                    staging / ".backup",
+                    remove_targets=stale_markers,
+                )
                 return str(binary_path)
             finally:
+                shutil.rmtree(staging, ignore_errors=True)
                 try:
                     if temp_archive.exists():
                         temp_archive.unlink()

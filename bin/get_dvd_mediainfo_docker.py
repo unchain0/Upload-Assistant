@@ -82,14 +82,18 @@ def extract_linux_binaries(cli_archive: Path, lib_archive: Path, output_dir: Pat
             if library_member not in archive.namelist():
                 raise RuntimeError("MediaInfo archive does not contain the required library")
             extract_zip_regular_member(archive, library_member, staging / "libmediainfo.so.0")
+        (staging / "mediainfo").chmod(0o700)
+        (staging / "libmediainfo.so.0").chmod(0o644)
+        staged_version = staging / f"version_{MEDIAINFO_VERSION}"
+        staged_version.write_text(f"MediaInfo {MEDIAINFO_VERSION} - DVD Support")
         promote_files_with_rollback(
             [
                 (staging / "mediainfo", output_dir / "mediainfo"),
                 (staging / "libmediainfo.so.0", output_dir / "libmediainfo.so.0"),
+                (staged_version, output_dir / staged_version.name),
             ],
             staging / ".backup",
         )
-        (output_dir / "libmediainfo.so.0").chmod(0o644)
     finally:
         shutil.rmtree(staging, ignore_errors=True)
 
@@ -152,15 +156,8 @@ def download_dvd_mediainfo_docker():
         # Extract binaries
         extract_linux_binaries(cli_archive, lib_archive, output_dir)
 
-        # Create version marker
-        with Path(version_file).open("w") as f:
-            f.write(f"MediaInfo {MEDIAINFO_VERSION} - DVD Support")
-
-        # Make CLI binary executable and verify permissions
+        # Verify CLI permissions
         if cli_file.exists():
-            # Set secure executable permissions (owner only)
-            Path(cli_file).chmod(0o700)
-            # Verify permissions were set correctly
             file_stat = cli_file.stat()
             is_executable = bool(file_stat.st_mode & 0o100)  # Check if owner execute bit is set
             if is_executable:

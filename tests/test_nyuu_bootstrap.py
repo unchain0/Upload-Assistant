@@ -71,11 +71,15 @@ def test_windows_nyuu_extracts_only_expected_executable(tmp_path: Path, monkeypa
     monkeypatch.setattr(get_nyuu.platform, "system", lambda: "Windows")
     monkeypatch.setattr(get_nyuu.platform, "machine", lambda: "AMD64")
     monkeypatch.setattr(asyncio, "create_subprocess_exec", create_process)
+    stale_marker = tmp_path / "bin" / "nyuu" / "windows" / "x86_64" / "v0.4.1"
+    stale_marker.parent.mkdir(parents=True)
+    stale_marker.write_text("stale")
 
     binary = asyncio.run(NyuuBinaryManager.ensure_nyuu_binary(tmp_path, path_7z="7zr.exe"))
 
     assert Path(binary).read_bytes() == b"executable"  # noqa: S101
     assert Path(binary).name == "nyuu.exe"  # noqa: S101
+    assert not stale_marker.exists()  # noqa: S101
 
 
 def test_windows_nyuu_cancellation_kills_and_reaps_7z(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -84,6 +88,7 @@ def test_windows_nyuu_cancellation_kills_and_reaps_7z(tmp_path: Path, monkeypatc
 
     class Process:
         returncode = None
+        pid = 123
 
         def __init__(self) -> None:
             self.calls = 0
@@ -99,8 +104,19 @@ def test_windows_nyuu_cancellation_kills_and_reaps_7z(tmp_path: Path, monkeypatc
             self.killed = True
 
     process = Process()
+    taskkill_command: tuple[object, ...] | None = None
 
-    async def create_process(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+    class TreeKiller:
+        returncode = 0
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            return b"", b""
+
+    async def create_process(*args, **_kwargs):  # type: ignore[no-untyped-def]
+        nonlocal taskkill_command
+        if args[0] == "taskkill":
+            taskkill_command = args
+            return TreeKiller()
         return process
 
     async def exercise() -> None:
@@ -119,3 +135,4 @@ def test_windows_nyuu_cancellation_kills_and_reaps_7z(tmp_path: Path, monkeypatc
 
     assert process.killed is True  # noqa: S101
     assert process.calls == 2  # noqa: S101
+    assert taskkill_command == ("taskkill", "/F", "/T", "/PID", "123")  # noqa: S101

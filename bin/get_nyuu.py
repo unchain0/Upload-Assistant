@@ -76,7 +76,8 @@ class NyuuBinaryManager:
         binary_executable = system == "windows" or os.access(binary_path, os.X_OK)
         binary_valid = binary_exists and binary_executable
 
-        if version_path.exists() and version_path.is_file() and binary_valid:
+        version_markers = [candidate for candidate in bin_dir.glob("v*") if candidate.is_file()]
+        if version_path.exists() and version_path.is_file() and binary_valid and version_markers == [version_path]:
             logger.debug("[blue]Nyuu binary is up to date[/blue]")
             return str(binary_path)
 
@@ -134,9 +135,11 @@ class NyuuBinaryManager:
             staged_version = staging_dir / version
             async with aiofiles.open(staged_version, "w", encoding="utf-8") as version_file:
                 await version_file.write(f"Nyuu version {version} installed successfully.")
+            stale_markers = [candidate for candidate in version_markers if candidate != version_path]
             promote_files_with_rollback(
                 [(staged_binary, binary_path), (staged_version, version_path)],
                 staging_dir / ".backup",
+                remove_targets=stale_markers,
             )
 
             return str(binary_path)
@@ -151,6 +154,7 @@ class NyuuBinaryManager:
     async def _terminate_process_tree(process: asyncio.subprocess.Process) -> None:
         pid = getattr(process, "pid", None)
         if platform.system().lower() == "windows" and pid is not None:
+            tree_killer = None
             try:
                 tree_killer = await asyncio.create_subprocess_exec(
                     "taskkill",
@@ -162,7 +166,15 @@ class NyuuBinaryManager:
                     stderr=asyncio.subprocess.DEVNULL,
                 )
                 await asyncio.wait_for(tree_killer.communicate(), timeout=10)
-            except (OSError, TimeoutError):
+                if tree_killer.returncode != 0:
+                    logger.warning("taskkill could not terminate the complete 7z process tree")
+            except TimeoutError:
+                if tree_killer is not None and tree_killer.returncode is None:
+                    with suppress(ProcessLookupError):
+                        tree_killer.kill()
+                    with suppress(ProcessLookupError, TimeoutError):
+                        await asyncio.wait_for(tree_killer.communicate(), timeout=10)
+            except OSError:
                 pass
         if process.returncode is None:
             with suppress(ProcessLookupError):

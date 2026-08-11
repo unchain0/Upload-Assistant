@@ -34,6 +34,26 @@ docs
 tmp
 *.torrent
 *.log
+.env
+.env.*
+data/config*
+data/cookies
+data/session_secret
+data/sessions
+data/user_args*
+data/*.db
+data/*.sqlite*
+session_secret
+bin/7z
+bin/nyuu
+bin/par2
+bin/pesto
+bin/zentag
+bin/mkbrr
+bin/bdinfo
+bin/MI/linux
+bin/dovi_tool
+bin/hdr10plus_tool
 
 # OS junk
 Thumbs.db

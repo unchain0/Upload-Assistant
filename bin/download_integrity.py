@@ -123,14 +123,25 @@ def safe_extract_tar(archive: tarfile.TarFile, destination: Path, *, max_bytes: 
             shutil.copyfileobj(source, output, length=1024 * 1024)
 
 
-def promote_files_with_rollback(replacements: list[tuple[Path, Path]], backup_dir: Path) -> None:
+def promote_files_with_rollback(
+    replacements: list[tuple[Path, Path]],
+    backup_dir: Path,
+    *,
+    remove_targets: list[Path] | None = None,
+) -> None:
     """Promote staged files together, restoring every previous target on failure."""
     shutil.rmtree(backup_dir, ignore_errors=True)
     backup_dir.mkdir(parents=True)
     backups: list[tuple[Path, Path]] = []
     promoted: list[Path] = []
+    promotion_succeeded = False
+    targets = [target for _source, target in replacements]
+    targets.extend(remove_targets or [])
+    target_names = [target.name for target in targets]
+    if len(target_names) != len(set(target_names)):
+        raise ValueError("Transactional promotion targets must have unique filenames")
     try:
-        for _source, target in replacements:
+        for target in targets:
             if target.exists():
                 backup = backup_dir / target.name
                 target.replace(backup)
@@ -138,14 +149,28 @@ def promote_files_with_rollback(replacements: list[tuple[Path, Path]], backup_di
         for source, target in replacements:
             source.replace(target)
             promoted.append(target)
-    except BaseException:
+        promotion_succeeded = True
+    except BaseException as promotion_error:
+        rollback_errors: list[BaseException] = []
         for target in reversed(promoted):
-            target.unlink(missing_ok=True)
+            try:
+                target.unlink(missing_ok=True)
+            except BaseException as error:
+                rollback_errors.append(error)
         for backup, target in reversed(backups):
-            backup.replace(target)
+            try:
+                backup.replace(target)
+            except BaseException as error:
+                rollback_errors.append(error)
+        if rollback_errors:
+            raise BaseExceptionGroup(
+                "File promotion failed and rollback was incomplete",
+                [promotion_error, *rollback_errors],
+            ) from promotion_error
         raise
     finally:
-        shutil.rmtree(backup_dir, ignore_errors=True)
+        if promotion_succeeded or not any(backup.exists() for backup, _target in backups):
+            shutil.rmtree(backup_dir, ignore_errors=True)
 
 
 def verify_downloaded_asset(path: Path, asset: str) -> None:

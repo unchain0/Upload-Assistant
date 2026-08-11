@@ -66,14 +66,17 @@ def test_existing_versioned_binary_does_not_download(tmp_path: Path, monkeypatch
     assert result == str(binary)  # noqa: S101
 
 
-def test_downloaded_asset_checksum_is_verified(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_downloaded_asset_checksum_is_verified(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     asset = "test-asset"
     content = b"known-good"
+    downloaded = tmp_path / asset
     monkeypatch.setitem(get_dynamic_hdr_tools.ASSET_SHA256, asset, hashlib.sha256(content).hexdigest())
 
-    get_dynamic_hdr_tools._verify_checksum(asset, content)
+    downloaded.write_bytes(content)
+    get_dynamic_hdr_tools._verify_checksum_file(asset, downloaded)
+    downloaded.write_bytes(b"tampered")
     with pytest.raises(RuntimeError, match="Checksum mismatch"):
-        get_dynamic_hdr_tools._verify_checksum(asset, b"tampered")
+        get_dynamic_hdr_tools._verify_checksum_file(asset, downloaded)
 
 
 def test_unsupported_dynamic_hdr_architecture_is_rejected(monkeypatch) -> None:  # type: ignore[no-untyped-def]

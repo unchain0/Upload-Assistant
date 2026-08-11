@@ -61,6 +61,8 @@ def test_extract_linux_restores_existing_pair_when_second_promotion_fails(tmp_pa
     output.mkdir()
     (output / "mediainfo").write_bytes(b"old-cli")
     (output / "libmediainfo.so.0").write_bytes(b"old-lib")
+    marker = output / "version_23.04"
+    marker.write_text("old-version")
     with zipfile.ZipFile(cli_archive, "w") as archive:
         _write_member(archive, "bin/mediainfo", b"new-cli")
     with zipfile.ZipFile(lib_archive, "w") as archive:
@@ -80,6 +82,7 @@ def test_extract_linux_restores_existing_pair_when_second_promotion_fails(tmp_pa
 
     assert (output / "mediainfo").read_bytes() == b"old-cli"  # noqa: S101
     assert (output / "libmediainfo.so.0").read_bytes() == b"old-lib"  # noqa: S101
+    assert marker.read_text() == "old-version"  # noqa: S101
 
 
 def test_specialized_mediainfo_timeout_kills_and_reaps_process(monkeypatch) -> None:  # type: ignore[no-untyped-def]

@@ -9,7 +9,7 @@ from typing import Any, ClassVar, cast
 
 import httpx  # pyright: ignore[reportMissingImports]
 
-from bin.download_integrity import MAX_ASSET_BYTES, download_bounded_asset, sha256_file
+from bin.download_integrity import MAX_ASSET_BYTES, download_bounded_asset, promote_files_with_rollback, sha256_file
 
 HTTPX: Any = cast(Any, httpx)
 
@@ -88,8 +88,20 @@ class ZentagBinaryManager:
         if not expected_binary or hashlib.sha256(payload).hexdigest() != expected_binary:
             raise RuntimeError(f"zentag binary checksum verification failed for {asset}")
 
-        binary.write_bytes(payload)
+        staged_binary = target_dir / f".{binary.name}.staged"
+        staged_marker = target_dir / f".{cls.VERSION}.staged"
+        staged_binary.write_bytes(payload)
         if os_name != "windows":
-            binary.chmod(binary.stat().st_mode | stat.S_IEXEC)
-        marker.write_text(cls.VERSION, encoding="utf-8")
+            staged_binary.chmod(staged_binary.stat().st_mode | stat.S_IEXEC)
+        staged_marker.write_text(cls.VERSION, encoding="utf-8")
+        stale_markers = [
+            candidate
+            for candidate in target_dir.iterdir()
+            if candidate.is_file() and candidate.name.startswith("v") and candidate != marker
+        ]
+        promote_files_with_rollback(
+            [(staged_binary, binary), (staged_marker, marker)],
+            target_dir / ".zentag-backup",
+            remove_targets=stale_markers,
+        )
         return str(binary)

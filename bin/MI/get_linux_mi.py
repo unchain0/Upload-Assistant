@@ -54,10 +54,14 @@ def extract_linux(cli_archive: Path, lib_archive: Path, output_dir: Path) -> Non
             if library_member not in archive.namelist():
                 raise RuntimeError("MediaInfo archive does not contain the required library")
             extract_zip_regular_member(archive, library_member, staging / "libmediainfo.so.0")
+        (staging / "mediainfo").chmod(0o700)
+        staged_version = staging / f"version_{MEDIAINFO_VERSION}"
+        staged_version.write_text(f"MediaInfo {MEDIAINFO_VERSION}")
         promote_files_with_rollback(
             [
                 (staging / "mediainfo", output_dir / "mediainfo"),
                 (staging / "libmediainfo.so.0", output_dir / "libmediainfo.so.0"),
+                (staged_version, output_dir / staged_version.name),
             ],
             staging / ".backup",
         )
@@ -123,13 +127,6 @@ def download_dvd_mediainfo(base_dir: str) -> str | None:
         extract_linux(cli_archive, lib_archive, output_dir)
 
         logger.debug("[green]Extracted library[/green]")
-
-        with Path(version_file).open("w") as f:
-            f.write(f"MediaInfo {MEDIAINFO_VERSION}")
-
-        # Make CLI binary executable
-        if cli_file.exists():
-            Path(cli_file).chmod(0o700)  # rwx------ (owner only)
 
     if not cli_file.exists():
         raise Exception(f"Failed to extract CLI binary to {cli_file}")

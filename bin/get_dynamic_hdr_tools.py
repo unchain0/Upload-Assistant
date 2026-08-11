@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import platform
 import shutil
 import stat
@@ -13,7 +12,14 @@ from pathlib import Path
 
 import httpx
 
-from bin.download_integrity import MAX_EXTRACTED_BYTES, download_bounded_asset, safe_extract_tar, safe_extract_zip, sha256_file
+from bin.download_integrity import (
+    MAX_EXTRACTED_BYTES,
+    download_bounded_asset,
+    promote_files_with_rollback,
+    safe_extract_tar,
+    safe_extract_zip,
+    sha256_file,
+)
 from src.console import logger
 
 TOOLS = {
@@ -52,15 +58,6 @@ def _asset_name(tool: str) -> tuple[str, str]:
     if system == "linux" and arch in {"x86_64", "aarch64"}:
         return f"{tool}_tool-{version}-{arch}-unknown-linux-musl.tar.gz", ""
     raise RuntimeError(f"Dynamic HDR plots are not supported on {system} {machine}")
-
-
-def _verify_checksum(asset: str, content: bytes) -> None:
-    """Reject release assets whose content differs from the pinned digest."""
-    expected_checksum = ASSET_SHA256.get(asset)
-    if expected_checksum is None:
-        raise RuntimeError(f"Missing checksum for {asset}")
-    if hashlib.sha256(content).hexdigest() != expected_checksum:
-        raise RuntimeError(f"Checksum mismatch for {asset}")
 
 
 def _verify_checksum_file(asset: str, path: Path) -> None:
@@ -111,14 +108,22 @@ async def get_tool(base_dir: str, tool: str) -> str:
         candidates = [path for path in staging.rglob(f"{command}{extension}") if path.is_file()]
         if not candidates:
             raise RuntimeError(f"{asset} did not contain {command}{extension}")
-        # A prior interrupted or outdated install may leave the executable or
-        # its marker behind. Windows does not allow shutil.move to replace it.
-        binary.unlink(missing_ok=True)
-        version_file.unlink(missing_ok=True)
-        shutil.move(str(candidates[0]), binary)
+        staged_binary = staging / f".{command}{extension}.staged"
+        shutil.move(str(candidates[0]), staged_binary)
         if system != "windows":
-            binary.chmod(binary.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-        version_file.write_text(f"{command} {TOOLS[tool]['version']}\n", encoding="utf-8")
+            staged_binary.chmod(staged_binary.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        staged_version = staging / TOOLS[tool]["version"]
+        staged_version.write_text(f"{command} {TOOLS[tool]['version']}\n", encoding="utf-8")
+        stale_markers = [
+            candidate
+            for candidate in target_dir.iterdir()
+            if candidate.is_file() and candidate != binary and candidate != version_file
+        ]
+        promote_files_with_rollback(
+            [(staged_binary, binary), (staged_version, version_file)],
+            staging / ".backup",
+            remove_targets=stale_markers,
+        )
         return str(binary)
     finally:
         shutil.rmtree(staging, ignore_errors=True)

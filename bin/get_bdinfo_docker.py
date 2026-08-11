@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from bin.download_integrity import download_bounded_asset_sync, safe_extract_tar, verify_downloaded_asset
+from bin.download_integrity import download_bounded_asset_sync, promote_files_with_rollback, safe_extract_tar, verify_downloaded_asset
 
 try:
     from src.console import console, logger
@@ -80,31 +80,37 @@ def download_bdinfo_for_docker(base_dir: Path = Path("/Upload-Assistant"), versi
     logger.info(f"Downloading bdinfo from: {download_url}", extra={"markup": False})
 
     temp_archive = bin_dir / f"temp_{file_pattern}"
+    staging = bin_dir / ".bdinfo-staging"
+    shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir()
     try:
         download_file(download_url, temp_archive)
         verify_downloaded_asset(temp_archive, file_pattern)
-        logger.info(f"Extracting {temp_archive} to {bin_dir}", extra={"markup": False})
-        secure_extract_tar(temp_archive, bin_dir)
+        logger.info(f"Extracting {temp_archive} to {staging}", extra={"markup": False})
+        secure_extract_tar(temp_archive, staging)
     finally:
         temp_archive.unlink(missing_ok=True)
 
-    # Search for extracted bdinfo executable and move it into place if necessary
-    if not binary_path.exists():
-        found = None
-        for p in bin_dir.rglob("bdinfo"):
-            if p.is_file():
-                found = p
-                break
-        if found:
-            shutil.move(str(found), str(binary_path))
-
-    if not binary_path.exists():
-        raise Exception(f"Failed to extract bdinfo binary to {binary_path}")
-
-    Path(binary_path).chmod(0o700)
-
-    with Path(version_path).open("w", encoding="utf-8") as vf:
-        vf.write(f"autobrr/go-bdinfo version {version} installed successfully.")
+    try:
+        candidates = [candidate for candidate in staging.rglob("bdinfo") if candidate.is_file()]
+        if len(candidates) != 1:
+            raise Exception(f"Failed to extract exactly one bdinfo binary for {binary_path}")
+        staged_binary = candidates[0]
+        staged_binary.chmod(0o700)
+        staged_version = staging / version
+        staged_version.write_text(f"autobrr/go-bdinfo version {version} installed successfully.", encoding="utf-8")
+        stale_markers = [
+            candidate
+            for candidate in bin_dir.iterdir()
+            if candidate.is_file() and candidate.name.startswith("v") and candidate != version_path
+        ]
+        promote_files_with_rollback(
+            [(staged_binary, binary_path), (staged_version, version_path)],
+            staging / ".backup",
+            remove_targets=stale_markers,
+        )
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
 
     logger.info(f"Installed bdinfo: {binary_path}", extra={"markup": False})
     return str(binary_path)
