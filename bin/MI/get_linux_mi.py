@@ -6,8 +6,7 @@ import zipfile
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-import requests
-
+from bin.download_integrity import download_verified_asset_sync, safe_extract_zip
 from src.console import logger
 
 MEDIAINFO_VERSION = "23.04"
@@ -37,36 +36,31 @@ def get_url(system: str, arch: str, library_type: str = "cli") -> str:
 
 
 def download_file(url: str, output_path: Path) -> None:
-    response = requests.get(url, stream=True, timeout=30)
-    response.raise_for_status()
-
-    with Path(output_path).open("wb") as f:
-        for chunk in response.iter_content(chunk_size=8192):
-            f.write(chunk)
+    download_verified_asset_sync(url, output_path, output_path.name)
 
 
 def extract_linux(cli_archive: Path, lib_archive: Path, output_dir: Path) -> None:
     # Extract MediaInfo CLI from zip file
     with zipfile.ZipFile(cli_archive, "r") as zip_ref:
+        safe_extract_zip(zip_ref, output_dir.parent)
         file_list = zip_ref.namelist()
         mediainfo_file = output_dir / "mediainfo"
 
         # Look for the mediainfo binary in the archive
         for member in file_list:
             if member.endswith("/mediainfo") or member == "mediainfo":
-                zip_ref.extract(member, output_dir.parent)
                 extracted_path = output_dir.parent / member
                 shutil.move(str(extracted_path), str(mediainfo_file))
                 break
 
     # Extract MediaInfo library
     with zipfile.ZipFile(lib_archive, "r") as zip_ref:
+        safe_extract_zip(zip_ref, output_dir.parent)
         file_list = zip_ref.namelist()
         lib_file = output_dir / "libmediainfo.so.0"
 
         # Look for the library file in the archive
         if "lib/libmediainfo.so.0.0.0" in file_list:
-            zip_ref.extract("lib/libmediainfo.so.0.0.0", output_dir.parent)
             extracted_path = output_dir.parent / "lib/libmediainfo.so.0.0.0"
             shutil.move(str(extracted_path), str(lib_file))
 

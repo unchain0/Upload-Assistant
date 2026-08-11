@@ -2,11 +2,16 @@
 
 import asyncio
 import hashlib
+import shutil
+import stat
+import tarfile
+import zipfile
 from pathlib import Path
 from typing import Any
 
 MAX_ASSET_BYTES = 128 * 1024 * 1024
 TRANSFER_TIMEOUT_SECONDS = 120.0
+MAX_EXTRACTED_BYTES = 512 * 1024 * 1024
 
 SHA256_BY_ASSET = {
     "mkbrr_1.24.0_windows_x86_64.zip": "23b923a26d50e3afabcd99938ea70a510904a98365f698bbeaae057ec1a51711",
@@ -42,7 +47,66 @@ SHA256_BY_ASSET = {
     "nyuu-v0.4.2-linux-aarch64.tar.xz": "8a94f3f775996e4469736494074ac7663ff463748b0e302c2bc13d0ff4a88c0b",
     "nyuu-v0.4.2-linux-amd64.tar.xz": "bbea69ffaf1d8ed3465935157e3842fe7a38bade2703504879eb8bc7c0a83dff",
     "nyuu-v0.4.2-macos-x64.tar.xz": "040c56a486bc4ac7e3b0eed7a482ffce1bbf747ff731ad45ffd99d7230fcb2a0",
+    "MediaInfo_CLI_23.04_Lambda_x86_64.zip": "a3874e3387085075bfb9900fe6cea7899e7bda5b33f741ebdcf9020caf21325f",
+    "MediaInfo_DLL_23.04_Lambda_x86_64.zip": "2a4674dc79d24568838a582f8fb55bed48014cff7566685b1f3f19bb3f0a8714",
+    "MediaInfo_CLI_23.04_Lambda_arm64.zip": "8d47d63a36dde47070dcb0eb2e0726e4d339be57bcdd0e56f8153c81d2e47a63",
+    "MediaInfo_DLL_23.04_Lambda_arm64.zip": "fb5bb11ecbc73f69ef8f017bb05ff56a167b0a813a4fbf2f974d4f20f3eb9f93",
 }
+
+
+def _safe_destination(base: Path, member_name: str) -> Path:
+    member_path = Path(member_name)
+    if member_path.is_absolute() or ".." in member_path.parts:
+        raise RuntimeError(f"Unsafe archive member: {member_name}")
+    destination = (base / member_path).resolve()
+    if destination != base and base not in destination.parents:
+        raise RuntimeError(f"Archive member escapes destination: {member_name}")
+    return destination
+
+
+def safe_extract_zip(archive: zipfile.ZipFile, destination: Path, *, max_bytes: int = MAX_EXTRACTED_BYTES) -> None:
+    """Extract regular ZIP members with path, type and expanded-size limits."""
+    base = destination.resolve()
+    total = 0
+    for member in archive.infolist():
+        target = _safe_destination(base, member.filename)
+        mode = member.external_attr >> 16
+        file_type = stat.S_IFMT(mode)
+        if stat.S_ISLNK(mode):
+            raise RuntimeError(f"Archive links are not allowed: {member.filename}")
+        if file_type and not (stat.S_ISREG(mode) or stat.S_ISDIR(mode)):
+            raise RuntimeError(f"Unsupported archive member: {member.filename}")
+        if member.is_dir():
+            target.mkdir(parents=True, exist_ok=True)
+            continue
+        total += member.file_size
+        if member.file_size > max_bytes or total > max_bytes:
+            raise RuntimeError(f"Archive exceeds the {max_bytes}-byte expanded-size limit")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with archive.open(member) as source, target.open("wb") as output:
+            shutil.copyfileobj(source, output, length=1024 * 1024)
+
+
+def safe_extract_tar(archive: tarfile.TarFile, destination: Path, *, max_bytes: int = MAX_EXTRACTED_BYTES) -> None:
+    """Extract regular TAR members with path, type and expanded-size limits."""
+    base = destination.resolve()
+    total = 0
+    for member in archive.getmembers():
+        target = _safe_destination(base, member.name)
+        if member.isdir():
+            target.mkdir(parents=True, exist_ok=True)
+            continue
+        if not member.isfile():
+            raise RuntimeError(f"Unsupported archive member: {member.name}")
+        total += member.size
+        if member.size > max_bytes or total > max_bytes:
+            raise RuntimeError(f"Archive exceeds the {max_bytes}-byte expanded-size limit")
+        source = archive.extractfile(member)
+        if source is None:
+            raise RuntimeError(f"Unable to read archive member: {member.name}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with source, target.open("wb") as output:
+            shutil.copyfileobj(source, output, length=1024 * 1024)
 
 
 def verify_downloaded_asset(path: Path, asset: str) -> None:

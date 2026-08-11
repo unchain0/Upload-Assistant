@@ -1,13 +1,7 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
-import contextlib
-import os
 import platform
 import shutil
-import tarfile
-import tempfile
 from pathlib import Path
-
-import httpx
 
 try:
     from src.console import logger
@@ -19,9 +13,6 @@ except ImportError:
 
 
 class FfmpegBinaryManager:
-    AMD_URL = "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-01-24-12-54/ffmpeg-n8.0.1-48-g0592be14ff-linux64-lgpl-8.0.tar.xz"
-    ARM_URL = "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-01-24-12-54/ffmpeg-n8.0.1-48-g0592be14ff-linuxarm64-lgpl-8.0.tar.xz"
-
     @staticmethod
     def download_ffmpeg_for_docker(base_dir: str | Path = ".") -> str:
         """Download ffmpeg amd and arm builds and install into bin/ffmpeg/<arch>/ffmpeg.
@@ -35,81 +26,12 @@ class FfmpegBinaryManager:
         if "linux" not in system:
             raise Exception(f"This script is for Docker/Linux only, detected: {system}")
 
-        base = Path(base_dir)
-        ff_root = base / "bin" / "ffmpeg"
-        ff_root.mkdir(parents=True, exist_ok=True)
-
-        results: dict[str, bool] = {}
-
-        for arch, url in (("amd", FfmpegBinaryManager.AMD_URL), ("arm", FfmpegBinaryManager.ARM_URL)):
-            try:
-                arch_dir = ff_root / arch
-                arch_dir.mkdir(parents=True, exist_ok=True)
-                logger.info(f"[blue]Downloading ffmpeg for arch {arch} from {url}[/blue]")
-
-                temp_archive = arch_dir / f"ffmpeg_{arch}.tar.xz"
-                with httpx.Client(timeout=60.0, follow_redirects=True) as client, client.stream("GET", url, timeout=60.0) as response:
-                    response.raise_for_status()
-                    with Path(temp_archive).open("wb") as f:
-                        for chunk in response.iter_bytes(chunk_size=8192):
-                            f.write(chunk)
-
-                logger.info(f"[green]Downloaded {temp_archive.name}[/green]")
-
-                # Extract into a temporary directory to avoid polluting target
-                with tempfile.TemporaryDirectory(dir=str(arch_dir)) as extract_dir:
-                    try:
-                        with tarfile.open(temp_archive, "r:xz") as tar_ref:
-                            # Secure extract: only extract regular files and dirs
-                            members = [m for m in tar_ref.getmembers() if (m.isreg() or m.isdir())]
-                            for member in members:
-                                # Prevent absolute paths and traversal
-                                if Path(member.name).is_absolute() or ".." in Path(member.name).parts:
-                                    logger.info(f"[yellow]Skipping unsafe member: {member.name}[/yellow]")
-                                    continue
-                                tar_ref.extract(member, path=extract_dir)
-
-                        # Search for the ffmpeg binary in the extracted tree
-                        found = None
-                        for root, _dirs, files in os.walk(extract_dir):
-                            for fname in files:
-                                if fname == "ffmpeg":
-                                    found = Path(root) / fname
-                                    break
-                            if found:
-                                break
-
-                        if not found:
-                            logger.info(f"[red]ffmpeg binary not found inside archive for {arch}[/red]")
-                            results[arch] = False
-                        else:
-                            target_path = arch_dir / "ffmpeg"
-                            shutil.move(found, target_path)
-                            # Ensure executable
-                            target_path.chmod(target_path.stat().st_mode | 0o111)
-                            logger.info(f"[green]Installed ffmpeg for {arch} at: {target_path}[/green]")
-                            results[arch] = True
-
-                    except tarfile.TarError as e:
-                        logger.error(f"[red]Failed to extract archive for {arch}: {e}[/red]")
-                        results[arch] = False
-
-                # Clean up archive file
-                with contextlib.suppress(Exception):
-                    temp_archive.unlink()
-
-            except (httpx.RequestError, httpx.HTTPStatusError) as e:
-                logger.error(f"[red]Failed to download ffmpeg for {arch}: {e}[/red]")
-                results[arch] = False
-
-        # Summarize
-        for a, ok in results.items():
-            if ok:
-                logger.info(f"[green]ffmpeg {a} ready[/green]")
-            else:
-                logger.info(f"[yellow]ffmpeg {a} missing or failed to install[/yellow]")
-
-        return str(ff_root)
+        del base_dir
+        ffmpeg = shutil.which("ffmpeg")
+        if ffmpeg is None:
+            raise RuntimeError("ffmpeg must be installed by the operating system package manager")
+        logger.info(f"[green]Using system ffmpeg: {ffmpeg}[/green]")
+        return ffmpeg
 
 
 if __name__ == "__main__":

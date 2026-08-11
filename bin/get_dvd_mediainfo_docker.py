@@ -8,12 +8,11 @@ support DVD IFO/VOB file parsing with language information.
 
 import platform
 import shutil
-import stat
 import zipfile
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-import requests
+from bin.download_integrity import download_verified_asset_sync, safe_extract_zip
 
 try:
     from src.console import console, logger
@@ -61,12 +60,7 @@ def get_url(system: str, arch: str, library_type: str = "cli") -> str:
 def download_file(url: str, output_path: Path) -> None:
     """Download a file from URL to specified path."""
     logger.info(f"Downloading: {url}", extra={"markup": False})
-    response = requests.get(url, stream=True, timeout=60)
-    response.raise_for_status()
-
-    with Path(output_path).open("wb") as f:
-        for chunk in response.iter_content(chunk_size=8192):
-            f.write(chunk)
+    download_verified_asset_sync(url, output_path, output_path.name)
     logger.info(f"Downloaded: {output_path.name}", extra={"markup": False})
 
 
@@ -76,6 +70,7 @@ def extract_linux_binaries(cli_archive: Path, lib_archive: Path, output_dir: Pat
 
     # Extract MediaInfo CLI from zip file
     with zipfile.ZipFile(cli_archive, "r") as zip_ref:
+        safe_extract_zip(zip_ref, output_dir.parent)
         file_list = zip_ref.namelist()
         mediainfo_file = output_dir / "mediainfo"
 
@@ -83,13 +78,6 @@ def extract_linux_binaries(cli_archive: Path, lib_archive: Path, output_dir: Pat
 
         # Look for the mediainfo binary in the archive
         for member in file_list:
-            # Check for symlinks in ZIP files
-            info = zip_ref.getinfo(member)
-            perm = info.external_attr >> 16
-            if stat.S_ISLNK(perm):
-                logger.warning(f"Warning: Skipping symlink: {member}", extra={"markup": False})
-                continue
-
             # Check for absolute paths
             if Path(member).is_absolute():
                 logger.warning(f"Warning: Skipping absolute path: {member}", extra={"markup": False})
@@ -101,7 +89,6 @@ def extract_linux_binaries(cli_archive: Path, lib_archive: Path, output_dir: Pat
                 continue
 
             if member.endswith("/mediainfo") or member == "mediainfo":
-                zip_ref.extract(member, output_dir.parent)
                 extracted_path = output_dir.parent / member
                 shutil.move(str(extracted_path), str(mediainfo_file))
                 logger.info(f"Extracted CLI binary: {mediainfo_file}", extra={"markup": False})
@@ -111,6 +98,7 @@ def extract_linux_binaries(cli_archive: Path, lib_archive: Path, output_dir: Pat
 
     # Extract MediaInfo library
     with zipfile.ZipFile(lib_archive, "r") as zip_ref:
+        safe_extract_zip(zip_ref, output_dir.parent)
         file_list = zip_ref.namelist()
         lib_file = output_dir / "libmediainfo.so.0"
 
@@ -121,13 +109,6 @@ def extract_linux_binaries(cli_archive: Path, lib_archive: Path, output_dir: Pat
 
         for candidate in lib_candidates:
             if candidate in file_list:
-                # Check for symlinks in ZIP files
-                info = zip_ref.getinfo(candidate)
-                perm = info.external_attr >> 16
-                if stat.S_ISLNK(perm):
-                    logger.warning(f"Warning: Skipping symlink: {candidate}", extra={"markup": False})
-                    continue
-
                 # Check for absolute paths
                 if Path(candidate).is_absolute():
                     logger.warning(f"Warning: Skipping absolute path: {candidate}", extra={"markup": False})
@@ -138,7 +119,6 @@ def extract_linux_binaries(cli_archive: Path, lib_archive: Path, output_dir: Pat
                     logger.warning(f"Warning: Skipping dangerous path: {candidate}", extra={"markup": False})
                     continue
 
-                zip_ref.extract(candidate, output_dir.parent)
                 extracted_path = output_dir.parent / candidate
                 # Move to final location
                 shutil.move(str(extracted_path), str(lib_file))

@@ -9,7 +9,7 @@ from pathlib import Path
 import aiofiles
 import httpx
 
-from bin.download_integrity import download_verified_asset
+from bin.download_integrity import MAX_EXTRACTED_BYTES, download_verified_asset, safe_extract_zip
 
 try:
     from src.console import console, logger
@@ -99,19 +99,7 @@ class Par2BinaryManager:
 
             try:
                 with zipfile.ZipFile(temp_file, "r") as zip_ref:
-                    # Secure extract: prevent path traversal
-                    for member in zip_ref.namelist():
-                        info = zip_ref.getinfo(member)
-                        perm = info.external_attr >> 16
-                        if stat.S_ISLNK(perm):
-                            continue
-                        if Path(member).is_absolute() or ".." in member or member.startswith("/"):
-                            continue
-                        full_path = os.path.realpath(Path(bin_dir) / member)
-                        base_path = os.path.realpath(bin_dir)
-                        if not full_path.startswith(base_path + os.sep) and full_path != base_path:
-                            continue
-                        zip_ref.extract(member, str(bin_dir))
+                    safe_extract_zip(zip_ref, bin_dir, max_bytes=MAX_EXTRACTED_BYTES)
 
                 # Locate par2 binary in extracted output
                 if not binary_path.exists():

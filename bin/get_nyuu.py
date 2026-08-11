@@ -10,7 +10,7 @@ from pathlib import Path
 import aiofiles
 import httpx
 
-from bin.download_integrity import download_verified_asset
+from bin.download_integrity import MAX_EXTRACTED_BYTES, download_verified_asset, safe_extract_tar
 
 try:
     from src.console import console, logger
@@ -89,8 +89,8 @@ class NyuuBinaryManager:
         download_url = f"https://github.com/animetosho/Nyuu/releases/download/{version}/{file_pattern}"
         logger.debug(f"[blue]Nyuu Download URL: {download_url}[/blue]")
 
+        temp_file = bin_dir / f"temp_{file_pattern}"
         try:
-            temp_file = bin_dir / f"temp_{file_pattern}"
             async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
                 await download_verified_asset(client, download_url, temp_file, file_pattern)
 
@@ -105,7 +105,12 @@ class NyuuBinaryManager:
                 # Extract using the 7z binary
                 cmd = [path_7z, "x", "-y", f"-o{bin_dir}", str(temp_file)]
                 process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-                _stdout, stderr = await process.communicate()
+                try:
+                    _stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=120)
+                except TimeoutError:
+                    process.kill()
+                    await process.communicate()
+                    raise RuntimeError("7z extraction timed out after 120 seconds") from None
                 if process.returncode != 0:
                     raise Exception(f"7z extraction failed: {stderr.decode(errors='replace')}")
 
@@ -115,23 +120,11 @@ class NyuuBinaryManager:
                         if p.is_file():
                             shutil.move(str(p), str(binary_path))
                             break
-                if temp_file.exists():
-                    temp_file.unlink()
             else:
                 # Linux/macOS are tar.xz archives
                 try:
                     with tarfile.open(temp_file, "r:xz") as tar_ref:
-                        # Secure extract: prevent path traversal
-                        for member in tar_ref.getmembers():
-                            if member.islnk() or member.issym():
-                                continue
-                            if Path(member.name).is_absolute() or ".." in member.name or member.name.startswith("/"):
-                                continue
-                            full_path = os.path.realpath(Path(bin_dir) / member.name)
-                            base_path = os.path.realpath(bin_dir)
-                            if not full_path.startswith(base_path + os.sep) and full_path != base_path:
-                                continue
-                            tar_ref.extract(member, str(bin_dir))
+                        safe_extract_tar(tar_ref, bin_dir, max_bytes=MAX_EXTRACTED_BYTES)
 
                     # Locate nyuu binary in extracted output
                     if not binary_path.exists():
@@ -160,3 +153,5 @@ class NyuuBinaryManager:
 
         except Exception as e:
             raise Exception(f"Failed to setup Nyuu binary: {e}") from e
+        finally:
+            temp_file.unlink(missing_ok=True)

@@ -1,10 +1,13 @@
 import asyncio
+import io
+import tarfile
+import zipfile
 from pathlib import Path
 
 import httpx
 import pytest
 
-from bin.download_integrity import download_bounded_asset, download_bounded_asset_sync
+from bin.download_integrity import download_bounded_asset, download_bounded_asset_sync, safe_extract_tar, safe_extract_zip
 
 
 class _Response:
@@ -82,3 +85,25 @@ def test_sync_bootstrap_uses_interruptible_total_timeout(tmp_path: Path, monkeyp
         download_bounded_asset_sync("https://example.invalid/asset", destination, timeout_seconds=0.01)
 
     assert not destination.exists()  # noqa: S101
+
+
+def test_safe_extract_zip_rejects_cumulative_expanded_size(tmp_path: Path) -> None:
+    archive_path = tmp_path / "asset.zip"
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr("one", b"123456")
+        archive.writestr("two", b"123456")
+
+    with zipfile.ZipFile(archive_path) as archive, pytest.raises(RuntimeError, match="expanded-size limit"):
+        safe_extract_zip(archive, tmp_path / "output", max_bytes=10)
+
+
+def test_safe_extract_tar_rejects_links(tmp_path: Path) -> None:
+    archive_path = tmp_path / "asset.tar"
+    with tarfile.open(archive_path, "w") as archive:
+        member = tarfile.TarInfo("link")
+        member.type = tarfile.SYMTYPE
+        member.linkname = "target"
+        archive.addfile(member, io.BytesIO())
+
+    with tarfile.open(archive_path) as archive, pytest.raises(RuntimeError, match="Unsupported archive member"):
+        safe_extract_tar(archive, tmp_path / "output")

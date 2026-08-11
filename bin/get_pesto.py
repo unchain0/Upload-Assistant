@@ -78,8 +78,8 @@ class PestoBinaryManager:
         download_url = f"https://github.com/franzopl/pesto/releases/download/{version}/{file_pattern}"
         logger.debug(f"[blue]Pesto Download URL: {download_url}[/blue]")
 
+        temp_file = bin_dir / f"temp_{file_pattern}"
         try:
-            temp_file = bin_dir / f"temp_{file_pattern}"
             async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
                 await download_verified_asset(client, download_url, temp_file, file_pattern)
 
@@ -98,3 +98,5 @@ class PestoBinaryManager:
 
         except Exception as e:
             raise Exception(f"Failed to setup Pesto binary: {e}") from e
+        finally:
+            temp_file.unlink(missing_ok=True)

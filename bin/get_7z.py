@@ -9,7 +9,7 @@ from pathlib import Path
 import aiofiles
 import httpx
 
-from bin.download_integrity import download_verified_asset
+from bin.download_integrity import MAX_EXTRACTED_BYTES, download_verified_asset, safe_extract_tar
 
 try:
     from src.console import console, logger
@@ -91,8 +91,8 @@ class SevenZipBinaryManager:
         download_url = f"https://github.com/ip7z/7zip/releases/download/{version}/{file_pattern}"
         logger.debug(f"[blue]7-Zip Download URL: {download_url}[/blue]")
 
+        temp_file = bin_dir / f"temp_{file_pattern}"
         try:
-            temp_file = bin_dir / f"temp_{file_pattern}"
             async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
                 await download_verified_asset(client, download_url, temp_file, file_pattern)
 
@@ -105,17 +105,7 @@ class SevenZipBinaryManager:
                 # Linux/macOS are tar.xz archives
                 try:
                     with tarfile.open(temp_file, "r:xz") as tar_ref:
-                        # Secure extract: prevent path traversal
-                        for member in tar_ref.getmembers():
-                            if member.islnk() or member.issym():
-                                continue
-                            if Path(member.name).is_absolute() or ".." in member.name or member.name.startswith("/"):
-                                continue
-                            full_path = os.path.realpath(Path(bin_dir) / member.name)
-                            base_path = os.path.realpath(bin_dir)
-                            if not full_path.startswith(base_path + os.sep) and full_path != base_path:
-                                continue
-                            tar_ref.extract(member, str(bin_dir))
+                        safe_extract_tar(tar_ref, bin_dir, max_bytes=MAX_EXTRACTED_BYTES)
 
                     # Locate 7zz binary in extracted output
                     if not binary_path.exists():
@@ -124,8 +114,7 @@ class SevenZipBinaryManager:
                                 shutil.move(str(p), str(binary_path))
                                 break
                 finally:
-                    if temp_file.exists():
-                        temp_file.unlink()
+                    temp_file.unlink(missing_ok=True)
 
             if system != "windows" and binary_path.exists():
                 binary_path.chmod(binary_path.stat().st_mode | stat.S_IEXEC)
@@ -137,3 +126,5 @@ class SevenZipBinaryManager:
 
         except Exception as e:
             raise Exception(f"Failed to setup 7z binary: {e}") from e
+        finally:
+            temp_file.unlink(missing_ok=True)

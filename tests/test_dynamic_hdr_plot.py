@@ -158,6 +158,7 @@ def test_debug_mode_does_not_upload_dynamic_hdr_images(tmp_path: Path, monkeypat
 
 def test_dynamic_hdr_tool_timeout_is_reported(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     def timeout(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        assert _kwargs["timeout"] == 1  # noqa: S101
         raise subprocess.TimeoutExpired("dovi_tool", 1)
 
     monkeypatch.setattr("src.dynamic_hdr_plot.subprocess.run", timeout)

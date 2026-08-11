@@ -43,6 +43,7 @@ def download_file(url: str, output_path: Path) -> None:
 def secure_extract_tar(tar_path: Path, extract_to: Path) -> None:
     with tarfile.open(tar_path, "r:gz") as tar_ref:
         base_path = extract_to.resolve()
+        total_size = 0
         for member in tar_ref.getmembers():
             if member.issym() or member.islnk():
                 logger.warning(f"Warning: Skipping link: {member.name}", extra={"markup": False})
@@ -71,6 +72,9 @@ def secure_extract_tar(tar_path: Path, extract_to: Path) -> None:
             if member.isfile() and member.size > 100 * 1024 * 1024:
                 logger.warning(f"Warning: Skipping oversized file: {member.name} ({member.size} bytes)", extra={"markup": False})
                 continue
+            total_size += member.size
+            if total_size > 512 * 1024 * 1024:
+                raise RuntimeError("Archive exceeds the 536870912-byte expanded-size limit")
 
             if member.isdir():
                 target_dir = base_path / member.name
@@ -120,12 +124,13 @@ def download_bdinfo_for_docker(base_dir: Path = Path("/Upload-Assistant"), versi
     logger.info(f"Downloading bdinfo from: {download_url}", extra={"markup": False})
 
     temp_archive = bin_dir / f"temp_{file_pattern}"
-    download_file(download_url, temp_archive)
-    verify_downloaded_asset(temp_archive, file_pattern)
-
-    logger.info(f"Extracting {temp_archive} to {bin_dir}", extra={"markup": False})
-    secure_extract_tar(temp_archive, bin_dir)
-    temp_archive.unlink()
+    try:
+        download_file(download_url, temp_archive)
+        verify_downloaded_asset(temp_archive, file_pattern)
+        logger.info(f"Extracting {temp_archive} to {bin_dir}", extra={"markup": False})
+        secure_extract_tar(temp_archive, bin_dir)
+    finally:
+        temp_archive.unlink(missing_ok=True)
 
     # Search for extracted bdinfo executable and move it into place if necessary
     if not binary_path.exists():

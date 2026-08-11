@@ -10,7 +10,7 @@ from pathlib import Path
 import aiofiles
 import httpx
 
-from bin.download_integrity import download_verified_asset, download_verified_asset_sync
+from bin.download_integrity import MAX_EXTRACTED_BYTES, download_verified_asset, download_verified_asset_sync, safe_extract_tar, safe_extract_zip
 
 try:
     from src.console import console, logger
@@ -123,88 +123,19 @@ class MkbrrBinaryManager:
         download_url = f"https://github.com/autobrr/mkbrr/releases/download/{version}/mkbrr_{version[1:]}_{file_pattern}"
         logger.debug(f"[blue]Download URL: {download_url}[/blue]")
 
+        temp_archive = bin_dir / f"temp_{file_pattern}"
         try:
-            temp_archive = bin_dir / f"temp_{file_pattern}"
             async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
                 await download_verified_asset(client, download_url, temp_archive, f"mkbrr_{version[1:]}_{file_pattern}")
             logger.debug(f"[green]Downloaded {file_pattern}[/green]")
 
             if file_pattern.endswith(".zip"):
                 with zipfile.ZipFile(temp_archive, "r") as zip_ref:
-                    # Safely extract zip file with validation to prevent directory traversal attacks
-                    def safe_extract_zip(zip_file: zipfile.ZipFile, path: str = ".") -> None:
-                        """Safely extract zip members, checking for directory traversal attacks"""
-                        for member in zip_file.namelist():
-                            # Check for symlinks in ZIP files
-                            info = zip_file.getinfo(member)
-                            perm = info.external_attr >> 16
-                            if stat.S_ISLNK(perm):
-                                logger.debug(f"[yellow]Warning: Skipping symlink: {member}[/yellow]")
-                                continue
-
-                            # Check for absolute paths
-                            if Path(member).is_absolute():
-                                logger.debug(f"[yellow]Warning: Skipping absolute path: {member}[/yellow]")
-                                continue
-
-                            # Check for directory traversal patterns
-                            if ".." in member or member.startswith("/"):
-                                logger.debug(f"[yellow]Warning: Skipping dangerous path: {member}[/yellow]")
-                                continue
-
-                            # Check if the final path would be safe
-                            full_path = os.path.realpath(Path(path) / member)
-                            base_path = os.path.realpath(path)
-                            if not full_path.startswith(base_path + os.sep) and full_path != base_path:
-                                logger.debug(f"[yellow]Warning: Skipping path outside target directory: {member}[/yellow]")
-                                continue
-
-                            # Extract the safe member
-                            zip_file.extract(member, path)
-                            logger.debug(f"[cyan]Extracted: {member}[/cyan]")
-
-                    safe_extract_zip(zip_ref, str(bin_dir))
+                    safe_extract_zip(zip_ref, bin_dir, max_bytes=MAX_EXTRACTED_BYTES)
 
             elif file_pattern.endswith(".tar.gz"):
                 with tarfile.open(temp_archive, "r:gz") as tar_ref:
-                    # Safely extract tar file with validation to prevent directory traversal attacks
-                    def safe_extract_tar(tar_file: tarfile.TarFile, path: str = ".") -> None:
-                        """Safely extract tar members, checking for directory traversal attacks"""
-                        for member in tar_file.getmembers():
-                            # Check for symlinks and hardlinks in TAR files
-                            if member.islnk() or member.issym():
-                                logger.debug(f"[yellow]Warning: Skipping link entry: {member.name}[/yellow]")
-                                continue
-
-                            # Check for absolute paths
-                            if Path(member.name).is_absolute():
-                                logger.debug(f"[yellow]Warning: Skipping absolute path: {member.name}[/yellow]")
-                                continue
-
-                            # Check for directory traversal patterns
-                            if ".." in member.name or member.name.startswith("/"):
-                                logger.debug(f"[yellow]Warning: Skipping dangerous path: {member.name}[/yellow]")
-                                continue
-
-                            # Check if the final path would be safe
-                            full_path = os.path.realpath(Path(path) / member.name)
-                            base_path = os.path.realpath(path)
-                            if not full_path.startswith(base_path + os.sep) and full_path != base_path:
-                                logger.debug(f"[yellow]Warning: Skipping path outside target directory: {member.name}[/yellow]")
-                                continue
-
-                            # Check for reasonable file sizes (prevent tar bombs)
-                            if member.size > 100 * 1024 * 1024:  # 100MB limit
-                                logger.debug(f"[yellow]Warning: Skipping oversized file: {member.name} ({member.size} bytes)[/yellow]")
-                                continue
-
-                            # Extract the safe member
-                            tar_file.extract(member, path)
-                            logger.debug(f"[cyan]Extracted: {member.name}[/cyan]")
-
-                    safe_extract_tar(tar_ref, str(bin_dir))
-
-            temp_archive.unlink()
+                    safe_extract_tar(tar_ref, bin_dir, max_bytes=MAX_EXTRACTED_BYTES)
 
             if system != "windows" and binary_path.exists():
                 binary_path.chmod(binary_path.stat().st_mode | stat.S_IEXEC)
@@ -220,6 +151,8 @@ class MkbrrBinaryManager:
             raise Exception(f"Failed to download mkbrr binary: {e}") from e
         except (zipfile.BadZipFile, tarfile.TarError) as e:
             raise Exception(f"Failed to extract mkbrr binary: {e}") from e
+        finally:
+            temp_archive.unlink(missing_ok=True)
 
     @staticmethod
     def download_mkbrr_for_docker(base_dir: str | Path = ".", version: str = "v1.18.0") -> str:
@@ -268,77 +201,14 @@ class MkbrrBinaryManager:
         download_url = f"https://github.com/autobrr/mkbrr/releases/download/{version}/mkbrr_{version[1:]}_{file_pattern}"
         logger.info(f"Downloading from: {download_url}", extra={"markup": False})
 
+        temp_archive = bin_dir / f"temp_{file_pattern}"
         try:
-            temp_archive = bin_dir / f"temp_{file_pattern}"
             download_verified_asset_sync(download_url, temp_archive, f"mkbrr_{version[1:]}_{file_pattern}")
 
             logger.info(f"Downloaded {file_pattern}", extra={"markup": False})
 
             with tarfile.open(temp_archive, "r:gz") as tar_ref:
-
-                def secure_extract(tar: tarfile.TarFile, extract_path: str = ".") -> None:
-                    """Securely extract tar members with comprehensive security checks."""
-                    base_path = Path(extract_path).resolve()
-
-                    for member in tar.getmembers():
-                        if member.issym():
-                            logger.warning(f"Warning: Skipping symbolic link: {member.name}", extra={"markup": False})
-                            continue
-                        if member.islnk():
-                            logger.warning(f"Warning: Skipping hard link: {member.name}", extra={"markup": False})
-                            continue
-
-                        if Path(member.name).is_absolute():
-                            logger.warning(f"Warning: Skipping absolute path: {member.name}", extra={"markup": False})
-                            continue
-
-                        if ".." in Path(member.name).parts:
-                            logger.warning(f"Warning: Skipping path with '..': {member.name}", extra={"markup": False})
-                            continue
-
-                        try:
-                            final_path = (base_path / member.name).resolve()
-
-                            try:
-                                os.path.commonpath([base_path, final_path])
-                                if not str(final_path).startswith(str(base_path) + os.sep) and final_path != base_path:
-                                    logger.warning(f"Warning: Path outside base directory: {member.name}", extra={"markup": False})
-                                    continue
-                            except ValueError:
-                                logger.warning(f"Warning: Invalid path resolution: {member.name}", extra={"markup": False})
-                                continue
-
-                        except (OSError, ValueError) as e:
-                            logger.warning(f"Warning: Path resolution failed for {member.name}: {e}", extra={"markup": False})
-                            continue
-
-                        if not (member.isfile() or member.isdir()):
-                            logger.warning(f"Warning: Skipping non-regular file: {member.name}", extra={"markup": False})
-                            continue
-
-                        if member.isfile() and member.size > 100 * 1024 * 1024:  # 100MB limit
-                            logger.warning(f"Warning: Skipping oversized file: {member.name} ({member.size} bytes)", extra={"markup": False})
-                            continue
-
-                        if member.isfile():
-                            final_path.parent.mkdir(parents=True, exist_ok=True)
-
-                            source = tar.extractfile(member)
-                            if source is not None:
-                                with source, Path(final_path).open("wb") as target:
-                                    target.write(source.read())
-
-                            final_path.chmod(0o600)
-
-                        elif member.isdir():
-                            final_path.mkdir(parents=True, exist_ok=True)
-                            final_path.chmod(0o700)
-
-                        logger.info(f"Extracted: {member.name}", extra={"markup": False})
-
-                secure_extract(tar_ref, str(bin_dir))
-
-            temp_archive.unlink()
+                safe_extract_tar(tar_ref, bin_dir, max_bytes=MAX_EXTRACTED_BYTES)
 
             if binary_path.exists():
                 Path(binary_path).chmod(0o700)
@@ -353,3 +223,5 @@ class MkbrrBinaryManager:
 
         except Exception as e:
             raise Exception(f"Error downloading mkbrr: {e}") from e
+        finally:
+            temp_archive.unlink(missing_ok=True)
