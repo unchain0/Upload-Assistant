@@ -29,8 +29,8 @@ jobs:
     runs-on: windows-2025
     env:
       PYTHON_MINOR: "3.14"
-      FFMPEG_URL: "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
-      FFMPEG_FALLBACK_URL: "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+      FFMPEG_URL: "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+      FFMPEG_SHA256: "c91c9bd5e396b7d65f4520e789bd0321b7747c0df3fa6e1cfb4b1bc31bb10f4e"
     steps:
       - name: Validate manual release attachment
         if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
@@ -74,6 +74,7 @@ jobs:
 
           function Test-FfmpegArchive([string]$Path) {
             if (-not (Test-Path -LiteralPath $Path)) { return $false }
+            if ((Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() -ne $env:FFMPEG_SHA256) { return $false }
             try {
               Add-Type -AssemblyName System.IO.Compression.FileSystem
               $archive = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path -LiteralPath $Path))
@@ -120,7 +121,7 @@ jobs:
           else {
             Remove-Item -LiteralPath $cachedFfmpeg -Force -ErrorAction SilentlyContinue
             $downloaded = $false
-            foreach ($uri in @($env:FFMPEG_URL, $env:FFMPEG_FALLBACK_URL)) {
+            foreach ($uri in @($env:FFMPEG_URL)) {
               try {
                 Invoke-DownloadWithRetry -Uri $uri -OutFile $payloadFfmpeg
                 if (-not (Test-FfmpegArchive -Path $payloadFfmpeg)) {

@@ -1,5 +1,4 @@
 # Upload Assistant © 2026 Audionut & wastaken7 — Licensed under UAPL v1.0
-import asyncio
 import hashlib
 import io
 import os
@@ -9,7 +8,7 @@ import stat
 import tarfile
 import zipfile
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 import httpx  # pyright: ignore[reportMissingImports]
 
@@ -18,6 +17,14 @@ HTTPX: Any = cast(Any, httpx)
 
 class ZentagBinaryManager:
     VERSION = "v0.3.0"
+    CHECKSUMS: ClassVar[dict[str, str]] = {
+        "zentag_0.3.0_darwin_amd64.tar.gz": "1e40bde40f50f88ca05f9ad647c2a49e0ace42f4325c413e674d4ae97e381b16",
+        "zentag_0.3.0_darwin_arm64.tar.gz": "e4284dce7438f309bdb0b725a2013895d2afec6147aa5dcbbc57c746685013b0",
+        "zentag_0.3.0_linux_amd64.tar.gz": "cd2f17ebef2e6c8586e2aef8655c12ca1769c7e2dbf147e6238f487469200cba",
+        "zentag_0.3.0_linux_arm64.tar.gz": "7d47677949451b113ab3e9c199230797e1095ad9964afab04d57db319ba107dd",
+        "zentag_0.3.0_windows_amd64.zip": "a49112e047361267ad404b664cb7501b4c3acde0dde27f689cc3079bb802cdd0",
+        "zentag_0.3.0_windows_arm64.zip": "0acf0fc3b126a0fd654c547894e27eae71720a47bc1d023abf7e26fec494a48e",
+    }
 
     @classmethod
     async def ensure_binary(cls, base_dir: str | Path) -> str:
@@ -44,16 +51,9 @@ class ZentagBinaryManager:
 
         release_url = f"https://github.com/znth-cx/zentag/releases/download/{cls.VERSION}"
         async with HTTPX.AsyncClient(timeout=120.0, follow_redirects=True) as client:
-            archive_response, checksum_response = cast(
-                tuple[Any, Any],
-                await asyncio.gather(
-                client.get(f"{release_url}/{asset}"),
-                client.get(f"{release_url}/checksums.txt"),
-                ),
-            )
+            archive_response = await client.get(f"{release_url}/{asset}")
         archive_response.raise_for_status()
-        checksum_response.raise_for_status()
-        expected = next((line.split()[0] for line in checksum_response.text.splitlines() if line.split()[1:] == [asset]), "")
+        expected = cls.CHECKSUMS.get(asset, "")
         actual = hashlib.sha256(archive_response.content).hexdigest()
         if not expected or actual != expected:
             raise RuntimeError(f"zentag checksum verification failed for {asset}")

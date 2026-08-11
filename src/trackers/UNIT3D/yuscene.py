@@ -260,7 +260,10 @@ class YUSCENE(UNIT3D):
                 payload = response.json()
             raw_translations = payload.get("data", {}).get("translations", []) if isinstance(payload, dict) else []
             translated_values = [html.unescape(str(item.get("translatedText", "")).strip()) for item in raw_translations if isinstance(item, dict)]
-        except (httpx.HTTPError, TypeError, ValueError) as error:
+        except httpx.HTTPError:
+            logger.info(f"{self.tracker}: [bold red]English book metadata translation HTTP request failed.[/bold red]")
+            return False
+        except (TypeError, ValueError) as error:
             logger.info(f"{self.tracker}: [bold red]English book metadata translation failed: {error}[/bold red]")
             return False
 

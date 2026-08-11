@@ -108,6 +108,20 @@ def test_cross_seed_links_normalize_component_paths(tmp_path: Path) -> None:
     assert asyncio.run(exercise())
 
 
+def test_cross_seed_links_reject_torrent_name_outside_tracker_root(tmp_path: Path) -> None:
+    source = tmp_path / "episode.mkv"
+    source.write_bytes(b"episode")
+    tracker_dir = tmp_path / "tracker"
+    torrent = SimpleNamespace(
+        metainfo={"info": {"name": "../escaped", "files": [{"path": ["episode.mkv"], "length": 7}]}},
+        name="../escaped",
+    )
+    meta = Meta(path=str(source), filelist=[str(source)])
+
+    assert not asyncio.run(create_cross_seed_links(meta, torrent, str(tracker_dir), use_hardlink=False))
+    assert not (tmp_path / "escaped").exists()
+
+
 def test_qbittorrent_maps_single_file_torrent_from_kept_source_folder(tmp_path: Path) -> None:
     source_dir = tmp_path / "source"
     source_dir.mkdir()

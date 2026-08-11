@@ -206,12 +206,12 @@ class QbittorrentClientMixin:
                                 await asyncio.to_thread(Path(torrent_file_path).write_bytes, torrent_file_content)
 
                                 # Validate the .torrent file before saving as BASE.torrent
-                                valid, _ = await self.is_valid_torrent(meta, torrent_file_path, torrent_hash, "qbit", client)
+                                valid, resolved_torrent_path = await self.is_valid_torrent(meta, str(torrent_file_path), torrent_hash, "qbit", client)
                                 if not valid:
                                     logger.debug(f"[bold red]Validation failed for {torrent_file_path}")
                                     torrent_file_path.unlink()  # Remove invalid file
                                 else:
-                                    await TorrentCreator.create_base_from_existing_torrent(torrent_file_path, meta.base_dir, meta.uuid)
+                                    await TorrentCreator.create_base_from_existing_torrent(str(resolved_torrent_path or torrent_file_path), meta.base_dir, meta.uuid)
                             except TimeoutError:
                                 logger.info(f"[bold red]Failed to export .torrent for {torrent_hash} after retries")
 
@@ -1663,8 +1663,9 @@ class QbittorrentClientMixin:
             if torrent_file_path:
                 valid, torrent_path = await self.is_valid_torrent(meta, torrent_file_path, torrent_hash, "qbit", client_config)
                 if valid:
-                    if meta.subtitle_files and not self._torrent_includes_all_local_subtitles(torrent_file_path, meta):
-                        if self._torrent_has_no_subtitles(torrent_file_path):
+                    validated_torrent_path = torrent_path or torrent_file_path
+                    if meta.subtitle_files and not self._torrent_includes_all_local_subtitles(validated_torrent_path, meta):
+                        if self._torrent_has_no_subtitles(validated_torrent_path):
                             subtitle_fallback = {"hash": torrent_hash, "torrent_path": torrent_path or torrent_file_path}
                             logger.debug(f"[yellow]Keeping video-only torrent as fallback: {torrent_hash}")
                         else:
@@ -1672,7 +1673,7 @@ class QbittorrentClientMixin:
                     elif use_piece_preference:
                         # **Track best match based on piece size**
                         try:
-                            torrent_data = Torrent.read(torrent_file_path)
+                            torrent_data = Torrent.read(validated_torrent_path)
                             piece_size = torrent_data.piece_size
                             # For prefer_small_pieces: prefer smallest pieces
                             # For piece_limit: prefer torrents with piece size <= 16 MiB (16777216 bytes)
@@ -1697,7 +1698,7 @@ class QbittorrentClientMixin:
                     else:
                         # If piece preference is disabled, return first valid torrent
                         try:
-                            await TorrentCreator.create_base_from_existing_torrent(torrent_file_path, meta.base_dir, meta.uuid)
+                            await TorrentCreator.create_base_from_existing_torrent(validated_torrent_path, meta.base_dir, meta.uuid)
                             logger.debug(f"[green]Created BASE.torrent from first valid torrent: {torrent_hash}")
                             meta.base_torrent_created = True
                             meta.hash_used = torrent_hash
@@ -1727,8 +1728,9 @@ class QbittorrentClientMixin:
                         alt_valid, alt_torrent_path = await self.is_valid_torrent(meta, alt_torrent_file_path, alt_torrent_hash, "qbit", client_config)
 
                         if alt_valid:
-                            if meta.subtitle_files and not self._torrent_includes_all_local_subtitles(alt_torrent_file_path, meta):
-                                if self._torrent_has_no_subtitles(alt_torrent_file_path):
+                            validated_alt_torrent_path = alt_torrent_path or alt_torrent_file_path
+                            if meta.subtitle_files and not self._torrent_includes_all_local_subtitles(validated_alt_torrent_path, meta):
+                                if self._torrent_has_no_subtitles(validated_alt_torrent_path):
                                     subtitle_fallback = {"hash": alt_torrent_hash, "torrent_path": alt_torrent_path or alt_torrent_file_path}
                                     logger.debug(f"[yellow]Keeping video-only alternative as fallback: {alt_torrent_hash}")
                                 else:
@@ -1736,7 +1738,7 @@ class QbittorrentClientMixin:
                             elif use_piece_preference:
                                 # **Track best match based on piece size**
                                 try:
-                                    torrent_data = Torrent.read(alt_torrent_file_path)
+                                    torrent_data = Torrent.read(validated_alt_torrent_path)
                                     piece_size = torrent_data.piece_size
                                     # For prefer_small_pieces: prefer smallest pieces
                                     # For piece_limit: prefer torrents with piece size <= 16 MiB (16777216 bytes)
@@ -1763,7 +1765,7 @@ class QbittorrentClientMixin:
                             else:
                                 # If piece preference is disabled, return first valid torrent
                                 try:
-                                    await TorrentCreator.create_base_from_existing_torrent(alt_torrent_file_path, meta.base_dir, meta.uuid)
+                                    await TorrentCreator.create_base_from_existing_torrent(validated_alt_torrent_path, meta.base_dir, meta.uuid)
                                     logger.debug(f"[green]Created BASE.torrent from alternative torrent {alt_torrent_hash}")
                                     meta.infohash = alt_torrent_hash
                                     meta.base_torrent_created = True
@@ -1977,7 +1979,11 @@ async def create_cross_seed_links(meta: Meta, torrent: Torrent, tracker_dir: str
         length_value = info.get("length")
         torrent_files.append({"relative_path": torrent_name, "length": length_value if isinstance(length_value, int) else None})
 
-    destination_root = Path(tracker_dir) / torrent_name if multi_file else tracker_dir
+    tracker_root = Path(tracker_dir).resolve()
+    destination_root = Path(tracker_dir) / torrent_name if multi_file else Path(tracker_dir)
+    if not is_path_under(destination_root.resolve(), tracker_root):
+        logger.info(f"[bold red]Refusing to create link directory outside tracker directory: {destination_root}")
+        return False
     if multi_file:
         await asyncio.to_thread(os.makedirs, destination_root, exist_ok=True)
     else:
