@@ -59,7 +59,7 @@ from src.qbitwait import Wait
 from src.queuemanage import QueueManager
 from src.rehostimages import check_tracker_image_hosts
 from src.takescreens import TakeScreensManager, download_artwork_from_meta
-from src.temp_paths import artwork_dir, screenshots_dir
+from src.temp_paths import artwork_dir, ensure_temp_root, screenshots_dir
 from src.torrentcreate import TorrentCreator
 from src.tracker_images import configured_screenshot_minimum, screenshot_requirement_error
 from src.trackerhandle import process_trackers
@@ -2257,16 +2257,7 @@ async def do_the_thing(base_dir: str) -> None:
 
     await asyncio.sleep(0.1)  # Ensure it's not racing
 
-    tmp_dir = Path(base_dir) / "tmp"
-    if not Path(tmp_dir).exists():
-        if os.name != "nt":
-            Path(tmp_dir).mkdir(parents=True, mode=0o700, exist_ok=True)
-        else:
-            Path(tmp_dir).mkdir(parents=True, exist_ok=True)
-    else:
-        # Ensure existing directory has secure permissions
-        if os.name != "nt":
-            Path(tmp_dir).chmod(0o700)
+    ensure_temp_root(base_dir)
 
     def ensure_secure_tmp_subdir(subdir_path: str | Path) -> None:
         """Ensure tmp subdirectories are created with secure permissions (0o700)"""

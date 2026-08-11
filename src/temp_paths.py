@@ -7,7 +7,20 @@ otherwise mistake a poster, cover or diagnostic image for a screenshot.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+
+
+def ensure_temp_root(base_dir: str | Path) -> Path:
+    path = Path(base_dir) / "tmp"
+    path.mkdir(parents=True, mode=0o700, exist_ok=True)
+    if os.name != "nt":
+        try:
+            path.chmod(0o700)
+        except PermissionError:
+            if not os.access(path, os.W_OK | os.X_OK):
+                raise
+    return path
 
 
 def release_temp_dir(base_dir: str | Path, release_id: str) -> Path:

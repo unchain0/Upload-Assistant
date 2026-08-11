@@ -16,6 +16,7 @@ from rich.markup import escape
 from src.book_prep import AUDIOBOOK_EXTENSIONS, BOOK_EXTENSIONS
 from src.console import logger
 from src.meta import Meta
+from src.temp_paths import ensure_temp_root
 
 type QueueItem = dict[str, Any]
 type QueueList = list[str] | list[QueueItem]
@@ -404,15 +405,7 @@ class QueueManager:
         logger.info("\n\n")
 
         if save_to_log and base_dir and queue_name:
-            tmp_dir = Path(base_dir) / "tmp"
-            if not Path(tmp_dir).exists():
-                Path(tmp_dir).mkdir(parents=True, mode=0o700, exist_ok=True)
-                # Enforce 0700 regardless of process umask (POSIX only).
-                if os.name != "nt":
-                    Path(tmp_dir).chmod(0o700)
-            else:
-                if os.name != "nt":
-                    Path(tmp_dir).chmod(0o700)
+            tmp_dir = ensure_temp_root(base_dir)
             log_file = Path(tmp_dir) / f"{queue_name}_queue.log"
 
             try:

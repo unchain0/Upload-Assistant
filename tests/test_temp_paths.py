@@ -1,8 +1,25 @@
 # ruff: noqa: S101
 
+import os
 from pathlib import Path
 
-from src.temp_paths import artwork_dir, menu_screenshots_dir, screenshots_dir, spectrograms_dir
+from src.temp_paths import artwork_dir, ensure_temp_root, menu_screenshots_dir, screenshots_dir, spectrograms_dir
+
+
+def test_temp_root_accepts_writable_directory_owned_by_another_user(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    temp_root = tmp_path / "tmp"
+    temp_root.mkdir()
+    original_chmod = Path.chmod
+
+    def reject_foreign_chmod(path: Path, mode: int) -> None:
+        if path == temp_root:
+            raise PermissionError("not owner")
+        original_chmod(path, mode)
+
+    monkeypatch.setattr(Path, "chmod", reject_foreign_chmod)
+    monkeypatch.setattr("src.temp_paths.os.access", lambda path, mode: path == temp_root and mode == os.W_OK | os.X_OK)
+
+    assert ensure_temp_root(tmp_path) == temp_root
 
 
 def test_typed_image_directories_are_isolated_per_release(tmp_path: Path) -> None:

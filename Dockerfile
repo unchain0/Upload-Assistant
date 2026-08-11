@@ -83,6 +83,8 @@ RUN mkdir -p /Upload-Assistant/bin/nyuu /Upload-Assistant/bin/7z /Upload-Assista
 # Create tmp directory; world-writable so any UID can use it
 RUN mkdir -p /Upload-Assistant/tmp && chmod 1777 /Upload-Assistant/tmp
 ENV TMPDIR=/Upload-Assistant/tmp
+ENV MPLCONFIGDIR=/Upload-Assistant/tmp/matplotlib
+ENV XDG_CACHE_HOME=/Upload-Assistant/tmp/cache
 
 # ── Runtime metadata ─────────────────────────────────────────────────
 # Document the WebUI port (informational only; does not publish the port)
