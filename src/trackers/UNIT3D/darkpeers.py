@@ -6,6 +6,7 @@ from typing import Any, ClassVar, cast
 
 import httpx
 
+from src.book_extractors import validate_isbn_checksum
 from src.console import logger
 from src.get_desc import DescriptionBuilder
 from src.languages import languages_manager
@@ -25,6 +26,15 @@ class DarkPeers(UNIT3D):
     display_name = "DarkPeers"
     allows_bloated_audio = True
     reject_episode_if_season_pack_exists = True
+    _AUDIO_TRACK_PATTERN = re.compile(
+        r"^(?:\d{1,3}(?:-\d{1,2})?\.\s+.+|\d{1,3}(?:-\d{1,2})?\s+-\s+.+|\d{1,3}(?:-\d{1,2})?-(?!-).+|.+-\d{1,3}(?:-\d{1,2})?-(?!-).+)$"
+    )
+    _AUDIO_CODEC_PATTERN = re.compile(r"\s+(?:DTS Headphone:X|DTS-HD MA|DTS-HD HRA|DTS-ES|DTS:X|TrueHD|DD\+ EX|DD EX|DD\+|DD|LPCM|FLAC|ALAC|AAC|Opus|MP3|MP2|Vorbis)(?=\s|$)")
+    _DUB_ELEMENT_PATTERN = re.compile(
+        r"\s+(?:(?:[A-Z][A-Za-z]*(?:\s+[A-Z][A-Za-z]*){0,2}\s+)?(?:MULTi|Dubbed)|Dual-Audio)"
+        r"(?=\s+(?:DTS Headphone:X|DTS-HD MA|DTS-HD HRA|DTS-ES|DTS:X|TrueHD|DD\+ EX|DD EX|DD\+|DD|LPCM|FLAC|ALAC|AAC|Opus|MP3|MP2|Vorbis)(?:\s|$)|-[A-Za-z0-9]+$)"
+    )
+    _VIDEO_EXTENSIONS: ClassVar[set[str]] = {".avi", ".m2ts", ".mkv", ".mp4", ".mpg", ".mpeg", ".ts", ".vob"}
     base_url = "https://darkpeers.org"
     banned_groups = (
         "ARCADE",
@@ -115,13 +125,22 @@ class DarkPeers(UNIT3D):
         group = str(meta.tag or "").lstrip("-").strip().upper()
         release_type = str(meta.type or "").strip().upper()
         category = str(meta.category or "").strip().upper()
+        filelist = [] if meta.filelist is None else meta.filelist
+        if not isinstance(filelist, (list, tuple, set)):
+            logger.info(f"{self.tracker}: [bold red]File list metadata is invalid. Skipping upload.[/bold red]")
+            return False
 
         if category in {"MOVIE", "TV"}:
+            if self._is_local_path_name(str(meta.name or "")):
+                logger.info(f"{self.tracker}: [bold red]Generated upload title contains a local file path. Skipping upload.[/bold red]")
+                return False
             if not await self.validate_video_languages(meta):
                 return False
             if not await self.validate_video_resolution(meta):
                 return False
             if not self.validate_video_files(meta):
+                return False
+            if not self.validate_screenshot_count(meta):
                 return False
             if (
                 meta.keep_folder
@@ -193,7 +212,6 @@ class DarkPeers(UNIT3D):
         "swe": "swedish",
     }
     _BOOK_FORMATS: ClassVar[set[str]] = {
-        "AZW",
         "AZW3",
         "CBR",
         "CBZ",
@@ -203,7 +221,6 @@ class DarkPeers(UNIT3D):
         "DOCX",
         "EPUB",
         "FB2",
-        "HTM",
         "HTML",
         "KFX",
         "LIT",
@@ -263,11 +280,47 @@ class DarkPeers(UNIT3D):
         return False
 
     def validate_video_files(self, meta: Meta) -> bool:
-        archive = next((Path(str(item)).name for item in meta.filelist or [] if Path(str(item)).suffix.lower() in {".rar", ".zip", ".7z"}), "")
+        filelist = [] if meta.filelist is None else meta.filelist
+        if not isinstance(filelist, (list, tuple, set)):
+            logger.info(f"{self.tracker}: [bold red]File list metadata is invalid. Skipping upload.[/bold red]")
+            return False
+        archive = next((Path(str(item)).name for item in filelist if Path(str(item)).suffix.lower() in {".rar", ".zip", ".7z"}), "")
         if archive:
             logger.info(f"{self.tracker}: [bold red]does not permit archives in Movie/TV uploads: {archive}. Skipping upload.")
             return False
+        group = str(meta.tag or "").lstrip("-").strip().casefold()
+        renamed = next(
+            (
+                Path(str(item)).name
+                for item in filelist
+                if group
+                and Path(str(item)).suffix.casefold() in self._VIDEO_EXTENSIONS
+                and any(char.isspace() for char in Path(str(item)).stem)
+                and Path(str(item)).stem.casefold().endswith(f"-{group}")
+            ),
+            "",
+        )
+        if renamed:
+            logger.info(
+                f"{self.tracker}: [bold red]Tagged release file appears to have been renamed with spaces: {renamed}. "
+                "Restore the original filename before uploading.[/bold red]"
+            )
+            return False
         return True
+
+    @staticmethod
+    def _is_local_path_name(value: str) -> bool:
+        return bool(value) and (value.startswith(("/", "\\")) or Path(value).is_absolute() or bool(re.match(r"^[A-Za-z]:[\\/]", value)))
+
+    def validate_screenshot_count(self, meta: Meta) -> bool:
+        try:
+            screens = int(meta.screens)
+        except (TypeError, ValueError, OverflowError):
+            screens = 0
+        if 3 <= screens <= 5:
+            return True
+        logger.info(f"{self.tracker}: [bold red]Movie and TV uploads require between 3 and 5 screenshots. Skipping upload.")
+        return False
 
     def validate_tv_scope(self, meta: Meta) -> bool:
         name = " ".join((str(meta.name or ""), Path(str(meta.path or "")).name)).casefold()
@@ -290,28 +343,135 @@ class DarkPeers(UNIT3D):
         author = str(meta.author or meta.book_author or "").strip()
         if not author:
             return await self._missing_required("author", meta)
+        if not str(meta.title or meta.book_title or "").strip():
+            return await self._missing_required("title", meta)
+        if not meta.year:
+            return await self._missing_required("release year", meta)
         format_name = self._book_format(meta)
         allowed = self._AUDIOBOOK_FORMATS if meta.audiobook else self._BOOK_FORMATS
         if format_name not in allowed:
             logger.info(f"{self.tracker}: [bold red]does not support {format_name or 'an unspecified'} book format. Skipping upload.")
             return False
+        collection = self._is_book_collection(meta)
+        if meta.audiobook:
+            validated_isbn = validate_isbn_checksum(str(meta.isbn or meta.book_isbn or ""))
+            if not validated_isbn and not collection:
+                logger.info(f"{self.tracker}: [bold red]Audiobooks require a valid ISBN-10 or ISBN-13. Re-run with --isbn. Skipping upload.[/bold red]")
+                return False
+            meta.isbn = validated_isbn or ""
+        elif not collection:
+            validated_isbn = validate_isbn_checksum(str(meta.isbn or meta.book_isbn or ""))
+            if not validated_isbn:
+                logger.info(f"{self.tracker}: [bold red]Individual eBooks require a valid ISBN-10 or ISBN-13 in the upload title. Re-run with --isbn. Skipping upload.[/bold red]")
+                return False
+            meta.isbn = validated_isbn
         identifier = self._book_identifier(meta)
-        is_collection = len(meta.filelist or []) > 1 or "collection" in str(meta.name or "").casefold()
-        if not identifier and not is_collection:
-            return await self._missing_required("a valid ISBN/ASIN", meta)
+        if not identifier and not collection:
+            return await self._missing_required("a valid ISBN", meta)
         publisher = str(meta.publisher or meta.book_publisher or "").strip()
         if not publisher:
             return await self._missing_required("publisher", meta)
         if meta.audiobook and not str(meta.narrator or "").strip():
             return await self._missing_required("audiobook narrator", meta)
+        if meta.audiobook and not meta.audiobook_duration:
+            return await self._missing_required("audiobook runtime", meta)
+        if meta.audiobook and format_name in {"MP3", "AAC", "OPUS", "VORBIS"}:
+            if not meta.audiobook_bitrate:
+                return await self._missing_required("lossy audiobook bitrate", meta)
+            if int(meta.audiobook_bitrate) < 64:
+                logger.info(f"{self.tracker}: [bold red]Speech-only audiobooks require a bitrate of at least 64 kbps. Skipping upload.[/bold red]")
+                return False
+        if meta.audiobook:
+            details = (
+                f"Narrator: {meta.narrator}; Runtime: {meta.audiobook_duration_formatted or meta.audiobook_duration}; "
+                f"Publisher: {publisher}; Year: {meta.year}; ISBN: {identifier}"
+            )
+            if meta.unattended:
+                logger.info(
+                    f"{self.tracker}: [bold red]Audiobook edition metadata cannot be verified safely in unattended mode. "
+                    f"Run attended and verify that narrator/runtime match publisher, year, and ISBN. {details}[/bold red]"
+                )
+                return False
+            logger.info(f"{self.tracker}: [yellow]Verify that all audiobook edition fields describe the same recording. {details}[/yellow]")
+            if not await self.common.prompt_user_for_confirmation("Do these audiobook edition details match the files?", meta):
+                return False
         if not meta.audiobook and format_name == "PDF" and not bool(meta.get("page_count", None) or meta.get("book_page_count", None)):
             return await self._missing_required("PDF page count", meta)
+        if not meta.audiobook:
+            source = str(meta.manual_source or meta.source or "").strip().upper()
+            if source not in {"RETAIL", "SCAN", "OTHER"}:
+                logger.info(
+                    f"{self.tracker}: [bold red]eBook provenance must be explicit. Re-run with --source RETAIL for an untouched digital retail file, "
+                    "--source SCAN (and --ocr when applicable), or --source OTHER for a verified non-retail born-digital file. "
+                    "Generic WEB metadata is not proof of a retail release. Skipping upload.[/bold red]"
+                )
+                return False
+            if meta.ocr and source != "SCAN":
+                logger.info(f"{self.tracker}: [bold red]OCR cannot be combined with Retail. Use --source SCAN --ocr. Skipping upload.[/bold red]")
+                return False
+        return self._validate_book_file_layout(meta, format_name)
+
+    @staticmethod
+    def _is_book_collection(meta: Meta) -> bool:
+        files = [Path(str(item)) for item in meta.filelist or []]
+        book_files = [item for item in files if item.suffix.upper().lstrip(".") in DarkPeers._BOOK_FORMATS | DarkPeers._AUDIOBOOK_FORMATS]
+        label = " ".join((str(meta.title or ""), str(meta.name or ""), Path(str(meta.path or "")).name))
+        marked = bool(re.search(r"\b(?:collection|complete|books?\s+\d+\s*-\s*\d+|series\s+pack)\b", label, re.IGNORECASE))
+        return marked and len(book_files) >= 5
+
+    def _validate_book_file_layout(self, meta: Meta, format_name: str) -> bool:
+        source_path = Path(str(meta.path or ""))
+        if meta.audiobook and source_path.exists() and source_path.is_file():
+            logger.info(f"{self.tracker}: [bold red]Audiobooks must be uploaded inside a single descriptive folder. Skipping upload.[/bold red]")
+            return False
+
+        files = [Path(str(item)) for item in meta.filelist or []]
+        if meta.audiobook:
+            audio_files = [item for item in files if item.suffix.upper().lstrip(".") in self._AUDIOBOOK_FORMATS]
+            if format_name == "M4B" and len(audio_files) == 1:
+                expected = self._normalized_book_filename(f"{meta.author} {meta.title} {meta.year}")
+                actual = self._normalized_book_filename(audio_files[0].stem)
+                if actual != expected:
+                    logger.info(
+                        f"{self.tracker}: [bold red]single-file M4B must be named "
+                        f"'Author - Title - Year.m4b': {audio_files[0].name}. Skipping upload.[/bold red]"
+                    )
+                    return False
+            if len(audio_files) > 1:
+                invalid = next((item.name for item in audio_files if not re.match(r"^(?:\d{1,3}|chapter\s*\d+|(?:disc|part)\s*\d+)", item.stem, re.IGNORECASE)), "")
+                if invalid:
+                    logger.info(f"{self.tracker}: [bold red]Audiobook files must use logical chapter, disc, or part numbering: {invalid}. Skipping upload.[/bold red]")
+                    return False
+            return True
+
+        if source_path.exists():
+            author_tokens = set(re.findall(r"[a-z0-9]+", str(meta.author or meta.book_author or "").casefold()))
+            title_tokens = set(re.findall(r"[a-z0-9]+", str(meta.title or meta.book_title or "").casefold()))
+            ebook_files = [item for item in files if item.suffix.upper().lstrip(".") in self._BOOK_FORMATS]
+            invalid = next(
+                (
+                    item.name
+                    for item in ebook_files
+                    if not author_tokens.issubset(set(re.findall(r"[a-z0-9]+", item.stem.casefold())))
+                    or not title_tokens.issubset(set(re.findall(r"[a-z0-9]+", item.stem.casefold())))
+                ),
+                "",
+            )
+            if invalid:
+                logger.info(f"{self.tracker}: [bold red]eBook filename must include the author and title: {invalid}. Skipping upload.[/bold red]")
+                return False
         return True
+
+    @staticmethod
+    def _normalized_book_filename(value: str) -> str:
+        return " ".join(re.findall(r"[\w]+", value.casefold()))
 
     @staticmethod
     def _book_format(meta: Meta) -> str:
         """Resolve container aliases from MediaInfo when the codec is available."""
         format_name = str(meta.type or meta.format or "").upper().strip()
+        if format_name == "HTM":
+            return "HTML"
         if not meta.audiobook or format_name not in {"M4A", "OGG", "WAV"}:
             return format_name
         media = (meta.mediainfo if isinstance(meta.mediainfo, dict) else {}).get("media")
@@ -346,13 +506,27 @@ class DarkPeers(UNIT3D):
             return False
         audio_suffixes = {".flac", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".alac"}
         paths = [track.relative_path for track in release.tracks] or [str(item) for item in meta.filelist or [] if Path(str(item)).suffix.lower() in audio_suffixes]
+        album = str(release.get("album", meta.title or "")).strip()
+        root = Path(str(meta.path or ""))
+        if root.exists() and not root.is_dir():
+            logger.info(f"{self.tracker}: [bold red]Music uploads must be contained in a descriptive folder. Skipping upload.[/bold red]")
+            return False
+        if root.is_dir() and album and re.sub(r"\W+", " ", album.casefold()).strip() not in re.sub(r"\W+", " ", root.name.casefold()).strip():
+            logger.info(f"{self.tracker}: [bold red]Music folder name must include the album title. Skipping upload.[/bold red]")
+            return False
+        release_type = str(release.get("release_type", "")).casefold()
+        unnumbered_single = len(paths) == 1 and release_type == "single"
         for path in paths:
             relative = str(path).replace("\\", "/")
             filename = Path(relative).name
-            if len(relative) > 180 or filename.startswith(" ") or any(part.startswith(" ") for part in relative.split("/")):
+            full_relative = "/".join(part for part in (root.name if root.is_dir() else "", relative) if part)
+            if len(full_relative) > 180 or filename.startswith(" ") or any(part.startswith(" ") for part in relative.split("/")):
                 logger.info(f"{self.tracker}: [bold red]invalid music path: {relative}. Skipping upload.")
                 return False
-            if re.search(r"\b\w+\.\w+\.\d{1,2}\.\w+", filename) or not re.match(r"(?:\d{1,2}|\d{1,2}-\d{1,2})\s+-\s+.+", filename):
+            if any(char in filename for char in ':?<>|*"'):
+                logger.info(f"{self.tracker}: [bold red]music filename contains prohibited filesystem characters: {filename}. Skipping upload.")
+                return False
+            if re.search(r"\b\w+\.\w+\.\d{1,2}\.\w+", filename) or (not unnumbered_single and not self._AUDIO_TRACK_PATTERN.match(Path(filename).stem)):
                 logger.info(f"{self.tracker}: [bold red]music filename must include a track number and title: {filename}. Skipping upload.")
                 return False
         return True
@@ -370,10 +544,9 @@ class DarkPeers(UNIT3D):
         return True
 
     async def _missing_required(self, field: str, meta: Meta) -> bool:
-        if meta.unattended and not meta.unattended_confirm:
-            logger.info(f"{self.tracker}: [bold red]missing required {field}. Skipping unattended upload.")
-            return False
-        return await self._confirm_or_skip(f"is missing required {field}; confirm it is present in the final description.", meta)
+        _ = meta
+        logger.info(f"{self.tracker}: [bold red]missing required {field}. Skipping upload.[/bold red]")
+        return False
 
     async def _confirm_or_skip(self, message: str, meta: Meta) -> bool:
         logger.info(f"{self.tracker}: [bold red]{message}[/bold red]")
@@ -395,8 +568,10 @@ class DarkPeers(UNIT3D):
         audio = self._languages(meta.audio_languages)
         original = self._normalise_language(meta.original_language)
         accepted = self._accepted_languages()
-        if not audio or (len(audio) == 1 and original in audio):
+        if not audio:
             return "SKIPPED"
+        if len(audio) == 1 and original in audio:
+            return ""
         if audio == {"english"} and original and original != "english":
             return "Dubbed"
         if len(audio) == 1:
@@ -405,7 +580,7 @@ class DarkPeers(UNIT3D):
                 return f"{only.title()} Dubbed"
             return "SKIPPED"
         if original and original in audio:
-            if "english" in audio and len(audio) == 2:
+            if original != "english" and "english" in audio and len(audio) == 2:
                 return "Dual-Audio"
             if len(audio) >= 3:
                 return "MULTi"
@@ -429,18 +604,125 @@ class DarkPeers(UNIT3D):
         if meta.category == "BOOK":
             return {"name": self._book_name(meta)}
 
-        # DP prohibits retags.  When the preparation stage identified a scene
-        # release, submit its recorded release name rather than rebuilding it.
-        dp_name = str(meta.scene_name or meta.name or "")
+        scene_name = str(meta.scene_name or "")
+        if scene_name and not self._is_local_path_name(scene_name):
+            return {"name": scene_name}
 
-        if meta.category == "TV":
-            dp_name = await self._tv_name(meta, dp_name)
-
+        if not str(meta.type or "").strip():
+            dp_name = str(meta.name or "")
+            if meta.category == "TV":
+                dp_name = await self._tv_name(meta, dp_name)
+        else:
+            dp_name = await self._video_name(meta)
         audio = await self.get_audio(meta)
-        if audio and audio != "SKIPPED" and "Dual-Audio" in dp_name:
-            dp_name = dp_name.replace("Dual-Audio", audio)
+        dp_name = self._apply_dub_element(dp_name, audio)
 
         return {"name": dp_name}
+
+    async def _video_name(self, meta: Meta) -> str:
+        release_type = str(meta.type or "").upper()
+        title = str(meta.title or "").strip()
+        aka = "" if meta.no_aka else str(meta.aka or "").strip()
+        year = str(meta.manual_year or meta.year or "").strip()
+        if meta.category == "TV" and year and not await self._tv_title_needs_year(meta):
+            year = ""
+        if meta.no_year:
+            year = ""
+
+        if meta.manual_date:
+            year = ""
+            season_episode = str(meta.manual_date)
+        else:
+            season_episode = "" if meta.no_season else f"{meta.season or ''}{meta.episode or ''}"
+        edition = str(meta.manual_edition or meta.edition or "").strip()
+        hybrid = "Hybrid" if meta.webdv or re.search(r"\bHybrid\b", edition, re.IGNORECASE) else ""
+        edition = re.sub(r"\bHybrid\b", "", edition, flags=re.IGNORECASE).strip()
+
+        ratio = ""
+        for pattern, canonical in ((r"\bOpen Matte\b", "Open Matte"), (r"\bIMAX\b", "IMAX"), (r"\bMAR\b", "MAR")):
+            if match := re.search(pattern, edition, re.IGNORECASE):
+                ratio = canonical
+                edition = f"{edition[: match.start()]} {edition[match.end() :]}".strip()
+                break
+
+        cut = ""
+        cut_patterns = (
+            r"Director(?:'|\u2019)s Cut",
+            r"Super Duper Cut",
+            r"Special Edition",
+            r"Extended",
+            r"Unrated",
+            r"Uncut",
+        )
+        for pattern in cut_patterns:
+            if match := re.search(rf"\b{pattern}\b", edition, re.IGNORECASE):
+                cut = match.group(0)
+                edition = f"{edition[: match.start()]} {edition[match.end() :]}".strip()
+                break
+        edition = " ".join(edition.split())
+
+        resolution = "" if str(meta.resolution or "").upper() == "OTHER" else str(meta.resolution or "").strip()
+        source = self._video_source(meta, release_type)
+        type_name = {"REMUX": "REMUX", "WEBDL": "WEB-DL", "WEBRIP": "WEBRip"}.get(release_type, "")
+        full_disc_or_remux = release_type in {"DISC", "REMUX"}
+        dvd_sourced = "DVD" in source.upper()
+        if dvd_sourced:
+            resolution = ""
+
+        context = " ".join((str(meta.name or ""), str(meta.basename_no_ext or ""), Path(str(meta.path or "")).name))
+        ds4k = "DS4K" if not full_disc_or_remux and release_type in {"WEBDL", "WEBRIP", "HDTV"} and re.search(r"\bDS4K\b", context, re.IGNORECASE) else ""
+        hi10p = "Hi10P" if re.search(r"\bHi10P\b", context, re.IGNORECASE) else ""
+        video_codec = str(meta.video_codec if full_disc_or_remux else meta.video_encode or meta.video_codec or "").strip()
+        region = str(meta.region or "").strip() if full_disc_or_remux else ""
+        three_d = str(meta.three_d or "").strip()
+        repack = str(meta.repack or "").strip()
+        audio = str(meta.audio or "").strip()
+        hdr = str(meta.hdr or "").strip()
+        tag = str(meta.tag or "").strip()
+
+        prefix = [title, aka, year, season_episode, cut, ratio, hybrid, repack, resolution]
+        if full_disc_or_remux:
+            parts = [*prefix, edition, region, three_d, source, type_name, hi10p, hdr, video_codec, audio]
+        else:
+            parts = [*prefix, ds4k, edition, three_d, source, type_name, audio, hi10p, hdr, video_codec]
+        name = " ".join(part for part in parts if part)
+        return f"{' '.join(name.split())}{tag}"
+
+    @staticmethod
+    def _video_source(meta: Meta, release_type: str) -> str:
+        source = str(meta.source or "").strip()
+        if release_type in {"WEBDL", "WEBRIP"}:
+            return str(meta.service or "").strip() or ("" if source.upper() == "WEB" else source)
+        if release_type == "DVDRIP":
+            standard = "NTSC" if "NTSC" in source.upper() else "PAL" if "PAL" in source.upper() else ""
+            return " ".join(part for part in (standard, "DVDRip") if part)
+        if release_type == "DISC":
+            if source in {"BluRay", "Blu-ray"}:
+                source = "Blu-ray"
+                if str(meta.uhd or "").upper() == "UHD":
+                    source = "UHD Blu-ray"
+            if source in {"PAL DVD", "NTSC DVD"} and str(meta.dvd_size or "").strip():
+                source = f"{source}{str(meta.dvd_size).replace('DVD', '')}"
+        elif release_type == "REMUX" and source in {"Blu-ray", "BluRay"}:
+            source = "UHD BluRay" if str(meta.uhd or "").upper() == "UHD" else "BluRay"
+        return source
+
+    @classmethod
+    def _apply_dub_element(cls, name: str, audio: str) -> str:
+        if audio == "SKIPPED":
+            return " ".join(name.split())
+        existing = cls._DUB_ELEMENT_PATTERN.search(name)
+        replacement = f" {audio}" if audio else ""
+        if existing:
+            normalized = f"{name[: existing.start()]}{replacement}{name[existing.end() :]}"
+            return " ".join(normalized.split())
+        if not replacement:
+            return " ".join(name.split())
+        codec_match = cls._AUDIO_CODEC_PATTERN.search(name)
+        if not codec_match:
+            return " ".join(name.split())
+        normalized = f"{name[: codec_match.start()]}{replacement}{name[codec_match.start() :]}"
+        return " ".join(normalized.split())
 
     async def _tv_name(self, meta: Meta, name: str) -> str:
         title = str(meta.title or "").strip()
@@ -452,8 +734,10 @@ class DarkPeers(UNIT3D):
     async def _tv_title_needs_year(self, meta: Meta) -> bool:
         title = str(meta.title or "").strip()
         api_key = str(self.config.get("DEFAULT", {}).get("tmdb_api", "")).strip()
-        if not title or not api_key:
+        if not title:
             return False
+        if not api_key:
+            return True
         try:
             logger.info(f"{self.tracker}: Checking if TMDb has multiple shows with the title '{title}'...")
             async with httpx.AsyncClient() as client:
@@ -464,7 +748,7 @@ class DarkPeers(UNIT3D):
                 response.raise_for_status()
                 payload_raw: Any = response.json()
         except httpx.HTTPError, ValueError, TypeError:
-            return False
+            return True
 
         title_key = " ".join(title.casefold().split())
         current_id = str(meta.tmdb_id or "")
@@ -522,6 +806,9 @@ class DarkPeers(UNIT3D):
                 format_parts.append(bitrate_mode)
 
         format_name = " ".join(part for part in format_parts if part)
+        release_type = str(cls._release_field(release, "release_type", "")).strip().casefold()
+        if release_type == "single":
+            format_name = f"{format_name} Single".strip()
         title = " - ".join(part for part in (artist, album) if part)
         if year:
             title = f"{title} ({year})" if title else f"({year})"
@@ -533,6 +820,8 @@ class DarkPeers(UNIT3D):
         # Publisher is a description field, never a substitute for the author.
         author = str(meta.author or meta.book_author or "").strip()
         title = str(meta.title or "").strip()
+        if author:
+            title = re.sub(rf"^{re.escape(author)}\s*[-:]+\s*", "", title, flags=re.IGNORECASE).strip()
         year = str(meta.year or "").strip()
         edition = str(meta.manual_edition or meta.edition or "").strip()
         format_name = DarkPeers._book_format(meta)
@@ -545,10 +834,16 @@ class DarkPeers(UNIT3D):
             parts.append(format_name)
 
         if meta.audiobook:
+            manual_source = str(meta.manual_source or "").strip().upper()
+            source_name = {"CD": "CD", "OVERDRIVE": "Overdrive", "HOOPLA": "Hoopla", "WEB": "Web", "OTHER": "Other"}.get(manual_source, "")
+            if source_name:
+                parts.insert(-1, source_name)
             if format_name in {"MP3", "AAC", "OPUS", "VORBIS"} and meta.audiobook_bitrate:
                 parts.append(str(meta.audiobook_bitrate))
             if identifier:
                 parts.append(identifier)
+            if manual_source == "RETAIL":
+                parts.append("Retail")
             base_name = " ".join(parts)
             tag = str(meta.tag or "").strip()
             if tag:

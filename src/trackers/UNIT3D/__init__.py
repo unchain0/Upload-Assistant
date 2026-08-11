@@ -57,7 +57,6 @@ class UNIT3D:
 
     async def search_existing(self, meta: Meta) -> list[dict[str, Any]]:
         dupes: list[dict[str, Any]] = []
-        params_list: ParamsList | None = None
         category = meta.category
 
         # Ensure tracker_status keys exist before any potential writes
@@ -69,8 +68,9 @@ class UNIT3D:
         }
 
         if category in ("MOVIE", "TV"):
+            search_name = meta.title or meta.name
             params_dict: dict[str, str] = {
-                "name": "",
+                "name": search_name,
                 "perPage": "100",
             }
             if meta.tmdb is not None:
@@ -81,41 +81,22 @@ class UNIT3D:
                 # for manually constructed metadata without a TMDB ID.
                 params_dict["categories[]"] = (await self.get_category_id(meta))["category_id"]
 
-            if self.tracker not in ["OLDTOONSWORLD"]:
-                resolutions = await self.get_resolution_id(meta)
-                resolution_id = resolutions["resolution_id"]
-                if resolution_id in ["3", "4"]:
-                    # Convert params to list of tuples to support duplicate keys
-                    params_list = list(params_dict.items())
-                    params_list.append(("resolutions[]", "3"))
-                    params_list.append(("resolutions[]", "4"))
-                else:
-                    params_dict["resolutions[]"] = resolution_id
-
-            if self.tracker not in ["SEEDPOOL", "SKIPTHECOMMERCIALS"]:
-                type_id = (await self.get_type_id(meta))["type_id"]
-                if params_list is not None:
-                    params_list.append(("types[]", type_id))
-                else:
-                    params_dict["types[]"] = type_id
-
             if meta.category == "TV":
-                season_value = f" {meta.season}"
-                if params_list is not None:
-                    # Update the 'name' parameter in the list
-                    params_list = [(k, (v + season_value if k == "name" and isinstance(v, str) else v)) for k, v in params_list]
-                else:
-                    params_dict["name"] = params_dict["name"] + season_value
+                params_dict["name"] = f"{search_name} {meta.season}".strip()
 
         else:
+            search_name = meta.title or meta.name
+            if category == "BOOK" and ":" in search_name:
+                main_title = search_name.split(":", 1)[0].strip()
+                if len(main_title.split()) >= 2:
+                    search_name = main_title
             params_dict = {
-                "name": meta.title or meta.name,
+                "name": search_name,
                 "categories[]": (await self.get_category_id(meta))["category_id"],
                 "perPage": "100",
             }
 
-        request_params: ParamsList
-        request_params = params_list if params_list is not None else list(params_dict.items())
+        request_params: ParamsList = list(params_dict.items())
 
         urls_to_check = await self.get_search_urls(meta, request_params)
 
@@ -468,7 +449,22 @@ class UNIT3D:
         base_dir = meta.base_dir
         uuid = meta.uuid
         specified_dir = Path(base_dir) / "tmp" / uuid
-        nfo_files = [str(p) for p in specified_dir.glob("*.nfo")]
+        nfo_files: list[str] = []
+        if meta.category == "GAME":
+            source_path = Path(str(meta.path or ""))
+            source_dir = source_path if source_path.is_dir() else source_path.parent
+            candidates = [meta.scene_nfo_file, *(meta.filelist if isinstance(meta.filelist, (list, tuple, set)) else [])]
+            for candidate in candidates:
+                candidate_path = Path(str(candidate or ""))
+                if candidate_path.suffix.lower() != ".nfo":
+                    continue
+                if not candidate_path.is_file() and not candidate_path.is_absolute():
+                    candidate_path = source_dir / candidate_path
+                if candidate_path.is_file() and str(candidate_path) not in nfo_files:
+                    nfo_files.append(str(candidate_path))
+
+        if not nfo_files:
+            nfo_files = [str(p) for p in specified_dir.glob("*.nfo")]
         if not nfo_files and meta.keep_nfo and (meta.keep_folder or meta.isdir):
             search_dir = Path(str(meta.path)).parent
             nfo_files = [str(p) for p in search_dir.glob("*.nfo")]
@@ -476,7 +472,7 @@ class UNIT3D:
         if nfo_files:
             async with aiofiles.open(nfo_files[0], "rb") as f:
                 nfo_bytes = await f.read()
-            files["nfo"] = ("nfo_file.nfo", nfo_bytes, "text/plain")
+            files["nfo"] = (Path(nfo_files[0]).name, nfo_bytes, "text/plain")
 
         if meta.category not in ("MOVIE", "TV", "GAME"):
             cover_path = meta.artwork_path
@@ -550,6 +546,12 @@ class UNIT3D:
                             )
                         return False  # Auth/permission error
                     if e.response.status_code in [401, 404, 422]:
+                        if self._is_duplicate_name_error(e.response.text):
+                            status = meta.tracker_status[self.tracker]
+                            status["dupe"] = True
+                            status["upload"] = False
+                            status["status_message"] = "Duplicate detected during upload: this release name already exists on the tracker."
+                            return False
                         meta.tracker_status[self.tracker]["status_message"] = f"data error: HTTP {e.response.status_code} - {e.response.text}"
                     else:
                         # Retry other HTTP errors
@@ -603,6 +605,14 @@ class UNIT3D:
             return True  # Debug mode - simulated success
 
         return False
+
+    @staticmethod
+    def _is_duplicate_name_error(response_text: str) -> bool:
+        normalized = str(response_text or "").casefold()
+        return '"name"' in normalized and any(
+            phrase in normalized
+            for phrase in ("already been taken", "already exists", "já se encontra registado", "ja se encontra registado")
+        )
 
     async def get_torrent_id(self, response_data: dict[str, Any]) -> str:
         """Matches /12345.abcde and returns 12345"""

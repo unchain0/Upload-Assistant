@@ -72,6 +72,7 @@ class TmdbManager:
         mode: str = "non_cli",
         category_preference: str | None = None,
         imdb_info: dict[str, Any] | None = None,
+        unattended: bool = False,
     ) -> tuple[str, int | str, str, bool]:
         return await get_tmdb_from_imdb(
             imdb_id=imdb_id,
@@ -82,6 +83,7 @@ class TmdbManager:
             mode=mode,
             category_preference=category_preference,
             imdb_info=imdb_info,
+            unattended=unattended,
         )
 
     async def get_tmdb_id(
@@ -277,6 +279,16 @@ async def normalize_title(title: str) -> str:
     return title.lower().replace("&", "and").replace("  ", " ").strip()
 
 
+def _reconcile_tmdb_imdb_id(original_id: int, external_id: Any, quickie_search: bool) -> tuple[int, bool, int]:
+    external_text = str(external_id or "").removeprefix("tt")
+    external = int(external_text) if external_text.isdigit() else 0
+    if not external:
+        return (0 if quickie_search else original_id), False, 0
+    if original_id and external != original_id:
+        return original_id, quickie_search, external
+    return external, False, 0
+
+
 async def get_tmdb_from_imdb(
     imdb_id: str | int | None,
     tvdb_id: int | None = None,
@@ -286,6 +298,7 @@ async def get_tmdb_from_imdb(
     mode: str = "non_cli",
     category_preference: str | None = None,
     imdb_info: dict[str, Any] | None = None,
+    unattended: bool = False,
 ) -> tuple[str, int | str, str, bool]:
     """Fetches TMDb ID using IMDb or TVDb ID.
 
@@ -366,18 +379,18 @@ async def get_tmdb_from_imdb(
 
     # Try as movie first
     fallback_movie_title = str(imdb_info.get("original title") or imdb_info.get("localized title") or "")
-    tmdb_id, category = await get_tmdb_id(title, year, "MOVIE", secondary_title=fallback_movie_title, debug=debug)
+    tmdb_id, category = await get_tmdb_id(title, year, "MOVIE", secondary_title=fallback_movie_title, debug=debug, unattended=unattended)
 
     # If no results, try as TV
     if tmdb_id == 0:
-        tmdb_id, category = await get_tmdb_id(title, year, "TV", secondary_title=fallback_movie_title, debug=debug)
+        tmdb_id, category = await get_tmdb_id(title, year, "TV", secondary_title=fallback_movie_title, debug=debug, unattended=unattended)
 
     # Extract necessary values from the result
     tmdb_id = tmdb_id or 0
     category = category or "MOVIE"
 
     # **User Prompt for Manual TMDb ID Entry**
-    if tmdb_id in ("None", "", None, 0, "0") and mode == "cli":
+    if tmdb_id in ("None", "", None, 0, "0") and mode == "cli" and not unattended:
         logger.info("[yellow]Unable to find a matching TMDb entry[/yellow]")
         tmdb_input = await prompt_in_thread(cli_ui.ask_string, "Please enter TMDb ID (format: tv/12345 or movie/12345): ", default="") or ""
         category, tmdb_id = _get_parser().parse_tmdb_id(tmdb_input, category)
@@ -423,6 +436,7 @@ async def get_tmdb_id(
     ) -> tuple[int, str]:
         _ = untouched_filename
         _ = path
+        _ = debug
         search_results: dict[str, Any] = {"results": []}
         original_category = category
         category = new_category or original_category
@@ -695,7 +709,7 @@ async def get_tmdb_id(
                                         return tmdb_id, category
 
                         # Put unattended handling here, since it will work based on the sorted results
-                        if unattended and not debug:
+                        if unattended:
                             tmdb_id = int(sorted_results[0]["id"])
                             return tmdb_id, category
 
@@ -916,6 +930,8 @@ async def get_tmdb_id(
 
     # No match found, prompt user if in CLI mode
     logger.info("[bold red]Unable to find TMDb match using any search[/bold red]")
+    if unattended:
+        return 0, category
     try:
         tmdb_input = await prompt_in_thread(cli_ui.ask_string, "Please enter TMDb ID in this format: tv/12345 or movie/12345")
     except EOFError:
@@ -987,6 +1003,7 @@ async def tmdb_other_meta(
     release_date = None
     first_air_date = None
     last_air_date = None
+    series_status = ""
     youtube = None
     networks = []
 
@@ -1078,6 +1095,7 @@ async def tmdb_other_meta(
                 year = datetime.strptime(media_data["last_air_date"], "%Y-%m-%d").replace(tzinfo=UTC).year if media_data["last_air_date"] else 0
             first_air_date = media_data.get("first_air_date", None)
             last_air_date = media_data.get("last_air_date", None)
+            series_status = str(media_data.get("status") or "")
             runtime_list = media_data.get("episode_run_time", [60])
             runtime = runtime_list[0] if runtime_list else 60
             tmdb_type = media_data.get("type", "Scripted")
@@ -1134,34 +1152,12 @@ async def tmdb_other_meta(
         else:
             try:
                 external = typing_cast(dict[str, Any], external_data.json())  # type: ignore
-                # Process IMDB ID
-                if quickie_search or imdb_id == 0:
-                    external_imdb_id = external.get("imdb_id", None)
-                    if isinstance(external_imdb_id, str) and external_imdb_id not in ["", " ", "None", "null"]:
-                        imdb_id_clean = external_imdb_id.lstrip("t")
-                        if imdb_id_clean.isdigit():
-                            imdb_id_clean_int = int(imdb_id_clean)
-                            if imdb_id_clean_int != int(original_imdb_id) and quickie_search and original_imdb_id != 0:
-                                imdb_mismatch = True
-                                mismatched_imdb_id = imdb_id_clean_int
-                            else:
-                                imdb_id = int(imdb_id_clean)
-                        else:
-                            imdb_id = original_imdb_id
-                    else:
-                        imdb_id = original_imdb_id
-                else:
-                    external_imdb_id = external.get("imdb_id", None)
-                    if isinstance(external_imdb_id, str) and external_imdb_id not in ["", " ", "None", "null"]:
-                        imdb_id_clean = external_imdb_id.lstrip("t")
-                        if imdb_id_clean.isdigit():
-                            imdb_id_clean_int = int(imdb_id_clean)
-                            if imdb_id_clean_int != int(original_imdb_id):
-                                logger.warning(
-                                    f"[yellow]Warning: TMDb IMDb ID ({imdb_id_clean_int}) does not match provided IMDb ID ({original_imdb_id}). Using original IMDb ID.[/yellow]"
-                                )
-
-                    imdb_id = original_imdb_id
+                external_imdb_id = external.get("imdb_id")
+                imdb_id, imdb_mismatch, mismatched_imdb_id = _reconcile_tmdb_imdb_id(int(original_imdb_id), external_imdb_id, quickie_search)
+                if not quickie_search and mismatched_imdb_id:
+                    logger.warning(
+                        f"[yellow]Warning: TMDb IMDb ID ({mismatched_imdb_id}) does not match provided IMDb ID ({original_imdb_id}). Using original IMDb ID.[/yellow]"
+                    )
 
                 # Process TVDB ID
                 if tvdb_id == 0:
@@ -1273,6 +1269,7 @@ async def tmdb_other_meta(
         "release_date": release_date,
         "first_air_date": first_air_date,
         "last_air_date": last_air_date,
+        "series_status": series_status,
         "imdb_id": imdb_id,
         "tvdb_id": tvdb_id,
         "origin_country": origin_country,

@@ -409,7 +409,7 @@ class BEYONDHD:
                 return False
 
         common = Common(config=self.config)
-        return common.check_and_confirm_adult_media_upload(meta, self.tracker)
+        return await common.check_and_confirm_adult_media_upload(meta, self.tracker)
 
     async def search_existing(self, meta: Meta) -> list[dict[str, Any]]:
         dupes: list[dict[str, Any]] = []

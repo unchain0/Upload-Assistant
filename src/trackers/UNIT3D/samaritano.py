@@ -1,6 +1,8 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
+from pathlib import Path
 from typing import Any
 
+from src.console import logger
 from src.get_desc import DescriptionBuilder
 from src.meta import Meta
 from src.trackers.common import Common
@@ -27,11 +29,30 @@ class Samaritano(UNIT3D):
     supported_categories = ("TV", "MOVIE", "BOOK", "GAME")
     tracker_urls = ("https://samaritano.cc",)
     allows_bloated_audio = True
+    _TV_ENDED_STATUSES: frozenset[str] = frozenset({"ended", "canceled", "cancelled", "finished", "completed"})
+    _TV_ONGOING_STATUSES: frozenset[str] = frozenset({"returning", "continuing", "in production", "upcoming", "ongoing"})
+    _VIDEO_EXTENSIONS: tuple[str, ...] = (
+        ".mkv",
+        ".mp4",
+        ".avi",
+        ".mov",
+        ".m4v",
+        ".mpg",
+        ".mpeg",
+        ".m2ts",
+        ".ts",
+        ".wmv",
+        ".flv",
+    )
 
     def __init__(self, config: Config) -> None:
         super().__init__(config, tracker_name="SAMARITANO")
         self.config: Config = config
         self.common = Common(config)
+
+    @staticmethod
+    def _video_file_count(filelist: list[Any]) -> int:
+        return sum(1 for item in filelist if Path(str(item)).suffix.lower() in Samaritano._VIDEO_EXTENSIONS)
 
     async def get_resolution_id(self, meta: Meta, resolution: str = "", reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
         resolution_id = {
@@ -52,6 +73,8 @@ class Samaritano(UNIT3D):
         return {"resolution_id": resolved_id}
 
     async def get_name(self, meta: Meta) -> dict[str, str]:
+        if meta.software:
+            return {"name": meta.name}
         cbr = CapybaraBR(self.config)
         cbr.tracker = self.tracker
         return await cbr.get_name(meta)
@@ -87,6 +110,8 @@ class Samaritano(UNIT3D):
                 resolved_category = "HQS_E_MANGAS"
             else:
                 resolved_category = "LIVROS"
+        elif resolved_category == "GAME" and meta.software:
+            resolved_category = "PROGRAMAS"
 
         category_id = cat_map.get(resolved_category, "0")
         return {"category_id": category_id}
@@ -128,6 +153,9 @@ class Samaritano(UNIT3D):
         if isinstance(resolved_type, str):
             resolved_type = resolved_type.upper().strip().lstrip(".")
 
+        if meta.software:
+            return {"type_id": type_id["PC"] if str(meta.platform or "").upper() in {"PC", "WINDOWS"} else type_id["OUTRO"]}
+
         if resolved_type == "GAME" or (meta.category == "GAME" and resolved_type not in type_id):
             platform = meta.platform.lower()
             nin_term = bytes([110, 105, 110, 116, 101, 110, 100, 111]).decode()
@@ -159,8 +187,39 @@ class Samaritano(UNIT3D):
         return data
 
     async def get_additional_checks(self, meta: Meta) -> bool:
+        raw_filelist = [] if meta.filelist is None else meta.filelist
+        if not isinstance(raw_filelist, (list, tuple, set)):
+            logger.info(f"{self.tracker}: [bold red]File list metadata is invalid.[/bold red]")
+            return False
+
         if meta.category == "BOOK":
             return True
+
+        if meta.category == "MOVIE":
+            filelist = [item for item in raw_filelist if str(item).strip() != ""]
+            if self._video_file_count(filelist) > 1:
+                logger.info(f"{self.tracker}: [bold red]Movie uploads must contain only one video file.[/bold red]")
+                return False
+            return await self.common.check_portuguese_video_requirements(meta, self.tracker)
+
+        if meta.category == "TV":
+            filelist = [item for item in raw_filelist if str(item).strip() != ""]
+            seasons = self.common.extract_tv_seasons(filelist)
+            episode_count = self.common.count_tv_episodes(filelist)
+
+            if len(seasons) > 1:
+                logger.info(f"{self.tracker}: [bold red]TV uploads must contain only one season.[/bold red]")
+                return False
+
+            if meta.tv_pack:
+                if self.common.is_tv_series_ended(meta, self._TV_ENDED_STATUSES, self._TV_ONGOING_STATUSES) is not True:
+                    logger.info(f"{self.tracker}: [bold red]TV season packs are allowed only for ended series.[/bold red]")
+                    return False
+                return await self.common.check_portuguese_video_requirements(meta, self.tracker)
+
+            if not meta.tv_pack and episode_count > 1:
+                logger.info(f"{self.tracker}: [bold red]Non-pack TV uploads must contain only one episode.[/bold red]")
+                return False
 
         return await self.common.check_portuguese_video_requirements(meta, self.tracker)
 

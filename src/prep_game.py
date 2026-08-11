@@ -23,6 +23,8 @@ from src.meta import Meta
 from src.metadata_cache import cache_for, is_cache_miss
 from src.temp_paths import artwork_dir
 
+_VERSION_PATTERN = r"\d+(?:[.\-]\d+)*(?:[a-z]\d*)?"
+
 
 def normalize_version(version_str: str) -> str:
     version_str = version_str.strip()
@@ -35,20 +37,110 @@ def normalize_version(version_str: str) -> str:
     return version_str
 
 
+def clean_game_title(value: str) -> str:
+    title = Path(str(value or "")).name
+    title = re.sub(r"(?i)\.(?:dmg|pkg|iso|rar|zip|7z)$", "", title)
+    title = re.sub(r"\[[^\]]+\]$", "", title).strip(" ._-")
+    if "-" in title:
+        prefix, suffix = title.rsplit("-", 1)
+        if (suffix.isupper() or suffix.isdigit()) and len(suffix) < 15 and not re.search(r"\s", suffix):
+            title = prefix
+    title = re.sub(
+        rf"(?i)(?<![A-Za-z0-9]){_VERSION_PATTERN}\s+(?:(?:incl(?:uded)?|with)\s+)?(?:keygen|crack(?:ed)?|serial)\b.*",
+        "",
+        title,
+    )
+    title = re.sub(r"(?<![A-Za-z0-9])\d+(?:\.\d+){1,3}\s*$", "", title)
+    title = re.sub(r"[._-]+", " ", title)
+    title = re.sub(r"(?i)\b(?:update|patch|build|version)\b.*", "", title)
+    title = re.sub(rf"(?i)\bv{_VERSION_PATTERN}\b.*", "", title)
+    title = re.sub(r"\b(?:19|20)\d{6}\b\s*$", "", title)
+    title = re.sub(r"(?i)\b[a-z]{2}(?:US|GB|CA|AU|BR|DE|ES|FR|IT|JP)\b\s*$", "", title)
+    title = re.sub(r"\s+", " ", title).strip()
+    return title.title() if title and title == title.lower() else title
+
+
+def extract_release_group(value: str) -> str:
+    release_name = re.sub(r"(?i)\.(?:dmg|pkg|iso|rar|zip|7z)$", "", Path(str(value or "")).name)
+    bracket_match = re.search(r"\[([A-Za-z0-9]+)\]$", release_name)
+    if bracket_match:
+        return bracket_match.group(1)
+    dash_match = re.search(r"-\s*([A-Za-z0-9]+)$", release_name)
+    return dash_match.group(1) if dash_match else ""
+
+
+def required_game_fields(meta: Meta) -> list[str]:
+    fields = ["title", "platform"]
+    if not meta.software:
+        fields.insert(1, "year")
+    return fields
+
+
+def missing_game_fields(meta: Meta) -> list[str]:
+    missing = [field for field in required_game_fields(meta) if not str(getattr(meta, field, "") or "").strip()]
+    if not meta.software:
+        return missing
+
+    software_fields = {
+        "game_version": meta.game_version,
+        "developer": meta.developer,
+        "publisher": meta.publisher,
+        "cover": meta.artwork_path or meta.artwork_url,
+        "languages": meta.languages,
+        "overview": meta.overview,
+        "installation instructions": meta.software_notes,
+    }
+    missing.extend(label for label, value in software_fields.items() if not value)
+    return missing
+
+
+def _is_desktop_installer(meta: Meta) -> bool:
+    if meta.console_game or str(meta.platform or "").upper() not in {"PC", "MAC", "LINUX"}:
+        return False
+    paths = [str(item) for item in meta.filelist]
+    if meta.path:
+        paths.append(str(meta.path))
+    return any(Path(path).suffix.lower() in {".dmg", ".exe", ".msi", ".pkg"} for path in paths)
+
+
+async def _read_software_notes(meta: Meta) -> str:
+    for item in meta.filelist:
+        path = Path(str(item))
+        if path.suffix.lower() not in {".md", ".nfo", ".txt"} or not path.is_file():
+            continue
+        try:
+            if path.stat().st_size > 64 * 1024:
+                continue
+            async with aiofiles.open(path, encoding="utf-8", errors="replace") as handle:
+                notes = (await handle.read()).strip()
+            if not notes:
+                continue
+            if path.suffix.lower() != ".nfo":
+                return notes
+            instructions = []
+            for line in notes.splitlines():
+                match = re.search(r"(\d+\.\s+.+)", line)
+                if match:
+                    instruction = match.group(1).rstrip(" \t|│║�")
+                    if re.search(r"\b(?:extract|burn|mount|run|setup|install|copy|crack|play|usage)\b", instruction, re.IGNORECASE):
+                        instructions.append(instruction)
+            if instructions:
+                return "\n".join(instructions)
+        except OSError:
+            continue
+    return ""
+
+
 def extract_version_from_text(text: str) -> str | None:
     if not text:
         return None
 
     # 1. Match version/update/build prefixes:
-    m = re.search(r"(?i)(?<![a-zA-Z0-9])(?:update|version|ver|build)[.:=\-_\s]*[vV]?(\d+(?:[.\-]\d+)+)(?![a-zA-Z0-9])", text)
+    m = re.search(rf"(?i)(?<![a-zA-Z0-9])(?:update|version|ver|build)[.:=\-_\s]*[vV]?({_VERSION_PATTERN})(?![a-zA-Z0-9])", text)
     if m:
         return normalize_version(m.group(1))
 
-    m = re.search(r"(?i)(?<![a-zA-Z0-9])(?:update|version|ver|build)[.:=\-_\s]*[vV]?(\d+)(?![a-zA-Z0-9])", text)
-    if m:
-        return normalize_version(m.group(1))
-
-    m = re.search(r"(?i)(?<![a-zA-Z0-9])[vV](\d+(?:[.\-]\d+)*)(?![a-zA-Z0-9])", text)
+    m = re.search(rf"(?i)(?<![a-zA-Z0-9])[vV]({_VERSION_PATTERN})(?![a-zA-Z0-9])", text)
     if m:
         return normalize_version(m.group(1))
 
@@ -82,16 +174,13 @@ def extract_version_from_nfo(nfo_path: str) -> str | None:
 
         # First pass: look for strong patterns
         for line in lines:
-            m = re.search(r"(?i)(?<![a-zA-Z0-9])(?:update|version|ver|build)[.:=\-_\s]*[vV]?(\d+(?:[.\-]\d+)+)(?![a-zA-Z0-9])", line)
-            if m:
-                return normalize_version(m.group(1))
-            m = re.search(r"(?i)(?<![a-zA-Z0-9])(?:update|version|ver|build)[.:=\-_\s]*[vV]?(\d+)(?![a-zA-Z0-9])", line)
+            m = re.search(rf"(?i)(?<![a-zA-Z0-9])(?:update|version|ver|build)[.:=\-_\s]*[vV]?({_VERSION_PATTERN})(?![a-zA-Z0-9])", line)
             if m:
                 return normalize_version(m.group(1))
 
         # Second pass: look for any vX.Y pattern
         for line in lines:
-            m = re.search(r"(?i)(?<![a-zA-Z0-9])[vV](\d+(?:[.\-]\d+)+)(?![a-zA-Z0-9])", line)
+            m = re.search(rf"(?i)(?<![a-zA-Z0-9])[vV]({_VERSION_PATTERN})(?![a-zA-Z0-9])", line)
             if m:
                 return normalize_version(m.group(0))
 
@@ -276,7 +365,11 @@ async def detect_platform_from_files(
             return "PS4"
         if "ps5" in all_paths_str or "playstation 5" in all_paths_str:
             return "PS5"
-        return "PS3"
+        if "ps3" in all_paths_str or "playstation 3" in all_paths_str:
+            return "PS3"
+        if any(re.search(r"(?:^|[^a-z0-9])(?:np|bl|bc)[a-z]{2}\d{5}(?:[^a-z0-9]|$)", pkg) for pkg in pkg_files):
+            return "PS3"
+        return "MAC"
 
     # Xbox 360
     if any(b.endswith(".xex") for b in basenames_lower) or any(b == "default.xex" for b in basenames_lower):
@@ -299,6 +392,10 @@ async def detect_platform_from_files(
         return "PC"
     if any("binaries/win64" in f or "binaries/win32" in f or "engine/binaries" in f for f in files_lower):
         return "PC"
+    if any(b.endswith((".exe", ".msi")) for b in basenames_lower):
+        return "PC"
+    if any(b.endswith(".dmg") for b in basenames_lower):
+        return "MAC"
 
     # --- 2. Basename/Path text keyword checks (if no extensions matched) ---
     path_to_search = path_to_check or (filelist[0] if filelist else "")
@@ -372,6 +469,8 @@ def resolve_game_filelist(
         videopath = videoloc
         filelist.append(videoloc)
 
+    if videopath in filelist:
+        filelist = [videopath, *(item for item in filelist if item != videopath)]
     meta.filelist = filelist
     meta.imdb_id = 0
 
@@ -399,8 +498,24 @@ async def gather_game_prep(
     meta.sd = 0
     meta.valid_mi_settings = True
 
+    local_nfo_files = [Path(str(item)) for item in meta.filelist if Path(str(item)).suffix.lower() == ".nfo" and Path(str(item)).is_file()]
+    if local_nfo_files:
+        if not meta.scene_nfo_file:
+            meta.scene_nfo_file = str(local_nfo_files[0])
+        if not meta.software_notes:
+            meta.software_notes = await _read_software_notes(meta)
+
+    title_source = str(meta.path or videopath or meta.filename or meta.title or "")
+    fallback_title = clean_game_title(title_source)
+    if fallback_title:
+        meta.title = fallback_title
+    if not meta.tag:
+        release_group = extract_release_group(title_source)
+        if release_group:
+            meta.tag = f"-{release_group}"
+
     cli_overrides = {
-        "title": bool(meta.title),
+        "title": False,
         "year": ("manual_year" in meta and meta.manual_year) or 0 > 0,
         "platform": bool(meta.manual_platform),
     }
@@ -430,8 +545,11 @@ async def gather_game_prep(
         version = normalize_version(meta.game_version)
         logger.info(f"[green]Game version (manual override): {version}[/green]")
     else:
-        # Attempt to extract from directory name first
         if path_to_check:
+            version = extract_version_from_text(Path(path_to_check).name)
+
+        # Attempt to extract from directory name first
+        if not version and path_to_check:
             search_dir = path_to_check if Path(path_to_check).is_dir() else str(Path(path_to_check).parent)
             if search_dir:
                 folder_name = Path(search_dir).name
@@ -479,9 +597,9 @@ async def gather_game_prep(
         return
 
     # Use title in meta (cleaned folder/file name) or extract from videopath
-    title_query = meta.title or meta.filename
+    title_query = clean_game_title(str(meta.path or videopath or meta.filename or meta.title or ""))
     if not title_query and videopath:
-        title_query = Path(videopath).stem
+        title_query = clean_game_title(videopath)
 
     # Clean game release suffixes to get a clean search term for IGDB
     if title_query:
@@ -584,7 +702,11 @@ async def gather_game_prep(
     if not selected_game:
         results = await igdb.search_game(title_query)
         if not results:
+            meta.software = _is_desktop_installer(meta)
             logger.info(f"[yellow]IGDB: No games found matching '{title_query}'[/yellow]")
+            if meta.software:
+                meta.software_notes = await _read_software_notes(meta)
+                logger.info("[green]Desktop software package detected; game-only metadata requirements will not be applied.[/green]")
             return
 
         # Sort results based on platform match if platform is known/detected
@@ -852,11 +974,15 @@ async def gather_game_prep(
                     if desc_unescaped:
                         meta.localized_overviews = {"brazilian": desc_unescaped}
 
-                # Extract PC system requirements
-                pc_reqs = app_data.get("pc_requirements", {})
-                if isinstance(pc_reqs, dict):
-                    minimum = pc_reqs.get("minimum", "")
-                    recommended = pc_reqs.get("recommended", "")
+                requirements_key = {
+                    "PC": "pc_requirements",
+                    "MAC": "mac_requirements",
+                    "LINUX": "linux_requirements",
+                }.get(str(meta.platform or "").upper())
+                platform_reqs = app_data.get(requirements_key, {}) if requirements_key else {}
+                if isinstance(platform_reqs, dict):
+                    minimum = platform_reqs.get("minimum", "")
+                    recommended = platform_reqs.get("recommended", "")
                     if minimum:
                         meta.requirements_minimum = minimum
                     if recommended:

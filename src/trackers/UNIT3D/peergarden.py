@@ -1,6 +1,7 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
 from typing import Any
 
+from src.console import logger
 from src.meta import Meta
 from src.trackers.common import Common
 from src.trackers.UNIT3D import UNIT3D
@@ -32,6 +33,8 @@ class PeerGarden(UNIT3D):
     tracker_urls = ("peergarden",)
     allows_dupes = True
     exact_match_only = True
+    required_book_fields = ("title",)
+    requires_book_cover = False
 
     def __init__(self, config: Config) -> None:
         """Initialize the PeerGarden tracker adapter."""
@@ -255,6 +258,12 @@ class PeerGarden(UNIT3D):
         return {
             "mod_queue_opt_in": await self.get_flag(meta, "modq"),
         }
+
+    async def get_additional_checks(self, meta: Meta) -> bool:
+        if meta.software:
+            logger.info(f"{self.tracker}: [yellow]Software uploads are not mapped to a dedicated tracker category. Skipping upload.[/yellow]")
+            return False
+        return True
 
     async def get_data(self, meta: Meta) -> dict[str, Any]:
         """Build PeerGarden-specific upload payload, filtering out prohibited fields."""

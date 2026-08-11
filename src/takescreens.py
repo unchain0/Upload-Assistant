@@ -941,6 +941,18 @@ async def load_local_cover_if_exists(path: str, dest_path: str) -> bool:
 async def extract_embedded_cover_from_audiobook(meta: Meta, dest_path: str, confirmed_only: bool = False) -> bool:
     import mutagen
 
+    def _extract_mp4_cover_without_chapters(audio_path: str) -> bool:
+        from mutagen.mp4 import Atoms, MP4Tags
+
+        with Path(audio_path).open("rb") as fileobj:
+            tags = MP4Tags(Atoms(fileobj), fileobj)
+        covers = tags.get("covr", [])
+        if not covers:
+            return False
+        with Path(dest_path).open("wb") as output:
+            output.write(bytes(covers[0]))
+        return True
+
     def _extract():
         filelist = meta.filelist
         if not filelist:
@@ -1010,6 +1022,12 @@ async def extract_embedded_cover_from_audiobook(meta: Meta, dest_path: str, conf
                             f.write(bytes(item))
                         return True
             except Exception as e:
+                if ext in {".m4a", ".m4b"}:
+                    try:
+                        if _extract_mp4_cover_without_chapters(audio_path):
+                            return True
+                    except Exception as fallback_error:
+                        logger.debug(f"[yellow]MP4 cover fallback failed for {audio_path}: {fallback_error}[/yellow]")
                 logger.debug(f"[yellow]Error extracting from {audio_path}: {e}[/yellow]")
         return False
 
@@ -2111,7 +2129,8 @@ async def capture_screenshot(args: tuple[int, str, float, str, float, float, flo
                 out_kwargs = {"vframes": 1, "vf": vf_chain, "compression_level": ffmpeg_compression, "pred": "mixed"}
                 info_cmd = inp.output(image_path, **out_kwargs)
 
-                global_args = ["-y", "-loglevel", loglevel, "-hide_banner", "-map", "0:v:0", "-an", "-sn"]
+                effective_loglevel = "error" if meta.debug and loglevel == "quiet" else loglevel
+                global_args = ["-y", "-nostdin", "-loglevel", effective_loglevel, "-hide_banner", "-map", "0:v:0", "-an", "-sn"]
                 if use_libplacebo and meta.libplacebo:
                     global_args += ["-init_hw_device", "vulkan"]
                 if ffmpeg_limit:
@@ -2125,7 +2144,7 @@ async def capture_screenshot(args: tuple[int, str, float, str, float, float, flo
                 # Disable emoji translation so 0:v:0 stays literal
                 try:
                     compiled = compile_ffmpeg_command(cmd)
-                    logger.info(f"[cyan]FFmpeg command: {' '.join(compiled)}[/cyan]")
+                    logger.info(f"FFmpeg command: {' '.join(compiled)}", extra={"markup": False, "highlighter": None})
                 except Exception:
                     logger.info("[cyan]FFmpeg command: (unable to render command)[/cyan]")
 
@@ -2138,7 +2157,10 @@ async def capture_screenshot(args: tuple[int, str, float, str, float, float, flo
 
             info_cmd = build_cmd(use_libplacebo=True)
             if loglevel == "verbose" or (meta and meta.debug):
-                logger.info(f"[cyan]FFmpeg command: {' '.join(compile_ffmpeg_command(info_cmd))}[/cyan]")
+                logger.info(
+                    f"FFmpeg command: {' '.join(compile_ffmpeg_command(info_cmd))}",
+                    extra={"markup": False, "highlighter": None},
+                )
 
             returncode, stdout, stderr = await run_cmd(info_cmd, 140)  # a bit longer for first pass
             if returncode != 0 and hdr_tonemap and meta.libplacebo:
@@ -2161,7 +2183,10 @@ async def capture_screenshot(args: tuple[int, str, float, str, float, float, flo
                 vf_chain = ",".join(z_vf_filters)
                 info_cmd = build_cmd(use_libplacebo=False)
                 if loglevel == "verbose" or meta.debug:
-                    logger.info(f"[cyan]Fallback FFmpeg command: {' '.join(compile_ffmpeg_command(info_cmd))}[/cyan]")
+                    logger.info(
+                        f"Fallback FFmpeg command: {' '.join(compile_ffmpeg_command(info_cmd))}",
+                        extra={"markup": False, "highlighter": None},
+                    )
                 returncode, stdout, stderr = await run_cmd(info_cmd, 140)
                 cmd = info_cmd  # for logging below
 

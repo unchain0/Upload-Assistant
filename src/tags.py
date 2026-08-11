@@ -14,6 +14,10 @@ from src.meta import Meta
 guessit_module = import_module("guessit")
 GuessitFn = Callable[[str, dict[str, Any] | None], dict[str, Any]]
 
+SPACE_SEPARATED_RELEASE_GROUPS = {
+    "BONE": "BONE",
+}
+
 
 def guessit_fn(value: str, options: dict[str, Any] | None = None) -> dict[str, Any]:
     return cast(dict[str, Any], guessit_module.guessit(value, options))
@@ -76,7 +80,7 @@ async def get_tag(video: str, meta: Meta, season_pack_check: bool = False) -> st
             basename_stripped = name
 
         non_anime_match = re.search(
-            r"(?<=-)((?!\s*(?:WEB-DL|Blu-ray|H-264|H-265))(?:\W|\b)(?!(?:\d{3,4}[ip]))(?!\d+\b)(?:\W|\b)([\w .]+?))(?:\[.+\])?(?:\))?(?:\s\[.+\])?$", basename_stripped
+            r"(?<=-)((?!\s*(?:WEB-DL|Blu-ray|H-264|H-265))(?:\W|\b)(?!(?:\d{3,4}[ip]))(?!\d+\b)(?:\W|\b)([\w.]+?))(?:\[.+\])?(?:\))?(?:\s\[.+\])?$", basename_stripped
         )
         if non_anime_match:
             release_group = non_anime_match.group(1).strip()
@@ -113,6 +117,14 @@ async def get_tag(video: str, meta: Meta, season_pack_check: bool = False) -> st
                 if not meta.scene and len(release_group) > 12:
                     release_group = None
             logger.debug(f"Non-anime regex match: {release_group}")
+
+        if not release_group and meta.category in ("MOVIE", "TV"):
+            space_separated_match = re.search(r"\s([A-Za-z0-9]+)$", basename_stripped)
+            if space_separated_match:
+                candidate = space_separated_match.group(1)
+                release_group = SPACE_SEPARATED_RELEASE_GROUPS.get(candidate.upper())
+                if release_group:
+                    logger.debug(f"Space-separated release group match: {release_group}")
 
     # If regex patterns didn't work, fall back to guessit
     if not release_group and meta.is_disc:

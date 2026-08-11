@@ -14,6 +14,19 @@ from typing import Any
 
 from src.console import logger
 
+_MAX_EPUB_MEMBER_SIZE = 2 * 1024 * 1024
+_MAX_EPUB_COMPRESSION_RATIO = 100
+
+
+def _safe_zip_member_bytes(archive: zipfile.ZipFile, name: str) -> bytes | None:
+    try:
+        member = archive.getinfo(name)
+    except KeyError:
+        return None
+    if member.file_size > _MAX_EPUB_MEMBER_SIZE or member.file_size > max(member.compress_size, 1) * _MAX_EPUB_COMPRESSION_RATIO:
+        return None
+    return archive.read(member)
+
 
 def normalize_series_index(value: str) -> str:
     """Drop a trailing .0 from a series index ("5.0" -> "5"), keeping "5.5"/"0.5"."""
@@ -32,10 +45,14 @@ def extract_epub_metadata(epub_path: str) -> dict[str, Any]:
 
     try:
         with zipfile.ZipFile(epub_path, "r") as z:
+            if len(z.infolist()) > 4096:
+                return metadata
             # 1. Read META-INF/container.xml to find the .opf file path
             rootfile_path: str | None = None
             try:
-                container_data = z.read("META-INF/container.xml")
+                container_data = _safe_zip_member_bytes(z, "META-INF/container.xml")
+                if container_data is None:
+                    raise ValueError("unsafe or missing EPUB container metadata")
                 root = ET.fromstring(container_data)
                 for elem in root.iter():
                     if elem.tag.endswith("rootfile"):
@@ -57,11 +74,14 @@ def extract_epub_metadata(epub_path: str) -> dict[str, Any]:
                 return metadata
 
             # 2. Read and parse the .opf file
-            opf_data = z.read(rootfile_path)
+            opf_data = _safe_zip_member_bytes(z, rootfile_path)
+            if opf_data is None:
+                return metadata
             root = ET.fromstring(opf_data)
 
             title = ""
-            author = ""
+            creators: list[tuple[str, str, str]] = []
+            creator_roles: dict[str, str] = {}
             language = ""
             date = ""
             identifier = ""
@@ -75,11 +95,17 @@ def extract_epub_metadata(epub_path: str) -> dict[str, Any]:
                 if tag_local == "title":
                     title = (elem.text or "").strip()
                 elif tag_local == "creator":
-                    author = (elem.text or "").strip()
+                    creator = (elem.text or "").strip()
+                    creator_id = elem.attrib.get("id", "").strip()
+                    inline_role = next((value.strip().lower() for key, value in elem.attrib.items() if key.split("}")[-1] == "role"), "")
+                    if creator:
+                        creators.append((creator_id, creator, inline_role))
                 elif tag_local == "language":
                     language = (elem.text or "").strip()
                 elif tag_local == "date":
-                    date = (elem.text or "").strip()
+                    event = str(get_attr_ignore_ns(elem, "event") or "").strip().casefold()
+                    if event not in {"modification", "modified", "dcterms:modified"}:
+                        date = (elem.text or "").strip()
                 elif tag_local == "identifier":
                     val = (elem.text or "").strip()
                     if val.lower().startswith("urn:isbn:"):
@@ -94,13 +120,25 @@ def extract_epub_metadata(epub_path: str) -> dict[str, Any]:
                     publisher = (elem.text or "").strip()
                 elif tag_local == "meta":
                     meta_name = (elem.attrib.get("name") or "").lower()
-                    if meta_name == "calibre:series":
+                    property_name = (elem.attrib.get("property") or "").lower()
+                    refined_id = (elem.attrib.get("refines") or "").lstrip("#").strip()
+                    if property_name == "role" and refined_id:
+                        creator_roles[refined_id] = (elem.text or elem.attrib.get("content") or "").strip().lower()
+                    elif meta_name == "calibre:series":
                         series = (elem.attrib.get("content") or "").strip()
                     elif meta_name == "calibre:series_index":
                         series_index = (elem.attrib.get("content") or "").strip()
 
             if title:
                 metadata["title"] = title
+            author = next(
+                (
+                    creator
+                    for creator_id, creator, inline_role in creators
+                    if inline_role == "aut" or creator_roles.get(creator_id) == "aut"
+                ),
+                creators[0][1] if creators else "",
+            )
             if author:
                 metadata["author"] = author
             if language:
@@ -365,6 +403,23 @@ def validate_isbn_checksum(candidate: str) -> str | None:
     return None
 
 
+def extract_pdf_page_count(pdf_path: str) -> int | None:
+    try:
+        import fitz
+    except ImportError:
+        return None
+
+    if not Path(pdf_path).is_file():
+        return None
+
+    try:
+        with fitz.open(pdf_path) as doc:
+            return len(doc) or None
+    except Exception as error:
+        logger.debug(f"[yellow]Warning: Error reading PDF page count: {error}[/yellow]")
+        return None
+
+
 def extract_isbn_from_pdf(pdf_path: str) -> str | None:
     """Search for and extract a valid ISBN from a PDF file using PyMuPDF (fitz)."""
     try:
@@ -405,8 +460,9 @@ def extract_isbn_from_pdf(pdf_path: str) -> str | None:
                 if not isinstance(text, str) or not text:
                     continue
 
-                # Find ISBN candidates
-                candidates = re.findall(r"\b(?:ISBN(?:-1[03])?:?\s*)?((?:97[89][- ]?)?\d(?:[- ]?\d){8,11}[- ]?[\dX])\b", text, re.IGNORECASE)
+                labelled = re.findall(r"\bISBN(?:-1[03])?:?\s*((?:97[89][- ]?)?\d(?:[- ]?\d){8,11}[- ]?[\dX])\b", text, re.IGNORECASE)
+                bare_isbn13 = re.findall(r"\b(97[89](?:[- ]?\d){10})\b", text)
+                candidates = list(dict.fromkeys([*labelled, *bare_isbn13]))
                 for cand in candidates:
                     validated = validate_isbn_checksum(cand)
                     if validated:
@@ -459,9 +515,13 @@ def get_epubmeta_output(epub_path: str) -> str | None:
 
     try:
         with zipfile.ZipFile(epub_path, "r") as z:
+            if len(z.infolist()) > 4096:
+                return None
             rootfile_path = None
             try:
-                container_data = z.read("META-INF/container.xml")
+                container_data = _safe_zip_member_bytes(z, "META-INF/container.xml")
+                if container_data is None:
+                    raise ValueError("unsafe or missing EPUB container metadata")
                 root = ET.fromstring(container_data)
                 for elem in root.iter():
                     if elem.tag.split("}")[-1] == "rootfile":
@@ -480,7 +540,9 @@ def get_epubmeta_output(epub_path: str) -> str | None:
             if not rootfile_path or rootfile_path not in z.namelist():
                 return None
 
-            opf_data = z.read(rootfile_path)
+            opf_data = _safe_zip_member_bytes(z, rootfile_path)
+            if opf_data is None:
+                return None
             root = ET.fromstring(opf_data)
 
             # Get package tag attributes

@@ -16,11 +16,15 @@ from src.dupe_checking import DupeChecker
 from src.imdb import imdb_manager
 from src.meta import Meta
 from src.metadata_searching import get_douban_id
+from src.prep_game import missing_game_fields
 from src.torrentcreate import TorrentCreator
 from src.trackers.AVISTAZ.routing import AvistaZNetworkRouter
+from src.trackers.common import Common
 from src.trackers.passthepopcorn import PassThePopcorn
 from src.trackersetup import TrackerSetup, tracker_class_map
 from src.uphelper import UploadHelper
+from src.upload_safety import blocks_automatic_upload, book_metadata_cjk_fields, content_paths_with_spaces
+from src.zentag import should_prepare_zenith_audiobook, should_prepare_zenith_ebook
 
 
 def merge_tracker_status(processed: dict[str, dict[str, Any]], existing: Mapping[str, Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -31,14 +35,55 @@ def merge_tracker_status(processed: dict[str, dict[str, Any]], existing: Mapping
     return merged
 
 
+def missing_book_fields_for_tracker(meta: Meta, tracker_class: Any) -> list[str]:
+    from src.book_prep import missing_book_fields
+
+    missing = missing_book_fields(meta)
+    required_fields = getattr(tracker_class, "required_book_fields", None)
+    if required_fields is None:
+        return missing
+    required = {str(field) for field in required_fields}
+    return [field for field in missing if field in required]
+
+
 class TrackerStatusManager:
     def __init__(self, config: dict[str, Any]) -> None:
         self.config = config
         self.trackers_config = cast(Mapping[str, Mapping[str, Any]], config.get("TRACKERS", {}))
 
+    @staticmethod
+    def _block_completed_episode_uploads(meta: Meta, results: list[tuple[str, dict[str, Any], str | None, Any]]) -> bool:
+        if not Common.is_completed_tv_episode(meta):
+            return False
+        for _tracker_name, status, _display_name, _tracker_class in results:
+            if not status["dupe"]:
+                status["skipped"] = True
+                status["upload"] = False
+        return True
+
     async def process_all_trackers(self, meta: Meta) -> int:
         tracker_status: dict[str, dict[str, Any]] = {}
         successful_trackers = 0
+        if blocks_automatic_upload(meta):
+            suspicious_paths = content_paths_with_spaces(meta)
+            displayed_paths = ", ".join(suspicious_paths[:5])
+            if len(suspicious_paths) > 5:
+                displayed_paths = f"{displayed_paths}, and {len(suspicious_paths) - 5} more"
+            reason = f"Content file/folder names contain spaces and may have been renamed: {displayed_paths}. Use --allow-spaces to explicitly permit this upload."
+            trackers = [meta.trackers] if isinstance(meta.trackers, str) else list(meta.trackers)
+            for tracker in trackers:
+                tracker_status[str(tracker)] = {
+                    "banned": False,
+                    "skipped": True,
+                    "dupe": False,
+                    "upload": False,
+                    "other": False,
+                    "skip_reason": reason,
+                }
+            meta.tracker_status = merge_tracker_status(tracker_status, meta.tracker_status)
+            logger.info(f"[bold red]{reason} All tracker uploads were skipped.[/bold red]")
+            return 0
+
         client: Any = Clients(config=self.config)
         tracker_setup: Any = TrackerSetup(config=self.config)
         tracker_setup.filter_unsupported_trackers(meta)
@@ -83,9 +128,9 @@ class TrackerStatusManager:
                         break
                     cli_ui.error("Invalid IMDB ID format. Expected format: tt1234567")
 
-        async def process_single_tracker(tracker_name: str, shared_meta: Meta) -> tuple[str, dict[str, bool], str | None, Any]:
+        async def process_single_tracker(tracker_name: str, shared_meta: Meta) -> tuple[str, dict[str, Any], str | None, Any]:
             local_meta = copy.deepcopy(shared_meta)  # Ensure each task gets its own copy of meta
-            local_tracker_status = {"banned": False, "skipped": False, "dupe": False, "upload": False, "other": False}
+            local_tracker_status: dict[str, Any] = {"banned": False, "skipped": False, "dupe": False, "upload": False, "other": False}
             display_name = None
             tracker_class = None
 
@@ -98,6 +143,10 @@ class TrackerStatusManager:
 
             if tracker_name in tracker_class_map:
                 tracker_class = tracker_class_map[tracker_name](config=self.config)
+                if tracker_name == "ZENITH" and (
+                    should_prepare_zenith_audiobook(Meta(**local_meta), self.config) or should_prepare_zenith_ebook(Meta(**local_meta), self.config)
+                ):
+                    local_meta["defer_zentag_validation"] = True
                 if tracker_name in {"TORRENTHR", "PASSTHEPOPCORN"} and local_meta.get("imdb_id", 0) == 0:
                     local_tracker_status["skipped"] = True
 
@@ -112,33 +161,20 @@ class TrackerStatusManager:
 
                 # Check for missing required BOOK fields in unattended mode
                 if local_meta.get("category") == "BOOK" and local_meta.get("unattended", False):
-                    from src.book_prep import is_valid_book_language
-
-                    book_required_fields = ["title", "author", "year", "book_language"]
-                    book_missing: list[str] = []
-                    for f in book_required_fields:
-                        val = local_meta.get(f)
-                        if not val or str(val).strip().lower() in ("", "none", "null"):
-                            book_missing.append(f)
-                        elif f == "book_language":
-                            iso = local_meta.get("book_language_iso", "")
-                            if not is_valid_book_language(str(val), str(iso)):
-                                book_missing.append(f)
+                    book_missing = missing_book_fields_for_tracker(Meta(**local_meta), tracker_class)
                     if book_missing:
                         logger.info(f"[yellow]{tracker_name}: Skipping upload because required BOOK fields are missing: {', '.join(book_missing)}[/yellow]")
                         local_tracker_status["skipped"] = True
+                        local_tracker_status["skip_reason"] = f"Required BOOK fields missing: {', '.join(book_missing)}"
 
                 # Check for missing required GAME fields in unattended mode
                 elif local_meta.get("category") == "GAME" and local_meta.get("unattended", False):
-                    game_required_fields = ["title", "year", "platform", "game_version"]
-                    game_missing: list[str] = []
-                    for f in game_required_fields:
-                        val = local_meta.get(f)
-                        if not val or str(val).strip().lower() in ("", "none", "null") or (f == "platform" and "," in str(val)):
-                            game_missing.append(f)
+                    game_missing = missing_game_fields(Meta(**local_meta))
                     if game_missing:
-                        logger.info(f"[yellow]{tracker_name}: Skipping upload because required GAME fields are missing: {', '.join(game_missing)}[/yellow]")
+                        kind = "SOFTWARE" if local_meta.get("software") else "GAME"
+                        logger.info(f"[yellow]{tracker_name}: Skipping upload because required {kind} fields are missing: {', '.join(game_missing)}[/yellow]")
                         local_tracker_status["skipped"] = True
+                        local_tracker_status["skip_reason"] = f"Required {kind} fields missing: {', '.join(game_missing)}"
 
                 if not local_tracker_status["banned"] and not local_tracker_status["skipped"]:
                     claimed = await tracker_setup.get_torrent_claims(local_meta, tracker_name)
@@ -155,6 +191,25 @@ class TrackerStatusManager:
                             if not should_continue:
                                 local_tracker_status["skipped"] = True
                                 local_meta.skipping = tracker_name
+
+                        if not local_tracker_status["skipped"]:
+                            cjk_fields = book_metadata_cjk_fields(Meta(**local_meta))
+                            can_prepare_zenith = tracker_name == "ZENITH" and (
+                                should_prepare_zenith_audiobook(Meta(**local_meta), self.config)
+                                or should_prepare_zenith_ebook(Meta(**local_meta), self.config)
+                            )
+                            if cjk_fields and not can_prepare_zenith:
+                                fields = ", ".join(cjk_fields)
+                                reason = f"BOOK metadata contains CJK characters in: {fields}. Provide verified English metadata before uploading."
+                                logger.info(f"{tracker_name}: [bold red]{reason}[/bold red]")
+                                local_tracker_status["skipped"] = True
+                                local_tracker_status["skip_reason"] = reason
+                                local_meta.skipping = tracker_name
+
+                        if not local_tracker_status["skipped"]:
+                            async with meta_lock:
+                                prepared_meta = meta.setdefault("tracker_prepared_meta", {})
+                                prepared_meta[tracker_name] = local_meta.copy()
 
                         if not local_tracker_status["skipped"]:
                             try:
@@ -327,6 +382,9 @@ class TrackerStatusManager:
             logger.info("[yellow]Searching for existing torrents on selected trackers...")
         tasks = [process_single_tracker(tracker_name, meta) for tracker_name in meta.trackers]
         results = await asyncio.gather(*tasks)
+
+        if self._block_completed_episode_uploads(meta, results):
+            logger.info("[bold red]Individual episodes from completed TV series are not eligible for upload. Upload the complete season pack instead.[/bold red]")
 
         # Collect passed trackers and skip reasons
         passed_trackers: list[tuple[str, str | None, Any]] = []

@@ -11,7 +11,9 @@ from typing import Any, cast
 
 import cli_ui
 import click
+from rich.markup import escape
 
+from src.book_prep import AUDIOBOOK_EXTENSIONS, BOOK_EXTENSIONS
 from src.console import logger
 from src.meta import Meta
 
@@ -29,6 +31,33 @@ def _dedupe_paths(paths: Sequence[str]) -> list[str]:
         seen.add(current)
         deduped.append(current)
     return deduped
+
+
+def _expand_multi_format_ebook_directories(queue: QueueList) -> QueueList:
+    if not all(isinstance(item, str) for item in queue):
+        return queue
+
+    ebook_extensions = BOOK_EXTENSIONS - {".txt", ".html", ".htm"}
+    expanded: list[str] = []
+    for item in cast(list[str], queue):
+        if not Path(item).is_dir():
+            expanded.append(item)
+            continue
+
+        files = sorted(path.resolve() for path in Path(item).rglob("*") if path.is_file())
+        ebook_files = [path for path in files if path.suffix.casefold() in ebook_extensions]
+        has_audiobook = any(path.suffix.casefold() in AUDIOBOOK_EXTENSIONS for path in files)
+        normalized_stems = {re.sub(r"[\W_]+", " ", path.stem.casefold()).strip() for path in ebook_files}
+        extensions = {path.suffix.casefold() for path in ebook_files}
+
+        if len(ebook_files) > 1 and not has_audiobook and len(normalized_stems) == 1 and len(extensions) == len(ebook_files):
+            logger.info(
+                f"[cyan]Splitting {escape(Path(item).name)} into {len(ebook_files)} separate ebook uploads, one per format.[/cyan]"
+            )
+            expanded.extend(str(path) for path in ebook_files)
+        else:
+            expanded.append(item)
+    return expanded
 
 
 async def _read_json_file(path: str) -> Any:
@@ -97,7 +126,7 @@ class QueueManager:
         if queue:
             # Display the queue
             paths_only = [item["path"] for item in queue]
-            md_text = "\n - ".join(paths_only)
+            md_text = "\n - ".join(escape(path) for path in paths_only)
             logger.info("\n[bold green]Queuing these files for site upload:[/bold green]")
             logger.info(f"- {md_text.rstrip()}\n\n")
             logger.info(f"[yellow]Tracker: {site_upload}[/yellow]")
@@ -369,7 +398,7 @@ class QueueManager:
             else:
                 paths_or_lines.append(str(item))
 
-        md_text = "\n - ".join(paths_or_lines)
+        md_text = "\n - ".join(escape(path) for path in paths_or_lines)
         logger.info("\n[bold green]Queuing these files:[/bold green]")
         logger.info(f"- {md_text.rstrip()}\n\n")
         logger.info("\n\n")
@@ -418,7 +447,7 @@ class QueueManager:
 
         log_file = Path(base_dir) / "tmp" / f"{(meta.queue if meta.queue is not None else 'default')}_queue.log"
 
-        if path.endswith(".txt") and not meta.unit3d:
+        if path.endswith(".txt") and not meta.unit3d and not meta.paths_from_stdin:
             logger.info(f"[bold yellow]Detected a text file for queue input: {path}[/bold yellow]")
             if Path(path).exists():
                 queue_name = Path(path).stem
@@ -655,7 +684,7 @@ class QueueManager:
 
         elif len(paths) > 1:
             queue = _dedupe_paths(paths)
-            md_text = "\n - ".join(queue)
+            md_text = "\n - ".join(escape(path) for path in queue)
             logger.info("\n[bold green]Queuing these files:[/bold green]")
             logger.info(f"- {md_text.rstrip()}\n\n")
             logger.info("\n\n")
@@ -671,7 +700,7 @@ class QueueManager:
                 globs = [str(p) for p in parent_dir.glob(pattern)]
                 queue = globs
                 if queue:
-                    md_text = "\n - ".join(queue)
+                    md_text = "\n - ".join(escape(path) for path in queue)
                     logger.info("\n[bold green]Queuing these files:[/bold green]")
                     logger.info(f"- {md_text.rstrip()}\n\n")
                     logger.info("\n\n")
@@ -680,14 +709,14 @@ class QueueManager:
 
             elif Path(path).parent.exists() and len(paths) != 1:
                 queue = _dedupe_paths(paths)
-                md_text = "\n - ".join(queue)
+                md_text = "\n - ".join(escape(path) for path in queue)
                 logger.info("\n[bold green]Queuing these files:[/bold green]")
                 logger.info(f"- {md_text.rstrip()}\n\n")
                 logger.info("\n\n")
             elif not Path(path).parent.exists():
                 queue = await QueueManager._resolve_split_path(path)
                 if queue:
-                    md_text = "\n - ".join(queue)
+                    md_text = "\n - ".join(escape(path) for path in queue)
                     logger.info("\n[bold green]Queuing these files:[/bold green]")
                     logger.info(f"- {md_text.rstrip()}\n\n")
                     logger.info("\n\n")
@@ -696,6 +725,8 @@ class QueueManager:
                 # Add Search Here
                 logger.info("[red]There was an issue with your input. If you think this was not an issue, please make a report that includes the full command used.")
                 exit()
+
+        queue = _expand_multi_format_ebook_directories(queue)
 
         if not queue:
             logger.info(f"[red]No valid files or directories found for path: {path}")

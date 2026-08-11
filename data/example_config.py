@@ -76,6 +76,10 @@ config: dict[str, Any] = {
         # Google Books API key. "" = disabled
         # You can get one here https://console.cloud.google.com/apis/library/books.googleapis.com
         "google_books_api_key": "",
+        # Google Cloud Translation Basic API key. "" = disabled
+        # Used to translate non-English BOOK metadata for trackers that require English.
+        # Enable the Cloud Translation API in the Google Cloud project before using it.
+        "google_translate_api_key": "",
         # Twitch/IGDB API credentials. "" = disabled
         # You can get them from the Twitch Developer Console (https://dev.twitch.tv/console)
         "twitch_client_id": "",

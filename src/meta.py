@@ -16,6 +16,7 @@ class Meta:
     aither_trumpable: list[Any] | None = field(default_factory=list)
     aither: str | None = None
     aka: str = ""
+    allow_spaces: bool = False
     anime: bool = False
     anon: bool = False
     ant_user_tags: bool | None = None
@@ -159,6 +160,8 @@ class Meta:
     game_subcategory: str = ""
     game_system: str = ""
     game_version: str = ""
+    software: bool = False
+    software_notes: str = ""
     genre_ids: int | None = None
     genre: str = ""
     genres: list[str] = field(default_factory=list)
@@ -310,8 +313,10 @@ class Meta:
     overview_meta: str = ""
     overview: str = ""
     part: str = ""
+    page_count: int | None = None
     path_to_menu_screenshots: str = ""
     path: str | None = None
+    paths_from_stdin: bool = False
     personalrelease: bool = False
     piece_size_constraints_enabled: str | bool = False
     platform: str = ""
@@ -385,6 +390,7 @@ class Meta:
     season_pack_link: str | None = None
     season_pack_name: str = ""
     season: int | str | None = 0
+    series_status: str = ""
     secondary_title: str | None = None
     service_longname: str = ""
     service: str | None = None

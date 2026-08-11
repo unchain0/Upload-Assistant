@@ -30,6 +30,8 @@ from src.usenetcreate import verify_nzb_has_password
 
 
 class Common:
+    TV_ENDED_STATUSES: frozenset[str] = frozenset({"ended", "canceled", "cancelled", "finished", "completed"})
+    TV_ONGOING_STATUSES: frozenset[str] = frozenset({"returning series", "in production", "ongoing", "planned", "pilot", "in development"})
     PORTUGUESE_SUBTITLE_EXTENSIONS: frozenset[str] = frozenset({".ass", ".ssa", ".srt", ".sub", ".vtt"})
     PORTUGUESE_SUBTITLE_WORDS: frozenset[str] = frozenset(
         {
@@ -69,6 +71,57 @@ class Common:
             "vamos",
         }
     )
+    PORTUGUESE_DESCRIPTION_WORDS: frozenset[str] = frozenset(
+        {
+            "ainda",
+            "agora",
+            "ano",
+            "ao",
+            "aos",
+            "aquele",
+            "aqueles",
+            "aquela",
+            "aquelas",
+            "ate",
+            "bem",
+            "essa",
+            "esse",
+            "esta",
+            "estas",
+            "estava",
+            "estao",
+            "este",
+            "estes",
+            "estou",
+            "eu",
+            "exemplo",
+            "foi",
+            "fiz",
+            "ficou",
+            "hoje",
+            "isso",
+            "mais",
+            "muito",
+            "nao",
+            "nada",
+            "onde",
+            "para",
+            "porque",
+            "qual",
+            "quando",
+            "quem",
+            "segundo",
+            "sem",
+            "tambem",
+            "temos",
+            "voce",
+            "vida",
+            "vou",
+            "varios",
+            "vao",
+        }
+    )
+    PORTUGUESE_DESCRIPTION_MARKERS = re.compile(r"[ãõÃÕ]")
     LANGUAGE_EQUIVALENCE_GROUPS: tuple[set[str], ...] = (
         {"chinese", "mandarin", "zh", "zho", "chi", "cmn", "chinese simplified", "chinese traditional", "zh hans", "zh hant"},
         {"english", "eng", "en", "en us", "en gb", "english cc", "english sdh", "english forced"},
@@ -150,6 +203,48 @@ class Common:
         return expanded
 
     @staticmethod
+    def extract_tv_seasons(filelist: list[Any]) -> set[int]:
+        seasons: set[int] = set()
+        season_pattern = re.compile(r"(?<![A-Za-z0-9])[sS](\d{1,3})(?:[eE]\d{1,3}(?:[eE]\d{1,3})?)?")
+        for item in filelist:
+            seasons.update(int(match) for match in season_pattern.findall(str(item)))
+        return seasons
+
+    @staticmethod
+    def count_tv_episodes(filelist: list[Any]) -> int:
+        episodes: set[tuple[int, int]] = set()
+        episode_pattern = re.compile(r"(?<![A-Za-z0-9])[sS](\d{1,3})[eE](\d{1,3})((?:[-_. ]?[eE]\d{1,3})*)")
+        for item in filelist:
+            for season, first_episode, remaining_episodes in episode_pattern.findall(str(item)):
+                for episode in (first_episode, *re.findall(r"[eE](\d{1,3})", remaining_episodes)):
+                    episodes.add((int(season), int(episode)))
+        return len(episodes)
+
+    @staticmethod
+    def is_tv_series_ended(
+        meta: Meta,
+        ended_values: set[str] | frozenset[str],
+        ongoing_values: set[str] | frozenset[str],
+    ) -> bool | None:
+        imdb_status = meta.imdb_info.get("status", "") if isinstance(meta.imdb_info, dict) else ""
+        for raw_status in (getattr(meta, "series_status", ""), imdb_status):
+            status_text = str(raw_status or "").casefold().strip()
+            if any(value in status_text for value in ended_values):
+                return True
+            if any(value in status_text for value in ongoing_values):
+                return False
+        return None
+
+    @classmethod
+    def is_completed_tv_episode(cls, meta: Meta) -> bool:
+        return (
+            meta.category == "TV"
+            and not meta.tv_pack
+            and int(meta.episode_int or 0) > 0
+            and cls.is_tv_series_ended(meta, cls.TV_ENDED_STATUSES, cls.TV_ONGOING_STATUSES) is True
+        )
+
+    @staticmethod
     def _read_subtitle_text(path: Path) -> str:
         for encoding in ("utf-8-sig", "utf-16", "cp1252"):
             try:
@@ -208,9 +303,36 @@ class Common:
             check_subtitle=True,
             prompt_on_failure=False,
         )
-        if not subtitles and (not meta.unattended or meta.unattended_confirm):
-            return await self.prompt_user_for_confirmation(f"{tracker}: No Portuguese audio or subtitles found. Do you want to proceed with the upload?")
-        return subtitles
+        if subtitles:
+            return True
+        if meta.unattended:
+            return bool(meta.unattended_confirm)
+        return await self.prompt_user_for_confirmation(f"{tracker}: No Portuguese audio or subtitles found. Do you want to proceed with the upload?")
+
+    def _strip_bbcode_and_markup(self, text: str) -> str:
+        without_bbcode = re.sub(r"\[[^\]]+\]", " ", text)
+        return re.sub(r"<[^>]+>", " ", without_bbcode)
+
+    def is_portuguese_description(self, description: str) -> bool:
+        description = self._strip_bbcode_and_markup(description or "")
+        if not description.strip():
+            return False
+
+        if self.PORTUGUESE_DESCRIPTION_MARKERS.search(description):
+            return True
+
+        normalized = self._normalize_language_token(description)
+        words = set(re.findall(r"[a-z]+", normalized))
+        return len(words & self.PORTUGUESE_DESCRIPTION_WORDS) >= 3
+
+    async def check_portuguese_description_requirements(self, description: str, tracker: str, meta: Meta) -> bool:
+        if self.is_portuguese_description(description):
+            return True
+
+        if meta.unattended:
+            return bool(meta.unattended_confirm)
+
+        return await self.prompt_user_for_confirmation(f"{tracker}: Description does not appear to be in Portuguese. Do you want to proceed with the upload?")
 
     def _format_language_for_display(self, language: str) -> str:
         if not language:
@@ -2551,8 +2673,8 @@ class Common:
             return True
 
     async def prompt_user_for_confirmation(self, message: str, meta: Meta | None = None) -> bool:
-        if meta and meta.unattended and not meta.unattended_confirm:
-            return False
+        if meta and meta.unattended:
+            return bool(meta.unattended_confirm)
         response = (await prompt_in_thread(cli_ui.ask_string, f"{message} (Y/n): ", default="") or "").strip().lower()
         return response == "" or response == "y"
 
@@ -3156,7 +3278,9 @@ class Common:
             languages_to_check = [lang.lower() for lang in languages_to_check]
             audio_languages = [lang.lower() for lang in meta_audio_languages]
             subtitle_languages = [lang.lower() for lang in meta_subtitle_languages]
-            audio_languages_normalized = {self._normalize_language_token(lang) for lang in meta_audio_languages if isinstance(lang, str) and lang.strip()}
+            required_languages_expanded = self._expand_language_list(languages_to_check, alias_lookup)
+            audio_languages_expanded = self._expand_language_list(meta_audio_languages, alias_lookup)
+            subtitle_languages_expanded = self._expand_language_list(meta_subtitle_languages, alias_lookup)
             language_display = None
             original_ok = False
             if original_language:
@@ -3172,7 +3296,7 @@ class Common:
                     first_lang = first_lang.strip()
                     language_display = self._format_language_for_display(first_lang)
                     original_language_expanded = self._expand_language_candidates(first_lang, alias_lookup)
-                    original_ok = bool(original_language_expanded.intersection(audio_languages_normalized))
+                    original_ok = bool(original_language_expanded.intersection(audio_languages_expanded))
 
                     if meta.debug and not original_ok:
                         logger.info(f"[blue]Debug: Original language expanded candidates: {', '.join(sorted(original_language_expanded)) or 'None'}[/blue]")
@@ -3190,8 +3314,8 @@ class Common:
                     )
                 return False
 
-            audio_ok = not check_audio or any(lang in audio_languages for lang in languages_to_check)
-            subtitle_ok = not check_subtitle or any(lang in subtitle_languages for lang in languages_to_check)
+            audio_ok = not check_audio or bool(required_languages_expanded.intersection(audio_languages_expanded))
+            subtitle_ok = not check_subtitle or bool(required_languages_expanded.intersection(subtitle_languages_expanded))
 
             logger.debug(f"[blue]Debug: Audio Languages Found: {audio_languages}[/blue]")
             logger.debug(f"[blue]Debug: Subtitle Languages Found: {subtitle_languages}[/blue]")
@@ -3279,7 +3403,7 @@ class Common:
 
         return f"{resolution} @ {video_bitrate} kbps - {audio} @ {audio_bitrate} kbps"
 
-    def check_and_confirm_adult_media_upload(self, meta: Meta, tracker: str) -> bool:
+    async def check_and_confirm_adult_media_upload(self, meta: Meta, tracker: str) -> bool:
         """
         Check if the media is categorized as adult/pornographic and prompt the user for confirmation before uploading to a non-adult tracker.
 
@@ -3288,14 +3412,10 @@ class Common:
         :return: True if the user confirms or if the media is not adult, False otherwise.
         """
         if meta.adult_media:
-            if not meta.unattended or (meta.unattended and meta.unattended_confirm):
-                logger.info(f"[bold red]Pornography is not allowed at {tracker}.[/bold red]")
-                if cli_ui.ask_yes_no("Do you want to upload anyway?", default=False):
-                    pass
-                else:
-                    return False
-            else:
-                return False
+            logger.info(f"[bold red]Pornography is not allowed at {tracker}.[/bold red]")
+            if meta.unattended:
+                return bool(meta.unattended_confirm)
+            return await self.prompt_user_for_confirmation("Do you want to upload anyway?", meta)
 
         return True
 
