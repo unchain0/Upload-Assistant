@@ -145,7 +145,7 @@ class MkbrrBinaryManager:
                 await version_file.write(f"mkbrr version {version} installed successfully.")
             promote_files_with_rollback(
                 [(staged_binary, binary_path), (staged_version, version_path)],
-                staging / ".backup",
+                bin_dir / ".mkbrr-backup",
                 remove_targets=[candidate for candidate in version_markers if candidate != version_path],
             )
             return str(binary_path)
@@ -223,7 +223,7 @@ class MkbrrBinaryManager:
             staged_version.write_text(f"mkbrr version {version} installed successfully.", encoding="utf-8")
             promote_files_with_rollback(
                 [(staged_binary, binary_path), (staged_version, version_path)],
-                staging / ".backup",
+                bin_dir / ".mkbrr-backup",
                 remove_targets=[candidate for candidate in version_markers if candidate != version_path],
             )
             logger.info(f"mkbrr binary ready at: {binary_path}", extra={"markup": False})

@@ -113,7 +113,7 @@ class Par2BinaryManager:
             ]
             promote_files_with_rollback(
                 [(staged_binary, binary_path), (staged_version, version_path)],
-                staging / ".backup",
+                bin_dir / ".par2-backup",
                 remove_targets=stale_markers,
             )
 

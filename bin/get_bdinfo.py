@@ -141,7 +141,7 @@ class BDInfoBinaryManager:
                 ]
                 promote_files_with_rollback(
                     [(staged_binary, binary_path), (staged_version, version_path)],
-                    staging / ".backup",
+                    bin_dir / ".bdinfo-backup",
                     remove_targets=stale_markers,
                 )
                 return str(binary_path)

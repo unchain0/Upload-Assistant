@@ -61,7 +61,7 @@ class PestoBinaryManager:
         binary_exists = binary_path.exists() and binary_path.is_file()
         binary_executable = system == "windows" or os.access(binary_path, os.X_OK)
         binary_valid = binary_exists and binary_executable
-        version_markers = [candidate for candidate in bin_dir.glob("v*") if candidate.is_file()]
+        version_markers = [candidate for candidate in bin_dir.glob("pesto-v*") if candidate.is_file()]
 
         if version_path.exists() and version_path.is_file() and binary_valid and version_markers == [version_path]:
             logger.debug("[blue]Pesto binary is up to date[/blue]")

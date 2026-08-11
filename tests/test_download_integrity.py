@@ -7,7 +7,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from bin.download_integrity import download_bounded_asset, download_bounded_asset_sync, safe_extract_tar, safe_extract_zip
+from bin.download_integrity import download_bounded_asset, download_bounded_asset_sync, promote_files_with_rollback, safe_extract_tar, safe_extract_zip
 
 
 class _Response:
@@ -107,3 +107,27 @@ def test_safe_extract_tar_rejects_links(tmp_path: Path) -> None:
 
     with tarfile.open(archive_path) as archive, pytest.raises(RuntimeError, match="Unsupported archive member"):
         safe_extract_tar(archive, tmp_path / "output")
+
+
+def test_incomplete_rollback_preserves_recovery_backup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    source = staging / "tool"
+    source.write_bytes(b"new")
+    target = tmp_path / "tool"
+    target.write_bytes(b"working")
+    backup_dir = tmp_path / ".tool-backup"
+    original_replace = Path.replace
+
+    def fail_promotion_and_restore(path: Path, destination: Path) -> Path:
+        if path == source or path == backup_dir / target.name:
+            raise OSError("simulated filesystem failure")
+        return original_replace(path, destination)
+
+    monkeypatch.setattr(Path, "replace", fail_promotion_and_restore)
+
+    with pytest.raises(BaseExceptionGroup, match="rollback was incomplete"):
+        promote_files_with_rollback([(source, target)], backup_dir)
+
+    assert not target.exists()  # noqa: S101
+    assert (backup_dir / target.name).read_bytes() == b"working"  # noqa: S101

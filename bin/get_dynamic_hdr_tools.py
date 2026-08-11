@@ -121,7 +121,7 @@ async def get_tool(base_dir: str, tool: str) -> str:
         ]
         promote_files_with_rollback(
             [(staged_binary, binary), (staged_version, version_file)],
-            staging / ".backup",
+            target_dir / ".dynamic-hdr-backup",
             remove_targets=stale_markers,
         )
         return str(binary)

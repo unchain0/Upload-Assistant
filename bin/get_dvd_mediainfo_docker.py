@@ -92,7 +92,7 @@ def extract_linux_binaries(cli_archive: Path, lib_archive: Path, output_dir: Pat
                 (staging / "libmediainfo.so.0", output_dir / "libmediainfo.so.0"),
                 (staged_version, output_dir / staged_version.name),
             ],
-            staging / ".backup",
+            output_dir / ".mediainfo-backup",
         )
     finally:
         shutil.rmtree(staging, ignore_errors=True)

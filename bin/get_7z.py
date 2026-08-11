@@ -123,7 +123,7 @@ class SevenZipBinaryManager:
             stale_markers = [candidate for candidate in version_markers if candidate != version_path]
             promote_files_with_rollback(
                 [(staged_binary, binary_path), (staged_version, version_path)],
-                staging / ".backup",
+                bin_dir / ".7z-backup",
                 remove_targets=stale_markers,
             )
 
