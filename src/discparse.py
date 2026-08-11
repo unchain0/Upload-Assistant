@@ -36,9 +36,15 @@ class DiscParse:
         try:
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=30)
         except TimeoutError:
-            process.kill()
+            if process.returncode is None:
+                process.kill()
             await process.communicate()
             raise RuntimeError("Specialized MediaInfo timed out after 30 seconds") from None
+        except BaseException:
+            if process.returncode is None:
+                process.kill()
+            await process.communicate()
+            raise
         return stdout, stderr, process.returncode
 
     def _calculate_playlist_score(self, playlist: PlaylistInfo) -> float:
@@ -106,49 +112,54 @@ class DiscParse:
         )
         command = [*command, "--progress"]
         process = await asyncio.create_subprocess_exec(*command, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
-        if process.stderr is None:
-            raise RuntimeError("Unable to read go-bdinfo progress output")
+        try:
+            if process.stderr is None:
+                raise RuntimeError("Unable to read go-bdinfo progress output")
 
-        current = 0.0
-        buffer = ""
-        publish_progress(progress_id, "Scanning Blu-ray", current=0, total=100, detail="Starting go-bdinfo scan")
-        with progress_display(
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            console=console,
-            transient=False,
-        ) as progress:
-            task = progress.add_task("Scanning Blu-ray...", total=100)
-            while chunk := await process.stderr.read(1024):
-                buffer += chunk.decode("utf-8", errors="replace")
-                updates = re.split(r"[\r\n]+", buffer)
-                buffer = updates.pop()
-                for update in updates:
-                    match = progress_pattern.search(update)
-                    if not match:
-                        continue
-                    current = float(match["percent"])
-                    detail = f"{match['done'].strip()} / {match['total'].strip()} | {match['speed'].strip()} | ETA {match['eta'].strip()}"
-                    progress.update(task, completed=current, description=f"Scanning Blu-ray... {detail}")
-                    publish_progress(progress_id, "Scanning Blu-ray", current=current, total=100, detail=detail)
+            current = 0.0
+            buffer = ""
+            publish_progress(progress_id, "Scanning Blu-ray", current=0, total=100, detail="Starting go-bdinfo scan")
+            with progress_display(
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                console=console,
+                transient=False,
+            ) as progress:
+                task = progress.add_task("Scanning Blu-ray...", total=100)
+                while chunk := await process.stderr.read(1024):
+                    buffer += chunk.decode("utf-8", errors="replace")
+                    updates = re.split(r"[\r\n]+", buffer)
+                    buffer = updates.pop()
+                    for update in updates:
+                        match = progress_pattern.search(update)
+                        if not match:
+                            continue
+                        current = float(match["percent"])
+                        detail = f"{match['done'].strip()} / {match['total'].strip()} | {match['speed'].strip()} | ETA {match['eta'].strip()}"
+                        progress.update(task, completed=current, description=f"Scanning Blu-ray... {detail}")
+                        publish_progress(progress_id, "Scanning Blu-ray", current=current, total=100, detail=detail)
 
-            if buffer:
-                match = progress_pattern.search(buffer)
-                if match:
-                    current = float(match["percent"])
-                    detail = f"{match['done'].strip()} / {match['total'].strip()} | {match['speed'].strip()} | ETA {match['eta'].strip()}"
-                    progress.update(task, completed=current, description=f"Scanning Blu-ray... {detail}")
-                    publish_progress(progress_id, "Scanning Blu-ray", current=current, total=100, detail=detail)
+                if buffer:
+                    match = progress_pattern.search(buffer)
+                    if match:
+                        current = float(match["percent"])
+                        detail = f"{match['done'].strip()} / {match['total'].strip()} | {match['speed'].strip()} | ETA {match['eta'].strip()}"
+                        progress.update(task, completed=current, description=f"Scanning Blu-ray... {detail}")
+                        publish_progress(progress_id, "Scanning Blu-ray", current=current, total=100, detail=detail)
 
-            returncode = await process.wait()
-            if returncode == 0:
-                progress.update(task, completed=100, description="Scanning Blu-ray complete")
-                complete_progress(progress_id, "Scanning Blu-ray", current=100, total=100)
-            else:
-                publish_progress(progress_id, "Scanning Blu-ray", current=current, total=100, detail=f"go-bdinfo exited with status {returncode}", status="failed")
+                returncode = await process.wait()
+                if returncode == 0:
+                    progress.update(task, completed=100, description="Scanning Blu-ray complete")
+                    complete_progress(progress_id, "Scanning Blu-ray", current=100, total=100)
+                else:
+                    publish_progress(progress_id, "Scanning Blu-ray", current=current, total=100, detail=f"go-bdinfo exited with status {returncode}", status="failed")
 
-        return returncode
+            return returncode
+        finally:
+            if process.returncode is None:
+                process.kill()
+                await process.wait()
 
     """
     Get and parse bdinfo

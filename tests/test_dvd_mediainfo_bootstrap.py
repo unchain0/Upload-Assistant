@@ -1,10 +1,14 @@
 import asyncio
+import io
 import stat
+import tarfile
 import zipfile
 from pathlib import Path
 
 import pytest
 
+from bin import get_bdinfo
+from bin.get_bdinfo import BDInfoBinaryManager
 from bin.MI.get_linux_mi import extract_linux
 from src.discparse import DiscParse
 
@@ -85,3 +89,115 @@ def test_specialized_mediainfo_timeout_kills_and_reaps_process(monkeypatch) -> N
 
     assert process.killed is True  # noqa: S101
     assert process.calls == 1  # noqa: S101
+
+
+def test_specialized_mediainfo_cancellation_kills_and_reaps_process(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    class Process:
+        returncode = None
+
+        def __init__(self) -> None:
+            self.killed = False
+            self.calls = 0
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            self.calls += 1
+            if self.calls == 1:
+                await asyncio.sleep(60)
+            return b"", b""
+
+        def kill(self) -> None:
+            self.killed = True
+
+    process = Process()
+
+    async def create_process(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        return process
+
+    async def exercise() -> None:
+        task = asyncio.create_task(DiscParse({})._run_specialized_mediainfo("mediainfo", "input.ifo"))
+        await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_process)
+    asyncio.run(exercise())
+
+    assert process.killed is True  # noqa: S101
+    assert process.calls == 2  # noqa: S101
+
+
+def test_bdinfo_progress_cancellation_kills_and_reaps_process(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    class Stderr:
+        async def read(self, _size: int) -> bytes:
+            await asyncio.sleep(60)
+            return b""
+
+    class Process:
+        returncode = None
+        stderr = Stderr()
+
+        def __init__(self) -> None:
+            self.killed = False
+            self.waited = False
+
+        def kill(self) -> None:
+            self.killed = True
+
+        async def wait(self) -> int:
+            self.waited = True
+            self.returncode = -9
+            return self.returncode
+
+    class Progress:
+        def __enter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        def __exit__(self, *_args):  # type: ignore[no-untyped-def]
+            return None
+
+        def add_task(self, *_args, **_kwargs) -> int:  # type: ignore[no-untyped-def]
+            return 1
+
+        def update(self, *_args, **_kwargs) -> None:  # type: ignore[no-untyped-def]
+            return None
+
+    process = Process()
+
+    async def create_process(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        return process
+
+    async def exercise() -> None:
+        task = asyncio.create_task(DiscParse({})._run_bdinfo_with_progress(["bdinfo"], "qa"))
+        await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_process)
+    monkeypatch.setattr("src.discparse.progress_display", lambda *_args, **_kwargs: Progress())
+    monkeypatch.setattr("src.discparse.publish_progress", lambda *_args, **_kwargs: None)
+    asyncio.run(exercise())
+
+    assert process.killed is True  # noqa: S101
+    assert process.waited is True  # noqa: S101
+
+
+def test_bdinfo_archive_without_binary_does_not_write_version_marker(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    async def write_invalid_archive(_client, _url, destination, _asset_name):  # type: ignore[no-untyped-def]
+        payload = b"not bdinfo"
+        with tarfile.open(destination, "w:gz") as archive:
+            member = tarfile.TarInfo("README.txt")
+            member.size = len(payload)
+            archive.addfile(member, io.BytesIO(payload))
+
+    monkeypatch.setattr(get_bdinfo, "download_verified_asset", write_invalid_archive)
+    monkeypatch.setattr(get_bdinfo.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(get_bdinfo.platform, "machine", lambda: "x86_64")
+
+    with pytest.raises(RuntimeError, match="does not contain the expected bdinfo executable"):
+        asyncio.run(BDInfoBinaryManager.ensure_bdinfo_binary(tmp_path))
+
+    output = tmp_path / "bin" / "bdinfo" / "linux" / "amd64"
+    assert not (output / "v0.3.1").exists()  # noqa: S101
+    assert not (output / "bdinfo").exists()  # noqa: S101

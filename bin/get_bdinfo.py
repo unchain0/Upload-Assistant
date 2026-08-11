@@ -150,7 +150,10 @@ class BDInfoBinaryManager:
                         # Move to target location
                         shutil.move(str(found), str(binary_path))
 
-                if system != "windows" and binary_path.exists():
+                if not binary_path.is_file():
+                    raise RuntimeError(f"Downloaded archive does not contain the expected {binary_name} executable")
+
+                if system != "windows":
                     binary_path.chmod(binary_path.stat().st_mode | stat.S_IEXEC)
 
                 async with aiofiles.open(version_path, "w", encoding="utf-8") as version_file:
