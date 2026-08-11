@@ -212,7 +212,9 @@ class DupeChecker:
         async def has_same_repack_base(name: str) -> bool:
             target = re.sub(r"\s+", " ", repack_pattern.sub("", str(meta.name or meta.uuid or ""))).strip()
             candidate = re.sub(r"\s+", " ", repack_pattern.sub("", name)).strip()
-            return await DupeChecker.normalize_filename(target) == await DupeChecker.normalize_filename(candidate)
+            normalized_target = re.sub(r"\s+", " ", await DupeChecker.normalize_filename(target)).strip()
+            normalized_candidate = re.sub(r"\s+", " ", await DupeChecker.normalize_filename(candidate)).strip()
+            return normalized_target == normalized_candidate
 
         async def log_exclusion(reason: str, item: str) -> None:
             if meta.debug:

@@ -334,7 +334,8 @@ class UploadHelper:
                 replaced_map = cast(Mapping[str, object] | Meta, replaced_release) if isinstance(replaced_release, (Mapping, Meta)) else {}
                 raw_replaced_id = replaced_map.get("id")
                 replaced_id = str(raw_replaced_id) if raw_replaced_id is not None else ""
-                replaced_name = str(replaced_map.get("name", ""))
+                raw_replaced_link = replaced_map.get("link")
+                replaced_link = str(raw_replaced_link) if raw_replaced_link else ""
                 dupes_list = [
                     entry
                     for entry in dupes_list
@@ -342,7 +343,8 @@ class UploadHelper:
                         isinstance(entry, (Mapping, Meta))
                         and (
                             (replaced_id and entry.get("id") is not None and str(entry.get("id")) == replaced_id)
-                            or (not replaced_id and replaced_name and str(entry.get("name", "")) == replaced_name)
+                            or (not replaced_id and replaced_link and str(entry.get("link") or "") == replaced_link)
+                            or (not replaced_id and not replaced_link and entry is replaced_release)
                         )
                     )
                 ]

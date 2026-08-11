@@ -283,8 +283,12 @@ async def process_trackers(
                             dupe_checker = DupeChecker(config)
                             real_new_dupes = cast(list[Any], await dupe_checker.filter_dupes(real_new_dupes, meta, tracker_name))
                             if real_new_dupes:
-                                logger.info(f"[red]New dupe found on {tracker_name} during wait! Automatically skipping upload.[/red]")
-                                return False
+                                from src.uphelper import UploadHelper
+
+                                is_dupe, _ = await UploadHelper(config).dupe_check(real_new_dupes, meta, tracker_name)
+                                if is_dupe:
+                                    logger.info(f"[red]New dupe found on {tracker_name} during wait! Automatically skipping upload.[/red]")
+                                    return False
             return True
 
         if tracker in api_trackers:
