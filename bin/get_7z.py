@@ -9,7 +9,7 @@ from pathlib import Path
 import aiofiles
 import httpx
 
-from bin.download_integrity import verify_downloaded_asset
+from bin.download_integrity import download_verified_asset
 
 try:
     from src.console import console, logger
@@ -92,18 +92,11 @@ class SevenZipBinaryManager:
         logger.debug(f"[blue]7-Zip Download URL: {download_url}[/blue]")
 
         try:
-            async with (
-                httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client,
-                client.stream("GET", download_url, timeout=60.0) as response,
-            ):
-                response.raise_for_status()
-                temp_file = bin_dir / f"temp_{file_pattern}"
-                async with aiofiles.open(temp_file, "wb") as f:
-                    async for chunk in response.aiter_bytes(chunk_size=8192):
-                        await f.write(chunk)
+            temp_file = bin_dir / f"temp_{file_pattern}"
+            async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+                await download_verified_asset(client, download_url, temp_file, file_pattern)
 
             logger.debug(f"[green]Downloaded 7-Zip package: {file_pattern}[/green]")
-            verify_downloaded_asset(temp_file, file_pattern)
 
             if file_pattern.endswith(".exe"):
                 # Windows 7zr.exe is a raw executable

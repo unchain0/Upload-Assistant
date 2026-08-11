@@ -125,6 +125,12 @@ def test_nordicquality_strips_only_known_media_extensions():
     assert asyncio.run(_tracker().get_name(meta)) == {"name": "Movie.2025.1080p.BluRay.REMUX-GROUP"}  # noqa: S101
 
 
+def test_nordicquality_strips_m2ts_media_extension():
+    meta = Meta(category="MOVIE", uuid="unused-folder-name", filelist=["D:/Movies/Movie.2025.1080p.WEB-DL-GROUP.m2ts"])
+
+    assert asyncio.run(_tracker().get_name(meta)) == {"name": "Movie.2025.1080p.WEB-DL-GROUP"}  # noqa: S101
+
+
 def test_nordicquality_falls_back_to_generated_name():
     meta = Meta(category="MOVIE", name="Movie 2025 1080p BluRay REMUX DTS-HD MA 7.1-GROUP")
 

@@ -1,11 +1,12 @@
 import asyncio
 import hashlib
+import subprocess
 from pathlib import Path
 
 import pytest
 
 from bin import get_dynamic_hdr_tools
-from src.dynamic_hdr_plot import _formats, _generate_plot, _source_files, dynamic_hdr_plot_enabled
+from src.dynamic_hdr_plot import _formats, _generate_plot, _run, _source_files, dynamic_hdr_plot_enabled
 from src.get_desc import DescriptionBuilder
 from src.meta import Meta
 
@@ -80,7 +81,7 @@ def test_mp4_is_remuxed_to_annex_b_hevc(tmp_path: Path, monkeypatch) -> None:  #
     source.touch()
     commands: list[list[str]] = []
 
-    def fake_run(command: list[str]) -> None:
+    def fake_run(command: list[str], _timeout_seconds: int = 3600) -> None:
         commands.append(command)
         if command[-1].endswith(".png"):
             Path(command[-1]).touch()
@@ -102,7 +103,7 @@ def test_plot_artifacts_are_unique_for_same_named_sources(tmp_path: Path, monkey
     first.touch()
     second.touch()
 
-    def fake_run(command: list[str]) -> None:
+    def fake_run(command: list[str], _timeout_seconds: int = 3600) -> None:
         if command[-1].endswith(".png"):
             Path(command[-1]).touch()
 
@@ -119,3 +120,13 @@ def test_tracker_override_enables_dynamic_hdr_plot() -> None:
     config = {"DEFAULT": {"add_dynamic_hdr_plot": False}, "TRACKERS": {"TEST": {"add_dynamic_hdr_plot": True}}}
 
     assert dynamic_hdr_plot_enabled(meta, config)  # noqa: S101
+
+
+def test_dynamic_hdr_tool_timeout_is_reported(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    def timeout(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise subprocess.TimeoutExpired("dovi_tool", 1)
+
+    monkeypatch.setattr("src.dynamic_hdr_plot.subprocess.run", timeout)
+
+    with pytest.raises(RuntimeError, match="timed out after 1 seconds"):
+        _run(["dovi_tool", "plot"], timeout_seconds=1)

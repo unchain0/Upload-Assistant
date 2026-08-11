@@ -1,7 +1,14 @@
 """Pinned SHA-256 verification for third-party executable downloads."""
 
+import asyncio
 import hashlib
+import time
+from collections.abc import Iterable
 from pathlib import Path
+from typing import Any
+
+MAX_ASSET_BYTES = 128 * 1024 * 1024
+TRANSFER_TIMEOUT_SECONDS = 120.0
 
 SHA256_BY_ASSET = {
     "mkbrr_1.24.0_windows_x86_64.zip": "23b923a26d50e3afabcd99938ea70a510904a98365f698bbeaae057ec1a51711",
@@ -49,3 +56,91 @@ def verify_downloaded_asset(path: Path, asset: str) -> None:
         actual = hashlib.file_digest(asset_file, "sha256").hexdigest()
     if actual != expected:
         raise RuntimeError(f"SHA-256 checksum mismatch for {asset}")
+
+
+def _validate_declared_size(response: Any, max_bytes: int) -> None:
+    declared = response.headers.get("content-length")
+    if declared is None:
+        return
+    try:
+        declared_size = int(declared)
+    except (TypeError, ValueError):
+        return
+    if declared_size > max_bytes:
+        raise RuntimeError(f"Download exceeds the {max_bytes}-byte limit")
+
+
+async def download_bounded_asset(
+    client: Any,
+    url: str,
+    destination: Path,
+    *,
+    max_bytes: int = MAX_ASSET_BYTES,
+    timeout_seconds: float = TRANSFER_TIMEOUT_SECONDS,
+) -> None:
+    """Stream a response to disk with declared, running-size and total-time limits."""
+    destination.unlink(missing_ok=True)
+    try:
+        async with asyncio.timeout(timeout_seconds):
+            async with client.stream("GET", url, timeout=min(timeout_seconds, 60.0)) as response:
+                response.raise_for_status()
+                _validate_declared_size(response, max_bytes)
+                received = 0
+                with destination.open("wb") as output:
+                    async for chunk in response.aiter_bytes(chunk_size=8192):
+                        received += len(chunk)
+                        if received > max_bytes:
+                            raise RuntimeError(f"Download exceeds the {max_bytes}-byte limit")
+                        output.write(chunk)
+    except BaseException:
+        destination.unlink(missing_ok=True)
+        raise
+
+
+def write_bounded_response(
+    response: Any,
+    destination: Path,
+    chunks: Iterable[bytes],
+    *,
+    max_bytes: int = MAX_ASSET_BYTES,
+    deadline: float | None = None,
+) -> None:
+    """Write a synchronous streaming response with the same resource limits."""
+    destination.unlink(missing_ok=True)
+    try:
+        _validate_declared_size(response, max_bytes)
+        received = 0
+        with destination.open("wb") as output:
+            for chunk in chunks:
+                if deadline is not None and time.monotonic() > deadline:
+                    raise TimeoutError("Download exceeded its total transfer deadline")
+                received += len(chunk)
+                if received > max_bytes:
+                    raise RuntimeError(f"Download exceeds the {max_bytes}-byte limit")
+                output.write(chunk)
+    except BaseException:
+        destination.unlink(missing_ok=True)
+        raise
+
+
+async def download_verified_asset(client: Any, url: str, destination: Path, asset: str) -> None:
+    """Download a bounded asset and fail closed unless its pinned digest matches."""
+    try:
+        await download_bounded_asset(client, url, destination)
+        verify_downloaded_asset(destination, asset)
+    except BaseException:
+        destination.unlink(missing_ok=True)
+        raise
+
+
+def download_verified_asset_sync(client: Any, url: str, destination: Path, asset: str) -> None:
+    """Synchronous equivalent used by Docker/bootstrap entry points."""
+    deadline = time.monotonic() + TRANSFER_TIMEOUT_SECONDS
+    try:
+        with client.stream("GET", url, timeout=60.0) as response:
+            response.raise_for_status()
+            write_bounded_response(response, destination, response.iter_bytes(chunk_size=8192), deadline=deadline)
+        verify_downloaded_asset(destination, asset)
+    except BaseException:
+        destination.unlink(missing_ok=True)
+        raise

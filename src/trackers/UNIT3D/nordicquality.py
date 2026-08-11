@@ -23,7 +23,9 @@ class NordicQuality(UNIT3D):
     torrent_url = f"{base_url}/torrents/"
     supported_categories = ("TV", "MOVIE", "MUSIC", "BOOK", "GAME")
     tracker_urls = (base_url,)
-    KNOWN_MEDIA_EXTENSIONS: ClassVar[frozenset[str]] = frozenset({".avi", ".mkv", ".mp4", ".ts"})
+    KNOWN_MEDIA_EXTENSIONS: ClassVar[frozenset[str]] = frozenset(
+        {".avi", ".flv", ".m2ts", ".m4v", ".mkv", ".mov", ".mp4", ".mpeg", ".mpg", ".rm", ".rmvb", ".ts", ".vob", ".webm", ".wmv"}
+    )
     NORDIC_SUBTITLE_LANGUAGES: ClassVar[list[str]] = [
         "da",
         "dan",

@@ -88,6 +88,7 @@ DEFAULT_KEY_TYPES: dict[str, tuple[type, ...]] = {
     "add_dynamic_hdr_plot": (bool,),
     "dynamic_hdr_plot_header": (str,),
     "dynamic_hdr_plot_max_files": (str, int),
+    "dynamic_hdr_plot_tool_timeout": (str, int),
     "user_overrides": (bool,),
     "ping_unit3d": (bool,),
     "get_bluray_info": (bool,),

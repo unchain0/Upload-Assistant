@@ -10,7 +10,7 @@ from pathlib import Path
 import aiofiles
 import httpx
 
-from bin.download_integrity import verify_downloaded_asset
+from bin.download_integrity import download_verified_asset, download_verified_asset_sync
 
 try:
     from src.console import console, logger
@@ -124,17 +124,10 @@ class MkbrrBinaryManager:
         logger.debug(f"[blue]Download URL: {download_url}[/blue]")
 
         try:
-            async with (
-                httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client,
-                client.stream("GET", download_url, timeout=60.0) as response,
-            ):
-                response.raise_for_status()
-                temp_archive = bin_dir / f"temp_{file_pattern}"
-                async with aiofiles.open(temp_archive, "wb") as f:
-                    async for chunk in response.aiter_bytes(chunk_size=8192):
-                        await f.write(chunk)
+            temp_archive = bin_dir / f"temp_{file_pattern}"
+            async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+                await download_verified_asset(client, download_url, temp_archive, f"mkbrr_{version[1:]}_{file_pattern}")
             logger.debug(f"[green]Downloaded {file_pattern}[/green]")
-            verify_downloaded_asset(temp_archive, f"mkbrr_{version[1:]}_{file_pattern}")
 
             if file_pattern.endswith(".zip"):
                 with zipfile.ZipFile(temp_archive, "r") as zip_ref:
@@ -276,18 +269,11 @@ class MkbrrBinaryManager:
         logger.info(f"Downloading from: {download_url}", extra={"markup": False})
 
         try:
-            with (
-                httpx.Client(timeout=60.0, follow_redirects=True) as client,
-                client.stream("GET", download_url) as response,
-            ):
-                response.raise_for_status()
-                temp_archive = bin_dir / f"temp_{file_pattern}"
-                with Path(temp_archive).open("wb") as f:
-                    for chunk in response.iter_bytes(chunk_size=8192):
-                        f.write(chunk)
+            temp_archive = bin_dir / f"temp_{file_pattern}"
+            with httpx.Client(timeout=60.0, follow_redirects=True) as client:
+                download_verified_asset_sync(client, download_url, temp_archive, f"mkbrr_{version[1:]}_{file_pattern}")
 
             logger.info(f"Downloaded {file_pattern}", extra={"markup": False})
-            verify_downloaded_asset(temp_archive, f"mkbrr_{version[1:]}_{file_pattern}")
 
             with tarfile.open(temp_archive, "r:gz") as tar_ref:
 

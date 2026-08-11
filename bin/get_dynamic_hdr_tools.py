@@ -13,6 +13,7 @@ from pathlib import Path
 
 import httpx
 
+from bin.download_integrity import download_bounded_asset
 from src.console import logger
 
 TOOLS = {
@@ -54,6 +55,16 @@ def _verify_checksum(asset: str, content: bytes) -> None:
     if expected_checksum is None:
         raise RuntimeError(f"Missing checksum for {asset}")
     if hashlib.sha256(content).hexdigest() != expected_checksum:
+        raise RuntimeError(f"Checksum mismatch for {asset}")
+
+
+def _verify_checksum_file(asset: str, path: Path) -> None:
+    expected_checksum = ASSET_SHA256.get(asset)
+    if expected_checksum is None:
+        raise RuntimeError(f"Missing checksum for {asset}")
+    with path.open("rb") as asset_file:
+        actual_checksum = hashlib.file_digest(asset_file, "sha256").hexdigest()
+    if actual_checksum != expected_checksum:
         raise RuntimeError(f"Checksum mismatch for {asset}")
 
 
@@ -101,10 +112,8 @@ async def get_tool(base_dir: str, tool: str) -> str:
     logger.info(f"[yellow]Downloading {command} for dynamic HDR plots...[/yellow]")
     try:
         async with httpx.AsyncClient(timeout=90.0, follow_redirects=True) as client:
-            response = await client.get(url)
-            response.raise_for_status()
-        _verify_checksum(asset, response.content)
-        await asyncio.to_thread(archive.write_bytes, response.content)
+            await download_bounded_asset(client, url, archive)
+        await asyncio.to_thread(_verify_checksum_file, asset, archive)
         await asyncio.to_thread(_safe_extract, archive, staging)
         candidates = [path for path in staging.rglob(f"{command}{extension}") if path.is_file()]
         if not candidates:

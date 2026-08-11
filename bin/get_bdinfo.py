@@ -11,7 +11,7 @@ from pathlib import Path
 import aiofiles
 import httpx
 
-from bin.download_integrity import verify_downloaded_asset
+from bin.download_integrity import download_verified_asset
 
 try:
     from src.console import console, logger
@@ -121,17 +121,10 @@ class BDInfoBinaryManager:
         logger.debug(f"[blue]Download URL: {download_url}[/blue]")
 
         try:
-            async with (
-                httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client,
-                client.stream("GET", download_url, timeout=60.0) as response,
-            ):
-                response.raise_for_status()
-                temp_archive = bin_dir / f"temp_{file_pattern}"
-                async with aiofiles.open(temp_archive, "wb") as f:
-                    async for chunk in response.aiter_bytes(chunk_size=8192):
-                        await f.write(chunk)
+            temp_archive = bin_dir / f"temp_{file_pattern}"
+            async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+                await download_verified_asset(client, download_url, temp_archive, file_pattern)
             logger.debug(f"[green]Downloaded {file_pattern}[/green]")
-            verify_downloaded_asset(temp_archive, file_pattern)
 
             # Extract archive safely and ensure temporary archive is always removed.
             try:

@@ -9,13 +9,14 @@ import platform
 import shutil
 import sys
 import tarfile
+import time
 from pathlib import Path
 
 import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from bin.download_integrity import verify_downloaded_asset
+from bin.download_integrity import TRANSFER_TIMEOUT_SECONDS, verify_downloaded_asset, write_bounded_response
 
 try:
     from src.console import console, logger
@@ -38,11 +39,10 @@ BASE_RELEASE_URL = "https://github.com/autobrr/go-bdinfo/releases/download"
 
 def download_file(url: str, output_path: Path) -> None:
     logger.info(f"Downloading: {url}", extra={"markup": False})
-    resp = requests.get(url, stream=True, timeout=60)
-    resp.raise_for_status()
-    with Path(output_path).open("wb") as f:
-        for chunk in resp.iter_content(chunk_size=8192):
-            f.write(chunk)
+    deadline = time.monotonic() + TRANSFER_TIMEOUT_SECONDS
+    with requests.get(url, stream=True, timeout=60) as resp:
+        resp.raise_for_status()
+        write_bounded_response(resp, output_path, resp.iter_content(chunk_size=8192), deadline=deadline)
     logger.info(f"Downloaded: {output_path.name}", extra={"markup": False})
 
 

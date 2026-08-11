@@ -22,6 +22,7 @@ from src.webui_progress import complete_progress, publish_progress
 
 CACHE_VERSION = 1
 VIDEO_EXTENSIONS = {".m2ts", ".mkv", ".mp4", ".ts", ".hevc", ".h265"}
+MAX_TOOL_TIMEOUT_SECONDS = 7200
 
 
 def _positive_config_int(config: dict[str, Any], key: str, default: int) -> int:
@@ -62,14 +63,22 @@ def _fingerprint(sources: list[Path], formats: list[str]) -> str:
     return digest.hexdigest()
 
 
-def _run(command: list[str]) -> None:
-    result = subprocess.run(command, capture_output=True, text=True, check=False)  # noqa: S603
+def _run(command: list[str], timeout_seconds: int = 3600) -> None:
+    try:
+        result = subprocess.run(  # noqa: S603
+            command,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError(f"{' '.join(command[:2])} timed out after {timeout_seconds} seconds") from error
     if result.returncode:
-        detail = (result.stderr or result.stdout).strip()
-        raise RuntimeError(detail or f"{' '.join(command[:2])} failed with exit code {result.returncode}")
+        raise RuntimeError(f"{' '.join(command[:2])} failed with exit code {result.returncode}")
 
 
-async def _generate_plot(binary: str, kind: str, source: Path, output_dir: Path) -> Path:
+async def _generate_plot(binary: str, kind: str, source: Path, output_dir: Path, timeout_seconds: int = 3600) -> Path:
     stem = source.stem
     artifact_id = hashlib.sha256(str(source.resolve()).encode()).hexdigest()[:12]
     artifact_name = f"{stem}_{artifact_id}"
@@ -84,15 +93,16 @@ async def _generate_plot(binary: str, kind: str, source: Path, output_dir: Path)
         await asyncio.to_thread(
             _run,
             ["ffmpeg", "-y", "-i", str(source), "-map", "0:v:0", "-c:v", "copy", "-bsf:v", "hevc_mp4toannexb", "-f", "hevc", str(input_source)],
+            timeout_seconds,
         )
     if kind == "dovi":
         rpu = work_dir / f"{artifact_name}.rpu.bin"
-        await asyncio.to_thread(_run, [binary, "extract-rpu", str(input_source), "-o", str(rpu)])
-        await asyncio.to_thread(_run, [binary, "plot", str(rpu), "-t", f"Dolby Vision L1 Plot - {stem}", "-o", str(output)])
+        await asyncio.to_thread(_run, [binary, "extract-rpu", str(input_source), "-o", str(rpu)], timeout_seconds)
+        await asyncio.to_thread(_run, [binary, "plot", str(rpu), "-t", f"Dolby Vision L1 Plot - {stem}", "-o", str(output)], timeout_seconds)
     else:
         metadata = work_dir / f"{artifact_name}.hdr10plus.json"
-        await asyncio.to_thread(_run, [binary, "extract", str(input_source), "-o", str(metadata)])
-        await asyncio.to_thread(_run, [binary, "plot", str(metadata), "-t", f"HDR10+ Plot - {stem}", "-o", str(output)])
+        await asyncio.to_thread(_run, [binary, "extract", str(input_source), "-o", str(metadata)], timeout_seconds)
+        await asyncio.to_thread(_run, [binary, "plot", str(metadata), "-t", f"HDR10+ Plot - {stem}", "-o", str(output)], timeout_seconds)
     if not output.is_file():
         raise RuntimeError(f"{TOOLS[kind]['command']} did not create {output.name}")
     return output
@@ -139,6 +149,7 @@ async def process_dynamic_hdr_plots(meta: Meta, config: dict[str, Any], uploadsc
         pass
 
     jobs = [(kind, source) for source in sources for kind in formats]
+    tool_timeout = min(_positive_config_int(config, "dynamic_hdr_plot_tool_timeout", 3600), MAX_TOOL_TIMEOUT_SECONDS)
     logger.info("[yellow]Generating dynamic HDR plots reads each selected video file in full; this may take a while for large releases.[/yellow]")
     progress_id = f"dynamic-hdr-plot-{meta.uuid}"
     publish_progress(progress_id, "Generating dynamic HDR plots", current=0, total=len(jobs), detail="Preparing metadata tools", group="dynamic_hdr", unit="plots")
@@ -149,7 +160,7 @@ async def process_dynamic_hdr_plots(meta: Meta, config: dict[str, Any], uploadsc
             if kind not in tools:
                 tools[kind] = await get_tool(meta.base_dir, kind)
             binary = tools[kind]
-            plot = await _generate_plot(binary, kind, source, output_dir)
+            plot = await _generate_plot(binary, kind, source, output_dir, tool_timeout)
             generated.append(str(plot))
             detail = f"Generated {kind} plot for {source.name}"
         except Exception as error:

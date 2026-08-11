@@ -354,6 +354,8 @@ config: dict[str, Any] = {
         "audio_spectrogram_max_files": 12,
         # Limit plots generated for multi-file releases.
         "dynamic_hdr_plot_max_files": 1,
+        # Maximum runtime in seconds for each HDR metadata tool invocation (capped at 7200).
+        "dynamic_hdr_plot_tool_timeout": 3600,
         # CLIENT SETUP
         # Configures the order of uploads when both torrent trackers and Usenet are selected.
         # "concurrent" (default) -> Upload to Usenet and torrent trackers at the same time.
