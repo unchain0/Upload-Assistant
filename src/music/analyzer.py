@@ -398,7 +398,7 @@ class MusicReleaseAnalyzer:
         cleaned = [_clean(value) for value in values if _clean(value)]
         if not cleaned:
             return
-        selected, count = Counter(cleaned).most_common(1)[0]
+        selected, _count = Counter(cleaned).most_common(1)[0]
         release.set_field(name, selected, source, confidence)
         unique = sorted(set(cleaned))
         if len(unique) > 1:
