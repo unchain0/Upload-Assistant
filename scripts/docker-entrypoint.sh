@@ -21,7 +21,7 @@ restore_data() {
     # never replaced.
     mkdir -p /Upload-Assistant/data
     if [ -d /Upload-Assistant/defaults/data ]; then
-        cp -an /Upload-Assistant/defaults/data/. /Upload-Assistant/data/
+        cp -rn /Upload-Assistant/defaults/data/. /Upload-Assistant/data/
     fi
     if [ ! -f /Upload-Assistant/data/config.py ] && [ -f /Upload-Assistant/data/example_config.py ]; then
         cp /Upload-Assistant/data/example_config.py /Upload-Assistant/data/config.py
@@ -79,7 +79,7 @@ if [ "$(id -u)" = "0" ]; then
             restore_data() {
                 mkdir -p /Upload-Assistant/data
                 if [ -d /Upload-Assistant/defaults/data ]; then
-                    cp -an /Upload-Assistant/defaults/data/. /Upload-Assistant/data/
+                    cp -rn /Upload-Assistant/defaults/data/. /Upload-Assistant/data/
                 fi
                 if [ ! -f /Upload-Assistant/data/config.py ] && [ -f /Upload-Assistant/data/example_config.py ]; then
                     cp /Upload-Assistant/data/example_config.py /Upload-Assistant/data/config.py
