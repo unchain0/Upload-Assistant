@@ -115,6 +115,19 @@ def test_darkpeers_repack_replacement_keeps_other_dupes_in_normal_check() -> Non
     assert meta["DARKPEERS_repack_replaces"]["id"] == 117400
 
 
+def test_darkpeers_repack_replacement_with_missing_ids_keeps_other_dupes() -> None:
+    meta = _tv_meta("Show S01E01 REPACK 1080p WEB-DL H.264-Kitsune")
+    original: dict[str, object] = {"name": "Show S01E01 1080p WEB-DL H.264-Kitsune", "id": None}
+    other_dupe: dict[str, object] = {"name": "Show S01E01 1080p WEB-DL H.264-Other", "id": None}
+    helper = UploadHelper(CONFIG)
+
+    dupes = asyncio.run(DupeChecker({"DEFAULT": {}}).filter_dupes([original, other_dupe], meta, "DARKPEERS"))
+    is_dupe, _ = asyncio.run(helper.dupe_check(cast(list[dict[str, Any] | str], dupes), meta, "DARKPEERS"))
+
+    assert is_dupe is True
+    assert meta["DARKPEERS_repack_replaces"]["name"] == original["name"]
+
+
 def test_darkpeers_repack_policy_requires_exact_release_group() -> None:
     normal = _tv_meta("Show S01E01 1080p WEB-DL H.264-Kitsune")
     other_group_repack = _candidate("Show S01E01 REPACK 1080p WEB-DL H.264-NotKitsune", 117486)

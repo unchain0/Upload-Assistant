@@ -332,14 +332,18 @@ class UploadHelper:
                     f"{_format_repack_result(cast(DupeEntry | str, replaced_release))}"
                 )
                 replaced_map = cast(Mapping[str, object] | Meta, replaced_release) if isinstance(replaced_release, (Mapping, Meta)) else {}
-                replaced_id = str(replaced_map.get("id", ""))
+                raw_replaced_id = replaced_map.get("id")
+                replaced_id = str(raw_replaced_id) if raw_replaced_id is not None else ""
                 replaced_name = str(replaced_map.get("name", ""))
                 dupes_list = [
                     entry
                     for entry in dupes_list
                     if not (
                         isinstance(entry, (Mapping, Meta))
-                        and ((replaced_id and str(entry.get("id", "")) == replaced_id) or (not replaced_id and replaced_name and str(entry.get("name", "")) == replaced_name))
+                        and (
+                            (replaced_id and entry.get("id") is not None and str(entry.get("id")) == replaced_id)
+                            or (not replaced_id and replaced_name and str(entry.get("name", "")) == replaced_name)
+                        )
                     )
                 ]
                 if not dupes_list:
