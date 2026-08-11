@@ -15,15 +15,18 @@ set -e
 TARGET_UID="${PUID:-}"
 TARGET_GID="${PGID:-}"
 
-# Restore files hidden by an empty or older data volume before Python imports
-# modules that depend on data.config. Existing user files are never replaced.
-mkdir -p /Upload-Assistant/data
-if [ -d /Upload-Assistant/defaults/data ]; then
-    cp -an /Upload-Assistant/defaults/data/. /Upload-Assistant/data/
-fi
-if [ ! -f /Upload-Assistant/data/config.py ] && [ -f /Upload-Assistant/data/example_config.py ]; then
-    cp /Upload-Assistant/data/example_config.py /Upload-Assistant/data/config.py
-fi
+restore_data() {
+    # Restore files hidden by an empty or older data volume before Python
+    # imports modules that depend on data.config. Existing user files are
+    # never replaced.
+    mkdir -p /Upload-Assistant/data
+    if [ -d /Upload-Assistant/defaults/data ]; then
+        cp -an /Upload-Assistant/defaults/data/. /Upload-Assistant/data/
+    fi
+    if [ ! -f /Upload-Assistant/data/config.py ] && [ -f /Upload-Assistant/data/example_config.py ]; then
+        cp /Upload-Assistant/data/example_config.py /Upload-Assistant/data/config.py
+    fi
+}
 
 # ── Fix directory ownership (only possible when running as root) ──────
 if [ "$(id -u)" = "0" ]; then
@@ -63,6 +66,8 @@ if [ "$(id -u)" = "0" ]; then
         chmod 711 /root 2>/dev/null || true
     fi
 
+    restore_data
+
     # Drop privileges if PUID was set
     if [ -n "$TARGET_UID" ] && [ "$TARGET_UID" != "0" ]; then
         # Ensure XDG_CONFIG_HOME is set so the app resolves the config
@@ -77,4 +82,5 @@ if [ "$(id -u)" = "0" ]; then
 fi
 
 # Fallback: run as current user (root, or whatever `user:` specified)
+restore_data
 exec python /Upload-Assistant/upload.py "$@"
