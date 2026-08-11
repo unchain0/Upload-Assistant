@@ -13,7 +13,7 @@ from pathlib import Path
 
 import httpx
 
-from bin.download_integrity import download_bounded_asset, sha256_file
+from bin.download_integrity import MAX_EXTRACTED_BYTES, download_bounded_asset, safe_extract_tar, safe_extract_zip, sha256_file
 from src.console import logger
 
 TOOLS = {
@@ -73,23 +73,12 @@ def _verify_checksum_file(asset: str, path: Path) -> None:
 
 
 def _safe_extract(archive: Path, destination: Path) -> None:
-    destination_resolved = destination.resolve()
     if archive.suffix == ".zip":
         with zipfile.ZipFile(archive) as contents:
-            members = contents.infolist()
-            for member in members:
-                target = (destination / member.filename).resolve()
-                if not target.is_relative_to(destination_resolved) or stat.S_ISLNK(member.external_attr >> 16):
-                    raise RuntimeError(f"Unsafe archive member: {member.filename}")
-            contents.extractall(destination)  # noqa: S202 - each member is validated above.
+            safe_extract_zip(contents, destination, max_bytes=MAX_EXTRACTED_BYTES)
     else:
         with tarfile.open(archive, "r:gz") as contents:
-            members = contents.getmembers()
-            for member in members:
-                target = (destination / member.name).resolve()
-                if not target.is_relative_to(destination_resolved) or member.issym() or member.islnk():
-                    raise RuntimeError(f"Unsafe archive member: {member.name}")
-            contents.extractall(destination, members=members)  # noqa: S202 - members are validated above.
+            safe_extract_tar(contents, destination, max_bytes=MAX_EXTRACTED_BYTES)
 
 
 async def get_tool(base_dir: str, tool: str) -> str:

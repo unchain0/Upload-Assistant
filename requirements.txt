@@ -24,14 +24,14 @@ Jinja2==3.1.6
 keyring==25.6.0
 langcodes==3.5.1
 language-data==1.4.0
-librosa
+librosa==0.11.0
 lxml==6.1.0
-matplotlib>=3.10.9
+matplotlib==3.11.1
 mobi==0.4.1
 mutagen==1.47.0
 nest_asyncio==1.6.0
 numpy==2.4.4
-packaging<25,>=21
+packaging==24.2
 Pillow==12.3.0
 resvg-py==0.3.3
 psutil==7.2.2

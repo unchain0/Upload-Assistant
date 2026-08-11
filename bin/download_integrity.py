@@ -87,6 +87,20 @@ def safe_extract_zip(archive: zipfile.ZipFile, destination: Path, *, max_bytes: 
             shutil.copyfileobj(source, output, length=1024 * 1024)
 
 
+def extract_zip_regular_member(archive: zipfile.ZipFile, member_name: str, destination: Path, *, max_bytes: int = MAX_EXTRACTED_BYTES) -> None:
+    """Copy one regular ZIP member to a fixed destination with an expanded-size limit."""
+    member = archive.getinfo(member_name)
+    mode = member.external_attr >> 16
+    file_type = stat.S_IFMT(mode)
+    if member.is_dir() or stat.S_ISLNK(mode) or (file_type and not stat.S_ISREG(mode)):
+        raise RuntimeError(f"Archive member is not a regular file: {member_name}")
+    if member.file_size > max_bytes:
+        raise RuntimeError(f"Archive member exceeds the {max_bytes}-byte expanded-size limit")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with archive.open(member) as source, destination.open("wb") as output:
+        shutil.copyfileobj(source, output, length=1024 * 1024)
+
+
 def safe_extract_tar(archive: tarfile.TarFile, destination: Path, *, max_bytes: int = MAX_EXTRACTED_BYTES) -> None:
     """Extract regular TAR members with path, type and expanded-size limits."""
     base = destination.resolve()

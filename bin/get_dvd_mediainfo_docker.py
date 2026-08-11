@@ -12,7 +12,7 @@ import zipfile
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from bin.download_integrity import MAX_EXTRACTED_BYTES, download_verified_asset_sync
+from bin.download_integrity import download_verified_asset_sync, extract_zip_regular_member
 
 try:
     from src.console import console, logger
@@ -68,74 +68,25 @@ def extract_linux_binaries(cli_archive: Path, lib_archive: Path, output_dir: Pat
     """Extract MediaInfo CLI and library from downloaded archives."""
     logger.info("Extracting MediaInfo binaries...", extra={"markup": False})
 
-    # Extract MediaInfo CLI from zip file
-    with zipfile.ZipFile(cli_archive, "r") as zip_ref:
-        file_list = zip_ref.namelist()
-        mediainfo_file = output_dir / "mediainfo"
-
-        logger.info(f"CLI archive contents: {file_list}", extra={"markup": False})
-
-        # Look for the mediainfo binary in the archive
-        for member in file_list:
-            # Check for absolute paths
-            if Path(member).is_absolute():
-                logger.warning(f"Warning: Skipping absolute path: {member}", extra={"markup": False})
-                continue
-
-            # Check for directory traversal patterns
-            if ".." in member or member.startswith("/"):
-                logger.warning(f"Warning: Skipping dangerous path: {member}", extra={"markup": False})
-                continue
-
-            if member.endswith("/mediainfo") or member == "mediainfo":
-                info = zip_ref.getinfo(member)
-                if info.file_size > MAX_EXTRACTED_BYTES:
-                    raise RuntimeError(f"MediaInfo CLI exceeds the {MAX_EXTRACTED_BYTES}-byte limit")
-                with zip_ref.open(info) as source, mediainfo_file.open("wb") as output:
-                    shutil.copyfileobj(source, output, length=1024 * 1024)
-                logger.info(f"Extracted CLI binary: {mediainfo_file}", extra={"markup": False})
-                break
-        else:
-            raise Exception("MediaInfo CLI binary not found in archive")
-
-    # Extract MediaInfo library
-    with zipfile.ZipFile(lib_archive, "r") as zip_ref:
-        file_list = zip_ref.namelist()
-        lib_file = output_dir / "libmediainfo.so.0"
-
-        logger.info(f"Library archive contents: {file_list}", extra={"markup": False})
-
-        # Look for the library file in the archive
-        lib_candidates = ["lib/libmediainfo.so.0.0.0", "libmediainfo.so.0.0.0", "libmediainfo.so.0", "MediaInfo/libmediainfo.so.0.0.0", "MediaInfo/lib/libmediainfo.so.0.0.0"]
-
-        for candidate in lib_candidates:
-            if candidate in file_list:
-                # Check for absolute paths
-                if Path(candidate).is_absolute():
-                    logger.warning(f"Warning: Skipping absolute path: {candidate}", extra={"markup": False})
-                    continue
-
-                # Check for directory traversal patterns
-                if ".." in candidate or candidate.startswith("/"):
-                    logger.warning(f"Warning: Skipping dangerous path: {candidate}", extra={"markup": False})
-                    continue
-
-                info = zip_ref.getinfo(candidate)
-                if info.file_size > MAX_EXTRACTED_BYTES:
-                    raise RuntimeError(f"MediaInfo library exceeds the {MAX_EXTRACTED_BYTES}-byte limit")
-                with zip_ref.open(info) as source, lib_file.open("wb") as output:
-                    shutil.copyfileobj(source, output, length=1024 * 1024)
-                # Set appropriate permissions for library file (readable by all)
-                Path(lib_file).chmod(0o644)
-                logger.info(f"Extracted library: {lib_file}", extra={"markup": False})
-                break
-        else:
-            raise Exception("MediaInfo library not found in archive")
-
-    # Clean up empty lib directory if it exists
-    lib_dir = output_dir.parent / "lib"
-    if lib_dir.exists() and not any(lib_dir.iterdir()):
-        lib_dir.rmdir()
+    staging = output_dir / ".mediainfo-staging"
+    shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir()
+    try:
+        with zipfile.ZipFile(cli_archive, "r") as archive:
+            cli_members = [name for name in archive.namelist() if name.endswith("/mediainfo") or name == "mediainfo"]
+            if len(cli_members) != 1:
+                raise RuntimeError("MediaInfo archive must contain exactly one CLI binary")
+            extract_zip_regular_member(archive, cli_members[0], staging / "mediainfo")
+        with zipfile.ZipFile(lib_archive, "r") as archive:
+            library_member = "lib/libmediainfo.so.0.0.0"
+            if library_member not in archive.namelist():
+                raise RuntimeError("MediaInfo archive does not contain the required library")
+            extract_zip_regular_member(archive, library_member, staging / "libmediainfo.so.0")
+        (staging / "mediainfo").replace(output_dir / "mediainfo")
+        (staging / "libmediainfo.so.0").replace(output_dir / "libmediainfo.so.0")
+        (output_dir / "libmediainfo.so.0").chmod(0o644)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
 
 
 def download_dvd_mediainfo_docker():

@@ -11,7 +11,7 @@ from pathlib import Path
 import aiofiles
 import httpx
 
-from bin.download_integrity import download_verified_asset
+from bin.download_integrity import MAX_EXTRACTED_BYTES, download_verified_asset, safe_extract_tar, safe_extract_zip
 
 try:
     from src.console import console, logger
@@ -130,66 +130,11 @@ class BDInfoBinaryManager:
             try:
                 if file_pattern.endswith(".zip"):
                     with zipfile.ZipFile(temp_archive, "r") as zip_ref:
-
-                        def safe_extract_zip(zip_file: zipfile.ZipFile, path: str = ".") -> None:
-                            for member in zip_file.namelist():
-                                info = zip_file.getinfo(member)
-                                perm = info.external_attr >> 16
-                                if stat.S_ISLNK(perm):
-                                    logger.debug(f"[yellow]Warning: Skipping symlink: {member}[/yellow]")
-                                    continue
-
-                                # Check for absolute paths and directory traversal
-                                if Path(member).is_absolute() or ".." in member or member.startswith("/"):
-                                    logger.debug(f"[yellow]Warning: Skipping dangerous path: {member}[/yellow]")
-                                    continue
-
-                                # Verify final path is inside target directory
-                                full_path = os.path.realpath(Path(path) / member)
-                                base_path = os.path.realpath(path)
-                                if not full_path.startswith(base_path + os.sep) and full_path != base_path:
-                                    logger.debug(f"[yellow]Warning: Skipping path outside target directory: {member}[/yellow]")
-                                    continue
-
-                                # Check for reasonable file sizes (prevent zip bombs)
-                                try:
-                                    file_size = info.file_size
-                                except Exception:
-                                    file_size = 0
-
-                                if file_size > 100 * 1024 * 1024:
-                                    logger.debug(f"[yellow]Warning: Skipping oversized file: {member} ({file_size} bytes)[/yellow]")
-                                    continue
-
-                                # Extract the safe member
-                                zip_file.extract(member, path)
-                                logger.debug(f"[cyan]Extracted: {member}[/cyan]")
-
-                        safe_extract_zip(zip_ref, str(bin_dir))
+                        safe_extract_zip(zip_ref, bin_dir, max_bytes=MAX_EXTRACTED_BYTES)
 
                 elif file_pattern.endswith(".tar.gz"):
                     with tarfile.open(temp_archive, "r:gz") as tar_ref:
-
-                        def safe_extract_tar(tar_file: tarfile.TarFile, path: str = ".") -> None:
-                            for member in tar_file.getmembers():
-                                if member.islnk() or member.issym():
-                                    logger.debug(f"[yellow]Warning: Skipping link entry: {member.name}[/yellow]")
-                                    continue
-                                if Path(member.name).is_absolute() or ".." in member.name or member.name.startswith("/"):
-                                    logger.debug(f"[yellow]Warning: Skipping dangerous path: {member.name}[/yellow]")
-                                    continue
-                                full_path = os.path.realpath(Path(path) / member.name)
-                                base_path = os.path.realpath(path)
-                                if not full_path.startswith(base_path + os.sep) and full_path != base_path:
-                                    logger.debug(f"[yellow]Warning: Skipping path outside target directory: {member.name}[/yellow]")
-                                    continue
-                                if member.size > 100 * 1024 * 1024:
-                                    logger.debug(f"[yellow]Warning: Skipping oversized file: {member.name} ({member.size} bytes)[/yellow]")
-                                    continue
-                                tar_file.extract(member, path)
-                                logger.debug(f"[cyan]Extracted: {member.name}[/cyan]")
-
-                        safe_extract_tar(tar_ref, str(bin_dir))
+                        safe_extract_tar(tar_ref, bin_dir, max_bytes=MAX_EXTRACTED_BYTES)
 
                 # If extraction created a nested directory (common for GitHub release zips),
                 # search for the bdinfo executable and move it to the expected binary path.

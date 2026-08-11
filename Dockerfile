@@ -1,18 +1,18 @@
-FROM python:3.14
+FROM python:3.14@sha256:3a9d2dd3f18e5c7a9d8de7b3659418a4ab848ccd409fb9e91ef9d7a6a3520ba7
 
 # ── System dependencies ──────────────────────────────────────────────
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-    git \
-    g++ \
-    cargo \
-    ffmpeg \
-    mediainfo \
-    rustc \
-    nano \
-    ca-certificates \
-    curl \
-    gosu && \
+    git=1:2.47.3-0+deb13u1 \
+    g++=4:14.2.0-1 \
+    cargo=1.85.0+dfsg3-1 \
+    ffmpeg=7:7.1.5-0+deb13u1 \
+    mediainfo=25.04-1 \
+    rustc=1.85.0+dfsg3-1 \
+    nano=8.4-1+deb13u1 \
+    ca-certificates=20250419 \
+    curl=8.14.1-2+deb13u4 \
+    gosu=1.17-3+b4 && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* && \
     update-ca-certificates
@@ -25,7 +25,8 @@ ENV PYTHONDONTWRITEBYTECODE=1
 RUN python -m venv /venv
 ENV PATH="/venv/bin:$PATH"
 
-RUN pip install --no-cache-dir --upgrade pip==25.3 wheel==0.45.1 requests==2.32.5 httpx==0.28.1
+COPY requirements.lock .
+RUN pip install --no-cache-dir --require-hashes -r requirements.lock
 
 # ── Application setup ────────────────────────────────────────────────
 WORKDIR /Upload-Assistant
@@ -34,10 +35,6 @@ WORKDIR /Upload-Assistant
 # This downloads specialized MediaInfo binaries for DVD processing with language support
 COPY bin/__init__.py bin/get_dvd_mediainfo_docker.py bin/download_integrity.py bin/
 RUN python3 -m bin.get_dvd_mediainfo_docker
-
-# Copy the Python requirements file and install Python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the rest of the application
 COPY . .

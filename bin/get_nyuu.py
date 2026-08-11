@@ -1,5 +1,4 @@
 # Upload Assistant © 2026 Audionut & wastaken7 — Licensed under UAPL v1.0
-import asyncio
 import os
 import platform
 import shutil
@@ -97,44 +96,19 @@ class NyuuBinaryManager:
             logger.debug(f"[green]Downloaded Nyuu package: {file_pattern}[/green]")
 
             if file_pattern.endswith(".7z"):
-                if not path_7z:
-                    from bin.get_7z import SevenZipBinaryManager
+                del path_7z
+                raise RuntimeError("Automatic Nyuu installation on Windows is disabled; install a trusted nyuu.exe manually")
+            try:
+                with tarfile.open(temp_file, "r:xz") as tar_ref:
+                    safe_extract_tar(tar_ref, bin_dir, max_bytes=MAX_EXTRACTED_BYTES)
 
-                    path_7z = await SevenZipBinaryManager.ensure_7z_binary(base_dir)
-
-                # Extract using the 7z binary
-                cmd = [path_7z, "x", "-y", f"-o{bin_dir}", str(temp_file)]
-                process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-                try:
-                    _stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=120)
-                except TimeoutError:
-                    process.kill()
-                    await process.communicate()
-                    raise RuntimeError("7z extraction timed out after 120 seconds") from None
-                if process.returncode != 0:
-                    raise Exception(f"7z extraction failed: {stderr.decode(errors='replace')}")
-
-                # Locate nyuu.exe binary in extracted directory (Windows)
                 if not binary_path.exists():
-                    for p in bin_dir.rglob("nyuu.exe"):
+                    for p in bin_dir.rglob("nyuu"):
                         if p.is_file():
                             shutil.move(str(p), str(binary_path))
                             break
-            else:
-                # Linux/macOS are tar.xz archives
-                try:
-                    with tarfile.open(temp_file, "r:xz") as tar_ref:
-                        safe_extract_tar(tar_ref, bin_dir, max_bytes=MAX_EXTRACTED_BYTES)
-
-                    # Locate nyuu binary in extracted output
-                    if not binary_path.exists():
-                        for p in bin_dir.rglob("nyuu"):
-                            if p.is_file():
-                                shutil.move(str(p), str(binary_path))
-                                break
-                finally:
-                    if temp_file.exists():
-                        temp_file.unlink()
+            finally:
+                temp_file.unlink(missing_ok=True)
 
             # Cleanup extra directories/files leftover from extraction
             for p in list(bin_dir.iterdir()):

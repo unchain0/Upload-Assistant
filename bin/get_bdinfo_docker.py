@@ -8,12 +8,11 @@ import os
 import platform
 import shutil
 import sys
-import tarfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from bin.download_integrity import download_bounded_asset_sync, verify_downloaded_asset
+from bin.download_integrity import download_bounded_asset_sync, safe_extract_tar, verify_downloaded_asset
 
 try:
     from src.console import console, logger
@@ -41,53 +40,10 @@ def download_file(url: str, output_path: Path) -> None:
 
 
 def secure_extract_tar(tar_path: Path, extract_to: Path) -> None:
+    import tarfile
+
     with tarfile.open(tar_path, "r:gz") as tar_ref:
-        base_path = extract_to.resolve()
-        total_size = 0
-        for member in tar_ref.getmembers():
-            if member.issym() or member.islnk():
-                logger.warning(f"Warning: Skipping link: {member.name}", extra={"markup": False})
-                continue
-            if Path(member.name).is_absolute() or ".." in Path(member.name).parts:
-                logger.warning(f"Warning: Skipping dangerous path: {member.name}", extra={"markup": False})
-                continue
-            try:
-                final_path = (base_path / member.name).resolve()
-                try:
-                    os.path.commonpath([str(base_path), str(final_path)])
-                    if not str(final_path).startswith(str(base_path) + os.sep) and final_path != base_path:
-                        logger.warning(f"Warning: Path outside base directory: {member.name}", extra={"markup": False})
-                        continue
-                except ValueError:
-                    logger.warning(f"Warning: Invalid path resolution: {member.name}", extra={"markup": False})
-                    continue
-            except (OSError, ValueError) as e:
-                logger.warning(f"Warning: Path resolution failed for {member.name}: {e}", extra={"markup": False})
-                continue
-
-            if not (member.isfile() or member.isdir()):
-                logger.warning(f"Warning: Skipping non-regular file: {member.name}", extra={"markup": False})
-                continue
-
-            if member.isfile() and member.size > 100 * 1024 * 1024:
-                logger.warning(f"Warning: Skipping oversized file: {member.name} ({member.size} bytes)", extra={"markup": False})
-                continue
-            total_size += member.size
-            if total_size > 512 * 1024 * 1024:
-                raise RuntimeError("Archive exceeds the 536870912-byte expanded-size limit")
-
-            if member.isdir():
-                target_dir = base_path / member.name
-                target_dir.mkdir(parents=True, exist_ok=True)
-                target_dir.chmod(0o700)
-            elif member.isfile():
-                target_file = base_path / member.name
-                target_file.parent.mkdir(parents=True, exist_ok=True)
-                source = tar_ref.extractfile(member)
-                if source is not None:
-                    with source, Path(target_file).open("wb") as out_f:
-                        out_f.write(source.read())
-                    target_file.chmod(0o600)
+        safe_extract_tar(tar_ref, extract_to)
 
 
 def download_bdinfo_for_docker(base_dir: Path = Path("/Upload-Assistant"), version: str = BDINFO_VERSION) -> str:

@@ -31,6 +31,16 @@ class DiscParse:
         self.config = config
         self.mediainfo_config: dict[str, Any] | None = None
 
+    async def _run_specialized_mediainfo(self, binary: str, *arguments: str) -> tuple[bytes, bytes, int | None]:
+        process = await asyncio.create_subprocess_exec(binary, *arguments, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        try:
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=30)
+        except TimeoutError:
+            process.kill()
+            await process.communicate()
+            raise RuntimeError("Specialized MediaInfo timed out after 30 seconds") from None
+        return stdout, stderr, process.returncode
+
     def _calculate_playlist_score(self, playlist: PlaylistInfo) -> float:
         """Calculate weighted score for playlist selection.
 
@@ -619,12 +629,9 @@ class DiscParse:
 
                     try:
                         if mediainfo_binary:
-                            process = await asyncio.create_subprocess_exec(
-                                mediainfo_binary, "--Output=JSON", ifo_file, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-                            )
-                            stdout, stderr = await process.communicate()
+                            stdout, stderr, returncode = await self._run_specialized_mediainfo(mediainfo_binary, "--Output=JSON", ifo_file)
 
-                            if process.returncode == 0 and stdout:
+                            if returncode == 0 and stdout:
                                 vob_set_mi = stdout.decode()
                             else:
                                 logger.info(f"[yellow]Specialized MediaInfo failed for {ifo_file}, falling back to standard[/yellow]")
@@ -676,10 +683,9 @@ class DiscParse:
                 # Process VOB file
                 try:
                     if mediainfo_binary:
-                        process = await asyncio.create_subprocess_exec(mediainfo_binary, vob_basename, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-                        stdout, stderr = await process.communicate()
+                        stdout, stderr, returncode = await self._run_specialized_mediainfo(mediainfo_binary, vob_basename)
 
-                        if process.returncode == 0 and stdout:
+                        if returncode == 0 and stdout:
                             vob_mi_output = stdout.decode().replace("\r\n", "\n")
                         else:
                             logger.info("[yellow]Specialized MediaInfo failed for VOB, falling back[/yellow]")
@@ -699,10 +705,9 @@ class DiscParse:
                 # Process IFO file
                 try:
                     if mediainfo_binary:
-                        process = await asyncio.create_subprocess_exec(mediainfo_binary, ifo_basename, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-                        stdout, stderr = await process.communicate()
+                        stdout, stderr, returncode = await self._run_specialized_mediainfo(mediainfo_binary, ifo_basename)
 
-                        if process.returncode == 0 and stdout:
+                        if returncode == 0 and stdout:
                             ifo_mi_output = stdout.decode().replace("\r\n", "\n")
                         else:
                             logger.info("[yellow]Specialized MediaInfo failed for IFO, falling back[/yellow]")
