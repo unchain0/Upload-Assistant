@@ -33,6 +33,13 @@ class FakeTracker:
         return True
 
 
+class FakeDarkPeers(FakeTracker):
+    tracker = "DARKPEERS"
+
+    async def search_existing(self, _meta: Meta) -> list[dict[str, object]]:
+        return [{"name": "Show S01E01 1080p WEB-DL H.264-Kitsune", "id": 117400}]
+
+
 def _image(number: int) -> dict[str, str]:
     return {"raw_url": f"https://images.example/{number}.png"}
 
@@ -155,3 +162,44 @@ async def test_modqueue_limit_disables_tracker_for_remainder_of_run() -> None:
     assert FakeTracker.upload_calls == 1
     assert second_meta.tracker_status["TEST"]["skipped"] is True
     assert "remainder of this run" in second_meta.tracker_status["TEST"]["status_message"]
+
+
+@pytest.mark.asyncio
+async def test_bandwidth_recheck_allows_repack_replacing_new_original(monkeypatch: pytest.MonkeyPatch) -> None:
+    class ImmediateWait:
+        def __init__(self, _config: dict[str, Any]) -> None:
+            pass
+
+        async def wait_for_bandwidth(self, _threshold: int, _seconds: int) -> bool:
+            return True
+
+    monkeypatch.setattr(trackerhandle.TrackerSetup, "trackers_enabled", lambda _self, _meta: ["DARKPEERS"])
+    monkeypatch.setattr(trackerhandle, "Wait", ImmediateWait)
+    meta = _meta()
+    meta.update(
+        {
+            "name": "Show S01E01 REPACK 1080p WEB-DL H.264-Kitsune",
+            "uuid": "Show S01E01 REPACK 1080p WEB-DL H.264-Kitsune",
+            "type": "WEBDL",
+            "source": "WEB",
+            "resolution": "1080p",
+            "season": "S01",
+            "episode": "E01",
+            "tag": "-Kitsune",
+            "unattended": True,
+            "trackers": ["DARKPEERS"],
+            "tracker_status": {"DARKPEERS": {"upload": True}},
+            "initial_dupes": {"DARKPEERS": []},
+            "qbit_bandwidth_control": True,
+            "qbit_bandwidth_threshold": 1,
+            "qbit_bandwidth_time": 1,
+        }
+    )
+    config = _config()
+    config["DEFAULT"]["qbit_bandwidth_control"] = True
+    config["DEFAULT"]["tmdb_api"] = "test-key"
+    config["TRACKERS"] = {"DARKPEERS": {}}
+
+    await trackerhandle.process_trackers(meta, config, FakeClient(), ["DARKPEERS"], {"DARKPEERS": FakeDarkPeers}, [], [])
+
+    assert FakeDarkPeers.upload_calls == 1

@@ -25,6 +25,7 @@ class DarkPeers(UNIT3D):
     tracker = "DARKPEERS"
     display_name = "DarkPeers"
     allows_bloated_audio = True
+    prefers_repack = True
     reject_episode_if_season_pack_exists = True
     _AUDIO_TRACK_PATTERN = re.compile(
         r"^(?:\d{1,3}(?:-\d{1,2})?\.\s+.+|\d{1,3}(?:-\d{1,2})?\s+-\s+.+|\d{1,3}(?:-\d{1,2})?-(?!-).+|.+-\d{1,3}(?:-\d{1,2})?-(?!-).+)$"

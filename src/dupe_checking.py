@@ -136,6 +136,7 @@ class DupeChecker:
 
         new_dupes: list[DupeEntry]
 
+        repack_pattern = re.compile(r"(?<![a-z0-9])repack\d*(?![a-z0-9])", re.IGNORECASE)
         has_repack_in_uuid = "repack" in meta.uuid.lower()
         video_encode_value = meta.video_encode
         video_encode = video_encode_value if video_encode_value else ""
@@ -197,6 +198,23 @@ class DupeChecker:
 
         tracker_cls = tracker_class_map.get(tracker_name.upper())
         is_exact_match_only = bool(getattr(tracker_cls, "exact_match_only", False))
+        prefers_repack = bool(getattr(tracker_cls, "prefers_repack", False))
+        preferred_upload_is_repack = prefers_repack and any(repack_pattern.search(str(value or "")) for value in (meta.repack, meta.name, meta.uuid))
+        release_group = str(meta.tag or "").lstrip("-").strip().casefold()
+
+        if prefers_repack:
+            meta.pop(f"{tracker_name}_preferred_repack", None)
+            meta.pop(f"{tracker_name}_repack_replaces", None)
+
+        def has_same_release_group(name: str) -> bool:
+            return bool(release_group) and name.rstrip().casefold().endswith(f"-{release_group}")
+
+        async def has_same_repack_base(name: str) -> bool:
+            target = re.sub(r"\s+", " ", repack_pattern.sub("", str(meta.name or meta.uuid or ""))).strip()
+            candidate = re.sub(r"\s+", " ", repack_pattern.sub("", name)).strip()
+            normalized_target = re.sub(r"\s+", " ", await DupeChecker.normalize_filename(target)).strip()
+            normalized_candidate = re.sub(r"\s+", " ", await DupeChecker.normalize_filename(candidate)).strip()
+            return normalized_target == normalized_candidate
 
         async def log_exclusion(reason: str, item: str) -> None:
             if meta.debug:
@@ -636,7 +654,7 @@ class DupeChecker:
                 await log_exclusion("file count less than 2 for disc upload", each)
                 return True
 
-            if has_repack_in_uuid and "repack" not in normalized and meta.tag and meta.tag.lower() in normalized:
+            if not prefers_repack and has_repack_in_uuid and "repack" not in normalized and meta.tag and meta.tag.lower() in normalized:
                 await log_exclusion("repack release", each)
                 return True
 
@@ -859,6 +877,26 @@ class DupeChecker:
             return False
 
         new_dupes = [each for each in processed_dupes if not await process_exclusion(each)]
+
+        if prefers_repack:
+            if not preferred_upload_is_repack:
+                for entry in new_dupes:
+                    entry_name = str(entry.get("name", ""))
+                    if repack_pattern.search(entry_name) and has_same_release_group(entry_name) and await has_same_repack_base(entry_name):
+                        meta[f"{tracker_name}_preferred_repack"] = entry
+                        break
+            else:
+                for entry in new_dupes:
+                    entry_name = str(entry.get("name", ""))
+                    if repack_pattern.search(entry_name) and has_same_release_group(entry_name) and await has_same_repack_base(entry_name):
+                        meta[f"{tracker_name}_preferred_repack"] = entry
+                        break
+                if not meta.get(f"{tracker_name}_preferred_repack"):
+                    for entry in new_dupes:
+                        entry_name = str(entry.get("name", ""))
+                        if not repack_pattern.search(entry_name) and has_same_release_group(entry_name) and await has_same_repack_base(entry_name):
+                            meta[f"{tracker_name}_repack_replaces"] = entry
+                            break
 
         if is_exact_match_only:
             if processed_dupes and not new_dupes:
