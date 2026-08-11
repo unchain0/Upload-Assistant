@@ -1106,7 +1106,13 @@ def _movie_tv_identity_error(meta: Meta) -> str | None:
     numeric_ids = (meta.tmdb, meta.tmdb_id, meta.tvdb_id, meta.tvmaze_id, meta.mal_id)
     imdb_ids = (meta.imdb, meta.imdb_id, imdb_info_id)
     has_numeric_id = any(re.fullmatch(r"[1-9]\d*", str(value or "").strip()) for value in numeric_ids)
-    has_imdb_id = any(re.fullmatch(r"tt[1-9]\d{6,9}", str(value or "").strip(), re.IGNORECASE) for value in imdb_ids)
+
+    def is_valid_imdb_id(value: object) -> bool:
+        candidate = f"{value:07d}" if isinstance(value, int) else str(value or "").strip()
+        match = re.fullmatch(r"(?:tt)?(\d{7,10})", candidate, re.IGNORECASE)
+        return bool(match and int(match.group(1)) > 0)
+
+    has_imdb_id = any(is_valid_imdb_id(value) for value in imdb_ids)
     if not has_numeric_id and not has_imdb_id:
         return f"Unattended {meta.category} metadata has no valid TMDb, IMDb, TVDB, TVmaze, or MAL identifier. Refusing to process the upload."
 
