@@ -119,6 +119,40 @@ def test_podcast_prep_builds_an_audio_pack_without_tmdb(tmp_path: Path) -> None:
     assert meta.resolution == ""  # noqa: S101
 
 
+def test_unwalled_podcast_title_requires_year_format_and_audio_bitrate() -> None:
+    assert Unwalled._valid_podcast_title("Example Show [2026/MP3 - 128kbps]", audio=True) is True  # noqa: S101
+    assert Unwalled._valid_podcast_title("Example Show [2026-08-11/MP4]", audio=False) is True  # noqa: S101
+    assert Unwalled._valid_podcast_title("Example Show [MP3 - 128kbps]", audio=True) is False  # noqa: S101
+    assert Unwalled._valid_podcast_title("Example Show [2026/MP3]", audio=True) is False  # noqa: S101
+
+
+@pytest.mark.asyncio
+async def test_unwalled_additional_checks_reject_invalid_generated_title() -> None:
+    meta = Meta(category="PODCAST", type="AUDIO", name="Example Show [MP3 - 128kbps]")
+
+    assert await _tracker().get_additional_checks(meta) is False  # noqa: S101
+
+
+@pytest.mark.asyncio
+async def test_podcast_prep_offloads_per_file_media_scanning(tmp_path: Path) -> None:
+    episode = tmp_path / "001 - Pilot.mp3"
+    episode.write_bytes(b"audio")
+    meta = Meta(path=str(tmp_path), base_dir=str(tmp_path), uuid="offloaded-scan", category="PODCAST", podcast_title="Example Show [2026/MP3 - 128kbps]")
+
+    async def run_in_thread(function: Callable[..., object], *args: object) -> object:
+        return function(*args)
+
+    with (
+        patch("src.podcast_prep.asyncio.to_thread", new=AsyncMock(side_effect=run_in_thread)) as to_thread,
+        patch("src.podcast_prep._detected_media_kind", return_value="audio"),
+        patch("src.podcast_prep.export_info", new=AsyncMock(return_value={"media": {"track": []}})),
+    ):
+        await gather_podcast_prep(meta)
+
+    offloaded_functions = [call.args[0].__name__ for call in to_thread.await_args_list]
+    assert offloaded_functions == ["_source_files", "_media_files", "_audio_bitrate"]  # noqa: S101
+
+
 def test_podcast_prep_includes_allowed_companion_files(tmp_path: Path) -> None:
     episode = tmp_path / "001 - Pilot.mp3"
     companion = tmp_path / "episode-notes.pdf"
@@ -250,6 +284,22 @@ async def test_unwalled_discovers_options_across_all_result_pages() -> None:
         catalog = await _tracker().discover_options()
 
     assert catalog == {"categories": {"science": "15", "technology": "14"}, "types": {"free audio": "3", "premium audio": "4"}}  # noqa: S101
+
+
+@pytest.mark.asyncio
+async def test_unwalled_retries_incomplete_option_discovery_cache() -> None:
+    tracker = _tracker()
+    tracker.option_catalog["categories"]["technology"] = "14"
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": [{"attributes": {"type": "Free Audio", "type_id": 3}}]})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    with patch("src.trackers.UNIT3D.unwalled.httpx.AsyncClient", return_value=client):
+        catalog = await tracker.discover_options()
+
+    assert catalog == {"categories": {"technology": "14"}, "types": {"free audio": "3"}}  # noqa: S101
+    assert tracker.option_discovery_complete is True  # noqa: S101
 
 
 @pytest.mark.asyncio
@@ -645,6 +695,7 @@ async def test_unwalled_upload_does_not_follow_redirects(tmp_path: Path) -> None
         assert await tracker.upload(meta) is False  # noqa: S101
 
     assert [request.url.host for request in requests] == ["unwalled.cc"]  # noqa: S101
+    assert meta.tracker_status["UNWALLED"]["status_message"] == "data error: Upload redirect rejected"  # noqa: S101
 
 
 @pytest.mark.asyncio

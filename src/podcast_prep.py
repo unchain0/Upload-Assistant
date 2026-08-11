@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import tarfile
 import zipfile
 from collections import Counter
@@ -156,7 +157,7 @@ def _audio_bitrate(files: list[Path]) -> int | None:
     return bitrate if count / len(bitrates) >= 0.7 else None
 
 
-def _generated_title(meta: Meta, root: Path, files: list[Path], audio: bool) -> str:
+def _generated_title(meta: Meta, root: Path, files: list[Path], audio_bitrate: int | None) -> str:
     fallback_title = root.stem if root.is_file() else root.name
     title = str(meta.title or fallback_title).strip()
     year = str(meta.manual_year or meta.year or "").strip()
@@ -164,9 +165,8 @@ def _generated_title(meta: Meta, root: Path, files: list[Path], audio: bool) -> 
     details = [year] if year else []
     if media_format:
         technical = media_format
-        bitrate = _audio_bitrate(files) if audio else None
-        if bitrate:
-            technical = f"{technical} - {bitrate}kbps"
+        if audio_bitrate:
+            technical = f"{technical} - {audio_bitrate}kbps"
         details.append(technical)
     return f"{title} [{'/'.join(details)}]" if details else title
 
@@ -178,8 +178,8 @@ async def gather_podcast_prep(meta: Meta) -> None:
     if not root.exists():
         raise ValueError(f"Podcast path does not exist: {root}")
 
-    source_files = _source_files(root)
-    audio_files, video_files = _media_files(source_files)
+    source_files = await asyncio.to_thread(_source_files, root)
+    audio_files, video_files = await asyncio.to_thread(_media_files, source_files)
     if audio_files and video_files:
         raise ValueError("Podcast torrents cannot contain mixed audio and video media")
     media_files = audio_files or video_files
@@ -201,7 +201,7 @@ async def gather_podcast_prep(meta: Meta) -> None:
     meta.mal = 0
     meta.type = "AUDIO" if audio_files else "VIDEO"
     meta.container = _dominant_extension(media_files).casefold()
-    meta.audio_bitrate = _audio_bitrate(audio_files) if audio_files else None
+    meta.audio_bitrate = await asyncio.to_thread(_audio_bitrate, audio_files) if audio_files else None
     meta.resolution = ""
     meta.sd = 0
     meta.valid_mi = True
@@ -221,7 +221,7 @@ async def gather_podcast_prep(meta: Meta) -> None:
 
     primary = max(media_files, key=lambda path: path.stat().st_size)
     meta.mediainfo = await export_info(str(primary), meta.isdir, meta.uuid, meta.base_dir, is_dvd=False)
-    final_title = str(meta.podcast_title or _generated_title(meta, root, media_files, bool(audio_files))).strip()
+    final_title = str(meta.podcast_title or _generated_title(meta, root, media_files, meta.audio_bitrate)).strip()
     meta.title = meta.title or (root.stem if root.is_file() else root.name)
     meta.name_notag = final_title
     meta.name = final_title

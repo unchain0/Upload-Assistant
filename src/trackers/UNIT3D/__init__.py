@@ -121,6 +121,8 @@ class UNIT3D:
                 else:
                     async with client.stream("GET", url, headers=headers, params=params) as streamed_response:
                         response = await self._bounded_response(streamed_response, self.max_json_response_size)
+                if 300 <= response.status_code < 400 and not self.follow_search_redirects:
+                    raise ValueError("Tracker search redirect rejected")
                 response.raise_for_status()
 
                 if response.status_code == 200:
@@ -539,6 +541,9 @@ class UNIT3D:
                         else:
                             async with client.stream("POST", self.upload_url, files=files, data=data, headers=headers) as streamed_response:
                                 response = await self._bounded_response(streamed_response, self.max_json_response_size)
+                        if 300 <= response.status_code < 400 and not self.follow_upload_redirects:
+                            meta.tracker_status[self.tracker]["status_message"] = "data error: Upload redirect rejected"
+                            return False
                         response.raise_for_status()
 
                         raw_response_data = cast(object, response.json())
@@ -562,9 +567,6 @@ class UNIT3D:
                         break  # POST definitively succeeded
 
                 except httpx.HTTPStatusError as e:
-                    if 300 <= e.response.status_code < 400 and not self.follow_upload_redirects:
-                        meta.tracker_status[self.tracker]["status_message"] = "data error: Upload redirect rejected"
-                        return False
                     if e.response.status_code in [403, 302]:
                         # Don't retry auth/permission errors
                         if e.response.status_code == 403:

@@ -10,6 +10,7 @@ from src.trackers.UNIT3D import UNIT3D
 from src.trackers.UNIT3D.unwalled_validation import UnwalledValidationMixin
 
 type OptionCatalog = dict[str, dict[str, str]]
+PODCAST_TITLE_PATTERN = re.compile(r"^.+\s\[(?:19|20)\d{2}(?:-\d{2}(?:-\d{2})?)?/[A-Z0-9][A-Z0-9.+-]*(?: - (\d+)kbps)?\]$")
 
 
 class Unwalled(UnwalledValidationMixin, UNIT3D):
@@ -34,6 +35,7 @@ class Unwalled(UnwalledValidationMixin, UNIT3D):
     def __init__(self, config: dict[str, Any]) -> None:
         super().__init__(config, tracker_name=self.tracker)
         self.option_catalog: OptionCatalog = {"categories": {}, "types": {}}
+        self.option_discovery_complete = False
 
     @staticmethod
     def _normalize_option(value: str) -> str:
@@ -62,7 +64,7 @@ class Unwalled(UnwalledValidationMixin, UNIT3D):
         return catalog
 
     async def discover_options(self) -> OptionCatalog:
-        if any(self.option_catalog.values()):
+        if self.option_discovery_complete:
             return self.option_catalog
         headers = {"authorization": f"Bearer {self.api_key}", "accept": "application/json"}
         max_size = self.max_json_response_size or 2 * 1024 * 1024
@@ -70,6 +72,8 @@ class Unwalled(UnwalledValidationMixin, UNIT3D):
             async with httpx.AsyncClient(timeout=10.0, follow_redirects=self.follow_search_redirects) as client:
                 for page in range(1, 101):
                     async with client.stream("GET", self.search_url, headers=headers, params={"name": "", "perPage": "100", "page": str(page)}) as response:
+                        if 300 <= response.status_code < 400:
+                            raise ValueError("Unwalled option discovery redirect rejected")
                         response.raise_for_status()
                         bounded_response = await self._bounded_response(response, max_size)
                     raw_payload = bounded_response.json()
@@ -81,6 +85,7 @@ class Unwalled(UnwalledValidationMixin, UNIT3D):
                     self.option_catalog["types"].update(discovered["types"])
                     entries = payload.get("data")
                     if not isinstance(entries, list) or len(entries) < 100:
+                        self.option_discovery_complete = True
                         break
         except (httpx.HTTPError, ValueError) as error:
             logger.info(f"{self.tracker}: [yellow]Unable to discover category/type IDs: {error}[/yellow]")
@@ -131,11 +136,20 @@ class Unwalled(UnwalledValidationMixin, UNIT3D):
         name = re.sub(r"\s+", " ", (meta.podcast_title or meta.name).replace("&", "and")).strip()
         return {"name": name}
 
+    @staticmethod
+    def _valid_podcast_title(title: str, audio: bool) -> bool:
+        match = PODCAST_TITLE_PATTERN.fullmatch(title.strip())
+        return match is not None and (not audio or match.group(1) is not None)
+
     async def get_additional_checks(self, meta: Meta) -> bool:
         if meta.category != "PODCAST":
             return False
-        if not meta.name and not meta.podcast_title:
+        title = str(meta.podcast_title or meta.name).strip()
+        if not title:
             logger.info(f"{self.tracker}: [bold red]A podcast torrent title is required.[/bold red]")
+            return False
+        if not self._valid_podcast_title(title, meta.type == "AUDIO"):
+            logger.info(f"{self.tracker}: [bold red]Podcast title must include year/date, format, and audio bitrate when applicable.[/bold red]")
             return False
         if not meta.debug and not self._valid_announce_url(self.announce_url):
             logger.info(f"{self.tracker}: [bold red]Configure a valid personal Unwalled announce URL.[/bold red]")
