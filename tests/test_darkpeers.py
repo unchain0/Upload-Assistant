@@ -97,10 +97,9 @@ def test_darkpeers_ebook_name_includes_book_elements():
         type="EPUB",
         isbn="978-0765377067",
         source="RETAIL",
-        ocr=True,
     )
 
-    assert _name(meta) == "Liu Cixin - The Three-Body Problem 2008 Revised Edition EPUB 9780765377067 Retail OCR"
+    assert _name(meta) == "Liu Cixin - The Three-Body Problem 2008 Revised Edition EPUB 9780765377067 Retail"
 
 
 def test_darkpeers_audiobook_name_includes_format_bitrate_isbn_and_tag():
@@ -246,7 +245,7 @@ def test_darkpeers_required_book_fields_cannot_be_bypassed_by_unattended_confirm
         title="Wholeness and the Implicate Order",
         year=1980,
         type="AZW3",
-        source="WEB",
+        source="RETAIL",
     )
 
     assert _additional_checks(meta) is False
@@ -262,11 +261,50 @@ def test_darkpeers_normalizes_valid_ebook_isbn_before_building_title():
         year=1980,
         type="AZW3",
         isbn="978-0-415-28979-5",
-        source="WEB",
+        source="RETAIL",
     )
 
     assert _additional_checks(meta) is True
-    assert _name(meta) == "David Bohm - Wholeness and the Implicate Order 1980 AZW3 9780415289795"
+    assert _name(meta) == "David Bohm - Wholeness and the Implicate Order 1980 AZW3 9780415289795 Retail"
+
+
+def test_darkpeers_rejects_generic_web_as_ebook_provenance():
+    meta = Meta(
+        category="BOOK",
+        unattended=True,
+        author="Author",
+        publisher="Publisher",
+        title="Book",
+        year=2026,
+        type="EPUB",
+        isbn="978-0-123456-47-2",
+        source="WEB",
+    )
+
+    assert _additional_checks(meta) is False
+
+
+def test_darkpeers_rejects_retail_ocr_contradiction():
+    meta = Meta(
+        category="BOOK",
+        unattended=True,
+        author="Author",
+        publisher="Publisher",
+        title="Book",
+        year=2026,
+        type="EPUB",
+        isbn="978-0-123456-47-2",
+        source="RETAIL",
+        ocr=True,
+    )
+
+    assert _additional_checks(meta) is False
+
+
+def test_darkpeers_scan_ocr_name_is_explicit():
+    meta = Meta(category="BOOK", author="Author", title="Book", year=2026, type="PDF", isbn="978-0-123456-47-2", source="SCAN", ocr=True)
+
+    assert _name(meta) == "Author - Book 2026 PDF 9780123456472 Scan OCR"
 
 
 def test_darkpeers_rejects_invalid_ebook_isbn_instead_of_rendering_it():
@@ -293,7 +331,7 @@ def test_darkpeers_allows_explicit_multi_file_collection_without_isbn():
         title="Author Collection",
         year=2026,
         type="EPUB",
-        source="WEB",
+        source="RETAIL",
         filelist=[
             "Author - Author Collection - Book One.epub",
             "Author - Author Collection - Book Two.epub",
@@ -628,7 +666,7 @@ def test_darkpeers_book_language_is_unrestricted_but_author_is_required_unattend
         type="EPUB",
         isbn="978-0-123456-47-2",
         book_language="Portuguese",
-        source="WEB",
+        source="RETAIL",
     )
     no_author = Meta(category="BOOK", unattended=True, publisher="Editora", type="EPUB", isbn="978-0-123456-47-2")
 

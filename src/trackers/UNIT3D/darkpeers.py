@@ -399,8 +399,17 @@ class DarkPeers(UNIT3D):
                 return False
         if not meta.audiobook and format_name == "PDF" and not bool(meta.get("page_count", None) or meta.get("book_page_count", None)):
             return await self._missing_required("PDF page count", meta)
-        if not meta.audiobook and not str(meta.manual_source or meta.source or "").strip():
-            return await self._missing_required("eBook source", meta)
+        if not meta.audiobook:
+            source = str(meta.manual_source or meta.source or "").strip().upper()
+            if source not in {"RETAIL", "SCAN"}:
+                logger.info(
+                    f"{self.tracker}: [bold red]eBook provenance must be explicit. Re-run with --source retail for an untouched digital retail file, "
+                    "or --source scan (and --ocr when applicable). Generic WEB metadata is not proof of a retail release. Skipping upload.[/bold red]"
+                )
+                return False
+            if meta.ocr and source != "SCAN":
+                logger.info(f"{self.tracker}: [bold red]OCR cannot be combined with Retail. Use --source scan --ocr. Skipping upload.[/bold red]")
+                return False
         return self._validate_book_file_layout(meta, format_name)
 
     @staticmethod
