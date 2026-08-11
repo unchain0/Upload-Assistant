@@ -42,6 +42,31 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return default
 
 
+def _clear_episode_metadata(meta: Meta) -> None:
+    meta.auto_episode_title = None
+    meta.overview_meta = None
+    meta.episode_airdate = None
+    meta.episode_name = ""
+    meta.episode_overview = ""
+    if not meta.manual_episode_title:
+        meta.episode_title = ""
+    meta.episode_tmdb_data = {}
+    meta.tmdb_episode_data = None
+    meta.tvdb_episode_data = {}
+    meta.tvdb_episode_id = None
+    meta.tvdb_episode_int = None
+    meta.tvdb_episode_name = None
+    meta.tvdb_episode_year = ""
+    meta.tvdb_episode = None
+    meta.tvdb_overview = None
+    meta.tvdb_season_int = None
+    meta.tvdb_season = None
+    meta.tvmaze_episode_data = {}
+    meta.we_asked_tvmaze = False
+    meta.we_checked_tmdb = False
+    meta.we_checked_tvdb = False
+
+
 def sync_single_episode_from_filename(meta: Meta) -> bool:
     if (
         meta.category != "TV"
@@ -57,7 +82,7 @@ def sync_single_episode_from_filename(meta: Meta) -> bool:
     video_files = [
         Path(path)
         for path in filelist
-        if isinstance(path, (str, Path)) and Path(path).suffix.lower() in {".avi", ".m2ts", ".m4v", ".mkv", ".mp4", ".ts"}
+        if isinstance(path, (str, Path)) and Path(path).suffix.lower() in {".avi", ".m2ts", ".m4v", ".mkv", ".mp4", ".mpeg", ".mpg", ".ts", ".vob"}
     ]
     if len(video_files) != 1:
         return False
@@ -81,6 +106,7 @@ def sync_single_episode_from_filename(meta: Meta) -> bool:
     if season_int == meta.season_int and episode_int == meta.episode_int:
         return False
 
+    _clear_episode_metadata(meta)
     meta.season_int = season_int
     meta.episode_int = episode_int
     meta.season = f"S{season_int:02d}"
@@ -94,6 +120,7 @@ class SeasonEpisodeManager:
 
     async def get_season_episode(self, video: str, meta: Meta) -> Meta:
         if meta.category == "TV":
+            previous_identity = (meta.season_int, meta.episode_int)
             filelist = cast(list[str], meta.filelist)
             meta.tv_pack = False
             is_daily = False
@@ -353,6 +380,8 @@ class SeasonEpisodeManager:
             #     meta.season = "COMPLETE"
             meta.season_int = season_int
             meta.episode_int = episode_int
+            if previous_identity != (season_int, episode_int):
+                _clear_episode_metadata(meta)
 
             # Manual episode title
             if "manual_episode_title" in meta and meta.manual_episode_title:
