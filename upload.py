@@ -53,6 +53,7 @@ from src.exceptions import ItemProcessingError
 from src.get_desc import gen_desc
 from src.get_name import NameManager
 from src.get_tracker_data import TrackerDataManager
+from src.getseasonep import sync_single_episode_from_filename
 from src.qbitwait import Wait
 from src.queuemanage import QueueManager
 from src.rehostimages import check_tracker_image_hosts
@@ -1139,6 +1140,14 @@ def _failed_tracker_names(tracker_status: Mapping[str, Any]) -> list[str]:
     ]
 
 
+def _sync_single_episode(meta: Meta) -> None:
+    if sync_single_episode_from_filename(meta):
+        logger.warning(
+            f"[yellow]Updated single-episode metadata to {meta.season}{meta.episode} "
+            "to match the video filename.[/yellow]"
+        )
+
+
 async def process_meta(meta: Meta, base_dir: str) -> bool:
     """Process the metadata for each queued path."""
     if not meta.imghost:
@@ -1209,6 +1218,8 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
     # validating their credentials.  The later status/upload stages retain the
     # same check as a defensive guard for tracker lists changed after this point.
     TrackerSetup(config=config).filter_unsupported_trackers(meta)
+
+    _sync_single_episode(meta)
 
     meta.name_notag, meta.name, meta.clean_name, meta.potential_missing = await name_manager.get_name(meta)
 
@@ -1288,6 +1299,7 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
         meta.edit = True
         meta = await prep.gather_prep(meta=meta, mode="cli")
         TrackerSetup(config=config).filter_unsupported_trackers(meta)
+        _sync_single_episode(meta)
         meta.name_notag, meta.name, meta.clean_name, meta.potential_missing = await name_manager.get_name(meta)
         async with aiofiles.open(f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/meta.json", "w", encoding="utf-8") as f:
             await f.write(json.dumps(meta.to_dict(), indent=4, cls=PathAwareEncoder))

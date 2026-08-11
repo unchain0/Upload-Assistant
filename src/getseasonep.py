@@ -42,6 +42,52 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return default
 
 
+def sync_single_episode_from_filename(meta: Meta) -> bool:
+    if (
+        meta.category != "TV"
+        or bool(meta.is_disc)
+        or meta.tv_pack
+        or meta.manual_date
+        or meta.manual_season is not None
+        or meta.manual_episode is not None
+    ):
+        return False
+
+    filelist = meta.filelist if isinstance(meta.filelist, list) else []
+    video_files = [
+        Path(path)
+        for path in filelist
+        if isinstance(path, (str, Path)) and Path(path).suffix.lower() in {".avi", ".m2ts", ".m4v", ".mkv", ".mp4", ".ts"}
+    ]
+    if len(video_files) != 1:
+        return False
+
+    filename = video_files[0].name
+    if len(filename) > 1024:
+        return False
+
+    try:
+        guessed_episodes = _guessit_data(filename).get("episode")
+    except Exception:
+        return False
+    if isinstance(guessed_episodes, list):
+        return False
+
+    matches = re.findall(r"(?i)(?<![^\W_])S([0-9]{1,3})E([0-9]{1,4})(?![^\W_])", filename)
+    if len(matches) != 1:
+        return False
+
+    season_int, episode_int = (int(value) for value in matches[0])
+    if season_int == meta.season_int and episode_int == meta.episode_int:
+        return False
+
+    meta.season_int = season_int
+    meta.episode_int = episode_int
+    meta.season = f"S{season_int:02d}"
+    meta.episode = f"E{episode_int:02d}"
+    return True
+
+
 class SeasonEpisodeManager:
     def __init__(self, config: dict[str, Any]) -> None:
         self.tmdb_manager = TmdbManager(config)
