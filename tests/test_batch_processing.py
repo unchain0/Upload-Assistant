@@ -251,6 +251,8 @@ def test_movie_tv_identity_validation_rejects_invalid_automatic_metadata() -> No
         {"tmdb": "unknown"},
         {"tmdb_id": "12x"},
         {"imdb": "N/A"},
+        {"imdb": True},
+        {"imdb_id": False},
         {"imdb_id": "12345"},
         {"imdb_info": {"imdbID": "tt0"}},
         {"tvdb_id": "none"},

@@ -1108,6 +1108,8 @@ def _movie_tv_identity_error(meta: Meta) -> str | None:
     has_numeric_id = any(re.fullmatch(r"[1-9]\d*", str(value or "").strip()) for value in numeric_ids)
 
     def is_valid_imdb_id(value: object) -> bool:
+        if isinstance(value, bool):
+            return False
         candidate = f"{value:07d}" if isinstance(value, int) else str(value or "").strip()
         match = re.fullmatch(r"(?:tt)?(\d{7,10})", candidate, re.IGNORECASE)
         return bool(match and int(match.group(1)) > 0)
