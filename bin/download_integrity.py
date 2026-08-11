@@ -130,7 +130,8 @@ def promote_files_with_rollback(
     remove_targets: list[Path] | None = None,
 ) -> None:
     """Promote staged files together, restoring every previous target on failure."""
-    shutil.rmtree(backup_dir, ignore_errors=True)
+    if backup_dir.exists():
+        raise RuntimeError(f"Recovery backup must be resolved before another update: {backup_dir}")
     backup_dir.mkdir(parents=True)
     backups: list[tuple[Path, Path]] = []
     promoted: list[Path] = []

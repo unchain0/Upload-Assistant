@@ -131,3 +131,8 @@ def test_incomplete_rollback_preserves_recovery_backup(tmp_path: Path, monkeypat
 
     assert not target.exists()  # noqa: S101
     assert (backup_dir / target.name).read_bytes() == b"working"  # noqa: S101
+
+    with pytest.raises(RuntimeError, match="Recovery backup must be resolved"):
+        promote_files_with_rollback([(source, target)], backup_dir)
+
+    assert (backup_dir / target.name).read_bytes() == b"working"  # noqa: S101
