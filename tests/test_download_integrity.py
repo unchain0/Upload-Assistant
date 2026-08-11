@@ -136,3 +136,14 @@ def test_incomplete_rollback_preserves_recovery_backup(tmp_path: Path, monkeypat
         promote_files_with_rollback([(source, target)], backup_dir)
 
     assert (backup_dir / target.name).read_bytes() == b"working"  # noqa: S101
+
+
+def test_duplicate_targets_do_not_create_recovery_backup(tmp_path: Path) -> None:
+    source = tmp_path / "staged"
+    target = tmp_path / "tool"
+    backup_dir = tmp_path / ".tool-backup"
+
+    with pytest.raises(ValueError, match="unique filenames"):
+        promote_files_with_rollback([(source, target)], backup_dir, remove_targets=[target])
+
+    assert not backup_dir.exists()  # noqa: S101

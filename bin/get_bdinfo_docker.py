@@ -96,7 +96,7 @@ def download_bdinfo_for_docker(base_dir: Path = Path("/Upload-Assistant"), versi
         if len(candidates) != 1:
             raise Exception(f"Failed to extract exactly one bdinfo binary for {binary_path}")
         staged_binary = candidates[0]
-        staged_binary.chmod(0o700)
+        staged_binary.chmod(0o755)
         staged_version = staging / version
         staged_version.write_text(f"autobrr/go-bdinfo version {version} installed successfully.", encoding="utf-8")
         stale_markers = [

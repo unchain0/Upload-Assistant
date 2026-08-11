@@ -130,17 +130,17 @@ def promote_files_with_rollback(
     remove_targets: list[Path] | None = None,
 ) -> None:
     """Promote staged files together, restoring every previous target on failure."""
+    targets = [target for _source, target in replacements]
+    targets.extend(remove_targets or [])
+    target_names = [target.name for target in targets]
+    if len(target_names) != len(set(target_names)):
+        raise ValueError("Transactional promotion targets must have unique filenames")
     if backup_dir.exists():
         raise RuntimeError(f"Recovery backup must be resolved before another update: {backup_dir}")
     backup_dir.mkdir(parents=True)
     backups: list[tuple[Path, Path]] = []
     promoted: list[Path] = []
     promotion_succeeded = False
-    targets = [target for _source, target in replacements]
-    targets.extend(remove_targets or [])
-    target_names = [target.name for target in targets]
-    if len(target_names) != len(set(target_names)):
-        raise ValueError("Transactional promotion targets must have unique filenames")
     try:
         for target in targets:
             if target.exists():

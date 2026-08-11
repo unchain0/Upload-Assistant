@@ -1,25 +1,31 @@
 # ruff: noqa: S101
 
-import os
+import stat
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from src.temp_paths import artwork_dir, ensure_temp_root, menu_screenshots_dir, screenshots_dir, spectrograms_dir
 
 
-def test_temp_root_accepts_writable_directory_owned_by_another_user(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_temp_root_rejects_writable_directory_owned_by_another_user(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     temp_root = tmp_path / "tmp"
     temp_root.mkdir()
-    original_chmod = Path.chmod
 
-    def reject_foreign_chmod(path: Path, mode: int) -> None:
-        if path == temp_root:
-            raise PermissionError("not owner")
-        original_chmod(path, mode)
+    monkeypatch.setattr(Path, "chmod", lambda _path, _mode: (_ for _ in ()).throw(PermissionError("not owner")))
+    monkeypatch.setattr(Path, "stat", lambda _path: SimpleNamespace(st_uid=12345, st_mode=stat.S_IFDIR | 0o1777))
 
-    monkeypatch.setattr(Path, "chmod", reject_foreign_chmod)
-    monkeypatch.setattr("src.temp_paths.os.access", lambda path, mode: path == temp_root and mode == os.W_OK | os.X_OK)
+    with pytest.raises(PermissionError, match="not owner"):
+        ensure_temp_root(tmp_path)
+
+
+def test_temp_root_accepts_root_owned_sticky_shared_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    temp_root = tmp_path / "tmp"
+    temp_root.mkdir()
+
+    monkeypatch.setattr(Path, "chmod", lambda _path, _mode: (_ for _ in ()).throw(PermissionError("not owner")))
+    monkeypatch.setattr(Path, "stat", lambda _path: SimpleNamespace(st_uid=0, st_mode=stat.S_IFDIR | 0o1777))
 
     assert ensure_temp_root(tmp_path) == temp_root
 

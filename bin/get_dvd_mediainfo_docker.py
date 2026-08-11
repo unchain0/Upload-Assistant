@@ -82,7 +82,7 @@ def extract_linux_binaries(cli_archive: Path, lib_archive: Path, output_dir: Pat
             if library_member not in archive.namelist():
                 raise RuntimeError("MediaInfo archive does not contain the required library")
             extract_zip_regular_member(archive, library_member, staging / "libmediainfo.so.0")
-        (staging / "mediainfo").chmod(0o700)
+        (staging / "mediainfo").chmod(0o755)
         (staging / "libmediainfo.so.0").chmod(0o644)
         staged_version = staging / f"version_{MEDIAINFO_VERSION}"
         staged_version.write_text(f"MediaInfo {MEDIAINFO_VERSION} - DVD Support")
