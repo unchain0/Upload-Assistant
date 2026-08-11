@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shlex
+import stat
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, cast
@@ -66,7 +67,7 @@ async def _read_json_file(path: str) -> Any:
     return json.loads(content)
 
 
-async def _write_json_file(path: str, data: Any, indent: int = 4) -> None:
+async def _write_json_file(path: str | Path, data: Any, indent: int = 4) -> None:
     content = json.dumps(data, indent=indent)
 
     def write_securely() -> None:
@@ -79,9 +80,10 @@ async def _write_json_file(path: str, data: Any, indent: int = 4) -> None:
             descriptor = os.open(destination, flags, 0o600)
         except FileExistsError:
             attributes = destination.lstat()
-            if not destination.is_file() or attributes.st_uid != os.geteuid():
+            if not stat.S_ISREG(attributes.st_mode) or attributes.st_uid != os.geteuid():
                 raise PermissionError(f"Refusing to replace untrusted queue log: {destination}") from None
             descriptor = os.open(destination, os.O_WRONLY | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0))
+        os.fchmod(descriptor, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8") as output:
             output.write(content)
 
