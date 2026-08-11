@@ -66,8 +66,6 @@ if [ "$(id -u)" = "0" ]; then
         chmod 711 /root 2>/dev/null || true
     fi
 
-    restore_data
-
     # Drop privileges if PUID was set
     if [ -n "$TARGET_UID" ] && [ "$TARGET_UID" != "0" ]; then
         # Ensure XDG_CONFIG_HOME is set so the app resolves the config
@@ -77,7 +75,19 @@ if [ "$(id -u)" = "0" ]; then
         # never be found.
         export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-/root/.config}"
 
-        exec gosu "$TARGET_UID:${TARGET_GID:-$TARGET_UID}" python /Upload-Assistant/upload.py "$@"
+        exec gosu "$TARGET_UID:${TARGET_GID:-$TARGET_UID}" sh -c '
+            restore_data() {
+                mkdir -p /Upload-Assistant/data
+                if [ -d /Upload-Assistant/defaults/data ]; then
+                    cp -an /Upload-Assistant/defaults/data/. /Upload-Assistant/data/
+                fi
+                if [ ! -f /Upload-Assistant/data/config.py ] && [ -f /Upload-Assistant/data/example_config.py ]; then
+                    cp /Upload-Assistant/data/example_config.py /Upload-Assistant/data/config.py
+                fi
+            }
+            restore_data
+            exec python /Upload-Assistant/upload.py "$@"
+        ' sh "$@"
     fi
 fi
 
