@@ -6,7 +6,7 @@ import zipfile
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from bin.download_integrity import download_verified_asset_sync, safe_extract_zip
+from bin.download_integrity import MAX_EXTRACTED_BYTES, download_verified_asset_sync
 from src.console import logger
 
 MEDIAINFO_VERSION = "23.04"
@@ -42,27 +42,31 @@ def download_file(url: str, output_path: Path) -> None:
 def extract_linux(cli_archive: Path, lib_archive: Path, output_dir: Path) -> None:
     # Extract MediaInfo CLI from zip file
     with zipfile.ZipFile(cli_archive, "r") as zip_ref:
-        safe_extract_zip(zip_ref, output_dir.parent)
         file_list = zip_ref.namelist()
         mediainfo_file = output_dir / "mediainfo"
 
         # Look for the mediainfo binary in the archive
         for member in file_list:
             if member.endswith("/mediainfo") or member == "mediainfo":
-                extracted_path = output_dir.parent / member
-                shutil.move(str(extracted_path), str(mediainfo_file))
+                info = zip_ref.getinfo(member)
+                if info.file_size > MAX_EXTRACTED_BYTES:
+                    raise RuntimeError(f"MediaInfo CLI exceeds the {MAX_EXTRACTED_BYTES}-byte limit")
+                with zip_ref.open(info) as source, mediainfo_file.open("wb") as output:
+                    shutil.copyfileobj(source, output, length=1024 * 1024)
                 break
 
     # Extract MediaInfo library
     with zipfile.ZipFile(lib_archive, "r") as zip_ref:
-        safe_extract_zip(zip_ref, output_dir.parent)
         file_list = zip_ref.namelist()
         lib_file = output_dir / "libmediainfo.so.0"
 
         # Look for the library file in the archive
         if "lib/libmediainfo.so.0.0.0" in file_list:
-            extracted_path = output_dir.parent / "lib/libmediainfo.so.0.0.0"
-            shutil.move(str(extracted_path), str(lib_file))
+            info = zip_ref.getinfo("lib/libmediainfo.so.0.0.0")
+            if info.file_size > MAX_EXTRACTED_BYTES:
+                raise RuntimeError(f"MediaInfo library exceeds the {MAX_EXTRACTED_BYTES}-byte limit")
+            with zip_ref.open(info) as source, lib_file.open("wb") as output:
+                shutil.copyfileobj(source, output, length=1024 * 1024)
 
     # Clean up empty lib directory if it exists
     lib_dir = output_dir.parent / "lib"

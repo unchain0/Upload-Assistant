@@ -12,7 +12,7 @@ import zipfile
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from bin.download_integrity import download_verified_asset_sync, safe_extract_zip
+from bin.download_integrity import MAX_EXTRACTED_BYTES, download_verified_asset_sync
 
 try:
     from src.console import console, logger
@@ -70,7 +70,6 @@ def extract_linux_binaries(cli_archive: Path, lib_archive: Path, output_dir: Pat
 
     # Extract MediaInfo CLI from zip file
     with zipfile.ZipFile(cli_archive, "r") as zip_ref:
-        safe_extract_zip(zip_ref, output_dir.parent)
         file_list = zip_ref.namelist()
         mediainfo_file = output_dir / "mediainfo"
 
@@ -89,8 +88,11 @@ def extract_linux_binaries(cli_archive: Path, lib_archive: Path, output_dir: Pat
                 continue
 
             if member.endswith("/mediainfo") or member == "mediainfo":
-                extracted_path = output_dir.parent / member
-                shutil.move(str(extracted_path), str(mediainfo_file))
+                info = zip_ref.getinfo(member)
+                if info.file_size > MAX_EXTRACTED_BYTES:
+                    raise RuntimeError(f"MediaInfo CLI exceeds the {MAX_EXTRACTED_BYTES}-byte limit")
+                with zip_ref.open(info) as source, mediainfo_file.open("wb") as output:
+                    shutil.copyfileobj(source, output, length=1024 * 1024)
                 logger.info(f"Extracted CLI binary: {mediainfo_file}", extra={"markup": False})
                 break
         else:
@@ -98,7 +100,6 @@ def extract_linux_binaries(cli_archive: Path, lib_archive: Path, output_dir: Pat
 
     # Extract MediaInfo library
     with zipfile.ZipFile(lib_archive, "r") as zip_ref:
-        safe_extract_zip(zip_ref, output_dir.parent)
         file_list = zip_ref.namelist()
         lib_file = output_dir / "libmediainfo.so.0"
 
@@ -119,9 +120,11 @@ def extract_linux_binaries(cli_archive: Path, lib_archive: Path, output_dir: Pat
                     logger.warning(f"Warning: Skipping dangerous path: {candidate}", extra={"markup": False})
                     continue
 
-                extracted_path = output_dir.parent / candidate
-                # Move to final location
-                shutil.move(str(extracted_path), str(lib_file))
+                info = zip_ref.getinfo(candidate)
+                if info.file_size > MAX_EXTRACTED_BYTES:
+                    raise RuntimeError(f"MediaInfo library exceeds the {MAX_EXTRACTED_BYTES}-byte limit")
+                with zip_ref.open(info) as source, lib_file.open("wb") as output:
+                    shutil.copyfileobj(source, output, length=1024 * 1024)
                 # Set appropriate permissions for library file (readable by all)
                 Path(lib_file).chmod(0o644)
                 logger.info(f"Extracted library: {lib_file}", extra={"markup": False})

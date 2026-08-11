@@ -25,15 +25,15 @@ ENV PYTHONDONTWRITEBYTECODE=1
 RUN python -m venv /venv
 ENV PATH="/venv/bin:$PATH"
 
-RUN pip install --no-cache-dir --upgrade pip==25.3 wheel==0.45.1 requests==2.32.5
+RUN pip install --no-cache-dir --upgrade pip==25.3 wheel==0.45.1 requests==2.32.5 httpx==0.28.1
 
 # ── Application setup ────────────────────────────────────────────────
 WORKDIR /Upload-Assistant
 
 # Copy DVD MediaInfo download script and run it
 # This downloads specialized MediaInfo binaries for DVD processing with language support
-COPY bin/get_dvd_mediainfo_docker.py bin/
-RUN python3 bin/get_dvd_mediainfo_docker.py
+COPY bin/__init__.py bin/get_dvd_mediainfo_docker.py bin/download_integrity.py bin/
+RUN python3 -m bin.get_dvd_mediainfo_docker
 
 # Copy the Python requirements file and install Python dependencies
 COPY requirements.txt .
