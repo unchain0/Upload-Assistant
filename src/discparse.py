@@ -57,12 +57,14 @@ class DiscParse:
             )
             await tree_killer.wait()
             if process.returncode is None:
-                process.kill()
+                with suppress(ProcessLookupError):
+                    process.kill()
         elif pid is not None:
             with suppress(ProcessLookupError):
                 os.killpg(pid, signal.SIGKILL)
         else:
-            process.kill()
+            with suppress(ProcessLookupError):
+                process.kill()
 
     async def _run_specialized_mediainfo(self, binary: str, *arguments: str) -> tuple[bytes, bytes, int | None]:
         process = await asyncio.create_subprocess_exec(
