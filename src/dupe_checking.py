@@ -209,6 +209,11 @@ class DupeChecker:
         def has_same_release_group(name: str) -> bool:
             return bool(release_group) and name.rstrip().casefold().endswith(f"-{release_group}")
 
+        async def has_same_repack_base(name: str) -> bool:
+            target = re.sub(r"\s+", " ", repack_pattern.sub("", str(meta.name or meta.uuid or ""))).strip()
+            candidate = re.sub(r"\s+", " ", repack_pattern.sub("", name)).strip()
+            return await DupeChecker.normalize_filename(target) == await DupeChecker.normalize_filename(candidate)
+
         async def log_exclusion(reason: str, item: str) -> None:
             if meta.debug:
                 logger.debug(f"[yellow]Excluding result due to {reason}: {item}")
@@ -875,15 +880,21 @@ class DupeChecker:
             if not preferred_upload_is_repack:
                 for entry in new_dupes:
                     entry_name = str(entry.get("name", ""))
-                    if repack_pattern.search(entry_name) and has_same_release_group(entry_name):
+                    if repack_pattern.search(entry_name) and has_same_release_group(entry_name) and await has_same_repack_base(entry_name):
                         meta[f"{tracker_name}_preferred_repack"] = entry
                         break
             else:
                 for entry in new_dupes:
                     entry_name = str(entry.get("name", ""))
-                    if not repack_pattern.search(entry_name) and has_same_release_group(entry_name):
-                        meta[f"{tracker_name}_repack_replaces"] = entry
+                    if repack_pattern.search(entry_name) and has_same_release_group(entry_name) and await has_same_repack_base(entry_name):
+                        meta[f"{tracker_name}_preferred_repack"] = entry
                         break
+                if not meta.get(f"{tracker_name}_preferred_repack"):
+                    for entry in new_dupes:
+                        entry_name = str(entry.get("name", ""))
+                        if not repack_pattern.search(entry_name) and has_same_release_group(entry_name) and await has_same_repack_base(entry_name):
+                            meta[f"{tracker_name}_repack_replaces"] = entry
+                            break
 
         if is_exact_match_only:
             if processed_dupes and not new_dupes:

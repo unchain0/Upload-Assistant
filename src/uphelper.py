@@ -331,7 +331,19 @@ class UploadHelper:
                     f"[yellow]After the upload succeeds, report the old release manually so staff can remove it:[/yellow] "
                     f"{_format_repack_result(cast(DupeEntry | str, replaced_release))}"
                 )
-                return False, meta
+                replaced_map = cast(Mapping[str, object] | Meta, replaced_release) if isinstance(replaced_release, (Mapping, Meta)) else {}
+                replaced_id = str(replaced_map.get("id", ""))
+                replaced_name = str(replaced_map.get("name", ""))
+                dupes_list = [
+                    entry
+                    for entry in dupes_list
+                    if not (
+                        isinstance(entry, (Mapping, Meta))
+                        and ((replaced_id and str(entry.get("id", "")) == replaced_id) or (not replaced_id and replaced_name and str(entry.get("name", "")) == replaced_name))
+                    )
+                ]
+                if not dupes_list:
+                    return False, meta
 
         try:
             tracker_rename = await tracker_class.get_name(meta)

@@ -79,6 +79,42 @@ def test_darkpeers_allows_repack_and_preserves_original_report_target() -> None:
     assert result["DARKPEERS_repack_replaces"]["id"] == 117400
 
 
+def test_darkpeers_blocks_repack_when_same_repack_already_exists() -> None:
+    meta = _tv_meta("Show S01E01 REPACK 1080p WEB-DL H.264-Kitsune")
+    original = _candidate("Show S01E01 1080p WEB-DL H.264-Kitsune", 117400)
+    existing_repack = _candidate("Show S01E01 REPACK 1080p WEB-DL H.264-Kitsune", 117485)
+    helper = UploadHelper(CONFIG)
+
+    dupes = asyncio.run(DupeChecker({"DEFAULT": {}}).filter_dupes([original, existing_repack], meta, "DARKPEERS"))
+    is_dupe, _ = asyncio.run(helper.dupe_check(cast(list[dict[str, Any] | str], dupes), meta, "DARKPEERS"))
+
+    assert is_dupe is True
+    assert meta["DARKPEERS_preferred_repack"]["id"] == 117485
+    assert meta.get("DARKPEERS_repack_replaces") is None
+
+
+def test_darkpeers_does_not_match_repack_with_different_release_characteristics() -> None:
+    meta = _tv_meta("Show S01E01 1080p AMZN WEB-DL H.264-Kitsune")
+    different_service = _candidate("Show S01E01 REPACK 1080p NF WEB-DL H.264-Kitsune", 117486)
+
+    asyncio.run(DupeChecker({"DEFAULT": {}}).filter_dupes([different_service], meta, "DARKPEERS"))
+
+    assert meta.get("DARKPEERS_preferred_repack") is None
+
+
+def test_darkpeers_repack_replacement_keeps_other_dupes_in_normal_check() -> None:
+    meta = _tv_meta("Show S01E01 REPACK 1080p WEB-DL H.264-Kitsune")
+    original = _candidate("Show S01E01 1080p WEB-DL H.264-Kitsune", 117400)
+    other_dupe = _candidate("Show S01E01 1080p WEB-DL H.264-Other", 117401)
+    helper = UploadHelper(CONFIG)
+
+    dupes = asyncio.run(DupeChecker({"DEFAULT": {}}).filter_dupes([original, other_dupe], meta, "DARKPEERS"))
+    is_dupe, _ = asyncio.run(helper.dupe_check(cast(list[dict[str, Any] | str], dupes), meta, "DARKPEERS"))
+
+    assert is_dupe is True
+    assert meta["DARKPEERS_repack_replaces"]["id"] == 117400
+
+
 def test_darkpeers_repack_policy_requires_exact_release_group() -> None:
     normal = _tv_meta("Show S01E01 1080p WEB-DL H.264-Kitsune")
     other_group_repack = _candidate("Show S01E01 REPACK 1080p WEB-DL H.264-NotKitsune", 117486)
