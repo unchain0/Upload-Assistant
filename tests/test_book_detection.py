@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from src.book_extractors import extract_epub_metadata, extract_isbn_from_pdf, extract_pdf_page_count, validate_isbn_checksum
+from src.book_extractors import extract_epub_metadata, extract_isbn_from_pdf, extract_pdf_page_count, get_epubmeta_output, validate_isbn_checksum
 from src.book_prep import _epub_content_identifiers, book_identity_conflict, book_identity_from_path, missing_book_fields, resolve_book_filelist
 from src.exceptions import ItemProcessingError
 from src.meta import Meta
@@ -23,9 +23,15 @@ from src.prep_helpers import detect_disc_and_category
 def test_epub_identifier_scan_rejects_extreme_compression_ratio(tmp_path: Path) -> None:
     epub = tmp_path / "hostile.epub"
     with zipfile.ZipFile(epub, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr(
+            "META-INF/container.xml",
+            '<?xml version="1.0"?><container><rootfiles><rootfile full-path="OEBPS/content.opf"/></rootfiles></container>',
+        )
         archive.writestr("OEBPS/content.opf", "0" * (1024 * 1024))
 
     assert _epub_content_identifiers(str(epub)) == (set(), set())
+    assert extract_epub_metadata(str(epub)) == {}
+    assert get_epubmeta_output(str(epub)) is None
 
 
 def test_validate_isbn_checksum_rejects_mam_numeric_id() -> None:

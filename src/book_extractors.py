@@ -14,6 +14,19 @@ from typing import Any
 
 from src.console import logger
 
+_MAX_EPUB_MEMBER_SIZE = 2 * 1024 * 1024
+_MAX_EPUB_COMPRESSION_RATIO = 100
+
+
+def _safe_zip_member_bytes(archive: zipfile.ZipFile, name: str) -> bytes | None:
+    try:
+        member = archive.getinfo(name)
+    except KeyError:
+        return None
+    if member.file_size > _MAX_EPUB_MEMBER_SIZE or member.file_size > max(member.compress_size, 1) * _MAX_EPUB_COMPRESSION_RATIO:
+        return None
+    return archive.read(member)
+
 
 def normalize_series_index(value: str) -> str:
     """Drop a trailing .0 from a series index ("5.0" -> "5"), keeping "5.5"/"0.5"."""
@@ -32,10 +45,14 @@ def extract_epub_metadata(epub_path: str) -> dict[str, Any]:
 
     try:
         with zipfile.ZipFile(epub_path, "r") as z:
+            if len(z.infolist()) > 4096:
+                return metadata
             # 1. Read META-INF/container.xml to find the .opf file path
             rootfile_path: str | None = None
             try:
-                container_data = z.read("META-INF/container.xml")
+                container_data = _safe_zip_member_bytes(z, "META-INF/container.xml")
+                if container_data is None:
+                    raise ValueError("unsafe or missing EPUB container metadata")
                 root = ET.fromstring(container_data)
                 for elem in root.iter():
                     if elem.tag.endswith("rootfile"):
@@ -57,7 +74,9 @@ def extract_epub_metadata(epub_path: str) -> dict[str, Any]:
                 return metadata
 
             # 2. Read and parse the .opf file
-            opf_data = z.read(rootfile_path)
+            opf_data = _safe_zip_member_bytes(z, rootfile_path)
+            if opf_data is None:
+                return metadata
             root = ET.fromstring(opf_data)
 
             title = ""
@@ -496,9 +515,13 @@ def get_epubmeta_output(epub_path: str) -> str | None:
 
     try:
         with zipfile.ZipFile(epub_path, "r") as z:
+            if len(z.infolist()) > 4096:
+                return None
             rootfile_path = None
             try:
-                container_data = z.read("META-INF/container.xml")
+                container_data = _safe_zip_member_bytes(z, "META-INF/container.xml")
+                if container_data is None:
+                    raise ValueError("unsafe or missing EPUB container metadata")
                 root = ET.fromstring(container_data)
                 for elem in root.iter():
                     if elem.tag.split("}")[-1] == "rootfile":
@@ -517,7 +540,9 @@ def get_epubmeta_output(epub_path: str) -> str | None:
             if not rootfile_path or rootfile_path not in z.namelist():
                 return None
 
-            opf_data = z.read(rootfile_path)
+            opf_data = _safe_zip_member_bytes(z, rootfile_path)
+            if opf_data is None:
+                return None
             root = ET.fromstring(opf_data)
 
             # Get package tag attributes
