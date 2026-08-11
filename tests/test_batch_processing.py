@@ -276,6 +276,7 @@ def test_movie_tv_identity_validation_rejects_provider_placeholders_and_malforme
         {"imdb_id": "1234567"},
         {"imdb_info": {"imdbID": "tt0133093"}},
         {"imdb_info": {"imdbID": "tt1234567"}},
+        {"imdb_info": {"imdbID": "https://www.imdb.com/title/tt0133093/"}},
         {"tvdb_id": 123},
         {"tvmaze_id": "123"},
         {"mal_id": 123},

@@ -1111,7 +1111,11 @@ def _movie_tv_identity_error(meta: Meta) -> str | None:
         if isinstance(value, bool):
             return False
         candidate = f"{value:07d}" if isinstance(value, int) else str(value or "").strip()
-        match = re.fullmatch(r"(?:tt)?(\d{7,10})", candidate, re.IGNORECASE)
+        match = re.fullmatch(
+            r"(?:https?://(?:www\.)?imdb\.com/title/)?(?:tt)?(\d{7,10})(?:/)?(?:[?#].*)?",
+            candidate,
+            re.IGNORECASE,
+        )
         return bool(match and int(match.group(1)) > 0)
 
     has_imdb_id = any(is_valid_imdb_id(value) for value in imdb_ids)
