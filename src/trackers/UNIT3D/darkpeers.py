@@ -403,12 +403,12 @@ class DarkPeers(UNIT3D):
             source = str(meta.manual_source or meta.source or "").strip().upper()
             if source not in {"RETAIL", "SCAN"}:
                 logger.info(
-                    f"{self.tracker}: [bold red]eBook provenance must be explicit. Re-run with --source retail for an untouched digital retail file, "
-                    "or --source scan (and --ocr when applicable). Generic WEB metadata is not proof of a retail release. Skipping upload.[/bold red]"
+                    f"{self.tracker}: [bold red]eBook provenance must be explicit. Re-run with --source RETAIL for an untouched digital retail file, "
+                    "or --source SCAN (and --ocr when applicable). Generic WEB metadata is not proof of a retail release. Skipping upload.[/bold red]"
                 )
                 return False
             if meta.ocr and source != "SCAN":
-                logger.info(f"{self.tracker}: [bold red]OCR cannot be combined with Retail. Use --source scan --ocr. Skipping upload.[/bold red]")
+                logger.info(f"{self.tracker}: [bold red]OCR cannot be combined with Retail. Use --source SCAN --ocr. Skipping upload.[/bold red]")
                 return False
         return self._validate_book_file_layout(meta, format_name)
 

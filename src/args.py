@@ -264,8 +264,8 @@ class Args:
             "--source",
             nargs=1,
             required=False,
-            help="Source [Blu-ray, BluRay, DVD, DVD5, DVD9, HDDVD, WEB, HDTV, UHDTV, LaserDisc, DCP]",
-            choices=["Blu-ray", "BluRay", "DVD", "DVD5", "DVD9", "HDDVD", "WEB", "HDTV", "UHDTV", "LaserDisc", "DCP"],
+            help="Source [Blu-ray, BluRay, DVD, DVD5, DVD9, HDDVD, WEB, HDTV, UHDTV, LaserDisc, DCP, RETAIL, SCAN]",
+            choices=["Blu-ray", "BluRay", "DVD", "DVD5", "DVD9", "HDDVD", "WEB", "HDTV", "UHDTV", "LaserDisc", "DCP", "RETAIL", "SCAN"],
             dest="manual_source",
         )
         parser.add_argument(
