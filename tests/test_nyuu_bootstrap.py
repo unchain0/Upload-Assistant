@@ -54,3 +54,46 @@ def test_windows_nyuu_extracts_only_expected_executable(tmp_path: Path, monkeypa
 
     assert Path(binary).read_bytes() == b"executable"  # noqa: S101
     assert Path(binary).name == "nyuu.exe"  # noqa: S101
+
+
+def test_windows_nyuu_cancellation_kills_and_reaps_7z(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    async def write_archive(_client, _url, destination, _asset_name):  # type: ignore[no-untyped-def]
+        destination.write_bytes(b"verified archive")
+
+    class Process:
+        returncode = None
+
+        def __init__(self) -> None:
+            self.calls = 0
+            self.killed = False
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            self.calls += 1
+            if self.calls == 1:
+                await asyncio.sleep(60)
+            return b"", b""
+
+        def kill(self) -> None:
+            self.killed = True
+
+    process = Process()
+
+    async def create_process(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        return process
+
+    async def exercise() -> None:
+        task = asyncio.create_task(NyuuBinaryManager.ensure_nyuu_binary(tmp_path, path_7z="7zr.exe"))
+        await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    monkeypatch.setattr(get_nyuu, "download_verified_asset", write_archive)
+    monkeypatch.setattr(get_nyuu.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(get_nyuu.platform, "machine", lambda: "AMD64")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_process)
+
+    asyncio.run(exercise())
+
+    assert process.killed is True  # noqa: S101
+    assert process.calls == 2  # noqa: S101

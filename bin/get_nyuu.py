@@ -4,6 +4,7 @@ import os
 import platform
 import shutil
 import stat
+import subprocess
 import tarfile
 from contextlib import suppress
 from pathlib import Path
@@ -111,6 +112,7 @@ class NyuuBinaryManager:
                         *command,
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE,
+                        creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
                     )
                     try:
                         _stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=120)
@@ -119,6 +121,11 @@ class NyuuBinaryManager:
                             process.kill()
                         await process.communicate()
                         raise RuntimeError("7z extraction timed out after 120 seconds") from None
+                    except BaseException:
+                        with suppress(ProcessLookupError):
+                            process.kill()
+                        await process.communicate()
+                        raise
                     if process.returncode != 0:
                         raise RuntimeError(f"7z extraction failed: {stderr.decode(errors='replace')}")
                     extracted = [candidate for candidate in staging_dir.rglob("nyuu.exe") if candidate.is_file()]
