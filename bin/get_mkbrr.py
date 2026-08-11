@@ -270,8 +270,7 @@ class MkbrrBinaryManager:
 
         try:
             temp_archive = bin_dir / f"temp_{file_pattern}"
-            with httpx.Client(timeout=60.0, follow_redirects=True) as client:
-                download_verified_asset_sync(client, download_url, temp_archive, f"mkbrr_{version[1:]}_{file_pattern}")
+            download_verified_asset_sync(download_url, temp_archive, f"mkbrr_{version[1:]}_{file_pattern}")
 
             logger.info(f"Downloaded {file_pattern}", extra={"markup": False})
 

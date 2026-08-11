@@ -2,8 +2,6 @@
 
 import asyncio
 import hashlib
-import time
-from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -88,44 +86,21 @@ async def download_bounded_asset(
 ) -> None:
     """Stream a response to disk with declared, running-size and total-time limits."""
     destination.unlink(missing_ok=True)
-    try:
-        async with asyncio.timeout(timeout_seconds):
-            async with client.stream("GET", url, timeout=min(timeout_seconds, 60.0)) as response:
-                response.raise_for_status()
-                _validate_declared_size(response, max_bytes)
-                received = 0
-                with destination.open("wb") as output:
-                    async for chunk in response.aiter_bytes(chunk_size=8192):
-                        received += len(chunk)
-                        if received > max_bytes:
-                            raise RuntimeError(f"Download exceeds the {max_bytes}-byte limit")
-                        output.write(chunk)
-    except BaseException:
-        destination.unlink(missing_ok=True)
-        raise
 
+    async def transfer() -> None:
+        async with client.stream("GET", url, timeout=min(timeout_seconds, 60.0)) as response:
+            response.raise_for_status()
+            _validate_declared_size(response, max_bytes)
+            received = 0
+            with destination.open("wb") as output:
+                async for chunk in response.aiter_bytes(chunk_size=8192):
+                    received += len(chunk)
+                    if received > max_bytes:
+                        raise RuntimeError(f"Download exceeds the {max_bytes}-byte limit")
+                    output.write(chunk)
 
-def write_bounded_response(
-    response: Any,
-    destination: Path,
-    chunks: Iterable[bytes],
-    *,
-    max_bytes: int = MAX_ASSET_BYTES,
-    deadline: float | None = None,
-) -> None:
-    """Write a synchronous streaming response with the same resource limits."""
-    destination.unlink(missing_ok=True)
     try:
-        _validate_declared_size(response, max_bytes)
-        received = 0
-        with destination.open("wb") as output:
-            for chunk in chunks:
-                if deadline is not None and time.monotonic() > deadline:
-                    raise TimeoutError("Download exceeded its total transfer deadline")
-                received += len(chunk)
-                if received > max_bytes:
-                    raise RuntimeError(f"Download exceeds the {max_bytes}-byte limit")
-                output.write(chunk)
+        await asyncio.wait_for(transfer(), timeout=timeout_seconds)
     except BaseException:
         destination.unlink(missing_ok=True)
         raise
@@ -141,13 +116,27 @@ async def download_verified_asset(client: Any, url: str, destination: Path, asse
         raise
 
 
-def download_verified_asset_sync(client: Any, url: str, destination: Path, asset: str) -> None:
-    """Synchronous equivalent used by Docker/bootstrap entry points."""
-    deadline = time.monotonic() + TRANSFER_TIMEOUT_SECONDS
+def download_bounded_asset_sync(
+    url: str,
+    destination: Path,
+    *,
+    max_bytes: int = MAX_ASSET_BYTES,
+    timeout_seconds: float = TRANSFER_TIMEOUT_SECONDS,
+) -> None:
+    """Run the bounded async transfer for synchronous bootstrap entry points."""
+    import httpx
+
+    async def download() -> None:
+        async with httpx.AsyncClient(timeout=min(timeout_seconds, 60.0), follow_redirects=True) as client:
+            await download_bounded_asset(client, url, destination, max_bytes=max_bytes, timeout_seconds=timeout_seconds)
+
+    asyncio.run(download())
+
+
+def download_verified_asset_sync(url: str, destination: Path, asset: str) -> None:
+    """Synchronous bounded download with pinned checksum verification."""
     try:
-        with client.stream("GET", url, timeout=60.0) as response:
-            response.raise_for_status()
-            write_bounded_response(response, destination, response.iter_bytes(chunk_size=8192), deadline=deadline)
+        download_bounded_asset_sync(url, destination)
         verify_downloaded_asset(destination, asset)
     except BaseException:
         destination.unlink(missing_ok=True)

@@ -1,9 +1,10 @@
 import asyncio
 from pathlib import Path
 
+import httpx
 import pytest
 
-from bin.download_integrity import download_bounded_asset
+from bin.download_integrity import download_bounded_asset, download_bounded_asset_sync
 
 
 class _Response:
@@ -35,6 +36,12 @@ class _Client:
     def stream(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
         return self.response
 
+    async def __aenter__(self):  # type: ignore[no-untyped-def]
+        return self
+
+    async def __aexit__(self, *_args):  # type: ignore[no-untyped-def]
+        return None
+
 
 def test_bounded_download_rejects_oversized_content_length(tmp_path: Path) -> None:
     destination = tmp_path / "asset"
@@ -62,5 +69,16 @@ def test_bounded_download_enforces_total_timeout(tmp_path: Path) -> None:
 
     with pytest.raises(TimeoutError):
         asyncio.run(download_bounded_asset(_Client(response), "https://example.invalid/asset", destination, timeout_seconds=0.01))
+
+    assert not destination.exists()  # noqa: S101
+
+
+def test_sync_bootstrap_uses_interruptible_total_timeout(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    destination = tmp_path / "asset"
+    response = _Response([b"slow"], delay=0.05)
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **_kwargs: _Client(response))
+
+    with pytest.raises(TimeoutError):
+        download_bounded_asset_sync("https://example.invalid/asset", destination, timeout_seconds=0.01)
 
     assert not destination.exists()  # noqa: S101
