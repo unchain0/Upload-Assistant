@@ -820,6 +820,8 @@ class DarkPeers(UNIT3D):
         # Publisher is a description field, never a substitute for the author.
         author = str(meta.author or meta.book_author or "").strip()
         title = str(meta.title or "").strip()
+        if author:
+            title = re.sub(rf"^{re.escape(author)}\s*[-:]+\s*", "", title, flags=re.IGNORECASE).strip()
         year = str(meta.year or "").strip()
         edition = str(meta.manual_edition or meta.edition or "").strip()
         format_name = DarkPeers._book_format(meta)

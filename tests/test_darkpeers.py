@@ -120,6 +120,20 @@ def test_darkpeers_ebook_name_includes_book_elements():
     assert _name(meta) == "Liu Cixin - The Three-Body Problem 2008 Revised Edition EPUB 9780765377067 Retail"
 
 
+def test_darkpeers_ebook_name_does_not_repeat_author_from_extracted_title():
+    meta = Meta(
+        category="BOOK",
+        author="Eric Evans",
+        title="Eric Evans -\u00a0Domain-Driven Design Reference",
+        year=2014,
+        type="PDF",
+        isbn="9781457501197",
+        source="OTHER",
+    )
+
+    assert _name(meta) == "Eric Evans - Domain-Driven Design Reference 2014 PDF 9781457501197"
+
+
 def test_darkpeers_audiobook_name_includes_format_bitrate_isbn_and_tag():
     meta = Meta(
         category="BOOK",
