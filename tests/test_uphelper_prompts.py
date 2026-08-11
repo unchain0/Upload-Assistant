@@ -219,7 +219,7 @@ async def test_unit3d_episode_search_includes_all_season_pack_qualities(monkeypa
 
     assert await tracker.search_existing(meta) == []
     assert ("tmdbId", "325785") in captured_params
-    assert ("name", " S01") in captured_params
+    assert ("name", "S01") in captured_params
     assert not any(key in {"resolutions[]", "types[]"} for key, _value in captured_params)
 
     captured_params.clear()
