@@ -406,6 +406,24 @@ def test_darkpeers_rejects_generic_web_as_ebook_provenance():
     assert _additional_checks(meta) is False
 
 
+def test_darkpeers_accepts_explicit_non_retail_born_digital_ebook():
+    meta = Meta(
+        category="BOOK",
+        unattended=True,
+        author="Eric Evans",
+        publisher="Domain Language, Inc.",
+        title="Domain-Driven Design Reference",
+        year=2015,
+        type="PDF",
+        isbn="978-1-4575-0119-7",
+        source="OTHER",
+        page_count=59,
+    )
+
+    assert _additional_checks(meta) is True
+    assert _name(meta) == "Eric Evans - Domain-Driven Design Reference 2015 PDF 9781457501197"
+
+
 def test_darkpeers_rejects_retail_ocr_contradiction():
     meta = Meta(
         category="BOOK",

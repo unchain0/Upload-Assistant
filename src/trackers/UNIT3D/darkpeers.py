@@ -399,10 +399,11 @@ class DarkPeers(UNIT3D):
             return await self._missing_required("PDF page count", meta)
         if not meta.audiobook:
             source = str(meta.manual_source or meta.source or "").strip().upper()
-            if source not in {"RETAIL", "SCAN"}:
+            if source not in {"RETAIL", "SCAN", "OTHER"}:
                 logger.info(
                     f"{self.tracker}: [bold red]eBook provenance must be explicit. Re-run with --source RETAIL for an untouched digital retail file, "
-                    "or --source SCAN (and --ocr when applicable). Generic WEB metadata is not proof of a retail release. Skipping upload.[/bold red]"
+                    "--source SCAN (and --ocr when applicable), or --source OTHER for a verified non-retail born-digital file. "
+                    "Generic WEB metadata is not proof of a retail release. Skipping upload.[/bold red]"
                 )
                 return False
             if meta.ocr and source != "SCAN":
