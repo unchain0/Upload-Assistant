@@ -310,7 +310,7 @@ class Meta:
     original_tvdb: int = 0
     original_tvmaze: int = 0
     orpheus: str | int | None = None
-    overview_meta: str = ""
+    overview_meta: str | None = ""
     overview: str = ""
     part: str = ""
     page_count: int | None = None

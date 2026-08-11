@@ -1052,6 +1052,10 @@ async def search_metadata(
         meta.original_language = original_language
         meta.no_ids = filename_search
 
+    daily_filename = re.search(r"\d{4}[-.]\d{2}[-.]\d{2}", videopath)
+    if meta.category == "TV" and int(meta.tmdb_id or 0) != 0 and (meta.manual_date or daily_filename):
+        meta = await prep_instance.season_episode_manager.get_season_episode(videopath, meta)
+
     no_original_language = False
     if meta.original_language is None:
         no_original_language = True

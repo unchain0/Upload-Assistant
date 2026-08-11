@@ -53,6 +53,7 @@ from src.exceptions import ItemProcessingError
 from src.get_desc import gen_desc
 from src.get_name import NameManager
 from src.get_tracker_data import TrackerDataManager
+from src.getseasonep import sync_single_episode_from_filename
 from src.qbitwait import Wait
 from src.queuemanage import QueueManager
 from src.rehostimages import check_tracker_image_hosts
@@ -1139,6 +1140,14 @@ def _failed_tracker_names(tracker_status: Mapping[str, Any]) -> list[str]:
     ]
 
 
+def _sync_single_episode(meta: Meta) -> None:
+    if sync_single_episode_from_filename(meta):
+        logger.warning(
+            f"[yellow]Updated single-episode metadata to {meta.season}{meta.episode} "
+            "to match the video filename.[/yellow]"
+        )
+
+
 async def process_meta(meta: Meta, base_dir: str) -> bool:
     """Process the metadata for each queued path."""
     if not meta.imghost:
@@ -1158,6 +1167,7 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
             meta.unattended = True
             logger.info("[yellow]Running in Auto Mode")
 
+    _sync_single_episode(meta)
     prep = Prep(screens=meta.screens, img_host=meta.imghost, config=config, publish_preview=_publish_webui_preview_target)
     try:
         meta = await prep.gather_prep(meta=meta, mode="cli")
@@ -1286,6 +1296,7 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
             meta.trackers = [t.strip().upper() for t in meta.trackers if t]
         logger.debug(f"Trackers list during edit process: {meta.trackers}")
         meta.edit = True
+        _sync_single_episode(meta)
         meta = await prep.gather_prep(meta=meta, mode="cli")
         TrackerSetup(config=config).filter_unsupported_trackers(meta)
         meta.name_notag, meta.name, meta.clean_name, meta.potential_missing = await name_manager.get_name(meta)

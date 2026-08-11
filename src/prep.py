@@ -28,7 +28,7 @@ try:
     from src.get_disc import DiscInfoManager
     from src.get_name import NameManager
     from src.get_tracker_data import TrackerDataManager
-    from src.getseasonep import SeasonEpisodeManager
+    from src.getseasonep import SeasonEpisodeManager, sync_single_episode_from_filename
     from src.is_scene import SceneManager
     from src.languages import languages_manager
     from src.metadata_searching import MetadataSearchingManager
@@ -163,6 +163,7 @@ class Prep:
 
         # 3. File information and basic media processing
         filename, untouched_filename, videopath, search_term, search_file_folder, mi, video = await prep_helpers.process_media_files(self, meta, videoloc, bdinfo)
+        sync_single_episode_from_filename(meta)
 
         # HDR is normally finalized after the metadata searches, but ffmpeg
         # needs it while the early capture is running (for optional tonemapping).
