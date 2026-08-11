@@ -30,6 +30,8 @@ PlaylistInfo = dict[str, Any]
 
 
 class DiscParse:
+    PROCESS_CLEANUP_TIMEOUT = 5
+
     def __init__(self, config: dict[str, Any]) -> None:
         self.config = config
         self.mediainfo_config: dict[str, Any] | None = None
@@ -55,7 +57,11 @@ class DiscParse:
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
             )
-            await tree_killer.wait()
+            try:
+                await asyncio.wait_for(tree_killer.wait(), timeout=DiscParse.PROCESS_CLEANUP_TIMEOUT)
+            except TimeoutError:
+                with suppress(ProcessLookupError):
+                    tree_killer.kill()
             if process.returncode is None:
                 with suppress(ProcessLookupError):
                     process.kill()
@@ -78,11 +84,13 @@ class DiscParse:
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=30)
         except TimeoutError:
             await self._terminate_process_tree(process)
-            await process.communicate()
+            with suppress(TimeoutError):
+                await asyncio.wait_for(process.communicate(), timeout=self.PROCESS_CLEANUP_TIMEOUT)
             raise RuntimeError("Specialized MediaInfo timed out after 30 seconds") from None
         except BaseException:
             await self._terminate_process_tree(process)
-            await process.communicate()
+            with suppress(TimeoutError):
+                await asyncio.wait_for(process.communicate(), timeout=self.PROCESS_CLEANUP_TIMEOUT)
             raise
         return stdout, stderr, process.returncode
 
@@ -203,7 +211,8 @@ class DiscParse:
         finally:
             if process.returncode is None:
                 await self._terminate_process_tree(process)
-                await process.wait()
+                with suppress(TimeoutError):
+                    await asyncio.wait_for(process.wait(), timeout=self.PROCESS_CLEANUP_TIMEOUT)
 
     """
     Get and parse bdinfo

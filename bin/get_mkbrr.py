@@ -18,6 +18,7 @@ from bin.download_integrity import (
     safe_extract_tar,
     safe_extract_zip,
 )
+from bin.runtime_tool_paths import tool_install_dir, trusted_executable
 
 try:
     from src.console import console, logger
@@ -44,7 +45,7 @@ class MkbrrBinaryManager:
         candidates = (bin_root / binary_name, bin_root / "mkbrr" / binary_name)
 
         for binary_path in candidates:
-            if binary_path.is_file() and (binary_name.endswith(".exe") or os.access(binary_path, os.X_OK)):
+            if trusted_executable(binary_path):
                 logger.debug(f"[blue]Using existing mkbrr binary: {binary_path}[/blue]")
                 return str(binary_path)
 
@@ -96,8 +97,7 @@ class MkbrrBinaryManager:
         logger.debug(f"[blue]Using file pattern: {file_pattern}[/blue]")
         logger.debug(f"[blue]Target folder: {folder_path}[/blue]")
 
-        bin_dir = Path(base_dir) / "bin" / "mkbrr" / folder_path
-        bin_dir.mkdir(parents=True, exist_ok=True)
+        bin_dir = tool_install_dir(base_dir, "mkbrr", folder_path)
         logger.debug(f"[blue]Binary directory: {bin_dir}[/blue]")
 
         binary_name = "mkbrr.exe" if system == "windows" else "mkbrr"

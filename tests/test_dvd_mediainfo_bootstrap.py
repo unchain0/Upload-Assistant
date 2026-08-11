@@ -107,9 +107,11 @@ def test_specialized_mediainfo_timeout_kills_and_reaps_process(monkeypatch) -> N
     async def create_process(*_args, **_kwargs):  # type: ignore[no-untyped-def]
         return process
 
+    timeouts: list[int] = []
+
     async def immediate_timeout(awaitable, **kwargs):  # type: ignore[no-untyped-def]
         awaitable.close()
-        assert kwargs["timeout"] == 30  # noqa: S101
+        timeouts.append(kwargs["timeout"])
         raise TimeoutError
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", create_process)
@@ -119,7 +121,8 @@ def test_specialized_mediainfo_timeout_kills_and_reaps_process(monkeypatch) -> N
         asyncio.run(DiscParse({})._run_specialized_mediainfo("mediainfo", "input.ifo"))
 
     assert process.killed is True  # noqa: S101
-    assert process.calls == 1  # noqa: S101
+    assert process.calls == 0  # noqa: S101
+    assert timeouts == [30, 5]  # noqa: S101
 
 
 def test_specialized_mediainfo_cancellation_kills_and_reaps_process(monkeypatch) -> None:  # type: ignore[no-untyped-def]

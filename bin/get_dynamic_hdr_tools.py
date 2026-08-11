@@ -20,6 +20,7 @@ from bin.download_integrity import (
     safe_extract_zip,
     sha256_file,
 )
+from bin.runtime_tool_paths import tool_install_dir
 from src.console import logger
 
 TOOLS = {
@@ -87,13 +88,12 @@ async def get_tool(base_dir: str, tool: str) -> str:
     asset, extension = _asset_name(tool)
     system = platform.system().lower()
     machine = platform.machine().lower()
-    target_dir = Path(base_dir) / "bin" / command / system / machine
+    target_dir = tool_install_dir(base_dir, command, f"{system}/{machine}")
     binary = target_dir / f"{command}{extension}"
     version_file = target_dir / TOOLS[tool]["version"]
     if binary.is_file() and version_file.is_file():
         return str(binary)
 
-    target_dir.mkdir(parents=True, exist_ok=True)
     staging = target_dir / ".download"
     shutil.rmtree(staging, ignore_errors=True)
     staging.mkdir()

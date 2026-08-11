@@ -10,7 +10,10 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
+import signal
 import subprocess
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -63,19 +66,47 @@ def _fingerprint(sources: list[Path], formats: list[str]) -> str:
     return digest.hexdigest()
 
 
-def _run(command: list[str], timeout_seconds: int = 3600) -> None:
-    try:
-        result = subprocess.run(  # noqa: S603
-            command,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-            timeout=timeout_seconds,
+async def _terminate_process(process: asyncio.subprocess.Process) -> None:
+    if process.returncode is not None:
+        return
+    pid = getattr(process, "pid", None)
+    if os.name == "nt" and pid is not None:
+        killer = await asyncio.create_subprocess_exec(
+            "taskkill", "/F", "/T", "/PID", str(pid), stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
         )
-    except subprocess.TimeoutExpired as error:
-        raise RuntimeError(f"{' '.join(command[:2])} timed out after {timeout_seconds} seconds") from error
-    if result.returncode:
-        raise RuntimeError(f"{' '.join(command[:2])} failed with exit code {result.returncode}")
+        try:
+            await asyncio.wait_for(killer.wait(), timeout=5)
+        except TimeoutError:
+            with suppress(ProcessLookupError):
+                killer.kill()
+    elif pid is not None:
+        with suppress(ProcessLookupError):
+            os.killpg(pid, signal.SIGKILL)
+    else:
+        with suppress(ProcessLookupError):
+            process.kill()
+    with suppress(TimeoutError):
+        await asyncio.wait_for(process.wait(), timeout=5)
+
+
+async def _run(command: list[str], timeout_seconds: int = 3600) -> None:
+    process = await asyncio.create_subprocess_exec(
+        *command,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0,
+        start_new_session=os.name != "nt",
+    )
+    try:
+        returncode = await asyncio.wait_for(process.wait(), timeout=timeout_seconds)
+    except TimeoutError:
+        await _terminate_process(process)
+        raise RuntimeError(f"{' '.join(command[:2])} timed out after {timeout_seconds} seconds") from None
+    except BaseException:
+        await _terminate_process(process)
+        raise
+    if returncode:
+        raise RuntimeError(f"{' '.join(command[:2])} failed with exit code {returncode}")
 
 
 async def _generate_plot(binary: str, kind: str, source: Path, output_dir: Path, timeout_seconds: int = 3600) -> Path:
@@ -90,19 +121,18 @@ async def _generate_plot(binary: str, kind: str, source: Path, output_dir: Path,
         # The third-party tools accept MKV or elementary HEVC streams. Convert
         # transport streams and MP4 containers with a stream copy, never a re-encode.
         input_source = work_dir / f"{artifact_name}.hevc"
-        await asyncio.to_thread(
-            _run,
+        await _run(
             ["ffmpeg", "-y", "-i", str(source), "-map", "0:v:0", "-c:v", "copy", "-bsf:v", "hevc_mp4toannexb", "-f", "hevc", str(input_source)],
             timeout_seconds,
         )
     if kind == "dovi":
         rpu = work_dir / f"{artifact_name}.rpu.bin"
-        await asyncio.to_thread(_run, [binary, "extract-rpu", str(input_source), "-o", str(rpu)], timeout_seconds)
-        await asyncio.to_thread(_run, [binary, "plot", str(rpu), "-t", f"Dolby Vision L1 Plot - {stem}", "-o", str(output)], timeout_seconds)
+        await _run([binary, "extract-rpu", str(input_source), "-o", str(rpu)], timeout_seconds)
+        await _run([binary, "plot", str(rpu), "-t", f"Dolby Vision L1 Plot - {stem}", "-o", str(output)], timeout_seconds)
     else:
         metadata = work_dir / f"{artifact_name}.hdr10plus.json"
-        await asyncio.to_thread(_run, [binary, "extract", str(input_source), "-o", str(metadata)], timeout_seconds)
-        await asyncio.to_thread(_run, [binary, "plot", str(metadata), "-t", f"HDR10+ Plot - {stem}", "-o", str(output)], timeout_seconds)
+        await _run([binary, "extract", str(input_source), "-o", str(metadata)], timeout_seconds)
+        await _run([binary, "plot", str(metadata), "-t", f"HDR10+ Plot - {stem}", "-o", str(output)], timeout_seconds)
     if not output.is_file():
         raise RuntimeError(f"{TOOLS[kind]['command']} did not create {output.name}")
     return output

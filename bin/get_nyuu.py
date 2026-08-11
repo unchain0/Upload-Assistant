@@ -13,6 +13,7 @@ import aiofiles
 import httpx
 
 from bin.download_integrity import MAX_EXTRACTED_BYTES, download_verified_asset, promote_files_with_rollback, safe_extract_tar
+from bin.runtime_tool_paths import tool_install_dir
 
 try:
     from src.console import console, logger
@@ -65,8 +66,7 @@ class NyuuBinaryManager:
         file_pattern = platform_info["file"]
         folder_path = platform_info["folder"]
 
-        bin_dir = Path(base_dir) / "bin" / "nyuu" / folder_path
-        bin_dir.mkdir(parents=True, exist_ok=True)
+        bin_dir = tool_install_dir(base_dir, "nyuu", folder_path)
 
         binary_name = "nyuu.exe" if system == "windows" else "nyuu"
         binary_path = bin_dir / binary_name

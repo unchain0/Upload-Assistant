@@ -60,26 +60,26 @@ RUN find bin/mkbrr -name "mkbrr" -print0 | xargs -0 chmod +x && \
     find bin/bdinfo -name "bdinfo" -print0 | xargs -0 chmod +x
 
 # ── Permissions ──────────────────────────────────────────────────────
-# Give UID 1000 ownership (runtime binary updates need chmod) and let
-# any other UID (e.g. Unraid 99:100) read/execute.
+# Give UID 1000 ownership for the default runtime while keeping bundled
+# executables immutable to unrelated UIDs. Arbitrary UIDs use a private cache.
 RUN chown -R 1000:1000 /Upload-Assistant/bin/mkbrr \
     && chown -R 1000:1000 /Upload-Assistant/bin/MI \
     && chown -R 1000:1000 /Upload-Assistant/bin/bdinfo \
-    && find /Upload-Assistant/bin/mkbrr /Upload-Assistant/bin/MI /Upload-Assistant/bin/bdinfo -type d -exec chmod 0777 {} + \
+    && find /Upload-Assistant/bin/mkbrr /Upload-Assistant/bin/MI /Upload-Assistant/bin/bdinfo -type d -exec chmod 0755 {} + \
     && chmod -R o+rX /Upload-Assistant/bin/mkbrr \
     && chmod -R o+rX /Upload-Assistant/bin/MI \
     && chmod -R o+rX /Upload-Assistant/bin/bdinfo
 
-# Dynamic HDR tools are downloaded on demand by the application.
+# Runtime tools are downloaded on demand. Their bundled roots are readable but
+# not writable by unrelated UIDs; the application falls back to a private cache.
 RUN mkdir -p /Upload-Assistant/bin/dovi_tool /Upload-Assistant/bin/hdr10plus_tool \
     && chown -R 1000:1000 /Upload-Assistant/bin/dovi_tool /Upload-Assistant/bin/hdr10plus_tool \
-    && chmod 1777 /Upload-Assistant/bin/dovi_tool /Upload-Assistant/bin/hdr10plus_tool
+    && chmod 0755 /Upload-Assistant/bin/dovi_tool /Upload-Assistant/bin/hdr10plus_tool
 
-# Nyuu and 7-Zip are also downloaded on demand. Keep only these dedicated
-# install directories writable for arbitrary container UIDs.
+# Nyuu, 7-Zip, PAR2, Pesto and Zentag are also downloaded on demand.
 RUN mkdir -p /Upload-Assistant/bin/nyuu /Upload-Assistant/bin/7z /Upload-Assistant/bin/par2 /Upload-Assistant/bin/pesto /Upload-Assistant/bin/zentag \
     && chown -R 1000:1000 /Upload-Assistant/bin/nyuu /Upload-Assistant/bin/7z /Upload-Assistant/bin/par2 /Upload-Assistant/bin/pesto /Upload-Assistant/bin/zentag \
-    && chmod 1777 /Upload-Assistant/bin/nyuu /Upload-Assistant/bin/7z /Upload-Assistant/bin/par2 /Upload-Assistant/bin/pesto /Upload-Assistant/bin/zentag
+    && chmod 0755 /Upload-Assistant/bin/nyuu /Upload-Assistant/bin/7z /Upload-Assistant/bin/par2 /Upload-Assistant/bin/pesto /Upload-Assistant/bin/zentag
 
 # Create tmp directory; world-writable so any UID can use it
 RUN mkdir -p /Upload-Assistant/tmp && chmod 1777 /Upload-Assistant/tmp

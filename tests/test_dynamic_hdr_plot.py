@@ -1,6 +1,5 @@
 import asyncio
 import hashlib
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -92,7 +91,7 @@ def test_mp4_is_remuxed_to_annex_b_hevc(tmp_path: Path, monkeypatch) -> None:  #
     source.touch()
     commands: list[list[str]] = []
 
-    def fake_run(command: list[str], _timeout_seconds: int = 3600) -> None:
+    async def fake_run(command: list[str], _timeout_seconds: int = 3600) -> None:
         commands.append(command)
         if command[-1].endswith(".png"):
             Path(command[-1]).touch()
@@ -114,7 +113,7 @@ def test_plot_artifacts_are_unique_for_same_named_sources(tmp_path: Path, monkey
     first.touch()
     second.touch()
 
-    def fake_run(command: list[str], _timeout_seconds: int = 3600) -> None:
+    async def fake_run(command: list[str], _timeout_seconds: int = 3600) -> None:
         if command[-1].endswith(".png"):
             Path(command[-1]).touch()
 
@@ -160,11 +159,64 @@ def test_debug_mode_does_not_upload_dynamic_hdr_images(tmp_path: Path, monkeypat
 
 
 def test_dynamic_hdr_tool_timeout_is_reported(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    def timeout(*_args, **_kwargs):  # type: ignore[no-untyped-def]
-        assert _kwargs["timeout"] == 1  # noqa: S101
-        raise subprocess.TimeoutExpired("dovi_tool", 1)
+    class Process:
+        returncode = None
+        pid = None
+        killed = False
 
-    monkeypatch.setattr("src.dynamic_hdr_plot.subprocess.run", timeout)
+        async def wait(self) -> int:
+            await asyncio.sleep(60)
+            return 0
+
+        def kill(self) -> None:
+            self.killed = True
+
+    process = Process()
+
+    async def create_process(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_process)
 
     with pytest.raises(RuntimeError, match="timed out after 1 seconds"):
-        _run(["dovi_tool", "plot"], timeout_seconds=1)
+        asyncio.run(_run(["dovi_tool", "plot"], timeout_seconds=1))
+
+    assert process.killed is True  # noqa: S101
+
+
+def test_dynamic_hdr_cancellation_kills_and_reaps_process(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    class Process:
+        returncode = None
+        pid = None
+
+        def __init__(self) -> None:
+            self.killed = False
+            self.wait_calls = 0
+
+        async def wait(self) -> int:
+            self.wait_calls += 1
+            if self.wait_calls == 1:
+                await asyncio.sleep(60)
+            self.returncode = -9
+            return self.returncode
+
+        def kill(self) -> None:
+            self.killed = True
+
+    process = Process()
+
+    async def create_process(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        return process
+
+    async def exercise() -> None:
+        task = asyncio.create_task(_run(["dovi_tool", "plot"]))
+        await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_process)
+    asyncio.run(exercise())
+
+    assert process.killed is True  # noqa: S101
+    assert process.wait_calls == 2  # noqa: S101

@@ -10,6 +10,7 @@ from typing import Any, ClassVar, cast
 import httpx  # pyright: ignore[reportMissingImports]
 
 from bin.download_integrity import MAX_ASSET_BYTES, download_bounded_asset, promote_files_with_rollback, sha256_file
+from bin.runtime_tool_paths import tool_install_dir
 
 HTTPX: Any = cast(Any, httpx)
 
@@ -45,8 +46,7 @@ class ZentagBinaryManager:
         version_number = cls.VERSION.lstrip("v")
         extension = "zip" if os_name == "windows" else "tar.gz"
         asset = f"zentag_{version_number}_{os_name}_{arch}.{extension}"
-        target_dir = Path(base_dir) / "bin" / "zentag" / os_name / arch
-        target_dir.mkdir(parents=True, exist_ok=True)
+        target_dir = tool_install_dir(base_dir, "zentag", f"{os_name}/{arch}")
         binary = target_dir / ("zentag.exe" if os_name == "windows" else "zentag")
         marker = target_dir / cls.VERSION
         expected_binary = cls.BINARY_CHECKSUMS.get(asset, "")

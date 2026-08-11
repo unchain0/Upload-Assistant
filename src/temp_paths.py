@@ -34,13 +34,22 @@ def ensure_temp_root(base_dir: str | Path) -> Path:
 
 def release_temp_dir(base_dir: str | Path, release_id: str) -> Path:
     """Return the root temporary directory for one release."""
-    return Path(base_dir) / "tmp" / str(release_id)
+    path = ensure_temp_root(base_dir) / str(release_id)
+    if path.is_symlink():
+        raise RuntimeError(f"Release temporary directory must not be a symbolic link: {path}")
+    path.mkdir(mode=0o700, exist_ok=True)
+    if os.name != "nt":
+        attributes = path.stat()
+        if attributes.st_uid != os.geteuid():
+            raise PermissionError(f"Release temporary directory is owned by another user: {path}")
+        path.chmod(0o700)
+    return path
 
 
 def image_dir(base_dir: str | Path, release_id: str, kind: str) -> Path:
     """Return and create a typed image directory below a release's temp root."""
     path = release_temp_dir(base_dir, release_id) / kind
-    path.mkdir(parents=True, exist_ok=True)
+    path.mkdir(mode=0o700, exist_ok=True)
     return path
 
 

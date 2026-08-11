@@ -8,6 +8,7 @@ import aiofiles
 import httpx
 
 from bin.download_integrity import download_verified_asset, promote_files_with_rollback
+from bin.runtime_tool_paths import tool_install_dir
 
 try:
     from src.console import console, logger
@@ -51,8 +52,7 @@ class PestoBinaryManager:
         file_pattern = platform_info["file"]
         folder_path = platform_info["folder"]
 
-        bin_dir = Path(base_dir) / "bin" / "pesto" / folder_path
-        bin_dir.mkdir(parents=True, exist_ok=True)
+        bin_dir = tool_install_dir(base_dir, "pesto", folder_path)
 
         binary_name = "pesto.exe" if system == "windows" else "pesto"
         binary_path = bin_dir / binary_name

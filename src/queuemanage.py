@@ -68,7 +68,24 @@ async def _read_json_file(path: str) -> Any:
 
 async def _write_json_file(path: str, data: Any, indent: int = 4) -> None:
     content = json.dumps(data, indent=indent)
-    await asyncio.to_thread(Path(path).write_text, content, encoding="utf-8")
+
+    def write_securely() -> None:
+        destination = Path(path)
+        if os.name == "nt":
+            destination.write_text(content, encoding="utf-8")
+            return
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            descriptor = os.open(destination, flags, 0o600)
+        except FileExistsError:
+            attributes = destination.lstat()
+            if not destination.is_file() or attributes.st_uid != os.geteuid():
+                raise PermissionError(f"Refusing to replace untrusted queue log: {destination}") from None
+            descriptor = os.open(destination, os.O_WRONLY | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            output.write(content)
+
+    await asyncio.to_thread(write_securely)
 
 
 async def _read_text_lines(path: str) -> list[str]:

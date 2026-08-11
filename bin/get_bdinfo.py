@@ -12,6 +12,7 @@ import aiofiles
 import httpx
 
 from bin.download_integrity import MAX_EXTRACTED_BYTES, download_verified_asset, promote_files_with_rollback, safe_extract_tar, safe_extract_zip
+from bin.runtime_tool_paths import tool_install_dir
 
 try:
     from src.console import console, logger
@@ -71,8 +72,7 @@ class BDInfoBinaryManager:
         logger.debug(f"[blue]Using file pattern: {file_pattern}[/blue]")
         logger.debug(f"[blue]Target folder: {folder_path}[/blue]")
 
-        bin_dir = Path(base_dir) / "bin" / "bdinfo" / folder_path
-        bin_dir.mkdir(parents=True, exist_ok=True)
+        bin_dir = tool_install_dir(base_dir, "bdinfo", folder_path)
         logger.debug(f"[blue]Binary directory: {bin_dir}[/blue]")
 
         binary_name = "bdinfo.exe" if system == "windows" else "bdinfo"

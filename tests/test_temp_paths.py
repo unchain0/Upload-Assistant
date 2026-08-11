@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.temp_paths import artwork_dir, ensure_temp_root, menu_screenshots_dir, screenshots_dir, spectrograms_dir
+from src.temp_paths import artwork_dir, ensure_temp_root, menu_screenshots_dir, release_temp_dir, screenshots_dir, spectrograms_dir
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX ownership and mode checks do not apply on Windows")
@@ -53,3 +53,21 @@ def test_typed_image_directories_are_isolated_per_release(tmp_path: Path) -> Non
     assert directories.isdisjoint(other_directories)
     assert {path.name for path in directories} == {"screenshots", "artwork", "menu_screenshots", "spectrograms"}
     assert all(path.is_dir() for path in directories)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX ownership checks do not apply on Windows")
+def test_release_temp_dir_rejects_foreign_owned_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    release = tmp_path / "tmp" / "release"
+    release.mkdir(parents=True)
+    original_stat = Path.stat
+
+    def foreign_stat(path: Path):  # type: ignore[no-untyped-def]
+        attributes = original_stat(path)
+        if path == release:
+            return SimpleNamespace(st_uid=os.geteuid() + 1, st_mode=attributes.st_mode)
+        return attributes
+
+    monkeypatch.setattr(Path, "stat", foreign_stat)
+
+    with pytest.raises(PermissionError, match="owned by another user"):
+        release_temp_dir(tmp_path, "release")
