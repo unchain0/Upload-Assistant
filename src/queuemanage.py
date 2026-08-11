@@ -42,6 +42,13 @@ def _queue_log_path(tmp_dir: str | Path, queue_name: str, suffix: str) -> Path:
     return Path(tmp_dir) / f"{normalized}{suffix}"
 
 
+def _trusted_existing_queue_log(attributes: os.stat_result, *, windows: bool) -> bool:
+    is_reparse_point = bool(
+        getattr(attributes, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    )
+    return stat.S_ISREG(attributes.st_mode) and not is_reparse_point and (windows or attributes.st_uid == os.geteuid())
+
+
 def _expand_multi_format_ebook_directories(queue: QueueList) -> QueueList:
     if not all(isinstance(item, str) for item in queue):
         return queue
@@ -84,11 +91,7 @@ async def _write_json_file(path: str | Path, data: Any, indent: int = 4) -> None
             descriptor = os.open(destination, flags, 0o600)
         except FileExistsError:
             attributes = destination.lstat()
-            is_reparse_point = bool(
-                getattr(attributes, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
-            )
-            wrong_owner = os.name != "nt" and attributes.st_uid != os.geteuid()
-            if not stat.S_ISREG(attributes.st_mode) or is_reparse_point or wrong_owner:
+            if not _trusted_existing_queue_log(attributes, windows=os.name == "nt"):
                 raise PermissionError(f"Refusing to replace untrusted queue log: {destination}") from None
             descriptor = os.open(destination, os.O_WRONLY | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0))
         if os.name != "nt":

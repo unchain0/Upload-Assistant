@@ -2,11 +2,13 @@
 
 import asyncio
 import os
+import stat
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from src.queuemanage import QueueManager, _write_json_file
+from src.queuemanage import QueueManager, _trusted_existing_queue_log, _write_json_file
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX file modes do not apply on Windows")
@@ -33,17 +35,14 @@ def test_queue_log_writer_rejects_symlink(tmp_path: Path) -> None:
     assert target.read_text(encoding="utf-8") == "protected"
 
 
-def test_queue_log_writer_rejects_symlink_on_windows_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    target = tmp_path / "target"
-    target.write_text("protected", encoding="utf-8")
-    log = tmp_path / "queue.log"
-    log.symlink_to(target)
-    monkeypatch.setattr("src.queuemanage.os.name", "nt")
+def test_windows_reparse_point_is_not_a_trusted_queue_log() -> None:
+    attributes = SimpleNamespace(
+        st_mode=stat.S_IFREG,
+        st_file_attributes=getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400),
+        st_uid=0,
+    )
 
-    with pytest.raises(PermissionError, match="untrusted queue log"):
-        asyncio.run(_write_json_file(log, ["new"]))
-
-    assert target.read_text(encoding="utf-8") == "protected"
+    assert not _trusted_existing_queue_log(attributes, windows=True)
 
 
 def test_queue_name_cannot_escape_temp_directory(tmp_path: Path) -> None:
