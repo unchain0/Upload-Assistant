@@ -195,6 +195,16 @@ async def detect_disc_and_category(prep_instance: Any, meta: Meta) -> tuple[str,
     if isinstance(meta.manual_category, str) and meta.manual_category.strip():
         meta.category = meta.manual_category.strip().upper()
 
+    if not meta.category and not meta.manual_category and not meta.is_disc:
+        path_to_check = Path(meta.path) if meta.path else None
+        if path_to_check and path_to_check.exists():
+            has_game_package = path_to_check.is_file() and path_to_check.suffix.lower() in _GAME_EXTENSIONS
+            if path_to_check.is_dir():
+                has_game_package = any(item.is_file() and item.suffix.lower() in _GAME_EXTENSIONS for item in path_to_check.rglob("*"))
+            if has_game_package:
+                meta.category = "GAME"
+                logger.debug("[cyan]Auto-detected category: GAME (package file)[/cyan]")
+
     # If category is manually set to BOOK, ensure meta.audiobook is set if audio files are present
     if meta.category == "BOOK" and not meta.audiobook:
         path_to_check = Path(meta.path) if meta.path else None

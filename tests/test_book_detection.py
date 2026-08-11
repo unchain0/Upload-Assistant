@@ -300,6 +300,20 @@ def test_scene_game_iso_is_still_auto_detected_as_game(tmp_path):
     assert meta.category == "GAME"
 
 
+def test_scene_game_iso_takes_precedence_over_bundled_flac(tmp_path):
+    release = tmp_path / "Cyberpunk.SFX-TENOKE"
+    release.mkdir()
+    (release / "tenoke-cyberpunk.sfx.iso").write_bytes(b"disc")
+    (release / "10-sam_wilson-part_of_life.flac").write_bytes(b"soundtrack")
+    (release / "tenoke-cyberpunk.sfx.nfo").write_text("TENOKE", encoding="utf-8")
+    meta = Meta(path=str(release))
+    prep = SimpleNamespace(disc_info_manager=SimpleNamespace(get_disc=AsyncMock(return_value=("", str(release), {}, []))))
+
+    asyncio.run(detect_disc_and_category(prep, meta))
+
+    assert meta.category == "GAME"
+
+
 def test_dmg_is_auto_detected_as_game_software(tmp_path):
     installer = tmp_path / "Native_Instruments_SuperStarSaw_1.0.0_[HCiSO].dmg"
     installer.write_bytes(b"installer")
