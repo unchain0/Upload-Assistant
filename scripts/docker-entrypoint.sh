@@ -15,6 +15,16 @@ set -e
 TARGET_UID="${PUID:-}"
 TARGET_GID="${PGID:-}"
 
+# Restore files hidden by an empty or older data volume before Python imports
+# modules that depend on data.config. Existing user files are never replaced.
+mkdir -p /Upload-Assistant/data
+if [ -d /Upload-Assistant/defaults/data ]; then
+    cp -an /Upload-Assistant/defaults/data/. /Upload-Assistant/data/
+fi
+if [ ! -f /Upload-Assistant/data/config.py ] && [ -f /Upload-Assistant/data/example_config.py ]; then
+    cp /Upload-Assistant/data/example_config.py /Upload-Assistant/data/config.py
+fi
+
 # ── Fix directory ownership (only possible when running as root) ──────
 if [ "$(id -u)" = "0" ]; then
     # Directories the app needs write access to

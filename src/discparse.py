@@ -5,8 +5,11 @@ import os
 import platform
 import re
 import shutil
+import signal
+import subprocess
 import traceback
 from collections import OrderedDict, defaultdict
+from contextlib import suppress
 from pathlib import Path
 from typing import Any, cast
 
@@ -31,18 +34,52 @@ class DiscParse:
         self.config = config
         self.mediainfo_config: dict[str, Any] | None = None
 
+    @staticmethod
+    def _process_group_options() -> dict[str, Any]:
+        if os.name == "nt":
+            return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+        return {"start_new_session": True}
+
+    @staticmethod
+    async def _terminate_process_tree(process: asyncio.subprocess.Process) -> None:
+        if process.returncode is not None:
+            return
+        pid = getattr(process, "pid", None)
+        if os.name == "nt" and pid is not None:
+            tree_killer = await asyncio.create_subprocess_exec(
+                "taskkill",
+                "/F",
+                "/T",
+                "/PID",
+                str(pid),
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await tree_killer.wait()
+            if process.returncode is None:
+                process.kill()
+        elif pid is not None:
+            with suppress(ProcessLookupError):
+                os.killpg(pid, signal.SIGKILL)
+        else:
+            process.kill()
+
     async def _run_specialized_mediainfo(self, binary: str, *arguments: str) -> tuple[bytes, bytes, int | None]:
-        process = await asyncio.create_subprocess_exec(binary, *arguments, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        process = await asyncio.create_subprocess_exec(
+            binary,
+            *arguments,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            **self._process_group_options(),
+        )
         try:
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=30)
         except TimeoutError:
-            if process.returncode is None:
-                process.kill()
+            await self._terminate_process_tree(process)
             await process.communicate()
             raise RuntimeError("Specialized MediaInfo timed out after 30 seconds") from None
         except BaseException:
-            if process.returncode is None:
-                process.kill()
+            await self._terminate_process_tree(process)
             await process.communicate()
             raise
         return stdout, stderr, process.returncode
@@ -111,7 +148,12 @@ class DiscParse:
             r"(?P<files_done>\d+)/(?P<files_total>\d+),\s*read\s*(?P<speed>[^,]+),\s*ETA\s*(?P<eta>[^)]+)\)"
         )
         command = [*command, "--progress"]
-        process = await asyncio.create_subprocess_exec(*command, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+            **self._process_group_options(),
+        )
         try:
             if process.stderr is None:
                 raise RuntimeError("Unable to read go-bdinfo progress output")
@@ -158,7 +200,7 @@ class DiscParse:
             return returncode
         finally:
             if process.returncode is None:
-                process.kill()
+                await self._terminate_process_tree(process)
                 await process.wait()
 
     """

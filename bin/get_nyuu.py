@@ -110,6 +110,9 @@ class NyuuBinaryManager:
             finally:
                 temp_file.unlink(missing_ok=True)
 
+            if not binary_path.is_file():
+                raise RuntimeError(f"Downloaded archive does not contain the expected {binary_name} executable")
+
             # Cleanup extra directories/files leftover from extraction
             for p in list(bin_dir.iterdir()):
                 if p.is_dir():
@@ -117,7 +120,7 @@ class NyuuBinaryManager:
                 elif p.is_file() and p.name not in (binary_name, version):
                     p.unlink()
 
-            if system != "windows" and binary_path.exists():
+            if system != "windows":
                 binary_path.chmod(binary_path.stat().st_mode | stat.S_IEXEC)
 
             async with aiofiles.open(version_path, "w", encoding="utf-8") as version_file:

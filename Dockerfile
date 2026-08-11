@@ -42,7 +42,7 @@ COPY . .
 # Preserve the built-in data/ directory outside the mount-point so that
 # volume mounts over /Upload-Assistant/data/ don't hide critical files
 # (__init__.py, version.py, example-config.py, templates/).
-# At runtime the app restores any missing files from this copy.
+# At runtime the entrypoint restores missing files from this copy.
 RUN rm -rf /Upload-Assistant/defaults \
     && mkdir -p /Upload-Assistant/defaults \
     && cp -a data /Upload-Assistant/defaults/ \
