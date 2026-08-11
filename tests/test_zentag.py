@@ -34,9 +34,21 @@ async def test_tampered_cached_zentag_is_replaced_with_verified_binary(tmp_path:
     class Response:
         content = archive_payload
 
+        def __init__(self) -> None:
+            self.headers = {"content-length": str(len(archive_payload))}
+
+        async def __aenter__(self) -> Response:
+            return self
+
+        async def __aexit__(self, *_args: Any) -> None:
+            return None
+
         @staticmethod
         def raise_for_status() -> None:
             return None
+
+        async def aiter_bytes(self, chunk_size: int):  # type: ignore[no-untyped-def]  # noqa: ARG002
+            yield self.content
 
     class Client:
         def __init__(self, **_kwargs: Any) -> None:
@@ -48,7 +60,7 @@ async def test_tampered_cached_zentag_is_replaced_with_verified_binary(tmp_path:
         async def __aexit__(self, *_args: Any) -> None:
             return None
 
-        async def get(self, _url: str) -> Response:
+        def stream(self, *_args: Any, **_kwargs: Any) -> Response:
             return Response()
 
     monkeypatch.setattr(get_zentag.platform, "system", lambda: "Linux")
