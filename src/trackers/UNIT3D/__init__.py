@@ -68,8 +68,9 @@ class UNIT3D:
         }
 
         if category in ("MOVIE", "TV"):
+            search_name = meta.title or meta.name
             params_dict: dict[str, str] = {
-                "name": "",
+                "name": search_name,
                 "perPage": "100",
             }
             if meta.tmdb is not None:
@@ -81,7 +82,7 @@ class UNIT3D:
                 params_dict["categories[]"] = (await self.get_category_id(meta))["category_id"]
 
             if meta.category == "TV":
-                params_dict["name"] = f" {meta.season}"
+                params_dict["name"] = f"{search_name} {meta.season}".strip()
 
         else:
             search_name = meta.title or meta.name

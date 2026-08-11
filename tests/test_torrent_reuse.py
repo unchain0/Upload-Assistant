@@ -152,9 +152,9 @@ async def test_reuse_validation_normalizes_binary_md5sum_in_working_copy(tmp_pat
     valid, resolved_path = await Clients({"DEFAULT": {}, "TORRENT_CLIENTS": {}}).is_valid_torrent(meta, str(torrent_path), "hash", "qbit", {})
 
     assert valid  # noqa: S101
-    assert resolved_path == str(torrent_path)  # noqa: S101
-    assert torrent_path.read_bytes() == original_metainfo  # noqa: S101
     normalized_path = tmp_path / "tmp" / "book.epub" / "candidate.torrent"
+    assert resolved_path == str(normalized_path)  # noqa: S101
+    assert torrent_path.read_bytes() == original_metainfo  # noqa: S101
     assert Torrent.read(normalized_path).files == [Path("book.epub")]  # noqa: S101
 
 

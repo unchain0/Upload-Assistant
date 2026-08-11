@@ -57,7 +57,7 @@ class Clients(QbittorrentClientMixin, RtorrentClientMixin, DelugeClientMixin, Tr
             normalized_path.parent.mkdir(parents=True, exist_ok=True)
             normalized_path.write_bytes(bencodepy.encode(metainfo))
             logger.info(f"[yellow]Normalized legacy binary md5sum metadata in a working copy: {normalized_path}[/yellow]")
-            return Torrent.read(normalized_path), torrent_path
+            return Torrent.read(normalized_path), str(normalized_path)
 
     @staticmethod
     def _matches_tracker_host(host: str, tracker_hosts: dict[str, tuple[str, ...]]) -> str | None:

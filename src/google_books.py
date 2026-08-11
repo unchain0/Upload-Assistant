@@ -150,14 +150,14 @@ class GoogleBooksManager:
                             logger.info(f"{google_color_str}: ISBN match found: {clean_isbn}")
                         return metadata
                     logger.info(f"{google_color_str}: No items found for ISBN: {clean_isbn}")
-                    await cache.set("google_books", "isbn", clean_isbn, {"not_found": True}, negative=True)
+                    await cache.set("google_books", "isbn_exact", clean_isbn, {"not_found": True}, negative=True)
                 else:
                     if resp.status_code == 429:
                         logger.info(f"{google_color_str}: Rate limited (Status 429) for ISBN: {clean_isbn}")
                     else:
                         logger.info(f"{google_color_str}: API returned error status code {resp.status_code} for ISBN: {clean_isbn}")
                         if resp.status_code == 404:
-                            await cache.set("google_books", "isbn", clean_isbn, {"not_found": True}, negative=True)
+                            await cache.set("google_books", "isbn_exact", clean_isbn, {"not_found": True}, negative=True)
         except Exception as e:
             logger.info(f"{google_color_str}: Network or query error for ISBN {clean_isbn}: {e}")
 
