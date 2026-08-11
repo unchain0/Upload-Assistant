@@ -3041,6 +3041,11 @@ async def do_the_thing(base_dir: str) -> None:
                     logger.info(f"- {failed_path}: {failed_reason}")
         current_release_log_path.set(None)
 
+    except ItemProcessingError as e:
+        item_path = e.item_path or meta.path or ""
+        item_label = f"{item_path}: " if item_path else ""
+        logger.info(f"[yellow]Skipping {item_label}{e}[/yellow]")
+        cleanup_manager.reset_terminal()
     except Exception as e:
         logger.info(f"[bold red]An unexpected error occurred: {e}")
         if sanitize_meta:

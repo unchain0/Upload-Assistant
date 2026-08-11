@@ -160,6 +160,8 @@ async def test_single_item_failure_still_aborts(tmp_path: Path, monkeypatch: pyt
     await upload.do_the_thing(upload.base_dir)
 
     assert not any("Batch summary:" in message for message in info_messages)
+    assert any("Skipping" in message and "No Video files found" in message for message in info_messages)
+    assert not any("unexpected error" in message.lower() for message in info_messages)
     assert process_meta_mock.call_count == 1
 
 
