@@ -1167,6 +1167,7 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
             meta.unattended = True
             logger.info("[yellow]Running in Auto Mode")
 
+    _sync_single_episode(meta)
     prep = Prep(screens=meta.screens, img_host=meta.imghost, config=config, publish_preview=_publish_webui_preview_target)
     try:
         meta = await prep.gather_prep(meta=meta, mode="cli")
@@ -1218,8 +1219,6 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
     # validating their credentials.  The later status/upload stages retain the
     # same check as a defensive guard for tracker lists changed after this point.
     TrackerSetup(config=config).filter_unsupported_trackers(meta)
-
-    _sync_single_episode(meta)
 
     meta.name_notag, meta.name, meta.clean_name, meta.potential_missing = await name_manager.get_name(meta)
 
@@ -1297,9 +1296,9 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
             meta.trackers = [t.strip().upper() for t in meta.trackers if t]
         logger.debug(f"Trackers list during edit process: {meta.trackers}")
         meta.edit = True
+        _sync_single_episode(meta)
         meta = await prep.gather_prep(meta=meta, mode="cli")
         TrackerSetup(config=config).filter_unsupported_trackers(meta)
-        _sync_single_episode(meta)
         meta.name_notag, meta.name, meta.clean_name, meta.potential_missing = await name_manager.get_name(meta)
         async with aiofiles.open(f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/meta.json", "w", encoding="utf-8") as f:
             await f.write(json.dumps(meta.to_dict(), indent=4, cls=PathAwareEncoder))

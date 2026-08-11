@@ -1,9 +1,12 @@
+# ruff: noqa: S101
 import asyncio
-from unittest.mock import Mock
+from pathlib import Path
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 import src.getseasonep as season_episode
+import upload
 from src.get_name import NameManager
 from src.getseasonep import sync_single_episode_from_filename
 from src.meta import Meta
@@ -111,3 +114,32 @@ def test_sync_single_episode_rejects_untrusted_filename_shapes(monkeypatch: pyte
 
     monkeypatch.setattr(season_episode, "_guessit_data", Mock(side_effect=ValueError("invalid filename")))
     assert sync_single_episode_from_filename(_stale_meta()) is False
+
+
+@pytest.mark.asyncio
+async def test_process_meta_syncs_before_metadata_gather(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    events: list[str] = []
+
+    class FakePrep:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        async def gather_prep(self, meta: Meta, mode: str) -> Meta:
+            assert mode == "cli"
+            events.append("gather")
+            meta.category = "TV"
+            meta.title = ""
+            meta.tmdb = None
+            meta.imdb = ""
+            return meta
+
+    def record_sync(_meta: Meta) -> None:
+        events.append("sync")
+
+    monkeypatch.setattr(upload, "Prep", FakePrep)
+    monkeypatch.setattr(upload, "_sync_single_episode", record_sync)
+    monkeypatch.setattr(upload, "cancel_and_drain_early_artifact_tasks", AsyncMock(return_value=None))
+    meta = Meta(base_dir=str(tmp_path), uuid="single-episode", imghost="imgbb", unattended=True, trackers=["DARKPEERS"])
+
+    assert await upload.process_meta(meta, str(tmp_path)) is False
+    assert events == ["sync", "gather"]
