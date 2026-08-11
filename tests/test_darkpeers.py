@@ -52,6 +52,24 @@ def test_darkpeers_music_name_uses_required_folder_style():
     assert _name(meta) == "Taylor Swift - Red (2012) - WEB FLAC 16-44.1"
 
 
+def test_darkpeers_music_single_name_is_disambiguated():
+    meta = Meta(
+        category="MUSIC",
+        music_release={
+            "fields": {
+                "artist": {"value": "Eskila"},
+                "album": {"value": "Tequetom"},
+                "release_year": {"value": 2026},
+                "media": {"value": "WEB"},
+                "release_type": {"value": "Single"},
+            },
+            "tracks": [{"codec": "MP3", "bitrate": 320000, "bitrate_mode": "CBR"}],
+        },
+    )
+
+    assert _name(meta) == "Eskila - Tequetom (2026) - WEB MP3 320 CBR Single"
+
+
 def test_darkpeers_accepts_numbered_scene_music_filenames():
     pattern = DarkPeers._AUDIO_TRACK_PATTERN
 
@@ -116,6 +134,110 @@ def test_darkpeers_audiobook_name_includes_format_bitrate_isbn_and_tag():
     )
 
     assert _name(meta) == "Ernest Cline - Ready Player One 2011 MP3 64 9780307887436-GROUP"
+
+
+def test_darkpeers_audiobook_name_includes_explicit_source_or_retail_marker():
+    base = {
+        "category": "BOOK",
+        "audiobook": True,
+        "author": "Author",
+        "title": "Recording",
+        "year": 2026,
+        "type": "MP3",
+        "audiobook_bitrate": 64,
+        "isbn": "978-0-123456-47-2",
+    }
+
+    assert _name(Meta(**base, manual_source="OVERDRIVE")) == "Author - Recording 2026 Overdrive MP3 64 9780123456472"
+    assert _name(Meta(**base, manual_source="RETAIL")) == "Author - Recording 2026 MP3 64 9780123456472 Retail"
+
+
+def test_darkpeers_video_web_name_follows_documented_order():
+    meta = Meta(
+        category="MOVIE",
+        type="WEBDL",
+        title="Example",
+        aka="AKA Original",
+        year=2026,
+        edition="Director's Cut IMAX Criterion Collection Hybrid",
+        repack="PROPER",
+        resolution="1080p",
+        service="AMZN",
+        audio="DD+ 5.1 Atmos",
+        audio_languages=["English"],
+        original_language="English",
+        language_checked=True,
+        hdr="HDR10+",
+        video_encode="H.264",
+        tag="-GROUP",
+    )
+
+    assert _name(meta) == "Example AKA Original 2026 Director's Cut IMAX Hybrid PROPER 1080p Criterion Collection AMZN WEB-DL DD+ 5.1 Atmos HDR10+ H.264-GROUP"
+
+
+def test_darkpeers_full_disc_name_follows_documented_order():
+    meta = Meta(
+        category="MOVIE",
+        type="DISC",
+        is_disc="BDMV",
+        title="Example",
+        year=2026,
+        edition="Extended Criterion Collection Hybrid",
+        repack="REPACK",
+        resolution="2160p",
+        region="USA",
+        source="BluRay",
+        uhd="UHD",
+        hdr="DV HDR10+",
+        video_codec="HEVC",
+        audio="TrueHD 7.1 Atmos",
+        audio_languages=["English"],
+        original_language="English",
+        language_checked=True,
+        tag="-GROUP",
+    )
+
+    assert _name(meta) == "Example 2026 Extended Hybrid REPACK 2160p Criterion Collection USA UHD Blu-ray DV HDR10+ HEVC TrueHD 7.1 Atmos-GROUP"
+
+
+def test_darkpeers_daily_tv_name_uses_iso_date_without_year_or_season():
+    meta = Meta(
+        category="TV",
+        type="WEBDL",
+        title="Daily Show",
+        year=2026,
+        season="S01",
+        episode="E01",
+        manual_date="2026-08-11",
+        resolution="1080p",
+        service="AMZN",
+        audio="DD+ 2.0",
+        audio_languages=["English"],
+        original_language="English",
+        language_checked=True,
+        video_encode="H.264",
+        tag="-GROUP",
+    )
+
+    assert _name(meta) == "Daily Show 2026-08-11 1080p AMZN WEB-DL DD+ 2.0 H.264-GROUP"
+
+
+def test_darkpeers_normalizes_htm_ebook_format_to_html():
+    meta = Meta(category="BOOK", author="Author", title="Book", year=2026, type="HTM", isbn="978-0-123456-47-2", source="RETAIL")
+
+    assert _name(meta) == "Author - Book 2026 HTML 9780123456472 Retail"
+
+
+def test_darkpeers_scene_name_is_never_retagged_with_derived_audio():
+    meta = Meta(
+        category="MOVIE",
+        scene_name="Original.Release.2026-GRP",
+        audio_languages=["English", "French"],
+        original_language="English",
+        language_checked=True,
+    )
+
+    assert _name(meta) == "Original.Release.2026-GRP"
 
 
 def test_darkpeers_requires_attended_audiobook_edition_verification():

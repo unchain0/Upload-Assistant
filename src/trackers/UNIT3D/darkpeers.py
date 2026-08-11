@@ -212,7 +212,6 @@ class DarkPeers(UNIT3D):
         "swe": "swedish",
     }
     _BOOK_FORMATS: ClassVar[set[str]] = {
-        "AZW",
         "AZW3",
         "CBR",
         "CBZ",
@@ -222,7 +221,6 @@ class DarkPeers(UNIT3D):
         "DOCX",
         "EPUB",
         "FB2",
-        "HTM",
         "HTML",
         "KFX",
         "LIT",
@@ -471,6 +469,8 @@ class DarkPeers(UNIT3D):
     def _book_format(meta: Meta) -> str:
         """Resolve container aliases from MediaInfo when the codec is available."""
         format_name = str(meta.type or meta.format or "").upper().strip()
+        if format_name == "HTM":
+            return "HTML"
         if not meta.audiobook or format_name not in {"M4A", "OGG", "WAV"}:
             return format_name
         media = (meta.mediainfo if isinstance(meta.mediainfo, dict) else {}).get("media")
@@ -603,18 +603,108 @@ class DarkPeers(UNIT3D):
         if meta.category == "BOOK":
             return {"name": self._book_name(meta)}
 
-        # DP prohibits retags.  When the preparation stage identified a scene
-        # release, submit its recorded release name rather than rebuilding it.
         scene_name = str(meta.scene_name or "")
-        dp_name = scene_name if scene_name and not self._is_local_path_name(scene_name) else str(meta.name or "")
+        if scene_name and not self._is_local_path_name(scene_name):
+            return {"name": scene_name}
 
-        if meta.category == "TV":
-            dp_name = await self._tv_name(meta, dp_name)
-
+        if not str(meta.type or "").strip():
+            dp_name = str(meta.name or "")
+            if meta.category == "TV":
+                dp_name = await self._tv_name(meta, dp_name)
+        else:
+            dp_name = await self._video_name(meta)
         audio = await self.get_audio(meta)
         dp_name = self._apply_dub_element(dp_name, audio)
 
         return {"name": dp_name}
+
+    async def _video_name(self, meta: Meta) -> str:
+        release_type = str(meta.type or "").upper()
+        title = str(meta.title or "").strip()
+        aka = "" if meta.no_aka else str(meta.aka or "").strip()
+        year = str(meta.manual_year or meta.year or "").strip()
+        if meta.category == "TV" and year and not await self._tv_title_needs_year(meta):
+            year = ""
+        if meta.no_year:
+            year = ""
+
+        if meta.manual_date:
+            year = ""
+            season_episode = str(meta.manual_date)
+        else:
+            season_episode = "" if meta.no_season else f"{meta.season or ''}{meta.episode or ''}"
+        edition = str(meta.manual_edition or meta.edition or "").strip()
+        hybrid = "Hybrid" if meta.webdv or re.search(r"\bHybrid\b", edition, re.IGNORECASE) else ""
+        edition = re.sub(r"\bHybrid\b", "", edition, flags=re.IGNORECASE).strip()
+
+        ratio = ""
+        for pattern, canonical in ((r"\bOpen Matte\b", "Open Matte"), (r"\bIMAX\b", "IMAX"), (r"\bMAR\b", "MAR")):
+            if match := re.search(pattern, edition, re.IGNORECASE):
+                ratio = canonical
+                edition = f"{edition[: match.start()]} {edition[match.end() :]}".strip()
+                break
+
+        cut = ""
+        cut_patterns = (
+            r"Director(?:'|\u2019)s Cut",
+            r"Super Duper Cut",
+            r"Special Edition",
+            r"Extended",
+            r"Unrated",
+            r"Uncut",
+        )
+        for pattern in cut_patterns:
+            if match := re.search(rf"\b{pattern}\b", edition, re.IGNORECASE):
+                cut = match.group(0)
+                edition = f"{edition[: match.start()]} {edition[match.end() :]}".strip()
+                break
+        edition = " ".join(edition.split())
+
+        resolution = "" if str(meta.resolution or "").upper() == "OTHER" else str(meta.resolution or "").strip()
+        source = self._video_source(meta, release_type)
+        type_name = {"REMUX": "REMUX", "WEBDL": "WEB-DL", "WEBRIP": "WEBRip"}.get(release_type, "")
+        full_disc_or_remux = release_type in {"DISC", "REMUX"}
+        dvd_sourced = "DVD" in source.upper()
+        if dvd_sourced:
+            resolution = ""
+
+        context = " ".join((str(meta.name or ""), str(meta.basename_no_ext or ""), Path(str(meta.path or "")).name))
+        ds4k = "DS4K" if not full_disc_or_remux and release_type in {"WEBDL", "WEBRIP", "HDTV"} and re.search(r"\bDS4K\b", context, re.IGNORECASE) else ""
+        hi10p = "Hi10P" if re.search(r"\bHi10P\b", context, re.IGNORECASE) else ""
+        video_codec = str(meta.video_codec if full_disc_or_remux else meta.video_encode or meta.video_codec or "").strip()
+        region = str(meta.region or "").strip() if full_disc_or_remux else ""
+        three_d = str(meta.three_d or "").strip()
+        repack = str(meta.repack or "").strip()
+        audio = str(meta.audio or "").strip()
+        hdr = str(meta.hdr or "").strip()
+        tag = str(meta.tag or "").strip()
+
+        prefix = [title, aka, year, season_episode, cut, ratio, hybrid, repack, resolution]
+        if full_disc_or_remux:
+            parts = [*prefix, edition, region, three_d, source, type_name, hi10p, hdr, video_codec, audio]
+        else:
+            parts = [*prefix, ds4k, edition, three_d, source, type_name, audio, hi10p, hdr, video_codec]
+        name = " ".join(part for part in parts if part)
+        return f"{' '.join(name.split())}{tag}"
+
+    @staticmethod
+    def _video_source(meta: Meta, release_type: str) -> str:
+        source = str(meta.source or "").strip()
+        if release_type in {"WEBDL", "WEBRIP"}:
+            return str(meta.service or "").strip() or ("" if source.upper() == "WEB" else source)
+        if release_type == "DVDRIP":
+            standard = "NTSC" if "NTSC" in source.upper() else "PAL" if "PAL" in source.upper() else ""
+            return " ".join(part for part in (standard, "DVDRip") if part)
+        if release_type == "DISC":
+            if source in {"BluRay", "Blu-ray"}:
+                source = "Blu-ray"
+                if str(meta.uhd or "").upper() == "UHD":
+                    source = "UHD Blu-ray"
+            if source in {"PAL DVD", "NTSC DVD"} and str(meta.dvd_size or "").strip():
+                source = f"{source}{str(meta.dvd_size).replace('DVD', '')}"
+        elif release_type == "REMUX" and source in {"Blu-ray", "BluRay"}:
+            source = "UHD BluRay" if str(meta.uhd or "").upper() == "UHD" else "BluRay"
+        return source
 
     @classmethod
     def _apply_dub_element(cls, name: str, audio: str) -> str:
@@ -715,6 +805,9 @@ class DarkPeers(UNIT3D):
                 format_parts.append(bitrate_mode)
 
         format_name = " ".join(part for part in format_parts if part)
+        release_type = str(cls._release_field(release, "release_type", "")).strip().casefold()
+        if release_type == "single":
+            format_name = f"{format_name} Single".strip()
         title = " - ".join(part for part in (artist, album) if part)
         if year:
             title = f"{title} ({year})" if title else f"({year})"
@@ -738,10 +831,16 @@ class DarkPeers(UNIT3D):
             parts.append(format_name)
 
         if meta.audiobook:
+            manual_source = str(meta.manual_source or "").strip().upper()
+            source_name = {"CD": "CD", "OVERDRIVE": "Overdrive", "HOOPLA": "Hoopla", "WEB": "Web", "OTHER": "Other"}.get(manual_source, "")
+            if source_name:
+                parts.insert(-1, source_name)
             if format_name in {"MP3", "AAC", "OPUS", "VORBIS"} and meta.audiobook_bitrate:
                 parts.append(str(meta.audiobook_bitrate))
             if identifier:
                 parts.append(identifier)
+            if manual_source == "RETAIL":
+                parts.append("Retail")
             base_name = " ".join(parts)
             tag = str(meta.tag or "").strip()
             if tag:
