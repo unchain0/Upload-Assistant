@@ -123,6 +123,8 @@ def test_sync_single_episode_clears_stale_episode_metadata() -> None:
         overview_meta="Old E01 overview",
         tmdb_episode_data={"name": "Old Episode One"},
         tvdb_episode_data={"episode": 1},
+        tvdb_imdb_id="tt0000101",
+        tvdb_season_name="Season One",
         tvmaze_episode_data={"name": "Old Episode One"},
         we_checked_tmdb=True,
         we_checked_tvdb=True,
@@ -134,6 +136,8 @@ def test_sync_single_episode_clears_stale_episode_metadata() -> None:
     assert meta.overview_meta is None
     assert meta.tmdb_episode_data is None
     assert meta.tvdb_episode_data == {}
+    assert meta.tvdb_imdb_id is None
+    assert meta.tvdb_season_name == ""
     assert meta.tvmaze_episode_data == {}
     assert meta.we_checked_tmdb is False
     assert meta.we_checked_tvdb is False

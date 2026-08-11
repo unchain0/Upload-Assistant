@@ -58,7 +58,9 @@ def _clear_episode_metadata(meta: Meta) -> None:
     meta.tvdb_episode_name = None
     meta.tvdb_episode_year = ""
     meta.tvdb_episode = None
+    meta.tvdb_imdb_id = None
     meta.tvdb_overview = None
+    meta.tvdb_season_name = ""
     meta.tvdb_season_int = None
     meta.tvdb_season = None
     meta.tvmaze_episode_data = {}
