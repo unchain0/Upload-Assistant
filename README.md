@@ -59,6 +59,7 @@ This branch introduces new media categories and automation features not present 
 ### 2. Audio Stream Spectrogram Generation
 
 - **Spectrogram Extraction & Plotting**: Use `-as` / `--audio-spectrogram` to automatically extract audio streams from MKVs, Blu-ray BDInfo, music tracks, or audiobook chapters using FFmpeg and plot frequency/time graphs (inferno theme) via `librosa` and `matplotlib`. Music and audiobook processing is capped by `audio_spectrogram_max_files`.
+- **Dynamic HDR Metadata Plots**: Use `--dynamic-hdr-plot` to create and upload separate Dolby Vision and HDR10+ metadata plots. The required `dovi_tool` and `hdr10plus_tool` binaries are downloaded automatically for the current platform on first use.
 - **Automated Upload**: Automatically uploads generated spectrograms along with your screenshots for release verification.
 - **Stream Selection**: Supports targeting specific tracks using `-ast` / `--audio-spectrogram-tracks` (e.g., track indexes or `all`).
 
@@ -142,7 +143,6 @@ This branch introduces new media categories and automation features not present 
 | <img src="web_ui/static/img/trackers/luminarr.png" width="16" height="16" />               | Luminarr               | LUMINARR               | MOVIE, TV                    |
 | <img src="web_ui/static/img/trackers/makingoff.png" width="16" height="16" />              | MakingOff              | MAKINGOFF              | MOVIE                        |
 | <img src="web_ui/static/img/trackers/midnightscene.png" width="16" height="16" />          | MidnightScene          | MIDNIGHTSCENE          | MOVIE, TV, GAME, MUSIC       |
-| <img src="web_ui/static/img/trackers/morethantv.png" width="16" height="16" />             | MoreThanTV             | MORETHANTV             | MOVIE, TV                    |
 | <img src="web_ui/static/img/trackers/mteam.png" width="16" height="16" />                  | M-Team                 | MTEAM                  | MOVIE, TV                    |
 | <img src="web_ui/static/img/trackers/nebulance.png" width="16" height="16" />              | Nebulance              | NEBULANCE              | TV                           |
 | <img src="web_ui/static/img/trackers/nordicquality.png" width="16" height="16" />          | NordicQuality          | NORDICQUALITY          | MOVIE, TV, MUSIC, BOOK, GAME |
@@ -303,7 +303,7 @@ In your terminal, run the command for your operating system and follow the on-sc
 - Check out our [Wiki Help Page](docs/home.md).
 - Windows installation and basic commands: see [Windows Install](docs/windows-install.md).
 - Need a no-root Linux or seedbox setup? See [Seedbox / Linux Install](docs/seedbox.md).
-- Found an issue or need help? Please [open a GitHub Issue](https://github.com/wastaken7/Upload-Assistant/issues) so we can track and resolve it.
+- Found an issue or need help? Please [open a GitHub Issue](https://github.com/wastaken7/Upload-Assistant/issues) so we can track and resolve it. If you prefer not to create a GitHub account for privacy reasons, join our [Signal group](https://signal.group/#CjQKILmkUCLe5mZULkQGI6B5knmX1ytrIBFicpJ_NZGAHmOrEhDD5F7ctp-obLeLOsa0yCoJ) instead.
 
 ## **Updating:**
 

@@ -8,6 +8,8 @@ from pathlib import Path
 import aiofiles
 import httpx
 
+from bin.download_integrity import verify_downloaded_asset
+
 try:
     from src.console import console, logger
 except ImportError:
@@ -27,7 +29,7 @@ class PestoBinaryManager:
     """Download Pesto binaries for the host architecture."""
 
     @staticmethod
-    async def ensure_pesto_binary(base_dir: str | Path, version: str = "pesto-v0.3.62") -> str:
+    async def ensure_pesto_binary(base_dir: str | Path, version: str = "pesto-v0.6.0") -> str:
         system = platform.system().lower()
         machine = platform.machine().lower()
         logger.debug(f"[blue]Pesto: Detected system: {system}, architecture: {machine}[/blue]")
@@ -88,6 +90,7 @@ class PestoBinaryManager:
                         await f.write(chunk)
 
             logger.debug(f"[green]Downloaded Pesto package: {file_pattern}[/green]")
+            verify_downloaded_asset(temp_file, file_pattern)
 
             # Pesto has raw binaries, just move it to target location
             shutil.move(str(temp_file), str(binary_path))
