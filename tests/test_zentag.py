@@ -94,6 +94,44 @@ async def test_unattended_zenith_m4b_is_transformed_and_validated(tmp_path: Path
 
 
 @pytest.mark.asyncio
+async def test_unattended_zenith_ebook_is_organized_inside_directory(tmp_path: Path, monkeypatch: Any) -> None:
+    source = tmp_path / "Rich Dad Guide.pdf"
+    source.write_bytes(b"pdf")
+    output = tmp_path / "zentag-output" / "Robert T. Kiyosaki - Rich Dad's Guide [ENG PDF]"
+    output_file = output / "Robert T. Kiyosaki - Rich Dad's Guide (2012) [ENG PDF 1612680208].pdf"
+    calls: list[list[str]] = []
+
+    async def fake_binary(_base_dir: str) -> str:
+        return "/bin/zentag"
+
+    async def fake_process(command: list[str]) -> tuple[int, str, str]:
+        calls.append(command)
+        output.mkdir(parents=True)
+        output_file.write_bytes(b"pdf")
+        return 0, f"Wrote {output_file}\n", ""
+
+    monkeypatch.setattr(zentag.ZentagBinaryManager, "ensure_binary", staticmethod(fake_binary))
+    monkeypatch.setattr(zentag, "_run_process", fake_process)
+    meta = Meta(
+        path=str(source),
+        filelist=[str(source)],
+        trackers=["ZENITH"],
+        unattended=True,
+        category="BOOK",
+        author="Robert T. Kiyosaki",
+        title="Rich Dad's Guide",
+        year=2012,
+        isbn="1612680208",
+        book_language_iso="eng",
+    )
+
+    assert await zentag.prepare_zenith_ebook(meta, str(tmp_path), {"DEFAULT": {"auto_zentag": True}}) == str(output)
+    assert calls[0][3:5] == ["ebook", str(source)]
+    assert calls[0][calls[0].index("--isbn") + 1] == "1612680208"
+    assert calls[0][calls[0].index("--language") + 1] == "eng"
+
+
+@pytest.mark.asyncio
 async def test_failed_zentag_validation_keeps_original_for_other_trackers(tmp_path: Path, monkeypatch: Any) -> None:
     source = tmp_path / "Book [B07ZHYPJK1].m4b"
     source.write_bytes(b"m4b")

@@ -112,6 +112,7 @@ async def test_failed_required_zentag_preparation_disables_zenith(tmp_path: Path
         return None
 
     monkeypatch.setattr(trackerhandle, "prepare_zenith_audiobook", failed_prepare)
+    monkeypatch.setattr(trackerhandle, "prepare_zenith_ebook", failed_prepare)
 
     prepared = await trackerhandle.prepare_tracker_meta(meta, "ZENITH", {"DEFAULT": {"auto_zentag": True}})
 

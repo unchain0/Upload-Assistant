@@ -27,7 +27,7 @@ from src.trackers.torrenthr import TorrentHR
 from src.trackers.UNIT3D.znth import prepare_zenith_music_layout
 from src.trackersetup import TrackerSetup
 from src.upload_safety import book_metadata_cjk_fields
-from src.zentag import prepare_zenith_audiobook, should_prepare_zenith_audiobook
+from src.zentag import prepare_zenith_audiobook, prepare_zenith_ebook, should_prepare_zenith_audiobook, should_prepare_zenith_ebook
 
 type StatusDict = dict[str, Any]
 
@@ -42,8 +42,10 @@ async def prepare_tracker_meta(shared_meta: Meta, tracker: str, config: dict[str
     if tracker != "ZENITH":
         return tracker_meta
 
-    preparation_required = should_prepare_zenith_audiobook(tracker_meta, config)
+    preparation_required = should_prepare_zenith_audiobook(tracker_meta, config) or should_prepare_zenith_ebook(tracker_meta, config)
     prepared_book = await prepare_zenith_audiobook(tracker_meta, str(tracker_meta.base_dir), config)
+    if prepared_book is None:
+        prepared_book = await prepare_zenith_ebook(tracker_meta, str(tracker_meta.base_dir), config)
     if preparation_required and not prepared_book:
         status = shared_meta.tracker_status.setdefault(tracker, {})
         status.update(upload=False, skipped=True, status_message="Automatic zentag preparation failed; the original audiobook will not be uploaded")

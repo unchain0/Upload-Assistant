@@ -531,8 +531,6 @@ class Zenith(UNIT3D):
             book_format = _book_format(meta)
             defer_to_zentag = bool(
                 meta.get("defer_zentag_validation", False)
-                and meta.audiobook
-                and book_format == "M4B"
                 and not meta.get("zentag_prepared", False)
             )
             if not meta.isdir and not defer_to_zentag:
