@@ -8,12 +8,11 @@ support DVD IFO/VOB file parsing with language information.
 
 import platform
 import shutil
-import stat
 import zipfile
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-import requests
+from bin.download_integrity import download_verified_asset_sync, extract_zip_regular_member, promote_files_with_rollback
 
 try:
     from src.console import console, logger
@@ -61,12 +60,7 @@ def get_url(system: str, arch: str, library_type: str = "cli") -> str:
 def download_file(url: str, output_path: Path) -> None:
     """Download a file from URL to specified path."""
     logger.info(f"Downloading: {url}", extra={"markup": False})
-    response = requests.get(url, stream=True, timeout=60)
-    response.raise_for_status()
-
-    with Path(output_path).open("wb") as f:
-        for chunk in response.iter_content(chunk_size=8192):
-            f.write(chunk)
+    download_verified_asset_sync(url, output_path, output_path.name)
     logger.info(f"Downloaded: {output_path.name}", extra={"markup": False})
 
 
@@ -74,85 +68,34 @@ def extract_linux_binaries(cli_archive: Path, lib_archive: Path, output_dir: Pat
     """Extract MediaInfo CLI and library from downloaded archives."""
     logger.info("Extracting MediaInfo binaries...", extra={"markup": False})
 
-    # Extract MediaInfo CLI from zip file
-    with zipfile.ZipFile(cli_archive, "r") as zip_ref:
-        file_list = zip_ref.namelist()
-        mediainfo_file = output_dir / "mediainfo"
-
-        logger.info(f"CLI archive contents: {file_list}", extra={"markup": False})
-
-        # Look for the mediainfo binary in the archive
-        for member in file_list:
-            # Check for symlinks in ZIP files
-            info = zip_ref.getinfo(member)
-            perm = info.external_attr >> 16
-            if stat.S_ISLNK(perm):
-                logger.warning(f"Warning: Skipping symlink: {member}", extra={"markup": False})
-                continue
-
-            # Check for absolute paths
-            if Path(member).is_absolute():
-                logger.warning(f"Warning: Skipping absolute path: {member}", extra={"markup": False})
-                continue
-
-            # Check for directory traversal patterns
-            if ".." in member or member.startswith("/"):
-                logger.warning(f"Warning: Skipping dangerous path: {member}", extra={"markup": False})
-                continue
-
-            if member.endswith("/mediainfo") or member == "mediainfo":
-                zip_ref.extract(member, output_dir.parent)
-                extracted_path = output_dir.parent / member
-                shutil.move(str(extracted_path), str(mediainfo_file))
-                logger.info(f"Extracted CLI binary: {mediainfo_file}", extra={"markup": False})
-                break
-        else:
-            raise Exception("MediaInfo CLI binary not found in archive")
-
-    # Extract MediaInfo library
-    with zipfile.ZipFile(lib_archive, "r") as zip_ref:
-        file_list = zip_ref.namelist()
-        lib_file = output_dir / "libmediainfo.so.0"
-
-        logger.info(f"Library archive contents: {file_list}", extra={"markup": False})
-
-        # Look for the library file in the archive
-        lib_candidates = ["lib/libmediainfo.so.0.0.0", "libmediainfo.so.0.0.0", "libmediainfo.so.0", "MediaInfo/libmediainfo.so.0.0.0", "MediaInfo/lib/libmediainfo.so.0.0.0"]
-
-        for candidate in lib_candidates:
-            if candidate in file_list:
-                # Check for symlinks in ZIP files
-                info = zip_ref.getinfo(candidate)
-                perm = info.external_attr >> 16
-                if stat.S_ISLNK(perm):
-                    logger.warning(f"Warning: Skipping symlink: {candidate}", extra={"markup": False})
-                    continue
-
-                # Check for absolute paths
-                if Path(candidate).is_absolute():
-                    logger.warning(f"Warning: Skipping absolute path: {candidate}", extra={"markup": False})
-                    continue
-
-                # Check for directory traversal patterns
-                if ".." in candidate or candidate.startswith("/"):
-                    logger.warning(f"Warning: Skipping dangerous path: {candidate}", extra={"markup": False})
-                    continue
-
-                zip_ref.extract(candidate, output_dir.parent)
-                extracted_path = output_dir.parent / candidate
-                # Move to final location
-                shutil.move(str(extracted_path), str(lib_file))
-                # Set appropriate permissions for library file (readable by all)
-                Path(lib_file).chmod(0o644)
-                logger.info(f"Extracted library: {lib_file}", extra={"markup": False})
-                break
-        else:
-            raise Exception("MediaInfo library not found in archive")
-
-    # Clean up empty lib directory if it exists
-    lib_dir = output_dir.parent / "lib"
-    if lib_dir.exists() and not any(lib_dir.iterdir()):
-        lib_dir.rmdir()
+    staging = output_dir / ".mediainfo-staging"
+    shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir()
+    try:
+        with zipfile.ZipFile(cli_archive, "r") as archive:
+            cli_members = [name for name in archive.namelist() if name.endswith("/mediainfo") or name == "mediainfo"]
+            if len(cli_members) != 1:
+                raise RuntimeError("MediaInfo archive must contain exactly one CLI binary")
+            extract_zip_regular_member(archive, cli_members[0], staging / "mediainfo")
+        with zipfile.ZipFile(lib_archive, "r") as archive:
+            library_member = "lib/libmediainfo.so.0.0.0"
+            if library_member not in archive.namelist():
+                raise RuntimeError("MediaInfo archive does not contain the required library")
+            extract_zip_regular_member(archive, library_member, staging / "libmediainfo.so.0")
+        (staging / "mediainfo").chmod(0o755)
+        (staging / "libmediainfo.so.0").chmod(0o644)
+        staged_version = staging / f"version_{MEDIAINFO_VERSION}"
+        staged_version.write_text(f"MediaInfo {MEDIAINFO_VERSION} - DVD Support")
+        promote_files_with_rollback(
+            [
+                (staging / "mediainfo", output_dir / "mediainfo"),
+                (staging / "libmediainfo.so.0", output_dir / "libmediainfo.so.0"),
+                (staged_version, output_dir / staged_version.name),
+            ],
+            output_dir / ".mediainfo-backup",
+        )
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
 
 
 def download_dvd_mediainfo_docker():
@@ -213,15 +156,8 @@ def download_dvd_mediainfo_docker():
         # Extract binaries
         extract_linux_binaries(cli_archive, lib_archive, output_dir)
 
-        # Create version marker
-        with Path(version_file).open("w") as f:
-            f.write(f"MediaInfo {MEDIAINFO_VERSION} - DVD Support")
-
-        # Make CLI binary executable and verify permissions
+        # Verify CLI permissions
         if cli_file.exists():
-            # Set secure executable permissions (owner only)
-            Path(cli_file).chmod(0o700)
-            # Verify permissions were set correctly
             file_stat = cli_file.stat()
             is_executable = bool(file_stat.st_mode & 0o100)  # Check if owner execute bit is set
             if is_executable:

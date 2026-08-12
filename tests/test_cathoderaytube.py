@@ -18,6 +18,7 @@ def meta(**overrides):
         "category": "MOVIE",
         "name": "Example Movie (2010)",
         "title": "Example Movie",
+        "aka": "",
         "year": "2010",
         "edition": "",
         "imdb_id": "1234567",
@@ -51,6 +52,7 @@ def meta(**overrides):
         "image_list": [],
         "menu_images": [],
         "spectrograms_images": [],
+        "dynamic_hdr_plot_images": [],
         "tracker_image_collections": {},
         "screens": 6,
         "base_dir": ".",
@@ -97,6 +99,7 @@ def test_maps_categories_and_builds_description():
 def test_formats_titles_to_crt_conventions():
     site = tracker()
     assert asyncio.run(site.get_name(meta(edition="Director's Cut"))) == "Example Movie (2010) Director's Cut"  # noqa: S101
+    assert asyncio.run(site.get_name(meta(aka="AKA Example Movie in Portuguese"))) == "Example Movie AKA Example Movie in Portuguese (2010)"  # noqa: S101
     tv_name = asyncio.run(site.get_name(meta(category="TV", title="Example Show", season="S01", year="2001")))
     assert tv_name == "Example Show - Season 1 (2001)"  # noqa: S101
     assert asyncio.run(site.get_name(meta(category="TV", title="Example Show", season="S00", year="2001"))) == "Example Show - Specials (2001)"  # noqa: S101
@@ -113,7 +116,7 @@ def test_uses_the_image_hosts_approved_by_crt():
 def test_cover_uses_only_an_approved_image_host():
     site = tracker()
     assert site.get_cover(meta(tmdb_poster_path="/poster.jpg", artwork_url="https://image.tmdb.org/t/p/w500/poster.jpg")) == ""  # noqa: S101
-    assert (
+    assert (  # noqa: S101
         site.get_cover(
             meta(
                 tmdb_poster_path="/poster.jpg",
@@ -319,3 +322,9 @@ def test_extracts_successful_upload_url():
     request = httpx.Request("POST", "https://www.cathode-ray.tube/torrents.php?id=123&torrentid=456")
     response = httpx.Response(200, request=request)
     assert CathodeRayTube._uploaded_torrent_url(response).endswith("id=123&torrentid=456")  # noqa: S101
+
+
+def test_excludes_images_without_raw_url_from_screenshot_validation():
+    valid_images = [{"raw_url": f"https://images.example/{index}.png"} for index in range(5)]
+
+    assert not asyncio.run(tracker().get_additional_checks(meta(image_list=valid_images, dynamic_hdr_plot_images=[{}])))  # noqa: S101

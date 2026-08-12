@@ -131,7 +131,7 @@ class SpeedApp:
         return media_info, None
 
     async def get_screenshots(self, meta: Meta) -> list[str]:
-        images = cast(list[dict[str, Any]], meta.menu_images) + meta.image_list + meta.spectrograms_images
+        images = cast(list[dict[str, Any]], meta.menu_images) + meta.image_list + meta.spectrograms_images + meta.dynamic_hdr_plot_images
         return [image["raw_url"] for image in images if image.get("raw_url")]
 
     async def search_existing(self, meta: Meta) -> list[dict[str, Any]]:
@@ -213,6 +213,7 @@ class SpeedApp:
             custom_header=True,
             custom_signature=False,
             description=False,
+            dynamic_hdr_plot=False,
             game=False,
             languages=False,
             logo=True,

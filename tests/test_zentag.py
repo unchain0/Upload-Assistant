@@ -1,4 +1,5 @@
 # ruff: noqa: S101
+import asyncio
 import hashlib
 import io
 import tarfile
@@ -34,9 +35,21 @@ async def test_tampered_cached_zentag_is_replaced_with_verified_binary(tmp_path:
     class Response:
         content = archive_payload
 
+        def __init__(self) -> None:
+            self.headers = {"content-length": str(len(archive_payload))}
+
+        async def __aenter__(self) -> Response:
+            return self
+
+        async def __aexit__(self, *_args: Any) -> None:
+            return None
+
         @staticmethod
         def raise_for_status() -> None:
             return None
+
+        async def aiter_bytes(self, chunk_size: int):  # type: ignore[no-untyped-def]  # noqa: ARG002
+            yield self.content
 
     class Client:
         def __init__(self, **_kwargs: Any) -> None:
@@ -48,7 +61,7 @@ async def test_tampered_cached_zentag_is_replaced_with_verified_binary(tmp_path:
         async def __aexit__(self, *_args: Any) -> None:
             return None
 
-        async def get(self, _url: str) -> Response:
+        def stream(self, *_args: Any, **_kwargs: Any) -> Response:
             return Response()
 
     monkeypatch.setattr(get_zentag.platform, "system", lambda: "Linux")
@@ -79,6 +92,95 @@ async def test_noninteractive_zentag_process_does_not_inherit_terminal_stdin(mon
 
     assert await zentag._run_process(["zentag", "ebook", "book.pdf"]) == (0, "ok", "")
     assert captured["stdin"] == zentag.asyncio.subprocess.DEVNULL
+
+
+@pytest.mark.asyncio
+async def test_cancelled_zentag_process_is_killed_and_reaped(monkeypatch: Any) -> None:
+    process_started = asyncio.Event()
+
+    class Process:
+        returncode: int | None = None
+        killed = False
+        waited = False
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            process_started.set()
+            await asyncio.Event().wait()
+            return b"", b""
+
+        def kill(self) -> None:
+            self.killed = True
+            self.returncode = -9
+
+        async def wait(self) -> int:
+            self.waited = True
+            return self.returncode or 0
+
+    process = Process()
+
+    async def fake_create(*_command: str, **_kwargs: Any) -> Process:
+        return process
+
+    monkeypatch.setattr(zentag.asyncio, "create_subprocess_exec", fake_create)
+    task = asyncio.create_task(zentag._run_process(["zentag", "check"]))
+    await process_started.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert process.killed
+    assert process.waited
+
+
+@pytest.mark.asyncio
+async def test_cancelled_zentag_transform_is_killed_and_reaped(monkeypatch: Any) -> None:
+    read_started = asyncio.Event()
+
+    class Stdin:
+        def write(self, _data: bytes) -> None:
+            return None
+
+        async def drain(self) -> None:
+            return None
+
+    class Reader:
+        async def read(self, _size: int = -1) -> bytes:
+            read_started.set()
+            await asyncio.Event().wait()
+            return b""
+
+    class Process:
+        returncode: int | None = None
+        stdin = Stdin()
+        stdout = Reader()
+        stderr = Reader()
+        killed = False
+        waited = False
+
+        def kill(self) -> None:
+            self.killed = True
+            self.returncode = -9
+
+        async def wait(self) -> int:
+            self.waited = True
+            return self.returncode or 0
+
+    process = Process()
+
+    async def fake_create(*_command: str, **_kwargs: Any) -> Process:
+        return process
+
+    monkeypatch.setattr(zentag.asyncio, "create_subprocess_exec", fake_create)
+    task = asyncio.create_task(zentag._run_transform(["zentag", "transform"]))
+    await read_started.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert process.killed
+    assert process.waited
 
 
 @pytest.mark.asyncio

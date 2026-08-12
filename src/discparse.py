@@ -5,8 +5,11 @@ import os
 import platform
 import re
 import shutil
+import signal
+import subprocess
 import traceback
 from collections import OrderedDict, defaultdict
+from contextlib import suppress
 from pathlib import Path
 from typing import Any, cast
 
@@ -27,9 +30,69 @@ PlaylistInfo = dict[str, Any]
 
 
 class DiscParse:
+    PROCESS_CLEANUP_TIMEOUT = 5
+
     def __init__(self, config: dict[str, Any]) -> None:
         self.config = config
         self.mediainfo_config: dict[str, Any] | None = None
+
+    @staticmethod
+    def _process_group_options() -> dict[str, Any]:
+        if os.name == "nt":
+            return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+        return {"start_new_session": True}
+
+    @staticmethod
+    async def _terminate_process_tree(process: asyncio.subprocess.Process) -> None:
+        if process.returncode is not None:
+            return
+        pid = getattr(process, "pid", None)
+        if os.name == "nt" and pid is not None:
+            tree_killer = await asyncio.create_subprocess_exec(
+                "taskkill",
+                "/F",
+                "/T",
+                "/PID",
+                str(pid),
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            try:
+                await asyncio.wait_for(tree_killer.wait(), timeout=DiscParse.PROCESS_CLEANUP_TIMEOUT)
+            except TimeoutError:
+                with suppress(ProcessLookupError):
+                    tree_killer.kill()
+            if process.returncode is None:
+                with suppress(ProcessLookupError):
+                    process.kill()
+        elif pid is not None:
+            with suppress(ProcessLookupError):
+                os.killpg(pid, signal.SIGKILL)
+        else:
+            with suppress(ProcessLookupError):
+                process.kill()
+
+    async def _run_specialized_mediainfo(self, binary: str, *arguments: str) -> tuple[bytes, bytes, int | None]:
+        process = await asyncio.create_subprocess_exec(
+            binary,
+            *arguments,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            **self._process_group_options(),
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=30)
+        except TimeoutError:
+            await self._terminate_process_tree(process)
+            with suppress(TimeoutError):
+                await asyncio.wait_for(process.communicate(), timeout=self.PROCESS_CLEANUP_TIMEOUT)
+            raise RuntimeError("Specialized MediaInfo timed out after 30 seconds") from None
+        except BaseException:
+            await self._terminate_process_tree(process)
+            with suppress(TimeoutError):
+                await asyncio.wait_for(process.communicate(), timeout=self.PROCESS_CLEANUP_TIMEOUT)
+            raise
+        return stdout, stderr, process.returncode
 
     def _calculate_playlist_score(self, playlist: PlaylistInfo) -> float:
         """Calculate weighted score for playlist selection.
@@ -95,50 +158,61 @@ class DiscParse:
             r"(?P<files_done>\d+)/(?P<files_total>\d+),\s*read\s*(?P<speed>[^,]+),\s*ETA\s*(?P<eta>[^)]+)\)"
         )
         command = [*command, "--progress"]
-        process = await asyncio.create_subprocess_exec(*command, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
-        if process.stderr is None:
-            raise RuntimeError("Unable to read go-bdinfo progress output")
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+            **self._process_group_options(),
+        )
+        try:
+            if process.stderr is None:
+                raise RuntimeError("Unable to read go-bdinfo progress output")
 
-        current = 0.0
-        buffer = ""
-        publish_progress(progress_id, "Scanning Blu-ray", current=0, total=100, detail="Starting go-bdinfo scan")
-        with progress_display(
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            console=console,
-            transient=False,
-        ) as progress:
-            task = progress.add_task("Scanning Blu-ray...", total=100)
-            while chunk := await process.stderr.read(1024):
-                buffer += chunk.decode("utf-8", errors="replace")
-                updates = re.split(r"[\r\n]+", buffer)
-                buffer = updates.pop()
-                for update in updates:
-                    match = progress_pattern.search(update)
-                    if not match:
-                        continue
-                    current = float(match["percent"])
-                    detail = f"{match['done'].strip()} / {match['total'].strip()} | {match['speed'].strip()} | ETA {match['eta'].strip()}"
-                    progress.update(task, completed=current, description=f"Scanning Blu-ray... {detail}")
-                    publish_progress(progress_id, "Scanning Blu-ray", current=current, total=100, detail=detail)
+            current = 0.0
+            buffer = ""
+            publish_progress(progress_id, "Scanning Blu-ray", current=0, total=100, detail="Starting go-bdinfo scan")
+            with progress_display(
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                console=console,
+                transient=False,
+            ) as progress:
+                task = progress.add_task("Scanning Blu-ray...", total=100)
+                while chunk := await process.stderr.read(1024):
+                    buffer += chunk.decode("utf-8", errors="replace")
+                    updates = re.split(r"[\r\n]+", buffer)
+                    buffer = updates.pop()
+                    for update in updates:
+                        match = progress_pattern.search(update)
+                        if not match:
+                            continue
+                        current = float(match["percent"])
+                        detail = f"{match['done'].strip()} / {match['total'].strip()} | {match['speed'].strip()} | ETA {match['eta'].strip()}"
+                        progress.update(task, completed=current, description=f"Scanning Blu-ray... {detail}")
+                        publish_progress(progress_id, "Scanning Blu-ray", current=current, total=100, detail=detail)
 
-            if buffer:
-                match = progress_pattern.search(buffer)
-                if match:
-                    current = float(match["percent"])
-                    detail = f"{match['done'].strip()} / {match['total'].strip()} | {match['speed'].strip()} | ETA {match['eta'].strip()}"
-                    progress.update(task, completed=current, description=f"Scanning Blu-ray... {detail}")
-                    publish_progress(progress_id, "Scanning Blu-ray", current=current, total=100, detail=detail)
+                if buffer:
+                    match = progress_pattern.search(buffer)
+                    if match:
+                        current = float(match["percent"])
+                        detail = f"{match['done'].strip()} / {match['total'].strip()} | {match['speed'].strip()} | ETA {match['eta'].strip()}"
+                        progress.update(task, completed=current, description=f"Scanning Blu-ray... {detail}")
+                        publish_progress(progress_id, "Scanning Blu-ray", current=current, total=100, detail=detail)
 
-            returncode = await process.wait()
-            if returncode == 0:
-                progress.update(task, completed=100, description="Scanning Blu-ray complete")
-                complete_progress(progress_id, "Scanning Blu-ray", current=100, total=100)
-            else:
-                publish_progress(progress_id, "Scanning Blu-ray", current=current, total=100, detail=f"go-bdinfo exited with status {returncode}", status="failed")
+                returncode = await process.wait()
+                if returncode == 0:
+                    progress.update(task, completed=100, description="Scanning Blu-ray complete")
+                    complete_progress(progress_id, "Scanning Blu-ray", current=100, total=100)
+                else:
+                    publish_progress(progress_id, "Scanning Blu-ray", current=current, total=100, detail=f"go-bdinfo exited with status {returncode}", status="failed")
 
-        return returncode
+            return returncode
+        finally:
+            if process.returncode is None:
+                await self._terminate_process_tree(process)
+                with suppress(TimeoutError):
+                    await asyncio.wait_for(process.wait(), timeout=self.PROCESS_CLEANUP_TIMEOUT)
 
     """
     Get and parse bdinfo
@@ -619,12 +693,9 @@ class DiscParse:
 
                     try:
                         if mediainfo_binary:
-                            process = await asyncio.create_subprocess_exec(
-                                mediainfo_binary, "--Output=JSON", ifo_file, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-                            )
-                            stdout, stderr = await process.communicate()
+                            stdout, stderr, returncode = await self._run_specialized_mediainfo(mediainfo_binary, "--Output=JSON", ifo_file)
 
-                            if process.returncode == 0 and stdout:
+                            if returncode == 0 and stdout:
                                 vob_set_mi = stdout.decode()
                             else:
                                 logger.info(f"[yellow]Specialized MediaInfo failed for {ifo_file}, falling back to standard[/yellow]")
@@ -676,10 +747,9 @@ class DiscParse:
                 # Process VOB file
                 try:
                     if mediainfo_binary:
-                        process = await asyncio.create_subprocess_exec(mediainfo_binary, vob_basename, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-                        stdout, stderr = await process.communicate()
+                        stdout, stderr, returncode = await self._run_specialized_mediainfo(mediainfo_binary, vob_basename)
 
-                        if process.returncode == 0 and stdout:
+                        if returncode == 0 and stdout:
                             vob_mi_output = stdout.decode().replace("\r\n", "\n")
                         else:
                             logger.info("[yellow]Specialized MediaInfo failed for VOB, falling back[/yellow]")
@@ -699,10 +769,9 @@ class DiscParse:
                 # Process IFO file
                 try:
                     if mediainfo_binary:
-                        process = await asyncio.create_subprocess_exec(mediainfo_binary, ifo_basename, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-                        stdout, stderr = await process.communicate()
+                        stdout, stderr, returncode = await self._run_specialized_mediainfo(mediainfo_binary, ifo_basename)
 
-                        if process.returncode == 0 and stdout:
+                        if returncode == 0 and stdout:
                             ifo_mi_output = stdout.decode().replace("\r\n", "\n")
                         else:
                             logger.info("[yellow]Specialized MediaInfo failed for IFO, falling back[/yellow]")

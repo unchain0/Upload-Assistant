@@ -9,6 +9,9 @@ from pathlib import Path
 import aiofiles
 import httpx
 
+from bin.download_integrity import MAX_EXTRACTED_BYTES, download_verified_asset, promote_files_with_rollback, safe_extract_zip
+from bin.runtime_tool_paths import tool_install_dir
+
 try:
     from src.console import console, logger
 except ImportError:
@@ -62,8 +65,7 @@ class Par2BinaryManager:
         file_pattern = platform_info["file"]
         folder_path = platform_info["folder"]
 
-        bin_dir = Path(base_dir) / "bin" / "par2" / folder_path
-        bin_dir.mkdir(parents=True, exist_ok=True)
+        bin_dir = tool_install_dir(base_dir, "par2", folder_path)
 
         binary_name = "par2.exe" if system == "windows" else "par2"
         binary_path = bin_dir / binary_name
@@ -79,68 +81,46 @@ class Par2BinaryManager:
 
         logger.info("[yellow]Binary 'par2' not found. Attempting to download automatically...[/yellow]")
 
-        # Cleanup old files
-        if binary_path.exists():
-            binary_path.unlink()
-        if version_path.exists():
-            version_path.unlink()
-
         download_url = f"https://github.com/animetosho/par2cmdline-turbo/releases/download/{version}/{file_pattern}"
         logger.debug(f"[blue]PAR2 Download URL: {download_url}[/blue]")
 
         try:
-            async with (
-                httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client,
-                client.stream("GET", download_url, timeout=60.0) as response,
-            ):
-                response.raise_for_status()
-                temp_file = bin_dir / f"temp_{file_pattern}"
-                async with aiofiles.open(temp_file, "wb") as f:
-                    async for chunk in response.aiter_bytes(chunk_size=8192):
-                        await f.write(chunk)
+            temp_file = bin_dir / f"temp_{file_pattern}"
+            staging = bin_dir / ".par2-staging"
+            shutil.rmtree(staging, ignore_errors=True)
+            staging.mkdir()
+            async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+                await download_verified_asset(client, download_url, temp_file, file_pattern)
 
             logger.debug(f"[green]Downloaded PAR2 package: {file_pattern}[/green]")
 
-            try:
-                with zipfile.ZipFile(temp_file, "r") as zip_ref:
-                    # Secure extract: prevent path traversal
-                    for member in zip_ref.namelist():
-                        info = zip_ref.getinfo(member)
-                        perm = info.external_attr >> 16
-                        if stat.S_ISLNK(perm):
-                            continue
-                        if Path(member).is_absolute() or ".." in member or member.startswith("/"):
-                            continue
-                        full_path = os.path.realpath(Path(bin_dir) / member)
-                        base_path = os.path.realpath(bin_dir)
-                        if not full_path.startswith(base_path + os.sep) and full_path != base_path:
-                            continue
-                        zip_ref.extract(member, str(bin_dir))
+            with zipfile.ZipFile(temp_file, "r") as zip_ref:
+                safe_extract_zip(zip_ref, staging, max_bytes=MAX_EXTRACTED_BYTES)
+            candidates = [candidate for candidate in staging.rglob(binary_name) if candidate.is_file()]
+            if len(candidates) != 1:
+                raise RuntimeError(f"Downloaded archive must contain exactly one {binary_name} executable")
+            staged_binary = candidates[0]
+            if system != "windows":
+                staged_binary.chmod(staged_binary.stat().st_mode | stat.S_IEXEC)
 
-                # Locate par2 binary in extracted output
-                if not binary_path.exists():
-                    for p in bin_dir.rglob(binary_name):
-                        if p.is_file():
-                            shutil.move(str(p), str(binary_path))
-                            break
-            finally:
-                if temp_file.exists():
-                    temp_file.unlink()
-
-            # Cleanup extra directories/files leftover from extraction
-            for p in list(bin_dir.iterdir()):
-                if p.is_dir():
-                    shutil.rmtree(p)
-                elif p.is_file() and p.name not in (binary_name, version):
-                    p.unlink()
-
-            if system != "windows" and binary_path.exists():
-                binary_path.chmod(binary_path.stat().st_mode | stat.S_IEXEC)
-
-            async with aiofiles.open(version_path, "w", encoding="utf-8") as version_file:
+            staged_version = staging / version
+            async with aiofiles.open(staged_version, "w", encoding="utf-8") as version_file:
                 await version_file.write(f"PAR2 version {version} installed successfully.")
+            stale_markers = [
+                candidate
+                for candidate in bin_dir.iterdir()
+                if candidate.is_file() and candidate.name.startswith("v") and candidate != version_path
+            ]
+            promote_files_with_rollback(
+                [(staged_binary, binary_path), (staged_version, version_path)],
+                bin_dir / ".par2-backup",
+                remove_targets=stale_markers,
+            )
 
             return str(binary_path)
 
         except Exception as e:
             raise Exception(f"Failed to setup PAR2 binary: {e}") from e
+        finally:
+            temp_file.unlink(missing_ok=True)
+            shutil.rmtree(staging, ignore_errors=True)

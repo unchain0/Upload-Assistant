@@ -7,10 +7,12 @@ Docker-specific script to download bdinfo binaries for Linux containers.
 import os
 import platform
 import shutil
-import tarfile
+import sys
 from pathlib import Path
 
-import requests
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from bin.download_integrity import download_bounded_asset_sync, promote_files_with_rollback, safe_extract_tar, verify_downloaded_asset
 
 try:
     from src.console import console, logger
@@ -33,58 +35,15 @@ BASE_RELEASE_URL = "https://github.com/autobrr/go-bdinfo/releases/download"
 
 def download_file(url: str, output_path: Path) -> None:
     logger.info(f"Downloading: {url}", extra={"markup": False})
-    resp = requests.get(url, stream=True, timeout=60)
-    resp.raise_for_status()
-    with Path(output_path).open("wb") as f:
-        for chunk in resp.iter_content(chunk_size=8192):
-            f.write(chunk)
+    download_bounded_asset_sync(url, output_path)
     logger.info(f"Downloaded: {output_path.name}", extra={"markup": False})
 
 
 def secure_extract_tar(tar_path: Path, extract_to: Path) -> None:
+    import tarfile
+
     with tarfile.open(tar_path, "r:gz") as tar_ref:
-        base_path = extract_to.resolve()
-        for member in tar_ref.getmembers():
-            if member.issym() or member.islnk():
-                logger.warning(f"Warning: Skipping link: {member.name}", extra={"markup": False})
-                continue
-            if Path(member.name).is_absolute() or ".." in Path(member.name).parts:
-                logger.warning(f"Warning: Skipping dangerous path: {member.name}", extra={"markup": False})
-                continue
-            try:
-                final_path = (base_path / member.name).resolve()
-                try:
-                    os.path.commonpath([str(base_path), str(final_path)])
-                    if not str(final_path).startswith(str(base_path) + os.sep) and final_path != base_path:
-                        logger.warning(f"Warning: Path outside base directory: {member.name}", extra={"markup": False})
-                        continue
-                except ValueError:
-                    logger.warning(f"Warning: Invalid path resolution: {member.name}", extra={"markup": False})
-                    continue
-            except (OSError, ValueError) as e:
-                logger.warning(f"Warning: Path resolution failed for {member.name}: {e}", extra={"markup": False})
-                continue
-
-            if not (member.isfile() or member.isdir()):
-                logger.warning(f"Warning: Skipping non-regular file: {member.name}", extra={"markup": False})
-                continue
-
-            if member.isfile() and member.size > 100 * 1024 * 1024:
-                logger.warning(f"Warning: Skipping oversized file: {member.name} ({member.size} bytes)", extra={"markup": False})
-                continue
-
-            if member.isdir():
-                target_dir = base_path / member.name
-                target_dir.mkdir(parents=True, exist_ok=True)
-                target_dir.chmod(0o700)
-            elif member.isfile():
-                target_file = base_path / member.name
-                target_file.parent.mkdir(parents=True, exist_ok=True)
-                source = tar_ref.extractfile(member)
-                if source is not None:
-                    with source, Path(target_file).open("wb") as out_f:
-                        out_f.write(source.read())
-                    target_file.chmod(0o600)
+        safe_extract_tar(tar_ref, extract_to)
 
 
 def download_bdinfo_for_docker(base_dir: Path = Path("/Upload-Assistant"), version: str = BDINFO_VERSION) -> str:
@@ -121,29 +80,37 @@ def download_bdinfo_for_docker(base_dir: Path = Path("/Upload-Assistant"), versi
     logger.info(f"Downloading bdinfo from: {download_url}", extra={"markup": False})
 
     temp_archive = bin_dir / f"temp_{file_pattern}"
-    download_file(download_url, temp_archive)
+    staging = bin_dir / ".bdinfo-staging"
+    shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir()
+    try:
+        download_file(download_url, temp_archive)
+        verify_downloaded_asset(temp_archive, file_pattern)
+        logger.info(f"Extracting {temp_archive} to {staging}", extra={"markup": False})
+        secure_extract_tar(temp_archive, staging)
+    finally:
+        temp_archive.unlink(missing_ok=True)
 
-    logger.info(f"Extracting {temp_archive} to {bin_dir}", extra={"markup": False})
-    secure_extract_tar(temp_archive, bin_dir)
-    temp_archive.unlink()
-
-    # Search for extracted bdinfo executable and move it into place if necessary
-    if not binary_path.exists():
-        found = None
-        for p in bin_dir.rglob("bdinfo"):
-            if p.is_file():
-                found = p
-                break
-        if found:
-            shutil.move(str(found), str(binary_path))
-
-    if not binary_path.exists():
-        raise Exception(f"Failed to extract bdinfo binary to {binary_path}")
-
-    Path(binary_path).chmod(0o700)
-
-    with Path(version_path).open("w", encoding="utf-8") as vf:
-        vf.write(f"autobrr/go-bdinfo version {version} installed successfully.")
+    try:
+        candidates = [candidate for candidate in staging.rglob("bdinfo") if candidate.is_file()]
+        if len(candidates) != 1:
+            raise Exception(f"Failed to extract exactly one bdinfo binary for {binary_path}")
+        staged_binary = candidates[0]
+        staged_binary.chmod(0o755)
+        staged_version = staging / version
+        staged_version.write_text(f"autobrr/go-bdinfo version {version} installed successfully.", encoding="utf-8")
+        stale_markers = [
+            candidate
+            for candidate in bin_dir.iterdir()
+            if candidate.is_file() and candidate.name.startswith("v") and candidate != version_path
+        ]
+        promote_files_with_rollback(
+            [(staged_binary, binary_path), (staged_version, version_path)],
+            bin_dir / ".bdinfo-backup",
+            remove_targets=stale_markers,
+        )
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
 
     logger.info(f"Installed bdinfo: {binary_path}", extra={"markup": False})
     return str(binary_path)

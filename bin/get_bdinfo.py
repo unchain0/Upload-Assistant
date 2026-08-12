@@ -11,6 +11,9 @@ from pathlib import Path
 import aiofiles
 import httpx
 
+from bin.download_integrity import MAX_EXTRACTED_BYTES, download_verified_asset, promote_files_with_rollback, safe_extract_tar, safe_extract_zip
+from bin.runtime_tool_paths import tool_install_dir
+
 try:
     from src.console import console, logger
 except ImportError:
@@ -69,8 +72,7 @@ class BDInfoBinaryManager:
         logger.debug(f"[blue]Using file pattern: {file_pattern}[/blue]")
         logger.debug(f"[blue]Target folder: {folder_path}[/blue]")
 
-        bin_dir = Path(base_dir) / "bin" / "bdinfo" / folder_path
-        bin_dir.mkdir(parents=True, exist_ok=True)
+        bin_dir = tool_install_dir(base_dir, "bdinfo", folder_path)
         logger.debug(f"[blue]Binary directory: {bin_dir}[/blue]")
 
         binary_name = "bdinfo.exe" if system == "windows" else "bdinfo"
@@ -99,123 +101,52 @@ class BDInfoBinaryManager:
             logger.debug("[blue]bdinfo version is up to date[/blue]")
             return str(binary_path)
 
-        # Remove any old binary/version markers
-        if binary_path.exists() and binary_path.is_file():
-            if system != "windows":
-                Path(binary_path).chmod(0o600)
-            binary_path.unlink()
-            logger.debug(f"[blue]Removed existing binary at: {binary_path}[/blue]")
-
-        if version_path.exists():
-            if system != "windows":
-                Path(version_path).chmod(0o644)
-            version_path.unlink()
-            logger.debug(f"[blue]Removed existing version file at: {version_path}[/blue]")
-
-        cleanup_old_version_files()
-
         # Construct download URL using autobrr/go-bdinfo release asset filename.
         download_url = f"https://github.com/autobrr/go-bdinfo/releases/download/{version}/{file_pattern}"
         logger.debug(f"[blue]Download URL: {download_url}[/blue]")
 
         try:
-            async with (
-                httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client,
-                client.stream("GET", download_url, timeout=60.0) as response,
-            ):
-                response.raise_for_status()
-                temp_archive = bin_dir / f"temp_{file_pattern}"
-                async with aiofiles.open(temp_archive, "wb") as f:
-                    async for chunk in response.aiter_bytes(chunk_size=8192):
-                        await f.write(chunk)
+            temp_archive = bin_dir / f"temp_{file_pattern}"
+            staging = bin_dir / ".bdinfo-staging"
+            shutil.rmtree(staging, ignore_errors=True)
+            staging.mkdir()
+            async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+                await download_verified_asset(client, download_url, temp_archive, file_pattern)
             logger.debug(f"[green]Downloaded {file_pattern}[/green]")
 
             # Extract archive safely and ensure temporary archive is always removed.
             try:
                 if file_pattern.endswith(".zip"):
                     with zipfile.ZipFile(temp_archive, "r") as zip_ref:
-
-                        def safe_extract_zip(zip_file: zipfile.ZipFile, path: str = ".") -> None:
-                            for member in zip_file.namelist():
-                                info = zip_file.getinfo(member)
-                                perm = info.external_attr >> 16
-                                if stat.S_ISLNK(perm):
-                                    logger.debug(f"[yellow]Warning: Skipping symlink: {member}[/yellow]")
-                                    continue
-
-                                # Check for absolute paths and directory traversal
-                                if Path(member).is_absolute() or ".." in member or member.startswith("/"):
-                                    logger.debug(f"[yellow]Warning: Skipping dangerous path: {member}[/yellow]")
-                                    continue
-
-                                # Verify final path is inside target directory
-                                full_path = os.path.realpath(Path(path) / member)
-                                base_path = os.path.realpath(path)
-                                if not full_path.startswith(base_path + os.sep) and full_path != base_path:
-                                    logger.debug(f"[yellow]Warning: Skipping path outside target directory: {member}[/yellow]")
-                                    continue
-
-                                # Check for reasonable file sizes (prevent zip bombs)
-                                try:
-                                    file_size = info.file_size
-                                except Exception:
-                                    file_size = 0
-
-                                if file_size > 100 * 1024 * 1024:
-                                    logger.debug(f"[yellow]Warning: Skipping oversized file: {member} ({file_size} bytes)[/yellow]")
-                                    continue
-
-                                # Extract the safe member
-                                zip_file.extract(member, path)
-                                logger.debug(f"[cyan]Extracted: {member}[/cyan]")
-
-                        safe_extract_zip(zip_ref, str(bin_dir))
+                        safe_extract_zip(zip_ref, staging, max_bytes=MAX_EXTRACTED_BYTES)
 
                 elif file_pattern.endswith(".tar.gz"):
                     with tarfile.open(temp_archive, "r:gz") as tar_ref:
+                        safe_extract_tar(tar_ref, staging, max_bytes=MAX_EXTRACTED_BYTES)
 
-                        def safe_extract_tar(tar_file: tarfile.TarFile, path: str = ".") -> None:
-                            for member in tar_file.getmembers():
-                                if member.islnk() or member.issym():
-                                    logger.debug(f"[yellow]Warning: Skipping link entry: {member.name}[/yellow]")
-                                    continue
-                                if Path(member.name).is_absolute() or ".." in member.name or member.name.startswith("/"):
-                                    logger.debug(f"[yellow]Warning: Skipping dangerous path: {member.name}[/yellow]")
-                                    continue
-                                full_path = os.path.realpath(Path(path) / member.name)
-                                base_path = os.path.realpath(path)
-                                if not full_path.startswith(base_path + os.sep) and full_path != base_path:
-                                    logger.debug(f"[yellow]Warning: Skipping path outside target directory: {member.name}[/yellow]")
-                                    continue
-                                if member.size > 100 * 1024 * 1024:
-                                    logger.debug(f"[yellow]Warning: Skipping oversized file: {member.name} ({member.size} bytes)[/yellow]")
-                                    continue
-                                tar_file.extract(member, path)
-                                logger.debug(f"[cyan]Extracted: {member.name}[/cyan]")
+                candidates = [candidate for candidate in staging.rglob(binary_name) if candidate.is_file()]
+                if len(candidates) != 1:
+                    raise RuntimeError(f"Downloaded archive does not contain the expected {binary_name} executable")
+                staged_binary = candidates[0]
+                if system != "windows":
+                    staged_binary.chmod(staged_binary.stat().st_mode | stat.S_IEXEC)
 
-                        safe_extract_tar(tar_ref, str(bin_dir))
-
-                # If extraction created a nested directory (common for GitHub release zips),
-                # search for the bdinfo executable and move it to the expected binary path.
-                if not binary_path.exists():
-                    binary_basename = binary_name
-                    found = None
-                    for p in bin_dir.rglob(binary_basename):
-                        if p.is_file():
-                            found = p
-                            break
-
-                    if found:
-                        # Move to target location
-                        shutil.move(str(found), str(binary_path))
-
-                if system != "windows" and binary_path.exists():
-                    binary_path.chmod(binary_path.stat().st_mode | stat.S_IEXEC)
-
-                async with aiofiles.open(version_path, "w", encoding="utf-8") as version_file:
+                staged_version = staging / version
+                async with aiofiles.open(staged_version, "w", encoding="utf-8") as version_file:
                     await version_file.write(f"autobrr/go-bdinfo version {version} installed successfully.")
+                stale_markers = [
+                    candidate
+                    for candidate in bin_dir.iterdir()
+                    if candidate.is_file() and candidate.name.startswith("v") and candidate != version_path
+                ]
+                promote_files_with_rollback(
+                    [(staged_binary, binary_path), (staged_version, version_path)],
+                    bin_dir / ".bdinfo-backup",
+                    remove_targets=stale_markers,
+                )
                 return str(binary_path)
             finally:
+                shutil.rmtree(staging, ignore_errors=True)
                 try:
                     if temp_archive.exists():
                         temp_archive.unlink()

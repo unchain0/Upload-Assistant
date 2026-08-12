@@ -1,6 +1,7 @@
 import asyncio
 import json
 import re
+from contextlib import suppress
 from pathlib import Path
 from typing import Any, cast
 
@@ -57,11 +58,18 @@ async def _run_process(command: list[str]) -> tuple[int, str, str]:
     )
     try:
         stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=PROCESS_TIMEOUT)
-    except TimeoutError:
-        process.kill()
-        await process.wait()
+    except BaseException:
+        await _terminate_process(process)
         raise
     return process.returncode or 0, stdout.decode("utf-8", errors="replace"), stderr.decode("utf-8", errors="replace")
+
+
+async def _terminate_process(process: asyncio.subprocess.Process) -> None:
+    if process.returncode is None:
+        with suppress(ProcessLookupError):
+            process.kill()
+    with suppress(ProcessLookupError):
+        await process.wait()
 
 
 async def _run_transform(command: list[str]) -> tuple[int, str, str]:
@@ -72,6 +80,7 @@ async def _run_transform(command: list[str]) -> tuple[int, str, str]:
         stderr=asyncio.subprocess.PIPE,
     )
     if process.stdin is None or process.stdout is None or process.stderr is None:
+        await _terminate_process(process)
         raise RuntimeError("zentag subprocess pipes are unavailable")
     stdin = cast(asyncio.StreamWriter, process.stdin)
     stdout = cast(asyncio.StreamReader, process.stdout)
@@ -99,10 +108,11 @@ async def _run_transform(command: list[str]) -> tuple[int, str, str]:
         await asyncio.wait_for(interact(), timeout=PROCESS_TIMEOUT)
         return_code = await asyncio.wait_for(process.wait(), timeout=PROCESS_TIMEOUT)
         stderr = await stderr_task
-    except TimeoutError:
-        process.kill()
-        await process.wait()
+    except BaseException:
+        await _terminate_process(process)
         stderr_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await stderr_task
         raise
     return return_code, output.decode("utf-8", errors="replace"), stderr.decode("utf-8", errors="replace")
 

@@ -24,7 +24,7 @@ async def test_qbittorrent_search_propagates_keyboard_interrupt(tmp_path, monkey
     meta = Meta(base_dir=str(tmp_path), uuid="interrupt", client="qbit")
 
     with pytest.raises(KeyboardInterrupt):
-        await clients._search_single_client_for_torrent(meta, "qbit", False, False, False, None)
+        await clients._search_single_client_for_torrent(meta, "qbit", False, False, None)
 
 
 @pytest.mark.asyncio

@@ -40,6 +40,13 @@ ffmpeg_is_good = False
 use_libplacebo = True
 tone_map = False
 ffmpeg_compression = "6"
+LOSTIMG_MIN_SIZE = 75_000
+LOSTIMG_MAX_SIZE = 20_000_000
+
+
+def is_valid_lostimg_image_size(image_size: int) -> bool:
+    """Return whether an image meets Lostimg's accepted size range."""
+    return LOSTIMG_MIN_SIZE < image_size <= LOSTIMG_MAX_SIZE
 
 
 def compile_ffmpeg_command(command: Any) -> list[str]:
@@ -351,7 +358,14 @@ async def disc_screenshots(
 
         before = {path.resolve() for path in screenshot_dir.glob("*.png")}
         vs_screengn(source=file_path, encode=None, num=num_screens, dir=f"{screenshot_dir}/")
-        valid_results = [str(path) for path in screenshot_dir.glob("*.png") if path.resolve() not in before]
+        for image_path in screenshot_dir.glob("*.png"):
+            if image_path.resolve() in before:
+                continue
+            image_size = image_path.stat().st_size
+            if img_host == "lostimg" and not is_valid_lostimg_image_size(image_size):
+                logger.info(f"[red]Image {image_path} with size {image_size} bytes: does not meet size requirements for {img_host}, skipping.[/red]")
+                continue
+            valid_results.append(str(image_path))
     else:
         loglevel = "verbose" if ffdebug else "quiet"
 
@@ -427,6 +441,12 @@ async def disc_screenshots(
                     else:
                         logger.info(f"[red]Image {image_path} with size {image_size} bytes: does not meet size requirements for {img_host}, retaking.")
                         retake = True
+                elif img_host == "lostimg":
+                    if is_valid_lostimg_image_size(image_size):
+                        logger.debug(f"[green]Image {image_path} meets size requirements for {img_host}.[/green]")
+                    else:
+                        logger.info(f"[red]Image {image_path} with size {image_size} bytes: does not meet size requirements for {img_host}, retaking.")
+                        retake = True
                 elif img_host and img_host in ["lensdump", "ptscreens", "onlyimage", "dalexni", "zipline", "midnightscene", "passtheimage", "seedpool_cdn", "sharex", "utppm"]:
                     logger.debug(f"[green]Image {image_path} meets size requirements for {img_host}.[/green]")
                 else:
@@ -453,6 +473,10 @@ async def disc_screenshots(
                                 valid_image = True
                         elif img_host and img_host in ["imgbox", "pixhost"]:
                             if new_size > 75000 and new_size <= 10000000:
+                                logger.info(f"[green]Successfully retaken screenshot for: {image_path} ({new_size} bytes)[/green]")
+                                valid_image = True
+                        elif img_host == "lostimg":
+                            if is_valid_lostimg_image_size(new_size):
                                 logger.info(f"[green]Successfully retaken screenshot for: {image_path} ({new_size} bytes)[/green]")
                                 valid_image = True
                         elif (
@@ -643,7 +667,7 @@ async def dvd_screenshots(
             frame_rate = float(track.frame_rate)
     w_sar, h_sar = screenshot_par_scale_factors(width, height, par, dar)
 
-    async def _is_vob_good(n: int, loops: int, _num_screens: int) -> tuple[float, float]:
+    async def _is_vob_good(n: int, loops: int, _num_screens: int) -> tuple[float, int]:
         max_loops = 6
         fallback_duration = 300
         valid_tracks: list[dict[str, Any]] = []
@@ -672,10 +696,11 @@ async def dvd_screenshots(
             n = (n + 1) % len(main_set)
             loops += 1
 
-        return fallback_duration, 0.0
+        return fallback_duration, 0
 
     main_set = meta.discs[disc_num]["main_set"][1:] if len(meta.discs[disc_num]["main_set"]) > 1 else meta.discs[disc_num]["main_set"]
-    voblength, _vob_index = await _is_vob_good(0, 0, num_screens)
+    voblength, vob_index = await _is_vob_good(0, 0, num_screens)
+    capture_vob = main_set[vob_index]
     ss_times = await valid_ss_time([], num_screens, voblength, frame_rate, meta, retake=retry_cap)
     capture_tasks: list[Awaitable[tuple[int, str | None]]] = []
     existing_images_count = 0
@@ -683,7 +708,7 @@ async def dvd_screenshots(
 
     for i in range(num_screens + 1):
         image = str(screenshot_dir / f"{sanitized_disc_name}-{i}.png")
-        input_file = f"{meta.discs[disc_num]['path']}/VTS_{main_set[i % len(main_set)]}"
+        input_file = f"{meta.discs[disc_num]['path']}/VTS_{capture_vob}"
         if Path(image).exists() and not meta.retake:
             existing_images_count += 1
             existing_image_paths.append(image)
@@ -698,7 +723,7 @@ async def dvd_screenshots(
 
     for i in range(num_screens + 1):
         image = str(screenshot_dir / f"{sanitized_disc_name}-{i}.png")
-        input_file = f"{meta.discs[disc_num]['path']}/VTS_{main_set[i % len(main_set)]}"
+        input_file = f"{meta.discs[disc_num]['path']}/VTS_{capture_vob}"
         image_paths.append(image)
         input_files.append(input_file)
 
@@ -762,7 +787,7 @@ async def dvd_screenshots(
                 logger.info(f"[yellow]Retaking screenshot for: {image} (Attempt {attempt}/{retry_attempts})[/yellow]")
 
                 index = int(image.rsplit("-", 1)[-1].split(".")[0])
-                input_file = f"{meta.discs[disc_num]['path']}/VTS_{main_set[index % len(main_set)]}"
+                input_file = f"{meta.discs[disc_num]['path']}/VTS_{capture_vob}"
                 adjusted_time = random.uniform(0, voblength)  # nosec B311 - Random screenshot timing, not cryptographic  # noqa: S311
 
                 if Path(image).exists():  # Prevent unnecessary deletion error
@@ -1867,6 +1892,9 @@ async def screenshots(
         retake = False
         image_size = Path(image_path).stat().st_size
         logger.debug(f"[yellow]Checking image {image_path} (size: {image_size} bytes) for image host: {img_host}[/yellow]")
+        if manual_frames and img_host == "lostimg" and not is_valid_lostimg_image_size(image_size):
+            logger.info(f"[red]Image {image_path} with size {image_size} bytes: does not meet size requirements for {img_host}, skipping.[/red]")
+            continue
         if not manual_frames:
             if image_size <= 75000:
                 logger.info(f"[yellow]Image {image_path} is incredibly small, retaking.")
@@ -1880,6 +1908,12 @@ async def screenshots(
                         retake = True
                 elif img_host and img_host in ["imgbox", "pixhost"]:
                     if 75000 < image_size <= 10000000:
+                        logger.debug(f"[green]Image {image_path} meets size requirements for {img_host}.[/green]")
+                    else:
+                        logger.info(f"[red]Image {image_path} with size {image_size} bytes: does not meet size requirements for {img_host}, retaking.")
+                        retake = True
+                elif img_host == "lostimg":
+                    if is_valid_lostimg_image_size(image_size):
                         logger.debug(f"[green]Image {image_path} meets size requirements for {img_host}.[/green]")
                     else:
                         logger.info(f"[red]Image {image_path} with size {image_size} bytes: does not meet size requirements for {img_host}, retaking.")
@@ -1931,6 +1965,10 @@ async def screenshots(
                                 if 75000 < new_size <= 10000000:
                                     logger.info(f"[green]Successfully retaken screenshot for: {screenshot_path} ({new_size} bytes)[/green]")
                                     valid_image = True
+                            elif img_host == "lostimg":
+                                if is_valid_lostimg_image_size(new_size):
+                                    logger.info(f"[green]Successfully retaken screenshot for: {screenshot_path} ({new_size} bytes)[/green]")
+                                    valid_image = True
                             elif (
                                 img_host
                                 and img_host in ["lensdump", "ptscreens", "onlyimage", "dalexni", "zipline", "midnightscene", "passtheimage", "seedpool_cdn", "sharex", "utppm"]
@@ -1972,6 +2010,9 @@ async def screenshots(
                             valid_image = True
                     elif img_host and img_host in ["imgbox", "pixhost"]:
                         if 75000 < new_size <= 10000000:
+                            valid_image = True
+                    elif img_host == "lostimg":
+                        if is_valid_lostimg_image_size(new_size):
                             valid_image = True
                     elif (
                         img_host

@@ -47,6 +47,7 @@ from src.console import current_release_log_path, logger  # pyright: ignore[repo
 from src.console import rich_handler as _rich_handler
 from src.disc_menus import process_disc_menus
 from src.dupe_checking import DupeChecker
+from src.dynamic_hdr_plot import dynamic_hdr_plot_enabled, process_dynamic_hdr_plots
 from src.early_tasks import cancel_and_drain_early_artifact_tasks, get_early_artifact_tasks, start_early_artifact_tasks
 from src.early_tasks import is_usenet_only as _is_usenet_only
 from src.exceptions import ItemProcessingError
@@ -58,7 +59,7 @@ from src.qbitwait import Wait
 from src.queuemanage import QueueManager
 from src.rehostimages import check_tracker_image_hosts
 from src.takescreens import TakeScreensManager, download_artwork_from_meta
-from src.temp_paths import artwork_dir, screenshots_dir
+from src.temp_paths import artwork_dir, ensure_temp_root, screenshots_dir
 from src.torrentcreate import TorrentCreator
 from src.tracker_images import configured_screenshot_minimum, screenshot_requirement_error
 from src.trackerhandle import process_trackers
@@ -1489,6 +1490,12 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
             meta.manual_frames = ""
         manual_frames = meta.manual_frames
 
+        if dynamic_hdr_plot_enabled(meta, config):
+            try:
+                await process_dynamic_hdr_plots(meta, config, uploadscreens_manager)
+            except Exception as e:
+                logger.error(f"[red]Error processing dynamic HDR plots: {e}[/red]")
+
         if meta.comparison:
             await ComparisonManager(meta, config).add_comparison()
 
@@ -1692,7 +1699,6 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
                     "DIGITALCORE",
                     "GREATPOSTERWALL",
                     "HAWKEUNO",
-                    "MORETHANTV",
                     "ONLYENCODES",
                     "PASSTHEPOPCORN",
                     "SKIPTHECOMMERCIALS",
@@ -2058,7 +2064,7 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
         trackers_normalized = [t.strip().upper() for t in trackers_list]
 
         base_piece_mb: int | None = cast(int | None, meta.base_torrent_piece_mb)
-        if base_piece_mb is None and any(t in {"HDBITS", "MORETHANTV", "PASSTHEPOPCORN"} for t in trackers_normalized):
+        if base_piece_mb is None and any(t in {"HDBITS", "PASSTHEPOPCORN"} for t in trackers_normalized):
             try:
                 torrent = await asyncio.to_thread(TORF_Torrent.read, torrent_path)
                 base_piece_mb = torrent.piece_size // (1024 * 1024)
@@ -2067,18 +2073,6 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
             except Exception as e:
                 logger.debug(f"[yellow]Unable to cache BASE.torrent piece size: {e}")
                 base_piece_mb = None
-
-        if "MORETHANTV" in trackers_normalized:
-            mtv_cfg = config.get("TRACKERS", {}).get("MORETHANTV", {})
-            if str(mtv_cfg.get("skip_if_rehash", "false")).lower() == "true" and base_piece_mb and base_piece_mb > 8:
-                meta.trackers = [t for t in trackers_list if t.strip().upper() != "MORETHANTV"]
-                trackers_list = [str(t) for t in cast(list[Any], meta.trackers or []) if str(t).strip()]
-                trackers_normalized = [t.strip().upper() for t in trackers_list]
-                logger.debug("[yellow]Removed MORETHANTV from trackers due to skip_if_rehash config and 8 MiB limit.[/yellow]")
-                if not meta.trackers:
-                    logger.info("[red]No trackers remain after removing MORETHANTV for skip_if_rehash.[/red]")
-                    meta.we_are_uploading = False
-                    return True
 
     if meta.randomized >= 1 and not meta.mkbrr and not is_usenet_only:
         TORRENT_CREATOR.create_random_torrents(meta.base_dir, meta.uuid, meta.randomized, cast(str, meta.path))
@@ -2263,16 +2257,7 @@ async def do_the_thing(base_dir: str) -> None:
 
     await asyncio.sleep(0.1)  # Ensure it's not racing
 
-    tmp_dir = Path(base_dir) / "tmp"
-    if not Path(tmp_dir).exists():
-        if os.name != "nt":
-            Path(tmp_dir).mkdir(parents=True, mode=0o700, exist_ok=True)
-        else:
-            Path(tmp_dir).mkdir(parents=True, exist_ok=True)
-    else:
-        # Ensure existing directory has secure permissions
-        if os.name != "nt":
-            Path(tmp_dir).chmod(0o700)
+    ensure_temp_root(base_dir)
 
     def ensure_secure_tmp_subdir(subdir_path: str | Path) -> None:
         """Ensure tmp subdirectories are created with secure permissions (0o700)"""

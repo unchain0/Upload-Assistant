@@ -15,6 +15,21 @@ set -e
 TARGET_UID="${PUID:-}"
 TARGET_GID="${PGID:-}"
 
+restore_data() {
+    # Restore files hidden by an empty or older data volume before Python
+    # imports modules that depend on data.config. Existing user files are
+    # never replaced.
+    mkdir -p /Upload-Assistant/data
+    if [ -d /Upload-Assistant/defaults/data ]; then
+        cp -rn /Upload-Assistant/defaults/data/. /Upload-Assistant/data/
+    fi
+    if [ ! -f /Upload-Assistant/data/config.py ] && [ -f /Upload-Assistant/data/example_config.py ]; then
+        cp /Upload-Assistant/data/example_config.py /Upload-Assistant/data/config.py
+    fi
+    chmod go-rwx /Upload-Assistant/data 2>/dev/null || true
+    find /Upload-Assistant/data -type f -exec chmod go-rwx {} + 2>/dev/null || true
+}
+
 # ── Fix directory ownership (only possible when running as root) ──────
 if [ "$(id -u)" = "0" ]; then
     # Directories the app needs write access to
@@ -62,9 +77,24 @@ if [ "$(id -u)" = "0" ]; then
         # never be found.
         export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-/root/.config}"
 
-        exec gosu "$TARGET_UID:${TARGET_GID:-$TARGET_UID}" python /Upload-Assistant/upload.py "$@"
+        exec gosu "$TARGET_UID:${TARGET_GID:-$TARGET_UID}" sh -c '
+            restore_data() {
+                mkdir -p /Upload-Assistant/data
+                if [ -d /Upload-Assistant/defaults/data ]; then
+                    cp -rn /Upload-Assistant/defaults/data/. /Upload-Assistant/data/
+                fi
+                if [ ! -f /Upload-Assistant/data/config.py ] && [ -f /Upload-Assistant/data/example_config.py ]; then
+                    cp /Upload-Assistant/data/example_config.py /Upload-Assistant/data/config.py
+                fi
+                chmod go-rwx /Upload-Assistant/data 2>/dev/null || true
+                find /Upload-Assistant/data -type f -exec chmod go-rwx {} + 2>/dev/null || true
+            }
+            restore_data
+            exec python /Upload-Assistant/upload.py "$@"
+        ' sh "$@"
     fi
 fi
 
 # Fallback: run as current user (root, or whatever `user:` specified)
+restore_data
 exec python /Upload-Assistant/upload.py "$@"

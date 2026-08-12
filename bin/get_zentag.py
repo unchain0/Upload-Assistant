@@ -1,6 +1,5 @@
 # Upload Assistant © 2026 Audionut & wastaken7 — Licensed under UAPL v1.0
 import hashlib
-import io
 import platform
 import stat
 import tarfile
@@ -9,6 +8,9 @@ from pathlib import Path
 from typing import Any, ClassVar, cast
 
 import httpx  # pyright: ignore[reportMissingImports]
+
+from bin.download_integrity import MAX_ASSET_BYTES, download_bounded_asset, promote_files_with_rollback, sha256_file
+from bin.runtime_tool_paths import tool_install_dir
 
 HTTPX: Any = cast(Any, httpx)
 
@@ -44,43 +46,62 @@ class ZentagBinaryManager:
         version_number = cls.VERSION.lstrip("v")
         extension = "zip" if os_name == "windows" else "tar.gz"
         asset = f"zentag_{version_number}_{os_name}_{arch}.{extension}"
-        target_dir = Path(base_dir) / "bin" / "zentag" / os_name / arch
-        target_dir.mkdir(parents=True, exist_ok=True)
+        target_dir = tool_install_dir(base_dir, "zentag", f"{os_name}/{arch}")
         binary = target_dir / ("zentag.exe" if os_name == "windows" else "zentag")
         marker = target_dir / cls.VERSION
         expected_binary = cls.BINARY_CHECKSUMS.get(asset, "")
-        cached_digest = hashlib.sha256(binary.read_bytes()).hexdigest() if binary.is_file() else ""
+        cached_digest = sha256_file(binary) if binary.is_file() else ""
         if expected_binary and cached_digest == expected_binary and marker.is_file() and marker.read_text(encoding="utf-8").strip() == cls.VERSION:
             return str(binary)
 
         release_url = f"https://github.com/znth-cx/zentag/releases/download/{cls.VERSION}"
-        async with HTTPX.AsyncClient(timeout=120.0, follow_redirects=True) as client:
-            archive_response = await client.get(f"{release_url}/{asset}")
-        archive_response.raise_for_status()
-        expected = cls.CHECKSUMS.get(asset, "")
-        actual = hashlib.sha256(archive_response.content).hexdigest()
-        if not expected or actual != expected:
-            raise RuntimeError(f"zentag checksum verification failed for {asset}")
+        downloaded_archive = target_dir / f".{asset}.download"
+        try:
+            async with HTTPX.AsyncClient(timeout=120.0, follow_redirects=True) as client:
+                await download_bounded_asset(client, f"{release_url}/{asset}", downloaded_archive)
+            expected = cls.CHECKSUMS.get(asset, "")
+            if not expected or sha256_file(downloaded_archive) != expected:
+                raise RuntimeError(f"zentag checksum verification failed for {asset}")
 
-        if extension == "zip":
-            with zipfile.ZipFile(io.BytesIO(archive_response.content)) as archive:
-                member = next((name for name in archive.namelist() if Path(name).name == binary.name), "")
-                if not member:
-                    raise RuntimeError(f"zentag binary not found in {asset}")
-                payload = archive.read(member)
-        else:
-            with tarfile.open(fileobj=io.BytesIO(archive_response.content), mode="r:gz") as archive:
-                member = next((item for item in archive.getmembers() if item.isfile() and Path(item.name).name == binary.name), None)
-                extracted = archive.extractfile(member) if member is not None else None
-                if extracted is None:
-                    raise RuntimeError(f"zentag binary not found in {asset}")
-                payload = extracted.read()
+            if extension == "zip":
+                with zipfile.ZipFile(downloaded_archive) as archive:
+                    member = next((item for item in archive.infolist() if Path(item.filename).name == binary.name), None)
+                    if member is None:
+                        raise RuntimeError(f"zentag binary not found in {asset}")
+                    if member.file_size > MAX_ASSET_BYTES:
+                        raise RuntimeError(f"zentag binary exceeds the {MAX_ASSET_BYTES}-byte limit")
+                    payload = archive.read(member)
+            else:
+                with tarfile.open(downloaded_archive, mode="r:gz") as archive:
+                    member = next((item for item in archive.getmembers() if item.isfile() and Path(item.name).name == binary.name), None)
+                    if member is not None and member.size > MAX_ASSET_BYTES:
+                        raise RuntimeError(f"zentag binary exceeds the {MAX_ASSET_BYTES}-byte limit")
+                    extracted = archive.extractfile(member) if member is not None else None
+                    if extracted is None:
+                        raise RuntimeError(f"zentag binary not found in {asset}")
+                    payload = extracted.read(MAX_ASSET_BYTES + 1)
+                    if len(payload) > MAX_ASSET_BYTES:
+                        raise RuntimeError(f"zentag binary exceeds the {MAX_ASSET_BYTES}-byte limit")
+        finally:
+            downloaded_archive.unlink(missing_ok=True)
 
         if not expected_binary or hashlib.sha256(payload).hexdigest() != expected_binary:
             raise RuntimeError(f"zentag binary checksum verification failed for {asset}")
 
-        binary.write_bytes(payload)
+        staged_binary = target_dir / f".{binary.name}.staged"
+        staged_marker = target_dir / f".{cls.VERSION}.staged"
+        staged_binary.write_bytes(payload)
         if os_name != "windows":
-            binary.chmod(binary.stat().st_mode | stat.S_IEXEC)
-        marker.write_text(cls.VERSION, encoding="utf-8")
+            staged_binary.chmod(staged_binary.stat().st_mode | stat.S_IEXEC)
+        staged_marker.write_text(cls.VERSION, encoding="utf-8")
+        stale_markers = [
+            candidate
+            for candidate in target_dir.iterdir()
+            if candidate.is_file() and candidate.name.startswith("v") and candidate != marker
+        ]
+        promote_files_with_rollback(
+            [(staged_binary, binary), (staged_marker, marker)],
+            target_dir / ".zentag-backup",
+            remove_targets=stale_markers,
+        )
         return str(binary)

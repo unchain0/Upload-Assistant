@@ -24,7 +24,7 @@ The config is a Python dict named `config` with these top-level sections:
 Notes:
 
 - Many numeric values are stored as strings (e.g. `"4"`, `"14000"`). Keep the same type unless you know a specific option is numeric.
-- Tracker lists are usually a comma-separated string using tracker identifiers (e.g. `"MORETHANTV, BEYONDHD"`).
+- Tracker lists are usually a comma-separated string using tracker identifiers (e.g. `"BEYONDHD, AITHER"`).
 
 ## How Upload Assistant uses this config (implementation context)
 
@@ -123,6 +123,7 @@ Implementation notes:
 - `algorithm` (str): Tonemap algorithm (e.g. `mobius`).
 - `desat` (str): Tonemap desaturation value.
 - `tonemapped_header` (str): BBCode header inserted above screenshots when tonemapping occurred.
+- `dynamic_hdr_plot_header` (str): BBCode header used above dynamic HDR plots.
 
 Implementation notes:
 
@@ -135,10 +136,13 @@ Implementation notes:
 - `process_limit` (str): Max number of screenshot optimization processes.
 - `threads` (str): Thread limit per process during image optimization.
 - `ffmpeg_limit` (bool): Limit CPU usage when running ffmpeg.
+- `add_dynamic_hdr_plot` (bool): Generate and add Dolby Vision/HDR10+ metadata plots when dynamic metadata is detected. The required tools download automatically on first use. Extraction reads each selected video file in full and can take a while for large releases.
+- `dynamic_hdr_plot_max_files` (int): Maximum video files to plot for a multi-file release (default: `1`).
+- `dynamic_hdr_plot_tool_timeout` (int): Maximum runtime in seconds for each HDR tool invocation (default: `3600`, capped at `7200`).
 
 Implementation notes:
 
-- These are most visible during screenshot capture/optimization (`src/takescreens.py`). Lower them on shared/limited systems.
+- Screenshot limits are handled by `src/takescreens.py`; dynamic HDR plot limits are handled by `src/dynamic_hdr_plot.py`. Lower them on shared/limited systems.
 
 ### Packs (season packs / multi-disc)
 
@@ -278,7 +282,7 @@ A comma-separated list of tracker identifiers to upload to by default.
 Example:
 
 ```python
-"default_trackers": "MORETHANTV, BEYONDHD, AITHER"
+"default_trackers": "BEYONDHD, AITHER"
 ```
 
 ### Per-tracker blocks

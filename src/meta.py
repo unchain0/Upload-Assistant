@@ -34,6 +34,7 @@ class Meta:
     audio_languages: list[str] | None = field(default_factory=list)
     audio_spectrogram_tracks: str | None = None
     audio_spectrogram: bool | None = None
+    dynamic_hdr_plot: bool | None = None
     audio: str = ""
     audiobook_bitrate: int | None = None
     audiobook_duration_formatted: str | None = None
@@ -251,7 +252,6 @@ class Meta:
     mode: str = ""
     modq: bool = False
     mteam_description: str = ""
-    mtv_timeout: bool | None = None
     music_album: str = ""
     music_artist: str = ""
     music_catalogue_number: str = ""
@@ -417,6 +417,7 @@ class Meta:
     source: str | None = None
     spd_channel: str = ""
     spectrograms_images: list[Any] = field(default_factory=list)
+    dynamic_hdr_plot_images: list[Any] = field(default_factory=list)
     steam_manual: str | None = None
     steam_url: str | None = None
     stream: bool = False

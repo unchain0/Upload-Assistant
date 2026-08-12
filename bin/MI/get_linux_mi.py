@@ -6,8 +6,7 @@ import zipfile
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-import requests
-
+from bin.download_integrity import download_verified_asset_sync, extract_zip_regular_member, promote_files_with_rollback
 from src.console import logger
 
 MEDIAINFO_VERSION = "23.04"
@@ -37,43 +36,38 @@ def get_url(system: str, arch: str, library_type: str = "cli") -> str:
 
 
 def download_file(url: str, output_path: Path) -> None:
-    response = requests.get(url, stream=True, timeout=30)
-    response.raise_for_status()
-
-    with Path(output_path).open("wb") as f:
-        for chunk in response.iter_content(chunk_size=8192):
-            f.write(chunk)
+    download_verified_asset_sync(url, output_path, output_path.name)
 
 
 def extract_linux(cli_archive: Path, lib_archive: Path, output_dir: Path) -> None:
-    # Extract MediaInfo CLI from zip file
-    with zipfile.ZipFile(cli_archive, "r") as zip_ref:
-        file_list = zip_ref.namelist()
-        mediainfo_file = output_dir / "mediainfo"
+    staging = output_dir / ".mediainfo-staging"
+    shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir()
+    try:
+        with zipfile.ZipFile(cli_archive, "r") as archive:
+            cli_members = [name for name in archive.namelist() if name.endswith("/mediainfo") or name == "mediainfo"]
+            if len(cli_members) != 1:
+                raise RuntimeError("MediaInfo archive must contain exactly one CLI binary")
+            extract_zip_regular_member(archive, cli_members[0], staging / "mediainfo")
+        with zipfile.ZipFile(lib_archive, "r") as archive:
+            library_member = "lib/libmediainfo.so.0.0.0"
+            if library_member not in archive.namelist():
+                raise RuntimeError("MediaInfo archive does not contain the required library")
+            extract_zip_regular_member(archive, library_member, staging / "libmediainfo.so.0")
+        (staging / "mediainfo").chmod(0o700)
+        staged_version = staging / f"version_{MEDIAINFO_VERSION}"
+        staged_version.write_text(f"MediaInfo {MEDIAINFO_VERSION}")
+        promote_files_with_rollback(
+            [
+                (staging / "mediainfo", output_dir / "mediainfo"),
+                (staging / "libmediainfo.so.0", output_dir / "libmediainfo.so.0"),
+                (staged_version, output_dir / staged_version.name),
+            ],
+            output_dir / ".mediainfo-backup",
+        )
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
 
-        # Look for the mediainfo binary in the archive
-        for member in file_list:
-            if member.endswith("/mediainfo") or member == "mediainfo":
-                zip_ref.extract(member, output_dir.parent)
-                extracted_path = output_dir.parent / member
-                shutil.move(str(extracted_path), str(mediainfo_file))
-                break
-
-    # Extract MediaInfo library
-    with zipfile.ZipFile(lib_archive, "r") as zip_ref:
-        file_list = zip_ref.namelist()
-        lib_file = output_dir / "libmediainfo.so.0"
-
-        # Look for the library file in the archive
-        if "lib/libmediainfo.so.0.0.0" in file_list:
-            zip_ref.extract("lib/libmediainfo.so.0.0.0", output_dir.parent)
-            extracted_path = output_dir.parent / "lib/libmediainfo.so.0.0.0"
-            shutil.move(str(extracted_path), str(lib_file))
-
-    # Clean up empty lib directory if it exists
-    lib_dir = output_dir.parent / "lib"
-    if lib_dir.exists() and not any(lib_dir.iterdir()):
-        lib_dir.rmdir()
 
 
 def download_dvd_mediainfo(base_dir: str) -> str | None:
@@ -133,13 +127,6 @@ def download_dvd_mediainfo(base_dir: str) -> str | None:
         extract_linux(cli_archive, lib_archive, output_dir)
 
         logger.debug("[green]Extracted library[/green]")
-
-        with Path(version_file).open("w") as f:
-            f.write(f"MediaInfo {MEDIAINFO_VERSION}")
-
-        # Make CLI binary executable
-        if cli_file.exists():
-            Path(cli_file).chmod(0o700)  # rwx------ (owner only)
 
     if not cli_file.exists():
         raise Exception(f"Failed to extract CLI binary to {cli_file}")
