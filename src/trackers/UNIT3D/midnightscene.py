@@ -1,6 +1,6 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
 import re
-from typing import Any
+from typing import Any, cast
 
 from src.console import logger
 from src.languages import languages_manager
@@ -193,8 +193,10 @@ class MidnightScene(UNIT3D):
                 val = "9"  # PC
         elif meta.category == "MUSIC":
             release = meta.music_release if isinstance(meta.music_release, dict) else {}
-            fields = release.get("fields", {}) if isinstance(release.get("fields"), dict) else {}
-            format_field = fields.get("format", {}) if isinstance(fields.get("format"), dict) else {}
+            fields_raw = release.get("fields", {})
+            fields = cast(dict[str, Any], fields_raw) if isinstance(fields_raw, dict) else {}
+            format_field_raw = fields.get("format", {})
+            format_field = cast(dict[str, Any], format_field_raw) if isinstance(format_field_raw, dict) else {}
             music_format = str(meta.format or format_field.get("value", "") or meta.type or "").upper().strip().lstrip(".")
             val = type_id.get(music_format, "0")
         elif "FLAC" in (meta.audio or "").upper():
@@ -331,10 +333,12 @@ class MidnightScene(UNIT3D):
                     return {"name": scene_name.replace("_", " ")}
 
             release = meta.music_release if isinstance(meta.music_release, dict) else {}
-            fields = release.get("fields", {}) if isinstance(release.get("fields"), dict) else {}
+            fields_raw = release.get("fields", {})
+            fields = cast(dict[str, Any], fields_raw) if isinstance(fields_raw, dict) else {}
 
             def release_field(name: str, fallback: Any = "") -> str:
-                field = fields.get(name, {}) if isinstance(fields.get(name), dict) else {}
+                field_raw = fields.get(name, {})
+                field = cast(dict[str, Any], field_raw) if isinstance(field_raw, dict) else {}
                 return str(field.get("value", fallback) or "").strip()
 
             artist = release_field("artist", meta.artist)
