@@ -1,4 +1,22 @@
-from src.audio_spectrogram import MAX_TIME_BINS, get_spectrogram_sources, get_stft_parameters, prompt_audio_stream_positions, select_audio_streams
+import pytest
+from matplotlib import font_manager
+
+from src.audio_spectrogram import (
+    MAX_TIME_BINS,
+    _resolve_plot_font,
+    _sanitize_plot_text,
+    get_spectrogram_sources,
+    get_stft_parameters,
+    prompt_audio_stream_positions,
+    select_audio_streams,
+)
+
+
+@pytest.fixture(autouse=True)
+def _reset_plot_font_cache() -> None:
+    import src.audio_spectrogram
+
+    src.audio_spectrogram._PLOT_FONT_CACHE = None
 
 
 def test_prompt_audio_stream_positions_uses_cli_ui_and_defaults_to_all(monkeypatch):
@@ -52,3 +70,219 @@ def test_stft_parameters_bound_the_number_of_time_bins_for_long_audio():
 
     assert n_fft == 2048  # noqa: S101
     assert sample_count / hop_length <= MAX_TIME_BINS  # noqa: S101
+
+
+def test_sanitize_plot_text_keeps_ascii_when_unicode_supported():
+    assert _sanitize_plot_text("Shrouding the Heavens", True) == "Shrouding the Heavens"  # noqa: S101
+
+
+def test_sanitize_plot_text_replaces_non_ascii_when_unicode_not_supported():
+    assert _sanitize_plot_text("Shrouding the Heavens 遮天", False) == "Shrouding the Heavens ??"  # noqa: S101
+
+
+def test_sanitize_plot_text_keeps_non_cjk_unicode_when_unicode_not_supported():
+    assert _sanitize_plot_text("Café de la Crème Amélie", False) == "Café de la Crème Amélie"  # noqa: S101
+
+
+def test_resolve_plot_font_prefers_matplotlib_name_match(monkeypatch):
+    fallback_font = "noto-cjk-fallback.otf"
+
+    def fake_findfont(*_args, **_kwargs):
+        if _args and _args[0] == "Noto Sans CJK SC":
+            return fallback_font
+        raise ValueError("not found")
+
+    class FakeFontProperties:
+        def __init__(self, fname=None):
+            self._fname = fname
+
+        def get_name(self) -> str:
+            if self._fname == fallback_font:
+                return "Noto Sans CJK SC"
+            return "Unknown"
+
+    monkeypatch.setattr(font_manager, "findfont", fake_findfont)
+    monkeypatch.setattr(font_manager, "FontProperties", FakeFontProperties)
+    monkeypatch.setattr(font_manager.fontManager, "addfont", lambda _path: None)
+    monkeypatch.setattr("src.audio_spectrogram.ft2font.FT2Font", lambda _font_path: object())
+
+    assert _resolve_plot_font() == ("Noto Sans CJK SC", True, fallback_font)  # noqa: S101
+
+
+def test_resolve_plot_font_finds_cjk_font_from_system_font_files(monkeypatch):
+    def fake_findfont(*_args, **_kwargs):
+        raise ValueError("not found")
+
+    monkeypatch.setattr(font_manager, "findfont", fake_findfont)
+    monkeypatch.setattr(
+        font_manager,
+        "findSystemFonts",
+        lambda *_args, **_kwargs: [
+            "/usr/share/fonts/example/regular.ttf",
+            "/usr/share/fonts/google-noto-sans-mono-cjk-vf-fonts/NotoSansMonoCJK-VF.ttc",
+        ],
+    )
+
+    class FakeFontProperties:
+        def __init__(self, fname=None, family=None):  # noqa: ARG002
+            self._fname = fname
+
+        def get_name(self) -> str:
+            if self._fname and "NotoSansMonoCJK-VF" in self._fname:
+                return "Noto Sans Mono CJK SC"
+            return "DejaVu Sans"
+
+    monkeypatch.setattr(font_manager, "FontProperties", FakeFontProperties)
+    monkeypatch.setattr(font_manager.fontManager, "addfont", lambda _path: None)
+    monkeypatch.setattr("src.audio_spectrogram.ft2font.FT2Font", lambda _font_path: object())
+
+    assert _resolve_plot_font() == ("Noto Sans Mono CJK SC", True, "/usr/share/fonts/google-noto-sans-mono-cjk-vf-fonts/NotoSansMonoCJK-VF.ttc")  # noqa: S101
+
+
+def test_resolve_plot_font_marks_wenquanyi_font_as_unicode_supported(monkeypatch):
+    def fake_findfont(*_args, **_kwargs):
+        _name = _args[0] if _args else _kwargs.get("_name", "")
+        if _name == "WenQuanYi Zen Hei":
+            return "wenquanyi-zen-hei.otf"
+        raise ValueError("not found")
+    expected_font_path = "wenquanyi-zen-hei.otf"
+
+    class FakeFontProperties:
+        def __init__(self, fname=None):
+            self._fname = fname
+
+        def get_name(self) -> str:
+            return "WenQuanYi Zen Hei"
+
+    monkeypatch.setattr(font_manager, "findfont", fake_findfont)
+    monkeypatch.setattr(font_manager, "FontProperties", FakeFontProperties)
+    monkeypatch.setattr(font_manager.fontManager, "addfont", lambda _path: None)
+    monkeypatch.setattr("src.audio_spectrogram.ft2font.FT2Font", lambda _font_path: object())
+
+    assert _resolve_plot_font() == ("WenQuanYi Zen Hei", True, expected_font_path)  # noqa: S101
+
+
+def test_resolve_plot_font_uses_env_override(monkeypatch, tmp_path):
+    override_font = tmp_path / "wqy-override.ttf"
+    override_font.write_text("stub", encoding="utf-8")
+
+    monkeypatch.setenv("UA_AUDIO_SPECTROGRAM_FONT_PATH", str(override_font))
+
+    def fake_findfont(*_args, **_kwargs):
+        raise ValueError("not used")
+
+    class FakeFontProperties:
+        def __init__(self, fname=None):
+            self._fname = fname
+
+        def get_name(self) -> str:
+            return "WenQuanYi Override" if self._fname == str(override_font) else "Unknown"
+
+    monkeypatch.setattr(font_manager, "findfont", fake_findfont)
+    monkeypatch.setattr(font_manager, "FontProperties", FakeFontProperties)
+    monkeypatch.setattr(font_manager.fontManager, "addfont", lambda _path: None)
+    monkeypatch.setattr("src.audio_spectrogram.ft2font.FT2Font", lambda _font_path: object())
+
+    assert _resolve_plot_font() == ("WenQuanYi Override", True, str(override_font))  # noqa: S101
+
+
+def test_resolve_plot_font_falls_back_when_env_font_is_not_loadable(monkeypatch, tmp_path):
+    override_font = tmp_path / "broken-font.ttf"
+    override_font.write_text("stub", encoding="utf-8")
+    fallback_font = "/usr/share/fonts/wqy-fallback/wqy-zenhei.otf"
+
+    monkeypatch.setenv("UA_AUDIO_SPECTROGRAM_FONT_PATH", str(override_font))
+
+    def fake_findfont(*_args, **_kwargs):
+        if _args and _args[0] == "Noto Sans CJK SC":
+            return fallback_font
+        raise ValueError("not found")
+
+    class FakeFontProperties:
+        def __init__(self, fname=None):
+            self._fname = fname
+
+        def get_name(self) -> str:
+            if self._fname == fallback_font:
+                return "WenQuanYi Zen Hei"
+            return "Override Font"
+
+    class FakeFT2Font:
+        def __init__(self, font_path):
+            if font_path == str(override_font):
+                raise RuntimeError("not loadable")
+
+    monkeypatch.setattr(font_manager, "findfont", fake_findfont)
+    monkeypatch.setattr(font_manager, "FontProperties", FakeFontProperties)
+    monkeypatch.setattr(font_manager.fontManager, "addfont", lambda _path: None)
+    monkeypatch.setattr("src.audio_spectrogram.ft2font.FT2Font", FakeFT2Font)
+
+    assert _resolve_plot_font() == ("WenQuanYi Zen Hei", True, fallback_font)  # noqa: S101
+
+
+def test_resolve_plot_font_prefers_cjk_candidate_when_default_font_finds_first(monkeypatch):
+    def fake_findfont(*args, **_kwargs):
+        requested = args[0]
+        if requested == "Noto Sans":
+            return "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf"
+        if requested == "WenQuanYi Zen Hei":
+            return "/usr/share/fonts/wqy/wqy-zenhei.ttc"
+        raise ValueError("not found")
+
+    monkeypatch.setattr(font_manager, "findfont", fake_findfont)
+
+    class FakeFontProperties:
+        def __init__(self, fname=None):
+            self._fname = fname
+
+        def get_name(self) -> str:
+            if "NotoSans-Regular" in str(self._fname):
+                return "Noto Sans"
+            return "WenQuanYi Zen Hei"
+
+    monkeypatch.setattr(font_manager, "FontProperties", FakeFontProperties)
+    monkeypatch.setattr(font_manager.fontManager, "addfont", lambda _path: None)
+    monkeypatch.setattr("src.audio_spectrogram.ft2font.FT2Font", lambda _font_path: object())
+
+    assert _resolve_plot_font() == ("WenQuanYi Zen Hei", True, "/usr/share/fonts/wqy/wqy-zenhei.ttc")  # noqa: S101
+
+
+def test_resolve_plot_font_skips_unloadable_cjk_fonts(monkeypatch):
+    bad_font = "/usr/share/fonts/custom/BadSansCJK-VF.ttc"
+    good_font = "/usr/share/fonts/custom/WenQuanYiZenHei.otf"
+
+    def fake_findfont(*args, **_kwargs):
+        requested = args[0]
+        if requested == "WenQuanYi Zen Hei":
+            return bad_font
+        if requested == "Noto Sans CJK SC":
+            return bad_font
+        raise ValueError("not found")
+
+    def fake_find_system_fonts(*_args, **_kwargs):
+        return [
+            bad_font,
+            good_font,
+        ]
+
+    class FakeFontProperties:
+        def __init__(self, fname=None):
+            self._fname = fname
+
+        def get_name(self) -> str:
+            if self._fname == good_font:
+                return "WenQuanYi Zen Hei"
+            return "Noto Sans CJK SC"
+
+    class FakeFT2Font:
+        def __init__(self, font_path):
+            if font_path == bad_font:
+                raise RuntimeError("Can not load face")
+
+    monkeypatch.setattr(font_manager, "findfont", fake_findfont)
+    monkeypatch.setattr(font_manager, "findSystemFonts", fake_find_system_fonts)
+    monkeypatch.setattr(font_manager, "FontProperties", FakeFontProperties)
+    monkeypatch.setattr(font_manager.fontManager, "addfont", lambda _path: None)
+    monkeypatch.setattr("src.audio_spectrogram.ft2font.FT2Font", FakeFT2Font)
+
+    assert _resolve_plot_font() == ("WenQuanYi Zen Hei", True, good_font)  # noqa: S101

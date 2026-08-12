@@ -745,12 +745,39 @@ class Zenith(UNIT3D):
             if meta.category == "TV" and meta.episode_title != "":
                 znth_name = znth_name.replace(f"{meta.episode_title} {meta.resolution}", f"{meta.resolution}", 1)
             imdb_year = str(meta.imdb_info.get("year", ""))
-            year = str(meta.year) if meta.year is not None else ""
+            year = str(meta.manual_year) if meta.manual_year else str(meta.year) if meta.year is not None else ""
             if meta.category != "TV" and imdb_year and imdb_year.strip() and year and year.strip() and imdb_year != year:
                 znth_name = znth_name.replace(f"{year}", imdb_year, 1)
+                year = imdb_year
+            title = str(meta.title or "").strip()
+            if title and year and znth_name:
+                znth_name = self._normalize_aka_year_order(znth_name, title=title, aka=str(meta.aka or ""), year=year)
             return {"name": znth_name}
 
         return {"name": meta.name}
+
+    @staticmethod
+    def _normalize_aka_year_order(name: str, title: str, aka: str, year: str) -> str:
+        if not (name and title and aka and year):
+            return " ".join((name or "").split())
+
+        aka_name = re.sub(r"^AKA\s+", "", aka, flags=re.IGNORECASE).strip()
+        if not aka_name:
+            return " ".join(name.split())
+
+        title_pattern = re.escape(title)
+        year_pattern = re.escape(year)
+        aka_pattern = re.escape(aka_name)
+        match = re.match(
+            rf"^(?P<title>{title_pattern})\s+{year_pattern}\s+AKA\s+{aka_pattern}(?P<suffix>\s+.*)?$",
+            name,
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            return " ".join(name.split())
+
+        suffix = (match.group("suffix") or "").strip()
+        return " ".join((f"{match.group('title')} AKA {aka_name} {year} {suffix}").split())
 
     @staticmethod
     def _music_field(release: dict[str, Any], name: str, default: Any = "") -> Any:

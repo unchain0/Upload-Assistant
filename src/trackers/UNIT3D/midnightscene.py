@@ -1,6 +1,6 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
 import re
-from typing import Any
+from typing import Any, cast
 
 from src.console import logger
 from src.languages import languages_manager
@@ -193,8 +193,10 @@ class MidnightScene(UNIT3D):
                 val = "9"  # PC
         elif meta.category == "MUSIC":
             release = meta.music_release if isinstance(meta.music_release, dict) else {}
-            fields = release.get("fields", {}) if isinstance(release.get("fields"), dict) else {}
-            format_field = fields.get("format", {}) if isinstance(fields.get("format"), dict) else {}
+            fields_raw = release.get("fields", {})
+            fields = cast(dict[str, Any], fields_raw) if isinstance(fields_raw, dict) else {}
+            format_field_raw = fields.get("format", {})
+            format_field = cast(dict[str, Any], format_field_raw) if isinstance(format_field_raw, dict) else {}
             music_format = str(meta.format or format_field.get("value", "") or meta.type or "").upper().strip().lstrip(".")
             val = type_id.get(music_format, "0")
         elif "FLAC" in (meta.audio or "").upper():
@@ -227,6 +229,31 @@ class MidnightScene(UNIT3D):
             if any(filename.endswith(suffix) for suffix in suffixes):
                 return True
         return False
+
+    @staticmethod
+    def _normalize_aka_year_order(name: str, title: str, aka: str, year: str | int | None) -> str:
+        if not (name and title and aka and year):
+            return " ".join((name or "").split())
+
+        title_str = title.strip()
+        aka_name = re.sub(r"^AKA\s+", "", str(aka), flags=re.IGNORECASE).strip()
+        if not aka_name:
+            return " ".join(name.split())
+
+        year_pattern = re.escape(str(year))
+        title_pattern = re.escape(title_str)
+
+        match = re.search(
+            rf"^(?P<title>{title_pattern})\s+{year_pattern}\s+AKA\s+{re.escape(aka_name)}(?P<suffix>\s+.*)?$",
+            name,
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            return " ".join(name.split())
+
+        title_from_name = match.group("title").strip()
+        suffix = (match.group("suffix") or "").strip()
+        return " ".join((f"{title_from_name} AKA {aka_name} {year} {suffix}").split())
 
     async def _confirm_or_skip(self, message: str, meta: Meta) -> bool:
         if meta.unattended:
@@ -306,10 +333,12 @@ class MidnightScene(UNIT3D):
                     return {"name": scene_name.replace("_", " ")}
 
             release = meta.music_release if isinstance(meta.music_release, dict) else {}
-            fields = release.get("fields", {}) if isinstance(release.get("fields"), dict) else {}
+            fields_raw = release.get("fields", {})
+            fields = cast(dict[str, Any], fields_raw) if isinstance(fields_raw, dict) else {}
 
             def release_field(name: str, fallback: Any = "") -> str:
-                field = fields.get(name, {}) if isinstance(fields.get(name), dict) else {}
+                field_raw = fields.get(name, {})
+                field = cast(dict[str, Any], field_raw) if isinstance(field_raw, dict) else {}
                 return str(field.get("value", fallback) or "").strip()
 
             artist = release_field("artist", meta.artist)
@@ -351,4 +380,5 @@ class MidnightScene(UNIT3D):
             elif meta.is_disc != "BDMV":
                 ms_name = ms_name.replace(meta.resolution, f"{foreign_lang} {meta.resolution}", 1)
 
+        ms_name = self._normalize_aka_year_order(ms_name, title=str(meta.title or ""), aka=str(meta.aka or ""), year=meta.year)
         return {"name": ms_name}
