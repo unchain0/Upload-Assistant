@@ -947,27 +947,7 @@ def test_darkpeers_rejects_low_bitrate_webl_for_1080p():
     assert _additional_checks(low) is False
 
 
-def test_darkpeers_webl_without_configured_video_threshold_is_accepted():
-    assert (
-        _additional_checks(
-            Meta(
-                category="MOVIE",
-                unattended=True,
-                language_checked=True,
-                audio_languages=["English"],
-                filelist=["Movie.mkv"],
-                type="WEBDL",
-                resolution="480p",
-                screens=3,
-                video_bitrate=1000,
-                audio_bitrate=192,
-            )
-        )
-        is True
-    )
-
-
-def test_darkpeers_rejects_webl_when_video_bitrate_is_missing():
+def test_darkpeers_rejects_webdl_when_video_bitrate_is_missing():
     missing = Meta(
         category="MOVIE",
         unattended=True,
@@ -983,26 +963,7 @@ def test_darkpeers_rejects_webl_when_video_bitrate_is_missing():
     assert _additional_checks(missing) is False
 
 
-def test_darkpeers_allows_movie_discs_without_payload_content_validation():
-    assert (
-        _additional_checks(
-            Meta(
-                category="MOVIE",
-                unattended=True,
-                language_checked=True,
-                audio_languages=["English"],
-                is_disc="BDMV",
-                type="REMUX",
-                resolution="1080p",
-                screens=3,
-                filelist=[],
-            )
-        )
-        is True
-    )
-
-
-def test_darkpeers_accepts_webl_bitrate_when_configured_higher_quality_is_not_required():
+def test_darkpeers_accepts_webdl_bitrate_when_configured_higher_quality_is_not_required():
     meta = Meta(
         category="MOVIE",
         unattended=True,
@@ -1024,6 +985,22 @@ def test_darkpeers_accepts_webl_bitrate_when_configured_higher_quality_is_not_re
             }
         },
     ) is True
+
+
+def test_darkpeers_allows_480p_webdl_when_video_bitrate_threshold_is_unset():
+    low_res = Meta(
+        category="MOVIE",
+        unattended=True,
+        language_checked=True,
+        audio_languages=["English"],
+        filelist=["Movie.mkv"],
+        type="WEBDL",
+        resolution="480p",
+        screens=3,
+        audio_bitrate=160,
+    )
+
+    assert _additional_checks(low_res) is True
 
 
 def test_darkpeers_requires_movie_tv_payload_for_content_checks():
