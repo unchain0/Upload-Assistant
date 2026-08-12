@@ -4,6 +4,7 @@ import contextlib
 import hashlib
 import io
 import json
+import os
 import subprocess
 from pathlib import Path
 from typing import Any, cast
@@ -29,7 +30,8 @@ SAMPLE_RATE = 48000
 WIDTH_INCH = 16
 HEIGHT_INCH = 9
 DPI_VALUE = 240
-CACHE_VERSION = 2
+CACHE_VERSION = 3
+_PLOT_FONT_CACHE: tuple[str, bool, str | None] | None = None
 AUDIOBOOK_EXTENSIONS = {".aac", ".aax", ".flac", ".m4a", ".m4b", ".mp3", ".ogg", ".opus", ".wav", ".wma"}
 SPECTROGRAM_N_FFT = 2048
 MAX_TIME_BINS = 1024
@@ -66,6 +68,15 @@ _CJK_FONT_NAME_HINTS: tuple[str, ...] = (
     "simhei",
     "pingfang",
 )
+_CJK_FONT_PATH_ENV_VARS: tuple[str, ...] = ("UA_AUDIO_SPECTROGRAM_FONT_PATH", "AUDIO_SPECTROGRAM_FONT_PATH")
+
+
+def _env_font_path() -> str | None:
+    for name in _CJK_FONT_PATH_ENV_VARS:
+        value = os.getenv(name, "").strip()
+        if value:
+            return value
+    return None
 
 
 def _is_cjk_character(character: str) -> bool:
@@ -204,19 +215,43 @@ def _register_font(font_path: str) -> None:
         font_manager.fontManager.addfont(font_path)  # pyright: ignore[reportUnknownMemberType]
 
 
-def _resolve_plot_font() -> tuple[str, bool, str | None]:
-    def _supports_cjk(font_name: str, font_path: str) -> bool:
-        checked = (font_name.lower() + " " + Path(font_path).stem.lower()).lower()
-        return any(hint in checked for hint in _CJK_FONT_NAME_HINTS) or any(
-            hint in font_path.lower() for hint in _CJK_SYSTEM_FONT_HINTS
-        )
+def _font_path_supports_cjk(font_path: str, font_name: str | None = None) -> bool:
+    lower_font_path = font_path.lower()
+    if any(hint in lower_font_path for hint in _CJK_SYSTEM_FONT_HINTS):
+        return True
+    if any(hint in Path(font_path).stem.lower() for hint in _CJK_FONT_NAME_HINTS):
+        return True
+    if font_name:
+        return any(hint in font_name.lower() for hint in _CJK_FONT_NAME_HINTS)
+    return False
 
-    def _font_is_loadable(font_path: str) -> bool:
-        try:
-            ft2font.FT2Font(font_path)
-            return True
-        except Exception:
-            return False
+
+def _font_is_loadable(font_path: str) -> bool:
+    try:
+        ft2font.FT2Font(font_path)
+        return True
+    except Exception:
+        return False
+
+
+def _resolve_plot_font() -> tuple[str, bool, str | None]:
+    global _PLOT_FONT_CACHE
+    if _PLOT_FONT_CACHE is not None:
+        return _PLOT_FONT_CACHE
+
+    override_path = _env_font_path()
+    if override_path:
+        override_font_path = Path(override_path).expanduser()
+        if override_font_path.is_file():
+            font_path = override_font_path.resolve().as_posix()
+            if _font_is_loadable(font_path):
+                _register_font(font_path)
+                supports_unicode = _font_path_supports_cjk(font_path)
+                _PLOT_FONT_CACHE = (_font_name_for_file(font_path), supports_unicode, font_path)
+                return _PLOT_FONT_CACHE
+            logger.warning(
+                f"[yellow]Configured spectrogram font '{override_font_path}' is not loadable; falling back to auto-detected font.[/yellow]"
+            )
 
     fallback_font: tuple[str, bool, str] | None = None
 
@@ -230,23 +265,30 @@ def _resolve_plot_font() -> tuple[str, bool, str | None]:
         resolved_name = _font_name_for_file(font_path)
         if not _font_is_loadable(font_path):
             continue
-        supports_unicode = _supports_cjk(font_name, font_path)
+        supports_unicode = _font_path_supports_cjk(font_path, resolved_name)
         _register_font(font_path)
         if supports_unicode:
-            return resolved_name, True, font_path
+            _PLOT_FONT_CACHE = (resolved_name, True, font_path)
+            return _PLOT_FONT_CACHE
         if fallback_font is None:
             fallback_font = (resolved_name, False, font_path)
 
     for font_path in dict.fromkeys(font_manager.findSystemFonts()):  # pyright: ignore[reportUnknownMemberType]
-        lower_font_path = font_path.lower()
-        if _font_is_loadable(font_path) and any(hint in lower_font_path for hint in _CJK_SYSTEM_FONT_HINTS):
-            _register_font(font_path)
-            return _font_name_for_file(font_path), True, font_path
+        if not _font_is_loadable(font_path):
+            continue
+        resolved_font_name = _font_name_for_file(font_path)
+        if not _font_path_supports_cjk(font_path, resolved_font_name):
+            continue
+        _register_font(font_path)
+        _PLOT_FONT_CACHE = (resolved_font_name, True, font_path)
+        return _PLOT_FONT_CACHE
 
     if fallback_font is not None:
+        _PLOT_FONT_CACHE = fallback_font
         return fallback_font
 
-    return "DejaVu Sans", False, None
+    _PLOT_FONT_CACHE = ("DejaVu Sans", False, None)
+    return _PLOT_FONT_CACHE
 
 
 def _build_plot_font_properties(font_path: str | None) -> tuple[font_manager.FontProperties | None, bool]:

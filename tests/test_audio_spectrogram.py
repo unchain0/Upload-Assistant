@@ -1,3 +1,4 @@
+import pytest
 from matplotlib import font_manager
 
 from src.audio_spectrogram import (
@@ -9,6 +10,13 @@ from src.audio_spectrogram import (
     prompt_audio_stream_positions,
     select_audio_streams,
 )
+
+
+@pytest.fixture(autouse=True)
+def _reset_plot_font_cache() -> None:
+    import src.audio_spectrogram
+
+    src.audio_spectrogram._PLOT_FONT_CACHE = None
 
 
 def test_prompt_audio_stream_positions_uses_cli_ui_and_defaults_to_all(monkeypatch):
@@ -152,6 +160,64 @@ def test_resolve_plot_font_marks_wenquanyi_font_as_unicode_supported(monkeypatch
     monkeypatch.setattr("src.audio_spectrogram.ft2font.FT2Font", lambda _font_path: object())
 
     assert _resolve_plot_font() == ("WenQuanYi Zen Hei", True, expected_font_path)  # noqa: S101
+
+
+def test_resolve_plot_font_uses_env_override(monkeypatch, tmp_path):
+    override_font = tmp_path / "wqy-override.ttf"
+    override_font.write_text("stub", encoding="utf-8")
+
+    monkeypatch.setenv("UA_AUDIO_SPECTROGRAM_FONT_PATH", str(override_font))
+
+    def fake_findfont(*_args, **_kwargs):
+        raise ValueError("not used")
+
+    class FakeFontProperties:
+        def __init__(self, fname=None):
+            self._fname = fname
+
+        def get_name(self) -> str:
+            return "WenQuanYi Override" if self._fname == str(override_font) else "Unknown"
+
+    monkeypatch.setattr(font_manager, "findfont", fake_findfont)
+    monkeypatch.setattr(font_manager, "FontProperties", FakeFontProperties)
+    monkeypatch.setattr(font_manager.fontManager, "addfont", lambda _path: None)
+    monkeypatch.setattr("src.audio_spectrogram.ft2font.FT2Font", lambda _font_path: object())
+
+    assert _resolve_plot_font() == ("WenQuanYi Override", True, str(override_font))  # noqa: S101
+
+
+def test_resolve_plot_font_falls_back_when_env_font_is_not_loadable(monkeypatch, tmp_path):
+    override_font = tmp_path / "broken-font.ttf"
+    override_font.write_text("stub", encoding="utf-8")
+    fallback_font = "/usr/share/fonts/wqy-fallback/wqy-zenhei.otf"
+
+    monkeypatch.setenv("UA_AUDIO_SPECTROGRAM_FONT_PATH", str(override_font))
+
+    def fake_findfont(*_args, **_kwargs):
+        if _args and _args[0] == "Noto Sans CJK SC":
+            return fallback_font
+        raise ValueError("not found")
+
+    class FakeFontProperties:
+        def __init__(self, fname=None):
+            self._fname = fname
+
+        def get_name(self) -> str:
+            if self._fname == fallback_font:
+                return "WenQuanYi Zen Hei"
+            return "Override Font"
+
+    class FakeFT2Font:
+        def __init__(self, font_path):
+            if font_path == str(override_font):
+                raise RuntimeError("not loadable")
+
+    monkeypatch.setattr(font_manager, "findfont", fake_findfont)
+    monkeypatch.setattr(font_manager, "FontProperties", FakeFontProperties)
+    monkeypatch.setattr(font_manager.fontManager, "addfont", lambda _path: None)
+    monkeypatch.setattr("src.audio_spectrogram.ft2font.FT2Font", FakeFT2Font)
+
+    assert _resolve_plot_font() == ("WenQuanYi Zen Hei", True, fallback_font)  # noqa: S101
 
 
 def test_resolve_plot_font_prefers_cjk_candidate_when_default_font_finds_first(monkeypatch):
