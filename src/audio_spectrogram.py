@@ -243,7 +243,7 @@ def _resolve_plot_font() -> tuple[str, bool, str | None]:
     if override_path:
         override_font_path = Path(override_path).expanduser()
         if override_font_path.is_file():
-            font_path = override_font_path.resolve().as_posix()
+            font_path = str(override_font_path.resolve())
             if _font_is_loadable(font_path):
                 _register_font(font_path)
                 supports_unicode = _font_path_supports_cjk(font_path)
