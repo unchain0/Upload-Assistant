@@ -15,6 +15,7 @@ from src.music.models import MusicRelease
 from src.music.validation import MusicValidator, ValidationLevel
 from src.tmdb import TmdbManager
 from src.trackers.UNIT3D import UNIT3D
+from src.type_utils import to_int
 
 
 class DarkPeers(UNIT3D):
@@ -35,7 +36,6 @@ class DarkPeers(UNIT3D):
         r"\s+(?:(?:[A-Z][A-Za-z]*(?:\s+[A-Z][A-Za-z]*){0,2}\s+)?(?:MULTi|Dubbed)|Dual-Audio)"
         r"(?=\s+(?:DTS Headphone:X|DTS-HD MA|DTS-HD HRA|DTS-ES|DTS:X|TrueHD|DD\+ EX|DD EX|DD\+|DD|LPCM|FLAC|ALAC|AAC|Opus|MP3|MP2|Vorbis)(?:\s|$)|-[A-Za-z0-9]+$)"
     )
-    _VIDEO_EXTENSIONS: ClassVar[set[str]] = {".avi", ".m2ts", ".mkv", ".mp4", ".mpg", ".mpeg", ".ts", ".vob"}
     base_url = "https://darkpeers.org"
     banned_groups = (
         "ARCADE",
@@ -139,9 +139,16 @@ class DarkPeers(UNIT3D):
                 return False
             if not await self.validate_video_resolution(meta):
                 return False
-            if not self.validate_video_files(meta):
-                return False
-            if not self.validate_screenshot_count(meta):
+            has_payload = bool([value for value in (meta.filelist or []) if str(value).strip()])
+            if has_payload or category == "MOVIE":
+                if not await self.validate_video_quality(meta):
+                    return False
+                if not meta.is_disc:
+                    if not self.validate_video_files(meta):
+                        return False
+                    if not self.validate_video_content(meta):
+                        return False
+            if not self.validate_video_screenshots(meta):
                 return False
             if (
                 meta.keep_folder
@@ -241,11 +248,106 @@ class DarkPeers(UNIT3D):
         "PCM",
         "VORBIS",
     }
+    _VIDEO_EXTENSIONS: ClassVar[set[str]] = {
+        ".3gp",
+        ".avi",
+        ".flv",
+        ".m2ts",
+        ".m4v",
+        ".mkv",
+        ".mov",
+        ".mp4",
+        ".mpeg",
+        ".mpg",
+        ".ts",
+        ".vob",
+        ".webm",
+        ".wmv",
+    }
+    _WEB_DL_MIN_VIDEO_BITRATE_KBPS: ClassVar[dict[str, int]] = {
+        "4320p": 35_000,
+        "2160p": 18_000,
+        "1080p": 2_500,
+        "1080i": 2_500,
+        "720p": 1_800,
+    }
+    _WEB_DL_MIN_AUDIO_BITRATE_KBPS: ClassVar[dict[str, int]] = {
+        "default": 128,
+        "4320p": 192,
+        "2160p": 192,
+        "1080p": 128,
+        "720p": 96,
+    }
+
+    def _to_int(self, value: Any) -> int | None:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _config_min_bitrate(self, key: str) -> dict[str, int]:
+        raw = self.tracker_config.get(key, {})
+        if not isinstance(raw, dict):
+            return {}
+        values: dict[str, int] = {}
+        for key_name, raw_value in raw.items():
+            parsed = self._to_int(raw_value)
+            if parsed is None or parsed < 0 or not isinstance(key_name, str):
+                continue
+            values[key_name.lower()] = parsed
+        return values
+
+    def _min_webl_bitrate(self, bitrate_type: str, resolution: str) -> int | None:
+        resolution_key = str(resolution or "").lower()
+        base = self._WEB_DL_MIN_VIDEO_BITRATE_KBPS if bitrate_type == "video" else self._WEB_DL_MIN_AUDIO_BITRATE_KBPS
+        default_value = base.get("default")
+        overrides = self._config_min_bitrate(f"webl_min_{bitrate_type}_kbps")
+
+        for source in (overrides, base):
+            if resolution_key in source:
+                return source[resolution_key]
+            if bitrate_type == "audio" and "default" in source:
+                default_value = source["default"]
+
+        return default_value
+
+    async def validate_video_quality(self, meta: Meta) -> bool:
+        if str(meta.type or "").upper() != "WEBDL":
+            return True
+
+        resolution = str(meta.resolution or "").lower()
+        min_video_kbps = self._min_webl_bitrate("video", resolution)
+        min_audio_kbps = self._min_webl_bitrate("audio", resolution)
+
+        if min_video_kbps is None and min_audio_kbps is None:
+            return True
+
+        if min_video_kbps is not None:
+            video_bitrate = self._to_int(meta.video_bitrate)
+            if video_bitrate is None:
+                logger.info(f"{self.tracker}: [bold red]Could not determine video bitrate for this WEBDL upload.")
+                return False
+            if video_bitrate < min_video_kbps:
+                logger.info(
+                    f"{self.tracker}: [bold red]Video bitrate too low for DARKPEERS WEBDL ({video_bitrate} < {min_video_kbps} kbps). Skipping upload."
+                )
+                return False
+
+        audio_bitrate = self._to_int(meta.audio_bitrate)
+        if min_audio_kbps is not None and audio_bitrate is not None and audio_bitrate < min_audio_kbps:
+            logger.info(
+                f"{self.tracker}: [bold red]Audio bitrate too low for DARKPEERS WEBDL ({audio_bitrate} < {min_audio_kbps} kbps). Skipping upload."
+            )
+            return False
+
+        return True
 
     @classmethod
     def _normalise_language(cls, value: Any) -> str:
         language = re.sub(r"\s+", " ", str(value or "").strip().casefold())
         language = re.sub(r"\s*\([^)]*\)", "", language).strip()
+        language = language.split("-", maxsplit=1)[0]
+        language = language.replace("_", "-").split("-", maxsplit=1)[0].strip()
         return cls._LANGUAGE_ALIASES.get(language, language)
 
     @classmethod
@@ -313,15 +415,42 @@ class DarkPeers(UNIT3D):
     def _is_local_path_name(value: str) -> bool:
         return bool(value) and (value.startswith(("/", "\\")) or Path(value).is_absolute() or bool(re.match(r"^[A-Za-z]:[\\/]", value)))
 
-    def validate_screenshot_count(self, meta: Meta) -> bool:
-        try:
-            screens = int(meta.screens)
-        except (TypeError, ValueError, OverflowError):
-            screens = 0
-        if 3 <= screens <= 5:
-            return True
-        logger.info(f"{self.tracker}: [bold red]Movie and TV uploads require between 3 and 5 screenshots. Skipping upload.")
-        return False
+    def validate_video_content(self, meta: Meta) -> bool:
+        paths = [Path(str(item)) for item in (meta.filelist or []) if str(item).strip()]
+        if not paths:
+            logger.info(f"{self.tracker}: [bold red]Movie/TV uploads require a payload of files. Skipping upload.")
+            return False
+
+        valid_video_files: list[str] = []
+        invalid_files: list[str] = []
+        for path in paths:
+            suffix = path.suffix.lower()
+            if not suffix:
+                invalid_files.append(path.name or str(path))
+            elif suffix in self._VIDEO_EXTENSIONS:
+                valid_video_files.append(path.name)
+            else:
+                invalid_files.append(path.name)
+
+        if not valid_video_files:
+            logger.info(f"{self.tracker}: [bold red]Movie/TV uploads did not include a recognized video file extension. Skipping upload.")
+            return False
+        if invalid_files:
+            logger.info(
+                f"{self.tracker}: [bold red]Movie/TV uploads should include video files only. Remove non-video files: {', '.join(invalid_files)}. Skipping upload."
+            )
+            return False
+        return True
+
+    def validate_video_screenshots(self, meta: Meta) -> bool:
+        screenshot_count = to_int(meta.screens, 0)
+        if screenshot_count < 3:
+            logger.info(f"{self.tracker}: [bold red]requires at least 3 screenshots for Movie/TV uploads. Skipping upload.")
+            return False
+        if screenshot_count > 5:
+            logger.info(f"{self.tracker}: [bold red]supports at most 5 screenshots for Movie/TV uploads. Skipping upload.")
+            return False
+        return True
 
     def validate_tv_scope(self, meta: Meta) -> bool:
         name = " ".join((str(meta.name or ""), Path(str(meta.path or "")).name)).casefold()
@@ -572,7 +701,7 @@ class DarkPeers(UNIT3D):
         if not audio:
             return "SKIPPED"
         if len(audio) == 1 and original in audio:
-            return ""
+            return "SKIPPED"
         if audio == {"english"} and original and original != "english":
             return "Dubbed"
         if len(audio) == 1:
@@ -581,7 +710,10 @@ class DarkPeers(UNIT3D):
                 return f"{only.title()} Dubbed"
             return "SKIPPED"
         if original and original in audio:
-            if original != "english" and "english" in audio and len(audio) == 2:
+            if "english" in audio and len(audio) == 2:
+                if original == "english":
+                    other = next(iter(audio - {"english"}), "")
+                    return f"{other.title()} MULTi" if other else "SKIPPED"
                 return "Dual-Audio"
             if len(audio) >= 3:
                 return "MULTi"
@@ -600,25 +732,83 @@ class DarkPeers(UNIT3D):
 
     async def get_name(self, meta: Meta) -> dict[str, str]:
         if meta.category == "MUSIC":
-            return {"name": self._music_name(meta)}
+            name = self._music_name(meta)
+            return {"name": self._ensure_group_tag(name, meta.tag, preserve_if_scene=meta.scene)}
 
         if meta.category == "BOOK":
-            return {"name": self._book_name(meta)}
+            name = self._book_name(meta)
+            return {"name": self._ensure_group_tag(name, meta.tag, preserve_if_scene=meta.scene)}
 
         scene_name = str(meta.scene_name or "")
-        if scene_name and not self._is_local_path_name(scene_name):
+        has_scene_name = scene_name and not self._is_local_path_name(scene_name)
+        if has_scene_name:
             return {"name": scene_name}
 
-        if not str(meta.type or "").strip():
-            dp_name = str(meta.name or "")
-            if meta.category == "TV":
-                dp_name = await self._tv_name(meta, dp_name)
-        else:
+        dp_name = str(meta.name or "")
+        if str(meta.type or "").strip():
             dp_name = await self._video_name(meta)
+        elif meta.category == "TV":
+            dp_name = await self._tv_name(meta, dp_name)
+
+        if meta.category in {"TV", "MOVIE"} and not meta.scene:
+            year = str(meta.manual_year) if meta.manual_year not in (None, 0) else str(meta.year or "").strip()
+            dp_name = self._normalize_aka_year_order(dp_name, meta.title, meta.aka, year)
+
         audio = await self.get_audio(meta)
         dp_name = self._apply_dub_element(dp_name, audio)
 
-        return {"name": dp_name}
+        return {"name": self._ensure_group_tag(dp_name, meta.tag, preserve_if_scene=bool(has_scene_name))}
+
+    @staticmethod
+    def _ensure_group_tag(name: str, tag: str | None, preserve_if_scene: bool = False) -> str:
+        if preserve_if_scene:
+            return name
+        cleaned = str(tag or "").strip()
+        if DarkPeers._has_group_in_name(name):
+            return name
+        if not cleaned:
+            return name
+        return f"{name}{cleaned}" if cleaned.startswith("-") else f"{name}-{cleaned}"
+
+    @staticmethod
+    def _has_group_in_name(name: str) -> bool:
+        match = re.search(r"-([A-Za-z][A-Za-z0-9+_-]{1,})$", str(name).strip())
+        if not match:
+            return False
+        token = match.group(1)
+        token_lower = token.lower()
+        if token_lower in {"h264", "h265", "x264", "x265", "hevc", "avc", "ac3", "eac3", "dd", "dts", "opus", "aac", "mp3", "flac"}:
+            return False
+        if re.fullmatch(r"[xhx][.-]?\d{3,4}", token_lower):
+            return False
+        if re.fullmatch(r"\d+p", token_lower):
+            return False
+        return True
+
+    @staticmethod
+    def _normalize_aka_year_order(name: str, title: str, aka: str, year: str) -> str:
+        if not name or not title or not aka or not year:
+            return name
+
+        title_value = " ".join(str(title).split())
+        aka_value = " ".join(str(aka).split())
+        if not title_value or not aka_value:
+            return name
+
+        year_value = str(year).strip()
+        if not year_value:
+            return name
+
+        normalized_name = " ".join(name.split())
+
+        if normalized_name.casefold() == name.casefold():
+            name = normalized_name
+
+        expected = f"{title_value} {year_value} {aka_value}"
+        if re.search(re.escape(expected), name, flags=re.IGNORECASE):
+            return re.sub(rf"(?i)\b{re.escape(title_value)}\s+{re.escape(year_value)}\s+{re.escape(aka_value)}\b", f"{title_value} {aka_value} {year_value}", name, count=1)
+
+        return name
 
     async def _video_name(self, meta: Meta) -> str:
         release_type = str(meta.type or "").upper()
@@ -846,9 +1036,6 @@ class DarkPeers(UNIT3D):
             if manual_source == "RETAIL":
                 parts.append("Retail")
             base_name = " ".join(parts)
-            tag = str(meta.tag or "").strip()
-            if tag:
-                return f"{base_name}{tag if tag.startswith('-') else f'-{tag}'}"
             return base_name
 
         if identifier:
