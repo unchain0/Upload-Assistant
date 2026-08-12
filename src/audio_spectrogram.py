@@ -68,6 +68,22 @@ _CJK_FONT_NAME_HINTS: tuple[str, ...] = (
 )
 
 
+def _is_cjk_character(character: str) -> bool:
+    if not character:
+        return False
+    value = ord(character)
+    return (
+        0x3400 <= value <= 0x4DBF
+        or 0x4E00 <= value <= 0x9FFF
+        or 0xF900 <= value <= 0xFAFF
+        or 0x20000 <= value <= 0x2CEAF
+        or 0x2F00 <= value <= 0x2FDF
+        or 0x3000 <= value <= 0x303F
+        or 0x3040 <= value <= 0x30FF
+        or 0xAC00 <= value <= 0xD7A3
+    )
+
+
 def prompt_audio_stream_positions() -> str:
     """Ask for stream positions through the prompt API supported by the WebUI."""
     return (
@@ -176,17 +192,19 @@ def _load_cached_images(cache_path: Path, fingerprint: str) -> list[Any]:
     return []
 
 
+def _font_name_for_file(font_path: str) -> str:
+    try:
+        return font_manager.FontProperties(fname=font_path).get_name()
+    except (RuntimeError, OSError):
+        return Path(font_path).stem
+
+
+def _register_font(font_path: str) -> None:
+    with contextlib.suppress(Exception):
+        font_manager.fontManager.addfont(font_path)  # pyright: ignore[reportUnknownMemberType]
+
+
 def _resolve_plot_font() -> tuple[str, bool, str | None]:
-    def _font_name_for_file(font_path: str) -> str:
-        try:
-            return font_manager.FontProperties(fname=font_path).get_name()
-        except (RuntimeError, OSError):
-            return Path(font_path).stem
-
-    def _register_font(font_path: str) -> None:
-        with contextlib.suppress(Exception):
-            font_manager.fontManager.addfont(font_path)
-
     def _supports_cjk(font_name: str, font_path: str) -> bool:
         checked = (font_name.lower() + " " + Path(font_path).stem.lower()).lower()
         return any(hint in checked for hint in _CJK_FONT_NAME_HINTS) or any(
@@ -219,7 +237,7 @@ def _resolve_plot_font() -> tuple[str, bool, str | None]:
         if fallback_font is None:
             fallback_font = (resolved_name, False, font_path)
 
-    for font_path in dict.fromkeys(font_manager.findSystemFonts()):
+    for font_path in dict.fromkeys(font_manager.findSystemFonts()):  # pyright: ignore[reportUnknownMemberType]
         lower_font_path = font_path.lower()
         if _font_is_loadable(font_path) and any(hint in lower_font_path for hint in _CJK_SYSTEM_FONT_HINTS):
             _register_font(font_path)
@@ -231,10 +249,20 @@ def _resolve_plot_font() -> tuple[str, bool, str | None]:
     return "DejaVu Sans", False, None
 
 
+def _build_plot_font_properties(font_path: str | None) -> tuple[font_manager.FontProperties | None, bool]:
+    if not font_path:
+        return None, False
+    try:
+        return font_manager.FontProperties(fname=font_path), True
+    except Exception as error:
+        logger.warning(f"[yellow]Could not load spectrogram font from '{font_path}': {error}[/yellow]")
+    return None, False
+
+
 def _sanitize_plot_text(text: str, supports_unicode: bool) -> str:
     if supports_unicode:
         return text
-    return "".join(character if character.isascii() else "?" for character in text)
+    return "".join("?" if _is_cjk_character(character) else character for character in text)
 
 
 def generate_spectrogram(
@@ -247,6 +275,8 @@ def generate_spectrogram(
     sample_rate: int,
     source_position: int,
     source_name: str,
+    font_properties: font_manager.FontProperties | None = None,
+    supports_unicode: bool | None = None,
 ) -> Path:
     """Decode one stream and generate a frequency/time image suitable for review."""
     command = [
@@ -287,13 +317,14 @@ def generate_spectrogram(
     stft = np.abs(librosa.stft(samples, n_fft=n_fft, hop_length=hop_length))
     db_spectrogram = librosa.amplitude_to_db(stft, ref=np.max)  # pyright: ignore[reportUnknownMemberType]  # librosa stub has an untyped callback overload.
 
-    _plot_font, supports_unicode, plot_font_path = _resolve_plot_font()
-    font_properties = None
-    if plot_font_path:
-        with contextlib.suppress(Exception):
-            font_properties = font_manager.FontProperties(fname=plot_font_path)
+    if supports_unicode is None or font_properties is None:
+        _plot_font, supports_unicode, plot_font_path = _resolve_plot_font()
+        if font_properties is None:
+            font_properties, resolved_font_supports_unicode = _build_plot_font_properties(plot_font_path)
+            if not resolved_font_supports_unicode:
+                supports_unicode = False
 
-    with matplotlib.rc_context({"font.family": ["sans-serif"]}):
+    with matplotlib.rc_context({"font.family": ["sans-serif"]}):  # pyright: ignore[reportUnknownMemberType]
         figure, axis = plt.subplots(figsize=(WIDTH_INCH, HEIGHT_INCH), dpi=DPI_VALUE)  # pyright: ignore[reportUnknownMemberType]  # matplotlib stub types **fig_kw as Unknown.
         image = librosa.display.specshow(
             db_spectrogram,
@@ -307,13 +338,13 @@ def generate_spectrogram(
         )
         figure.colorbar(image, ax=axis, format="%+2.0f dB")  # pyright: ignore[reportUnknownMemberType]  # matplotlib stub types **kwargs as Unknown.
         display_label = stream_label if stream_label and stream_label != f"Stream_{stream_index}" else source_name
-        axis.set_title(
+        axis.set_title(  # pyright: ignore[reportUnknownMemberType]  # matplotlib stub types **kwargs as Unknown.
             _sanitize_plot_text(display_label, supports_unicode),
             fontsize=18,
             fontweight="bold",
             pad=22,
             fontproperties=font_properties,
-        )  # pyright: ignore[reportUnknownMemberType]  # matplotlib stub types **kwargs as Unknown.
+        )
         axis.text(  # pyright: ignore[reportUnknownMemberType]  # matplotlib stub types **kwargs as Unknown.
             0.5,
             1.01,
@@ -415,6 +446,10 @@ async def process_audio_spectrograms(meta: Meta, config: dict[str, Any], uploads
 
     duration = _positive_config_int(config, "audio_spectrogram_duration", DURATION_LIMIT)
     sample_rate = _positive_config_int(config, "audio_spectrogram_sample_rate", SAMPLE_RATE)
+    _, supports_unicode, plot_font_path = _resolve_plot_font()
+    plot_font_properties, font_property_supports_unicode = _build_plot_font_properties(plot_font_path)
+    if not font_property_supports_unicode:
+        supports_unicode = False
     fingerprint = _cache_fingerprint(audio_sources, duration, sample_rate, [(audio_path, int(stream["index"])) for _, audio_path, stream in selected_jobs])
     cached_images = await asyncio.to_thread(_load_cached_images, cache_path, fingerprint)
     if cached_images:
@@ -431,7 +466,18 @@ async def process_audio_spectrograms(meta: Meta, config: dict[str, Any], uploads
         language = tags.get("language", "und")
         try:
             file_path = await asyncio.to_thread(
-                generate_spectrogram, int(stream["index"]), label, language, audio_path, output_dir, duration, sample_rate, source_position, audio_path.stem
+                generate_spectrogram,
+                int(stream["index"]),
+                label,
+                language,
+                audio_path,
+                output_dir,
+                duration,
+                sample_rate,
+                source_position,
+                audio_path.stem,
+                plot_font_properties,
+                supports_unicode,
             )
         except RuntimeError as error:
             logger.error(f"[red]{error}[/red]")

@@ -72,6 +72,10 @@ def test_sanitize_plot_text_replaces_non_ascii_when_unicode_not_supported():
     assert _sanitize_plot_text("Shrouding the Heavens 遮天", False) == "Shrouding the Heavens ??"  # noqa: S101
 
 
+def test_sanitize_plot_text_keeps_non_cjk_unicode_when_unicode_not_supported():
+    assert _sanitize_plot_text("Café de la Crème Amélie", False) == "Café de la Crème Amélie"  # noqa: S101
+
+
 def test_resolve_plot_font_prefers_matplotlib_name_match(monkeypatch):
     fallback_font = "noto-cjk-fallback.otf"
 
