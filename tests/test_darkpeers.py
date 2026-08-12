@@ -1,6 +1,7 @@
 """Regression tests for DarkPeers-specific BOOK and MUSIC title rules."""
 
 import asyncio
+from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
 from src.meta import Meta
@@ -10,6 +11,11 @@ from src.trackers.UNIT3D.darkpeers import DarkPeers
 def _name(meta: Meta) -> str:
     config = {"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}}
     return asyncio.run(DarkPeers(config).get_name(meta))["name"]
+
+
+def _audio(meta: Meta) -> str:
+    config = {"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}}
+    return asyncio.run(DarkPeers(config).get_audio(meta))
 
 
 def test_darkpeers_music_name_uses_required_folder_style():
@@ -104,6 +110,10 @@ def test_darkpeers_replaces_generic_dual_audio_with_rule_matrix_label():
     assert _name(meta) == "Anime 2026 1080p WEB-DL French MULTi-TEAM"
 
 
+def test_darkpeers_keeps_dual_audio_for_original_non_english_with_english_only_pair():
+    assert _audio(Meta(category="MOVIE", language_checked=True, original_language="Japanese", audio_languages=["Japanese", "en-US"])) == "Dual-Audio"
+
+
 def test_darkpeers_preserves_detected_original_scene_name():
     meta = Meta(category="MOVIE", name="Generated Name", scene=True, scene_name="Original.Release.2026-GRP", language_checked=True)
 
@@ -149,6 +159,69 @@ def test_darkpeers_tv_year_rule_detects_a_distinct_exact_tmdb_title():
         assert asyncio.run(adapter._tv_title_needs_year(meta)) is True
 
 
+def test_darkpeers_moves_year_to_end_of_aka_for_movie():
+    assert (
+        _name(
+            Meta(
+                category="MOVIE",
+                title="The Flash",
+                aka="AKA A Sombra",
+                year=2014,
+                name="The Flash 2014 AKA A Sombra 1080p WEB-DL AAC 2.0 H.264",
+                language_checked=True,
+            )
+        )
+        == "The Flash AKA A Sombra 2014 1080p WEB-DL AAC 2.0 H.264"
+    )
+
+
+def test_darkpeers_uses_manual_year_when_reordering_aka_year():
+    assert (
+        _name(
+            Meta(
+                category="MOVIE",
+                title="The Flash",
+                aka="AKA O Brilho",
+                year=2014,
+                manual_year=2015,
+                name="The Flash 2015 AKA O Brilho 1080p WEB-DL AAC 2.0 H.264",
+                language_checked=True,
+            )
+        )
+        == "The Flash AKA O Brilho 2015 1080p WEB-DL AAC 2.0 H.264"
+    )
+
+
+def test_darkpeers_does_not_reorder_aka_year_without_both_tokens():
+    assert (
+        _name(
+            Meta(
+                category="MOVIE",
+                title="The Flash",
+                year=2014,
+                name="The Flash 2014 1080p WEB-DL AAC 2.0 H.264",
+                language_checked=True,
+            )
+        )
+        == "The Flash 2014 1080p WEB-DL AAC 2.0 H.264"
+    )
+
+
+def test_darkpeers_treats_english_plus_one_other_as_language_multi():
+    assert _audio(Meta(category="MOVIE", language_checked=True, original_language="English", audio_languages=["en-US", "Portuguese"])) == "Portuguese MULTi"
+
+
+def test_darkpeers_keeps_existing_multi_label_if_audio_stays_multi():
+    meta = Meta(
+        category="MOVIE",
+        language_checked=True,
+        audio_languages=["english", "Portuguese"],
+        name="Closer to God 2014 1080p WEB-DL Portuguese MULTi AAC 2.0 H.265-nitrato",
+    )
+
+    assert _name(meta) == "Closer to God 2014 1080p WEB-DL Portuguese MULTi AAC 2.0 H.265-nitrato"
+
+
 def test_darkpeers_tv_year_rule_does_not_count_the_only_tmdb_result_as_a_duplicate():
     meta = Meta(category="TV", title="BLACK TORCH")
     adapter = DarkPeers({"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}})
@@ -164,10 +237,48 @@ def _additional_checks(meta: Meta) -> bool:
     return asyncio.run(DarkPeers(config).get_additional_checks(meta))
 
 
+def _additional_checks_with_config(meta: Meta, tracker_config: dict[str, Any]) -> bool:
+    config = {"DEFAULT": {"tmdb_api": "test-key", "thumbnail_size": "350"}, "TRACKERS": {"DARKPEERS": tracker_config}}
+    return asyncio.run(DarkPeers(config).get_additional_checks(meta))
+
+
 def test_darkpeers_evo_webdl_allowed_and_non_webdl_blocked():
-    evo_webdl = Meta(category="MOVIE", type="WEBDL", tag="-EVO", audio_languages=["English"], resolution="1080p", screens=3)
-    evo_encode = Meta(category="MOVIE", type="ENCODE", tag="-EVO", audio_languages=["English"], resolution="1080p", screens=3)
-    evo_remux = Meta(category="MOVIE", type="REMUX", tag="EVO", audio_languages=["English"], resolution="1080p", screens=3)
+    evo_webdl = Meta(
+        category="MOVIE",
+        type="WEBDL",
+        tag="-EVO",
+        language_checked=True,
+        audio_languages=["English"],
+        filelist=["Movie.mkv"],
+        video_bitrate=3500,
+        audio_bitrate=160,
+        resolution="1080p",
+        screens=3,
+    )
+    evo_encode = Meta(
+        category="MOVIE",
+        type="ENCODE",
+        tag="-EVO",
+        language_checked=True,
+        audio_languages=["English"],
+        filelist=["Movie.mkv"],
+        video_bitrate=3500,
+        audio_bitrate=160,
+        resolution="1080p",
+        screens=3,
+    )
+    evo_remux = Meta(
+        category="MOVIE",
+        type="REMUX",
+        tag="EVO",
+        language_checked=True,
+        audio_languages=["English"],
+        filelist=["Movie.mkv"],
+        video_bitrate=3500,
+        audio_bitrate=160,
+        resolution="1080p",
+        screens=3,
+    )
 
     assert _additional_checks(evo_webdl) is True
     assert _additional_checks(evo_encode) is False
@@ -175,9 +286,40 @@ def test_darkpeers_evo_webdl_allowed_and_non_webdl_blocked():
 
 
 def test_darkpeers_hdt_remux_allowed_and_non_remux_blocked():
-    hdt_remux = Meta(category="MOVIE", type="REMUX", tag="-HDT", audio_languages=["English"], resolution="1080p", screens=3)
-    hdt_webdl = Meta(category="MOVIE", type="WEBDL", tag="-HDT", audio_languages=["English"], resolution="1080p", screens=3)
-    hdt_encode = Meta(category="MOVIE", type="ENCODE", tag="HDT", audio_languages=["English"], resolution="1080p", screens=3)
+    hdt_remux = Meta(
+        category="MOVIE",
+        type="REMUX",
+        tag="-HDT",
+        language_checked=True,
+        audio_languages=["English"],
+        filelist=["Movie.mkv"],
+        resolution="1080p",
+        screens=3,
+    )
+    hdt_webdl = Meta(
+        category="MOVIE",
+        type="WEBDL",
+        tag="-HDT",
+        language_checked=True,
+        audio_languages=["English"],
+        filelist=["Movie.mkv"],
+        video_bitrate=3500,
+        audio_bitrate=160,
+        resolution="1080p",
+        screens=3,
+    )
+    hdt_encode = Meta(
+        category="MOVIE",
+        type="ENCODE",
+        tag="HDT",
+        language_checked=True,
+        audio_languages=["English"],
+        filelist=["Movie.mkv"],
+        video_bitrate=3500,
+        audio_bitrate=160,
+        resolution="1080p",
+        screens=3,
+    )
 
     assert _additional_checks(hdt_remux) is True
     assert _additional_checks(hdt_webdl) is False
@@ -185,9 +327,48 @@ def test_darkpeers_hdt_remux_allowed_and_non_remux_blocked():
 
 
 def test_darkpeers_hardcoded_subs_blocked_in_interactive_and_unattended():
-    subs_interactive = Meta(category="MOVIE", type="WEBDL", tag="-GRP", hardcoded_subs=True, unattended=False, audio_languages=["English"], resolution="1080p", screens=3)
-    subs_unattended = Meta(category="MOVIE", type="WEBDL", tag="-GRP", hardcoded_subs=True, unattended=True, audio_languages=["English"], resolution="1080p", screens=3)
-    no_subs_unattended = Meta(category="MOVIE", type="WEBDL", tag="-GRP", hardcoded_subs=False, unattended=True, audio_languages=["English"], resolution="1080p", screens=3)
+    subs_interactive = Meta(
+        category="MOVIE",
+        type="WEBDL",
+        tag="-GRP",
+        hardcoded_subs=True,
+        unattended=False,
+        language_checked=True,
+        audio_languages=["English"],
+        filelist=["Movie.mkv"],
+        video_bitrate=3500,
+        audio_bitrate=160,
+        resolution="1080p",
+        screens=3,
+    )
+    subs_unattended = Meta(
+        category="MOVIE",
+        type="WEBDL",
+        tag="-GRP",
+        hardcoded_subs=True,
+        unattended=True,
+        language_checked=True,
+        audio_languages=["English"],
+        filelist=["Movie.mkv"],
+        video_bitrate=3500,
+        audio_bitrate=160,
+        resolution="1080p",
+        screens=3,
+    )
+    no_subs_unattended = Meta(
+        category="MOVIE",
+        type="WEBDL",
+        tag="-GRP",
+        hardcoded_subs=False,
+        unattended=True,
+        language_checked=True,
+        audio_languages=["English"],
+        filelist=["Movie.mkv"],
+        video_bitrate=3500,
+        audio_bitrate=160,
+        resolution="1080p",
+        screens=3,
+    )
 
     assert _additional_checks(subs_interactive) is False
     assert _additional_checks(subs_unattended) is False
@@ -196,14 +377,150 @@ def test_darkpeers_hardcoded_subs_blocked_in_interactive_and_unattended():
 
 def test_darkpeers_video_language_rule_requires_original_audio_with_accepted_subtitles():
     original_with_subtitles = Meta(
-        category="MOVIE", unattended=True, audio_languages=["jpn"], subtitle_languages=["Swedish"], original_language="Japanese", resolution="1080p", screens=3
+        category="MOVIE",
+        unattended=True,
+        language_checked=True,
+        audio_languages=["jpn"],
+        subtitle_languages=["Swedish"],
+        filelist=["Movie.mkv"],
+        original_language="Japanese",
+        resolution="1080p",
+        screens=3,
+        video_bitrate=3500,
+        audio_bitrate=160,
     )
     foreign_dub_with_subtitles = Meta(
-        category="MOVIE", unattended=True, audio_languages=["Spanish"], subtitle_languages=["English"], original_language="Japanese", resolution="1080p", screens=3
+        category="MOVIE",
+        unattended=True,
+        language_checked=True,
+        audio_languages=["Spanish"],
+        subtitle_languages=["English"],
+        filelist=["Movie.mkv"],
+        original_language="Japanese",
+        resolution="1080p",
+        screens=3,
     )
 
     assert _additional_checks(original_with_subtitles) is True
     assert _additional_checks(foreign_dub_with_subtitles) is False
+
+
+def test_darkpeers_rejects_low_bitrate_webl_for_1080p():
+    low = Meta(
+        category="MOVIE",
+        unattended=True,
+        language_checked=True,
+        audio_languages=["English"],
+        filelist=["Movie.mkv"],
+        type="WEBDL",
+        resolution="1080p",
+        screens=3,
+        video_bitrate=1500,
+    )
+
+    assert _additional_checks(low) is False
+
+
+def test_darkpeers_rejects_webl_when_video_bitrate_is_missing():
+    missing = Meta(
+        category="MOVIE",
+        unattended=True,
+        language_checked=True,
+        audio_languages=["English"],
+        filelist=["Movie.mkv"],
+        type="WEBDL",
+        resolution="1080p",
+        screens=3,
+        audio_bitrate=160,
+    )
+
+    assert _additional_checks(missing) is False
+
+
+def test_darkpeers_accepts_webl_bitrate_when_configured_higher_quality_is_not_required():
+    meta = Meta(
+        category="MOVIE",
+        unattended=True,
+        language_checked=True,
+        audio_languages=["English"],
+        filelist=["Movie.mkv"],
+        type="WEBDL",
+        resolution="1080p",
+        screens=3,
+        video_bitrate=1500,
+        audio_bitrate=160,
+    )
+
+    assert _additional_checks_with_config(
+        meta,
+        {
+            "webl_min_video_kbps": {
+                "1080p": 1000,
+            }
+        },
+    ) is True
+
+
+def test_darkpeers_requires_movie_tv_payload_for_content_checks():
+    assert _additional_checks(Meta(category="MOVIE", unattended=True, language_checked=True, audio_languages=["English"], resolution="1080p", screens=3)) is False
+
+
+def test_darkpeers_rejects_movie_tv_payload_with_unsupported_file_types():
+    payload_invalid = Meta(
+        category="MOVIE",
+        unattended=True,
+        language_checked=True,
+        audio_languages=["English"],
+        filelist=["Movie.mkv", "readme.txt"],
+        resolution="1080p",
+        screens=3,
+    )
+
+    assert _additional_checks(payload_invalid) is False
+
+
+def test_darkpeers_rejects_movie_tv_payload_with_non_video_only_files():
+    payload_video_like = Meta(
+        category="MOVIE",
+        unattended=True,
+        language_checked=True,
+        audio_languages=["English"],
+        filelist=["cover.jpg", "scan.nfo"],
+        resolution="1080p",
+        screens=3,
+    )
+
+    assert _additional_checks(payload_video_like) is False
+
+
+def test_darkpeers_enforces_screenshot_count_rules_movie_tv():
+    base = dict(
+        category="MOVIE",
+        unattended=True,
+        language_checked=True,
+        audio_languages=["English"],
+        filelist=["Movie.mkv"],
+        resolution="1080p",
+    )
+
+    assert _additional_checks(Meta(**base, screens=2)) is False
+    assert _additional_checks(Meta(**base, screens=3)) is True
+    assert _additional_checks(Meta(**base, screens=5)) is True
+    assert _additional_checks(Meta(**base, screens=6)) is False
+
+
+def test_darkpeers_rejects_invalid_screenshot_count_value():
+    payload_invalid_screens = Meta(
+        category="MOVIE",
+        unattended=True,
+        language_checked=True,
+        audio_languages=["English"],
+        filelist=["Movie.mkv"],
+        resolution="1080p",
+        screens="not-a-number",
+    )
+
+    assert _additional_checks(payload_invalid_screens) is False
 
 
 def test_darkpeers_rejects_unsupported_resolution():
