@@ -140,12 +140,14 @@ class DarkPeers(UNIT3D):
                 return False
             if not await self.validate_video_resolution(meta):
                 return False
-            if not await self.validate_video_quality(meta):
-                return False
-            if not self.validate_video_files(meta):
-                return False
-            if not self.validate_video_content(meta):
-                return False
+            has_payload = bool([value for value in (meta.filelist or []) if str(value).strip()])
+            if has_payload or category == "MOVIE":
+                if not await self.validate_video_quality(meta):
+                    return False
+                if not self.validate_video_files(meta):
+                    return False
+                if not self.validate_video_content(meta):
+                    return False
             if not self.validate_video_screenshots(meta):
                 return False
             if (
@@ -407,6 +409,10 @@ class DarkPeers(UNIT3D):
             )
             return False
         return True
+
+    @staticmethod
+    def _is_local_path_name(value: str) -> bool:
+        return bool(value) and (value.startswith(("/", "\\")) or Path(value).is_absolute() or bool(re.match(r"^[A-Za-z]:[\\/]", value)))
 
     def validate_video_content(self, meta: Meta) -> bool:
         paths = [Path(str(item)) for item in (meta.filelist or []) if str(item).strip()]
@@ -693,10 +699,8 @@ class DarkPeers(UNIT3D):
         accepted = self._accepted_languages()
         if not audio:
             return "SKIPPED"
-        if not audio or (len(audio) == 1 and original in audio):
-            return "SKIPPED"
         if len(audio) == 1 and original in audio:
-            return ""
+            return "SKIPPED"
         if audio == {"english"} and original and original != "english":
             return "Dubbed"
         if len(audio) == 1:
@@ -734,28 +738,24 @@ class DarkPeers(UNIT3D):
             name = self._book_name(meta)
             return {"name": self._ensure_group_tag(name, meta.tag, preserve_if_scene=meta.scene)}
 
-        # DP prohibits retags.  When the preparation stage identified a scene
-        # release, submit its recorded release name rather than rebuilding it.
-        dp_name = str(meta.scene_name or meta.name or "")
+        scene_name = str(meta.scene_name or "")
+        if scene_name and not self._is_local_path_name(scene_name):
+            return {"name": scene_name}
 
-        if meta.category == "TV":
+        dp_name = str(meta.name or "")
+        if str(meta.type or "").strip():
+            dp_name = await self._video_name(meta)
+        elif meta.category == "TV":
             dp_name = await self._tv_name(meta, dp_name)
+
         if meta.category in {"TV", "MOVIE"} and not meta.scene:
             year = str(meta.manual_year) if meta.manual_year not in (None, 0) else str(meta.year or "").strip()
             dp_name = self._normalize_aka_year_order(dp_name, meta.title, meta.aka, year)
 
-        if not str(meta.type or "").strip():
-            dp_name = str(meta.name or "")
-            if meta.category == "TV":
-                dp_name = await self._tv_name(meta, dp_name)
-        else:
-            dp_name = await self._video_name(meta)
         audio = await self.get_audio(meta)
-        if audio and audio != "SKIPPED":
-            if "Dual-Audio" in dp_name:
-                dp_name = dp_name.replace("Dual-Audio", audio)
+        dp_name = self._apply_dub_element(dp_name, audio)
 
-        return {"name": self._ensure_group_tag(dp_name, meta.tag, preserve_if_scene=meta.scene_name is not None and meta.scene is True)}
+        return {"name": self._ensure_group_tag(dp_name, meta.tag, preserve_if_scene=bool(meta.scene_name))}
 
     @staticmethod
     def _ensure_group_tag(name: str, tag: str | None, preserve_if_scene: bool = False) -> str:
