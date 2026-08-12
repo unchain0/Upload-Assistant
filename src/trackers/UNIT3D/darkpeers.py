@@ -36,7 +36,6 @@ class DarkPeers(UNIT3D):
         r"\s+(?:(?:[A-Z][A-Za-z]*(?:\s+[A-Z][A-Za-z]*){0,2}\s+)?(?:MULTi|Dubbed)|Dual-Audio)"
         r"(?=\s+(?:DTS Headphone:X|DTS-HD MA|DTS-HD HRA|DTS-ES|DTS:X|TrueHD|DD\+ EX|DD EX|DD\+|DD|LPCM|FLAC|ALAC|AAC|Opus|MP3|MP2|Vorbis)(?:\s|$)|-[A-Za-z0-9]+$)"
     )
-    _VIDEO_EXTENSIONS: ClassVar[set[str]] = {".avi", ".m2ts", ".mkv", ".mp4", ".mpg", ".mpeg", ".ts", ".vob"}
     base_url = "https://darkpeers.org"
     banned_groups = (
         "ARCADE",
