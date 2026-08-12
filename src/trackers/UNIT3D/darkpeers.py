@@ -156,13 +156,11 @@ class DarkPeers(UNIT3D):
                 and not await self._confirm_or_skip("does not allow an individual video file in an unnecessary folder.", meta)
             ):
                 return False
-
         if category == "TV" and not self.validate_tv_scope(meta):
             return False
 
         if category == "BOOK" and not await self.validate_book(meta):
             return False
-
         if category == "MUSIC" and not self.validate_music(meta):
             return False
 
@@ -753,7 +751,6 @@ class DarkPeers(UNIT3D):
         if meta.category in {"TV", "MOVIE"} and not meta.scene:
             year = str(meta.manual_year) if meta.manual_year not in (None, 0) else str(meta.year or "").strip()
             dp_name = self._normalize_aka_year_order(dp_name, meta.title, meta.aka, year)
-
         audio = await self.get_audio(meta)
         dp_name = self._apply_dub_element(dp_name, audio)
 
