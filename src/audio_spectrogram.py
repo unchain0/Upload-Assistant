@@ -1,5 +1,6 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
 import asyncio
+import contextlib
 import hashlib
 import io
 import json
@@ -10,6 +11,7 @@ from typing import Any, cast
 import librosa
 import librosa.display
 import matplotlib
+from matplotlib import font_manager, ft2font
 
 matplotlib.use("Agg")
 
@@ -31,6 +33,39 @@ CACHE_VERSION = 2
 AUDIOBOOK_EXTENSIONS = {".aac", ".aax", ".flac", ".m4a", ".m4b", ".mp3", ".ogg", ".opus", ".wav", ".wma"}
 SPECTROGRAM_N_FFT = 2048
 MAX_TIME_BINS = 1024
+_PREFERRED_PLOT_FONTS: tuple[str, ...] = (
+    "Noto Sans CJK SC",
+    "Noto Sans CJK TC",
+    "Noto Sans SC",
+    "Noto Sans TC",
+    "PingFang SC",
+    "PingFang TC",
+    "WenQuanYi Zen Hei",
+    "WenQuanYi Micro Hei",
+    "SimHei",
+    "Noto Sans",
+    "DejaVu Sans",
+)
+_CJK_SYSTEM_FONT_HINTS: tuple[str, ...] = (
+    "notosanscjk",
+    "notoserifcjk",
+    "notosansmonocjk",
+    "noto sans cjk",
+    "wenquanyi",
+    "wqy",
+    "simhei",
+    "pingfang",
+)
+_CJK_FONT_NAME_HINTS: tuple[str, ...] = (
+    "noto sans cjk",
+    "noto sans sc",
+    "noto sans tc",
+    "noto sans mono cjk",
+    "wenquanyi",
+    "wqy",
+    "simhei",
+    "pingfang",
+)
 
 
 def prompt_audio_stream_positions() -> str:
@@ -141,6 +176,67 @@ def _load_cached_images(cache_path: Path, fingerprint: str) -> list[Any]:
     return []
 
 
+def _resolve_plot_font() -> tuple[str, bool, str | None]:
+    def _font_name_for_file(font_path: str) -> str:
+        try:
+            return font_manager.FontProperties(fname=font_path).get_name()
+        except (RuntimeError, OSError):
+            return Path(font_path).stem
+
+    def _register_font(font_path: str) -> None:
+        with contextlib.suppress(Exception):
+            font_manager.fontManager.addfont(font_path)
+
+    def _supports_cjk(font_name: str, font_path: str) -> bool:
+        checked = (font_name.lower() + " " + Path(font_path).stem.lower()).lower()
+        return any(hint in checked for hint in _CJK_FONT_NAME_HINTS) or any(
+            hint in font_path.lower() for hint in _CJK_SYSTEM_FONT_HINTS
+        )
+
+    def _font_is_loadable(font_path: str) -> bool:
+        try:
+            ft2font.FT2Font(font_path)
+            return True
+        except Exception:
+            return False
+
+    fallback_font: tuple[str, bool, str] | None = None
+
+    for font_name in _PREFERRED_PLOT_FONTS:
+        try:
+            font_path = font_manager.findfont(font_name, fallback_to_default=False)
+        except (RuntimeError, ValueError):
+            continue
+        if not font_path:
+            continue
+        resolved_name = _font_name_for_file(font_path)
+        if not _font_is_loadable(font_path):
+            continue
+        supports_unicode = _supports_cjk(font_name, font_path)
+        _register_font(font_path)
+        if supports_unicode:
+            return resolved_name, True, font_path
+        if fallback_font is None:
+            fallback_font = (resolved_name, False, font_path)
+
+    for font_path in dict.fromkeys(font_manager.findSystemFonts()):
+        lower_font_path = font_path.lower()
+        if _font_is_loadable(font_path) and any(hint in lower_font_path for hint in _CJK_SYSTEM_FONT_HINTS):
+            _register_font(font_path)
+            return _font_name_for_file(font_path), True, font_path
+
+    if fallback_font is not None:
+        return fallback_font
+
+    return "DejaVu Sans", False, None
+
+
+def _sanitize_plot_text(text: str, supports_unicode: bool) -> str:
+    if supports_unicode:
+        return text
+    return "".join(character if character.isascii() else "?" for character in text)
+
+
 def generate_spectrogram(
     stream_index: int,
     stream_label: str,
@@ -191,36 +287,54 @@ def generate_spectrogram(
     stft = np.abs(librosa.stft(samples, n_fft=n_fft, hop_length=hop_length))
     db_spectrogram = librosa.amplitude_to_db(stft, ref=np.max)  # pyright: ignore[reportUnknownMemberType]  # librosa stub has an untyped callback overload.
 
-    figure, axis = plt.subplots(figsize=(WIDTH_INCH, HEIGHT_INCH), dpi=DPI_VALUE)  # pyright: ignore[reportUnknownMemberType]  # matplotlib stub types **fig_kw as Unknown.
-    image = librosa.display.specshow(
-        db_spectrogram,
-        sr=actual_sample_rate,
-        hop_length=hop_length,
-        x_axis="time",
-        y_axis="hz",
-        cmap="inferno",
-        ax=axis,
-        rasterized=True,
-    )
-    figure.colorbar(image, ax=axis, format="%+2.0f dB")  # pyright: ignore[reportUnknownMemberType]  # matplotlib stub types **kwargs as Unknown.
-    display_label = stream_label if stream_label and stream_label != f"Stream_{stream_index}" else source_name
-    axis.set_title(display_label, fontsize=18, fontweight="bold", pad=22)  # pyright: ignore[reportUnknownMemberType]  # matplotlib stub types **kwargs as Unknown.
-    axis.text(  # pyright: ignore[reportUnknownMemberType]  # matplotlib stub types **kwargs as Unknown.
-        0.5,
-        1.01,
-        f"File: {source_name}  •  Stream {stream_index}  •  {stream_lang}  •  First {duration}s  •  mono mix @ {actual_sample_rate / 1000:g} kHz",
-        transform=axis.transAxes,
-        ha="center",
-        va="bottom",
-        fontsize=10,
-    )
-    axis.set_xlabel("Time (s)")  # pyright: ignore[reportUnknownMemberType]  # matplotlib stub types **kwargs as Unknown.
-    axis.set_ylabel("Frequency (Hz)")  # pyright: ignore[reportUnknownMemberType]  # matplotlib stub types **kwargs as Unknown.
+    _plot_font, supports_unicode, plot_font_path = _resolve_plot_font()
+    font_properties = None
+    if plot_font_path:
+        with contextlib.suppress(Exception):
+            font_properties = font_manager.FontProperties(fname=plot_font_path)
 
-    output_name = output_dir / f"spectrogram_source_{source_position:02d}_stream_{stream_index}.png"
-    figure.tight_layout()
-    figure.savefig(output_name, dpi=DPI_VALUE, bbox_inches="tight")  # pyright: ignore[reportUnknownMemberType]  # matplotlib stub types **kwargs as Unknown.
-    plt.close(figure)
+    with matplotlib.rc_context({"font.family": ["sans-serif"]}):
+        figure, axis = plt.subplots(figsize=(WIDTH_INCH, HEIGHT_INCH), dpi=DPI_VALUE)  # pyright: ignore[reportUnknownMemberType]  # matplotlib stub types **fig_kw as Unknown.
+        image = librosa.display.specshow(
+            db_spectrogram,
+            sr=actual_sample_rate,
+            hop_length=hop_length,
+            x_axis="time",
+            y_axis="hz",
+            cmap="inferno",
+            ax=axis,
+            rasterized=True,
+        )
+        figure.colorbar(image, ax=axis, format="%+2.0f dB")  # pyright: ignore[reportUnknownMemberType]  # matplotlib stub types **kwargs as Unknown.
+        display_label = stream_label if stream_label and stream_label != f"Stream_{stream_index}" else source_name
+        axis.set_title(
+            _sanitize_plot_text(display_label, supports_unicode),
+            fontsize=18,
+            fontweight="bold",
+            pad=22,
+            fontproperties=font_properties,
+        )  # pyright: ignore[reportUnknownMemberType]  # matplotlib stub types **kwargs as Unknown.
+        axis.text(  # pyright: ignore[reportUnknownMemberType]  # matplotlib stub types **kwargs as Unknown.
+            0.5,
+            1.01,
+            _sanitize_plot_text(
+                f"File: {source_name}  •  Stream {stream_index}  •  {stream_lang}  •  First {duration}s  •  mono mix @ {actual_sample_rate / 1000:g} kHz",
+                supports_unicode,
+            ),
+            transform=axis.transAxes,
+            ha="center",
+            va="bottom",
+            fontsize=10,
+            fontproperties=font_properties,
+        )
+        axis.set_xlabel("Time (s)")  # pyright: ignore[reportUnknownMemberType]  # matplotlib stub types **kwargs as Unknown.
+        axis.set_ylabel("Frequency (Hz)")  # pyright: ignore[reportUnknownMemberType]  # matplotlib stub types **kwargs as Unknown.
+
+        output_name = output_dir / f"spectrogram_source_{source_position:02d}_stream_{stream_index}.png"
+        figure.tight_layout()
+        figure.savefig(output_name, dpi=DPI_VALUE, bbox_inches="tight")  # pyright: ignore[reportUnknownMemberType]  # matplotlib stub types **kwargs as Unknown.
+        plt.close(figure)
+
     return output_name
 
 

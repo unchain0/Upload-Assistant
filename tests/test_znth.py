@@ -501,3 +501,41 @@ def test_zenith_rejects_banned_book_work():
         )
         is False
     )
+
+
+def test_zenith_reorders_movie_year_before_aka():
+    name = asyncio.run(
+        _tracker().get_name(
+            Meta(
+                category="MOVIE",
+                title="Closer to God",
+                aka="AKA Portuguese MULTi",
+                year=2014,
+                name="Closer to God 2014 AKA Portuguese MULTi 1080p WEB-DL AAC 2.0 H.265-nitrato",
+                filelist=["Closer.to.God.2014.1080p.WEB-DL.AAC2.0.H.265.DUAL-nitrato.mkv"],
+                resolution="1080p",
+                screens=3,
+            )
+        )
+    )["name"]
+
+    assert name == "Closer to God AKA Portuguese MULTi 2014 1080p WEB-DL AAC 2.0 H.265-nitrato"
+
+
+def test_zenith_reorders_tv_year_before_aka():
+    name = asyncio.run(
+        _tracker().get_name(
+            Meta(
+                category="TV",
+                title="Shrouding the Heavens",
+                aka="AKA Zhe Tian",
+                year=2023,
+                episode_title="",
+                name="Shrouding the Heavens 2023 AKA Zhe Tian S01E175 2160p WEB-DL DD+ 2.0 H.265-QHstudIo",
+                resolution="2160p",
+                screens=3,
+            )
+        )
+    )["name"]
+
+    assert name == "Shrouding the Heavens AKA Zhe Tian 2023 S01E175 2160p WEB-DL DD+ 2.0 H.265-QHstudIo"

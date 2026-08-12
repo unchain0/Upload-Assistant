@@ -228,6 +228,31 @@ class MidnightScene(UNIT3D):
                 return True
         return False
 
+    @staticmethod
+    def _normalize_aka_year_order(name: str, title: str, aka: str, year: str | int | None) -> str:
+        if not (name and title and aka and year):
+            return " ".join((name or "").split())
+
+        title_str = title.strip()
+        aka_name = re.sub(r"^AKA\s+", "", str(aka), flags=re.IGNORECASE).strip()
+        if not aka_name:
+            return " ".join(name.split())
+
+        year_pattern = re.escape(str(year))
+        title_pattern = re.escape(title_str)
+
+        match = re.search(
+            rf"^(?P<title>{title_pattern})\s+{year_pattern}\s+AKA\s+{re.escape(aka_name)}(?P<suffix>\s+.*)?$",
+            name,
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            return " ".join(name.split())
+
+        title_from_name = match.group("title").strip()
+        suffix = (match.group("suffix") or "").strip()
+        return " ".join((f"{title_from_name} AKA {aka_name} {year} {suffix}").split())
+
     async def _confirm_or_skip(self, message: str, meta: Meta) -> bool:
         if meta.unattended:
             return bool(meta.unattended_confirm)
@@ -351,4 +376,5 @@ class MidnightScene(UNIT3D):
             elif meta.is_disc != "BDMV":
                 ms_name = ms_name.replace(meta.resolution, f"{foreign_lang} {meta.resolution}", 1)
 
+        ms_name = self._normalize_aka_year_order(ms_name, title=str(meta.title or ""), aka=str(meta.aka or ""), year=meta.year)
         return {"name": ms_name}

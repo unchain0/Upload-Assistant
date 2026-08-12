@@ -83,6 +83,24 @@ def test_midnightscene_keeps_dual_audio_with_english_audio():
     assert asyncio.run(_tracker().get_name(meta)) == {"name": "Example Show S01 1080p BluRay Dual-Audio FLAC 2.0 x265-ExampleGroup"}
 
 
+def test_midnightscene_reorders_year_before_aka_for_tv_names():
+    meta = Meta(
+        category="TV",
+        name="Shrouding the Heavens 2023 AKA Zhe Tian S01E175 2160p WEB-DL DD+ 2.0 H.265-QHstudIo",
+        title="Shrouding the Heavens",
+        aka="AKA Zhe Tian",
+        year=2023,
+        resolution="2160p",
+        type="WEBDL",
+        audio_languages=["chinese"],
+        language_checked=True,
+    )
+
+    assert asyncio.run(_tracker().get_name(meta)) == {
+        "name": "Shrouding the Heavens AKA Zhe Tian 2023 S01E175 CHINESE 2160p WEB-DL DD+ 2.0 H.265-QHstudIo"
+    }
+
+
 def test_midnightscene_does_not_treat_dvdrip_as_an_unofficial_source():
     meta = Meta(
         category="MOVIE",
