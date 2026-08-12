@@ -144,10 +144,11 @@ class DarkPeers(UNIT3D):
             if has_payload or category == "MOVIE":
                 if not await self.validate_video_quality(meta):
                     return False
-                if not self.validate_video_files(meta):
-                    return False
-                if not self.validate_video_content(meta):
-                    return False
+                if not meta.is_disc:
+                    if not self.validate_video_files(meta):
+                        return False
+                    if not self.validate_video_content(meta):
+                        return False
             if not self.validate_video_screenshots(meta):
                 return False
             if (
@@ -322,15 +323,16 @@ class DarkPeers(UNIT3D):
         if min_video_kbps is None and min_audio_kbps is None:
             return True
 
-        video_bitrate = self._to_int(meta.video_bitrate)
-        if video_bitrate is None:
-            logger.info(f"{self.tracker}: [bold red]Could not determine video bitrate for this WEBDL upload.")
-            return False
-        if video_bitrate < min_video_kbps:
-            logger.info(
-                f"{self.tracker}: [bold red]Video bitrate too low for DARKPEERS WEBDL ({video_bitrate} < {min_video_kbps} kbps). Skipping upload."
-            )
-            return False
+        if min_video_kbps is not None:
+            video_bitrate = self._to_int(meta.video_bitrate)
+            if video_bitrate is None:
+                logger.info(f"{self.tracker}: [bold red]Could not determine video bitrate for this WEBDL upload.")
+                return False
+            if video_bitrate < min_video_kbps:
+                logger.info(
+                    f"{self.tracker}: [bold red]Video bitrate too low for DARKPEERS WEBDL ({video_bitrate} < {min_video_kbps} kbps). Skipping upload."
+                )
+                return False
 
         audio_bitrate = self._to_int(meta.audio_bitrate)
         if min_audio_kbps is not None and audio_bitrate is not None and audio_bitrate < min_audio_kbps:
@@ -739,7 +741,8 @@ class DarkPeers(UNIT3D):
             return {"name": self._ensure_group_tag(name, meta.tag, preserve_if_scene=meta.scene)}
 
         scene_name = str(meta.scene_name or "")
-        if scene_name and not self._is_local_path_name(scene_name):
+        has_scene_name = scene_name and not self._is_local_path_name(scene_name)
+        if has_scene_name:
             return {"name": scene_name}
 
         dp_name = str(meta.name or "")
@@ -755,7 +758,7 @@ class DarkPeers(UNIT3D):
         audio = await self.get_audio(meta)
         dp_name = self._apply_dub_element(dp_name, audio)
 
-        return {"name": self._ensure_group_tag(dp_name, meta.tag, preserve_if_scene=bool(meta.scene_name))}
+        return {"name": self._ensure_group_tag(dp_name, meta.tag, preserve_if_scene=bool(has_scene_name))}
 
     @staticmethod
     def _ensure_group_tag(name: str, tag: str | None, preserve_if_scene: bool = False) -> str:
