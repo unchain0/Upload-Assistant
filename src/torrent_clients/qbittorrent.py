@@ -206,12 +206,12 @@ class QbittorrentClientMixin:
                                 await asyncio.to_thread(Path(torrent_file_path).write_bytes, torrent_file_content)
 
                                 # Validate the .torrent file before saving as BASE.torrent
-                                valid, _ = await self.is_valid_torrent(meta, torrent_file_path, torrent_hash, "qbit", client)
+                                valid, resolved_torrent_path = await self.is_valid_torrent(meta, str(torrent_file_path), torrent_hash, "qbit", client)
                                 if not valid:
                                     logger.debug(f"[bold red]Validation failed for {torrent_file_path}")
                                     torrent_file_path.unlink()  # Remove invalid file
                                 else:
-                                    await TorrentCreator.create_base_from_existing_torrent(torrent_file_path, meta.base_dir, meta.uuid)
+                                    await TorrentCreator.create_base_from_existing_torrent(str(resolved_torrent_path or torrent_file_path), meta.base_dir, meta.uuid)
                             except TimeoutError:
                                 logger.info(f"[bold red]Failed to export .torrent for {torrent_hash} after retries")
 
@@ -272,6 +272,30 @@ class QbittorrentClientMixin:
         if response.status_code in (502, 503, 504):
             raise _RetryableProxyResponseError(f"proxy returned HTTP {response.status_code}")
         raise _ProxyResponseError(f"proxy returned HTTP {response.status_code}")
+
+    async def _post_proxy_command(
+        self,
+        qbt_session: httpx.AsyncClient,
+        url: str,
+        data: dict[str, str],
+        operation_name: str,
+        accepted_statuses: tuple[int, ...] = (200,),
+    ) -> httpx.Response:
+        async def post_command() -> httpx.Response:
+            response = await qbt_session.post(url, data=data)
+            if response.status_code not in accepted_statuses:
+                self._raise_for_proxy_response(response)
+            return response
+
+        return cast(
+            httpx.Response,
+            await self.retry_qbt_operation(
+                post_command,
+                operation_name,
+                max_retries=2,
+                retryable_errors=(TimeoutError, httpx.HTTPError, _RetryableProxyResponseError),
+            ),
+        )
 
     async def _add_torrent_via_proxy(self, qbt_session: httpx.AsyncClient, qbt_proxy_url: str, infohash: str, data: dict[str, str], files: dict[str, Any]) -> None:
         add_attempt = 0
@@ -536,13 +560,14 @@ class QbittorrentClientMixin:
                     continue
 
                 # **Use `torrent_storage_dir` if available**
+                torrent_file_path = Path(extracted_torrent_dir) / f"{torrent_hash}.torrent"
                 if torrent_storage_dir:
                     torrent_file_path = Path(torrent_storage_dir) / f"{torrent_hash}.torrent"
                     if not Path(torrent_file_path).exists():
                         logger.info(f"[yellow]Torrent file not found in storage directory: {torrent_file_path}")
-                        continue
-                else:
-                    # **Fetch from qBittorrent API if no `torrent_storage_dir`**
+                        torrent_file_path = Path(extracted_torrent_dir) / f"{torrent_hash}.torrent"
+
+                if not Path(torrent_file_path).exists():
                     logger.debug(f"[cyan]Exporting .torrent file for {torrent_hash}")
 
                     torrent_file_content = None
@@ -592,6 +617,7 @@ class QbittorrentClientMixin:
                     torrent_path = None
 
                 if valid:
+                    torrent_file_path = Path(torrent_path or torrent_file_path)
                     if meta.subtitle_files and not self._torrent_includes_all_local_subtitles(str(torrent_file_path), meta):
                         if self._torrent_has_no_subtitles(str(torrent_file_path)):
                             video_only_fallback = torrent_hash
@@ -608,7 +634,7 @@ class QbittorrentClientMixin:
                             best_piece_size_raw_value: Any = best_match.get("piece_size") if best_match else None
                             best_piece_size: int | None = best_piece_size_raw_value if isinstance(best_piece_size_raw_value, int) else None
                             if best_match is None or (best_piece_size is not None and piece_size < best_piece_size):
-                                best_match = {"hash": torrent_hash, "torrent_path": torrent_path if torrent_path else torrent_file_path, "piece_size": piece_size}
+                                best_match = {"hash": torrent_hash, "torrent_path": torrent_file_path, "piece_size": piece_size}
                                 logger.info(f"[green]Updated best match: {best_match}")
                         except Exception as e:
                             logger.info(f"[bold red]Error reading torrent data for {torrent_hash}: {e}")
@@ -619,7 +645,8 @@ class QbittorrentClientMixin:
                         return torrent_hash
                 else:
                     logger.debug(f"[bold red]{torrent_hash} failed validation")
-                    torrent_file_path.unlink()
+                    if Path(torrent_file_path).is_relative_to(Path(extracted_torrent_dir)):
+                        torrent_file_path.unlink(missing_ok=True)
 
             # **Return the best match if `prefer_small_pieces` is enabled**
             if best_match:
@@ -777,12 +804,35 @@ class QbittorrentClientMixin:
             tracker_dir = tracker_directory(link_target, link_dir_name, tracker)
             await asyncio.to_thread(os.makedirs, tracker_dir, exist_ok=True)
 
-            if cross:
+            torrent_info_raw = getattr(torrent, "metainfo", {}).get("info", {})
+            torrent_info = torrent_info_raw if isinstance(torrent_info_raw, dict) else {}
+            torrent_is_multi_file = bool(torrent_info.get("files"))
+            source_is_directory = Path(src).is_dir()
+            requires_file_mapping = source_is_directory != torrent_is_multi_file
+
+            if cross or requires_file_mapping:
                 linking_success = await create_cross_seed_links(meta=meta, torrent=torrent, tracker_dir=tracker_dir, use_hardlink=use_hardlink)
             else:
                 src_name = Path(src.rstrip(os.sep)).name
                 dst = Path(tracker_dir) / src_name
                 linking_success = await async_link_directory(src=src, dst=dst, use_hardlink=use_hardlink)
+
+            if not linking_success:
+                isolated_tracker_dir = Path(tracker_dir) / torrent.infohash.lower()
+                await asyncio.to_thread(os.makedirs, isolated_tracker_dir, exist_ok=True)
+                logger.info(f"[yellow]Link destination is occupied by different content; retrying in isolated directory: {isolated_tracker_dir}")
+                if cross or requires_file_mapping:
+                    linking_success = await create_cross_seed_links(
+                        meta=meta,
+                        torrent=torrent,
+                        tracker_dir=str(isolated_tracker_dir),
+                        use_hardlink=use_hardlink,
+                    )
+                else:
+                    dst = isolated_tracker_dir / src_name
+                    linking_success = await async_link_directory(src=src, dst=dst, use_hardlink=use_hardlink)
+                if linking_success:
+                    tracker_dir = isolated_tracker_dir
 
             allow_fallback = client.get("allow_fallback", True)
             if not linking_success and allow_fallback:
@@ -949,14 +999,21 @@ class QbittorrentClientMixin:
                 if proxy_url:
                     if qbt_session is None:
                         raise RuntimeError("qbt_session cannot be None")
-                    response = await qbt_session.post(f"{qbt_proxy_url}/api/v2/torrents/start", data={"hashes": torrent.infohash})
+                    response = await self._post_proxy_command(
+                        qbt_session,
+                        f"{qbt_proxy_url}/api/v2/torrents/start",
+                        {"hashes": torrent.infohash},
+                        "Start torrent via qBittorrent proxy",
+                        accepted_statuses=(200, 404),
+                    )
                     if response.status_code == 404:
                         logger.debug("[cyan]Start endpoint returned 404, trying legacy resume endpoint (pre-v5.0.0)...")
-                        resume_response = await qbt_session.post(f"{qbt_proxy_url}/api/v2/torrents/resume", data={"hashes": torrent.infohash})
-                        if resume_response.status_code != 200:
-                            logger.info(f"[yellow]Failed to resume torrent via proxy (resume): {resume_response.status_code}")
-                    elif response.status_code != 200:
-                        logger.info(f"[yellow]Failed to resume torrent via proxy: {response.status_code}")
+                        await self._post_proxy_command(
+                            qbt_session,
+                            f"{qbt_proxy_url}/api/v2/torrents/resume",
+                            {"hashes": torrent.infohash},
+                            "Resume torrent via qBittorrent proxy",
+                        )
                 else:
                     if qbt_client is None:
                         raise RuntimeError("qbt_client cannot be None")
@@ -1606,8 +1663,9 @@ class QbittorrentClientMixin:
             if torrent_file_path:
                 valid, torrent_path = await self.is_valid_torrent(meta, torrent_file_path, torrent_hash, "qbit", client_config)
                 if valid:
-                    if meta.subtitle_files and not self._torrent_includes_all_local_subtitles(torrent_file_path, meta):
-                        if self._torrent_has_no_subtitles(torrent_file_path):
+                    validated_torrent_path = torrent_path or torrent_file_path
+                    if meta.subtitle_files and not self._torrent_includes_all_local_subtitles(validated_torrent_path, meta):
+                        if self._torrent_has_no_subtitles(validated_torrent_path):
                             subtitle_fallback = {"hash": torrent_hash, "torrent_path": torrent_path or torrent_file_path}
                             logger.debug(f"[yellow]Keeping video-only torrent as fallback: {torrent_hash}")
                         else:
@@ -1615,7 +1673,7 @@ class QbittorrentClientMixin:
                     elif use_piece_preference:
                         # **Track best match based on piece size**
                         try:
-                            torrent_data = Torrent.read(torrent_file_path)
+                            torrent_data = Torrent.read(validated_torrent_path)
                             piece_size = torrent_data.piece_size
                             # For prefer_small_pieces: prefer smallest pieces
                             # For piece_limit: prefer torrents with piece size <= 16 MiB (16777216 bytes)
@@ -1640,7 +1698,7 @@ class QbittorrentClientMixin:
                     else:
                         # If piece preference is disabled, return first valid torrent
                         try:
-                            await TorrentCreator.create_base_from_existing_torrent(torrent_file_path, meta.base_dir, meta.uuid)
+                            await TorrentCreator.create_base_from_existing_torrent(validated_torrent_path, meta.base_dir, meta.uuid)
                             logger.debug(f"[green]Created BASE.torrent from first valid torrent: {torrent_hash}")
                             meta.base_torrent_created = True
                             meta.hash_used = torrent_hash
@@ -1670,8 +1728,9 @@ class QbittorrentClientMixin:
                         alt_valid, alt_torrent_path = await self.is_valid_torrent(meta, alt_torrent_file_path, alt_torrent_hash, "qbit", client_config)
 
                         if alt_valid:
-                            if meta.subtitle_files and not self._torrent_includes_all_local_subtitles(alt_torrent_file_path, meta):
-                                if self._torrent_has_no_subtitles(alt_torrent_file_path):
+                            validated_alt_torrent_path = alt_torrent_path or alt_torrent_file_path
+                            if meta.subtitle_files and not self._torrent_includes_all_local_subtitles(validated_alt_torrent_path, meta):
+                                if self._torrent_has_no_subtitles(validated_alt_torrent_path):
                                     subtitle_fallback = {"hash": alt_torrent_hash, "torrent_path": alt_torrent_path or alt_torrent_file_path}
                                     logger.debug(f"[yellow]Keeping video-only alternative as fallback: {alt_torrent_hash}")
                                 else:
@@ -1679,7 +1738,7 @@ class QbittorrentClientMixin:
                             elif use_piece_preference:
                                 # **Track best match based on piece size**
                                 try:
-                                    torrent_data = Torrent.read(alt_torrent_file_path)
+                                    torrent_data = Torrent.read(validated_alt_torrent_path)
                                     piece_size = torrent_data.piece_size
                                     # For prefer_small_pieces: prefer smallest pieces
                                     # For piece_limit: prefer torrents with piece size <= 16 MiB (16777216 bytes)
@@ -1706,7 +1765,7 @@ class QbittorrentClientMixin:
                             else:
                                 # If piece preference is disabled, return first valid torrent
                                 try:
-                                    await TorrentCreator.create_base_from_existing_torrent(alt_torrent_file_path, meta.base_dir, meta.uuid)
+                                    await TorrentCreator.create_base_from_existing_torrent(validated_alt_torrent_path, meta.base_dir, meta.uuid)
                                     logger.debug(f"[green]Created BASE.torrent from alternative torrent {alt_torrent_hash}")
                                     meta.infohash = alt_torrent_hash
                                     meta.base_torrent_created = True
@@ -1920,7 +1979,11 @@ async def create_cross_seed_links(meta: Meta, torrent: Torrent, tracker_dir: str
         length_value = info.get("length")
         torrent_files.append({"relative_path": torrent_name, "length": length_value if isinstance(length_value, int) else None})
 
-    destination_root = Path(tracker_dir) / torrent_name if multi_file else tracker_dir
+    tracker_root = Path(tracker_dir).resolve()
+    destination_root = Path(tracker_dir) / torrent_name if multi_file else Path(tracker_dir)
+    if not is_path_under(destination_root.resolve(), tracker_root):
+        logger.info(f"[bold red]Refusing to create link directory outside tracker directory: {destination_root}")
+        return False
     if multi_file:
         await asyncio.to_thread(os.makedirs, destination_root, exist_ok=True)
     else:
@@ -2036,10 +2099,6 @@ async def create_cross_seed_links(meta: Meta, torrent: Torrent, tracker_dir: str
         dest_parent = str(Path(dest_file_path).parent)
         if dest_parent:
             await asyncio.to_thread(os.makedirs, dest_parent, exist_ok=True)
-        if await asyncio.to_thread(os.path.exists, dest_file_path):
-            logger.debug(f"[yellow]Cross-seed link already exists, keeping: {dest_file_path}")
-            continue
-
         linked = await async_link_directory(source_file, dest_file_path, use_hardlink=use_hardlink)
         if not linked:
             logger.info(f"[bold red]Linking failed for cross-seed file: {relative_path}")
@@ -2054,13 +2113,20 @@ async def async_link_directory(src: str, dst: str, use_hardlink: bool = True) ->
         # Create destination directory
         await asyncio.to_thread(os.makedirs, str(Path(dst).parent), exist_ok=True)
 
-        # Check if destination already exists
-        if await asyncio.to_thread(os.path.exists, dst):
-            logger.debug(f"[yellow]Skipping linking, path already exists: {dst}")
-            return True
+        destination_exists = await asyncio.to_thread(os.path.lexists, dst)
+        if destination_exists:
+            try:
+                if await asyncio.to_thread(os.path.samefile, src, dst):
+                    logger.debug(f"[green]Existing link already points to source: {dst}")
+                    return True
+            except OSError:
+                pass
 
         # Handle file linking
         if await asyncio.to_thread(os.path.isfile, src):
+            if destination_exists:
+                logger.info(f"[yellow]Link destination contains different content: {dst}")
+                return False
             if use_hardlink:
                 try:
                     await asyncio.to_thread(os.link, src, dst)
@@ -2084,6 +2150,9 @@ async def async_link_directory(src: str, dst: str, use_hardlink: bool = True) ->
 
         # Handle directory linking
         else:
+            if destination_exists and (not await asyncio.to_thread(os.path.isdir, dst) or await asyncio.to_thread(os.path.islink, dst)):
+                logger.info(f"[yellow]Directory link destination contains different content: {dst}")
+                return False
             if use_hardlink:
                 # For hardlinks, we need to recreate the directory structure
                 await asyncio.to_thread(os.makedirs, dst, exist_ok=True)
@@ -2110,6 +2179,14 @@ async def async_link_directory(src: str, dst: str, use_hardlink: bool = True) ->
 
                 def _try_hardlink(src_path: str, dst_path: str, rel_path: str) -> bool:
                     try:
+                        if os.path.lexists(dst_path):
+                            try:
+                                if Path(src_path).samefile(dst_path):
+                                    return True
+                            except OSError:
+                                pass
+                            logger.info(f"[yellow]Hard link destination contains different content: {dst_path}")
+                            return False
                         os.link(src_path, dst_path)
                         if rel_path == os.path.relpath(all_items[0][0], src):
                             logger.debug(f"[green]Hard link created for file: {dst_path} -> {src_path}")

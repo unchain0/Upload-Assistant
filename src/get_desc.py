@@ -357,7 +357,7 @@ class DescriptionBuilder:
 
     async def get_mediainfo_section(self, meta: Meta) -> str:
         """Returns the mediainfo section, using a cache file if available."""
-        if meta.is_disc == "BDMV" or meta.category in ("GAME", "BOOK", "MUSIC"):
+        if meta.is_disc == "BDMV" or meta.category in ("GAME", "BOOK", "MUSIC", "PODCAST"):
             return ""
 
         if self._get_bool_config("full_mediainfo", True) or meta.is_disc:
@@ -660,6 +660,11 @@ class DescriptionBuilder:
         narrator = meta.narrator
         overview = meta.overview
         publisher = meta.publisher
+        language = meta.book_language
+        page_count = meta.page_count
+        series = meta.book_series
+        series_index = meta.book_series_index
+        source = str(meta.manual_source or meta.source or "").strip()
         year = str(meta.year) if meta.year is not None else ""
 
         use_pt_br = self.tracker in ("AMIGOSSHARE", "BRASILTRACKER", "CAPYBARABR", "SAMARITANO", "BJSHARE")
@@ -674,6 +679,10 @@ class DescriptionBuilder:
         str_narrator = "Narrator" if not use_pt_br else "Narrador"
         str_overview = "Overview" if not use_pt_br else "Visão Geral"
         str_publisher = "Publisher" if not use_pt_br else "Editora"
+        str_language = "Language" if not use_pt_br else "Idioma"
+        str_page_count = "Page Count" if not use_pt_br else "Número de Páginas"
+        str_series = "Series" if not use_pt_br else "Série"
+        str_source = "Source" if not use_pt_br else "Fonte"
         str_technical_details = "Technical Details" if not use_pt_br else "Detalhes Técnicos"
         str_year = "Release Year" if not use_pt_br else "Ano de Lançamento"
 
@@ -691,6 +700,15 @@ class DescriptionBuilder:
             fields.append((str_narrator, narrator))
         if publisher:
             fields.append((str_publisher, publisher))
+        if language:
+            fields.append((str_language, language))
+        if series:
+            series_value = f"{series} #{series_index}" if series_index else series
+            fields.append((str_series, series_value))
+        if source:
+            fields.append((str_source, source))
+        if page_count:
+            fields.append((str_page_count, str(page_count)))
         if isbn:
             fields.append((str_isbn, isbn))
         if asin:
@@ -787,9 +805,15 @@ class DescriptionBuilder:
         str_official_supported_languages = "Officially Supported Languages" if not use_pt_br else "Idiomas Oficialmente Suportados"
         str_language = "Language" if not use_pt_br else "Idioma"
         str_support = "Support" if not use_pt_br else "Suporte"
+        str_content_type = "Content Type" if not use_pt_br else "Tipo de Conteúdo"
+        str_package = "Package" if not use_pt_br else "Pacote"
+        str_release_group = "Release Group" if not use_pt_br else "Grupo de Lançamento"
+        str_installation = "Installation and Usage Instructions" if not use_pt_br else "Instruções de Instalação e Uso"
 
         # 1. Technical Details
         fields: list[tuple[str, str]] = []
+        if meta.software:
+            fields.append((str_content_type, "Software"))
         if meta.platform:
             fields.append((str_platform, meta.platform))
         if meta.game_version:
@@ -800,6 +824,12 @@ class DescriptionBuilder:
             fields.append((str_developer, meta.developer))
         if meta.publisher:
             fields.append((str_publisher, meta.publisher))
+        if meta.software:
+            package_formats = sorted({Path(str(item)).suffix.upper().lstrip(".") for item in meta.filelist if Path(str(item)).suffix.lower() in {".dmg", ".exe", ".pkg"}})
+            if package_formats:
+                fields.append((str_package, ", ".join(package_formats)))
+            if meta.tag:
+                fields.append((str_release_group, str(meta.tag).lstrip("-")))
         if meta.steam_url:
             fields.append(("Steam", f"[url]{meta.steam_url}[/url]"))
 
@@ -833,6 +863,12 @@ class DescriptionBuilder:
 
         if overview_text:
             game_parts.append(overview_text)
+
+        if meta.software and meta.software_notes:
+            notes = html_to_bbcode(meta.software_notes)
+            notes = re.sub(r"<[^>]+>", "", notes).strip()
+            if notes:
+                game_parts.append(f"{header}{str_installation}{header_end}{notes}")
 
         # 3. System Requirements Section
         req_min = meta.requirements_minimum
@@ -1050,7 +1086,33 @@ class DescriptionBuilder:
             body = "\n".join(table_lines)
         else:
             body = "\n".join(f"[b]{label}:[/b] {field_value}" for label, field_value in music_fields)
-        return f"{header}{text['details']}{header_end}\n{body}"
+
+        track_lines: list[str] = []
+        primary_artist = display(value("artist"))
+        disc_count = max((int(track.get("disc_number") or 1) for track in tracks if isinstance(track, dict)), default=1)
+        for index, track in enumerate(tracks, start=1):
+            if not isinstance(track, dict):
+                continue
+            try:
+                track_number = int(track.get("track_number") or index)
+            except (TypeError, ValueError):
+                track_number = index
+            try:
+                disc_number = int(track.get("disc_number") or 1)
+            except (TypeError, ValueError):
+                disc_number = 1
+            number = f"{disc_number}-{track_number:02d}" if disc_count > 1 else f"{track_number:02d}"
+            title = display(track.get("title"))
+            artist = display(track.get("artist"))
+            credit = f"{artist} - " if artist and artist.casefold() != primary_artist.casefold() else ""
+            if title:
+                track_lines.append(f"{number}. {credit}{title}")
+
+        tracklist = ""
+        if track_lines:
+            tracklist_header = "Lista de Faixas" if use_pt_br else "Tracklist"
+            tracklist = f"\n\n{header}{tracklist_header}{header_end}\n" + "\n".join(track_lines)
+        return f"{header}{text['details']}{header_end}\n{body}{tracklist}"
 
     async def general_description_generator(
         self,

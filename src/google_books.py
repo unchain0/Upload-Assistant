@@ -12,6 +12,15 @@ google_color_str = "[#4285f4]G[/#4285f4][#ea4335]o[/#ea4335][#fbbc05]o[/#fbbc05]
 
 
 class GoogleBooksManager:
+    @staticmethod
+    def _canonical_isbn(value: str) -> str:
+        clean = re.sub(r"[^0-9X]", "", value.upper())
+        if len(clean) != 10:
+            return clean
+        base = f"978{clean[:9]}"
+        check = (10 - sum(int(digit) * (1 if index % 2 == 0 else 3) for index, digit in enumerate(base)) % 10) % 10
+        return f"{base}{check}"
+
     def _parse_volume_info(self, data: dict[str, Any], isbn: str) -> dict[str, Any] | None:
         """
         Helper to parse raw Google Books API response data uniformly.
@@ -20,7 +29,16 @@ class GoogleBooksManager:
         if total_items <= 0 or "items" not in data:
             return None
 
-        volume = data["items"][0]
+        clean_isbn = self._canonical_isbn(isbn)
+        volume = None
+        for item in data["items"]:
+            identifiers = item.get("volumeInfo", {}).get("industryIdentifiers", [])
+            identifier_values = {self._canonical_isbn(str(identifier.get("identifier", ""))) for identifier in identifiers}
+            if clean_isbn in identifier_values:
+                volume = item
+                break
+        if volume is None:
+            return None
         volume_id = volume.get("id")
         volume_info = volume.get("volumeInfo", {})
         image_link = volume_info.get("imageLinks", {}).get("thumbnail", "")
@@ -105,7 +123,7 @@ class GoogleBooksManager:
             return None
 
         cache = cache_for(base_dir)
-        cached_data = await cache.get("google_books", "isbn", clean_isbn)
+        cached_data = await cache.get("google_books", "isbn_exact", clean_isbn)
         if not is_cache_miss(cached_data) and isinstance(cached_data, dict):
             if cached_data.get("not_found"):
                 logger.info(f"{google_color_str}: ISBN match not found (cached): {clean_isbn}")
@@ -127,19 +145,21 @@ class GoogleBooksManager:
                     if total_items > 0 and "items" in data:
                         metadata = self._parse_volume_info(data, isbn)
                         if metadata:
-                            await cache.set("google_books", "isbn", clean_isbn, metadata)
-                        if metadata:
+                            await cache.set("google_books", "isbn_exact", clean_isbn, metadata)
                             logger.info(f"{google_color_str}: ISBN match found: {clean_isbn}")
+                        else:
+                            logger.info(f"{google_color_str}: ISBN match not found: {clean_isbn}")
+                            await cache.set("google_books", "isbn_exact", clean_isbn, {"not_found": True}, negative=True)
                         return metadata
                     logger.info(f"{google_color_str}: No items found for ISBN: {clean_isbn}")
-                    await cache.set("google_books", "isbn", clean_isbn, {"not_found": True}, negative=True)
+                    await cache.set("google_books", "isbn_exact", clean_isbn, {"not_found": True}, negative=True)
                 else:
                     if resp.status_code == 429:
                         logger.info(f"{google_color_str}: Rate limited (Status 429) for ISBN: {clean_isbn}")
                     else:
                         logger.info(f"{google_color_str}: API returned error status code {resp.status_code} for ISBN: {clean_isbn}")
                         if resp.status_code == 404:
-                            await cache.set("google_books", "isbn", clean_isbn, {"not_found": True}, negative=True)
+                            await cache.set("google_books", "isbn_exact", clean_isbn, {"not_found": True}, negative=True)
         except Exception as e:
             logger.info(f"{google_color_str}: Network or query error for ISBN {clean_isbn}: {e}")
 

@@ -70,6 +70,10 @@ class AmigosShare:
     supported_categories = ("TV", "MOVIE", "BOOK", "GAME")
     tracker_urls = ("amigos-share.club",)
     allows_bloated_audio = True
+    _ARCHIVE_EXTENSIONS: ClassVar[frozenset[str]] = frozenset({".7z", ".rar", ".r00", ".r01", ".zip"})
+    _VIDEO_EXTENSIONS: ClassVar[frozenset[str]] = frozenset({".avi", ".m2ts", ".mkv", ".mp4", ".mpg", ".mpeg", ".ts", ".vob"})
+    _TV_ENDED_STATUSES: ClassVar[frozenset[str]] = frozenset({"ended", "canceled", "cancelled", "finished", "completed"})
+    _TV_ONGOING_STATUSES: ClassVar[frozenset[str]] = frozenset({"returning", "continuing", "in production", "upcoming", "ongoing"})
     tmdb_localization_requirements: ClassVar[dict[str, dict[str, str]]] = {
         "pt-BR": {
             "main": "credits,videos,content_ratings",
@@ -428,7 +432,7 @@ class AmigosShare:
         fileinfo_dump = await self.media_info(meta)
 
         if not user_layout:
-            return "[center]Erro: Não foi possível carregar o layout da descrição.[/center]"
+            return "[center]Error: The description layout could not be loaded.[/center]"
 
         layout_image = {k: v for k, v in user_layout.items() if k.startswith("BARRINHA_")}
         description_parts = ["[center]"]
@@ -456,10 +460,10 @@ class AmigosShare:
         overview: str = season_tmdb.get("overview", "") or main_tmdb.get("overview", "")
         if not overview:
             if meta.unattended and not meta.unattended_confirm:
-                logger.info(f"{self.tracker}: [yellow]Sinopse não encontrada no TMDb em modo unattended. Plando upload para {self.tracker}.[/yellow]")
+                logger.info(f"{self.tracker}: [yellow]No TMDb overview was found in unattended mode. Skipping upload to {self.tracker}.[/yellow]")
                 meta.skipping = f"{self.tracker}"
                 return ""
-            user_input_raw = await prompt_in_thread(cli_ui.ask_string, f"{self.tracker}: Sinopse não encontrada no TMDb. Por favor, insira manualmente.")
+            user_input_raw = await prompt_in_thread(cli_ui.ask_string, f"{self.tracker}: No TMDb overview was found. Enter one manually.")
             user_input = (user_input_raw or "").strip()
             overview = user_input or "Sinopse não encontrada."
         await append_section("BARRINHA_SINOPSE", overview)
@@ -596,10 +600,10 @@ class AmigosShare:
 
         if not tags:
             if not meta.genre and meta.unattended and not meta.unattended_confirm:
-                logger.info(f"{self.tracker}: [yellow]Gêneros não encontrados em modo unattended. Plando upload para {self.tracker}.[/yellow]")
+                logger.info(f"{self.tracker}: [yellow]No genres were found in unattended mode. Skipping upload to {self.tracker}.[/yellow]")
                 meta.skipping = f"{self.tracker}"
                 return ""
-            tags_raw = meta.genre or await prompt_in_thread(cli_ui.ask_string, f"Digite os gêneros (no formato do {self.tracker}): ")
+            tags_raw = meta.genre or await prompt_in_thread(cli_ui.ask_string, f"Enter genres in the {self.tracker} format: ")
             tags = (tags_raw or "").strip()
 
         return tags
@@ -622,17 +626,15 @@ class AmigosShare:
                 filename = first_content.strip() if isinstance(first_content, str) else first_content.get_text(strip=True)
 
         except Exception as e:
-            logger.info(f"{self.tracker}: [bold red]Falha ao obter nome do arquivo para ID {torrent_id}: {e}[/bold red]")
+            logger.info(f"{self.tracker}: [bold red]Failed to retrieve the filename for torrent ID {torrent_id}: {e}[/bold red]")
 
         return {"name": filename, "size": size, "link": torrent_link}
 
     def get_game_name(self, meta: Meta) -> str:
         """Build the torrent name for GAME category."""
-        tag = meta.tag
-        if tag:
-            tag = tag.lstrip("-")
+        tag = str(meta.tag or "NoGroup").lstrip("-")
 
-        name = f"{meta.title} - [{tag}]"
+        name = f"{meta.title} [{tag}]"
         return re.sub(r"\s{2,}", " ", name).strip()
 
     def get_game_type(self, meta: Meta) -> str:
@@ -751,19 +753,186 @@ class AmigosShare:
 
         return final_description
 
+    async def _confirm_rule_exception(self, message: str, meta: Meta) -> bool:
+        if getattr(meta, "unattended", False):
+            return bool(getattr(meta, "unattended_confirm", False))
+        return await self.common.prompt_user_for_confirmation(f"{self.tracker}: {message}")
+
+    @staticmethod
+    def _metadata_values(meta: Meta, field: str) -> list[str]:
+        value = getattr(meta, field, None)
+        if isinstance(value, str):
+            return [value]
+        if isinstance(value, (list, tuple, set)):
+            return [str(item) for item in value]
+        return []
+
+    @classmethod
+    def _has_prohibited_subject(cls, meta: Meta) -> bool:
+        values = [str(getattr(meta, field, "") or "") for field in ("name", "title")]
+        values.extend(cls._metadata_values(meta, "genres"))
+        values.extend(cls._metadata_values(meta, "keywords"))
+        context = " ".join(values).casefold()
+        return bool(re.search(r"(?<![a-z])(?:pedofilia|pedophilia|zoofilia|zoophilia)(?![a-z])", context))
+
+    @staticmethod
+    def _has_serial_or_key(description: str) -> bool:
+        return bool(re.search(r"(?i)\b(?:serial(?:[ ._-]+(?:key|number))?|cd[ ._-]?key|product[ ._-]?key|license[ ._-]?key)\s*[:=]", description))
+
+    @classmethod
+    def _is_archive_file(cls, path: Path) -> bool:
+        name = path.name.casefold()
+        return path.suffix.casefold() in cls._ARCHIVE_EXTENSIONS or bool(re.search(r"(?:\.r\d{2,}|\.7z\.\d+)$", name))
+
+    @staticmethod
+    def _is_advertising_file(path: Path) -> bool:
+        name = path.name.casefold()
+        return path.suffix.casefold() in {".torrent", ".url"} or any(marker in name for marker in ("downloaded from", "torrent downloaded", "www."))
+
+    @staticmethod
+    def _has_valid_video_filename(path: Path) -> bool:
+        name = path.stem
+        resolution = re.search(r"(?<![A-Za-z0-9])(?:2160|1080|720|576|480|360|240)[pi]?(?![A-Za-z0-9])", name, re.IGNORECASE)
+        source = re.search(r"(?<![A-Za-z0-9])(?:UHD[ ._-]?BluRay|BluRay|BDRip|BRRip|WEB[ ._-]?DL|WEBRip|DVDRip|DVD|HDTV)(?![A-Za-z0-9])", name, re.IGNORECASE)
+        codec = re.search(r"(?<![A-Za-z0-9])(?:H[ .]?26[45]|x26[45]|HEVC|AVC|MPEG[ ._-]?2|XviD|DivX)(?![A-Za-z0-9])", name, re.IGNORECASE)
+        release = re.search(r"^-[A-Za-z0-9][A-Za-z0-9._-]*$", name[codec.end() :]) if codec else None
+        return bool(resolution and source and codec and release)
+
+    @staticmethod
+    def _is_unreleased_game_build(meta: Meta) -> bool:
+        release_fields = " ".join(str(getattr(meta, field, "") or "") for field in ("type", "release_type", "license_type"))
+        name = str(getattr(meta, "name", "") or "")
+        return bool(
+            re.search(r"(?i)(?<![A-Za-z0-9])(?:demo|beta|freeware|open[ ._-]?source)(?![A-Za-z0-9])", release_fields)
+            or re.search(r"(?i)(?:\(|\[)(?:demo|beta|freeware|open[ ._-]?source)(?:\)|\])", name)
+        )
+
     async def get_additional_checks(self, meta: Meta) -> bool:
-        if meta.category == "BOOK" and meta.source_size <= 1024 * 1024:
-            logger.info(f"{self.tracker}: [bold red]Ignorando upload na categoria BOOK devido ao tamanho ser menor ou igual a 1MB.[/bold red]")
+        category = str(getattr(meta, "category", "") or "").upper()
+        if category not in self.supported_categories:
+            logger.info(f"{self.tracker}: [bold red]This category is not supported by the upload rules.[/bold red]")
             return False
 
-        if meta.category in ("BOOK", "GAME"):
+        try:
+            source_size = int(getattr(meta, "source_size", 0) or 0)
+        except (TypeError, ValueError, OverflowError):
+            source_size = 0
+
+        if category == "BOOK" and source_size <= 1024 * 1024:
+            logger.info(f"{self.tracker}: [bold red]BOOK uploads must be larger than 1 MB.[/bold red]")
+            return False
+
+        if 0 < source_size < 20 * 1024 * 1024 and category != "BOOK" and not await self._confirm_rule_exception(
+            "Torrents below 20 MB require staff approval. Do you want to continue?", meta
+        ):
+            return False
+
+        if self._has_prohibited_subject(meta):
+            logger.info(f"{self.tracker}: [bold red]Content involving pedophilia or zoophilia is prohibited.[/bold red]")
+            return False
+
+        adult_media = bool(getattr(meta, "adult_media", False) or getattr(meta, "tmdb_adult_media", False) or getattr(meta, "nsfw", False))
+        release_name = " ".join(str(getattr(meta, field, "") or "") for field in ("name", "title"))
+        if adult_media and re.search(r"(?i)(?<![A-Za-z0-9])amateur(?![A-Za-z0-9])", release_name):
+            logger.info(f"{self.tracker}: [bold red]Amateur adult content is not allowed.[/bold red]")
+            return False
+        if adult_media and source_size < 100 * 1024 * 1024:
+            logger.info(f"{self.tracker}: [bold red]Adult videos must be at least 100 MB.[/bold red]")
+            return False
+
+        raw_filelist = getattr(meta, "filelist", None) or []
+        if not isinstance(raw_filelist, (list, tuple, set)):
+            logger.info(f"{self.tracker}: [bold red]Invalid file list.[/bold red]")
+            return False
+        paths = [Path(str(item)) for item in raw_filelist if str(item).strip()]
+
+        if category != "GAME" and any(self._is_archive_file(path) for path in paths):
+            logger.info(f"{self.tracker}: [bold red]Archives are allowed only for games.[/bold red]")
+            return False
+        if any(self._is_advertising_file(path) for path in paths):
+            logger.info(f"{self.tracker}: [bold red]Website references, advertisements, and nested .torrent files are not allowed.[/bold red]")
+            return False
+
+        if category == "GAME":
+            if self._is_unreleased_game_build(meta):
+                logger.info(f"{self.tracker}: [bold red]Demos, betas, freeware, and open-source software are not allowed as torrents.[/bold red]")
+                return False
+            standalone_markers = ("crack", "keygen", "patch", "update", "traducao", "tradução")
+            payload_paths = [
+                path
+                for path in paths
+                if path.suffix.casefold() != ".nfo" and path.name.casefold() not in {"readme", "readme.txt", "readme.md"}
+            ]
+            if payload_paths and all(any(marker in path.stem.casefold() for marker in standalone_markers) for path in payload_paths):
+                logger.info(f"{self.tracker}: [bold red]Cracks, keygens, patches, and updates cannot be uploaded separately.[/bold red]")
+                return False
+
+        description = get_base_description(meta)
+        if self._has_serial_or_key(description):
+            logger.info(f"{self.tracker}: [bold red]The description cannot contain serials, CD keys, or license keys.[/bold red]")
+            return False
+        if not await self.common.check_portuguese_description_requirements(description, self.tracker, meta):
+            logger.info(f"{self.tracker}: [bold red]The description was not identified as Portuguese. Skipping upload.[/bold red]")
+            return False
+
+        if category in ("BOOK", "GAME"):
             return True
 
-        if not meta.imdb_id and not meta.anime:
-            logger.info(f"{self.tracker}: [bold red]Ignorando upload devido à ausência de IMDb.[/bold red]")
+        if not getattr(meta, "imdb_id", None) and not getattr(meta, "anime", False):
+            logger.info(f"{self.tracker}: [bold red]IMDb metadata is required. Skipping upload.[/bold red]")
             return False
 
-        if meta.category in ("MOVIE", "TV"):
+        if category in ("MOVIE", "TV"):
+            video_paths = [path for path in paths if path.suffix.casefold() in self._VIDEO_EXTENSIONS and "sample" not in path.stem.casefold()]
+            if not getattr(meta, "is_disc", None):
+                if not video_paths:
+                    logger.info(f"{self.tracker}: [bold red]No recognized video file was found.[/bold red]")
+                    return False
+                invalid_name = next((path.name for path in video_paths if not self._has_valid_video_filename(path)), "")
+                if invalid_name:
+                    logger.info(f"{self.tracker}: [bold red]Video filename does not follow the ASC technical standard: {invalid_name}.[/bold red]")
+                    return False
+
+            try:
+                screenshot_count = int(getattr(meta, "screens", 0) or 0)
+            except (TypeError, ValueError, OverflowError):
+                screenshot_count = 0
+            required_screens = max(1, len(video_paths)) if adult_media else 1
+            if screenshot_count < required_screens:
+                logger.info(f"{self.tracker}: [bold red]Real screenshots from the uploaded content are required.[/bold red]")
+                return False
+
+            if category == "TV":
+                episode_count = self.common.count_tv_episodes(video_paths)
+                tv_pack = bool(getattr(meta, "tv_pack", False))
+                if not getattr(meta, "is_disc", None) and episode_count == 0:
+                    logger.info(f"{self.tracker}: [bold red]No valid TV episode marker was found in the uploaded files.[/bold red]")
+                    return False
+                status = self.common.is_tv_series_ended(meta, self._TV_ENDED_STATUSES, self._TV_ONGOING_STATUSES)
+                if tv_pack and status is not True and not await self._confirm_rule_exception(
+                    "Packs are allowed only after the season or series has ended. Do you want to continue?", meta
+                ):
+                    return False
+                if not tv_pack and episode_count > 1:
+                    logger.info(f"{self.tracker}: [bold red]Episodes from ongoing series must be uploaded individually.[/bold red]")
+                    return False
+                if not tv_pack and episode_count and status is True:
+                    logger.info(f"{self.tracker}: [bold red]Completed series accept only complete season packs.[/bold red]")
+                    return False
+                if not tv_pack and episode_count and status is None and not await self._confirm_rule_exception(
+                    "The season status could not be confirmed. Do you want to continue?", meta
+                ):
+                    return False
+                if not tv_pack and any(re.search(r"(?i)(?:extra|bonus|bônus)", path.stem) for path in video_paths):
+                    logger.info(f"{self.tracker}: [bold red]Extras must accompany the complete season or series.[/bold red]")
+                    return False
+
+            if getattr(meta, "is_disc", None) and "dvd" in str(getattr(meta, "is_disc", "")).casefold():
+                source_context = " ".join(str(getattr(meta, field, "") or "") for field in ("name", "source", "type"))
+                if re.search(r"(?i)(?<![A-Za-z0-9])(?:R5|CAM|HDCAM|TC|TS|DVDSCR)(?![A-Za-z0-9])", source_context):
+                    logger.info(f"{self.tracker}: [bold red]Authored DVD-R releases or DVD-R conversions from inferior sources are not allowed.[/bold red]")
+                    return False
+
             return await self.common.check_portuguese_video_requirements(meta, self.tracker)
 
         return True
@@ -1077,17 +1246,17 @@ class AmigosShare:
                 )
 
             if results:
-                message = f"\n{self.tracker}: [bold yellow]Seu upload pode atender o(s) seguinte(s) pedido(s), confira:[/bold yellow]\n\n"
+                message = f"\n{self.tracker}: [bold yellow]Your upload may fill the following request(s):[/bold yellow]\n\n"
                 for r in results:
-                    message += f"[bold green]Nome:[/bold green] {r['Name']}\n"
-                    message += f"[bold green]Recompensa:[/bold green] {r['Reward']}\n"
+                    message += f"[bold green]Name:[/bold green] {r['Name']}\n"
+                    message += f"[bold green]Reward:[/bold green] {r['Reward']}\n"
                     message += f"[bold green]Link:[/bold green] {self.base_url}/{r['Link']}\n\n"
                 logger.info(message)
 
             return results
 
-        except Exception as e:
-            logger.info(f"{self.tracker}: [bold red]Ocorreu um erro ao buscar pedido(s) no {self.tracker}: {e}[/bold red]")
+        except httpx.HTTPError as e:
+            logger.info(f"{self.tracker}: [bold red]An error occurred while searching requests on {self.tracker}: {e}[/bold red]")
             import traceback
 
             logger.info(traceback.format_exc())
@@ -1220,7 +1389,7 @@ class AmigosShare:
         if getattr(meta, "skipping", None) == self.tracker:
             return False
         if meta.category == "BOOK" and meta.source_size <= 1024 * 1024:
-            logger.info(f"{self.tracker}: [bold red]Ignorando upload na categoria BOOK devido ao tamanho ser menor ou igual a 1MB.[/bold red]")
+            logger.info(f"{self.tracker}: [bold red]BOOK uploads must be larger than 1 MB.[/bold red]")
             return False
         cookie_jar = await self.cookie_validator.load_session_cookies(meta, self.tracker)
         if cookie_jar is not None:

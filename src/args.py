@@ -36,6 +36,18 @@ MUSIC_RELEASE_TYPE_CHOICES = (
 PATHS_FROM_STDIN_OPTION = "--paths-from-stdin"
 
 
+def partition_existing_paths(paths: Sequence[str]) -> tuple[list[str], list[str]]:
+    existing: list[str] = []
+    missing: list[str] = []
+    for raw_path in paths:
+        path = Path(raw_path).expanduser()
+        if path.exists():
+            existing.append(str(path.resolve()))
+        else:
+            missing.append(raw_path)
+    return existing, missing
+
+
 def read_paths_from_stdin(argv: Sequence[str], stream: TextIO) -> tuple[list[str], list[str]]:
     args = list(argv)
     option_count = args.count(PATHS_FROM_STDIN_OPTION)
@@ -195,10 +207,15 @@ class Args:
             "--category",
             nargs=1,
             required=False,
-            help="Category [movie, tv, fanres, book, game, music]",
-            choices=["movie", "tv", "fanres", "book", "game", "music"],
+            help="Category [movie, tv, fanres, book, game, music, podcast]",
+            choices=["movie", "tv", "fanres", "book", "game", "music", "podcast"],
             dest="manual_category",
         )
+        parser.add_argument("--podcast-title", nargs=1, required=False, help="PODCAST: final tracker title following the site's naming rules", dest="podcast_title")
+        parser.add_argument("--podcast-cover", nargs=1, required=False, help="PODCAST: local square JPEG cover path", dest="podcast_cover")
+        parser.add_argument("--podcast-banner", nargs=1, required=False, help="PODCAST: local 16:9 JPEG banner path", dest="podcast_banner")
+        parser.add_argument("--unwalled-category", nargs=1, required=False, help="Unwalled subject category name or numeric ID", dest="unwalled_category")
+        parser.add_argument("--unwalled-type", nargs=1, required=False, help="Unwalled upload type name or numeric ID", dest="unwalled_type")
         parser.add_argument("--music-artist", nargs=1, required=False, help="MUSIC: main artist(s), separated by &", dest="music_artist")
         parser.add_argument("--music-album", nargs=1, required=False, help="MUSIC: album/release title", dest="music_album")
         parser.add_argument(
@@ -252,8 +269,26 @@ class Args:
             "--source",
             nargs=1,
             required=False,
-            help="Source [Blu-ray, BluRay, DVD, DVD5, DVD9, HDDVD, WEB, HDTV, UHDTV, LaserDisc, DCP]",
-            choices=["Blu-ray", "BluRay", "DVD", "DVD5", "DVD9", "HDDVD", "WEB", "HDTV", "UHDTV", "LaserDisc", "DCP"],
+            help="Source [Blu-ray, BluRay, DVD, DVD5, DVD9, HDDVD, WEB, HDTV, UHDTV, LaserDisc, DCP, CD, OVERDRIVE, HOOPLA, OTHER, RETAIL, SCAN]",
+            choices=[
+                "Blu-ray",
+                "BluRay",
+                "DVD",
+                "DVD5",
+                "DVD9",
+                "HDDVD",
+                "WEB",
+                "HDTV",
+                "UHDTV",
+                "LaserDisc",
+                "DCP",
+                "CD",
+                "OVERDRIVE",
+                "HOOPLA",
+                "OTHER",
+                "RETAIL",
+                "SCAN",
+            ],
             dest="manual_source",
         )
         parser.add_argument(
@@ -299,6 +334,13 @@ class Args:
         parser.add_argument("--no-dub", dest="no_dub", action="store_true", required=False, help="Remove Dubbed from title")
         parser.add_argument("--no-dual", dest="no_dual", action="store_true", required=False, help="Remove Dual-Audio from title")
         parser.add_argument("--no-tag", dest="no_tag", action="store_true", required=False, help="Remove Group Tag from title")
+        parser.add_argument(
+            "--allow-spaces",
+            dest="allow_spaces",
+            action="store_true",
+            required=False,
+            help="Explicitly allow uploading content whose file or folder names contain spaces",
+        )
         parser.add_argument("--no-edition", dest="no_edition", action="store_true", required=False, help="Remove Edition from title")
         parser.add_argument("--dual-audio", dest="dual_audio", action="store_true", required=False, help="Add Dual-Audio to the title")
         parser.add_argument("-ol", "--original-language", dest="manual_language", nargs=1, required=False, help="Set original audio language")
@@ -315,6 +357,7 @@ class Args:
         parser.add_argument("-year", "--year", dest="manual_year", nargs=1, required=False, help="Override the year found", type=int, default=0)
         parser.add_argument("-author", "--author", nargs="*", required=False, help="Book/Audiobook author name (overrides auto-detected value)", type=str, dest="book_author")
         parser.add_argument("-btitle", "--book-title", nargs="*", required=False, help="Book/Audiobook title (overrides auto-detected value)", type=str, dest="book_title")
+        parser.add_argument("-narrator", "--narrator", nargs="*", required=False, help="Audiobook narrator name (overrides auto-detected value)", type=str, dest="narrator")
         parser.add_argument("--book-cover", nargs=1, required=False, help="BOOK: public artwork URL or local cover image path", dest="book_cover")
         parser.add_argument("--comic", "-comic", action="store_true", required=False, help="Identify the book upload as a Comic", dest="comic", default=False)
         parser.add_argument("--manga", "-manga", action="store_true", required=False, help="Identify the book upload as a Manga", dest="manga", default=False)

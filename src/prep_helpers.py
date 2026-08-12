@@ -34,6 +34,38 @@ from src.video import video_manager
 guessit_module: Any = cast(Any, guessit)
 
 _URL_TOKEN_RE = re.compile(r"https?://[^\s<>'\"()]+", re.IGNORECASE)
+_GAME_EXTENSIONS = {
+    ".3ds",
+    ".3dsx",
+    ".cci",
+    ".cdi",
+    ".chd",
+    ".cia",
+    ".cso",
+    ".dmg",
+    ".exe",
+    ".gcm",
+    ".gdi",
+    ".hdf",
+    ".iso",
+    ".nca",
+    ".nds",
+    ".nsp",
+    ".nsz",
+    ".pbp",
+    ".pkg",
+    ".rap",
+    ".srl",
+    ".szs",
+    ".vpk",
+    ".wbfs",
+    ".wud",
+    ".wux",
+    ".xbe",
+    ".xci",
+    ".xcz",
+    ".xex",
+}
 
 
 def _is_igdb_url(url: str) -> bool:
@@ -163,6 +195,16 @@ async def detect_disc_and_category(prep_instance: Any, meta: Meta) -> tuple[str,
     if isinstance(meta.manual_category, str) and meta.manual_category.strip():
         meta.category = meta.manual_category.strip().upper()
 
+    if not meta.category and not meta.manual_category and not meta.is_disc:
+        path_to_check = Path(meta.path) if meta.path else None
+        if path_to_check and path_to_check.exists():
+            has_game_package = path_to_check.is_file() and path_to_check.suffix.lower() in _GAME_EXTENSIONS
+            if path_to_check.is_dir():
+                has_game_package = any(item.is_file() and item.suffix.lower() in _GAME_EXTENSIONS for item in path_to_check.rglob("*"))
+            if has_game_package:
+                meta.category = "GAME"
+                logger.debug("[cyan]Auto-detected category: GAME (package file)[/cyan]")
+
     # If category is manually set to BOOK, ensure meta.audiobook is set if audio files are present
     if meta.category == "BOOK" and not meta.audiobook:
         path_to_check = Path(meta.path) if meta.path else None
@@ -244,17 +286,20 @@ async def detect_disc_and_category(prep_instance: Any, meta: Meta) -> tuple[str,
                 has_books = False
                 has_audio = False
                 has_video = False
+                has_game_package = False
                 for _root, _, files in os.walk(path_to_check):
                     for file in files:
                         ext = Path(file).suffix.lower()
-                        if ext in BOOK_EXTENSIONS:
+                        if ext in _GAME_EXTENSIONS:
+                            has_game_package = True
+                        elif ext in BOOK_EXTENSIONS:
                             has_books = True
                         elif ext in AUDIOBOOK_EXTENSIONS:
                             has_audio = True
                         elif ext in video_extensions:
                             has_video = True
                 # If we have books/audio files and NO video files, classify as BOOK
-                if (has_books or has_audio) and not has_video:
+                if (has_books or has_audio) and not has_video and not has_game_package:
                     is_book = True
             else:
                 ext = Path(path_to_check).suffix.lower()
@@ -268,38 +313,6 @@ async def detect_disc_and_category(prep_instance: Any, meta: Meta) -> tuple[str,
     # Auto-detect GAME category if category/manual_category is not already set and it's not a disc
     if not meta.category and not meta.manual_category and not meta.is_disc:
         is_game = False
-        game_extensions = {
-            ".3ds",
-            ".3dsx",
-            ".cci",
-            ".cdi",
-            ".chd",
-            ".cia",
-            ".cso",
-            ".exe",
-            ".gcm",
-            ".gdi",
-            ".hdf",
-            ".iso",
-            ".nca",
-            ".nds",
-            ".nsp",
-            ".nsz",
-            ".pbp",
-            ".pkg",
-            ".rap",
-            ".rar",
-            ".srl",
-            ".szs",
-            ".vpk",
-            ".wbfs",
-            ".wud",
-            ".wux",
-            ".xbe",
-            ".xci",
-            ".xcz",
-            ".xex",
-        }
         video_extensions = {".mkv", ".mp4", ".ts", ".avi"}
         game_groups = {"tenoke", "rune", "flt", "plaza", "codex", "skidrow", "prophet", "gog", "darkzer0", "doge", "tinyiso", "razor1911", "outlaws", "alias", "simplex"}
 
@@ -321,7 +334,7 @@ async def detect_disc_and_category(prep_instance: Any, meta: Meta) -> tuple[str,
                     for file in files:
                         file_lower = file.lower()
                         ext = Path(file_lower).suffix
-                        if ext in game_extensions:
+                        if ext in _GAME_EXTENSIONS:
                             has_game_ext = True
                         elif ext in video_extensions:
                             has_video = True
@@ -340,7 +353,7 @@ async def detect_disc_and_category(prep_instance: Any, meta: Meta) -> tuple[str,
                                             has_steam_link = True
             else:
                 ext = Path(base_name_lower).suffix
-                if ext in game_extensions:
+                if ext in _GAME_EXTENSIONS:
                     has_game_ext = True
 
             if has_steam_link or ((has_game_ext or has_game_group) and not has_video):
@@ -584,6 +597,8 @@ async def process_media_files(prep_instance: Any, meta: Meta, videoloc: str, bdi
                     meta.resolution, meta.hfr = await video_manager.get_resolution(guessit_fn(video), meta.uuid, base_dir, meta)
 
                 meta.sd = await video_manager.is_sd(meta.resolution)
+        except ItemProcessingError:
+            raise
         except Exception as e:
             logger.error(f"[red]Error processing Mediainfo: {e}[/red]")
             raise Exception(f"Error processing Mediainfo: {e}") from e
@@ -1029,12 +1044,17 @@ async def search_metadata(
             mode=(meta.mode if meta.mode is not None else "non_cli"),
             category_preference=meta.category,
             imdb_info=meta.imdb_info,
+            unattended=meta.unattended,
         )
 
         meta.category = category
         meta.tmdb_id = _to_int(tmdb_id)
         meta.original_language = original_language
         meta.no_ids = filename_search
+
+    daily_filename = re.search(r"\d{4}[-.]\d{2}[-.]\d{2}", videopath)
+    if meta.category == "TV" and int(meta.tmdb_id or 0) != 0 and (meta.manual_date or daily_filename):
+        meta = await prep_instance.season_episode_manager.get_season_episode(videopath, meta)
 
     no_original_language = False
     if meta.original_language is None:
@@ -1106,6 +1126,7 @@ async def search_metadata(
             mode=(meta.mode if meta.mode is not None else "non_cli"),
             category_preference=meta.category,
             imdb_info=meta.imdb_info,
+            unattended=meta.unattended,
         )
 
         meta.category = category
@@ -1122,6 +1143,19 @@ async def search_metadata(
     if not meta.imdb_info and imdb_id_value != 0 and meta.category not in ("BOOK", "GAME"):
         imdb_info = await imdb_manager.get_imdb_info_api(imdb_id_value, manual_language=meta.manual_language, base_dir=meta.base_dir, config=prep_instance.config)
         meta.imdb_info = imdb_info
+
+
+def _distinct_aka(title: Any, aka: Any, year: Any = None) -> str:
+    aka_text = str(aka or "").strip()
+    candidate = re.sub(r"^AKA\s*[:\-]?\s*", "", aka_text, flags=re.I).strip()
+    year_text = str(year or "").strip()
+
+    def identity(value: str) -> str:
+        if year_text:
+            value = re.sub(rf"\s*[\[(]?{re.escape(year_text)}[\])]?\s*$", "", value)
+        return "".join(character for character in value.casefold() if character.isalnum())
+
+    return "" if not candidate or identity(str(title or "")) == identity(candidate) else aka_text
 
 
 async def finalize_metadata(
@@ -1219,7 +1253,7 @@ async def finalize_metadata(
                 config=prep_instance.config,
             )
             meta.tvmaze_id = tvmaze_res if isinstance(tvmaze_res, int) else tvmaze_res[0]
-        if meta.tvdb_id == 0:
+        if meta.tvdb_id == 0 and not both_ids_searched:
             logger.debug("[yellow]No TVDB ID found, attempting to fetch...[/yellow]")
             try:
                 series_results, series_id = await prep_instance.tvdb_handler.search_tvdb_series(filename=filename, year=meta.year)
@@ -1284,6 +1318,8 @@ async def finalize_metadata(
                 should_use_tvdb_series_name = series_name and not _tvdb_title_drops_existing_leading_article(meta.title, series_name)
                 if should_use_tvdb_series_name:
                     meta.title = series_name
+
+    meta.aka = _distinct_aka(meta.title, meta.aka, meta.year)
 
     # bluray.com data if config
     get_bluray_info = prep_instance.config["DEFAULT"].get("get_bluray_info", False)

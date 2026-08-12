@@ -96,6 +96,7 @@ You can override auto-detected values using the following command-line flags:
 | `-pub`       | `--publisher`     | Overrides the book publisher metadata                                                               |
 | `-btitle`    | `--book-title`    | Overrides the book title                                                                            |
 | `-author`    | `--author`        | Overrides the book author                                                                           |
+| `-narrator`  | `--narrator`      | Overrides the audiobook narrator                                                                    |
 | `-isbn`      | `--isbn`          | Overrides the ISBN number                                                                           |
 | `-asin`      | `--asin`          | Overrides the ASIN number                                                                           |
 | `-blang`     | `--book-language` | Overrides the book language (e.g. English, Portuguese)                                              |
@@ -104,6 +105,13 @@ You can override auto-detected values using the following command-line flags:
 | `-manga`     | `--manga`         | Identifies the book upload as a Manga                                                               |
 | `-magazine`  | `--magazine`      | Identifies the book upload as a Magazine                                                            |
 | `-newspaper` | `--newspaper`     | Identifies the book upload as a Newspaper                                                           |
+
+Audiobook edition fields should be overridden together when an external source identifies a different recording:
+
+```text
+--book-title "The Gabriel Hounds" --author "Mary Stewart" --narrator "Davina Porter"
+--publisher "Recorded Books" --year 1991 --isbn 9781664616110
+```
 
 ---
 

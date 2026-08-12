@@ -67,7 +67,7 @@ def _split_main_artists(values: list[str]) -> list[str]:
     """
     artists: list[str] = []
     for value in values:
-        parts = re.split(r"\s+&\s+", value)
+        parts = re.split(r"\s+&\s+|\s+(?:feat(?:uring)?|ft)\.?\s+|\s*;\s*", value, flags=re.I)
         for part in parts:
             cleaned = _clean(part)
             if cleaned and cleaned not in artists:
@@ -131,7 +131,8 @@ class MusicReleaseAnalyzer:
             else:
                 self._classify_auxiliary(release, file, root)
 
-        self._derive_release_fields(release, supplied.name)
+        display_name = supplied.stem if supplied.is_file() else supplied.name
+        self._derive_release_fields(release, display_name)
         return release
 
     def _read_track(self, path: Path, root: Path) -> AudioTrack | None:
@@ -381,11 +382,15 @@ class MusicReleaseAnalyzer:
         if not per_track:
             return
         selected, count = Counter(per_track).most_common(1)[0]
-        artists = list(selected)
-        release.set_field("artists", artists, MetadataSource.FILE_TAG, count / len(per_track))
-        release.set_field("artist", " & ".join(artists), MetadataSource.FILE_TAG, count / len(per_track))
+        shared: set[str] = {artist.casefold() for artist in per_track[0]}
+        for item in per_track[1:]:
+            shared.intersection_update(artist.casefold() for artist in item)
+        artists = [artist for artist in selected if artist.casefold() in shared] if shared else list(selected)
+        confidence = 1.0 if shared else count / len(per_track)
+        release.set_field("artists", artists, MetadataSource.FILE_TAG, confidence)
+        release.set_field("artist", " & ".join(artists), MetadataSource.FILE_TAG, confidence)
         unique = sorted({" & ".join(item) for item in per_track})
-        if len(unique) > 1:
+        if len(unique) > 1 and not shared:
             release.conflicts["artist"] = unique
 
     @staticmethod
@@ -393,8 +398,8 @@ class MusicReleaseAnalyzer:
         cleaned = [_clean(value) for value in values if _clean(value)]
         if not cleaned:
             return
-        selected, count = Counter(cleaned).most_common(1)[0]
-        release.set_field(name, selected, source, confidence * count / len(cleaned))
+        selected, _count = Counter(cleaned).most_common(1)[0]
+        release.set_field(name, selected, source, confidence)
         unique = sorted(set(cleaned))
         if len(unique) > 1:
             release.conflicts[name] = unique
@@ -411,8 +416,26 @@ class MusicReleaseAnalyzer:
         if match:
             release.set_field("year", match.group(1), MetadataSource.DIRECTORY, 1.0)
         if not release.get("artist") or not release.get("album"):
-            name_without_metadata = re.sub(r"(?:\s*(?:\[[^\]]+\]|\{[^\}]+\}))*$", "", normalized)
-            match = re.search(r"(?:^|\d{4}\s*-?\s*)(.+?)\s+-\s+(.+?)$", name_without_metadata)
+            name_without_metadata = re.sub(r"\s+-\s+[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\s*$", "", normalized, flags=re.I)
+            name_without_metadata = re.sub(
+                r"\s+-\s+(?:(?:16|24)bit\s+\d+(?:\.\d+)?kHz\s+)?(?:Digital Media|WEB|CD)(?:\s+(?:FLAC|MP3|AAC|ALAC))?\s*$",
+                "",
+                name_without_metadata,
+                flags=re.I,
+            )
+            name_without_metadata = re.sub(r"(?:\s*(?:\[[^\]]+\]|\{[^\}]+\}))*$", "", name_without_metadata)
+            trailing_year = re.search(r"\s+\(((?:19|20)\d{2})\)\s*$", name_without_metadata)
+            if trailing_year:
+                release.set_field("year", trailing_year.group(1), MetadataSource.DIRECTORY, 0.9)
+                name_without_metadata = name_without_metadata[: trailing_year.start()].rstrip()
+            dated_recording = re.fullmatch(r"(.+?)\s+-\s+((?:19|20)\d{2})-\d{2}-\d{2}\s+-\s+(.+)", name_without_metadata)
+            if dated_recording:
+                release.set_field("artist", dated_recording.group(1).strip(), MetadataSource.DIRECTORY, 0.55)
+                release.set_field("year", dated_recording.group(2), MetadataSource.DIRECTORY, 0.9)
+                release.set_field("album", dated_recording.group(3).strip(), MetadataSource.DIRECTORY, 0.55)
+                match = None
+            else:
+                match = re.search(r"(?:^|\d{4}\s*-?\s*)(.+?)\s+-\s+(.+?)$", name_without_metadata)
             if match:
                 release.set_field("artist", match.group(1).strip(), MetadataSource.DIRECTORY, 0.55)
                 release.set_field("album", match.group(2).strip(), MetadataSource.DIRECTORY, 0.55)
@@ -517,8 +540,12 @@ class MusicReleaseAnalyzer:
             if track.artist:
                 track_artists.add(track.artist.casefold())
 
+        shared_album_artists: set[str] = set(next(iter(album_artist_credits))) if album_artist_credits else set()
+        for credit in album_artist_credits:
+            shared_album_artists.intersection_update(credit)
+
         has_explicit_various_artists = any(credit in {"various artists", "various", "va", "v.a."} for artists in album_artist_credits for credit in artists)
-        has_stable_album_artist = len(album_artist_credits) == 1 and not has_explicit_various_artists
+        has_stable_album_artist = bool(shared_album_artists) and not has_explicit_various_artists
         # Without ALBUMARTIST at all, many unrelated track artists are the
         # best remaining signal.  Do not apply this fallback when an explicit,
         # stable album artist exists.
@@ -531,7 +558,7 @@ class MusicReleaseAnalyzer:
             value = "Soundtrack"
         elif re.search(r"\blive\b", album):
             value = "Live album"
-        elif explicit_compilation or has_explicit_various_artists or len(album_artist_credits) > 1 or inferred_from_tracks:
+        elif explicit_compilation or has_explicit_various_artists or (len(album_artist_credits) > 1 and not has_stable_album_artist) or inferred_from_tracks:
             value = "Compilation"
             # Orpheus uses the multiple-artist feature for actual Various
             # Artists/VA compilations.  Do not overwrite a stable album-artist
@@ -547,9 +574,12 @@ class MusicReleaseAnalyzer:
                             compilation_artists.append(artist)
                 if compilation_artists:
                     release.set_field("artists", compilation_artists, MetadataSource.INFERRED, 1.0, force=True)
-                    release.set_field("artist", " & ".join(compilation_artists), MetadataSource.INFERRED, 1.0, force=True)
-        elif count == 1:
+                    release.set_field("artist", "Various Artists", MetadataSource.INFERRED, 1.0, force=True)
+        elif count == 1 and (release.tracks[0].duration or 0) <= 20 * 60:
             value = "Single"
+        elif count == 1:
+            release.warnings.append("A long one-track release cannot be safely classified as an official single without external metadata.")
+            return
         elif "ep" in album.split() or 2 <= count <= 6:
             value = "EP"
         else:

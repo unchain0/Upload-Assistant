@@ -300,6 +300,57 @@ class UploadHelper:
             return False, meta
         tracker_class_factory = cast(Callable[..., Any], self.tracker_class_map[tracker_name])
         tracker_class = tracker_class_factory(config=self.config)
+
+        def _format_repack_result(entry: DupeEntry | str) -> str:
+            def terminal_safe(value: object) -> str:
+                without_osc = re.sub(r"\x1b\][^\x07]*(?:\x07|\x1b\\)", "", str(value))
+                return "".join(character for character in without_osc if character.isprintable())
+
+            if not isinstance(entry, dict):
+                return escape(terminal_safe(entry))
+            entry_map = cast(dict[str, object], entry)
+            name = terminal_safe(entry_map.get("name", ""))
+            raw_id = str(entry_map.get("id", ""))
+            torrent_id = int(raw_id) if raw_id.isascii() and raw_id.isdecimal() and len(raw_id) <= 20 else 0
+            torrent_url = str(getattr(tracker_class, "torrent_url", ""))
+            if torrent_id > 0 and torrent_url:
+                return format_terminal_link(name, f"{torrent_url}{torrent_id}", self.default_config)
+            return escape(name)
+
+        if getattr(tracker_class, "prefers_repack", False):
+            preferred_repack = meta.get(f"{tracker_name}_preferred_repack")
+            if preferred_repack:
+                logger.info(f"[bold red]{tracker_name}: a matching REPACK is already available. The non-REPACK release will be skipped.[/bold red]")
+                logger.info(f"[bold cyan]{_format_repack_result(cast(DupeEntry | str, preferred_repack))}[/bold cyan]")
+                return True, meta
+
+            replaced_release = meta.get(f"{tracker_name}_repack_replaces")
+            if replaced_release:
+                logger.info(f"[bold green]{tracker_name}: this REPACK supersedes an existing release and may be uploaded.[/bold green]")
+                logger.info(
+                    f"[yellow]After the upload succeeds, report the old release manually so staff can remove it:[/yellow] "
+                    f"{_format_repack_result(cast(DupeEntry | str, replaced_release))}"
+                )
+                replaced_map = cast(Mapping[str, object] | Meta, replaced_release) if isinstance(replaced_release, (Mapping, Meta)) else {}
+                raw_replaced_id = replaced_map.get("id")
+                replaced_id = str(raw_replaced_id) if raw_replaced_id is not None else ""
+                raw_replaced_link = replaced_map.get("link")
+                replaced_link = str(raw_replaced_link) if raw_replaced_link else ""
+                dupes_list = [
+                    entry
+                    for entry in dupes_list
+                    if not (
+                        isinstance(entry, (Mapping, Meta))
+                        and (
+                            (replaced_id and entry.get("id") is not None and str(entry.get("id")) == replaced_id)
+                            or (not replaced_id and replaced_link and str(entry.get("link") or "") == replaced_link)
+                            or (not replaced_id and not replaced_link and entry is replaced_release)
+                        )
+                    )
+                ]
+                if not dupes_list:
+                    return False, meta
+
         try:
             tracker_rename = await tracker_class.get_name(meta)
         except Exception:
@@ -312,7 +363,7 @@ class UploadHelper:
             elif isinstance(tracker_rename, str):
                 display_name = tracker_rename
 
-        if meta.dupe is False and meta.season_pack_exists and bool(getattr(tracker_class, "reject_episode_if_season_pack_exists", False)):
+        if meta.dupe is False and meta.season_pack_exists:
             pack_name = meta.season_pack_name or "matching season pack"
             logger.info(f"[bold red]{tracker_name}: {pack_name} already contains this episode. Skipping individual episode upload.[/bold red]")
             return True, meta
@@ -541,7 +592,8 @@ class UploadHelper:
             lines.append("[bold red]DEBUG: True - Will not actually upload![/bold red]")
             lines.append(f"Prep material saved to {meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}")
         lines.append("")
-        lines.append(("Title", f"{meta.title} ({meta.year})"))
+        display_title = f"{meta.title} ({meta.year})" if meta.year else meta.title
+        lines.append(("Title", display_title))
         lines.append(("Category", meta.category))
         edition = meta.edition
 
@@ -581,8 +633,8 @@ class UploadHelper:
             lines.append(("Cover", poster))
 
         elif meta.category == "GAME":
-            notes = meta.description_link or meta.description_file or ""
-            if notes:
+            notes = "Included" if meta.software_notes else meta.description_link or meta.description_file or ""
+            if notes and not meta.software_notes:
                 # don't leak links or file paths
                 notes = notes[:16] if notes.startswith("http") else f"./{Path(notes).name}"
             if meta.platform == "PC":

@@ -1,14 +1,27 @@
 import re
 import unicodedata
+from pathlib import Path
 from typing import Any, cast
 
 from src.book_prep import extract_first_author as _primary_name
+from src.book_prep import resolve_book_language
 from src.console import logger
 from src.meta import Meta
 from src.trackers.common import Common
 from src.trackers.UNIT3D import UNIT3D, ParamsList
 
 Config = dict[str, Any]
+
+
+def prepare_zenith_music_layout(meta: Meta) -> None:
+    raw_trackers = [meta.trackers] if isinstance(meta.trackers, str) else meta.trackers
+    trackers = {str(tracker).strip().upper() for tracker in raw_trackers if str(tracker).strip()}
+    if str(meta.category or "").upper() != "MUSIC" or "ZENITH" not in trackers:
+        return
+    meta.keep_folder = True
+    meta.rehash = True
+    meta.reuse_torrent_path = None
+    meta.base_reuse_torrent_path = None
 
 
 def _iso_639_2_code(iso3: str) -> str:
@@ -45,6 +58,56 @@ class Zenith(UNIT3D):
     banned_url = f"{base_url}/api/bannedReleaseGroups"
     supported_categories = ("TV", "MOVIE", "BOOK", "GAME", "MUSIC")
     tracker_urls = ("https://znth.cx",)
+    _ARCHIVE_EXTENSIONS: frozenset[str] = frozenset({
+        ".rar",
+        ".r00",
+        ".r01",
+        ".r02",
+        ".r03",
+        ".r04",
+        ".r05",
+        ".r06",
+        ".r07",
+        ".r08",
+        ".r09",
+        ".zip",
+        ".7z",
+    })
+    _KNOWN_VIDEO_EXTENSIONS: frozenset[str] = frozenset({".mkv", ".mp4", ".avi", ".mov", ".m4v", ".mpg", ".mpeg", ".m2ts", ".ts", ".wmv", ".flv"})
+    _VIDEO_EXTENSIONS: frozenset[str] = frozenset({".mkv", ".mp4", ".ts", ".ps", ".mpg"})
+    _VIDEO_RESOLUTIONS: tuple[str, ...] = ("480i", "480p", "576i", "576p", "720p", "1080i", "1080p", "2160p", "4320p", "360p")
+    _AUDIO_TRACK_PATTERN: re.Pattern[str] = re.compile(
+        r"^(?:\d{1,3}(?:-\d{1,2})?\.\s+.+|\d{1,3}(?:-\d{1,2})?\s+-\s+.+|\d{1,3}(?:-\d{1,2})?-(?!-).+|.+-\d{1,3}(?:-\d{1,2})?-(?!-).+)$"
+    )
+    _VIDEO_SOURCE_HINTS: tuple[str, ...] = (
+        "WEB-DL",
+        "WEBRIP",
+        "HDTV",
+        "UHDTV",
+        "BluRay",
+        "Blu-ray",
+        "UHD Blu-ray",
+        "WEB",
+        "AMZN",
+        "NF",
+        "ATVP",
+        "HMAX",
+    )
+    _VIDEO_CODEC_HINTS: tuple[str, ...] = ("H.264", "H.265", "XviD", "x264", "x265", "AV1", "VC-1", "MPEG-2", "MPEG2", "VP9", "HEVC")
+    _VIDEO_AUDIO_CODEC_HINTS: tuple[str, ...] = ("DD", "DD+", "AAC", "AC3", "DTS", "DTS-HD", "TrueHD", "FLAC", "OPUS", "ALAC")
+    _TV_ENDED_STATUSES: frozenset[str] = frozenset({"ended", "canceled", "cancelled", "finished", "completed"})
+    _TV_ONGOING_STATUSES: frozenset[str] = frozenset({"returning", "continuing", "in production", "upcoming", "ongoing"})
+    _VIDEO_CHANNEL_HINTS: tuple[str, ...] = (
+        "1.0",
+        "2.0",
+        "3.0",
+        "4.0",
+        "5.1",
+        "6.1",
+        "7.1",
+        "9.1",
+    )
+    _BANNED_BOOK_WORKS: tuple[str, ...] = ("FOUR AGAINST DARKNESS EXPANDED EDITION",)
 
     _banned_authors_raw = (
         "J.R.R. Tolkien",
@@ -151,12 +214,336 @@ class Zenith(UNIT3D):
                     return True
         return False
 
+    @staticmethod
+    def _is_path_like_file(filename: Any) -> bool:
+        return bool(str(filename).strip())
+
+    @classmethod
+    def _collect_video_paths(cls, filelist: list[Any]) -> list[Path]:
+        return [
+            Path(str(item))
+            for item in filelist
+            if cls._is_path_like_file(item) and Path(str(item)).suffix.lower() in cls._KNOWN_VIDEO_EXTENSIONS
+        ]
+
+    @staticmethod
+    def _renamed_tagged_video_file(video_paths: list[Path], tag: str | None) -> str:
+        group = str(tag or "").lstrip("-").strip().casefold()
+        if not group:
+            return ""
+        return next(
+            (path.name for path in video_paths if any(char.isspace() for char in path.stem) and path.stem.casefold().endswith(f"-{group}")),
+            "",
+        )
+
+    @staticmethod
+    def _contains_archive_file(filelist: list[Any]) -> str:
+        for item in filelist:
+            path = Path(str(item))
+            if path.suffix.lower() in Zenith._ARCHIVE_EXTENSIONS:
+                return path.name
+        return ""
+
+    @staticmethod
+    def _disc_is_supported(meta: Meta) -> bool:
+        disctype = str(meta.is_disc or "").upper().strip().replace(" ", "").replace("-", "")
+        if not disctype:
+            return True
+        return disctype in {"BDMV", "3DBDMV", "VIDEO_TS"}
+
+    @staticmethod
+    def _video_extensions_for_type(meta: Meta) -> set[str]:
+        media_type = str(meta.type or "").upper().strip()
+        if media_type in {"HDTV", "UHDTV"}:
+            encode = str(meta.video_encode or "").casefold().replace(".", "")
+            if encode in {"x264", "x265", "xvid"}:
+                return {".mkv", ".mp4", ".avi"}
+            return {".ts"}
+        if media_type == "SDTV":
+            return {".ps", ".mpg"}
+        if media_type == "DVDRIP":
+            return {".avi", ".mkv", ".mp4"}
+        return {".mkv", ".mp4"}
+
+    @staticmethod
+    def _contains_disallowed_video_file(filelist: list[Any], allowed: set[str]) -> str:
+        for item in filelist:
+            path = Path(str(item))
+            suffix = path.suffix.lower()
+            if suffix not in Zenith._KNOWN_VIDEO_EXTENSIONS:
+                continue
+            if suffix not in allowed:
+                return path.name
+        return ""
+
+    @classmethod
+    def _has_video_resolution(cls, title: str) -> bool:
+        normalized = str(title).replace(".", " ").upper().replace("HD", " HD ")
+        return any(f" {res.upper()} " in f" {normalized} " for res in cls._VIDEO_RESOLUTIONS)
+
+    @classmethod
+    def _has_tv_pattern(cls, title: str) -> bool:
+        return bool(re.search(r"\bS\d{1,2}(?:E\d{1,3}(?:E\d{1,3})?|\s)?\b", str(title or ""), re.IGNORECASE))
+
+    @classmethod
+    def _contains_source_or_type_token(cls, title: str) -> bool:
+        haystack = str(title or "").upper()
+        tokens = cls._VIDEO_SOURCE_HINTS + cls._VIDEO_CODEC_HINTS + cls._VIDEO_AUDIO_CODEC_HINTS + cls._VIDEO_CHANNEL_HINTS
+        return any(re.search(rf"(?<![A-Z0-9]){re.escape(token.upper())}(?![A-Z0-9])", haystack) for token in tokens)
+
+    @staticmethod
+    def _has_valid_music_path_format(file_path: Path) -> bool:
+        return len(str(file_path)) <= 180 and not any(part.startswith(" ") for part in str(file_path).replace("\\", "/").split("/"))
+
+    @staticmethod
+    def _normalized_music_component(value: Any) -> str:
+        normalized = unicodedata.normalize("NFKC", str(value or "")).casefold()
+        return " ".join("".join(char if char.isalnum() else " " for char in normalized).split())
+
+    @classmethod
+    def _music_release_error(cls, meta: Meta, filelist: list[Any]) -> str:
+        release = cast(dict[str, Any], meta.music_release) if isinstance(meta.music_release, dict) else {}
+        artist = cls._music_field(release, "artist", meta.artist)
+        album = cls._music_field(release, "album", meta.title)
+        root = Path(str(meta.path or ""))
+        root_name = root.name
+        normalized_root = cls._normalized_music_component(root_name)
+
+        if not root_name or root.suffix.lower() in {".flac", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".alac"}:
+            return "music uploads must be inside a directory"
+        artist_values = [artist]
+        artists = cls._music_field(release, "artists", [])
+        if isinstance(artists, list):
+            artist_values.extend(artists)
+        conflicts_raw = release.get("conflicts")
+        conflicts = cast(dict[str, Any], conflicts_raw) if isinstance(conflicts_raw, dict) else {}
+        artist_conflicts = conflicts.get("artist")
+        if isinstance(artist_conflicts, list):
+            artist_values.extend(artist_conflicts)
+        normalized_artists = {cls._normalized_music_component(value) for value in artist_values if cls._normalized_music_component(value)}
+        artist_matches = any(value in normalized_root for value in normalized_artists)
+        artist_matches = artist_matches or ("various artists" in normalized_artists and "va" in normalized_root.split())
+        if not normalized_artists or not artist_matches:
+            return "music directory must contain the artist name"
+
+        normalized_album = cls._normalized_music_component(album)
+        if not normalized_album or normalized_album not in normalized_root:
+            return "music directory must contain the album name"
+
+        tracks_raw = release.get("tracks")
+        tracks = cast(list[Any], tracks_raw) if isinstance(tracks_raw, list) else []
+        if not tracks:
+            return "music metadata does not contain any audio tracks"
+        audio_suffixes = {".flac", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".alac", ".pcm"}
+        audio_file_count = sum(Path(str(item)).suffix.lower() in audio_suffixes for item in filelist)
+        if len(tracks) != audio_file_count:
+            return f"music metadata contains {len(tracks)} tracks for {audio_file_count} audio files"
+        for index, raw_track in enumerate(tracks, start=1):
+            if not isinstance(raw_track, dict):
+                return f"music track {index} metadata is invalid"
+            track = cast(dict[str, Any], raw_track)
+            missing = [
+                label
+                for label, value in (
+                    ("Artist", track.get("artist")),
+                    ("Album", track.get("album")),
+                    ("Title", track.get("title")),
+                    ("Track Number", track.get("track_number")),
+                )
+                if value in (None, "", 0)
+            ]
+            if missing:
+                filename = Path(str(track.get("relative_path") or track.get("path") or f"track {index}")).name
+                return f"{filename} is missing required tags: {', '.join(missing)}"
+        return ""
+
+    @classmethod
+    def _validate_music_track_naming(cls, filelist: list[Any], release_root: str | Path | None = None, *, enforce_filenames: bool = True) -> str:
+        audio_suffixes = {".flac", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".alac", ".pcm", ".m4b"}
+        audio_paths = [Path(str(item)) for item in filelist if Path(str(item)).suffix.lower() in audio_suffixes]
+        root = Path(release_root) if release_root else None
+        if root and root.is_file():
+            root = root.parent
+        for source_path in audio_paths:
+            path = source_path
+            if root and source_path.is_absolute():
+                try:
+                    path = source_path.relative_to(root)
+                except ValueError:
+                    path = Path(source_path.name)
+            torrent_path = path
+            if root and (not path.parts or path.parts[0] != root.name):
+                torrent_path = Path(root.name) / path
+            if not cls._has_valid_music_path_format(torrent_path):
+                return path.name
+            if not enforce_filenames:
+                continue
+
+            filename = path.name
+            stem = path.stem
+            if cls._AUDIO_TRACK_PATTERN.match(stem):
+                continue
+            if len(audio_paths) == 1 and not stem.startswith(".") and any(ch.isalpha() or ch.isdigit() for ch in stem):
+                continue
+            if " " not in stem or stem.startswith(".") or "." in stem:
+                return filename
+
+            if not any(ch.isalpha() or ch.isdigit() for ch in stem):
+                return filename
+
+            if len(audio_paths) > 1 and not cls._AUDIO_TRACK_PATTERN.match(stem):
+                return filename
+
+        return ""
+
+    @staticmethod
+    def _is_valid_language3(meta: Meta) -> bool:
+        code = _iso_639_2_code(meta.book_language_iso)
+        return bool(code and code.isalpha() and len(code) == 3)
+
+    @classmethod
+    def _is_banned_book_work(cls, meta: Meta) -> bool:
+        title = (meta.title or meta.name or "").upper()
+        author = (meta.author or "").upper()
+        return any(work in title or work in author for work in cls._BANNED_BOOK_WORKS)
+
+    @staticmethod
+    def _audiobook_layout_error(meta: Meta, filelist: list[Any], expected_name: str) -> str:
+        root = Path(str(meta.path or ""))
+        if root.name != expected_name:
+            return f"audiobook directory must be named '{expected_name}'"
+
+        audio_extensions = {".m4b", ".mp3", ".flac"}
+        audio_paths = [Path(str(item)) for item in filelist if Path(str(item)).suffix.lower() in audio_extensions]
+        if not audio_paths:
+            return "audiobook does not contain a supported audio file"
+
+        if len(audio_paths) == 1:
+            if audio_paths[0].stem != expected_name:
+                return f"single audiobook file must be named '{expected_name}{audio_paths[0].suffix.lower()}'"
+            return ""
+
+        if any(path.suffix.lower() == ".m4b" for path in audio_paths):
+            return "M4B audiobooks must contain one file unless the retail source is split into Disc folders"
+
+        title_year = f"{meta.title} ({meta.year})"
+        track_pattern = re.compile(rf"^\d+\.\s+.+\s+-\s+{re.escape(title_year)}$", re.IGNORECASE)
+        invalid = next((path.name for path in audio_paths if not track_pattern.fullmatch(path.stem)), "")
+        return f"multi-file audiobook track has invalid name: {invalid}" if invalid else ""
+
+    @staticmethod
+    def _audiobook_language_error(meta: Meta) -> str:
+        media = cast(dict[str, Any], meta.mediainfo.get("media", {}))
+        tracks = cast(list[Any], media.get("track", []))
+        audio_tracks: list[dict[str, Any]] = []
+        for value in tracks:
+            if not isinstance(value, dict):
+                continue
+            track = cast(dict[str, Any], value)
+            if track.get("@type") == "Audio":
+                audio_tracks.append(track)
+        if not audio_tracks:
+            return "MediaInfo does not contain an audio track"
+
+        expected = _iso_639_2_code(meta.book_language_iso)
+        for track in audio_tracks:
+            raw_language = str(track.get("Language") or track.get("language") or "").strip()
+            _language, actual = resolve_book_language(raw_language)
+            if not actual:
+                return "audio track is missing the required language metadata"
+            if actual.upper() != expected:
+                return f"audio track language is {actual.upper()}, but the audiobook metadata is {expected}"
+        return ""
+
     async def get_additional_checks(self, meta: Meta) -> bool:
-        if meta.category == "BOOK" and not _is_misc(meta):
+        category = str(meta.category or "").upper()
+        if meta.software:
+            logger.info(f"{self.tracker}: [yellow]Software uploads are not mapped to a dedicated tracker category. Skipping upload.[/yellow]")
+            return False
+        raw_filelist = [] if meta.filelist is None else meta.filelist
+        if not isinstance(raw_filelist, (list, tuple, set)):
+            logger.info(f"{self.tracker}: [bold red]File list metadata is invalid.[/bold red]")
+            return False
+        filelist = [item for item in raw_filelist if self._is_path_like_file(item)]
+
+        if category in {"MOVIE", "TV"}:
+            video_paths = self._collect_video_paths(filelist)
+            if not meta.is_disc:
+                renamed_file = self._renamed_tagged_video_file(video_paths, meta.tag)
+                if renamed_file:
+                    logger.info(
+                        f"{self.tracker}: [bold red]Tagged release file appears to have been renamed with spaces: {renamed_file}. "
+                        "Restore the original filename before uploading.[/bold red]"
+                    )
+                    return False
+            try:
+                screenshot_count = int(meta.screens)
+            except (TypeError, ValueError, OverflowError):
+                screenshot_count = 0
+            if screenshot_count < 3:
+                logger.info(f"{self.tracker}: [bold red]Video uploads require at least 3 screenshots on {self.tracker}.[/bold red]")
+                return False
+
+            if meta.is_disc and not self._disc_is_supported(meta):
+                logger.info(f"{self.tracker}: [bold red]Full-disc uploads on {self.tracker} must use BDMV or VIDEO_TS structures.[/bold red]")
+                return False
+
+            if not meta.is_disc:
+                video_extensions = self._video_extensions_for_type(meta)
+                disallowed_container_file = self._contains_disallowed_video_file(video_paths, video_extensions)
+                if disallowed_container_file:
+                    logger.info(
+                        f"{self.tracker}: [bold red]Video container '{Path(disallowed_container_file).suffix}' is not allowed for this release type on {self.tracker}.[/bold red]"
+                    )
+                    return False
+
+            archive_file = self._contains_archive_file(filelist)
+            if archive_file:
+                logger.info(f"{self.tracker}: [bold red]Archive or multipart files are not allowed. Found: {archive_file}[/bold red]")
+                return False
+
+            if category == "TV":
+                seasons = self.common.extract_tv_seasons(filelist)
+                if len(seasons) > 1:
+                    logger.info(f"{self.tracker}: [bold red]TV uploads must target a single season on {self.tracker}.[/bold red]")
+                    return False
+
+                if meta.tv_pack:
+                    tv_pack_ended = self.common.is_tv_series_ended(meta, self._TV_ENDED_STATUSES, self._TV_ONGOING_STATUSES)
+                    if tv_pack_ended is False:
+                        logger.info(f"{self.tracker}: [bold red]TV season packs are restricted to ended series on {self.tracker}.[/bold red]")
+                        return False
+                    if tv_pack_ended is None:
+                        logger.info(f"{self.tracker}: [yellow]Unable to confirm whether this TV series has ended.[/yellow]")
+                        if meta.unattended:
+                            if not meta.unattended_confirm:
+                                return False
+                        elif not await self.common.prompt_user_for_confirmation("Do you want to upload this TV pack anyway?", meta):
+                            return False
+                elif self.common.count_tv_episodes(filelist) > 1:
+                    logger.info(f"{self.tracker}: [bold red]Non-pack TV uploads should contain a single episode on {self.tracker}.[/bold red]")
+                    return False
+                elif self.common.is_tv_series_ended(meta, self._TV_ENDED_STATUSES, self._TV_ONGOING_STATUSES) is True:
+                    logger.info(f"{self.tracker}: [bold red]Completed TV seasons must be uploaded as season packs on {self.tracker}.[/bold red]")
+                    return False
+
+        if category == "BOOK" and not _is_misc(meta):
+            book_format = _book_format(meta)
+            defer_to_zentag = bool(
+                meta.get("defer_zentag_validation", False)
+                and not meta.get("zentag_prepared", False)
+            )
+            if not meta.isdir and not defer_to_zentag:
+                logger.info(f"{self.tracker}: [bold red]Books and audiobooks must be uploaded inside a directory. Use zentag to create a compliant copy.[/bold red]")
+                return False
+            if len(filelist) == 1 and not meta.keep_folder and not defer_to_zentag:
+                logger.info(
+                    f"{self.tracker}: [bold red]Single-file book torrents must retain their directory. Re-run with --keep-folder after preparing the release with zentag.[/bold red]"
+                )
+                return False
             if not meta.isbn and not meta.asin:
                 logger.info(f"{self.tracker}: [bold red]ISBN or ASIN is required for ebooks and audiobooks. Skipping upload...[/bold red]")
                 return False
-            book_format = _book_format(meta)
             if meta.audiobook:
                 if not meta.narrator:
                     logger.info(f"{self.tracker}: [bold red]Narrator is required for audiobooks. Skipping upload...[/bold red]")
@@ -164,6 +551,16 @@ class Zenith(UNIT3D):
                 if book_format not in ("MP3", "FLAC", "M4B"):
                     logger.info(f"{self.tracker}: [bold red]Audiobooks must be MP3, FLAC, or M4B. Skipping upload...[/bold red]")
                     return False
+                if not defer_to_zentag:
+                    expected_name = (await self.get_name(meta))["name"]
+                    layout_error = self._audiobook_layout_error(meta, filelist, expected_name)
+                    if layout_error:
+                        logger.info(f"{self.tracker}: [bold red]Invalid audiobook layout: {layout_error}. Use zentag transform before uploading.[/bold red]")
+                        return False
+                    language_error = self._audiobook_language_error(meta)
+                    if language_error:
+                        logger.info(f"{self.tracker}: [bold red]Invalid audiobook metadata: {language_error}. Use zentag transform before uploading.[/bold red]")
+                        return False
             elif book_format not in ("EPUB", "PDF", "MOBI", "AZW3", "DJVU"):
                 logger.info(f"{self.tracker}: [bold red]Ebooks must be EPUB, PDF, MOBI, AZW3, or DJVU. Skipping upload...[/bold red]")
                 return False
@@ -172,7 +569,45 @@ class Zenith(UNIT3D):
                 logger.info(f"{self.tracker}: [bold red]Author '{meta.author}' is banned on {self.tracker}. Skipping upload...[/bold red]")
                 return False
 
-        return self.common.check_and_confirm_adult_media_upload(meta, self.tracker)
+            if self._is_banned_book_work(meta):
+                logger.info(f"{self.tracker}: [bold red]Title/author '{meta.title or meta.name}' is blocked by banned works list on {self.tracker}. Skipping upload...[/bold red]")
+                return False
+
+            if not self._is_valid_language3(meta):
+                logger.info(f"{self.tracker}: [bold red]Books and audiobooks require a valid 3-letter language code. Skipping upload...[/bold red]")
+                return False
+
+        if category == "MUSIC":
+            release_error = self._music_release_error(meta, filelist)
+            if release_error:
+                logger.info(f"{self.tracker}: [bold red]{release_error}. Skipping upload...[/bold red]")
+                return False
+            invalid_track = self._validate_music_track_naming(filelist, meta.path, enforce_filenames=meta.personalrelease)
+            if invalid_track:
+                reason = "filename structure" if meta.personalrelease else "path structure"
+                logger.info(f"{self.tracker}: [bold red]Invalid music {reason} for {invalid_track}. Skipping upload...[/bold red]")
+                return False
+
+        if category in {"MOVIE", "TV"}:
+            # Enforce title format tokens used by Zenith naming guide.
+            release_name = str(meta.name or "")
+            if not self._has_video_resolution(release_name):
+                logger.info(f"{self.tracker}: [bold red]Release title does not include a supported resolution on {self.tracker}. Skipping upload...[/bold red]")
+                return False
+
+            if category == "TV":
+                if not self._has_tv_pattern(release_name) and not self._has_tv_pattern(meta.episode_title):
+                    logger.info(f"{self.tracker}: [bold red]TV release title is missing Sxx(Eyy) season/episode token on {self.tracker}. Skipping upload...[/bold red]")
+                    return False
+            elif re.search(r"\bS\d{1,2}E\d{1,3}\b", release_name, re.IGNORECASE):
+                logger.info(f"{self.tracker}: [bold red]Movie title appears to contain TV episode tokens on {self.tracker}. Skipping upload...[/bold red]")
+                return False
+
+            if not self._contains_source_or_type_token(release_name):
+                logger.info(f"{self.tracker}: [bold red]Release title is missing source/type metadata required by {self.tracker} naming rules.[/bold red]")
+                return False
+
+        return await self.common.check_and_confirm_adult_media_upload(meta, self.tracker)
 
     async def get_search_urls(self, meta: Meta, request_params: ParamsList) -> list[tuple[str, ParamsList, bool]]:
         urls = await super().get_search_urls(meta, request_params)
@@ -337,7 +772,7 @@ class Zenith(UNIT3D):
     def _music_sample_rate(value: Any) -> str:
         try:
             return f"{float(value) / 1000:g}kHz"
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             return ""
 
     @classmethod
@@ -375,7 +810,7 @@ class Zenith(UNIT3D):
                 bitrate_kbps = round(float(bitrate) / 1000)
                 bitrate_mode = str(first_track.get("bitrate_mode") or "").upper().strip()
                 format_parts.append(f"{bitrate_kbps} {bitrate_mode}".strip())
-            except TypeError, ValueError:
+            except (TypeError, ValueError):
                 pass
         release_type = str(cls._music_field(release, "release_type", "")).casefold()
         if release_type == "single":

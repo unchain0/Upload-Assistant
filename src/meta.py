@@ -16,6 +16,7 @@ class Meta:
     aither_trumpable: list[Any] | None = field(default_factory=list)
     aither: str | None = None
     aka: str = ""
+    allow_spaces: bool = False
     anime: bool = False
     anon: bool = False
     ant_user_tags: bool | None = None
@@ -159,6 +160,8 @@ class Meta:
     game_subcategory: str = ""
     game_system: str = ""
     game_version: str = ""
+    software: bool = False
+    software_notes: str = ""
     genre_ids: int | None = None
     genre: str = ""
     genres: list[str] = field(default_factory=list)
@@ -307,12 +310,17 @@ class Meta:
     original_tvdb: int = 0
     original_tvmaze: int = 0
     orpheus: str | int | None = None
-    overview_meta: str = ""
+    overview_meta: str | None = ""
     overview: str = ""
     part: str = ""
+    page_count: int | None = None
     path_to_menu_screenshots: str = ""
     path: str | None = None
+    paths_from_stdin: bool = False
     personalrelease: bool = False
+    podcast_banner: str = ""
+    podcast_cover: str = ""
+    podcast_title: str = ""
     piece_size_constraints_enabled: str | bool = False
     platform: str = ""
     potential_missing: list[Any] = field(default_factory=list)
@@ -385,6 +393,7 @@ class Meta:
     season_pack_link: str | None = None
     season_pack_name: str = ""
     season: int | str | None = 0
+    series_status: str = ""
     secondary_title: str | None = None
     service_longname: str = ""
     service: str | None = None
@@ -471,6 +480,8 @@ class Meta:
     ulcx: str | int | None = None
     unattended_audio_skip: bool = False
     unattended_confirm: bool = False
+    unwalled_category: str = ""
+    unwalled_type: str = ""
     unattended_subtitle_skip: bool = False
     unattended: bool = False
     unit3d: bool | None = None

@@ -15,6 +15,33 @@ from src.exceptions import NoAudioMediaError
 from src.meta import Meta
 
 
+def _declared_resolution_is_compatible(declared: Any, res: str, width: str | int, scan: str) -> bool:
+    dimensions = {
+        "480p": (854, 480),
+        "480i": (854, 480),
+        "576p": (1024, 576),
+        "576i": (1024, 576),
+        "720p": (1280, 720),
+        "1080p": (1920, 1080),
+        "1080i": (1920, 1080),
+        "1440p": (2560, 1440),
+        "2160p": (3840, 2160),
+        "4320p": (7680, 4320),
+        "8640p": (15360, 8640),
+    }
+    declared_text = str(declared or "").lower()
+    nominal = dimensions.get(declared_text)
+    if nominal is None or not declared_text.endswith(scan):
+        return False
+    try:
+        actual_width = int(width)
+        actual_height = int(res.rsplit("x", 1)[1][:-1])
+    except (IndexError, TypeError, ValueError):
+        return False
+    nominal_width, nominal_height = nominal
+    return nominal_height * 0.70 <= actual_height <= nominal_height * 1.05 and actual_width <= nominal_width * 1.25
+
+
 def validate_file_path(file_path: str) -> str:
     if not file_path:
         raise ValueError("File path cannot be empty")
@@ -121,6 +148,10 @@ async def mi_resolution(
         "4320p": "4320p",
         "OTHER": "OTHER",
     }
+    declared_resolution = guess.get("screen_size") if isinstance(guess, dict) else None
+    if _declared_resolution_is_compatible(declared_resolution, res, width, scan):
+        return str(declared_resolution).lower()
+
     resolution = res_map.get(res)
     if resolution is None:
         width_map = {
@@ -164,6 +195,9 @@ async def export_info(
     base_dir: str,
     is_dvd: bool = False,
 ) -> dict[str, Any]:
+    async def parse_mediainfo(**kwargs: Any) -> Any:
+        return await asyncio.to_thread(MediaInfo.parse, video, **kwargs)
+
     def filter_mediainfo(data: dict[str, Any]) -> dict[str, Any]:
         media = data.get("media")
         if not isinstance(media, dict):
@@ -443,20 +477,20 @@ async def export_info(
 
         except subprocess.TimeoutExpired:
             logger.info("[bold red]Specialized MediaInfo timed out (30s) - falling back to standard MediaInfo[/bold red]")
-            media_info = MediaInfo.parse(video, output="STRING", full=False)
+            media_info = await parse_mediainfo(output="STRING", full=False)
         except ValueError as e:
             logger.info(f"[bold red]Path validation error: {e}[/bold red]")
             logger.info("[bold yellow]Falling back to standard MediaInfo for text...")
-            media_info = MediaInfo.parse(video, output="STRING", full=False)
+            media_info = await parse_mediainfo(output="STRING", full=False)
         except (subprocess.CalledProcessError, Exception) as e:
             logger.info(f"[bold red]Error getting text from specialized MediaInfo: {e}")
             if result is not None:
                 logger.debug(f"[red]Subprocess stderr: {result.stderr}[/red]")
                 logger.debug(f"[red]Subprocess returncode: {result.returncode}[/red]")
             logger.info("[bold yellow]Falling back to standard MediaInfo for text...")
-            media_info = MediaInfo.parse(video, output="STRING", full=False)
+            media_info = await parse_mediainfo(output="STRING", full=False)
     else:
-        media_info = MediaInfo.parse(video, output="STRING", full=False)
+        media_info = await parse_mediainfo(output="STRING", full=False)
 
     # Filter out unwanted lines from media info regardless of type
     media_info_str = media_info
@@ -489,11 +523,11 @@ async def export_info(
         except ValueError as e:
             logger.info(f"[bold red]Path validation error: {e}[/bold red]")
             logger.info("[bold yellow]Falling back to standard MediaInfo for JSON...")
-            media_info_json = MediaInfo.parse(video, output="JSON")
+            media_info_json = await parse_mediainfo(output="JSON")
             media_info_dict = json.loads(media_info_json)
         except subprocess.TimeoutExpired:
             logger.info("[bold red]Specialized MediaInfo timed out (30s) - falling back to standard MediaInfo[/bold red]")
-            media_info_json = MediaInfo.parse(video, output="JSON")
+            media_info_json = await parse_mediainfo(output="JSON")
             media_info_dict = json.loads(media_info_json)
         except (subprocess.CalledProcessError, json.JSONDecodeError, Exception) as e:
             logger.info(f"[bold red]Error getting JSON from specialized MediaInfo: {e}")
@@ -503,11 +537,11 @@ async def export_info(
                 if result2.stdout:
                     logger.debug(f"[red]Subprocess stdout preview: {result2.stdout[:200]}...[/red]")
             logger.info("[bold yellow]Falling back to standard MediaInfo for JSON...[/bold yellow]")
-            media_info_json = MediaInfo.parse(video, output="JSON")
+            media_info_json = await parse_mediainfo(output="JSON")
             media_info_dict = json.loads(media_info_json)
     else:
         # Use standard MediaInfo library for non-DVD or when specialized CLI not available
-        media_info_json = MediaInfo.parse(video, output="JSON")
+        media_info_json = await parse_mediainfo(output="JSON")
         media_info_dict = json.loads(media_info_json)
 
     filtered_info = filter_mediainfo(media_info_dict)

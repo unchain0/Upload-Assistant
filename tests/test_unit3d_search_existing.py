@@ -44,12 +44,13 @@ def test_tmdb_duplicate_search_omits_category_filter(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr("src.trackers.UNIT3D.httpx.AsyncClient", factory)
 
     tracker = tracker_class({"TRACKERS": {tracker_class.tracker: {"api_key": "test-key"}}})
-    meta = Meta(category="TV", tmdb=123, season="S01", resolution="1080p", type="WEBDL")
+    meta = Meta(category="TV", title="Example Show", tmdb=123, season="S01", resolution="1080p", type="WEBDL")
 
     asyncio.run(tracker.search_existing(meta))
 
     assert len(requests) == 1  # noqa: S101
     assert ("tmdbId", "123") in requests[0]  # noqa: S101
+    assert ("name", "Example Show S01") in requests[0]  # noqa: S101
     assert not any(key == "categories[]" for key, _value in requests[0])  # noqa: S101
 
 

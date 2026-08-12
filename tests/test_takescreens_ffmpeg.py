@@ -9,6 +9,7 @@ import ffmpeg
 import pytest
 
 from src import takescreens
+from src.meta import Meta
 
 
 async def _stop_process(process: asyncio.subprocess.Process) -> None:
@@ -100,3 +101,28 @@ async def test_cancelling_run_ffmpeg_terminates_only_its_owned_process(tmp_path,
         for process in owned_processes:
             await _stop_process(process)
         await _stop_process(unrelated)
+
+
+@pytest.mark.asyncio
+async def test_debug_capture_disables_stdin_and_preserves_ffmpeg_errors(tmp_path, monkeypatch):
+    source = tmp_path / "source.mp4"
+    output = tmp_path / "frame.png"
+    source.write_bytes(b"video")
+    commands: list[list[str]] = []
+
+    async def fake_run(command):
+        commands.append(takescreens.compile_ffmpeg_command(command))
+        output.write_bytes(b"png")
+        return 0, b"", b""
+
+    monkeypatch.setattr(takescreens, "run_ffmpeg", fake_run)
+    monkeypatch.setattr(takescreens, "use_libplacebo", False)
+    monkeypatch.setattr(takescreens, "ffmpeg_limit", False)
+
+    result = await takescreens.capture_screenshot(
+        (0, str(source), 1.0, str(output), 1920, 1080, 1.0, 1.0, "quiet", False, Meta(debug=True))
+    )
+
+    assert result == (0, str(output))
+    assert "-nostdin" in commands[0]
+    assert commands[0][commands[0].index("-loglevel") + 1] == "error"

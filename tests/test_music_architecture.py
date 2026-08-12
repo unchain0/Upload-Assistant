@@ -283,7 +283,7 @@ def test_compilation_uses_multiple_artists_not_various_artists_literal():
 
     assert release.get("release_type") == "Compilation"
     assert release.get("artists") == ["Artist One", "Artist Two", "Artist Three", "Artist Four"]
-    assert release.get("artist") != "Various Artists"
+    assert release.get("artist") == "Various Artists"
 
 
 def test_featured_track_artists_do_not_turn_a_stable_album_artist_into_a_compilation():
@@ -768,7 +768,126 @@ def test_directory_derivation_strips_only_matched_bracketed_metadata(tmp_path):
     MusicReleaseAnalyzer._derive_from_directory(release, "Artist - Album (2008) [FLAC] {Label CATNO CD}")
 
     assert release.get("artist") == "Artist"
-    assert release.get("album") == "Album (2008)"
+    assert release.get("album") == "Album"
+    assert release.get("year") == "2008"
+
+
+def test_lidarr_directory_derivation_removes_technical_suffix_and_uuid(tmp_path):
+    release = MusicRelease(root=str(tmp_path))
+
+    MusicReleaseAnalyzer._derive_from_directory(
+        release,
+        "Travis Scott - K-POP (2023) - 16bit 44.1kHz Digital Media - 83321e07-f832-4e71-901b-2784dc4ea0e5",
+    )
+
+    assert release.get("artist") == "Travis Scott"
+    assert release.get("album") == "K-POP"
+    assert release.get("year") == "2023"
+
+
+def test_single_file_dated_recording_uses_stem_and_title_as_album(tmp_path, monkeypatch):
+    source = tmp_path / "The Bruenigs - 2026-08-10 - Summers End.mp3"
+    source.write_bytes(b"audio")
+    track = AudioTrack(
+        path=str(source),
+        relative_path=source.name,
+        format="MP3",
+        codec="MP3",
+        artist="The Bruenigs",
+        title="Summers End",
+        date="2026",
+        duration=3334,
+    )
+
+    def read_track(*_args):
+        return track
+
+    monkeypatch.setattr(MusicReleaseAnalyzer, "_read_track", read_track)
+
+    release = MusicReleaseAnalyzer().analyze(source)
+
+    assert release.get("artist") == "The Bruenigs"
+    assert release.get("album") == "Summers End"
+    assert release.get("year") == "2026"
+    assert not release.get("release_type")
+    assert any("long one-track release" in warning for warning in release.warnings)
+
+
+def test_common_album_artist_avoids_feature_conflict_and_compilation(tmp_path):
+    release = MusicRelease(root=str(tmp_path))
+    for index, album_artist in enumerate(("Kanye West", "Kanye West & Featured Artist"), start=1):
+        release.tracks.append(
+            AudioTrack(
+                path=f"{index}.flac",
+                relative_path=f"{index}.flac",
+                format="FLAC",
+                codec="FLAC",
+                artist=album_artist,
+                album_artist=album_artist,
+                album="Yeezus",
+                title=f"Track {index}",
+                track_number=index,
+                tags={"albumartist": [album_artist]},
+            )
+        )
+
+    MusicReleaseAnalyzer()._derive_release_fields(release, "Ye - Yeezus (2013) - 16bit 44.1kHz CD")
+
+    assert release.get("artist") == "Kanye West"
+    assert release.get("release_type") == "EP"
+    assert "artist" not in release.conflicts
+
+
+def test_featured_album_artist_text_keeps_common_primary_artist(tmp_path):
+    release = MusicRelease(root=str(tmp_path))
+    for index, album_artist in enumerate(("Kanye West", "Kanye West feat. Chance the Rapper"), start=1):
+        release.tracks.append(
+            AudioTrack(
+                path=f"{index}.flac",
+                relative_path=f"{index}.flac",
+                format="FLAC",
+                codec="FLAC",
+                artist=album_artist,
+                album_artist=album_artist,
+                album="The Life of Pablo",
+                title=f"Track {index}",
+                track_number=index,
+                tags={"albumartist": [album_artist]},
+            )
+        )
+
+    MusicReleaseAnalyzer()._derive_release_fields(release, "Ye - The Life of Pablo (2016) - 16bit 44.1kHz Digital Media")
+
+    assert release.get("artist") == "Kanye West"
+    assert release.get("release_type") == "EP"
+    assert "artist" not in release.conflicts
+
+
+def test_conflicting_file_tag_albums_remain_authoritative_over_directory(tmp_path):
+    release = MusicRelease(root=str(tmp_path))
+    for index, album in enumerate(("K-POP", "K-POP (Instrumental)"), start=1):
+        release.tracks.append(
+            AudioTrack(
+                path=f"{index}.flac",
+                relative_path=f"{index}.flac",
+                format="FLAC",
+                codec="FLAC",
+                artist="Travis Scott",
+                album_artist="Travis Scott",
+                album=album,
+                title=f"Track {index}",
+                track_number=index,
+                tags={"albumartist": ["Travis Scott"]},
+            )
+        )
+
+    MusicReleaseAnalyzer()._derive_release_fields(
+        release,
+        "Travis Scott - K-POP (2023) - 16bit 44.1kHz Digital Media - 83321e07-f832-4e71-901b-2784dc4ea0e5",
+    )
+
+    assert release.get("album") == "K-POP"
+    assert release.conflicts["album"] == ["K-POP", "K-POP (Instrumental)"]
 
 
 def test_orpheus_enrichment_extracts_discogs_master_from_group_wiki(tmp_path):

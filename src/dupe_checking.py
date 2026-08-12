@@ -136,6 +136,7 @@ class DupeChecker:
 
         new_dupes: list[DupeEntry]
 
+        repack_pattern = re.compile(r"(?<![a-z0-9])repack\d*(?![a-z0-9])", re.IGNORECASE)
         has_repack_in_uuid = "repack" in meta.uuid.lower()
         video_encode_value = meta.video_encode
         video_encode = video_encode_value if video_encode_value else ""
@@ -197,6 +198,23 @@ class DupeChecker:
 
         tracker_cls = tracker_class_map.get(tracker_name.upper())
         is_exact_match_only = bool(getattr(tracker_cls, "exact_match_only", False))
+        prefers_repack = bool(getattr(tracker_cls, "prefers_repack", False))
+        preferred_upload_is_repack = prefers_repack and any(repack_pattern.search(str(value or "")) for value in (meta.repack, meta.name, meta.uuid))
+        release_group = str(meta.tag or "").lstrip("-").strip().casefold()
+
+        if prefers_repack:
+            meta.pop(f"{tracker_name}_preferred_repack", None)
+            meta.pop(f"{tracker_name}_repack_replaces", None)
+
+        def has_same_release_group(name: str) -> bool:
+            return bool(release_group) and name.rstrip().casefold().endswith(f"-{release_group}")
+
+        async def has_same_repack_base(name: str) -> bool:
+            target = re.sub(r"\s+", " ", repack_pattern.sub("", str(meta.name or meta.uuid or ""))).strip()
+            candidate = re.sub(r"\s+", " ", repack_pattern.sub("", name)).strip()
+            normalized_target = re.sub(r"\s+", " ", await DupeChecker.normalize_filename(target)).strip()
+            normalized_candidate = re.sub(r"\s+", " ", await DupeChecker.normalize_filename(candidate)).strip()
+            return normalized_target == normalized_candidate
 
         async def log_exclusion(reason: str, item: str) -> None:
             if meta.debug:
@@ -209,6 +227,9 @@ class DupeChecker:
             """
             each = entry.get("name", "")
             sized = entry.get("size")  # This may come as a string, such as "1.5 GB"
+
+            if each.strip().casefold() == str(meta.name or "").strip().casefold():
+                return False
 
             if is_exact_match_only:
                 is_exact = await DupeChecker.is_exact_match(entry, meta)
@@ -311,6 +332,33 @@ class DupeChecker:
                     meta[matched_count_key] = file_count
                 if entry.get("id"):
                     meta[matched_torrent_id] = entry.get("id")
+
+            if meta.category == "TV" and target_episode:
+                season_episode_match, is_season = await DupeChecker.is_season_episode_match(normalized, target_season, target_episode)
+                if season_episode_match and is_season:
+                    target_episode_numbers = {int(value) for value in re.findall(r"\d+", str(target_episode))}
+                    if files and target_season_number is not None and target_episode_numbers:
+                        pack_episode_numbers: set[int] = set()
+                        episode_pattern = re.compile(rf"(?i)(?<!\w)S0*{target_season_number}E(\d+)")
+                        for file_name in files:
+                            pack_episode_numbers.update(int(value) for value in episode_pattern.findall(file_name))
+                        if not target_episode_numbers.issubset(pack_episode_numbers):
+                            await log_exclusion(f"season pack does not contain episode {target_episode}", each)
+                            return True
+                        meta.season_pack_exists = True
+                        meta.season_pack_name = each
+                        meta.season_pack_link = entry.get("link")
+                        meta.season_pack_id = entry.get("id")
+                        logger.debug(f"[yellow]Season pack detected for episode upload: {each}")
+                        logger.debug(f"[yellow]Your episode {target_season}{target_episode} is contained in existing season pack")
+                        remember_match("season_pack_contains_episode")
+                        return False
+
+                if tracker_name == "LUMINARR" and season_episode_match and not is_season and (
+                    not target_resolution or target_resolution.casefold() in normalized.casefold()
+                ):
+                    remember_match("luminarr_same_episode_resolution")
+                    return False
 
             if meta.category == "GAME":
                 target_title = meta.title or meta.name
@@ -419,6 +467,11 @@ class DupeChecker:
             if meta.category == "BOOK":
                 import unicodedata
 
+                if await DupeChecker.is_exact_match(entry, meta):
+                    remember_match("exact_payload")
+                    logger.debug(f"[cyan]Exact book payload duplicate matched: {each}")
+                    return False
+
                 target_title = meta.title or meta.name
                 if not target_title.strip():
                     await log_exclusion("empty target book title", each)
@@ -447,6 +500,10 @@ class DupeChecker:
                             candidates.append(p_clean)
                     return candidates
 
+                def normalize_main_candidate(candidate: str) -> str:
+                    without_release_suffix = re.sub(r"\b(?:19|20)\d{2}\b.*$", "", candidate)
+                    return re.sub(r"\s+", " ", without_release_suffix).strip()
+
                 clean_target = clean_book_title(target_title)
                 clean_each = clean_book_title(each)
 
@@ -464,10 +521,11 @@ class DupeChecker:
                     dupe_candidates = get_main_title_candidates(clean_each)
 
                     if target_candidates and dupe_candidates:
-                        target_main = target_candidates[0]
-                        dupe_main = dupe_candidates[0]
+                        clean_author = clean_book_title(str(meta.author or ""))
+                        target_main = normalize_main_candidate(next((candidate for candidate in target_candidates if candidate != clean_author), target_candidates[0]))
+                        dupe_main = normalize_main_candidate(next((candidate for candidate in dupe_candidates if candidate != clean_author), dupe_candidates[0]))
 
-                        if (target_main == dupe_main) or re.search(rf"\b{re.escape(target_main)}\b", norm_each_str) or re.search(rf"\b{re.escape(dupe_main)}\b", norm_target):
+                        if target_main == dupe_main:
                             is_title_match = True
 
                 if not is_title_match:
@@ -596,7 +654,7 @@ class DupeChecker:
                 await log_exclusion("file count less than 2 for disc upload", each)
                 return True
 
-            if has_repack_in_uuid and "repack" not in normalized and meta.tag and meta.tag.lower() in normalized:
+            if not prefers_repack and has_repack_in_uuid and "repack" not in normalized and meta.tag and meta.tag.lower() in normalized:
                 await log_exclusion("repack release", each)
                 return True
 
@@ -787,18 +845,6 @@ class DupeChecker:
                     await log_exclusion("season/episode mismatch", each)
                     return True
 
-                # Check if uploading an episode but a matching season pack exists
-                if is_season and target_episode:
-                    # We're uploading an episode and found a matching season pack
-                    meta.season_pack_exists = True
-                    meta.season_pack_name = each
-                    meta.season_pack_link = entry.get("link")
-                    meta.season_pack_id = entry.get("id")
-                    logger.debug(f"[yellow]Season pack detected for episode upload: {each}")
-                    logger.debug(f"[yellow]Your episode {target_season}{target_episode} is contained in existing season pack")
-                    remember_match("season_pack_contains_episode")
-                    return False
-
             if is_hdtv and any(web_term in normalized for web_term in ["web-dl", "web -dl", "webdl", "web dl"]):
                 return False
 
@@ -831,6 +877,26 @@ class DupeChecker:
             return False
 
         new_dupes = [each for each in processed_dupes if not await process_exclusion(each)]
+
+        if prefers_repack:
+            if not preferred_upload_is_repack:
+                for entry in new_dupes:
+                    entry_name = str(entry.get("name", ""))
+                    if repack_pattern.search(entry_name) and has_same_release_group(entry_name) and await has_same_repack_base(entry_name):
+                        meta[f"{tracker_name}_preferred_repack"] = entry
+                        break
+            else:
+                for entry in new_dupes:
+                    entry_name = str(entry.get("name", ""))
+                    if repack_pattern.search(entry_name) and has_same_release_group(entry_name) and await has_same_repack_base(entry_name):
+                        meta[f"{tracker_name}_preferred_repack"] = entry
+                        break
+                if not meta.get(f"{tracker_name}_preferred_repack"):
+                    for entry in new_dupes:
+                        entry_name = str(entry.get("name", ""))
+                        if not repack_pattern.search(entry_name) and has_same_release_group(entry_name) and await has_same_repack_base(entry_name):
+                            meta[f"{tracker_name}_repack_replaces"] = entry
+                            break
 
         if is_exact_match_only:
             if processed_dupes and not new_dupes:

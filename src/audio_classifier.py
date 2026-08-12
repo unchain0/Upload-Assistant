@@ -92,6 +92,10 @@ AUDIOBOOK_FILENAME_REGEX = re.compile(
 )
 
 MUSIC_FILENAME_REGEX = re.compile(r"^\s*\d{1,3}\s*[-._]\s*(?![cC]hapter|[pP]art|[bB]ook)\w+")
+SCENE_MUSIC_RELEASE_REGEX = re.compile(
+    r"(?i)(?:^|[-_.])(?:SINGLE|EP|LP|ALBUM)[-_.]+WEB(?:[-_.]|$)|[-_.]WEB[-_.](?:19|20)\d{2}[-_.][A-Z0-9]+$"
+)
+DATED_MUSIC_RELEASE_REGEX = re.compile(r"^\s*\S.*?\s+-\s+(?:19|20)\d{2}-\d{2}-\d{2}\s+-\s+\S", re.I)
 
 
 @dataclass
@@ -267,6 +271,28 @@ async def detect_audio_category(_meta: Any, path: Path | str) -> AudioCategoryRe
     if any(w in parent_dir_name for w in ("audiobook", "audiobooks", "audio book", "audio books", "readarr", "libby")):
         book_score += 2.0
         book_evidence.append(f"parent directory hint ('{path_obj.name}')")
+
+    path_components = {part.casefold() for part in path_obj.parts}
+    if "lidarr" in path_components:
+        music_score += 6.0
+        music_evidence.append("Lidarr library path")
+
+    release_name = path_obj.name.replace("_", " ")
+    has_artist_album_shape = bool(re.search(r"\S\s+-\s+\S", release_name))
+    has_music_release_marker = bool(
+        re.search(r"(?:\b(?:16|24)BIT\b|\b(?:WEB|CD)[ ._-]*(?:FLAC|MP3|AAC)\b|\[(?:FLAC|MP3|AAC)\])", release_name, re.I)
+    )
+    if has_artist_album_shape and has_music_release_marker:
+        music_score += 3.0
+        music_evidence.append("structured artist/album music release name")
+
+    if SCENE_MUSIC_RELEASE_REGEX.search(path_obj.name):
+        music_score += 6.0
+        music_evidence.append("scene music release name")
+
+    if DATED_MUSIC_RELEASE_REGEX.search(release_name):
+        music_score += 6.0
+        music_evidence.append("dated artist/title music release name")
 
     # B. Metadata and Technical characteristics inspection
     sample_files = audio_files[:30]

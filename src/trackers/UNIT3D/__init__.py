@@ -1,10 +1,9 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
 import asyncio
-import json
 import platform
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import aiofiles
 import httpx
@@ -29,6 +28,12 @@ class UNIT3D:
     pending_url: str = ""
     search_url: str = ""
     upload_url: str = ""
+    download_url_hosts: tuple[str, ...] = ()
+    max_torrent_download_size: int | None = None
+    max_json_response_size: int | None = None
+    follow_upload_redirects = True
+    follow_search_redirects = True
+    expose_remote_error_details = True
 
     def __init__(self, config: dict[str, Any], tracker_name: str):
         self.config = config
@@ -48,6 +53,11 @@ class UNIT3D:
         _meta = meta
         return True
 
+    def _remote_error(self, value: object) -> str:
+        if not self.expose_remote_error_details:
+            return "[tracker response omitted]"
+        return str(Redaction.redact_private_info(value))
+
     async def get_search_urls(self, meta: Meta, request_params: ParamsList) -> list[tuple[str, ParamsList, bool]]:
         _ = meta
         urls: list[tuple[str, ParamsList, bool]] = [(self.search_url, request_params, False)]
@@ -55,9 +65,11 @@ class UNIT3D:
             urls.append((self.pending_url, request_params, True))
         return urls
 
+    def get_search_name(self, meta: Meta) -> str:
+        return meta.title or meta.name
+
     async def search_existing(self, meta: Meta) -> list[dict[str, Any]]:
         dupes: list[dict[str, Any]] = []
-        params_list: ParamsList | None = None
         category = meta.category
 
         # Ensure tracker_status keys exist before any potential writes
@@ -69,8 +81,9 @@ class UNIT3D:
         }
 
         if category in ("MOVIE", "TV"):
+            search_name = meta.title or meta.name
             params_dict: dict[str, str] = {
-                "name": "",
+                "name": search_name,
                 "perPage": "100",
             }
             if meta.tmdb is not None:
@@ -81,48 +94,35 @@ class UNIT3D:
                 # for manually constructed metadata without a TMDB ID.
                 params_dict["categories[]"] = (await self.get_category_id(meta))["category_id"]
 
-            if self.tracker not in ["OLDTOONSWORLD"]:
-                resolutions = await self.get_resolution_id(meta)
-                resolution_id = resolutions["resolution_id"]
-                if resolution_id in ["3", "4"]:
-                    # Convert params to list of tuples to support duplicate keys
-                    params_list = list(params_dict.items())
-                    params_list.append(("resolutions[]", "3"))
-                    params_list.append(("resolutions[]", "4"))
-                else:
-                    params_dict["resolutions[]"] = resolution_id
-
-            if self.tracker not in ["SEEDPOOL", "SKIPTHECOMMERCIALS"]:
-                type_id = (await self.get_type_id(meta))["type_id"]
-                if params_list is not None:
-                    params_list.append(("types[]", type_id))
-                else:
-                    params_dict["types[]"] = type_id
-
             if meta.category == "TV":
-                season_value = f" {meta.season}"
-                if params_list is not None:
-                    # Update the 'name' parameter in the list
-                    params_list = [(k, (v + season_value if k == "name" and isinstance(v, str) else v)) for k, v in params_list]
-                else:
-                    params_dict["name"] = params_dict["name"] + season_value
+                params_dict["name"] = f"{search_name} {meta.season}".strip()
 
         else:
+            search_name = self.get_search_name(meta)
+            if category == "BOOK" and ":" in search_name:
+                main_title = search_name.split(":", 1)[0].strip()
+                if len(main_title.split()) >= 2:
+                    search_name = main_title
             params_dict = {
-                "name": meta.title or meta.name,
+                "name": search_name,
                 "categories[]": (await self.get_category_id(meta))["category_id"],
                 "perPage": "100",
             }
 
-        request_params: ParamsList
-        request_params = params_list if params_list is not None else list(params_dict.items())
+        request_params: ParamsList = list(params_dict.items())
 
         urls_to_check = await self.get_search_urls(meta, request_params)
 
-        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=self.follow_search_redirects) as client:
             for url, params, check_pending in urls_to_check:
                 logger.debug(f"{self.tracker}: Searching URL: {url} with params: {params} (pending={check_pending})")
-                response = await client.get(url=url, headers=headers, params=params)
+                if self.max_json_response_size is None:
+                    response = await client.get(url=url, headers=headers, params=params)
+                else:
+                    async with client.stream("GET", url, headers=headers, params=params) as streamed_response:
+                        response = await self._bounded_response(streamed_response, self.max_json_response_size)
+                if 300 <= response.status_code < 400 and not self.follow_search_redirects:
+                    raise ValueError("Tracker search redirect rejected")
                 response.raise_for_status()
 
                 if response.status_code == 200:
@@ -468,7 +468,22 @@ class UNIT3D:
         base_dir = meta.base_dir
         uuid = meta.uuid
         specified_dir = Path(base_dir) / "tmp" / uuid
-        nfo_files = [str(p) for p in specified_dir.glob("*.nfo")]
+        nfo_files: list[str] = []
+        if meta.category == "GAME":
+            source_path = Path(str(meta.path or ""))
+            source_dir = source_path if source_path.is_dir() else source_path.parent
+            candidates = [meta.scene_nfo_file, *(meta.filelist if isinstance(meta.filelist, (list, tuple, set)) else [])]
+            for candidate in candidates:
+                candidate_path = Path(str(candidate or ""))
+                if candidate_path.suffix.lower() != ".nfo":
+                    continue
+                if not candidate_path.is_file() and not candidate_path.is_absolute():
+                    candidate_path = source_dir / candidate_path
+                if candidate_path.is_file() and str(candidate_path) not in nfo_files:
+                    nfo_files.append(str(candidate_path))
+
+        if not nfo_files:
+            nfo_files = [str(p) for p in specified_dir.glob("*.nfo")]
         if not nfo_files and meta.keep_nfo and (meta.keep_folder or meta.isdir):
             search_dir = Path(str(meta.path)).parent
             nfo_files = [str(p) for p in search_dir.glob("*.nfo")]
@@ -476,7 +491,7 @@ class UNIT3D:
         if nfo_files:
             async with aiofiles.open(nfo_files[0], "rb") as f:
                 nfo_bytes = await f.read()
-            files["nfo"] = ("nfo_file.nfo", nfo_bytes, "text/plain")
+            files["nfo"] = (Path(nfo_files[0]).name, nfo_bytes, "text/plain")
 
         if meta.category not in ("MOVIE", "TV", "GAME"):
             cover_path = meta.artwork_path
@@ -493,9 +508,12 @@ class UNIT3D:
 
         return files
 
+    async def get_upload_torrent_filename(self, meta: Meta) -> str:
+        return await self.common.get_torrent_filename(meta, self.tracker_config)
+
     async def upload(self, meta: Meta) -> bool:
         data = await self.get_data(meta)
-        torrent_filename = await self.common.get_torrent_filename(meta, self.tracker_config)
+        torrent_filename = await self.get_upload_torrent_filename(meta)
         torrent_file_path = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/{torrent_filename}.torrent"
         async with aiofiles.open(torrent_file_path, "rb") as f:
             torrent_bytes = await f.read()
@@ -517,20 +535,31 @@ class UNIT3D:
 
             for attempt in range(max_retries):
                 try:
-                    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-                        response = await client.post(url=self.upload_url, files=files, data=data, headers=headers)
+                    async with httpx.AsyncClient(timeout=timeout, follow_redirects=self.follow_upload_redirects) as client:
+                        if self.max_json_response_size is None:
+                            response = await client.post(url=self.upload_url, files=files, data=data, headers=headers)
+                        else:
+                            async with client.stream("POST", self.upload_url, files=files, data=data, headers=headers) as streamed_response:
+                                response = await self._bounded_response(streamed_response, self.max_json_response_size)
+                        if 300 <= response.status_code < 400 and not self.follow_upload_redirects:
+                            meta.tracker_status[self.tracker]["status_message"] = "data error: Upload redirect rejected"
+                            return False
                         response.raise_for_status()
 
-                        response_data = response.json()
+                        raw_response_data = cast(object, response.json())
+                        if not isinstance(raw_response_data, dict):
+                            raise ValueError("Tracker response must be a JSON object")
+                        response_data = cast(dict[str, Any], raw_response_data)
 
                         # Verify API success before proceeding
                         if not response_data.get("success"):
-                            error_msg = response_data.get("message", "Unknown error")
+                            error_msg = self._remote_error(response_data.get("message", "Unknown error"))
                             meta.tracker_status[self.tracker]["status_message"] = f"API error: {error_msg}"
                             logger.info(f"{self.tracker}: [yellow]Upload to {self.tracker} failed: {error_msg}[/yellow]")
                             return False
 
-                        meta.tracker_status[self.tracker]["status_message"] = await self.process_response_data(response_data)
+                        processed_message = await self.process_response_data(response_data)
+                        meta.tracker_status[self.tracker]["status_message"] = processed_message if self.expose_remote_error_details else "Upload successful"
                         torrent_id = await self.get_torrent_id(response_data)
                         meta.tracker_status[self.tracker]["torrent_id"] = torrent_id
                         download_url = response_data.get("data")
@@ -542,15 +571,21 @@ class UNIT3D:
                         # Don't retry auth/permission errors
                         if e.response.status_code == 403:
                             meta.tracker_status[self.tracker]["status_message"] = (
-                                f"data error: Forbidden (403). This may indicate that you do not have upload permission. {e.response.text}"
+                                f"data error: Forbidden (403). This may indicate that you do not have upload permission. {self._remote_error(e.response.text)}"
                             )
                         else:
                             meta.tracker_status[self.tracker]["status_message"] = (
-                                f"data error: Redirect (302). This may indicate a problem with authentication. {e.response.text}"
+                                f"data error: Redirect (302). This may indicate a problem with authentication. {self._remote_error(e.response.text)}"
                             )
                         return False  # Auth/permission error
                     if e.response.status_code in [401, 404, 422]:
-                        meta.tracker_status[self.tracker]["status_message"] = f"data error: HTTP {e.response.status_code} - {e.response.text}"
+                        if self._is_duplicate_name_error(e.response.text):
+                            status = meta.tracker_status[self.tracker]
+                            status["dupe"] = True
+                            status["upload"] = False
+                            status["status_message"] = "Duplicate detected during upload: this release name already exists on the tracker."
+                            return False
+                        meta.tracker_status[self.tracker]["status_message"] = f"data error: HTTP {e.response.status_code} - {self._remote_error(e.response.text)}"
                     else:
                         # Retry other HTTP errors
                         if attempt < max_retries - 1:
@@ -563,7 +598,7 @@ class UNIT3D:
                         if e.response.status_code == 520:
                             meta.tracker_status[self.tracker]["status_message"] = "data error: Error (520). This is probably a cloudflare issue on the tracker side."
                         else:
-                            meta.tracker_status[self.tracker]["status_message"] = f"data error: HTTP {e.response.status_code} - {e.response.text}"
+                            meta.tracker_status[self.tracker]["status_message"] = f"data error: HTTP {e.response.status_code} - {self._remote_error(e.response.text)}"
                         return False  # HTTP error after all retries
                 except httpx.TimeoutException:
                     if attempt < max_retries - 1:
@@ -580,15 +615,28 @@ class UNIT3D:
                         logger.info(f"{self.tracker}: [yellow]Request error, retrying in {retry_delay} seconds... (attempt {attempt + 1}/{max_retries})[/yellow]")
                         await asyncio.sleep(retry_delay)
                         continue
-                    meta.tracker_status[self.tracker]["status_message"] = f"data error: Unable to upload. Error: {e}.\nResponse: {response_data}"
+                    meta.tracker_status[self.tracker]["status_message"] = f"data error: Unable to upload. Error: {e}.\nResponse: {self._remote_error(response_data)}"
                     return False  # Request error after all retries
-                except json.JSONDecodeError as e:
+                except ValueError as e:
                     meta.tracker_status[self.tracker]["status_message"] = f"data error: Invalid JSON response from {self.tracker}. Error: {e}"
                     return False  # JSON parsing error
 
             if post_succeeded:
+                if not download_url:
+                    meta.tracker_status[self.tracker]["status_message"] = "data error: Upload succeeded but the API returned no torrent download URL"
+                    return False
                 # Download is outside the retry loop — a POST timeout/error cannot cause re-submission
-                await self.common.download_tracker_torrent(meta, self.tracker, headers=headers, downurl=download_url)
+                downloaded_torrent = await self.common.download_tracker_torrent(
+                    meta,
+                    self.tracker,
+                    headers=headers,
+                    downurl=download_url,
+                    allowed_hosts=self.download_url_hosts,
+                    max_size=self.max_torrent_download_size,
+                )
+                if self.download_url_hosts and downloaded_torrent is None:
+                    meta.tracker_status[self.tracker]["status_message"] = "data error: Upload succeeded but the torrent download was rejected or failed"
+                    return False
                 return True
         else:
             logger.info(f"{self.tracker}: Request Data:")
@@ -603,6 +651,26 @@ class UNIT3D:
             return True  # Debug mode - simulated success
 
         return False
+
+    @staticmethod
+    def _is_duplicate_name_error(response_text: str) -> bool:
+        normalized = str(response_text or "").casefold()
+        return '"name"' in normalized and any(
+            phrase in normalized
+            for phrase in ("already been taken", "already exists", "já se encontra registado", "ja se encontra registado")
+        )
+
+    @staticmethod
+    async def _bounded_response(response: httpx.Response, max_size: int) -> httpx.Response:
+        content_length = response.headers.get("content-length", "")
+        if content_length.isdigit() and int(content_length) > max_size:
+            raise ValueError("Tracker JSON response exceeds the configured size limit")
+        body = bytearray()
+        async for chunk in response.aiter_bytes():
+            body.extend(chunk)
+            if len(body) > max_size:
+                raise ValueError("Tracker JSON response exceeds the configured size limit")
+        return httpx.Response(response.status_code, headers=response.headers, content=bytes(body), request=response.request)
 
     async def get_torrent_id(self, response_data: dict[str, Any]) -> str:
         """Matches /12345.abcde and returns 12345"""
