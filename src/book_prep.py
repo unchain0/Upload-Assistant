@@ -267,6 +267,11 @@ def _extract_asin_identifier(value: Any) -> str:
     return match.group(1).upper() if match else ""
 
 
+def _is_capitalized_mononym(value: str) -> bool:
+    words = re.findall(r"[^\W\d_]+(?:['-][^\W\d_]+)*", value, flags=re.UNICODE)
+    return len(words) == 1 and words[0][0].isupper()
+
+
 def book_identity_from_path(path: str) -> tuple[str, str]:
     source = Path(path)
     name = source.name if source.is_dir() else source.stem
@@ -281,7 +286,7 @@ def book_identity_from_path(path: str) -> tuple[str, str]:
     second_score = _author_likelihood(second)
     if first_score >= 3 and second_score <= 1:
         author, title = first, second
-    elif second_score >= 3 and first_score <= 0:
+    elif (second_score >= 3 and first_score <= 0) or (first_score < 0 and _is_capitalized_mononym(second)):
         author, title = second, first
     elif first_score >= 3 and second_score >= 3:
         author, title = first, second

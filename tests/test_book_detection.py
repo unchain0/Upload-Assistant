@@ -171,6 +171,13 @@ def test_book_identity_keeps_title_before_author_for_article_title(tmp_path: Pat
     assert book_identity_from_path(str(release)) == ("Jon Ronson", "The Psychopath Test")
 
 
+def test_book_identity_accepts_title_before_mononym_author(tmp_path: Path) -> None:
+    release = tmp_path / "Comece pelo porque - Seneca.epub"
+    release.touch()
+
+    assert book_identity_from_path(str(release)) == ("Seneca", "Comece pelo porque")
+
+
 def test_book_identity_does_not_infer_author_from_title_like_audiobook_name(tmp_path: Path) -> None:
     release = tmp_path / "Dark Adventure Radio Theatre - Masks of Nyarlathotep.m4b"
     release.touch()
@@ -392,6 +399,14 @@ def test_myanonamouse_extracts_publisher_metadata() -> None:
             "publisher_info": {"1": "Brilliance Audio"},
             "publication_year": "2025",
         }
+    )
+
+    assert metadata["publisher"] == "Brilliance Audio"
+
+
+def test_myanonamouse_trims_unescaped_publisher_whitespace() -> None:
+    metadata = MyAnonamouseManager()._parse_torrent_info(
+        {"title": "Example", "publisher": "&nbsp;Brilliance Audio&nbsp;"}
     )
 
     assert metadata["publisher"] == "Brilliance Audio"

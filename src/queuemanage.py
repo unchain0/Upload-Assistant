@@ -50,27 +50,51 @@ def _trusted_existing_queue_log(attributes: os.stat_result, *, windows: bool) ->
 
 
 def _expand_multi_format_ebook_directories(queue: QueueList) -> QueueList:
-    if not all(isinstance(item, str) for item in queue):
-        return queue
-
     ebook_extensions = BOOK_EXTENSIONS - {".txt", ".html", ".htm"}
-    expanded: list[str] = []
-    for item in cast(list[str], queue):
-        if not Path(item).is_dir():
-            expanded.append(item)
-            continue
+    def split_path(directory: str) -> list[str]:
+        if not Path(directory).is_dir():
+            return [directory]
 
-        files = sorted(path.resolve() for path in Path(item).rglob("*") if path.is_file())
-        ebook_files = [path for path in files if path.suffix.casefold() in ebook_extensions]
-        has_audiobook = any(path.suffix.casefold() in AUDIOBOOK_EXTENSIONS for path in files)
-        if len(ebook_files) > 1 and not has_audiobook:
-            logger.info(
-                f"[cyan]Splitting {escape(Path(item).name)} into {len(ebook_files)} separate ebook uploads, one per file.[/cyan]"
-            )
-            expanded.extend(str(path) for path in ebook_files)
-        else:
-            expanded.append(item)
-    return expanded
+        files = sorted(file_path.resolve() for file_path in Path(directory).rglob("*") if file_path.is_file())
+        ebook_files = [file_path for file_path in files if file_path.suffix.casefold() in ebook_extensions]
+        has_audiobook = any(file_path.suffix.casefold() in AUDIOBOOK_EXTENSIONS for file_path in files)
+        if len(ebook_files) <= 1 or has_audiobook:
+            return [directory]
+
+        logger.info(f"[cyan]Splitting {escape(Path(directory).name)} into {len(ebook_files)} separate ebook uploads, one per file.[/cyan]")
+        return [str(file_path) for file_path in ebook_files]
+
+    if all(isinstance(item, str) for item in queue):
+        expanded: list[str] = []
+        for item in cast(list[str], queue):
+            expanded.extend(split_path(item))
+        return expanded
+
+    if all(isinstance(item, dict) for item in queue):
+        expanded_items: list[QueueItem] = []
+        for item in cast(list[QueueItem], queue):
+            item_path = item.get("path")
+            if not isinstance(item_path, str):
+                expanded_items.append(item)
+                continue
+
+            split_paths = split_path(item_path)
+            if len(split_paths) == 1:
+                expanded_items.append(item)
+                continue
+
+            for split_item_path in split_paths:
+                expanded_item = dict(item)
+                expanded_item["path"] = split_item_path
+                args = expanded_item.get("args")
+                if isinstance(args, list) and args:
+                    expanded_item["args"] = [split_item_path, *args[1:]]
+                    if isinstance(expanded_item.get("line"), str):
+                        expanded_item["line"] = shlex.join(expanded_item["args"])
+                expanded_items.append(expanded_item)
+        return expanded_items
+
+    return queue
 
 
 async def _read_json_file(path: str) -> Any:
@@ -512,6 +536,7 @@ class QueueManager:
                     logger.info(f"[bold yellow]All items in the {queue_name} queue have already been processed.[/bold yellow]")
                     exit(0)
 
+                queue = cast(list[QueueItem], _expand_multi_format_ebook_directories(queue))
                 queue_log = _queue_log_path(ensure_temp_root(base_dir), queue_name, "_queue.log")
                 try:
                     await _write_json_file(queue_log, [item["line"] for item in queue], indent=4)

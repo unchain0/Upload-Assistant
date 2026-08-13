@@ -39,13 +39,17 @@ def _metadata_values(value: Any) -> list[str]:
         if text[:1] in "[{":
             with contextlib.suppress(json.JSONDecodeError):
                 return _metadata_values(json.loads(text))
-        return [html.unescape(text)] if text else []
+        text = html.unescape(text).strip()
+        return [text] if text else []
     if isinstance(value, dict):
         preferred = next((value.get(key) for key in ("name", "publisher", "title", "value") if value.get(key)), None)
         return _metadata_values(preferred) if preferred is not None else _metadata_values(list(value.values()))
     if isinstance(value, (list, tuple, set)):
         return [item for entry in value for item in _metadata_values(entry)]
-    return [html.unescape(str(value).strip())] if value is not None and str(value).strip() else []
+    if value is None:
+        return []
+    text = html.unescape(str(value)).strip()
+    return [text] if text else []
 
 
 class MyAnonamouseManager:
