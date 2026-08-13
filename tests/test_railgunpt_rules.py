@@ -46,6 +46,38 @@ def _tv_meta(**kwargs: Any) -> Meta:
     return Meta(**values)
 
 
+def _music_meta(**kwargs: Any) -> Meta:
+    values: dict[str, Any] = {
+        "category": "MUSIC",
+        "filelist": ["Artist - Album - 01.flac", "Artist - Album - 02.flac"],
+        "name": "Artist - Album 2024 FLAC",
+        "format": "FLAC",
+        "source": "CD",
+        "source_size": 1024**3,
+        "music_release": {
+            "fields": {"release_type": {"value": "Album"}},
+            "auxiliary": {"cues": ["Album.cue"]},
+            "tracks": [{"format": "FLAC"}, {"format": "FLAC"}],
+        },
+    }
+    values.update(kwargs)
+    return Meta(**values)
+
+
+def _game_meta(**kwargs: Any) -> Meta:
+    values: dict[str, Any] = {
+        "category": "GAME",
+        "filelist": ["Command.And.Conquer.iso"],
+        "name": "Command And Conquer Red Alert 3 Uprising",
+        "source_size": 1024**3,
+        "type": "GAME",
+        "platform": "PC",
+        "game_version": "1.0",
+    }
+    values.update(kwargs)
+    return Meta(**values)
+
+
 def _check(meta: Meta) -> bool:
     return asyncio.run(_tracker().get_additional_checks(meta))
 
@@ -148,3 +180,86 @@ def test_railgunpt_allows_multi_file_disc_layout_without_collection_marker():
 
 def test_railgunpt_rejects_invalid_filelist_metadata():
     assert _check(_movie_meta(filelist=1)) is False
+
+
+def test_railgunpt_rejects_lossy_audio_below_51_channels():
+    files = ["movie.mkv", "track01.mp3"]
+    assert _check(_movie_meta(filelist=files, audio="MP3", channels="2.0")) is False
+    assert _check(_movie_meta(filelist=files, audio="MP3", channels="5.1")) is True
+
+
+def test_railgunpt_requires_cue_for_multitrack_audio():
+    files = ["movie.mkv", "track01.flac", "track02.flac"]
+    assert _check(_movie_meta(filelist=files, audio="FLAC")) is False
+    assert _check(_movie_meta(filelist=[*files, "album.cue"], audio="FLAC")) is True
+
+
+def test_railgunpt_rejects_multipart_archives_and_mixed_attachment_packing():
+    assert _check(_movie_meta(filelist=["movie.mkv", "release.r03"])) is False
+    assert _check(_movie_meta(filelist=["movie.mkv", "subtitles.rar", "cover.jpg"])) is False
+    assert _check(_movie_meta(filelist=["movie.mkv", "subtitles.rar", "cover.rar"])) is True
+
+
+def test_railgunpt_allows_sd_sports_from_tv_or_dsr():
+    sports = _tv_meta(
+        name="Sports Event 2024.08.13 576p DSR x264-GRP",
+        resolution="576p",
+        source="DSR",
+        genres=["Sports"],
+    )
+    assert _check(sports) is True
+    assert _check(_tv_meta(name=sports.name, resolution="576p", source="DSR", genres=["Drama"])) is False
+
+
+def test_railgunpt_requires_consistent_movie_collection_media():
+    files = ["Movie.One.2020.1080p.BluRay.x264.mkv", "Movie.Two.2022.720p.BluRay.x264.mkv"]
+    assert _check(_movie_meta(name="Example Collection 2024 1080p BluRay x264-GRP", filelist=files)) is False
+
+    consistent = ["Movie.One.2020.1080p.BluRay.x264.mkv", "Movie.Two.2022.1080p.BluRay.x264.mkv"]
+    assert _check(_movie_meta(name="Example Collection 2024 1080p BluRay x264-GRP", filelist=consistent)) is True
+
+
+def test_railgunpt_supports_music_and_game_categories_with_known_mappings():
+    assert RailgunPT.supported_categories == ("TV", "MOVIE", "MUSIC", "GAME")
+    assert _tracker().get_category(_tv_meta(genres=["Sports"])) == 407
+    assert _tracker().get_category(_tv_meta(genres=[], keywords=["Sports"])) == 407
+    assert _tracker().get_category(_music_meta()) == 408
+    assert _tracker().get_category(_game_meta()) == 412
+    assert _tracker().get_category(_game_meta(software=True)) == 410
+    assert _tracker().get_type(_music_meta()) == 8
+    assert _tracker().get_audio_codec(_music_meta()) == 5
+
+
+def test_railgunpt_skips_tmdb_localization_for_non_video_categories():
+    tracker = _tracker()
+    asyncio.run(tracker.load_localized_data(_music_meta()))
+    assert tracker.tmdb_data == {}
+    asyncio.run(tracker.load_localized_data(_game_meta()))
+    assert tracker.tmdb_data == {}
+
+
+def test_railgunpt_applies_music_size_and_pack_rules():
+    assert _check(
+        _music_meta(
+            source_size=100 * 1024 * 1024 - 1,
+            filelist=["Artist - Album - 01.flac", "Artist - Album - 02.flac", "Album.cue"],
+            music_release={"fields": {"release_type": {"value": "Single"}}},
+        )
+    ) is True
+    assert _check(_music_meta(source_size=100 * 1024 * 1024 - 1)) is False
+    assert _check(_music_meta(filelist=["Artist - Album - 01.flac", "Artist - Album - 02.flac"], music_release={"tracks": [{"format": "FLAC"}, {"format": "MP3"}], "auxiliary": {"cues": ["Album.cue"]}})) is False
+    assert _check(
+        _music_meta(
+            music_release={
+                "tracks": [{"format": "FLAC", "album": "Album One"}, {"format": "FLAC", "album": "Album Two"}],
+                "auxiliary": {"cues": ["Albums.cue"]},
+            }
+        )
+    ) is False
+
+
+def test_railgunpt_applies_original_game_image_and_software_exceptions():
+    assert _check(_game_meta()) is True
+    assert _check(_game_meta(filelist=["game.rar"])) is False
+    assert _check(_game_meta(filelist=["game.exe"], name="Game Portable Repack")) is False
+    assert _check(_game_meta(software=True, source_size=100 * 1024 * 1024 - 1, filelist=["tool.pkg"], name="HD Video Tool")) is True
