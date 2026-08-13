@@ -63,12 +63,9 @@ def _expand_multi_format_ebook_directories(queue: QueueList) -> QueueList:
         files = sorted(path.resolve() for path in Path(item).rglob("*") if path.is_file())
         ebook_files = [path for path in files if path.suffix.casefold() in ebook_extensions]
         has_audiobook = any(path.suffix.casefold() in AUDIOBOOK_EXTENSIONS for path in files)
-        normalized_stems = {re.sub(r"[\W_]+", " ", path.stem.casefold()).strip() for path in ebook_files}
-        extensions = {path.suffix.casefold() for path in ebook_files}
-
-        if len(ebook_files) > 1 and not has_audiobook and len(normalized_stems) == 1 and len(extensions) == len(ebook_files):
+        if len(ebook_files) > 1 and not has_audiobook:
             logger.info(
-                f"[cyan]Splitting {escape(Path(item).name)} into {len(ebook_files)} separate ebook uploads, one per format.[/cyan]"
+                f"[cyan]Splitting {escape(Path(item).name)} into {len(ebook_files)} separate ebook uploads, one per file.[/cyan]"
             )
             expanded.extend(str(path) for path in ebook_files)
         else:

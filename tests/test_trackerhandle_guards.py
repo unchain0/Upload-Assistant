@@ -149,6 +149,41 @@ async def test_tracker_can_allow_book_without_cover() -> None:
 
 
 @pytest.mark.asyncio
+async def test_prepared_zenith_book_can_keep_cjk_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeZenith(FakeTracker):
+        tracker = "ZENITH"
+        requires_book_cover = False
+
+        async def get_additional_checks(self, _meta: Meta) -> bool:
+            return True
+
+    source = _meta(images=0)
+    source.update(
+        {
+            "category": "BOOK",
+            "name": "宮沢 賢治 - 宮沢賢治童話全集 2016 JAPANESE AUDIOBOOK",
+            "title": "宮沢賢治童話全集",
+            "author": "宮沢 賢治",
+            "tracker_status": {"ZENITH": {"upload": True}},
+            "trackers": ["ZENITH"],
+            "debug": True,
+        }
+    )
+
+    async def prepared_meta(_shared_meta: Meta, _tracker: str, _config: dict[str, Any]) -> Meta:
+        prepared = source.copy()
+        prepared.update({"zentag_prepared": True, "tracker_status": source.tracker_status})
+        return prepared
+
+    monkeypatch.setattr(trackerhandle, "prepare_tracker_meta", prepared_meta)
+    monkeypatch.setattr(trackerhandle.TrackerSetup, "trackers_enabled", lambda _self, _meta: ["ZENITH"])
+
+    await trackerhandle.process_trackers(source, _config(), FakeClient(), ["ZENITH"], {"ZENITH": FakeZenith}, [], [])
+
+    assert source.tracker_status["ZENITH"]["upload_success"] is True
+
+
+@pytest.mark.asyncio
 async def test_modqueue_limit_disables_tracker_for_remainder_of_run() -> None:
     config = _config()
     FakeTracker.fail_with_modqueue = True

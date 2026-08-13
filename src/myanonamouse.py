@@ -1,4 +1,5 @@
 # Upload Assistant © 2026 Audionut & wastaken7 — Licensed under UAPL v1.0
+import contextlib
 import html
 import json
 import re
@@ -30,6 +31,21 @@ def _clean_mam_title(value: Any, author: str = "") -> str:
     if author:
         title = re.sub(rf"^{re.escape(author)}\s+-\s+", "", title, flags=re.IGNORECASE)
     return title.strip()
+
+
+def _metadata_values(value: Any) -> list[str]:
+    if isinstance(value, str):
+        text = value.strip()
+        if text[:1] in "[{":
+            with contextlib.suppress(json.JSONDecodeError):
+                return _metadata_values(json.loads(text))
+        return [html.unescape(text)] if text else []
+    if isinstance(value, dict):
+        preferred = next((value.get(key) for key in ("name", "publisher", "title", "value") if value.get(key)), None)
+        return _metadata_values(preferred) if preferred is not None else _metadata_values(list(value.values()))
+    if isinstance(value, (list, tuple, set)):
+        return [item for entry in value for item in _metadata_values(entry)]
+    return [html.unescape(str(value).strip())] if value is not None and str(value).strip() else []
 
 
 class MyAnonamouseManager:
@@ -80,6 +96,18 @@ class MyAnonamouseManager:
             unescaped_desc = html.unescape(str(description)).strip()
             metadata["overview"] = unescaped_desc
 
+        publisher_value = next(
+            (
+                item.get(field)
+                for field in ("publisher", "publisher_info", "publisher_name", "publishers", "pubname")
+                if item.get(field)
+            ),
+            None,
+        )
+        publishers = list(dict.fromkeys(name for name in _metadata_values(publisher_value) if name))
+        if publishers:
+            metadata["publisher"] = ", ".join(publishers)
+
         # ISBN
         if title:
             metadata["title"] = _clean_mam_title(title, metadata.get("author", ""))
@@ -91,8 +119,9 @@ class MyAnonamouseManager:
         # ASIN
         asin = item.get("asin") or item.get("ASIN")
         if asin:
-            cleaned_asin = str(asin).strip()
-            if cleaned_asin:
+            asin_match = re.search(r"\bASIN\s*[:#]?\s*([A-Z0-9]{10})(?![A-Z0-9])", str(asin), re.IGNORECASE)
+            cleaned_asin = (asin_match.group(1) if asin_match else str(asin)).strip().upper()
+            if re.fullmatch(r"[A-Z0-9]{10}", cleaned_asin):
                 metadata["asin"] = cleaned_asin
 
         publication_value = next(

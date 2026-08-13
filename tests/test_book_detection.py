@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from src.book_extractors import extract_epub_metadata, extract_isbn_from_pdf, extract_pdf_page_count, get_epubmeta_output, validate_isbn_checksum
-from src.book_prep import _epub_content_identifiers, book_identity_conflict, book_identity_from_path, missing_book_fields, resolve_book_filelist
+from src.book_prep import _epub_content_identifiers, _extract_asin_identifier, book_identity_conflict, book_identity_from_path, missing_book_fields, resolve_book_filelist
 from src.exceptions import ItemProcessingError
 from src.meta import Meta
 from src.myanonamouse import MyAnonamouseManager
@@ -162,6 +162,33 @@ def test_book_identity_detects_title_before_author_and_removes_extension(tmp_pat
     release.touch()
 
     assert book_identity_from_path(str(release)) == ("Simon Sinek", "Comece pelo porque")
+
+
+def test_book_identity_keeps_title_before_author_for_article_title(tmp_path: Path) -> None:
+    release = tmp_path / "The Psychopath Test - Jon Ronson.m4b"
+    release.touch()
+
+    assert book_identity_from_path(str(release)) == ("Jon Ronson", "The Psychopath Test")
+
+
+def test_book_identity_does_not_infer_author_from_title_like_audiobook_name(tmp_path: Path) -> None:
+    release = tmp_path / "Dark Adventure Radio Theatre - Masks of Nyarlathotep.m4b"
+    release.touch()
+
+    assert book_identity_from_path(str(release)) == ("", "Dark Adventure Radio Theatre - Masks of Nyarlathotep")
+
+
+def test_book_identity_accepts_title_before_author_without_false_conflict(tmp_path: Path) -> None:
+    release = tmp_path / "The Psychopath Test - Jon Ronson.m4b"
+    release.touch()
+    meta = Meta(author="Jon Ronson", title="The Psychopath Test")
+
+    assert book_identity_conflict(meta, str(release)) is None
+
+
+def test_mediainfo_asin_is_not_treated_as_invalid_isbn() -> None:
+    assert _extract_asin_identifier("ASIN:B002UZLFVQ") == "B002UZLFVQ"
+    assert _extract_asin_identifier("ISBN:9781394289615") == ""
 
 
 def test_book_identity_does_not_treat_series_title_as_author_before_volume(tmp_path) -> None:
@@ -356,6 +383,18 @@ def test_myanonamouse_uses_explicit_publication_year():
     metadata = MyAnonamouseManager()._parse_torrent_info({"title": "80's Adventures", "publication_year": "2021"})
 
     assert metadata["year"] == 2021
+
+
+def test_myanonamouse_extracts_publisher_metadata() -> None:
+    metadata = MyAnonamouseManager()._parse_torrent_info(
+        {
+            "title": "The Black Book of Power",
+            "publisher_info": {"1": "Brilliance Audio"},
+            "publication_year": "2025",
+        }
+    )
+
+    assert metadata["publisher"] == "Brilliance Audio"
 
 
 def test_myanonamouse_restores_valid_leading_zero_isbn() -> None:

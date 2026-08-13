@@ -236,6 +236,9 @@ async def test_unit3d_episode_search_includes_all_season_pack_qualities(monkeypa
     assert UNIT3D._is_duplicate_name_error('{"data":{"name":["The name has already been taken."]}}') is True
     assert UNIT3D._is_duplicate_name_error('{"data":{"name":["The name field already exists."]}}') is True
     assert UNIT3D._is_duplicate_name_error('{"data":{"name":["O valor indicado para o campo name já se encontra registado."]}}') is True
+    assert UNIT3D._is_duplicate_name_error(
+        '{"data":{"torrent":["A torrent with the same info_hash has already been uploaded and has been approved."]}}'
+    ) is True
 
 
 @pytest.mark.asyncio

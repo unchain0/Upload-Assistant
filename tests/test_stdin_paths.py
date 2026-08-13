@@ -125,7 +125,7 @@ async def test_queue_splits_same_ebook_in_distinct_formats(tmp_path: Path) -> No
 
 
 @pytest.mark.asyncio
-async def test_queue_does_not_split_distinct_ebooks(tmp_path: Path) -> None:
+async def test_queue_splits_distinct_ebooks(tmp_path: Path) -> None:
     release = tmp_path / "Books"
     release.mkdir()
     (release / "First Book.epub").write_bytes(b"epub")
@@ -133,4 +133,4 @@ async def test_queue_does_not_split_distinct_ebooks(tmp_path: Path) -> None:
 
     queue, _ = await QueueManager.handle_queue(str(release), Meta(), [str(release)], str(tmp_path))
 
-    assert queue == [str(release)]
+    assert queue == [str((release / "First Book.epub").resolve()), str((release / "Second Book.pdf").resolve())]
