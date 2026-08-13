@@ -312,12 +312,12 @@ def test_railgunpt_requires_cue_in_music_payload(tmp_path):
     attacker_root = tmp_path / "attacker"
     root.mkdir()
     attacker_root.mkdir()
-    (root / "Album.cue").touch()
     (attacker_root / "Unrelated.cue").touch()
     nested = root / "CD1"
     nested.mkdir()
     track_one = nested / "Artist - Album - 01.flac"
     track_two = nested / "Artist - Album - 02.flac"
+    (root / "Album.cue").write_text('FILE "CD1/Artist - Album - 01.flac" WAVE\n')
     release = {"root": str(root), "tracks": [{"format": "FLAC"}, {"format": "FLAC"}], "auxiliary": {"cues": ["Album.cue"]}}
     assert _check(_music_meta(filelist=[str(track_one), str(track_two)], music_release=release)) is True
 
@@ -326,6 +326,11 @@ def test_railgunpt_requires_cue_in_music_payload(tmp_path):
 
     release["root"] = str(attacker_root)
     release["auxiliary"] = {"cues": ["Unrelated.cue"]}
+    assert _check(_music_meta(filelist=[str(track_one), str(track_two)], music_release=release)) is False
+
+    parent_root = tmp_path
+    (parent_root / "Sibling.cue").touch()
+    release = {"root": str(parent_root), "tracks": [{"format": "FLAC"}, {"format": "FLAC"}], "auxiliary": {"cues": ["Sibling.cue"]}}
     assert _check(_music_meta(filelist=[str(track_one), str(track_two)], music_release=release)) is False
 
     release["auxiliary"] = {"cues": ["etc/passwd"]}
@@ -341,6 +346,8 @@ def test_railgunpt_requires_cue_in_music_payload(tmp_path):
 
     assert _check(_music_meta(filelist=["01.flac", "02.flac", "../Outside.cue"], music_release={})) is False
     assert _check(_music_meta(filelist=["01.flac", "02.flac", str(outside)], music_release={})) is False
+    assert _check(_music_meta(filelist=[str(track_one), str(track_two), "forged.cue"], music_release={"root": "/"})) is False
+    assert _check(_music_meta(filelist=[str(track_one), str(track_two), "forged.cue"], music_release={"root": str(attacker_root)})) is False
 
     (root / "Linked.cue").symlink_to(outside)
     release = {"root": str(root), "tracks": [{"format": "FLAC"}, {"format": "FLAC"}], "auxiliary": {"cues": []}}

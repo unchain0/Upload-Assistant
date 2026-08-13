@@ -248,6 +248,26 @@ class RailgunPT(NEXUSPHP):
             return None
         return payload_root
 
+    @staticmethod
+    def _cue_references_audio(cue_path: Path, payload_root: Path, audio_paths: list[Path]) -> bool:
+        try:
+            content = cue_path.read_text(encoding="utf-8", errors="replace")
+        except (OSError, UnicodeError):
+            return False
+        references = re.findall(r"^\s*FILE\s+(?:\"([^\"]+)\"|(\S+))", content, re.IGNORECASE | re.MULTILINE)
+        if not references:
+            return False
+        relative_audio = {path.resolve().relative_to(payload_root).as_posix().casefold() for path in audio_paths}
+        audio_names = {path.name.casefold() for path in audio_paths}
+        for quoted, bare in references:
+            reference = (quoted or bare).replace("\\", "/")
+            reference_path = Path(reference)
+            if reference_path.is_absolute() or ".." in reference_path.parts:
+                continue
+            if reference_path.as_posix().casefold() in relative_audio or reference_path.name.casefold() in audio_names:
+                return True
+        return False
+
     @classmethod
     def _music_cue_is_present(cls, release: dict[str, Any], paths: list[Path]) -> bool:
         cue_paths = [path for path in paths if path.suffix.casefold() == ".cue"]
@@ -264,9 +284,14 @@ class RailgunPT(NEXUSPHP):
                 continue
             elif payload_root is not None:
                 try:
-                    (payload_root / cue_path).resolve().relative_to(payload_root)
+                    resolved_cue = (payload_root / cue_path).resolve()
+                    resolved_cue.relative_to(payload_root)
                 except (OSError, RuntimeError, ValueError):
                     continue
+                if not resolved_cue.is_file() or not cls._cue_references_audio(resolved_cue, payload_root, [path for path in paths if path.suffix.casefold() in cls._AUDIO_EXTENSIONS]):
+                    continue
+            elif release.get("root"):
+                continue
             return True
 
         cues_value = cls._music_dict(release.get("auxiliary")).get("cues")
@@ -282,7 +307,7 @@ class RailgunPT(NEXUSPHP):
                 resolved_cue.relative_to(payload_root)
             except (OSError, RuntimeError, ValueError):
                 continue
-            if resolved_cue.is_file():
+            if resolved_cue.is_file() and cls._cue_references_audio(resolved_cue, payload_root, [path for path in paths if path.suffix.casefold() in cls._AUDIO_EXTENSIONS]):
                 return True
         return False
 
