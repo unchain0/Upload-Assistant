@@ -1,5 +1,4 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
-import os
 import re
 from pathlib import Path
 from typing import Any, ClassVar, cast
@@ -237,14 +236,19 @@ class RailgunPT(NEXUSPHP):
             return True
         cues_value = cls._music_dict(release.get("auxiliary")).get("cues")
         audio_paths = [path for path in paths if path.suffix.casefold() in cls._AUDIO_EXTENSIONS]
-        if not isinstance(cues_value, list) or not audio_paths or not all(path.is_absolute() for path in audio_paths):
+        root_value = release.get("root")
+        if not isinstance(cues_value, list) or not audio_paths or not all(path.is_absolute() for path in audio_paths) or not root_value:
             return False
         cues = cast(list[Any], cues_value)
         try:
-            payload_root = Path(os.path.commonpath([str(path.parent) for path in audio_paths])).resolve()
+            payload_root = Path(str(root_value)).resolve()
+            if payload_root.parent == payload_root:
+                return False
+            for audio_path in audio_paths:
+                audio_path.resolve().relative_to(payload_root)
         except (OSError, RuntimeError, ValueError):
             return False
-        if not payload_root.is_dir() or payload_root.parent == payload_root:
+        if not payload_root.is_dir():
             return False
         for cue in cues:
             cue_path = Path(str(cue))

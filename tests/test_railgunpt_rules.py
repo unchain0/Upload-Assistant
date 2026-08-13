@@ -314,10 +314,15 @@ def test_railgunpt_requires_cue_in_music_payload(tmp_path):
     attacker_root.mkdir()
     (root / "Album.cue").touch()
     (attacker_root / "Unrelated.cue").touch()
-    track_one = root / "Artist - Album - 01.flac"
-    track_two = root / "Artist - Album - 02.flac"
-    release = {"root": "/", "tracks": [{"format": "FLAC"}, {"format": "FLAC"}], "auxiliary": {"cues": ["Album.cue"]}}
+    nested = root / "CD1"
+    nested.mkdir()
+    track_one = nested / "Artist - Album - 01.flac"
+    track_two = nested / "Artist - Album - 02.flac"
+    release = {"root": str(root), "tracks": [{"format": "FLAC"}, {"format": "FLAC"}], "auxiliary": {"cues": ["Album.cue"]}}
     assert _check(_music_meta(filelist=[str(track_one), str(track_two)], music_release=release)) is True
+
+    release["root"] = "/"
+    assert _check(_music_meta(filelist=[str(track_one), str(track_two)], music_release=release)) is False
 
     release["root"] = str(attacker_root)
     release["auxiliary"] = {"cues": ["Unrelated.cue"]}
