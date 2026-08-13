@@ -175,8 +175,8 @@ async def test_prepared_zenith_book_can_keep_cjk_metadata(monkeypatch: pytest.Mo
         prepared.update({"zentag_prepared": True, "tracker_status": source.tracker_status})
         return prepared
 
-    monkeypatch.setattr(trackerhandle, "prepare_tracker_meta", prepared_meta)
-    monkeypatch.setattr(trackerhandle.TrackerSetup, "trackers_enabled", lambda _self, _meta: ["ZENITH"])
+    monkeypatch.setattr("src.trackerhandle.prepare_tracker_meta", prepared_meta)
+    monkeypatch.setattr("src.trackerhandle.TrackerSetup.trackers_enabled", lambda _self, _meta: ["ZENITH"])
 
     await trackerhandle.process_trackers(source, _config(), FakeClient(), ["ZENITH"], {"ZENITH": FakeZenith}, [], [])
 
