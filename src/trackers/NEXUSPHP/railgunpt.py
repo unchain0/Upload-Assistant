@@ -262,6 +262,11 @@ class RailgunPT(NEXUSPHP):
                     continue
             elif ".." in cue_path.parts:
                 continue
+            elif payload_root is not None:
+                try:
+                    (payload_root / cue_path).resolve().relative_to(payload_root)
+                except (OSError, RuntimeError, ValueError):
+                    continue
             return True
 
         cues_value = cls._music_dict(release.get("auxiliary")).get("cues")

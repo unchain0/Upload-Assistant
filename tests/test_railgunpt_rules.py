@@ -342,6 +342,10 @@ def test_railgunpt_requires_cue_in_music_payload(tmp_path):
     assert _check(_music_meta(filelist=["01.flac", "02.flac", "../Outside.cue"], music_release={})) is False
     assert _check(_music_meta(filelist=["01.flac", "02.flac", str(outside)], music_release={})) is False
 
+    (root / "Linked.cue").symlink_to(outside)
+    release = {"root": str(root), "tracks": [{"format": "FLAC"}, {"format": "FLAC"}], "auxiliary": {"cues": []}}
+    assert _check(_music_meta(filelist=[str(track_one), str(track_two), "Linked.cue"], music_release=release)) is False
+
 
 def test_railgunpt_does_not_misclassify_payload_names_as_attachments():
     files = ["Submarine.2023.1080p.BluRay.x264-GRP.mkv", "subtitles.rar"]
