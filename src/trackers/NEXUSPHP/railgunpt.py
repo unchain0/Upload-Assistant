@@ -193,7 +193,9 @@ class RailgunPT(NEXUSPHP):
         normalized_tokens = {cls._normalized_token(token): token for token in tokens}
         for path in paths:
             normalized_name = cls._normalized_token(path.stem)
-            matches = sorted((canonical for token, canonical in normalized_tokens.items() if token in normalized_name), key=lambda token: len(cls._normalized_token(token)), reverse=True)
+            matches = sorted(
+                (canonical for token, canonical in normalized_tokens.items() if token in normalized_name), key=lambda token: len(cls._normalized_token(token)), reverse=True
+            )
             if matches:
                 found.add(matches[0])
         return found
@@ -256,16 +258,15 @@ class RailgunPT(NEXUSPHP):
                     payload_root = payload_root.parent
             candidate_roots = [payload_root]
             while (
-                (re.fullmatch(r"(?:cd|disc|disk)[ ._-]?\d+", payload_root.name, re.IGNORECASE) or payload_root.name.casefold() in cls._MUSIC_LAYOUT_DIRS)
-                and payload_root != source_root
-            ):
+                re.fullmatch(r"(?:cd|disc|disk)[ ._-]?\d+", payload_root.name, re.IGNORECASE) or payload_root.name.casefold() in cls._MUSIC_LAYOUT_DIRS
+            ) and payload_root != source_root:
                 payload_root = payload_root.parent
                 candidate_roots.append(payload_root)
             if payload_root.parent == payload_root:
                 return None
             for audio_path in resolved_audio:
                 audio_path.relative_to(payload_root)
-        except (OSError, RuntimeError, ValueError):
+        except OSError, RuntimeError, ValueError:
             return None
         if not payload_root.is_dir():
             return None
@@ -273,7 +274,7 @@ class RailgunPT(NEXUSPHP):
         if declared_root:
             try:
                 declared_path = Path(str(declared_root)).resolve()
-            except (OSError, RuntimeError):
+            except OSError, RuntimeError:
                 declared_path = None
             if declared_path in candidate_roots:
                 return declared_path
@@ -283,38 +284,53 @@ class RailgunPT(NEXUSPHP):
     def _cue_references_audio(cue_path: Path, payload_root: Path, audio_paths: list[Path]) -> set[Path] | None:
         try:
             content = cue_path.read_text(encoding="utf-8", errors="replace")
-        except (OSError, UnicodeError):
+        except OSError, UnicodeError:
             return None
         lines = content.splitlines()
         file_pattern = re.compile(r"^\s*FILE\s+(?:\"([^\"]+)\"|(\S+))\s+(?:BINARY|MOTOROLA|WAVE|AIFF|MP3)\s*$", re.IGNORECASE)
-        track_pattern = re.compile(r"^\s*TRACK\s+\d{2}\s+(?:AUDIO|MODE\d/\d+|CDI/\d+)\s*$", re.IGNORECASE)
-        index_pattern = re.compile(r"^\s*INDEX\s+\d{2}\s+\d{2}:\d{2}:\d{2}\s*$", re.IGNORECASE)
+        track_pattern = re.compile(r"^\s*TRACK\s+(?:0[1-9]|[1-9]\d)\s+(?:AUDIO|MODE\d/\d+|CDI/\d+)\s*$", re.IGNORECASE)
+        index_pattern = re.compile(r"^\s*INDEX\s+(\d{2})\s+(\d{2}):([0-5]\d):([0-5]\d)\s*$", re.IGNORECASE)
+        metadata_pattern = re.compile(
+            r"^\s*(?:REM(?:\s+.*)?|(?:PERFORMER|TITLE|SONGWRITER|CATALOG|ISRC|CDTEXTFILE|FLAGS|PREGAP|POSTGAP)\s+.+)\s*$",
+            re.IGNORECASE,
+        )
         references: list[tuple[str, str]] = []
+        file_positions: list[int] = []
         track_positions: list[int] = []
-        index_positions: list[int] = []
+        index_positions: list[tuple[int, int]] = []
         for line_number, line in enumerate(lines):
+            if not line.strip():
+                continue
             if re.match(r"^\s*FILE\b", line, re.IGNORECASE):
                 match = file_pattern.fullmatch(line)
                 if not match:
                     return None
                 references.append((match.group(1) or "", match.group(2) or ""))
+                file_positions.append(line_number)
             elif re.match(r"^\s*TRACK\b", line, re.IGNORECASE):
                 if not track_pattern.fullmatch(line):
                     return None
                 track_positions.append(line_number)
             elif re.match(r"^\s*INDEX\b", line, re.IGNORECASE):
-                if not index_pattern.fullmatch(line):
+                match = index_pattern.fullmatch(line)
+                if not match:
                     return None
-                index_positions.append(line_number)
-        if not references or not track_positions or not index_positions or len(track_positions) < len(references):
+                index_positions.append((line_number, int(match.group(1))))
+            elif not metadata_pattern.fullmatch(line):
+                return None
+        if not references or not track_positions or not index_positions or track_positions[0] < file_positions[0]:
             return None
+        for index, file_position in enumerate(file_positions):
+            next_file = file_positions[index + 1] if index + 1 < len(file_positions) else len(lines)
+            if not any(file_position < track_position < next_file for track_position in track_positions):
+                return None
         for index, track_position in enumerate(track_positions):
             next_track = track_positions[index + 1] if index + 1 < len(track_positions) else len(lines)
-            if not any(track_position < index_position < next_track for index_position in index_positions):
+            if not any(track_position < index_position < next_track and index_number == 1 for index_position, index_number in index_positions):
                 return None
         try:
             resolved_audio = {path.resolve(strict=True) for path in audio_paths if path.resolve(strict=True).is_file()}
-        except (OSError, RuntimeError):
+        except OSError, RuntimeError:
             return None
         resolved_references: set[Path] = set()
         for quoted, bare in references:
@@ -325,7 +341,7 @@ class RailgunPT(NEXUSPHP):
             try:
                 candidate = (cue_path.parent / reference_path).resolve(strict=True)
                 candidate.relative_to(payload_root)
-            except (OSError, RuntimeError, ValueError):
+            except OSError, RuntimeError, ValueError:
                 return None
             if candidate not in resolved_audio:
                 return None
@@ -340,7 +356,7 @@ class RailgunPT(NEXUSPHP):
         try:
             resolved = candidate.resolve(strict=True)
             resolved.relative_to(payload_root)
-        except (OSError, RuntimeError, ValueError):
+        except OSError, RuntimeError, ValueError:
             return None
         if candidate.absolute() != resolved or not resolved.is_file():
             return None
@@ -375,7 +391,7 @@ class RailgunPT(NEXUSPHP):
                         covered_audio.update(references)
         try:
             required_audio = {path.resolve(strict=True) for path in audio_paths}
-        except (OSError, RuntimeError):
+        except OSError, RuntimeError:
             return False
         return required_audio.issubset(covered_audio)
 
@@ -477,7 +493,7 @@ class RailgunPT(NEXUSPHP):
 
         try:
             source_size = int(meta.source_size)
-        except (TypeError, ValueError, OverflowError):
+        except TypeError, ValueError, OverflowError:
             source_size = 0
         if source_size < 100 * 1024 * 1024 and not self._size_exception_applies(meta, category):
             logger.info(f"{self.tracker}: [bold red]Torrents must be at least 100 MiB unless a RailgunPT exception applies.[/bold red]")
