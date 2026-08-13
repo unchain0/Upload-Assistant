@@ -289,7 +289,7 @@ class RailgunPT(NEXUSPHP):
         lines = content.splitlines()
         file_pattern = re.compile(r"^\s*FILE\s+(?:\"([^\"]+)\"|(\S+))\s+(?:BINARY|MOTOROLA|WAVE|AIFF|MP3)\s*$", re.IGNORECASE)
         track_pattern = re.compile(r"^\s*TRACK\s+(?:0[1-9]|[1-9]\d)\s+(?:AUDIO|MODE\d/\d+|CDI/\d+)\s*$", re.IGNORECASE)
-        index_pattern = re.compile(r"^\s*INDEX\s+(\d{2})\s+(\d{2}):([0-5]\d):([0-5]\d)\s*$", re.IGNORECASE)
+        index_pattern = re.compile(r"^\s*INDEX\s+(\d{2})\s+(\d{2}):([0-5]\d):(?:[0-6]\d|7[0-4])\s*$", re.IGNORECASE)
         metadata_pattern = re.compile(
             r"^\s*(?:REM(?:\s+.*)?|(?:PERFORMER|TITLE|SONGWRITER|CATALOG|ISRC|CDTEXTFILE|FLAGS|PREGAP|POSTGAP)\s+.+)\s*$",
             re.IGNORECASE,

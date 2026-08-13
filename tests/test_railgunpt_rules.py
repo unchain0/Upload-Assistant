@@ -505,6 +505,7 @@ def test_railgunpt_requires_cue_in_music_payload(tmp_path):
     invalid_cue_cases = {
         "MissingIndex.cue": 'FILE "CD1/Artist - Album - 01.flac" WAVE\nTRACK 01 AUDIO\nINDEX 02 00:00:00\n',
         "InvalidTime.cue": 'FILE "CD1/Artist - Album - 01.flac" WAVE\nTRACK 01 AUDIO\nINDEX 01 00:99:99\n',
+        "InvalidFrame.cue": 'FILE "CD1/Artist - Album - 01.flac" WAVE\nTRACK 01 AUDIO\nINDEX 01 00:00:75\n',
         "ZeroTrack.cue": 'FILE "CD1/Artist - Album - 01.flac" WAVE\nTRACK 00 AUDIO\nINDEX 01 00:00:00\n',
         "UnknownDirective.cue": 'FILE "CD1/Artist - Album - 01.flac" WAVE\nUNKNOWN "unexpected"\nTRACK 01 AUDIO\nINDEX 01 00:00:00\n',
     }
@@ -513,6 +514,13 @@ def test_railgunpt_requires_cue_in_music_payload(tmp_path):
         invalid_cue.write_text(cue_content)
         release["auxiliary"] = {"cues": [cue_name]}
         assert _check(_music_meta(path=str(root), filelist=[str(track_one), str(track_two)], music_release=release)) is False
+
+    valid_frame_cue = root / "ValidFrame.cue"
+    valid_frame_cue.write_text(
+        'FILE "CD1/Artist - Album - 01.flac" WAVE\nTRACK 01 AUDIO\nINDEX 01 00:00:74\nFILE "CD1/Artist - Album - 02.flac" WAVE\nTRACK 02 AUDIO\nINDEX 01 00:00:00\n'
+    )
+    release["auxiliary"] = {"cues": ["ValidFrame.cue"]}
+    assert _check(_music_meta(path=str(root), filelist=[str(track_one), str(track_two)], music_release=release)) is True
 
     release["auxiliary"] = {"cues": ["Album.cue"]}
     assert _check(_music_meta(path=str(track_one), filelist=[str(track_one), str(track_two)], music_release=release)) is False
