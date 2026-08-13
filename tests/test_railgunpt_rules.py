@@ -253,7 +253,7 @@ def test_railgunpt_applies_music_size_and_pack_rules():
     ) is True
     assert _check(_music_meta(source_size=100 * 1024 * 1024 - 1)) is False
     assert _check(_music_meta(filelist=["Artist - Album - 01.flac", "Artist - Album - 02.flac", "Album.cue"], music_release={"tracks": [{"format": "FLAC"}, {"format": "FLAC"}], "auxiliary": {"cues": ["Album.cue"]}})) is True
-    assert _check(_music_meta(filelist=["Artist - Album - 01.flac", "Artist - Album - 02.mp3", "Album.cue"], music_release={"tracks": [{"format": "FLAC"}, {"format": "FLAC"}], "auxiliary": {"cues": ["Album.cue"]}})) is False
+    assert _check(_music_meta(channels="5.1", filelist=["Artist - Album - 01.flac", "Artist - Album - 02.mp3", "Album.cue"], music_release={"tracks": [{"format": "FLAC"}, {"format": "FLAC"}], "auxiliary": {"cues": ["Album.cue"]}})) is False
     assert _check(_music_meta(filelist=["Artist - Album - 01.flac", "Artist - Album - 02.flac"], music_release={"tracks": [{"format": "FLAC"}, {"format": "FLAC"}], "auxiliary": {"cues": ["Album.cue"]}})) is False
     assert _check(
         _music_meta(
