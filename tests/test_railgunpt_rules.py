@@ -329,7 +329,7 @@ def test_railgunpt_requires_cue_in_music_payload(tmp_path):
     assert _check(_music_meta(path=str(root), filelist=[str(track_one), str(track_two)], music_release=release)) is False
 
     parent_root = tmp_path
-    (parent_root / "Sibling.cue").touch()
+    (parent_root / "Sibling.cue").write_text('FILE "album/CD1/Artist - Album - 01.flac" WAVE\n')
     release = {"root": str(parent_root), "tracks": [{"format": "FLAC"}, {"format": "FLAC"}], "auxiliary": {"cues": ["Sibling.cue"]}}
     assert _check(_music_meta(path=str(root), filelist=[str(track_one), str(track_two)], music_release=release)) is False
 
