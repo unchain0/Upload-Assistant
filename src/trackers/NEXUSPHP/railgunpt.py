@@ -111,9 +111,9 @@ class RailgunPT(NEXUSPHP):
         raw_tracks = cast(list[Any], tracks)
         return [cast(dict[str, Any], track) for track in raw_tracks if isinstance(track, dict)]
 
-    @staticmethod
-    def _music_field(release: dict[str, Any], name: str, default: Any = "") -> Any:
-        field = RailgunPT._music_dict(RailgunPT._music_dict(release.get("fields")).get(name))
+    @classmethod
+    def _music_field(cls, release: dict[str, Any], name: str, default: Any = "") -> Any:
+        field = cls._music_dict(cls._music_dict(release.get("fields")).get(name))
         return field.get("value", default)
 
     @classmethod
@@ -172,12 +172,11 @@ class RailgunPT(NEXUSPHP):
 
     @classmethod
     def _is_archive_file(cls, path: Path) -> bool:
-        name = path.name.casefold()
-        return path.suffix.casefold() in cls._ARCHIVE_EXTENSIONS or bool(re.search(r"(?:\.r\d{2,}|(?:\.rar|\.zip|\.7z)\.\d{3,})$", name))
+        return path.suffix.casefold() in cls._ARCHIVE_EXTENSIONS or cls._is_multipart_archive(path)
 
     @staticmethod
     def _is_multipart_archive(path: Path) -> bool:
-        return bool(re.search(r"(?:\.r\d{2,}|(?:\.rar|\.zip|\.7z)\.\d{3,})$", path.name.casefold()))
+        return bool(re.search(r"(?:\.r\d{2,}|(?:\.rar|\.zip|\.7z)\.\d{3,}|\.part\d+\.(?:rar|zip|7z))$", path.name.casefold()))
 
     @classmethod
     def _is_attachment_file(cls, path: Path) -> bool:
@@ -231,9 +230,33 @@ class RailgunPT(NEXUSPHP):
     def _music_channel_counts(cls, release: dict[str, Any]) -> list[float | None]:
         return [cls._channel_count(track.get("channels")) for track in cls._music_tracks(release)]
 
-    @staticmethod
-    def _music_cue_is_present(paths: list[Path]) -> bool:
-        return any(path.suffix.casefold() == ".cue" for path in paths)
+    @classmethod
+    def _music_cue_is_present(cls, release: dict[str, Any], paths: list[Path]) -> bool:
+        if any(path.suffix.casefold() == ".cue" for path in paths):
+            return True
+        cues_value = cls._music_dict(release.get("auxiliary")).get("cues")
+        root_value = release.get("root")
+        if not isinstance(cues_value, list) or not root_value:
+            return False
+        cues = cast(list[Any], cues_value)
+        try:
+            root = Path(str(root_value)).resolve()
+        except (OSError, RuntimeError):
+            return False
+        if not root.is_dir():
+            return False
+        for cue in cues:
+            cue_path = Path(str(cue))
+            if cue_path.suffix.casefold() != ".cue":
+                continue
+            try:
+                resolved_cue = cue_path.resolve() if cue_path.is_absolute() else (root / cue_path).resolve()
+                resolved_cue.relative_to(root)
+            except (OSError, RuntimeError, ValueError):
+                continue
+            if resolved_cue.is_file():
+                return True
+        return False
 
     def _validate_audio_rules(self, meta: Meta, paths: list[Path]) -> bool:
         audio_paths = [path for path in paths if path.suffix.casefold() in self._AUDIO_EXTENSIONS]
@@ -242,16 +265,15 @@ class RailgunPT(NEXUSPHP):
 
         lossy_paths = [path for path in audio_paths if path.suffix.casefold() in self._LOSSY_AUDIO_EXTENSIONS]
         channel_counts = [self._channel_count(meta.channels)]
+        release = meta.music_release if isinstance(meta.music_release, dict) else {}
         if str(meta.category or "").upper() == "MUSIC":
-            release = meta.music_release if isinstance(meta.music_release, dict) else {}
             channel_counts.extend(self._music_channel_counts(release))
         channel_counts = [channel for channel in channel_counts if channel is not None]
         if lossy_paths and (not channel_counts or any(channel < 5.1 for channel in channel_counts)):
             logger.info(f"{self.tracker}: [bold red]Lossy audio files must meet the 5.1-channel minimum.[/bold red]")
             return False
 
-        release = meta.music_release if isinstance(meta.music_release, dict) else {}
-        has_cue = self._music_cue_is_present(paths)
+        has_cue = self._music_cue_is_present(release, paths)
         if len(audio_paths) > 1 and not has_cue:
             logger.info(f"{self.tracker}: [bold red]Multi-track audio uploads must include a cue sheet.[/bold red]")
             return False

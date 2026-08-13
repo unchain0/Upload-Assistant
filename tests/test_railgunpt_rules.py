@@ -203,6 +203,7 @@ def test_railgunpt_rejects_multipart_archives_and_mixed_attachment_packing():
     assert _check(_movie_meta(filelist=["movie.mkv", "release.r03"])) is False
     assert _check(_movie_meta(filelist=["movie.mkv", "subtitles.r03"])) is False
     assert _check(_movie_meta(filelist=["movie.mkv", "subtitles.rar.001"])) is False
+    assert _check(_movie_meta(filelist=["movie.mkv", "subtitles.part01.rar"])) is False
     assert _check(_movie_meta(filelist=["movie.mkv", "subtitles.rar", "cover.jpg"])) is False
     assert _check(_movie_meta(filelist=["movie.mkv", "subtitles.rar", "cover.rar"])) is True
 
@@ -306,10 +307,18 @@ def test_railgunpt_applies_original_game_image_and_software_exceptions():
     assert _check(_game_meta(software=True, source_size=100 * 1024 * 1024 - 1, filelist=["tool.pkg"], name="HD Video Tool")) is True
 
 
-def test_railgunpt_requires_cue_in_music_payload():
+def test_railgunpt_requires_cue_in_music_payload(tmp_path):
+    root = tmp_path / "album"
+    root.mkdir()
+    (root / "Album.cue").touch()
+    release = {"root": str(root), "tracks": [{"format": "FLAC"}, {"format": "FLAC"}], "auxiliary": {"cues": ["Album.cue"]}}
+    assert _check(_music_meta(filelist=["Artist - Album - 01.flac", "Artist - Album - 02.flac"], music_release=release)) is True
+
     release = {"root": "/", "tracks": [{"format": "FLAC"}, {"format": "FLAC"}], "auxiliary": {"cues": ["etc/passwd"]}}
     assert _check(_music_meta(filelist=["Artist - Album - 01.flac", "Artist - Album - 02.flac"], music_release=release)) is False
-    assert _check(_music_meta(filelist=["Artist - Album - 01.flac", "Artist - Album - 02.flac", "Album.cue"], music_release=release)) is True
+
+    release = {"root": str(root), "tracks": [{"format": "FLAC"}, {"format": "FLAC"}], "auxiliary": {"cues": ["../Outside.cue"]}}
+    assert _check(_music_meta(filelist=["Artist - Album - 01.flac", "Artist - Album - 02.flac"], music_release=release)) is False
 
 
 def test_railgunpt_does_not_misclassify_payload_names_as_attachments():
