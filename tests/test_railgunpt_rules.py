@@ -404,6 +404,15 @@ def test_railgunpt_requires_cue_in_music_payload(tmp_path):
     release["auxiliary"] = {"cues": ["Partial.cue"]}
     assert _check(_music_meta(path=str(root), filelist=[str(track_one), str(track_two)], music_release=release)) is False
 
+    malformed_cue = root / "Malformed.cue"
+    malformed_cue.write_text('FILE "CD1/Artist - Album - 01.flac"\nFILE "CD1/Artist - Album - 02.flac"\nTRACK 01 AUDIO\nINDEX 01 00:00:00\n')
+    release["auxiliary"] = {"cues": ["Malformed.cue"]}
+    assert _check(_music_meta(path=str(root), filelist=[str(track_one), str(track_two)], music_release=release)) is False
+
+    release["auxiliary"] = {"cues": ["Album.cue"]}
+    assert _check(_music_meta(path=str(track_one), filelist=[str(track_one), str(track_two)], music_release=release)) is False
+    assert _check(_music_meta(path=str(root / "missing-release"), filelist=[str(track_one), str(track_two)], music_release=release)) is False
+
     release["auxiliary"] = {"cues": ["etc/passwd"]}
     assert _check(_music_meta(path=str(root), filelist=[str(track_one), str(track_two)], music_release=release)) is False
 

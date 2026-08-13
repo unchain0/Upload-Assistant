@@ -240,8 +240,9 @@ class RailgunPT(NEXUSPHP):
         if not audio_paths or not all(path.is_absolute() for path in audio_paths) or not meta.path:
             return None
         try:
-            source_path = Path(str(meta.path)).resolve()
-            source_root = source_path if source_path.is_dir() else source_path.parent
+            source_root = Path(str(meta.path)).resolve(strict=True)
+            if not source_root.is_dir():
+                return None
             resolved_audio = [path.resolve(strict=True) for path in audio_paths]
             if not source_root.is_dir() or not all(path.is_file() for path in resolved_audio):
                 return None
@@ -284,7 +285,7 @@ class RailgunPT(NEXUSPHP):
             content = cue_path.read_text(encoding="utf-8", errors="replace")
         except (OSError, UnicodeError):
             return False
-        references = re.findall(r"^\s*FILE\s+(?:\"([^\"]+)\"|(\S+))", content, re.IGNORECASE | re.MULTILINE)
+        references = re.findall(r"^\s*FILE\s+(?:\"([^\"]+)\"|(\S+))\s+\S+", content, re.IGNORECASE | re.MULTILINE)
         tracks = re.findall(r"^\s*TRACK\s+\d+\s+\S+", content, re.IGNORECASE | re.MULTILINE)
         indexes = re.findall(r"^\s*INDEX\s+\d+\s+\S+", content, re.IGNORECASE | re.MULTILINE)
         if not references or not tracks or not indexes:
