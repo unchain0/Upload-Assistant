@@ -26,6 +26,7 @@ class RailgunPT(NEXUSPHP):
     _ARCHIVE_EXTENSIONS: frozenset[str] = frozenset({".rar", ".r00", ".r01", ".r02", ".zip", ".7z"})
     _ATTACHMENT_ARCHIVE_MARKERS: tuple[str, ...] = ("sub", "subtitle", "font", "scan", "cover", "patch", "crack")
     _AUDIO_EXTENSIONS: frozenset[str] = frozenset({".aac", ".ac3", ".ape", ".dts", ".flac", ".m4a", ".mp3", ".ogg", ".opus", ".wav", ".wma"})
+    _MUSIC_LAYOUT_DIRS: frozenset[str] = frozenset({"aac", "ac3", "ape", "dts", "flac", "m4a", "mp3", "ogg", "opus", "wav", "wma"})
     _LOSSY_AUDIO_EXTENSIONS: frozenset[str] = frozenset({".aac", ".ac3", ".dts", ".m4a", ".mp3", ".ogg", ".opus", ".wma"})
     _GAME_IMAGE_EXTENSIONS: frozenset[str] = frozenset({".bin", ".chd", ".cso", ".img", ".iso", ".mdf", ".nrg", ".wbfs"})
     _MUSIC_FORMAT_BY_EXTENSION: ClassVar[dict[str, str]] = {
@@ -234,7 +235,7 @@ class RailgunPT(NEXUSPHP):
         return [cls._channel_count(track.get("channels")) for track in cls._music_tracks(release)]
 
     @classmethod
-    def _music_payload_root(cls, paths: list[Path]) -> Path | None:
+    def _music_payload_root(cls, release: dict[str, Any], paths: list[Path]) -> Path | None:
         audio_paths = [path for path in paths if path.suffix.casefold() in cls._AUDIO_EXTENSIONS]
         if not audio_paths or not all(path.is_absolute() for path in audio_paths):
             return None
@@ -246,8 +247,13 @@ class RailgunPT(NEXUSPHP):
             for audio_path in resolved_audio[1:]:
                 while payload_root != audio_path.parent and payload_root not in audio_path.parent.parents:
                     payload_root = payload_root.parent
-            while re.fullmatch(r"(?:cd|disc|disk)[ ._-]?\d+", payload_root.name, re.IGNORECASE) and payload_root.parent != payload_root:
+            candidate_roots = [payload_root]
+            while (
+                (re.fullmatch(r"(?:cd|disc|disk)[ ._-]?\d+", payload_root.name, re.IGNORECASE) or payload_root.name.casefold() in cls._MUSIC_LAYOUT_DIRS)
+                and payload_root.parent != payload_root
+            ):
                 payload_root = payload_root.parent
+                candidate_roots.append(payload_root)
             if payload_root.parent == payload_root:
                 return None
             for audio_path in resolved_audio:
@@ -256,6 +262,14 @@ class RailgunPT(NEXUSPHP):
             return None
         if not payload_root.is_dir():
             return None
+        declared_root = release.get("root")
+        if declared_root:
+            try:
+                declared_path = Path(str(declared_root)).resolve()
+            except (OSError, RuntimeError):
+                declared_path = None
+            if declared_path in candidate_roots:
+                return declared_path
         return payload_root
 
     @staticmethod
@@ -291,7 +305,7 @@ class RailgunPT(NEXUSPHP):
     def _music_cue_is_present(cls, release: dict[str, Any], paths: list[Path]) -> bool:
         cue_paths = [path for path in paths if path.suffix.casefold() == ".cue"]
         audio_paths = [path for path in paths if path.suffix.casefold() in cls._AUDIO_EXTENSIONS]
-        payload_root = cls._music_payload_root(paths)
+        payload_root = cls._music_payload_root(release, paths)
         for cue_path in cue_paths:
             if payload_root is not None:
                 if cue_path.is_absolute() or ".." not in cue_path.parts:
