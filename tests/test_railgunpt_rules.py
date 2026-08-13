@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 
 from src.meta import Meta
+from src.trackers.NEXUSPHP import NEXUSPHP
 from src.trackers.NEXUSPHP.railgunpt import RailgunPT
 
 
@@ -243,6 +244,24 @@ def test_railgunpt_skips_tmdb_localization_for_non_video_categories():
     assert tracker.tmdb_data == {}
 
 
+def test_railgunpt_handles_non_video_nexusphp_payload_and_search(monkeypatch: pytest.MonkeyPatch):
+    tracker = _tracker()
+    tracker.announce_url = "https://tracker.example/announce"
+    observed: dict[str, Any] = {}
+
+    async def fake_search(_tracker: NEXUSPHP, meta: Meta) -> list[dict[str, str]]:
+        observed.update({"season": meta.season, "episode": meta.episode, "tv_pack": meta.tv_pack})
+        return []
+
+    monkeypatch.setattr(NEXUSPHP, "search_existing", fake_search)
+    game = _game_meta(season=0, episode="", tv_pack=False)
+    assert asyncio.run(tracker.get_technical_info(game)) == ""
+    assert asyncio.run(tracker.get_technical_info(_music_meta())) == ""
+    assert asyncio.run(tracker.search_existing(game)) == []
+    assert observed == {"season": "", "episode": "", "tv_pack": False}
+    assert (game.season, game.episode, game.tv_pack) == (0, "", False)
+
+
 def test_railgunpt_applies_music_size_and_pack_rules():
     assert _check(
         _music_meta(
@@ -254,6 +273,11 @@ def test_railgunpt_applies_music_size_and_pack_rules():
     assert _check(_music_meta(source_size=100 * 1024 * 1024 - 1)) is False
     assert _check(_music_meta(filelist=["Artist - Album - 01.flac", "Artist - Album - 02.flac", "Album.cue"], music_release={"tracks": [{"format": "FLAC"}, {"format": "FLAC"}], "auxiliary": {"cues": ["Album.cue"]}})) is True
     assert _check(_music_meta(channels="5.1", filelist=["Artist - Album - 01.flac", "Artist - Album - 02.mp3", "Album.cue"], music_release={"tracks": [{"format": "FLAC"}, {"format": "FLAC"}], "auxiliary": {"cues": ["Album.cue"]}})) is False
+    assert _check(_music_meta(filelist=["Artist - Album - 01.flac", "Artist - Album - 02.flac"], music_release={"tracks": [{"format": "FLAC"}, {"format": "FLAC"}], "auxiliary": {"cues": ["Album.cue"]}})) is False
+    assert _check(_music_meta(channels="5.1", filelist=["Artist - Album - 01.m4a", "Artist - Album - 02.m4a", "Album.cue"], music_release={"tracks": [{"format": "AAC"}, {"format": "AAC"}], "auxiliary": {"cues": ["Album.cue"]}})) is True
+    assert _check(_music_meta(channels="5.1", filelist=["Artist - Album - 01.ogg", "Artist - Album - 02.ogg", "Album.cue"], music_release={"tracks": [{"format": "Ogg Vorbis"}, {"format": "Ogg Vorbis"}], "auxiliary": {"cues": ["Album.cue"]}})) is True
+    assert _check(_music_meta(filelist=["Artist - Album - 01.mp3", "Artist - Album - 02.mp3", "Album.cue"], format="MP3", channels="", music_release={"tracks": [{"format": "MP3", "channels": 2}, {"format": "MP3", "channels": 2}], "auxiliary": {"cues": ["Album.cue"]}})) is False
+    assert _check(_music_meta(filelist=["Artist - Album - 01.mp3", "Artist - Album - 02.mp3", "Album.cue"], format="MP3", channels="", music_release={"tracks": [{"format": "MP3", "channels": 5.1}, {"format": "MP3", "channels": 5.1}], "auxiliary": {"cues": ["Album.cue"]}})) is True
     assert _check(_music_meta(filelist=["Artist - Album - 01.flac", "Artist - Album - 02.flac"], music_release={"tracks": [{"format": "FLAC"}, {"format": "FLAC"}], "auxiliary": {"cues": ["Album.cue"]}})) is False
     assert _check(
         _music_meta(
@@ -268,6 +292,20 @@ def test_railgunpt_applies_music_size_and_pack_rules():
 def test_railgunpt_applies_original_game_image_and_software_exceptions():
     assert _check(_game_meta()) is True
     assert _check(_game_meta(filelist=["game.cue"])) is False
+    assert _check(_game_meta(name="Garry's Mod", filelist=["Garrys.Mod.iso"])) is True
     assert _check(_game_meta(filelist=["game.rar"])) is False
     assert _check(_game_meta(filelist=["game.exe"], name="Game Portable Repack")) is False
     assert _check(_game_meta(software=True, source_size=100 * 1024 * 1024 - 1, filelist=["tool.pkg"], name="HD Video Tool")) is True
+
+
+def test_railgunpt_accepts_snapshot_cue_when_file_exists(tmp_path):
+    root = tmp_path / "album"
+    root.mkdir()
+    (root / "Album.cue").touch()
+    release = {"root": str(root), "tracks": [{"format": "FLAC"}, {"format": "FLAC"}], "auxiliary": {"cues": ["Album.cue"]}}
+    assert _check(_music_meta(filelist=["Artist - Album - 01.flac", "Artist - Album - 02.flac"], music_release=release)) is True
+
+
+def test_railgunpt_does_not_misclassify_payload_names_as_attachments():
+    files = ["Submarine.2023.1080p.BluRay.x264-GRP.mkv", "subtitles.rar"]
+    assert _check(_movie_meta(filelist=files)) is True

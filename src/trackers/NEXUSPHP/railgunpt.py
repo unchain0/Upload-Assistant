@@ -1,7 +1,7 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from src.console import logger
 from src.meta import Meta
@@ -28,6 +28,19 @@ class RailgunPT(NEXUSPHP):
     _AUDIO_EXTENSIONS: frozenset[str] = frozenset({".aac", ".ac3", ".ape", ".dts", ".flac", ".m4a", ".mp3", ".ogg", ".opus", ".wav", ".wma"})
     _LOSSY_AUDIO_EXTENSIONS: frozenset[str] = frozenset({".aac", ".ac3", ".dts", ".m4a", ".mp3", ".ogg", ".opus", ".wma"})
     _GAME_IMAGE_EXTENSIONS: frozenset[str] = frozenset({".bin", ".chd", ".cso", ".img", ".iso", ".mdf", ".nrg", ".wbfs"})
+    _MUSIC_FORMAT_BY_EXTENSION: ClassVar[dict[str, str]] = {
+        ".aac": "aac",
+        ".ac3": "ac3",
+        ".ape": "ape",
+        ".dts": "dts",
+        ".flac": "flac",
+        ".m4a": "aac",
+        ".mp3": "mp3",
+        ".ogg": "ogg vorbis",
+        ".opus": "opus",
+        ".wav": "wav",
+        ".wma": "wma",
+    }
     _BANNED_EXTENSIONS: frozenset[str] = frozenset({".rm", ".rmvb", ".flv", ".torrent", ".url"})
     _VIDEO_EXTENSIONS: frozenset[str] = frozenset({".avi", ".m2ts", ".m4v", ".mkv", ".mov", ".mp4", ".mpg", ".mpeg", ".rm", ".rmvb", ".ts", ".vob", ".webm"})
     _LOW_QUALITY_MARKERS: tuple[str, ...] = ("cam", "hdcam", "tc", "telesync", "ts", "scr", "dvdscr", "r5", "r5 line", "halfcd")
@@ -45,7 +58,6 @@ class RailgunPT(NEXUSPHP):
         "keygen",
         "unofficial",
         "third party mod",
-        "mod",
     )
 
     def __init__(self, config: Config) -> None:
@@ -56,6 +68,22 @@ class RailgunPT(NEXUSPHP):
             self.tmdb_data = {}
             return
         await super().load_localized_data(meta)
+
+    async def get_technical_info(self, meta: Meta) -> str:
+        if str(meta.category or "").upper() in {"GAME", "MUSIC"}:
+            return ""
+        return await super().get_technical_info(meta)
+
+    async def search_existing(self, meta: Meta) -> list[dict[str, str]]:
+        if str(meta.category or "").upper() not in {"GAME", "MUSIC"}:
+            return await super().search_existing(meta)
+
+        original_season, original_episode, original_tv_pack = meta.season, meta.episode, meta.tv_pack
+        meta.season, meta.episode, meta.tv_pack = "", "", False
+        try:
+            return await super().search_existing(meta)
+        finally:
+            meta.season, meta.episode, meta.tv_pack = original_season, original_episode, original_tv_pack
 
     @staticmethod
     def _normalized_token(value: Any) -> str:
@@ -80,13 +108,32 @@ class RailgunPT(NEXUSPHP):
         return default
 
     @classmethod
+    def _canonical_music_format(cls, value: Any) -> str:
+        token = cls._normalized_token(value)
+        return {
+            "aac": "aac",
+            "ac3": "ac3",
+            "ape": "ape",
+            "dts": "dts",
+            "flac": "flac",
+            "m4a": "aac",
+            "mp3": "mp3",
+            "ogg": "ogg vorbis",
+            "oggvorbis": "ogg vorbis",
+            "opus": "opus",
+            "vorbis": "ogg vorbis",
+            "wav": "wav",
+            "wma": "wma",
+        }.get(token, token)
+
+    @classmethod
     def _music_track_formats(cls, release: dict[str, Any], paths: list[Path]) -> set[str]:
         tracks = release.get("tracks")
         formats: set[str] = set()
         if isinstance(tracks, list):
-            formats = {str(track.get("format") or track.get("codec") or "").casefold() for track in tracks if isinstance(track, dict)}
+            formats = {cls._canonical_music_format(track.get("format") or track.get("codec") or "") for track in tracks if isinstance(track, dict)}
             formats.discard("")
-        payload_formats = {path.suffix.casefold().lstrip(".") for path in paths if path.suffix.casefold() in cls._AUDIO_EXTENSIONS}
+        payload_formats = {cls._MUSIC_FORMAT_BY_EXTENSION[path.suffix.casefold()] for path in paths if path.suffix.casefold() in cls._AUDIO_EXTENSIONS}
         return payload_formats | formats
 
     @staticmethod
@@ -104,8 +151,7 @@ class RailgunPT(NEXUSPHP):
 
     @classmethod
     def _archive_is_allowed_attachment(cls, path: Path) -> bool:
-        stem = cls._normalized_token(path.stem)
-        return any(marker in stem for marker in cls._ATTACHMENT_ARCHIVE_MARKERS)
+        return cls._is_attachment_file(path)
 
     @classmethod
     def _is_archive_file(cls, path: Path) -> bool:
@@ -114,8 +160,8 @@ class RailgunPT(NEXUSPHP):
 
     @classmethod
     def _is_attachment_file(cls, path: Path) -> bool:
-        stem = cls._normalized_token(path.stem)
-        return any(marker in stem for marker in cls._ATTACHMENT_ARCHIVE_MARKERS)
+        stem = re.sub(r"[._-]+", " ", path.stem.casefold())
+        return any(re.search(rf"(?<![a-z0-9]){re.escape(marker)}s?(?![a-z0-9])", stem) for marker in cls._ATTACHMENT_ARCHIVE_MARKERS)
 
     @classmethod
     def _pack_tokens(cls, paths: list[Path], tokens: tuple[str, ...]) -> set[str]:
@@ -160,18 +206,47 @@ class RailgunPT(NEXUSPHP):
         match = re.search(r"(?<!\d)(\d+(?:\.\d+)?)(?:\s*(?:channels?|ch))?", str(value or "").casefold())
         return float(match.group(1)) if match else None
 
+    @classmethod
+    def _music_channel_counts(cls, release: dict[str, Any]) -> list[float | None]:
+        tracks = release.get("tracks")
+        if not isinstance(tracks, list):
+            return []
+        return [cls._channel_count(track.get("channels")) for track in tracks if isinstance(track, dict)]
+
+    @classmethod
+    def _music_cue_is_present(cls, release: dict[str, Any], paths: list[Path]) -> bool:
+        if any(path.suffix.casefold() == ".cue" for path in paths):
+            return True
+        auxiliary = release.get("auxiliary")
+        cues = auxiliary.get("cues") if isinstance(auxiliary, dict) else []
+        root = Path(str(release.get("root", ""))) if release.get("root") else None
+        if not isinstance(cues, list) or root is None:
+            return False
+        for cue in cues:
+            cue_path = Path(str(cue))
+            if not cue_path.is_absolute():
+                cue_path = root / cue_path
+            if cue_path.is_file():
+                return True
+        return False
+
     def _validate_audio_rules(self, meta: Meta, paths: list[Path]) -> bool:
         audio_paths = [path for path in paths if path.suffix.casefold() in self._AUDIO_EXTENSIONS]
         if not audio_paths:
             return True
 
         lossy_paths = [path for path in audio_paths if path.suffix.casefold() in self._LOSSY_AUDIO_EXTENSIONS]
-        channels = self._channel_count(meta.channels)
-        if lossy_paths and (channels is None or channels < 5.1):
+        channel_counts = [self._channel_count(meta.channels)]
+        if str(meta.category or "").upper() == "MUSIC":
+            release = meta.music_release if isinstance(meta.music_release, dict) else {}
+            channel_counts.extend(self._music_channel_counts(release))
+        channel_counts = [channel for channel in channel_counts if channel is not None]
+        if lossy_paths and (not channel_counts or any(channel < 5.1 for channel in channel_counts)):
             logger.info(f"{self.tracker}: [bold red]Lossy audio files must meet the 5.1-channel minimum.[/bold red]")
             return False
 
-        has_cue = any(path.suffix.casefold() == ".cue" for path in paths)
+        release = meta.music_release if isinstance(meta.music_release, dict) else {}
+        has_cue = self._music_cue_is_present(release, paths)
         if len(audio_paths) > 1 and not has_cue:
             logger.info(f"{self.tracker}: [bold red]Multi-track audio uploads must include a cue sheet.[/bold red]")
             return False
