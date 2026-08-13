@@ -231,25 +231,43 @@ class RailgunPT(NEXUSPHP):
         return [cls._channel_count(track.get("channels")) for track in cls._music_tracks(release)]
 
     @classmethod
-    def _music_cue_is_present(cls, release: dict[str, Any], paths: list[Path]) -> bool:
-        if any(path.suffix.casefold() == ".cue" for path in paths):
-            return True
-        cues_value = cls._music_dict(release.get("auxiliary")).get("cues")
+    def _music_payload_root(cls, release: dict[str, Any], paths: list[Path]) -> Path | None:
         audio_paths = [path for path in paths if path.suffix.casefold() in cls._AUDIO_EXTENSIONS]
         root_value = release.get("root")
-        if not isinstance(cues_value, list) or not audio_paths or not all(path.is_absolute() for path in audio_paths) or not root_value:
-            return False
-        cues = cast(list[Any], cues_value)
+        if not audio_paths or not all(path.is_absolute() for path in audio_paths) or not root_value:
+            return None
         try:
             payload_root = Path(str(root_value)).resolve()
             if payload_root.parent == payload_root:
-                return False
+                return None
             for audio_path in audio_paths:
                 audio_path.resolve().relative_to(payload_root)
         except (OSError, RuntimeError, ValueError):
-            return False
+            return None
         if not payload_root.is_dir():
+            return None
+        return payload_root
+
+    @classmethod
+    def _music_cue_is_present(cls, release: dict[str, Any], paths: list[Path]) -> bool:
+        cue_paths = [path for path in paths if path.suffix.casefold() == ".cue"]
+        payload_root = cls._music_payload_root(release, paths)
+        for cue_path in cue_paths:
+            if cue_path.is_absolute():
+                if payload_root is None:
+                    continue
+                try:
+                    cue_path.resolve().relative_to(payload_root)
+                except (OSError, RuntimeError, ValueError):
+                    continue
+            elif ".." in cue_path.parts:
+                continue
+            return True
+
+        cues_value = cls._music_dict(release.get("auxiliary")).get("cues")
+        if not isinstance(cues_value, list) or payload_root is None:
             return False
+        cues = cast(list[Any], cues_value)
         for cue in cues:
             cue_path = Path(str(cue))
             if cue_path.is_absolute() or ".." in cue_path.parts or cue_path.suffix.casefold() != ".cue":
