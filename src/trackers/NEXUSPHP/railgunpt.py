@@ -1,7 +1,7 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from src.console import logger
 from src.meta import Meta
@@ -12,7 +12,7 @@ Config = dict[str, Any]
 
 class RailgunPT(NEXUSPHP):
     """
-    RAILGUNPT is a CHINESE Private Torrent Tracker for MOVIES / TV / GENERAL
+    RAILGUNPT is a CHINESE Private Torrent Tracker for MOVIES / TV / MUSIC / GAME.
     """
 
     banned_groups = ()
@@ -20,22 +20,70 @@ class RailgunPT(NEXUSPHP):
     base_url = "https://bilibili.download"
     source_flag = "[bilibili.download] RailgunPT"
     torrent_url = f"{base_url}/details.php?id="
-    supported_categories = ("TV", "MOVIE")
+    supported_categories = ("TV", "MOVIE", "MUSIC", "GAME")
     tracker_urls = ("https://bilibili.download",)
     allows_bloated_audio = True
     _ARCHIVE_EXTENSIONS: frozenset[str] = frozenset({".rar", ".r00", ".r01", ".r02", ".zip", ".7z"})
     _ATTACHMENT_ARCHIVE_MARKERS: tuple[str, ...] = ("sub", "subtitle", "font", "scan", "cover", "patch", "crack")
+    _AUDIO_EXTENSIONS: frozenset[str] = frozenset({".aac", ".ac3", ".ape", ".dts", ".flac", ".m4a", ".mp3", ".ogg", ".opus", ".wav", ".wma"})
+    _LOSSY_AUDIO_EXTENSIONS: frozenset[str] = frozenset({".aac", ".ac3", ".dts", ".m4a", ".mp3", ".ogg", ".opus", ".wma"})
+    _GAME_IMAGE_EXTENSIONS: frozenset[str] = frozenset({".bin", ".chd", ".cso", ".img", ".iso", ".mdf", ".nrg", ".wbfs"})
+    _MUSIC_FORMAT_BY_EXTENSION: ClassVar[dict[str, str]] = {
+        ".aac": "aac",
+        ".ac3": "ac3",
+        ".ape": "ape",
+        ".dts": "dts",
+        ".flac": "flac",
+        ".m4a": "aac",
+        ".mp3": "mp3",
+        ".ogg": "ogg vorbis",
+        ".opus": "opus",
+        ".wav": "wav",
+        ".wma": "wma",
+    }
     _BANNED_EXTENSIONS: frozenset[str] = frozenset({".rm", ".rmvb", ".flv", ".torrent", ".url"})
     _VIDEO_EXTENSIONS: frozenset[str] = frozenset({".avi", ".m2ts", ".m4v", ".mkv", ".mov", ".mp4", ".mpg", ".mpeg", ".rm", ".rmvb", ".ts", ".vob", ".webm"})
     _LOW_QUALITY_MARKERS: tuple[str, ...] = ("cam", "hdcam", "tc", "telesync", "ts", "scr", "dvdscr", "r5", "r5 line", "halfcd")
-    _SOURCE_TOKENS: tuple[str, ...] = ("blu-ray", "bluray", "hddvd", "hd dvd", "hdtv", "uhdtv", "dvd", "web-dl", "webdl", "remux")
+    _SOURCE_TOKENS: tuple[str, ...] = ("blu-ray", "bluray", "hddvd", "hd dvd", "hdtv", "uhdtv", "dvd", "web-dl", "webdl", "remux", "dsr", "tv")
     _VIDEO_CODEC_TOKENS: tuple[str, ...] = ("avc", "h.264", "h264", "hevc", "h.265", "h265", "mpeg-2", "mpeg2", "vc-1", "vc1", "x264", "x265", "xvid")
-    _PACK_SOURCE_TOKENS: tuple[str, ...] = ("bluray", "hddvd", "hdtv", "uhdtv", "dvd", "webdl", "webrip")
+    _PACK_SOURCE_TOKENS: tuple[str, ...] = ("bluray", "hddvd", "hdtv", "uhdtv", "dvd", "webdl", "webrip", "remux", "dsr", "tv")
     _PACK_CODEC_TOKENS: tuple[str, ...] = ("x264", "x265", "h264", "h265", "hevc", "avc", "mpeg2", "vc1", "xvid")
     _DISC_TYPES: frozenset[str] = frozenset({"bdmv", "dvd", "hddvd_ts", "video_ts"})
+    _GAME_PROHIBITED_MARKERS: tuple[str, ...] = (
+        "portable",
+        "highly compressed",
+        "compressed",
+        "repack",
+        "cracked",
+        "keygen",
+        "unofficial",
+        "third party mod",
+    )
 
     def __init__(self, config: Config) -> None:
         super().__init__(config, "RAILGUNPT")
+
+    async def load_localized_data(self, meta: Meta) -> None:
+        if str(meta.category or "").upper() in {"GAME", "MUSIC"}:
+            self.tmdb_data = {}
+            return
+        await super().load_localized_data(meta)
+
+    async def get_technical_info(self, meta: Meta) -> str:
+        if str(meta.category or "").upper() in {"GAME", "MUSIC"}:
+            return ""
+        return await super().get_technical_info(meta)
+
+    async def search_existing(self, meta: Meta) -> list[dict[str, str]]:
+        if str(meta.category or "").upper() not in {"GAME", "MUSIC"}:
+            return await super().search_existing(meta)
+
+        original_season, original_episode, original_tv_pack = meta.season, meta.episode, meta.tv_pack
+        meta.season, meta.episode, meta.tv_pack = "", "", False
+        try:
+            return await super().search_existing(meta)
+        finally:
+            meta.season, meta.episode, meta.tv_pack = original_season, original_episode, original_tv_pack
 
     @staticmethod
     def _normalized_token(value: Any) -> str:
@@ -48,6 +96,45 @@ class RailgunPT(NEXUSPHP):
         if isinstance(value, (list, tuple, set)):
             return list(value)
         return []
+
+    @staticmethod
+    def _music_field(release: dict[str, Any], name: str, default: Any = "") -> Any:
+        fields = release.get("fields")
+        if not isinstance(fields, dict):
+            return default
+        field = fields.get(name)
+        if isinstance(field, dict):
+            return field.get("value", default)
+        return default
+
+    @classmethod
+    def _canonical_music_format(cls, value: Any) -> str:
+        token = cls._normalized_token(value)
+        return {
+            "aac": "aac",
+            "ac3": "ac3",
+            "ape": "ape",
+            "dts": "dts",
+            "flac": "flac",
+            "m4a": "aac",
+            "mp3": "mp3",
+            "ogg": "ogg vorbis",
+            "oggvorbis": "ogg vorbis",
+            "opus": "opus",
+            "vorbis": "ogg vorbis",
+            "wav": "wav",
+            "wma": "wma",
+        }.get(token, token)
+
+    @classmethod
+    def _music_track_formats(cls, release: dict[str, Any], paths: list[Path]) -> set[str]:
+        tracks = release.get("tracks")
+        formats: set[str] = set()
+        if isinstance(tracks, list):
+            formats = {cls._canonical_music_format(track.get("format") or track.get("codec") or "") for track in tracks if isinstance(track, dict)}
+            formats.discard("")
+        payload_formats = {cls._MUSIC_FORMAT_BY_EXTENSION[path.suffix.casefold()] for path in paths if path.suffix.casefold() in cls._AUDIO_EXTENSIONS}
+        return payload_formats | formats
 
     @staticmethod
     def _title_contains_token(title: str, token: Any) -> bool:
@@ -64,8 +151,17 @@ class RailgunPT(NEXUSPHP):
 
     @classmethod
     def _archive_is_allowed_attachment(cls, path: Path) -> bool:
-        stem = cls._normalized_token(path.stem)
-        return any(marker in stem for marker in cls._ATTACHMENT_ARCHIVE_MARKERS)
+        return cls._is_attachment_file(path)
+
+    @classmethod
+    def _is_archive_file(cls, path: Path) -> bool:
+        name = path.name.casefold()
+        return path.suffix.casefold() in cls._ARCHIVE_EXTENSIONS or bool(re.search(r"(?:\.r\d{2,}|(?:\.rar|\.zip|\.7z)\.\d{3,})$", name))
+
+    @classmethod
+    def _is_attachment_file(cls, path: Path) -> bool:
+        stem = re.sub(r"[._-]+", " ", path.stem.casefold())
+        return any(re.search(rf"(?<![a-z0-9]){re.escape(marker)}s?(?![a-z0-9])", stem) for marker in cls._ATTACHMENT_ARCHIVE_MARKERS)
 
     @classmethod
     def _pack_tokens(cls, paths: list[Path], tokens: tuple[str, ...]) -> set[str]:
@@ -73,7 +169,7 @@ class RailgunPT(NEXUSPHP):
         normalized_tokens = {cls._normalized_token(token): token for token in tokens}
         for path in paths:
             normalized_name = cls._normalized_token(path.stem)
-            matches = [canonical for token, canonical in normalized_tokens.items() if token in normalized_name]
+            matches = sorted((canonical for token, canonical in normalized_tokens.items() if token in normalized_name), key=lambda token: len(cls._normalized_token(token)), reverse=True)
             if matches:
                 found.add(matches[0])
         return found
@@ -86,12 +182,118 @@ class RailgunPT(NEXUSPHP):
     def _valid_sd_release(self, meta: Meta, height: int) -> bool:
         if height < 480:
             return False
+        genres = [str(value).casefold().strip() for value in self._metadata_values(meta.genres)]
+        keywords = [str(value).casefold().strip() for value in self._metadata_values(meta.keywords)]
+        source = self._normalized_token(meta.source)
+        if str(meta.category or "").upper() == "TV" and source in {"tv", "dsr"} and any(value in {"sport", "sports"} for value in genres + keywords):
+            return True
         disc_type = str(meta.is_disc or "").casefold()
         release_type = self._normalized_token(meta.type)
-        source = self._normalized_token(meta.source)
         if "dvd" in disc_type or release_type in {"dvd", "dvdrip", "cndvdrip"} or source in {"dvd", "dvdrip", "cndvdrip"}:
             return True
         return release_type == "encode" and source in {"bluray", "uhdbluray", "hddvd", "hdtv", "uhdtv"}
+
+    def _size_exception_applies(self, meta: Meta, category: str) -> bool:
+        if category == "GAME" and meta.software:
+            return True
+        if category != "MUSIC" or not isinstance(meta.music_release, dict):
+            return False
+        release_type = str(self._music_field(meta.music_release, "release_type", "")).casefold().strip()
+        return release_type in {"single", "single album", "single track"}
+
+    @staticmethod
+    def _channel_count(value: Any) -> float | None:
+        match = re.search(r"(?<!\d)(\d+(?:\.\d+)?)(?:\s*(?:channels?|ch))?", str(value or "").casefold())
+        return float(match.group(1)) if match else None
+
+    @classmethod
+    def _music_channel_counts(cls, release: dict[str, Any]) -> list[float | None]:
+        tracks = release.get("tracks")
+        if not isinstance(tracks, list):
+            return []
+        return [cls._channel_count(track.get("channels")) for track in tracks if isinstance(track, dict)]
+
+    @classmethod
+    def _music_cue_is_present(cls, release: dict[str, Any], paths: list[Path]) -> bool:
+        if any(path.suffix.casefold() == ".cue" for path in paths):
+            return True
+        auxiliary = release.get("auxiliary")
+        cues = auxiliary.get("cues") if isinstance(auxiliary, dict) else []
+        root = Path(str(release.get("root", ""))) if release.get("root") else None
+        if not isinstance(cues, list) or root is None:
+            return False
+        for cue in cues:
+            cue_path = Path(str(cue))
+            if not cue_path.is_absolute():
+                cue_path = root / cue_path
+            if cue_path.is_file():
+                return True
+        return False
+
+    def _validate_audio_rules(self, meta: Meta, paths: list[Path]) -> bool:
+        audio_paths = [path for path in paths if path.suffix.casefold() in self._AUDIO_EXTENSIONS]
+        if not audio_paths:
+            return True
+
+        lossy_paths = [path for path in audio_paths if path.suffix.casefold() in self._LOSSY_AUDIO_EXTENSIONS]
+        channel_counts = [self._channel_count(meta.channels)]
+        if str(meta.category or "").upper() == "MUSIC":
+            release = meta.music_release if isinstance(meta.music_release, dict) else {}
+            channel_counts.extend(self._music_channel_counts(release))
+        channel_counts = [channel for channel in channel_counts if channel is not None]
+        if lossy_paths and (not channel_counts or any(channel < 5.1 for channel in channel_counts)):
+            logger.info(f"{self.tracker}: [bold red]Lossy audio files must meet the 5.1-channel minimum.[/bold red]")
+            return False
+
+        release = meta.music_release if isinstance(meta.music_release, dict) else {}
+        has_cue = self._music_cue_is_present(release, paths)
+        if len(audio_paths) > 1 and not has_cue:
+            logger.info(f"{self.tracker}: [bold red]Multi-track audio uploads must include a cue sheet.[/bold red]")
+            return False
+        return True
+
+    def _validate_music_rules(self, meta: Meta, paths: list[Path]) -> bool:
+        audio_paths = [path for path in paths if path.suffix.casefold() in self._AUDIO_EXTENSIONS]
+        if not audio_paths:
+            logger.info(f"{self.tracker}: [bold red]Music uploads must contain supported audio files.[/bold red]")
+            return False
+        if not self._validate_audio_rules(meta, paths):
+            return False
+
+        release = meta.music_release if isinstance(meta.music_release, dict) else {}
+        if len(self._music_track_formats(release, audio_paths)) > 1:
+            logger.info(f"{self.tracker}: [bold red]Packed audio releases must use one encoding format.[/bold red]")
+            return False
+        tracks = release.get("tracks")
+        albums = {str(track.get("album", "")).casefold().strip() for track in tracks if isinstance(track, dict) and str(track.get("album", "")).strip()} if isinstance(tracks, list) else set()
+        if len(albums) > 1 and len(albums) < 5:
+            logger.info(f"{self.tracker}: [bold red]Music packs must contain at least five albums.[/bold red]")
+            return False
+        return True
+
+    def _validate_game_rules(self, meta: Meta, paths: list[Path]) -> bool:
+        if meta.software:
+            return True
+        image_paths = [path for path in paths if path.suffix.casefold() in self._GAME_IMAGE_EXTENSIONS]
+        if not image_paths:
+            logger.info(f"{self.tracker}: [bold red]PC game uploads must contain an original disc image.[/bold red]")
+            return False
+        context = " ".join([str(meta.name or ""), *(path.name for path in paths)]).casefold()
+        if any(self._contains_marker(context, (marker,)) for marker in self._GAME_PROHIBITED_MARKERS):
+            logger.info(f"{self.tracker}: [bold red]Portable, highly compressed, repacked, or modified game releases are not allowed.[/bold red]")
+            return False
+        return True
+
+    def _validate_pack_consistency(self, paths: list[Path]) -> bool:
+        signatures: list[tuple[str, str, str]] = []
+        for path in paths:
+            resolution = re.search(r"\b(480[pi]|576[pi]|720p|1080[pi]|2160p)\b", path.name, re.IGNORECASE)
+            sources = self._pack_tokens([path], self._PACK_SOURCE_TOKENS)
+            codecs = self._pack_tokens([path], self._PACK_CODEC_TOKENS)
+            if not resolution or len(sources) != 1 or len(codecs) != 1:
+                return False
+            signatures.append((resolution.group(1).casefold(), next(iter(sources)), next(iter(codecs))))
+        return len(set(signatures)) == 1
 
     def _title_has_required_video_tokens(self, meta: Meta, title: str) -> bool:
         resolution = str(meta.resolution or "").strip()
@@ -112,7 +314,7 @@ class RailgunPT(NEXUSPHP):
     async def get_additional_checks(self, meta: Meta) -> bool:
         category = str(meta.category or "").upper()
         if category not in self.supported_categories:
-            logger.info(f"{self.tracker}: [bold red]Only Movie and TV uploads are supported by this adapter.[/bold red]")
+            logger.info(f"{self.tracker}: [bold red]This upload category is not supported by RailgunPT.[/bold red]")
             return False
 
         if bool(meta.adult_media or meta.tmdb_adult_media or meta.nsfw):
@@ -129,8 +331,8 @@ class RailgunPT(NEXUSPHP):
             source_size = int(meta.source_size)
         except (TypeError, ValueError, OverflowError):
             source_size = 0
-        if source_size < 100 * 1024 * 1024:
-            logger.info(f"{self.tracker}: [bold red]Video torrents must be at least 100 MiB.[/bold red]")
+        if source_size < 100 * 1024 * 1024 and not self._size_exception_applies(meta, category):
+            logger.info(f"{self.tracker}: [bold red]Torrents must be at least 100 MiB unless a RailgunPT exception applies.[/bold red]")
             return False
 
         raw_filelist = [] if meta.filelist is None else meta.filelist
@@ -145,13 +347,25 @@ class RailgunPT(NEXUSPHP):
             if suffix in self._BANNED_EXTENSIONS:
                 logger.info(f"{self.tracker}: [bold red]Unsupported or spam file found: {path.name}.[/bold red]")
                 return False
-            if suffix in self._ARCHIVE_EXTENSIONS and not self._archive_is_allowed_attachment(path):
+            if self._is_archive_file(path) and not self._archive_is_allowed_attachment(path):
                 logger.info(f"{self.tracker}: [bold red]Archived files are not allowed: {path.name}.[/bold red]")
                 return False
             lowered_name = path.name.casefold()
             if "downloaded from" in lowered_name or "torrent downloaded" in lowered_name:
                 logger.info(f"{self.tracker}: [bold red]Advertising or tracker-reference files are not allowed.[/bold red]")
                 return False
+
+        attachments = [path for path in paths if self._is_attachment_file(path)]
+        if attachments and any(self._is_archive_file(path) for path in attachments) and any(not self._is_archive_file(path) for path in attachments):
+            logger.info(f"{self.tracker}: [bold red]Subtitle, crack, patch, font, and scan attachments must be consistently archived or unarchived.[/bold red]")
+            return False
+        if not self._validate_audio_rules(meta, paths):
+            return False
+
+        if category == "MUSIC":
+            return self._validate_music_rules(meta, paths)
+        if category == "GAME":
+            return self._validate_game_rules(meta, paths)
 
         if video_paths and all("sample" in path.stem.casefold() for path in video_paths):
             logger.info(f"{self.tracker}: [bold red]An individual sample cannot be uploaded as the main torrent.[/bold red]")
@@ -193,20 +407,13 @@ class RailgunPT(NEXUSPHP):
             if not any(marker in release_name.casefold() for marker in pack_markers):
                 logger.info(f"{self.tracker}: [bold red]Movie packs must be identifiable official box-set collections.[/bold red]")
                 return False
-
-        if meta.tv_pack and len(main_video_paths) > 1:
-            resolutions = [match.group(1).casefold() if (match := re.search(r"\b(480[pi]|576[pi]|720p|1080[pi]|2160p)\b", path.name, re.IGNORECASE)) else "" for path in main_video_paths]
-            sources = [self._pack_tokens([path], self._PACK_SOURCE_TOKENS) for path in main_video_paths]
-            codecs = [self._pack_tokens([path], self._PACK_CODEC_TOKENS) for path in main_video_paths]
-            if (
-                not all(resolutions)
-                or len(set(resolutions)) > 1
-                or any(len(values) != 1 for values in sources + codecs)
-                or len({next(iter(values)) for values in sources}) > 1
-                or len({next(iter(values)) for values in codecs}) > 1
-            ):
+            if not self._validate_pack_consistency(main_video_paths):
                 logger.info(f"{self.tracker}: [bold red]Packed videos must use the same source type, resolution, and video codec.[/bold red]")
                 return False
+
+        if meta.tv_pack and len(main_video_paths) > 1 and not self._validate_pack_consistency(main_video_paths):
+            logger.info(f"{self.tracker}: [bold red]Packed videos must use the same source type, resolution, and video codec.[/bold red]")
+            return False
 
         return True
 
@@ -221,6 +428,13 @@ class RailgunPT(NEXUSPHP):
         genres = ", ".join(str(value) for value in self._metadata_values(meta.genres)).lower()
         keywords = ", ".join(str(value) for value in self._metadata_values(meta.keywords)).lower()
 
+        if category == "MUSIC":
+            return 408
+        if category == "GAME":
+            return 410 if meta.software else 412
+        is_sports = category == "TV" and any(re.search(rf"(^|,\s*){re.escape(keyword)}(\s*,|$)", genres + ", " + keywords, re.IGNORECASE) for keyword in ("sport", "sports"))
+        if is_sports:
+            return 407
         if "documentary" in genres or "documentary" in keywords:
             return documentaries
         if meta.anime or "animation" in genres or "animation" in keywords:
@@ -257,6 +471,9 @@ class RailgunPT(NEXUSPHP):
         remux = 3
         uhd = 2
         web_dl = 4
+
+        if str(meta.category or "").upper() == "MUSIC":
+            return 8
 
         is_disc = str(meta.is_disc or "").lower()
         mtype = str(meta.type).lower()
@@ -318,7 +535,12 @@ class RailgunPT(NEXUSPHP):
         return 5
 
     def get_audio_codec(self, meta: Meta) -> int:
-        audio_codec = str(meta.audio or "").lower()
+        audio_values = [str(meta.audio or ""), str(meta.format or "")]
+        if isinstance(meta.music_release, dict):
+            tracks = meta.music_release.get("tracks")
+            if isinstance(tracks, list) and tracks and isinstance(tracks[0], dict):
+                audio_values.extend([str(tracks[0].get("format") or ""), str(tracks[0].get("codec") or "")])
+        audio_codec = " ".join(audio_values).lower()
 
         if "true" in audio_codec or "atmos" in audio_codec:
             return 1
