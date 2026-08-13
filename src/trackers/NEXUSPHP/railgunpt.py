@@ -1,7 +1,7 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
 import re
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
 
 from src.console import logger
 from src.meta import Meta
@@ -54,6 +54,8 @@ class RailgunPT(NEXUSPHP):
         "highly compressed",
         "compressed",
         "repack",
+        "re packed",
+        "repacked",
         "cracked",
         "keygen",
         "unofficial",
@@ -98,14 +100,21 @@ class RailgunPT(NEXUSPHP):
         return []
 
     @staticmethod
+    def _music_dict(value: Any) -> dict[str, Any]:
+        return cast(dict[str, Any], value) if isinstance(value, dict) else {}
+
+    @classmethod
+    def _music_tracks(cls, release: dict[str, Any]) -> list[dict[str, Any]]:
+        tracks = release.get("tracks")
+        if not isinstance(tracks, list):
+            return []
+        raw_tracks = cast(list[Any], tracks)
+        return [cast(dict[str, Any], track) for track in raw_tracks if isinstance(track, dict)]
+
+    @staticmethod
     def _music_field(release: dict[str, Any], name: str, default: Any = "") -> Any:
-        fields = release.get("fields")
-        if not isinstance(fields, dict):
-            return default
-        field = fields.get(name)
-        if isinstance(field, dict):
-            return field.get("value", default)
-        return default
+        field = RailgunPT._music_dict(RailgunPT._music_dict(release.get("fields")).get(name))
+        return field.get("value", default)
 
     @classmethod
     def _canonical_music_format(cls, value: Any) -> str:
@@ -128,11 +137,8 @@ class RailgunPT(NEXUSPHP):
 
     @classmethod
     def _music_track_formats(cls, release: dict[str, Any], paths: list[Path]) -> set[str]:
-        tracks = release.get("tracks")
-        formats: set[str] = set()
-        if isinstance(tracks, list):
-            formats = {cls._canonical_music_format(track.get("format") or track.get("codec") or "") for track in tracks if isinstance(track, dict)}
-            formats.discard("")
+        formats = {cls._canonical_music_format(track.get("format") or track.get("codec") or "") for track in cls._music_tracks(release)}
+        formats.discard("")
         payload_formats = {cls._MUSIC_FORMAT_BY_EXTENSION[path.suffix.casefold()] for path in paths if path.suffix.casefold() in cls._AUDIO_EXTENSIONS}
         return payload_formats | formats
 
@@ -146,8 +152,19 @@ class RailgunPT(NEXUSPHP):
 
     @staticmethod
     def _contains_marker(value: str, markers: tuple[str, ...]) -> bool:
-        normalized = re.sub(r"[._-]+", " ", value.casefold())
-        return any(re.search(rf"(?<![a-z0-9]){re.escape(marker)}(?![a-z0-9])", normalized) for marker in markers)
+        normalized = re.sub(r"[^a-z0-9]+", " ", value.casefold()).strip()
+        tokens = normalized.split()
+        for marker in markers:
+            marker_tokens = re.sub(r"[^a-z0-9]+", " ", marker.casefold()).strip().split()
+            if not marker_tokens:
+                continue
+            marker_text = " ".join(marker_tokens)
+            if re.search(rf"(?<![a-z0-9]){re.escape(marker_text)}(?![a-z0-9])", normalized):
+                return True
+            compact_marker = "".join(marker_tokens)
+            if compact_marker in tokens:
+                return True
+        return False
 
     @classmethod
     def _archive_is_allowed_attachment(cls, path: Path) -> bool:
@@ -157,6 +174,10 @@ class RailgunPT(NEXUSPHP):
     def _is_archive_file(cls, path: Path) -> bool:
         name = path.name.casefold()
         return path.suffix.casefold() in cls._ARCHIVE_EXTENSIONS or bool(re.search(r"(?:\.r\d{2,}|(?:\.rar|\.zip|\.7z)\.\d{3,})$", name))
+
+    @staticmethod
+    def _is_multipart_archive(path: Path) -> bool:
+        return bool(re.search(r"(?:\.r\d{2,}|(?:\.rar|\.zip|\.7z)\.\d{3,})$", path.name.casefold()))
 
     @classmethod
     def _is_attachment_file(cls, path: Path) -> bool:
@@ -208,27 +229,11 @@ class RailgunPT(NEXUSPHP):
 
     @classmethod
     def _music_channel_counts(cls, release: dict[str, Any]) -> list[float | None]:
-        tracks = release.get("tracks")
-        if not isinstance(tracks, list):
-            return []
-        return [cls._channel_count(track.get("channels")) for track in tracks if isinstance(track, dict)]
+        return [cls._channel_count(track.get("channels")) for track in cls._music_tracks(release)]
 
-    @classmethod
-    def _music_cue_is_present(cls, release: dict[str, Any], paths: list[Path]) -> bool:
-        if any(path.suffix.casefold() == ".cue" for path in paths):
-            return True
-        auxiliary = release.get("auxiliary")
-        cues = auxiliary.get("cues") if isinstance(auxiliary, dict) else []
-        root = Path(str(release.get("root", ""))) if release.get("root") else None
-        if not isinstance(cues, list) or root is None:
-            return False
-        for cue in cues:
-            cue_path = Path(str(cue))
-            if not cue_path.is_absolute():
-                cue_path = root / cue_path
-            if cue_path.is_file():
-                return True
-        return False
+    @staticmethod
+    def _music_cue_is_present(paths: list[Path]) -> bool:
+        return any(path.suffix.casefold() == ".cue" for path in paths)
 
     def _validate_audio_rules(self, meta: Meta, paths: list[Path]) -> bool:
         audio_paths = [path for path in paths if path.suffix.casefold() in self._AUDIO_EXTENSIONS]
@@ -246,7 +251,7 @@ class RailgunPT(NEXUSPHP):
             return False
 
         release = meta.music_release if isinstance(meta.music_release, dict) else {}
-        has_cue = self._music_cue_is_present(release, paths)
+        has_cue = self._music_cue_is_present(paths)
         if len(audio_paths) > 1 and not has_cue:
             logger.info(f"{self.tracker}: [bold red]Multi-track audio uploads must include a cue sheet.[/bold red]")
             return False
@@ -264,8 +269,8 @@ class RailgunPT(NEXUSPHP):
         if len(self._music_track_formats(release, audio_paths)) > 1:
             logger.info(f"{self.tracker}: [bold red]Packed audio releases must use one encoding format.[/bold red]")
             return False
-        tracks = release.get("tracks")
-        albums = {str(track.get("album", "")).casefold().strip() for track in tracks if isinstance(track, dict) and str(track.get("album", "")).strip()} if isinstance(tracks, list) else set()
+        tracks = self._music_tracks(release)
+        albums = {str(track.get("album", "")).casefold().strip() for track in tracks if str(track.get("album", "")).strip()}
         if len(albums) > 1 and len(albums) < 5:
             logger.info(f"{self.tracker}: [bold red]Music packs must contain at least five albums.[/bold red]")
             return False
@@ -349,6 +354,9 @@ class RailgunPT(NEXUSPHP):
                 return False
             if self._is_archive_file(path) and not self._archive_is_allowed_attachment(path):
                 logger.info(f"{self.tracker}: [bold red]Archived files are not allowed: {path.name}.[/bold red]")
+                return False
+            if self._is_multipart_archive(path):
+                logger.info(f"{self.tracker}: [bold red]Multipart archives are not allowed: {path.name}.[/bold red]")
                 return False
             lowered_name = path.name.casefold()
             if "downloaded from" in lowered_name or "torrent downloaded" in lowered_name:
@@ -537,8 +545,8 @@ class RailgunPT(NEXUSPHP):
     def get_audio_codec(self, meta: Meta) -> int:
         audio_values = [str(meta.audio or ""), str(meta.format or "")]
         if isinstance(meta.music_release, dict):
-            tracks = meta.music_release.get("tracks")
-            if isinstance(tracks, list) and tracks and isinstance(tracks[0], dict):
+            tracks = self._music_tracks(cast(dict[str, Any], meta.music_release))
+            if tracks:
                 audio_values.extend([str(tracks[0].get("format") or ""), str(tracks[0].get("codec") or "")])
         audio_codec = " ".join(audio_values).lower()
 
