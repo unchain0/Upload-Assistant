@@ -231,13 +231,13 @@ class RailgunPT(NEXUSPHP):
         return [cls._channel_count(track.get("channels")) for track in cls._music_tracks(release)]
 
     @classmethod
-    def _music_payload_root(cls, release: dict[str, Any], paths: list[Path]) -> Path | None:
+    def _music_payload_root(cls, meta: Meta, paths: list[Path]) -> Path | None:
         audio_paths = [path for path in paths if path.suffix.casefold() in cls._AUDIO_EXTENSIONS]
-        root_value = release.get("root")
-        if not audio_paths or not all(path.is_absolute() for path in audio_paths) or not root_value:
+        if not audio_paths or not all(path.is_absolute() for path in audio_paths) or not meta.path:
             return None
         try:
-            payload_root = Path(str(root_value)).resolve()
+            source_path = Path(str(meta.path)).resolve()
+            payload_root = source_path if source_path.is_dir() else source_path.parent
             if payload_root.parent == payload_root:
                 return None
             for audio_path in audio_paths:
@@ -269,9 +269,9 @@ class RailgunPT(NEXUSPHP):
         return False
 
     @classmethod
-    def _music_cue_is_present(cls, release: dict[str, Any], paths: list[Path]) -> bool:
+    def _music_cue_is_present(cls, meta: Meta, release: dict[str, Any], paths: list[Path]) -> bool:
         cue_paths = [path for path in paths if path.suffix.casefold() == ".cue"]
-        payload_root = cls._music_payload_root(release, paths)
+        payload_root = cls._music_payload_root(meta, paths)
         for cue_path in cue_paths:
             if cue_path.is_absolute():
                 if payload_root is None:
@@ -326,7 +326,7 @@ class RailgunPT(NEXUSPHP):
             logger.info(f"{self.tracker}: [bold red]Lossy audio files must meet the 5.1-channel minimum.[/bold red]")
             return False
 
-        has_cue = self._music_cue_is_present(release, paths)
+        has_cue = self._music_cue_is_present(meta, release, paths)
         if len(audio_paths) > 1 and not has_cue:
             logger.info(f"{self.tracker}: [bold red]Multi-track audio uploads must include a cue sheet.[/bold red]")
             return False

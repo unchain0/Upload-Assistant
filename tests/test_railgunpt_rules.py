@@ -319,30 +319,30 @@ def test_railgunpt_requires_cue_in_music_payload(tmp_path):
     track_two = nested / "Artist - Album - 02.flac"
     (root / "Album.cue").write_text('FILE "CD1/Artist - Album - 01.flac" WAVE\n')
     release = {"root": str(root), "tracks": [{"format": "FLAC"}, {"format": "FLAC"}], "auxiliary": {"cues": ["Album.cue"]}}
-    assert _check(_music_meta(filelist=[str(track_one), str(track_two)], music_release=release)) is True
+    assert _check(_music_meta(path=str(root), filelist=[str(track_one), str(track_two)], music_release=release)) is True
 
     release["root"] = "/"
-    assert _check(_music_meta(filelist=[str(track_one), str(track_two)], music_release=release)) is False
+    assert _check(_music_meta(path=str(root), filelist=[str(track_one), str(track_two)], music_release=release)) is True
 
     release["root"] = str(attacker_root)
     release["auxiliary"] = {"cues": ["Unrelated.cue"]}
-    assert _check(_music_meta(filelist=[str(track_one), str(track_two)], music_release=release)) is False
+    assert _check(_music_meta(path=str(root), filelist=[str(track_one), str(track_two)], music_release=release)) is False
 
     parent_root = tmp_path
     (parent_root / "Sibling.cue").touch()
     release = {"root": str(parent_root), "tracks": [{"format": "FLAC"}, {"format": "FLAC"}], "auxiliary": {"cues": ["Sibling.cue"]}}
-    assert _check(_music_meta(filelist=[str(track_one), str(track_two)], music_release=release)) is False
+    assert _check(_music_meta(path=str(root), filelist=[str(track_one), str(track_two)], music_release=release)) is False
 
     release["auxiliary"] = {"cues": ["etc/passwd"]}
-    assert _check(_music_meta(filelist=[str(track_one), str(track_two)], music_release=release)) is False
+    assert _check(_music_meta(path=str(root), filelist=[str(track_one), str(track_two)], music_release=release)) is False
 
     release["auxiliary"] = {"cues": ["../Outside.cue"]}
-    assert _check(_music_meta(filelist=[str(track_one), str(track_two)], music_release=release)) is False
+    assert _check(_music_meta(path=str(root), filelist=[str(track_one), str(track_two)], music_release=release)) is False
 
     outside = tmp_path / "Outside.cue"
     outside.touch()
     release["auxiliary"] = {"cues": [str(outside)]}
-    assert _check(_music_meta(filelist=[str(track_one), str(track_two)], music_release=release)) is False
+    assert _check(_music_meta(path=str(root), filelist=[str(track_one), str(track_two)], music_release=release)) is False
 
     assert _check(_music_meta(filelist=["01.flac", "02.flac", "../Outside.cue"], music_release={})) is False
     assert _check(_music_meta(filelist=["01.flac", "02.flac", str(outside)], music_release={})) is False
@@ -351,7 +351,7 @@ def test_railgunpt_requires_cue_in_music_payload(tmp_path):
 
     (root / "Linked.cue").symlink_to(outside)
     release = {"root": str(root), "tracks": [{"format": "FLAC"}, {"format": "FLAC"}], "auxiliary": {"cues": []}}
-    assert _check(_music_meta(filelist=[str(track_one), str(track_two), "Linked.cue"], music_release=release)) is False
+    assert _check(_music_meta(path=str(root), filelist=[str(track_one), str(track_two), "Linked.cue"], music_release=release)) is False
 
 
 def test_railgunpt_does_not_misclassify_payload_names_as_attachments():
