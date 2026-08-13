@@ -101,7 +101,10 @@ class RailgunPT(NEXUSPHP):
 
     @staticmethod
     def _music_dict(value: Any) -> dict[str, Any]:
-        return cast(dict[str, Any], value) if isinstance(value, dict) else {}
+        if not isinstance(value, dict):
+            return {}
+        raw_value = cast(dict[object, Any], value)
+        return {str(key): item for key, item in raw_value.items()}
 
     @classmethod
     def _music_tracks(cls, release: dict[str, Any]) -> list[dict[str, Any]]:
@@ -109,7 +112,7 @@ class RailgunPT(NEXUSPHP):
         if not isinstance(tracks, list):
             return []
         raw_tracks = cast(list[Any], tracks)
-        return [cast(dict[str, Any], track) for track in raw_tracks if isinstance(track, dict)]
+        return [cls._music_dict(track) for track in raw_tracks if isinstance(track, dict)]
 
     @classmethod
     def _music_field(cls, release: dict[str, Any], name: str, default: Any = "") -> Any:
@@ -231,17 +234,24 @@ class RailgunPT(NEXUSPHP):
         return [cls._channel_count(track.get("channels")) for track in cls._music_tracks(release)]
 
     @classmethod
-    def _music_payload_root(cls, meta: Meta, paths: list[Path]) -> Path | None:
+    def _music_payload_root(cls, paths: list[Path]) -> Path | None:
         audio_paths = [path for path in paths if path.suffix.casefold() in cls._AUDIO_EXTENSIONS]
-        if not audio_paths or not all(path.is_absolute() for path in audio_paths) or not meta.path:
+        if not audio_paths or not all(path.is_absolute() for path in audio_paths):
             return None
         try:
-            source_path = Path(str(meta.path)).resolve()
-            payload_root = source_path if source_path.is_dir() else source_path.parent
+            resolved_audio = [path.resolve(strict=True) for path in audio_paths]
+            if not all(path.is_file() for path in resolved_audio):
+                return None
+            payload_root = resolved_audio[0].parent
+            for audio_path in resolved_audio[1:]:
+                while payload_root != audio_path.parent and payload_root not in audio_path.parent.parents:
+                    payload_root = payload_root.parent
+            while re.fullmatch(r"(?:cd|disc|disk)[ ._-]?\d+", payload_root.name, re.IGNORECASE) and payload_root.parent != payload_root:
+                payload_root = payload_root.parent
             if payload_root.parent == payload_root:
                 return None
-            for audio_path in audio_paths:
-                audio_path.resolve().relative_to(payload_root)
+            for audio_path in resolved_audio:
+                audio_path.relative_to(payload_root)
         except (OSError, RuntimeError, ValueError):
             return None
         if not payload_root.is_dir():
@@ -257,48 +267,46 @@ class RailgunPT(NEXUSPHP):
         references = re.findall(r"^\s*FILE\s+(?:\"([^\"]+)\"|(\S+))", content, re.IGNORECASE | re.MULTILINE)
         if not references:
             return False
-        relative_audio = {path.resolve().relative_to(payload_root).as_posix().casefold() for path in audio_paths}
-        audio_names = {path.name.casefold() for path in audio_paths}
+        try:
+            resolved_audio = {path.resolve(strict=True) for path in audio_paths if path.resolve(strict=True).is_file()}
+        except (OSError, RuntimeError):
+            return False
         for quoted, bare in references:
             reference = (quoted or bare).replace("\\", "/")
             reference_path = Path(reference)
-            if reference_path.is_absolute() or ".." in reference_path.parts:
+            if reference_path.is_absolute():
                 continue
-            if reference_path.as_posix().casefold() in relative_audio or reference_path.name.casefold() in audio_names:
+            try:
+                candidate = (cue_path.parent / reference_path).resolve(strict=True)
+                candidate.relative_to(payload_root)
+            except (OSError, RuntimeError, ValueError):
+                continue
+            if candidate in resolved_audio:
                 return True
         return False
 
     @classmethod
-    def _music_cue_is_present(cls, meta: Meta, release: dict[str, Any], paths: list[Path]) -> bool:
+    def _music_cue_is_present(cls, release: dict[str, Any], paths: list[Path]) -> bool:
         cue_paths = [path for path in paths if path.suffix.casefold() == ".cue"]
-        payload_root = cls._music_payload_root(meta, paths)
+        audio_paths = [path for path in paths if path.suffix.casefold() in cls._AUDIO_EXTENSIONS]
+        payload_root = cls._music_payload_root(paths)
         for cue_path in cue_paths:
-            if cue_path.is_absolute():
-                if payload_root is None:
-                    continue
-                try:
-                    cue_path.resolve().relative_to(payload_root)
-                except (OSError, RuntimeError, ValueError):
-                    continue
-            elif ".." in cue_path.parts:
+            if payload_root is not None:
+                if cue_path.is_absolute() or ".." not in cue_path.parts:
+                    try:
+                        resolved_cue = cue_path.resolve() if cue_path.is_absolute() else (payload_root / cue_path).resolve()
+                        resolved_cue.relative_to(payload_root)
+                    except (OSError, RuntimeError, ValueError):
+                        continue
+                    if resolved_cue.is_file() and cls._cue_references_audio(resolved_cue, payload_root, audio_paths):
+                        return True
                 continue
-            elif payload_root is not None:
-                try:
-                    resolved_cue = (payload_root / cue_path).resolve()
-                    resolved_cue.relative_to(payload_root)
-                except (OSError, RuntimeError, ValueError):
-                    continue
-                if not resolved_cue.is_file() or not cls._cue_references_audio(resolved_cue, payload_root, [path for path in paths if path.suffix.casefold() in cls._AUDIO_EXTENSIONS]):
-                    continue
-            elif release.get("root"):
-                continue
-            return True
 
         cues_value = cls._music_dict(release.get("auxiliary")).get("cues")
         if not isinstance(cues_value, list) or payload_root is None:
             return False
-        cues = cast(list[Any], cues_value)
-        for cue in cues:
+        raw_cues = cast(list[Any], cues_value)
+        for cue in raw_cues:
             cue_path = Path(str(cue))
             if cue_path.is_absolute() or ".." in cue_path.parts or cue_path.suffix.casefold() != ".cue":
                 continue
@@ -307,7 +315,7 @@ class RailgunPT(NEXUSPHP):
                 resolved_cue.relative_to(payload_root)
             except (OSError, RuntimeError, ValueError):
                 continue
-            if resolved_cue.is_file() and cls._cue_references_audio(resolved_cue, payload_root, [path for path in paths if path.suffix.casefold() in cls._AUDIO_EXTENSIONS]):
+            if resolved_cue.is_file() and cls._cue_references_audio(resolved_cue, payload_root, audio_paths):
                 return True
         return False
 
@@ -326,7 +334,7 @@ class RailgunPT(NEXUSPHP):
             logger.info(f"{self.tracker}: [bold red]Lossy audio files must meet the 5.1-channel minimum.[/bold red]")
             return False
 
-        has_cue = self._music_cue_is_present(meta, release, paths)
+        has_cue = self._music_cue_is_present(release, paths)
         if len(audio_paths) > 1 and not has_cue:
             logger.info(f"{self.tracker}: [bold red]Multi-track audio uploads must include a cue sheet.[/bold red]")
             return False
@@ -620,7 +628,7 @@ class RailgunPT(NEXUSPHP):
     def get_audio_codec(self, meta: Meta) -> int:
         audio_values = [str(meta.audio or ""), str(meta.format or "")]
         if isinstance(meta.music_release, dict):
-            tracks = self._music_tracks(cast(dict[str, Any], meta.music_release))
+            tracks = self._music_tracks(self._music_dict(meta.music_release))
             if tracks:
                 audio_values.extend([str(tracks[0].get("format") or ""), str(tracks[0].get("codec") or "")])
         audio_codec = " ".join(audio_values).lower()

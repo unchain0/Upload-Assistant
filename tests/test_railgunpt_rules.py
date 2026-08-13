@@ -1,6 +1,7 @@
 # ruff: noqa: S101
 
 import asyncio
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -193,10 +194,20 @@ def test_railgunpt_rejects_lossy_audio_below_51_channels():
         assert _check(_movie_meta(filelist=files, audio=codec, channels="5.1")) is True
 
 
-def test_railgunpt_requires_cue_for_multitrack_audio():
+def test_railgunpt_requires_cue_for_multitrack_audio(tmp_path):
+    root = tmp_path / "album"
+    root.mkdir()
+    track_one = root / "track01.flac"
+    track_two = root / "track02.flac"
+    track_one.touch()
+    track_two.touch()
+    cue = root / "album.cue"
+    cue.write_text('FILE "track01.flac" WAVE\n')
+    movie = root / "movie.mkv"
+    movie.touch()
     files = ["movie.mkv", "track01.flac", "track02.flac"]
     assert _check(_movie_meta(filelist=files, audio="FLAC")) is False
-    assert _check(_movie_meta(filelist=[*files, "album.cue"], audio="FLAC")) is True
+    assert _check(_movie_meta(path=str(root), filelist=[str(movie), str(track_one), str(track_two), str(cue)], audio="FLAC")) is True
 
 
 def test_railgunpt_rejects_multipart_archives_and_mixed_attachment_packing():
@@ -268,23 +279,44 @@ def test_railgunpt_handles_non_video_nexusphp_payload_and_search(monkeypatch: py
     assert (game.season, game.episode, game.tv_pack) == (0, "", False)
 
 
-def test_railgunpt_applies_music_size_and_pack_rules():
+def test_railgunpt_applies_music_size_and_pack_rules(tmp_path):
+    def payload(name: str, extensions: tuple[str, ...], *, cue: bool = True) -> tuple[str, list[str]]:
+        root = tmp_path / name
+        root.mkdir()
+        tracks = []
+        for index, extension in enumerate(extensions, 1):
+            track = root / f"track{index:02d}.{extension}"
+            track.touch()
+            tracks.append(str(track))
+        if cue:
+            cue_path = root / "Album.cue"
+            cue_path.write_text(f'FILE "{Path(tracks[0]).name}" WAVE\n')
+            tracks.append(str(cue_path))
+        return str(root), tracks
+
+    flac_root, flac_tracks = payload("flac", ("flac", "flac"))
+    mixed_root, mixed_tracks = payload("mixed", ("flac", "mp3"))
+    m4a_root, m4a_tracks = payload("m4a", ("m4a", "m4a"))
+    ogg_root, ogg_tracks = payload("ogg", ("ogg", "ogg"))
+    mp3_root, mp3_tracks = payload("mp3", ("mp3", "mp3"))
+    no_cue_root, no_cue_tracks = payload("no-cue", ("flac", "flac"), cue=False)
     assert _check(
         _music_meta(
             source_size=100 * 1024 * 1024 - 1,
-            filelist=["Artist - Album - 01.flac", "Artist - Album - 02.flac", "Album.cue"],
+            path=flac_root,
+            filelist=flac_tracks,
             music_release={"fields": {"release_type": {"value": "Single"}}},
         )
     ) is True
     assert _check(_music_meta(source_size=100 * 1024 * 1024 - 1)) is False
-    assert _check(_music_meta(filelist=["Artist - Album - 01.flac", "Artist - Album - 02.flac", "Album.cue"], music_release={"tracks": [{"format": "FLAC"}, {"format": "FLAC"}], "auxiliary": {"cues": ["Album.cue"]}})) is True
-    assert _check(_music_meta(channels="5.1", filelist=["Artist - Album - 01.flac", "Artist - Album - 02.mp3", "Album.cue"], music_release={"tracks": [{"format": "FLAC"}, {"format": "FLAC"}], "auxiliary": {"cues": ["Album.cue"]}})) is False
-    assert _check(_music_meta(filelist=["Artist - Album - 01.flac", "Artist - Album - 02.flac"], music_release={"tracks": [{"format": "FLAC"}, {"format": "FLAC"}], "auxiliary": {"cues": ["Album.cue"]}})) is False
-    assert _check(_music_meta(channels="5.1", filelist=["Artist - Album - 01.m4a", "Artist - Album - 02.m4a", "Album.cue"], music_release={"tracks": [{"format": "AAC"}, {"format": "AAC"}], "auxiliary": {"cues": ["Album.cue"]}})) is True
-    assert _check(_music_meta(channels="5.1", filelist=["Artist - Album - 01.ogg", "Artist - Album - 02.ogg", "Album.cue"], music_release={"tracks": [{"format": "Ogg Vorbis"}, {"format": "Ogg Vorbis"}], "auxiliary": {"cues": ["Album.cue"]}})) is True
-    assert _check(_music_meta(filelist=["Artist - Album - 01.mp3", "Artist - Album - 02.mp3", "Album.cue"], format="MP3", channels="", music_release={"tracks": [{"format": "MP3", "channels": 2}, {"format": "MP3", "channels": 2}], "auxiliary": {"cues": ["Album.cue"]}})) is False
-    assert _check(_music_meta(filelist=["Artist - Album - 01.mp3", "Artist - Album - 02.mp3", "Album.cue"], format="MP3", channels="", music_release={"tracks": [{"format": "MP3", "channels": 5.1}, {"format": "MP3", "channels": 5.1}], "auxiliary": {"cues": ["Album.cue"]}})) is True
-    assert _check(_music_meta(filelist=["Artist - Album - 01.flac", "Artist - Album - 02.flac"], music_release={"tracks": [{"format": "FLAC"}, {"format": "FLAC"}], "auxiliary": {"cues": ["Album.cue"]}})) is False
+    assert _check(_music_meta(path=flac_root, filelist=flac_tracks, music_release={"tracks": [{"format": "FLAC"}, {"format": "FLAC"}], "auxiliary": {"cues": ["Album.cue"]}})) is True
+    assert _check(_music_meta(path=mixed_root, channels="5.1", filelist=mixed_tracks, music_release={"tracks": [{"format": "FLAC"}, {"format": "FLAC"}], "auxiliary": {"cues": ["Album.cue"]}})) is False
+    assert _check(_music_meta(path=no_cue_root, filelist=no_cue_tracks, music_release={"tracks": [{"format": "FLAC"}, {"format": "FLAC"}], "auxiliary": {"cues": ["Album.cue"]}})) is False
+    assert _check(_music_meta(path=m4a_root, channels="5.1", filelist=m4a_tracks, music_release={"tracks": [{"format": "AAC"}, {"format": "AAC"}], "auxiliary": {"cues": ["Album.cue"]}})) is True
+    assert _check(_music_meta(path=ogg_root, channels="5.1", filelist=ogg_tracks, music_release={"tracks": [{"format": "Ogg Vorbis"}, {"format": "Ogg Vorbis"}], "auxiliary": {"cues": ["Album.cue"]}})) is True
+    assert _check(_music_meta(path=mp3_root, filelist=mp3_tracks, format="MP3", channels="", music_release={"tracks": [{"format": "MP3", "channels": 2}, {"format": "MP3", "channels": 2}], "auxiliary": {"cues": ["Album.cue"]}})) is False
+    assert _check(_music_meta(path=mp3_root, filelist=mp3_tracks, format="MP3", channels="", music_release={"tracks": [{"format": "MP3", "channels": 5.1}, {"format": "MP3", "channels": 5.1}], "auxiliary": {"cues": ["Album.cue"]}})) is True
+    assert _check(_music_meta(path=no_cue_root, filelist=no_cue_tracks, music_release={"tracks": [{"format": "FLAC"}, {"format": "FLAC"}], "auxiliary": {"cues": ["Album.cue"]}})) is False
     assert _check(
         _music_meta(
             music_release={
@@ -317,6 +349,8 @@ def test_railgunpt_requires_cue_in_music_payload(tmp_path):
     nested.mkdir()
     track_one = nested / "Artist - Album - 01.flac"
     track_two = nested / "Artist - Album - 02.flac"
+    track_one.touch()
+    track_two.touch()
     (root / "Album.cue").write_text('FILE "CD1/Artist - Album - 01.flac" WAVE\n')
     release = {"root": str(root), "tracks": [{"format": "FLAC"}, {"format": "FLAC"}], "auxiliary": {"cues": ["Album.cue"]}}
     assert _check(_music_meta(path=str(root), filelist=[str(track_one), str(track_two)], music_release=release)) is True
@@ -331,6 +365,16 @@ def test_railgunpt_requires_cue_in_music_payload(tmp_path):
     parent_root = tmp_path
     (parent_root / "Sibling.cue").write_text('FILE "album/CD1/Artist - Album - 01.flac" WAVE\n')
     release = {"root": str(parent_root), "tracks": [{"format": "FLAC"}, {"format": "FLAC"}], "auxiliary": {"cues": ["Sibling.cue"]}}
+    assert _check(_music_meta(path=str(root), filelist=[str(track_one), str(track_two)], music_release=release)) is False
+    assert _check(_music_meta(path=str(parent_root), filelist=[str(track_one), str(track_two)], music_release=release)) is False
+
+    forged_absolute = root / "Forged.cue"
+    release = {"root": str(root), "tracks": [{"format": "FLAC"}, {"format": "FLAC"}], "auxiliary": {"cues": []}}
+    assert _check(_music_meta(path=str(root), filelist=[str(track_one), str(track_two), str(forged_absolute)], music_release=release)) is False
+
+    wrong_reference = root / "Wrong.cue"
+    wrong_reference.write_text('FILE "CD2/Artist - Album - 01.flac" WAVE\n')
+    release["auxiliary"] = {"cues": ["Wrong.cue"]}
     assert _check(_music_meta(path=str(root), filelist=[str(track_one), str(track_two)], music_release=release)) is False
 
     release["auxiliary"] = {"cues": ["etc/passwd"]}
