@@ -280,69 +280,104 @@ class RailgunPT(NEXUSPHP):
         return payload_root
 
     @staticmethod
-    def _cue_references_audio(cue_path: Path, payload_root: Path, audio_paths: list[Path]) -> bool:
+    def _cue_references_audio(cue_path: Path, payload_root: Path, audio_paths: list[Path]) -> set[Path] | None:
         try:
             content = cue_path.read_text(encoding="utf-8", errors="replace")
         except (OSError, UnicodeError):
-            return False
-        references = re.findall(r"^\s*FILE\s+(?:\"([^\"]+)\"|(\S+))\s+\S+", content, re.IGNORECASE | re.MULTILINE)
-        tracks = re.findall(r"^\s*TRACK\s+\d+\s+\S+", content, re.IGNORECASE | re.MULTILINE)
-        indexes = re.findall(r"^\s*INDEX\s+\d+\s+\S+", content, re.IGNORECASE | re.MULTILINE)
-        if not references or not tracks or not indexes:
-            return False
+            return None
+        lines = content.splitlines()
+        file_pattern = re.compile(r"^\s*FILE\s+(?:\"([^\"]+)\"|(\S+))\s+(?:BINARY|MOTOROLA|WAVE|AIFF|MP3)\s*$", re.IGNORECASE)
+        track_pattern = re.compile(r"^\s*TRACK\s+\d{2}\s+(?:AUDIO|MODE\d/\d+|CDI/\d+)\s*$", re.IGNORECASE)
+        index_pattern = re.compile(r"^\s*INDEX\s+\d{2}\s+\d{2}:\d{2}:\d{2}\s*$", re.IGNORECASE)
+        references: list[tuple[str, str]] = []
+        track_positions: list[int] = []
+        index_positions: list[int] = []
+        for line_number, line in enumerate(lines):
+            if re.match(r"^\s*FILE\b", line, re.IGNORECASE):
+                match = file_pattern.fullmatch(line)
+                if not match:
+                    return None
+                references.append((match.group(1) or "", match.group(2) or ""))
+            elif re.match(r"^\s*TRACK\b", line, re.IGNORECASE):
+                if not track_pattern.fullmatch(line):
+                    return None
+                track_positions.append(line_number)
+            elif re.match(r"^\s*INDEX\b", line, re.IGNORECASE):
+                if not index_pattern.fullmatch(line):
+                    return None
+                index_positions.append(line_number)
+        if not references or not track_positions or not index_positions or len(track_positions) < len(references):
+            return None
+        for index, track_position in enumerate(track_positions):
+            next_track = track_positions[index + 1] if index + 1 < len(track_positions) else len(lines)
+            if not any(track_position < index_position < next_track for index_position in index_positions):
+                return None
         try:
             resolved_audio = {path.resolve(strict=True) for path in audio_paths if path.resolve(strict=True).is_file()}
         except (OSError, RuntimeError):
-            return False
+            return None
         resolved_references: set[Path] = set()
         for quoted, bare in references:
             reference = (quoted or bare).replace("\\", "/")
             reference_path = Path(reference)
             if reference_path.is_absolute() or ".." in reference_path.parts:
-                return False
+                return None
             try:
                 candidate = (cue_path.parent / reference_path).resolve(strict=True)
                 candidate.relative_to(payload_root)
             except (OSError, RuntimeError, ValueError):
-                return False
+                return None
             if candidate not in resolved_audio:
-                return False
+                return None
             resolved_references.add(candidate)
-        return resolved_references == resolved_audio
+        return resolved_references
+
+    @staticmethod
+    def _resolve_music_cue(cue_path: Path, payload_root: Path) -> Path | None:
+        if ".." in cue_path.parts:
+            return None
+        candidate = cue_path if cue_path.is_absolute() else payload_root / cue_path
+        try:
+            resolved = candidate.resolve(strict=True)
+            resolved.relative_to(payload_root)
+        except (OSError, RuntimeError, ValueError):
+            return None
+        if candidate.absolute() != resolved or not resolved.is_file():
+            return None
+        return resolved
 
     @classmethod
     def _music_cue_is_present(cls, meta: Meta, release: dict[str, Any], paths: list[Path]) -> bool:
         cue_paths = [path for path in paths if path.suffix.casefold() == ".cue"]
         audio_paths = [path for path in paths if path.suffix.casefold() in cls._AUDIO_EXTENSIONS]
         payload_root = cls._music_payload_root(meta, release, paths)
+        if payload_root is None:
+            return False
+        covered_audio: set[Path] = set()
         for cue_path in cue_paths:
-            if payload_root is not None:
-                if cue_path.is_absolute() or ".." not in cue_path.parts:
-                    try:
-                        resolved_cue = cue_path.resolve() if cue_path.is_absolute() else (payload_root / cue_path).resolve()
-                        resolved_cue.relative_to(payload_root)
-                    except (OSError, RuntimeError, ValueError):
-                        continue
-                    if resolved_cue.is_file() and cls._cue_references_audio(resolved_cue, payload_root, audio_paths):
-                        return True
-                continue
+            resolved_cue = cls._resolve_music_cue(cue_path, payload_root)
+            if resolved_cue is not None:
+                references = cls._cue_references_audio(resolved_cue, payload_root, audio_paths)
+                if references is not None:
+                    covered_audio.update(references)
 
         cues_value = cls._music_dict(release.get("auxiliary")).get("cues")
-        if not isinstance(cues_value, list) or payload_root is None:
+        if isinstance(cues_value, list):
+            raw_cues = cast(list[Any], cues_value)
+            for cue in raw_cues:
+                cue_path = Path(str(cue))
+                if cue_path.is_absolute() or cue_path.suffix.casefold() != ".cue":
+                    continue
+                resolved_cue = cls._resolve_music_cue(cue_path, payload_root)
+                if resolved_cue is not None:
+                    references = cls._cue_references_audio(resolved_cue, payload_root, audio_paths)
+                    if references is not None:
+                        covered_audio.update(references)
+        try:
+            required_audio = {path.resolve(strict=True) for path in audio_paths}
+        except (OSError, RuntimeError):
             return False
-        raw_cues = cast(list[Any], cues_value)
-        for cue in raw_cues:
-            cue_path = Path(str(cue))
-            if cue_path.is_absolute() or ".." in cue_path.parts or cue_path.suffix.casefold() != ".cue":
-                continue
-            try:
-                resolved_cue = (payload_root / cue_path).resolve()
-                resolved_cue.relative_to(payload_root)
-            except (OSError, RuntimeError, ValueError):
-                continue
-            if resolved_cue.is_file() and cls._cue_references_audio(resolved_cue, payload_root, audio_paths):
-                return True
-        return False
+        return required_audio.issubset(covered_audio)
 
     def _validate_audio_rules(self, meta: Meta, paths: list[Path]) -> bool:
         audio_paths = [path for path in paths if path.suffix.casefold() in self._AUDIO_EXTENSIONS]
