@@ -309,16 +309,30 @@ def test_railgunpt_applies_original_game_image_and_software_exceptions():
 
 def test_railgunpt_requires_cue_in_music_payload(tmp_path):
     root = tmp_path / "album"
+    attacker_root = tmp_path / "attacker"
     root.mkdir()
+    attacker_root.mkdir()
     (root / "Album.cue").touch()
-    release = {"root": str(root), "tracks": [{"format": "FLAC"}, {"format": "FLAC"}], "auxiliary": {"cues": ["Album.cue"]}}
-    assert _check(_music_meta(filelist=["Artist - Album - 01.flac", "Artist - Album - 02.flac"], music_release=release)) is True
+    (attacker_root / "Unrelated.cue").touch()
+    track_one = root / "Artist - Album - 01.flac"
+    track_two = root / "Artist - Album - 02.flac"
+    release = {"root": "/", "tracks": [{"format": "FLAC"}, {"format": "FLAC"}], "auxiliary": {"cues": ["Album.cue"]}}
+    assert _check(_music_meta(filelist=[str(track_one), str(track_two)], music_release=release)) is True
 
-    release = {"root": "/", "tracks": [{"format": "FLAC"}, {"format": "FLAC"}], "auxiliary": {"cues": ["etc/passwd"]}}
-    assert _check(_music_meta(filelist=["Artist - Album - 01.flac", "Artist - Album - 02.flac"], music_release=release)) is False
+    release["root"] = str(attacker_root)
+    release["auxiliary"] = {"cues": ["Unrelated.cue"]}
+    assert _check(_music_meta(filelist=[str(track_one), str(track_two)], music_release=release)) is False
 
-    release = {"root": str(root), "tracks": [{"format": "FLAC"}, {"format": "FLAC"}], "auxiliary": {"cues": ["../Outside.cue"]}}
-    assert _check(_music_meta(filelist=["Artist - Album - 01.flac", "Artist - Album - 02.flac"], music_release=release)) is False
+    release["auxiliary"] = {"cues": ["etc/passwd"]}
+    assert _check(_music_meta(filelist=[str(track_one), str(track_two)], music_release=release)) is False
+
+    release["auxiliary"] = {"cues": ["../Outside.cue"]}
+    assert _check(_music_meta(filelist=[str(track_one), str(track_two)], music_release=release)) is False
+
+    outside = tmp_path / "Outside.cue"
+    outside.touch()
+    release["auxiliary"] = {"cues": [str(outside)]}
+    assert _check(_music_meta(filelist=[str(track_one), str(track_two)], music_release=release)) is False
 
 
 def test_railgunpt_does_not_misclassify_payload_names_as_attachments():

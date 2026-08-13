@@ -1,4 +1,5 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
+import os
 import re
 from pathlib import Path
 from typing import Any, ClassVar, cast
@@ -235,23 +236,23 @@ class RailgunPT(NEXUSPHP):
         if any(path.suffix.casefold() == ".cue" for path in paths):
             return True
         cues_value = cls._music_dict(release.get("auxiliary")).get("cues")
-        root_value = release.get("root")
-        if not isinstance(cues_value, list) or not root_value:
+        audio_paths = [path for path in paths if path.suffix.casefold() in cls._AUDIO_EXTENSIONS]
+        if not isinstance(cues_value, list) or not audio_paths or not all(path.is_absolute() for path in audio_paths):
             return False
         cues = cast(list[Any], cues_value)
         try:
-            root = Path(str(root_value)).resolve()
-        except (OSError, RuntimeError):
+            payload_root = Path(os.path.commonpath([str(path.parent) for path in audio_paths])).resolve()
+        except (OSError, RuntimeError, ValueError):
             return False
-        if not root.is_dir():
+        if not payload_root.is_dir() or payload_root.parent == payload_root:
             return False
         for cue in cues:
             cue_path = Path(str(cue))
-            if cue_path.suffix.casefold() != ".cue":
+            if cue_path.is_absolute() or ".." in cue_path.parts or cue_path.suffix.casefold() != ".cue":
                 continue
             try:
-                resolved_cue = cue_path.resolve() if cue_path.is_absolute() else (root / cue_path).resolve()
-                resolved_cue.relative_to(root)
+                resolved_cue = (payload_root / cue_path).resolve()
+                resolved_cue.relative_to(payload_root)
             except (OSError, RuntimeError, ValueError):
                 continue
             if resolved_cue.is_file():
