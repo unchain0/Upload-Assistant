@@ -271,19 +271,21 @@ class RailgunPT(NEXUSPHP):
             resolved_audio = {path.resolve(strict=True) for path in audio_paths if path.resolve(strict=True).is_file()}
         except (OSError, RuntimeError):
             return False
+        resolved_references: list[Path] = []
         for quoted, bare in references:
             reference = (quoted or bare).replace("\\", "/")
             reference_path = Path(reference)
-            if reference_path.is_absolute():
-                continue
+            if reference_path.is_absolute() or ".." in reference_path.parts:
+                return False
             try:
                 candidate = (cue_path.parent / reference_path).resolve(strict=True)
                 candidate.relative_to(payload_root)
             except (OSError, RuntimeError, ValueError):
-                continue
-            if candidate in resolved_audio:
-                return True
-        return False
+                return False
+            if candidate not in resolved_audio:
+                return False
+            resolved_references.append(candidate)
+        return bool(resolved_references)
 
     @classmethod
     def _music_cue_is_present(cls, release: dict[str, Any], paths: list[Path]) -> bool:

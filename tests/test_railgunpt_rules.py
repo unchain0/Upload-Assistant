@@ -355,6 +355,12 @@ def test_railgunpt_requires_cue_in_music_payload(tmp_path):
     release = {"root": str(root), "tracks": [{"format": "FLAC"}, {"format": "FLAC"}], "auxiliary": {"cues": ["Album.cue"]}}
     assert _check(_music_meta(path=str(root), filelist=[str(track_one), str(track_two)], music_release=release)) is True
 
+    mixed_cue = root / "Mixed.cue"
+    mixed_cue.write_text('FILE "CD1/Artist - Album - 01.flac" WAVE\nFILE "../Outside.flac" WAVE\n')
+    release["auxiliary"] = {"cues": ["Mixed.cue"]}
+    assert _check(_music_meta(path=str(root), filelist=[str(track_one), str(track_two)], music_release=release)) is False
+    release["auxiliary"] = {"cues": ["Album.cue"]}
+
     release["root"] = "/"
     assert _check(_music_meta(path=str(root), filelist=[str(track_one), str(track_two)], music_release=release)) is True
 
