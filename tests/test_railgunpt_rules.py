@@ -202,7 +202,7 @@ def test_railgunpt_requires_cue_for_multitrack_audio(tmp_path):
     track_one.touch()
     track_two.touch()
     cue = root / "album.cue"
-    cue.write_text('FILE "track01.flac" WAVE\n')
+    cue.write_text('FILE "track01.flac" WAVE\nFILE "track02.flac" WAVE\nTRACK 01 AUDIO\nINDEX 01 00:00:00\n')
     movie = root / "movie.mkv"
     movie.touch()
     files = ["movie.mkv", "track01.flac", "track02.flac"]
@@ -290,7 +290,7 @@ def test_railgunpt_applies_music_size_and_pack_rules(tmp_path):
             tracks.append(str(track))
         if cue:
             cue_path = root / "Album.cue"
-            cue_path.write_text(f'FILE "{Path(tracks[0]).name}" WAVE\n')
+            cue_path.write_text("".join(f'FILE "{Path(track).name}" WAVE\n' for track in tracks) + "TRACK 01 AUDIO\nINDEX 01 00:00:00\n")
             tracks.append(str(cue_path))
         return str(root), tracks
 
@@ -351,7 +351,7 @@ def test_railgunpt_requires_cue_in_music_payload(tmp_path):
     track_two = nested / "Artist - Album - 02.flac"
     track_one.touch()
     track_two.touch()
-    (root / "Album.cue").write_text('FILE "CD1/Artist - Album - 01.flac" WAVE\n')
+    (root / "Album.cue").write_text('FILE "CD1/Artist - Album - 01.flac" WAVE\nFILE "CD1/Artist - Album - 02.flac" WAVE\nTRACK 01 AUDIO\nINDEX 01 00:00:00\n')
     release = {"root": str(root), "tracks": [{"format": "FLAC"}, {"format": "FLAC"}], "auxiliary": {"cues": ["Album.cue"]}}
     assert _check(_music_meta(path=str(root), filelist=[str(track_one), str(track_two)], music_release=release)) is True
 
@@ -362,12 +362,12 @@ def test_railgunpt_requires_cue_in_music_payload(tmp_path):
     format_two = format_dir / "02.flac"
     format_one.touch()
     format_two.touch()
-    (format_root / "Album.cue").write_text('FILE "FLAC/01.flac" WAVE\n')
+    (format_root / "Album.cue").write_text('FILE "FLAC/01.flac" WAVE\nFILE "FLAC/02.flac" WAVE\nTRACK 01 AUDIO\nINDEX 01 00:00:00\n')
     format_release = {"root": str(format_root), "tracks": [{"format": "FLAC"}, {"format": "FLAC"}], "auxiliary": {"cues": ["Album.cue"]}}
     assert _check(_music_meta(path=str(format_root), filelist=[str(format_one), str(format_two)], music_release=format_release)) is True
 
     mixed_cue = root / "Mixed.cue"
-    mixed_cue.write_text('FILE "CD1/Artist - Album - 01.flac" WAVE\nFILE "../Outside.flac" WAVE\n')
+    mixed_cue.write_text('FILE "CD1/Artist - Album - 01.flac" WAVE\nFILE "../Outside.flac" WAVE\nTRACK 01 AUDIO\nINDEX 01 00:00:00\n')
     release["auxiliary"] = {"cues": ["Mixed.cue"]}
     assert _check(_music_meta(path=str(root), filelist=[str(track_one), str(track_two)], music_release=release)) is False
     release["auxiliary"] = {"cues": ["Album.cue"]}
@@ -380,7 +380,7 @@ def test_railgunpt_requires_cue_in_music_payload(tmp_path):
     assert _check(_music_meta(path=str(root), filelist=[str(track_one), str(track_two)], music_release=release)) is False
 
     parent_root = tmp_path
-    (parent_root / "Sibling.cue").write_text('FILE "album/CD1/Artist - Album - 01.flac" WAVE\n')
+    (parent_root / "Sibling.cue").write_text('FILE "album/CD1/Artist - Album - 01.flac" WAVE\nFILE "album/CD1/Artist - Album - 02.flac" WAVE\nTRACK 01 AUDIO\nINDEX 01 00:00:00\n')
     release = {"root": str(parent_root), "tracks": [{"format": "FLAC"}, {"format": "FLAC"}], "auxiliary": {"cues": ["Sibling.cue"]}}
     assert _check(_music_meta(path=str(root), filelist=[str(track_one), str(track_two)], music_release=release)) is False
     assert _check(_music_meta(path=str(parent_root), filelist=[str(track_one), str(track_two)], music_release=release)) is False
@@ -390,8 +390,18 @@ def test_railgunpt_requires_cue_in_music_payload(tmp_path):
     assert _check(_music_meta(path=str(root), filelist=[str(track_one), str(track_two), str(forged_absolute)], music_release=release)) is False
 
     wrong_reference = root / "Wrong.cue"
-    wrong_reference.write_text('FILE "CD2/Artist - Album - 01.flac" WAVE\n')
+    wrong_reference.write_text('FILE "CD2/Artist - Album - 01.flac" WAVE\nFILE "CD2/Artist - Album - 02.flac" WAVE\nTRACK 01 AUDIO\nINDEX 01 00:00:00\n')
     release["auxiliary"] = {"cues": ["Wrong.cue"]}
+    assert _check(_music_meta(path=str(root), filelist=[str(track_one), str(track_two)], music_release=release)) is False
+
+    bare_cue = root / "Bare.cue"
+    bare_cue.write_text('FILE "CD1/Artist - Album - 01.flac" WAVE\nFILE "CD1/Artist - Album - 02.flac" WAVE\n')
+    release["auxiliary"] = {"cues": ["Bare.cue"]}
+    assert _check(_music_meta(path=str(root), filelist=[str(track_one), str(track_two)], music_release=release)) is False
+
+    partial_cue = root / "Partial.cue"
+    partial_cue.write_text('FILE "CD1/Artist - Album - 01.flac" WAVE\nTRACK 01 AUDIO\nINDEX 01 00:00:00\n')
+    release["auxiliary"] = {"cues": ["Partial.cue"]}
     assert _check(_music_meta(path=str(root), filelist=[str(track_one), str(track_two)], music_release=release)) is False
 
     release["auxiliary"] = {"cues": ["etc/passwd"]}
@@ -413,6 +423,19 @@ def test_railgunpt_requires_cue_in_music_payload(tmp_path):
     (root / "Linked.cue").symlink_to(outside)
     release = {"root": str(root), "tracks": [{"format": "FLAC"}, {"format": "FLAC"}], "auxiliary": {"cues": []}}
     assert _check(_music_meta(path=str(root), filelist=[str(track_one), str(track_two), "Linked.cue"], music_release=release)) is False
+
+    outside_audio = tmp_path / "Outside.flac"
+    outside_audio.touch()
+    linked_audio = root / "Linked.flac"
+    try:
+        linked_audio.symlink_to(outside_audio)
+    except OSError:
+        pass
+    else:
+        linked_audio_cue = root / "LinkedAudio.cue"
+        linked_audio_cue.write_text('FILE "CD1/Artist - Album - 01.flac" WAVE\nFILE "Linked.flac" WAVE\nTRACK 01 AUDIO\nINDEX 01 00:00:00\n')
+        release["auxiliary"] = {"cues": ["LinkedAudio.cue"]}
+        assert _check(_music_meta(path=str(root), filelist=[str(track_one), str(linked_audio), str(linked_audio_cue)], music_release=release)) is False
 
 
 def test_railgunpt_does_not_misclassify_payload_names_as_attachments():

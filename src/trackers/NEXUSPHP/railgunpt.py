@@ -235,14 +235,20 @@ class RailgunPT(NEXUSPHP):
         return [cls._channel_count(track.get("channels")) for track in cls._music_tracks(release)]
 
     @classmethod
-    def _music_payload_root(cls, release: dict[str, Any], paths: list[Path]) -> Path | None:
+    def _music_payload_root(cls, meta: Meta, release: dict[str, Any], paths: list[Path]) -> Path | None:
         audio_paths = [path for path in paths if path.suffix.casefold() in cls._AUDIO_EXTENSIONS]
-        if not audio_paths or not all(path.is_absolute() for path in audio_paths):
+        if not audio_paths or not all(path.is_absolute() for path in audio_paths) or not meta.path:
             return None
         try:
+            source_path = Path(str(meta.path)).resolve()
+            source_root = source_path if source_path.is_dir() else source_path.parent
             resolved_audio = [path.resolve(strict=True) for path in audio_paths]
-            if not all(path.is_file() for path in resolved_audio):
+            if not source_root.is_dir() or not all(path.is_file() for path in resolved_audio):
                 return None
+            for listed_path, resolved_path in zip(audio_paths, resolved_audio, strict=True):
+                if listed_path != resolved_path:
+                    return None
+                resolved_path.relative_to(source_root)
             payload_root = resolved_audio[0].parent
             for audio_path in resolved_audio[1:]:
                 while payload_root != audio_path.parent and payload_root not in audio_path.parent.parents:
@@ -250,7 +256,7 @@ class RailgunPT(NEXUSPHP):
             candidate_roots = [payload_root]
             while (
                 (re.fullmatch(r"(?:cd|disc|disk)[ ._-]?\d+", payload_root.name, re.IGNORECASE) or payload_root.name.casefold() in cls._MUSIC_LAYOUT_DIRS)
-                and payload_root.parent != payload_root
+                and payload_root != source_root
             ):
                 payload_root = payload_root.parent
                 candidate_roots.append(payload_root)
@@ -279,13 +285,15 @@ class RailgunPT(NEXUSPHP):
         except (OSError, UnicodeError):
             return False
         references = re.findall(r"^\s*FILE\s+(?:\"([^\"]+)\"|(\S+))", content, re.IGNORECASE | re.MULTILINE)
-        if not references:
+        tracks = re.findall(r"^\s*TRACK\s+\d+\s+\S+", content, re.IGNORECASE | re.MULTILINE)
+        indexes = re.findall(r"^\s*INDEX\s+\d+\s+\S+", content, re.IGNORECASE | re.MULTILINE)
+        if not references or not tracks or not indexes:
             return False
         try:
             resolved_audio = {path.resolve(strict=True) for path in audio_paths if path.resolve(strict=True).is_file()}
         except (OSError, RuntimeError):
             return False
-        resolved_references: list[Path] = []
+        resolved_references: set[Path] = set()
         for quoted, bare in references:
             reference = (quoted or bare).replace("\\", "/")
             reference_path = Path(reference)
@@ -298,14 +306,14 @@ class RailgunPT(NEXUSPHP):
                 return False
             if candidate not in resolved_audio:
                 return False
-            resolved_references.append(candidate)
-        return bool(resolved_references)
+            resolved_references.add(candidate)
+        return resolved_references == resolved_audio
 
     @classmethod
-    def _music_cue_is_present(cls, release: dict[str, Any], paths: list[Path]) -> bool:
+    def _music_cue_is_present(cls, meta: Meta, release: dict[str, Any], paths: list[Path]) -> bool:
         cue_paths = [path for path in paths if path.suffix.casefold() == ".cue"]
         audio_paths = [path for path in paths if path.suffix.casefold() in cls._AUDIO_EXTENSIONS]
-        payload_root = cls._music_payload_root(release, paths)
+        payload_root = cls._music_payload_root(meta, release, paths)
         for cue_path in cue_paths:
             if payload_root is not None:
                 if cue_path.is_absolute() or ".." not in cue_path.parts:
@@ -350,7 +358,7 @@ class RailgunPT(NEXUSPHP):
             logger.info(f"{self.tracker}: [bold red]Lossy audio files must meet the 5.1-channel minimum.[/bold red]")
             return False
 
-        has_cue = self._music_cue_is_present(release, paths)
+        has_cue = self._music_cue_is_present(meta, release, paths)
         if len(audio_paths) > 1 and not has_cue:
             logger.info(f"{self.tracker}: [bold red]Multi-track audio uploads must include a cue sheet.[/bold red]")
             return False
