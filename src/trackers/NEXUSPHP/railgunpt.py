@@ -169,7 +169,7 @@ class RailgunPT(NEXUSPHP):
         normalized_tokens = {cls._normalized_token(token): token for token in tokens}
         for path in paths:
             normalized_name = cls._normalized_token(path.stem)
-            matches = [canonical for token, canonical in normalized_tokens.items() if token in normalized_name]
+            matches = sorted((canonical for token, canonical in normalized_tokens.items() if token in normalized_name), key=lambda token: len(cls._normalized_token(token)), reverse=True)
             if matches:
                 found.add(matches[0])
         return found

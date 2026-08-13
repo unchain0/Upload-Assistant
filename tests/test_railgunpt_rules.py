@@ -160,6 +160,9 @@ def test_railgunpt_enforces_pack_consistency():
     files = ["Show.S01E01.1080p.HDTV.x264-GRP.mkv", "Show.S01E02.720p.HDTV.x264-GRP.mkv"]
     assert _check(_tv_meta(name="Example Show S01 1080p HDTV x264-GRP", tv_pack=True, filelist=files)) is False
 
+    files = ["Show.S01E01.2160p.UHDTV.x265-GRP.mkv", "Show.S01E02.2160p.HDTV.x265-GRP.mkv"]
+    assert _check(_tv_meta(name="Example Show S01 2160p UHDTV x265-GRP", tv_pack=True, filelist=files)) is False
+
     files = ["Show.S01E01.1080p.HDTV.x264-GRP.mkv", "Show.S01E02.1080p.HDTV-GRP.mkv"]
     assert _check(_tv_meta(name="Example Show S01 1080p HDTV x264-GRP", tv_pack=True, filelist=files)) is False
 
@@ -294,7 +297,7 @@ def test_railgunpt_applies_original_game_image_and_software_exceptions():
     assert _check(_game_meta(filelist=["game.cue"])) is False
     assert _check(_game_meta(name="Garry's Mod", filelist=["Garrys.Mod.iso"])) is True
     assert _check(_game_meta(filelist=["game.rar"])) is False
-    assert _check(_game_meta(filelist=["game.exe"], name="Game Portable Repack")) is False
+    assert _check(_game_meta(filelist=["game.iso"], name="Game Portable Repack")) is False
     assert _check(_game_meta(software=True, source_size=100 * 1024 * 1024 - 1, filelist=["tool.pkg"], name="HD Video Tool")) is True
 
 
