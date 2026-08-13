@@ -49,7 +49,7 @@ def _tv_meta(**kwargs: Any) -> Meta:
 def _music_meta(**kwargs: Any) -> Meta:
     values: dict[str, Any] = {
         "category": "MUSIC",
-        "filelist": ["Artist - Album - 01.flac", "Artist - Album - 02.flac"],
+        "filelist": ["Artist - Album - 01.flac", "Artist - Album - 02.flac", "Album.cue"],
         "name": "Artist - Album 2024 FLAC",
         "format": "FLAC",
         "source": "CD",
@@ -183,9 +183,10 @@ def test_railgunpt_rejects_invalid_filelist_metadata():
 
 
 def test_railgunpt_rejects_lossy_audio_below_51_channels():
-    files = ["movie.mkv", "track01.mp3"]
-    assert _check(_movie_meta(filelist=files, audio="MP3", channels="2.0")) is False
-    assert _check(_movie_meta(filelist=files, audio="MP3", channels="5.1")) is True
+    for extension, codec in (("mp3", "MP3"), ("ac3", "AC3"), ("dts", "DTS")):
+        files = ["movie.mkv", f"track01.{extension}"]
+        assert _check(_movie_meta(filelist=files, audio=codec, channels="2.0")) is False
+        assert _check(_movie_meta(filelist=files, audio=codec, channels="5.1")) is True
 
 
 def test_railgunpt_requires_cue_for_multitrack_audio():
@@ -209,6 +210,10 @@ def test_railgunpt_allows_sd_sports_from_tv_or_dsr():
     )
     assert _check(sports) is True
     assert _check(_tv_meta(name=sports.name, resolution="576p", source="DSR", genres=["Drama"])) is False
+
+
+def test_railgunpt_prioritizes_sports_category_over_documentary_tag():
+    assert _tracker().get_category(_tv_meta(genres=["Sports", "Documentary"])) == 407
 
 
 def test_railgunpt_requires_consistent_movie_collection_media():
@@ -247,7 +252,9 @@ def test_railgunpt_applies_music_size_and_pack_rules():
         )
     ) is True
     assert _check(_music_meta(source_size=100 * 1024 * 1024 - 1)) is False
-    assert _check(_music_meta(filelist=["Artist - Album - 01.flac", "Artist - Album - 02.flac"], music_release={"tracks": [{"format": "FLAC"}, {"format": "MP3"}], "auxiliary": {"cues": ["Album.cue"]}})) is False
+    assert _check(_music_meta(filelist=["Artist - Album - 01.flac", "Artist - Album - 02.flac", "Album.cue"], music_release={"tracks": [{"format": "FLAC"}, {"format": "FLAC"}], "auxiliary": {"cues": ["Album.cue"]}})) is True
+    assert _check(_music_meta(filelist=["Artist - Album - 01.flac", "Artist - Album - 02.mp3", "Album.cue"], music_release={"tracks": [{"format": "FLAC"}, {"format": "FLAC"}], "auxiliary": {"cues": ["Album.cue"]}})) is False
+    assert _check(_music_meta(filelist=["Artist - Album - 01.flac", "Artist - Album - 02.flac"], music_release={"tracks": [{"format": "FLAC"}, {"format": "FLAC"}], "auxiliary": {"cues": ["Album.cue"]}})) is False
     assert _check(
         _music_meta(
             music_release={
@@ -260,6 +267,7 @@ def test_railgunpt_applies_music_size_and_pack_rules():
 
 def test_railgunpt_applies_original_game_image_and_software_exceptions():
     assert _check(_game_meta()) is True
+    assert _check(_game_meta(filelist=["game.cue"])) is False
     assert _check(_game_meta(filelist=["game.rar"])) is False
     assert _check(_game_meta(filelist=["game.exe"], name="Game Portable Repack")) is False
     assert _check(_game_meta(software=True, source_size=100 * 1024 * 1024 - 1, filelist=["tool.pkg"], name="HD Video Tool")) is True

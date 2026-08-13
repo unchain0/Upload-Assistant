@@ -26,8 +26,8 @@ class RailgunPT(NEXUSPHP):
     _ARCHIVE_EXTENSIONS: frozenset[str] = frozenset({".rar", ".r00", ".r01", ".r02", ".zip", ".7z"})
     _ATTACHMENT_ARCHIVE_MARKERS: tuple[str, ...] = ("sub", "subtitle", "font", "scan", "cover", "patch", "crack")
     _AUDIO_EXTENSIONS: frozenset[str] = frozenset({".aac", ".ac3", ".ape", ".dts", ".flac", ".m4a", ".mp3", ".ogg", ".opus", ".wav", ".wma"})
-    _LOSSY_AUDIO_EXTENSIONS: frozenset[str] = frozenset({".aac", ".m4a", ".mp3", ".ogg", ".opus", ".wma"})
-    _GAME_IMAGE_EXTENSIONS: frozenset[str] = frozenset({".bin", ".chd", ".cue", ".cso", ".gdi", ".img", ".iso", ".mdf", ".mds", ".nrg", ".wbfs"})
+    _LOSSY_AUDIO_EXTENSIONS: frozenset[str] = frozenset({".aac", ".ac3", ".dts", ".m4a", ".mp3", ".ogg", ".opus", ".wma"})
+    _GAME_IMAGE_EXTENSIONS: frozenset[str] = frozenset({".bin", ".chd", ".cso", ".img", ".iso", ".mdf", ".nrg", ".wbfs"})
     _BANNED_EXTENSIONS: frozenset[str] = frozenset({".rm", ".rmvb", ".flv", ".torrent", ".url"})
     _VIDEO_EXTENSIONS: frozenset[str] = frozenset({".avi", ".m2ts", ".m4v", ".mkv", ".mov", ".mp4", ".mpg", ".mpeg", ".rm", ".rmvb", ".ts", ".vob", ".webm"})
     _LOW_QUALITY_MARKERS: tuple[str, ...] = ("cam", "hdcam", "tc", "telesync", "ts", "scr", "dvdscr", "r5", "r5 line", "halfcd")
@@ -82,12 +82,12 @@ class RailgunPT(NEXUSPHP):
     @classmethod
     def _music_track_formats(cls, release: dict[str, Any], paths: list[Path]) -> set[str]:
         tracks = release.get("tracks")
+        formats: set[str] = set()
         if isinstance(tracks, list):
             formats = {str(track.get("format") or track.get("codec") or "").casefold() for track in tracks if isinstance(track, dict)}
             formats.discard("")
-            if formats:
-                return formats
-        return {path.suffix.casefold() for path in paths if path.suffix.casefold() in cls._AUDIO_EXTENSIONS}
+        payload_formats = {path.suffix.casefold().lstrip(".") for path in paths if path.suffix.casefold() in cls._AUDIO_EXTENSIONS}
+        return payload_formats | formats
 
     @staticmethod
     def _title_contains_token(title: str, token: Any) -> bool:
@@ -172,9 +172,6 @@ class RailgunPT(NEXUSPHP):
             return False
 
         has_cue = any(path.suffix.casefold() == ".cue" for path in paths)
-        music_release = meta.music_release if isinstance(meta.music_release, dict) else {}
-        auxiliary = music_release.get("auxiliary") if isinstance(music_release.get("auxiliary"), dict) else {}
-        has_cue = has_cue or bool(auxiliary.get("cues"))
         if len(audio_paths) > 1 and not has_cue:
             logger.info(f"{self.tracker}: [bold red]Multi-track audio uploads must include a cue sheet.[/bold red]")
             return False
@@ -360,6 +357,9 @@ class RailgunPT(NEXUSPHP):
             return 408
         if category == "GAME":
             return 410 if meta.software else 412
+        is_sports = category == "TV" and any(re.search(rf"(^|,\s*){re.escape(keyword)}(\s*,|$)", genres + ", " + keywords, re.IGNORECASE) for keyword in ("sport", "sports"))
+        if is_sports:
+            return 407
         if "documentary" in genres or "documentary" in keywords:
             return documentaries
         if meta.anime or "animation" in genres or "animation" in keywords:
@@ -368,8 +368,6 @@ class RailgunPT(NEXUSPHP):
         if category == "MOVIE":
             return movies
         if category == "TV":
-            if any(re.search(rf"(^|,\s*){re.escape(keyword)}(\s*,|$)", genres + ", " + keywords, re.IGNORECASE) for keyword in ("sport", "sports")):
-                return 407
             game_show_keywords = [
                 "award show",
                 "competition",
