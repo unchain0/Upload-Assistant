@@ -743,8 +743,9 @@ class DarkPeers(UNIT3D):
             if meta.scene:
                 return {"name": scene_name}
 
-            normalized_scene_name = self._normalize_scene_name(scene_name)
-            return {"name": self._ensure_group_tag(normalized_scene_name, meta.tag)}
+            if not str(meta.title or "") and not str(meta.name or ""):
+                normalized_scene_name = self._normalize_scene_name(scene_name)
+                return {"name": self._ensure_group_tag(normalized_scene_name, meta.tag)}
 
         dp_name = str(meta.name or "")
         if str(meta.type or "").strip():
