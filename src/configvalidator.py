@@ -85,6 +85,7 @@ DEFAULT_KEY_TYPES: dict[str, tuple[type, ...]] = {
     "mkbrr": (bool,),
     "mkbrr_threads": (str, int),
     "auto_zentag": (bool,),
+    "ebook_meta_path": (str,),
     "add_dynamic_hdr_plot": (bool,),
     "dynamic_hdr_plot_header": (str,),
     "dynamic_hdr_plot_max_files": (str, int),

@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import re
 from contextlib import suppress
 from pathlib import Path
@@ -132,15 +133,26 @@ def _written_output(stdout: str, output_root: Path) -> Path | None:
     return output.parent if output.is_file() else None
 
 
-def _zentag_paths(source: Path, base_dir: str) -> tuple[Path, Path]:
+def _zentag_paths(source: Path, base_dir: str, default_config: dict[str, Any]) -> tuple[Path, Path]:
     output_root = source.parent / "zentag-output"
     config_path = Path(base_dir) / "tmp" / "zentag-auto.yaml"
     output_root.mkdir(parents=True, exist_ok=True)
     config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(
-        f"output_dir: {json.dumps(str(output_root))}\nsession_dir: {json.dumps(str(Path(base_dir) / 'tmp' / 'zentag-sessions'))}\n",
-        encoding="utf-8",
-    )
+    lines = [
+        f"output_dir: {json.dumps(str(output_root))}",
+        f"session_dir: {json.dumps(str(Path(base_dir) / 'tmp' / 'zentag-sessions'))}",
+    ]
+    ebook_meta_path = str(default_config.get("ebook_meta_path", "")).strip()
+    if ebook_meta_path:
+        resolved_ebook_meta_path = Path(ebook_meta_path).expanduser()
+        if not resolved_ebook_meta_path.exists():
+            raise RuntimeError(f"Configured ebook_meta_path does not exist: {resolved_ebook_meta_path}")
+        if not resolved_ebook_meta_path.is_file():
+            raise RuntimeError(f"Configured ebook_meta_path is not a file: {resolved_ebook_meta_path}")
+        if os.name != "nt" and not os.access(resolved_ebook_meta_path, os.X_OK):
+            raise RuntimeError(f"Configured ebook_meta_path is not executable: {resolved_ebook_meta_path}")
+        lines.append(f"ebook_meta_path: {json.dumps(str(resolved_ebook_meta_path))}")
+    config_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return output_root, config_path
 
 
@@ -154,7 +166,7 @@ async def prepare_zenith_audiobook(meta: Meta, base_dir: str, config: dict[str, 
 
     try:
         binary = await ZentagBinaryManager.ensure_binary(base_dir)
-        output_root, config_path = _zentag_paths(source, base_dir)
+        output_root, config_path = _zentag_paths(source, base_dir, config.get("DEFAULT", {}))
 
         asin = str(meta.book_asin or meta.asin or "").strip().upper()
         if not re.fullmatch(r"[A-Z0-9]{10}", asin):
@@ -196,7 +208,7 @@ async def prepare_zenith_ebook(meta: Meta, base_dir: str, config: dict[str, Any]
 
     try:
         binary = await ZentagBinaryManager.ensure_binary(base_dir)
-        output_root, config_path = _zentag_paths(source, base_dir)
+        output_root, config_path = _zentag_paths(source, base_dir, config.get("DEFAULT", {}))
         command = [binary, "--config", str(config_path), "ebook", str(source)]
         values: dict[str, object] = {
             "--author": meta.author or meta.book_author,
