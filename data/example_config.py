@@ -192,8 +192,6 @@ config: dict[str, Any] = {
         # Set the full path to the `ebook-meta` binary used by zentag's ebook mode.
         # Leave blank to resolve from system PATH.
         "ebook_meta_path": "",
-        # Set to false to skip automatic zentag preparation for books and audiobooks.
-        "auto_zentag": True,
         # set true to use argument overrides from data/templates/user-args.json
         "user_overrides": False,
         # Automatically set --personalrelease to True if the detected release group matches any of these tags (case-insensitive)

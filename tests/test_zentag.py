@@ -2,6 +2,7 @@
 import asyncio
 import hashlib
 import io
+import os
 import tarfile
 from pathlib import Path
 from typing import Any, cast
@@ -346,7 +347,7 @@ def test_zentag_paths_includes_ebook_meta_path(tmp_path: Path, monkeypatch: Any)
 
     _, config_path = zentag._zentag_paths(source, str(tmp_path), {"ebook_meta_path": "~/bin/ebook-meta"})
     config_text = config_path.read_text()
-    assert f'ebook_meta_path: "{Path("~/bin/ebook-meta").expanduser()}"' in config_text
+    assert f"ebook_meta_path: {zentag.json.dumps(str(Path('~/bin/ebook-meta').expanduser()))}" in config_text
 
 
 def test_zentag_paths_omits_empty_ebook_meta_path(tmp_path: Path) -> None:
@@ -355,3 +356,23 @@ def test_zentag_paths_omits_empty_ebook_meta_path(tmp_path: Path) -> None:
 
     _, config_path = zentag._zentag_paths(source, str(tmp_path), {"ebook_meta_path": "   "})
     assert "ebook_meta_path:" not in config_path.read_text()
+
+
+def test_zentag_paths_rejects_missing_ebook_meta_path(tmp_path: Path) -> None:
+    source = tmp_path / "book.pdf"
+    source.write_bytes(b"pdf")
+
+    with pytest.raises(RuntimeError, match="does not exist"):
+        zentag._zentag_paths(source, str(tmp_path), {"ebook_meta_path": str(tmp_path / "missing-ebook-meta")})
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Executable-bit check is unreliable on Windows")
+def test_zentag_paths_rejects_non_executable_ebook_meta_path(tmp_path: Path) -> None:
+    source = tmp_path / "book.pdf"
+    source.write_bytes(b"pdf")
+    bad_bin = tmp_path / "not-executable"
+    bad_bin.write_text("not executable", encoding="utf-8")
+    bad_bin.chmod(0o644)
+
+    with pytest.raises(RuntimeError, match="not executable"):
+        zentag._zentag_paths(source, str(tmp_path), {"ebook_meta_path": str(bad_bin)})

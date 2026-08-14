@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import re
 from contextlib import suppress
 from pathlib import Path
@@ -143,7 +144,14 @@ def _zentag_paths(source: Path, base_dir: str, default_config: dict[str, Any]) -
     ]
     ebook_meta_path = str(default_config.get("ebook_meta_path", "")).strip()
     if ebook_meta_path:
-        lines.append(f"ebook_meta_path: {json.dumps(str(Path(ebook_meta_path).expanduser()))}")
+        resolved_ebook_meta_path = Path(ebook_meta_path).expanduser()
+        if not resolved_ebook_meta_path.exists():
+            raise RuntimeError(f"Configured ebook_meta_path does not exist: {resolved_ebook_meta_path}")
+        if not resolved_ebook_meta_path.is_file():
+            raise RuntimeError(f"Configured ebook_meta_path is not a file: {resolved_ebook_meta_path}")
+        if os.name != "nt" and not os.access(resolved_ebook_meta_path, os.X_OK):
+            raise RuntimeError(f"Configured ebook_meta_path is not executable: {resolved_ebook_meta_path}")
+        lines.append(f"ebook_meta_path: {json.dumps(str(resolved_ebook_meta_path))}")
     config_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return output_root, config_path
 
