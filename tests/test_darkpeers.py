@@ -233,7 +233,7 @@ def test_darkpeers_normalizes_htm_ebook_format_to_html():
     assert _name(meta) == "Author - Book 2026 HTML 9780123456472 Retail"
 
 
-def test_darkpeers_scene_name_is_never_retagged_with_derived_audio():
+def test_darkpeers_scene_name_is_normalized_when_not_treated_as_scene():
     meta = Meta(
         category="MOVIE",
         scene_name="Original.Release.2026-GRP",
@@ -242,7 +242,32 @@ def test_darkpeers_scene_name_is_never_retagged_with_derived_audio():
         language_checked=True,
     )
 
-    assert _name(meta) == "Original.Release.2026-GRP"
+    assert _name(meta) == "Original Release 2026-GRP"
+
+
+def test_darkpeers_preserves_scene_name_dots_when_scene_mode_is_enabled():
+    meta = Meta(
+        category="TV",
+        scene_name="Dr.Seuss's.Red.Fish.Blue.Fish.S03E04.1080p.WEB.h264-DOLORES",
+        scene=True,
+        language_checked=True,
+        audio_languages=["English"],
+        original_language="English",
+    )
+
+    assert _name(meta) == "Dr.Seuss's.Red.Fish.Blue.Fish.S03E04.1080p.WEB.h264-DOLORES"
+
+
+def test_darkpeers_normalizes_scene_names_without_changing_codec_or_audio_channels():
+    meta = Meta(
+        category="TV",
+        scene_name="Show.Name.S03E04.DD+5.1.WEB.h.264-GROUP_NAME",
+        language_checked=True,
+        audio_languages=["English"],
+        original_language="English",
+    )
+
+    assert _name(meta) == "Show Name S03E04 DD+5.1 WEB h.264-GROUP_NAME"
 
 
 def test_darkpeers_requires_attended_audiobook_edition_verification():
