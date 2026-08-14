@@ -271,11 +271,14 @@ class NameManager:
         else:
             ebook_type = ebook_type.upper()
 
+        author_or_publisher = author or publisher
+        title_without_author = self._strip_prefix_author(title, author_or_publisher)
+
         # Construct final string parts based on subtype
         parts = []
 
         if audiobook:
-            parts.extend([author, "-", title, edition, year, lang_display, "AUDIOBOOK"])
+            parts.extend([author, "-", title_without_author, edition, year, lang_display, "AUDIOBOOK"])
         elif comic:
             vol_str = f"Vol {volume}" if volume else ""
             no_str = f"No {issue}" if issue else ""
@@ -289,12 +292,17 @@ class NameManager:
         elif newspaper:
             parts.extend([title, year, lang_display, source, ebook_type, "eBOOK"])
         else:
-            author_or_publisher = author or publisher
-            parts.extend([author_or_publisher, "-", title, edition, year, lang_display, source, ebook_type, "eBOOK"])
+            parts.extend([author_or_publisher, "-", title_without_author, edition, year, lang_display, source, ebook_type, "eBOOK"])
 
         cleaned_parts = [p for p in parts if p]
         base_name = " ".join(cleaned_parts)
         return " ".join(base_name.split())
+
+    @staticmethod
+    def _strip_prefix_author(title: str, author_or_publisher: str) -> str:
+        if not title or not author_or_publisher:
+            return title.strip()
+        return re.sub(rf"^{re.escape(author_or_publisher)}\s*[-:]+\s*", "", title.strip(), flags=re.IGNORECASE).strip()
 
     def extract_game_name(self, meta: Meta) -> str:
         """Build a game release name losely based on the SCENE 2021_GAMEiSO ruleset."""
