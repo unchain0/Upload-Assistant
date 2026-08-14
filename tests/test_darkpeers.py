@@ -245,7 +245,7 @@ def test_darkpeers_scene_name_is_normalized_when_not_treated_as_scene():
     assert _name(meta) == "Original Release 2026-GRP"
 
 
-def test_darkpeers_preserves_scene_dots_only_when_scene_mode_is_enabled():
+def test_darkpeers_preserves_scene_name_dots_when_scene_mode_is_enabled():
     meta = Meta(
         category="TV",
         scene_name="Dr.Seuss's.Red.Fish.Blue.Fish.S03E04.1080p.WEB.h264-DOLORES",
