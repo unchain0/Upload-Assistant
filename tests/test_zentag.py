@@ -340,18 +340,17 @@ async def test_debug_runs_zentag_without_uploading(tmp_path: Path, monkeypatch: 
     assert await zentag.prepare_zenith_audiobook(meta, str(tmp_path), {"DEFAULT": {}}) == str(output.resolve())
 
 
-def test_zentag_paths_includes_ebook_meta_path(tmp_path: Path, monkeypatch: Any) -> None:
+def test_zentag_paths_includes_ebook_meta_path(tmp_path: Path) -> None:
     source = tmp_path / "book.pdf"
     source.write_bytes(b"pdf")
-    monkeypatch.setenv("HOME", str(tmp_path))
     bin_path = tmp_path / "bin" / "ebook-meta"
     bin_path.parent.mkdir(parents=True, exist_ok=True)
     bin_path.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
     bin_path.chmod(0o755)
 
-    _, config_path = zentag._zentag_paths(source, str(tmp_path), {"ebook_meta_path": "~/bin/ebook-meta"})
+    _, config_path = zentag._zentag_paths(source, str(tmp_path), {"ebook_meta_path": str(bin_path)})
     config_text = config_path.read_text()
-    assert f"ebook_meta_path: {zentag.json.dumps(str(Path('~/bin/ebook-meta').expanduser()))}" in config_text
+    assert f"ebook_meta_path: {zentag.json.dumps(str(bin_path))}" in config_text
 
 
 def test_zentag_paths_omits_empty_ebook_meta_path(tmp_path: Path) -> None:
