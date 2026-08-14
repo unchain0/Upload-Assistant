@@ -133,9 +133,6 @@ class Luminarr(UNIT3D):
 
     @staticmethod
     def _is_multi_pass_abr(settings: str) -> bool:
-        if "rc=2pass" in settings or "rc:2pass" in settings:
-            return True
-
         passes = Luminarr._setting_value(settings, "pass")
         return bool(passes.isdigit() and int(passes) >= 2)
 
