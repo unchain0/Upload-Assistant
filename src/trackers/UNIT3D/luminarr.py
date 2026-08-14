@@ -125,6 +125,59 @@ class Luminarr(UNIT3D):
         return format_name
 
     @staticmethod
+    def _setting_value(settings: str, key: str) -> str:
+        match = re.search(rf"(?:^|[\s/;,:]){re.escape(key)}\s*[:=]\s*([^\s/;,:]+)", settings, re.IGNORECASE)
+        if not match:
+            return ""
+        return match.group(1).strip().lower()
+
+    @staticmethod
+    def _is_multi_pass_abr(settings: str) -> bool:
+        for key in ("pass", "stats-read"):
+            value = Luminarr._setting_value(settings, key)
+            if value.isdigit() and int(value) >= 2:
+                return True
+        return False
+
+    def _invalid_encode_settings_reason(self, meta: Meta) -> str:
+        mediainfo = meta.mediainfo if isinstance(meta.mediainfo, dict) else {}
+        media = cast(dict[str, Any], mediainfo.get("media", {})) if isinstance(mediainfo.get("media"), dict) else {}
+        tracks = cast(list[Any], media.get("track", [])) if isinstance(media.get("track"), list) else []
+
+        for track in tracks:
+            if not isinstance(track, dict):
+                continue
+
+            track_map = cast(dict[str, Any], track)
+            if track_map.get("@type") != "Video":
+                continue
+
+            raw_settings = track_map.get("Encoded_Library_Settings", "")
+            if not raw_settings:
+                continue
+
+            if isinstance(raw_settings, dict):
+                if not raw_settings:
+                    continue
+                settings = " / ".join(
+                    f"{key!s}={value!s}" for key, value in raw_settings.items()
+                )
+            elif isinstance(raw_settings, str):
+                settings = raw_settings
+            else:
+                settings = str(raw_settings)
+
+            if not settings.strip():
+                continue
+
+            settings = settings.lower()
+            rate_control = Luminarr._setting_value(settings, "rc")
+            if rate_control == "abr" and not self._is_multi_pass_abr(settings):
+                return "Single-pass ABR is not permitted. Use CRF or multi-pass ABR."
+
+        return ""
+
+    @staticmethod
     def _is_supplementary_audio(track: dict[str, Any]) -> bool:
         if track.get("is_commentary") is True:
             return True
@@ -248,6 +301,11 @@ class Luminarr(UNIT3D):
             invalid_audio_reason = self._invalid_audio_reason(meta)
             if invalid_audio_reason:
                 logger.info(f"{self.tracker}: [bold red]{invalid_audio_reason} Skipping upload.[/bold red]")
+                return False
+
+            invalid_encode_settings_reason = self._invalid_encode_settings_reason(meta)
+            if invalid_encode_settings_reason:
+                logger.info(f"{self.tracker}: [bold red]{invalid_encode_settings_reason} Skipping upload.[/bold red]")
                 return False
 
         try:
