@@ -195,6 +195,24 @@ def test_luminarr_accepts_multi_pass_abr_encode_with_colon_delimiter():
     assert asyncio.run(_tracker().get_additional_checks(_movie_meta(type="WEBDL", mediainfo=mediainfo))) is True
 
 
+def test_luminarr_accepts_x265_multi_pass_abr_with_stats_read_marker():
+    mediainfo = {
+        "media": {
+            "track": [
+                {"@type": "General"},
+                {
+                    "@type": "Video",
+                    "Format": "HEVC",
+                    "Encoded_Library_Settings": "cabac=1 / rc=abr / stats-write=0 / stats-read=2 / bitrate=1900",
+                },
+                {"@type": "Audio", "Format": "AAC", "Title": "English"},
+            ]
+        }
+    }
+
+    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(type="WEBDL", mediainfo=mediainfo))) is True
+
+
 def test_luminarr_allows_primary_mp2_for_hdtv():
     mediainfo = {"media": {"track": [{"@type": "Audio", "Format": "MPEG Audio", "Format_Profile": "Layer 2", "Title": "English"}]}}
 

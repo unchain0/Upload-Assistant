@@ -133,8 +133,11 @@ class Luminarr(UNIT3D):
 
     @staticmethod
     def _is_multi_pass_abr(settings: str) -> bool:
-        passes = Luminarr._setting_value(settings, "pass")
-        return bool(passes.isdigit() and int(passes) >= 2)
+        for key in ("pass", "stats-read"):
+            value = Luminarr._setting_value(settings, key)
+            if value.isdigit() and int(value) >= 2:
+                return True
+        return False
 
     def _invalid_encode_settings_reason(self, meta: Meta) -> str:
         mediainfo = meta.mediainfo if isinstance(meta.mediainfo, dict) else {}
