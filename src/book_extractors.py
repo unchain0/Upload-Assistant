@@ -78,13 +78,14 @@ def extract_epub_metadata(epub_path: str) -> dict[str, Any]:
             if opf_data is None:
                 return metadata
             root = ET.fromstring(opf_data)
+            unique_id = get_attr_ignore_ns(root, "unique-identifier") or ""
 
             title = ""
             creators: list[tuple[str, str, str]] = []
             creator_roles: dict[str, str] = {}
             language = ""
             date = ""
-            identifier = ""
+            identifiers: list[tuple[str, str]] = []
             description = ""
             publisher = ""
             series = ""
@@ -108,12 +109,7 @@ def extract_epub_metadata(epub_path: str) -> dict[str, Any]:
                         date = (elem.text or "").strip()
                 elif tag_local == "identifier":
                     val = (elem.text or "").strip()
-                    if val.lower().startswith("urn:isbn:"):
-                        identifier = val[9:]
-                    elif val.lower().startswith("isbn:"):
-                        identifier = val[5:]
-                    elif not identifier:
-                        identifier = val
+                    identifiers.append((elem.attrib.get("id", "").strip(), val))
                 elif tag_local == "description":
                     description = (elem.text or "").strip()
                 elif tag_local == "publisher":
@@ -147,10 +143,16 @@ def extract_epub_metadata(epub_path: str) -> dict[str, Any]:
                 match = re.search(r"\b\d{4}\b", date)
                 if match:
                     metadata["year"] = match.group(0)
-            if identifier:
-                cleaned_id = re.sub(r"[^\d]", "", identifier)
-                if len(cleaned_id) in (10, 13):
+            ordered_identifiers: list[str] = []
+            if unique_id:
+                ordered_identifiers.extend(value for identifier_id, value in identifiers if identifier_id == unique_id)
+            ordered_identifiers.extend(value for _identifier_id, value in identifiers if value.lower().startswith(("urn:isbn:", "isbn:")))
+            ordered_identifiers.extend(value for _identifier_id, value in identifiers)
+            for identifier_value in ordered_identifiers:
+                cleaned_id = re.sub(r"[^\dXx]", "", identifier_value).upper()
+                if validate_isbn_checksum(cleaned_id):
                     metadata["isbn"] = cleaned_id
+                    break
             if description:
                 metadata["overview"] = description
             if publisher:

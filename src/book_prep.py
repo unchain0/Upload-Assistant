@@ -238,7 +238,10 @@ def _unescape_meta_val(val: Any) -> str | None:
 
 
 _AUTHOR_PARTICLES = frozenset({"al", "da", "de", "del", "della", "di", "dos", "du", "la", "le", "of", "van", "von", "y"})
-_BOOK_FORMAT_SUFFIX = re.compile(r"\s*(?:\.(?:azw3?|cb[rz]|djvu|epub|fb2|html?|kfx|lit|mobi|pdf|rtf|txt)|\((?:azw3?|cb[rz]|djvu|epub|fb2|kfx|mobi|pdf)\))\s*$", re.IGNORECASE)
+_BOOK_FORMAT_SUFFIX = re.compile(
+    r"\s*(?:\.(?:azw3?|cb[rz]|djvu|epub|fb2|html?|kfx|lit|mobi|pdf|rtf|txt)|\((?:azw3?|cb[rz]|djvu|epub|fb2|kfx|mobi|pdf|retail|scan|hybrid)\))\s*$",
+    re.IGNORECASE,
+)
 _BOOK_PART_ONLY = re.compile(r"^(?:vol(?:ume)?|book|part|tome)\s*[#.]?\s*\d+(?:\.\d+)?$", re.IGNORECASE)
 _ASIN_VALUE = re.compile(r"\bASIN\s*[:#]?\s*([A-Z0-9]{10})(?![A-Z0-9])", re.IGNORECASE)
 
@@ -286,13 +289,13 @@ def book_identity_from_path(path: str) -> tuple[str, str]:
     second_score = _author_likelihood(second)
     if first_score >= 3 and second_score <= 1:
         author, title = first, second
-    elif (second_score >= 3 and first_score <= 0) or (first_score < 0 and _is_capitalized_mononym(second)):
+    elif (second_score >= 3 and first_score <= 0) or (first_score < 0 and not re.search(r"\d", first) and _is_capitalized_mononym(second)):
         author, title = second, first
     elif first_score >= 3 and second_score >= 3:
         author, title = first, second
     else:
         return "", re.sub(r"_\s+", ": ", name).strip()
-    title = re.sub(r"_\s+", ": ", title).strip()
+    title = _strip_book_format_suffix(re.sub(r"_\s+", ": ", title).strip())
     title_parts = re.split(r"\s+-\s+", title)
     if len(title_parts) > 1 and validate_isbn_checksum(title_parts[-1]):
         title = " - ".join(title_parts[:-1]).strip()
@@ -319,9 +322,30 @@ def _prefer_descriptive_source_title(current_title: str, author: str, source_tit
     author_identity = _normalized_book_identity(author)
     source_tokens = _identity_tokens(source_title)
     current_tokens = _identity_tokens(current_title)
+    if current_identity in {"anovel", "amemoir", "abiography", "ahistory", "aguide"} and len(source_tokens) >= 2:
+        return source_title
     if current_identity and current_identity == author_identity and current_tokens < source_tokens:
         return source_title
     return current_title
+
+
+def _prefer_descriptive_source_author(current_author: str, source_author: str) -> str:
+    current_tokens = _author_identity_tokens(current_author)
+    source_tokens = _author_identity_tokens(source_author)
+    if current_tokens and len(source_tokens) > len(current_tokens) and current_tokens < source_tokens:
+        return source_author
+    return current_author
+
+
+def _publisher_from_overview(value: str) -> str:
+    import html
+
+    plain = re.sub(r"<br\s*/?>", "\n", str(value or ""), flags=re.IGNORECASE)
+    plain = re.sub(r"<[^>]+>", "", plain)
+    plain = html.unescape(plain).replace("\u00a0", " ")
+    plain = re.sub(r"[\u200b\u200e\u200f\ufeff]", "", plain)
+    match = re.search(r"\bpublisher\b\s*(?::|\uFF1A)\s*([^\r\n]+)", plain, flags=re.IGNORECASE)
+    return match.group(1).strip() if match else ""
 
 
 def _matching_isbn_metadata(meta: Meta, *providers: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -726,8 +750,8 @@ async def gather_book_prep(
             logger.debug(f"[yellow]Warning: Error extracting embedded book metadata: {ex}[/yellow]")
 
     fallback_author, fallback_title = book_identity_from_path(str(meta.path or videopath))
-    if not meta.author and fallback_author:
-        meta.author = fallback_author
+    if fallback_author:
+        meta.author = _prefer_descriptive_source_author(str(meta.author or ""), fallback_author)
     if fallback_title:
         meta.title = _prefer_descriptive_source_title(str(meta.title or ""), str(meta.author or ""), fallback_title)
 
@@ -934,6 +958,11 @@ async def gather_book_prep(
                         meta[key] = val
                     if key == "year" and "search_year" not in openlibrary_data:
                         meta.search_year = int(val)
+
+    if not meta.publisher and not cli_overrides["publisher"]:
+        inferred_publisher = _publisher_from_overview(str(meta.overview or ""))
+        if inferred_publisher:
+            meta.publisher = inferred_publisher
 
     exact_edition = _matching_isbn_metadata(meta, mam_data, google_books_data, openlibrary_data)
     exact_title = _matching_isbn_metadata(meta, google_books_data, openlibrary_data, mam_data)
