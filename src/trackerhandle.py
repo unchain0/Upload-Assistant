@@ -207,7 +207,7 @@ async def process_trackers(
             status.update(upload=False, skipped=True, status_message="Prepared zentag audiobook failed Zenith validation")
 
         cjk_fields = book_metadata_cjk_fields(meta)
-        if cjk_fields:
+        if cjk_fields and not (tracker == "ZENITH" and meta.get("zentag_prepared", False)):
             fields = ", ".join(cjk_fields)
             status = meta.tracker_status.setdefault(tracker, {})
             status.update(upload=False, skipped=True, status_message=f"BOOK metadata contains CJK characters in: {fields}")

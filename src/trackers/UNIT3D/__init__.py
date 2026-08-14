@@ -583,7 +583,7 @@ class UNIT3D:
                             status = meta.tracker_status[self.tracker]
                             status["dupe"] = True
                             status["upload"] = False
-                            status["status_message"] = "Duplicate detected during upload: this release name already exists on the tracker."
+                            status["status_message"] = "Duplicate detected during upload: the release name or info hash already exists on the tracker."
                             return False
                         meta.tracker_status[self.tracker]["status_message"] = f"data error: HTTP {e.response.status_code} - {self._remote_error(e.response.text)}"
                     else:
@@ -655,6 +655,8 @@ class UNIT3D:
     @staticmethod
     def _is_duplicate_name_error(response_text: str) -> bool:
         normalized = str(response_text or "").casefold()
+        if re.search(r"\bsame[\s_-]+info[\s_-]*hash\b", normalized):
+            return True
         return '"name"' in normalized and any(
             phrase in normalized
             for phrase in ("already been taken", "already exists", "já se encontra registado", "ja se encontra registado")

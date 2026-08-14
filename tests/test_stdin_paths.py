@@ -1,5 +1,6 @@
 # ruff: noqa: S101
 import io
+import shlex
 from pathlib import Path
 
 import pytest
@@ -125,7 +126,7 @@ async def test_queue_splits_same_ebook_in_distinct_formats(tmp_path: Path) -> No
 
 
 @pytest.mark.asyncio
-async def test_queue_does_not_split_distinct_ebooks(tmp_path: Path) -> None:
+async def test_queue_splits_distinct_ebooks(tmp_path: Path) -> None:
     release = tmp_path / "Books"
     release.mkdir()
     (release / "First Book.epub").write_bytes(b"epub")
@@ -133,4 +134,23 @@ async def test_queue_does_not_split_distinct_ebooks(tmp_path: Path) -> None:
 
     queue, _ = await QueueManager.handle_queue(str(release), Meta(), [str(release)], str(tmp_path))
 
-    assert queue == [str(release)]
+    assert queue == [str((release / "First Book.epub").resolve()), str((release / "Second Book.pdf").resolve())]
+
+
+@pytest.mark.asyncio
+async def test_args_line_queue_splits_ebooks_and_preserves_options(tmp_path: Path) -> None:
+    release = tmp_path / "Books"
+    release.mkdir()
+    first = release / "First Book.epub"
+    second = release / "Second Book.pdf"
+    first.write_bytes(b"epub")
+    second.write_bytes(b"pdf")
+    queue_file = tmp_path / "books.txt"
+    queue_file.write_text(f'"{release}" -tk SITE -btitle "Shared title"\n', encoding="utf-8")
+
+    queue, _ = await QueueManager.handle_queue(str(queue_file), Meta(), [str(queue_file)], str(tmp_path))
+
+    assert [item["path"] for item in queue] == [str(first.resolve()), str(second.resolve())]
+    for item in queue:
+        assert item["args"][1:] == ["-tk", "SITE", "-btitle", "Shared title"]
+        assert item["line"] == shlex.join(item["args"])

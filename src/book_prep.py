@@ -240,11 +240,14 @@ def _unescape_meta_val(val: Any) -> str | None:
 _AUTHOR_PARTICLES = frozenset({"al", "da", "de", "del", "della", "di", "dos", "du", "la", "le", "of", "van", "von", "y"})
 _BOOK_FORMAT_SUFFIX = re.compile(r"\s*(?:\.(?:azw3?|cb[rz]|djvu|epub|fb2|html?|kfx|lit|mobi|pdf|rtf|txt)|\((?:azw3?|cb[rz]|djvu|epub|fb2|kfx|mobi|pdf)\))\s*$", re.IGNORECASE)
 _BOOK_PART_ONLY = re.compile(r"^(?:vol(?:ume)?|book|part|tome)\s*[#.]?\s*\d+(?:\.\d+)?$", re.IGNORECASE)
+_ASIN_VALUE = re.compile(r"\bASIN\s*[:#]?\s*([A-Z0-9]{10})(?![A-Z0-9])", re.IGNORECASE)
 
 
 def _author_likelihood(value: str) -> int:
     words = re.findall(r"[^\W\d_]+(?:['-][^\W\d_]+)*", value, flags=re.UNICODE)
     if not 2 <= len(words) <= 6:
+        return 0
+    if words[0].casefold() in {"a", "an", "the"}:
         return 0
     substantive = [word for word in words if word.casefold() not in _AUTHOR_PARTICLES]
     if not substantive or any(not word[0].isupper() for word in substantive):
@@ -259,6 +262,16 @@ def _strip_book_format_suffix(value: str) -> str:
     return _BOOK_FORMAT_SUFFIX.sub("", value).strip()
 
 
+def _extract_asin_identifier(value: Any) -> str:
+    match = _ASIN_VALUE.search(str(value or "").strip())
+    return match.group(1).upper() if match else ""
+
+
+def _is_capitalized_mononym(value: str) -> bool:
+    words = re.findall(r"[^\W\d_]+(?:['-][^\W\d_]+)*", value, flags=re.UNICODE)
+    return len(words) == 1 and words[0][0].isupper()
+
+
 def book_identity_from_path(path: str) -> tuple[str, str]:
     source = Path(path)
     name = source.name if source.is_dir() else source.stem
@@ -269,7 +282,16 @@ def book_identity_from_path(path: str) -> tuple[str, str]:
     first, second = parts
     if _BOOK_PART_ONLY.fullmatch(second.strip()):
         return "", re.sub(r"_\s+", ": ", name).strip()
-    author, title = (second, first) if _author_likelihood(second) > _author_likelihood(first) else (first, second)
+    first_score = _author_likelihood(first)
+    second_score = _author_likelihood(second)
+    if first_score >= 3 and second_score <= 1:
+        author, title = first, second
+    elif (second_score >= 3 and first_score <= 0) or (first_score < 0 and _is_capitalized_mononym(second)):
+        author, title = second, first
+    elif first_score >= 3 and second_score >= 3:
+        author, title = first, second
+    else:
+        return "", re.sub(r"_\s+", ": ", name).strip()
     title = re.sub(r"_\s+", ": ", title).strip()
     title_parts = re.split(r"\s+-\s+", title)
     if len(title_parts) > 1 and validate_isbn_checksum(title_parts[-1]):
@@ -611,7 +633,10 @@ async def gather_book_prep(
                 if not isbn_val and isinstance(general_track.get("extra"), dict):
                     isbn_val = general_track["extra"].get("ISBN") or general_track["extra"].get("isbn")
                 isbn_val = _unescape_meta_val(isbn_val)
-                if isbn_val and not meta.isbn:
+                asin_from_isbn = _extract_asin_identifier(isbn_val)
+                if asin_from_isbn and not meta.asin:
+                    meta.asin = asin_from_isbn
+                elif isbn_val and not meta.isbn:
                     meta.isbn = isbn_val
 
                 # 5b. ASIN
@@ -619,8 +644,9 @@ async def gather_book_prep(
                 if not asin_val and isinstance(general_track.get("extra"), dict):
                     asin_val = general_track["extra"].get("ASIN") or general_track["extra"].get("asin")
                 asin_val = _unescape_meta_val(asin_val)
-                if asin_val and not meta.asin:
-                    meta.asin = asin_val
+                normalized_asin = _extract_asin_identifier(asin_val) or str(asin_val or "").strip().upper()
+                if normalized_asin and re.fullmatch(r"[A-Z0-9]{10}", normalized_asin) and not meta.asin:
+                    meta.asin = normalized_asin
 
                 # Series from extra.SERIES / extra.SERIESPART
                 if not meta.book_series:

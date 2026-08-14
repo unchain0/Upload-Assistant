@@ -322,7 +322,7 @@ def test_failed_tracker_names_excludes_late_duplicate() -> None:
         "ZENITH": {
             "dupe": True,
             "upload": False,
-            "status_message": "Duplicate detected during upload: this release name already exists on the tracker.",
+            "status_message": "Duplicate detected during upload: the release name or info hash already exists on the tracker.",
         },
         "SAMARITANO": {"upload": True, "upload_success": False},
     }
