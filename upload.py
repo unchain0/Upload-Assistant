@@ -993,6 +993,16 @@ async def _ensure_valid_book_artwork(meta: Meta) -> bool:
     return False
 
 
+async def _prepare_book_artwork(meta: Meta) -> None:
+    while not await _ensure_valid_book_artwork(meta):
+        if meta.unattended:
+            logger.info("[yellow]BOOK upload: no valid cover could be obtained. Trackers requiring a cover will be skipped.[/yellow]")
+            return
+        meta.artwork_path = ""
+        meta.artwork_url = ""
+        await _prompt_book_meta(meta)
+
+
 async def _prompt_music_meta(meta: Meta) -> None:
     """Ask for minimum Orpheus music metadata, never technical stream fields."""
     required = list(MUSIC_REQUIRED_FIELDS)
@@ -1233,14 +1243,7 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
     # and into get_name (which runs again below if any field was filled in).
     if meta.category == "BOOK":
         await _prompt_book_meta(meta)
-        while not await _ensure_valid_book_artwork(meta):
-            if meta.unattended:
-                logger.info("[yellow]BOOK upload: no valid cover could be obtained. Skipping all selected trackers.[/yellow]")
-                meta.trackers = []
-                break
-            meta.artwork_path = ""
-            meta.artwork_url = ""
-            await _prompt_book_meta(meta)
+        await _prepare_book_artwork(meta)
 
     if meta.category == "GAME":
         await _prompt_game_meta(meta)

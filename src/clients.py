@@ -355,7 +355,7 @@ class Clients(QbittorrentClientMixin, RtorrentClientMixin, DelugeClientMixin, Tr
             meta.reuse_torrent_client = video_only_fallback[1]
             return video_only_fallback[0]
 
-        logger.info("[bold yellow]No Valid .torrent found")
+        logger.debug("[yellow]No reusable .torrent found; a fresh torrent will be created.")
         return None
 
     async def _search_single_client_for_torrent(

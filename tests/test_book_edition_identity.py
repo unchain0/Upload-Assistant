@@ -239,6 +239,38 @@ async def test_exact_isbn_replaces_noisy_local_title_variant(tmp_path: Path, mon
 
 
 @pytest.mark.asyncio
+async def test_filename_identity_replaces_generic_epub_title_and_partial_author(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = tmp_path / "Aliza Levine - Night Songs (retail).epub"
+    source.touch()
+    meta = Meta(path=str(source), filelist=[str(source)], skip_auto_torrent=True, unattended=True)
+    embedded = {
+        "title": "A Novel",
+        "author": "Levine",
+        "isbn": "9781668045824",
+        "year": "2026",
+        "book_language_raw": "en",
+    }
+
+    async def export_stub(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {}
+
+    async def no_result(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr(book_prep, "_get_epubmeta_output", lambda _path: "")
+    monkeypatch.setattr(book_prep, "_extract_epub_metadata", lambda _path: dict(embedded))
+    monkeypatch.setattr(book_prep, "_epub_content_identifiers", lambda _path: (set(), set()))
+    monkeypatch.setattr(book_prep, "export_info", export_stub)
+    monkeypatch.setattr("src.google_books.google_books_manager.search_by_isbn", no_result)
+    monkeypatch.setattr("src.openlibrary.openlibrary_manager.search_by_isbn", no_result)
+
+    await book_prep.gather_book_prep(meta, str(source), str(tmp_path), {"DEFAULT": {}})
+
+    assert meta.title == "Night Songs"
+    assert meta.author == "Aliza Levine"
+
+
+@pytest.mark.asyncio
 async def test_explicit_epub_comic_flag_is_preserved(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     source = tmp_path / "Another World Survival.epub"
     source.touch()

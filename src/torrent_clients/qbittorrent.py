@@ -561,7 +561,7 @@ class QbittorrentClientMixin:
                 if torrent_storage_dir:
                     torrent_file_path = Path(torrent_storage_dir) / f"{torrent_hash}.torrent"
                     if not Path(torrent_file_path).exists():
-                        logger.info(f"[yellow]Torrent file not found in storage directory: {torrent_file_path}")
+                        logger.debug(f"[yellow]Torrent file not found in storage directory: {torrent_file_path}; attempting qBittorrent export")
                         torrent_file_path = Path(extracted_torrent_dir) / f"{torrent_hash}.torrent"
 
                 if not Path(torrent_file_path).exists():
@@ -651,7 +651,7 @@ class QbittorrentClientMixin:
                 logger.info(f"[yellow]No matching torrent with all local subtitles found; using video-only fallback: {video_only_fallback}")
                 result = video_only_fallback
             else:
-                logger.info("[yellow]No valid torrents found.")
+                logger.debug("[yellow]No reusable torrents found in qBittorrent.")
                 result = None
 
             return result

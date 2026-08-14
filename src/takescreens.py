@@ -1088,32 +1088,46 @@ async def download_artwork_from_meta(meta: Meta, artwork_path: str, *, force: bo
             if api_key:
                 cookies["mam_id"] = api_key
 
-        current_url = artwork_url
+        candidate_urls = [artwork_url]
+        if poster_host == "myanonamouse.net" or poster_host.endswith(".myanonamouse.net"):
+            parsed_url = urllib.parse.urlparse(artwork_url)
+            for extension in ("jpg", "jpeg", "png", "gif"):
+                candidate_path = re.sub(r"\.(?:jpe?g|png|gif)$", f".{extension}", parsed_url.path, flags=re.IGNORECASE)
+                candidate_url = urllib.parse.urlunparse(parsed_url._replace(path=candidate_path))
+                if candidate_url not in candidate_urls:
+                    candidate_urls.append(candidate_url)
+
         async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
-            for _ in range(4):
-                if not is_public_http_url(current_url):
-                    logger.warning("[yellow]Warning: Artwork download target is not a public HTTP(S) URL.[/yellow]")
+            for candidate_url in candidate_urls:
+                current_url = candidate_url
+                for _ in range(4):
+                    if not is_public_http_url(current_url):
+                        logger.warning("[yellow]Warning: Artwork download target is not a public HTTP(S) URL.[/yellow]")
+                        return False
+                    response = await client.get(current_url, cookies=cookies, headers=headers)
+                    if response.is_redirect:
+                        location = response.headers.get("Location")
+                        if not location:
+                            break
+                        current_url = urllib.parse.urljoin(current_url, location)
+                        continue
+                    if response.status_code == 200:
+                        if not is_valid_image_bytes(response.content):
+                            logger.info("[yellow]Warning: Downloaded artwork is not a valid supported image and will be ignored.[/yellow]")
+                            break
+                        await asyncio.to_thread(Path(artwork_path).write_bytes, response.content)
+                        if not is_valid_cover_image(artwork_path):
+                            break
+                        meta.artwork_path = artwork_path
+                        logger.info(f"[green]Successfully downloaded artwork from {current_url}[/green]")
+                        return True
+                    if response.status_code == 404 and candidate_url != candidate_urls[-1]:
+                        break
+                    logger.warning(f"[yellow]Warning: Failed to download poster, status code {response.status_code}[/yellow]")
                     return False
-                response = await client.get(current_url, cookies=cookies, headers=headers)
-                if response.is_redirect:
-                    location = response.headers.get("Location")
-                    if not location:
-                        return False
-                    current_url = urllib.parse.urljoin(current_url, location)
-                    continue
-                if response.status_code == 200:
-                    if not is_valid_image_bytes(response.content):
-                        logger.info("[yellow]Warning: Downloaded artwork is not a valid supported image and will be ignored.[/yellow]")
-                        return False
-                    await asyncio.to_thread(Path(artwork_path).write_bytes, response.content)
-                    if not is_valid_cover_image(artwork_path):
-                        return False
-                    meta.artwork_path = artwork_path
-                    logger.info(f"[green]Successfully downloaded artwork from {current_url}[/green]")
-                    return True
-                logger.warning(f"[yellow]Warning: Failed to download poster, status code {response.status_code}[/yellow]")
-                return False
-            logger.warning("[yellow]Warning: Artwork download exceeded the redirect limit.[/yellow]")
+                else:
+                    logger.warning("[yellow]Warning: Artwork download exceeded the redirect limit.[/yellow]")
+            logger.warning("[yellow]Warning: No artwork candidate could be downloaded.[/yellow]")
     except Exception as e:
         logger.warning(f"[yellow]Warning: Error downloading poster: {e}[/yellow]")
     return False

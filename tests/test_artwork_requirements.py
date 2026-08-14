@@ -8,7 +8,7 @@ from PIL import Image
 from src.args import Args
 from src.meta import Meta
 from src.trackers.UNIT3D import UNIT3D
-from upload import _prompt_book_meta, _prompt_music_meta
+from upload import _prepare_book_artwork, _prompt_book_meta, _prompt_music_meta
 
 
 @pytest.mark.asyncio
@@ -32,6 +32,20 @@ async def test_prompt_book_meta_accepts_url() -> None:
         await _prompt_book_meta(meta)
 
     assert meta.artwork_url == "https://example.com/cover.jpg"
+
+
+@pytest.mark.asyncio
+async def test_unattended_book_without_cover_keeps_trackers_for_per_tracker_checks(monkeypatch: pytest.MonkeyPatch) -> None:
+    meta = Meta(category="BOOK", unattended=True, trackers=["PEERGARDEN"])
+    monkeypatch.setattr("upload._ensure_valid_book_artwork", lambda _meta: _false_async())
+
+    await _prepare_book_artwork(meta)
+
+    assert meta.trackers == ["PEERGARDEN"]
+
+
+async def _false_async() -> bool:
+    return False
 
 
 @pytest.mark.asyncio

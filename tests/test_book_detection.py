@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,6 +13,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+import src.book_prep as book_prep
 from src.book_extractors import extract_epub_metadata, extract_isbn_from_pdf, extract_pdf_page_count, get_epubmeta_output, validate_isbn_checksum
 from src.book_prep import _epub_content_identifiers, _extract_asin_identifier, book_identity_conflict, book_identity_from_path, missing_book_fields, resolve_book_filelist
 from src.exceptions import ItemProcessingError
@@ -32,6 +34,25 @@ def test_epub_identifier_scan_rejects_extreme_compression_ratio(tmp_path: Path) 
     assert _epub_content_identifiers(str(epub)) == (set(), set())
     assert extract_epub_metadata(str(epub)) == {}
     assert get_epubmeta_output(str(epub)) is None
+
+
+def test_epub_metadata_prefers_unique_package_isbn(tmp_path: Path) -> None:
+    epub = tmp_path / "book.epub"
+    container = '<?xml version="1.0"?><container><rootfiles><rootfile full-path="OEBPS/content.opf"/></rootfiles></container>'
+    opf = '''<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" xmlns:dc="http://purl.org/dc/elements/1.1/" unique-identifier="pub-id">
+  <metadata>
+    <dc:identifier id="uuid">urn:uuid:12345678-1234-1234-1234-123456789012</dc:identifier>
+    <dc:identifier id="pub-id">9798991926324</dc:identifier>
+    <dc:title>Now and Then</dc:title>
+    <dc:creator> Sara Miller </dc:creator>
+  </metadata>
+</package>'''
+    with zipfile.ZipFile(epub, "w") as archive:
+        archive.writestr("META-INF/container.xml", container)
+        archive.writestr("OEBPS/content.opf", opf)
+
+    assert extract_epub_metadata(str(epub))["isbn"] == "9798991926324"
 
 
 def test_validate_isbn_checksum_rejects_mam_numeric_id() -> None:
@@ -176,6 +197,72 @@ def test_book_identity_accepts_title_before_mononym_author(tmp_path: Path) -> No
     release.touch()
 
     assert book_identity_from_path(str(release)) == ("Seneca", "Comece pelo porque")
+
+
+def test_book_identity_does_not_treat_abbreviated_title_as_mononym_author(tmp_path: Path) -> None:
+    release = tmp_path / "PF 2e - Malevolence.pdf"
+    release.touch()
+
+    assert book_identity_from_path(str(release)) == ("", "PF 2e - Malevolence")
+
+
+def test_book_identity_removes_retail_marker_from_title(tmp_path: Path) -> None:
+    release = tmp_path / "Alli Dyer - Night Songs (retail).epub"
+    release.touch()
+
+    assert book_identity_from_path(str(release)) == ("Alli Dyer", "Night Songs")
+
+
+def test_book_metadata_prefers_descriptive_filename_title_over_generic_provider_title() -> None:
+    assert book_prep._prefer_descriptive_source_title("A Novel", "Alli Dyer", "Night Songs") == "Night Songs"
+
+
+def test_book_metadata_prefers_full_filename_author_over_surname_only_metadata() -> None:
+    assert book_prep._prefer_descriptive_source_author("Levine", "Aliza Levine") == "Aliza Levine"
+
+
+def test_book_metadata_extracts_publisher_label_from_overview() -> None:
+    overview = "<p><strong>Publisher </strong>\u200f : \u200e Stationery Office Books<br>Edition: 2015</p>"
+
+    assert book_prep._publisher_from_overview(overview) == "Stationery Office Books"
+
+
+@pytest.mark.asyncio
+async def test_book_cover_download_tries_alternate_mam_extensions(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from PIL import Image
+
+    from src.takescreens import download_artwork_from_meta
+
+    cover_bytes = io.BytesIO()
+    Image.new("RGB", (32, 48), "red").save(cover_bytes, format="PNG")
+
+    class Response:
+        def __init__(self, status_code: int, content: bytes = b"") -> None:
+            self.status_code = status_code
+            self.content = content
+            self.headers: dict[str, str] = {}
+
+        @property
+        def is_redirect(self) -> bool:
+            return False
+
+    class Client:
+        async def __aenter__(self) -> Client:
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+        async def get(self, url: str, **_kwargs: object) -> Response:
+            return Response(200, cover_bytes.getvalue()) if url.endswith(".png") else Response(404)
+
+    monkeypatch.setattr("src.takescreens.is_public_http_url", lambda _url: True)
+    monkeypatch.setattr("httpx.AsyncClient", lambda **_kwargs: Client())
+    meta = Meta(artwork_url="https://cdn.myanonamouse.net/t/p/large/1263040.jpeg")
+    artwork_path = tmp_path / "cover.png"
+
+    assert await download_artwork_from_meta(meta, str(artwork_path), force=True)
+    assert artwork_path.is_file()
 
 
 def test_book_identity_does_not_infer_author_from_title_like_audiobook_name(tmp_path: Path) -> None:
