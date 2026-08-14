@@ -344,6 +344,10 @@ def test_zentag_paths_includes_ebook_meta_path(tmp_path: Path, monkeypatch: Any)
     source = tmp_path / "book.pdf"
     source.write_bytes(b"pdf")
     monkeypatch.setenv("HOME", str(tmp_path))
+    bin_path = tmp_path / "bin" / "ebook-meta"
+    bin_path.parent.mkdir(parents=True, exist_ok=True)
+    bin_path.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+    bin_path.chmod(0o755)
 
     _, config_path = zentag._zentag_paths(source, str(tmp_path), {"ebook_meta_path": "~/bin/ebook-meta"})
     config_text = config_path.read_text()
