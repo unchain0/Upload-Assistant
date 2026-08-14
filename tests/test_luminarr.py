@@ -127,6 +127,24 @@ def test_luminarr_rejects_single_pass_abr_encode():
     assert asyncio.run(_tracker().get_additional_checks(_movie_meta(type="WEBDL", mediainfo=mediainfo))) is False
 
 
+def test_luminarr_rejects_single_pass_abr_encode_with_dict_settings():
+    mediainfo = {
+        "media": {
+            "track": [
+                {"@type": "General"},
+                {
+                    "@type": "Video",
+                    "Format": "AVC",
+                    "Encoded_Library_Settings": {"rc": "abr", "bitrate": 1900},
+                },
+                {"@type": "Audio", "Format": "AAC", "Title": "English"},
+            ]
+        }
+    }
+
+    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(type="WEBDL", mediainfo=mediainfo))) is False
+
+
 def test_luminarr_accepts_crf_encode():
     mediainfo = {
         "media": {

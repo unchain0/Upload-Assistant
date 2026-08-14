@@ -153,10 +153,24 @@ class Luminarr(UNIT3D):
                 continue
 
             raw_settings = track_map.get("Encoded_Library_Settings", "")
-            if not isinstance(raw_settings, str):
+            if not raw_settings:
                 continue
 
-            settings = raw_settings.lower()
+            if isinstance(raw_settings, dict):
+                if not raw_settings:
+                    continue
+                settings = " / ".join(
+                    f"{key!s}={value!s}" for key, value in raw_settings.items()
+                )
+            elif isinstance(raw_settings, str):
+                settings = raw_settings
+            else:
+                settings = str(raw_settings)
+
+            if not settings.strip():
+                continue
+
+            settings = settings.lower()
             rate_control = Luminarr._setting_value(settings, "rc")
             if rate_control == "abr" and not self._is_multi_pass_abr(settings):
                 return "Single-pass ABR is not permitted. Use CRF or multi-pass ABR."
