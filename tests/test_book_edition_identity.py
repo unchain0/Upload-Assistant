@@ -257,10 +257,10 @@ async def test_filename_identity_replaces_generic_epub_title_and_partial_author(
     async def no_result(*_args: Any, **_kwargs: Any) -> None:
         return None
 
-    monkeypatch.setattr(book_prep, "_get_epubmeta_output", lambda _path: "")
-    monkeypatch.setattr(book_prep, "_extract_epub_metadata", lambda _path: dict(embedded))
-    monkeypatch.setattr(book_prep, "_epub_content_identifiers", lambda _path: (set(), set()))
-    monkeypatch.setattr(book_prep, "export_info", export_stub)
+    monkeypatch.setattr("src.book_prep._get_epubmeta_output", lambda _path: "")
+    monkeypatch.setattr("src.book_prep._extract_epub_metadata", lambda _path: dict(embedded))
+    monkeypatch.setattr("src.book_prep._epub_content_identifiers", lambda _path: (set(), set()))
+    monkeypatch.setattr("src.book_prep.export_info", export_stub)
     monkeypatch.setattr("src.google_books.google_books_manager.search_by_isbn", no_result)
     monkeypatch.setattr("src.openlibrary.openlibrary_manager.search_by_isbn", no_result)
 
@@ -268,6 +268,106 @@ async def test_filename_identity_replaces_generic_epub_title_and_partial_author(
 
     assert meta.title == "Night Songs"
     assert meta.author == "Aliza Levine"
+
+
+@pytest.mark.asyncio
+async def test_online_generic_title_fallback_does_not_overwrite_local_title(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = tmp_path / "Brinda Charry - Hocus Pocus.epub"
+    source.touch()
+    meta = Meta(
+        path=str(source),
+        filelist=[str(source)],
+        skip_auto_torrent=True,
+        torrent_comments=[{"trackers": "https://myanonamouse.net/announce", "comment": "MID=9001"},
+        ],
+    )
+    embedded = {
+        "author": "Brinda Charry",
+        "year": "2026",
+        "book_language_raw": "en",
+    }
+    remote_metadata = {
+        "title": "A Novel",
+        "author": "Brinda Charry",
+        "overview": "A young magician travels across the world seeking fame and fortune all the while hiding a secret...",
+    }
+
+    async def export_stub(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {}
+
+    async def mam_stub(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return remote_metadata
+
+    async def no_result(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr(book_prep, "_get_epubmeta_output", lambda _path: "")
+    monkeypatch.setattr(book_prep, "_extract_epub_metadata", lambda _path: embedded)
+    monkeypatch.setattr(book_prep, "_epub_content_identifiers", lambda _path: (set(), set()))
+    monkeypatch.setattr(book_prep, "export_info", export_stub)
+    monkeypatch.setattr("src.myanonamouse.myanonamouse_manager.search_by_id", mam_stub)
+    monkeypatch.setattr("src.google_books.google_books_manager.search_by_isbn", no_result)
+    monkeypatch.setattr("src.openlibrary.openlibrary_manager.search_by_isbn", no_result)
+
+    await book_prep.gather_book_prep(meta, str(source), str(tmp_path), {"DEFAULT": {}})
+
+    assert meta.title == "Hocus Pocus"
+    assert meta.author == "Brinda Charry"
+
+
+@pytest.mark.parametrize(
+    ("filename", "author", "expected_title"),
+    [("George Orwell - 1984.epub", "George Orwell", "1984"), ("Frank Herbert - Dune.epub", "Frank Herbert", "Dune")],
+)
+@pytest.mark.asyncio
+async def test_online_generic_title_fallback_prefers_single_word_filename_title(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    filename: str,
+    author: str,
+    expected_title: str,
+) -> None:
+    source = tmp_path / filename
+    source.touch()
+    meta = Meta(
+        path=str(source),
+        filelist=[str(source)],
+        skip_auto_torrent=True,
+        unattended=True,
+        torrent_comments=[{"trackers": "https://myanonamouse.net/announce", "comment": "MID=9002"}],
+    )
+    embedded = {
+        "author": author,
+        "year": "1949",
+        "book_language_raw": "en",
+    }
+    remote_metadata = {
+        "title": "A Novel",
+        "author": author,
+        "overview": "Generic remote title placeholder metadata with no usable identity details.",
+    }
+
+    async def export_stub(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {}
+
+    async def mam_stub(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return remote_metadata
+
+    async def no_result(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr("src.book_prep._get_epubmeta_output", lambda _path: "")
+    monkeypatch.setattr("src.book_prep._extract_epub_metadata", lambda _path: dict(embedded))
+    monkeypatch.setattr("src.book_prep._epub_content_identifiers", lambda _path: (set(), set()))
+    monkeypatch.setattr("src.book_prep.export_info", export_stub)
+    monkeypatch.setattr("src.myanonamouse.myanonamouse_manager.search_by_id", mam_stub)
+    monkeypatch.setattr("src.google_books.google_books_manager.search_by_isbn", no_result)
+    monkeypatch.setattr("src.openlibrary.openlibrary_manager.search_by_isbn", no_result)
+
+    await book_prep.gather_book_prep(meta, str(source), str(tmp_path), {"DEFAULT": {}})
+
+    assert meta.title == expected_title
+    assert meta.author == author
 
 
 @pytest.mark.asyncio

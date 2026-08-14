@@ -303,6 +303,7 @@ def book_identity_from_path(path: str) -> tuple[str, str]:
 
 
 _IDENTITY_STOPWORDS = frozenset({"a", "an", "and", "as", "book", "for", "in", "life", "of", "the", "through", "to", "with", "you", "your"})
+_GENERIC_PROVIDER_TITLES = frozenset({"anovel", "amemoir", "abiography", "ahistory", "aguide"})
 
 
 def _identity_tokens(value: str) -> set[str]:
@@ -322,7 +323,7 @@ def _prefer_descriptive_source_title(current_title: str, author: str, source_tit
     author_identity = _normalized_book_identity(author)
     source_tokens = _identity_tokens(source_title)
     current_tokens = _identity_tokens(current_title)
-    if current_identity in {"anovel", "amemoir", "abiography", "ahistory", "aguide"} and len(source_tokens) >= 2:
+    if current_identity in _GENERIC_PROVIDER_TITLES and source_tokens:
         return source_title
     if current_identity and current_identity == author_identity and current_tokens < source_tokens:
         return source_title
@@ -1010,6 +1011,10 @@ async def gather_book_prep(
             override_key = "book_language" if key == "book_language_iso" else key
             if val and not cli_overrides.get(override_key, False):
                 meta[key] = int(val) if key in {"year", "search_year"} else val
+
+    repair_title_source = local_title or str(fallback_title or "")
+    if not cli_overrides["title"] and repair_title_source:
+        meta.title = _prefer_descriptive_source_title(str(meta.title or ""), str(meta.author or ""), repair_title_source)
 
     if file_ext not in {"CBR", "CBZ"}:
         meta.comic = explicit_comic

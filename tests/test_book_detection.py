@@ -217,6 +217,19 @@ def test_book_metadata_prefers_descriptive_filename_title_over_generic_provider_
     assert book_prep._prefer_descriptive_source_title("A Novel", "Alli Dyer", "Night Songs") == "Night Songs"
 
 
+@pytest.mark.parametrize(
+    "filename_title, expected_title",
+    [("1984", "1984"), ("Dune", "Dune")],
+)
+def test_book_metadata_prefers_one_word_filename_title_over_generic_provider_title(
+    filename_title: str,
+    expected_title: str,
+) -> None:
+    assert (
+        book_prep._prefer_descriptive_source_title("A Novel", "George Orwell", filename_title) == expected_title
+    )
+
+
 def test_book_metadata_prefers_full_filename_author_over_surname_only_metadata() -> None:
     assert book_prep._prefer_descriptive_source_author("Levine", "Aliza Levine") == "Aliza Levine"
 
