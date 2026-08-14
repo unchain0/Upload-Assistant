@@ -774,7 +774,11 @@ class DarkPeers(UNIT3D):
             suffix = value[len(prefix) :].strip()
 
         encoded = prefix.replace("_", " ")
-        encoded = re.sub(r"(?i)(?:(?:(?:x|h)\.[0-9]{3})|(?:[0-9]+\.[0-9]{1,2}\b))", lambda match: match.group(0).replace(".", "\x00"), encoded)
+        encoded = re.sub(
+            r"(?i)(?:(?:(?:x|h)\.[0-9]{3})|(?:[0-9]+\.[0-9]{1,2}\b))",
+            lambda match: match.group(0).replace(".", "\x00"),
+            encoded,
+        )
         normalized = encoded.replace(".", " ")
         normalized = normalized.replace("\x00", ".")
 
