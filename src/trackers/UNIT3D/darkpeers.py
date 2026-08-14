@@ -740,7 +740,11 @@ class DarkPeers(UNIT3D):
         scene_name = str(meta.scene_name or "")
         has_scene_name = scene_name and not self._is_local_path_name(scene_name)
         if has_scene_name:
-            return {"name": scene_name}
+            if meta.scene:
+                return {"name": scene_name}
+
+            normalized_scene_name = self._normalize_scene_name(scene_name)
+            return {"name": self._ensure_group_tag(normalized_scene_name, meta.tag)}
 
         dp_name = str(meta.name or "")
         if str(meta.type or "").strip():
@@ -754,7 +758,12 @@ class DarkPeers(UNIT3D):
         audio = await self.get_audio(meta)
         dp_name = self._apply_dub_element(dp_name, audio)
 
-        return {"name": self._ensure_group_tag(dp_name, meta.tag, preserve_if_scene=bool(has_scene_name))}
+        return {"name": self._ensure_group_tag(dp_name, meta.tag, preserve_if_scene=bool(has_scene_name and meta.scene))}
+
+    @staticmethod
+    def _normalize_scene_name(scene_name: str) -> str:
+        parts = [part for part in scene_name.replace("_", " ").split(".") if part.strip()]
+        return " ".join(part.strip() for part in parts)
 
     @staticmethod
     def _ensure_group_tag(name: str, tag: str | None, preserve_if_scene: bool = False) -> str:
