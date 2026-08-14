@@ -1014,7 +1014,7 @@ async def gather_book_prep(
 
     repair_title_source = local_title or str(fallback_title or "")
     if not cli_overrides["title"] and repair_title_source:
-        meta.title = _prefer_descriptive_source_title(str(meta.title or ""), str(local_author or ""), repair_title_source)
+        meta.title = _prefer_descriptive_source_title(str(meta.title or ""), str(meta.author or ""), repair_title_source)
 
     if file_ext not in {"CBR", "CBZ"}:
         meta.comic = explicit_comic

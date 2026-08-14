@@ -257,10 +257,10 @@ async def test_filename_identity_replaces_generic_epub_title_and_partial_author(
     async def no_result(*_args: Any, **_kwargs: Any) -> None:
         return None
 
-    monkeypatch.setattr(book_prep, "_get_epubmeta_output", lambda _path: "")
-    monkeypatch.setattr(book_prep, "_extract_epub_metadata", lambda _path: dict(embedded))
-    monkeypatch.setattr(book_prep, "_epub_content_identifiers", lambda _path: (set(), set()))
-    monkeypatch.setattr(book_prep, "export_info", export_stub)
+    monkeypatch.setattr("src.book_prep._get_epubmeta_output", lambda _path: "")
+    monkeypatch.setattr("src.book_prep._extract_epub_metadata", lambda _path: dict(embedded))
+    monkeypatch.setattr("src.book_prep._epub_content_identifiers", lambda _path: (set(), set()))
+    monkeypatch.setattr("src.book_prep.export_info", export_stub)
     monkeypatch.setattr("src.google_books.google_books_manager.search_by_isbn", no_result)
     monkeypatch.setattr("src.openlibrary.openlibrary_manager.search_by_isbn", no_result)
 
@@ -356,10 +356,10 @@ async def test_online_generic_title_fallback_prefers_single_word_filename_title(
     async def no_result(*_args: Any, **_kwargs: Any) -> None:
         return None
 
-    monkeypatch.setattr(book_prep, "_get_epubmeta_output", lambda _path: "")
-    monkeypatch.setattr(book_prep, "_extract_epub_metadata", lambda _path: dict(embedded))
-    monkeypatch.setattr(book_prep, "_epub_content_identifiers", lambda _path: (set(), set()))
-    monkeypatch.setattr(book_prep, "export_info", export_stub)
+    monkeypatch.setattr("src.book_prep._get_epubmeta_output", lambda _path: "")
+    monkeypatch.setattr("src.book_prep._extract_epub_metadata", lambda _path: dict(embedded))
+    monkeypatch.setattr("src.book_prep._epub_content_identifiers", lambda _path: (set(), set()))
+    monkeypatch.setattr("src.book_prep.export_info", export_stub)
     monkeypatch.setattr("src.myanonamouse.myanonamouse_manager.search_by_id", mam_stub)
     monkeypatch.setattr("src.google_books.google_books_manager.search_by_isbn", no_result)
     monkeypatch.setattr("src.openlibrary.openlibrary_manager.search_by_isbn", no_result)

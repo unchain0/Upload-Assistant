@@ -88,6 +88,4 @@ jobs:
           file: ./Dockerfile
           platforms: ${{ matrix.platform }}
           provenance: false
-          cache-from: type=gha,scope=pr-webui-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=pr-webui-${{ matrix.arch }}
           push: false
