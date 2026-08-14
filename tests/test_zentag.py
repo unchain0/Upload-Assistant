@@ -346,7 +346,7 @@ def test_zentag_paths_includes_ebook_meta_path(tmp_path: Path, monkeypatch: Any)
 
     _, config_path = zentag._zentag_paths(source, str(tmp_path), {"ebook_meta_path": "~/bin/ebook-meta"})
     config_text = config_path.read_text()
-    assert f'ebook_meta_path: "{tmp_path / "bin" / "ebook-meta"}"' in config_text
+    assert f'ebook_meta_path: "{Path("~/bin/ebook-meta").expanduser()}"' in config_text
 
 
 def test_zentag_paths_omits_empty_ebook_meta_path(tmp_path: Path) -> None:
