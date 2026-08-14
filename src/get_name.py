@@ -278,7 +278,10 @@ class NameManager:
         parts = []
 
         if audiobook:
-            parts.extend([author, "-", title_without_author, edition, year, lang_display, "AUDIOBOOK"])
+            if author_or_publisher:
+                parts.extend([author_or_publisher, "-", title_without_author, edition, year, lang_display, "AUDIOBOOK"])
+            else:
+                parts.extend([title_without_author, edition, year, lang_display, "AUDIOBOOK"])
         elif comic:
             vol_str = f"Vol {volume}" if volume else ""
             no_str = f"No {issue}" if issue else ""

@@ -59,3 +59,16 @@ def test_book_name_preserves_title_with_colon_after_author_name():
     )
 
     assert _book_name(meta) == "Cher - Cher: The Memoir, Part One 2022 RETAiL ePUB eBOOK"
+
+
+def test_audiobook_name_keeps_publisher_when_author_missing_and_prefix_matches():
+    meta = Meta(
+        category="BOOK",
+        audiobook=True,
+        publisher="Bloomsbury Publishing Plc",
+        title="Bloomsbury Publishing Plc - The C Programming Language",
+        year=2022,
+        source="SCAN",
+    )
+
+    assert _book_name(meta) == "Bloomsbury Publishing Plc - The C Programming Language 2022 AUDIOBOOK"
