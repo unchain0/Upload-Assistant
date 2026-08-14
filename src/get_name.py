@@ -272,7 +272,7 @@ class NameManager:
             ebook_type = ebook_type.upper()
 
         author_or_publisher = author or publisher
-        title_without_author = self._strip_prefix_author(title, author_or_publisher)
+        title_without_author = self._strip_prefix_author_or_publisher(title, author_or_publisher)
 
         # Construct final string parts based on subtype
         parts = []
@@ -299,10 +299,10 @@ class NameManager:
         return " ".join(base_name.split())
 
     @staticmethod
-    def _strip_prefix_author(title: str, author_or_publisher: str) -> str:
+    def _strip_prefix_author_or_publisher(title: str, author_or_publisher: str) -> str:
         if not title or not author_or_publisher:
             return title.strip()
-        return re.sub(rf"^{re.escape(author_or_publisher)}\s*[-:]+\s*", "", title.strip(), flags=re.IGNORECASE).strip()
+        return re.sub(rf"^{re.escape(author_or_publisher)}\s*-\s*", "", title.strip(), flags=re.IGNORECASE).strip()
 
     def extract_game_name(self, meta: Meta) -> str:
         """Build a game release name losely based on the SCENE 2021_GAMEiSO ruleset."""

@@ -46,3 +46,16 @@ def test_book_name_deduplicates_publisher_when_author_is_missing():
     )
 
     assert _book_name(meta) == "Bloomsbury Publishing Plc - The C Programming Language 2022 RETAiL ePUB eBOOK"
+
+
+def test_book_name_preserves_title_with_colon_after_author_name():
+    meta = Meta(
+        category="BOOK",
+        author="Cher",
+        title="Cher: The Memoir, Part One",
+        year=2022,
+        type="EPUB",
+        source="RETAIL",
+    )
+
+    assert _book_name(meta) == "Cher - Cher: The Memoir, Part One 2022 RETAiL ePUB eBOOK"
