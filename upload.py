@@ -1867,7 +1867,13 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
                             )
 
                     if image_list_count < min_successful_uploads:
-                        raise Exception(f"Minimum of {min_successful_uploads} successful image uploads required, but only {image_list_count} were uploaded.")
+                        requirements_error = screenshot_requirement_error(meta, config)
+                        if requirements_error:
+                            raise Exception(requirements_error)
+                        logger.info(
+                            f"[yellow]Only {image_list_count} images uploaded; minimum is {min_successful_uploads}, but continuing without hosted screenshots. "
+                            "Configure --skip-imagehost-upload or another approved host to avoid this warning.[/yellow]"
+                        )
 
                     if reviewed_uploads:
                         from src.screenshot_review import apply_staged_remote_uploads
