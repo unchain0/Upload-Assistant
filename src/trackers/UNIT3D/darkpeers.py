@@ -758,12 +758,27 @@ class DarkPeers(UNIT3D):
         audio = await self.get_audio(meta)
         dp_name = self._apply_dub_element(dp_name, audio)
 
-        return {"name": self._ensure_group_tag(dp_name, meta.tag, preserve_if_scene=bool(has_scene_name and meta.scene))}
+        return {"name": self._ensure_group_tag(dp_name, meta.tag)}
 
     @staticmethod
     def _normalize_scene_name(scene_name: str) -> str:
-        parts = [part for part in scene_name.replace("_", " ").split(".") if part.strip()]
-        return " ".join(part.strip() for part in parts)
+        value = str(scene_name).strip()
+        if not value:
+            return ""
+
+        prefix = value
+        suffix = ""
+        match = re.match(r"^(.+)-(?:[A-Za-z][A-Za-z0-9_+]{1,})$", value)
+        if match:
+            prefix = match.group(1).strip()
+            suffix = value[len(prefix) :].strip()
+
+        encoded = prefix.replace("_", " ")
+        encoded = re.sub(r"(?i)(?:(?:(?:x|h)\.[0-9]{3})|(?:[0-9]+\.[0-9]{1,2}\b))", lambda match: match.group(0).replace(".", "\x00"), encoded)
+        normalized = encoded.replace(".", " ")
+        normalized = normalized.replace("\x00", ".")
+
+        return f"{normalized.strip()}{suffix}".strip() if suffix else normalized.strip()
 
     @staticmethod
     def _ensure_group_tag(name: str, tag: str | None, preserve_if_scene: bool = False) -> str:

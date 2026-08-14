@@ -249,12 +249,25 @@ def test_darkpeers_preserves_scene_dots_only_when_scene_mode_is_enabled():
     meta = Meta(
         category="TV",
         scene_name="Dr.Seuss's.Red.Fish.Blue.Fish.S03E04.1080p.WEB.h264-DOLORES",
+        scene=True,
         language_checked=True,
         audio_languages=["English"],
         original_language="English",
     )
 
-    assert _name(meta) == "Dr Seuss's Red Fish Blue Fish S03E04 1080p WEB h264-DOLORES"
+    assert _name(meta) == "Dr.Seuss's.Red.Fish.Blue.Fish.S03E04.1080p.WEB.h264-DOLORES"
+
+
+def test_darkpeers_normalizes_scene_names_without_changing_codec_or_audio_channels():
+    meta = Meta(
+        category="TV",
+        scene_name="Show.Name.S03E04.DD+5.1.WEB.h.264-GROUP_NAME",
+        language_checked=True,
+        audio_languages=["English"],
+        original_language="English",
+    )
+
+    assert _name(meta) == "Show Name S03E04 DD+5.1 WEB h.264-GROUP_NAME"
 
 
 def test_darkpeers_requires_attended_audiobook_edition_verification():
