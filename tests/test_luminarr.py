@@ -109,6 +109,92 @@ def test_luminarr_rejects_primary_vorbis_audio():
     assert asyncio.run(_tracker().get_additional_checks(_movie_meta(type="WEBDL", mediainfo=mediainfo))) is False
 
 
+def test_luminarr_rejects_single_pass_abr_encode():
+    mediainfo = {
+        "media": {
+            "track": [
+                {"@type": "General"},
+                {
+                    "@type": "Video",
+                    "Format": "AVC",
+                    "Encoded_Library_Settings": "cabac=1 / ref=1 / deblock=1:0:0 / analyse=0x1:0x111 / me=hex / subme=2 / rc=abr / bitrate=1900 / vbv_maxrate=50000",
+                },
+                {"@type": "Audio", "Format": "AAC", "Title": "English"},
+            ]
+        }
+    }
+
+    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(type="WEBDL", mediainfo=mediainfo))) is False
+
+
+def test_luminarr_accepts_crf_encode():
+    mediainfo = {
+        "media": {
+            "track": [
+                {"@type": "General"},
+                {"@type": "Video", "Format": "AVC", "Encoded_Library_Settings": "cabac=1 / crf=21.0 / ref=1 / deblock=1:0:0"},
+                {"@type": "Audio", "Format": "AAC", "Title": "English"},
+            ]
+        }
+    }
+
+    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(type="WEBDL", mediainfo=mediainfo))) is True
+
+
+def test_luminarr_accepts_multi_pass_abr_encode_with_pass_counter():
+    mediainfo = {
+        "media": {
+            "track": [
+                {"@type": "General"},
+                {
+                    "@type": "Video",
+                    "Format": "AVC",
+                    "Encoded_Library_Settings": "cabac=1 / ref=1 / deblock=1:0:0 / me=hex / subme=2 / rc=abr / bitrate=1900 / pass=2 / vbv_maxrate=50000",
+                },
+                {"@type": "Audio", "Format": "AAC", "Title": "English"},
+            ]
+        }
+    }
+
+    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(type="WEBDL", mediainfo=mediainfo))) is True
+
+
+def test_luminarr_accepts_multi_pass_abr_encode_with_rc_2pass():
+    mediainfo = {
+        "media": {
+            "track": [
+                {"@type": "General"},
+                {
+                    "@type": "Video",
+                    "Format": "AVC",
+                    "Encoded_Library_Settings": "cabac=1 / ref=1 / deblock=1:0:0 / me=hex / subme=2 / rc=2pass / bitrate=1900 / vbv_maxrate=50000",
+                },
+                {"@type": "Audio", "Format": "AAC", "Title": "English"},
+            ]
+        }
+    }
+
+    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(type="WEBDL", mediainfo=mediainfo))) is True
+
+
+def test_luminarr_accepts_multi_pass_abr_encode_with_colon_delimiter():
+    mediainfo = {
+        "media": {
+            "track": [
+                {"@type": "General"},
+                {
+                    "@type": "Video",
+                    "Format": "AVC",
+                    "Encoded_Library_Settings": "cabac=1 / ref=1 / deblock=1:0:0 / rc:abr / pass:2 / bitrate=1900",
+                },
+                {"@type": "Audio", "Format": "AAC", "Title": "English"},
+            ]
+        }
+    }
+
+    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(type="WEBDL", mediainfo=mediainfo))) is True
+
+
 def test_luminarr_allows_primary_mp2_for_hdtv():
     mediainfo = {"media": {"track": [{"@type": "Audio", "Format": "MPEG Audio", "Format_Profile": "Layer 2", "Title": "English"}]}}
 
