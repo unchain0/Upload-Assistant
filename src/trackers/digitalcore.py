@@ -1,5 +1,8 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
+import re
 import unicodedata
+from collections.abc import Mapping
+from pathlib import Path
 from typing import Any, cast
 
 import aiofiles
@@ -48,7 +51,7 @@ class DigitalCore:
         self.config = config
         self.common = Common(config)
         self.rehost_images_manager = RehostImagesManager(config)
-        self.api_key = self.config["TRACKERS"][self.tracker].get("api_key")
+        self.api_key = self.config["TRACKERS"][self.tracker].get("api_key") or ""
         self.session = httpx.AsyncClient(headers={"X-API-KEY": self.api_key}, timeout=30.0)
 
     async def mediainfo(self, meta: Meta) -> str:
@@ -212,12 +215,75 @@ class DigitalCore:
             tracker_name = "".join(c for c in tracker_name if c.isascii() and (c.isalnum() or c in (" ", ".", "-")))
             tracker_name = tracker_name.replace("!", "")
             if scene_name:
-                tracker_name += " [UNRAR]"
+                tracker_name += " [NORAR]"
 
         else:
-            tracker_name = f"{scene_name} [UNRAR]" if scene_name else meta.basename_no_ext
+            tracker_name = f"{scene_name} [NORAR]" if scene_name else meta.basename_no_ext
 
         return tracker_name
+
+    async def get_additional_checks(self, meta: Meta) -> bool:
+        category = str(meta.category).upper()
+        source = str(meta.source or "").upper()
+        media_type = str(meta.type or "").upper()
+        video_codec = str(meta.video_codec or "").lower()
+        video_encode = str(meta.video_encode or "").lower()
+
+        for forbidden in ("divx", "xvid"):
+            if forbidden in video_codec or forbidden in video_encode:
+                logger.info(f"{self.tracker}: DivX/XviD uploads are not allowed.")
+                return False
+        if source in {"CAM", "TS"} or media_type in {"CAM", "TS"}:
+            logger.info(f"{self.tracker}: CAM/TS uploads are not allowed.")
+            return False
+
+        release_context = " ".join(
+            value
+            for value in (
+                str(meta.name or ""),
+                str(meta.scene_name or ""),
+                str(meta.tag or ""),
+                str(meta.title or ""),
+                source,
+                media_type,
+            )
+            if value
+        )
+        if self._contains_forbidden_source_marker(release_context):
+            logger.info(f"{self.tracker}: CAM/TS uploads are not allowed.")
+            return False
+
+        if category in {"MOVIE", "TV"}:
+            raw_filelist = meta.filelist if isinstance(meta.filelist, (list, tuple, set)) else []
+            for item in raw_filelist:
+                if self._is_rar_file(str(item)):
+                    logger.info(f"{self.tracker}: RAR files are not allowed: {item}")
+                    return False
+
+            image_list = meta.image_list if isinstance(meta.image_list, (list, tuple)) else []
+            for image in image_list:
+                raw_url = ""
+                img_url = ""
+                web_url = ""
+                if isinstance(image, str):
+                    raw_url = image.strip()
+                elif isinstance(image, Mapping):
+                    raw_url = str(image.get("raw_url", "")).strip()
+                    img_url = str(image.get("img_url", "")).strip()
+                    web_url = str(image.get("web_url", "")).strip()
+                screenshot_url = raw_url or img_url or web_url
+                if not screenshot_url:
+                    continue
+                extension = Path(screenshot_url).suffix.lower()
+                if extension == ".webp":
+                    logger.info(f"{self.tracker}: Screenshots for DIGITALCORE must be JPG/PNG/GIF. WEBP is not allowed.")
+                    return False
+
+        return True
+
+    @staticmethod
+    def _contains_forbidden_source_marker(value: str) -> bool:
+        return bool(re.search(r"(?<![A-Za-z0-9])(?:CAM|TS)(?![A-Za-z0-9])", value, re.IGNORECASE))
 
     async def get_firstpic(self, meta: Meta) -> str:
         if meta.category in ("BOOK", "MUSIC"):
@@ -227,6 +293,13 @@ class DigitalCore:
                 if raw_url:
                     return str(raw_url)
         return ""
+
+    @staticmethod
+    def _is_rar_file(path_value: str) -> bool:
+        lowered = path_value.lower()
+        if lowered.endswith(".rar"):
+            return True
+        return bool(re.search(r"\.r\d{2,}$", lowered))
 
     async def fetch_data(self, meta: Meta) -> dict[str, Any]:
         anon = "1" if meta.anon or self.config["TRACKERS"][self.tracker].get("anon", False) else "0"

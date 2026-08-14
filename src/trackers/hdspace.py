@@ -1,12 +1,15 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
 import platform
 import re
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import aiofiles
 import httpx
 from bs4 import BeautifulSoup
+from PIL import Image, UnidentifiedImageError
 
 from src.console import logger
 from src.cookie_auth import CookieAuthUploader, CookieValidator
@@ -81,6 +84,39 @@ class HDSpace:
         if meta.resolution not in ["2160p", "1080p", "1080i", "720p"]:
             logger.info(f"{self.tracker}: The resolution must be at least 720p, skipping the upload...")
             return False
+
+        video_codec = str(meta.video_codec or "").lower()
+        video_encode = str(meta.video_encode or "").lower()
+        for forbidden in ("xvid", "divx"):
+            if forbidden in video_codec or forbidden in video_encode:
+                logger.info(f"{self.tracker}: xvid/divx codecs are not allowed, skipping the upload...")
+                return False
+
+        raw_filelist = meta.filelist if isinstance(meta.filelist, (list, tuple, set)) else []
+        if not raw_filelist:
+            logger.info(f"{self.tracker}: No payload files found, skipping upload.")
+            return False
+
+        archive = next((Path(str(item)).name for item in raw_filelist if self._is_rar_file(str(item))), "")
+        if archive:
+            logger.info(f"{self.tracker}: RAR files are not allowed: {archive}. Skipping upload.")
+            return False
+
+        screenshots = self._collect_movie_tv_screenshots(meta)
+        required_screenshots = 3
+        if meta.category in {"MOVIE", "TV"} and len(screenshots) < required_screenshots:
+            logger.info(f"{self.tracker}: HD-Space requires at least {required_screenshots} valid screenshots for Movie/TV uploads.")
+            return False
+
+        for image_url in screenshots:
+            if not image_url.lower().startswith(("http://", "https://")):
+                logger.info(f"{self.tracker}: Screenshot links must use direct HTTP(S) URLs. Found invalid entry: {image_url}.")
+                return False
+
+            if not self._is_png_screenshot(image_url):
+                logger.info(f"{self.tracker}: HD-Space requires .png screenshots only, skipping upload.")
+                return False
+
         return True
 
     async def search_existing(self, meta: Meta) -> list[dict[str, str | None]]:
@@ -308,3 +344,70 @@ class HDSpace:
 
     async def get_name(self, meta: Meta) -> str:
         return meta.name
+
+    @staticmethod
+    def _is_rar_file(path_value: str) -> bool:
+        lowered = path_value.lower()
+        if lowered.endswith(".rar"):
+            return True
+        return bool(re.search(r"\.r\d{2,}$", lowered))
+
+    @staticmethod
+    def _is_png_screenshot(url_or_path: str) -> bool:
+        candidate = Path(urlparse(url_or_path).path).suffix.lower()
+        return candidate == ".png" and candidate != ""
+
+    @staticmethod
+    def _is_allowed_screenshot_width(width: int) -> bool:
+        return width in (1280, 1920, 3840)
+
+    @staticmethod
+    def _read_screenshot_width(image_path: str) -> int | None:
+        try:
+            with Image.open(image_path) as image:
+                width, _ = image.size
+                return width
+        except (FileNotFoundError, OSError, UnidentifiedImageError, TypeError):
+            return None
+
+    @classmethod
+    def _collect_movie_tv_screenshots(cls, meta: Meta) -> list[str]:
+        image_list = meta.image_list
+        if not isinstance(image_list, (list, tuple)):
+            return []
+
+        screenshots: list[str] = []
+        local_dimension_failures: list[str] = []
+
+        for image in image_list:
+            image_url = ""
+            local_file = ""
+
+            if isinstance(image, str):
+                image_url = image.strip()
+            elif isinstance(image, Mapping):
+                raw_url = str(image.get("raw_url", "")).strip()
+                img_url = str(image.get("img_url", "")).strip()
+                web_url = str(image.get("web_url", "")).strip()
+                local_file = str(image.get("local_file_path", "")).strip()
+                image_url = raw_url or img_url or web_url
+
+            if not image_url:
+                continue
+
+            if not cls._is_png_screenshot(image_url):
+                continue
+
+            if local_file:
+                width = cls._read_screenshot_width(local_file)
+                if width is not None and not cls._is_allowed_screenshot_width(width):
+                    local_dimension_failures.append(local_file)
+                    continue
+
+            screenshots.append(image_url)
+
+        if local_dimension_failures:
+            logger.info(
+                f"HDSpace: found screenshot(s) with invalid dimensions (must be 1280x*, 1920x*, or 3840x*). Offending: {', '.join(local_dimension_failures)}"
+            )
+        return screenshots
