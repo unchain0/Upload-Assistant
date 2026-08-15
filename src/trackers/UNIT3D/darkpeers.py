@@ -743,10 +743,13 @@ class DarkPeers(UNIT3D):
             if meta.scene:
                 return {"name": scene_name}
 
-            normalized_scene_name = self._normalize_scene_name(scene_name)
-            return {"name": self._ensure_group_tag(normalized_scene_name, meta.tag)}
+            title_present = bool(str(meta.title or "").strip())
+            name_present = bool(str(meta.name or "").strip())
+            if not title_present and not name_present:
+                normalized_scene_name = self._normalize_scene_name(scene_name)
+                return {"name": self._ensure_group_tag(normalized_scene_name, meta.tag)}
 
-        dp_name = str(meta.name or "")
+        dp_name = str(meta.name or "").strip()
         if str(meta.type or "").strip():
             dp_name = await self._video_name(meta)
         elif meta.category == "TV":
@@ -768,13 +771,17 @@ class DarkPeers(UNIT3D):
 
         prefix = value
         suffix = ""
-        match = re.match(r"^(.+)-(?:[A-Za-z][A-Za-z0-9_+]{1,})$", value)
+        match = re.match(r"^(.+)-(?:[A-Za-z0-9][A-Za-z0-9_+]{1,})$", value)
         if match:
             prefix = match.group(1).strip()
             suffix = value[len(prefix) :].strip()
 
         encoded = prefix.replace("_", " ")
-        encoded = re.sub(r"(?i)(?:(?:(?:x|h)\.[0-9]{3})|(?:[0-9]+\.[0-9]{1,2}\b))", lambda match: match.group(0).replace(".", "\x00"), encoded)
+        encoded = re.sub(
+            r"(?i)(?:(?:(?:x|h)\.[0-9]{3})|(?:[0-9]+\.[0-9]{1,2}\b))",
+            lambda match: match.group(0).replace(".", "\x00"),
+            encoded,
+        )
         normalized = encoded.replace(".", " ")
         normalized = normalized.replace("\x00", ".")
 
@@ -789,15 +796,21 @@ class DarkPeers(UNIT3D):
             return name
         if not cleaned:
             return name
-        return f"{name}{cleaned}" if cleaned.startswith("-") else f"{name}-{cleaned}"
+        normalized_name = name.strip()
+        normalized_tag = cleaned if cleaned.startswith("-") else f"-{cleaned}"
+        if normalized_name.lower().endswith(normalized_tag.lower()):
+            return name
+        return f"{normalized_name}{cleaned}" if cleaned.startswith("-") else f"{normalized_name}-{cleaned}"
 
     @staticmethod
     def _has_group_in_name(name: str) -> bool:
-        match = re.search(r"-([A-Za-z][A-Za-z0-9+_-]{1,})$", str(name).strip())
+        match = re.search(r"-([A-Za-z0-9][A-Za-z0-9+_-]{1,})$", str(name).strip())
         if not match:
             return False
         token = match.group(1)
         token_lower = token.lower()
+        if re.fullmatch(r"\d+", token_lower):
+            return False
         if token_lower in {"h264", "h265", "x264", "x265", "hevc", "avc", "ac3", "eac3", "dd", "dts", "opus", "aac", "mp3", "flac"}:
             return False
         if re.fullmatch(r"[xhx][.-]?\d{3,4}", token_lower):

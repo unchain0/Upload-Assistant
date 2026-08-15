@@ -258,6 +258,58 @@ def test_darkpeers_preserves_scene_name_dots_when_scene_mode_is_enabled():
     assert _name(meta) == "Dr.Seuss's.Red.Fish.Blue.Fish.S03E04.1080p.WEB.h264-DOLORES"
 
 
+def test_darkpeers_uses_metadata_name_when_scene_name_is_set_but_scene_mode_disabled():
+    meta = Meta(
+        category="TV",
+        scene_name="Dr.Seusss.Red.Fish.Blue.Fish.S03E04.1080p.WEB.h264-DOLORES",
+        scene=False,
+        tag="-DOLORES",
+        type="WEBDL",
+        title="Dr. Seuss's Red Fish, Blue Fish",
+        year=2025,
+        no_year=True,
+        season="S03",
+        episode="E04",
+        resolution="1080p",
+        service="AMZN",
+        video_encode="H.264",
+        audio="DD+ 5.1",
+        audio_languages=["English"],
+        original_language="English",
+        language_checked=True,
+    )
+
+    assert _name(meta) == "Dr. Seuss's Red Fish, Blue Fish S03E04 1080p AMZN WEB-DL DD+ 5.1 H.264-DOLORES"
+
+
+def test_darkpeers_prefers_normalized_scene_name_when_scene_name_set_and_name_is_whitespace():
+    meta = Meta(
+        category="TV",
+        scene_name="Movie.2026-3L",
+        name="   ",
+        tag="-3L",
+        audio_languages=["English"],
+        original_language="English",
+        language_checked=True,
+    )
+
+    assert _name(meta) == "Movie 2026-3L"
+
+
+def test_darkpeers_preserves_leading_digit_release_group_without_double_append():
+    meta = Meta(
+        category="TV",
+        scene_name="Movie.2026-3L",
+        name="   ",
+        tag="3L",
+        audio_languages=["English"],
+        original_language="English",
+        language_checked=True,
+    )
+
+    assert _name(meta) == "Movie 2026-3L"
+
+
 def test_darkpeers_normalizes_scene_names_without_changing_codec_or_audio_channels():
     meta = Meta(
         category="TV",
