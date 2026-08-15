@@ -296,6 +296,20 @@ def test_darkpeers_prefers_normalized_scene_name_when_scene_name_set_and_name_is
     assert _name(meta) == "Movie 2026-3L"
 
 
+def test_darkpeers_preserves_leading_digit_release_group_without_double_append():
+    meta = Meta(
+        category="TV",
+        scene_name="Movie.2026-3L",
+        name="   ",
+        tag="3L",
+        audio_languages=["English"],
+        original_language="English",
+        language_checked=True,
+    )
+
+    assert _name(meta) == "Movie 2026-3L"
+
+
 def test_darkpeers_normalizes_scene_names_without_changing_codec_or_audio_channels():
     meta = Meta(
         category="TV",

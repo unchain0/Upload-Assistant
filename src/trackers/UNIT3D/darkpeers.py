@@ -771,7 +771,7 @@ class DarkPeers(UNIT3D):
 
         prefix = value
         suffix = ""
-        match = re.match(r"^(.+)-(?:[A-Za-z][A-Za-z0-9_+]{1,})$", value)
+        match = re.match(r"^(.+)-(?:[A-Za-z0-9][A-Za-z0-9_+]{1,})$", value)
         if match:
             prefix = match.group(1).strip()
             suffix = value[len(prefix) :].strip()
@@ -804,11 +804,13 @@ class DarkPeers(UNIT3D):
 
     @staticmethod
     def _has_group_in_name(name: str) -> bool:
-        match = re.search(r"-([A-Za-z][A-Za-z0-9+_-]{1,})$", str(name).strip())
+        match = re.search(r"-([A-Za-z0-9][A-Za-z0-9+_-]{1,})$", str(name).strip())
         if not match:
             return False
         token = match.group(1)
         token_lower = token.lower()
+        if re.fullmatch(r"\d+", token_lower):
+            return False
         if token_lower in {"h264", "h265", "x264", "x265", "hevc", "avc", "ac3", "eac3", "dd", "dts", "opus", "aac", "mp3", "flac"}:
             return False
         if re.fullmatch(r"[xhx][.-]?\d{3,4}", token_lower):
