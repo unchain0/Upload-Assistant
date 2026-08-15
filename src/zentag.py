@@ -52,7 +52,7 @@ def should_prepare_zenith_ebook(meta: Meta, config: dict[str, Any]) -> bool:
 async def _run_process(command: list[str]) -> tuple[int, str, str]:
     process = await asyncio.create_subprocess_exec(
         *command,
-        stdin=asyncio.subprocess.DEVNULL,
+        stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
