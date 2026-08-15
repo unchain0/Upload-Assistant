@@ -743,11 +743,13 @@ class DarkPeers(UNIT3D):
             if meta.scene:
                 return {"name": scene_name}
 
-            if not str(meta.title or "") and not str(meta.name or ""):
+            title_present = bool(str(meta.title or "").strip())
+            name_present = bool(str(meta.name or "").strip())
+            if not title_present and not name_present:
                 normalized_scene_name = self._normalize_scene_name(scene_name)
                 return {"name": self._ensure_group_tag(normalized_scene_name, meta.tag)}
 
-        dp_name = str(meta.name or "")
+        dp_name = str(meta.name or "").strip()
         if str(meta.type or "").strip():
             dp_name = await self._video_name(meta)
         elif meta.category == "TV":
@@ -794,7 +796,11 @@ class DarkPeers(UNIT3D):
             return name
         if not cleaned:
             return name
-        return f"{name}{cleaned}" if cleaned.startswith("-") else f"{name}-{cleaned}"
+        normalized_name = name.strip()
+        normalized_tag = cleaned if cleaned.startswith("-") else f"-{cleaned}"
+        if normalized_name.lower().endswith(normalized_tag.lower()):
+            return name
+        return f"{normalized_name}{cleaned}" if cleaned.startswith("-") else f"{normalized_name}-{cleaned}"
 
     @staticmethod
     def _has_group_in_name(name: str) -> bool:
