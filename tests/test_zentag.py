@@ -92,7 +92,7 @@ async def test_noninteractive_zentag_process_does_not_inherit_terminal_stdin(mon
     monkeypatch.setattr(zentag.asyncio, "create_subprocess_exec", fake_create)
 
     assert await zentag._run_process(["zentag", "ebook", "book.pdf"]) == (0, "ok", "")
-    assert captured["stdin"] == zentag.asyncio.subprocess.DEVNULL
+    assert captured["stdin"] == zentag.asyncio.subprocess.PIPE
 
 
 @pytest.mark.asyncio
