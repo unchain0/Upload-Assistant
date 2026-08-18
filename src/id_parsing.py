@@ -21,10 +21,10 @@ def parse_tmdb_id(id_str: str, category: str | None) -> tuple[str, int]:
                     normalized_category = "MOVIE"
                 parsed_id = id_part
 
-    if parsed_id.startswith("tv"):
+    if parsed_id.startswith("tv/"):
         parsed_id = parsed_id.split("/", 1)[1]
         normalized_category = "TV"
-    elif parsed_id.startswith("movie"):
+    elif parsed_id.startswith("movie/"):
         parsed_id = parsed_id.split("/", 1)[1]
         normalized_category = "MOVIE"
 

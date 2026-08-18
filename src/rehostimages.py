@@ -54,7 +54,7 @@ def has_restricted_image_hosts(
         approved_hosts = getattr(tracker_class, "approved_image_hosts", None)
         if (
             callable(getattr(tracker_class, "check_image_hosts", None))
-            and isinstance(approved_hosts, tuple | list | set)
+            and isinstance(approved_hosts, (tuple, list, set))
             and any(isinstance(host, str) for host in approved_hosts)
         ):
             return True
@@ -82,7 +82,7 @@ def select_common_image_host(
             continue
 
         approved_hosts = getattr(tracker_class, "approved_image_hosts", None)
-        if callable(getattr(tracker_class, "check_image_hosts", None)) and isinstance(approved_hosts, tuple | list | set):
+        if callable(getattr(tracker_class, "check_image_hosts", None)) and isinstance(approved_hosts, (tuple, list, set)):
             approved_sets.append({host for host in approved_hosts if isinstance(host, str)})
 
     if not approved_sets:
