@@ -22,3 +22,13 @@ def test_parse_tmdb_id_accepts_tmdb_url() -> None:
 
 def test_parse_tmdb_id_does_not_use_unrelated_numeric_url_segment() -> None:
     assert parse_tmdb_id("https://www.themoviedb.org/person/12345", "TV") == ("TV", 0)
+
+
+def test_parse_tmdb_id_rejects_non_tmdb_url_hosts() -> None:
+    assert parse_tmdb_id("https://example.com/tv/12345", "MOVIE") == ("MOVIE", 0)
+    assert parse_tmdb_id("https://themoviedb.org.evil.example/movie/67890", "TV") == ("TV", 0)
+
+
+def test_parse_tmdb_id_rejects_malformed_http_prefix_and_non_http_scheme() -> None:
+    assert parse_tmdb_id("httpjunk/tv/12345", "MOVIE") == ("MOVIE", 0)
+    assert parse_tmdb_id("ftp://www.themoviedb.org/tv/12345", "MOVIE") == ("MOVIE", 0)
