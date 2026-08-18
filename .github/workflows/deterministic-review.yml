@@ -1,0 +1,149 @@
+name: Deterministic PR review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: deterministic-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  static-review:
+    name: Static review
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      REVIEWDOG_VERSION: v0.21.0
+      ACTIONLINT_VERSION: v1.7.12
+      RUFF_VERSION: 0.16.3
+      SEMGREP_VERSION: 1.173.0
+      SEMGREP_RULES_SHA: 40b8c63f75dc7c22c8a77482d73bfb864b146f7e
+      SHELLCHECK_VERSION: v0.11.0
+      SHELLCHECK_SHA256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
+      HADOLINT_VERSION: v2.15.1
+      HADOLINT_SHA256: c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507
+    steps:
+      - name: Checkout pull request head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Set up Go 1.26
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.5"
+          cache: true
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            web_ui/static/js/package-lock.json
+
+      - name: Install Python analyzers
+        run: python -m pip install "ruff==${RUFF_VERSION}" "semgrep==${SEMGREP_VERSION}"
+
+      - name: Install Node analyzers
+        run: |
+          npm ci --ignore-scripts
+          npm ci --prefix web_ui/static/js --ignore-scripts
+          npm audit --audit-level=moderate
+          npm audit --prefix web_ui/static/js --audit-level=moderate
+
+      - name: Install Reviewdog and actionlint
+        env:
+          GOBIN: ${{ runner.temp }}/review-tools
+        run: |
+          mkdir -p "$GOBIN"
+          go install "github.com/reviewdog/reviewdog/cmd/reviewdog@${REVIEWDOG_VERSION}"
+          go install "github.com/rhysd/actionlint/cmd/actionlint@${ACTIONLINT_VERSION}"
+          echo "$GOBIN" >> "$GITHUB_PATH"
+
+      - name: Install ShellCheck and Hadolint
+        run: |
+          set -euo pipefail
+          tools_dir="${RUNNER_TEMP}/review-tools"
+          mkdir -p "$tools_dir"
+
+          shellcheck_archive="shellcheck-${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          curl -fsSLo "${RUNNER_TEMP}/${shellcheck_archive}" \
+            "https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/${shellcheck_archive}"
+          echo "${SHELLCHECK_SHA256}  ${RUNNER_TEMP}/${shellcheck_archive}" | sha256sum -c -
+          tar -xJf "${RUNNER_TEMP}/${shellcheck_archive}" -C "$RUNNER_TEMP"
+          install -m 0755 "${RUNNER_TEMP}/shellcheck-${SHELLCHECK_VERSION}/shellcheck" "$tools_dir/shellcheck"
+
+          hadolint_binary="${RUNNER_TEMP}/hadolint-linux-x86_64"
+          curl -fsSLo "$hadolint_binary" \
+            "https://github.com/hadolint/hadolint/releases/download/${HADOLINT_VERSION}/hadolint-linux-x86_64"
+          echo "${HADOLINT_SHA256}  ${hadolint_binary}" | sha256sum -c -
+          install -m 0755 "$hadolint_binary" "$tools_dir/hadolint"
+
+          echo "$tools_dir" >> "$GITHUB_PATH"
+
+      - name: Fetch pinned Semgrep Community rules
+        run: |
+          set -euo pipefail
+          rules_dir="${RUNNER_TEMP}/semgrep-rules"
+          git init -q "$rules_dir"
+          git -C "$rules_dir" remote add origin https://github.com/semgrep/semgrep-rules.git
+          git -C "$rules_dir" fetch -q --depth=1 origin "$SEMGREP_RULES_SHA"
+          git -C "$rules_dir" checkout -q --detach FETCH_HEAD
+          test "$(git -C "$rules_dir" rev-parse HEAD)" = "$SEMGREP_RULES_SHA"
+
+      - name: Run deterministic inline review
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          SEMGREP_RULES_DIR: ${{ runner.temp }}/semgrep-rules
+          REVIEWDOG_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REVIEWDOG_REPORTER: ${{ github.event.pull_request.head.repo.full_name == github.repository && 'github-pr-review' || 'local' }}
+          REVIEWDOG_FILTER_MODE: ${{ github.event.pull_request.head.repo.full_name == github.repository && 'added' || 'nofilter' }}
+          REVIEWDOG_FAIL_LEVEL: error
+        run: scripts/run-static-review.sh
+
+  danger:
+    name: PR policy review
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Checkout pull request head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install Danger
+        run: |
+          npm ci --ignore-scripts
+          npm audit --audit-level=moderate
+
+      - name: Run PR policy review
+        env:
+          DANGER_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run danger
