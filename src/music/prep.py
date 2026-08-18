@@ -14,6 +14,7 @@ import mutagen
 
 from src.cogs.redaction import PathAwareEncoder
 from src.console import logger
+from src.mediainfo import MediaInfoError
 from src.meta import Meta
 from src.music.analyzer import MusicReleaseAnalyzer
 from src.music.models import MetadataSource, MusicRelease
@@ -287,8 +288,12 @@ async def gather_music_prep(meta: Meta, config: dict[str, Any]) -> None:
                 meta.base_dir,
                 is_dvd=False,
             )
-        except Exception as e:
-            logger.error(f"[yellow]Warning: MediaInfo export failed for music: {e}[/yellow]")
+        except MediaInfoError as error:
+            logger.warning(f"[yellow]MediaInfo could not inspect music release: {error}[/yellow]")
+            logger.debug(error.debug_details)
+            meta.mediainfo = {}
+        except Exception as error:
+            logger.warning(f"[yellow]MediaInfo export failed for music: {error}[/yellow]")
             meta.mediainfo = {}
     await _write_music_release_snapshot(meta, release)
 

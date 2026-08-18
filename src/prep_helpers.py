@@ -15,7 +15,7 @@ import guessit
 from torf import Torrent
 
 from src.bluray_com import get_bluray_releases
-from src.book_prep import AUDIOBOOK_EXTENSIONS, BOOK_EXTENSIONS
+from src.book_prep import BOOK_EXTENSIONS
 from src.cleanup import cleanup_manager
 from src.clients import Clients
 from src.console import logger
@@ -25,6 +25,7 @@ from src.exportmi import export_info, get_conformance_error, mi_resolution, vali
 from src.get_source import get_source
 from src.imdb import imdb_manager
 from src.languages import languages_manager
+from src.mediainfo import MediaInfoError
 from src.meta import Meta
 from src.region import get_distributor, get_region, get_service
 from src.tags import get_tag, tag_override
@@ -72,6 +73,7 @@ _GAME_EXTENSIONS = {
 XXX_RELEASE_MARKERS = XXX_PLATFORM_KEYWORDS | {"xxx"}
 _XXX_RELEASE_MARKER_RE = re.compile(rf"(?<![a-z0-9])(?:{'|'.join(re.escape(marker) for marker in sorted(XXX_RELEASE_MARKERS))})(?![a-z0-9])", re.IGNORECASE)
 _VIDEO_EXTENSIONS = frozenset({".avi", ".m2ts", ".m4v", ".mkv", ".mov", ".mp4", ".mpeg", ".mpg", ".ts", ".webm", ".wmv"})
+_AUDIOBOOK_ONLY_EXTENSIONS = frozenset({".m4b", ".aax", ".aaxc"})
 
 
 def is_xxx_video_release(path: str | Path) -> bool:
@@ -270,7 +272,7 @@ async def detect_disc_and_category(prep_instance: Any, meta: Meta) -> tuple[str,
             from src.audio_classifier import detect_audio_category
 
             audio_res = await detect_audio_category(meta, path_to_check)
-            if audio_res.category in ("BOOK", "MUSIC"):
+            if audio_res.category in ("BOOK", "MUSIC", "PODCAST"):
                 meta.category = audio_res.category
                 meta.audiobook = audio_res.is_audiobook
                 logger.debug(f"[cyan]Auto-detected category: {meta.category}[/cyan]")
@@ -284,7 +286,7 @@ async def detect_disc_and_category(prep_instance: Any, meta: Meta) -> tuple[str,
                 unattended = getattr(meta, "unattended", False)
                 unattended_confirm = getattr(meta, "unattended_confirm", False)
 
-                logger.warning("[yellow]Audio category is ambiguous: could not confidently determine whether this is MUSIC or an AUDIOBOOK.[/yellow]")
+                logger.warning("[yellow]Audio category is ambiguous: could not confidently determine whether this is MUSIC, a PODCAST, or an AUDIOBOOK.[/yellow]")
                 if audio_res.evidence:
                     logger.warning("[yellow]Evidence evaluated:[/yellow]")
                     for ev in audio_res.evidence:
@@ -294,27 +296,31 @@ async def detect_disc_and_category(prep_instance: Any, meta: Meta) -> tuple[str,
                     try:
                         choice = cli_ui.ask_choice(
                             "Choose category for audio release:",
-                            choices=["1. Music", "2. Audiobook"],
+                            choices=["1. Music", "2. Audiobook", "3. Podcast"],
                         )
                     except EOFError, KeyboardInterrupt:
                         logger.error("[bold red]Category selection cancelled or failed.[/bold red]")
-                        raise ItemProcessingError("Could not determine if release is MUSIC or BOOK from interactive cancellation.", str(meta.path or "")) from None
+                        raise ItemProcessingError("Could not determine if release is MUSIC, PODCAST, or BOOK from interactive cancellation.", str(meta.path or "")) from None
                     if choice is None:
                         logger.error("[bold red]Category selection cancelled or failed.[/bold red]")
-                        raise ItemProcessingError("Could not determine if release is MUSIC or BOOK from interactive selection.", str(meta.path or ""))
-                    if choice.startswith("1") or choice.lower() == "music":
+                        raise ItemProcessingError("Could not determine if release is MUSIC, PODCAST, or BOOK from interactive selection.", str(meta.path or ""))
+                    choice_text = str(choice)
+                    if choice_text.startswith("1") or choice_text.lower() == "music":
                         meta.category = "MUSIC"
                         meta.audiobook = False
-                    else:
+                    elif choice_text.startswith("2") or choice_text.lower() == "audiobook":
                         meta.category = "BOOK"
                         meta.audiobook = True
+                    else:
+                        meta.category = "PODCAST"
+                        meta.audiobook = False
                     logger.info(f"[cyan]Category selected interactively: {meta.category}[/cyan]")
                 else:
-                    logger.error("[bold red]Could not confidently distinguish MUSIC from AUDIOBOOK in unattended mode.[/bold red]")
-                    logger.error("[yellow]Specify one of: -c book or -c music[/yellow]")
+                    logger.error("[bold red]Could not confidently distinguish MUSIC, PODCAST, or AUDIOBOOK in unattended mode.[/bold red]")
+                    logger.error("[yellow]Specify one of: -c book, -c music, or -c podcast[/yellow]")
                     logger.error("[yellow]Skipping this release instead of assigning an unsafe category.[/yellow]")
                     raise ItemProcessingError(
-                        "Could not determine if release is MUSIC or BOOK from mixed audio signals. Specify --category music or --category book.",
+                        "Could not determine if release is MUSIC, PODCAST, or BOOK from mixed audio signals. Specify --category music, --category podcast, or --category book.",
                         str(meta.path or ""),
                     )
 
@@ -337,7 +343,7 @@ async def detect_disc_and_category(prep_instance: Any, meta: Meta) -> tuple[str,
                             has_game_package = True
                         elif ext in BOOK_EXTENSIONS:
                             has_books = True
-                        elif ext in AUDIOBOOK_EXTENSIONS:
+                        elif ext in _AUDIOBOOK_ONLY_EXTENSIONS:
                             has_audio = True
                         elif ext in video_extensions:
                             has_video = True
@@ -346,7 +352,7 @@ async def detect_disc_and_category(prep_instance: Any, meta: Meta) -> tuple[str,
                     is_book = True
             else:
                 ext = Path(path_to_check).suffix.lower()
-                if ext in BOOK_EXTENSIONS or ext in AUDIOBOOK_EXTENSIONS:
+                if ext in BOOK_EXTENSIONS or ext in _AUDIOBOOK_ONLY_EXTENSIONS:
                     is_book = True
 
         if is_book:
@@ -649,9 +655,12 @@ async def process_media_files(prep_instance: Any, meta: Meta, videoloc: str, bdi
                 meta.sd = await video_manager.is_sd(meta.resolution)
         except ItemProcessingError:
             raise
+        except MediaInfoError as error:
+            logger.debug(f"[red]{error.debug_details}[/red]")
+            raise ItemProcessingError(f"MediaInfo could not inspect {Path(videopath).name}: {error}", str(meta.path or videopath)) from error
         except Exception as e:
-            logger.error(f"[red]Error processing Mediainfo: {e}[/red]")
-            raise Exception(f"Error processing Mediainfo: {e}") from e
+            logger.error(f"[red]Error processing media metadata: {e}[/red]")
+            raise
 
     filename = str(filename)
     untouched_filename = str(untouched_filename)

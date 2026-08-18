@@ -148,6 +148,10 @@ config: dict[str, Any] = {
         "img_host_4": "",
         "img_host_5": "",
         "img_host_6": "",
+        "img_host_7": "",
+        "img_host_8": "",
+        "img_host_9": "",
+        "img_host_10": "",
         # Prefer one configured host accepted by every selected tracker that
         # declares an image-host policy. If none is shared, use per-tracker
         # fallback hosting as usual.

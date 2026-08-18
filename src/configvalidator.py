@@ -7,6 +7,8 @@ Validates the user's config.py against expected structure and types.
 import math
 from typing import Any, cast
 
+from src.image_hosts import IMAGE_HOST_SPECS, MAX_IMAGE_HOST_SLOTS
+
 # Required top-level sections
 REQUIRED_SECTIONS = ["DEFAULT", "TRACKERS"]
 
@@ -27,9 +29,7 @@ DEFAULT_KEY_TYPES: dict[str, tuple[type, ...]] = {
     "tvdb_api": (str,),
     "tvdb_token": (str,),
     "btn_api": (str,),
-    "img_host_1": (str,),
-    "img_host_2": (str,),
-    "img_host_3": (str,),
+    **{f"img_host_{index}": (str,) for index in range(1, MAX_IMAGE_HOST_SLOTS + 1)},
     "smart_image_host_selection": (bool,),
     "image_upload_concurrency": (str, int),
     "image_upload_delay": (str, float, int),
@@ -144,41 +144,10 @@ DEFAULT_KEY_TYPES: dict[str, tuple[type, ...]] = {
     "tracker_metadata_cache_negative_ttl_minutes": (int,),
 }
 
-# Valid image hosts
-VALID_IMAGE_HOSTS = [
-    "imgbb",
-    "imgbox",
-    "pixhost",
-    "lensdump",
-    "ptscreens",
-    "onlyimage",
-    "dalexni",
-    "zipline",
-    "midnightscene",
-    "passtheimage",
-    "seedpool_cdn",
-    "sharex",
-    "utppm",
-    "lostimg",
-    "",
-]
-
-# Image hosts that require API keys and their corresponding config key names
-IMAGE_HOST_API_KEYS: dict[str, str] = {
-    "imgbb": "imgbb_api",
-    "lostimg": "lostimg_api",
-    "lensdump": "lensdump_api",
-    "ptscreens": "ptscreens_api",
-    "onlyimage": "onlyimage_api",
-    "dalexni": "dalexni_api",
-    "passtheimage": "passtheima_ge_api",
-    "seedpool_cdn": "seedpool_cdn_api",
-    "sharex": "sharex_api_key",
-    "zipline": "zipline_api_key",
-    "midnightscene": "midnightscene_api_key",
-    "utppm": "utppm_api",
-    # imgbox and pixhost don't require API keys
-}
+# Valid image hosts and required config settings come from the canonical
+# image-host registry so validation cannot drift from the uploader/configurator.
+VALID_IMAGE_HOSTS = [*IMAGE_HOST_SPECS, ""]
+IMAGE_HOST_REQUIRED_CONFIG: dict[str, tuple[str, ...]] = {host: spec.config_keys for host, spec in IMAGE_HOST_SPECS.items() if spec.config_keys}
 
 # Valid torrent client types (must match example_config.py)
 VALID_TORRENT_CLIENTS = ["qbit", "rtorrent", "deluge", "transmission", "watch"]
@@ -471,7 +440,7 @@ def validate_config(config: Any, active_trackers: list[str] | None = None, activ
             active_hosts = [active_imghost.strip()]
         else:
             # Collect all configured img_host_* values
-            for i in range(1, 10):
+            for i in range(1, MAX_IMAGE_HOST_SLOTS + 1):
                 host_key = f"img_host_{i}"
                 host_value = default_section.get(host_key, "")
                 if isinstance(host_value, str) and host_value.strip():
@@ -479,11 +448,10 @@ def validate_config(config: Any, active_trackers: list[str] | None = None, activ
 
         # Check that each active host has its required API key
         for host in active_hosts:
-            if host in IMAGE_HOST_API_KEYS:
-                api_key_name = IMAGE_HOST_API_KEYS[host]
-                api_key_value = default_section.get(api_key_name, "")
-                if not api_key_value or (isinstance(api_key_value, str) and not api_key_value.strip()):
-                    errors.append(f"Image host '{host}' requires API key '{api_key_name}' but it is not set")
+            for config_key in IMAGE_HOST_REQUIRED_CONFIG.get(host, ()):
+                config_value = default_section.get(config_key, "")
+                if not config_value or (isinstance(config_value, str) and not config_value.strip()):
+                    errors.append(f"Image host '{host}' requires config setting '{config_key}' but it is not set")
 
     is_valid = len(errors) == 0
     return is_valid, errors, warnings
@@ -536,7 +504,7 @@ def _validate_default_section(default: dict[str, Any]) -> tuple[list[str], list[
         )
 
     # Validate image hosts
-    for i in range(1, 10):
+    for i in range(1, MAX_IMAGE_HOST_SLOTS + 1):
         host_key = f"img_host_{i}"
         if host_key in default:
             host_value = default[host_key]

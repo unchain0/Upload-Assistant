@@ -11,6 +11,7 @@ from typing import Any, TextIO
 from src.book_prep import detect_newspaper, sanitize_book_author, sanitize_book_language
 from src.console import logger
 from src.id_parsing import parse_tmdb_id as parse_tmdb_id_value
+from src.image_hosts import IMAGE_HOST_SPECS
 from src.meta import Meta
 from src.trackersetup import get_tracker_comment_hosts, tracker_class_map
 
@@ -564,21 +565,7 @@ class Args:
             nargs=1,
             required=False,
             help="Image Host",
-            choices=[
-                "imgbb",
-                "imgbox",
-                "pixhost",
-                "lensdump",
-                "ptscreens",
-                "onlyimage",
-                "dalexni",
-                "zipline",
-                "midnightscene",
-                "passtheimage",
-                "seedpool_cdn",
-                "utppm",
-                "lostimg",
-            ],
+            choices=list(IMAGE_HOST_SPECS),
         )
         parser.add_argument("-siu", "--skip-imagehost-upload", dest="skip_imghost_upload", action="store_true", required=False, help="Skip Uploading to an image host")
         parser.add_argument("-th", "--torrenthash", nargs=1, required=False, help="Torrent Hash to re-use from your client's session directory")

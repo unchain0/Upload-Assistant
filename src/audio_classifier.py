@@ -1,5 +1,5 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
-"""Audio category classifier for distinguishing MUSIC vs AUDIOBOOK releases."""
+"""Audio category classifier for distinguishing MUSIC, PODCAST, and AUDIOBOOK releases."""
 
 from __future__ import annotations
 
@@ -17,6 +17,8 @@ from src.book_prep import BOOK_EXTENSIONS
 AUDIOBOOK_CONTAINER_EXTENSIONS = frozenset({".m4b", ".aax", ".aaxc"})
 SHARED_AUDIO_EXTENSIONS = frozenset({".mp3", ".flac", ".m4a", ".aac", ".ac3", ".dts", ".wav", ".aiff", ".alac", ".ogg", ".opus", ".ape", ".wv", ".wma"})
 
+PODCAST_GENRES = frozenset({"podcast", "podcasts", "news & politics"})
+
 SPOKEN_GENRES = frozenset(
     {
         "audiobook",
@@ -28,7 +30,6 @@ SPOKEN_GENRES = frozenset(
         "speech",
         "spoken",
         "audio drama",
-        "podcast",
         "radio play",
         "story",
         "nonfiction",
@@ -100,7 +101,7 @@ DATED_MUSIC_RELEASE_REGEX = re.compile(r"^\s*\S.*?\s+-\s+(?:19|20)\d{2}-\d{2}-\d
 
 @dataclass
 class AudioCategoryResult:
-    category: str  # "BOOK", "MUSIC", "AMBIGUOUS", or "NONE"
+    category: str  # "BOOK", "MUSIC", "PODCAST", "AMBIGUOUS", or "NONE"
     is_audiobook: bool = False
     confidence: float = 0.0
     evidence: list[str] = field(default_factory=list)
@@ -192,7 +193,7 @@ def _inspect_audio_file(filepath: Path) -> dict[str, Any]:
 
 
 async def detect_audio_category(_meta: Any, path: Path | str) -> AudioCategoryResult:
-    """Classify an audio directory or file as BOOK (audiobook), MUSIC, or AMBIGUOUS."""
+    """Classify audio as BOOK (audiobook), MUSIC, PODCAST, AMBIGUOUS, or NONE."""
     path_obj = Path(path)
     if not path_obj.exists():
         return AudioCategoryResult(category="NONE")
@@ -248,6 +249,8 @@ async def detect_audio_category(_meta: Any, path: Path | str) -> AudioCategoryRe
     music_evidence: list[str] = [f"{len(audio_files)} audio files detected"]
     book_score = 0.0
     music_score = 0.0
+    podcast_score = 0.0
+    podcast_evidence: list[str] = [f"{len(audio_files)} audio files detected"]
 
     # A. Filename patterns
     chapter_part_matches = 0
@@ -341,6 +344,11 @@ async def detect_audio_category(_meta: Any, path: Path | str) -> AudioCategoryRe
             long_track_count += 1
 
     for g in genres_found:
+        normalized_genre = re.sub(r"\s+", " ", g).strip()
+        if normalized_genre in PODCAST_GENRES:
+            podcast_score += 7.0
+            podcast_evidence.append(f"podcast metadata genre ('{g}')")
+            break
         if any(sg in g for sg in SPOKEN_GENRES):
             book_score += 5.0
             book_evidence.append(f"spoken-word / audiobook genre ('{g}')")
@@ -395,6 +403,14 @@ async def detect_audio_category(_meta: Any, path: Path | str) -> AudioCategoryRe
         book_evidence.append(f"long individual tracks (>15 min) ({long_track_count} files)")
 
     # C. Decision logic
+    if podcast_score >= 4.0 and podcast_score > max(book_score, music_score):
+        return AudioCategoryResult(
+            category="PODCAST",
+            is_audiobook=False,
+            confidence=min(1.0, podcast_score / 10.0),
+            evidence=podcast_evidence,
+        )
+
     if book_score >= 3.0 and book_score > music_score:
         return AudioCategoryResult(
             category="BOOK",

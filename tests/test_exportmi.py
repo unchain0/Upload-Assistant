@@ -7,7 +7,7 @@ import pytest
 
 from bin.download_integrity import SHA256_BY_ASSET
 from bin.get_mediainfo import MediaInfoBinaryManager
-from src.mediainfo import MediaInfo, _binary, ensure_mediainfo_binary, resolve_mediainfo_binary, run_mediainfo, strip_report_by_line
+from src.mediainfo import MediaInfo, MediaInfoError, _binary, ensure_mediainfo_binary, resolve_mediainfo_binary, run_mediainfo, strip_report_by_line
 
 
 def test_cli_backed_mediainfo_preserves_track_access() -> None:
@@ -50,12 +50,12 @@ def test_strip_report_by_line_handles_bare_carriage_return_boundaries() -> None:
     assert strip_report_by_line(report) == "General\rComplete name : example.mkv\rVideo\rFormat : AVC\r"
 
 
-def test_text_reports_always_request_mediainfo_version() -> None:
+def test_text_reports_do_not_require_nonportable_inform_version_option() -> None:
     completed = Mock(returncode=0, stdout="General", stderr="")
     with patch("src.mediainfo._binary", return_value="mediainfo"), patch("src.mediainfo.subprocess.run", return_value=completed) as run:
         run_mediainfo("video.mkv", output="STRING", full=False)
 
-    assert run.call_args.args[0] == ["mediainfo", "--inform_version=1", "video.mkv"]
+    assert run.call_args.args[0] == ["mediainfo", "video.mkv"]
 
 
 def test_mediainfo_prefers_configured_binary(tmp_path) -> None:
@@ -156,19 +156,20 @@ def test_mediainfo_uses_state_managed_binary_before_system_path() -> None:
 
 def test_mediainfo_failure_reports_command_and_both_output_streams() -> None:
     completed = Mock(returncode=1, stdout="could not parse file", stderr="input error")
-    with patch("src.mediainfo._binary", return_value="mediainfo"), patch("src.mediainfo.subprocess.run", return_value=completed):
-        with pytest.raises(RuntimeError) as exc_info:
-            run_mediainfo("video.mkv", output="STRING", full=False)
+    with patch("src.mediainfo._binary", return_value="mediainfo"), patch("src.mediainfo.subprocess.run", return_value=completed), pytest.raises(MediaInfoError) as exc_info:
+        run_mediainfo("video.mkv", output="STRING", full=False)
 
-    assert str(exc_info.value) == (
-        "MediaInfo failed with exit code 1\nCommand: ['mediainfo', '--inform_version=1', 'video.mkv']\nstdout:\ncould not parse file\nstderr:\ninput error"
-    )
+    assert str(exc_info.value) == "MediaInfo failed with exit code 1: input error"
+    assert exc_info.value.debug_details == "Command: ['mediainfo', 'video.mkv']\nstdout:\ncould not parse file\nstderr:\ninput error"
 
 
 def test_mediainfo_timeout_becomes_runtime_error() -> None:
-    with patch("src.mediainfo._binary", return_value="mediainfo"), patch("src.mediainfo.subprocess.run", side_effect=subprocess.TimeoutExpired("mediainfo", 900)):
-        with pytest.raises(RuntimeError, match="timed out"):
-            run_mediainfo("video.mkv")
+    with (
+        patch("src.mediainfo._binary", return_value="mediainfo"),
+        patch("src.mediainfo.subprocess.run", side_effect=subprocess.TimeoutExpired("mediainfo", 900)),
+        pytest.raises(RuntimeError, match="timed out"),
+    ):
+        run_mediainfo("video.mkv")
 
 
 def test_all_supported_mediainfo_downloads_have_pinned_hashes() -> None:

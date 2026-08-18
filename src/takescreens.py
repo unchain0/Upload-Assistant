@@ -25,6 +25,7 @@ from src.artwork import is_public_http_url, is_valid_cover_image, is_valid_image
 from src.binaries import configured_binary
 from src.cleanup import cleanup_manager
 from src.console import logger
+from src.image_hosts import image_host_size_within_limit
 from src.mediainfo import MediaInfo
 from src.meta import Meta
 from src.screenshot_manifest import clear_group as clear_screenshot_group
@@ -564,13 +565,13 @@ async def disc_screenshots(
                 retake = True
             else:
                 if img_host and "imgbb" in img_host:
-                    if image_size <= 31000000:
+                    if image_host_size_within_limit("imgbb", image_size):
                         logger.debug(f"[green]Image {image_path} meets size requirements for imgbb.[/green]")
                     else:
                         logger.info(f"[red]Image {image_path} with size {image_size} bytes: does not meet size requirements for imgbb, retaking.")
                         retake = True
                 elif img_host and img_host in ["imgbox", "pixhost"]:
-                    if 75000 < image_size <= 10000000:
+                    if image_size > 75000 and image_host_size_within_limit(img_host, image_size):
                         logger.debug(f"[green]Image {image_path} meets size requirements for {img_host}.[/green]")
                     else:
                         logger.info(f"[red]Image {image_path} with size {image_size} bytes: does not meet size requirements for {img_host}, retaking.")
@@ -602,11 +603,11 @@ async def disc_screenshots(
                         valid_image = False
 
                         if img_host and "imgbb" in img_host:
-                            if new_size > 75000 and new_size <= 31000000:
+                            if new_size > 75000 and image_host_size_within_limit("imgbb", new_size):
                                 logger.info(f"[green]Successfully retaken screenshot for: {image_path} ({new_size} bytes)[/green]")
                                 valid_image = True
                         elif img_host and img_host in ["imgbox", "pixhost"]:
-                            if new_size > 75000 and new_size <= 10000000:
+                            if new_size > 75000 and image_host_size_within_limit(img_host, new_size):
                                 logger.info(f"[green]Successfully retaken screenshot for: {image_path} ({new_size} bytes)[/green]")
                                 valid_image = True
                         elif img_host == "lostimg":
@@ -1992,13 +1993,13 @@ async def screenshots(
                 retake = True
             else:
                 if img_host and "imgbb" in img_host:
-                    if image_size <= 31000000:
+                    if image_host_size_within_limit("imgbb", image_size):
                         logger.debug(f"[green]Image {image_path} meets size requirements for imgbb.[/green]")
                     else:
                         logger.info(f"[red]Image {image_path} with size {image_size} bytes: does not meet size requirements for imgbb, retaking.")
                         retake = True
                 elif img_host and img_host in ["imgbox", "pixhost"]:
-                    if 75000 < image_size <= 10000000:
+                    if image_size > 75000 and image_host_size_within_limit(img_host, image_size):
                         logger.debug(f"[green]Image {image_path} meets size requirements for {img_host}.[/green]")
                     else:
                         logger.info(f"[red]Image {image_path} with size {image_size} bytes: does not meet size requirements for {img_host}, retaking.")
@@ -2049,11 +2050,11 @@ async def screenshots(
                             valid_image = False
 
                             if img_host and "imgbb" in img_host:
-                                if 75000 < new_size <= 31000000:
+                                if new_size > 75000 and image_host_size_within_limit("imgbb", new_size):
                                     logger.info(f"[green]Successfully retaken screenshot for: {screenshot_path} ({new_size} bytes)[/green]")
                                     valid_image = True
                             elif img_host and img_host in ["imgbox", "pixhost"]:
-                                if 75000 < new_size <= 10000000:
+                                if new_size > 75000 and image_host_size_within_limit(img_host, new_size):
                                     logger.info(f"[green]Successfully retaken screenshot for: {screenshot_path} ({new_size} bytes)[/green]")
                                     valid_image = True
                             elif img_host == "lostimg":
@@ -2097,10 +2098,10 @@ async def screenshots(
                     valid_image = False
 
                     if img_host and "imgbb" in img_host:
-                        if 75000 < new_size <= 31000000:
+                        if new_size > 75000 and image_host_size_within_limit("imgbb", new_size):
                             valid_image = True
                     elif img_host and img_host in ["imgbox", "pixhost"]:
-                        if 75000 < new_size <= 10000000:
+                        if new_size > 75000 and image_host_size_within_limit(img_host, new_size):
                             valid_image = True
                     elif img_host == "lostimg":
                         if is_valid_lostimg_image_size(new_size):

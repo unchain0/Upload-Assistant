@@ -1,5 +1,7 @@
 [Configuration](configuration.md)
 
+[Image hosts / API contracts](image-hosts.md)
+
 [Docker](docker.md)
 
 [Install tips for Unraid](unraid.md)

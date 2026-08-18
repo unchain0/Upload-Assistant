@@ -5,15 +5,13 @@
 - The Movie Database: `tmdb_api` **REQUIRED**
   - There are fantastic instructions w/ screenshots on how to obtain a tmdb api key at https://developers.themoviedb.org/3/getting-started/introduction
 
-- Image Hosts and their respective API keys: e.g.`imgbb_api`
-  - Only one image host is **REQUIRED**, but extras are nice to have.
-  - Acceptable values for `img_host_x` are:
-    - imgbb
-      - Notes: 32MB Cap, easy to signup and get your api key. Kinda slowish
-    - imgbox
-      - Notes: 10MB Cap. No signup needed. Recommended.
-    - lostimg
-      - Notes: JSON response API. API Key can be created/found in Settings.
+- Image hosts and their respective API keys: e.g. `imgbb_api`
+  - Only one image host is **REQUIRED**, but configuring fallbacks is recommended.
+  - `img_host_1` through `img_host_10` are supported, in priority order.
+  - Acceptable values are `imgbb`, `imgbox`, `pixhost`, `lensdump`, `ptscreens`, `onlyimage`, `dalexni`, `zipline`, `midnightscene`, `passtheimage`, `seedpool_cdn`, `sharex`, `utppm`, and `lostimg`.
+  - ImgBB's documented limit is 32 MB; ImgBox and PiXhost document 10 MB limits.
+  - ImgBox currently has a provider-side service-disruption notice. Keep a fallback host after it rather than relying on it as the only host.
+  - See [Image hosts](image-hosts.md) for the audited API endpoints, authentication methods, provider documentation, and fallback behavior.
 
 - Default number of screenshots per upload: `screens` **REQUIRED**
   - Recommended value = 6

@@ -15,6 +15,24 @@ from src.binaries import configured_binary
 _REPORT_BY_LINE = re.compile(r"(?<![^\r\n])[ \t]*ReportBy[ \t]*:[^\r\n]*(?:\r\n?|\n)?", re.IGNORECASE)
 
 
+class MediaInfoError(RuntimeError):
+    """MediaInfo execution failure with concise user text and debug details."""
+
+    def __init__(self, message: str, *, command: list[str], stdout: str = "", stderr: str = "") -> None:
+        self.command = command
+        self.stdout = stdout
+        self.stderr = stderr
+        super().__init__(message)
+
+    @property
+    def debug_details(self) -> str:
+        return (
+            f"Command: {self.command!r}\n"
+            f"stdout:\n{self.stdout.strip() or '(empty)'}\n"
+            f"stderr:\n{self.stderr.strip() or '(empty)'}"
+        )
+
+
 def strip_report_by_line(report: str) -> str:
     """Remove MediaInfo's optional ReportBy version line from a text report."""
     return _REPORT_BY_LINE.sub("", report)
@@ -50,8 +68,6 @@ def _binary() -> str:
 
 def run_mediainfo(path: str | Path, *, output: str | None = None, full: bool = True, inform: str | None = None) -> str:
     command = [_binary()]
-    if output != "JSON":
-        command.append("--inform_version=1")
     if full:
         command.append("--Full")
     if inform:
@@ -70,13 +86,15 @@ def run_mediainfo(path: str | Path, *, output: str | None = None, full: bool = T
             timeout=900,
         )
     except subprocess.TimeoutExpired as exc:
-        raise RuntimeError("MediaInfo timed out after 15 minutes") from exc
+        raise MediaInfoError("MediaInfo timed out after 15 minutes", command=command) from exc
     if result.returncode != 0:
-        raise RuntimeError(
-            f"MediaInfo failed with exit code {result.returncode}\n"
-            f"Command: {command!r}\n"
-            f"stdout:\n{result.stdout.strip() or '(empty)'}\n"
-            f"stderr:\n{result.stderr.strip() or '(empty)'}"
+        detail = (result.stderr or result.stdout).strip()
+        summary = re.sub(r"\s+", " ", detail)[:300] if detail else "no diagnostic output"
+        raise MediaInfoError(
+            f"MediaInfo failed with exit code {result.returncode}: {summary}",
+            command=command,
+            stdout=result.stdout,
+            stderr=result.stderr,
         )
     return result.stdout
 

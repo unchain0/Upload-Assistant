@@ -648,7 +648,7 @@ class Clients(QbittorrentClientMixin, RtorrentClientMixin, DelugeClientMixin, Tr
                     logger.info("[yellow]Existing torrent matches the file layout but not the current content; forcing a fresh torrent hash[/yellow]")
 
         else:
-            logger.info(f"[bold yellow]{torrent_path} was not found")
+            logger.debug(f"No reusable torrent found at {torrent_path}; a fresh torrent can be created if needed")
 
         # Additional checks if the torrent is valid so far
         if valid:
