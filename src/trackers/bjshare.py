@@ -586,23 +586,9 @@ class BJShare:
 
         return await builder.general_description_generator(
             meta,
-            audio_spectrogram=True,
-            bluray=True,
-            book=True,
-            custom_header=True,
-            custom_signature=True,
-            description=True,
-            game=True,
-            languages=False,
-            logo=True,
-            mediainfo=True,
             menu_screenshots=False,
             nfo=False,
             screenshots=False,
-            tonemapped_header=True,
-            tv_info=True,
-            ua_signature=True,
-            user_description=True,
             signature=f"[align=right][url=https://github.com/wastaken7/Upload-Assistant][size=1]Compartilhado com {meta.ua_name} {meta.current_version} (fork)[/size][/url][/align]",
         )
 
@@ -1362,7 +1348,7 @@ class BJShare:
         imdb_data: dict[str, Any] = meta.imdb_info
         imdb_names = imdb_data.get(imdb_key, [])
         tmdb_names = meta.get(tmdb_key, [])
-        names = imdb_names + tmdb_names
+        names = meta.cast if role == "cast" else imdb_names + tmdb_names
 
         limit = 1 if role in ("director", "creator") else 5
         unique_names = self._collect_credit_names(names, limit)

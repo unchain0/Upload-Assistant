@@ -166,8 +166,10 @@ class HawkeUno(UNIT3D):
         return should_continue
 
     async def get_description(self, meta: Meta) -> None:
-        desc = await DescriptionBuilder(self.tracker, self.config).unit3d_edit_desc(
+        desc = await DescriptionBuilder(self.tracker, self.config).general_description_generator(
             meta,
+            mediainfo=False,
+            nfo=False,
             approved_image_hosts=self.approved_image_hosts,
             signature=f"[right][url=https://github.com/wastaken7/Upload-Assistant][size=8]{meta.ua_signature}[/size][/url][/right]",
         )

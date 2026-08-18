@@ -3,6 +3,7 @@
 
 import asyncio
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import ffmpeg
@@ -57,6 +58,30 @@ async def test_run_ffmpeg_writes_report_next_to_output(tmp_path, monkeypatch):
     assert first_report != second_report
     assert "FFREPORT" not in takescreens.os.environ
     assert all(isinstance(argument, str) for argument in captured[0]["args"])
+
+
+@pytest.mark.asyncio
+async def test_run_ffmpeg_prefers_configured_binary(tmp_path, monkeypatch):
+    executable = tmp_path / "ffmpeg.exe"
+    executable.touch()
+    executable.chmod(executable.stat().st_mode | 0o111)
+    captured: list[tuple[object, ...]] = []
+
+    async def fake_create_subprocess_exec(*args, **_kwargs):
+        captured.append(args)
+
+        async def fake_communicate():
+            return b"", b""
+
+        return SimpleNamespace(returncode=0, communicate=fake_communicate)
+
+    monkeypatch.setattr(takescreens.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr(takescreens, "default_config", {"ffmpeg_path": str(executable)})
+
+    command = ffmpeg.input(str(tmp_path / "source.mkv")).output(str(tmp_path / "frame.png"), vframes=1)
+    await takescreens.run_ffmpeg(command)
+
+    assert captured[0][0] == str(executable)
 
 
 @pytest.mark.asyncio
@@ -126,3 +151,60 @@ async def test_debug_capture_disables_stdin_and_preserves_ffmpeg_errors(tmp_path
     assert result == (0, str(output))
     assert "-nostdin" in commands[0]
     assert commands[0][commands[0].index("-loglevel") + 1] == "error"
+
+
+@pytest.mark.asyncio
+async def test_determine_tonemapping_uses_verified_libplacebo(monkeypatch, tmp_path):
+    meta = Meta(hdr="HDR")
+    compatibility_calls = []
+
+    async def compatible(*args):
+        compatibility_calls.append(args)
+        return True, True
+
+    monkeypatch.setattr(takescreens, "tone_map", True)
+    monkeypatch.setattr(takescreens, "use_libplacebo", True)
+    monkeypatch.setattr(takescreens, "ffmpeg_is_good", False)
+    monkeypatch.setattr(takescreens, "check_libplacebo_compatibility", compatible)
+
+    enabled = await takescreens.determine_tonemapping(1, 1, 1920, 1080, "source.mkv", "10", str(tmp_path / "frame.png"), "quiet", meta)
+
+    assert enabled is True
+    assert meta.tonemapped is True
+    assert meta.libplacebo is True
+    assert len(compatibility_calls) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("hdr", ["DV", "HLG"])
+async def test_determine_tonemapping_uses_zscale_fallback_for_dv_and_hlg(monkeypatch, tmp_path, hdr):
+    monkeypatch.setattr(takescreens, "tone_map", True)
+    monkeypatch.setattr(takescreens, "use_libplacebo", False)
+    meta = Meta(hdr=hdr)
+
+    enabled = await takescreens.determine_tonemapping(1, 1, 1920, 1080, "source.mkv", "10", str(tmp_path / "frame.png"), "quiet", meta)
+
+    assert enabled is True
+    assert meta.tonemapped is True
+    assert meta.libplacebo is False
+
+
+@pytest.mark.asyncio
+async def test_capture_screenshot_applies_selected_libplacebo_tonemapping(monkeypatch, tmp_path):
+    source = tmp_path / "source.mkv"
+    output = tmp_path / "frame.png"
+    source.write_bytes(b"video")
+    commands: list[list[str]] = []
+
+    async def run_stub(command):
+        compiled = takescreens.compile_ffmpeg_command(command)
+        commands.append(compiled)
+        Path(takescreens.get_ffmpeg_output_path(command, compiled)).write_bytes(b"png")
+        return 0, b"", b""
+
+    monkeypatch.setattr(takescreens, "run_ffmpeg", run_stub)
+
+    result = await takescreens.capture_screenshot((0, str(source), 10, str(output), 1920, 1080, 1, 1, "quiet", True, Meta(libplacebo=True)))
+
+    assert result == (0, str(output))
+    assert any("libplacebo=tonemapping=hable" in argument for argument in commands[0])

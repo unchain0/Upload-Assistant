@@ -7,7 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.temp_paths import artwork_dir, ensure_temp_root, menu_screenshots_dir, release_temp_dir, screenshots_dir, spectrograms_dir
+import src.temp_paths as temp_paths
+from src.temp_paths import artwork_dir, ensure_temp_root, menu_screenshots_dir, music_release_snapshot_path, release_temp_dir, screenshots_dir, spectrograms_dir
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX ownership and mode checks do not apply on Windows")
@@ -71,3 +72,10 @@ def test_release_temp_dir_rejects_foreign_owned_directory(tmp_path: Path, monkey
 
     with pytest.raises(PermissionError, match="owned by another user"):
         release_temp_dir(tmp_path, "release")
+
+
+def test_music_release_snapshot_uses_state_dir_when_base_dir_is_empty(tmp_path: Path, monkeypatch) -> None:
+    state_dir = tmp_path / "state"
+    monkeypatch.setattr(temp_paths, "STATE_DIR", state_dir)
+
+    assert music_release_snapshot_path("", "release") == state_dir / "tmp" / "release" / "music_release.json"

@@ -22,6 +22,7 @@ REQUIRED_DEFAULT_KEYS: dict[str, type] = {
 DEFAULT_KEY_TYPES: dict[str, tuple[type, ...]] = {
     "update_notification": (bool,),
     "verbose_notification": (bool,),
+    "update_notification_cache_hours": (str, int, float),
     "tmdb_api": (str,),
     "tvdb_api": (str,),
     "tvdb_token": (str,),
@@ -29,6 +30,7 @@ DEFAULT_KEY_TYPES: dict[str, tuple[type, ...]] = {
     "img_host_1": (str,),
     "img_host_2": (str,),
     "img_host_3": (str,),
+    "smart_image_host_selection": (bool,),
     "image_upload_concurrency": (str, int),
     "image_upload_delay": (str, float, int),
     "imgbb_api": (str,),
@@ -41,6 +43,11 @@ DEFAULT_KEY_TYPES: dict[str, tuple[type, ...]] = {
     "logo_size": (str, int),
     "episode_overview": (bool,),
     "screens": (str, int),
+    "xxx_contact_sheet_rows": (str, int),
+    "xxx_contact_sheet_columns": (str, int),
+    "xxx_contact_sheet_max_videos": (str, int),
+    "xxx_contact_sheet_animated_webp": (bool,),
+    "xxx_contact_sheet_animation_seconds": (str, int, float),
     "cutoff_screens": (str, int),
     "max_menu_screens": (str, int),
     "thumbnail_size": (str, int),
@@ -52,6 +59,14 @@ DEFAULT_KEY_TYPES: dict[str, tuple[type, ...]] = {
     "ffmpeg_is_good": (bool,),
     "ffmpeg_warmup": (bool,),
     "ffmpeg_compression": (str, int),
+    "ffmpeg_path": (str,),
+    "ffprobe_path": (str,),
+    "mediainfo_path": (str,),
+    "dvd_mediainfo_path": (str,),
+    "bdinfo_path": (str,),
+    "mkbrr_path": (str,),
+    "dovi_tool_path": (str,),
+    "hdr10plus_tool_path": (str,),
     "process_limit": (str, int),
     "threads": (str, int),
     "ffmpeg_limit": (bool,),
@@ -80,6 +95,7 @@ DEFAULT_KEY_TYPES: dict[str, tuple[type, ...]] = {
     "use_largest_playlist": (bool,),
     "tracker_description_mode": (str,),
     "tracker_search_concurrency": (str, int),
+    "tracker_comment_only": (bool,),
     "use_sonarr": (bool,),
     "use_radarr": (bool,),
     "mkbrr": (bool,),
@@ -329,7 +345,7 @@ def validate_config(config: Any, active_trackers: list[str] | None = None, activ
                 is_usenet_tracker_active = True
                 break
     except ImportError:
-        if any(ut in trackers_upper for ut in ("CURUPIRA", "SUIO", "DRUNKENSLUG")):
+        if any(ut in trackers_upper for ut in ("CURUPIRA", "SUIO", "DRUNKENSLUG", "NZBGEEK")):
             is_usenet_tracker_active = True
 
     if "USENET" in config_dict:
@@ -532,6 +548,10 @@ def _validate_default_section(default: dict[str, Any]) -> tuple[list[str], list[
     # Validate numeric string values can be parsed
     numeric_keys = [
         "screens",
+        "xxx_contact_sheet_rows",
+        "xxx_contact_sheet_columns",
+        "xxx_contact_sheet_max_videos",
+        "xxx_contact_sheet_animation_seconds",
         "cutoff_screens",
         "max_menu_screens",
         "thumbnail_size",
@@ -552,9 +572,10 @@ def _validate_default_section(default: dict[str, Any]) -> tuple[list[str], list[
             value = default[key]
             if isinstance(value, str):
                 try:
-                    int(value)
+                    (float if key == "xxx_contact_sheet_animation_seconds" else int)(value)
                 except ValueError:
-                    warnings.append(ConfigValidationWarning(f"Cannot parse '{value}' as integer", key=key, section="DEFAULT"))
+                    expected = "number" if key == "xxx_contact_sheet_animation_seconds" else "integer"
+                    warnings.append(ConfigValidationWarning(f"Cannot parse '{value}' as {expected}", key=key, section="DEFAULT"))
 
     image_upload_concurrency = default.get("image_upload_concurrency")
     if image_upload_concurrency is not None:

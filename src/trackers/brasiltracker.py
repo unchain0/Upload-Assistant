@@ -616,8 +616,6 @@ class BrasilTracker:
             meta,
             audio_spectrogram=False,
             bluray=False,
-            book=True,
-            custom_header=True,
             custom_signature=False,
             description=False,
             dynamic_hdr_plot=False,
@@ -628,10 +626,6 @@ class BrasilTracker:
             menu_screenshots=False,
             nfo=False,
             screenshots=False,
-            tonemapped_header=True,
-            tv_info=True,
-            ua_signature=True,
-            user_description=True,
             signature=f"[align=right][url=https://github.com/wastaken7/Upload-Assistant][size=1]Compartilhado com {meta.ua_name} {meta.current_version} (fork)[/size][/url][/align]",
         )
 
@@ -1076,7 +1070,7 @@ class BrasilTracker:
                 )
 
                 if magazine:
-                    data["adulto"] = "1" if meta.xxx or meta.nsfw else "0"
+                    data["adulto"] = "1" if meta.adult_media or meta.tmdb_adult_media else "0"
 
                     months_pt = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
                     months_en = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]

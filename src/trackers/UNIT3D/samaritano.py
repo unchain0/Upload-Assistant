@@ -225,4 +225,11 @@ class Samaritano(UNIT3D):
 
     async def get_description(self, meta: Meta) -> dict[str, str]:
         signature = f"[right][url=https://github.com/wastaken7/Upload-Assistant][size=4]Compartilhado com {meta.ua_name} {meta.current_version} (fork)[/size][/url][/right]"
-        return {"description": await DescriptionBuilder(self.tracker, self.config).unit3d_edit_desc(meta, signature=signature)}
+        return {
+            "description": await DescriptionBuilder(self.tracker, self.config).general_description_generator(
+                meta,
+                mediainfo=False,
+                nfo=False,
+                signature=signature,
+            )
+        }

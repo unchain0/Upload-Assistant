@@ -9,7 +9,7 @@ import pytest
 
 from bin import get_bdinfo
 from bin.get_bdinfo import BDInfoBinaryManager
-from bin.MI.get_linux_mi import extract_linux
+from bin.get_dvd_mediainfo import extract_linux
 from src.discparse import DiscParse
 
 

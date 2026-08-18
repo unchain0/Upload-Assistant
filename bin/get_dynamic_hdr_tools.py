@@ -91,6 +91,8 @@ async def get_tool(base_dir: str, tool: str) -> str:
     target_dir = tool_install_dir(base_dir, command, f"{system}/{machine}")
     binary = target_dir / f"{command}{extension}"
     version_file = target_dir / TOOLS[tool]["version"]
+    if binary.is_file() and binary.stat().st_size > 0 and version_file.is_file():
+        return str(binary)
 
     staging = target_dir / ".download"
     shutil.rmtree(staging, ignore_errors=True)

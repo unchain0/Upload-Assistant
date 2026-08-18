@@ -11,6 +11,8 @@ import os
 import stat
 from pathlib import Path
 
+from src.app_paths import STATE_DIR
+
 
 def _is_trusted_shared_root(path: Path) -> bool:
     attributes = path.stat()
@@ -44,6 +46,11 @@ def release_temp_dir(base_dir: str | Path, release_id: str) -> Path:
             raise PermissionError(f"Release temporary directory is owned by another user: {path}")
         path.chmod(0o700)
     return path
+
+
+def music_release_snapshot_path(base_dir: str | Path | None, release_id: str) -> Path:
+    """Return the music metadata snapshot path under a user-owned state directory."""
+    return release_temp_dir(base_dir or STATE_DIR, release_id) / "music_release.json"
 
 
 def image_dir(base_dir: str | Path, release_id: str, kind: str) -> Path:

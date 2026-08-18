@@ -93,7 +93,6 @@ class Par2BinaryManager:
                 await download_verified_asset(client, download_url, temp_file, file_pattern)
 
             logger.debug(f"[green]Downloaded PAR2 package: {file_pattern}[/green]")
-
             with zipfile.ZipFile(temp_file, "r") as zip_ref:
                 safe_extract_zip(zip_ref, staging, max_bytes=MAX_EXTRACTED_BYTES)
             candidates = [candidate for candidate in staging.rglob(binary_name) if candidate.is_file()]

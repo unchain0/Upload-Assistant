@@ -172,7 +172,11 @@ class Cinematik(UNIT3D):
 
     async def get_description(self, meta: Meta) -> dict[str, str]:
         if meta.description_link or meta.description_file:
-            desc = await DescriptionBuilder(self.tracker, self.config).unit3d_edit_desc(meta)
+            desc = await DescriptionBuilder(self.tracker, self.config).general_description_generator(
+                meta,
+                mediainfo=False,
+                nfo=False,
+            )
 
             logger.info(f"{self.tracker}: Custom Description Link/File Path: {desc}", extra={"markup": False})
             return {"description": desc}

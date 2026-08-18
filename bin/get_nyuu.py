@@ -95,7 +95,6 @@ class NyuuBinaryManager:
                 await download_verified_asset(client, download_url, temp_file, file_pattern)
 
             logger.debug(f"[green]Downloaded Nyuu package: {file_pattern}[/green]")
-
             if file_pattern.endswith(".7z"):
                 if not path_7z:
                     from bin.get_7z import SevenZipBinaryManager

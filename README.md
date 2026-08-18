@@ -102,6 +102,7 @@ This branch introduces new media categories and automation features not present 
 
 |                                                                                            | Site                   | Usage                  | Supported Categories         |
 | ------------------------------------------------------------------------------------------ | ---------------------- | ---------------------- | ---------------------------- |
+| <img src="web_ui/static/img/trackers/1ptba.png" width="16" height="16" />                  | 1PTBA                  | 1PTBA                  | MOVIE, TV                    |
 | <img src="web_ui/static/img/trackers/aither.png" width="16" height="16" />                 | Aither                 | AITHER                 | MOVIE, TV                    |
 | <img src="web_ui/static/img/trackers/alpharatio.png" width="16" height="16" />             | Alpharatio             | ALPHARATIO             | MOVIE, TV                    |
 | <img src="web_ui/static/img/trackers/amigosshare.png" width="16" height="16" />            | Amigos-Share           | AMIGOSSHARE            | MOVIE, TV, BOOK, GAME        |
@@ -111,6 +112,7 @@ This branch introduces new media categories and automation features not present 
 | <img src="web_ui/static/img/trackers/avistaz.png" width="16" height="16" />                | AvistaZ                | AVISTAZ                | MOVIE, TV                    |
 | <img src="web_ui/static/img/trackers/beyondhd.png" width="16" height="16" />               | Beyond-HD              | BEYONDHD               | MOVIE, TV                    |
 | <img src="web_ui/static/img/trackers/bithdtv.png" width="16" height="16" />                | BitHDTV                | BITHDTV                | MOVIE, TV                    |
+| <img src="web_ui/static/img/trackers/bitporn.png" width="16" height="16" />                | BitPorn                | BITPORN                | XXX                          |
 | <img src="web_ui/static/img/trackers/blutopia.png" width="16" height="16" />               | Blutopia               | BLUTOPIA               | MOVIE, TV                    |
 | <img src="web_ui/static/img/trackers/bjshare.png" width="16" height="16" />                | BrasilJapão-Share      | BJSHARE                | MOVIE, TV, BOOK, GAME        |
 | <img src="web_ui/static/img/trackers/brasiltracker.png" width="16" height="16" />          | BrasilTracker          | BRASILTRACKER          | MOVIE, TV, BOOK, GAME        |
@@ -135,11 +137,12 @@ This branch introduces new media categories and automation features not present 
 | <img src="web_ui/static/img/trackers/iptorrents.png" width="16" height="16" />             | IPTorrents             | IPTORRENTS             | MOVIE, TV, BOOK, GAME, MUSIC |
 | <img src="web_ui/static/img/trackers/itatorrents.png" width="16" height="16" />            | ItaTorrents            | ITATORRENTS            | MOVIE, TV                    |
 | <img src="web_ui/static/img/trackers/lajidui.png" width="16" height="16" />                | lajidui                | LAJIDUI                | MOVIE, TV                    |
+| <img src="web_ui/static/img/trackers/lemonhd.png" width="16" height="16" />                | LemonHD                | LEMONHD                | MOVIE, TV                    |
 | <img src="web_ui/static/img/trackers/lastdigitalunderground.png" width="16" height="16" /> | LastDigitalUnderground | LASTDIGITALUNDERGROUND | MOVIE, TV, BOOK              |
 | <img src="web_ui/static/img/trackers/latteam.png" width="16" height="16" />                | Lat-Team               | LATTEAM                | MOVIE, TV, BOOK              |
 | <img src="web_ui/static/img/trackers/locadora.png" width="16" height="16" />               | Locadora               | LOCADORA               | MOVIE, TV                    |
 | <img src="web_ui/static/img/trackers/longpt.png" width="16" height="16" />                 | LongPT                 | LONGPT                 | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/lst.png" width="16" height="16" />                    | LST                    | LST                    | MOVIE, TV, BOOK, MUSIC       |
+| <img src="web_ui/static/img/trackers/lst.png" width="16" height="16" />                    | LST                    | LST                    | MOVIE, TV, BOOK, MUSIC, XXX  |
 | <img src="web_ui/static/img/trackers/luminarr.png" width="16" height="16" />               | Luminarr               | LUMINARR               | MOVIE, TV                    |
 | <img src="web_ui/static/img/trackers/makingoff.png" width="16" height="16" />              | MakingOff              | MAKINGOFF              | MOVIE                        |
 | <img src="web_ui/static/img/trackers/midnightscene.png" width="16" height="16" />          | MidnightScene          | MIDNIGHTSCENE          | MOVIE, TV, GAME, MUSIC       |
@@ -155,6 +158,7 @@ This branch introduces new media categories and automation features not present 
 | <img src="web_ui/static/img/trackers/portugas.png" width="16" height="16" />               | Portugas               | PORTUGAS               | MOVIE, TV                    |
 | <img src="web_ui/static/img/trackers/privatehd.png" width="16" height="16" />              | PrivateHD              | PRIVATEHD              | MOVIE, TV                    |
 | <img src="web_ui/static/img/trackers/ptgtk.png" width="16" height="16" />                  | PT GTK                 | PTGTK                  | MOVIE, TV                    |
+| <img src="web_ui/static/img/trackers/ptzone.png" width="16" height="16" />                 | PTZone                 | PTZONE                 | MOVIE, TV                    |
 | <img src="web_ui/static/img/trackers/ptcafe.png" width="16" height="16" />                 | ptcafe                 | PTCAFE                 | MOVIE, TV                    |
 | <img src="web_ui/static/img/trackers/pterclub.png" width="16" height="16" />               | PTerClub               | PTERCLUB               | MOVIE, TV                    |
 | <img src="web_ui/static/img/trackers/ptfans.png" width="16" height="16" />                 | PTFans                 | PTFANS                 | MOVIE, TV                    |
@@ -178,6 +182,7 @@ This branch introduces new media categories and automation features not present 
 | <img src="web_ui/static/img/trackers/torrentleech.png" width="16" height="16" />           | TorrentLeech           | TORRENTLEECH           | MOVIE, TV, BOOK, GAME, MUSIC |
 | <img src="web_ui/static/img/trackers/totheglory.png" width="16" height="16" />             | ToTheGlory             | TOTHEGLORY             | MOVIE, TV                    |
 | <img src="web_ui/static/img/trackers/tvchaosuk.png" width="16" height="16" />              | TVChaosUK              | TVCHAOSUK              | MOVIE, TV                    |
+| <img src="web_ui/static/img/trackers/xingyungept.png" width="16" height="16" />            | XingyungePT            | XINGYUNGEPT            | MOVIE, TV                    |
 | <img src="web_ui/static/img/trackers/ulcx.png" width="16" height="16" />                   | ULCX                   | ULCX                   | MOVIE, TV                    |
 |                                                                                            | Unwalled               | UNWALLED               | PODCAST                      |
 | <img src="web_ui/static/img/trackers/utopia.png" width="16" height="16" />                 | UTOPIA                 | UTOPIA                 | MOVIE, TV                    |
@@ -189,10 +194,11 @@ This branch introduces new media categories and automation features not present 
 <details>
 <summary><strong>Click to view Supported Usenet Indexers</strong></summary>
 
-|                                                                                 | Site        | Usage       | Supported Categories  |
-| ------------------------------------------------------------------------------- | ----------- | ----------- | --------------------- |
-| <img src="web_ui/static/img/trackers/curupira.png" width="16" height="16" />    | Curupira    | CURUPIRA    | MOVIE, TV, BOOK, GAME |
-| <img src="web_ui/static/img/trackers/drunkenslug.png" width="16" height="16" /> | DrunkenSlug | DRUNKENSLUG | MOVIE, TV, BOOK, GAME |
+|                                                                                 | Site        | Usage       | Supported Categories         |
+| ------------------------------------------------------------------------------- | ----------- | ----------- | ---------------------------- |
+| <img src="web_ui/static/img/trackers/curupira.png" width="16" height="16" />    | Curupira    | CURUPIRA    | MOVIE, TV, BOOK, GAME        |
+| <img src="web_ui/static/img/trackers/drunkenslug.png" width="16" height="16" /> | DrunkenSlug | DRUNKENSLUG | MOVIE, TV, BOOK, GAME        |
+| <img src="web_ui/static/img/trackers/nzbgeek.png" width="16" height="16" />     | NZBGeek     | NZBGEEK     | MOVIE, TV, BOOK, GAME, MUSIC |
 
 </details>
 
@@ -210,10 +216,11 @@ For a manual Linux/macOS/Windows installation, Upload Assistant needs a few tool
    - Download and install it from the [official Python website](https://www.python.org/downloads/).
 2. **MediaInfo & FFmpeg**:
    - These are helper tools used to scan files and generate screenshots/spectrograms.
-   - Install them using your system's software manager:
-     - Debian/Ubuntu: `sudo apt install mediainfo ffmpeg`
-     - Arch Linux: `sudo pacman -S mediainfo ffmpeg`
-     - RedHat/Fedora: `sudo dnf install mediainfo ffmpeg`
+   - The official MediaInfo CLI is downloaded and checksum-verified automatically on supported Windows, Linux, and macOS systems. Android/Termux uses its native `mediainfo` package (`pkg install mediainfo`).
+   - Install FFmpeg using your system's software manager:
+     - Debian/Ubuntu: `sudo apt install ffmpeg`
+     - Arch Linux: `sudo pacman -S ffmpeg`
+     - RedHat/Fedora: `sudo dnf install ffmpeg`
    - _Having issues with FFmpeg? Check out our [FFmpeg troubleshooting guide](docs/ffmpeg-max-workers-issues.md)._
 
 ---

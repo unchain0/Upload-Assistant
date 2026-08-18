@@ -15,6 +15,7 @@ import pytest
 from PIL import Image
 from torf import Torrent
 
+from src import mediainfo, podcast_prep
 from src.args import Args
 from src.exportmi import export_info
 from src.meta import Meta
@@ -914,3 +915,5 @@ def test_unwalled_rejects_decompression_bomb_errors(tmp_path: Path) -> None:
     image_path.write_bytes(b"not-an-image")
     with patch("src.trackers.UNIT3D.unwalled_validation.Image.open", side_effect=Image.DecompressionBombError("bomb")):
         assert _tracker()._image_details(str(image_path)) is None  # noqa: S101
+def test_podcast_prep_uses_cli_backed_mediainfo() -> None:
+    assert podcast_prep.MediaInfo is mediainfo.MediaInfo  # noqa: S101

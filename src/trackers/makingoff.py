@@ -18,6 +18,7 @@ import langcodes
 import pycountry
 from bs4 import BeautifulSoup
 
+from src.binaries import configured_binary
 from src.cogs.redaction import Redaction
 from src.config_helpers import format_terminal_link
 from src.console import logger, prompt_in_thread
@@ -206,6 +207,8 @@ class MakingOff:
         return cg
 
     def _get_ffmpeg_path(self, meta: Meta) -> str:
+        if configured := configured_binary("ffmpeg_path", self.config):
+            return configured
 
         base_dir = getattr(meta, "base_dir", "") or str(Path(__file__).parent.parent.parent)
 
@@ -1692,7 +1695,7 @@ class MakingOff:
             logger.warning(f"{self.tracker}: [bold red]Only films may be uploaded to this forum.[/bold red]")
             return False
 
-        if bool(getattr(meta, "adult_media", False) or getattr(meta, "tmdb_adult_media", False) or getattr(meta, "nsfw", False)):
+        if bool(getattr(meta, "adult_media", False) or getattr(meta, "tmdb_adult_media", False)):
             logger.warning(f"{self.tracker}: [bold red]Adult releases are not allowed on this forum.[/bold red]")
             return False
 
