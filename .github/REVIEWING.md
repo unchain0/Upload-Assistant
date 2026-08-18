@@ -2,7 +2,10 @@
 
 Automated PR review is performed by `.github/workflows/deterministic-review.yml`.
 The repository-level CodeRabbit and Qodo/PR-Agent apps may remain installed, but
-their automatic reviews are disabled by `.coderabbit.yaml` and `.pr_agent.toml`.
+their automatic feedback is disabled by `.coderabbit.yaml` and `.pr_agent.toml`.
+CodeRabbit also suppresses its skipped-review status comment, while Qodo uses
+`config.disable_auto_feedback = true` in addition to empty automatic command
+lists so neither app owns PR review feedback.
 
 ## Static review
 

@@ -1,5 +1,6 @@
 # CodeRabbit remains installed at the GitHub organization/repository level, but
 # deterministic CI now owns automated code review for this repository.
 reviews:
+  review_status: false
   auto_review:
     enabled: false
