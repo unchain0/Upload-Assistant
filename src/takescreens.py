@@ -2779,6 +2779,20 @@ class TakeScreensManager:
     async def capture_screenshot(self, args: tuple[int, str, float, str, float, float, float, float, str, bool, Meta]) -> tuple[int, str | None] | None:
         return await capture_screenshot(args)
 
+    async def determine_tonemapping(
+        self,
+        w_sar: float,
+        h_sar: float,
+        width: float,
+        height: float,
+        path: str,
+        ss_time: str,
+        image_path: str,
+        loglevel: str,
+        meta: Meta,
+    ) -> bool:
+        return await determine_tonemapping(w_sar, h_sar, width, height, path, ss_time, image_path, loglevel, meta)
+
     async def valid_ss_time(self, ss_times: list[str], num_screens: int, length: float, frame_rate: float, meta: Meta, retake: bool = False) -> list[str]:
         return await valid_ss_time(ss_times, num_screens, length, frame_rate, meta, retake)
 

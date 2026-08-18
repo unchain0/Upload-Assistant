@@ -1,6 +1,7 @@
 """Shared artwork validation and explicit-artwork preparation helpers."""
 
 import asyncio
+import contextlib
 import ipaddress
 import re
 import socket
@@ -174,7 +175,8 @@ def _write_png(source: Path | bytes, destination: Path) -> bool:
         temporary.replace(destination)
         return True
     except OSError, SyntaxError, ValueError, Image.DecompressionBombError, Image.DecompressionBombWarning:
-        temporary.unlink(missing_ok=True)
+        with contextlib.suppress(OSError):
+            temporary.unlink(missing_ok=True)
         return False
 
 

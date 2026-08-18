@@ -6,7 +6,7 @@ import pytest
 from PIL import Image
 
 from src.args import Args
-from src.artwork import MAX_ARTWORK_BYTES, _find_local_artwork_sources, is_valid_cover_image, prepare_artwork
+from src.artwork import MAX_ARTWORK_BYTES, _find_local_artwork_sources, _write_png, is_valid_cover_image, prepare_artwork
 from src.meta import Meta
 from src.trackers.UNIT3D import UNIT3D
 from upload import _prepare_book_artwork, _prompt_book_meta, _prompt_music_meta
@@ -123,6 +123,16 @@ async def test_explicit_local_artwork_honors_byte_limit(tmp_path: Path) -> None:
 
     assert not meta.artwork_path
     assert not (tmp_path / "tmp" / "oversized-artwork" / "artwork" / "POSTER.png").exists()
+
+
+def test_write_png_ignores_cleanup_errors(tmp_path: Path) -> None:
+    source = tmp_path / "source.png"
+    Image.new("RGB", (32, 48), "blue").save(source)
+    destination = tmp_path / "poster.png"
+    destination.with_suffix(".tmp").mkdir()
+
+    assert _write_png(source, destination) is False
+    assert not destination.exists()
 
 
 @pytest.mark.asyncio
