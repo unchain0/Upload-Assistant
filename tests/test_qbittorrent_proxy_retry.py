@@ -2,6 +2,7 @@ import asyncio
 
 import httpx
 import pytest
+import qbittorrentapi
 
 from src.torrent_clients.qbittorrent import QbittorrentClientMixin, _RetryableProxyResponseError
 
@@ -37,7 +38,7 @@ async def test_proxy_retry_retries_a_transient_http_status(monkeypatch):
             raise _RetryableProxyResponseError("proxy returned HTTP 502")
         return "added"
 
-    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+    monkeypatch.setattr("asyncio.sleep", no_sleep)
 
     result = await client.retry_qbt_operation(
         operation,
@@ -65,7 +66,7 @@ async def test_proxy_retry_retries_httpx_connection_errors(monkeypatch):
             raise httpx.ConnectError("proxy unavailable")
         return "added"
 
-    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+    monkeypatch.setattr("asyncio.sleep", no_sleep)
 
     result = await client.retry_qbt_operation(
         operation,
@@ -89,7 +90,7 @@ async def test_proxy_retry_checks_for_existing_torrent_before_second_post(monkey
     async def no_sleep(_seconds):
         return None
 
-    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+    monkeypatch.setattr("asyncio.sleep", no_sleep)
 
     await client._add_torrent_via_proxy(session, "https://qbit-proxy.example", "abc123", {"savepath": "/data"}, {})
 
@@ -105,7 +106,7 @@ async def test_proxy_command_retries_transient_http_status(monkeypatch):
     async def no_sleep(_seconds):
         return None
 
-    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+    monkeypatch.setattr("asyncio.sleep", no_sleep)
 
     response = await client._post_proxy_command(session, "https://qbit-proxy.example/api/v2/torrents/start", {"hashes": "abc123"}, "Start torrent")
 
@@ -138,8 +139,6 @@ class FakeDirectClient:
 
 @pytest.mark.asyncio
 async def test_direct_add_recovers_if_torrent_already_present_after_failure(monkeypatch):
-    import qbittorrentapi
-
     client = QbittorrentClientMixin()
     fake_qbt = FakeDirectClient(
         add_side_effects=[qbittorrentapi.APIConnectionError("connection dropped")],
@@ -149,7 +148,7 @@ async def test_direct_add_recovers_if_torrent_already_present_after_failure(monk
     async def no_sleep(_seconds):
         return None
 
-    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+    monkeypatch.setattr("asyncio.sleep", no_sleep)
 
     await client._add_torrent_direct(fake_qbt, "abc123", {"save_path": "/data"})
 
@@ -159,8 +158,6 @@ async def test_direct_add_recovers_if_torrent_already_present_after_failure(monk
 
 @pytest.mark.asyncio
 async def test_direct_add_handles_conflict_409(monkeypatch):
-    import qbittorrentapi
-
     client = QbittorrentClientMixin()
     fake_qbt = FakeDirectClient(
         add_side_effects=[qbittorrentapi.Conflict409Error("torrent already exists")],
@@ -169,7 +166,7 @@ async def test_direct_add_handles_conflict_409(monkeypatch):
     async def no_sleep(_seconds):
         return None
 
-    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+    monkeypatch.setattr("asyncio.sleep", no_sleep)
 
     await client._add_torrent_direct(fake_qbt, "abc123", {"save_path": "/data"})
 

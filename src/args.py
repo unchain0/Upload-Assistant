@@ -10,7 +10,9 @@ from typing import Any, TextIO
 
 from src.book_prep import detect_newspaper, sanitize_book_author, sanitize_book_language
 from src.console import logger
+from src.id_parsing import parse_tmdb_id as parse_tmdb_id_value
 from src.meta import Meta
+from src.trackersetup import get_tracker_comment_hosts, tracker_class_map
 
 MUSIC_MEDIA_CHOICES = ("cd", "web", "vinyl", "dvd", "bd", "soundboard", "sacd", "dat", "cassette")
 MUSIC_RELEASE_TYPE_CHOICES = (
@@ -1139,8 +1141,6 @@ class Args:
 
     def parse_tracker_id(self, value: str) -> tuple[str, str]:
         """Normalize ``--tracker-id`` values without exposing tracker-specific CLI flags."""
-        from src.trackersetup import get_tracker_comment_hosts, tracker_class_map
-
         candidate = value.strip()
         tracker_name = ""
         id_value = candidate
@@ -1174,35 +1174,4 @@ class Args:
         return tracker_name, id_value
 
     def parse_tmdb_id(self, id_str: str, category: str | None) -> tuple[str, int]:
-        if category is None:
-            category = ""
-        parsed_id: str = id_str.lower().strip()
-        if parsed_id.startswith("http"):
-            parsed = urllib.parse.urlparse(parsed_id)
-            path = parsed.path.strip("/")
-
-            if "/" in path:
-                parts = path.split("/")
-                if len(parts) >= 2:
-                    type_part = parts[-2]
-                    id_part = parts[-1]
-
-                    if type_part == "tv":
-                        category = "TV"
-                    elif type_part == "movie":
-                        category = "MOVIE"
-
-                    parsed_id = id_part
-
-        if parsed_id.startswith("tv"):
-            parsed_id = parsed_id.split("/")[1]
-            category = "TV"
-        elif parsed_id.startswith("movie"):
-            parsed_id = parsed_id.split("/")[1]
-            category = "MOVIE"
-        else:
-            parsed_id = parsed_id
-
-        parsed_id_int = int(parsed_id) if parsed_id.isdigit() else 0
-
-        return category, parsed_id_int
+        return parse_tmdb_id_value(id_str, category)

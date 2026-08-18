@@ -6,7 +6,7 @@ import pytest
 from PIL import Image
 
 from src.args import Args
-from src.artwork import prepare_artwork
+from src.artwork import MAX_ARTWORK_BYTES, _find_local_artwork_sources, is_valid_cover_image, prepare_artwork
 from src.meta import Meta
 from src.trackers.UNIT3D import UNIT3D
 from upload import _prepare_book_artwork, _prompt_book_meta, _prompt_music_meta
@@ -111,6 +111,21 @@ async def test_generic_artwork_cli_args_normalize_local_images(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
+async def test_explicit_local_artwork_honors_byte_limit(tmp_path: Path) -> None:
+    source = tmp_path / "oversized-poster.png"
+    Image.new("RGB", (32, 48), "blue").save(source)
+    with source.open("ab") as output:
+        output.truncate(MAX_ARTWORK_BYTES + 1)
+    meta = Meta(base_dir=str(tmp_path), uuid="oversized-artwork", explicit_poster=str(source))
+
+    with patch("src.artwork.Image.open", side_effect=AssertionError("oversized explicit artwork must not be decoded")):
+        await prepare_artwork(meta)
+
+    assert not meta.artwork_path
+    assert not (tmp_path / "tmp" / "oversized-artwork" / "artwork" / "POSTER.png").exists()
+
+
+@pytest.mark.asyncio
 async def test_generic_poster_url_is_normalized_and_retained(tmp_path: Path) -> None:
     source = tmp_path / "source.jpg"
     Image.new("RGB", (32, 48), "green").save(source)
@@ -160,8 +175,6 @@ def test_imghost_cli_arg_takes_precedence_over_automatic_selection(tmp_path: Pat
 
 
 def test_invalid_cover_is_not_accepted() -> None:
-    from src.artwork import is_valid_cover_image
-
     assert not is_valid_cover_image(None)
 
 
@@ -169,8 +182,6 @@ def test_local_artwork_discovery_does_not_read_media_files(tmp_path: Path) -> No
     """The scan touches every file beside the release, so non-images must be
     skipped by suffix. Reading them would pull whole media files - hundreds of
     gigabytes over a network share - only to find they are not cover art."""
-    from src.artwork import _find_local_artwork_sources
-
     media_file = tmp_path / "Release.mkv"
     media_file.write_bytes(b"\x00" * 2048)
     (tmp_path / "Release.iso").write_bytes(b"\x00" * 2048)
@@ -180,8 +191,6 @@ def test_local_artwork_discovery_does_not_read_media_files(tmp_path: Path) -> No
 
 
 def test_oversized_image_is_rejected_without_being_read(tmp_path: Path) -> None:
-    from src.artwork import MAX_ARTWORK_BYTES, is_valid_cover_image
-
     oversized = tmp_path / "huge.png"
     oversized.write_bytes(b"\x00" * (MAX_ARTWORK_BYTES + 1))
 
@@ -192,8 +201,6 @@ def test_oversized_image_is_rejected_without_being_read(tmp_path: Path) -> None:
 def test_user_supplied_cover_without_extension_is_accepted(tmp_path: Path) -> None:
     """Paths the user provides explicitly are validated by content, not by name:
     a decodable image must not be rejected for lacking a known suffix."""
-    from src.artwork import is_valid_cover_image
-
     extensionless = tmp_path / "cover_no_extension"
     Image.new("RGB", (32, 48), "teal").save(extensionless, format="PNG")
 
@@ -201,8 +208,6 @@ def test_user_supplied_cover_without_extension_is_accepted(tmp_path: Path) -> No
 
 
 def test_empty_image_file_is_rejected(tmp_path: Path) -> None:
-    from src.artwork import is_valid_cover_image
-
     empty = tmp_path / "cover.png"
     empty.touch()
 
@@ -210,8 +215,6 @@ def test_empty_image_file_is_rejected(tmp_path: Path) -> None:
 
 
 def test_valid_cover_within_size_limit_is_still_accepted(tmp_path: Path) -> None:
-    from src.artwork import is_valid_cover_image
-
     cover_file = tmp_path / "cover.png"
     Image.new("RGB", (32, 48), "blue").save(cover_file)
 
@@ -220,8 +223,6 @@ def test_valid_cover_within_size_limit_is_still_accepted(tmp_path: Path) -> None
 
 def test_local_artwork_discovery_skips_media_files(tmp_path: Path) -> None:
     """The scan must still find the cover while ignoring the media beside it."""
-    from src.artwork import _find_local_artwork_sources
-
     media_file = tmp_path / "Release.mkv"
     media_file.write_bytes(b"\x00" * 4096)
     (tmp_path / "Release.iso").write_bytes(b"\x00" * 4096)

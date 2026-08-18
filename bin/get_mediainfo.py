@@ -77,7 +77,8 @@ class MediaInfoBinaryManager:
             binary = cls.binary_path(base_dir)
         except RuntimeError:
             return None
-        if binary.is_file() and (binary.suffix.lower() == ".exe" or os.access(binary, os.X_OK)):
+        version_marker = binary.parent / f"version_{cls.VERSION}"
+        if binary.is_file() and version_marker.is_file() and (binary.suffix.lower() == ".exe" or os.access(binary, os.X_OK)):
             return str(binary)
         return None
 

@@ -146,18 +146,34 @@ def _write_png(source: Path | bytes, destination: Path) -> bool:
     """Validate and re-encode artwork into the canonical PNG artifact."""
     temporary = destination.with_suffix(".tmp")
     try:
-        image_source = BytesIO(source) if isinstance(source, bytes) else source
-        with Image.open(image_source) as image:
-            image.load()
-            if image.format not in _SUPPORTED_COVER_FORMATS or image.width <= 0 or image.height <= 0:
+        if isinstance(source, bytes):
+            if not source or len(source) > MAX_ARTWORK_BYTES:
                 return False
-            if image.mode not in {"RGB", "RGBA"}:
-                image = image.convert("RGBA" if "transparency" in image.info else "RGB")
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            image.save(temporary, "PNG")
+            image_source: Path | BytesIO = BytesIO(source)
+        else:
+            size = source.stat().st_size
+            if size == 0 or size > MAX_ARTWORK_BYTES:
+                return False
+            image_source = source
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(image_source) as image:
+                if (
+                    image.format not in _SUPPORTED_COVER_FORMATS
+                    or image.width <= 0
+                    or image.height <= 0
+                    or image.width * image.height > MAX_ARTWORK_PIXELS
+                ):
+                    return False
+                image.load()
+                if image.mode not in {"RGB", "RGBA"}:
+                    image = image.convert("RGBA" if "transparency" in image.info else "RGB")
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                image.save(temporary, "PNG")
         temporary.replace(destination)
         return True
-    except OSError, SyntaxError, ValueError:
+    except OSError, SyntaxError, ValueError, Image.DecompressionBombError, Image.DecompressionBombWarning:
         temporary.unlink(missing_ok=True)
         return False
 

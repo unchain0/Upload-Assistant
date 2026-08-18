@@ -22,6 +22,15 @@
       .trim();
   }
 
+  function decodeUriComponentSafely(text) {
+    try {
+      return decodeURIComponent(text);
+    } catch (error) {
+      if (error instanceof URIError) return text;
+      throw error;
+    }
+  }
+
   // Copy to clipboard helper with visual feedback
   async function copyToClipboard(text, button, originalText) {
     try {
@@ -187,7 +196,7 @@
         if (!href) return innerContent;
         if (
           href === innerContent ||
-          href === decodeURIComponent(innerContent)
+          href === decodeUriComponentSafely(innerContent)
         ) {
           return `[url]${href}[/url]`;
         }
@@ -384,7 +393,7 @@
         if (!href) return innerContent;
         if (
           href === innerContent ||
-          href === decodeURIComponent(innerContent)
+          href === decodeUriComponentSafely(innerContent)
         ) {
           return `<${href}>`;
         }

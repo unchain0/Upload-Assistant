@@ -138,9 +138,9 @@ def test_unit3d_source_id_does_not_skip_interactive_description_review(monkeypat
 
     async def run():
         messages = []
-        monkeypatch.setattr(common_module.httpx, "AsyncClient", lambda **_kwargs: FakeClient())
-        monkeypatch.setattr(common_module.cli_ui, "ask_string", lambda *_args, **_kwargs: "d")
-        monkeypatch.setattr(common_module.logger, "info", lambda message, **_kwargs: messages.append(str(message)))
+        monkeypatch.setattr("src.trackers.common.httpx.AsyncClient", lambda **_kwargs: FakeClient())
+        monkeypatch.setattr("src.trackers.common.cli_ui.ask_string", lambda *_args, **_kwargs: "d")
+        monkeypatch.setattr("src.trackers.common.logger.info", lambda message, **_kwargs: messages.append(str(message)))
         meta = Meta({"tracker_ids": {"AITHER": "123"}, "unattended": False})
 
         result = await Common({"TRACKERS": {"AITHER": {"api_key": "test"}}}).unit3d_torrent_info(
@@ -207,7 +207,7 @@ def test_explicit_tracker_ids_are_collected_concurrently_and_best_candidate_is_a
         running = 0
         peak_running = 0
 
-        async def fake_update(tracker, _instance, candidate, *_args, **_kwargs):
+        async def fake_update(_self, tracker, _instance, candidate, *_args, **_kwargs):
             nonlocal running, peak_running
             assert (tmp_path / "tmp" / candidate.uuid).is_dir()
             running += 1
@@ -219,7 +219,7 @@ def test_explicit_tracker_ids_are_collected_concurrently_and_best_candidate_is_a
             candidate.description_provenance = {"score": 1 if tracker == "AITHER" else 50}
             return candidate, True
 
-        monkeypatch.setattr(manager, "update_metadata_from_explicit_tracker", fake_update)
+        monkeypatch.setattr("src.get_tracker_data.TrackerDataManager.update_metadata_from_explicit_tracker", fake_update)
         monkeypatch.setitem(tracker_data_module.tracker_class_map, "AITHER", lambda **_kwargs: object())
         monkeypatch.setitem(tracker_data_module.tracker_class_map, "BLUTOPIA", lambda **_kwargs: object())
 
@@ -250,7 +250,7 @@ def test_tracker_comment_only_defaults_to_skipping_filename_searches(tmp_path, m
         async def unexpected_search(*_args, **_kwargs):
             raise AssertionError("filename-based tracker search must not run")
 
-        monkeypatch.setattr(manager, "update_metadata_from_explicit_tracker", unexpected_search)
+        monkeypatch.setattr("src.get_tracker_data.TrackerDataManager.update_metadata_from_explicit_tracker", unexpected_search)
 
         result = await manager.get_tracker_data(None, meta, "Release", "Release")
 

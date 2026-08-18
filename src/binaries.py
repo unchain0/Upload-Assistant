@@ -7,6 +7,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from data import config as data_config
+
 
 def configured_binary(key: str, config: Mapping[str, Any] | None = None) -> str | None:
     """Return an explicitly configured executable, if any.
@@ -15,8 +17,6 @@ def configured_binary(key: str, config: Mapping[str, Any] | None = None) -> str 
     longer points at a file instead of silently running a different binary.
     """
     if config is None:
-        from data import config as data_config
-
         config = data_config.config
 
     default = config.get("DEFAULT", {}) if isinstance(config, Mapping) else {}

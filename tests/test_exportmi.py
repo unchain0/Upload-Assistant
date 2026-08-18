@@ -6,7 +6,8 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from bin.download_integrity import SHA256_BY_ASSET
-from src.mediainfo import MediaInfo, _binary, ensure_mediainfo_binary, resolve_mediainfo_binary, strip_report_by_line
+from bin.get_mediainfo import MediaInfoBinaryManager
+from src.mediainfo import MediaInfo, _binary, ensure_mediainfo_binary, resolve_mediainfo_binary, run_mediainfo, strip_report_by_line
 
 
 def test_cli_backed_mediainfo_preserves_track_access() -> None:
@@ -52,8 +53,6 @@ def test_strip_report_by_line_handles_bare_carriage_return_boundaries() -> None:
 def test_text_reports_always_request_mediainfo_version() -> None:
     completed = Mock(returncode=0, stdout="General", stderr="")
     with patch("src.mediainfo._binary", return_value="mediainfo"), patch("src.mediainfo.subprocess.run", return_value=completed) as run:
-        from src.mediainfo import run_mediainfo
-
         run_mediainfo("video.mkv", output="STRING", full=False)
 
     assert run.call_args.args[0] == ["mediainfo", "--inform_version=1", "video.mkv"]
@@ -64,8 +63,6 @@ def test_mediainfo_prefers_configured_binary(tmp_path) -> None:
     executable.touch()
 
     with patch("src.mediainfo.configured_binary", return_value=str(executable)):
-        from src.mediainfo import _binary
-
         assert _binary() == str(executable)
 
 
@@ -105,6 +102,24 @@ def test_mediainfo_prefers_state_binary_before_path(tmp_path) -> None:
     find_on_path.assert_not_called()
 
 
+def test_mediainfo_managed_binary_requires_current_version_marker(tmp_path) -> None:
+    with (
+        patch("bin.get_mediainfo.MediaInfoBinaryManager._is_android", return_value=False),
+        patch(
+            "bin.get_mediainfo.MediaInfoBinaryManager._platform_info",
+            return_value=("linux", "MediaInfo_CLI_26.05_Lambda_x86_64.zip", "mediainfo", "zip"),
+        ),
+    ):
+        binary = tmp_path / "bin" / "MI" / "linux" / "mediainfo"
+        binary.parent.mkdir(parents=True)
+        binary.touch(mode=0o755)
+
+        assert MediaInfoBinaryManager.find_managed_binary(tmp_path) is None
+
+        (binary.parent / f"version_{MediaInfoBinaryManager.VERSION}").touch()
+        assert MediaInfoBinaryManager.find_managed_binary(tmp_path) == str(binary)
+
+
 def test_mediainfo_bootstrap_skips_download_for_bundled_binary(tmp_path) -> None:
     with (
         patch("src.mediainfo.resolve_mediainfo_binary", return_value="/code/bin/MI/linux/mediainfo"),
@@ -118,8 +133,6 @@ def test_mediainfo_bootstrap_skips_download_for_bundled_binary(tmp_path) -> None
 def test_mediainfo_uses_tolerant_utf8_output_decoding() -> None:
     completed = Mock(returncode=0, stdout="General", stderr="")
     with patch("src.mediainfo._binary", return_value="mediainfo"), patch("src.mediainfo.subprocess.run", return_value=completed) as run:
-        from src.mediainfo import run_mediainfo
-
         run_mediainfo("audio.m4b")
 
     assert run.call_args.kwargs["encoding"] == "utf-8"
@@ -144,8 +157,6 @@ def test_mediainfo_uses_state_managed_binary_before_system_path() -> None:
 def test_mediainfo_failure_reports_command_and_both_output_streams() -> None:
     completed = Mock(returncode=1, stdout="could not parse file", stderr="input error")
     with patch("src.mediainfo._binary", return_value="mediainfo"), patch("src.mediainfo.subprocess.run", return_value=completed):
-        from src.mediainfo import run_mediainfo
-
         with pytest.raises(RuntimeError) as exc_info:
             run_mediainfo("video.mkv", output="STRING", full=False)
 
@@ -156,8 +167,6 @@ def test_mediainfo_failure_reports_command_and_both_output_streams() -> None:
 
 def test_mediainfo_timeout_becomes_runtime_error() -> None:
     with patch("src.mediainfo._binary", return_value="mediainfo"), patch("src.mediainfo.subprocess.run", side_effect=subprocess.TimeoutExpired("mediainfo", 900)):
-        from src.mediainfo import run_mediainfo
-
         with pytest.raises(RuntimeError, match="timed out"):
             run_mediainfo("video.mkv")
 
@@ -181,15 +190,11 @@ def test_all_supported_mediainfo_downloads_have_pinned_hashes() -> None:
     ],
 )
 def test_mediainfo_platform_info_uses_official_asset(system, machine, expected) -> None:
-    from bin.get_mediainfo import MediaInfoBinaryManager
-
     with patch("bin.get_mediainfo.platform.system", return_value=system), patch("bin.get_mediainfo.platform.machine", return_value=machine):
         assert MediaInfoBinaryManager._platform_info() == expected
 
 
 def test_android_uses_mediainfo_from_path(tmp_path) -> None:
-    from bin.get_mediainfo import MediaInfoBinaryManager
-
     with (
         patch.object(MediaInfoBinaryManager, "_is_android", return_value=True),
         patch("bin.get_mediainfo.shutil.which", return_value="/data/data/com.termux/files/usr/bin/mediainfo"),
@@ -198,8 +203,6 @@ def test_android_uses_mediainfo_from_path(tmp_path) -> None:
 
 
 def test_android_without_mediainfo_has_install_instruction(tmp_path) -> None:
-    from bin.get_mediainfo import MediaInfoBinaryManager
-
     with (
         patch.object(MediaInfoBinaryManager, "_is_android", return_value=True),
         patch("bin.get_mediainfo.shutil.which", return_value=None),
@@ -209,8 +212,6 @@ def test_android_without_mediainfo_has_install_instruction(tmp_path) -> None:
 
 
 def test_macos_uses_downloaded_binary_before_path(tmp_path) -> None:
-    from bin.get_mediainfo import MediaInfoBinaryManager
-
     with (
         patch.object(MediaInfoBinaryManager, "_is_android", return_value=False),
         patch.object(MediaInfoBinaryManager, "_is_macos", return_value=True),
@@ -225,8 +226,6 @@ def test_macos_uses_downloaded_binary_before_path(tmp_path) -> None:
 
 
 def test_macos_falls_back_to_path_when_downloaded_binary_is_unavailable(tmp_path) -> None:
-    from bin.get_mediainfo import MediaInfoBinaryManager
-
     with (
         patch.object(MediaInfoBinaryManager, "_is_android", return_value=False),
         patch.object(MediaInfoBinaryManager, "_is_macos", return_value=True),
@@ -237,8 +236,6 @@ def test_macos_falls_back_to_path_when_downloaded_binary_is_unavailable(tmp_path
 
 
 def test_linux_falls_back_to_path_when_downloaded_binary_is_unavailable(tmp_path) -> None:
-    from bin.get_mediainfo import MediaInfoBinaryManager
-
     with (
         patch.object(MediaInfoBinaryManager, "_is_android", return_value=False),
         patch.object(MediaInfoBinaryManager, "_is_macos", return_value=False),

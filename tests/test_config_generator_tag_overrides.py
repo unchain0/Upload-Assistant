@@ -2,6 +2,7 @@
 
 import builtins
 import importlib.util
+import sys
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,7 @@ def config_generator_module():
     spec = importlib.util.spec_from_file_location("config_generator", path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -29,7 +31,7 @@ def test_validate_config_preserves_tracker_tag_overrides(config_generator_module
     }
     example = {"DEFAULT": {}, "TRACKERS": {"AITHER": {"api_key": ""}}}
 
-    monkeypatch.setattr(builtins, "input", lambda _prompt: pytest.fail("tag_overrides must not be treated as unexpected"))
+    monkeypatch.setattr("builtins.input", lambda _prompt: pytest.fail("tag_overrides must not be treated as unexpected"))
 
     assert config_generator_module.validate_config(config, example) == config
 
@@ -54,8 +56,8 @@ def test_configure_trackers_keeps_existing_tag_overrides(config_generator_module
     }
     example = {"AITHER": {"api_key": ""}}
 
-    monkeypatch.setattr(config_generator_module, "get_user_input", lambda *_args, **_kwargs: "AITHER")
-    monkeypatch.setattr(builtins, "input", lambda _prompt: "y")
+    monkeypatch.setattr("config_generator.get_user_input", lambda *_args, **_kwargs: "AITHER")
+    monkeypatch.setattr("builtins.input", lambda _prompt: "y")
 
     configured = config_generator_module.configure_trackers(existing, example, {})
 
@@ -64,7 +66,7 @@ def test_configure_trackers_keeps_existing_tag_overrides(config_generator_module
 
 
 def test_generator_writes_tag_override_comments(config_generator_module, monkeypatch, tmp_path):
-    monkeypatch.setattr(config_generator_module, "ensure_data_dir", lambda: None)
+    monkeypatch.setattr("config_generator.ensure_data_dir", lambda: None)
     _example, comments = config_generator_module.read_example_config()
     output = tmp_path / "config.py"
 

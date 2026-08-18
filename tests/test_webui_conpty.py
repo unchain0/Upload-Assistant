@@ -63,10 +63,10 @@ def test_kill_endpoint_stops_conpty_controller_and_worker(monkeypatch) -> None:
         assert mode == "conpty"
         assert worker_pid_match is not None
         worker_pid = int(worker_pid_match.group(1))
-        monkeypatch.setattr(server, "_get_bearer_from_header", lambda: None)
-        monkeypatch.setattr(server, "_is_authenticated", lambda: True)
-        monkeypatch.setattr(server, "_verify_csrf_header", lambda: True)
-        monkeypatch.setattr(server, "_verify_same_origin", lambda: True)
+        monkeypatch.setattr("web_ui.server._get_bearer_from_header", lambda: None)
+        monkeypatch.setattr("web_ui.server._is_authenticated", lambda: True)
+        monkeypatch.setattr("web_ui.server._verify_csrf_header", lambda: True)
+        monkeypatch.setattr("web_ui.server._verify_same_origin", lambda: True)
         session_id = "conpty-kill-tree-test"
         with server.active_processes_lock:
             server.active_processes[session_id] = {"mode": mode, "process": process}

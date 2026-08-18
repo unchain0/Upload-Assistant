@@ -18,9 +18,9 @@ def test_execute_replaces_running_session_process(monkeypatch) -> None:
     terminated_processes = []
     session_id = "replace-running-process-test"
 
-    monkeypatch.setattr(server, "_is_authenticated", lambda: True)
-    monkeypatch.setattr(server, "_verify_csrf_header", lambda: True)
-    monkeypatch.setattr(server, "_terminate_process_tree", terminated_processes.append)
+    monkeypatch.setattr("web_ui.server._is_authenticated", lambda: True)
+    monkeypatch.setattr("web_ui.server._verify_csrf_header", lambda: True)
+    monkeypatch.setattr("web_ui.server._terminate_process_tree", terminated_processes.append)
     with server.active_processes_lock:
         server.active_processes[session_id] = {"mode": "subprocess", "process": process}
 
@@ -46,10 +46,10 @@ def test_kill_endpoint_stops_upload_controller_and_worker(monkeypatch) -> None:
     worker_pid = int(controller.stdout.readline().strip())
 
     try:
-        monkeypatch.setattr(server, "_get_bearer_from_header", lambda: None)
-        monkeypatch.setattr(server, "_is_authenticated", lambda: True)
-        monkeypatch.setattr(server, "_verify_csrf_header", lambda: True)
-        monkeypatch.setattr(server, "_verify_same_origin", lambda: True)
+        monkeypatch.setattr("web_ui.server._get_bearer_from_header", lambda: None)
+        monkeypatch.setattr("web_ui.server._is_authenticated", lambda: True)
+        monkeypatch.setattr("web_ui.server._verify_csrf_header", lambda: True)
+        monkeypatch.setattr("web_ui.server._verify_same_origin", lambda: True)
         session_id = "kill-tree-test"
         with server.active_processes_lock:
             server.active_processes[session_id] = {"mode": "subprocess", "process": controller}
@@ -76,12 +76,12 @@ def test_kill_keeps_session_when_process_tree_termination_fails(monkeypatch) -> 
     process = object()
     session_id = "failed-kill-test"
 
-    monkeypatch.setattr(server, "_get_bearer_from_header", lambda: None)
-    monkeypatch.setattr(server, "_is_authenticated", lambda: True)
-    monkeypatch.setattr(server, "_verify_csrf_header", lambda: True)
-    monkeypatch.setattr(server, "_verify_same_origin", lambda: True)
-    monkeypatch.setattr(server, "_terminate_process_tree", lambda _: False)
-    monkeypatch.setattr(server, "_close_webui_process_io", lambda _: None)
+    monkeypatch.setattr("web_ui.server._get_bearer_from_header", lambda: None)
+    monkeypatch.setattr("web_ui.server._is_authenticated", lambda: True)
+    monkeypatch.setattr("web_ui.server._verify_csrf_header", lambda: True)
+    monkeypatch.setattr("web_ui.server._verify_same_origin", lambda: True)
+    monkeypatch.setattr("web_ui.server._terminate_process_tree", lambda _: False)
+    monkeypatch.setattr("web_ui.server._close_webui_process_io", lambda _: None)
     with server.active_processes_lock:
         server.active_processes[session_id] = {"mode": "subprocess", "process": process}
 
@@ -110,14 +110,14 @@ def test_sse_disconnect_terminates_running_process_tree(tmp_path, monkeypatch) -
     terminated_processes = []
     session_id = "sse-disconnect-test"
 
-    monkeypatch.setattr(server, "_is_authenticated", lambda: True)
-    monkeypatch.setattr(server, "_verify_csrf_header", lambda: True)
-    monkeypatch.setattr(server, "_resolve_user_path", lambda *_args, **_kwargs: str(tmp_path))
-    monkeypatch.setattr(server, "_assert_safe_resolved_path", lambda _: None)
-    monkeypatch.setattr(server, "_validate_upload_assistant_args", lambda args: args)
-    monkeypatch.setattr(server, "_spawn_webui_upload_process", lambda *_args: (process, "subprocess"))
-    monkeypatch.setattr(server, "_terminate_process_tree", terminated_processes.append)
-    monkeypatch.setattr(server, "_close_webui_process_io", lambda _: None)
+    monkeypatch.setattr("web_ui.server._is_authenticated", lambda: True)
+    monkeypatch.setattr("web_ui.server._verify_csrf_header", lambda: True)
+    monkeypatch.setattr("web_ui.server._resolve_user_path", lambda *_args, **_kwargs: str(tmp_path))
+    monkeypatch.setattr("web_ui.server._assert_safe_resolved_path", lambda _: None)
+    monkeypatch.setattr("web_ui.server._validate_upload_assistant_args", lambda args: args)
+    monkeypatch.setattr("web_ui.server._spawn_webui_upload_process", lambda *_args: (process, "subprocess"))
+    monkeypatch.setattr("web_ui.server._terminate_process_tree", terminated_processes.append)
+    monkeypatch.setattr("web_ui.server._close_webui_process_io", lambda _: None)
 
     response = server.app.test_client().post("/api/execute", json={"path": str(tmp_path), "session_id": session_id}, buffered=False)
     try:

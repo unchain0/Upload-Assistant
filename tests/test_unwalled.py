@@ -315,7 +315,7 @@ def test_podcast_prep_rejects_media_with_a_mismatched_extension(tmp_path: Path) 
     disguised_video.write_bytes(b"\x00\x00\x00\x18ftypisom\x00\x00\x02\x00isomiso2")
     meta = Meta(path=str(disguised_video), base_dir=str(tmp_path), uuid="mismatched-media", category="PODCAST")
 
-    with pytest.raises(ValueError, match="extension does not match"):
+    with patch("src.podcast_prep._detected_media_kind", return_value="video"), pytest.raises(ValueError, match="extension does not match"):
         asyncio.run(gather_podcast_prep(meta))
 
 
