@@ -59,3 +59,4 @@ tmp/*
 user-args.json
 venv/*
 web_ui/static/js/node_modules/
+node_modules/

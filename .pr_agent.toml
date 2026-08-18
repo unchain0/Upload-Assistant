@@ -1,0 +1,13 @@
+# Qodo/PR-Agent remains installed at the GitHub app level, but automatic LLM
+# review is disabled in favor of the deterministic review workflow.
+[github_app]
+pr_commands = []
+handle_push_trigger = false
+push_commands = []
+
+[github_action_config]
+auto_review = false
+auto_describe = false
+auto_improve = false
+handle_push_trigger = false
+push_commands = []
