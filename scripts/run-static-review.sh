@@ -68,7 +68,8 @@ check_tool_status() {
     fi
 }
 
-mapfile -d '' changed_files < <(git diff --name-only --diff-filter=ACMR -z "$BASE_SHA" "$HEAD_SHA" --)
+merge_base="$(git merge-base "$BASE_SHA" "$HEAD_SHA")"
+mapfile -d '' changed_files < <(git diff --name-only --diff-filter=ACMR -z "$merge_base" "$HEAD_SHA" --)
 
 python_files=()
 pyright_files=()
@@ -90,12 +91,15 @@ for file in "${changed_files[@]}"; do
             fi
             semgrep_files+=("$file")
             ;;
-        web_ui/static/js/*.js)
+        web_ui/static/js/*.js|web_ui/static/js/*.jsx)
             eslint_files+=("$file")
             semgrep_files+=("$file")
             ;;
         *.js)
             js_syntax_files+=("$file")
+            semgrep_files+=("$file")
+            ;;
+        *.jsx)
             semgrep_files+=("$file")
             ;;
         *.sh)

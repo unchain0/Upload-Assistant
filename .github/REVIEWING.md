@@ -28,7 +28,7 @@ untrusted code.
 
 ## PR policy review
 
-Danger JS 13.0.10 checks PR-level rules that source linters cannot express:
+Danger JS 13.0.10 checks PR-level rules that source linters cannot express. Internal-branch PRs receive the normal Danger comment; fork PRs run the same policy in `--text-only` mode so GitHub's read-only fork token still enforces the required check without granting write access to untrusted code:
 
 - a meaningful PR description is required;
 - committed `.env` files are rejected;
