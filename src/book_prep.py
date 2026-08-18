@@ -51,7 +51,7 @@ from src.book_extractors import (
 from src.console import logger
 from src.exceptions import ItemProcessingError
 from src.exportmi import export_info
-from src.mediainfo import MediaInfo
+from src.mediainfo import MediaInfo, MediaInfoError
 from src.meta import Meta
 
 # ---------------------------------------------------------------------------
@@ -593,8 +593,12 @@ async def gather_book_prep(
                 is_dvd=(meta.is_disc == "DVD"),
             )
             meta.mediainfo = mi
-        except Exception as e:
-            logger.info(f"[yellow]Warning: MediaInfo export failed for book: {e}[/yellow]")
+        except MediaInfoError as error:
+            logger.warning(f"[yellow]MediaInfo could not inspect book/audiobook release: {error}[/yellow]")
+            logger.debug(error.debug_details)
+            meta.mediainfo = {}
+        except Exception as error:
+            logger.warning(f"[yellow]MediaInfo export failed for book/audiobook: {error}[/yellow]")
             meta.mediainfo = {}
     else:
         pass  # meta.mediainfo already populated from a previous run

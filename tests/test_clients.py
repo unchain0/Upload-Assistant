@@ -28,6 +28,31 @@ def test_empty_inject_delay_is_a_no_op() -> None:
 def test_config_validator_declares_image_upload_types() -> None:
     assert DEFAULT_KEY_TYPES["image_upload_concurrency"] == (str, int)
     assert DEFAULT_KEY_TYPES["image_upload_delay"] == (str, float, int)
+    assert DEFAULT_KEY_TYPES["img_host_10"] == (str,)
+
+
+def test_config_validator_checks_tenth_image_host_credentials() -> None:
+    is_valid, errors, _warnings = validate_config(
+        {
+            "DEFAULT": {"tmdb_api": "test-key", "img_host_10": "imgbb"},
+            "TRACKERS": {},
+        }
+    )
+
+    assert not is_valid
+    assert "Image host 'imgbb' requires config setting 'imgbb_api' but it is not set" in errors
+
+
+def test_config_validator_checks_all_sharex_settings() -> None:
+    is_valid, errors, _warnings = validate_config(
+        {
+            "DEFAULT": {"tmdb_api": "test-key", "img_host_1": "sharex", "sharex_api_key": "token"},
+            "TRACKERS": {},
+        }
+    )
+
+    assert not is_valid
+    assert "Image host 'sharex' requires config setting 'sharex_url' but it is not set" in errors
 
 
 def test_config_validator_warns_for_invalid_image_upload_limits() -> None:

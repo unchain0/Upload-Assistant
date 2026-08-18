@@ -13,6 +13,7 @@ from rich.text import Text
 
 from src.app_paths import CODE_DIR, CONFIG_PATH, DATA_DIR, LEGACY_CONFIG_PATH, ensure_data_dir
 from src.check_requirements import check_dependencies
+from src.image_hosts import MAX_IMAGE_HOST_SLOTS, image_host_config_map
 
 check_dependencies()
 
@@ -645,22 +646,7 @@ def get_img_host(
     example_defaults: ConfigDict,
     config_comments: ConfigComments,
 ) -> None:
-    img_host_api_map: dict[str, str | list[str] | None] = {
-        "imgbb": "imgbb_api",
-        "lensdump": "lensdump_api",
-        "ptscreens": "ptscreens_api",
-        "onlyimage": "onlyimage_api",
-        "dalexni": "dalexni_api",
-        "zipline": ["zipline_url", "zipline_api_key"],
-        "midnightscene": "midnightscene_api_key",
-        "passtheimage": "passtheima_ge_api",
-        "seedpool_cdn": "seedpool_cdn_api",
-        "sharex": ["sharex_url", "sharex_api_key"],
-        "utppm": "utppm_api",
-        "lostimg": "lostimg_api",
-        "imgbox": None,
-        "pixhost": None,
-    }
+    img_host_api_map = image_host_config_map()
 
     console.print("\n==== IMAGE HOST CONFIGURATION ====", markup=False)
     console.print("[i] Available image hosts: " + ", ".join(img_host_api_map.keys()), markup=False)
@@ -668,7 +654,7 @@ def get_img_host(
 
     # Get existing image hosts if available
     existing_hosts: list[str] = []
-    for i in range(1, 11):
+    for i in range(1, MAX_IMAGE_HOST_SLOTS + 1):
         key = f"img_host_{i}"
         if existing_defaults.get(key):
             existing_hosts.append(str(existing_defaults[key]).strip().lower())
@@ -679,7 +665,7 @@ def get_img_host(
     default_count = len(existing_hosts) if existing_hosts else 1
     try:
         number_hosts = int(input(f"\n[i] How many image hosts would you like to configure? (1-10) [default: {default_count}]: ") or default_count)
-        number_hosts = max(1, min(10, number_hosts))  # Limit between 1 and 10
+        number_hosts = max(1, min(MAX_IMAGE_HOST_SLOTS, number_hosts))
     except ValueError:
         console.print(f"[!] Invalid input. Defaulting to {default_count} image host(s).", markup=False)
         number_hosts = default_count

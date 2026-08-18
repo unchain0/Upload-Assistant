@@ -1,3 +1,4 @@
+# ruff: noqa: S101
 """Tests for audio category classification (BOOK/audiobook vs MUSIC vs ambiguous)."""
 
 from __future__ import annotations
@@ -8,7 +9,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src.audio_classifier import detect_audio_category
+from src.audio_classifier import AudioCategoryResult, detect_audio_category
 from src.exceptions import ItemProcessingError
 from src.meta import Meta
 from src.prep_helpers import detect_disc_and_category
@@ -122,7 +123,7 @@ def test_ambiguous_audio_folder_fails_in_unattended_mode(tmp_path):
     meta = Meta(path=str(tmp_path), unattended=True, unattended_confirm=False)
     prep = SimpleNamespace(disc_info_manager=SimpleNamespace(get_disc=AsyncMock(return_value=("", str(tmp_path), {}, []))))
 
-    with pytest.raises(ItemProcessingError, match="Could not determine if release is MUSIC or BOOK"):
+    with pytest.raises(ItemProcessingError, match="Could not determine if release is MUSIC, PODCAST, or BOOK"):
         asyncio.run(detect_disc_and_category(prep, meta))
 
 
@@ -157,6 +158,69 @@ def test_scene_single_without_tags_is_music(tmp_path):
 
     assert result.category == "MUSIC"
     assert "scene music release name" in result.evidence
+
+
+def _podcast_audio_metadata(genre: str) -> dict[str, object]:
+    return {
+        "channels": 2,
+        "bitrate": 192000,
+        "sample_rate": 44100,
+        "length": 600.0,
+        "genres": [genre],
+        "title": "Episode",
+        "artist": "Example Show",
+        "album": "Example Show",
+        "albumartist": "",
+        "narrator": "",
+        "author": "",
+        "publisher": "",
+        "isbn": "",
+        "asin": "",
+        "has_chapters": False,
+        "has_musicbrainz": False,
+        "has_discogs": False,
+        "has_catalog_no": False,
+        "raw_tag_text": "",
+    }
+
+
+@pytest.mark.parametrize("genre", ["podcast", "News & Politics"])
+def test_podcast_genres_are_not_misclassified_as_audiobooks(tmp_path, genre):
+    track = tmp_path / "Example Show - 2026-08-18 - Episode.mp3"
+    track.write_bytes(b"not tagged")
+
+    with patch("src.audio_classifier._inspect_audio_file", return_value=_podcast_audio_metadata(genre)):
+        result = asyncio.run(detect_audio_category(Meta(), track))
+
+    assert result.category == "PODCAST"
+    assert result.is_audiobook is False
+    assert any("podcast metadata genre" in evidence for evidence in result.evidence)
+
+
+def test_podcast_detection_flows_into_prep_category(tmp_path):
+    track = tmp_path / "Example Show - 2026-08-18 - Episode.mp3"
+    track.write_bytes(b"not tagged")
+    meta = Meta(path=str(track))
+    prep = SimpleNamespace(disc_info_manager=SimpleNamespace(get_disc=AsyncMock(return_value=("", str(track), {}, []))))
+
+    with patch("src.audio_classifier._inspect_audio_file", return_value=_podcast_audio_metadata("podcast")):
+        asyncio.run(detect_disc_and_category(prep, meta))
+
+    assert meta.category == "PODCAST"
+    assert meta.audiobook is False
+
+
+def test_legacy_book_fallback_does_not_claim_shared_mp3_extension(tmp_path):
+    track = tmp_path / "spoken-or-music.mp3"
+    track.write_bytes(b"unknown")
+    meta = Meta(path=str(track))
+    prep = SimpleNamespace(disc_info_manager=SimpleNamespace(get_disc=AsyncMock(return_value=("", str(track), {}, []))))
+
+    with patch("src.audio_classifier.detect_audio_category", new=AsyncMock(return_value=AudioCategoryResult(category="NONE"))):
+        asyncio.run(detect_disc_and_category(prep, meta))
+
+    assert meta.category != "BOOK"
+    assert meta.audiobook is False
 
 
 def test_dated_single_long_track_is_music(tmp_path):

@@ -89,8 +89,9 @@ def test_zipline_upload_accepts_object_file_response(tmp_path: Path) -> None:
     assert result == {
         "status": "success",
         "img_url": "https://zip.example/u/image.png",
-        "raw_url": "https://zip.example/r/image.png",
-        "web_url": "https://zip.example/r/image.png",
+        "raw_url": "https://zip.example/u/image.png",
+        "web_url": "https://zip.example/u/image.png",
+        "local_file_path": str(tmp_path / "image.png"),
     }
 
 
@@ -100,15 +101,15 @@ def test_zipline_upload_preserves_legacy_string_response(tmp_path: Path) -> None
 
     assert result["status"] == "success"
     assert result["img_url"] == "https://zip.example/u/image.png"
-    assert result["raw_url"] == "https://zip.example/r/image.png"
-    assert result["web_url"] == "https://zip.example/r/image.png"
+    assert result["raw_url"] == "https://zip.example/u/image.png"
+    assert result["web_url"] == "https://zip.example/u/image.png"
 
 
 def test_zipline_upload_rejects_non_list_files_response(tmp_path: Path) -> None:
     """Reject malformed Zipline responses whose files value is not a list."""
     result = _run_upload(tmp_path, {"files": "not-a-list"})
 
-    assert result == {"status": "failed", "reason": "No valid URL returned from Zipline"}
+    assert result == {"status": "failed", "reason": "No valid URL returned from Zipline", "retryable": False}
 
 
 def test_midnightscene_uses_its_fixed_endpoint_and_token(tmp_path: Path) -> None:
@@ -128,7 +129,7 @@ def test_midnightscene_uses_its_fixed_endpoint_and_token(tmp_path: Path) -> None
             ("https://img.midnightscene.cc/api/upload",),
             {
                 "files": {"file": ("image.png", b"image")},
-                "headers": {"Authorization": "midnightscene-token"},
+                "headers": {"Authorization": "midnightscene-token", "Accept": "application/json"},
                 "timeout": 60,
             },
         )

@@ -32,7 +32,7 @@ def test_image_host_error_does_not_dump_html_response() -> None:
 
     summary = _summarize_host_error(html)
 
-    assert summary == "We're sorry, but something went wrong (500) internal details"
+    assert summary == "HTTP 500: remote service error"
     assert "<!DOCTYPE" not in summary
 
 
@@ -259,6 +259,47 @@ def test_upload_manager_skips_host_after_complete_failure(tmp_path: Path) -> Non
 
     asyncio.run(exercise())
     assert calls == ["onlyimage", "imgbb", "imgbb"]
+
+
+def test_imgbox_outage_opens_circuit_after_first_failed_image(tmp_path: Path) -> None:
+    calls: list[str] = []
+
+    async def fake_upload(args: object) -> dict[str, object]:
+        assert isinstance(args, list)
+        host = str(args[1])
+        calls.append(host)
+        if host == "imgbox":
+            return {"status": "failed", "reason": "HTTP 500: remote service error", "host_unavailable": True}
+        return {
+            "status": "success",
+            "img_url": f"https://img.test/{len(calls)}.png",
+            "raw_url": f"https://img.test/{len(calls)}.png",
+            "web_url": f"https://img.test/{len(calls)}.png",
+        }
+
+    async def exercise() -> tuple[list[dict[str, str]], int]:
+        config = {
+            "DEFAULT": {
+                "img_host_1": "imgbox",
+                "img_host_2": "imgbb",
+                "image_upload_concurrency": 0,
+                "image_upload_delay": 0,
+            },
+            "TRACKERS": {},
+        }
+        meta = Meta({"base_dir": str(tmp_path), "uuid": "test", "imghost": "imgbox"})
+        with (
+            patch("src.uploadscreens.screenshots_dir", return_value=tmp_path),
+            patch("src.uploadscreens.os.chdir"),
+            patch("src.uploadscreens.upload_image_task", new=fake_upload),
+        ):
+            return await _upload_screens(config, meta, 3, 1, 0, 3, ["one.png", "two.png", "three.png"], {}, max_retries=3, unavailable_hosts=set())
+
+    image_list, uploaded_count = asyncio.run(exercise())
+    assert uploaded_count == 3
+    assert len(image_list) == 3
+    assert calls.count("imgbox") == 1
+    assert calls.count("imgbb") == 3
 
 
 def test_upload_screens_does_not_retry_ambiguous_onlyimage_failure(tmp_path: Path) -> None:
