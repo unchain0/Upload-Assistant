@@ -68,6 +68,16 @@ def test_select_common_image_host_uses_first_configured_shared_host() -> None:
     assert selected == "imgbb"
 
 
+def test_select_common_image_host_strips_configured_host_whitespace() -> None:
+    selected = select_common_image_host(
+        {"img_host_1": " IMGBB "},
+        ["ALPHA", "BETA"],
+        {"ALPHA": _Alpha, "BETA": _Beta},
+    )
+
+    assert selected == "imgbb"
+
+
 def test_select_common_image_host_accepts_legacy_set_policy() -> None:
     selected = select_common_image_host(
         {"img_host_1": "imgbox", "img_host_2": "imgbb"},

@@ -125,6 +125,17 @@ async def test_debug_runs_tracker_payload_without_rehosting_or_client_injection(
 
 
 @pytest.mark.asyncio
+async def test_process_trackers_handles_missing_default_config() -> None:
+    meta = _meta(images=0)
+    meta.debug = True
+
+    await trackerhandle.process_trackers(meta, {}, FakeClient(), ["TEST"], {"TEST": FakeTracker}, [], [])
+
+    assert FakeTracker.upload_calls == 1
+    assert meta.tracker_status["TEST"]["upload_success"] is True
+
+
+@pytest.mark.asyncio
 async def test_book_without_cover_is_blocked_by_default() -> None:
     meta = _meta()
     meta.category = "BOOK"

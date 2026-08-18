@@ -537,11 +537,7 @@ async def export_info(
         logger.debug(f"[green]JSON file written to: {base_dir}{'/' + 'tmp' + '/'}{folder_id}/MediaInfo.json[/green]")
 
     async with aiofiles.open(f"{base_dir}{'/' + 'tmp' + '/'}{folder_id}/MediaInfo.json", encoding="utf-8") as f:
-        mi = cast(dict[str, Any], json.loads(await f.read()))
-
-        logger.debug("[blue]Reset MediaInfo library configuration[/blue]")
-
-    return mi
+        return cast(dict[str, Any], json.loads(await f.read()))
 
 
 def validate_mediainfo(meta: Meta, settings: bool = False) -> bool:

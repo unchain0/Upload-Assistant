@@ -1,6 +1,7 @@
 # ruff: noqa: ARG001, ARG005, S101
 from __future__ import annotations
 
+import importlib
 import signal
 import sys
 from pathlib import Path
@@ -29,6 +30,22 @@ def _configure_do_the_thing_stubs(
     queue_paths = [str(item.get("path", item)) if isinstance(item, dict) else str(item) for item in queue_items]
     for path in queue_paths:
         Path(path).touch()
+
+    # Keep batch-flow tests isolated from persistent user state and binary
+    # bootstrapping introduced before queue processing.
+    test_base_dir = str(Path(queue_paths[0]).parent / "ua-state")
+    monkeypatch.setattr(upload, "base_dir", test_base_dir)
+
+    def reload_with_test_config(module: Any) -> Any:
+        # ``do_the_thing`` reloads data.config before processing. Preserve the
+        # test overrides while still returning a distinct config object, just
+        # like a real module reload would.
+        monkeypatch.setattr(module, "config", dict(upload.config))
+        return module
+
+    monkeypatch.setattr(importlib, "reload", reload_with_test_config)
+    monkeypatch.setattr(upload, "configured_binary", lambda *_args, **_kwargs: "ffmpeg")
+    monkeypatch.setattr(upload, "ensure_mediainfo_binary", AsyncMock(return_value="mediainfo"))
 
     info_messages: list[str] = []
 

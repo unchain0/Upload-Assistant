@@ -94,7 +94,7 @@ def select_common_image_host(
 
     configured_hosts = sorted(
         (
-            (int(match.group(1)), host.lower())
+            (int(match.group(1)), host.strip().lower())
             for key, value in default_config.items()
             if (match := re.fullmatch(r"img_host_(\d+)", key)) and (host := _as_str(value)) and host.strip()
         ),
