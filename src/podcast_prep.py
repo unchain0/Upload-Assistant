@@ -9,9 +9,9 @@ from pathlib import Path
 from typing import Protocol, cast
 
 import mutagen
-from pymediainfo import MediaInfo
 
 from src.exportmi import export_info
+from src.mediainfo import MediaInfo
 from src.meta import Meta
 
 AUDIO_EXTENSIONS = frozenset({".aac", ".ac3", ".aiff", ".alac", ".ape", ".dts", ".flac", ".m4a", ".m4b", ".mp3", ".ogg", ".opus", ".wav", ".wma", ".wv"})

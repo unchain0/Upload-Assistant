@@ -119,7 +119,12 @@ class DarkPeers(UNIT3D):
 
     async def get_description(self, meta: Meta) -> dict[str, str]:
         audio_spectrogram = str(meta.category or "").strip().upper() == "MUSIC"
-        description = await DescriptionBuilder(self.tracker, self.config).unit3d_edit_desc(meta, audio_spectrogram=audio_spectrogram)
+        description = await DescriptionBuilder(self.tracker, self.config).general_description_generator(
+            meta,
+            audio_spectrogram=audio_spectrogram,
+            mediainfo=False,
+            nfo=False,
+        )
         return {"description": description}
 
     async def get_additional_checks(self, meta: Meta) -> bool:
@@ -815,9 +820,7 @@ class DarkPeers(UNIT3D):
             return False
         if re.fullmatch(r"[xhx][.-]?\d{3,4}", token_lower):
             return False
-        if re.fullmatch(r"\d+p", token_lower):
-            return False
-        return True
+        return not re.fullmatch(r"\d+p", token_lower)
 
     @staticmethod
     def _normalize_aka_year_order(name: str, title: str, aka: str, year: str) -> str:
@@ -1069,8 +1072,7 @@ class DarkPeers(UNIT3D):
                 parts.append(identifier)
             if manual_source == "RETAIL":
                 parts.append("Retail")
-            base_name = " ".join(parts)
-            return base_name
+            return " ".join(parts)
 
         if identifier:
             parts.append(identifier)

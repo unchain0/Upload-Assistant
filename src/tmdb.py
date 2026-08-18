@@ -15,9 +15,9 @@ import cli_ui
 import guessit
 import httpx
 
-from src.args import Args
 from src.cleanup import cleanup_manager
 from src.console import logger, prompt_in_thread
+from src.id_parsing import parse_tmdb_id
 from src.imdb import imdb_manager
 from src.meta import Meta
 from src.metadata_cache import cache_for, is_cache_miss
@@ -25,24 +25,16 @@ from src.metadata_cache import cache_for, is_cache_miss
 default_config: dict[str, Any] = {}
 tmdb_api_key: str | None = None
 TMDB_BASE_URL = "https://api.themoviedb.org/3"
-parser: Args | None = None
 
 
 def _apply_config(config: dict[str, Any]) -> None:
-    global tmdb_api_key, parser, default_config
+    global tmdb_api_key, default_config
     default_cfg = typing_cast(dict[str, Any], config.get("DEFAULT", {}))
     default_config = default_cfg
     api_key_value = default_cfg.get("tmdb_api", False)
     if not api_key_value or not isinstance(api_key_value, str) or not api_key_value.strip():
         raise ValueError("TMDB API key is missing or invalid. Please set 'tmdb_api' in your config under DEFAULT section.")
     tmdb_api_key = api_key_value
-    parser = Args(config=config)
-
-
-def _get_parser() -> Args:
-    if parser is None:
-        raise RuntimeError("TMDb parser is not initialized. Create TmdbManager with config first.")
-    return parser
 
 
 anitopy_parse_fn: Any = typing_cast(Any, anitopy).parse
@@ -393,7 +385,7 @@ async def get_tmdb_from_imdb(
     if tmdb_id in ("None", "", None, 0, "0") and mode == "cli" and not unattended:
         logger.info("[yellow]Unable to find a matching TMDb entry[/yellow]")
         tmdb_input = await prompt_in_thread(cli_ui.ask_string, "Please enter TMDb ID (format: tv/12345 or movie/12345): ", default="") or ""
-        category, tmdb_id = _get_parser().parse_tmdb_id(tmdb_input, category)
+        category, tmdb_id = parse_tmdb_id(tmdb_input, category)
 
     return category, tmdb_id, original_language, filename_search
 
@@ -747,7 +739,7 @@ async def get_tmdb_id(
                                 # Check if it's a manual TMDb ID entry
                                 if "/" in selection and (selection.lower().startswith("tv/") or selection.lower().startswith("movie/")):
                                     try:
-                                        parsed_category, parsed_tmdb_id = _get_parser().parse_tmdb_id(selection, category)
+                                        parsed_category, parsed_tmdb_id = parse_tmdb_id(selection, category)
                                         if parsed_tmdb_id and parsed_tmdb_id != 0:
                                             logger.info(f"[green]Using manual TMDb ID: {parsed_tmdb_id} and category: {parsed_category}[/green]")
                                             return parsed_tmdb_id, parsed_category
@@ -941,7 +933,7 @@ async def get_tmdb_id(
         sys.exit(1)
     if tmdb_input is None:
         tmdb_input = ""
-    category, tmdb_id = _get_parser().parse_tmdb_id(tmdb_input, category)
+    category, tmdb_id = parse_tmdb_id(tmdb_input, category)
 
     return tmdb_id, category
 
@@ -1616,7 +1608,7 @@ async def get_tmdb_imdb_from_mediainfo(
         for each in extra:
             if each.lower().startswith("tmdb") and not tmdbid:
                 with contextlib.suppress(Exception):
-                    category, tmdbid = _get_parser().parse_tmdb_id(extra[each], category)
+                    category, tmdbid = parse_tmdb_id(extra[each], category)
             if each.lower().startswith("imdb") and not imdbid:
                 with contextlib.suppress(Exception):
                     imdb_id = extract_imdb_id(extra[each])

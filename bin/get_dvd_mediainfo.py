@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
+"""Provision the legacy MediaInfo CLI required for DVD parsing."""
+
 import platform
 import shutil
 import zipfile
@@ -15,6 +17,8 @@ MEDIAINFO_LIB_BASE_URL = "https://mediaarea.net/download/binary/libmediainfo0"
 
 
 def get_filename(system: str, arch: str, library_type: str = "cli") -> str:
+    if system == "windows" and library_type == "cli" and arch == "x86_64":
+        return f"MediaInfo_CLI_{MEDIAINFO_VERSION}_Windows_x64.zip"
     if system == "linux":
         if library_type == "cli":
             # MediaInfo CLI uses Lambda (pre-compiled) version
@@ -52,7 +56,7 @@ def extract_linux(cli_archive: Path, lib_archive: Path, output_dir: Path) -> Non
         with zipfile.ZipFile(lib_archive, "r") as archive:
             library_member = "lib/libmediainfo.so.0.0.0"
             if library_member not in archive.namelist():
-                raise RuntimeError("MediaInfo archive does not contain the required library")
+                raise RuntimeError("MediaInfo library archive does not contain the required library")
             extract_zip_regular_member(archive, library_member, staging / "libmediainfo.so.0")
         (staging / "mediainfo").chmod(0o700)
         staged_version = staging / f"version_{MEDIAINFO_VERSION}"
@@ -68,6 +72,13 @@ def extract_linux(cli_archive: Path, lib_archive: Path, output_dir: Path) -> Non
     finally:
         shutil.rmtree(staging, ignore_errors=True)
 
+def extract_windows(cli_archive: Path, output_dir: Path) -> None:
+    """Extract the legacy Windows DVD CLI without unpacking arbitrary archive members."""
+    with zipfile.ZipFile(cli_archive, "r") as zip_ref:
+        members = [name for name in zip_ref.namelist() if Path(name).name == "MediaInfo.exe"]
+        if len(members) != 1:
+            raise RuntimeError("MediaInfo archive must contain exactly one MediaInfo.exe")
+        extract_zip_regular_member(zip_ref, members[0], output_dir / "MediaInfo.exe")
 
 
 def download_dvd_mediainfo(base_dir: str) -> str | None:
@@ -76,16 +87,41 @@ def download_dvd_mediainfo(base_dir: str) -> str | None:
 
     logger.debug(f"[blue]System: {system}, arch: {machine}[/blue]")
 
-    if system not in ["linux"]:
-        return None
-
-    if system == "linux" and machine not in ["x86_64", "arm64"]:
-        return None
-
     if machine == "amd64":
         machine = "x86_64"
 
-    platform_dir = "linux"
+    if system == "windows":
+        if machine != "x86_64":
+            raise RuntimeError("MediaInfo 23.04 is unavailable for Windows ARM64; DVD language parsing cannot use the newer CLI")
+
+        output_dir = Path(base_dir) / "bin" / "MI" / "windows" / "dvd"
+        cli_file = output_dir / "MediaInfo.exe"
+        version_file = output_dir / f"version_{MEDIAINFO_VERSION}"
+        if cli_file.is_file() and version_file.is_file():
+            return str(cli_file)
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+        cli_filename = get_filename(system, machine)
+        with TemporaryDirectory() as tmp_dir:
+            cli_archive = Path(tmp_dir) / cli_filename
+            download_file(get_url(system, machine), cli_archive)
+            with TemporaryDirectory(dir=output_dir.parent, prefix="mediainfo-dvd-") as staging_dir:
+                staging_dir_path = Path(staging_dir)
+                extract_windows(cli_archive, staging_dir_path)
+                staged_cli = staging_dir_path / "MediaInfo.exe"
+                if not staged_cli.is_file():
+                    raise RuntimeError("Failed to extract MediaInfo CLI for DVD processing")
+                staged_cli.replace(cli_file)
+        version_file.write_text(f"MediaInfo {MEDIAINFO_VERSION}\n", encoding="utf-8")
+        return str(cli_file)
+
+    if system != "linux":
+        return None
+
+    if machine not in ["x86_64", "arm64"]:
+        return None
+
+    platform_dir = "linux/dvd"
     output_dir = Path(base_dir) / "bin" / "MI" / platform_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 

@@ -3,7 +3,6 @@
 import ast
 import asyncio
 import contextlib
-import filecmp
 import gc
 import json
 import os
@@ -33,11 +32,14 @@ import requests
 from rich.markup import escape
 from torf import Torrent as _Torrent  # pyright: ignore[reportMissingImports,reportUnknownVariableType]
 
+from bin.get_ffmpeg import FfmpegBinaryManager
 from bin.get_mkbrr import MkbrrBinaryManager
 from src.add_comparison import ComparisonManager
+from src.app_paths import CODE_DIR, STATE_DIR
 from src.args import Args, partition_existing_paths, read_paths_from_stdin
 from src.artwork import is_public_http_url, is_valid_cover_image
 from src.audio_spectrogram import process_audio_spectrograms
+from src.binaries import configured_binary
 from src.book_prep import detect_newspaper, is_valid_book_language, missing_book_fields, resolve_book_language
 from src.cleanup import cleanup_manager
 from src.clients import Clients
@@ -55,24 +57,25 @@ from src.get_desc import gen_desc
 from src.get_name import NameManager
 from src.get_tracker_data import TrackerDataManager
 from src.getseasonep import sync_single_episode_from_filename
+from src.mediainfo import ensure_mediainfo_binary
 from src.qbitwait import Wait
 from src.queuemanage import QueueManager
 from src.rehostimages import check_tracker_image_hosts
 from src.takescreens import TakeScreensManager, download_artwork_from_meta
-from src.temp_paths import artwork_dir, ensure_temp_root, screenshots_dir
+from src.temp_paths import artwork_dir, ensure_temp_root, music_release_snapshot_path, screenshots_dir
 from src.torrentcreate import TorrentCreator
 from src.tracker_images import configured_screenshot_minimum, screenshot_requirement_error
 from src.trackerhandle import process_trackers
 from src.trackers.alpharatio import AlphaRatio
 from src.trackers.common import Common
-from src.trackers.digitalcore import DigitalCore
 from src.trackers.passthepopcorn import PassThePopcorn
 from src.trackersetup import TrackerSetup, api_trackers, http_trackers, other_api_trackers, tracker_class_map
 from src.trackerstatus import TrackerStatusManager
 from src.uphelper import UploadHelper
 from src.uploadscreens import UploadScreensManager
 
-base_dir = str(Path(__file__).resolve().parent)
+# Runtime artifacts are user-owned; CODE_DIR remains the read-only checkout.
+base_dir = str(STATE_DIR)
 CLI_UI: Any = cli_ui
 TORF_Torrent: Any = cast(Any, _Torrent)
 RICH_HANDLER: Any = cast(Any, _rich_handler)
@@ -165,25 +168,19 @@ def _handle_shutdown_signal(signum: int, _frame: Any) -> None:
 # ── Restore built-in data/ files when a Docker volume mount hides them ──
 # The Dockerfile copies the original data/ tree to defaults/data/ so that
 # volume mounts over /Upload-Assistant/data/ don't lose critical files
-# (__init__.py, version.py, example_config.py, templates/).
+# (__init__.py, example_config.py, templates/).
 _data_dir = Path(base_dir) / "data"
-_defaults_data_dir = Path(base_dir) / "defaults" / "data"
+_defaults_data_dir = CODE_DIR / "data"
 
 # Directories that should never be copied into user-facing data/
 _SKIP_DIRS = {"__pycache__", ".mypy_cache", ".ruff_cache"}
 
-# Built-in metadata files that should track the image version even when
-# /Upload-Assistant/data is a persistent volume from an older container.
-_ALWAYS_SYNC_ROOT_FILES = {"version.py"}
-
 if Path(_defaults_data_dir).is_dir():
     Path(_data_dir).mkdir(parents=True, exist_ok=True)
     _restored_count = 0
-    _synced_count = 0
     _restore_errors: list[str] = []
     # Walk the defaults tree and copy anything missing in the live data dir.
     # Never overwrite user files (config.py, cookies/, tags.json, etc.).
-    # Root version.py is image metadata, not user config, so keep it current.
     for dirpath, dirnames, filenames in os.walk(_defaults_data_dir):
         # Prune unwanted directories in-place so os.walk skips them entirely
         dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS]
@@ -201,25 +198,14 @@ if Path(_defaults_data_dir).is_dir():
                 continue
             target_file = Path(target_dir) / fname
             src_file = Path(dirpath) / fname
-            should_sync = False
-            if rel_dir == "." and fname in _ALWAYS_SYNC_ROOT_FILES and Path(target_file).exists():
-                try:
-                    should_sync = not filecmp.cmp(src_file, target_file, shallow=False)
-                except OSError:
-                    should_sync = True
-            if not Path(target_file).exists() or should_sync:
+            if not Path(target_file).exists():
                 try:
                     shutil.copy2(src_file, target_file)
-                    if should_sync:
-                        _synced_count += 1
-                    else:
-                        _restored_count += 1
+                    _restored_count += 1
                 except OSError as exc:
                     _restore_errors.append(f"{Path(rel_dir) / fname}: {exc}")
     if _restored_count:
         logger.info(f"Restored {_restored_count} built-in file(s) into data/ from defaults.", extra={"markup": False})
-    if _synced_count:
-        logger.info(f"Synced {_synced_count} built-in metadata file(s) into data/ from defaults.", extra={"markup": False})
     if _restore_errors:
         logger.warning(f"[red]Warning: failed to restore {len(_restore_errors)} file(s) into data/:[/red]")
         for _err in _restore_errors[:5]:
@@ -281,7 +267,7 @@ def _print_config_error(error_type: str, message: str, lineno: int | None = None
         logger.info(f"{_RED}  {message}{_RESET}", extra={"markup": False})
     if suggestion:
         logger.info(f"{_GREEN}  Suggestion: {suggestion}{_RESET}", extra={"markup": False})
-    logger.info(f"\n{_RED}Reference: https://github.com/Audionut/Upload-Assistant/blob/master/data/example_config.py{_RESET}", extra={"markup": False})
+    logger.info(f"\n{_RED}Reference: https://github.com/wastaken7/Upload-Assistant/blob/master/data/example_config.py{_RESET}", extra={"markup": False})
 
 
 config: dict[str, Any]
@@ -356,7 +342,7 @@ if Path(_config_path).exists():
 else:
     logger.info(f"{_RED}Configuration file 'config.py' not found.{_RESET}", extra={"markup": False})
     logger.info(f"{_RED}Please ensure the file is located at: {_YELLOW}{_config_path}{_RESET}", extra={"markup": False})
-    logger.info(f"{_RED}Follow the setup instructions: https://github.com/Audionut/Upload-Assistant{_RESET}", extra={"markup": False})
+    logger.info(f"{_RED}Follow the setup instructions: https://github.com/wastaken7/Upload-Assistant{_RESET}", extra={"markup": False})
     sys.exit(1)
 
 
@@ -369,7 +355,6 @@ async def merge_meta(meta: Meta, saved_meta: dict[str, Any]) -> dict[str, Any]:
         "audiobook_duration_formatted",
         "audiobook_duration",
         "author",
-        "blu",
         "book_asin",
         "book_author",
         "book_isbn",
@@ -393,7 +378,6 @@ async def merge_meta(meta: Meta, saved_meta: dict[str, Any]) -> dict[str, Any]:
         "game_system",
         "game_version",
         "hardcoded_subs",
-        "hdb",
         "igdb_manual",
         "imdb",
         "imghost",
@@ -423,7 +407,6 @@ async def merge_meta(meta: Meta, saved_meta: dict[str, Any]) -> dict[str, Any]:
         "openlibrary",
         "personalrelease",
         "platform",
-        "ptp",
         "qbit_cat",
         "qbit_tag",
         "region",
@@ -443,7 +426,10 @@ async def merge_meta(meta: Meta, saved_meta: dict[str, Any]) -> dict[str, Any]:
     sanitized_saved_meta: dict[str, Any] = {}
     for key, value in saved_meta.items():
         clean_key = key.strip().strip("'").strip('"')
-        if clean_key in overwrite_list:
+        if clean_key == "tracker_ids":
+            current_tracker_ids = meta.tracker_ids
+            sanitized_saved_meta[clean_key] = current_tracker_ids if current_tracker_ids else value
+        elif clean_key in overwrite_list:
             if clean_key in meta and getattr(meta, clean_key, None) is not None:
                 sanitized_saved_meta[clean_key] = meta[clean_key]
                 logger.debug(f"Overriding {clean_key} with meta value: {meta[clean_key]}")
@@ -451,7 +437,11 @@ async def merge_meta(meta: Meta, saved_meta: dict[str, Any]) -> dict[str, Any]:
                 sanitized_saved_meta[clean_key] = value
         else:
             sanitized_saved_meta[clean_key] = value
+    tracker_ids = sanitized_saved_meta.pop("tracker_ids", None)
     meta.update(sanitized_saved_meta)
+    if isinstance(tracker_ids, dict):
+        meta.set_tracker_ids(tracker_ids)
+        sanitized_saved_meta["tracker_ids"] = dict(meta.tracker_ids)
     sanitize_book_language(meta)
     sanitize_book_author(meta)
     return sanitized_saved_meta
@@ -901,23 +891,24 @@ def _download_music_cover(url: str) -> bytes | None:
 
 
 async def _write_music_snapshot(meta: Meta) -> None:
-    path = Path(meta.base_dir) / "tmp" / str(meta.uuid) / "music_release.json"
+    path = music_release_snapshot_path(meta.base_dir, str(meta.uuid))
     path.parent.mkdir(parents=True, exist_ok=True)
     async with aiofiles.open(path, "w", encoding="utf-8") as file:
         await file.write(json.dumps(meta.music_release, indent=2, cls=PathAwareEncoder))
 
 
-def _music_cover_allowed_hosts(config: Mapping[str, Any], trackers: Iterable[Any]) -> list[str]:
-    """Return image hosts accepted by DigitalCore and every selected constrained tracker."""
-    approved_hosts = set(getattr(DigitalCore(config=config), "approved_image_hosts", ()))
+def _music_cover_allowed_hosts(trackers: Iterable[Any]) -> list[str] | None:
+    """Return the hosts accepted by every selected tracker with a host policy."""
+    approved_hosts: set[str] | None = None
     for tracker_name in trackers:
         tracker_class = tracker_class_map.get(str(tracker_name).upper())
         if tracker_class is None:
             continue
-        tracker_hosts = getattr(tracker_class(config=config), "approved_image_hosts", None)
+        tracker_hosts = getattr(tracker_class, "approved_image_hosts", None)
         if tracker_hosts:
-            approved_hosts &= {str(host) for host in tracker_hosts}
-    return sorted(approved_hosts)
+            hosts = {str(host) for host in tracker_hosts}
+            approved_hosts = hosts if approved_hosts is None else approved_hosts & hosts
+    return sorted(approved_hosts) if approved_hosts is not None else None
 
 
 async def _host_music_cover(meta: Meta, uploadscreens_manager: UploadScreensManager, allowed_hosts: list[str] | None = None) -> None:
@@ -1159,6 +1150,15 @@ def _sync_single_episode(meta: Meta) -> None:
         )
 
 
+def xxx_min_successful_uploads(meta: Meta, min_successful_uploads: int) -> int:
+    """Cap XXX image uploads to its one-contact-sheet-per-video contract."""
+    try:
+        contact_sheet_count = int(meta.screens or 0)
+    except TypeError, ValueError:
+        contact_sheet_count = 0
+    return min(min_successful_uploads, max(1, contact_sheet_count))
+
+
 async def process_meta(meta: Meta, base_dir: str) -> bool:
     """Process the metadata for each queued path."""
     if not meta.imghost:
@@ -1343,6 +1343,7 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
         trackers = meta.trackers
 
         for tracker in [
+            "1PTBA",
             "ASIANCINEMA",
             "AITHER",
             "AMIGOSSHARE",
@@ -1357,6 +1358,7 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
             "INFINITYHD",
             "LAJIDUI",
             "LASTDIGITALUNDERGROUND",
+            "LEMONHD",
             "LONGPT",
             "LATTEAM",
             "MAKINGOFF",
@@ -1364,6 +1366,7 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
             "PTCAFE",
             "PTGTK",
             "PTSKIT",
+            "PTZONE",
             "RAILGUNPT",
             "SAMARITANO",
             "SHAREISLAND",
@@ -1372,6 +1375,7 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
             "TORRENTEROS",
             "TVCHAOSUK",
             "ULCX",
+            "XINGYUNGEPT",
         ]:
             if tracker in trackers:
                 status_dict = meta.tracker_status.setdefault(tracker, {})
@@ -1551,6 +1555,12 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
                 except Exception as e:
                     logger.error(f"[red]Error processing audio spectrograms: {e}[/red]")
 
+            if dynamic_hdr_plot_enabled(meta, config):
+                try:
+                    await process_dynamic_hdr_plots(meta, config, uploadscreens_manager)
+                except Exception as e:
+                    logger.error(f"[red]Error processing dynamic HDR plots: {e}[/red]")
+
             # Take Screenshots
             try:
                 # Keep the later upload count in sync with screenshots removed
@@ -1667,8 +1677,8 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
             if "image_list" not in meta:
                 meta.image_list = []
             if meta.category == "MUSIC":
-                allowed_hosts = _music_cover_allowed_hosts(config, cast(list[Any], meta.trackers))
-                if not allowed_hosts:
+                allowed_hosts = _music_cover_allowed_hosts(cast(list[Any], meta.trackers))
+                if allowed_hosts == []:
                     logger.warning("[yellow]MUSIC: no image host is approved by all selected trackers.[/yellow]")
                     return False
                 await _host_music_cover(meta, uploadscreens_manager, allowed_hosts)
@@ -1714,7 +1724,7 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
                 # not possible, keep processing the compatible trackers and skip only
                 # those for which the user has no acceptable configured host.
                 allowed_hosts: list[str] | None = None
-                if relevant_trackers:
+                if relevant_trackers and config.get("DEFAULT", {}).get("smart_image_host_selection", True) and not meta.imghost_from_cli:
                     try:
                         tracker_instances = {tracker_name: tracker_class_map[tracker_name](config=config) for tracker_name in relevant_trackers}
 
@@ -1835,6 +1845,8 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
                     if meta.category == "BOOK":
                         meta.screens = actual_screens
                         min_successful_uploads = min(required_minimum, actual_screens)
+                    elif meta.category == "XXX":
+                        min_successful_uploads = xxx_min_successful_uploads(meta, min_successful_uploads)
 
                     host_order: list[str] = []
                     for host_index in range(1, 10):
@@ -2174,6 +2186,41 @@ def get_remote_version(url: str) -> tuple[str | None, str | None]:
         return None, None
 
 
+def _update_notification_cache_path() -> Path:
+    return STATE_DIR / "update_notification.json"
+
+
+def _read_update_notification_cache(cache_hours: float) -> tuple[str, str] | None:
+    """Return a still-valid remote version response from the runtime cache."""
+    try:
+        cached = json.loads(_update_notification_cache_path().read_text(encoding="utf-8"))
+        checked_at = cached["checked_at"]
+        remote_version = cached["remote_version"]
+        remote_content = cached["remote_content"]
+        if not isinstance(checked_at, (int, float)) or not isinstance(remote_version, str) or not isinstance(remote_content, str):
+            return None
+        if time.time() - checked_at >= cache_hours * 3600:
+            return None
+        return remote_version, remote_content
+    except FileNotFoundError, OSError, TypeError, ValueError, KeyError, json.JSONDecodeError:
+        return None
+
+
+def _write_update_notification_cache(remote_version: str, remote_content: str) -> None:
+    """Persist a successful remote version response for later runs."""
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        cache_path = _update_notification_cache_path()
+        temporary_path = cache_path.with_suffix(".tmp")
+        temporary_path.write_text(
+            json.dumps({"checked_at": time.time(), "remote_version": remote_version, "remote_content": remote_content}),
+            encoding="utf-8",
+        )
+        temporary_path.replace(cache_path)
+    except OSError as exc:
+        logger.debug(f"Could not cache update notification: {exc}")
+
+
 def extract_changelog(content: str, to_version: str) -> str | None:
     """Extracts the changelog entries between the specified versions."""
     try:
@@ -2210,12 +2257,18 @@ def extract_changelog(content: str, to_version: str) -> str | None:
     return None
 
 
-async def update_notification(base_dir: str) -> str:
-    version_file = Path(base_dir) / "data" / "version.py"
-    remote_version_url = "https://raw.githubusercontent.com/wastaken7/Upload-Assistant/master/data/version.py"
+async def update_notification() -> str:
+    version_file = CODE_DIR / "src" / "version.py"
+    remote_version_url = "https://raw.githubusercontent.com/wastaken7/Upload-Assistant/master/src/version.py"
 
     notice = config["DEFAULT"].get("update_notification", True)
     verbose = config["DEFAULT"].get("verbose_notification", False)
+    cache_hours = config["DEFAULT"].get("update_notification_cache_hours", 4)
+    try:
+        cache_hours = max(0.0, float(cache_hours))
+    except TypeError, ValueError:
+        logger.warning("[yellow]Invalid update_notification_cache_hours; using 4 hours.[/yellow]")
+        cache_hours = 4.0
 
     local_version = get_local_version(version_file)
     if not local_version:
@@ -2224,14 +2277,19 @@ async def update_notification(base_dir: str) -> str:
     if not notice:
         return local_version
 
-    remote_version, remote_content = get_remote_version(remote_version_url)
+    cached_response = _read_update_notification_cache(cache_hours) if cache_hours else None
+    if cached_response:
+        remote_version, remote_content = cached_response
+    else:
+        remote_version, remote_content = get_remote_version(remote_version_url)
+        if remote_version and remote_content:
+            _write_update_notification_cache(remote_version, remote_content)
     if not remote_version:
         return local_version
 
     if _parse_version_tuple(remote_version) > _parse_version_tuple(local_version):
         logger.info(f"[red][NOTICE] [green]Update available: [/green][yellow]{remote_version}")
         logger.info(f"[red][NOTICE] [green]Current version: [/green][yellow]{local_version}")
-        await asyncio.sleep(1)
         if verbose and remote_content:
             changelog = extract_changelog(remote_content, remote_version)
             if changelog:
@@ -2305,7 +2363,7 @@ async def do_the_thing(base_dir: str) -> None:
             break
 
     meta.ua_name = "Upload-Assistant"
-    meta.current_version = await update_notification(base_dir)
+    meta.current_version = await update_notification()
 
     signature = f"Shared with {meta.ua_name}"
     if meta.current_version:
@@ -2435,7 +2493,7 @@ async def do_the_thing(base_dir: str) -> None:
             for error in config_errors:
                 logger.info(f"[red]  ✗ {error}[/red]")
             logger.info("[red]\nPlease fix the above errors in your config.py[/red]")
-            logger.info("[yellow]Reference: https://github.com/Audionut/Upload-Assistant/blob/master/data/example_config.py[/yellow]")
+            logger.info("[yellow]Reference: https://github.com/wastaken7/Upload-Assistant/blob/development/data/example_config.py[/yellow]")
             raise SystemExit(1)
 
         if config_warnings:
@@ -2457,6 +2515,10 @@ async def do_the_thing(base_dir: str) -> None:
 
         if not meta.path:
             exit(0)
+
+        if not configured_binary("ffmpeg_path", config):
+            os.environ["UA_FFMPEG_PATH"] = await FfmpegBinaryManager.ensure_ffmpeg_binary(STATE_DIR)
+        await ensure_mediainfo_binary(config, state_dir=STATE_DIR)
 
         path = meta.path
         path = str(Path(path).resolve())
@@ -2575,15 +2637,12 @@ async def do_the_thing(base_dir: str) -> None:
 
                 keep_meta = config["DEFAULT"].get("keep_meta", False)
 
-                if not keep_meta or meta.delete_meta:
-                    if Path(meta_file).exists():
-                        try:
-                            meta_file.unlink()
-                            logger.debug(f"[bold yellow]Found and deleted existing metadata file: {meta_file}")
-                        except Exception as e:
-                            logger.info(f"[bold red]Failed to delete metadata file {meta_file}: {e!s}")
-                    else:
-                        logger.debug(f"[yellow]No metadata file found at {meta_file}")
+                if (not keep_meta or meta.delete_meta) and Path(meta_file).exists():
+                    try:
+                        meta_file.unlink()
+                        logger.debug(f"[bold yellow]Found and deleted existing metadata file: {meta_file}")
+                    except Exception as e:
+                        logger.info(f"[bold red]Failed to delete metadata file {meta_file}: {e!s}")
 
                 if keep_meta and Path(meta_file).exists():
                     async with aiofiles.open(meta_file, encoding="utf-8") as f:
@@ -3272,7 +3331,11 @@ async def process_cross_seeds(meta: Meta) -> None:
 
 async def get_mkbrr_path(base_dir: str | None = None) -> str | None:
     try:
-        resolved_base_dir = base_dir or str(Path(__file__).resolve().parent)
+        # Prefer the immutable binary shipped with the application. Downloads
+        # are cached in the user-owned runtime directory only when needed.
+        if bundled_mkbrr := MkbrrBinaryManager.find_existing_binary(CODE_DIR):
+            return bundled_mkbrr
+        resolved_base_dir = base_dir or str(STATE_DIR)
         mkbrr_path = await MkbrrBinaryManager.ensure_mkbrr_binary(resolved_base_dir, version="v1.24.0")
         return mkbrr_path if mkbrr_path else None
     except Exception as e:

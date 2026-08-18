@@ -117,7 +117,11 @@ class Utopia(UNIT3D):
 
         try:
             builder = DescriptionBuilder(self.tracker, self.config)
-            description = await builder.unit3d_edit_desc(meta)
+            description = await builder.general_description_generator(
+                meta,
+                mediainfo=False,
+                nfo=False,
+            )
         finally:
             # Restore original values even if an error occurs
             meta.image_list = original_image_list

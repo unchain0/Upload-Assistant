@@ -29,8 +29,11 @@ from typing import Any, Literal, Protocol, TypedDict, cast
 from collections.abc import Callable
 from collections.abc import Iterator, Mapping, Sequence
 
+import psutil
+
 import web_ui.auth as auth_mod
 from src.webui_progress import ProgressEvent, clear_progress_callback, reset_progress, set_progress_callback
+from src.app_paths import CODE_DIR, STATE_DIR
 
 
 def _module_name(*parts: str) -> str:
@@ -82,6 +85,18 @@ class _ResponseLike(Protocol):
 class _ConsoleLike(Protocol):
     def print(self, *args: object, **kwargs: object) -> object: ...
     def input(self, prompt: str = "") -> str: ...
+
+
+class _PopenGroupKwargs(TypedDict, total=False):
+    creationflags: int
+    start_new_session: bool
+
+
+class _WebUIProcess(Protocol):
+    pid: int
+
+    def poll(self) -> int | None: ...
+    def wait(self, timeout: float | None = None) -> int: ...
 
 
 class _SessionLike(Protocol):
@@ -1141,8 +1156,136 @@ ANSI_ESCAPE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 ProcessInfo = dict[str, Any]
 
 
+class _ConPtyProcess:
+    """Popen-compatible surface for a Windows ConPTY child."""
+
+    def __init__(self, pty: Any) -> None:
+        self._pty = pty
+        self.pid = int(pty.pid)
+
+    def poll(self) -> int | None:
+        if self._pty.isalive():
+            return None
+        status = self._pty.exitstatus
+        return int(status) if status is not None else 1
+
+    def wait(self, timeout: float | None = None) -> int:
+        timeout_value = timeout if timeout is not None else 0.0
+        deadline = time.monotonic() + timeout if timeout is not None else None
+        while self.poll() is None:
+            if deadline is not None and time.monotonic() >= deadline:
+                raise subprocess.TimeoutExpired(["ConPTY"], timeout_value)
+            time.sleep(0.05)
+        return self.poll() or 0
+
+    def read(self, size: int = 1024) -> str:
+        return str(self._pty.read(size))
+
+    def write(self, text: str) -> None:
+        self._pty.write(text)
+
+    def close(self) -> None:
+        with contextlib.suppress(Exception):
+            self._pty.close()
+
+
+def _spawn_webui_upload_process(command: list[str], base_dir: Path, env: dict[str, str]) -> tuple[_WebUIProcess, str]:
+    """Start the upload controller, preferring a terminal on Windows for ANSI output."""
+    if sys.platform == "win32":
+        try:
+            pty_process_class: Any = cast(Any, importlib.import_module("winpty")).PtyProcess
+
+            pty = pty_process_class.spawn(command, cwd=str(base_dir), env=env, dimensions=(40, 120))
+            return _ConPtyProcess(pty), "conpty"
+        except ImportError:
+            console.print("pywinpty is unavailable; falling back to pipe-based WebUI output.", markup=False)
+        except Exception as err:
+            console.print(f"ConPTY startup failed; falling back to pipe-based WebUI output: {err}", markup=False)
+
+    popen_kwargs: _PopenGroupKwargs = {}
+    if sys.platform == "win32":
+        popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        popen_kwargs["start_new_session"] = True
+
+    # codeql[py/command-line-injection]
+    return (
+        subprocess.Popen(  # lgtm[py/command-line-injection]  # noqa: S603
+            command,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=0,
+            cwd=str(base_dir),
+            env=env,
+            universal_newlines=True,
+            **popen_kwargs,
+        ),
+        "subprocess",
+    )
+
+
+def _write_webui_process_input(process: _WebUIProcess, user_input: str) -> None:
+    if isinstance(process, _ConPtyProcess):
+        process.write(f"{user_input}\r\n")
+        return
+
+    stdin = getattr(process, "stdin", None)
+    if stdin is None:
+        raise RuntimeError("Process stdin is unavailable")
+    stdin.write(f"{user_input}\n")
+    stdin.flush()
+
+
+def _close_webui_process_io(process: _WebUIProcess) -> None:
+    if isinstance(process, _ConPtyProcess):
+        process.close()
+        return
+
+    for stream_name in ("stdin", "stdout", "stderr"):
+        with contextlib.suppress(Exception):
+            stream = getattr(process, stream_name, None)
+            if stream is not None:
+                stream.close()
+
+
 # Store active processes
 active_processes: dict[str, ProcessInfo] = {}
+
+
+def _terminate_process_tree(process: _WebUIProcess, timeout: float = 2.0) -> bool:
+    """Terminate an upload controller and every child it has started."""
+    if process.poll() is not None:
+        return True
+
+    try:
+        root = psutil.Process(process.pid)
+    except psutil.NoSuchProcess, psutil.AccessDenied, OSError:
+        return process.poll() is not None
+
+    # Snapshot descendants before stopping the controller: once the controller
+    # exits, its children may be re-parented and become impossible to identify.
+    try:
+        processes = root.children(recursive=True)
+    except psutil.NoSuchProcess, psutil.AccessDenied, OSError:
+        processes = []
+    processes.append(root)
+
+    for child in processes:
+        with contextlib.suppress(psutil.NoSuchProcess, psutil.AccessDenied, OSError):
+            child.terminate()
+
+    _, alive = psutil.wait_procs(processes, timeout=timeout)
+    for child in alive:
+        with contextlib.suppress(psutil.NoSuchProcess, psutil.AccessDenied, OSError):
+            child.kill()
+    _, alive = psutil.wait_procs(alive, timeout=timeout)
+
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        process.wait(timeout=0)
+    return process.poll() is not None and not alive
+
 
 # Local store for consoles we've wrapped to avoid assigning attributes on Console
 _ua_console_store: dict[int, dict[str, Any]] = {}
@@ -1332,7 +1475,7 @@ def _book_cover_from_meta(meta_data: Mapping[str, object], preview_session_id: s
     if not meta_uuid:
         return ""
 
-    tmp_dir = Path(__file__).parent.parent / "tmp" / meta_uuid / "artwork"
+    tmp_dir = STATE_DIR / "tmp" / meta_uuid / "artwork"
     for filename in ("POSTER.png", "poster.png", "POSTER.jpg", "poster.jpg", "cover.jpg", "cover.png"):
         if (tmp_dir / filename).exists():
             return _execution_preview_cover_url(preview_session_id, meta_uuid)
@@ -1374,7 +1517,7 @@ def _resolve_execution_preview_meta(session_id: str) -> tuple[str, Path | None, 
     if not execution_path:
         return "", None, None
 
-    base_tmp_dir = Path(__file__).parent.parent / "tmp"
+    base_tmp_dir = STATE_DIR / "tmp"
     alias_meta_file = base_tmp_dir / Path(execution_path).name / "meta.json"
     alias_meta = _read_execution_preview_meta_file(alias_meta_file) if alias_meta_file.exists() else None
     meta_uuid = _stringify_preview_value(process_info.get("meta_uuid"))
@@ -1397,23 +1540,31 @@ def _resolve_execution_preview_meta(session_id: str) -> tuple[str, Path | None, 
     return execution_path, None, None
 
 
-def _looks_like_subprocess_prompt(buffer: str) -> bool:
+def _subprocess_prompt_type(buffer: str) -> str | None:
     last_line = buffer.splitlines()[-1] if buffer else ""
-    stripped = last_line.strip()
+    stripped = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", last_line).strip()
     if not stripped:
-        return False
+        return None
     lowered = stripped.lower()
     if "running:" in lowered:
-        return False
-    return (
-        stripped.endswith(":")
-        or stripped.endswith("?")
-        or lowered.endswith("(y/n)")
-        or lowered.endswith("(y/n):")
-        or " enter " in f" {lowered} "
-        or " select " in f" {lowered} "
-        or lowered.startswith("select ")
-    )
+        return None
+    if re.search(r"\(\s*y\s*/\s*n\s*\)\s*:?$", lowered):
+        return "yes_no"
+    if stripped.endswith(":") or stripped.endswith("?") or " enter " in f" {lowered} " or " select " in f" {lowered} " or lowered.startswith("select "):
+        return "text"
+    return None
+
+
+def _webui_subprocess_env() -> dict[str, str]:
+    """Return the environment required for an interactive colored WebUI child."""
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    # Rich honors NO_COLOR even when force_terminal is enabled. The browser
+    # consumes ANSI itself, so its child must not inherit that CLI preference.
+    env.pop("NO_COLOR", None)
+    env["UA_WEBUI_FORCE_COLOR"] = "1"
+    return env
 
 
 def _append_metadata_source(
@@ -1864,9 +2015,9 @@ def _find_execution_preview_cover_file(session_id: str) -> Path | None:
     meta_uuid = _stringify_preview_value(resolved_meta.get("uuid")) if resolved_meta is not None else ""
     candidate_dirs: list[Path] = []
     if meta_uuid:
-        release_tmp = Path(__file__).parent.parent / "tmp" / meta_uuid
+        release_tmp = STATE_DIR / "tmp" / meta_uuid
         candidate_dirs.append(release_tmp / "artwork")
-    release_tmp = Path(__file__).parent.parent / "tmp" / Path(execution_path).name
+    release_tmp = STATE_DIR / "tmp" / Path(execution_path).name
     candidate_dirs.append(release_tmp / "artwork")
 
     # A music sidecar cover may stay beside the release, while embedded art is
@@ -1916,7 +2067,7 @@ def _resolve_execution_review_temp_dir(meta_data: Mapping[str, object]) -> Path 
     meta_uuid = _stringify_preview_value(meta_data.get("uuid"))
     if not meta_uuid:
         return None
-    temp_root = (Path(__file__).parent.parent / "tmp").resolve()
+    temp_root = (STATE_DIR / "tmp").resolve()
     try:
         temp_dir = (temp_root / meta_uuid).resolve()
         temp_dir.relative_to(temp_root)
@@ -2294,8 +2445,8 @@ def set_runtime_browse_roots(browse_roots: str) -> None:
 def _load_config_from_file(path: Path) -> dict[str, Any] | None:
     """Load and return the ``config`` dict from a Python config file.
 
-    Only files inside the repository ``data/`` directory with a ``.py``
-    extension are accepted.  No ownership or permission checks are
+    Only files inside the repository or runtime ``data/`` directories with a
+    ``.py`` extension are accepted.  No ownership or permission checks are
     performed — the file lives in a user-controlled directory and the app
     already writes to it freely via ``config_update``.
 
@@ -2305,10 +2456,15 @@ def _load_config_from_file(path: Path) -> dict[str, Any] | None:
     if not path.exists():
         return None
 
-    # Restrict to the repository `data` directory and ensure .py extension.
-    repo_data_dir = Path(__file__).resolve().parent.parent / "data"
+    # Preserve support for Python files beneath the repository data directory
+    # while also accepting files beneath the user-owned runtime data directory.
+    allowed_data_dirs = {
+        (CODE_DIR / "data").resolve(),
+        (STATE_DIR / "data").resolve(),
+    }
     try:
-        if not path.resolve().is_relative_to(repo_data_dir.resolve()) or path.suffix != ".py":
+        resolved_path = path.resolve()
+        if path.suffix != ".py" or not any(resolved_path.is_relative_to(directory) for directory in allowed_data_dirs):
             return None
     except Exception:
         return None
@@ -2400,7 +2556,7 @@ def _write_audit_log(action: str, path: list[str], old_value: Any, new_value: An
     not raise to callers.
     """
     try:
-        base_dir = Path(__file__).parent.parent
+        base_dir = STATE_DIR
         audit_path = base_dir / "data" / "config_audit.log"
         # Determine acting user: session -> Basic auth username -> persisted user -> remote_addr
         persisted = _load_user_record()
@@ -3648,8 +3804,8 @@ def config_options():
     if not _verify_csrf_header() or not _verify_same_origin():
         return jsonify({"success": False, "error": "CSRF/Origin validation failed"}), 403
 
-    base_dir = Path(__file__).parent.parent
-    example_path = base_dir / "data" / "example_config.py"
+    base_dir = STATE_DIR
+    example_path = CODE_DIR / "data" / "example_config.py"
     config_path = base_dir / "data" / "config.py"
 
     example_config_loaded = _load_config_from_file(example_path)
@@ -3745,7 +3901,7 @@ def torrent_clients():
     if not _verify_csrf_header() or not _verify_same_origin():
         return jsonify({"success": False, "error": "CSRF/Origin validation failed"}), 403
 
-    base_dir = Path(__file__).parent.parent
+    base_dir = STATE_DIR
     config_path = base_dir / "data" / "config.py"
 
     user_config = _load_config_from_file(config_path) or {}
@@ -3769,7 +3925,7 @@ def get_trackers():
     if not _verify_csrf_header() or not _verify_same_origin():
         return jsonify({"success": False, "error": "CSRF/Origin validation failed"}), 403
 
-    base_dir = Path(__file__).parent.parent
+    base_dir = STATE_DIR
     config_path = base_dir / "data" / "config.py"
     user_config = _load_config_from_file(config_path) or {}
 
@@ -3826,8 +3982,8 @@ def config_update():
     if not path:
         return jsonify({"success": False, "error": "Invalid path"}), 400
 
-    base_dir = Path(__file__).parent.parent
-    example_path = base_dir / "data" / "example_config.py"
+    base_dir = STATE_DIR
+    example_path = CODE_DIR / "data" / "example_config.py"
     config_path = base_dir / "data" / "config.py"
 
     example_config = _load_config_from_file(example_path) or {}
@@ -3911,7 +4067,7 @@ def config_remove_subsection():
     if not path:
         return jsonify({"success": False, "error": "Invalid path"}), 400
 
-    base_dir = Path(__file__).parent.parent
+    base_dir = STATE_DIR
     config_path = base_dir / "data" / "config.py"
 
     try:
@@ -4607,7 +4763,7 @@ def save_queue():
         if not items:
             return jsonify({"error": "No items provided", "success": False}), 400
 
-        base_dir = Path(__file__).parent.parent
+        base_dir = STATE_DIR
         tmp_dir = base_dir / "tmp"
         tmp_dir.mkdir(parents=True, exist_ok=True)
 
@@ -4738,9 +4894,9 @@ def execute_command():
             existing = active_processes.pop(session_id, None)
             if existing:
                 proc = existing.get("process")
-                if proc and getattr(proc, "poll", None) is None:
+                if proc and proc.poll() is None:
                     with contextlib.suppress(Exception):
-                        proc.kill()
+                        _terminate_process_tree(proc)
 
         console.print(f"Execute request - Path: {path}, Args: {args}, Session: {session_id}", markup=False)
 
@@ -4761,8 +4917,8 @@ def execute_command():
                     yield f"data: {json.dumps({'type': 'error', 'data': 'Invalid execution path'})}\n\n"
                     return
 
-                base_dir = Path(__file__).parent.parent
-                upload_script = str(base_dir / "upload.py")
+                base_dir = STATE_DIR
+                upload_script = str(CODE_DIR / "upload.py")
                 command = [sys.executable, "-u", upload_script, validated_path]
 
                 process_state = _make_process_state(validated_path, args)
@@ -4788,9 +4944,10 @@ def execute_command():
 
                 yield f"data: {json.dumps({'type': 'system', 'data': f'Executing: {command_str}'})}\n\n"
 
-                # Decide whether to run as a subprocess or in-process. In-process
-                # preserves Rich output and allows capturing console.input / cli_ui prompts.
-                use_subprocess = bool(os.environ.get("UA_WEBUI_USE_SUBPROCESS", "").strip())
+                # The upload controller must be isolated so Kill can terminate its
+                # external workers as one process tree. Subprocess stdin already
+                # supports the WebUI prompt flow.
+                use_subprocess = True
 
                 if not use_subprocess:
                     # In-process execution path
@@ -5294,14 +5451,7 @@ def execute_command():
                     return
 
                 else:
-                    # Set environment to unbuffered and force line buffering
-                    env = os.environ.copy()
-                    env["PYTHONUNBUFFERED"] = "1"
-                    env["PYTHONIOENCODING"] = "utf-8"
-                    # Preserve Rich OSC 8 links so ansi_to_html can turn them into
-                    # clickable anchors for the browser terminal.
-                    env["UA_WEBUI_FORCE_COLOR"] = "1"
-                    # Disable Python output buffering
+                    env = _webui_subprocess_env()
 
                     # Sanity-check the working directory used for the subprocess.
                     # `base_dir` is computed from the application `__file__`, but
@@ -5331,7 +5481,7 @@ def execute_command():
 
                         # Ensure the upload_script is the expected script under the repo
                         try:
-                            expected_script = os.path.realpath(str(Path(base_dir) / "upload.py"))
+                            expected_script = os.path.realpath(str(CODE_DIR / "upload.py"))
                             script_real = os.path.realpath(command[2])
                             if script_real != expected_script:
                                 raise ValueError("Invalid script path")
@@ -5353,62 +5503,72 @@ def execute_command():
                     process = None
                     # Wrap subprocess handling in try/finally to guarantee cleanup
                     try:
-                        process = subprocess.Popen(  # lgtm[py/command-line-injection]  # noqa: S603
-                            command,
-                            stdin=subprocess.PIPE,
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE,
-                            text=True,
-                            bufsize=0,  # Completely unbuffered
-                            cwd=str(base_dir),
-                            env=env,
-                            universal_newlines=True,
-                        )
+                        process, process_mode = _spawn_webui_upload_process(command, Path(base_dir), env)
 
                         process_state.update(
                             {
-                                "mode": "subprocess",
+                                "mode": process_mode,
                                 "process": process,
                             }
                         )
                         if not _session_state_is_current(session_id, process_state):
+                            _terminate_process_tree(process)
                             raise RuntimeError("Execution session was replaced before subprocess startup completed")
-
-                        # Thread to read stdout - stream raw output with ANSI codes
-                        def read_stdout():
-                            try:
-                                if process.stdout is None:
-                                    return
-                                while True:
-                                    # Read in small chunks for real-time streaming
-                                    chunk = process.stdout.read(1)
-                                    if not chunk:
-                                        break
-                                    output_queue.put(("stdout", chunk))
-                            except Exception as e:
-                                console.print(f"stdout read error: {e}", markup=False)
-
-                        # Thread to read stderr - stream raw output
-                        def read_stderr():
-                            try:
-                                if process.stderr is None:
-                                    return
-                                while True:
-                                    chunk = process.stderr.read(1)
-                                    if not chunk:
-                                        break
-                                    output_queue.put(("stderr", chunk))
-                            except Exception as e:
-                                console.print(f"stderr read error: {e}", markup=False)
 
                         output_queue: queue.Queue[tuple[str, str]] = queue.Queue()
 
-                        # Start threads (no input thread needed - we write directly)
-                        stdout_thread = threading.Thread(target=read_stdout, daemon=True)
-                        stderr_thread = threading.Thread(target=read_stderr, daemon=True)
+                        if isinstance(process, _ConPtyProcess):
+                            # A pseudo terminal combines stdout and stderr into one ANSI stream.
+                            def read_stdout():
+                                try:
+                                    while True:
+                                        # Keep the same incremental prompt detection semantics as
+                                        # the pipe reader. ConPTY can return a whole prompt plus
+                                        # its trailing input marker in one read.
+                                        for char in process.read(1024):
+                                            output_queue.put(("stdout", char))
+                                except EOFError:
+                                    pass
+                                except Exception as err:
+                                    console.print(f"ConPTY read error: {err}", markup=False)
+
+                            stdout_thread = threading.Thread(target=read_stdout, daemon=True)
+                            stderr_thread = None
+                        else:
+                            # Thread to read stdout - stream raw output with ANSI codes
+                            def read_stdout():
+                                try:
+                                    stdout = getattr(process, "stdout", None)
+                                    if stdout is None:
+                                        return
+                                    while True:
+                                        chunk = stdout.read(1)
+                                        if not chunk:
+                                            break
+                                        output_queue.put(("stdout", chunk))
+                                except Exception as err:
+                                    console.print(f"stdout read error: {err}", markup=False)
+
+                            # Thread to read stderr - stream raw output
+                            def read_stderr():
+                                try:
+                                    stderr = getattr(process, "stderr", None)
+                                    if stderr is None:
+                                        return
+                                    while True:
+                                        chunk = stderr.read(1)
+                                        if not chunk:
+                                            break
+                                        output_queue.put(("stderr", chunk))
+                                except Exception as err:
+                                    console.print(f"stderr read error: {err}", markup=False)
+
+                            stdout_thread = threading.Thread(target=read_stdout, daemon=True)
+                            stderr_thread = threading.Thread(target=read_stderr, daemon=True)
 
                         stdout_thread.start()
-                        stderr_thread.start()
+                        if stderr_thread is not None:
+                            stderr_thread.start()
 
                         # Record threads and output queue for debugging/cleanup
                         with contextlib.suppress(Exception):
@@ -5417,7 +5577,10 @@ def execute_command():
                                 process_state["stderr_thread"] = stderr_thread
                                 process_state["output_queue"] = output_queue
 
-                        console.print(f"Started subprocess reader threads for session {session_id}: stdout={stdout_thread.name}, stderr={stderr_thread.name}", markup=False)
+                        console.print(
+                            f"Started {process_mode} reader threads for session {session_id}: stdout={stdout_thread.name}, stderr={getattr(stderr_thread, 'name', 'merged')}",
+                            markup=False,
+                        )
 
                         def _read_output(q: queue.Queue[tuple[str, str]]) -> tuple[bool, tuple[str, str] | None]:
                             try:
@@ -5436,13 +5599,13 @@ def execute_command():
                                 if output_type not in buffers:
                                     buffers[output_type] = ""
                                 buffers[output_type] += char
-                                is_prompt_chunk = _looks_like_subprocess_prompt(buffers[output_type])
-                                if is_prompt_chunk:
-                                    _set_process_awaiting_input_if_current(session_id, process_state, True)
+                                prompt_type = _subprocess_prompt_type(buffers[output_type])
+                                if prompt_type:
+                                    _set_process_awaiting_input_if_current(session_id, process_state, True, prompt_type)
 
                                 # Flush on newline or when buffer grows large
                                 if char == "\n" or len(buffers[output_type]) > 512:
-                                    if not is_prompt_chunk:
+                                    if not prompt_type:
                                         _set_process_awaiting_input_if_current(session_id, process_state, False)
                                     chunk = buffers[output_type]
                                     buffers[output_type] = ""
@@ -5488,26 +5651,18 @@ def execute_command():
                                     yield f"data: {json.dumps({'type': 'html', 'data': html_fragment, 'origin': t})}\n\n"
 
                         # Wait for process to finish
-                        process.wait()
+                        exit_code = process.wait()
 
                         # Clean up (normal path)
                         _discard_session_state(session_id, process_state)
 
-                        yield f"data: {json.dumps({'type': 'exit', 'code': process.returncode})}\n\n"
+                        yield f"data: {json.dumps({'type': 'exit', 'code': exit_code})}\n\n"
                     finally:
                         with contextlib.suppress(Exception):
-                            if process is not None and not _session_state_is_current(session_id, process_state) and process.poll() is None:
-                                process.kill()
-                        # Ensure subprocess pipes are closed to avoid leaking file handles
-                        with contextlib.suppress(Exception):
-                            if process.stdin is not None:
-                                process.stdin.close()
-                        with contextlib.suppress(Exception):
-                            if process.stdout is not None:
-                                process.stdout.close()
-                        with contextlib.suppress(Exception):
-                            if process.stderr is not None:
-                                process.stderr.close()
+                            if process is not None and process.poll() is None:
+                                _terminate_process_tree(process)
+                        if process is not None:
+                            _close_webui_process_io(process)
                         # Ensure we remove tracking entry if still present
                         with contextlib.suppress(Exception):
                             _discard_session_state(session_id, process_state)
@@ -5581,20 +5736,14 @@ def send_input():
                 q.put(user_input)
                 return jsonify({"success": True})
 
-            # Otherwise write to subprocess stdin
-            # Always add newline to send the input
-            input_with_newline = user_input + "\n"
-
             process = process_info.get("process")
             if process is None:
                 return jsonify({"error": "No process found", "success": False}), 500
 
             if process.poll() is None:  # Process still running
-                if process.stdin is not None:
-                    _set_process_awaiting_input(session_id, False)
-                    process.stdin.write(input_with_newline)
-                    process.stdin.flush()
-                    console.print(f"Sent to stdin: '{input_with_newline.strip()}'", markup=False)
+                _set_process_awaiting_input(session_id, False)
+                _write_webui_process_input(process, user_input)
+                console.print(f"Sent input for session {session_id}", markup=False)
             else:
                 console.print(f"Process already terminated for session {session_id}", markup=False)
                 return jsonify({"error": "Process not running", "success": False}), 400
@@ -5715,32 +5864,21 @@ def kill_process():
         # Retrieve subprocess handle
         process = process_info.get("process")
         if process is None:
-            return jsonify({"error": "No process found", "success": False}), 500
+            # Kill can race with startup after the session has been registered
+            # but before Popen returns. Removing this state makes the launcher
+            # terminate the controller immediately if it does start.
+            _discard_session_state(session_id, process_info)
+            return jsonify({"success": True, "message": "Execution startup cancelled"})
 
+        terminated = False
         try:
-            # Terminate the process
-            process.terminate()
+            terminated = _terminate_process_tree(process)
 
-            # Give it a moment to terminate gracefully
-            try:
-                process.wait(timeout=2)
-            except Exception:
-                # Force kill if it doesn't terminate
-                process.kill()
-
-            # Close any pipes to avoid leaking handles
-            with contextlib.suppress(Exception):
-                if process.stdin is not None:
-                    process.stdin.close()
-            with contextlib.suppress(Exception):
-                if process.stdout is not None:
-                    process.stdout.close()
-            with contextlib.suppress(Exception):
-                if process.stderr is not None:
-                    process.stderr.close()
+            _close_webui_process_io(process)
 
         finally:
-            # Clean up tracking entry regardless
+            # Keep the session available for another Kill attempt if the
+            # process tree could not be terminated.
             # Attempt to join reader threads if present
             with contextlib.suppress(Exception):
                 info = active_processes.get(session_id, {})
@@ -5753,8 +5891,12 @@ def kill_process():
                     console.print(f"Joining stderr thread for session {session_id}", markup=False)
                     stderr_t.join(timeout=1)
 
-            with contextlib.suppress(Exception):
-                active_processes.pop(session_id, None)
+            if terminated:
+                with contextlib.suppress(Exception):
+                    active_processes.pop(session_id, None)
+
+        if not terminated:
+            return jsonify({"error": "Failed to terminate process tree", "success": False}), 500
 
         console.print(f"Process killed for session {session_id}", markup=False)
         console.print(f"Post-kill snapshot: {_debug_process_snapshot(session_id)}", markup=False)

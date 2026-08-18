@@ -19,23 +19,7 @@ from src.music.analyzer import MusicReleaseAnalyzer
 from src.music.models import MetadataSource, MusicRelease
 from src.music.sources import DiscogsEnricher, MusicBrainzEnricher
 from src.music.validation import MusicValidator
-from src.temp_paths import artwork_dir
-
-
-def _preferred_artwork(release: Any) -> Path | None:
-    """Choose a likely front cover from sidecar artwork without touching it."""
-    root = Path(release.root)
-    candidates = [root / relative for relative in release.auxiliary.artwork]
-    candidates = [candidate for candidate in candidates if candidate.is_file()]
-    if not candidates:
-        return None
-
-    def sort_key(candidate: Path) -> tuple[int, str]:
-        stem = candidate.stem.casefold()
-        priority = 0 if re.search(r"(?:^|[ _.-])(cover|front|folder|album)(?:$|[ _.-])", stem) else 1
-        return priority, str(candidate).casefold()
-
-    return min(candidates, key=sort_key)
+from src.temp_paths import artwork_dir, music_release_snapshot_path
 
 
 def _image_suffix(data: bytes, mime: str = "") -> str:
@@ -91,11 +75,6 @@ async def prepare_music_cover(meta: Meta, release: Any) -> str:
     configured = Path(str(meta.artwork_path or ""))
     if configured.is_file():
         return str(configured)
-    local_cover = _preferred_artwork(release)
-    if local_cover:
-        meta.artwork_path = str(local_cover)
-        return meta.artwork_path
-
     output_dir = artwork_dir(meta.base_dir, str(meta.uuid))
     extracted = await asyncio.to_thread(_extract_embedded_artwork, [track.path for track in release.tracks], output_dir)
     if extracted:
@@ -208,17 +187,6 @@ def _apply_music_cli_overrides(meta: Meta, release: Any) -> None:
         edition = " ".join(str(item).strip() for item in edition if str(item).strip())
     if str(edition or "").strip():
         set_user("edition", str(edition).strip())
-
-    cover = str(meta.music_cover or "").strip()
-    if cover.startswith(("http://", "https://")):
-        meta.artwork_url = cover
-        set_user("cover_url", cover)
-    elif cover:
-        cover_path = Path(cover).expanduser()
-        if cover_path.is_file():
-            meta.artwork_path = str(cover_path.resolve())
-        else:
-            logger.warning("[yellow]MUSIC: --music-cover is neither a public HTTP(S) URL nor an existing image file; ignoring it.[/yellow]")
 
 
 def _discogs_ids(meta: Meta, release: Any) -> tuple[str, str]:
@@ -374,7 +342,7 @@ def _sync_release_to_meta(meta: Meta, release: MusicRelease) -> None:
 
 async def _write_music_release_snapshot(meta: Meta, release: MusicRelease) -> None:
     """Persist the current release snapshot for review and later upload stages."""
-    path = Path(meta.base_dir) / "tmp" / str(meta.uuid) / "music_release.json"
+    path = music_release_snapshot_path(meta.base_dir, str(meta.uuid))
     path.parent.mkdir(parents=True, exist_ok=True)
     async with aiofiles.open(path, "w", encoding="utf-8") as file:
         await file.write(json.dumps(release.to_dict(), indent=2, cls=PathAwareEncoder))
@@ -401,10 +369,10 @@ def _orpheus_people(group: dict[str, Any], role: str) -> list[str]:
 async def enrich_music_from_orpheus(meta: Meta, config: dict[str, Any]) -> bool:
     """Enrich an analyzed MUSIC release from an explicitly known Orpheus torrent.
 
-    The ID is obtained from a matched client's torrent comment or ``--orpheus``;
+    The ID is obtained from a matched client's torrent comment or ``--tracker-id``;
     this never searches Orpheus by name and never performs a state-changing call.
     """
-    identifier = str(meta.orpheus or "").strip()
+    identifier = meta.get_tracker_id("ORPHEUS") or ""
     if meta.category != "MUSIC" or not identifier.isdigit() or not isinstance(meta.music_release, dict):
         return False
 

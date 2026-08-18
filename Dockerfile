@@ -7,7 +7,6 @@ RUN apt-get update && \
     g++=4:14.2.0-1 \
     cargo=1.85.0+dfsg3-1 \
     ffmpeg=7:7.1.5-0+deb13u1 \
-    mediainfo=25.04-1 \
     rustc=1.85.0+dfsg3-1 \
     nano=8.4-1+deb13u1 \
     ca-certificates=20250419 \
@@ -31,18 +30,16 @@ RUN pip install --no-cache-dir --require-hashes -r requirements.lock
 # ── Application setup ────────────────────────────────────────────────
 WORKDIR /Upload-Assistant
 
-# Copy DVD MediaInfo download script and run it
-# This downloads specialized MediaInfo binaries for DVD processing with language support
-COPY bin/__init__.py bin/get_dvd_mediainfo_docker.py bin/download_integrity.py bin/
-RUN python3 -m bin.get_dvd_mediainfo_docker
-
 # Copy the rest of the application
 COPY . .
 
+# Download the pinned official MediaInfo CLI used by the application.
+RUN python3 -c "import asyncio; from bin.get_mediainfo import MediaInfoBinaryManager; asyncio.run(MediaInfoBinaryManager.ensure_mediainfo_binary('/Upload-Assistant'))"
+
 # Preserve the built-in data/ directory outside the mount-point so that
 # volume mounts over /Upload-Assistant/data/ don't hide critical files
-# (__init__.py, version.py, example-config.py, templates/).
-# At runtime the entrypoint restores missing files from this copy.
+# (__init__.py, example-config.py, templates/).
+# At runtime the app restores any missing files from this copy.
 RUN rm -rf /Upload-Assistant/defaults \
     && mkdir -p /Upload-Assistant/defaults \
     && cp -a data /Upload-Assistant/defaults/ \
@@ -64,7 +61,8 @@ RUN find bin/mkbrr -name "mkbrr" -print0 | xargs -0 chmod +x && \
 # ── Permissions ──────────────────────────────────────────────────────
 # Give UID 1000 ownership for the default runtime while keeping bundled
 # executables immutable to unrelated UIDs. Arbitrary UIDs use a private cache.
-RUN chown -R 1000:1000 /Upload-Assistant/bin/mkbrr \
+RUN mkdir -p /Upload-Assistant/bin/MI \
+    && chown -R 1000:1000 /Upload-Assistant/bin/mkbrr \
     && chown -R 1000:1000 /Upload-Assistant/bin/MI \
     && chown -R 1000:1000 /Upload-Assistant/bin/bdinfo \
     && find /Upload-Assistant/bin/mkbrr /Upload-Assistant/bin/MI /Upload-Assistant/bin/bdinfo -type d -exec chmod 0755 {} + \
@@ -83,11 +81,13 @@ RUN mkdir -p /Upload-Assistant/bin/nyuu /Upload-Assistant/bin/7z /Upload-Assista
     && chown -R 1000:1000 /Upload-Assistant/bin/nyuu /Upload-Assistant/bin/7z /Upload-Assistant/bin/par2 /Upload-Assistant/bin/pesto /Upload-Assistant/bin/zentag \
     && chmod 0755 /Upload-Assistant/bin/nyuu /Upload-Assistant/bin/7z /Upload-Assistant/bin/par2 /Upload-Assistant/bin/pesto /Upload-Assistant/bin/zentag
 
-# Create tmp directory; world-writable so any UID can use it
-RUN mkdir -p /Upload-Assistant/tmp && chmod 1777 /Upload-Assistant/tmp
-ENV TMPDIR=/Upload-Assistant/tmp
-ENV MPLCONFIGDIR=/Upload-Assistant/tmp/matplotlib
-ENV XDG_CACHE_HOME=/Upload-Assistant/tmp/cache
+# All runtime state belongs outside the application checkout.  Mount /state to
+# persist configuration, caches, and temporary release artifacts.
+RUN mkdir -p /state && chmod 1777 /state
+ENV UA_DATA_DIR=/state
+ENV TMPDIR=/state/tmp
+ENV MPLCONFIGDIR=/state/matplotlib
+ENV XDG_CACHE_HOME=/state/cache
 
 # ── Runtime metadata ─────────────────────────────────────────────────
 # Document the WebUI port (informational only; does not publish the port)

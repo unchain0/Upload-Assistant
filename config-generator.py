@@ -11,6 +11,7 @@ from typing import Any, TypedDict, cast
 from rich.console import Console
 from rich.text import Text
 
+from src.app_paths import CODE_DIR, CONFIG_PATH, DATA_DIR, LEGACY_CONFIG_PATH, ensure_data_dir
 from src.check_requirements import check_dependencies
 
 check_dependencies()
@@ -69,6 +70,7 @@ class LinkedSetting(TypedDict):
 ConfigDict = dict[str, Any]
 ConfigComments = dict[str, list[str]]
 UnexpectedKey = tuple[str, ConfigDict, str]
+DYNAMIC_CONFIG_MAP_KEYS = frozenset({"tag_overrides"})
 
 
 def tracker_sort_key(name: str) -> tuple[bool, bool, str]:
@@ -78,7 +80,7 @@ def tracker_sort_key(name: str) -> tuple[bool, bool, str]:
 
 def read_example_config() -> tuple[ConfigDict | None, ConfigComments]:
     """Read the example config file and return its structure and comments"""
-    example_path = Path("data/example_config.py")
+    example_path = CODE_DIR / "data" / "example_config.py"
     comments: ConfigComments = {}
 
     if not example_path.exists():
@@ -106,6 +108,11 @@ def read_example_config() -> tuple[ConfigDict | None, ConfigComments]:
                     if key_stack:
                         key_stack.pop()
                     indent_stack.pop()
+                fq_key = ".".join([*key_stack, key]) if key_stack else key
+                if current_comments:
+                    comments[key] = list(current_comments)
+                    comments[fq_key] = list(current_comments)
+                    current_comments = []
                 key_stack.append(key)
                 indent_stack.append(indent)
             elif "}" in stripped:
@@ -192,7 +199,6 @@ def migrate_old_config(config_dict: ConfigDict) -> ConfigDict:
         "SPD": "SPEEDAPP",
         "SN": "SWARMAZON",
         "TTG": "TOTHEGLORY",
-        "THR": "TORRENTHR",
         "TL": "TORRENTLEECH",
         "TVC": "TVCHAOSUK",
         "AITHER": "AITHER",
@@ -278,7 +284,7 @@ def migrate_old_config(config_dict: ConfigDict) -> ConfigDict:
 
 def load_existing_config() -> tuple[ConfigDict | None, Path | None]:
     """Load an existing config file if available"""
-    config_paths = [Path("data/config.py"), Path("data/config1.py")]
+    config_paths = [CONFIG_PATH, DATA_DIR / "config1.py", LEGACY_CONFIG_PATH]
 
     for path in config_paths:
         if path.exists():
@@ -296,7 +302,8 @@ def load_existing_config() -> tuple[ConfigDict | None, Path | None]:
                         console.print(f"\n[!] Error loading config from {path}: config is not a dict", markup=False)
                         continue
                     console.print(f"\n[OK] Found existing config at {path}", markup=False)
-                    return migrate_old_config(cast(ConfigDict, config_dict)), path
+                    destination = CONFIG_PATH if path == LEGACY_CONFIG_PATH else path
+                    return migrate_old_config(cast(ConfigDict, config_dict)), destination
             except Exception as e:
                 console.print(f"\n[!] Error loading config from {path}: {e}", markup=False)
 
@@ -319,6 +326,8 @@ def validate_config(existing_config: ConfigDict, example_config: ConfigDict) -> 
         for key in existing_section:
             current_path = f"{path}.{key}" if path else key
 
+            if key in DYNAMIC_CONFIG_MAP_KEYS and isinstance(existing_section[key], dict):
+                continue
             if key not in example_section:
                 unexpected_keys.append((current_path, existing_section, key))
             elif isinstance(existing_section[key], dict) and isinstance(example_section.get(key), dict):
@@ -530,7 +539,7 @@ def configure_default_section(
 
     # Settings that should only be prompted if a parent setting has a specific value
     linked_settings: dict[str, LinkedSetting] = {
-        "update_notification": {"condition": lambda value: value.lower() == "true", "settings": ["verbose_notification"]},
+        "update_notification": {"condition": lambda value: value.lower() == "true", "settings": ["verbose_notification", "update_notification_cache_hours"]},
         "tone_map": {"condition": lambda value: value.lower() == "true", "settings": ["algorithm", "desat", "tonemapped_header"]},
         "add_logo": {"condition": lambda value: value.lower() == "true", "settings": ["logo_size", "logo_language"]},
         "frame_overlay": {"condition": lambda value: value.lower() == "true", "settings": ["overlay_text_size"]},
@@ -568,6 +577,10 @@ def configure_default_section(
 
     for key, default_value in example_defaults.items():
         if key in ["default_torrent_client"]:
+            continue
+
+        if key in DYNAMIC_CONFIG_MAP_KEYS and isinstance(default_value, dict):
+            config_defaults[key] = deepcopy(existing_defaults.get(key, default_value))
             continue
 
         # Skip if this setting should be skipped based on linked settings
@@ -783,11 +796,20 @@ def configure_trackers(
         example_tracker: ConfigDict = cast(ConfigDict, example_trackers.get(tracker, {}))
         tracker_config: dict[str, Any] = {}
 
+        for key in DYNAMIC_CONFIG_MAP_KEYS:
+            value = existing_tracker_config.get(key)
+            if isinstance(value, dict):
+                tracker_config[key] = deepcopy(value)
+
         if example_tracker:
             for key, default_value in example_tracker.items():
                 # Skip keys that should not be prompted
                 if tracker == "HDTORRENTS" and key == "announce_url":
                     tracker_config[key] = example_tracker[key]
+                    continue
+
+                if key in DYNAMIC_CONFIG_MAP_KEYS and isinstance(default_value, dict):
+                    tracker_config[key] = deepcopy(existing_tracker_config.get(key, default_value))
                     continue
 
                 comment_key = f"TRACKERS.{tracker}.{key}"
@@ -989,7 +1011,7 @@ def generate_config_file(
 ) -> bool:
     """Generate the config.py file from the config dictionary"""
     # Create output directory if it doesn't exist
-    Path("data").mkdir(parents=True, exist_ok=True)
+    ensure_data_dir()
 
     # Determine the output path
     if existing_path:
@@ -1001,8 +1023,9 @@ def generate_config_file(
                 dst.write(src.read())
             console.print(f"\n[OK] Created backup of existing config at {backup_path}", markup=False)
     else:
-        config_path = Path("data/config.py")
-        backup_path = Path("data/config.py.bak")
+        ensure_data_dir()
+        config_path = CONFIG_PATH
+        backup_path = DATA_DIR / "config.py.bak"
         if config_path.exists():
             overwrite = input(f"{config_path} already exists. Overwrite? (y/n): ").lower()
             if overwrite == "y":

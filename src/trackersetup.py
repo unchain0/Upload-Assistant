@@ -41,11 +41,15 @@ from src.trackers.makingoff import MakingOff
 from src.trackers.mteam import MTeam
 from src.trackers.nebulance import Nebulance
 from src.trackers.NEXUSPHP.lajidui import Lajidui
+from src.trackers.NEXUSPHP.lemonhd import LemonHD
 from src.trackers.NEXUSPHP.longpt import LongPT
+from src.trackers.NEXUSPHP.oneptba import OnePTBA
 from src.trackers.NEXUSPHP.ptcafe import PTCafe
 from src.trackers.NEXUSPHP.ptfans import PTFans
 from src.trackers.NEXUSPHP.ptgtk import PTGTK
+from src.trackers.NEXUSPHP.ptzone import PTZone
 from src.trackers.NEXUSPHP.railgunpt import RailgunPT
+from src.trackers.NEXUSPHP.xingyungept import XingyungePT
 from src.trackers.orpheus import Orpheus
 from src.trackers.passthepopcorn import PassThePopcorn
 from src.trackers.pterclub import PTerClub
@@ -53,13 +57,13 @@ from src.trackers.ptskit import Ptskit
 from src.trackers.retroflix import RetroFlix
 from src.trackers.speedapp import SpeedApp
 from src.trackers.swarmazon import Swarmazon
-from src.trackers.torrenthr import TorrentHR
 from src.trackers.torrentleech import TorrentLeech
 from src.trackers.totheglory import ToTheGlory
 from src.trackers.tvchaosuk import TVChaosUK
 from src.trackers.UNIT3D.aither import Aither
 from src.trackers.UNIT3D.asiancinema import AsianCinema
 from src.trackers.UNIT3D.aura4k import Aura4K
+from src.trackers.UNIT3D.bitporn import BitPorn
 from src.trackers.UNIT3D.blutopia import Blutopia
 from src.trackers.UNIT3D.capybarabr import CapybaraBR
 from src.trackers.UNIT3D.cinematik import Cinematik
@@ -93,6 +97,7 @@ from src.trackers.UNIT3D.theoldschool import TheOldSchool
 from src.trackers.UNIT3D.tlzdigital import TheLeachZone
 from src.trackers.UNIT3D.torrentdesi import DesiTorrents
 from src.trackers.UNIT3D.torrenteros import Torrenteros
+from src.trackers.UNIT3D.torrenthr import TorrentHR
 from src.trackers.UNIT3D.ulcx import ULCX
 from src.trackers.UNIT3D.unwalled import Unwalled
 from src.trackers.UNIT3D.utopia import Utopia
@@ -100,6 +105,7 @@ from src.trackers.UNIT3D.yuscene import YUSCENE
 from src.trackers.UNIT3D.znth import Zenith
 from src.trackers.USENET.curupira import Curupira
 from src.trackers.USENET.drunkenslug import DrunkenSlug
+from src.trackers.USENET.nzbgeek import NZBGeek
 from src.trackers.USENET.suio import Suio
 
 JsonDict = dict[str, Any]
@@ -1351,6 +1357,7 @@ tracker_class_map: dict[str, Any] = {
     "AVISTAZ": AvistaZ,
     "BEYONDHD": BEYONDHD,
     "BITHDTV": BitHDTV,
+    "BITPORN": BitPorn,
     "BJSHARE": BJShare,
     "BLUTOPIA": Blutopia,
     "BRASILTRACKER": BrasilTracker,
@@ -1361,6 +1368,7 @@ tracker_class_map: dict[str, Any] = {
     "DIGITALCORE": DigitalCore,
     "DARKPEERS": DarkPeers,
     "DRUNKENSLUG": DrunkenSlug,
+    "NZBGEEK": NZBGeek,
     "DESITORRENTS": DesiTorrents,
     "EMUWAREZ": Emuwarez,
     "FUNFILE": FunFile,
@@ -1376,6 +1384,7 @@ tracker_class_map: dict[str, Any] = {
     "IMMORTALSEED": ImmortalSeed,
     "ITATORRENTS": ItaTorrents,
     "LAJIDUI": Lajidui,
+    "LEMONHD": LemonHD,
     "LOCADORA": Locadora,
     "LASTDIGITALUNDERGROUND": LastDigitalUnderground,
     "LONGPT": LongPT,
@@ -1396,6 +1405,7 @@ tracker_class_map: dict[str, Any] = {
     "PTERCLUB": PTerClub,
     "PTFANS": PTFans,
     "PTGTK": PTGTK,
+    "PTZONE": PTZone,
     "PASSTHEPOPCORN": PassThePopcorn,
     "PTSKIT": Ptskit,
     "PEERGARDEN": PeerGarden,
@@ -1413,14 +1423,16 @@ tracker_class_map: dict[str, Any] = {
     "SPEEDAPP": SpeedApp,
     "SKIPTHECOMMERCIALS": SkipTheCommercials,
     "SUIO": Suio,
-    "TORRENTHR": TorrentHR,
     "CINEMATIK": Cinematik,
     "TORRENTLEECH": TorrentLeech,
     "THELEACHZONE": TheLeachZone,
     "THEOLDSCHOOL": TheOldSchool,
     "TOTHEGLORY": ToTheGlory,
     "TORRENTEROS": Torrenteros,
+    "TORRENTHR": TorrentHR,
     "TVCHAOSUK": TVChaosUK,
+    "1PTBA": OnePTBA,
+    "XINGYUNGEPT": XingyungePT,
     "ULCX": ULCX,
     "UNWALLED": Unwalled,
     "UTOPIA": Utopia,

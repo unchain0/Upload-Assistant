@@ -78,7 +78,6 @@ class PestoBinaryManager:
                 await download_verified_asset(client, download_url, temp_file, f"{version}/{file_pattern}")
 
             logger.debug(f"[green]Downloaded Pesto package: {file_pattern}[/green]")
-
             staged_binary = bin_dir / f".{binary_name}.staged"
             temp_file.replace(staged_binary)
             if system != "windows":

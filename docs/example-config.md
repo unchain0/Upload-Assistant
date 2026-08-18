@@ -2,15 +2,17 @@
 
 This document explains the configuration options found in `data/example_config.py`.
 
-Upload Assistant loads configuration from `data/config.py`.
+Upload Assistant loads configuration from its user-owned state directory: `%LOCALAPPDATA%\\Upload-Assistant\\data\\config.py` on Windows, `$XDG_DATA_HOME/Upload-Assistant/data/config.py` (normally `~/.local/share/Upload-Assistant/data/config.py`) on Linux, or `$UA_DATA_DIR/data/config.py` when overridden.
+
+On the first run after upgrading, a legacy `data/config.py` in the checkout is **moved** to this location, so only one active configuration remains.
 
 ## How to use
 
 - Generate a config interactively:
   - Run `python config-generator.py` from the repo root.
 - Or create your config manually:
-  - Copy `data/example_config.py` to `data/config.py`
-  - Edit `data/config.py` with your own values
+  - Run `config-generator.py`, or let the first start create the user config from `data/example_config.py`
+  - Edit the user-owned `config.py` with your own values
 
 ## Config file shape
 
@@ -32,7 +34,7 @@ Upload Assistant is structured around a runtime `meta` dict.
 
 At a high level:
 
-1. `data/config.py` is imported and read across the codebase.
+1. The user-owned `data/config.py` is imported and read across the codebase.
 2. `src/prep.py` builds and normalizes `meta` from the input path + CLI args + `config` defaults.
 3. Tracker metadata is fetched via `src/get_tracker_data.py` / `src/trackermeta.py` and individual tracker modules under `src/trackers/`.
 4. Screenshots are captured/optimized via `src/takescreens.py`.
@@ -41,7 +43,7 @@ At a high level:
 
 Important gotchas:
 
-- Some options are read at module import time (notably in `src/takescreens.py`). If you edit `data/config.py` while Upload Assistant is running, you may need to restart the process for changes to take effect.
+- Some options are read at module import time (notably in `src/takescreens.py`). If you edit the user `config.py` while Upload Assistant is running, you may need to restart the process for changes to take effect.
 - Many `DEFAULT` values are copied into `meta` during preparation, and later code reads `meta` rather than reading `config` again.
 - Several settings can be overridden by CLI flags (or by `user-args.json` overrides when enabled).
 
@@ -53,6 +55,7 @@ Important gotchas:
 
 - `update_notification` (bool): Print a notice when an update is available.
 - `verbose_notification` (bool): Print the changelog when an update is available.
+- `update_notification_cache_hours` (number, default `4`): Reuse a successful update check for this many hours. Set `0` to check every run.
 
 ### Metadata APIs
 
@@ -64,6 +67,7 @@ Important gotchas:
 Order matters: `img_host_1` is primary, later hosts are fallbacks.
 
 - `img_host_1`..`img_host_5` (str): Image host names. Valid examples include `imgbb`, `imgbox`, `pixhost`, `lensdump`, `ptscreens`, `onlyimage`, `dalexni`, `zipline`, `midnightscene`, `passtheimage`, `seedpool_cdn`, `utppm`, `lostimg`.
+- `smart_image_host_selection` (bool, default `true`): Before uploads begin, prefer the first configured host accepted by every selected tracker that declares an image-host policy. Set it to `false` to retain the former per-tracker selection behavior. If there is no common host, normal per-tracker fallback and rehosting behavior is retained.
 - `image_upload_concurrency` (int): Maximum number of image uploads running at once. Set to `0` to use the image host default.
 - `image_upload_delay` (float): Minimum delay in seconds between starting image uploads.
 
@@ -137,6 +141,7 @@ Implementation notes:
 - `threads` (str): Thread limit per process during image optimization.
 - `ffmpeg_limit` (bool): Limit CPU usage when running ffmpeg.
 - `add_dynamic_hdr_plot` (bool): Generate and add Dolby Vision/HDR10+ metadata plots when dynamic metadata is detected. The required tools download automatically on first use. Extraction reads each selected video file in full and can take a while for large releases.
+- `dynamic_hdr_plot_header` (str): BBCode header used above dynamic HDR plots.
 - `dynamic_hdr_plot_max_files` (int): Maximum video files to plot for a multi-file release (default: `1`).
 - `dynamic_hdr_plot_tool_timeout` (int): Maximum runtime in seconds for each HDR tool invocation (default: `3600`, capped at `7200`).
 
@@ -164,7 +169,48 @@ These can be [overridden per-tracker](#tracker-overridable-settings) by adding t
 - `custom_description_header` (str): BBCode header added at top of description section.
 - `screenshot_header` (str): BBCode header added above screenshots.
 - `disc_menu_header` (str): BBCode header added above disc menu screenshots (discs only).
+- `audio_spectrogram_header` (str): BBCode header added above audio spectrograms.
+- `dynamic_hdr_plot_header` (str): BBCode header added above dynamic HDR metadata plots.
+- `tonemapped_header` (str): BBCode header added for tone-mapped releases.
 - `custom_signature` (str): BBCode signature appended at bottom of description.
+- `tag_overrides` (dict): Per-release-group overrides for these text fields. The
+  group key is matched against `meta.tag` case-insensitively and may be written
+  with or without its leading hyphen. A tracker-level `tag_overrides` entry has
+  precedence over a `DEFAULT` entry; unspecified fields use their normal
+  tracker/default value.
+
+  Default overrides apply to every tracker that supports the description field:
+
+  ```python
+  config = {
+      "DEFAULT": {
+          "tag_overrides": {
+              "MyAwesomeGroupTag": {
+                  "custom_signature": "[center]Group signature[/center]",
+                  "screenshot_header": "[h2]Group screenshots[/h2]",
+              },
+          },
+      },
+  }
+  ```
+
+  Tracker overrides apply only to that tracker and take precedence over the
+  `DEFAULT` entry for the same group and field:
+
+  ```python
+  config = {
+      "TRACKERS": {
+          "AITHER": {
+              "tag_overrides": {
+                  "MyAwesomeGroupTag": {
+                      "custom_signature": "[center]AITHER group signature[/center]",
+                      "disc_menu_header": "[h2]AITHER group menus[/h2]",
+                  },
+              },
+          },
+      },
+  }
+  ```
 
 ### Torrent client integration
 
@@ -184,11 +230,13 @@ Implementation notes:
 - `use_largest_playlist` (bool): Always use the largest Blu-ray playlist without prompting.
 - `tracker_description_mode` (str, required): Import policy for other tracker releases: `ids`, `images`, `text`, or `text_and_images`.
 - `tracker_search_concurrency` (int): Maximum number of tracker IDs queried concurrently; default `4`.
+- `tracker_comment_only` (bool, default `True`): Only query tracker metadata when a torrent ID was obtained from a client comment or supplied with `--tracker-id`; disables filename-based tracker searches. Set `False` to re-enable filename-based tracker searches.
 
 Implementation notes:
 
 - `tracker_pass_checks` is used to determine how many trackers must pass early validation before continuing (see `upload.py`).
 - `tracker_description_mode` is the only configuration that controls imported tracker description text and screenshots. `--onlyID` temporarily forces `ids` for that execution.
+- `tracker_comment_only` does not disable explicit IDs supplied through `--tracker-id`.
 
 ### Sonarr / Radarr integration
 

@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import os
 import stat
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
+
+from src.app_paths import STATE_DIR
 
 
 def _is_trusted_shared_root(path: Path) -> bool:
@@ -32,9 +34,20 @@ def ensure_temp_root(base_dir: str | Path) -> Path:
     return path
 
 
+def _safe_release_id(release_id: str) -> str:
+    """Validate that a release identifier is one filesystem path component."""
+    value = str(release_id)
+    if not value:
+        return "release-pending"
+    if value in {".", ".."} or "\x00" in value or "/" in value or "\\" in value or PureWindowsPath(value).drive:
+        raise ValueError(f"Release id must be a single safe path component: {value!r}")
+    return value
+
+
 def release_temp_dir(base_dir: str | Path, release_id: str) -> Path:
     """Return the root temporary directory for one release."""
-    path = ensure_temp_root(base_dir) / str(release_id)
+    safe_release_id = _safe_release_id(release_id)
+    path = ensure_temp_root(base_dir) / safe_release_id
     if path.is_symlink():
         raise RuntimeError(f"Release temporary directory must not be a symbolic link: {path}")
     path.mkdir(mode=0o700, exist_ok=True)
@@ -44,6 +57,11 @@ def release_temp_dir(base_dir: str | Path, release_id: str) -> Path:
             raise PermissionError(f"Release temporary directory is owned by another user: {path}")
         path.chmod(0o700)
     return path
+
+
+def music_release_snapshot_path(base_dir: str | Path | None, release_id: str) -> Path:
+    """Return the music metadata snapshot under ``base_dir``, falling back to ``STATE_DIR`` when empty."""
+    return release_temp_dir(base_dir or STATE_DIR, release_id or "music-release-pending") / "music_release.json"
 
 
 def image_dir(base_dir: str | Path, release_id: str, kind: str) -> Path:

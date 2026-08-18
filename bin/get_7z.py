@@ -100,7 +100,6 @@ class SevenZipBinaryManager:
                 await download_verified_asset(client, download_url, temp_file, integrity_key)
 
             logger.debug(f"[green]Downloaded 7-Zip package: {file_pattern}[/green]")
-
             if file_pattern.endswith(".exe"):
                 # Windows 7zr.exe is a raw executable
                 staged_binary = staging / binary_name

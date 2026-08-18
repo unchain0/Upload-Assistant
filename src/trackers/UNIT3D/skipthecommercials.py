@@ -77,8 +77,10 @@ class SkipTheCommercials(UNIT3D):
 
     async def get_description(self, meta: Meta) -> dict[str, str]:
         return {
-            "description": await DescriptionBuilder(self.tracker, self.config).unit3d_edit_desc(
+            "description": await DescriptionBuilder(self.tracker, self.config).general_description_generator(
                 meta,
+                mediainfo=False,
+                nfo=False,
                 approved_image_hosts=self.approved_image_hosts,
             )
         }

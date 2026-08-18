@@ -113,7 +113,6 @@ class BDInfoBinaryManager:
             async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
                 await download_verified_asset(client, download_url, temp_archive, file_pattern)
             logger.debug(f"[green]Downloaded {file_pattern}[/green]")
-
             # Extract archive safely and ensure temporary archive is always removed.
             try:
                 if file_pattern.endswith(".zip"):

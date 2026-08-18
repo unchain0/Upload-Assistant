@@ -1,6 +1,7 @@
 # ruff: noqa: ARG001, ARG005, S101
 from __future__ import annotations
 
+import importlib
 import signal
 import sys
 from pathlib import Path
@@ -30,6 +31,22 @@ def _configure_do_the_thing_stubs(
     for path in queue_paths:
         Path(path).touch()
 
+    # Keep batch-flow tests isolated from persistent user state and binary
+    # bootstrapping introduced before queue processing.
+    test_base_dir = str(Path(queue_paths[0]).parent / "ua-state")
+    monkeypatch.setattr("upload.base_dir", test_base_dir)
+
+    def reload_with_test_config(module: Any) -> Any:
+        # ``do_the_thing`` reloads data.config before processing. Preserve the
+        # test overrides while still returning a distinct config object, just
+        # like a real module reload would.
+        monkeypatch.setattr("data.config.config", dict(upload.config))
+        return module
+
+    monkeypatch.setattr("importlib.reload", reload_with_test_config)
+    monkeypatch.setattr("upload.configured_binary", lambda *_args, **_kwargs: "ffmpeg")
+    monkeypatch.setattr("upload.ensure_mediainfo_binary", AsyncMock(return_value="mediainfo"))
+
     info_messages: list[str] = []
 
     def fake_parse(argv: list[str], meta: Meta) -> tuple[Meta, Any, list[str]]:
@@ -50,18 +67,18 @@ def _configure_do_the_thing_stubs(
         def reset_terminal(self) -> None:
             return None
 
-    monkeypatch.setattr(upload, "parser", type("Parser", (), {"parse": staticmethod(fake_parse)})())
+    monkeypatch.setattr("upload.parser", type("Parser", (), {"parse": staticmethod(fake_parse)})())
     handle_queue = AsyncMock(side_effect=fake_handle_queue)
     process_meta_mock = AsyncMock(side_effect=process_meta)
-    monkeypatch.setattr(upload.QueueManager, "handle_queue", handle_queue)
-    monkeypatch.setattr(upload, "process_meta", process_meta_mock)
-    monkeypatch.setattr(upload, "update_notification", AsyncMock(return_value=""))
-    monkeypatch.setattr(upload, "get_mkbrr_path", AsyncMock(return_value=False))
-    monkeypatch.setattr(upload, "cleanup_manager", _NoopCleanup())
-    monkeypatch.setattr(upload, "save_processed_file", AsyncMock(return_value=None))
-    monkeypatch.setattr(upload, "cancel_and_drain_early_artifact_tasks", AsyncMock(return_value=None))
-    monkeypatch.setattr(upload, "_publish_webui_preview_target", lambda *args, **kwargs: None)
-    monkeypatch.setattr(upload.logger, "info", lambda message, *args, **kwargs: info_messages.append(str(message)))
+    monkeypatch.setattr("upload.QueueManager.handle_queue", handle_queue)
+    monkeypatch.setattr("upload.process_meta", process_meta_mock)
+    monkeypatch.setattr("upload.update_notification", AsyncMock(return_value=""))
+    monkeypatch.setattr("upload.get_mkbrr_path", AsyncMock(return_value=False))
+    monkeypatch.setattr("upload.cleanup_manager", _NoopCleanup())
+    monkeypatch.setattr("upload.save_processed_file", AsyncMock(return_value=None))
+    monkeypatch.setattr("upload.cancel_and_drain_early_artifact_tasks", AsyncMock(return_value=None))
+    monkeypatch.setattr("upload._publish_webui_preview_target", lambda *args, **kwargs: None)
+    monkeypatch.setattr("upload.logger.info", lambda message, *args, **kwargs: info_messages.append(str(message)))
     default_config = dict(upload.config.get("DEFAULT", {}))
     if "cross_seeding" not in default_config:
         default_config["cross_seeding"] = False
@@ -76,8 +93,8 @@ def _configure_do_the_thing_stubs(
     default_config["mkbrr"] = False
     default_config["debug"] = False
     monkeypatch.setitem(upload.config, "DEFAULT", default_config)
-    monkeypatch.setattr(configvalidator, "validate_config", lambda *_args, **_kwargs: (True, [], []))
-    monkeypatch.setattr(configvalidator, "group_warnings", lambda warnings: warnings)
+    monkeypatch.setattr("src.configvalidator.validate_config", lambda *_args, **_kwargs: (True, [], []))
+    monkeypatch.setattr("src.configvalidator.group_warnings", lambda warnings: warnings)
 
     return info_messages, process_meta_mock
 
@@ -92,7 +109,7 @@ async def test_batch_continues_when_first_item_fails(tmp_path: Path, monkeypatch
         return True
 
     info_messages, process_meta_mock = _configure_do_the_thing_stubs(monkeypatch, queue, fake_process_meta)
-    monkeypatch.setattr(sys, "argv", ["upload.py", *queue])
+    monkeypatch.setattr("sys.argv", ["upload.py", *queue])
 
     await upload.do_the_thing(upload.base_dir)
 
@@ -114,7 +131,7 @@ async def test_batch_continues_when_intermediate_item_fails(tmp_path: Path, monk
         return True
 
     info_messages, process_meta_mock = _configure_do_the_thing_stubs(monkeypatch, queue, fake_process_meta)
-    monkeypatch.setattr(sys, "argv", ["upload.py", *queue])
+    monkeypatch.setattr("sys.argv", ["upload.py", *queue])
 
     await upload.do_the_thing(upload.base_dir)
 
@@ -134,7 +151,7 @@ async def test_batch_fails_all_items_without_aborting(tmp_path: Path, monkeypatc
         raise ItemProcessingError("No Video files found", meta.path)
 
     info_messages, process_meta_mock = _configure_do_the_thing_stubs(monkeypatch, queue, fake_process_meta)
-    monkeypatch.setattr(sys, "argv", ["upload.py", *queue])
+    monkeypatch.setattr("sys.argv", ["upload.py", *queue])
 
     await upload.do_the_thing(upload.base_dir)
 
@@ -155,7 +172,7 @@ async def test_single_item_failure_still_aborts(tmp_path: Path, monkeypatch: pyt
         raise ItemProcessingError("No Video files found", None)
 
     info_messages, process_meta_mock = _configure_do_the_thing_stubs(monkeypatch, queue, fake_process_meta)
-    monkeypatch.setattr(sys, "argv", ["upload.py", *queue])
+    monkeypatch.setattr("sys.argv", ["upload.py", *queue])
 
     await upload.do_the_thing(upload.base_dir)
 
@@ -175,7 +192,7 @@ async def test_site_check_batch_reports_completed_checks_instead_of_failures(tmp
         lambda _meta, _base_dir: True,
         meta_overrides={"site_check": True, "debug": True},
     )
-    monkeypatch.setattr(sys, "argv", ["upload.py", *queue])
+    monkeypatch.setattr("sys.argv", ["upload.py", *queue])
 
     await upload.do_the_thing(upload.base_dir)
 
@@ -189,8 +206,8 @@ async def test_site_check_batch_reports_completed_checks_instead_of_failures(tmp
 async def test_cross_seed_processing_has_no_side_effects_in_read_only_modes(monkeypatch: pytest.MonkeyPatch, mode: dict[str, bool]) -> None:
     download_torrent = AsyncMock()
     add_to_client = AsyncMock()
-    monkeypatch.setattr(upload, "Common", lambda _config: SimpleNamespace(download_tracker_torrent=download_torrent))
-    monkeypatch.setattr(upload.client, "add_to_client", add_to_client)
+    monkeypatch.setattr("upload.Common", lambda _config: SimpleNamespace(download_tracker_torrent=download_torrent))
+    monkeypatch.setattr("upload.client.add_to_client", add_to_client)
     meta = Meta(**mode)
     meta["DARKPEERS_cross_seed"] = "https://example.test/download/1"
 
@@ -208,7 +225,7 @@ async def test_ctrl_c_stops_batch_processing(tmp_path: Path, monkeypatch: pytest
         raise KeyboardInterrupt
 
     _configure_do_the_thing_stubs(monkeypatch, queue, fake_process_meta)
-    monkeypatch.setattr(sys, "argv", ["upload.py", *queue])
+    monkeypatch.setattr("sys.argv", ["upload.py", *queue])
 
     with pytest.raises(KeyboardInterrupt):
         await upload.do_the_thing(upload.base_dir)
@@ -222,7 +239,7 @@ async def test_ctrl_c_stops_single_item_processing(tmp_path: Path, monkeypatch: 
         raise KeyboardInterrupt
 
     _configure_do_the_thing_stubs(monkeypatch, queue, fake_process_meta)
-    monkeypatch.setattr(sys, "argv", ["upload.py", *queue])
+    monkeypatch.setattr("sys.argv", ["upload.py", *queue])
 
     with pytest.raises(KeyboardInterrupt):
         await upload.do_the_thing(upload.base_dir)
@@ -340,7 +357,7 @@ async def test_batch_summary_lists_skipped_terminal_outcomes_separately(tmp_path
         return True
 
     info_messages, _ = _configure_do_the_thing_stubs(monkeypatch, queue, fake_process_meta)
-    monkeypatch.setattr(sys, "argv", ["upload.py", *queue])
+    monkeypatch.setattr("sys.argv", ["upload.py", *queue])
 
     await upload.do_the_thing(upload.base_dir)
 
@@ -365,8 +382,8 @@ async def test_process_meta_stops_before_trackers_for_invalid_automatic_tv_metad
             return meta
 
     cancel_tasks = AsyncMock(return_value=None)
-    monkeypatch.setattr(upload, "Prep", FakePrep)
-    monkeypatch.setattr(upload, "cancel_and_drain_early_artifact_tasks", cancel_tasks)
+    monkeypatch.setattr("upload.Prep", FakePrep)
+    monkeypatch.setattr("upload.cancel_and_drain_early_artifact_tasks", cancel_tasks)
     meta = Meta(base_dir=str(tmp_path), uuid="invalid-tv", imghost="imgbb", unattended=True, trackers=["PEERGARDEN"])
 
     assert await upload.process_meta(meta, str(tmp_path)) is False
@@ -388,8 +405,8 @@ async def test_batch_summary_reports_partial_tracker_failure(tmp_path: Path, mon
             meta.tracker_status[tracker]["upload_success"] = tracker == "GOOD"
 
     info_messages, _ = _configure_do_the_thing_stubs(monkeypatch, queue, fake_process_meta)
-    monkeypatch.setattr(upload, "process_trackers", fake_process_trackers)
-    monkeypatch.setattr(sys, "argv", ["upload.py", *queue])
+    monkeypatch.setattr("upload.process_trackers", fake_process_trackers)
+    monkeypatch.setattr("sys.argv", ["upload.py", *queue])
 
     await upload.do_the_thing(upload.base_dir)
 
@@ -413,8 +430,8 @@ async def test_batch_records_tracker_outcomes_without_meta_queue(tmp_path: Path,
             meta.tracker_status[tracker]["upload_success"] = tracker == "GOOD"
 
     info_messages, _ = _configure_do_the_thing_stubs(monkeypatch, queue, fake_process_meta, meta_queue=None)
-    monkeypatch.setattr(upload, "process_trackers", fake_process_trackers)
-    monkeypatch.setattr(sys, "argv", ["upload.py", *queue])
+    monkeypatch.setattr("upload.process_trackers", fake_process_trackers)
+    monkeypatch.setattr("sys.argv", ["upload.py", *queue])
 
     await upload.do_the_thing(upload.base_dir)
 
@@ -429,8 +446,8 @@ async def test_site_upload_queue_failure_uses_original_item_identifier(tmp_path:
     info_messages, _ = _configure_do_the_thing_stubs(
         monkeypatch, queue, lambda *_args: True, meta_overrides={"site_upload_queue": True}
     )
-    monkeypatch.setattr(upload.QueueManager, "process_site_upload_item", AsyncMock(side_effect=RuntimeError("site queue failure")))
-    monkeypatch.setattr(sys, "argv", ["upload.py", path])
+    monkeypatch.setattr("upload.QueueManager.process_site_upload_item", AsyncMock(side_effect=RuntimeError("site queue failure")))
+    monkeypatch.setattr("sys.argv", ["upload.py", path])
 
     await upload.do_the_thing(upload.base_dir)
 
@@ -451,8 +468,8 @@ async def test_args_line_queue_failure_uses_original_item_identifier(tmp_path: P
             raise RuntimeError("args queue failure")
         return Meta(path=argv[0], args_line_queue=True, base_dir=upload.base_dir, trackers=[]), None, []
 
-    monkeypatch.setattr(upload, "parser", type("Parser", (), {"parse": staticmethod(fail_item_parse)})())
-    monkeypatch.setattr(sys, "argv", ["upload.py", path])
+    monkeypatch.setattr("upload.parser", type("Parser", (), {"parse": staticmethod(fail_item_parse)})())
+    monkeypatch.setattr("sys.argv", ["upload.py", path])
 
     await upload.do_the_thing(upload.base_dir)
 
@@ -475,8 +492,8 @@ async def test_limit_queue_records_unprocessed_items(tmp_path: Path, monkeypatch
     info_messages, process_meta_mock = _configure_do_the_thing_stubs(
         monkeypatch, queue, fake_process_meta, meta_overrides={"limit_queue": 1}
     )
-    monkeypatch.setattr(upload, "process_trackers", fake_process_trackers)
-    monkeypatch.setattr(sys, "argv", ["upload.py", *queue])
+    monkeypatch.setattr("upload.process_trackers", fake_process_trackers)
+    monkeypatch.setattr("sys.argv", ["upload.py", *queue])
 
     await upload.do_the_thing(upload.base_dir)
 
@@ -501,8 +518,8 @@ async def test_debug_items_do_not_consume_success_limit(tmp_path: Path, monkeypa
         fake_process_meta,
         meta_overrides={"debug": True, "limit_queue": 1},
     )
-    monkeypatch.setattr(upload, "process_trackers", AsyncMock(return_value=None))
-    monkeypatch.setattr(sys, "argv", ["upload.py", *queue])
+    monkeypatch.setattr("upload.process_trackers", AsyncMock(return_value=None))
+    monkeypatch.setattr("sys.argv", ["upload.py", *queue])
 
     await upload.do_the_thing(upload.base_dir)
 
@@ -527,10 +544,10 @@ async def test_batch_metadata_failure_without_meta_queue_updates_progress_and_pe
         lambda *_args: False,
         meta_queue=None,
     )
-    monkeypatch.setattr(upload.QueueManager, "handle_queue", AsyncMock(return_value=(queue, log_file)))
+    monkeypatch.setattr("upload.QueueManager.handle_queue", AsyncMock(return_value=(queue, log_file)))
     save_processed = AsyncMock(return_value=None)
-    monkeypatch.setattr(upload, "save_processed_file", save_processed)
-    monkeypatch.setattr(sys, "argv", ["upload.py", *queue])
+    monkeypatch.setattr("upload.save_processed_file", save_processed)
+    monkeypatch.setattr("sys.argv", ["upload.py", *queue])
 
     await upload.do_the_thing(upload.base_dir)
 
@@ -558,9 +575,9 @@ async def test_batch_reports_torrent_success_with_usenet_preparation_failure(tmp
 
     info_messages, _ = _configure_do_the_thing_stubs(monkeypatch, queue, fake_process_meta)
     monkeypatch.setitem(upload.tracker_class_map, "NZB", UsenetTracker)
-    monkeypatch.setattr(upload, "process_trackers", fake_process_trackers)
+    monkeypatch.setattr("upload.process_trackers", fake_process_trackers)
     monkeypatch.setattr("src.usenetcreate.prepare_and_upload_usenet", AsyncMock(side_effect=RuntimeError("Usenet preparation failed")))
-    monkeypatch.setattr(sys, "argv", ["upload.py", *queue])
+    monkeypatch.setattr("sys.argv", ["upload.py", *queue])
 
     await upload.do_the_thing(upload.base_dir)
 
@@ -590,9 +607,9 @@ async def test_usenet_pipeline_exception_preserves_completed_indexer_success(tmp
     _configure_do_the_thing_stubs(monkeypatch, queue, fake_process_meta)
     monkeypatch.setitem(upload.tracker_class_map, "NZB_OK", UsenetTracker)
     monkeypatch.setitem(upload.tracker_class_map, "NZB_FAIL", UsenetTracker)
-    monkeypatch.setattr(upload, "process_trackers", fake_process_trackers)
+    monkeypatch.setattr("upload.process_trackers", fake_process_trackers)
     monkeypatch.setattr("src.usenetcreate.prepare_and_upload_usenet", AsyncMock(return_value=str(tmp_path / "release.nzb")))
-    monkeypatch.setattr(sys, "argv", ["upload.py", *queue])
+    monkeypatch.setattr("sys.argv", ["upload.py", *queue])
 
     await upload.do_the_thing(upload.base_dir)
 
@@ -617,7 +634,7 @@ async def test_batch_summary_preserves_required_game_field_reason(tmp_path: Path
         return True
 
     info_messages, _ = _configure_do_the_thing_stubs(monkeypatch, queue, fake_process_meta)
-    monkeypatch.setattr(sys, "argv", ["upload.py", *queue])
+    monkeypatch.setattr("sys.argv", ["upload.py", *queue])
 
     await upload.do_the_thing(upload.base_dir)
 

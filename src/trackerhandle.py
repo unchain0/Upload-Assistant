@@ -20,10 +20,9 @@ from src.manualpackage import ManualPackageManager
 from src.meta import Meta
 from src.prep import Prep
 from src.qbitwait import Wait
-from src.rehostimages import check_tracker_image_hosts
+from src.rehostimages import check_tracker_image_hosts, has_restricted_image_hosts, select_common_image_host
 from src.tracker_images import screenshot_requirement_error
 from src.trackers.passthepopcorn import PassThePopcorn
-from src.trackers.torrenthr import TorrentHR
 from src.trackers.UNIT3D.znth import prepare_zenith_music_layout
 from src.trackersetup import TrackerSetup
 from src.upload_safety import book_metadata_cjk_fields
@@ -118,6 +117,8 @@ async def process_trackers(
     tracker_setup = TrackerSetup(config=config)
     tracker_setup_any = cast(Any, tracker_setup)
     enabled_trackers = list(cast(Sequence[str], tracker_setup_any.trackers_enabled(meta)))
+    default_config_value = config.get("DEFAULT", {})
+    default_config = cast(Mapping[str, Any], default_config_value) if isinstance(default_config_value, Mapping) else {}
     runtime_state_value = config.setdefault("_runtime", {})
     if isinstance(runtime_state_value, dict):
         runtime_state = cast(dict[str, Any], runtime_state_value)
@@ -130,6 +131,21 @@ async def process_trackers(
     else:
         disabled_trackers = {}
         runtime_state["disabled_trackers"] = disabled_trackers
+    if default_config.get("smart_image_host_selection", True) and not meta.imghost_from_cli:
+        manual_targets = "MANUAL" in enabled_trackers
+        target_trackers = [
+            tracker
+            for tracker in enabled_trackers
+            if tracker != "MANUAL" and (manual_targets or bool(cast(Mapping[str, Any], meta.tracker_status.get(tracker, {})).get("upload", False)))
+        ]
+        selected_host = select_common_image_host(default_config, target_trackers, tracker_class_map)
+        if selected_host:
+            current_host = str(meta.imghost or default_config.get("img_host_1", "")).strip().lower()
+            meta.imghost = selected_host
+            if selected_host != current_host:
+                logger.info(f"[green]Smart image-host selection changed the target host: {current_host or 'unset'} -> {selected_host}[/green]")
+        elif has_restricted_image_hosts(target_trackers, tracker_class_map):
+            logger.info("[yellow]No shared approved image host found; using per-tracker image-host selection.[/yellow]")
     manual_packager = ManualPackageManager(config)
     tracker_label_width = max(
         (len(str(tracker).replace(" ", "").upper().strip()) for tracker in enabled_trackers),
@@ -164,7 +180,7 @@ async def process_trackers(
                     torrent_url = str(getattr(tracker_class, "torrent_url", ""))
                     link_url = f"{torrent_url}{status['torrent_id']}"
 
-                if config["DEFAULT"].get("show_upload_duration", True) or meta.upload_timer:
+                if default_config.get("show_upload_duration", True) or meta.upload_timer:
                     duration = meta.get(f"{tracker}_upload_duration")
                     if duration and isinstance(duration, (int, float)):
                         color = "#21ff00" if duration < 5 else "#9fd600" if duration < 10 else "#cfaa00" if duration < 15 else "#f17100" if duration < 20 else "#ff0000"
@@ -199,7 +215,7 @@ async def process_trackers(
         meta = await prepare_tracker_meta(shared_meta, tracker, config)
 
         tracker_class: Any = None
-        if tracker not in {"MANUAL", "TORRENTHR", "PASSTHEPOPCORN"}:
+        if tracker not in {"MANUAL", "PASSTHEPOPCORN"}:
             tracker_class = tracker_class_map[tracker](config=config)
 
         if tracker == "ZENITH" and meta.get("zentag_prepared", False) and not await tracker_class.get_additional_checks(meta):
@@ -233,12 +249,12 @@ async def process_trackers(
         async def check_bandwidth_and_dupes(tracker_name: str, t_class: Any) -> bool:
             if t_class and getattr(t_class, "is_usenet", False):
                 return True
-            qbit_bw_control = meta.qbit_bandwidth_control or config["DEFAULT"].get("qbit_bandwidth_control", False)
+            qbit_bw_control = meta.qbit_bandwidth_control or default_config.get("qbit_bandwidth_control", False)
             if qbit_bw_control:
                 logger.info(f"\n[yellow]{tracker_name}: Checking bandwidth...[/yellow]")
                 waiter = Wait(config)
-                bw_thresh = meta.qbit_bandwidth_threshold or config["DEFAULT"].get("qbit_bandwidth_threshold", 0)
-                bw_time = meta.qbit_bandwidth_time or config["DEFAULT"].get("qbit_bandwidth_time", 0)
+                bw_thresh = meta.qbit_bandwidth_threshold or default_config.get("qbit_bandwidth_threshold", 0)
+                bw_time = meta.qbit_bandwidth_time or default_config.get("qbit_bandwidth_time", 0)
                 try:
                     bw_thresh = int(bw_thresh)
                     bw_time = int(bw_time)
@@ -419,7 +435,13 @@ async def process_trackers(
                         try:
                             await check_tracker_image_hosts(meta, tracker_class)
                             if manual_tracker in api_trackers:
-                                await DescriptionBuilder(manual_tracker, config).unit3d_edit_desc(meta, manual_tracker)
+                                await DescriptionBuilder(manual_tracker, config).general_description_generator(
+                                    meta,
+                                    languages=False,
+                                    mediainfo=False,
+                                    nfo=False,
+                                    signature=manual_tracker,
+                                )
                             else:
                                 await tracker_class.edit_desc(meta)
                         except Exception as e:
@@ -430,34 +452,6 @@ async def process_trackers(
                 else:
                     logger.info(f"[green]{meta.name}")
                     logger.info(f"[green]Files can be found at: [yellow]{url}[/yellow]")
-
-        elif tracker == "TORRENTHR":
-            tracker_status = meta.tracker_status or {}
-            upload_status = cast(Mapping[str, Any], tracker_status.get(tracker, {})).get("upload", False)
-            if upload_status:
-                thr = TorrentHR(config=config)
-                thr_any = cast(Any, thr)
-                is_uploaded = False
-                try:
-                    upload_start_time = time.time()
-                    is_uploaded = await thr_any.upload(meta)
-                    upload_duration = time.time() - upload_start_time
-                    meta[f"{tracker}_upload_duration"] = upload_duration
-                except Exception as e:
-                    logger.info(f"[red]Upload failed: {e}")
-                    logger.info(traceback.format_exc())
-                    return
-                if is_uploaded:
-                    status = meta.tracker_status.setdefault("TORRENTHR", {})
-                    status["upload_success"] = True
-                    if not meta.debug:
-                        await client.add_to_client(meta, "TORRENTHR")
-                    print_tracker_result(tracker, thr, status, True)
-                else:
-                    status = meta.tracker_status.setdefault("TORRENTHR", {})
-                    status["upload_success"] = False
-                    print_tracker_result(tracker, thr, status, False)
-                    logger.info(f"[red]{tracker} upload failed or returned data error.[/red]")
 
         elif tracker == "PASSTHEPOPCORN":
             tracker_status = meta.tracker_status
@@ -493,7 +487,7 @@ async def process_trackers(
                     logger.info(traceback.format_exc())
                     return
 
-    multi_screens = int(config["DEFAULT"].get("multiScreens", 2))
+    multi_screens = int(default_config.get("multiScreens", 2))
     discs = meta.discs or []
     one_disc = True
     if discs and len(discs) == 1:
@@ -501,7 +495,7 @@ async def process_trackers(
     elif discs and len(discs) > 1:
         one_disc = False
 
-    bandwidth_control = meta.qbit_bandwidth_control or config["DEFAULT"].get("qbit_bandwidth_control", False)
+    bandwidth_control = meta.qbit_bandwidth_control or default_config.get("qbit_bandwidth_control", False)
 
     if ((not meta.tv_pack and one_disc) or multi_screens == 0) and not bandwidth_control:
         # Run all tracker tasks concurrently with individual error handling

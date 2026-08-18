@@ -40,6 +40,69 @@ def _as_str(value: Any) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def has_restricted_image_hosts(
+    target_trackers: Iterable[str],
+    tracker_class_map: Mapping[str, Any],
+) -> bool:
+    """Return True if any of the target trackers define image-host restrictions."""
+    for tracker_name in target_trackers:
+        tracker_class = tracker_class_map.get(str(tracker_name).replace(" ", "").upper())
+        policy = getattr(tracker_class, "image_host_policy", None)
+        if isinstance(policy, ImageHostPolicy) and policy.approved_image_hosts:
+            return True
+
+        approved_hosts = getattr(tracker_class, "approved_image_hosts", None)
+        if (
+            callable(getattr(tracker_class, "check_image_hosts", None))
+            and isinstance(approved_hosts, (tuple, list, set))
+            and any(isinstance(host, str) for host in approved_hosts)
+        ):
+            return True
+
+    return False
+
+
+def select_common_image_host(
+    default_config: Mapping[str, Any],
+    target_trackers: Iterable[str],
+    tracker_class_map: Mapping[str, Any],
+) -> str | None:
+    """Return the preferred configured host accepted by every restricted target.
+
+    Trackers without a declared policy do not constrain the selection. ``None``
+    means no restricted targets or no common configured host, so callers retain
+    the normal per-tracker rehosting fallback.
+    """
+    approved_sets: list[set[str]] = []
+    for tracker_name in target_trackers:
+        tracker_class = tracker_class_map.get(str(tracker_name).replace(" ", "").upper())
+        policy = getattr(tracker_class, "image_host_policy", None)
+        if isinstance(policy, ImageHostPolicy):
+            approved_sets.append(set(policy.approved_image_hosts))
+            continue
+
+        approved_hosts = getattr(tracker_class, "approved_image_hosts", None)
+        if callable(getattr(tracker_class, "check_image_hosts", None)) and isinstance(approved_hosts, (tuple, list, set)):
+            approved_sets.append({host for host in approved_hosts if isinstance(host, str)})
+
+    if not approved_sets:
+        return None
+
+    common_hosts = set.intersection(*approved_sets)
+    if not common_hosts:
+        return None
+
+    configured_hosts = sorted(
+        (
+            (int(match.group(1)), host.strip().lower())
+            for key, value in default_config.items()
+            if (match := re.fullmatch(r"img_host_(\d+)", key)) and (host := _as_str(value)) and host.strip()
+        ),
+        key=lambda item: item[0],
+    )
+    return next((host for _, host in configured_hosts if host in common_hosts), None)
+
+
 def _safe_remove(path: str) -> bool:
     try:
         if Path(path).exists():
@@ -132,6 +195,12 @@ class RehostImagesManager:
 
 async def check_tracker_image_hosts(meta: Meta, tracker_class: Any) -> None:
     """Apply a tracker's image-host policy when it defines one."""
+    # MUSIC artwork is hosted before tracker processing.  It has no video
+    # screenshots, so a missing screenshot collection must not trigger the
+    # generic reupload path (which would attempt to capture the audio file).
+    if meta.category == "MUSIC":
+        return
+
     policy = getattr(tracker_class, "image_host_policy", None)
     rehost_manager = getattr(tracker_class, "rehost_images_manager", None)
     if isinstance(policy, ImageHostPolicy) and rehost_manager is not None:
@@ -624,6 +693,8 @@ async def _handle_image_upload(
                 )
             elif meta.is_disc == "DVD":
                 await takescreens_manager.dvd_screenshots(meta, disc_num=0, retry_cap=True)
+            elif meta.category == "XXX":
+                await takescreens_manager.xxx_contact_sheets(meta.filelist or [], folder_id, base_dir, meta)
             else:
                 if path:
                     await takescreens_manager.screenshots(
