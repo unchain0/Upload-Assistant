@@ -60,7 +60,7 @@ def release_temp_dir(base_dir: str | Path, release_id: str) -> Path:
 
 
 def music_release_snapshot_path(base_dir: str | Path | None, release_id: str) -> Path:
-    """Return the music metadata snapshot path under a user-owned state directory."""
+    """Return the music metadata snapshot under ``base_dir``, falling back to ``STATE_DIR`` when empty."""
     return release_temp_dir(base_dir or STATE_DIR, release_id or "music-release-pending") / "music_release.json"
 
 

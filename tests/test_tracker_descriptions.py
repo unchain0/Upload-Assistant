@@ -5,7 +5,6 @@ import asyncio
 import pytest
 
 import src.get_tracker_data as tracker_data_module
-import src.trackers.common as common_module
 from src.description_review import draft, load_review, save_review
 from src.get_tracker_data import TrackerDataManager
 from src.meta import Meta
@@ -153,7 +152,7 @@ def test_unit3d_source_id_does_not_skip_interactive_description_review(monkeypat
         )
 
         assert result[4] is None
-        assert "Searching for information on [bold cyan]Aither[/bold cyan] (https://aither.example/torrents/123)" in messages
+        assert "Searching for information on [bold cyan]AITHER[/bold cyan] (https://aither.example/torrents/123)" in messages
 
     asyncio.run(run())
 

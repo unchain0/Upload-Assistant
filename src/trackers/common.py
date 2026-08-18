@@ -2816,7 +2816,7 @@ class Common:
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 if id and public_torrent_url:
-                    logger.info(f"Searching for information on [bold cyan]{tracker.title()}[/bold cyan] ({public_torrent_url.rstrip('/')}/{id})")
+                    logger.info(f"Searching for information on [bold cyan]{tracker}[/bold cyan] ({public_torrent_url.rstrip('/')}/{id})")
                 else:
                     logger.info(f"Searching for information on [bold cyan]{tracker}[/bold cyan]")
                 response = await client.get(url=url, params=params, headers=headers)
