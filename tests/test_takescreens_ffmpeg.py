@@ -3,6 +3,7 @@
 
 import asyncio
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -14,7 +15,7 @@ from src.meta import Meta
 
 
 @pytest.fixture(autouse=True)
-def _reset_takescreens_config() -> None:
+def _reset_takescreens_config() -> Iterator[None]:
     takescreens.TakeScreensManager({"DEFAULT": {}})
     yield
     takescreens.TakeScreensManager({"DEFAULT": {}})

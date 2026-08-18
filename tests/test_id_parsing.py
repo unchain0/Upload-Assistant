@@ -16,3 +16,9 @@ def test_parse_tmdb_id_accepts_category_prefixed_id() -> None:
 
 def test_parse_tmdb_id_accepts_tmdb_url() -> None:
     assert parse_tmdb_id("https://www.themoviedb.org/tv/12345", None) == ("TV", 12345)
+    assert parse_tmdb_id("https://www.themoviedb.org/tv/12345/season/1", None) == ("TV", 12345)
+    assert parse_tmdb_id("https://www.themoviedb.org/movie/67890/cast", None) == ("MOVIE", 67890)
+
+
+def test_parse_tmdb_id_does_not_use_unrelated_numeric_url_segment() -> None:
+    assert parse_tmdb_id("https://www.themoviedb.org/person/12345", "TV") == ("TV", 0)
