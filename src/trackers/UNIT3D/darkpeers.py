@@ -820,9 +820,7 @@ class DarkPeers(UNIT3D):
             return False
         if re.fullmatch(r"[xhx][.-]?\d{3,4}", token_lower):
             return False
-        if re.fullmatch(r"\d+p", token_lower):
-            return False
-        return True
+        return not re.fullmatch(r"\d+p", token_lower)
 
     @staticmethod
     def _normalize_aka_year_order(name: str, title: str, aka: str, year: str) -> str:
@@ -1074,8 +1072,7 @@ class DarkPeers(UNIT3D):
                 parts.append(identifier)
             if manual_source == "RETAIL":
                 parts.append("Retail")
-            base_name = " ".join(parts)
-            return base_name
+            return " ".join(parts)
 
         if identifier:
             parts.append(identifier)
