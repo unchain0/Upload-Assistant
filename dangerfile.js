@@ -1,4 +1,4 @@
-const { danger, fail, message, warn } = require("danger");
+const { danger, fail, message, schedule, warn } = require("danger");
 
 const pr = danger.github.pr;
 const created = danger.git.created_files || [];
@@ -17,10 +17,16 @@ if (pr.draft) {
   warn("This PR is still a draft; convert it to ready-for-review before merging.");
 }
 
-const totalLines = Number(pr.additions || 0) + Number(pr.deletions || 0);
-if (totalLines > 1500) {
-  warn(`Large PR (${totalLines} changed lines). Consider splitting it if the changes are not tightly related.`);
-}
+schedule(async () => {
+  const [totalLines, lockfileLines] = await Promise.all([
+    danger.git.linesOfCode(),
+    danger.git.linesOfCode("{package-lock.json,**/package-lock.json}"),
+  ]);
+  const reviewableLines = Math.max(0, Number(totalLines || 0) - Number(lockfileLines || 0));
+  if (reviewableLines > 1500) {
+    warn(`Large PR (${reviewableLines} reviewable changed lines, excluding lockfiles). Consider splitting it if the changes are not tightly related.`);
+  }
+});
 
 const pythonProductionChanged = changed.some(
   (file) =>
