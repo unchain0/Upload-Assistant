@@ -1,23 +1,18 @@
-# ruff: noqa: S101
 import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-import src.getseasonep as season_episode
-import src.prep as prep_module
+import src.services.episode_service as season_episode
+import src.services.preparation_service as prep_module
 import upload
-from src.get_name import NameManager
-from src.getseasonep import SeasonEpisodeManager, sync_single_episode_from_filename
-from src.meta import Meta
-from src.trackers.UNIT3D.darkpeers import DarkPeers
+from src.domain_models.release import Meta
+from src.integrations.trackers.UNIT3D.darkpeers import DarkPeers
+from src.services.episode_service import SeasonEpisodeManager, sync_single_episode_from_filename
+from src.services.release_naming_service import NameManager
 
-REPACK_FILE = (
-    "I.Became.a.Legend.After.My.10.Year-Long.Last.Stand."
-    "S01E05.After.Ten.Years.I.Was.Told.to.Get.Lost."
-    "REPACK.1080p.CR.WEB-DL.DDP2.0.H.264-Kitsune.mkv"
-)
+REPACK_FILE = "I.Became.a.Legend.After.My.10.Year-Long.Last.Stand.S01E05.After.Ten.Years.I.Was.Told.to.Get.Lost.REPACK.1080p.CR.WEB-DL.DDP2.0.H.264-Kitsune.mkv"
 
 
 def _stale_meta(filename: str = REPACK_FILE, **overrides: object) -> Meta:
@@ -213,7 +208,6 @@ async def test_gather_prep_syncs_discovered_file_before_metadata_search(tmp_path
     prep.config = {"DEFAULT": {}}
     prep.publish_preview = None
 
-    monkeypatch.setattr(prep, "_publish_initial_webui_snapshot", AsyncMock(return_value=None))
     monkeypatch.setattr(prep_module.prep_helpers, "init_meta", Mock(return_value=(False, False, None, False, {}, {})))
     monkeypatch.setattr(prep_module.prep_helpers, "detect_disc_and_category", AsyncMock(return_value=(filename, {})))
 

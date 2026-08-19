@@ -1,14 +1,12 @@
-# ruff: noqa: S101
-
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from src.meta import Meta
-from src.trackers.UNIT3D.peergarden import PeerGarden
-from src.trackers.UNIT3D.samaritano import Samaritano
-from src.trackers.UNIT3D.znth import Zenith
+from src.domain_models.release import Meta
+from src.integrations.trackers.UNIT3D.peergarden import PeerGarden
+from src.integrations.trackers.UNIT3D.samaritano import Samaritano
+from src.integrations.trackers.UNIT3D.znth import Zenith
 
 
 @pytest.mark.asyncio

@@ -7,10 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from bin import get_bdinfo
-from bin.get_bdinfo import BDInfoBinaryManager
-from bin.get_dvd_mediainfo import extract_linux
-from src.discparse import DiscParse
+from src.integrations.media.disc_parser import DiscParse
+from src.integrations.runtime_tools import bdinfo as get_bdinfo
+from src.integrations.runtime_tools.bdinfo import BDInfoBinaryManager
+from src.integrations.runtime_tools.dvd_media_info import extract_linux
 
 
 def _write_member(archive: zipfile.ZipFile, name: str, payload: bytes, mode: int = stat.S_IFREG | 0o644) -> None:
@@ -31,8 +31,8 @@ def test_extract_linux_promotes_verified_regular_members_together(tmp_path: Path
 
     extract_linux(cli_archive, lib_archive, output)
 
-    assert (output / "mediainfo").read_bytes() == b"cli"  # noqa: S101
-    assert (output / "libmediainfo.so.0").read_bytes() == b"lib"  # noqa: S101
+    assert (output / "mediainfo").read_bytes() == b"cli"
+    assert (output / "libmediainfo.so.0").read_bytes() == b"lib"
 
 
 def test_extract_linux_does_not_bless_stale_cli_when_library_is_missing(tmp_path: Path) -> None:
@@ -50,8 +50,8 @@ def test_extract_linux_does_not_bless_stale_cli_when_library_is_missing(tmp_path
     with pytest.raises(RuntimeError, match="required library"):
         extract_linux(cli_archive, lib_archive, output)
 
-    assert stale.read_bytes() == b"stale"  # noqa: S101
-    assert not (output / "libmediainfo.so.0").exists()  # noqa: S101
+    assert stale.read_bytes() == b"stale"
+    assert not (output / "libmediainfo.so.0").exists()
 
 
 def test_extract_linux_restores_existing_pair_when_second_promotion_fails(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -80,9 +80,9 @@ def test_extract_linux_restores_existing_pair_when_second_promotion_fails(tmp_pa
     with pytest.raises(OSError, match="simulated promotion failure"):
         extract_linux(cli_archive, lib_archive, output)
 
-    assert (output / "mediainfo").read_bytes() == b"old-cli"  # noqa: S101
-    assert (output / "libmediainfo.so.0").read_bytes() == b"old-lib"  # noqa: S101
-    assert marker.read_text() == "old-version"  # noqa: S101
+    assert (output / "mediainfo").read_bytes() == b"old-cli"
+    assert (output / "libmediainfo.so.0").read_bytes() == b"old-lib"
+    assert marker.read_text() == "old-version"
 
 
 def test_specialized_mediainfo_timeout_kills_and_reaps_process(monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -120,9 +120,9 @@ def test_specialized_mediainfo_timeout_kills_and_reaps_process(monkeypatch) -> N
     with pytest.raises(RuntimeError, match="timed out after 30 seconds"):
         asyncio.run(DiscParse({})._run_specialized_mediainfo("mediainfo", "input.ifo"))
 
-    assert process.killed is True  # noqa: S101
-    assert process.calls == 0  # noqa: S101
-    assert timeouts == [30, 5]  # noqa: S101
+    assert process.killed is True
+    assert process.calls == 0
+    assert timeouts == [30, 5]
 
 
 def test_specialized_mediainfo_cancellation_kills_and_reaps_process(monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -157,8 +157,8 @@ def test_specialized_mediainfo_cancellation_kills_and_reaps_process(monkeypatch)
     monkeypatch.setattr(asyncio, "create_subprocess_exec", create_process)
     asyncio.run(exercise())
 
-    assert process.killed is True  # noqa: S101
-    assert process.calls == 2  # noqa: S101
+    assert process.killed is True
+    assert process.calls == 2
 
 
 def test_bdinfo_progress_cancellation_kills_and_reaps_process(monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -209,12 +209,11 @@ def test_bdinfo_progress_cancellation_kills_and_reaps_process(monkeypatch) -> No
             await task
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", create_process)
-    monkeypatch.setattr("src.discparse.progress_display", lambda *_args, **_kwargs: Progress())
-    monkeypatch.setattr("src.discparse.publish_progress", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("src.integrations.media.disc_parser.progress_display", lambda *_args, **_kwargs: Progress())
     asyncio.run(exercise())
 
-    assert process.killed is True  # noqa: S101
-    assert process.waited is True  # noqa: S101
+    assert process.killed is True
+    assert process.waited is True
 
 
 def test_bdinfo_archive_without_binary_does_not_write_version_marker(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -233,5 +232,5 @@ def test_bdinfo_archive_without_binary_does_not_write_version_marker(tmp_path: P
         asyncio.run(BDInfoBinaryManager.ensure_bdinfo_binary(tmp_path))
 
     output = tmp_path / "bin" / "bdinfo" / "linux" / "amd64"
-    assert not (output / "v0.3.1").exists()  # noqa: S101
-    assert not (output / "bdinfo").exists()  # noqa: S101
+    assert not (output / "v0.3.1").exists()
+    assert not (output / "bdinfo").exists()

@@ -1,13 +1,12 @@
-# ruff: noqa: S101
 """Regression tests for TorrentHR's UNIT3D mappings."""
 
 import asyncio
 
 import pytest
 
-from src.meta import Meta
-from src.trackers.UNIT3D.torrenthr import TorrentHR
-from src.trackersetup import tracker_class_map
+from src.domain_models.release import Meta
+from src.integrations.trackers.registry import tracker_class_map
+from src.integrations.trackers.UNIT3D.torrenthr import TorrentHR
 
 
 def _tracker() -> TorrentHR:

@@ -1,7 +1,5 @@
-# ruff: noqa: S101
-
-from src.args import Args
-from src.meta import Meta
+from src.delivery.cli.arguments import Args
+from src.domain_models.release import Meta
 
 
 def test_archive_password_cli_override_preserves_random_mode(tmp_path):

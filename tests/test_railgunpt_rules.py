@@ -1,14 +1,12 @@
-# ruff: noqa: S101
-
 import asyncio
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from src.meta import Meta
-from src.trackers.NEXUSPHP import NEXUSPHP
-from src.trackers.NEXUSPHP.railgunpt import RailgunPT
+from src.domain_models.release import Meta
+from src.integrations.trackers.NEXUSPHP import NEXUSPHP
+from src.integrations.trackers.NEXUSPHP.railgunpt import RailgunPT
 
 
 def _tracker() -> RailgunPT:
@@ -272,8 +270,8 @@ def test_railgunpt_handles_non_video_nexusphp_payload_and_search(monkeypatch: py
 
     monkeypatch.setattr(NEXUSPHP, "search_existing", fake_search)
     game = _game_meta(season=0, episode="", tv_pack=False)
-    assert asyncio.run(tracker.get_technical_info(game)) == ""
-    assert asyncio.run(tracker.get_technical_info(_music_meta())) == ""
+    assert asyncio.run(tracker.get_technical_info(game)) == {}
+    assert asyncio.run(tracker.get_technical_info(_music_meta())) == {}
     assert asyncio.run(tracker.search_existing(game)) == []
     assert observed == {"season": "", "episode": "", "tv_pack": False}
     assert (game.season, game.episode, game.tv_pack) == (0, "", False)

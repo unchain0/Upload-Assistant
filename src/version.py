@@ -1,5 +1,0 @@
-# Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
-
-__version__ = "v3.6"
-
-"## What's Changed\n* fix: TVMaze domain by @WOSSFOSS in https://github.com/wastaken7/Upload-Assistant/pull/313\n* fix: HDBits screenshot rehosting by @wastaken7 in https://github.com/wastaken7/Upload-Assistant/pull/315\n* fix(artwork): skip non-image files when scanning for local covers by @uilton-oliveira in https://github.com/wastaken7/Upload-Assistant/pull/317\n* fix(unit3d): remove imported Upload-Assistant signatures by @GamerGirlN6467 in https://github.com/wastaken7/Upload-Assistant/pull/311\n* fix(rehost): skip music screenshot rehosting by @wastaken7 in https://github.com/wastaken7/Upload-Assistant/pull/318\n* feat: cache update notification checks by @wastaken7 in https://github.com/wastaken7/Upload-Assistant/pull/320\n* refactor: windows installer by @wastaken7 in https://github.com/wastaken7/Upload-Assistant/pull/319\n\n## New Contributors\n* @uilton-oliveira made their first contribution in https://github.com/wastaken7/Upload-Assistant/pull/317\n\n**Full Changelog**: https://github.com/wastaken7/Upload-Assistant/compare/v3.5...v3.6"

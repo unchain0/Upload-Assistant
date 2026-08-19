@@ -1,5 +1,3 @@
-# ruff: noqa: S101
-
 import asyncio
 import os
 import stat
@@ -8,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.queuemanage import QueueManager, _trusted_existing_queue_log, _write_json_file
+from src.services.queue_service import QueueManager, _trusted_existing_queue_log, _write_json_file
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX file modes do not apply on Windows")

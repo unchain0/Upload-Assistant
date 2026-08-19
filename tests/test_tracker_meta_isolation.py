@@ -1,20 +1,16 @@
-# ruff: noqa: S101
-
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-import src.trackerhandle as trackerhandle
-from src.meta import Meta
-from src.upload_safety import book_metadata_cjk_fields
+import src.services.tracker_upload_service as trackerhandle
+from src.domain_models.release import Meta
+from src.engines.upload_safety_policy import book_metadata_cjk_fields
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("suffix", ["m4b", "pdf"])
-async def test_zentag_preparation_is_isolated_from_other_trackers(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, suffix: str
-) -> None:
+async def test_zentag_preparation_is_isolated_from_other_trackers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, suffix: str) -> None:
     original = tmp_path / "readarr" / f"Book.{suffix}"
     original.parent.mkdir()
     original.write_bytes(b"original")
@@ -77,9 +73,7 @@ async def test_tracker_prepared_metadata_is_reused_for_upload() -> None:
         title="宮沢賢治童話全集",
         trackers=["YUSCENE"],
         tracker_status={},
-        tracker_prepared_meta={
-            "YUSCENE": Meta(author="Kenji Miyazawa", title="Complete Collection of Children's Stories")
-        },
+        tracker_prepared_meta={"YUSCENE": Meta(author="Kenji Miyazawa", title="Complete Collection of Children's Stories")},
     )
 
     prepared = await trackerhandle.prepare_tracker_meta(original, "YUSCENE", {"DEFAULT": {}})
@@ -103,9 +97,7 @@ def test_cjk_book_metadata_is_detected_before_upload() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("suffix", ["m4b", "pdf"])
-async def test_failed_required_zentag_preparation_disables_zenith(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, suffix: str
-) -> None:
+async def test_failed_required_zentag_preparation_disables_zenith(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, suffix: str) -> None:
     source = tmp_path / f"Book.{suffix}"
     source.write_bytes(suffix.encode())
     status: dict[str, dict[str, Any]] = {"ZENITH": {"upload": True}}

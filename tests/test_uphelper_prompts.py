@@ -1,13 +1,12 @@
-# ruff: noqa: S101
 import asyncio
 import threading
 
 import pytest
 
-from src.dupe_checking import DupeChecker
-from src.meta import Meta
-from src.trackers.UNIT3D import UNIT3D
-from src.uphelper import DupeEntry, UploadHelper
+from src.domain_models.release import Meta
+from src.integrations.trackers.UNIT3D import UNIT3D
+from src.services.duplicate_check_service import DupeChecker
+from src.services.upload_decision_service import DupeEntry, UploadHelper
 
 
 @pytest.mark.asyncio
@@ -24,7 +23,7 @@ async def test_prompt_yes_no_serializes_concurrent_prompts(monkeypatch: pytest.M
             second_started.set()
         return default
 
-    monkeypatch.setattr("src.uphelper.cli_ui.ask_yes_no", ask_yes_no)
+    monkeypatch.setattr("src.services.upload_decision_service.cli_ui.ask_yes_no", ask_yes_no)
     helper = UploadHelper({"DEFAULT": {}})
 
     first = asyncio.create_task(helper.prompt_yes_no("first"))
@@ -49,7 +48,7 @@ async def test_bdinfo_comparison_prompt_uses_rich_markup(monkeypatch: pytest.Mon
         question = value
         return False
 
-    monkeypatch.setattr("src.uphelper.has_bdinfo_content", lambda _entry: True)
+    monkeypatch.setattr("src.services.upload_decision_service.has_bdinfo_content", lambda _entry: True)
     helper = UploadHelper({"DEFAULT": {}})
     monkeypatch.setattr(helper, "prompt_yes_no", prompt_yes_no)
 
@@ -212,7 +211,7 @@ async def test_unit3d_episode_search_includes_all_season_pack_qualities(monkeypa
             captured_params.extend(params)
             return Response()
 
-    monkeypatch.setattr("src.trackers.UNIT3D.httpx.AsyncClient", lambda **_kwargs: Client())
+    monkeypatch.setattr("src.integrations.trackers.UNIT3D.httpx.AsyncClient", lambda **_kwargs: Client())
     tracker = UNIT3D({"TRACKERS": {"TEST": {}}}, "TEST")
     tracker.search_url = "https://example.com/api/torrents/filter"
     meta = Meta(category="TV", tmdb=325785, season="S01", episode="E03", resolution="1080p", type="HDTV", tv_pack=False)
@@ -236,9 +235,7 @@ async def test_unit3d_episode_search_includes_all_season_pack_qualities(monkeypa
     assert UNIT3D._is_duplicate_name_error('{"data":{"name":["The name has already been taken."]}}') is True
     assert UNIT3D._is_duplicate_name_error('{"data":{"name":["The name field already exists."]}}') is True
     assert UNIT3D._is_duplicate_name_error('{"data":{"name":["O valor indicado para o campo name já se encontra registado."]}}') is True
-    assert UNIT3D._is_duplicate_name_error(
-        '{"data":{"torrent":["A torrent with the same info_hash has already been uploaded and has been approved."]}}'
-    ) is True
+    assert UNIT3D._is_duplicate_name_error('{"data":{"torrent":["A torrent with the same info_hash has already been uploaded and has been approved."]}}') is True
 
 
 @pytest.mark.asyncio

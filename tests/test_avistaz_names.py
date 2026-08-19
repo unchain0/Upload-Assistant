@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.trackers.AVISTAZ import AZTrackerBase
+from src.integrations.trackers.AVISTAZ import AZTrackerBase
 
 
 def make_meta(**overrides):
@@ -46,7 +46,7 @@ async def test_cinemaz_title_rules_are_normalized():
 
     name = await tracker("CINEMAZ").get_name(meta)
 
-    assert name == "Example 2024 DC EXT 1080p HYBRID WEB-DL H.264-NoGroup"  # noqa: S101
+    assert name == "Example 2024 DC EXT 1080p HYBRID WEB-DL H.264-NoGroup"
 
 
 @pytest.mark.asyncio
@@ -55,7 +55,7 @@ async def test_privatehd_removes_brackets_and_preserves_its_cut_terms():
 
     name = await tracker("PRIVATEHD").get_name(meta)
 
-    assert name == "Example 2024 Theatrical 1080p WEB-DL H.264-GROUP"  # noqa: S101
+    assert name == "Example 2024 Theatrical 1080p WEB-DL H.264-GROUP"
 
 
 @pytest.mark.asyncio
@@ -64,7 +64,7 @@ async def test_cinemaz_keeps_hybrid_when_no_quality_marker_exists():
 
     name = await tracker("CINEMAZ").get_name(meta)
 
-    assert name == "Example 2024 Hybrid WEB-DL H.264-GROUP"  # noqa: S101
+    assert name == "Example 2024 Hybrid WEB-DL H.264-GROUP"
 
 
 @pytest.mark.asyncio
@@ -73,7 +73,7 @@ async def test_cinemaz_places_hybrid_after_a_4k_quality_marker():
 
     name = await tracker("CINEMAZ").get_name(meta)
 
-    assert name == "Example 2024 4K HYBRID WEB-DL H.264-GROUP"  # noqa: S101
+    assert name == "Example 2024 4K HYBRID WEB-DL H.264-GROUP"
 
 
 @pytest.mark.asyncio
@@ -82,4 +82,4 @@ async def test_cinemaz_preserves_hybrid_in_the_title_when_repositioning_marker()
 
     name = await tracker("CINEMAZ").get_name(meta)
 
-    assert name == "Hybrid 2007 1080p HYBRID WEB-DL H.264-GROUP"  # noqa: S101
+    assert name == "Hybrid 2007 1080p HYBRID WEB-DL H.264-GROUP"

@@ -1,10 +1,8 @@
-# ruff: noqa: S101
-
 import asyncio
 from typing import Any
 
-from src.meta import Meta
-from src.trackers.digitalcore import DigitalCore
+from src.domain_models.release import Meta
+from src.integrations.trackers.digitalcore import DigitalCore
 
 
 def _tracker() -> DigitalCore:

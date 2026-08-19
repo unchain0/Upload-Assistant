@@ -1,12 +1,10 @@
-# ruff: noqa: S101
-
 import json
 from typing import Any
 
 import pytest
 
-from src.meta import Meta
-from src.trackersetup import TrackerSetup
+from src.domain_models.release import Meta
+from src.integrations.trackers.registry import TrackerSetup
 
 
 def test_music_trackers_are_filtered_before_tracker_specific_work():
@@ -62,7 +60,7 @@ class _BannedGroupsClient:
 @pytest.mark.asyncio
 async def test_capybarabr_fetches_banned_groups_with_api_token(tmp_path, monkeypatch: pytest.MonkeyPatch):
     requests: list[dict[str, Any]] = []
-    monkeypatch.setattr("src.trackersetup.httpx.AsyncClient", lambda: _BannedGroupsClient(requests))
+    monkeypatch.setattr("src.integrations.trackers.registry.httpx.AsyncClient", lambda: _BannedGroupsClient(requests))
     setup = TrackerSetup({"TRACKERS": {"CAPYBARABR": {"api_key": "test-token"}}})
 
     file_path = await setup.get_banned_groups(Meta(base_dir=str(tmp_path)), "CAPYBARABR")

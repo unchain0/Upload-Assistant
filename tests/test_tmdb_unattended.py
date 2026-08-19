@@ -1,5 +1,3 @@
-# ruff: noqa: S101
-
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -7,9 +5,15 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-import src.tmdb as tmdb
-from src import metadata_searching
-from src.prep_helpers import _distinct_aka
+import src.integrations.external_apis.tmdb as tmdb
+from src.domain_models.external_api import TmdbCredential
+from src.services import metadata_service as metadata_searching
+from src.services.preparation_helpers import _distinct_aka
+
+
+@pytest.fixture(autouse=True)
+def _configured_tmdb_credential(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(tmdb, "_tmdb_credential", TmdbCredential.parse("test-api-key"))
 
 
 class _EmptyResponse:

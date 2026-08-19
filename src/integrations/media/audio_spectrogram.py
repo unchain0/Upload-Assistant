@@ -1,0 +1,548 @@
+# Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
+import asyncio
+import contextlib
+import hashlib
+import io
+import json
+import os
+import subprocess
+from pathlib import Path
+from typing import Any, cast
+
+import librosa
+import librosa.display
+import matplotlib
+from matplotlib import font_manager, ft2font
+
+matplotlib.use("Agg")
+
+import cli_ui
+import matplotlib.pyplot as plt
+import numpy as np
+
+from src.domain_models.release import Meta
+from src.integrations.filesystem.temp_paths import spectrograms_dir
+from src.integrations.observability.runtime_support import logger
+from src.integrations.runtime_tools.configured_binaries import configured_binary
+
+DURATION_LIMIT = 600
+SAMPLE_RATE = 48000
+WIDTH_INCH = 16
+HEIGHT_INCH = 9
+DPI_VALUE = 240
+CACHE_VERSION = 3
+_PLOT_FONT_CACHE: tuple[str, bool, str | None] | None = None
+AUDIOBOOK_EXTENSIONS = {".aac", ".aax", ".flac", ".m4a", ".m4b", ".mp3", ".ogg", ".opus", ".wav", ".wma"}
+SPECTROGRAM_N_FFT = 2048
+MAX_TIME_BINS = 1024
+_PREFERRED_PLOT_FONTS: tuple[str, ...] = (
+    "Noto Sans CJK SC",
+    "Noto Sans CJK TC",
+    "Noto Sans SC",
+    "Noto Sans TC",
+    "PingFang SC",
+    "PingFang TC",
+    "WenQuanYi Zen Hei",
+    "WenQuanYi Micro Hei",
+    "SimHei",
+    "Noto Sans",
+    "DejaVu Sans",
+)
+_CJK_SYSTEM_FONT_HINTS: tuple[str, ...] = (
+    "notosanscjk",
+    "notoserifcjk",
+    "notosansmonocjk",
+    "noto sans cjk",
+    "wenquanyi",
+    "wqy",
+    "simhei",
+    "pingfang",
+)
+_CJK_FONT_NAME_HINTS: tuple[str, ...] = (
+    "noto sans cjk",
+    "noto sans sc",
+    "noto sans tc",
+    "noto sans mono cjk",
+    "wenquanyi",
+    "wqy",
+    "simhei",
+    "pingfang",
+)
+_CJK_FONT_PATH_ENV_VARS: tuple[str, ...] = ("UA_AUDIO_SPECTROGRAM_FONT_PATH", "AUDIO_SPECTROGRAM_FONT_PATH")
+
+
+def _env_font_path() -> str | None:
+    for name in _CJK_FONT_PATH_ENV_VARS:
+        value = os.getenv(name, "").strip()
+        if value:
+            return value
+    return None
+
+
+def _is_cjk_character(character: str) -> bool:
+    if not character:
+        return False
+    value = ord(character)
+    return (
+        0x3400 <= value <= 0x4DBF
+        or 0x4E00 <= value <= 0x9FFF
+        or 0xF900 <= value <= 0xFAFF
+        or 0x20000 <= value <= 0x2CEAF
+        or 0x2F00 <= value <= 0x2FDF
+        or 0x3000 <= value <= 0x303F
+        or 0x3040 <= value <= 0x30FF
+        or 0xAC00 <= value <= 0xD7A3
+    )
+
+
+def prompt_audio_stream_positions() -> str:
+    """Ask for stream positions through the asynchronous CLI prompt API."""
+    return (
+        cli_ui.ask_string(
+            "Select audio stream positions (e.g. 0,1 or all)",
+            default="all",
+        )
+        or "all"
+    )
+
+
+def get_audio_streams(file_path: str | Path) -> list[dict[str, Any]]:
+    """Return the audio streams reported by ffprobe, or raise a useful error."""
+    command = [
+        configured_binary("ffprobe_path") or "ffprobe",
+        "-v",
+        "error",
+        "-show_entries",
+        "stream=index:stream_tags=language,title",
+        "-select_streams",
+        "a",
+        "-of",
+        "json",
+        str(file_path),
+    ]
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, check=False, timeout=60)  # noqa: S603
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise RuntimeError(f"Could not run ffprobe: {error}") from error
+
+    if result.returncode:
+        detail = result.stderr.strip() or "unknown ffprobe error"
+        raise RuntimeError(f"ffprobe could not inspect '{file_path}': {detail}")
+    try:
+        streams = json.loads(result.stdout).get("streams", [])
+    except json.JSONDecodeError as error:
+        raise RuntimeError(f"ffprobe returned invalid JSON for '{file_path}'") from error
+    return [stream for stream in streams if isinstance(stream, dict)]
+
+
+def select_audio_streams(streams: list[dict[str, Any]], choice: str) -> list[dict[str, Any]]:
+    """Select streams by their displayed, zero-based position; ``all`` selects all."""
+    normalized = [item.strip().lower() for item in choice.split(",") if item.strip()]
+    if "all" in normalized:
+        return streams
+
+    selected: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    for item in normalized:
+        if not item.isdigit():
+            logger.warning(f"Invalid audio stream selection: {item}. Use zero-based positions or 'all'.")
+            continue
+        position = int(item)
+        if not 0 <= position < len(streams):
+            logger.warning(f"Invalid audio stream position: {position}. Available positions: 0-{len(streams) - 1}.")
+            continue
+        if position not in seen:
+            selected.append(streams[position])
+            seen.add(position)
+    return selected
+
+
+def _positive_config_int(config: dict[str, Any], key: str, default: int) -> int:
+    value = config.get("DEFAULT", {}).get(key, default)
+    try:
+        value_as_int = int(value)
+    except TypeError, ValueError:
+        logger.warning(f"[yellow]Invalid {key!r} value {value!r}; using {default}.[/yellow]")
+        return default
+    if value_as_int <= 0:
+        logger.warning(f"[yellow]{key!r} must be positive; using {default}.[/yellow]")
+        return default
+    return value_as_int
+
+
+def get_spectrogram_sources(category: str, filelist: list[Any], disc_final_path: Path | None, max_source_files: int) -> list[Path]:
+    """Return source files for a release, preserving all music/audiobook chapters."""
+    if disc_final_path:
+        return [disc_final_path]
+    sources = [Path(file_path) for file_path in filelist if Path(file_path).is_file()]
+    if category == "BOOK":
+        sources = [source for source in sources if source.suffix.lower() in AUDIOBOOK_EXTENSIONS]
+    elif category not in ("BOOK", "MUSIC"):
+        sources = sources[:1]
+    return sources[:max_source_files]
+
+
+def get_stft_parameters(sample_count: int) -> tuple[int, int]:
+    """Bound the matrix plotted by Matplotlib while retaining useful frequency detail."""
+    n_fft = min(SPECTROGRAM_N_FFT, max(32, 2 ** int(np.floor(np.log2(max(sample_count, 1))))))
+    hop_length = max(n_fft // 4, int(np.ceil(sample_count / MAX_TIME_BINS)))
+    return n_fft, hop_length
+
+
+def _cache_fingerprint(audio_sources: list[Path], duration: int, sample_rate: int, stream_indexes: list[tuple[Path, int]]) -> str:
+    data: dict[str, object] = {
+        "cache_version": CACHE_VERSION,
+        "sources": [{"path": str(source.resolve()), "size": source.stat().st_size, "mtime_ns": source.stat().st_mtime_ns} for source in audio_sources],
+        "duration": duration,
+        "sample_rate": sample_rate,
+        "stream_indexes": [{"path": str(source.resolve()), "index": index} for source, index in stream_indexes],
+    }
+    return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
+
+
+def _load_cached_images(cache_path: Path, fingerprint: str) -> list[Any]:
+    if not cache_path.exists():
+        return []
+    try:
+        content = cache_path.read_text(encoding="utf-8")
+        cache: dict[str, object] = cast(dict[str, object], json.loads(content)) if content.strip() else {}
+        images = cache.get("spectrograms_images")
+        if cache.get("fingerprint") == fingerprint and isinstance(images, list):
+            return cast(list[Any], images)
+    except (OSError, json.JSONDecodeError) as error:
+        logger.warning(f"[yellow]Could not load spectrogram image cache: {error!s}[/yellow]")
+    return []
+
+
+def _font_name_for_file(font_path: str) -> str:
+    try:
+        return font_manager.FontProperties(fname=font_path).get_name()
+    except RuntimeError, OSError:
+        return Path(font_path).stem
+
+
+def _register_font(font_path: str) -> None:
+    with contextlib.suppress(Exception):
+        font_manager.fontManager.addfont(font_path)  # pyright: ignore[reportUnknownMemberType]
+
+
+def _font_path_supports_cjk(font_path: str, font_name: str | None = None) -> bool:
+    lower_font_path = font_path.lower()
+    if any(hint in lower_font_path for hint in _CJK_SYSTEM_FONT_HINTS):
+        return True
+    if font_name:
+        return any(hint in font_name.lower() for hint in _CJK_FONT_NAME_HINTS)
+    return False
+
+
+def _font_is_loadable(font_path: str) -> bool:
+    try:
+        ft2font.FT2Font(font_path)
+        return True
+    except Exception:
+        return False
+
+
+def _resolve_plot_font() -> tuple[str, bool, str | None]:
+    global _PLOT_FONT_CACHE
+    if _PLOT_FONT_CACHE is not None:
+        return _PLOT_FONT_CACHE
+
+    override_path = _env_font_path()
+    if override_path:
+        override_font_path = Path(override_path).expanduser()
+        if override_font_path.is_file():
+            font_path = str(override_font_path.resolve())
+            if _font_is_loadable(font_path):
+                _register_font(font_path)
+                supports_unicode = _font_path_supports_cjk(font_path)
+                _PLOT_FONT_CACHE = (_font_name_for_file(font_path), supports_unicode, font_path)
+                return _PLOT_FONT_CACHE
+            logger.warning(f"[yellow]Configured spectrogram font '{override_font_path}' is not loadable; falling back to auto-detected font.[/yellow]")
+
+    fallback_font: tuple[str, bool, str] | None = None
+
+    for font_name in _PREFERRED_PLOT_FONTS:
+        try:
+            font_path = font_manager.findfont(font_name, fallback_to_default=False)
+        except RuntimeError, ValueError:
+            continue
+        if not font_path:
+            continue
+        resolved_name = _font_name_for_file(font_path)
+        if not _font_is_loadable(font_path):
+            continue
+        supports_unicode = _font_path_supports_cjk(font_path, resolved_name)
+        _register_font(font_path)
+        if supports_unicode:
+            _PLOT_FONT_CACHE = (resolved_name, True, font_path)
+            return _PLOT_FONT_CACHE
+        if fallback_font is None:
+            fallback_font = (resolved_name, False, font_path)
+
+    for font_path in dict.fromkeys(font_manager.findSystemFonts()):  # pyright: ignore[reportUnknownMemberType]
+        if not _font_is_loadable(font_path):
+            continue
+        resolved_font_name = _font_name_for_file(font_path)
+        if not _font_path_supports_cjk(font_path, resolved_font_name):
+            continue
+        _register_font(font_path)
+        _PLOT_FONT_CACHE = (resolved_font_name, True, font_path)
+        return _PLOT_FONT_CACHE
+
+    if fallback_font is not None:
+        _PLOT_FONT_CACHE = fallback_font
+        return fallback_font
+
+    _PLOT_FONT_CACHE = ("DejaVu Sans", False, None)
+    return _PLOT_FONT_CACHE
+
+
+def _build_plot_font_properties(font_path: str | None) -> tuple[font_manager.FontProperties | None, bool]:
+    if not font_path:
+        return None, False
+    try:
+        return font_manager.FontProperties(fname=font_path), True
+    except Exception as error:
+        logger.warning(f"[yellow]Could not load spectrogram font from '{font_path}': {error}[/yellow]")
+    return None, False
+
+
+def _sanitize_plot_text(text: str, supports_unicode: bool) -> str:
+    if supports_unicode:
+        return text
+    return "".join("?" if _is_cjk_character(character) else character for character in text)
+
+
+def generate_spectrogram(
+    stream_index: int,
+    stream_label: str,
+    stream_lang: str,
+    file_path: str | Path,
+    output_dir: Path,
+    duration: int,
+    sample_rate: int,
+    source_position: int,
+    source_name: str,
+    font_properties: font_manager.FontProperties | None = None,
+    supports_unicode: bool | None = None,
+) -> Path:
+    """Decode one stream and generate a frequency/time image suitable for review."""
+    command = [
+        configured_binary("ffmpeg_path") or "ffmpeg",
+        "-v",
+        "error",
+        "-nostdin",
+        "-i",
+        str(file_path),
+        "-map",
+        f"0:{stream_index}",
+        "-t",
+        str(duration),
+        "-ac",
+        "1",
+        "-ar",
+        str(sample_rate),
+        "-f",
+        "wav",
+        "pipe:1",
+    ]
+    try:
+        result = subprocess.run(command, capture_output=True, check=False, timeout=duration + 120)  # noqa: S603
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise RuntimeError(f"Could not decode audio stream {stream_index}: {error}") from error
+    if result.returncode or not result.stdout:
+        detail = result.stderr.decode(errors="replace").strip() or "no audio was produced"
+        raise RuntimeError(f"FFmpeg could not decode audio stream {stream_index}: {detail}")
+
+    try:
+        samples, actual_sample_rate = librosa.load(io.BytesIO(result.stdout), sr=None, mono=True)
+    except Exception as error:
+        raise RuntimeError(f"Could not read decoded audio for stream {stream_index}: {error}") from error
+    if samples.size == 0:
+        raise RuntimeError(f"Audio stream {stream_index} contains no decodable samples.")
+
+    n_fft, hop_length = get_stft_parameters(samples.size)
+    stft = np.abs(librosa.stft(samples, n_fft=n_fft, hop_length=hop_length))
+    db_spectrogram = librosa.amplitude_to_db(stft, ref=np.max)  # pyright: ignore[reportUnknownMemberType]  # librosa stub has an untyped callback overload.
+
+    if supports_unicode is None or font_properties is None:
+        _plot_font, supports_unicode, plot_font_path = _resolve_plot_font()
+        if font_properties is None:
+            font_properties, resolved_font_supports_unicode = _build_plot_font_properties(plot_font_path)
+            if not resolved_font_supports_unicode:
+                supports_unicode = False
+
+    with matplotlib.rc_context({"font.family": ["sans-serif"]}):  # pyright: ignore[reportUnknownMemberType]
+        figure, axis = plt.subplots(figsize=(WIDTH_INCH, HEIGHT_INCH), dpi=DPI_VALUE)  # pyright: ignore[reportUnknownMemberType]  # matplotlib stub types **fig_kw as Unknown.
+        image = librosa.display.specshow(
+            db_spectrogram,
+            sr=actual_sample_rate,
+            hop_length=hop_length,
+            x_axis="time",
+            y_axis="hz",
+            cmap="inferno",
+            ax=axis,
+            rasterized=True,
+        )
+        figure.colorbar(image, ax=axis, format="%+2.0f dB")  # pyright: ignore[reportUnknownMemberType]  # matplotlib stub types **kwargs as Unknown.
+        display_label = stream_label if stream_label and stream_label != f"Stream_{stream_index}" else source_name
+        axis.set_title(  # pyright: ignore[reportUnknownMemberType]  # matplotlib stub types **kwargs as Unknown.
+            _sanitize_plot_text(display_label, supports_unicode),
+            fontsize=18,
+            fontweight="bold",
+            pad=22,
+            fontproperties=font_properties,
+        )
+        axis.text(  # pyright: ignore[reportUnknownMemberType]  # matplotlib stub types **kwargs as Unknown.
+            0.5,
+            1.01,
+            _sanitize_plot_text(
+                f"File: {source_name}  •  Stream {stream_index}  •  {stream_lang}  •  First {duration}s  •  mono mix @ {actual_sample_rate / 1000:g} kHz",
+                supports_unicode,
+            ),
+            transform=axis.transAxes,
+            ha="center",
+            va="bottom",
+            fontsize=10,
+            fontproperties=font_properties,
+        )
+        axis.set_xlabel("Time (s)")  # pyright: ignore[reportUnknownMemberType]  # matplotlib stub types **kwargs as Unknown.
+        axis.set_ylabel("Frequency (Hz)")  # pyright: ignore[reportUnknownMemberType]  # matplotlib stub types **kwargs as Unknown.
+
+        output_name = output_dir / f"spectrogram_source_{source_position:02d}_stream_{stream_index}.png"
+        figure.tight_layout()
+        figure.savefig(output_name, dpi=DPI_VALUE, bbox_inches="tight")  # pyright: ignore[reportUnknownMemberType]  # matplotlib stub types **kwargs as Unknown.
+        plt.close(figure)
+
+    return output_name
+
+
+async def process_audio_spectrograms(meta: Meta, config: dict[str, Any], uploadscreens_manager: Any = None) -> list[str]:
+    if meta.spectrograms_images:
+        return []
+
+    logger.info("[yellow]Generating Audio Spectrograms...[/yellow]")
+    output_dir = spectrograms_dir(meta.base_dir, meta.uuid)
+    cache_path = Path(meta.base_dir) / "tmp" / meta.uuid / "audio_spectrograms_images.json"
+
+    bdinfo = meta.bdinfo
+    disc_final_path: Path | None = None
+    if bdinfo:
+        disc_path = bdinfo.get("path", "")
+        files_list = bdinfo.get("files", [])
+        disc_file = files_list[0].get("file", "") if files_list else ""
+        if disc_path and disc_file:
+            disc_final_path = Path(disc_path) / "STREAM" / disc_file
+            logger.debug(f"disc_final_path: {disc_final_path}")
+
+    max_source_files = _positive_config_int(config, "audio_spectrogram_max_files", 12)
+    all_audio_sources = get_spectrogram_sources(meta.category, meta.filelist, disc_final_path, max(len(meta.filelist), 1))
+    audio_sources = all_audio_sources[:max_source_files]
+    if len(all_audio_sources) > max_source_files:
+        logger.info(f"[yellow]Limiting audio spectrogram generation to the first {max_source_files} of {len(all_audio_sources)} {meta.category.lower()} audio files.[/yellow]")
+
+    if not audio_sources:
+        logger.info("[red]Could not find a valid audio or video file to process spectrograms from.[/red]")
+        return []
+
+    source_streams: list[tuple[int, Path, list[dict[str, Any]]]] = []
+    for source_position, audio_path in enumerate(audio_sources, start=1):
+        try:
+            streams = await asyncio.to_thread(get_audio_streams, audio_path)
+        except RuntimeError as error:
+            logger.error(f"[red]{error}[/red]")
+            continue
+
+        if bdinfo and audio_path == disc_final_path:
+            bdinfo_audios = bdinfo.get("audio", [])
+            for position, stream in enumerate(streams):
+                tags = stream.setdefault("tags", {})
+                if position < len(bdinfo_audios):
+                    if not tags.get("language") or tags.get("language") == "und":
+                        tags["language"] = bdinfo_audios[position].get("language", "und")
+                    tags.setdefault("title", bdinfo_audios[position].get("codec", "No Title"))
+        if streams:
+            source_streams.append((source_position, audio_path, streams))
+
+    if not source_streams:
+        logger.warning("No audio streams found.")
+        return []
+
+    if meta.audio_spectrogram_tracks is not None:
+        choice = str(meta.audio_spectrogram_tracks)
+    elif meta.unattended or len(source_streams) > 1:
+        choice = "all" if config["DEFAULT"].get("process_all_audio_spectrogram", False) else "0"
+    else:
+        _, first_audio_path, first_streams = source_streams[0]
+        logger.info(f"Available audio streams for {first_audio_path.name} (use zero-based positions):")
+        for position, stream in enumerate(first_streams):
+            tags = stream.get("tags", {})
+            logger.info(f"[{position}] FFmpeg stream {stream.get('index')} | Lang: {tags.get('language', 'und')} | Title: {tags.get('title', 'No Title')}")
+        choice = prompt_audio_stream_positions()
+
+    selected_jobs: list[tuple[int, Path, dict[str, Any]]] = []
+    for source_position, audio_path, streams in source_streams:
+        selected_streams = select_audio_streams(streams, choice)
+        if not selected_streams:
+            logger.warning(f"[yellow]No valid streams selected for {audio_path.name}; skipping it.[/yellow]")
+            continue
+        selected_jobs.extend((source_position, audio_path, stream) for stream in selected_streams)
+
+    if not selected_jobs:
+        logger.warning("[yellow]No valid audio streams were selected.[/yellow]")
+        return []
+
+    duration = _positive_config_int(config, "audio_spectrogram_duration", DURATION_LIMIT)
+    sample_rate = _positive_config_int(config, "audio_spectrogram_sample_rate", SAMPLE_RATE)
+    _, supports_unicode, plot_font_path = _resolve_plot_font()
+    plot_font_properties, font_property_supports_unicode = _build_plot_font_properties(plot_font_path)
+    if not font_property_supports_unicode:
+        supports_unicode = False
+    fingerprint = _cache_fingerprint(audio_sources, duration, sample_rate, [(audio_path, int(stream["index"])) for _, audio_path, stream in selected_jobs])
+    cached_images = await asyncio.to_thread(_load_cached_images, cache_path, fingerprint)
+    if cached_images:
+        meta.spectrograms_images = cached_images
+        logger.debug(f"[cyan]Loaded {len(cached_images)} matching cached spectrograms.[/cyan]")
+        return []
+
+    generated_files: list[str] = []
+
+    for _job_position, (source_position, audio_path, stream) in enumerate(selected_jobs, start=1):
+        tags = stream.get("tags", {})
+        label = tags.get("title", f"Stream_{stream['index']}")
+        language = tags.get("language", "und")
+        try:
+            file_path = await asyncio.to_thread(
+                generate_spectrogram,
+                int(stream["index"]),
+                label,
+                language,
+                audio_path,
+                output_dir,
+                duration,
+                sample_rate,
+                source_position,
+                audio_path.stem,
+                plot_font_properties,
+                supports_unicode,
+            )
+        except RuntimeError as error:
+            logger.error(f"[red]{error}[/red]")
+
+            continue
+        generated_files.append(str(file_path))
+
+    if generated_files and uploadscreens_manager:
+        logger.info("[yellow]Uploading Audio Spectrograms...[/yellow]")
+        try:
+            spec_images, _ = await uploadscreens_manager.upload_screens(meta, len(generated_files), 1, 0, len(generated_files), generated_files, {})
+            if spec_images:
+                meta.spectrograms_images = spec_images
+                cache: dict[str, object] = {"cache_version": CACHE_VERSION, "fingerprint": fingerprint, "spectrograms_images": spec_images}
+                await asyncio.to_thread(cache_path.write_text, json.dumps(cache, indent=4), encoding="utf-8")
+                logger.debug(f"[cyan]Saved {len(spec_images)} spectrograms to audio_spectrograms_images.json[/cyan]")
+        except Exception as error:
+            logger.error(f"[red]Error uploading audio spectrograms: {error}[/red]")
+
+    return generated_files

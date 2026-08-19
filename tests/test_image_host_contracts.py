@@ -1,5 +1,3 @@
-# ruff: noqa: S101
-
 from __future__ import annotations
 
 import asyncio
@@ -9,9 +7,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src.image_hosts import IMAGE_HOST_SPECS, MAX_IMAGE_HOST_SLOTS, image_host_config_map, image_host_size_within_limit
-from src.meta import Meta
-from src.uploadscreens import _pixhost_raw_url, upload_image_task
+from src.domain_models.release import Meta
+from src.integrations.image_hosts.contracts import IMAGE_HOST_SPECS, MAX_IMAGE_HOST_SLOTS, image_host_config_map, image_host_size_within_limit
+from src.integrations.image_hosts.uploader import _pixhost_raw_url, upload_image_task
 
 
 class _FakeResponse:
@@ -58,7 +56,7 @@ def _upload(
     async def exercise() -> dict[str, Any]:
         return await upload_image_task((str(image), host, {"DEFAULT": defaults}, Meta(category=category)))
 
-    with patch("src.uploadscreens.httpx.AsyncClient", return_value=_FakeClient(response, requests)):
+    with patch("src.integrations.image_hosts.uploader.httpx.AsyncClient", return_value=_FakeClient(response, requests)):
         result = asyncio.run(exercise())
     return result, requests
 
@@ -223,9 +221,27 @@ def test_imgbox_failure_is_marked_unavailable_for_fast_fallback(tmp_path: Path) 
         return_dict["host_unavailable"] = True
         return []
 
-    with patch("src.uploadscreens.imgbox_upload", new=AsyncMock(side_effect=fake_imgbox)):
+    with patch("src.integrations.image_hosts.uploader.imgbox_upload", new=AsyncMock(side_effect=fake_imgbox)):
         result = asyncio.run(exercise())
 
     assert result["status"] == "failed"
     assert result["host_unavailable"] is True
     assert "service unavailable" in result["reason"]
+
+
+def test_imgbb_http_400_rate_limit_opens_host_circuit(tmp_path: Path) -> None:
+    payload = {"success": False, "status": 400, "error": {"message": "Rate limit reached."}}
+
+    result, _requests = _upload(
+        tmp_path,
+        host="imgbb",
+        defaults={"imgbb_api": "limited-key"},
+        response=_FakeResponse(400, payload),
+    )
+
+    assert result == {
+        "status": "failed",
+        "reason": "imgbb upload failed (HTTP 400): Rate limit reached.",
+        "host_unavailable": True,
+        "retryable": False,
+    }

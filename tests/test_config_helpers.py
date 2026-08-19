@@ -1,8 +1,6 @@
-# ruff: noqa: S101
-
 from rich.text import Text
 
-from src.config_helpers import format_terminal_link, should_embed_links
+from src.integrations.observability.terminal_link_formatting import format_terminal_link, should_embed_links
 
 
 def test_embed_links_controls_terminal_link_formatting() -> None:

@@ -1,12 +1,10 @@
-# ruff: noqa: S101
-
 import hashlib
 from pathlib import Path
 
 import pytest
 
-from src import usenetcreate
-from src.meta import Meta
+from src.domain_models.release import Meta
+from src.integrations.usenet import creator as usenetcreate
 
 
 @pytest.mark.asyncio

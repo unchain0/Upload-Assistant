@@ -1,9 +1,7 @@
-# ruff: noqa: S101
-
 import pytest
 
-from src.args import Args
-from src.meta import Meta
+from src.delivery.cli.arguments import Args
+from src.domain_models.release import Meta
 
 
 def test_tracker_id_accepts_explicit_tracker_and_id():

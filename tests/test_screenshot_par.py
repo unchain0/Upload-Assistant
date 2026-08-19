@@ -1,4 +1,4 @@
-from src.takescreens import round_to_even, screenshot_par_scale_factors, should_scale_screenshots_for_par
+from src.integrations.media.screenshot_capture import round_to_even, screenshot_par_scale_factors, should_scale_screenshots_for_par
 
 
 def test_screenshot_par_scaling_is_disabled_by_default() -> None:

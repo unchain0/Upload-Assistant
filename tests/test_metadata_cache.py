@@ -1,15 +1,12 @@
-# ruff: noqa: S101
-
 import asyncio
 import json
-from pathlib import Path
 
-import data.config as config_module
-from src.metadata_cache import cache_for, is_cache_miss, set_run_disabled
+from src.integrations.cache.metadata_cache import cache_for, is_cache_miss, set_run_disabled
+from src.integrations.filesystem.paths import CODE_DIR
 
 
 def test_default_cache_root_is_the_configured_checkout():
-    assert cache_for("").root == Path(config_module.__file__).resolve().parent.parent / "data" / "cache" / "metadata"
+    assert cache_for("").root == CODE_DIR / "data" / "cache" / "metadata"
 
 
 def test_metadata_cache_uses_provider_subdirectories_and_ttl(tmp_path):

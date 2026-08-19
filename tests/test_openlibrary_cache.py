@@ -1,9 +1,7 @@
-# ruff: noqa: S101
-
 import asyncio
 
-from src.metadata_cache import cache_for
-from src.openlibrary import openlibrary_manager
+from src.integrations.cache.metadata_cache import cache_for
+from src.integrations.external_apis.openlibrary import openlibrary_manager
 
 
 def _fail_if_network(*_args, **_kwargs):
@@ -36,7 +34,7 @@ class _Client:
 
 def test_openlibrary_uses_central_cache_for_metadata_and_authors(tmp_path, monkeypatch):
     async def run():
-        monkeypatch.setattr("src.openlibrary.httpx.AsyncClient", _fail_if_network)
+        monkeypatch.setattr("src.integrations.external_apis.openlibrary.httpx.AsyncClient", _fail_if_network)
         cache = cache_for(tmp_path)
         await cache.set("openlibrary", "work", "OL1W", {"title": "Cached work"})
         await cache.set("openlibrary", "isbn", "9780000000001", {"title": "Cached ISBN"})
@@ -54,7 +52,7 @@ def test_openlibrary_uses_central_cache_for_metadata_and_authors(tmp_path, monke
 
 def test_openlibrary_ignores_null_cover_ids(tmp_path, monkeypatch):
     async def run():
-        monkeypatch.setattr("src.openlibrary.httpx.AsyncClient", lambda **_kwargs: _Client({"title": "No cover", "covers": [None]}))
+        monkeypatch.setattr("src.integrations.external_apis.openlibrary.httpx.AsyncClient", lambda **_kwargs: _Client({"title": "No cover", "covers": [None]}))
 
         metadata = await openlibrary_manager.search_by_work_id("OL2W", tmp_path)
 

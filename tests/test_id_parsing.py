@@ -1,7 +1,6 @@
-# ruff: noqa: S101
 import pytest
 
-from src.id_parsing import parse_tmdb_id
+from src.domain_models.media_identifiers import parse_tmdb_id
 
 
 @pytest.mark.parametrize("value", ["tv", "tv123", "movie", "movie123"])

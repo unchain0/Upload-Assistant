@@ -11,14 +11,9 @@ from typing import Any, TypedDict, cast
 from rich.console import Console
 from rich.text import Text
 
-from src.app_paths import CODE_DIR, CONFIG_PATH, DATA_DIR, LEGACY_CONFIG_PATH, ensure_data_dir
-from src.check_requirements import check_dependencies
-from src.image_hosts import MAX_IMAGE_HOST_SLOTS, image_host_config_map
-
-check_dependencies()
-
-
-from src.console import console  # noqa: E402
+from src.integrations.filesystem.paths import CODE_DIR, CONFIG_PATH, DATA_DIR, LEGACY_CONFIG_PATH, ensure_data_dir
+from src.integrations.image_hosts.contracts import MAX_IMAGE_HOST_SLOTS, image_host_config_map
+from src.integrations.observability.console import console
 
 
 class _StyledConsole:
@@ -32,7 +27,7 @@ class _StyledConsole:
     def __init__(self, base_console: Console) -> None:
         self._console = base_console
 
-    def print(self, message: object = "", *args: object, **kwargs: object) -> None:
+    def print(self, message: object = "", *args: object, **kwargs: Any) -> None:
         if not isinstance(message, str):
             self._console.print(message, *args, **kwargs)
             return
@@ -412,20 +407,19 @@ def autofill_missing_keys(config_data: ConfigDict, example_config: ConfigDict) -
             continue
 
         if section == "TRACKERS":
-            if "TRACKERS" not in config_data:
-                config_data["TRACKERS"] = {"default_trackers": ""}
+            trackers_config = cast(ConfigDict, config_data.setdefault("TRACKERS", {"default_trackers": ""}))
 
             # Trackers are independent configuration sections.  Unlike their
             # individual settings, a newly supported tracker has no existing
             # user section to iterate over, so add its template explicitly.
             for tracker_name, tracker_settings in example_section.items():
-                if tracker_name in {"default_trackers", "MANUAL"} or tracker_name in config_data["TRACKERS"]:
+                if tracker_name in {"default_trackers", "MANUAL"} or tracker_name in trackers_config:
                     continue
                 if isinstance(tracker_settings, dict):
-                    config_data["TRACKERS"][tracker_name] = deepcopy(tracker_settings)
+                    trackers_config[tracker_name] = deepcopy(tracker_settings)
                     console.print(f"[i] Added new tracker '{tracker_name}' with default settings", markup=False)
 
-            for tracker_name, tracker_settings in config_data["TRACKERS"].items():
+            for tracker_name, tracker_settings in trackers_config.items():
                 if tracker_name == "default_trackers":
                     continue
                 if isinstance(tracker_settings, dict) and tracker_name in example_section:

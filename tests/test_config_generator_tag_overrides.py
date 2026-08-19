@@ -1,6 +1,3 @@
-# ruff: noqa: S101
-
-import builtins
 import importlib.util
 import sys
 from pathlib import Path

@@ -1,5 +1,4 @@
 # Assertions are the idiomatic pytest checks for this focused subprocess test.
-# ruff: noqa: S101
 
 import asyncio
 import sys
@@ -10,8 +9,8 @@ from types import SimpleNamespace
 import ffmpeg
 import pytest
 
-from src import takescreens
-from src.meta import Meta
+from src.domain_models.release import Meta
+from src.integrations.media import screenshot_capture as takescreens
 
 
 @pytest.fixture(autouse=True)
@@ -44,8 +43,8 @@ async def test_run_ffmpeg_writes_report_next_to_output(tmp_path, monkeypatch):
 
         return SimpleNamespace(returncode=0, communicate=fake_communicate)
 
-    monkeypatch.setattr("src.takescreens.platform.system", lambda: "Windows")
-    monkeypatch.setattr("src.takescreens.asyncio.create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr("src.integrations.media.screenshot_capture.platform.system", lambda: "Windows")
+    monkeypatch.setattr("src.integrations.media.screenshot_capture.asyncio.create_subprocess_exec", fake_create_subprocess_exec)
 
     command = ffmpeg.input(str(output.with_name("source.mkv"))).output(str(output), vframes=1).global_args("-y", "-loglevel", "quiet")
 
@@ -83,7 +82,7 @@ async def test_run_ffmpeg_prefers_configured_binary(tmp_path, monkeypatch):
 
         return SimpleNamespace(returncode=0, communicate=fake_communicate)
 
-    monkeypatch.setattr("src.takescreens.asyncio.create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr("src.integrations.media.screenshot_capture.asyncio.create_subprocess_exec", fake_create_subprocess_exec)
     manager = takescreens.TakeScreensManager({"DEFAULT": {"ffmpeg_path": str(executable)}})
 
     command = ffmpeg.input(str(tmp_path / "source.mkv")).output(str(tmp_path / "frame.png"), vframes=1)
@@ -105,8 +104,8 @@ async def test_cancelling_run_ffmpeg_terminates_only_its_owned_process(tmp_path,
         owned_started.set()
         return process
 
-    monkeypatch.setattr("src.takescreens.platform.system", lambda: "Windows")
-    monkeypatch.setattr("src.takescreens.asyncio.create_subprocess_exec", capture_create_subprocess_exec)
+    monkeypatch.setattr("src.integrations.media.screenshot_capture.platform.system", lambda: "Windows")
+    monkeypatch.setattr("src.integrations.media.screenshot_capture.asyncio.create_subprocess_exec", capture_create_subprocess_exec)
 
     class Command:
         def compile(self):
@@ -148,12 +147,10 @@ async def test_debug_capture_disables_stdin_and_preserves_ffmpeg_errors(tmp_path
         output.write_bytes(b"png")
         return 0, b"", b""
 
-    monkeypatch.setattr("src.takescreens.run_ffmpeg", fake_run)
+    monkeypatch.setattr("src.integrations.media.screenshot_capture.run_ffmpeg", fake_run)
     manager = takescreens.TakeScreensManager({"DEFAULT": {"use_libplacebo": False, "ffmpeg_limit": False}})
 
-    result = await manager.capture_screenshot(
-        (0, str(source), 1.0, str(output), 1920, 1080, 1.0, 1.0, "quiet", False, Meta(debug=True))
-    )
+    result = await manager.capture_screenshot((0, str(source), 1.0, str(output), 1920, 1080, 1.0, 1.0, "quiet", False, Meta(debug=True)))
 
     assert result == (0, str(output))
     assert "-nostdin" in commands[0]
@@ -169,7 +166,7 @@ async def test_determine_tonemapping_uses_verified_libplacebo(monkeypatch, tmp_p
         compatibility_calls.append(args)
         return True, True
 
-    monkeypatch.setattr("src.takescreens.check_libplacebo_compatibility", compatible)
+    monkeypatch.setattr("src.integrations.media.screenshot_capture.check_libplacebo_compatibility", compatible)
     manager = takescreens.TakeScreensManager({"DEFAULT": {"tone_map": True, "use_libplacebo": True, "ffmpeg_is_good": False}})
 
     enabled = await manager.determine_tonemapping(1, 1, 1920, 1080, "source.mkv", "10", str(tmp_path / "frame.png"), "quiet", meta)
@@ -206,7 +203,7 @@ async def test_capture_screenshot_applies_selected_libplacebo_tonemapping(monkey
         Path(takescreens.get_ffmpeg_output_path(command, compiled)).write_bytes(b"png")
         return 0, b"", b""
 
-    monkeypatch.setattr("src.takescreens.run_ffmpeg", run_stub)
+    monkeypatch.setattr("src.integrations.media.screenshot_capture.run_ffmpeg", run_stub)
 
     result = await takescreens.capture_screenshot((0, str(source), 10, str(output), 1920, 1080, 1, 1, "quiet", True, Meta(libplacebo=True)))
 

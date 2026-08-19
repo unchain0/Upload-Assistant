@@ -1,13 +1,11 @@
-# ruff: noqa: S101
-
 import asyncio
 from typing import Any
 
 import pytest
 
-from src.meta import Meta
-from src.trackers.UNIT3D.capybarabr import CapybaraBR
-from src.trackers.UNIT3D.samaritano import Samaritano
+from src.domain_models.release import Meta
+from src.integrations.trackers.UNIT3D.capybarabr import CapybaraBR
+from src.integrations.trackers.UNIT3D.samaritano import Samaritano
 
 
 def test_samaritano_rejects_malformed_filelists_before_category_dispatch() -> None:

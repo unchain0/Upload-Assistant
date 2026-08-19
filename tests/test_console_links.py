@@ -1,19 +1,6 @@
-# ruff: noqa: S101
 import asyncio
-from io import StringIO
 
-from rich.console import Console
-
-from src.console import ansi_to_html, buffer_console_logs, prompt_in_thread
-
-
-def test_ansi_to_html_preserves_osc8_hyperlinks() -> None:
-    stream = StringIO()
-    Console(file=stream, force_terminal=True, color_system="truecolor", legacy_windows=False).print("[link=https://example.test]link[/link]")
-
-    html = ansi_to_html(stream.getvalue())
-
-    assert '<a href="https://example.test">link</a>' in html
+from src.integrations.observability.console import buffer_console_logs, prompt_in_thread
 
 
 def test_prompt_in_thread_returns_prompt_result() -> None:

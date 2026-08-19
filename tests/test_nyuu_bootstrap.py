@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from bin import get_nyuu
-from bin.get_nyuu import NyuuBinaryManager
+from src.integrations.runtime_tools import nyuu as get_nyuu
+from src.integrations.runtime_tools.nyuu import NyuuBinaryManager
 
 
 def test_nyuu_archive_without_binary_does_not_write_version_marker(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -25,8 +25,8 @@ def test_nyuu_archive_without_binary_does_not_write_version_marker(tmp_path: Pat
         asyncio.run(NyuuBinaryManager.ensure_nyuu_binary(tmp_path))
 
     output = tmp_path / "bin" / "nyuu" / "linux" / "amd64"
-    assert not (output / "v0.4.2").exists()  # noqa: S101
-    assert not (output / "nyuu").exists()  # noqa: S101
+    assert not (output / "v0.4.2").exists()
+    assert not (output / "nyuu").exists()
 
 
 def test_nyuu_failed_update_preserves_existing_installation(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -47,8 +47,8 @@ def test_nyuu_failed_update_preserves_existing_installation(tmp_path: Path, monk
     with pytest.raises(Exception, match="download failed"):
         asyncio.run(NyuuBinaryManager.ensure_nyuu_binary(tmp_path, version="v0.4.3"))
 
-    assert binary.read_bytes() == b"working binary"  # noqa: S101
-    assert marker.read_text() == "stale marker"  # noqa: S101
+    assert binary.read_bytes() == b"working binary"
+    assert marker.read_text() == "stale marker"
 
 
 def test_windows_nyuu_extracts_only_expected_executable(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -77,9 +77,9 @@ def test_windows_nyuu_extracts_only_expected_executable(tmp_path: Path, monkeypa
 
     binary = asyncio.run(NyuuBinaryManager.ensure_nyuu_binary(tmp_path, path_7z="7zr.exe"))
 
-    assert Path(binary).read_bytes() == b"executable"  # noqa: S101
-    assert Path(binary).name == "nyuu.exe"  # noqa: S101
-    assert not stale_marker.exists()  # noqa: S101
+    assert Path(binary).read_bytes() == b"executable"
+    assert Path(binary).name == "nyuu.exe"
+    assert not stale_marker.exists()
 
 
 def test_windows_nyuu_cancellation_kills_and_reaps_7z(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -133,6 +133,6 @@ def test_windows_nyuu_cancellation_kills_and_reaps_7z(tmp_path: Path, monkeypatc
 
     asyncio.run(exercise())
 
-    assert process.killed is True  # noqa: S101
-    assert process.calls == 2  # noqa: S101
-    assert taskkill_command == ("taskkill", "/F", "/T", "/PID", "123")  # noqa: S101
+    assert process.killed is True
+    assert process.calls == 2
+    assert taskkill_command == ("taskkill", "/F", "/T", "/PID", "123")

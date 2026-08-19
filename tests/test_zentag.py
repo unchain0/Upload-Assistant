@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 import asyncio
 import hashlib
 import io
@@ -9,9 +8,9 @@ from typing import Any, cast
 
 import pytest as _pytest  # pyright: ignore[reportMissingImports]
 
-import bin.get_zentag as get_zentag
-import src.zentag as zentag
-from src.meta import Meta
+import src.integrations.media.zentag as zentag
+import src.integrations.runtime_tools.zentag_binary as get_zentag
+from src.domain_models.release import Meta
 
 pytest: Any = cast(Any, _pytest)
 

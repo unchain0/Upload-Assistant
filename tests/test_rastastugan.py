@@ -2,8 +2,8 @@
 
 import asyncio
 
-from src.meta import Meta
-from src.trackers.UNIT3D.rastastugan import Rastastugan
+from src.domain_models.release import Meta
+from src.integrations.trackers.UNIT3D.rastastugan import Rastastugan
 
 
 def _tracker() -> Rastastugan:

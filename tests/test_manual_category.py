@@ -9,11 +9,11 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src.exceptions import ItemProcessingError
-from src.meta import Meta
-from src.prep import Prep
-from src.prep_helpers import detect_disc_and_category
-from src.video import video_manager
+from src.domain_models.processing import ItemProcessingError
+from src.domain_models.release import Meta
+from src.integrations.media.video import video_manager
+from src.services.preparation_helpers import detect_disc_and_category
+from src.services.preparation_service import Prep
 
 
 def test_manual_music_category_routes_to_music_before_media_processing(tmp_path):
@@ -25,7 +25,7 @@ def test_manual_music_category_routes_to_music_before_media_processing(tmp_path)
 
     asyncio.run(detect_disc_and_category(prep, meta))
 
-    assert meta.category == "MUSIC"  # noqa: S101
+    assert meta.category == "MUSIC"
 
 
 def test_manual_podcast_category_routes_before_media_processing(tmp_path):
@@ -36,7 +36,7 @@ def test_manual_podcast_category_routes_before_media_processing(tmp_path):
 
     asyncio.run(detect_disc_and_category(prep, meta))
 
-    assert meta.category == "PODCAST"  # noqa: S101
+    assert meta.category == "PODCAST"
 
 
 def test_podcast_symlinks_are_rejected_before_disc_detection(tmp_path):
@@ -52,8 +52,8 @@ def test_podcast_symlinks_are_rejected_before_disc_detection(tmp_path):
     disc_detection = AsyncMock()
 
     with (
-        patch("src.prep.prep_helpers.init_meta", return_value=(False, False, object(), False, [], [])),
-        patch("src.prep.prep_helpers.detect_disc_and_category", new=disc_detection),
+        patch("src.services.preparation_service.prep_helpers.init_meta", return_value=(False, False, object(), False, [], [])),
+        patch("src.services.preparation_service.prep_helpers.detect_disc_and_category", new=disc_detection),
         pytest.raises(ValueError, match="symbolic links"),
     ):
         asyncio.run(prep.gather_prep(meta, "cli"))
@@ -64,6 +64,7 @@ def test_podcast_symlinks_are_rejected_before_disc_detection(tmp_path):
 def test_missing_cli_video_reports_item_level_failure_in_batch(tmp_path):
     with pytest.raises(ItemProcessingError, match="No Video files found"):
         asyncio.run(video_manager.get_video(str(tmp_path), "cli"))
+
 
 def test_archive_only_video_reports_safe_item_level_failure(tmp_path):
     (tmp_path / "Release.rar").write_bytes(b"archive")

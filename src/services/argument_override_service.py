@@ -1,0 +1,207 @@
+# Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
+import asyncio
+import json
+import traceback
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any, Protocol, cast
+
+from src.domain_models.release import Meta
+from src.services.runtime_support import logger
+
+UserArgsEntry = dict[str, Any]
+
+
+class ArgumentParserPort(Protocol):
+    def parse(self, argv: list[str], meta: Meta) -> tuple[Meta, object, list[str]]: ...
+
+
+ArgumentParserFactory = Callable[[dict[str, Any]], ArgumentParserPort]
+
+
+class ApplyOverrides:
+    def __init__(self, config: dict[str, Any], argument_parser_factory: ArgumentParserFactory | None = None) -> None:
+        self.config = config
+        self._argument_parser_factory = argument_parser_factory
+
+    async def get_source_override(self, meta: Meta, other_id: bool = False) -> Meta:
+        try:
+            user_args_path = Path(meta.base_dir) / "data" / "templates" / "user-args.json"
+            user_args_text = await asyncio.to_thread(user_args_path.read_text, encoding="utf-8")
+            logger.info("[green]Found user-args.json")
+            user_args = cast(dict[str, Any], json.loads(user_args_text))
+
+            current_tmdb_id = meta.tmdb_id
+            current_imdb_id = meta.imdb_id
+            current_tvdb_id = meta.tvdb_id
+
+            # Convert to int for comparison if it's a string
+            if isinstance(current_tmdb_id, str) and current_tmdb_id.isdigit():
+                current_tmdb_id = int(current_tmdb_id)
+
+            if isinstance(current_imdb_id, str) and current_imdb_id.isdigit():
+                current_imdb_id = int(current_imdb_id)
+
+            if isinstance(current_tvdb_id, str) and current_tvdb_id.isdigit():
+                current_tvdb_id = int(current_tvdb_id)
+
+            if not other_id:
+                for entry in cast(list[UserArgsEntry], user_args.get("entries", [])):
+                    entry_tmdb_id = entry.get("tmdb_id")
+                    args = cast(list[str], entry.get("args", []))
+
+                    if not entry_tmdb_id:
+                        continue
+
+                    # Parse the entry's TMDB ID from the user-args.json file
+                    entry_category, entry_normalized_id = await self.parse_tmdb_id(entry_tmdb_id)
+                    if entry_category and entry_category != meta.category:
+                        logger.debug(f"Skipping user entry because override category {entry_category} does not match UA category {meta.category}:")
+                        continue
+
+                    # Check if IDs match
+                    if entry_normalized_id == current_tmdb_id:
+                        logger.info(f"[green]Found matching override for TMDb ID: {entry_normalized_id}")
+                        logger.info(f"[yellow]Applying arguments: {' '.join(args)}")
+
+                        meta = await self.apply_args_to_meta(meta, args)
+                        break
+
+            else:
+                for entry in cast(list[UserArgsEntry], user_args.get("other_ids", [])):
+                    # Check for TVDB ID match
+                    if "tvdb_id" in entry and str(entry["tvdb_id"]) == str(current_tvdb_id) and current_tvdb_id != 0:
+                        args = cast(list[str], entry.get("args", []))
+                        logger.info(f"[green]Found matching override for TVDb ID: {current_tvdb_id}")
+                        logger.info(f"[yellow]Applying arguments: {' '.join(args)}")
+                        meta = await self.apply_args_to_meta(meta, args)
+                        break
+
+                    # Check for IMDB ID match (without tt prefix)
+                    if "imdb_id" in entry:
+                        entry_imdb = entry["imdb_id"]
+                        if str(entry_imdb).startswith("tt"):
+                            entry_imdb = entry_imdb[2:]
+
+                        if str(entry_imdb) == str(current_imdb_id) and current_imdb_id != 0:
+                            args = cast(list[str], entry.get("args", []))
+                            logger.info(f"[green]Found matching override for IMDb ID: {current_imdb_id}")
+                            logger.info(f"[yellow]Applying arguments: {' '.join(args)}")
+                            meta = await self.apply_args_to_meta(meta, args)
+                            break
+
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            logger.error(f"[red]Error loading user-args.json: {e}")
+
+        return meta
+
+    async def parse_tmdb_id(self, tmdb_id: Any | None, category: str | None = None) -> tuple[str | None, int]:
+        if tmdb_id is None:
+            return category, 0
+
+        tmdb_id = str(tmdb_id).strip().lower()
+        if not tmdb_id:
+            return category, 0
+
+        if "/" in tmdb_id:
+            parts = tmdb_id.split("/")
+            if len(parts) >= 2:
+                prefix = parts[0]
+                id_part = parts[1]
+
+                if prefix == "tv":
+                    category = "TV"
+                elif prefix == "movie":
+                    category = "MOVIE"
+
+                try:
+                    normalized_id = int(id_part)
+                    return category, normalized_id
+                except ValueError:
+                    return category, 0
+
+        try:
+            normalized_id = int(tmdb_id)
+            return category, normalized_id
+        except ValueError:
+            return category, 0
+
+    async def apply_args_to_meta(self, meta: Meta, args: list[str]) -> Meta:
+        try:
+            arg_keys_to_track: set[str] = set()
+            arg_values: dict[str, str] = {}
+
+            i = 0
+            while i < len(args):
+                arg = args[i]
+                if arg.startswith("--"):
+                    # Remove '--' prefix and convert dashes to underscores
+                    key = arg[2:].replace("-", "_")
+                    arg_keys_to_track.add(key)
+
+                    # Store the value if it exists
+                    if i + 1 < len(args) and not args[i + 1].startswith("--"):
+                        arg_values[key] = args[i + 1]  # Store the value with its key
+                        i += 1
+                i += 1
+
+            logger.debug(f"[Debug] Tracking changes for keys: {', '.join(arg_keys_to_track)}")
+
+            # CLI parsing is supplied through a delivery-owned port.
+            if self._argument_parser_factory is None:
+                logger.warning("[yellow]Skipping user-args override because no argument parser port was supplied.[/yellow]")
+                return meta
+            arg_processor = self._argument_parser_factory(self.config)
+            full_args = ["upload.py", *args]
+            updated_meta, _, _ = arg_processor.parse(full_args, meta.copy())
+            updated_meta["path"] = meta.path
+            modified_keys: list[str] = []
+
+            # Handle ID arguments specifically
+            id_mappings = {
+                "tmdb": ["tmdb_id", "tmdb", "tmdb_manual"],
+                "tvmaze": ["tvmaze_id", "tvmaze", "tvmaze_manual"],
+                "imdb": ["imdb_id", "imdb", "imdb_manual"],
+                "tvdb": ["tvdb_id", "tvdb", "tvdb_manual"],
+            }
+
+            for key in arg_keys_to_track:
+                # Special handling for ID fields
+                if key in id_mappings:
+                    if key in arg_values:  # Check if we have a value for this key
+                        value: Any = arg_values[key]
+                        # Convert to int if possible
+                        try:
+                            if isinstance(value, str) and value.isdigit():
+                                value = int(value)
+                            elif isinstance(value, str) and key == "imdb" and value.startswith("tt"):
+                                value = int(value[2:])  # Remove 'tt' prefix and convert to int
+                        except ValueError:
+                            pass
+
+                        # Update all related keys
+                        for related_key in id_mappings[key]:
+                            meta[related_key] = value
+                            modified_keys.append(related_key)
+                            logger.debug(f"[Debug] Override: {related_key} changed from {meta.get(related_key)} to {value}")
+                # Handle regular fields
+                elif key in updated_meta and key in meta:
+                    # Skip path to preserve original
+                    if key == "path":
+                        continue
+
+                    new_value = updated_meta[key]
+                    old_value = meta[key]
+                    # Only update if the value actually changed
+                    if new_value != old_value:
+                        meta[key] = new_value
+                        modified_keys.append(key)
+                        logger.debug(f"[Debug] Override: {key} changed from {old_value} to {new_value}")
+            if meta.debug and modified_keys:
+                logger.info(f"[Debug] Applied overrides for: {', '.join(modified_keys)}")
+
+        except Exception as e:
+            logger.error(f"[red]Error processing arguments: {e}")
+            logger.debug(traceback.format_exc())
+
+        return meta

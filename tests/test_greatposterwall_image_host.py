@@ -1,11 +1,9 @@
 """Tests for GreatPosterWall's tracker-specific image rehost API."""
 
-# ruff: noqa: S101
-
 import asyncio
 
-from src.meta import Meta
-from src.trackers.greatposterwall import GreatPosterWall
+from src.domain_models.release import Meta
+from src.integrations.trackers.greatposterwall import GreatPosterWall
 
 
 class _Response:
@@ -36,7 +34,7 @@ class _Client:
 
 
 def test_greatposterwall_rehosts_only_unapproved_urls(monkeypatch):
-    monkeypatch.setattr("src.trackers.greatposterwall.httpx.AsyncClient", _Client)
+    monkeypatch.setattr("src.integrations.trackers.greatposterwall.httpx.AsyncClient", _Client)
     tracker = GreatPosterWall({"DEFAULT": {"tmdb_api": "test"}, "TRACKERS": {"GREATPOSTERWALL": {"api_key": "test-key"}}})
     meta = Meta(
         image_list=[

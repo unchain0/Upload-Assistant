@@ -1,0 +1,13 @@
+# Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
+
+from src.integrations.torrent_clients.deluge import DelugeClientMixin
+from src.integrations.torrent_clients.qbittorrent import QbittorrentClientMixin
+from src.integrations.torrent_clients.rtorrent import RtorrentClientMixin
+from src.integrations.torrent_clients.transmission import TransmissionClientMixin
+
+__all__ = [
+    "DelugeClientMixin",
+    "QbittorrentClientMixin",
+    "RtorrentClientMixin",
+    "TransmissionClientMixin",
+]

@@ -5,6 +5,7 @@ import asyncio
 import contextlib
 import gc
 import json
+import logging
 import os
 import platform
 import re
@@ -12,19 +13,12 @@ import shlex
 import shutil
 import signal
 import sys
-import threading
 import time
 import traceback
 from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import Any, Protocol, cast
+from typing import Any, cast
 from urllib.parse import urljoin, urlparse
-
-from src.check_requirements import check_dependencies
-
-check_dependencies()
-
-import logging
 
 import aiofiles
 import cli_ui  # pyright: ignore[reportMissingImports]
@@ -32,47 +26,51 @@ import requests
 from rich.markup import escape
 from torf import Torrent as _Torrent  # pyright: ignore[reportMissingImports,reportUnknownVariableType]
 
-from bin.get_ffmpeg import FfmpegBinaryManager
-from bin.get_mkbrr import MkbrrBinaryManager
-from src.add_comparison import ComparisonManager
-from src.app_paths import CODE_DIR, STATE_DIR
-from src.args import Args, partition_existing_paths, read_paths_from_stdin
-from src.artwork import is_public_http_url, is_valid_cover_image
-from src.audio_spectrogram import process_audio_spectrograms
-from src.binaries import configured_binary
-from src.book_prep import detect_newspaper, is_valid_book_language, missing_book_fields, resolve_book_language
-from src.cleanup import cleanup_manager
-from src.clients import Clients
-from src.cogs.redaction import PathAwareEncoder, Redaction
-from src.config_helpers import format_terminal_link
-from src.console import current_release_log_path, logger  # pyright: ignore[reportUnknownVariableType]
-from src.console import rich_handler as _rich_handler
-from src.disc_menus import process_disc_menus
-from src.dupe_checking import DupeChecker
-from src.dynamic_hdr_plot import dynamic_hdr_plot_enabled, process_dynamic_hdr_plots
-from src.early_tasks import cancel_and_drain_early_artifact_tasks, get_early_artifact_tasks, start_early_artifact_tasks
-from src.early_tasks import is_usenet_only as _is_usenet_only
-from src.exceptions import ItemProcessingError
-from src.get_desc import gen_desc
-from src.get_name import NameManager
-from src.get_tracker_data import TrackerDataManager
-from src.getseasonep import sync_single_episode_from_filename
-from src.mediainfo import ensure_mediainfo_binary
-from src.qbitwait import Wait
-from src.queuemanage import QueueManager
-from src.rehostimages import check_tracker_image_hosts
-from src.takescreens import TakeScreensManager, download_artwork_from_meta
-from src.temp_paths import artwork_dir, ensure_temp_root, music_release_snapshot_path, screenshots_dir
-from src.torrentcreate import TorrentCreator
-from src.tracker_images import configured_screenshot_minimum, screenshot_requirement_error
-from src.trackerhandle import process_trackers
-from src.trackers.alpharatio import AlphaRatio
-from src.trackers.common import Common
-from src.trackers.passthepopcorn import PassThePopcorn
-from src.trackersetup import TrackerSetup, api_trackers, http_trackers, other_api_trackers, tracker_class_map
-from src.trackerstatus import TrackerStatusManager
-from src.uphelper import UploadHelper
-from src.uploadscreens import UploadScreensManager
+from src.bootstrap import build_configuration_service
+from src.delivery.cli.arguments import Args, partition_existing_paths, read_paths_from_stdin
+from src.domain_models.book_language import is_valid_book_language, resolve_book_language
+from src.domain_models.errors import ConfigurationError, NoWorkAvailableError, OperationAbortedError
+from src.domain_models.processing import ItemProcessingError
+from src.domain_models.tracker_image_policy import configured_screenshot_minimum, screenshot_requirement_error
+from src.integrations.filesystem.cleanup import cleanup_manager
+from src.integrations.filesystem.paths import CODE_DIR, STATE_DIR
+from src.integrations.filesystem.temp_paths import artwork_dir, ensure_temp_root, music_release_snapshot_path, screenshots_dir
+from src.integrations.image_hosts.fallback import configured_image_hosts
+from src.integrations.image_hosts.rehosting import check_tracker_image_hosts
+from src.integrations.image_hosts.uploader import UploadScreensManager
+from src.integrations.media.artwork import is_public_http_url, is_valid_cover_image
+from src.integrations.media.audio_spectrogram import process_audio_spectrograms
+from src.integrations.media.disc_menus import process_disc_menus
+from src.integrations.media.dynamic_hdr_plot import dynamic_hdr_plot_enabled, process_dynamic_hdr_plots
+from src.integrations.media.media_info import ensure_mediainfo_binary
+from src.integrations.media.screenshot_capture import TakeScreensManager, download_artwork_from_meta
+from src.integrations.observability.console import configure_console, current_release_log_path, logger  # pyright: ignore[reportUnknownVariableType]
+from src.integrations.observability.console import rich_handler as _rich_handler
+from src.integrations.runtime_tools.configured_binaries import configure_binary_paths, configured_binary
+from src.integrations.runtime_tools.ffmpeg import FfmpegBinaryManager
+from src.integrations.runtime_tools.mkbrr import MkbrrBinaryManager
+from src.integrations.security.redaction import PathAwareEncoder, Redaction
+from src.integrations.torrent.torrent_creator import TorrentCreator
+from src.integrations.torrent_clients.bandwidth import Wait
+from src.integrations.torrent_clients.client_manager import Clients
+from src.integrations.trackers.alpharatio import AlphaRatio
+from src.integrations.trackers.common import Common
+from src.integrations.trackers.description_builder import gen_desc
+from src.integrations.trackers.passthepopcorn import PassThePopcorn
+from src.integrations.trackers.registry import TrackerSetup, api_trackers, http_trackers, other_api_trackers, tracker_class_map
+from src.services.book_input_service import detect_newspaper
+from src.services.book_preparation import missing_book_fields
+from src.services.comparison_service import ComparisonManager
+from src.services.duplicate_check_service import DupeChecker
+from src.services.early_artifact_service import cancel_and_drain_early_artifact_tasks, get_early_artifact_tasks, start_early_artifact_tasks
+from src.services.early_artifact_service import is_usenet_only as _is_usenet_only
+from src.services.episode_service import sync_single_episode_from_filename
+from src.services.queue_service import QueueManager
+from src.services.release_naming_service import NameManager
+from src.services.tracker_metadata_service import TrackerDataManager
+from src.services.tracker_status_service import TrackerStatusManager
+from src.services.tracker_upload_service import process_trackers
+from src.services.upload_decision_service import UploadHelper
 
 # Runtime artifacts are user-owned; CODE_DIR remains the read-only checkout.
 base_dir = str(STATE_DIR)
@@ -94,75 +92,26 @@ def _parse_version_tuple(value: str) -> tuple[int, ...]:
     return tuple(parts)
 
 
-class WebUIServer(Protocol):
-    def run(self) -> None: ...
-    def close(self) -> None: ...
-
-
-# Global state for shutdown handling (reset via _reset_shutdown_state() for in-process runs)
+# Global state for graceful CLI shutdown. Tests may reset this between in-process runs.
 _shutdown_requested = False
-_is_webui_mode = False
-_webui_server: WebUIServer | None = None  # Reference to waitress server for graceful shutdown
-_shutdown_event = threading.Event()  # Event for coordinating graceful shutdown
-_webui_session_id: str | None = None
-_webui_run_token: str | None = None
 
 
 def _reset_shutdown_state() -> None:
-    """Reset global shutdown state for clean in-process runs from web UI."""
-    global _shutdown_requested, _is_webui_mode, _webui_server, _webui_session_id, _webui_run_token
+    """Reset shutdown state for a clean in-process CLI run."""
+    global _shutdown_requested
     _shutdown_requested = False
-    _is_webui_mode = False
-    _webui_server = None
-    _webui_session_id = None
-    _webui_run_token = None
-    _shutdown_event.clear()
-
-
-def set_webui_session_id(session_id: str | None, run_token: str | None = None) -> None:
-    """Store the active Web UI execution session for in-process preview updates."""
-    global _webui_session_id, _webui_run_token
-    cleaned = (session_id or "").strip()
-    _webui_session_id = cleaned or None
-    cleaned_run_token = (run_token or "").strip()
-    _webui_run_token = cleaned_run_token or None
-
-
-def _publish_webui_preview_target(path: str, meta_uuid: str | None = None) -> None:
-    """Push the current queue item to the Web UI execution preview, when active."""
-    if not _is_webui_mode or not _webui_session_id or not _webui_run_token or not path:
-        return
-    try:
-        from web_ui.server import set_execution_preview_target
-
-        set_execution_preview_target(_webui_session_id, _webui_run_token, path, meta_uuid)
-    except Exception:
-        return
 
 
 def _handle_shutdown_signal(signum: int, _frame: Any) -> None:
-    """Handle SIGTERM/SIGINT for graceful shutdown."""
-    global _shutdown_requested, _webui_server
+    """Cancel the active CLI run on SIGTERM or SIGINT."""
+    global _shutdown_requested
     signal_name = "SIGTERM" if signum == signal.SIGTERM else "SIGINT"
-
-    if not _shutdown_requested:
-        _shutdown_requested = True
-        logger.info(f"\n[yellow]Received {signal_name}, shutting down gracefully...[/yellow]")
-
-        # Signal shutdown event (for webui thread coordination)
-        _shutdown_event.set()
-
-        # If running webui, close the server (main thread handles exit via event)
-        if _webui_server is not None:
-            with contextlib.suppress(Exception):
-                _webui_server.close()
-        else:
-            # Non-webui mode: raise to let asyncio handle task cancellation
-            raise KeyboardInterrupt
-    else:
-        # Second signal = force exit
+    if _shutdown_requested:
         logger.info("[red]Forced exit[/red]")
-        sys.exit(1)
+        raise SystemExit(1)
+    _shutdown_requested = True
+    logger.info(f"\n[yellow]Received {signal_name}, shutting down gracefully...[/yellow]")
+    raise KeyboardInterrupt
 
 
 # ── Restore built-in data/ files when a Docker volume mount hides them ──
@@ -215,25 +164,9 @@ if Path(_defaults_data_dir).is_dir():
         logger.info("[yellow]Hint: ensure the mounted data/ directory is writable by the container user.[/yellow]")
         logger.info("[yellow]  e.g. on the host: chown -R 1000:1000 /path/to/data[/yellow]")
 
-_config_path = Path(_data_dir) / "config.py"
-
-# Detect -webui or --webui forms, including --webui=host:port
-_is_webui_arg = any((arg == "-webui" or arg == "--webui" or arg.startswith("-webui=") or arg.startswith("--webui=")) for arg in sys.argv)
-# Auto-create config.py from example on first WebUI start
-if _is_webui_arg and not Path(_config_path).exists():
-    _example_config_path = Path(_data_dir) / "example_config.py"
-    if Path(_example_config_path).exists():
-        logger.info("No config.py found. Creating default config from example_config.py...", extra={"markup": False})
-        try:
-            shutil.copy2(_example_config_path, _config_path)
-            logger.info("Default config created successfully!", extra={"markup": False})
-        except Exception as e:
-            logger.info(f"Failed to create default config: {e}", extra={"markup": False})
-            logger.info("Continuing without config file...", extra={"markup": False})
-
-from src.book_prep import sanitize_book_author, sanitize_book_language
-from src.meta import Meta
-from src.prep import Prep
+from src.domain_models.release import Meta
+from src.services.book_input_service import sanitize_book_author, sanitize_book_language
+from src.services.preparation_service import Prep
 
 # Enable ANSI colors on Windows
 _use_colors = True
@@ -272,77 +205,26 @@ def _print_config_error(error_type: str, message: str, lineno: int | None = None
 
 config: dict[str, Any]
 
-if Path(_config_path).exists():
-    try:
-        from data.config import config as _imported_config  # pyright: ignore[reportMissingImports,reportUnknownVariableType]
+_CONFIGURATION_SERVICE = build_configuration_service()
 
-        config = cast(dict[str, Any], _imported_config)
-        parser: Any = Args(config)
-        client = Clients(config)
-        name_manager = NameManager(config)
-        tracker_data_manager = TrackerDataManager(config)
-        takescreens_manager = TakeScreensManager(config)
-        uploadscreens_manager = UploadScreensManager(config)
-    except SyntaxError as e:
-        _print_config_error("Syntax error", e.msg if e.msg else "Invalid syntax", lineno=e.lineno, text=e.text, offset=e.offset)
-        logger.info(f"\n{_RED}Common syntax issues:{_RESET}", extra={"markup": False})
-        logger.info(f"{_YELLOW}  - Missing comma between dictionary items{_RESET}", extra={"markup": False})
-        logger.info(f"{_YELLOW}  - Missing closing bracket, brace, quote or comma{_RESET}", extra={"markup": False})
-        logger.info(f"{_YELLOW}  - Unclosed string (missing quote at end){_RESET}", extra={"markup": False})
-        sys.exit(1)
-    except NameError as e:
-        # Extract line number from traceback
-        import traceback
-
-        tb = traceback.extract_tb(sys.exc_info()[2])
-        lineno = tb[-1].lineno if tb else None
-        text = tb[-1].line if tb else None
-
-        # Check for common mistakes
-        suggestion = None
-        error_str = str(e)
-        if "'true'" in error_str.lower():
-            suggestion = "Use 'True' (capital T) instead of 'true'"
-        elif "'false'" in error_str.lower():
-            suggestion = "Use 'False' (capital F) instead of 'false'"
-        elif "'null'" in error_str.lower() or "'none'" in error_str.lower():
-            suggestion = "Use 'None' (capital N) instead of 'null' or 'none'"
-        elif "is not defined" in error_str:
-            # Extract the undefined name from the error message
-            import re as _re
-
-            match = _re.search(r"name '([^']+)' is not defined", error_str)
-            if match:
-                undefined_name = match.group(1)
-                suggestion = f"Did you forget quotes? Try \"{undefined_name}\" instead of '{undefined_name}'"
-
-        _print_config_error("Name error", str(e), lineno=lineno, text=text, suggestion=suggestion)
-        sys.exit(1)
-    except TypeError as e:
-        import traceback
-
-        tb = traceback.extract_tb(sys.exc_info()[2])
-        lineno = tb[-1].lineno if tb else None
-        text = tb[-1].line if tb else None
-
-        _print_config_error("Type error", str(e), lineno=lineno, text=text)
-        logger.info(f"\n{_RED}Common type issues:{_RESET}", extra={"markup": False})
-        logger.info(f"{_YELLOW}  - Using unhashable type as dictionary key{_RESET}", extra={"markup": False})
-        logger.info(f"{_YELLOW}  - Incorrect data structure nesting{_RESET}", extra={"markup": False})
-        sys.exit(1)
-    except Exception as e:
-        import traceback
-
-        tb = traceback.extract_tb(sys.exc_info()[2])
-        lineno = tb[-1].lineno if tb else None
-        text = tb[-1].line if tb else None
-
-        _print_config_error("Error", str(e), lineno=lineno, text=text)
-        sys.exit(1)
-else:
-    logger.info(f"{_RED}Configuration file 'config.py' not found.{_RESET}", extra={"markup": False})
-    logger.info(f"{_RED}Please ensure the file is located at: {_YELLOW}{_config_path}{_RESET}", extra={"markup": False})
-    logger.info(f"{_RED}Follow the setup instructions: https://github.com/wastaken7/Upload-Assistant{_RESET}", extra={"markup": False})
+try:
+    _configuration_snapshot = _CONFIGURATION_SERVICE.load()
+    _config_path = Path(_configuration_snapshot.source.path)
+    config = cast(dict[str, Any], _configuration_snapshot.mutable_copy())
+    default_runtime_config = cast(dict[str, Any], config.get("DEFAULT", {}))
+    configure_console(default_runtime_config)
+    configure_binary_paths(default_runtime_config)
+    parser: Any = Args(config)
+    client = Clients(config)
+    name_manager = NameManager(config)
+    tracker_data_manager = TrackerDataManager(config)
+    takescreens_manager = TakeScreensManager(config)
+    uploadscreens_manager = UploadScreensManager(config)
+except ConfigurationError as error:
+    _print_config_error("Configuration error", str(error))
+    sys.exit(1)
+except Exception as error:
+    _print_config_error("Error", str(error))
     sys.exit(1)
 
 
@@ -566,7 +448,7 @@ async def _prompt_book_meta(meta: Meta) -> None:
             elif field == "isbn_or_asin":
                 value = (CLI_UI.ask_string("Enter ISBN or ASIN (leave blank to skip): ") or "").strip()
                 if value:
-                    from src.book_extractors import validate_isbn_checksum
+                    from src.integrations.media.book_extractors import validate_isbn_checksum
 
                     validated_isbn = validate_isbn_checksum(value)
                     if validated_isbn:
@@ -625,7 +507,7 @@ async def _prompt_game_meta(meta: Meta) -> None:
     torrent name is rebuilt so the confirmation screen and the per-tracker
     uploads reflect the new values.
     """
-    from src.prep_game import missing_game_fields
+    from src.services.game_preparation import missing_game_fields
 
     game_missing = missing_game_fields(meta)
     if not game_missing:
@@ -670,7 +552,7 @@ async def _prompt_game_meta(meta: Meta) -> None:
                 elif field == "game_version":
                     value = (CLI_UI.ask_string("Enter game version (e.g., 1.15) (leave blank to skip): ") or "").strip()
                     if value:
-                        from src.prep_game import normalize_version
+                        from src.services.game_preparation import normalize_version
 
                         meta[field] = normalize_version(value)
                         name_needs_rebuild = True
@@ -1020,9 +902,7 @@ async def _prompt_music_meta(meta: Meta) -> None:
     if not fields_to_prompt:
         return
     if meta.unattended:
-        logger.info(
-            f"[yellow]MUSIC metadata requires confirmation for: {', '.join(fields_to_prompt)}. Trackers that require confirmed values may skip this upload.[/yellow]"
-        )
+        logger.info(f"[yellow]MUSIC metadata requires confirmation for: {', '.join(fields_to_prompt)}. Trackers that require confirmed values may skip this upload.[/yellow]")
         return
 
     logger.info("\n[bold yellow]MUSIC metadata required or requiring confirmation:[/bold yellow]")
@@ -1144,10 +1024,7 @@ def _failed_tracker_names(tracker_status: Mapping[str, Any]) -> list[str]:
 
 def _sync_single_episode(meta: Meta) -> None:
     if sync_single_episode_from_filename(meta):
-        logger.warning(
-            f"[yellow]Updated single-episode metadata to {meta.season}{meta.episode} "
-            "to match the video filename.[/yellow]"
-        )
+        logger.warning(f"[yellow]Updated single-episode metadata to {meta.season}{meta.episode} to match the video filename.[/yellow]")
 
 
 def xxx_min_successful_uploads(meta: Meta, min_successful_uploads: int) -> int:
@@ -1161,16 +1038,30 @@ def xxx_min_successful_uploads(meta: Meta, min_successful_uploads: int) -> int:
 
 async def process_meta(meta: Meta, base_dir: str) -> bool:
     """Process the metadata for each queued path."""
-    if not meta.imghost:
-        meta.imghost = config["DEFAULT"]["img_host_1"]
-        try:
-            has_oeimg_config = any(config["DEFAULT"].get(key) == "oeimg" for key in config["DEFAULT"] if key.startswith("img_host_"))
-            if has_oeimg_config:
-                logger.info("[red]oeimg is now onlyimage, your config is being updated[/red]")
-                update_oeimg_to_onlyimage()
-        except Exception as e:
-            logger.error(f"[red]Error checking image hosts: {e}[/red]")
+    try:
+        default_config = config.get("DEFAULT", {})
+        has_oeimg_config = any(default_config.get(key) == "oeimg" for key in default_config if key.startswith("img_host_"))
+        if has_oeimg_config:
+            logger.info("[yellow]oeimg is now onlyimage; updating the active configuration.[/yellow]")
+            update_oeimg_to_onlyimage()
+            for key, value in list(default_config.items()):
+                if key.startswith("img_host_") and value == "oeimg":
+                    default_config[key] = "onlyimage"
+
+        configured_hosts = configured_image_hosts(default_config)
+        requested_host = str(meta.imghost or "").strip().lower()
+        if requested_host == "oeimg":
+            requested_host = "onlyimage"
+        if requested_host:
+            meta.imghost = requested_host
+        elif configured_hosts:
+            meta.imghost = configured_hosts[0]
+        else:
+            logger.error("[bold red]No image host is configured. Set DEFAULT.img_host_1 (and its credential when required) before uploading.[/bold red]")
             return False
+    except Exception as error:
+        logger.error(f"[red]Error resolving image hosts: {error}[/red]")
+        return False
 
     if not meta.unattended:
         ua = config["DEFAULT"].get("auto_mode", False)
@@ -1179,7 +1070,12 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
             logger.info("[yellow]Running in Auto Mode")
 
     _sync_single_episode(meta)
-    prep = Prep(screens=meta.screens, img_host=meta.imghost, config=config, publish_preview=_publish_webui_preview_target)
+    prep = Prep(
+        screens=meta.screens,
+        img_host=meta.imghost,
+        config=config,
+        argument_parser_factory=Args,
+    )
     try:
         meta = await prep.gather_prep(meta=meta, mode="cli")
     except ItemProcessingError:
@@ -1236,7 +1132,6 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
     logger.debug(f"Trackers list before editing: {meta.trackers}")
     async with aiofiles.open(f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/meta.json", "w", encoding="utf-8") as f:
         await f.write(json.dumps(meta.to_dict(), indent=4, cls=PathAwareEncoder))
-    _publish_webui_preview_target(cast(str, meta.path or ""), meta.uuid or None)
 
     # For BOOK category, certain trackers (e.g. CAPYBARABR) require title, author, year and language.
     # Prompt here - on the shared meta - so the data flows into every tracker's upload
@@ -1306,7 +1201,6 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
         meta.name_notag, meta.name, meta.clean_name, meta.potential_missing = await name_manager.get_name(meta)
         async with aiofiles.open(f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/meta.json", "w", encoding="utf-8") as f:
             await f.write(json.dumps(meta.to_dict(), indent=4, cls=PathAwareEncoder))
-        _publish_webui_preview_target(cast(str, meta.path or ""), meta.uuid or None)
         try:
             confirm = await helper.get_confirmation(meta)
         except EOFError:
@@ -1315,8 +1209,8 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
             cleanup_manager.reset_terminal()
             raise KeyboardInterrupt from None
 
-        current_trackers = cast(list[str], meta.trackers) if isinstance(meta.trackers, list) else (
-            [meta.trackers.strip()] if isinstance(meta.trackers, str) and meta.trackers.strip() else []
+        current_trackers = (
+            cast(list[str], meta.trackers) if isinstance(meta.trackers, list) else ([meta.trackers.strip()] if isinstance(meta.trackers, str) and meta.trackers.strip() else [])
         )
         removed: list[str] = []
         if meta.remove_trackers:
@@ -1384,8 +1278,7 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
         await asyncio.sleep(0.2)
         async with aiofiles.open(f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/meta.json", "w", encoding="utf-8") as f:
             await f.write(json.dumps(meta.to_dict(), indent=4, cls=PathAwareEncoder))
-        _publish_webui_preview_target(cast(str, meta.path or ""), meta.uuid or None)
-        await asyncio.sleep(0.2)
+            await asyncio.sleep(0.2)
 
         try:
             await validate_tracker_logins(meta, trackers)
@@ -1563,11 +1456,6 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
 
             # Take Screenshots
             try:
-                # Keep the later upload count in sync with screenshots removed
-                # through the Web UI review while this run awaited confirmation.
-                from src.screenshot_review import target_count
-
-                meta.screens = target_count(Path(meta.base_dir) / "tmp" / meta.uuid, meta.screens)
                 if meta.category in ("MUSIC", "PODCAST"):
                     logger.debug(f"[cyan]{meta.category}: skipping video screenshots and MediaInfo-dependent image processing.[/cyan]")
                 elif meta.is_disc == "BDMV":
@@ -1693,15 +1581,9 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
                 meta.screens = manual_frames_count
             cutoff = meta.cutoff
             configured_minimum = configured_screenshot_minimum(config) if meta.category in {"MOVIE", "TV"} else 0
-            # Remote images can be reviewed in the WebUI.  Replacements and
-            # additions remain local until this normal hosting stage, even if
-            # the original remote list already satisfies the cutoff.
-            from src.screenshot_review import staged_remote_uploads
-
-            reviewed_uploads = staged_remote_uploads(Path(meta.base_dir) / "tmp" / meta.uuid, cast(list[dict[str, Any]], meta.image_list or []))
             if (
                 not meta.debug
-                and (len(meta.image_list) < max(cutoff, configured_minimum) or reviewed_uploads)
+                and len(meta.image_list) < max(cutoff, configured_minimum)
                 and meta.skip_imghost_upload is False
                 and meta.category not in ("GAME", "MUSIC", "PODCAST")
             ):
@@ -1733,15 +1615,15 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
 
                         default_cfg_obj = config.get("DEFAULT", {})
                         default_cfg: dict[str, Any] = cast(dict[str, Any], default_cfg_obj) if isinstance(default_cfg_obj, dict) else {}
-                        configured_hosts: list[str] = []
+                        configured_constraint_hosts: list[str] = []
                         for host_index in range(1, 10):
                             host_key = f"img_host_{host_index}"
                             if host_key in default_cfg:
                                 host = default_cfg.get(host_key)
-                                if host and host not in configured_hosts:
-                                    configured_hosts.append(str(host))
+                                if host and host not in configured_constraint_hosts:
+                                    configured_constraint_hosts.append(str(host))
 
-                        logger.debug(f"[cyan]Image host debug: configured_hosts={configured_hosts}[/cyan]")
+                        logger.debug(f"[cyan]Image host debug: configured_hosts={configured_constraint_hosts}[/cyan]")
 
                         approved_sets: list[set[str]] = []
                         all_known = True
@@ -1758,7 +1640,7 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
                                 # then serves it from its approved KShare host.  Its configured
                                 # image hosts are therefore valid sources, not final destinations.
                                 if getattr(tracker_instance, "can_rehost_unapproved_images", False) and getattr(tracker_instance, "api_key", ""):
-                                    approved_host_set.update(configured_hosts)
+                                    approved_host_set.update(configured_constraint_hosts)
                                 approved_sets.append(approved_host_set)
                             else:
                                 all_known = False
@@ -1766,14 +1648,14 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
 
                             logger.debug(f"[cyan]Image host debug: {tracker_name}.approved_image_hosts={approved_hosts_list}[/cyan]")
 
-                        if all_known and approved_sets and configured_hosts:
+                        if all_known and approved_sets and configured_constraint_hosts:
                             common_hosts: set[str] = set()
                             for host_set in approved_sets:
                                 if not common_hosts:
                                     common_hosts = set(host_set)
                                 else:
                                     common_hosts &= host_set
-                            common_configured_hosts = [h for h in configured_hosts if h in common_hosts]
+                            common_configured_hosts = [h for h in configured_constraint_hosts if h in common_hosts]
 
                             logger.debug(f"[cyan]Image host debug: common_hosts={sorted(common_hosts)}[/cyan]")
                             logger.debug(f"[cyan]Image host debug: common_configured_hosts={common_configured_hosts}[/cyan]")
@@ -1783,7 +1665,7 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
                             if common_configured_hosts:
                                 allowed_hosts = common_configured_hosts
                             else:
-                                configured_host_set = set(configured_hosts)
+                                configured_host_set = set(configured_constraint_hosts)
                                 incompatible_trackers = [
                                     tracker_name
                                     for tracker_name, approved_hosts in zip(relevant_trackers, approved_sets, strict=True)
@@ -1864,22 +1746,27 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
                     if not host_order and allowed_hosts:
                         host_order = list(allowed_hosts)
 
-                    start_index = host_order.index(current_img_host) if current_img_host in host_order else 0
-                    image_list_count = 0
+                    if not current_img_host and host_order:
+                        current_img_host = host_order[0]
+                    if current_img_host:
+                        meta.imghost = current_img_host
 
-                    for idx in range(start_index, len(host_order)):
-                        meta.imghost = host_order[idx]
-                        await uploadscreens_manager.upload_screens(meta, meta.screens, 1, 0, meta.screens, [], return_dict=return_dict, allowed_hosts=allowed_hosts)
-                        image_list_count = len(meta.image_list or [])
-                        logger.debug(f"[cyan]Image host debug: post-upload_screens image_list={image_list_count}[/cyan]")
-
-                        if image_list_count >= min_successful_uploads:
-                            break
-
-                        if idx + 1 < len(host_order):
-                            logger.info(
-                                f"[yellow]Only {image_list_count} images uploaded; minimum is {min_successful_uploads}. Switching to next host: {host_order[idx + 1]}[/yellow]"
-                            )
+                    # UploadScreensManager owns the complete run-level fallback
+                    # plan and unavailable-host circuit. Calling it repeatedly
+                    # here restarted that plan, retried rate-limited providers,
+                    # and produced misleading duplicate host-switch messages.
+                    await uploadscreens_manager.upload_screens(
+                        meta,
+                        meta.screens,
+                        1,
+                        0,
+                        meta.screens,
+                        [],
+                        return_dict=return_dict,
+                        allowed_hosts=allowed_hosts,
+                    )
+                    image_list_count = len(meta.image_list or [])
+                    logger.debug(f"[cyan]Image host debug: post-upload_screens image_list={image_list_count}[/cyan]")
 
                     if image_list_count < min_successful_uploads:
                         requirements_error = screenshot_requirement_error(meta, config)
@@ -1888,29 +1775,6 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
                         logger.info(
                             f"[yellow]Only {image_list_count} images uploaded; minimum is {min_successful_uploads}, but continuing without hosted screenshots. "
                             "Configure --skip-imagehost-upload or another approved host to avoid this warning.[/yellow]"
-                        )
-
-                    if reviewed_uploads:
-                        from src.screenshot_review import apply_staged_remote_uploads
-
-                        review_files = [str(path) for _index, path in reviewed_uploads]
-                        uploaded_review_images, uploaded_count = await uploadscreens_manager.upload_screens(
-                            meta,
-                            len(review_files),
-                            1,
-                            0,
-                            len(review_files),
-                            review_files,
-                            {},
-                            allowed_hosts=allowed_hosts,
-                        )
-                        if uploaded_count != len(review_files):
-                            raise Exception("Could not upload every reviewed screenshot")
-                        meta.image_list = apply_staged_remote_uploads(
-                            Path(meta.base_dir) / "tmp" / meta.uuid,
-                            cast(list[dict[str, Any]], meta.image_list or []),
-                            uploaded_review_images,
-                            reviewed_uploads,
                         )
 
                     # Now that image_list exists, populate tracker-specific keys (and only reupload if required)
@@ -2012,7 +1876,6 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
 
             async with aiofiles.open(f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/meta.json", "w", encoding="utf-8") as f:
                 await f.write(json.dumps(meta.to_dict(), indent=4, cls=PathAwareEncoder))
-            _publish_webui_preview_target(cast(str, meta.path or ""), meta.uuid or None)
 
             if "image_list" in meta and meta.image_list:
                 try:
@@ -2100,7 +1963,6 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
 
     async with aiofiles.open(f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/meta.json", "w", encoding="utf-8") as f:
         await f.write(json.dumps(meta.to_dict(), indent=4, cls=PathAwareEncoder))
-    _publish_webui_preview_target(cast(str, meta.path or ""), meta.uuid or None)
     return True
 
 
@@ -2301,25 +2163,17 @@ async def update_notification() -> str:
     return local_version
 
 
-async def do_the_thing(base_dir: str) -> None:
-    # Reload config from disk so that changes made via the WebUI config
-    # editor (or manual file edits between runs) are picked up.  The
-    # module-level ``config`` dict is imported once at startup and would
-    # otherwise remain stale for the lifetime of the process.  Updating
-    # in-place (clear + update) keeps all existing references (Args,
-    # Clients, managers, etc.) pointing at the same dict object.
+async def do_the_thing(base_dir: str) -> None:  # pyright: ignore[reportGeneralTypeIssues]
+    # Reload the exact source selected by the configuration service.  This
+    # intentionally avoids importing ``data.config`` through ``sys.path``.
     try:
-        import importlib
-
-        import data.config as _cfg_mod  # may already be cached
-
-        importlib.reload(_cfg_mod)
-        _reloaded = _cfg_mod.config  # may raise AttributeError
-        if not isinstance(_reloaded, dict):
-            raise TypeError(f"Expected dict, got {type(_reloaded).__name__}")
+        reloaded = cast(dict[str, Any], _CONFIGURATION_SERVICE.load_mutable())
         config.clear()
-        config.update(_reloaded)
-    except Exception as exc:
+        config.update(reloaded)
+        default_runtime_config = cast(dict[str, Any], config.get("DEFAULT", {}))
+        configure_console(default_runtime_config)
+        configure_binary_paths(default_runtime_config)
+    except ConfigurationError as exc:
         logger.warning(f"[yellow]Warning: could not reload config from disk: {exc}[/yellow]")
 
     await asyncio.sleep(0.1)  # Ensure it's not racing
@@ -2396,79 +2250,8 @@ async def do_the_thing(base_dir: str) -> None:
             RICH_HANDLER._log_render.show_path = bool(config["DEFAULT"].get("console_debug_show_path", True))
             RICH_HANDLER.markup = bool(config["DEFAULT"].get("console_debug_markup", True))
 
-        # Start web UI if requested (exclusive mode - doesn't continue with uploads)
-        if meta.webui:
-            global _is_webui_mode, _webui_server
-            _is_webui_mode = True
-
-            webui_addr = meta.webui
-            if ":" not in webui_addr:
-                logger.info("[red]Invalid web UI address format. Use HOST:PORT[/red]")
-                sys.exit(1)
-
-            try:
-                host, port_str = webui_addr.split(":", 1)
-                port = int(port_str)
-            except ValueError:
-                logger.info("[red]Invalid port number in web UI address[/red]")
-                sys.exit(1)
-
-            from waitress import create_server  # type: ignore[attr-defined]
-
-            from web_ui.server import app, set_runtime_browse_roots
-
-            # Set browse roots for web UI
-            browse_roots = os.environ.get("UA_BROWSE_ROOTS", "").strip()
-            if not browse_roots and paths:
-                # Use the paths from command line as browse roots
-                browse_roots = ",".join(paths)
-            elif not browse_roots and meta.path:
-                # Use the path from command line as browse roots
-                path_value = meta.path
-                browse_roots = ",".join(str(p) for p in path_value) if isinstance(path_value, list) else (path_value)
-            if not browse_roots:
-                raise SystemExit("No browse roots specified. Please set UA_BROWSE_ROOTS environment variable or provide explicit paths.")
-
-            set_runtime_browse_roots(browse_roots)
-
-            try:
-                _webui_server = cast(WebUIServer, create_server(app, host=host, port=port))
-
-                # Build clickable URL (use localhost for 0.0.0.0 display)
-                display_host = "localhost" if host == "0.0.0.0" else host  # noqa: S104
-                url = f"http://{display_host}:{port}"
-
-                logger.info("")
-                logger.info("[green]Web UI server started[/green]")
-                logger.info(f"[bold]Access at: {format_terminal_link(url, url, config['DEFAULT'])}[/bold]")
-                logger.info("[dim]Press Ctrl+C to stop the server[/dim]")
-                logger.info("")
-
-                # Run server in daemon thread so main thread can handle signals
-                server_thread = threading.Thread(target=_webui_server.run, daemon=True)
-                server_thread.start()
-
-                # Wait for shutdown signal or unexpected thread death
-                while not _shutdown_event.is_set():
-                    if not server_thread.is_alive():
-                        raise RuntimeError("Web UI server thread exited unexpectedly")
-                    _shutdown_event.wait(timeout=1.0)
-
-                # Close server gracefully
-                _webui_server.close()
-                server_thread.join(timeout=5.0)
-
-            except Exception as e:
-                if not _shutdown_requested:
-                    logger.info(f"[red]Web UI server error: {e}[/red]")
-                    sys.exit(1)
-            finally:
-                logger.info("[yellow]Web UI server stopped[/yellow]")
-
-            return  # Exit early when running web UI only
-
         # Validate config structure and types (after args parsed so we have trackers list)
-        from src.configvalidator import group_warnings, validate_config
+        from src.services.configuration_validation_service import group_warnings, validate_config
 
         # Get active trackers from meta (parsed from command line) or fall back to config default
         active_trackers: list[str] | None = None
@@ -2610,7 +2393,6 @@ async def do_the_thing(base_dir: str) -> None:
 
                 meta.path = path
                 meta.uuid = ""
-                _publish_webui_preview_target(path)
 
                 if not path:
                     raise ValueError("The 'path' variable is not defined or is empty.")
@@ -2650,7 +2432,6 @@ async def do_the_thing(base_dir: str) -> None:
                         saved_meta = cast(dict[str, Any], json.loads(content)) if content.strip() else {}
                         logger.info("[yellow]Existing metadata file found, it holds cached values")
                         await merge_meta(meta, saved_meta)
-                        _publish_webui_preview_target(path, meta.uuid or None)
 
             except KeyboardInterrupt:
                 raise
@@ -2765,16 +2546,8 @@ async def do_the_thing(base_dir: str) -> None:
                     if is_batch:
                         tracker_statuses = [status for status in meta.tracker_status.values() if isinstance(status, Mapping)]
                         skip_reasons = list(dict.fromkeys(str(status.get("skip_reason")) for status in tracker_statuses if status.get("skip_reason")))
-                        duplicate_trackers = [
-                            tracker
-                            for tracker, status in meta.tracker_status.items()
-                            if isinstance(status, Mapping) and status.get("dupe") is True
-                        ]
-                        skipped_trackers = [
-                            tracker
-                            for tracker, status in meta.tracker_status.items()
-                            if isinstance(status, Mapping) and status.get("skipped") is True
-                        ]
+                        duplicate_trackers = [tracker for tracker, status in meta.tracker_status.items() if isinstance(status, Mapping) and status.get("dupe") is True]
+                        skipped_trackers = [tracker for tracker, status in meta.tracker_status.items() if isinstance(status, Mapping) and status.get("skipped") is True]
                         if skip_reasons:
                             skip_detail = "; ".join(skip_reasons)
                         elif duplicate_trackers:
@@ -2875,7 +2648,7 @@ async def do_the_thing(base_dir: str) -> None:
 
                     async def upload_usenet_flow(meta: Meta, usenet_trackers: list[str], need_usenet_post: bool, has_usenet_trackers: bool) -> None:
                         if need_usenet_post:
-                            from src.usenetcreate import prepare_and_upload_usenet
+                            from src.integrations.usenet.creator import prepare_and_upload_usenet
 
                             try:
                                 nzb_path = await prepare_and_upload_usenet(meta, config)
@@ -2898,14 +2671,13 @@ async def do_the_thing(base_dir: str) -> None:
                                             list(http_trackers),
                                             list(other_api_trackers),
                                             upload_target="usenet indexer",
+                                            argument_parser_factory=Args,
                                         )
                                 else:
                                     logger.info("[bold red]Usenet upload failed.[/bold red]")
                                     status_map = meta.tracker_status
                                     for t in usenet_trackers:
-                                        status_map.setdefault(t, {}).update(
-                                            status_message="data error: Usenet upload failed, NZB missing", upload=True, upload_success=False
-                                        )
+                                        status_map.setdefault(t, {}).update(status_message="data error: Usenet upload failed, NZB missing", upload=True, upload_success=False)
                             except Exception as e:
                                 logger.info(f"[bold red]Error in Usenet upload pipeline: {e}[/bold red]")
                                 import traceback
@@ -2916,9 +2688,7 @@ async def do_the_thing(base_dir: str) -> None:
                                     tracker_status = status_map.setdefault(t, {})
                                     if tracker_status.get("upload_success") is True:
                                         continue
-                                    tracker_status.update(
-                                        status_message=f"data error: Usenet upload failed: {e}", upload=True, upload_success=False
-                                    )
+                                    tracker_status.update(status_message=f"data error: Usenet upload failed: {e}", upload=True, upload_success=False)
                         elif has_usenet_trackers:
                             logger.info("[yellow]Skipping NNTP Usenet post because no Usenet indexers passed the upload checks.[/yellow]")
 
@@ -2937,6 +2707,7 @@ async def do_the_thing(base_dir: str) -> None:
                                 tracker_class_map,
                                 list(http_trackers),
                                 list(other_api_trackers),
+                                argument_parser_factory=Args,
                             )
 
                     upload_order = meta.upload_order or config["DEFAULT"].get("upload_order", "concurrent")
@@ -2950,7 +2721,7 @@ async def do_the_thing(base_dir: str) -> None:
 
                         if need_usenet_post and torrent_trackers:
                             logger.info("\n[yellow]Torrent uploads completed. Checking bandwidth before starting Usenet upload...[/yellow]")
-                            from src.qbitwait import Wait
+                            from src.integrations.torrent_clients.bandwidth import Wait
 
                             try:
                                 waiter = Wait(config)
@@ -2984,19 +2755,12 @@ async def do_the_thing(base_dir: str) -> None:
                         tracker_statuses = [status for status in meta.tracker_status.values() if isinstance(status, Mapping)]
                         upload_succeeded = any(status.get("upload_success") is True for status in tracker_statuses)
                         failed_trackers = _failed_tracker_names(meta.tracker_status)
-                        duplicate_trackers = [
-                            tracker
-                            for tracker, status in meta.tracker_status.items()
-                            if isinstance(status, Mapping) and status.get("dupe") is True
-                        ]
+                        duplicate_trackers = [tracker for tracker, status in meta.tracker_status.items() if isinstance(status, Mapping) and status.get("dupe") is True]
                         if not upload_succeeded and duplicate_trackers and not failed_trackers and not meta.debug:
                             skipped_files_count += 1
                             duplicate_reason = f"Release already exists on trackers ({', '.join(duplicate_trackers)})"
                             item_outcomes[item_index] = (current_item_path, "skipped", duplicate_reason)
-                            logger.info(
-                                f"[yellow]Processed {processed_files_count}/{total_files} files; "
-                                f"release already exists on {', '.join(duplicate_trackers)}.[/yellow]"
-                            )
+                            logger.info(f"[yellow]Processed {processed_files_count}/{total_files} files; release already exists on {', '.join(duplicate_trackers)}.[/yellow]")
                         elif not upload_succeeded and not meta.debug:
                             skipped_files_count += 1
                             failure_reason = f"No tracker upload succeeded ({', '.join(failed_trackers) or 'no eligible trackers'})"
@@ -3100,20 +2864,12 @@ async def do_the_thing(base_dir: str) -> None:
                 logger.info("[bold yellow]Items with partial uploads:[/bold yellow]")
                 for partial_path, failed_trackers in partial_items:
                     logger.info(f"- {partial_path}: failed on {failed_trackers}")
-            skipped_items = [
-                (path, detail)
-                for _index, (path, outcome, detail) in sorted(item_outcomes.items())
-                if outcome == "skipped"
-            ]
+            skipped_items = [(path, detail) for _index, (path, outcome, detail) in sorted(item_outcomes.items()) if outcome == "skipped"]
             if skipped_items:
                 logger.info("[bold yellow]Skipped items:[/bold yellow]")
                 for skipped_path, skipped_reason in skipped_items:
                     logger.info(f"- {skipped_path}: {skipped_reason}")
-            failed_summary_items = [
-                (path, detail)
-                for _index, (path, outcome, detail) in sorted(item_outcomes.items())
-                if outcome == "failed"
-            ]
+            failed_summary_items = [(path, detail) for _index, (path, outcome, detail) in sorted(item_outcomes.items()) if outcome == "failed"]
             if failed_summary_items:
                 logger.info("[bold red]Failed items:[/bold red]")
                 for failed_path, failed_reason in failed_summary_items:
@@ -3318,7 +3074,16 @@ async def process_cross_seeds(meta: Meta) -> None:
                 logger.debug(f"[yellow]Error getting ALPHARATIO auth credentials: {e}[/yellow]")
 
         async with semaphore:
-            await common.download_tracker_torrent(meta, tracker, headers=headers, params=None, downurl=download_url, hash_is_id=False, cross=True)
+            await common.download_tracker_torrent(
+                meta,
+                tracker,
+                headers=headers,
+                params=None,
+                downurl=download_url,
+                hash_is_id=False,
+                cross=True,
+                use_cookie_auth=tracker in http_trackers,
+            )
             await client.add_to_client(meta, tracker, cross=True)
 
     tasks = [(tracker, asyncio.create_task(handle_cross_seed(tracker))) for tracker in valid_trackers]
@@ -3351,22 +3116,19 @@ def check_python_version() -> None:
 
 
 async def main() -> None:
-    # Reset global state for clean in-process runs (when called from web UI)
-    pending_webui_session_id = _webui_session_id
-    pending_webui_run_token = _webui_run_token
     _reset_shutdown_state()
-    if pending_webui_session_id and pending_webui_run_token:
-        global _is_webui_mode
-        _is_webui_mode = True
-        set_webui_session_id(pending_webui_session_id, pending_webui_run_token)
 
     try:
         await do_the_thing(base_dir)
     except asyncio.CancelledError:
         if not _shutdown_requested:
             logger.info("[red]Tasks were cancelled. Exiting safely.[/red]")
+    except NoWorkAvailableError as exc:
+        logger.info(f"[yellow]{exc}[/yellow]")
+    except OperationAbortedError as exc:
+        logger.info(f"[yellow]{exc}[/yellow]")
     except EOFError:
-        pass  # Web UI cancellation - handled silently
+        pass  # Interactive input ended; exit cleanly
     except KeyboardInterrupt:
         pass  # Handled by signal handler
     except Exception as e:
@@ -3394,22 +3156,21 @@ if __name__ == "__main__":
             logger.info(f"[bold red]Critical error: {e}[/bold red]")
         exit_code = 1
     finally:
-        # Only run async cleanup for non-webui mode (webui doesn't use asyncio)
-        if not _is_webui_mode:
-            with contextlib.suppress(Exception):
-                # Run cleanup with timeout to prevent hanging on shutdown
-                async def _cleanup_with_timeout() -> None:
-                    try:
-                        await asyncio.wait_for(cleanup_manager.cleanup(), timeout=10.0)
-                    except TimeoutError, asyncio.CancelledError:
-                        logger.info("[yellow]Cleanup timed out or was cancelled, forcing exit...[/yellow]")
+        with contextlib.suppress(Exception):
 
-                asyncio.run(_cleanup_with_timeout())
+            async def _cleanup_with_timeout() -> None:
+                """Bound shutdown cleanup so the CLI cannot hang indefinitely."""
+                try:
+                    await asyncio.wait_for(cleanup_manager.cleanup(), timeout=10.0)
+                except TimeoutError, asyncio.CancelledError:
+                    logger.info("[yellow]Cleanup timed out or was cancelled, forcing exit...[/yellow]")
+
+            asyncio.run(_cleanup_with_timeout())
 
         gc.collect()
         cleanup_manager.reset_terminal()
 
-        if _shutdown_requested or _is_webui_mode:
+        if _shutdown_requested:
             logger.info("[green]Shutdown complete[/green]")
 
         sys.exit(exit_code)

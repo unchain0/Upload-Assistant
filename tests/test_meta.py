@@ -1,6 +1,4 @@
-# ruff: noqa: S101
-
-from src.meta import Meta
+from src.domain_models.release import Meta
 
 
 def test_populate_cast_merges_sources_in_priority_order() -> None:

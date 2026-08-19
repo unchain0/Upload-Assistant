@@ -1,9 +1,7 @@
-# ruff: noqa: ARG001, ARG005, S101
+# ruff: noqa: ARG001, ARG005
 from __future__ import annotations
 
-import importlib
 import signal
-import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -11,10 +9,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-import src.configvalidator as configvalidator
 import upload
-from src.exceptions import ItemProcessingError
-from src.meta import Meta
+from src.domain_models.processing import ItemProcessingError
+from src.domain_models.release import Meta
 
 _DEFAULT_META_QUEUE = object()
 
@@ -36,14 +33,7 @@ def _configure_do_the_thing_stubs(
     test_base_dir = str(Path(queue_paths[0]).parent / "ua-state")
     monkeypatch.setattr("upload.base_dir", test_base_dir)
 
-    def reload_with_test_config(module: Any) -> Any:
-        # ``do_the_thing`` reloads data.config before processing. Preserve the
-        # test overrides while still returning a distinct config object, just
-        # like a real module reload would.
-        monkeypatch.setattr("data.config.config", dict(upload.config))
-        return module
-
-    monkeypatch.setattr("importlib.reload", reload_with_test_config)
+    monkeypatch.setattr("upload._CONFIGURATION_SERVICE.load_mutable", lambda: dict(upload.config))
     monkeypatch.setattr("upload.configured_binary", lambda *_args, **_kwargs: "ffmpeg")
     monkeypatch.setattr("upload.ensure_mediainfo_binary", AsyncMock(return_value="mediainfo"))
 
@@ -77,7 +67,6 @@ def _configure_do_the_thing_stubs(
     monkeypatch.setattr("upload.cleanup_manager", _NoopCleanup())
     monkeypatch.setattr("upload.save_processed_file", AsyncMock(return_value=None))
     monkeypatch.setattr("upload.cancel_and_drain_early_artifact_tasks", AsyncMock(return_value=None))
-    monkeypatch.setattr("upload._publish_webui_preview_target", lambda *args, **kwargs: None)
     monkeypatch.setattr("upload.logger.info", lambda message, *args, **kwargs: info_messages.append(str(message)))
     default_config = dict(upload.config.get("DEFAULT", {}))
     if "cross_seeding" not in default_config:
@@ -93,8 +82,8 @@ def _configure_do_the_thing_stubs(
     default_config["mkbrr"] = False
     default_config["debug"] = False
     monkeypatch.setitem(upload.config, "DEFAULT", default_config)
-    monkeypatch.setattr("src.configvalidator.validate_config", lambda *_args, **_kwargs: (True, [], []))
-    monkeypatch.setattr("src.configvalidator.group_warnings", lambda warnings: warnings)
+    monkeypatch.setattr("src.services.configuration_validation_service.validate_config", lambda *_args, **_kwargs: (True, [], []))
+    monkeypatch.setattr("src.services.configuration_validation_service.group_warnings", lambda warnings: warnings)
 
     return info_messages, process_meta_mock
 
@@ -114,10 +103,7 @@ async def test_batch_continues_when_first_item_fails(tmp_path: Path, monkeypatch
     await upload.do_the_thing(upload.base_dir)
 
     assert process_meta_mock.call_count == 2
-    assert any(
-        "Batch summary: total queued 2, fully successful 0, partial 0, skipped/failed 2" in message
-        for message in info_messages
-    )
+    assert any("Batch summary: total queued 2, fully successful 0, partial 0, skipped/failed 2" in message for message in info_messages)
     assert any("first_fail.mkv" in message and "No Video files found" in message for message in info_messages)
 
 
@@ -136,10 +122,7 @@ async def test_batch_continues_when_intermediate_item_fails(tmp_path: Path, monk
     await upload.do_the_thing(upload.base_dir)
 
     assert process_meta_mock.call_count == 3
-    assert any(
-        "Batch summary: total queued 3, fully successful 0, partial 0, skipped/failed 3" in message
-        for message in info_messages
-    )
+    assert any("Batch summary: total queued 3, fully successful 0, partial 0, skipped/failed 3" in message for message in info_messages)
     assert any("middle_fail.mkv" in message and "No Video files found" in message for message in info_messages)
 
 
@@ -156,10 +139,7 @@ async def test_batch_fails_all_items_without_aborting(tmp_path: Path, monkeypatc
     await upload.do_the_thing(upload.base_dir)
 
     assert process_meta_mock.call_count == 2
-    assert any(
-        "Batch summary: total queued 2, fully successful 0, partial 0, skipped/failed 2" in message
-        for message in info_messages
-    )
+    assert any("Batch summary: total queued 2, fully successful 0, partial 0, skipped/failed 2" in message for message in info_messages)
     assert any("bad_one.mkv" in message and "No Video files found" in message for message in info_messages)
     assert any("bad_two.mkv" in message and "No Video files found" in message for message in info_messages)
 
@@ -443,9 +423,7 @@ async def test_batch_records_tracker_outcomes_without_meta_queue(tmp_path: Path,
 async def test_site_upload_queue_failure_uses_original_item_identifier(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     path = str(tmp_path / "site-item.mkv")
     queue = [{"path": path, "tracker": "SITE", "imdb_id": 1}]
-    info_messages, _ = _configure_do_the_thing_stubs(
-        monkeypatch, queue, lambda *_args: True, meta_overrides={"site_upload_queue": True}
-    )
+    info_messages, _ = _configure_do_the_thing_stubs(monkeypatch, queue, lambda *_args: True, meta_overrides={"site_upload_queue": True})
     monkeypatch.setattr("upload.QueueManager.process_site_upload_item", AsyncMock(side_effect=RuntimeError("site queue failure")))
     monkeypatch.setattr("sys.argv", ["upload.py", path])
 
@@ -459,9 +437,7 @@ async def test_args_line_queue_failure_uses_original_item_identifier(tmp_path: P
     path = str(tmp_path / "args-item.mkv")
     line = f'"{path}" -tk SITE'
     queue = [{"path": path, "line": line, "args": [path, "-tk", "SITE"]}]
-    info_messages, _ = _configure_do_the_thing_stubs(
-        monkeypatch, queue, lambda *_args: True, meta_overrides={"args_line_queue": True}
-    )
+    info_messages, _ = _configure_do_the_thing_stubs(monkeypatch, queue, lambda *_args: True, meta_overrides={"args_line_queue": True})
 
     def fail_item_parse(argv: list[str], meta: Meta) -> tuple[Meta, Any, list[str]]:
         if meta.args_line_queue:
@@ -489,9 +465,7 @@ async def test_limit_queue_records_unprocessed_items(tmp_path: Path, monkeypatch
     async def fake_process_trackers(meta: Meta, *_args: Any, **_kwargs: Any) -> None:
         meta.tracker_status["GOOD"]["upload_success"] = True
 
-    info_messages, process_meta_mock = _configure_do_the_thing_stubs(
-        monkeypatch, queue, fake_process_meta, meta_overrides={"limit_queue": 1}
-    )
+    info_messages, process_meta_mock = _configure_do_the_thing_stubs(monkeypatch, queue, fake_process_meta, meta_overrides={"limit_queue": 1})
     monkeypatch.setattr("upload.process_trackers", fake_process_trackers)
     monkeypatch.setattr("sys.argv", ["upload.py", *queue])
 
@@ -524,16 +498,11 @@ async def test_debug_items_do_not_consume_success_limit(tmp_path: Path, monkeypa
     await upload.do_the_thing(upload.base_dir)
 
     assert process_meta_mock.call_count == 2
-    assert any(
-        "total queued 2, fully successful 0, partial 0, skipped/failed 0, site checks completed 2" in message
-        for message in info_messages
-    )
+    assert any("total queued 2, fully successful 0, partial 0, skipped/failed 0, site checks completed 2" in message for message in info_messages)
 
 
 @pytest.mark.asyncio
-async def test_batch_metadata_failure_without_meta_queue_updates_progress_and_persists_path(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_batch_metadata_failure_without_meta_queue_updates_progress_and_persists_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     path = str(tmp_path / "failed.mkv")
     second_path = str(tmp_path / "second-failed.mkv")
     queue = [path, second_path]
@@ -576,7 +545,7 @@ async def test_batch_reports_torrent_success_with_usenet_preparation_failure(tmp
     info_messages, _ = _configure_do_the_thing_stubs(monkeypatch, queue, fake_process_meta)
     monkeypatch.setitem(upload.tracker_class_map, "NZB", UsenetTracker)
     monkeypatch.setattr("upload.process_trackers", fake_process_trackers)
-    monkeypatch.setattr("src.usenetcreate.prepare_and_upload_usenet", AsyncMock(side_effect=RuntimeError("Usenet preparation failed")))
+    monkeypatch.setattr("src.integrations.usenet.creator.prepare_and_upload_usenet", AsyncMock(side_effect=RuntimeError("Usenet preparation failed")))
     monkeypatch.setattr("sys.argv", ["upload.py", *queue])
 
     await upload.do_the_thing(upload.base_dir)
@@ -608,7 +577,7 @@ async def test_usenet_pipeline_exception_preserves_completed_indexer_success(tmp
     monkeypatch.setitem(upload.tracker_class_map, "NZB_OK", UsenetTracker)
     monkeypatch.setitem(upload.tracker_class_map, "NZB_FAIL", UsenetTracker)
     monkeypatch.setattr("upload.process_trackers", fake_process_trackers)
-    monkeypatch.setattr("src.usenetcreate.prepare_and_upload_usenet", AsyncMock(return_value=str(tmp_path / "release.nzb")))
+    monkeypatch.setattr("src.integrations.usenet.creator.prepare_and_upload_usenet", AsyncMock(return_value=str(tmp_path / "release.nzb")))
     monkeypatch.setattr("sys.argv", ["upload.py", *queue])
 
     await upload.do_the_thing(upload.base_dir)

@@ -1,10 +1,9 @@
 """Regression tests for Seedpool category and type mappings."""
-# ruff: noqa: S101
 
 import asyncio
 
-from src.meta import Meta
-from src.trackers.UNIT3D.seedpool import Seedpool
+from src.domain_models.release import Meta
+from src.integrations.trackers.UNIT3D.seedpool import Seedpool
 
 
 def _tracker() -> Seedpool:

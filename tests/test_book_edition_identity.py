@@ -1,12 +1,11 @@
-# ruff: noqa: S101
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-import src.book_prep as book_prep
-from src.google_books import GoogleBooksManager
-from src.meta import Meta
+import src.services.book_preparation as book_prep
+from src.domain_models.release import Meta
+from src.integrations.external_apis.google_books import GoogleBooksManager
 
 
 def test_google_books_rejects_volume_for_another_isbn() -> None:
@@ -82,9 +81,9 @@ async def test_epub_metadata_preserves_digital_edition_identity(tmp_path: Path, 
     monkeypatch.setattr(book_prep, "_extract_epub_metadata", lambda _path: dict(source_metadata))
     monkeypatch.setattr(book_prep, "_epub_content_identifiers", lambda _path: ({"9780143122791", "9781101561089"}, {"B005GSZIWG"}))
     monkeypatch.setattr(book_prep, "export_info", export_stub)
-    monkeypatch.setattr("src.myanonamouse.myanonamouse_manager.search_by_id", wrong_edition_stub)
-    monkeypatch.setattr("src.google_books.google_books_manager.search_by_isbn", wrong_edition_stub)
-    monkeypatch.setattr("src.openlibrary.openlibrary_manager.search_by_isbn", wrong_edition_stub)
+    monkeypatch.setattr("src.integrations.external_apis.myanonamouse.myanonamouse_manager.search_by_id", wrong_edition_stub)
+    monkeypatch.setattr("src.integrations.external_apis.google_books.google_books_manager.search_by_isbn", wrong_edition_stub)
+    monkeypatch.setattr("src.integrations.external_apis.openlibrary.openlibrary_manager.search_by_isbn", wrong_edition_stub)
 
     await book_prep.gather_book_prep(meta, str(source), str(tmp_path), {"DEFAULT": {}})
 
@@ -140,9 +139,9 @@ async def test_exact_isbn_metadata_replaces_divergent_embedded_identity(tmp_path
     monkeypatch.setattr(book_prep, "_extract_epub_metadata", lambda _path: dict(embedded))
     monkeypatch.setattr(book_prep, "_epub_content_identifiers", lambda _path: ({"9781961788022"}, {"B0C7M77Q5M"}))
     monkeypatch.setattr(book_prep, "export_info", export_stub)
-    monkeypatch.setattr("src.myanonamouse.myanonamouse_manager.search_by_id", mam_stub)
-    monkeypatch.setattr("src.google_books.google_books_manager.search_by_isbn", google_stub)
-    monkeypatch.setattr("src.openlibrary.openlibrary_manager.search_by_isbn", no_result)
+    monkeypatch.setattr("src.integrations.external_apis.myanonamouse.myanonamouse_manager.search_by_id", mam_stub)
+    monkeypatch.setattr("src.integrations.external_apis.google_books.google_books_manager.search_by_isbn", google_stub)
+    monkeypatch.setattr("src.integrations.external_apis.openlibrary.openlibrary_manager.search_by_isbn", no_result)
 
     await book_prep.gather_book_prep(meta, str(source), str(tmp_path), {"DEFAULT": {}})
 
@@ -189,9 +188,9 @@ async def test_exact_isbn_preserves_matching_local_edition_title_over_original_w
     monkeypatch.setattr(book_prep, "_extract_epub_metadata", lambda _path: embedded)
     monkeypatch.setattr(book_prep, "_epub_content_identifiers", lambda _path: ({"0679439374"}, set()))
     monkeypatch.setattr(book_prep, "export_info", export_stub)
-    monkeypatch.setattr("src.myanonamouse.myanonamouse_manager.search_by_id", mam_stub)
-    monkeypatch.setattr("src.google_books.google_books_manager.search_by_isbn", no_result)
-    monkeypatch.setattr("src.openlibrary.openlibrary_manager.search_by_isbn", mam_stub)
+    monkeypatch.setattr("src.integrations.external_apis.myanonamouse.myanonamouse_manager.search_by_id", mam_stub)
+    monkeypatch.setattr("src.integrations.external_apis.google_books.google_books_manager.search_by_isbn", no_result)
+    monkeypatch.setattr("src.integrations.external_apis.openlibrary.openlibrary_manager.search_by_isbn", mam_stub)
 
     await book_prep.gather_book_prep(meta, str(source), str(tmp_path), {"DEFAULT": {}})
 
@@ -230,8 +229,8 @@ async def test_exact_isbn_replaces_noisy_local_title_variant(tmp_path: Path, mon
     monkeypatch.setattr(book_prep, "_extract_epub_metadata", lambda _path: embedded)
     monkeypatch.setattr(book_prep, "_epub_content_identifiers", lambda _path: ({"9780691255224"}, set()))
     monkeypatch.setattr(book_prep, "export_info", export_stub)
-    monkeypatch.setattr("src.google_books.google_books_manager.search_by_isbn", edition_stub)
-    monkeypatch.setattr("src.openlibrary.openlibrary_manager.search_by_isbn", edition_stub)
+    monkeypatch.setattr("src.integrations.external_apis.google_books.google_books_manager.search_by_isbn", edition_stub)
+    monkeypatch.setattr("src.integrations.external_apis.openlibrary.openlibrary_manager.search_by_isbn", edition_stub)
 
     await book_prep.gather_book_prep(meta, str(source), str(tmp_path), {"DEFAULT": {}})
 
@@ -257,12 +256,12 @@ async def test_filename_identity_replaces_generic_epub_title_and_partial_author(
     async def no_result(*_args: Any, **_kwargs: Any) -> None:
         return None
 
-    monkeypatch.setattr("src.book_prep._get_epubmeta_output", lambda _path: "")
-    monkeypatch.setattr("src.book_prep._extract_epub_metadata", lambda _path: dict(embedded))
-    monkeypatch.setattr("src.book_prep._epub_content_identifiers", lambda _path: (set(), set()))
-    monkeypatch.setattr("src.book_prep.export_info", export_stub)
-    monkeypatch.setattr("src.google_books.google_books_manager.search_by_isbn", no_result)
-    monkeypatch.setattr("src.openlibrary.openlibrary_manager.search_by_isbn", no_result)
+    monkeypatch.setattr("src.services.book_preparation._get_epubmeta_output", lambda _path: "")
+    monkeypatch.setattr("src.services.book_preparation._extract_epub_metadata", lambda _path: dict(embedded))
+    monkeypatch.setattr("src.services.book_preparation._epub_content_identifiers", lambda _path: (set(), set()))
+    monkeypatch.setattr("src.services.book_preparation.export_info", export_stub)
+    monkeypatch.setattr("src.integrations.external_apis.google_books.google_books_manager.search_by_isbn", no_result)
+    monkeypatch.setattr("src.integrations.external_apis.openlibrary.openlibrary_manager.search_by_isbn", no_result)
 
     await book_prep.gather_book_prep(meta, str(source), str(tmp_path), {"DEFAULT": {}})
 
@@ -278,7 +277,8 @@ async def test_online_generic_title_fallback_does_not_overwrite_local_title(tmp_
         path=str(source),
         filelist=[str(source)],
         skip_auto_torrent=True,
-        torrent_comments=[{"trackers": "https://myanonamouse.net/announce", "comment": "MID=9001"},
+        torrent_comments=[
+            {"trackers": "https://myanonamouse.net/announce", "comment": "MID=9001"},
         ],
     )
     embedded = {
@@ -305,9 +305,9 @@ async def test_online_generic_title_fallback_does_not_overwrite_local_title(tmp_
     monkeypatch.setattr(book_prep, "_extract_epub_metadata", lambda _path: embedded)
     monkeypatch.setattr(book_prep, "_epub_content_identifiers", lambda _path: (set(), set()))
     monkeypatch.setattr(book_prep, "export_info", export_stub)
-    monkeypatch.setattr("src.myanonamouse.myanonamouse_manager.search_by_id", mam_stub)
-    monkeypatch.setattr("src.google_books.google_books_manager.search_by_isbn", no_result)
-    monkeypatch.setattr("src.openlibrary.openlibrary_manager.search_by_isbn", no_result)
+    monkeypatch.setattr("src.integrations.external_apis.myanonamouse.myanonamouse_manager.search_by_id", mam_stub)
+    monkeypatch.setattr("src.integrations.external_apis.google_books.google_books_manager.search_by_isbn", no_result)
+    monkeypatch.setattr("src.integrations.external_apis.openlibrary.openlibrary_manager.search_by_isbn", no_result)
 
     await book_prep.gather_book_prep(meta, str(source), str(tmp_path), {"DEFAULT": {}})
 
@@ -356,13 +356,13 @@ async def test_online_generic_title_fallback_prefers_single_word_filename_title(
     async def no_result(*_args: Any, **_kwargs: Any) -> None:
         return None
 
-    monkeypatch.setattr("src.book_prep._get_epubmeta_output", lambda _path: "")
-    monkeypatch.setattr("src.book_prep._extract_epub_metadata", lambda _path: dict(embedded))
-    monkeypatch.setattr("src.book_prep._epub_content_identifiers", lambda _path: (set(), set()))
-    monkeypatch.setattr("src.book_prep.export_info", export_stub)
-    monkeypatch.setattr("src.myanonamouse.myanonamouse_manager.search_by_id", mam_stub)
-    monkeypatch.setattr("src.google_books.google_books_manager.search_by_isbn", no_result)
-    monkeypatch.setattr("src.openlibrary.openlibrary_manager.search_by_isbn", no_result)
+    monkeypatch.setattr("src.services.book_preparation._get_epubmeta_output", lambda _path: "")
+    monkeypatch.setattr("src.services.book_preparation._extract_epub_metadata", lambda _path: dict(embedded))
+    monkeypatch.setattr("src.services.book_preparation._epub_content_identifiers", lambda _path: (set(), set()))
+    monkeypatch.setattr("src.services.book_preparation.export_info", export_stub)
+    monkeypatch.setattr("src.integrations.external_apis.myanonamouse.myanonamouse_manager.search_by_id", mam_stub)
+    monkeypatch.setattr("src.integrations.external_apis.google_books.google_books_manager.search_by_isbn", no_result)
+    monkeypatch.setattr("src.integrations.external_apis.openlibrary.openlibrary_manager.search_by_isbn", no_result)
 
     await book_prep.gather_book_prep(meta, str(source), str(tmp_path), {"DEFAULT": {}})
 
@@ -412,9 +412,7 @@ def test_epub_primary_isbn_wins_over_incidental_body_numbers(monkeypatch: pytest
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("source_publisher", "expected"), [("Seven Seas", "Seven Seas"), ("", "Seven Seas Entertainment")])
-async def test_exact_edition_publisher_prefers_source_then_openlibrary(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source_publisher: str, expected: str
-) -> None:
+async def test_exact_edition_publisher_prefers_source_then_openlibrary(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source_publisher: str, expected: str) -> None:
     source = tmp_path / "No Game No Life Vol 2.cbz"
     source.touch()
     meta = Meta(path=str(source), filelist=[str(source)], skip_auto_torrent=True)
@@ -440,8 +438,8 @@ async def test_exact_edition_publisher_prefers_source_then_openlibrary(
 
     monkeypatch.setattr(book_prep, "_extract_cbr_cbz_metadata", lambda _path: source_metadata)
     monkeypatch.setattr(book_prep, "export_info", export_stub)
-    monkeypatch.setattr("src.google_books.google_books_manager.search_by_isbn", google_stub)
-    monkeypatch.setattr("src.openlibrary.openlibrary_manager.search_by_isbn", openlibrary_stub)
+    monkeypatch.setattr("src.integrations.external_apis.google_books.google_books_manager.search_by_isbn", google_stub)
+    monkeypatch.setattr("src.integrations.external_apis.openlibrary.openlibrary_manager.search_by_isbn", openlibrary_stub)
 
     await book_prep.gather_book_prep(meta, str(source), str(tmp_path), {"DEFAULT": {}})
 
@@ -449,9 +447,7 @@ async def test_exact_edition_publisher_prefers_source_then_openlibrary(
 
 
 def test_book_identity_removes_trailing_source_isbn() -> None:
-    author, title = book_prep.book_identity_from_path(
-        "Jon Gertner - The Idea Factory - Bell Labs And The Great Age Of American Innovation - 9781101561089.epub"
-    )
+    author, title = book_prep.book_identity_from_path("Jon Gertner - The Idea Factory - Bell Labs And The Great Age Of American Innovation - 9781101561089.epub")
 
     assert author == "Jon Gertner"
     assert title == "The Idea Factory - Bell Labs And The Great Age Of American Innovation"

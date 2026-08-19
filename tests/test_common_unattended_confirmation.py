@@ -1,10 +1,8 @@
-# ruff: noqa: S101
-
 import asyncio
 from unittest.mock import AsyncMock, patch
 
-from src.meta import Meta
-from src.trackers.common import Common
+from src.domain_models.release import Meta
+from src.integrations.trackers.common import Common
 
 
 def test_common_confirmation_does_not_prompt_when_unattended():
@@ -13,7 +11,7 @@ def test_common_confirmation_does_not_prompt_when_unattended():
     async def run_checks():
         for confirmed in (False, True):
             meta = Meta(unattended=True, unattended_confirm=confirmed)
-            with patch("src.trackers.common.prompt_in_thread", new=AsyncMock(side_effect=AssertionError("interactive prompt called"))):
+            with patch("src.integrations.trackers.common.prompt_in_thread", new=AsyncMock(side_effect=AssertionError("interactive prompt called"))):
                 assert await common.prompt_user_for_confirmation("Continue?", meta) is confirmed
 
     asyncio.run(run_checks())
@@ -28,9 +26,7 @@ def test_common_adult_confirmation_uses_async_prompt_only_when_attended():
             prompt.assert_awaited_once()
 
         with patch.object(common, "prompt_user_for_confirmation", new=AsyncMock(side_effect=AssertionError("interactive prompt called"))):
-            assert await common.check_and_confirm_adult_media_upload(
-                Meta(adult_media=True, unattended=True, unattended_confirm=True), "TEST"
-            ) is True
+            assert await common.check_and_confirm_adult_media_upload(Meta(adult_media=True, unattended=True, unattended_confirm=True), "TEST") is True
 
     asyncio.run(run_checks())
 

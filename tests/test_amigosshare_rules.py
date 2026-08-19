@@ -1,5 +1,3 @@
-# ruff: noqa: S101
-
 import asyncio
 import sys
 import types
@@ -16,7 +14,7 @@ data_config.DEFAULT = {}
 data_config.config = {}
 sys.modules.setdefault("data.config", data_config)
 
-from src.trackers.amigosshare import AmigosShare  # noqa: E402
+from src.integrations.trackers.amigosshare import AmigosShare  # noqa: E402
 
 
 def make_meta(**overrides):
@@ -199,7 +197,7 @@ async def test_amigosshare_request_search_handles_http_errors_but_propagates_par
         def fail_parse(*_args, **_kwargs):
             raise ValueError("parser failure")
 
-        monkeypatch.setattr("src.trackers.amigosshare.BeautifulSoup", fail_parse)
+        monkeypatch.setattr("src.integrations.trackers.amigosshare.BeautifulSoup", fail_parse)
         with pytest.raises(ValueError, match="parser failure"):
             await client.get_requests(meta)
     finally:
@@ -207,7 +205,9 @@ async def test_amigosshare_request_search_handles_http_errors_but_propagates_par
 
 
 def test_book_blocks_non_portuguese_description_when_unattended():
-    meta = make_meta(category="BOOK", imdb_id=None, source_size=2 * 1024 * 1024, unattended=True, description="This release contains a Portuguese tracker release with title and files.")
+    meta = make_meta(
+        category="BOOK", imdb_id=None, source_size=2 * 1024 * 1024, unattended=True, description="This release contains a Portuguese tracker release with title and files."
+    )
 
     assert not asyncio.run(run_checks(meta))
 
@@ -245,7 +245,9 @@ def test_book_does_not_treat_spanish_or_french_accents_as_portuguese(description
 
 
 def test_book_blocks_non_portuguese_description_in_unattended_without_confirmation():
-    meta = make_meta(category="BOOK", imdb_id=None, source_size=2 * 1024 * 1024, unattended=True, description="This release contains a Portuguese tracker release with title and files.")
+    meta = make_meta(
+        category="BOOK", imdb_id=None, source_size=2 * 1024 * 1024, unattended=True, description="This release contains a Portuguese tracker release with title and files."
+    )
 
     assert not asyncio.run(run_checks(meta))
 
@@ -264,9 +266,7 @@ def test_imdb_rejection_happens_before_language_validation():
 
 def test_amigosshare_rejects_archives_except_for_games():
     assert not asyncio.run(run_checks(make_meta(filelist=["release.rar"]), guard_language_call=True))
-    assert not asyncio.run(
-        run_checks(make_meta(filelist=["Filme.2024.1080p.WEB-DL.H.264-GRP.mkv", "Filme.r02"]), guard_language_call=True)
-    )
+    assert not asyncio.run(run_checks(make_meta(filelist=["Filme.2024.1080p.WEB-DL.H.264-GRP.mkv", "Filme.r02"]), guard_language_call=True))
     assert asyncio.run(run_checks(make_meta(category="GAME", imdb_id=None, filelist=["Jogo.rar"]), guard_language_call=True))
 
 

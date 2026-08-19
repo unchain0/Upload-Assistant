@@ -1,11 +1,9 @@
-# ruff: noqa: S101
-
 import asyncio
 from pathlib import Path
 from typing import Self
 from unittest.mock import patch
 
-from src.uploadscreens import upload_image_task
+from src.integrations.image_hosts.uploader import upload_image_task
 
 
 class _FakeFile:
@@ -78,7 +76,10 @@ def _run_upload(
             )
         )
 
-    with patch("src.uploadscreens.aiofiles.open", return_value=_FakeFile()), patch("src.uploadscreens.httpx.AsyncClient", return_value=_FakeHttpClient(payload, request_log)):
+    with (
+        patch("src.integrations.image_hosts.uploader.aiofiles.open", return_value=_FakeFile()),
+        patch("src.integrations.image_hosts.uploader.httpx.AsyncClient", return_value=_FakeHttpClient(payload, request_log)),
+    ):
         return asyncio.run(exercise())
 
 

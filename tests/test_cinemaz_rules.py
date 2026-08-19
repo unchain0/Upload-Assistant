@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from src.trackers.AVISTAZ.cinemaz import CinemaZ
+from src.integrations.trackers.AVISTAZ.cinemaz import CinemaZ
 
 
 def make_meta(**overrides):
@@ -38,7 +38,7 @@ def test_sd_content_from_major_english_country_is_allowed():
 
     warnings = tracker().rules(meta)
 
-    assert warnings == ""  # noqa: S101
+    assert warnings == ""
 
 
 def test_vp9_is_an_allowed_video_codec():
@@ -46,7 +46,7 @@ def test_vp9_is_an_allowed_video_codec():
 
     warnings = tracker().rules(meta)
 
-    assert warnings == ""  # noqa: S101
+    assert warnings == ""
 
 
 def test_low_video_bitrate_is_reported():
@@ -54,7 +54,7 @@ def test_low_video_bitrate_is_reported():
 
     warnings = tracker().rules(meta)
 
-    assert "at least 3000 kbit/s" in warnings  # noqa: S101
+    assert "at least 3000 kbit/s" in warnings
 
 
 def test_raw_remux_and_4k_uploads_require_six_screenshots():
@@ -65,4 +65,4 @@ def test_raw_remux_and_4k_uploads_require_six_screenshots():
 
     issue = cinema.check_data(meta, data)
 
-    assert issue == "UPLOAD FAILED: CinemaZ requires at least 6 screenshots for this upload."  # noqa: S101
+    assert issue == "UPLOAD FAILED: CinemaZ requires at least 6 screenshots for this upload."

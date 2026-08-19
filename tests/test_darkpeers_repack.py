@@ -1,13 +1,12 @@
-# ruff: noqa: S101
 import asyncio
 from typing import Any, cast
 
 import pytest
 
-from src.console import logger
-from src.dupe_checking import DupeChecker
-from src.meta import Meta
-from src.uphelper import UploadHelper
+from src.domain_models.release import Meta
+from src.integrations.observability.console import logger
+from src.services.duplicate_check_service import DupeChecker
+from src.services.upload_decision_service import UploadHelper
 
 CONFIG: dict[str, Any] = {"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}}
 

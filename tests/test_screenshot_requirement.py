@@ -1,6 +1,6 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
-from src.meta import Meta
-from src.tracker_images import screenshot_requirement_error, valid_screenshot_count
+from src.domain_models.release import Meta
+from src.domain_models.tracker_image_policy import screenshot_requirement_error, valid_screenshot_count
 
 
 def _image(number: int) -> dict[str, str]:

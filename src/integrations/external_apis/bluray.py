@@ -1,0 +1,1761 @@
+# Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
+import asyncio
+import json
+import random
+import re
+from collections.abc import Mapping, MutableMapping, Sequence
+from pathlib import Path
+from typing import Any, cast
+
+import cli_ui
+import httpx
+from bs4 import BeautifulSoup
+from bs4.element import AttributeValueList
+from rich.console import Console
+
+from src.domain_models.errors import OperationAbortedError
+from src.domain_models.release import Meta
+from src.integrations.observability.runtime_support import logger
+
+console = Console()
+
+Release = MutableMapping[str, Any]
+MovieLink = MutableMapping[str, Any]
+
+
+def _style_contains(style: str | None, token: str) -> bool:
+    return bool(style and token in style)
+
+
+def _style_green(style: str | None) -> bool:
+    return _style_contains(style, "color: green")
+
+
+def _style_gray(style: str | None) -> bool:
+    return _style_contains(style, "color: #999999")
+
+
+def _style_specs(style: str | None) -> bool:
+    return _style_contains(style, "font-size: 12px")
+
+
+async def search_bluray(meta: Meta) -> str | None:
+    imdb_id_value = meta.imdb_id or 0
+    imdb_id = f"tt{imdb_id_value:07d}"
+    base_dir = meta.base_dir
+    uuid = meta.uuid
+    url = f"https://www.blu-ray.com/search/?quicksearch=1&quicksearch_country=all&quicksearch_keyword={imdb_id}&section=theatrical"
+    debug_filename = f"{base_dir}{'/' + 'tmp' + '/'}{uuid}/debug_bluray_search_{imdb_id}.html"
+
+    response_text: str | None = None
+
+    try:
+        if Path(debug_filename).exists():
+            logger.debug(f"[green]Found existing file for {imdb_id}[/green]")
+            response_text = await asyncio.to_thread(Path(debug_filename).read_text, encoding="utf-8")
+
+            if response_text and "No index" not in response_text:
+                return response_text
+            logger.info("[yellow]Cached file exists but appears to be invalid, will fetch fresh data[/yellow]")
+    except Exception as e:
+        logger.info(f"[yellow]Error reading cached file: {e!s}[/yellow]")
+
+    # If we're here, we need to make a request
+    logger.debug(f"[dim]Search URL: {url}[/dim]")
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive",
+        "Referer": "https://www.blu-ray.com/",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "same-origin",
+        "Sec-Fetch-User": "?1",
+        "Upgrade-Insecure-Requests": "1",
+        "Cache-Control": "max-age=0",
+    }
+
+    max_retries = 2
+    retry_count = 0
+    backoff_time = 3.0
+
+    while retry_count <= max_retries:
+        try:
+            delay = random.uniform(1, 3)  # nosec B311 - Rate limiting delay, not cryptographic  # noqa: S311
+            logger.debug(f"[dim]Waiting {delay:.2f} seconds before request (attempt {retry_count + 1}/{max_retries + 1})...[/dim]")
+            await asyncio.sleep(delay)
+
+            logger.debug(f"[yellow]Sending request to blu-ray.com (attempt {retry_count + 1}/{max_retries + 1})...[/yellow]")
+            async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+                response = await client.get(url, headers=headers)
+
+                if response.status_code == 200 and "No index" not in response.text:
+                    response_text = response.text
+
+                    try:
+                        debug_path = Path(base_dir) / "tmp" / uuid / f"debug_bluray_search_{imdb_id}.html"
+                        await asyncio.to_thread(debug_path.write_text, response_text, encoding="utf-8")
+                        logger.debug(f"[dim]Saved search response to debug_bluray_search_{imdb_id}.html[/dim]")
+                    except Exception as e:
+                        logger.info(f"[dim]Could not save debug file: {e!s}[/dim]")
+
+                    break
+
+                if "No index" in response.text:
+                    logger.info(f"[red]Blocked by blu-ray.com (Anti-scraping protection) (attempt {retry_count + 1}/{max_retries + 1})[/red]")
+                    logger.info(f"[dim]Response preview: {response.text[:150]}...[/dim]")
+
+                    # use less retries for blocked requests since it's probably just borked
+                    if retry_count < 2:
+                        backoff_time *= 2
+                        logger.info(f"[yellow]Retrying in {backoff_time:.1f} seconds...[/yellow]")
+                        await asyncio.sleep(backoff_time)
+                        retry_count += 1
+                    else:
+                        logger.info("[red]Maximum retries reached, giving up on search[/red]")
+                        break
+                else:
+                    logger.error(f"[red]Failed with status code: {response.status_code} (attempt {retry_count + 1}/{max_retries + 1})[/red]")
+
+                    if retry_count < max_retries:
+                        backoff_time *= 2
+                        logger.debug(f"[yellow]Retrying in {backoff_time:.1f} seconds...[/yellow]")
+                        await asyncio.sleep(backoff_time)
+                        retry_count += 1
+                    else:
+                        logger.info("[red]Maximum retries reached, giving up on search[/red]")
+                        break
+
+        except httpx.RequestError as e:
+            logger.info(f"[red]HTTP request error when accessing {url} (attempt {retry_count + 1}/{max_retries + 1}): {e!s}[/red]")
+            if retry_count < max_retries:
+                backoff_time *= 2
+                logger.debug(f"[yellow]Retrying in {backoff_time:.1f} seconds...[/yellow]")
+                await asyncio.sleep(backoff_time)
+                retry_count += 1
+            else:
+                logger.info("[red]Maximum retries reached, giving up on search[/red]")
+                break
+
+    if not response_text:
+        logger.error("[red]Failed to retrieve search results after all attempts[/red]")
+        return None
+
+    return response_text
+
+
+def extract_bluray_links(html_content: str | None) -> list[MovieLink] | None:
+    if not html_content:
+        logger.info("[red]No HTML content to extract links from[/red]")
+        return None
+
+    results: list[MovieLink] = []
+
+    try:
+        soup: Any = BeautifulSoup(html_content, "lxml")
+        movie_divs: list[Any] = list(soup.select("div.figure"))
+        if not movie_divs:
+            return None
+
+        for _i, movie_div in enumerate(movie_divs, 1):
+            link: Any = movie_div.find("a", class_="alphaborder")
+
+            if link and "href" in link.attrs:
+                movie_url = link["href"]
+                releases_url = f"{movie_url}#Releases"
+                title_div: Any = movie_div.select_one('div.figurecaptionbottom div[style*="font-weight: bold"]')
+                year_div: Any = movie_div.select_one('div.figurecaptionbottom div[style*="margin-top"]')
+
+                title = title_div.text.strip() if title_div else "Unknown Title"
+                year = year_div.text.strip() if year_div else "Unknown Year"
+
+                logger.info(f"[green]Found movie: {title} ({year})[/green]")
+                logger.info(f"[dim]URL: {releases_url}[/dim]")
+
+                results.append({"title": title, "year": year, "releases_url": releases_url})
+            else:
+                logger.info("[red]Movie div doesn't have a valid link[/red]")
+
+        return results
+
+    except Exception as e:
+        logger.error(f"[red]Error parsing HTML: {e!s}[/red]")
+        console.print_exception()
+        return None
+
+
+async def extract_bluray_release_info(html_content: str, meta: Meta, product_id: str) -> list[Release]:
+    if not html_content:
+        logger.info("[red]No HTML content to extract release info from[/red]")
+        return []
+
+    matching_releases: list[Release] = []
+    release_type, is_3d, is_4k, is_dvd = _derive_release_type(meta)
+    release_type_debug = "DVD" if is_dvd else "Blu-ray"
+
+    if is_3d:
+        logger.info("[blue]Looking for 3D Blu-ray releases[/blue]")
+    elif is_4k:
+        logger.info("[blue]Looking for 4K/UHD Blu-ray releases[/blue]")
+    elif is_dvd:
+        logger.info("[blue]Looking for DVD releases[/blue]")
+    else:
+        logger.info("[blue]Looking for standard Blu-ray releases[/blue]")
+
+    try:
+        base_dir = meta.base_dir
+        uuid = meta.uuid
+        debug_path = Path(base_dir) / "tmp" / uuid / f"debug_bluray_{release_type}_{product_id}.html"
+        await asyncio.to_thread(debug_path.write_text, html_content, encoding="utf-8")
+        logger.debug(f"[dim]Saved releases response to debug_bluray_{release_type}_{product_id}.html[/dim]")
+    except Exception as e:
+        logger.info(f"[dim]Could not save debug file: {e!s}[/dim]")
+
+    try:
+        soup: Any = BeautifulSoup(html_content, "lxml")
+        selected_sections: list[Any] = []
+        if is_dvd:
+            selected_sections = list(soup.find_all("h3", string=re.compile(r"DVD Editions")))
+        else:
+            selected_sections = list(soup.find_all("h3", string=re.compile(r"Blu-ray Editions|4K Blu-ray Editions|3D Blu-ray Editions")))
+
+        logger.debug(f"[blue]Found {len(selected_sections)} {release_type_debug} section(s)[/blue]")
+        filtered_sections: list[Any] = []
+        for section in selected_sections:
+            section_title = section.text
+
+            # Check if this section matches what we're looking for
+            if is_3d and "3D Blu-ray Editions" in section_title:
+                filtered_sections.append(section)
+                logger.debug(f"[green]Including 3D section: {section_title}[/green]")
+            elif is_4k and "4K Blu-ray Editions" in section_title:
+                filtered_sections.append(section)
+                logger.debug(f"[green]Including 4K section: {section_title}[/green]")
+            elif is_dvd and "DVD Editions" in section_title:
+                filtered_sections.append(section)
+                logger.debug(f"[green]Including DVD section: {section_title}[/green]")
+            elif not is_3d and not is_4k and "Blu-ray Editions" in section_title and "3D Blu-ray Editions" not in section_title and "4K Blu-ray Editions" not in section_title:
+                filtered_sections.append(section)
+                logger.debug(f"[green]Including standard Blu-ray section: {section_title}[/green]")
+
+        for _section_idx, section in enumerate(filtered_sections, 1):
+            parent_tr: Any = section.find_parent("tr")
+            if not parent_tr:
+                logger.info(f"[red]Could not find parent tr for {release_type_debug} section[/red]")
+                continue
+
+            release_links: list[Any] = []
+            current: Any = section.find_next()
+            while current and (current.name != "h3"):
+                if current.name == "a" and current.has_attr("href") and ("blu-ray.com/movies/" in current["href"] or "blu-ray.com/dvd/" in current["href"]):
+                    release_links.append(current)
+                current = current.find_next()
+
+            for _link_idx, link in enumerate(release_links, 1):
+                try:
+                    release_url = link["href"]
+                    title = link.get("title", link.text.strip())
+                    country_flag: Any = link.find_previous("img", width="18", height="12")
+                    country = country_flag.get("title", "Unknown") if country_flag else "Unknown"
+                    price_tag = link.find_next("small", style=_style_green)
+                    price = price_tag.text.strip() if price_tag else "Unknown"
+                    publisher_tag = link.find_next("small", style=_style_gray)
+                    publisher = publisher_tag.text.strip() if publisher_tag else "Unknown"
+
+                    release_id_match = re.search(r"blu-ray\.com/(movies|dvd)/.*?/(\d+)/", release_url)
+                    if release_id_match:
+                        release_id = release_id_match.group(2)
+                        logger.debug(f"[green]Found release ID: {release_id}[/green]")
+
+                        matching_releases.append({"title": title, "url": release_url, "price": price, "publisher": publisher, "country": country, "release_id": release_id})
+                    else:
+                        logger.info(f"[red]Could not extract release ID from URL: {release_url}[/red]")
+
+                except Exception as e:
+                    logger.error(f"[red]Error processing release: {e!s}[/red]")
+                    console.print_exception()
+
+        logger.info(f"[green]Found {len(matching_releases)} potential matching releases[/green]")
+        return matching_releases
+
+    except Exception as e:
+        logger.error(f"[red]Error parsing Blu-ray release HTML: {e!s}[/red]")
+        console.print_exception()
+        return []
+
+
+async def extract_product_id(url: str) -> str | None:
+    pattern = r"blu-ray\.com/.*?/(\d+)/"
+    match = re.search(pattern, url)
+
+    if match:
+        product_id = match.group(1)
+        logger.debug(f"[green]Successfully extracted product ID: {product_id}[/green]")
+        return product_id
+
+    logger.info(f"[red]Could not extract product ID from URL: {url}[/red]")
+    return None
+
+
+def _derive_release_type(meta: Meta) -> tuple[str, bool, bool, bool]:
+    is_3d = meta.three_d.lower() == "yes"
+    resolution = meta.resolution.lower()
+    is_4k = "2160p" in resolution or "4k" in resolution
+    is_dvd = str(meta.is_disc).upper() == "DVD"
+    release_type = "4K" if is_4k else "3D" if is_3d else "DVD" if is_dvd else "BD"
+    return release_type, is_3d, is_4k, is_dvd
+
+
+async def get_bluray_releases(meta: Meta) -> list[Release]:
+    logger.info("[blue]===== Starting blu-ray.com release search =====[/blue]")
+    imdb_id_value = meta.imdb_id or 0
+    logger.info(f"[blue]Movie: {(meta.uuid if meta.uuid is not None else 'Unknown')}, IMDB ID: tt{imdb_id_value:07d}[/blue]")
+
+    html_content = await search_bluray(meta)
+
+    if not html_content:
+        logger.error("[red]Failed to get search results from blu-ray.com[/red]")
+        return []
+
+    movie_links = extract_bluray_links(html_content) or []
+
+    if not movie_links:
+        logger.debug(f"[red]No movies found for IMDB ID: tt{meta.imdb_id:07d}[/red]")
+        return []
+
+    matching_releases: list[Release] = []
+
+    for idx, movie in enumerate(movie_links, 1):
+        logger.debug(f"[blue]Processing movie {idx}/{len(movie_links)}: {movie['title']} ({movie['year']})[/blue]")
+        releases_url = movie["releases_url"]
+        product_id = await extract_product_id(releases_url)
+        if not product_id:
+            logger.info(f"[red]Could not extract product ID from {releases_url}[/red]")
+            continue
+
+        ajax_url = f"https://www.blu-ray.com/products/menu_ajax.php?p={product_id}&c=20&action=showreleasesall"
+        logger.info(f"[dim]Releases URL: {ajax_url}[/dim]")
+
+        release_type, _is_3d, _is_4k, _is_dvd = _derive_release_type(meta)
+        release_debug_filename = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/debug_bluray_{release_type}_{product_id}.html"
+
+        try:
+            if Path(release_debug_filename).exists():
+                logger.debug(f"[green]Found existing release data for product ID {product_id}[/green]")
+                response_text = await asyncio.to_thread(Path(release_debug_filename).read_text, encoding="utf-8")
+
+                if response_text and "No index" not in response_text:
+                    movie_releases = await extract_bluray_release_info(response_text, meta, product_id)
+
+                    for release in movie_releases:
+                        release["movie_title"] = movie["title"]
+                        release["movie_year"] = movie["year"]
+
+                    matching_releases.extend(movie_releases)
+                    continue
+                logger.info("[yellow]Cached file exists but appears to be invalid, will fetch fresh data[/yellow]")
+        except Exception as e:
+            logger.info(f"[yellow]Error reading cached file: {e!s}[/yellow]")
+
+        # If we're here, we need to make a request
+        delay = random.uniform(2, 4)  # nosec B311 - Rate limiting delay, not cryptographic  # noqa: S311
+        logger.debug(f"[dim]Waiting {delay:.2f} seconds before request...[/dim]")
+        await asyncio.sleep(delay)
+
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Connection": "keep-alive",
+            "Referer": releases_url,
+            "X-Requested-With": "XMLHttpRequest",
+        }
+
+        try:
+            max_retries = 2
+            retry_count = 0
+            backoff_time = 3.0
+
+            while retry_count <= max_retries:
+                try:
+                    async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+                        response = await client.get(ajax_url, headers=headers)
+
+                        if response.status_code == 200 and "No index" not in response.text:
+                            movie_releases = await extract_bluray_release_info(response.text, meta, product_id)
+
+                            for release in movie_releases:
+                                release["movie_title"] = movie["title"]
+                                release["movie_year"] = movie["year"]
+
+                            logger.info(f"[green]Found {len(movie_releases)} matching releases for this movie[/green]")
+                            matching_releases.extend(movie_releases)
+                            break
+                        if "No index" in response.text:
+                            logger.info(f"[red]Blocked by blu-ray.com when accessing {ajax_url} (attempt {retry_count + 1}/{max_retries + 1})[/red]")
+                            if retry_count < max_retries:
+                                backoff_time *= 2
+                                logger.info(f"[yellow]Retrying in {backoff_time:.1f} seconds...[/yellow]")
+                                await asyncio.sleep(backoff_time)
+                                retry_count += 1
+                            else:
+                                logger.info("[red]Maximum retries reached, giving up on this URL[/red]")
+                                break
+                        else:
+                            logger.error(
+                                f"[red]Failed to get release information from {ajax_url}, status code: {response.status_code} (attempt {retry_count + 1}/{max_retries + 1})[/red]"
+                            )
+                            if retry_count < max_retries:
+                                backoff_time *= 2
+                                logger.info(f"[yellow]Retrying in {backoff_time:.1f} seconds...[/yellow]")
+                                await asyncio.sleep(backoff_time)
+                                retry_count += 1
+                            else:
+                                logger.info("[red]Maximum retries reached, giving up on this URL[/red]")
+                                break
+
+                except httpx.RequestError as e:
+                    logger.info(f"[red]HTTP request error when accessing {ajax_url} (attempt {retry_count + 1}/{max_retries + 1}): {e!s}[/red]")
+                    if retry_count < max_retries:
+                        backoff_time *= 2
+                        logger.info(f"[yellow]Retrying in {backoff_time:.1f} seconds...[/yellow]")
+                        await asyncio.sleep(backoff_time)
+                        retry_count += 1
+                    else:
+                        logger.info("[red]Maximum retries reached, giving up on this URL[/red]")
+                        break
+
+        except Exception as e:
+            logger.error(f"[red]Error fetching release details from {ajax_url}: {e!s}[/red]")
+            console.print_exception()
+
+    logger.info("[yellow]===== BluRay.com search results summary =====[/yellow]")
+
+    if matching_releases:
+        if not meta.unattended or (meta.unattended and meta.unattended_confirm):
+            for idx, release in enumerate(matching_releases, 1):
+                logger.info(f"[green]{idx}. {release['movie_title']} ({release['movie_year']}):[/green]")
+                logger.info(f"   [blue]Title: {release['title']}[/blue]")
+                logger.info(f"   [blue]Country: {release['country']}[/blue]")
+                logger.info(f"   [blue]Publisher: {release['publisher']}[/blue]")
+                logger.info(f"   [blue]Price: {release['price']}[/blue]")
+                logger.info(f"   [dim]URL: {release['url']}[/dim]")
+
+            if not meta.unattended or (meta.unattended and meta.unattended_confirm):
+                logger.info("")
+                logger.info("[green]Release Selection")
+                logger.info("[green]=======================================")
+                logger.info("[dim]Please select a release to use for region and distributor information:")
+                logger.info("[dim]Enter release number, 'a' for all releases, or 'n' to skip")
+                logger.info("[dim]Selecting all releases will search every release for more information...")
+                logger.info("[dim]More releases will require more time to process")
+            while True:
+                try:
+                    selection_raw = cli_ui.ask_string(f"Selection (1-{len(matching_releases)}/a/n): ")
+                    selection = (selection_raw or "").strip().lower()
+                    if selection == "a":
+                        cli_ui.info("All releases selected")
+                        return await process_all_releases(matching_releases, meta)
+                    if selection == "n":
+                        cli_ui.info("Skipped - not using Blu-ray.com information")
+                        return []
+                    try:
+                        selected_idx = int(selection)
+
+                        if 1 <= selected_idx <= len(matching_releases):
+                            selected_release = matching_releases[selected_idx - 1]
+                            cli_ui.info(f"Selected: {selected_release['title']} - {selected_release['country']} - {selected_release['publisher']}")
+                            region_code = map_country_to_region_code(selected_release["country"])
+                            meta.region = region_code or "" or ""
+                            meta.distributor = selected_release["publisher"].upper()
+                            meta.release_url = selected_release["url"]
+                            cli_ui.info(f"Set region code to: {region_code}, distributor to: {selected_release['publisher'].upper()}")
+
+                            if meta.use_bluray_images:
+                                logger.info("[yellow]Fetching release details to get cover images...[/yellow]")
+                                selected_release = await fetch_release_details(selected_release, meta)
+
+                                if selected_release.get("cover_images"):
+                                    meta.bluray_cover_urls = selected_release["cover_images"]
+                                    await download_cover_images(meta)
+
+                            return [selected_release]
+                        cli_ui.warning(f"Invalid selection: {selected_idx}. Must be between 1 and {len(matching_releases)}")
+                    except ValueError:
+                        cli_ui.warning(f"Invalid input: '{selection}'. Please enter a number, 'a', or 'n'")
+
+                except (KeyboardInterrupt, EOFError) as exc:
+                    raise OperationAbortedError("Blu-ray release selection was cancelled by the user.") from exc
+        else:
+            logger.info("[yellow]Unattended mode - selecting all releases")
+            return await process_all_releases(matching_releases, meta)
+
+    imdb_id = meta.imdb_id or 0
+    release_count = len(matching_releases)
+    debug_filename = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/bluray_results_tt{imdb_id:07d}_{release_count}releases.json"
+
+    # always save a file in case the existing results are invalid
+    try:
+        debug_payload = {
+            "movie": {"title": (meta.title if meta.title is not None else "Unknown"), "imdb_id": f"tt{(meta.imdb_id if meta.imdb_id is not None else '0000000'):07d}"},
+            "matching_releases": matching_releases,
+        }
+        debug_text = json.dumps(debug_payload, indent=2)
+        await asyncio.to_thread(Path(debug_filename).write_text, debug_text, encoding="utf-8")
+        logger.debug(f"[dim]Saved results to {debug_filename}[/dim]")
+    except Exception as e:
+        logger.info(f"[dim]Could not save debug results: {e!s}[/dim]")
+
+    return matching_releases
+
+
+async def parse_release_details(response_text: str, release: Release, meta: Meta) -> Release:
+    try:
+        soup: Any = BeautifulSoup(response_text, "lxml")
+        specs_td: Any = soup.find("td", width="228px", style=_style_specs)
+
+        if not specs_td:
+            logger.info("[red]Could not find specs section on the release page[/red]")
+            return release
+
+        specs: dict[str, Any] = {
+            "video": {},
+            "audio": [],
+            "subtitles": [],
+            "discs": {},
+            "playback": {},
+        }
+
+        # Parse video section
+        video_section = extract_section(specs_td, "Video")
+        if video_section:
+            codec_match = re.search(r"Codec: ([^<\n]+)", video_section)
+            if codec_match:
+                specs["video"]["codec"] = codec_match.group(1).strip()
+                logger.debug(f"[blue]Video Codec: {specs['video']['codec']}[/blue]")
+
+            resolution_match = re.search(r"Resolution: ([^<\n]+)", video_section)
+            if resolution_match:
+                specs["video"]["resolution"] = resolution_match.group(1).strip()
+                logger.debug(f"[blue]Resolution: {specs['video']['resolution']}[/blue]")
+
+        # Parse audio section
+        audio_section = extract_section(specs_td, "Audio")
+        if audio_section:
+            audio_div = specs_td.find("div", id="longaudio")
+            if not audio_div:
+                audio_div = specs_td.find("div", id="shortaudio")
+                logger.debug("[dim]Using shortaudio because longaudio wasn't found[/dim]")
+            if audio_div:
+                audio_html = str(audio_div)
+                audio_html = re.sub(r"<br\s*/?>", "\n", audio_html)
+                audio_soup = BeautifulSoup(audio_html, "lxml")
+                raw_text = audio_soup.get_text()
+                raw_lines = [line.strip() for line in raw_text.split("\n") if line.strip() and "less" not in line]
+
+                audio_lines: list[str] = []
+                i = 0
+                while i < len(raw_lines):
+                    current_line = raw_lines[i]
+                    is_atmos = "atmos" in current_line.lower()
+
+                    # If it's an Atmos track and there's a next line with the same language, combine them
+                    if is_atmos and i + 1 < len(raw_lines):
+                        next_line = raw_lines[i + 1]
+                        current_lang = current_line.split(":", 1)[0].strip() if ":" in current_line else ""
+                        next_lang = next_line.split(":", 1)[0].strip() if ":" in next_line else ""
+
+                        if current_lang and current_lang == next_lang and ("Dolby Atmos" in current_line and ("Dolby Digital" in next_line or "Dolby TrueHD" in next_line)):
+                            # This is likely an Atmos track followed by its core track
+                            # Combine them into a single entry
+                            channel_info = ""
+                            if "7.1" in next_line:
+                                channel_info = "7.1"
+                            elif "5.1" in next_line:
+                                channel_info = "5.1"
+                            combined_track = f"{current_lang}: Dolby TrueHD Atmos {channel_info}" if "TrueHD" in next_line else f"{current_lang}: Dolby Atmos {channel_info}"
+
+                            audio_lines.append(combined_track)
+                            i += 2
+                            continue
+
+                    if current_line.startswith("Note:"):
+                        # This is a note for the previous track
+                        if audio_lines:
+                            audio_lines[-1] = f"{audio_lines[-1]} - {current_line}"
+                    else:
+                        # This is a new track
+                        audio_lines.append(current_line)
+
+                    i += 1
+
+                specs["audio"] = audio_lines
+                logger.debug(f"[blue]Audio Tracks: {len(audio_lines)} found[/blue]")
+                for track in audio_lines:
+                    logger.debug(f"[dim]  - {track}[/dim]")
+
+        # Parse subtitle section
+        subtitle_section = extract_section(specs_td, "Subtitles")
+        if subtitle_section:
+            subs_div = specs_td.find("div", id="longsubs")
+            if not subs_div:
+                subs_div = specs_td.find("div", id="shortsubs")
+                logger.debug("[dim]Using shortsubs because longsubs wasn't found[/dim]")
+            if subs_div:
+                subtitle_text = subs_div.get_text(separator="\n").strip()
+                subtitle_text = re.sub(r"\s*\(less\)\s*", "", subtitle_text)
+                subtitles = [s.strip() for s in re.split(r",|\n", subtitle_text) if s.strip()]
+                specs["subtitles"] = subtitles
+                logger.debug(f"[blue]Subtitles: {', '.join(subtitles)}[/blue]")
+
+        # Parse disc section
+        disc_section = extract_section(specs_td, "Discs")
+        if disc_section:
+            disc_type_match = re.search(r"(Blu-ray Disc|DVD|Ultra HD Blu-ray|4K Ultra HD)", disc_section)
+            if disc_type_match:
+                specs["discs"]["type"] = disc_type_match.group(1).strip()
+                logger.debug(f"[blue]Disc Type: {specs['discs']['type']}[/blue]")
+
+            disc_count_match = re.search(r"Single disc \(1 ([^)]+)\)|(One|Two|Three|Four|Five|\d+)[ -]disc set(?:\s*\(([^)]+)\))?", disc_section)
+            logger.debug(f"[dim]Disc Count Match: {disc_count_match}[/dim]")
+            if disc_count_match:
+                if disc_count_match.group(1):
+                    specs["discs"]["count"] = 1
+                    specs["discs"]["format"] = disc_count_match.group(1).strip()
+                else:
+                    disc_count = disc_count_match.group(2)
+                    if disc_count.isdigit():
+                        specs["discs"]["count"] = int(disc_count)
+                    else:
+                        number_map = {"One": 1, "Two": 2, "Three": 3, "Four": 4, "Five": 5}
+                        specs["discs"]["count"] = number_map.get(disc_count, 1)
+
+                    if disc_count_match.group(3):
+                        bd_format_match = re.search(r"(\d+\s*BD-\d+|\d+\s*BD)", disc_count_match.group(3))
+                        logger.debug(f"[dim]BD Format Match: {bd_format_match}[/dim]")
+                        if bd_format_match:
+                            specs["discs"]["format"] = bd_format_match.group(1).strip()
+                        else:
+                            specs["discs"]["format"] = "multiple discs"
+                    else:
+                        specs["discs"]["format"] = "multiple discs"
+
+        # Parse playback section
+        playback_section = extract_section(specs_td, "Playback")
+        if playback_section:
+            region_match = re.search(r"(?:2K Blu-ray|4K Blu-ray|DVD): Region ([A-C])(?: \(([^)]+)\))?", playback_section)
+            if region_match:
+                specs["playback"]["region"] = region_match.group(1).strip()
+                specs["playback"]["region_notes"] = region_match.group(2).strip() if region_match.group(2) else ""
+                logger.debug(f"[blue]Region: {specs['playback']['region']}[/blue]")
+                if specs["playback"]["region_notes"] and meta.debug:
+                    logger.info(f"[dim]Region Notes: {specs['playback']['region_notes']}[/dim]")
+
+        if meta.use_bluray_images:
+            cover_images = extract_cover_images(response_text)
+            if cover_images:
+                release["cover_images"] = cover_images
+                logger.debug(f"[green]Found {len(cover_images)} cover images:[/green]")
+                for img_type, url in cover_images.items():
+                    logger.debug(f"[dim]  - {img_type}: {url}[/dim]")
+
+        release["specs"] = specs
+        logger.debug(f"[green]Successfully parsed details for {release['title']}[/green]")
+        return release
+
+    except Exception as e:
+        logger.error(f"[red]Error parsing release details: {e!s}[/red]")
+        console.print_exception()
+        return release
+
+
+async def download_cover_images(meta: Meta) -> bool:
+    if "bluray_cover_urls" not in meta or not meta.bluray_cover_urls:
+        logger.info("[yellow]No cover images to download[/yellow]")
+        return False
+
+    temp_dir = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}"
+    Path(temp_dir).mkdir(parents=True, exist_ok=True)
+
+    reuploaded_images_path = Path(meta.base_dir) / "tmp" / meta.uuid / "covers.json"
+    if Path(reuploaded_images_path).exists():
+        try:
+            covers_text = await asyncio.to_thread(Path(reuploaded_images_path).read_text, encoding="utf-8")
+            existing_covers = json.loads(covers_text)
+
+            matching_release = False
+            if isinstance(existing_covers, list):
+                covers_list = cast(list[Mapping[str, Any]], existing_covers)
+                if len(covers_list) > 0:
+                    for cover in covers_list:
+                        if cover.get("release_url") == meta.release_url:
+                            logger.debug(f"[green]Found existing cover images for this release URL: {meta.release_url}[/green]")
+                            matching_release = True
+                            return True
+
+            if not matching_release:
+                logger.debug(f"[yellow]Existing covers.json found but none match current release URL: {meta.release_url}[/yellow]")
+                logger.debug("[yellow]Deleting outdated covers.json file[/yellow]")
+                Path(reuploaded_images_path).unlink()
+
+        except Exception as e:
+            logger.error(f"[red]Error reading covers.json: {e!s}[/red]")
+            try:
+                Path(reuploaded_images_path).unlink()
+                logger.debug("[yellow]Deleted potentially corrupted covers.json file[/yellow]")
+            except Exception as delete_error:
+                logger.error(f"[red]Failed to delete corrupted covers.json: {delete_error!s}[/red]")
+
+    downloaded_images: dict[str, str] = {}
+    logger.info("[blue]Downloading cover images...[/blue]")
+
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+        cover_images = cast(Mapping[str, str], meta.bluray_cover_urls)
+        for img_type, url in cover_images.items():
+            file_ext = Path(url).suffix
+            local_filename = f"{temp_dir}/cover_{img_type}{file_ext}"
+
+            try:
+                logger.info(f"[dim]Downloading {img_type} cover from {url}[/dim]")
+                response = await client.get(url)
+
+                if response.status_code == 200:
+                    await asyncio.to_thread(Path(local_filename).write_bytes, response.content)
+                    downloaded_images[img_type] = local_filename
+                    logger.info(f"[green]✓[/green] Downloaded {img_type} cover to {local_filename}")
+                else:
+                    logger.error(f"[red]Failed to download {img_type} cover: HTTP {response.status_code}[/red]")
+            except Exception as e:
+                logger.error(f"[red]Error downloading {img_type} cover: {e!s}[/red]")
+
+    if downloaded_images:
+        meta.downloaded_bluray_cover_paths = downloaded_images
+        logger.info(f"[green]Successfully downloaded {len(downloaded_images)} cover images[/green]")
+        return True
+    logger.info("[yellow]No cover images were downloaded[/yellow]")
+    return False
+
+
+def extract_cover_images(html_content: str) -> dict[str, str]:
+    cover_images: dict[str, str] = {}
+    soup: Any = BeautifulSoup(html_content, "lxml")
+    scripts: list[Any] = soup.find_all("script")
+
+    for script in scripts:
+        # script.string may be None for some script tags; fall back to get_text
+        script_text = script.string if script.string is not None else script.get_text()
+        if not script_text:
+            continue
+
+        # low-cost filter to ignore script tags that will not match what we are looking for
+        if "append" not in script_text or "<img" not in script_text:
+            continue
+
+        # capture append('<img ...>') or append("<img ...>"), .S allows new lines in the fragment
+        # allowing indentation/new lines should be more resistent to future bluray.com html changes
+        for m in re.finditer(r'append\(\s*([\'"])(?P<html><img\b.*?>)\1\s*\)', script_text, re.S | re.I):
+            img_fragment = m.group("html")
+
+            frag_soup = BeautifulSoup(img_fragment, "lxml")
+            img_tag: Any = frag_soup.find("img")
+            img_id = str(img_tag.get("id") or "").strip()
+            url = str(img_tag.get("src") or "").strip()
+            if not url:
+                continue
+
+            cleaned_url = cast(str, clean_image_url(url))
+            lid = img_id.lower()
+            if "front" in lid:
+                cover_images["front"] = cleaned_url
+            elif "back" in lid:
+                cover_images["back"] = cleaned_url
+            elif "slipimage" in lid:
+                cover_images["slip"] = cleaned_url
+            else:
+                cover_images[img_id] = cleaned_url
+
+    if not cover_images:
+        overlay_divs = soup.find_all("div", class_="simple_overlay")
+        for div in overlay_divs:
+            img = div.find("img")
+            if img and "id" in img.attrs and "src" in img.attrs:
+                img_id_raw = img.get("id")
+                url_raw = img.get("src")
+                if not img_id_raw or not url_raw:
+                    continue
+
+                img_id = img_id_raw[0] if isinstance(img_id_raw, AttributeValueList) else str(img_id_raw)
+                url = url_raw[0] if isinstance(url_raw, AttributeValueList) else str(url_raw)
+
+                if "front" in img_id.lower():
+                    cover_images["front"] = url
+                elif "back" in img_id.lower():
+                    cover_images["back"] = url
+                elif "slip" in img_id.lower():
+                    cover_images["slip"] = url
+                else:
+                    cover_images[img_id] = url
+
+    return cover_images
+
+
+def clean_image_url(url: str | None) -> str | None:
+    if not url:
+        return url
+
+    extensions = [".jpg", ".png", ".gif", ".jpeg", ".webp"]
+    end_pos = None
+
+    for ext in extensions:
+        pos = url.lower().find(ext)
+        if pos > 0:
+            end_pos = pos + len(ext)
+            break
+
+    if end_pos:
+        return url[:end_pos]
+    return url
+
+
+async def fetch_release_details(release: Release, meta: Meta) -> Release:
+    release_url = release["url"]
+    release_id = release.get("release_id", "0000000")
+    debug_filename = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/debug_release_{release_id}.html"
+    logger.debug(f"[yellow]Fetching details for: {release['title']} - {release_url}[/yellow]")
+
+    response_text: str | None = None
+
+    try:
+        if Path(debug_filename).exists():
+            logger.debug(f"[green]Found existing debug file for release ID {release_id}[/green]")
+            response_text = await asyncio.to_thread(Path(debug_filename).read_text, encoding="utf-8")
+
+            if response_text and "No index" not in response_text:
+                return await parse_release_details(response_text, release, meta)
+            logger.info("[yellow]Cached file exists but appears to be invalid, will fetch fresh data[/yellow]")
+    except Exception as e:
+        logger.info(f"[yellow]Error reading cached file: {e!s}[/yellow]")
+
+    # If we're here, we need to make a request
+    delay = random.uniform(2, 4)  # nosec B311 - Rate limiting delay, not cryptographic  # noqa: S311
+    logger.debug(f"[dim]Waiting {delay:.2f} seconds before request...[/dim]")
+    await asyncio.sleep(delay)
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive",
+        "Referer": "https://www.blu-ray.com/movies/",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "same-origin",
+    }
+
+    max_retries = 2
+    retry_count = 0
+    backoff_time = 3.0
+
+    while retry_count <= max_retries:
+        try:
+            logger.debug(f"[yellow]Sending request to {release_url} (attempt {retry_count + 1}/{max_retries + 1})...[/yellow]")
+
+            async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+                response = await client.get(release_url, headers=headers)
+
+                if response.status_code == 200 and "No index" not in response.text:
+                    response_text = response.text
+
+                    try:
+                        release_id = release.get("release_id", "0000000")
+                        debug_path = Path(meta.base_dir) / "tmp" / meta.uuid / f"debug_release_{release_id}.html"
+                        await asyncio.to_thread(debug_path.write_text, response_text, encoding="utf-8")
+                        logger.debug(f"[dim]Saved release page to debug_release_{release_id}.html[/dim]")
+                    except Exception as e:
+                        logger.info(f"[dim]Could not save debug file: {e!s}[/dim]")
+
+                    break
+
+                if "No index" in response.text:
+                    logger.info(f"[red]Blocked by blu-ray.com when accessing {release_url} (attempt {retry_count + 1}/{max_retries + 1})[/red]")
+                    if retry_count < 2:
+                        backoff_time *= 2
+                        logger.info(f"[yellow]Retrying in {backoff_time:.1f} seconds...[/yellow]")
+                        await asyncio.sleep(backoff_time)
+                        retry_count += 1
+                    else:
+                        logger.info("[red]Maximum retries reached, giving up on this release[/red]")
+                        break
+                else:
+                    logger.error(f"[red]Failed to get release details, status code: {response.status_code} (attempt {retry_count + 1}/{max_retries + 1})[/red]")
+                    if retry_count < max_retries:
+                        backoff_time *= 2
+                        logger.info(f"[yellow]Retrying in {backoff_time:.1f} seconds...[/yellow]")
+                        await asyncio.sleep(backoff_time)
+                        retry_count += 1
+                    else:
+                        logger.info("[red]Maximum retries reached, giving up on this release[/red]")
+                        break
+
+        except httpx.RequestError as e:
+            logger.info(f"[red]HTTP request error when accessing {release_url} (attempt {retry_count + 1}/{max_retries + 1}): {e!s}[/red]")
+            if retry_count < max_retries:
+                backoff_time *= 2
+                logger.info(f"[yellow]Retrying in {backoff_time:.1f} seconds...[/yellow]")
+                await asyncio.sleep(backoff_time)
+                retry_count += 1
+            else:
+                logger.info("[red]Maximum retries reached, giving up on this release[/red]")
+                break
+
+    if not response_text:
+        logger.error("[red]Failed to retrieve release details after all attempts[/red]")
+        return release
+    return await parse_release_details(response_text, release, meta)
+
+
+def extract_section(specs_td: Any, section_title: str) -> str | None:
+    section_span: Any = specs_td.find("span", class_="subheading", string=section_title)
+    if not section_span:
+        return None
+
+    section_content: list[str] = []
+    current_element: Any = section_span.next_sibling
+
+    while current_element:
+        element = current_element
+        if getattr(element, "name", None) == "span" and "subheading" in cast(list[str], element.get("class", [])):
+            break
+
+        if isinstance(element, str):
+            section_content.append(element)
+        elif getattr(element, "name", None):
+            section_content.append(str(element.get_text()))
+
+        current_element = getattr(element, "next_sibling", None)
+
+    return "".join(section_content)
+
+
+async def process_all_releases(releases: Sequence[Release], meta: Meta) -> list[Release]:
+    if not releases:
+        return []
+
+    logger.debug("")
+    logger.debug("Processing Local Details")
+    logger.debug("----------------------------")
+
+    disc_count = len(meta.discs)
+    logger.debug(f"[dim]Local disc count from meta: {disc_count}")
+
+    meta_video_specs: dict[str, Any] = {}
+    meta_audio_specs: list[dict[str, Any]] = []
+    meta_subtitles: list[str] = []
+
+    if disc_count > 0 and "discs" in meta and meta.discs and "bdinfo" in meta.discs[0]:
+        bdinfo = meta.discs[0]["bdinfo"]
+
+        if bdinfo.get("video"):
+            meta_video_specs = bdinfo["video"][0]
+            codec = meta_video_specs.get("codec", "")
+            resolution = meta_video_specs.get("res", "")
+            logger.debug(f"[dim]Local video: {codec} {resolution}")
+
+        if bdinfo.get("audio"):
+            meta_audio_specs = bdinfo["audio"]
+            for track in meta_audio_specs:
+                logger.debug(f"[dim]Local audio: {track.get('language', '')} {track.get('codec', '')} {track.get('channels', '')} {track.get('bitrate', '')}")
+
+        bd_summary_path = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/BD_SUMMARY_00.txt"
+        filtered_languages: list[str] = []
+        meta_subtitles = []  # Initialize here so it's clear we're creating it
+
+        if Path(bd_summary_path).exists():
+            logger.debug(f"[blue]Opening BD_SUMMARY file: {bd_summary_path}[/blue]")
+            logger.debug("[dim]Stripping extremely small subtitle tracks from bdinfo[/dim]")
+            try:
+                summary_text = await asyncio.to_thread(Path(bd_summary_path).read_text, encoding="utf-8")
+                lines = summary_text.splitlines()
+
+                # Parse the subtitles section
+                for line in lines:
+                    line = line.strip()
+                    subtitle_line = None
+                    if line.startswith("Subtitle:"):
+                        subtitle_line = line
+                    elif line.startswith("* Subtitle:"):
+                        subtitle_line = line[2:].strip()
+
+                    if subtitle_line:
+                        # Extract the subtitle language and bitrate
+                        subtitle_match = re.match(r"Subtitle:\s+(\w+)\s+/\s+([\d.]+)\s+kbps", subtitle_line)
+                        if subtitle_match:
+                            language = subtitle_match.group(1)
+                            bitrate = float(subtitle_match.group(2))
+
+                            # Keep subtitles with a bitrate >= 1.0 kbps
+                            if bitrate >= 1.0:
+                                filtered_languages.append(language.lower())
+                                meta_subtitles.append(language)  # Add to meta_subtitles directly
+                                logger.debug(f"[green]✓ Keeping subtitle: {language} ({bitrate} kbps)[/green]")
+                            else:
+                                logger.debug(f"[red]✗ Discarding subtitle due to size: {language} ({bitrate} kbps)[/red]")
+
+                if meta_subtitles:
+                    logger.debug(f"[blue]Added subtitle languages: {', '.join(meta_subtitles)}[/blue]")
+                else:
+                    logger.info("[yellow]No valid subtitles found to add.[/yellow]")
+
+            except Exception as e:
+                logger.error(f"[red]Error reading BD_SUMMARY file: {e!s}[/red]")
+        else:
+            logger.info(f"[red]BD_SUMMARY file not found: {bd_summary_path}[/red]")
+
+    detailed_releases: list[Release] = []
+    for idx, release in enumerate(releases, 1):
+        logger.info(f"[cyan]Processing release {idx}/{len(releases)}: {release['title']} ({release['country']})")
+        detailed_release = await fetch_release_details(release, meta)
+        detailed_releases.append(detailed_release)
+
+    logger.debug("")
+    cli_ui.info_section("Processing Complete")
+    cli_ui.info(f"Successfully processed {len(detailed_releases)} releases")
+
+    logs: list[tuple[Release, list[str]]] = []  # Initialize a list to store logs for each release
+
+    def log_and_print(message: str, log_list: list[str]) -> None:
+        logger.debug(message)
+        log_list.append(message)
+
+    if detailed_releases:
+        scored_releases: list[tuple[float, Release]] = []
+        for idx, release in enumerate(detailed_releases, 1):
+            release_logs: list[str] = []
+            logger.debug(f"\n[bold blue]=== Release {idx}/{len(detailed_releases)}: {release['title']} ({release['country']}) ===[/bold blue]")
+            log_and_print(f"[blue]Release URL: {release['url']}[/blue]", release_logs)
+            score = 100.0
+
+            specs_missing = True
+            generic_format = False
+            if "specs" in release:
+                specs = cast(Mapping[str, Any], release.get("specs", {}))
+
+                specs_missing = False
+                generic_format = False
+                # Check for completeness of data (penalty for missing info)
+                if not specs.get("video", {}):
+                    score -= 5  # Missing video info
+                    specs_missing = True
+                    log_and_print("[red]✗[/red] Missing video info", release_logs)
+                    log_and_print("[dim]Penalty for missing video info: 5.0[/dim]", release_logs)
+                if not specs.get("audio", []):
+                    score -= 5  # Missing audio info
+                    specs_missing = True
+                    log_and_print("[red]✗[/red] Missing audio info", release_logs)
+                    log_and_print("[dim]Penalty for missing audio info: 5.0[/dim]", release_logs)
+                if meta_subtitles and not specs.get("subtitles", []):
+                    score -= 5  # Missing subtitle info when bdinfo has subtitles
+                    specs_missing = True
+                    log_and_print("[red]✗[/red] Missing subtitle info", release_logs)
+                    log_and_print("[dim]Penalty for missing subtitle info: 5.0[/dim]", release_logs)
+                if not specs.get("discs", {}):
+                    score -= 5  # Missing disc info
+                    specs_missing = True
+                    log_and_print("[red]✗[/red] Missing disc info", release_logs)
+                    log_and_print("[dim]Penalty for missing disc info: 5.0[/dim]", release_logs)
+
+                # Disc format check
+                if "discs" in specs and "format" in specs["discs"] and "discs" in meta and meta.discs and "bdinfo" in meta.discs[0]:
+                    release_format = str(specs["discs"]["format"]).lower()
+                    disc_size_gb = float(meta.discs[0]["bdinfo"].get("size", 0) or 0)
+
+                    expected_format = ""
+                    if disc_size_gb < 25:
+                        expected_format = "bd-25"
+                    elif disc_size_gb < 50:
+                        expected_format = "bd-50"
+                    elif disc_size_gb < 66:
+                        expected_format = "bd-66"
+                    else:
+                        expected_format = "bd-100"
+
+                    format_match = False
+                    if expected_format and expected_format in release_format:
+                        format_match = True
+                        log_and_print(f"[green]✓[/green] Disc format match: {specs['discs']['format']} matches size {disc_size_gb:.2f} GB", release_logs)
+                    elif "bd" in release_format and not any(char.isdigit() for char in release_format):
+                        generic_format = True
+                        log_and_print(f"[yellow]⚠[/yellow] Generic BD format found: {specs['discs']['format']} for size {disc_size_gb:.2f} GB", release_logs)
+                    elif expected_format:
+                        score -= 50
+                        log_and_print(
+                            f"[yellow]⚠[/yellow] Disc format mismatch: {specs['discs']['format']} vs expected {expected_format.upper()} (size: {disc_size_gb:.2f} GB)",
+                            release_logs,
+                        )
+                        if meta.debug:
+                            log_and_print("[dim]Penalty for disc format mismatch: 50.0[/dim]", release_logs)
+
+                    if generic_format:
+                        score -= 5
+                        if meta.debug:
+                            log_and_print("[dim]Reduced penalty for generic BD format: 5.0[/dim]", release_logs)
+
+                # Video format checks
+                if "video" in specs and meta_video_specs:
+                    release_codec = str(specs["video"].get("codec", "")).lower()
+                    meta_codec = str(meta_video_specs.get("codec", "")).lower()
+
+                    codec_match = False
+                    if ("avc" in release_codec and "avc" in meta_codec) or ("h.264" in release_codec and ("avc" in meta_codec or "h.264" in meta_codec)):
+                        codec_match = True
+                        log_and_print("[green]✓[/green] Video codec match: AVC/H.264", release_logs)
+                    elif ("hevc" in release_codec and "hevc" in meta_codec) or ("h.265" in release_codec and ("hevc" in meta_codec or "h.265" in meta_codec)):
+                        codec_match = True
+                        log_and_print("[green]✓[/green] Video codec match: HEVC/H.265", release_logs)
+                    elif ("vc-1" in release_codec and "vc-1" in meta_codec) or ("vc1" in release_codec and "vc1" in meta_codec):
+                        codec_match = True
+                        log_and_print("[green]✓[/green] Video codec match: VC-1", release_logs)
+                    elif ("mpeg-2" in release_codec and "mpeg-2" in meta_codec) or ("mpeg2" in release_codec and "mpeg2" in meta_codec):
+                        codec_match = True
+                        log_and_print("[green]✓[/green] Video codec match: MPEG-2", release_logs)
+
+                    if not codec_match:
+                        score -= 80
+                        log_and_print(f"[red]✗[/red] Video codec mismatch: {release_codec} vs {meta_codec}", release_logs)
+                        if meta.debug:
+                            log_and_print("[dim]Penalty for video codec mismatch 80.0[/dim]", release_logs)
+
+                    # Resolution match check
+                    release_res = str(specs["video"].get("resolution", "")).lower()
+                    meta_res = str(meta_video_specs.get("res", "")).lower()
+
+                    res_match = False
+                    if "1080" in release_res and "1080" in meta_res:
+                        res_match = True
+                        log_and_print("[green]✓[/green] Resolution match: 1080p", release_logs)
+                    elif ("2160" in release_res or "4k" in release_res) and ("2160" in meta_res or "4k" in meta_res):
+                        res_match = True
+                        log_and_print("[green]✓[/green] Resolution match: 4K/2160p", release_logs)
+
+                    if not res_match:
+                        score -= 80
+                        log_and_print(f"[red]✗[/red] Resolution mismatch: {release_res} vs {meta_res}", release_logs)
+                        if meta.debug:
+                            log_and_print("[dim]Penalty for resolution mismatch 80.0[/dim]", release_logs)
+                else:
+                    score -= 5
+                    log_and_print("[yellow]?[/yellow] Cannot compare video formats", release_logs)
+
+                # Audio track checks
+                if "audio" in specs and meta_audio_specs:
+                    audio_matches = 0
+                    partial_audio_matches = 0
+                    missing_audio_tracks = 0
+                    available_release_tracks = list(cast(list[str], specs.get("audio", [])))
+                    reduced_penalty_count = 0
+                    for meta_idx, meta_track in enumerate(meta_audio_specs):
+                        meta_lang = str(meta_track.get("language", "")).lower()
+                        meta_format = str(meta_track.get("codec", "")).lower().replace("audio", "")
+                        meta_channels = str(meta_track.get("channels", "")).lower().replace("audio", "")
+                        meta_sample_rate = str(meta_track.get("sample_rate", "")).lower()
+                        meta_bit_depth = str(meta_track.get("bit_depth", "")).lower()
+                        meta_bitrate = str(meta_track.get("bitrate", "")).lower()
+
+                        # Special handling for Atmos tracks
+                        if str(meta_track.get("atmos_why_you_be_like_this", "")).lower() == "atmos" or "atmos" in meta_channels:
+                            if "truehd" in meta_format:
+                                meta_format = "dolby truehd atmos"
+                            elif "dolby" in meta_format:
+                                meta_format = "dolby atmos"
+                            if meta_channels.strip() in ["atmos audio", "atmos", ""]:
+                                meta_channels = meta_sample_rate if meta_sample_rate in ["7.1", "5.1", "2.0", "1.0"] else "7.1"
+
+                            if "khz" in meta_bitrate and "khz" not in meta_sample_rate:
+                                meta_sample_rate = meta_bitrate
+                                meta_bitrate = ""
+
+                            if "kbps" in meta_bit_depth:
+                                bitrate_part = re.search(r"(\d+\s*kbps)", meta_bit_depth)
+                                if bitrate_part:
+                                    meta_bitrate = bitrate_part.group(1)
+                                    bit_depth_part = re.search(r"(\d+)-bit", meta_bit_depth)
+                                    meta_bit_depth = bit_depth_part.group(1) + "-bit" if bit_depth_part else ""
+
+                        # Skip bit depth if it contains "DN -" (Dolby Digital Normalization)
+                        if "dn -" in meta_bit_depth:
+                            meta_bit_depth = ""
+
+                        reduced_penalty = False
+                        if meta_idx > 0 and meta_bitrate and "kbps" in meta_bitrate:
+                            bitrate_value = int(meta_bitrate.replace("kbps", "").strip())
+                            if bitrate_value <= 258:
+                                reduced_penalty = True
+
+                        best_match_score = 0
+                        best_match_core_score = 0
+                        best_match_idx = -1
+                        track_found = False
+
+                        for idx, release_track in enumerate(available_release_tracks):
+                            release_track_lower = release_track.lower()
+                            current_match_score = 0
+                            core_match_score = 0
+
+                            lang_match = False
+                            if meta_lang and meta_lang in release_track_lower:
+                                lang_match = True
+                                current_match_score += 1
+                                core_match_score += 1
+
+                            if not lang_match:
+                                continue
+
+                            format_match = False
+                            if (
+                                ("lpcm" in meta_format and ("pcm" in release_track_lower or "lpcm" in release_track_lower))
+                                or ("dts-hd" in meta_format and "dts-hd" in release_track_lower)
+                                or ("dts" in meta_format and "dts" in release_track_lower)
+                                or ("dolby" in meta_format and "dolby" in release_track_lower)
+                                or ("truehd" in meta_format and "truehd" in release_track_lower)
+                                or ("atmos" in meta_format and "atmos" in release_track_lower)
+                            ):
+                                format_match = True
+                                current_match_score += 1
+                                core_match_score += 1
+
+                            channel_match = False
+                            if meta_channels:
+                                if (
+                                    ("5.1" in meta_channels and "5.1" in release_track_lower)
+                                    or ("7.1" in meta_channels and "7.1" in release_track_lower)
+                                    or ("2.0" in meta_channels and "2.0" in release_track_lower)
+                                    or ("2.0" in meta_channels and "stereo" in release_track_lower)
+                                    or ("1.0" in meta_channels and "1.0" in release_track_lower)
+                                    or ("1.0" in meta_channels and "mono" in release_track_lower)
+                                ):
+                                    channel_match = True
+                                    current_match_score += 1
+                                    core_match_score += 1
+                                elif ("2.0" in meta_channels and "mono" in release_track_lower) or (
+                                    "1.0" in meta_channels and ("2.0" in release_track_lower or "stereo" in release_track_lower)
+                                ):
+                                    channel_match = False
+
+                            # Check sample rate and bit depth in the release track (may be in notes)
+                            if meta_sample_rate:
+                                sample_rate_str = meta_sample_rate.replace(" ", "").lower()
+                                if sample_rate_str in release_track_lower.replace(" ", "") or ("note:" in release_track_lower and sample_rate_str in release_track_lower):
+                                    current_match_score += 1
+
+                            if meta_bit_depth and meta_bit_depth != "":
+                                bit_depth_str = meta_bit_depth.lower()
+                                if (
+                                    bit_depth_str in release_track_lower
+                                    or bit_depth_str.replace("-", "") in release_track_lower.replace(" ", "")
+                                    or ("note:" in release_track_lower and bit_depth_str.replace("-", "") in release_track_lower.replace(" ", ""))
+                                ):
+                                    current_match_score += 1
+
+                            if meta_bitrate and meta_bitrate != "":
+                                bitrate_str = meta_bitrate.lower()
+                                if bitrate_str in release_track_lower or ("note:" in release_track_lower and bitrate_str in release_track_lower):
+                                    current_match_score += 1
+
+                            if current_match_score > best_match_score:
+                                best_match_score = current_match_score
+                                best_match_core_score = core_match_score
+                                best_match_idx = idx
+
+                            if lang_match and (format_match or channel_match):
+                                track_found = True
+
+                        if track_found and best_match_idx >= 0:
+                            # Calculate matches based on core fields (language, format, channels)
+                            # Maximum core score: language (1) + format (1) + channels (1) = 3
+                            core_match_quality = best_match_core_score / 3.0
+                            matched_track = available_release_tracks[best_match_idx]
+
+                            if core_match_quality >= 1:
+                                audio_matches += 1
+                                log_and_print(
+                                    f"[green]✓[/green] Found good match for {meta_lang} {meta_format} {meta_channels} track: '{matched_track}' (match quality: 100%)",
+                                    release_logs,
+                                )
+                            else:
+                                partial_audio_matches += 1
+                                percent = int(core_match_quality * 100)
+                                log_and_print(
+                                    f"[yellow]⚠[/yellow] Found partial match for {meta_lang} {meta_format} {meta_channels} track: '{matched_track}' (match quality: {percent}%)",
+                                    release_logs,
+                                )
+
+                            available_release_tracks.pop(best_match_idx)
+
+                        else:
+                            missing_audio_tracks += 1
+                            if reduced_penalty:
+                                reduced_penalty_count += 1
+                                log_and_print(f"[red]✗[/red] No match found for {meta_lang} {meta_format} {meta_channels} track (Low bitrate, half penalty)", release_logs)
+                            else:
+                                log_and_print(f"[red]✗[/red] No match found for {meta_lang} {meta_format} {meta_channels} {meta_bitrate} track", release_logs)
+
+                    total_tracks = len(meta_audio_specs)
+                    if total_tracks > 0:
+                        full_match_percentage = (audio_matches / total_tracks) * 100
+                        partial_match_percentage = (partial_audio_matches / total_tracks) * 100
+
+                        if audio_matches == total_tracks:
+                            audio_penalty = 0.0
+                        # Single bdinfo track penalty adjustment
+                        elif total_tracks == 1:
+                            audio_penalty = 5.0 if partial_audio_matches == 1 else 10.0
+                        # Multiple bdinfo tracks penalty adjustment
+                        else:
+                            audio_penalty = 0.0
+                            audio_penalty += partial_audio_matches * 2.5
+                            missing_tracks = total_tracks - (audio_matches + partial_audio_matches)
+                            normal_missing = missing_audio_tracks - reduced_penalty_count
+                            audio_penalty += normal_missing * 5.0
+                            audio_penalty += reduced_penalty_count * 2.5
+
+                        if meta.debug:
+                            log_and_print(f"[dim]Audio penalty: {audio_penalty:.1f}[/dim]", release_logs)
+                        score -= audio_penalty
+
+                        if audio_matches > 0:
+                            log_and_print(
+                                f"[green]✓[/green] Audio tracks with good matches: {audio_matches}/{total_tracks} ({full_match_percentage:.1f}% of tracks)", release_logs
+                            )
+                            if partial_audio_matches > 0:
+                                log_and_print(
+                                    f"[yellow]⚠[/yellow] Audio tracks with partial matches: {partial_audio_matches}/{total_tracks} ({partial_match_percentage:.1f}% of tracks)",
+                                    release_logs,
+                                )
+                        elif partial_audio_matches > 0:
+                            log_and_print(f"[yellow]⚠[/yellow] There were only partial audio track matches: {partial_audio_matches}/{total_tracks}", release_logs)
+                        else:
+                            log_and_print("[red]✗[/red] No audio tracks match!", release_logs)
+
+                        extra_audio_tracks: list[str] = []
+                        if available_release_tracks:
+                            for release_track in available_release_tracks:
+                                extra_audio_tracks.append(release_track)
+                                log_and_print(f"[yellow]⚠[/yellow] Release has extra audio track not in BDInfo: {release_track}", release_logs)
+
+                        if extra_audio_tracks:
+                            extra_penalty = len(extra_audio_tracks) * 5
+                            score -= extra_penalty
+                            log_and_print(f"[red]-[/red] Found {len(extra_audio_tracks)} additional audio tracks in release not in BDInfo", release_logs)
+                            if meta.debug:
+                                log_and_print(f"[dim]Extra audio tracks penalty: {extra_penalty:.1f} points[/dim]", release_logs)
+
+                else:
+                    score -= 5
+                    log_and_print("[yellow]?[/yellow] Cannot compare audio tracks", release_logs)
+
+                # Subtitle checks
+                if "subtitles" in specs and meta_subtitles:
+                    sub_matches = 0
+                    missing_subs = 0
+                    available_release_subs = list(cast(list[str], specs.get("subtitles", [])))
+
+                    for meta_sub in meta_subtitles:
+                        meta_sub_lower = meta_sub.lower()
+                        sub_found = False
+                        matched_idx = -1
+
+                        for idx, release_sub in enumerate(available_release_subs):
+                            release_sub_lower = release_sub.lower()
+                            if meta_sub_lower in release_sub_lower or release_sub_lower in meta_sub_lower:
+                                sub_found = True
+                                matched_idx = idx
+                                break
+
+                        if sub_found and matched_idx >= 0:
+                            matched_sub = available_release_subs[matched_idx]
+                            sub_matches += 1
+                            log_and_print(f"[green]✓[/green] Subtitle match found: {meta_sub} -> {matched_sub}", release_logs)
+                            available_release_subs.pop(matched_idx)
+                        else:
+                            missing_subs += 1
+                            log_and_print(f"[red]✗[/red] No match found for subtitle: {meta_sub}", release_logs)
+
+                    total_subs = len(meta_subtitles)
+                    if total_subs > 0:
+                        match_percentage = (sub_matches / total_subs) * 100
+                        missing_tracks = total_subs - sub_matches
+                        sub_penalty = 10.0 if total_subs == 1 and sub_matches == 0 else 5.0 * missing_tracks
+                        if meta.debug:
+                            log_and_print(f"[dim]Subtitle penalty: {sub_penalty:.1f}[/dim]", release_logs)
+                        score -= sub_penalty
+
+                        if sub_matches > 0:
+                            log_and_print(f"[green]✓[/green] Subtitle matches: {sub_matches}/{total_subs} ({match_percentage:.1f}%)", release_logs)
+                        else:
+                            log_and_print("[red]✗[/red] No subtitle tracks match!", release_logs)
+
+                        extra_subtitles: list[str] = []
+                        if available_release_subs:
+                            for release_sub in available_release_subs:
+                                extra_subtitles.append(release_sub)
+                                log_and_print(f"[yellow]⚠[/yellow] Release has extra subtitle not in BDInfo: {release_sub}", release_logs)
+
+                        if extra_subtitles:
+                            extra_penalty = len(extra_subtitles) * 5
+                            score -= extra_penalty
+                            log_and_print(f"[red]-[/red] Found {len(extra_subtitles)} additional subtitles in release not in BDInfo", release_logs)
+                            if meta.debug:
+                                log_and_print(f"[dim]Extra subtitles penalty: {extra_penalty:.1f} points[/dim]", release_logs)
+
+                else:
+                    score -= 5
+                    log_and_print("[yellow]?[/yellow] Cannot compare subtitles", release_logs)
+            else:
+                score -= 80
+                log_and_print("[red]✗[/red] No specifications available for this release", release_logs)
+
+            log_and_print(f"[blue]Final score: {score:.1f}/100 for {release['title']} ({release['country']})[/blue]", release_logs)
+            log_and_print("", release_logs)
+            # Store flags on the release for later reference
+            release["_generic_format"] = generic_format if "specs" in release and "discs" in cast(Mapping[str, Any], release["specs"]) else False
+            release["_specs_missing"] = specs_missing if "specs" in release else True
+            scored_releases.append((score, release))
+            logs.append((release, release_logs))
+
+        scored_releases.sort(reverse=True, key=lambda x: x[0])
+
+        if scored_releases:
+            bluray_score = float(meta.bluray_score or 100)
+            bluray_single_score = float(meta.bluray_single_score or 100)
+            best_score, best_release = scored_releases[0]
+            close_matches = [release for score, release in scored_releases if best_score - score <= 40]
+
+            if len(scored_releases) == 1 and best_score == 100:
+                cli_ui.info(f"Single perfect match found: {best_release['title']} ({best_release['country']}) with score {best_score:.1f}/100")
+                region_code = map_country_to_region_code(best_release["country"])
+                meta.region = region_code or "" or ""
+                meta.distributor = best_release["publisher"].upper()
+                meta.release_url = best_release["url"]
+                if "cover_images" in best_release:
+                    meta.bluray_cover_urls = best_release["cover_images"]
+                    await download_cover_images(meta)
+                logger.info(f"[yellow]Set region code to: {region_code}, distributor to: {best_release['publisher'].upper()}")
+
+            elif len(scored_releases) == 1:
+                if not meta.unattended or (meta.unattended and meta.unattended_confirm):
+                    cli_ui.info(f"Single match found: {close_matches[0]['title']} ({close_matches[0]['country']}) with score {best_score:.1f}/100")
+                    try:
+                        if cli_ui.ask_yes_no("Do you want to use this release?", default=False):
+                            region_code = map_country_to_region_code(close_matches[0]["country"])
+                            meta.region = region_code or ""
+                            meta.distributor = close_matches[0]["publisher"].upper()
+                            meta.release_url = close_matches[0]["url"]
+                            if "cover_images" in close_matches[0]:
+                                meta.bluray_cover_urls = close_matches[0]["cover_images"]
+                                await download_cover_images(meta)
+                            logger.info(f"[yellow]Set region code to: {region_code}, distributor to: {close_matches[0]['publisher'].upper()}")
+                        else:
+                            cli_ui.warning("No release selected.")
+                            detailed_releases = []
+                    except KeyboardInterrupt:
+                        logger.info("[red]Operation cancelled.[/red]")
+                elif best_score > bluray_single_score:
+                    cli_ui.info(f"Best match: {best_release['title']} ({best_release['country']}) with score {best_score:.1f}/100")
+                    region_code = map_country_to_region_code(best_release["country"])
+                    meta.region = region_code or "" or ""
+                    meta.distributor = best_release["publisher"].upper()
+                    meta.release_url = best_release["url"]
+                    if "cover_images" in best_release:
+                        meta.bluray_cover_urls = best_release["cover_images"]
+                        await download_cover_images(meta)
+                    logger.info(f"[yellow]Set region code to: {region_code}, distributor to: {best_release['publisher'].upper()}")
+                else:
+                    cli_ui.warning(f"No suitable release found. Best match was {best_release['title']} ({best_release['country']}) with score {best_score:.1f}/100")
+                    detailed_releases = []
+
+            elif len(close_matches) > 1:
+                if not meta.unattended or (meta.unattended and meta.unattended_confirm):
+                    logger.info("[yellow]Multiple releases are within 40 points of the best match. Please confirm which release to use:[/yellow]")
+                    # Check if any close match has generic format or missing specs
+                    any_generic_format = any(r.get("_generic_format", False) for r in close_matches)
+                    any_specs_missing = any(r.get("_specs_missing", False) for r in close_matches)
+                    if any_generic_format:
+                        logger.info("[red]Note: Generic BD format found, please confirm the release.[/red]")
+                    if any_specs_missing:
+                        logger.info("[red]Note: Missing specs in release, please confirm the release.[/red]")
+                    for idx, release in enumerate(close_matches, 1):
+                        score = next(score for score, r in scored_releases if r == release)
+                        logger.info(f"{idx}. [blue]{release['title']} ({release['country']})[/blue] - Score: {score:.1f}/100")
+
+                    while True:
+                        logger.info("Enter the number of the release to use, 'p' to print logs for a release, or 'n' to skip:")
+                        user_input_raw = cli_ui.ask_string("Selection: ")
+                        user_input = (user_input_raw or "").strip().lower()
+                        if user_input == "n":
+                            cli_ui.warning("No release selected.")
+                            detailed_releases = []
+                            break
+                        if user_input == "p":
+                            try:
+                                release_idx_raw = cli_ui.ask_string(f"Enter the release number (1-{len(close_matches)}) to print logs: ")
+                                release_idx = int((release_idx_raw or "").strip())
+                                if 1 <= release_idx <= len(close_matches):
+                                    selected_release = close_matches[release_idx - 1]
+                                    for logged_release, release_logs in logs:
+                                        if logged_release == selected_release:
+                                            logger.info(f"[yellow]Logs for release: {logged_release['title']} ({logged_release['country']})[/yellow]")
+                                            for log in release_logs:
+                                                logger.info(log)
+                                            break
+                                else:
+                                    logger.info(f"[red]Invalid selection. Please enter a number between 1 and {len(close_matches)}.[/red]")
+                            except ValueError:
+                                logger.info("[red]Invalid input. Please enter a valid number.[/red]")
+                            except KeyboardInterrupt:
+                                logger.info("[red]Operation cancelled.[/red]")
+                                break
+                        else:
+                            try:
+                                selected_idx = int(user_input)
+                                if 1 <= selected_idx <= len(close_matches):
+                                    selected_release = close_matches[selected_idx - 1]
+                                    cli_ui.info(f"Selected: {selected_release['title']} ({selected_release['country']})")
+                                    region_code = map_country_to_region_code(selected_release["country"])
+                                    meta.region = region_code or "" or ""
+                                    meta.distributor = selected_release["publisher"].upper()
+                                    meta.release_url = selected_release["url"]
+                                    if "cover_images" in selected_release:
+                                        meta.bluray_cover_urls = selected_release["cover_images"]
+                                        await download_cover_images(meta)
+                                    logger.info(f"[yellow]Set region code to: {region_code}, distributor to: {selected_release['publisher'].upper()}[/yellow]")
+                                    break
+                                logger.info(f"[red]Invalid selection. Please enter a number between 1 and {len(close_matches)}.[/red]")
+                            except ValueError:
+                                logger.info("[red]Invalid input. Please enter a number or 'n'.[/red]")
+                            except KeyboardInterrupt:
+                                logger.info("[red]Operation cancelled.[/red]")
+                                break
+                elif best_score > bluray_score:
+                    cli_ui.info(f"Best match: {best_release['title']} ({best_release['country']}) with score {best_score:.1f}/100")
+                    region_code = map_country_to_region_code(best_release["country"])
+                    meta.region = region_code or "" or ""
+                    meta.distributor = best_release["publisher"].upper()
+                    meta.release_url = best_release["url"]
+                    if "cover_images" in best_release:
+                        meta.bluray_cover_urls = best_release["cover_images"]
+                        await download_cover_images(meta)
+                    logger.info(f"[yellow]Set region code to: {region_code}, distributor to: {best_release['publisher'].upper()}[/yellow]")
+                else:
+                    cli_ui.warning(f"No suitable release found. Best match was {best_release['title']} ({best_release['country']}) with score {best_score:.1f}/100")
+                    detailed_releases = []
+
+            else:
+                if not meta.unattended or (meta.unattended and meta.unattended_confirm):
+                    logger.info("[red]This is the probably the best match, but it is not a perfect match.[/red]")
+                    logger.info("[yellow]All other releases have a score at least 40 points lower.")
+                    for logged_release, release_logs in logs:
+                        if logged_release == best_release:
+                            logger.info(f"[yellow]Logs for release: {logged_release['title']} ({logged_release['country']})[/yellow]")
+                            for log in release_logs:
+                                logger.info(log)
+                    try:
+                        if cli_ui.ask_yes_no("Do you want to use this release?", default=False):
+                            region_code = map_country_to_region_code(best_release["country"])
+                            meta.region = region_code or ""
+                            meta.distributor = best_release["publisher"].upper()
+                            meta.release_url = best_release["url"]
+                            if "cover_images" in best_release:
+                                meta.bluray_cover_urls = best_release["cover_images"]
+                                await download_cover_images(meta)
+                            logger.info(f"[yellow]Set region code to: {region_code}, distributor to: {best_release['publisher'].upper()}[/yellow]")
+                        else:
+                            cli_ui.warning("No release selected.")
+                            detailed_releases = []
+                    except KeyboardInterrupt:
+                        logger.info("[red]Operation cancelled.[/red]")
+                elif best_score > bluray_score:
+                    cli_ui.info(f"Best match: {best_release['title']} ({best_release['country']}) with score {best_score:.1f}/100")
+                    region_code = map_country_to_region_code(best_release["country"])
+                    meta.region = region_code or "" or ""
+                    meta.distributor = best_release["publisher"].upper()
+                    meta.release_url = best_release["url"]
+                    if "cover_images" in best_release:
+                        meta.bluray_cover_urls = best_release["cover_images"]
+                        await download_cover_images(meta)
+                    logger.info(f"[yellow]Set region code to: {region_code}, distributor to: {best_release['publisher'].upper()}[/yellow]")
+                else:
+                    cli_ui.warning(f"No suitable release found. Best match was {best_release['title']} ({best_release['country']}) with score {best_score:.1f}/100")
+                    detailed_releases = []
+
+    return detailed_releases
+
+
+def map_country_to_region_code(country_name: str) -> str | None:
+    country_map = {
+        "Afghanistan": "AFG",
+        "Albania": "ALB",
+        "Algeria": "ALG",
+        "Andorra": "AND",
+        "Angola": "ANG",
+        "Argentina": "ARG",
+        "Armenia": "ARM",
+        "Aruba": "ARU",
+        "Australia": "AUS",
+        "Austria": "AUT",
+        "Azerbaijan": "AZE",
+        "Bahamas": "BAH",
+        "Bahrain": "BHR",
+        "Bangladesh": "BAN",
+        "Barbados": "BRB",
+        "Belarus": "BLR",
+        "Belgium": "BEL",
+        "Belize": "BLZ",
+        "Benin": "BEN",
+        "Bermuda": "BER",
+        "Bhutan": "BHU",
+        "Bolivia": "BOL",
+        "Bosnia and Herzegovina": "BIH",
+        "Botswana": "BOT",
+        "Brazil": "BRA",
+        "British Virgin Islands": "VGB",
+        "Brunei": "BRU",
+        "Burkina Faso": "BFA",
+        "Burundi": "BDI",
+        "Cambodia": "CAM",
+        "Cameroon": "CMR",
+        "Canada": "CAN",
+        "Cape Verde": "CPV",
+        "Cayman Islands": "CAY",
+        "Central African Republic": "CTA",
+        "Chad": "CHA",
+        "Chile": "CHI",
+        "China": "CHN",
+        "Colombia": "COL",
+        "Comoros": "COM",
+        "Congo": "CGO",
+        "Cook Islands": "COK",
+        "Costa Rica": "CRC",
+        "Croatia": "CRO",
+        "Cuba": "CUB",
+        "Cyprus": "CYP",
+        "Dominican Republic": "DOM",
+        "Ecuador": "ECU",
+        "Egypt": "EGY",
+        "El Salvador": "SLV",
+        "Equatorial Guinea": "EQG",
+        "Eritrea": "ERI",
+        "Ethiopia": "ETH",
+        "Fiji": "FIJ",
+        "France": "FRA",
+        "Gabon": "GAB",
+        "Gambia": "GAM",
+        "Georgia": "GEO",
+        "Germany": "GER",
+        "Ghana": "GHA",
+        "Greece": "GRE",
+        "Grenada": "GRN",
+        "Guatemala": "GUA",
+        "Guinea": "GUI",
+        "Guyana": "GUY",
+        "Haiti": "HAI",
+        "Honduras": "HON",
+        "Hong Kong": "HKG",
+        "Hungary": "HUN",
+        "Iceland": "ISL",
+        "India": "IND",
+        "Indonesia": "IDN",
+        "Iran": "IRN",
+        "Iraq": "IRQ",
+        "Ireland": "IRL",
+        "Israel": "ISR",
+        "Italy": "ITA",
+        "Jamaica": "JAM",
+        "Japan": "JPN",
+        "Jordan": "JOR",
+        "Kazakhstan": "KAZ",
+        "Kenya": "KEN",
+        "Kuwait": "KUW",
+        "Kyrgyzstan": "KGZ",
+        "Laos": "LAO",
+        "Lebanon": "LBN",
+        "Liberia": "LBR",
+        "Libya": "LBY",
+        "Liechtenstein": "LIE",
+        "Luxembourg": "LUX",
+        "Macau": "MAC",
+        "Madagascar": "MAD",
+        "Malaysia": "MAS",
+        "Malta": "MLT",
+        "Mexico": "MEX",
+        "Monaco": "MON",
+        "Mongolia": "MNG",
+        "Morocco": "MAR",
+        "Mozambique": "MOZ",
+        "Namibia": "NAM",
+        "Nepal": "NEP",
+        "Netherlands": "NLD",
+        "New Zealand": "NZL",
+        "Nicaragua": "NCA",
+        "Niger": "NIG",
+        "North Korea": "PRK",
+        "North Macedonia": "MKD",
+        "Norway": "NOR",
+        "Oman": "OMA",
+        "Pakistan": "PAK",
+        "Panama": "PAN",
+        "Papua New Guinea": "PNG",
+        "Paraguay": "PAR",
+        "Peru": "PER",
+        "Philippines": "PHI",
+        "Poland": "POL",
+        "Portugal": "POR",
+        "Puerto Rico": "PUR",
+        "Qatar": "QAT",
+        "Romania": "ROU",
+        "Russia": "RUS",
+        "Rwanda": "RWA",
+        "Saint Lucia": "LCA",
+        "Samoa": "SAM",
+        "San Marino": "SMR",
+        "Saudi Arabia": "KSA",
+        "Senegal": "SEN",
+        "Serbia": "SRB",
+        "Singapore": "SIN",
+        "South Africa": "RSA",
+        "South Korea": "KOR",
+        "Spain": "ESP",
+        "Sri Lanka": "LKA",
+        "Sudan": "SDN",
+        "Suriname": "SUR",
+        "Switzerland": "SUI",
+        "Syria": "SYR",
+        "Chinese Taipei": "TWN",
+        "Tajikistan": "TJK",
+        "Tanzania": "TAN",
+        "Thailand": "THA",
+        "Trinidad and Tobago": "TRI",
+        "Tunisia": "TUN",
+        "Turkey": "TUR",
+        "Uganda": "UGA",
+        "Ukraine": "UKR",
+        "United Arab Emirates": "UAE",
+        "United Kingdom": "GBR",
+        "United States": "USA",
+        "Uruguay": "URU",
+        "Uzbekistan": "UZB",
+        "Venezuela": "VEN",
+        "Vietnam": "VIE",
+        "Zambia": "ZAM",
+        "Zimbabwe": "ZIM",
+    }
+
+    region_code = country_map.get(country_name)
+    if not region_code:
+        region_code = None
+
+    return region_code

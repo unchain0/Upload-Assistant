@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from src.trackers.AVISTAZ.avistaz import AvistaZ
+from src.integrations.trackers.AVISTAZ.avistaz import AvistaZ
 
 
 def make_meta(**overrides):
@@ -29,7 +29,7 @@ def test_hdtv_mpeg2_transport_stream_is_allowed():
 
     warnings = AvistaZ({"TRACKERS": {"AVISTAZ": {}}}).rules(meta)
 
-    assert warnings == ""  # noqa: S101
+    assert warnings == ""
 
 
 def test_eac3_audio_is_allowed():
@@ -37,7 +37,7 @@ def test_eac3_audio_is_allowed():
 
     warnings = AvistaZ({"TRACKERS": {"AVISTAZ": {}}}).rules(meta)
 
-    assert warnings == ""  # noqa: S101
+    assert warnings == ""
 
 
 def test_low_audio_bitrate_is_reported_for_non_webdl():
@@ -45,7 +45,7 @@ def test_low_audio_bitrate_is_reported_for_non_webdl():
 
     warnings = AvistaZ({"TRACKERS": {"AVISTAZ": {}}}).rules(meta)
 
-    assert "128 kbit/s" in warnings  # noqa: S101
+    assert "128 kbit/s" in warnings
 
 
 def test_grouped_and_megabit_audio_bitrates_are_normalized():
@@ -54,4 +54,4 @@ def test_grouped_and_megabit_audio_bitrates_are_normalized():
 
         warnings = AvistaZ({"TRACKERS": {"AVISTAZ": {}}}).rules(meta)
 
-        assert warnings == ""  # noqa: S101
+        assert warnings == ""

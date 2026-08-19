@@ -4,13 +4,13 @@ import asyncio
 import json
 from unittest.mock import AsyncMock, patch
 
-from src.meta import Meta
+from src.domain_models.release import Meta
 from upload import _host_music_cover, _is_public_music_cover_url, _music_cover_allowed_hosts
 
 
 def test_music_cover_allowed_hosts_only_constrains_selected_trackers():
-    assert _music_cover_allowed_hosts(["DIGITALCORE"]) == ["bhd", "imgbb", "imgbox", "imgur", "postimg", "ptscreens", "sharex"]  # noqa: S101
-    assert _music_cover_allowed_hosts(["ORPHEUS"]) is None  # noqa: S101
+    assert _music_cover_allowed_hosts(["DIGITALCORE"]) == ["bhd", "imgbb", "imgbox", "imgur", "postimg", "ptscreens", "sharex"]
+    assert _music_cover_allowed_hosts(["ORPHEUS"]) is None
 
 
 def test_music_cover_reuses_cached_hosted_url_before_downloading(tmp_path):
@@ -25,10 +25,10 @@ def test_music_cover_reuses_cached_hosted_url_before_downloading(tmp_path):
 
     download.assert_not_called()
     manager.upload_screens.assert_not_called()
-    assert meta.artwork_url == "https://images.example/cover.jpg"  # noqa: S101
-    assert meta.music_release["fields"]["cover_url"]["value"] == meta.artwork_url  # noqa: S101
+    assert meta.artwork_url == "https://images.example/cover.jpg"
+    assert meta.music_release["fields"]["cover_url"]["value"] == meta.artwork_url
 
 
 def test_music_cover_rejects_private_download_host():
-    with patch("src.artwork.socket.getaddrinfo", return_value=[(None, None, None, None, ("127.0.0.1", 0))]):
-        assert not _is_public_music_cover_url("http://localhost/cover.jpg")  # noqa: S101
+    with patch("src.integrations.media.artwork.socket.getaddrinfo", return_value=[(None, None, None, None, ("127.0.0.1", 0))]):
+        assert not _is_public_music_cover_url("http://localhost/cover.jpg")

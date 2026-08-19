@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 """Regression tests for Zenith-specific names."""
 
 import asyncio
@@ -8,10 +7,10 @@ from unittest.mock import patch
 
 import torf  # pyright: ignore[reportMissingImports]
 
-from src.get_desc import DescriptionBuilder
-from src.meta import Meta
-from src.torrentcreate import TorrentCreator
-from src.trackers.UNIT3D.znth import Zenith, prepare_zenith_music_layout
+from src.domain_models.release import Meta
+from src.integrations.torrent.torrent_creator import TorrentCreator
+from src.integrations.trackers.description_builder import DescriptionBuilder
+from src.integrations.trackers.UNIT3D.znth import Zenith, prepare_zenith_music_layout
 
 TORF: Any = cast(Any, torf)
 TORRENT_CREATOR: Any = cast(Any, TorrentCreator)
@@ -302,14 +301,7 @@ def test_zenith_rejects_ongoing_tv_pack():
 def test_zenith_handles_unknown_tv_pack_status_by_confirmation_policy():
     files = ["Show.S01E01.mkv", "Show.S01E02.mkv"]
     assert asyncio.run(_tracker().get_additional_checks(_tv_meta(tv_pack=True, filelist=files, imdb_info={}))) is False
-    assert (
-        asyncio.run(
-            _tracker().get_additional_checks(
-                _tv_meta(tv_pack=True, filelist=files, imdb_info={}, unattended_confirm=True)
-            )
-        )
-        is True
-    )
+    assert asyncio.run(_tracker().get_additional_checks(_tv_meta(tv_pack=True, filelist=files, imdb_info={}, unattended_confirm=True))) is True
 
 
 def test_zenith_handles_none_name_in_movie_checks():
@@ -317,7 +309,7 @@ def test_zenith_handles_none_name_in_movie_checks():
 
 
 def test_zenith_confirmed_unattended_adult_upload_does_not_prompt():
-    with patch("src.trackers.common.cli_ui.ask_yes_no", side_effect=AssertionError("prompt should not run")):
+    with patch("src.integrations.trackers.common.cli_ui.ask_yes_no", side_effect=AssertionError("prompt should not run")):
         assert asyncio.run(_tracker().get_additional_checks(_movie_meta(adult_media=True, unattended=True, unattended_confirm=True))) is True
 
 
@@ -356,21 +348,11 @@ def test_zenith_rejects_music_with_invalid_track_structure():
         }
     )
 
-    assert (
-        asyncio.run(_tracker().get_additional_checks(meta))
-        is False
-    )
+    assert asyncio.run(_tracker().get_additional_checks(meta)) is False
 
 
 def test_zenith_allows_music_with_valid_track_structure():
-    assert (
-        asyncio.run(
-            _tracker().get_additional_checks(
-                _compliant_music_meta(filelist=["Disc1/01 - My Track.flac"], personalrelease=True)
-            )
-        )
-        is True
-    )
+    assert asyncio.run(_tracker().get_additional_checks(_compliant_music_meta(filelist=["Disc1/01 - My Track.flac"], personalrelease=True))) is True
 
 
 def _compliant_music_meta(**kwargs: Any) -> Meta:
@@ -493,14 +475,7 @@ def test_zenith_rejects_book_with_invalid_language_code():
 
 
 def test_zenith_rejects_banned_book_work():
-    assert (
-        asyncio.run(
-            _tracker().get_additional_checks(
-                _book_meta(title="Four Against Darkness Expanded Edition", name="Four Against Darkness Expanded Edition")
-            )
-        )
-        is False
-    )
+    assert asyncio.run(_tracker().get_additional_checks(_book_meta(title="Four Against Darkness Expanded Edition", name="Four Against Darkness Expanded Edition"))) is False
 
 
 def test_zenith_reorders_movie_year_before_aka():

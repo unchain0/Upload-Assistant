@@ -1,11 +1,9 @@
-# ruff: noqa: S101
-
 import asyncio
 from unittest.mock import patch
 
-from src.clients import Clients
-from src.configvalidator import DEFAULT_KEY_TYPES, validate_config
-from src.meta import Meta
+from src.domain_models.release import Meta
+from src.integrations.torrent_clients.client_manager import Clients
+from src.services.configuration_validation_service import DEFAULT_KEY_TYPES, validate_config
 
 
 def test_empty_inject_delay_is_a_no_op() -> None:
@@ -19,7 +17,7 @@ def test_empty_inject_delay_is_a_no_op() -> None:
         clients = Clients({"DEFAULT": {"inject_delay": 3}, "TRACKERS": {"TEST": {"inject_delay": ""}}})
         await clients.inject_delay(Meta(), "TEST", "qbit")
 
-    with patch("src.clients.asyncio.sleep", new=fake_sleep):
+    with patch("src.integrations.torrent_clients.client_manager.asyncio.sleep", new=fake_sleep):
         asyncio.run(exercise())
 
     assert sleep_calls == 0

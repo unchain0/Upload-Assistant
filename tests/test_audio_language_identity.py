@@ -1,8 +1,7 @@
-# ruff: noqa: S101
 import pytest
 
-from src.audio import AudioManager
-from src.meta import Meta
+from src.domain_models.release import Meta
+from src.integrations.media.audio import AudioManager
 
 
 @pytest.mark.asyncio

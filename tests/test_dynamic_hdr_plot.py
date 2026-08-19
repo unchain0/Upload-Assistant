@@ -4,16 +4,16 @@ from pathlib import Path
 
 import pytest
 
-from bin import get_dynamic_hdr_tools
-from src.dynamic_hdr_plot import _formats, _generate_plot, _run, _source_files, _terminate_process, dynamic_hdr_plot_enabled, process_dynamic_hdr_plots
-from src.get_desc import DescriptionBuilder
-from src.meta import Meta
+from src.domain_models.release import Meta
+from src.integrations.media.dynamic_hdr_plot import _formats, _generate_plot, _run, _source_files, _terminate_process, dynamic_hdr_plot_enabled, process_dynamic_hdr_plots
+from src.integrations.runtime_tools import dynamic_hdr_tools as get_dynamic_hdr_tools
+from src.integrations.trackers.description_builder import DescriptionBuilder
 
 
 def test_formats_selects_each_dynamic_metadata_type() -> None:
-    assert _formats(Meta(hdr="DV HDR10+")) == ["dovi", "hdr10plus"]  # noqa: S101
-    assert _formats(Meta(hdr="HDR10+")) == ["hdr10plus"]  # noqa: S101
-    assert _formats(Meta(hdr="HDR")) == []  # noqa: S101
+    assert _formats(Meta(hdr="DV HDR10+")) == ["dovi", "hdr10plus"]
+    assert _formats(Meta(hdr="HDR10+")) == ["hdr10plus"]
+    assert _formats(Meta(hdr="HDR")) == []
 
 
 def test_source_files_limits_to_supported_existing_video_files(tmp_path: Path) -> None:
@@ -26,8 +26,8 @@ def test_source_files_limits_to_supported_existing_video_files(tmp_path: Path) -
 
     meta = Meta(filelist=[str(first), str(ignored), str(second)])
 
-    assert _source_files(meta, 1) == [first]  # noqa: S101
-    assert _source_files(meta, 2) == [first, second]  # noqa: S101
+    assert _source_files(meta, 1) == [first]
+    assert _source_files(meta, 2) == [first, second]
 
 
 def test_description_section_uses_dynamic_hdr_plot_images() -> None:
@@ -39,8 +39,8 @@ def test_description_section_uses_dynamic_hdr_plot_images() -> None:
 
     section = asyncio.run(builder.get_dynamic_hdr_plot_section(meta))
 
-    assert "[b]HDR plots[/b]" in section  # noqa: S101
-    assert "https://host/plot.png" in section  # noqa: S101
+    assert "[b]HDR plots[/b]" in section
+    assert "https://host/plot.png" in section
 
 
 def test_existing_versioned_binary_does_not_download(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -62,7 +62,7 @@ def test_existing_versioned_binary_does_not_download(tmp_path: Path, monkeypatch
 
     result = asyncio.run(get_dynamic_hdr_tools.get_tool(str(tmp_path), "dovi"))
 
-    assert result == str(binary)  # noqa: S101
+    assert result == str(binary)
 
 
 def test_zero_byte_cached_dynamic_hdr_binary_is_rejected(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -115,13 +115,13 @@ def test_mp4_is_remuxed_to_annex_b_hevc(tmp_path: Path, monkeypatch) -> None:  #
         if command[-1].endswith(".png"):
             Path(command[-1]).touch()
 
-    monkeypatch.setattr("src.dynamic_hdr_plot._run", fake_run)
+    monkeypatch.setattr("src.integrations.media.dynamic_hdr_plot._run", fake_run)
 
     asyncio.run(_generate_plot("dovi_tool", "dovi", source, tmp_path))
 
-    assert commands[0][-3:-1] == ["-f", "hevc"]  # noqa: S101
-    assert Path(commands[0][-1]).name.startswith("release_")  # noqa: S101
-    assert commands[1][2] == commands[0][-1]  # noqa: S101
+    assert commands[0][-3:-1] == ["-f", "hevc"]
+    assert Path(commands[0][-1]).name.startswith("release_")
+    assert commands[1][2] == commands[0][-1]
 
 
 def test_plot_artifacts_are_unique_for_same_named_sources(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -136,19 +136,19 @@ def test_plot_artifacts_are_unique_for_same_named_sources(tmp_path: Path, monkey
         if command[-1].endswith(".png"):
             Path(command[-1]).touch()
 
-    monkeypatch.setattr("src.dynamic_hdr_plot._run", fake_run)
+    monkeypatch.setattr("src.integrations.media.dynamic_hdr_plot._run", fake_run)
 
     first_plot = asyncio.run(_generate_plot("dovi_tool", "dovi", first, tmp_path))
     second_plot = asyncio.run(_generate_plot("dovi_tool", "dovi", second, tmp_path))
 
-    assert first_plot != second_plot  # noqa: S101
+    assert first_plot != second_plot
 
 
 def test_tracker_override_enables_dynamic_hdr_plot() -> None:
     meta = Meta(trackers=["TEST"])
     config = {"DEFAULT": {"add_dynamic_hdr_plot": False}, "TRACKERS": {"TEST": {"add_dynamic_hdr_plot": True}}}
 
-    assert dynamic_hdr_plot_enabled(meta, config)  # noqa: S101
+    assert dynamic_hdr_plot_enabled(meta, config)
 
 
 def test_debug_mode_does_not_upload_dynamic_hdr_images(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -167,14 +167,14 @@ def test_debug_mode_does_not_upload_dynamic_hdr_images(tmp_path: Path, monkeypat
         async def upload_screens(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
             raise AssertionError("debug mode must not upload images")
 
-    monkeypatch.setattr("src.dynamic_hdr_plot.get_tool", fake_get_tool)
-    monkeypatch.setattr("src.dynamic_hdr_plot._generate_plot", fake_generate)
+    monkeypatch.setattr("src.integrations.media.dynamic_hdr_plot.get_tool", fake_get_tool)
+    monkeypatch.setattr("src.integrations.media.dynamic_hdr_plot._generate_plot", fake_generate)
     meta = Meta(base_dir=str(tmp_path), uuid="debug-hdr", filelist=[str(source)], hdr="DV", debug=True)
 
     generated = asyncio.run(process_dynamic_hdr_plots(meta, {"DEFAULT": {}}, UploadManager()))
 
-    assert generated == [str(generated_plot)]  # noqa: S101
-    assert meta.dynamic_hdr_plot_images == []  # noqa: S101
+    assert generated == [str(generated_plot)]
+    assert meta.dynamic_hdr_plot_images == []
 
 
 def test_dynamic_hdr_tool_timeout_is_reported(monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -200,7 +200,7 @@ def test_dynamic_hdr_tool_timeout_is_reported(monkeypatch) -> None:  # type: ign
     with pytest.raises(RuntimeError, match="timed out after 1 seconds"):
         asyncio.run(_run(["dovi_tool", "plot"], timeout_seconds=1))
 
-    assert process.killed is True  # noqa: S101
+    assert process.killed is True
 
 
 def test_dynamic_hdr_cancellation_kills_and_reaps_process(monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -237,8 +237,8 @@ def test_dynamic_hdr_cancellation_kills_and_reaps_process(monkeypatch) -> None: 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", create_process)
     asyncio.run(exercise())
 
-    assert process.killed is True  # noqa: S101
-    assert process.wait_calls == 2  # noqa: S101
+    assert process.killed is True
+    assert process.wait_calls == 2
 
 
 def test_windows_dynamic_hdr_cleanup_kills_target_when_taskkill_fails(monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -262,10 +262,10 @@ def test_windows_dynamic_hdr_cleanup_kills_target_when_taskkill_fails(monkeypatc
         raise OSError("taskkill unavailable")
 
     process = Process()
-    monkeypatch.setattr("src.dynamic_hdr_plot.os.name", "nt")
+    monkeypatch.setattr("src.integrations.media.dynamic_hdr_plot.os.name", "nt")
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fail_taskkill)
 
     asyncio.run(_terminate_process(process))  # type: ignore[arg-type]
 
-    assert process.killed is True  # noqa: S101
-    assert process.waited is True  # noqa: S101
+    assert process.killed is True
+    assert process.waited is True

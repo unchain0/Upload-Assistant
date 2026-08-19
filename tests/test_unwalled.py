@@ -15,15 +15,16 @@ import pytest
 from PIL import Image
 from torf import Torrent
 
-from src import mediainfo, podcast_prep
-from src.args import Args
-from src.exportmi import export_info
-from src.meta import Meta
-from src.podcast_prep import gather_podcast_prep
-from src.torrentcreate import TorrentCreator
-from src.trackers.common import Common
-from src.trackers.UNIT3D.unwalled import Unwalled
-from src.trackersetup import tracker_class_map
+from src.delivery.cli.arguments import Args
+from src.domain_models.release import Meta
+from src.integrations.media import media_info as mediainfo
+from src.integrations.media.media_info_export import export_info
+from src.integrations.torrent.torrent_creator import TorrentCreator
+from src.integrations.trackers.common import Common
+from src.integrations.trackers.registry import tracker_class_map
+from src.integrations.trackers.UNIT3D.unwalled import Unwalled
+from src.services import podcast_preparation as podcast_prep
+from src.services.podcast_preparation import gather_podcast_prep
 
 bdecode = cast(Callable[[bytes], object], vars(bencodepy)["decode"])
 bencode = cast(Callable[[object], bytes], vars(bencodepy)["encode"])
@@ -43,9 +44,9 @@ def _jpg(path: Path, size: tuple[int, int], color: str) -> None:
 
 
 def test_unwalled_is_registered_as_a_podcast_tracker() -> None:
-    assert tracker_class_map["UNWALLED"] is Unwalled  # noqa: S101
-    assert Unwalled.supported_categories == ("PODCAST",)  # noqa: S101
-    assert Unwalled.source_flag == "Unwalled"  # noqa: S101
+    assert tracker_class_map["UNWALLED"] is Unwalled
+    assert Unwalled.supported_categories == ("PODCAST",)
+    assert Unwalled.source_flag == "Unwalled"
 
 
 def test_cli_accepts_podcast_and_unwalled_overrides(tmp_path: Path) -> None:
@@ -72,12 +73,12 @@ def test_cli_accepts_podcast_and_unwalled_overrides(tmp_path: Path) -> None:
         meta,
     )
 
-    assert parsed.manual_category == "podcast"  # noqa: S101
-    assert parsed.podcast_title == "Example Show [2026/MP3 - 128kbps]"  # noqa: S101
-    assert parsed.podcast_cover == str(cover)  # noqa: S101
-    assert parsed.podcast_banner == str(banner)  # noqa: S101
-    assert parsed.unwalled_category == "Technology"  # noqa: S101
-    assert parsed.unwalled_type == "Free Audio"  # noqa: S101
+    assert parsed.manual_category == "podcast"
+    assert parsed.podcast_title == "Example Show [2026/MP3 - 128kbps]"
+    assert parsed.podcast_cover == str(cover)
+    assert parsed.podcast_banner == str(banner)
+    assert parsed.unwalled_category == "Technology"
+    assert parsed.unwalled_type == "Free Audio"
 
 
 def test_podcast_prep_rejects_mixed_audio_and_video(tmp_path: Path) -> None:
@@ -89,10 +90,10 @@ def test_podcast_prep_rejects_mixed_audio_and_video(tmp_path: Path) -> None:
         return "audio" if path.suffix == ".mp3" else "video"
 
     try:
-        with patch("src.podcast_prep._detected_media_kind", side_effect=detected_kind):
+        with patch("src.services.podcast_preparation._detected_media_kind", side_effect=detected_kind):
             asyncio.run(gather_podcast_prep(meta))
     except ValueError as error:
-        assert "mixed audio and video" in str(error).lower()  # noqa: S101
+        assert "mixed audio and video" in str(error).lower()
     else:
         raise AssertionError("mixed podcast media must be rejected")
 
@@ -110,30 +111,30 @@ def test_podcast_prep_builds_an_audio_pack_without_tmdb(tmp_path: Path) -> None:
     )
 
     with (
-        patch("src.podcast_prep._detected_media_kind", return_value="audio"),
-        patch("src.podcast_prep.export_info", new=AsyncMock(return_value={"media": {"track": []}})),
+        patch("src.services.podcast_preparation._detected_media_kind", return_value="audio"),
+        patch("src.services.podcast_preparation.export_info", new=AsyncMock(return_value={"media": {"track": []}})),
     ):
         asyncio.run(gather_podcast_prep(meta))
 
-    assert meta.category == "PODCAST"  # noqa: S101
-    assert meta.filelist == [str(episode.resolve())]  # noqa: S101
-    assert meta.name == "Example Show [2026/MP3 - 128kbps]"  # noqa: S101
-    assert meta.tmdb_id == 0 and meta.imdb_id == 0  # noqa: S101
-    assert meta.resolution == ""  # noqa: S101
+    assert meta.category == "PODCAST"
+    assert meta.filelist == [str(episode.resolve())]
+    assert meta.name == "Example Show [2026/MP3 - 128kbps]"
+    assert meta.tmdb_id == 0 and meta.imdb_id == 0
+    assert meta.resolution == ""
 
 
 def test_unwalled_podcast_title_requires_year_format_and_audio_bitrate() -> None:
-    assert Unwalled._valid_podcast_title("Example Show [2026/MP3 - 128kbps]", audio=True) is True  # noqa: S101
-    assert Unwalled._valid_podcast_title("Example Show [2026-08-11/MP4]", audio=False) is True  # noqa: S101
-    assert Unwalled._valid_podcast_title("Example Show [MP3 - 128kbps]", audio=True) is False  # noqa: S101
-    assert Unwalled._valid_podcast_title("Example Show [2026/MP3]", audio=True) is False  # noqa: S101
+    assert Unwalled._valid_podcast_title("Example Show [2026/MP3 - 128kbps]", audio=True) is True
+    assert Unwalled._valid_podcast_title("Example Show [2026-08-11/MP4]", audio=False) is True
+    assert Unwalled._valid_podcast_title("Example Show [MP3 - 128kbps]", audio=True) is False
+    assert Unwalled._valid_podcast_title("Example Show [2026/MP3]", audio=True) is False
 
 
 @pytest.mark.asyncio
 async def test_unwalled_additional_checks_reject_invalid_generated_title() -> None:
     meta = Meta(category="PODCAST", type="AUDIO", name="Example Show [MP3 - 128kbps]")
 
-    assert await _tracker().get_additional_checks(meta) is False  # noqa: S101
+    assert await _tracker().get_additional_checks(meta) is False
 
 
 @pytest.mark.asyncio
@@ -146,14 +147,14 @@ async def test_podcast_prep_offloads_per_file_media_scanning(tmp_path: Path) -> 
         return function(*args)
 
     with (
-        patch("src.podcast_prep.asyncio.to_thread", new=AsyncMock(side_effect=run_in_thread)) as to_thread,
-        patch("src.podcast_prep._detected_media_kind", return_value="audio"),
-        patch("src.podcast_prep.export_info", new=AsyncMock(return_value={"media": {"track": []}})),
+        patch("src.services.podcast_preparation.asyncio.to_thread", new=AsyncMock(side_effect=run_in_thread)) as to_thread,
+        patch("src.services.podcast_preparation._detected_media_kind", return_value="audio"),
+        patch("src.services.podcast_preparation.export_info", new=AsyncMock(return_value={"media": {"track": []}})),
     ):
         await gather_podcast_prep(meta)
 
     offloaded_functions = [call.args[0].__name__ for call in to_thread.await_args_list]
-    assert offloaded_functions == ["_source_files", "_media_files", "_audio_bitrate"]  # noqa: S101
+    assert offloaded_functions == ["_source_files", "_media_files", "_audio_bitrate"]
 
 
 @pytest.mark.asyncio
@@ -172,13 +173,13 @@ async def test_export_info_offloads_standard_mediainfo_parsing(tmp_path: Path) -
         return function(*args, **kwargs)
 
     with (
-        patch("src.exportmi.MediaInfo.parse", side_effect=parse_media),
-        patch("src.exportmi.asyncio.to_thread", new=AsyncMock(side_effect=run_in_thread)) as to_thread,
+        patch("src.integrations.media.media_info_export.MediaInfo.parse", side_effect=parse_media),
+        patch("src.integrations.media.media_info_export.asyncio.to_thread", new=AsyncMock(side_effect=run_in_thread)) as to_thread,
     ):
         result = await export_info(str(media), True, "mediainfo-offload", str(tmp_path))
 
-    assert result["media"]["track"] == []  # noqa: S101
-    assert to_thread.await_count == 2  # noqa: S101
+    assert result["media"]["track"] == []
+    assert to_thread.await_count == 2
 
 
 @pytest.mark.asyncio
@@ -206,8 +207,8 @@ async def test_unwalled_single_episode_directory_keeps_folder_torrent(tmp_path: 
     (tmp_path / "tmp" / meta.uuid).mkdir(parents=True)
 
     with (
-        patch("src.podcast_prep._detected_media_kind", return_value="audio"),
-        patch("src.podcast_prep.export_info", new=AsyncMock(return_value={"media": {"track": []}})),
+        patch("src.services.podcast_preparation._detected_media_kind", return_value="audio"),
+        patch("src.services.podcast_preparation.export_info", new=AsyncMock(return_value={"media": {"track": []}})),
     ):
         await gather_podcast_prep(meta)
     await TorrentCreator.create_torrent(meta, content, "BASE")
@@ -215,8 +216,8 @@ async def test_unwalled_single_episode_directory_keeps_folder_torrent(tmp_path: 
     filename = await _tracker().get_upload_torrent_filename(meta)
     torrent = Torrent.read(tmp_path / "tmp" / meta.uuid / f"{filename}.torrent")
 
-    assert meta.keep_folder is True  # noqa: S101
-    assert torrent.name == content.name  # noqa: S101
+    assert meta.keep_folder is True
+    assert torrent.name == content.name
 
 
 @pytest.mark.asyncio
@@ -224,8 +225,8 @@ async def test_unwalled_preserves_ampersands_in_final_title() -> None:
     tracker = _tracker()
     meta = Meta(name="Science & Society [2026/MP3 - 128kbps]")
 
-    assert tracker.get_search_name(meta) == meta.name  # noqa: S101
-    assert await tracker.get_name(meta) == {"name": meta.name}  # noqa: S101
+    assert tracker.get_search_name(meta) == meta.name
+    assert await tracker.get_name(meta) == {"name": meta.name}
 
 
 def test_podcast_prep_includes_allowed_companion_files(tmp_path: Path) -> None:
@@ -236,12 +237,12 @@ def test_podcast_prep_includes_allowed_companion_files(tmp_path: Path) -> None:
     meta = Meta(path=str(tmp_path), base_dir=str(tmp_path), uuid="podcast-companion", category="PODCAST")
 
     with (
-        patch("src.podcast_prep._detected_media_kind", return_value="audio"),
-        patch("src.podcast_prep.export_info", new=AsyncMock(return_value={"media": {"track": []}})),
+        patch("src.services.podcast_preparation._detected_media_kind", return_value="audio"),
+        patch("src.services.podcast_preparation.export_info", new=AsyncMock(return_value={"media": {"track": []}})),
     ):
         asyncio.run(gather_podcast_prep(meta))
 
-    assert meta.filelist == [str(episode.resolve()), str(companion.resolve())]  # noqa: S101
+    assert meta.filelist == [str(episode.resolve()), str(companion.resolve())]
 
 
 def test_podcast_prep_rejects_symlinks_and_disguised_archives(tmp_path: Path) -> None:
@@ -279,7 +280,7 @@ def test_podcast_prep_rejects_audio_archive_polyglot(tmp_path: Path) -> None:
         audio.write(archive.getvalue())
     meta = Meta(path=str(polyglot), base_dir=str(tmp_path), uuid="polyglot", category="PODCAST")
 
-    assert zipfile.is_zipfile(polyglot)  # noqa: S101
+    assert zipfile.is_zipfile(polyglot)
     with pytest.raises(ValueError, match="compressed archive"):
         asyncio.run(gather_podcast_prep(meta))
 
@@ -307,15 +308,16 @@ def test_podcast_prep_rejects_symlinked_ancestors_and_artwork(tmp_path: Path) ->
         category="PODCAST",
         podcast_cover=str(linked_cover),
     )
-    with patch("src.podcast_prep._detected_media_kind", return_value="audio"), pytest.raises(ValueError, match="symbolic links"):
+    with patch("src.services.podcast_preparation._detected_media_kind", return_value="audio"), pytest.raises(ValueError, match="symbolic links"):
         asyncio.run(gather_podcast_prep(artwork_meta))
+
 
 def test_podcast_prep_rejects_media_with_a_mismatched_extension(tmp_path: Path) -> None:
     disguised_video = tmp_path / "video.mp3"
     disguised_video.write_bytes(b"\x00\x00\x00\x18ftypisom\x00\x00\x02\x00isomiso2")
     meta = Meta(path=str(disguised_video), base_dir=str(tmp_path), uuid="mismatched-media", category="PODCAST")
 
-    with patch("src.podcast_prep._detected_media_kind", return_value="video"), pytest.raises(ValueError, match="extension does not match"):
+    with patch("src.services.podcast_preparation._detected_media_kind", return_value="video"), pytest.raises(ValueError, match="extension does not match"):
         asyncio.run(gather_podcast_prep(meta))
 
 
@@ -342,7 +344,7 @@ def test_unwalled_discovers_category_and_type_ids_from_unit3d_results() -> None:
         ]
     }
 
-    assert _tracker().catalog_from_response(payload) == {"categories": {"technology": "14"}, "types": {"free audio": "3"}}  # noqa: S101
+    assert _tracker().catalog_from_response(payload) == {"categories": {"technology": "14"}, "types": {"free audio": "3"}}
 
 
 @pytest.mark.asyncio
@@ -355,10 +357,10 @@ async def test_unwalled_discovers_options_across_all_result_pages() -> None:
         return httpx.Response(200, json={"data": payload})
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    with patch("src.trackers.UNIT3D.unwalled.httpx.AsyncClient", return_value=client):
+    with patch("src.integrations.trackers.UNIT3D.unwalled.httpx.AsyncClient", return_value=client):
         catalog = await _tracker().discover_options()
 
-    assert catalog == {"categories": {"science": "15", "technology": "14"}, "types": {"free audio": "3", "premium audio": "4"}}  # noqa: S101
+    assert catalog == {"categories": {"science": "15", "technology": "14"}, "types": {"free audio": "3", "premium audio": "4"}}
 
 
 @pytest.mark.asyncio
@@ -370,11 +372,11 @@ async def test_unwalled_retries_incomplete_option_discovery_cache() -> None:
         return httpx.Response(200, json={"data": [{"attributes": {"type": "Free Audio", "type_id": 3}}]})
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    with patch("src.trackers.UNIT3D.unwalled.httpx.AsyncClient", return_value=client):
+    with patch("src.integrations.trackers.UNIT3D.unwalled.httpx.AsyncClient", return_value=client):
         catalog = await tracker.discover_options()
 
-    assert catalog == {"categories": {"technology": "14"}, "types": {"free audio": "3"}}  # noqa: S101
-    assert tracker.option_discovery_complete is True  # noqa: S101
+    assert catalog == {"categories": {"technology": "14"}, "types": {"free audio": "3"}}
+    assert tracker.option_discovery_complete is True
 
 
 @pytest.mark.asyncio
@@ -383,8 +385,8 @@ async def test_unwalled_bounds_option_and_upload_json_responses() -> None:
         return httpx.Response(200, content=b"x" * (2 * 1024 * 1024 + 1))
 
     option_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    with patch("src.trackers.UNIT3D.unwalled.httpx.AsyncClient", return_value=option_client):
-        assert await _tracker().discover_options() == {"categories": {}, "types": {}}  # noqa: S101
+    with patch("src.integrations.trackers.UNIT3D.unwalled.httpx.AsyncClient", return_value=option_client):
+        assert await _tracker().discover_options() == {"categories": {}, "types": {}}
 
     response_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     async with response_client.stream("GET", "https://unwalled.cc/api/test") as response:
@@ -398,10 +400,10 @@ def test_unwalled_resolves_names_or_explicit_numeric_ids() -> None:
     named = Meta(category="PODCAST", unwalled_category="Technology", unwalled_type="Free Audio")
     numeric = Meta(category="PODCAST", unwalled_category="99", unwalled_type="42")
 
-    assert asyncio.run(tracker.get_category_id(named)) == {"category_id": "14"}  # noqa: S101
-    assert asyncio.run(tracker.get_type_id(named)) == {"type_id": "3"}  # noqa: S101
-    assert asyncio.run(tracker.get_category_id(numeric)) == {"category_id": "99"}  # noqa: S101
-    assert asyncio.run(tracker.get_type_id(numeric)) == {"type_id": "42"}  # noqa: S101
+    assert asyncio.run(tracker.get_category_id(named)) == {"category_id": "14"}
+    assert asyncio.run(tracker.get_type_id(named)) == {"type_id": "3"}
+    assert asyncio.run(tracker.get_category_id(numeric)) == {"category_id": "99"}
+    assert asyncio.run(tracker.get_type_id(numeric)) == {"type_id": "42"}
 
 
 @pytest.mark.asyncio
@@ -416,7 +418,7 @@ async def test_unwalled_video_payload_omits_unknown_resolution() -> None:
     ):
         payload = await tracker.get_data(meta)
 
-    assert "resolution_id" not in payload  # noqa: S101
+    assert "resolution_id" not in payload
 
 
 @pytest.mark.asyncio
@@ -429,10 +431,10 @@ async def test_unwalled_duplicate_search_uses_upload_title_and_bounds_json() -> 
 
     meta = Meta(category="PODCAST", title="source-folder", name="Final Podcast Title", podcast_title="Final Podcast Title", unwalled_category="14", unwalled_type="3")
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    with patch("src.trackers.UNIT3D.httpx.AsyncClient", return_value=client):
-        assert await _tracker().search_existing(meta) == []  # noqa: S101
+    with patch("src.integrations.trackers.UNIT3D.httpx.AsyncClient", return_value=client):
+        assert await _tracker().search_existing(meta) == []
 
-    assert seen_names == ["Final Podcast Title"]  # noqa: S101
+    assert seen_names == ["Final Podcast Title"]
 
     oversized = b'{"data":[],"padding":"' + b"x" * (2 * 1024 * 1024) + b'"}'
 
@@ -440,7 +442,7 @@ async def test_unwalled_duplicate_search_uses_upload_title_and_bounds_json() -> 
         return httpx.Response(200, content=oversized)
 
     oversized_client = httpx.AsyncClient(transport=httpx.MockTransport(oversized_handler))
-    with patch("src.trackers.UNIT3D.httpx.AsyncClient", return_value=oversized_client), pytest.raises(ValueError, match="size limit"):
+    with patch("src.integrations.trackers.UNIT3D.httpx.AsyncClient", return_value=oversized_client), pytest.raises(ValueError, match="size limit"):
         await _tracker().search_existing(meta)
 
 
@@ -462,13 +464,13 @@ def test_unwalled_requires_valid_distinct_jpeg_cover_and_banner(tmp_path: Path) 
         unwalled_type="3",
     )
 
-    assert asyncio.run(_tracker().get_additional_checks(meta)) is True  # noqa: S101
+    assert asyncio.run(_tracker().get_additional_checks(meta)) is True
     meta.artwork_banner_path = str(cover)
-    assert asyncio.run(_tracker().get_additional_checks(meta)) is False  # noqa: S101
+    assert asyncio.run(_tracker().get_additional_checks(meta)) is False
 
 
 def test_unwalled_rejects_invalid_torrent_file_names(tmp_path: Path) -> None:
-    assert _tracker()._valid_filename("bad:name.mp3") is False  # noqa: S101
+    assert _tracker()._valid_filename("bad:name.mp3") is False
     if os.name == "nt":
         return
     cover = tmp_path / "cover.jpg"
@@ -488,12 +490,12 @@ def test_unwalled_rejects_invalid_torrent_file_names(tmp_path: Path) -> None:
         unwalled_type="3",
     )
 
-    assert asyncio.run(_tracker().get_additional_checks(meta)) is False  # noqa: S101
+    assert asyncio.run(_tracker().get_additional_checks(meta)) is False
 
 
 @pytest.mark.parametrize("filename", ["   ", "bad:name.mp3", "episode.mp3.", "episode.mp3 "])
 def test_unwalled_rejects_windows_unsafe_or_blank_names(filename: str) -> None:
-    assert _tracker()._valid_filename(filename) is False  # noqa: S101
+    assert _tracker()._valid_filename(filename) is False
 
 
 def test_unwalled_rejects_invalid_nested_paths_and_missing_announce(tmp_path: Path) -> None:
@@ -516,7 +518,7 @@ def test_unwalled_rejects_invalid_nested_paths_and_missing_announce(tmp_path: Pa
             unwalled_category="14",
             unwalled_type="3",
         )
-        assert asyncio.run(_tracker().get_additional_checks(invalid_meta)) is False  # noqa: S101
+        assert asyncio.run(_tracker().get_additional_checks(invalid_meta)) is False
 
     valid_episode = tmp_path / "episode.mp3"
     valid_episode.write_bytes(b"audio")
@@ -530,7 +532,7 @@ def test_unwalled_rejects_invalid_nested_paths_and_missing_announce(tmp_path: Pa
         unwalled_category="14",
         unwalled_type="3",
     )
-    assert asyncio.run(_tracker(announce_url="").get_additional_checks(meta)) is False  # noqa: S101
+    assert asyncio.run(_tracker(announce_url="").get_additional_checks(meta)) is False
 
 
 @pytest.mark.asyncio
@@ -566,16 +568,16 @@ async def test_unwalled_builds_private_v1_torrent_with_source_and_announce(tmp_p
     filename = await _tracker(announce_url=announce).get_upload_torrent_filename(meta)
     torrent = Torrent.read(release_dir / f"{filename}.torrent")
 
-    assert filename == "[UNWALLED]"  # noqa: S101
-    assert torrent.metainfo.get("announce") == announce  # noqa: S101
-    assert torrent.metainfo["info"].get("private") == 1  # noqa: S101
-    assert torrent.metainfo["info"].get("source") == "Unwalled"  # noqa: S101
-    assert "file tree" not in torrent.metainfo["info"]  # noqa: S101
+    assert filename == "[UNWALLED]"
+    assert torrent.metainfo.get("announce") == announce
+    assert torrent.metainfo["info"].get("private") == 1
+    assert torrent.metainfo["info"].get("source") == "Unwalled"
+    assert "file tree" not in torrent.metainfo["info"]
 
     mismatched = tmp_path / "other.mp3"
     mismatched.write_bytes(b"different")
     meta.filelist = [str(mismatched)]
-    assert _tracker(announce_url=announce)._valid_upload_bundle(meta, release_dir / f"{filename}.torrent") is False  # noqa: S101
+    assert _tracker(announce_url=announce)._valid_upload_bundle(meta, release_dir / f"{filename}.torrent") is False
 
 
 def test_unwalled_rejects_inconsistent_v1_piece_count() -> None:
@@ -586,7 +588,7 @@ def test_unwalled_rejects_inconsistent_v1_piece_count() -> None:
         b"length": 1,
     }
 
-    assert _tracker()._valid_v1_info(info) is False  # noqa: S101
+    assert _tracker()._valid_v1_info(info) is False
 
 
 def test_unwalled_rejects_huge_v1_lengths_without_overflow(tmp_path: Path) -> None:
@@ -600,7 +602,7 @@ def test_unwalled_rejects_huge_v1_lengths_without_overflow(tmp_path: Path) -> No
         )
     )
 
-    assert _tracker()._torrent_is_v1(torrent_path) is False  # noqa: S101
+    assert _tracker()._torrent_is_v1(torrent_path) is False
 
     torrent_path.write_bytes(
         bencode(
@@ -610,21 +612,22 @@ def test_unwalled_rejects_huge_v1_lengths_without_overflow(tmp_path: Path) -> No
             }
         )
     )
-    assert _tracker()._torrent_is_v1(torrent_path) is False  # noqa: S101
+    assert _tracker()._torrent_is_v1(torrent_path) is False
 
 
 @pytest.mark.parametrize("piece_length", [16 * 1024, 32 * 1024 * 1024, 64 * 1024 * 1024, 128 * 1024 * 1024])
 def test_unwalled_accepts_supported_v1_piece_sizes(piece_length: int) -> None:
     info: dict[bytes, object] = {b"name": b"episode.mp3", b"piece length": piece_length, b"pieces": b"x" * 20, b"length": 1}
 
-    assert _tracker()._valid_v1_info(info) is True  # noqa: S101
+    assert _tracker()._valid_v1_info(info) is True
 
 
 @pytest.mark.parametrize("piece_length", [8 * 1024, 24 * 1024, 256 * 1024 * 1024])
 def test_unwalled_rejects_unsupported_v1_piece_sizes(piece_length: int) -> None:
     info: dict[bytes, object] = {b"name": b"episode.mp3", b"piece length": piece_length, b"pieces": b"x" * 20, b"length": 1}
 
-    assert _tracker()._valid_v1_info(info) is False  # noqa: S101
+    assert _tracker()._valid_v1_info(info) is False
+
 
 def test_unwalled_rejects_duplicate_v1_file_paths(tmp_path: Path) -> None:
     root = tmp_path / "show"
@@ -642,7 +645,7 @@ def test_unwalled_rejects_duplicate_v1_file_paths(tmp_path: Path) -> None:
         ],
     }
 
-    assert _tracker()._torrent_matches_files(info, meta) is False  # noqa: S101
+    assert _tracker()._torrent_matches_files(info, meta) is False
 
 
 @pytest.mark.asyncio
@@ -656,7 +659,7 @@ async def test_unwalled_rejects_cross_host_torrent_download_redirect(tmp_path: P
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     meta = Meta(base_dir=str(tmp_path), uuid="secure-download")
     (tmp_path / "tmp" / meta.uuid).mkdir(parents=True)
-    with patch("src.trackersetup.http_trackers", []), patch("src.trackers.common.httpx.AsyncClient", return_value=client):
+    with patch("src.integrations.trackers.registry.http_trackers", []), patch("src.integrations.trackers.common.httpx.AsyncClient", return_value=client):
         result = await Common({}).download_tracker_torrent(
             meta,
             "UNWALLED",
@@ -666,9 +669,9 @@ async def test_unwalled_rejects_cross_host_torrent_download_redirect(tmp_path: P
             max_size=1024,
         )
 
-    assert result is None  # noqa: S101
-    assert [request.url.host for request in requests] == ["unwalled.cc"]  # noqa: S101
-    assert not (tmp_path / "tmp" / meta.uuid / "[UNWALLED].torrent").exists()  # noqa: S101
+    assert result is None
+    assert [request.url.host for request in requests] == ["unwalled.cc"]
+    assert not (tmp_path / "tmp" / meta.uuid / "[UNWALLED].torrent").exists()
 
 
 @pytest.mark.asyncio
@@ -681,13 +684,13 @@ async def test_unwalled_option_discovery_does_not_follow_redirects() -> None:
         return httpx.Response(302, headers={"location": "https://attacker.invalid/options"})
 
     def client_factory(**kwargs: object) -> httpx.AsyncClient:
-        assert kwargs["follow_redirects"] is False  # noqa: S101
+        assert kwargs["follow_redirects"] is False
         return async_client_class(transport=httpx.MockTransport(handler), follow_redirects=False)
 
-    with patch("src.trackers.UNIT3D.unwalled.httpx.AsyncClient", side_effect=client_factory):
-        assert await _tracker().discover_options() == {"categories": {}, "types": {}}  # noqa: S101
+    with patch("src.integrations.trackers.UNIT3D.unwalled.httpx.AsyncClient", side_effect=client_factory):
+        assert await _tracker().discover_options() == {"categories": {}, "types": {}}
 
-    assert [request.url.host for request in requests] == ["unwalled.cc"]  # noqa: S101
+    assert [request.url.host for request in requests] == ["unwalled.cc"]
 
 
 @pytest.mark.asyncio
@@ -698,7 +701,7 @@ async def test_unwalled_rejects_oversized_torrent_download(tmp_path: Path) -> No
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     meta = Meta(base_dir=str(tmp_path), uuid="bounded-download")
     (tmp_path / "tmp" / meta.uuid).mkdir(parents=True)
-    with patch("src.trackersetup.http_trackers", []), patch("src.trackers.common.httpx.AsyncClient", return_value=client):
+    with patch("src.integrations.trackers.registry.http_trackers", []), patch("src.integrations.trackers.common.httpx.AsyncClient", return_value=client):
         result = await Common({}).download_tracker_torrent(
             meta,
             "UNWALLED",
@@ -707,14 +710,14 @@ async def test_unwalled_rejects_oversized_torrent_download(tmp_path: Path) -> No
             max_size=1024,
         )
 
-    assert result is None  # noqa: S101
-    assert not (tmp_path / "tmp" / meta.uuid / "[UNWALLED].torrent").exists()  # noqa: S101
+    assert result is None
+    assert not (tmp_path / "tmp" / meta.uuid / "[UNWALLED].torrent").exists()
 
 
 @pytest.mark.asyncio
 async def test_unwalled_upload_uses_bounded_same_host_torrent_download(tmp_path: Path) -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
-        assert request.method == "POST"  # noqa: S101
+        assert request.method == "POST"
         return httpx.Response(200, json={"success": True, "message": "uploaded", "data": "https://unwalled.cc/torrents/download/1"})
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
@@ -727,19 +730,19 @@ async def test_unwalled_upload_uses_bounded_same_host_torrent_download(tmp_path:
     downloaded_path = str(torrent_path)
 
     with (
-        patch("src.trackers.UNIT3D.httpx.AsyncClient", return_value=client),
+        patch("src.integrations.trackers.UNIT3D.httpx.AsyncClient", return_value=client),
         patch.object(tracker, "get_data", new=AsyncMock(return_value={})),
         patch.object(tracker, "get_upload_torrent_filename", new=AsyncMock(return_value="[UNWALLED]")),
         patch.object(tracker, "get_additional_files", new=AsyncMock(return_value={})),
         patch.object(tracker.common, "download_tracker_torrent", new=AsyncMock(return_value=downloaded_path)) as download_torrent,
     ):
-        assert await tracker.upload(meta) is True  # noqa: S101
+        assert await tracker.upload(meta) is True
 
     download_torrent.assert_awaited_once()
     awaited_call = download_torrent.await_args
-    assert awaited_call is not None  # noqa: S101
-    assert awaited_call.kwargs["allowed_hosts"] == ("unwalled.cc",)  # noqa: S101
-    assert awaited_call.kwargs["max_size"] == 1024 * 1024  # noqa: S101
+    assert awaited_call is not None
+    assert awaited_call.kwargs["allowed_hosts"] == ("unwalled.cc",)
+    assert awaited_call.kwargs["max_size"] == 1024 * 1024
 
 
 @pytest.mark.asyncio
@@ -758,19 +761,19 @@ async def test_unwalled_upload_does_not_follow_redirects(tmp_path: Path) -> None
     tracker = _tracker()
 
     def client_factory(**kwargs: object) -> httpx.AsyncClient:
-        assert kwargs["follow_redirects"] is False  # noqa: S101
+        assert kwargs["follow_redirects"] is False
         return async_client_class(transport=httpx.MockTransport(handler), follow_redirects=False)
 
     with (
-        patch("src.trackers.UNIT3D.httpx.AsyncClient", side_effect=client_factory),
+        patch("src.integrations.trackers.UNIT3D.httpx.AsyncClient", side_effect=client_factory),
         patch.object(tracker, "get_data", new=AsyncMock(return_value={"name": "Private Show"})),
         patch.object(tracker, "get_upload_torrent_filename", new=AsyncMock(return_value="[UNWALLED]")),
         patch.object(tracker, "get_additional_files", new=AsyncMock(return_value={})),
     ):
-        assert await tracker.upload(meta) is False  # noqa: S101
+        assert await tracker.upload(meta) is False
 
-    assert [request.url.host for request in requests] == ["unwalled.cc"]  # noqa: S101
-    assert meta.tracker_status["UNWALLED"]["status_message"] == "data error: Upload redirect rejected"  # noqa: S101
+    assert [request.url.host for request in requests] == ["unwalled.cc"]
+    assert meta.tracker_status["UNWALLED"]["status_message"] == "data error: Upload redirect rejected"
 
 
 @pytest.mark.asyncio
@@ -788,16 +791,16 @@ async def test_unwalled_omits_tracker_controlled_error_messages(tmp_path: Path) 
     tracker = _tracker()
 
     with (
-        patch("src.trackers.UNIT3D.httpx.AsyncClient", return_value=client),
+        patch("src.integrations.trackers.UNIT3D.httpx.AsyncClient", return_value=client),
         patch.object(tracker, "get_data", new=AsyncMock(return_value={})),
         patch.object(tracker, "get_upload_torrent_filename", new=AsyncMock(return_value="[UNWALLED]")),
         patch.object(tracker, "get_additional_files", new=AsyncMock(return_value={})),
-        patch("src.trackers.UNIT3D.logger.info") as log_info,
+        patch("src.integrations.trackers.UNIT3D.logger.info") as log_info,
     ):
-        assert await tracker.upload(meta) is False  # noqa: S101
+        assert await tracker.upload(meta) is False
 
-    assert sentinel not in str(meta.tracker_status)  # noqa: S101
-    assert all(sentinel not in str(call) for call in log_info.call_args_list)  # noqa: S101
+    assert sentinel not in str(meta.tracker_status)
+    assert all(sentinel not in str(call) for call in log_info.call_args_list)
 
 
 @pytest.mark.asyncio
@@ -834,7 +837,7 @@ async def test_unwalled_rejects_v2_base_and_oversized_final_bundle(tmp_path: Pat
     info[b"file tree"] = {}
     base_path.write_bytes(bencode(metainfo))
 
-    assert await _tracker().get_additional_checks(meta) is False  # noqa: S101
+    assert await _tracker().get_additional_checks(meta) is False
 
     await TorrentCreator.create_torrent(meta, episode, "BASE")
     await _tracker().get_upload_torrent_filename(meta)
@@ -842,7 +845,7 @@ async def test_unwalled_rejects_v2_base_and_oversized_final_bundle(tmp_path: Pat
     padding = 1024 * 1024 - upload_path.stat().st_size - cover.stat().st_size - banner.stat().st_size
     with banner.open("ab") as banner_file:
         banner_file.write(b"x" * max(padding, 0))
-    assert _tracker()._valid_upload_bundle(meta, upload_path) is False  # noqa: S101
+    assert _tracker()._valid_upload_bundle(meta, upload_path) is False
     with pytest.raises(ValueError, match="bundle validation"):
         await _tracker().get_upload_torrent_filename(meta)
 
@@ -876,21 +879,21 @@ async def test_unwalled_debug_torrent_never_contains_personal_announce(tmp_path:
     filename = await _tracker(announce_url="https://unwalled.cc/announce/personal-token").get_upload_torrent_filename(meta)
     torrent = Torrent.read(release_dir / f"{filename}.torrent")
 
-    assert torrent.metainfo.get("announce") == "https://fake.tracker"  # noqa: S101
+    assert torrent.metainfo.get("announce") == "https://fake.tracker"
 
 
 def test_unwalled_rejects_malformed_announce_ports() -> None:
-    assert _tracker()._valid_announce_url("https://unwalled.cc:invalid/announce/token") is False  # noqa: S101
+    assert _tracker()._valid_announce_url("https://unwalled.cc:invalid/announce/token") is False
 
 
 def test_unwalled_rejects_malformed_or_path_traversing_v1_torrents(tmp_path: Path) -> None:
     malformed = tmp_path / "malformed.torrent"
     malformed.write_bytes(b"d4:infod6:lengthi1eee")
-    assert _tracker()._torrent_is_v1(malformed) is False  # noqa: S101
+    assert _tracker()._torrent_is_v1(malformed) is False
 
     recursive = tmp_path / "recursive.torrent"
     recursive.write_bytes(b"d4:info" + b"l" * 1000 + b"e" * 1000 + b"e")
-    assert _tracker()._torrent_is_v1(recursive) is False  # noqa: S101
+    assert _tracker()._torrent_is_v1(recursive) is False
 
     content = tmp_path / "torrent-content"
     content.mkdir()
@@ -907,13 +910,15 @@ def test_unwalled_rejects_malformed_or_path_traversing_v1_torrents(tmp_path: Pat
     first_file = cast(dict[bytes, object], files[0])
     first_file[b"path"] = [b"..", b"episode.mp3"]
     base_path.write_bytes(bencode(metainfo))
-    assert _tracker()._torrent_is_v1(base_path) is False  # noqa: S101
+    assert _tracker()._torrent_is_v1(base_path) is False
 
 
 def test_unwalled_rejects_decompression_bomb_errors(tmp_path: Path) -> None:
     image_path = tmp_path / "bomb.jpg"
     image_path.write_bytes(b"not-an-image")
-    with patch("src.trackers.UNIT3D.unwalled_validation.Image.open", side_effect=Image.DecompressionBombError("bomb")):
-        assert _tracker()._image_details(str(image_path)) is None  # noqa: S101
+    with patch("src.integrations.trackers.UNIT3D.unwalled_validation.Image.open", side_effect=Image.DecompressionBombError("bomb")):
+        assert _tracker()._image_details(str(image_path)) is None
+
+
 def test_podcast_prep_uses_cli_backed_mediainfo() -> None:
-    assert podcast_prep.MediaInfo is mediainfo.MediaInfo  # noqa: S101
+    assert podcast_prep.MediaInfo is mediainfo.MediaInfo

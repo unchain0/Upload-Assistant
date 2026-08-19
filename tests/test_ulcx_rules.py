@@ -1,7 +1,8 @@
 import pytest
-from src.meta import Meta
-from src.prep_helpers import check_pre_release
-from src.trackers.UNIT3D.ulcx import ULCX
+
+from src.domain_models.release import Meta
+from src.integrations.trackers.UNIT3D.ulcx import ULCX
+from src.services.preparation_helpers import check_pre_release
 
 
 def make_ulcx_meta(**kwargs) -> Meta:

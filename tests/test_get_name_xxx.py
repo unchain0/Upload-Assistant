@@ -2,8 +2,8 @@
 
 import asyncio
 
-from src.get_name import NameManager
-from src.meta import Meta
+from src.domain_models.release import Meta
+from src.services.release_naming_service import NameManager
 
 
 def test_xxx_name_preserves_release_and_only_replaces_dots():

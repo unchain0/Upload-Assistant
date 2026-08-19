@@ -1,18 +1,13 @@
-# ruff: noqa: S101
-
 import asyncio
 
 import pytest
 
-from src.meta import Meta
-from src.trackers.UNIT3D.polishtorrent import PolishTorrent
+from src.domain_models.release import Meta
+from src.integrations.trackers.UNIT3D.polishtorrent import PolishTorrent
 
 
 def _movie_meta(**kwargs):
-    images = [
-        {"raw_url": f"https://images.example/full-{index}.png", "img_url": f"https://images.example/thumb-{index}.png"}
-        for index in range(3)
-    ]
+    images = [{"raw_url": f"https://images.example/full-{index}.png", "img_url": f"https://images.example/thumb-{index}.png"} for index in range(3)]
     values = {
         "category": "MOVIE",
         "filelist": ["Example.Movie.2024.mkv"],

@@ -1,7 +1,7 @@
 import asyncio
 
-from src.get_name import NameManager
-from src.meta import Meta
+from src.domain_models.release import Meta
+from src.services.release_naming_service import NameManager
 
 
 def _book_name(meta: Meta) -> str:

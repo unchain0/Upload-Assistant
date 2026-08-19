@@ -7,7 +7,13 @@ from pathlib import Path
 import httpx
 import pytest
 
-from bin.download_integrity import download_bounded_asset, download_bounded_asset_sync, promote_files_with_rollback, safe_extract_tar, safe_extract_zip
+from src.integrations.runtime_tools.download_integrity import (
+    download_bounded_asset,
+    download_bounded_asset_sync,
+    promote_files_with_rollback,
+    safe_extract_tar,
+    safe_extract_zip,
+)
 
 
 class _Response:
@@ -53,7 +59,7 @@ def test_bounded_download_rejects_oversized_content_length(tmp_path: Path) -> No
     with pytest.raises(RuntimeError, match="10-byte limit"):
         asyncio.run(download_bounded_asset(_Client(response), "https://example.invalid/asset", destination, max_bytes=10))
 
-    assert not destination.exists()  # noqa: S101
+    assert not destination.exists()
 
 
 def test_bounded_download_rejects_stream_that_exceeds_limit(tmp_path: Path) -> None:
@@ -63,7 +69,7 @@ def test_bounded_download_rejects_stream_that_exceeds_limit(tmp_path: Path) -> N
     with pytest.raises(RuntimeError, match="10-byte limit"):
         asyncio.run(download_bounded_asset(_Client(response), "https://example.invalid/asset", destination, max_bytes=10))
 
-    assert not destination.exists()  # noqa: S101
+    assert not destination.exists()
 
 
 def test_bounded_download_enforces_total_timeout(tmp_path: Path) -> None:
@@ -73,7 +79,7 @@ def test_bounded_download_enforces_total_timeout(tmp_path: Path) -> None:
     with pytest.raises(TimeoutError):
         asyncio.run(download_bounded_asset(_Client(response), "https://example.invalid/asset", destination, timeout_seconds=0.01))
 
-    assert not destination.exists()  # noqa: S101
+    assert not destination.exists()
 
 
 def test_sync_bootstrap_uses_interruptible_total_timeout(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -84,7 +90,7 @@ def test_sync_bootstrap_uses_interruptible_total_timeout(tmp_path: Path, monkeyp
     with pytest.raises(TimeoutError):
         download_bounded_asset_sync("https://example.invalid/asset", destination, timeout_seconds=0.01)
 
-    assert not destination.exists()  # noqa: S101
+    assert not destination.exists()
 
 
 def test_safe_extract_zip_rejects_cumulative_expanded_size(tmp_path: Path) -> None:
@@ -129,13 +135,13 @@ def test_incomplete_rollback_preserves_recovery_backup(tmp_path: Path, monkeypat
     with pytest.raises(BaseExceptionGroup, match="rollback was incomplete"):
         promote_files_with_rollback([(source, target)], backup_dir)
 
-    assert not target.exists()  # noqa: S101
-    assert (backup_dir / target.name).read_bytes() == b"working"  # noqa: S101
+    assert not target.exists()
+    assert (backup_dir / target.name).read_bytes() == b"working"
 
     with pytest.raises(RuntimeError, match="Recovery backup must be resolved"):
         promote_files_with_rollback([(source, target)], backup_dir)
 
-    assert (backup_dir / target.name).read_bytes() == b"working"  # noqa: S101
+    assert (backup_dir / target.name).read_bytes() == b"working"
 
 
 def test_duplicate_targets_do_not_create_recovery_backup(tmp_path: Path) -> None:
@@ -146,4 +152,4 @@ def test_duplicate_targets_do_not_create_recovery_backup(tmp_path: Path) -> None
     with pytest.raises(ValueError, match="unique filenames"):
         promote_files_with_rollback([(source, target)], backup_dir, remove_targets=[target])
 
-    assert not backup_dir.exists()  # noqa: S101
+    assert not backup_dir.exists()

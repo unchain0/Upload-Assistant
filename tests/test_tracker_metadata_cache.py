@@ -1,9 +1,7 @@
-# ruff: noqa: S101
-
 import asyncio
 
-from src.get_tracker_data import TrackerDataManager
-from src.meta import Meta
+from src.domain_models.release import Meta
+from src.services.tracker_metadata_service import TrackerDataManager
 
 
 class _FakeTrackerMetadataManager:

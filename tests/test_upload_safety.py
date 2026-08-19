@@ -1,11 +1,9 @@
-# ruff: noqa: S101
-
 import asyncio
 
-from src.args import Args
-from src.meta import Meta
-from src.trackerstatus import TrackerStatusManager
-from src.upload_safety import blocks_automatic_upload, content_paths_with_spaces
+from src.delivery.cli.arguments import Args
+from src.domain_models.release import Meta
+from src.engines.upload_safety_policy import blocks_automatic_upload, content_paths_with_spaces
+from src.services.tracker_status_service import TrackerStatusManager
 
 
 def test_single_file_with_spaces_is_blocked() -> None:

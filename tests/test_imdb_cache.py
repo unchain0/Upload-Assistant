@@ -1,9 +1,7 @@
-# ruff: noqa: S101
-
 import asyncio
 
-from src.imdb import imdb_manager
-from src.metadata_cache import cache_for, is_cache_miss
+from src.integrations.cache.metadata_cache import cache_for, is_cache_miss
+from src.integrations.external_apis.imdb import imdb_manager
 
 
 class _Response:
@@ -35,7 +33,7 @@ class _Client:
 
 def test_imdb_graphql_errors_are_not_negative_cached(monkeypatch, tmp_path):
     async def run():
-        monkeypatch.setattr("src.imdb.httpx.AsyncClient", lambda: _Client({"errors": [{"message": "temporarily unavailable"}]}))
+        monkeypatch.setattr("src.integrations.external_apis.imdb.httpx.AsyncClient", lambda: _Client({"errors": [{"message": "temporarily unavailable"}]}))
         config = {"DEFAULT": {"metadata_cache_dir": "cache"}}
 
         assert await imdb_manager.get_imdb_info_api(1, base_dir=tmp_path, config=config) == {}
@@ -47,7 +45,7 @@ def test_imdb_graphql_errors_are_not_negative_cached(monkeypatch, tmp_path):
 def test_imdb_graphql_requests_include_imdb_referer(monkeypatch, tmp_path):
     async def run():
         client = _Client({"data": {"title": {}}})
-        monkeypatch.setattr("src.imdb.httpx.AsyncClient", lambda: client)
+        monkeypatch.setattr("src.integrations.external_apis.imdb.httpx.AsyncClient", lambda: client)
 
         await imdb_manager.get_imdb_info_api(1, base_dir=tmp_path, config={"DEFAULT": {"metadata_cache_dir": "cache"}})
 

@@ -1,7 +1,7 @@
 import asyncio
 
-from src.meta import Meta
-from src.trackers.UNIT3D.homiehelpdesk import HomieHelpDesk
+from src.domain_models.release import Meta
+from src.integrations.trackers.UNIT3D.homiehelpdesk import HomieHelpDesk
 
 
 def _tracker() -> HomieHelpDesk:

@@ -1,9 +1,7 @@
-# ruff: noqa: S101
-
 import asyncio
 
-from src.get_desc import DescriptionBuilder
-from src.meta import Meta
+from src.domain_models.release import Meta
+from src.integrations.trackers.description_builder import DescriptionBuilder
 
 
 def test_tag_overrides_apply_to_description_text_fields():

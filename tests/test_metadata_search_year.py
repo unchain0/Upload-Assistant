@@ -1,8 +1,6 @@
-# ruff: noqa: S101
-
 import pytest
 
-from src.prep_helpers import _normalize_search_year
+from src.services.preparation_helpers import _normalize_search_year
 
 
 @pytest.mark.parametrize(

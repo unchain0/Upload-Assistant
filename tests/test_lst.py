@@ -2,8 +2,8 @@
 
 import asyncio
 
-from src.meta import Meta
-from src.trackers.UNIT3D.lst import LST
+from src.domain_models.release import Meta
+from src.integrations.trackers.UNIT3D.lst import LST
 
 
 def test_lst_music_payload_includes_discogs_release_and_master_ids():

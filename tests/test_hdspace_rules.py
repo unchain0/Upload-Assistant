@@ -4,8 +4,8 @@ from typing import Any
 
 from PIL import Image
 
-from src.meta import Meta
-from src.trackers.hdspace import HDSpace
+from src.domain_models.release import Meta
+from src.integrations.trackers.hdspace import HDSpace
 
 
 def _tracker() -> HDSpace:
@@ -25,6 +25,7 @@ def _screenshot_entry(path: Path, filename: str) -> dict[str, str]:
         "local_file_path": str(path),
     }
 
+
 def _make_meta(**overrides: Any) -> Meta:
     values: dict[str, Any] = {
         "category": "MOVIE",
@@ -40,20 +41,20 @@ def _make_meta(**overrides: Any) -> Meta:
 
 
 def test_hdspace_rejects_resolution_below_720p() -> None:
-    assert not asyncio.run(_tracker().get_additional_checks(_make_meta(resolution="480p")))  # noqa: S101
+    assert not asyncio.run(_tracker().get_additional_checks(_make_meta(resolution="480p")))
 
 
 def test_hdspace_rejects_forbidden_xvid_codecs() -> None:
-    assert not asyncio.run(_tracker().get_additional_checks(_make_meta(video_codec="xvid", video_encode="xvid")))  # noqa: S101
-    assert not asyncio.run(_tracker().get_additional_checks(_make_meta(video_codec="x264", video_encode="divx")))  # noqa: S101
+    assert not asyncio.run(_tracker().get_additional_checks(_make_meta(video_codec="xvid", video_encode="xvid")))
+    assert not asyncio.run(_tracker().get_additional_checks(_make_meta(video_codec="x264", video_encode="divx")))
 
 
 def test_hdspace_rejects_rar_payload_files() -> None:
-    assert not asyncio.run(_tracker().get_additional_checks(_make_meta(filelist=["Movie.2024.rar"])))  # noqa: S101
+    assert not asyncio.run(_tracker().get_additional_checks(_make_meta(filelist=["Movie.2024.rar"])))
 
 
 def test_hdspace_rejects_when_not_enough_screenshots() -> None:
-    assert not asyncio.run(_tracker().get_additional_checks(_make_meta(image_list=[{"raw_url": "https://example.com/frame-1.png", "local_file_path": ""}])))  # noqa: S101
+    assert not asyncio.run(_tracker().get_additional_checks(_make_meta(image_list=[{"raw_url": "https://example.com/frame-1.png", "local_file_path": ""}])))
 
 
 def test_hdspace_rejects_non_png_screenshots(tmp_path: Path) -> None:
@@ -67,7 +68,7 @@ def test_hdspace_rejects_non_png_screenshots(tmp_path: Path) -> None:
         _screenshot_entry(image_paths["1"], "frame-02.png"),
         _screenshot_entry(image_paths["2"], "frame-03.png"),
     ]
-    assert not asyncio.run(_tracker().get_additional_checks(_make_meta(image_list=image_list)))  # noqa: S101
+    assert not asyncio.run(_tracker().get_additional_checks(_make_meta(image_list=image_list)))
 
 
 def test_hdspace_rejects_invalid_screenshot_width(tmp_path: Path) -> None:
@@ -76,7 +77,7 @@ def test_hdspace_rejects_invalid_screenshot_width(tmp_path: Path) -> None:
         _screenshot_entry(_create_png(tmp_path / "frame-2.png", 1366, 768), "frame-2.png"),
         _screenshot_entry(_create_png(tmp_path / "frame-3.png", 1920, 1080), "frame-3.png"),
     ]
-    assert not asyncio.run(_tracker().get_additional_checks(_make_meta(image_list=image_list)))  # noqa: S101
+    assert not asyncio.run(_tracker().get_additional_checks(_make_meta(image_list=image_list)))
 
 
 def test_hdspace_allows_valid_screenshots_with_allowed_dimensions_and_format(tmp_path: Path) -> None:
@@ -85,4 +86,4 @@ def test_hdspace_allows_valid_screenshots_with_allowed_dimensions_and_format(tmp
         _screenshot_entry(_create_png(tmp_path / "frame-2.png", 1920, 1080), "frame-2.png"),
         _screenshot_entry(_create_png(tmp_path / "frame-3.png", 3840, 2160), "frame-3.png"),
     ]
-    assert asyncio.run(_tracker().get_additional_checks(_make_meta(image_list=image_list)))  # noqa: S101
+    assert asyncio.run(_tracker().get_additional_checks(_make_meta(image_list=image_list)))

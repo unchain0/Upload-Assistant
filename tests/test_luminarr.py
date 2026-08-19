@@ -1,13 +1,11 @@
-# ruff: noqa: S101
-
 import asyncio
 from typing import Any
 
 import pytest
 
-from src.dupe_checking import DupeChecker
-from src.meta import Meta
-from src.trackers.UNIT3D.luminarr import Luminarr
+from src.domain_models.release import Meta
+from src.integrations.trackers.UNIT3D.luminarr import Luminarr
+from src.services.duplicate_check_service import DupeChecker
 
 
 def _tracker() -> Luminarr:
@@ -370,14 +368,7 @@ def test_luminarr_rejects_bd_release_without_bdinfo():
 
 
 def test_luminarr_accepts_bd_release_when_bdinfo_is_present():
-    assert (
-        asyncio.run(
-            _tracker().get_additional_checks(
-                _movie_meta(is_disc="BDMV", filelist=["BDMV"], bdinfo={"disc_title": "sample"}, valid_mi_settings=False)
-            )
-        )
-        is True
-    )
+    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(is_disc="BDMV", filelist=["BDMV"], bdinfo={"disc_title": "sample"}, valid_mi_settings=False))) is True
 
 
 def test_luminarr_disc_types_do_not_require_mediainfo_encoding_settings():

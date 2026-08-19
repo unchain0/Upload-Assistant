@@ -1,7 +1,6 @@
-# ruff: noqa: S101
 import asyncio
 
-from src.get_desc import DescriptionBuilder
+from src.integrations.trackers.description_builder import DescriptionBuilder
 
 
 def test_torrentleech_uses_original_ua_screenshot_layout() -> None:

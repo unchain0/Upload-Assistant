@@ -1,5 +1,4 @@
-# ruff: noqa: S101
-from src.get_desc import DescriptionBuilder
+from src.integrations.trackers.description_builder import DescriptionBuilder
 
 
 def test_format_short_mediainfo_json() -> None:

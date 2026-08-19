@@ -1,14 +1,12 @@
-# ruff: noqa: S101
 import io
 import shlex
 from pathlib import Path
 
 import pytest
 
-from src.args import partition_existing_paths, read_paths_from_stdin
-from src.meta import Meta
-from src.queuemanage import QueueManager
-from web_ui.server import _validate_upload_assistant_args
+from src.delivery.cli.arguments import partition_existing_paths, read_paths_from_stdin
+from src.domain_models.release import Meta
+from src.services.queue_service import QueueManager
 
 
 class InteractiveInput(io.StringIO):
@@ -58,11 +56,6 @@ def test_partition_existing_paths_reports_fully_invalid_batch(tmp_path: Path) ->
 
     assert existing == []
     assert absent == [str(first), str(second)]
-
-
-def test_webui_rejects_paths_from_stdin_instead_of_reading_process_stdin() -> None:
-    with pytest.raises(ValueError, match="only available in CLI mode"):
-        _validate_upload_assistant_args(["--paths-from-stdin"])
 
 
 @pytest.mark.asyncio

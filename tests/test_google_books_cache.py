@@ -1,8 +1,6 @@
-# ruff: noqa: S101
-
 import asyncio
 
-from src.google_books import google_books_manager
+from src.integrations.external_apis.google_books import google_books_manager
 
 
 class _Response:
@@ -40,7 +38,7 @@ class _NonMatchingClient(_Client):
 def test_google_books_caches_negative_exact_isbn_lookup(tmp_path, monkeypatch):
     async def run():
         _Client.requests = 0
-        monkeypatch.setattr("src.google_books.httpx.AsyncClient", lambda **_kwargs: _Client())
+        monkeypatch.setattr("src.integrations.external_apis.google_books.httpx.AsyncClient", lambda **_kwargs: _Client())
 
         assert await google_books_manager.search_by_isbn("978-0000000002", tmp_path) is None
         assert await google_books_manager.search_by_isbn("9780000000002", tmp_path) is None
@@ -52,7 +50,7 @@ def test_google_books_caches_negative_exact_isbn_lookup(tmp_path, monkeypatch):
 def test_google_books_caches_nonmatching_results_as_negative(tmp_path, monkeypatch):
     async def run():
         _NonMatchingClient.requests = 0
-        monkeypatch.setattr("src.google_books.httpx.AsyncClient", lambda **_kwargs: _NonMatchingClient())
+        monkeypatch.setattr("src.integrations.external_apis.google_books.httpx.AsyncClient", lambda **_kwargs: _NonMatchingClient())
 
         assert await google_books_manager.search_by_isbn("9780000000002", tmp_path) is None
         assert await google_books_manager.search_by_isbn("9780000000002", tmp_path) is None

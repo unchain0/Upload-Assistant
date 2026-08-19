@@ -1,15 +1,13 @@
-# ruff: noqa: S101
-
 import asyncio
 import os
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from src.clients import Clients
-from src.meta import Meta
-from src.torrent_clients.path_utils import coerce_str_list, is_path_under, map_save_path, tracker_directory
-from src.torrent_clients.qbittorrent import QbittorrentClientMixin, async_link_directory, create_cross_seed_links
+from src.domain_models.release import Meta
+from src.integrations.torrent_clients.client_manager import Clients
+from src.integrations.torrent_clients.path_utils import coerce_str_list, is_path_under, map_save_path, tracker_directory
+from src.integrations.torrent_clients.qbittorrent import QbittorrentClientMixin, async_link_directory, create_cross_seed_links
 
 
 def test_qbittorrent_coerce_str_list_parses_stringified_paths() -> None:
@@ -102,7 +100,7 @@ def test_cross_seed_links_normalize_component_paths(tmp_path: Path) -> None:
     meta = Meta({"path": str(source_dir), "filelist": [str(source_dir / "episode.mkv")]})
 
     async def exercise() -> bool:
-        with patch("src.torrent_clients.qbittorrent.async_link_directory", new=AsyncMock(return_value=True)):
+        with patch("src.integrations.torrent_clients.qbittorrent.async_link_directory", new=AsyncMock(return_value=True)):
             return await create_cross_seed_links(meta, torrent, str(tmp_path / "tracker"), use_hardlink=False)
 
     assert asyncio.run(exercise())
@@ -165,8 +163,8 @@ def test_qbittorrent_maps_single_file_torrent_from_kept_source_folder(tmp_path: 
     async def exercise() -> None:
         with (
             patch.object(qbit, "init_qbittorrent_client", new=AsyncMock(return_value=None)),
-            patch("src.torrent_clients.qbittorrent.create_cross_seed_links", new=AsyncMock(return_value=True)) as mapper,
-            patch("src.torrent_clients.qbittorrent.async_link_directory", new=AsyncMock(return_value=True)) as direct_link,
+            patch("src.integrations.torrent_clients.qbittorrent.create_cross_seed_links", new=AsyncMock(return_value=True)) as mapper,
+            patch("src.integrations.torrent_clients.qbittorrent.async_link_directory", new=AsyncMock(return_value=True)) as direct_link,
         ):
             await qbit.qbittorrent(
                 path=str(source_dir),

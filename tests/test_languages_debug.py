@@ -1,10 +1,9 @@
-# ruff: noqa: S101
 from pathlib import Path
 
 import pytest
 
-from src.languages import LanguagesManager
-from src.meta import Meta
+from src.domain_models.release import Meta
+from src.integrations.media.language_adapter import LanguagesManager
 
 
 @pytest.mark.asyncio

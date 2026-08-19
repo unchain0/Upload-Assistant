@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 from bs4 import BeautifulSoup
 
-from src.trackers.bjshare import BJShare
+from src.integrations.trackers.bjshare import BJShare
 
 
 class FakeResponse:
@@ -25,7 +25,7 @@ class FakeSession:
         self.response = response or FakeResponse()
 
     async def get(self, _url, *, params, follow_redirects):
-        assert follow_redirects  # noqa: S101
+        assert follow_redirects
         self.calls.append(params)
         return self.response
 
@@ -43,7 +43,7 @@ def test_get_database_identifier_returns_imdb_id():
         "html.parser",
     )
 
-    assert BJShare.get_database_identifier(object.__new__(BJShare), soup) == "tt999999999"  # noqa: S101
+    assert BJShare.get_database_identifier(object.__new__(BJShare), soup) == "tt999999999"
 
 
 def test_get_database_identifier_returns_tmdb_id():
@@ -54,7 +54,7 @@ def test_get_database_identifier_returns_tmdb_id():
         "html.parser",
     )
 
-    assert BJShare.get_database_identifier(object.__new__(BJShare), soup) == "tv/999999999"  # noqa: S101
+    assert BJShare.get_database_identifier(object.__new__(BJShare), soup) == "tv/999999999"
 
 
 def test_search_existing_queries_both_media_identifiers_before_title_fallback():
@@ -67,7 +67,7 @@ def test_search_existing_queries_both_media_identifiers_before_title_fallback():
 
     asyncio.run(tracker.search_existing(meta))
 
-    assert tracker.session.calls == [{"searchstr": "tt1234567"}, {"searchstr": "tv/76543"}]  # noqa: S101
+    assert tracker.session.calls == [{"searchstr": "tt1234567"}, {"searchstr": "tv/76543"}]
 
 
 def test_search_existing_queries_title_once_without_media_identifiers():
@@ -80,7 +80,7 @@ def test_search_existing_queries_title_once_without_media_identifiers():
 
     asyncio.run(tracker.search_existing(meta))
 
-    assert tracker.session.calls == [{"searchstr": "Example"}]  # noqa: S101
+    assert tracker.session.calls == [{"searchstr": "Example"}]
 
 
 def test_get_database_overview_extracts_synopsis():
@@ -95,7 +95,7 @@ def test_get_database_overview_extracts_synopsis():
     soup = BeautifulSoup(html, "html.parser")
     tracker = object.__new__(BJShare)
     overview = tracker.get_database_overview(soup)
-    assert overview == "Em busca de uma vida melhor, Lu Xiao Fan deixa o interior..."  # noqa: S101
+    assert overview == "Em busca de uma vida melhor, Lu Xiao Fan deixa o interior..."
 
 
 def test_get_overview_returns_database_overview_when_already_has_the_info():
@@ -105,4 +105,4 @@ def test_get_overview_returns_database_overview_when_already_has_the_info():
     BJShare.database_overview = "Sinopse do site BJ-Share"
 
     result = asyncio.run(tracker.get_overview())
-    assert result == "Sinopse do site BJ-Share"  # noqa: S101
+    assert result == "Sinopse do site BJ-Share"

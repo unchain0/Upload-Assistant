@@ -1,12 +1,10 @@
-# ruff: noqa: S101
-
 import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src.meta import Meta
-from src.prep_game import (
+from src.domain_models.release import Meta
+from src.services.game_preparation import (
     clean_game_title,
     detect_platform_from_files,
     extract_release_group,
@@ -82,7 +80,7 @@ async def test_software_game_prep_uses_raw_filename_metadata(tmp_path) -> None:
         unattended=True,
     )
 
-    with patch("src.prep_game.IGDBAPI.search_game", new=AsyncMock(return_value=[])) as search:
+    with patch("src.services.game_preparation.IGDBAPI.search_game", new=AsyncMock(return_value=[])) as search:
         await gather_game_prep(
             meta,
             str(release_path),
@@ -102,7 +100,7 @@ async def test_game_prep_extracts_compact_letter_version_from_dmg(tmp_path) -> N
     release_path = tmp_path / "Factory.Town.2.Paradise.v133f.MacOS.dmg"
     meta = Meta(path=str(release_path), filelist=[str(release_path)], unattended=True)
 
-    with patch("src.prep_game.IGDBAPI.search_game", new=AsyncMock(return_value=[])) as search:
+    with patch("src.services.game_preparation.IGDBAPI.search_game", new=AsyncMock(return_value=[])) as search:
         await gather_game_prep(
             meta,
             str(release_path),
@@ -123,8 +121,8 @@ async def test_game_prep_replaces_prepopulated_inferred_title_with_igdb_name(tmp
     result = {"id": 1, "name": "Canonical IGDB Title"}
 
     with (
-        patch("src.prep_game.IGDBAPI.search_game", new=AsyncMock(return_value=[result])),
-        patch("src.prep_game.IGDBAPI.cache_game_details", new=AsyncMock()),
+        patch("src.services.game_preparation.IGDBAPI.search_game", new=AsyncMock(return_value=[result])),
+        patch("src.services.game_preparation.IGDBAPI.cache_game_details", new=AsyncMock()),
     ):
         await gather_game_prep(
             meta,
@@ -146,7 +144,7 @@ async def test_guitar_pro_pkg_is_prepared_as_mac_software(tmp_path) -> None:
     notes.write_text("install PKG\nUse Serial", encoding="utf-8")
     meta = Meta(path=str(release), filelist=[str(package), str(notes)], unattended=True)
 
-    with patch("src.prep_game.IGDBAPI.search_game", new=AsyncMock(return_value=[])):
+    with patch("src.services.game_preparation.IGDBAPI.search_game", new=AsyncMock(return_value=[])):
         await gather_game_prep(
             meta,
             str(package),
@@ -175,7 +173,7 @@ async def test_windows_installer_is_prepared_as_pc_software(tmp_path) -> None:
     notes.write_text("Install the application.\n", encoding="utf-8")
     meta = Meta(path=str(release), filelist=[str(installer), str(notes)], unattended=True)
 
-    with patch("src.prep_game.IGDBAPI.search_game", new=AsyncMock(return_value=[])) as search:
+    with patch("src.services.game_preparation.IGDBAPI.search_game", new=AsyncMock(return_value=[])) as search:
         await gather_game_prep(
             meta,
             str(installer),
@@ -200,10 +198,7 @@ async def test_scene_game_uses_local_nfo_and_extracts_installation_steps(tmp_pat
     iso.touch()
     nfo = release / "tenoke-cellar.keeper.nfo"
     nfo.write_text(
-        "TENOKE\n│ 1. Extract and burn or mount the .iso │\n"
-        "│ 2. Run SETUP.exe and install the game │\n"
-        "│ 3. Copy crack to install dir │\n"
-        "│ 4. Play │\n",
+        "TENOKE\n│ 1. Extract and burn or mount the .iso │\n│ 2. Run SETUP.exe and install the game │\n│ 3. Copy crack to install dir │\n│ 4. Play │\n",
         encoding="utf-8",
     )
     meta = Meta(path=str(release), filelist=[str(iso), str(nfo)], platform="PC", manual_platform="PC", unattended=True)
@@ -211,9 +206,4 @@ async def test_scene_game_uses_local_nfo_and_extracts_installation_steps(tmp_pat
     await gather_game_prep(meta, str(iso), str(tmp_path), {"DEFAULT": {}})
 
     assert meta.scene_nfo_file == str(nfo)
-    assert meta.software_notes == (
-        "1. Extract and burn or mount the .iso\n"
-        "2. Run SETUP.exe and install the game\n"
-        "3. Copy crack to install dir\n"
-        "4. Play"
-    )
+    assert meta.software_notes == ("1. Extract and burn or mount the .iso\n2. Run SETUP.exe and install the game\n3. Copy crack to install dir\n4. Play")

@@ -1,12 +1,10 @@
-# ruff: noqa: S101
-
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src.is_scene import SceneManager
-from src.meta import Meta
+from src.domain_models.release import Meta
+from src.integrations.media.scene_detection import SceneManager
 
 
 @pytest.mark.asyncio
@@ -23,7 +21,7 @@ async def test_scene_lookup_runs_when_meta_scene_defaults_to_false(tmp_path) -> 
     client.get.return_value = response
     meta = Meta(base_dir=str(tmp_path), uuid="cellar", category="GAME", path=str(tmp_path / "Cellar.Keeper-TENOKE"), isdir=True)
 
-    with patch("src.is_scene.httpx.AsyncClient", return_value=client):
+    with patch("src.integrations.media.scene_detection.httpx.AsyncClient", return_value=client):
         video, scene, imdb = await SceneManager({"DEFAULT": {}}).is_scene(str(meta.path), meta)
 
     assert scene is True

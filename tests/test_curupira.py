@@ -1,7 +1,7 @@
 import asyncio
 
-from src.meta import Meta
-from src.trackers.USENET.curupira import Curupira
+from src.domain_models.release import Meta
+from src.integrations.trackers.USENET.curupira import Curupira
 
 
 def test_dynamic_hdr_plots_are_preserved_in_curupira_screenshot_limit() -> None:
@@ -13,5 +13,5 @@ def test_dynamic_hdr_plots_are_preserved_in_curupira_screenshot_limit() -> None:
 
     urls = asyncio.run(tracker.get_screens(meta))
 
-    assert len(urls) == 6  # noqa: S101
-    assert urls[-1] == "https://images.example/dynamic-hdr.png"  # noqa: S101
+    assert len(urls) == 6
+    assert urls[-1] == "https://images.example/dynamic-hdr.png"

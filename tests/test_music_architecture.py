@@ -9,17 +9,16 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 
-from src.args import Args
-from src.get_desc import DescriptionBuilder
-from src.meta import Meta
-from src.music.analyzer import MusicReleaseAnalyzer, _clean, _format_for
-from src.music.models import AudioTrack, MetadataSource, MusicRelease
-from src.music.prep import _apply_music_cli_overrides, _discogs_ids, _find_discogs_release, _music_override_year, enrich_music_from_orpheus
-from src.music.sources import DiscogsEnricher, MusicBrainzEnricher, _music_cache_path, _write_music_cache
-from src.prep import Prep
-from src.trackers.orpheus import Orpheus
-from src.uphelper import _music_confirmation_lines
-from web_ui.server import _extract_execution_preview
+from src.delivery.cli.arguments import Args
+from src.domain_models.music import AudioTrack, MetadataSource, MusicRelease
+from src.domain_models.release import Meta
+from src.integrations.external_apis.music_sources import DiscogsEnricher, MusicBrainzEnricher, _music_cache_path, _write_music_cache
+from src.integrations.media.music_analyzer import MusicReleaseAnalyzer, _clean, _format_for
+from src.integrations.trackers.description_builder import DescriptionBuilder
+from src.integrations.trackers.orpheus import Orpheus
+from src.services.music_preparation import _apply_music_cli_overrides, _discogs_ids, _find_discogs_release, _music_override_year, enrich_music_from_orpheus
+from src.services.preparation_service import Prep
+from src.services.upload_decision_service import _music_confirmation_lines
 
 
 def test_description_builder_renders_music_release_details():
@@ -954,12 +953,12 @@ def test_music_prep_runs_shared_client_path_lookup_before_returning():
     tracker_ids = ["orpheus"]
 
     with (
-        patch("src.prep.prep_helpers.init_meta", return_value=(False, False, client, False, hash_ids, tracker_ids)),
-        patch("src.prep.prep_helpers.detect_disc_and_category", new=AsyncMock(return_value=("", {}))),
+        patch("src.services.preparation_service.prep_helpers.init_meta", return_value=(False, False, client, False, hash_ids, tracker_ids)),
+        patch("src.services.preparation_service.prep_helpers.detect_disc_and_category", new=AsyncMock(return_value=("", {}))),
         patch.object(Prep, "_gather_music_prep", new=AsyncMock()),
-        patch("src.prep.prep_helpers.process_trackers_and_torrent", new=AsyncMock()) as process_trackers,
-        patch("src.prep._enrich_music_from_orpheus_fn", new=AsyncMock()) as enrich_orpheus,
-        patch("src.prep._enrich_music_from_discogs_fn", new=AsyncMock()) as enrich_discogs,
+        patch("src.services.preparation_service.prep_helpers.process_trackers_and_torrent", new=AsyncMock()) as process_trackers,
+        patch("src.services.preparation_service._enrich_music_from_orpheus_fn", new=AsyncMock()) as enrich_orpheus,
+        patch("src.services.preparation_service._enrich_music_from_discogs_fn", new=AsyncMock()) as enrich_discogs,
     ):
         result = asyncio.run(prep.gather_prep(meta, "cli"))
 
@@ -967,37 +966,6 @@ def test_music_prep_runs_shared_client_path_lookup_before_returning():
     process_trackers.assert_awaited_once_with(prep, meta, client, hash_ids, tracker_ids, "", "")
     enrich_orpheus.assert_awaited_once_with(meta, prep.config)
     enrich_discogs.assert_awaited_once_with(meta, prep.config)
-
-
-def test_webui_music_preview_includes_release_review_data():
-    meta = {
-        "category": "MUSIC",
-        "path": "C:/Music/Artist - Album",
-        "music_release": {
-            "fields": {
-                "artists": {"value": ["Artist One", "Artist Two"], "source": "file_tag"},
-                "album": {"value": "Album", "source": "file_tag"},
-                "year": {"value": "2024", "source": "file_tag"},
-                "media": {"value": "WEB", "source": "auxiliary"},
-                "release_type": {"value": "Album", "source": "external"},
-                "release_label": {"value": "Example Records", "source": "auxiliary"},
-                "disc_count": {"value": 2, "source": "inferred"},
-                "track_count": {"value": 12, "source": "inferred"},
-            },
-            "tracks": [{"format": "FLAC", "codec": "FLAC", "bit_depth": 24, "sample_rate": 48_000, "channels": 2, "bitrate": 1_600_000}],
-            "auxiliary": {"logs": ["rip.log"], "nfos": ["release.nfo"]},
-            "warnings": ["warning: review rip log"],
-            "conflicts": {"year": ["2024", "2025"]},
-        },
-    }
-
-    preview = _extract_execution_preview(meta, meta["path"])
-
-    assert preview["title"] == "Album"
-    assert preview["music"]["artist"] == "Artist One & Artist Two"
-    assert preview["music"]["technical"] == "FLAC / 24-bit / 48 kHz / Stereo / 1600 kbps"
-    assert preview["music"]["auxiliary"] == ["1 log", "1 NFO"]
-    assert preview["music"]["conflicts"] == ["year"]
 
 
 def test_music_cli_arguments_override_analysis_with_user_provenance(tmp_path):
@@ -1068,8 +1036,8 @@ def test_orpheus_async_multipart_uses_mapping_and_repeats_list_fields():
 
 
 def test_gather_music_prep_generates_mediainfo(tmp_path):
-    from src.music.models import AudioTrack, MusicRelease
-    from src.music.prep import gather_music_prep
+    from src.domain_models.music import AudioTrack, MusicRelease
+    from src.services.music_preparation import gather_music_prep
 
     meta = Meta(
         category="MUSIC",
@@ -1094,8 +1062,8 @@ def test_gather_music_prep_generates_mediainfo(tmp_path):
 
     with (
         patch.object(MusicReleaseAnalyzer, "analyze", return_value=release),
-        patch("src.exportmi.export_info", new=AsyncMock(return_value=mock_mi)) as mock_export_info,
-        patch("src.music.prep.prepare_music_cover", new=AsyncMock(return_value="")),
+        patch("src.integrations.media.media_info_export.export_info", new=AsyncMock(return_value=mock_mi)) as mock_export_info,
+        patch("src.services.music_preparation.prepare_music_cover", new=AsyncMock(return_value="")),
     ):
         asyncio.run(gather_music_prep(meta, {"DEFAULT": {}}))
 

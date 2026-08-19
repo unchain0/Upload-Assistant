@@ -1,5 +1,4 @@
 """Regression tests for automatic XXX video category detection."""
-# ruff: noqa: S101
 
 from __future__ import annotations
 
@@ -9,12 +8,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from src.meta import Meta
-from src.prep import Prep
-from src.prep_helpers import detect_disc_and_category, is_xxx_video_release
-from src.trackers.USENET.suio import Suio
-from src.xxx_keywords import extract_xxx_keywords
-from src.xxx_platforms import XXX_PLATFORM_KEYWORDS
+from src.domain_models.adult_platforms import XXX_PLATFORM_KEYWORDS
+from src.domain_models.release import Meta
+from src.engines.adult_content_detection import extract_xxx_keywords
+from src.integrations.trackers.USENET.suio import Suio
+from src.services.preparation_helpers import detect_disc_and_category, is_xxx_video_release
+from src.services.preparation_service import Prep
 
 
 @pytest.mark.parametrize(

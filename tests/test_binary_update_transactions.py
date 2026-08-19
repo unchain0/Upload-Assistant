@@ -6,7 +6,13 @@ from typing import Any
 
 import pytest
 
-from bin import get_7z, get_bdinfo, get_dynamic_hdr_tools, get_mkbrr, get_par2, get_pesto, get_zentag
+from src.integrations.runtime_tools import bdinfo as get_bdinfo
+from src.integrations.runtime_tools import dynamic_hdr_tools as get_dynamic_hdr_tools
+from src.integrations.runtime_tools import mkbrr as get_mkbrr
+from src.integrations.runtime_tools import par2 as get_par2
+from src.integrations.runtime_tools import pesto as get_pesto
+from src.integrations.runtime_tools import seven_zip as get_7z
+from src.integrations.runtime_tools import zentag_binary as get_zentag
 
 
 @pytest.mark.parametrize(
@@ -51,8 +57,8 @@ def test_failed_binary_manager_update_preserves_existing_installation(
     with pytest.raises(Exception, match="simulated download failure"):
         asyncio.run(ensure(tmp_path))
 
-    assert binary.read_bytes() == b"working binary"  # noqa: S101
-    assert marker.read_text(encoding="utf-8") == "working marker"  # noqa: S101
+    assert binary.read_bytes() == b"working binary"
+    assert marker.read_text(encoding="utf-8") == "working marker"
 
 
 class _Client:
@@ -82,7 +88,7 @@ def test_pesto_cache_hit_does_not_download(tmp_path: Path, monkeypatch: pytest.M
 
     monkeypatch.setattr(get_pesto, "download_verified_asset", unexpected_download)
 
-    assert asyncio.run(get_pesto.PestoBinaryManager.ensure_pesto_binary(tmp_path)) == str(binary)  # noqa: S101
+    assert asyncio.run(get_pesto.PestoBinaryManager.ensure_pesto_binary(tmp_path)) == str(binary)
 
 
 def test_pesto_upgrade_replaces_stale_marker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -103,9 +109,9 @@ def test_pesto_upgrade_replaces_stale_marker(tmp_path: Path, monkeypatch: pytest
 
     asyncio.run(get_pesto.PestoBinaryManager.ensure_pesto_binary(tmp_path))
 
-    assert binary.read_bytes() == b"new"  # noqa: S101
-    assert (target / "pesto-v0.6.0").is_file()  # noqa: S101
-    assert not stale_marker.exists()  # noqa: S101
+    assert binary.read_bytes() == b"new"
+    assert (target / "pesto-v0.6.0").is_file()
+    assert not stale_marker.exists()
 
 
 def test_pesto_promotion_failure_preserves_old_installation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -131,8 +137,8 @@ def test_pesto_promotion_failure_preserves_old_installation(tmp_path: Path, monk
     with pytest.raises(Exception, match="promotion failed"):
         asyncio.run(get_pesto.PestoBinaryManager.ensure_pesto_binary(tmp_path))
 
-    assert binary.read_bytes() == b"old"  # noqa: S101
-    assert stale_marker.read_text(encoding="utf-8") == "old marker"  # noqa: S101
+    assert binary.read_bytes() == b"old"
+    assert stale_marker.read_text(encoding="utf-8") == "old marker"
 
 
 def test_failed_dynamic_hdr_update_preserves_existing_installation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -154,8 +160,8 @@ def test_failed_dynamic_hdr_update_preserves_existing_installation(tmp_path: Pat
     with pytest.raises(RuntimeError, match="simulated download failure"):
         asyncio.run(get_dynamic_hdr_tools.get_tool(str(tmp_path), "dovi"))
 
-    assert binary.read_bytes() == b"working binary"  # noqa: S101
-    assert marker.read_text(encoding="utf-8") == "working marker"  # noqa: S101
+    assert binary.read_bytes() == b"working binary"
+    assert marker.read_text(encoding="utf-8") == "working marker"
 
 
 def test_failed_zentag_update_preserves_existing_installation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -176,5 +182,5 @@ def test_failed_zentag_update_preserves_existing_installation(tmp_path: Path, mo
     with pytest.raises(RuntimeError, match="simulated download failure"):
         asyncio.run(get_zentag.ZentagBinaryManager.ensure_binary(tmp_path))
 
-    assert binary.read_bytes() == b"working binary"  # noqa: S101
-    assert marker.read_text(encoding="utf-8") == get_zentag.ZentagBinaryManager.VERSION  # noqa: S101
+    assert binary.read_bytes() == b"working binary"
+    assert marker.read_text(encoding="utf-8") == get_zentag.ZentagBinaryManager.VERSION

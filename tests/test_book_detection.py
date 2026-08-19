@@ -1,7 +1,5 @@
 """Regression tests for automatic ebook category detection."""
 
-# ruff: noqa: S101
-
 from __future__ import annotations
 
 import asyncio
@@ -13,13 +11,20 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-import src.book_prep as book_prep
-from src.book_extractors import extract_epub_metadata, extract_isbn_from_pdf, extract_pdf_page_count, get_epubmeta_output, validate_isbn_checksum
-from src.book_prep import _epub_content_identifiers, _extract_asin_identifier, book_identity_conflict, book_identity_from_path, missing_book_fields, resolve_book_filelist
-from src.exceptions import ItemProcessingError
-from src.meta import Meta
-from src.myanonamouse import MyAnonamouseManager
-from src.prep_helpers import detect_disc_and_category
+import src.services.book_preparation as book_prep
+from src.domain_models.processing import ItemProcessingError
+from src.domain_models.release import Meta
+from src.integrations.external_apis.myanonamouse import MyAnonamouseManager
+from src.integrations.media.book_extractors import extract_epub_metadata, extract_isbn_from_pdf, extract_pdf_page_count, get_epubmeta_output, validate_isbn_checksum
+from src.services.book_preparation import (
+    _epub_content_identifiers,
+    _extract_asin_identifier,
+    book_identity_conflict,
+    book_identity_from_path,
+    missing_book_fields,
+    resolve_book_filelist,
+)
+from src.services.preparation_helpers import detect_disc_and_category
 
 
 def test_epub_identifier_scan_rejects_extreme_compression_ratio(tmp_path: Path) -> None:
@@ -39,7 +44,7 @@ def test_epub_identifier_scan_rejects_extreme_compression_ratio(tmp_path: Path) 
 def test_epub_metadata_prefers_unique_package_isbn(tmp_path: Path) -> None:
     epub = tmp_path / "book.epub"
     container = '<?xml version="1.0"?><container><rootfiles><rootfile full-path="OEBPS/content.opf"/></rootfiles></container>'
-    opf = '''<?xml version="1.0" encoding="UTF-8"?>
+    opf = """<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" xmlns:dc="http://purl.org/dc/elements/1.1/" unique-identifier="pub-id">
   <metadata>
     <dc:identifier id="uuid">urn:uuid:12345678-1234-1234-1234-123456789012</dc:identifier>
@@ -47,7 +52,7 @@ def test_epub_metadata_prefers_unique_package_isbn(tmp_path: Path) -> None:
     <dc:title>Now and Then</dc:title>
     <dc:creator> Sara Miller </dc:creator>
   </metadata>
-</package>'''
+</package>"""
     with zipfile.ZipFile(epub, "w") as archive:
         archive.writestr("META-INF/container.xml", container)
         archive.writestr("OEBPS/content.opf", opf)
@@ -225,9 +230,7 @@ def test_book_metadata_prefers_one_word_filename_title_over_generic_provider_tit
     filename_title: str,
     expected_title: str,
 ) -> None:
-    assert (
-        book_prep._prefer_descriptive_source_title("A Novel", "George Orwell", filename_title) == expected_title
-    )
+    assert book_prep._prefer_descriptive_source_title("A Novel", "George Orwell", filename_title) == expected_title
 
 
 def test_book_metadata_prefers_full_filename_author_over_surname_only_metadata() -> None:
@@ -244,7 +247,7 @@ def test_book_metadata_extracts_publisher_label_from_overview() -> None:
 async def test_book_cover_download_tries_alternate_mam_extensions(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from PIL import Image
 
-    from src.takescreens import download_artwork_from_meta
+    from src.integrations.media.screenshot_capture import download_artwork_from_meta
 
     cover_bytes = io.BytesIO()
     Image.new("RGB", (32, 48), "red").save(cover_bytes, format="PNG")
@@ -269,7 +272,7 @@ async def test_book_cover_download_tries_alternate_mam_extensions(tmp_path: Path
         async def get(self, url: str, **_kwargs: object) -> Response:
             return Response(200, cover_bytes.getvalue()) if url.endswith(".png") else Response(404)
 
-    monkeypatch.setattr("src.takescreens.is_public_http_url", lambda _url: True)
+    monkeypatch.setattr("src.integrations.media.screenshot_capture.is_public_http_url", lambda _url: True)
     monkeypatch.setattr("httpx.AsyncClient", lambda **_kwargs: Client())
     meta = Meta(artwork_url="https://cdn.myanonamouse.net/t/p/large/1263040.jpeg")
     artwork_path = tmp_path / "cover.png"
@@ -312,15 +315,15 @@ def test_epub_creator_roles_select_author_regardless_of_element_order(tmp_path, 
         "editor": '<dc:creator id="creator04">Sarah Tilson</dc:creator>',
     }
     ordered_creators = [creators["author"], creators["editor"]] if author_first else [creators["editor"], creators["author"]]
-    opf = f'''<?xml version="1.0" encoding="UTF-8"?>
+    opf = f"""<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" xmlns:dc="http://purl.org/dc/elements/1.1/" version="3.0">
   <metadata>
     <dc:title>Infinite Dendrogram: Volume 18</dc:title>
-    {''.join(ordered_creators)}
+    {"".join(ordered_creators)}
     <meta property="role" refines="#creator01" scheme="marc:relators">aut</meta>
     <meta property="role" refines="#creator04" scheme="marc:relators">edt</meta>
   </metadata>
-</package>'''
+</package>"""
     epub = tmp_path / "book.epub"
     with zipfile.ZipFile(epub, "w") as archive:
         archive.writestr(
@@ -333,7 +336,7 @@ def test_epub_creator_roles_select_author_regardless_of_element_order(tmp_path, 
 
 
 def test_epub_modification_date_is_not_used_as_release_year(tmp_path: Path) -> None:
-    opf = '''<?xml version="1.0" encoding="UTF-8"?>
+    opf = """<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf"
          xmlns:dc="http://purl.org/dc/elements/1.1/"
          xmlns:opf="http://www.idpf.org/2007/opf" version="2.0">
@@ -341,7 +344,7 @@ def test_epub_modification_date_is_not_used_as_release_year(tmp_path: Path) -> N
     <dc:title>Black Summoner: Volume 5</dc:title>
     <dc:date opf:event="modification">2022-01-13</dc:date>
   </metadata>
-</package>'''
+</package>"""
     epub = tmp_path / "book.epub"
     with zipfile.ZipFile(epub, "w") as archive:
         archive.writestr(
@@ -408,7 +411,7 @@ async def test_m4b_cover_fallback_ignores_malformed_chapter_title(tmp_path, monk
     import mutagen
     import mutagen.mp4
 
-    from src.takescreens import extract_embedded_cover_from_audiobook
+    from src.integrations.media.screenshot_capture import extract_embedded_cover_from_audiobook
 
     audiobook = tmp_path / "book.m4b"
     artwork = tmp_path / "cover.jpg"
@@ -505,9 +508,7 @@ def test_myanonamouse_extracts_publisher_metadata() -> None:
 
 
 def test_myanonamouse_trims_unescaped_publisher_whitespace() -> None:
-    metadata = MyAnonamouseManager()._parse_torrent_info(
-        {"title": "Example", "publisher": "&nbsp;Brilliance Audio&nbsp;"}
-    )
+    metadata = MyAnonamouseManager()._parse_torrent_info({"title": "Example", "publisher": "&nbsp;Brilliance Audio&nbsp;"})
 
     assert metadata["publisher"] == "Brilliance Audio"
 

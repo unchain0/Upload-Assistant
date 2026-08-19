@@ -12,7 +12,8 @@ config: dict[str, Any] = {
         "update_notification_cache_hours": 4,
         # tmdb api key **REQUIRED**
         # visit "https://www.themoviedb.org/settings/api" copy api key and insert below
-        "tmdb_api": "",
+        "tmdb_api": "",  # TMDb v3 API key (preferred for existing configs)
+        "tmdb_access_token": "",  # Optional TMDb v4 API Read Access Token
         # METADATA CACHE
         # Temporarily saves responses from sites such as TMDB and IMDb. Future
         # runs can reuse this data and make fewer API requests.
@@ -2962,7 +2963,7 @@ config: dict[str, Any] = {
     # If you find issue, especially in local/remote path mapping, use the "--debug" argument to print out some related details
     "TORRENT_CLIENTS": {
         # Name your torrent clients here, for example, this example is named "qbittorrent" and is set as default_torrent_client above
-        # All options relate to the webui, make sure you have the webui secured if it has WAN access
+        # All options target the torrent client API/Web UI; secure that service if it has WAN access
         # **DO NOT** modify torrent_client name, eg: "qbit"
         # See https://github.com/wastaken7/Upload-Assistant/blob/development/docs/configuration.md#torrent-clients
         "qbittorrent": {

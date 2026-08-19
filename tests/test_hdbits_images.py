@@ -1,14 +1,12 @@
 """Regression coverage for HDBits screenshot rehosting."""
 
-# ruff: noqa: S101
-
 import asyncio
 
 import pytest
 
-from src.meta import Meta
-from src.temp_paths import screenshots_dir
-from src.trackers.hdbits import HDBits
+from src.domain_models.release import Meta
+from src.integrations.filesystem.temp_paths import screenshots_dir
+from src.integrations.trackers.hdbits import HDBits
 
 
 class _Response:
@@ -32,7 +30,7 @@ class _Client:
 
 
 def test_hdbits_rehosts_screenshots_from_typed_directory(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("src.trackers.hdbits.httpx.AsyncClient", lambda **_kwargs: _Client())
+    monkeypatch.setattr("src.integrations.trackers.hdbits.httpx.AsyncClient", lambda **_kwargs: _Client())
     screenshot = screenshots_dir(tmp_path, "release") / "screen.png"
     screenshot.write_bytes(b"png")
     tracker = HDBits({"TRACKERS": {"HDBITS": {"username": "user", "passkey": "pass"}}})

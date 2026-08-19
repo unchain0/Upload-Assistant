@@ -1,10 +1,8 @@
-# ruff: noqa: S101
-
 import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
-from src.trackers.common import Common
+from src.integrations.trackers.common import Common
 
 
 def check_subtitles(tmp_path: Path, *names: str) -> bool:

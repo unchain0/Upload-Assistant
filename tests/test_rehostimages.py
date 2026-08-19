@@ -1,21 +1,19 @@
 """Regression coverage for tracker-specific image-host reuploads."""
 
-# ruff: noqa: S101
-
 import asyncio
 from pathlib import Path
 from typing import ClassVar
 from unittest.mock import AsyncMock
 
-from src.meta import Meta
-from src.rehostimages import (
+from src.domain_models.release import Meta
+from src.domain_models.tracker_image_policy import get_tracker_image_collection, has_tracker_image_collection
+from src.integrations.image_hosts.rehosting import (
     ImageHostPolicy,
     RehostImagesManager,
     check_tracker_image_hosts,
     has_restricted_image_hosts,
     select_common_image_host,
 )
-from src.tracker_images import get_tracker_image_collection, has_tracker_image_collection
 
 
 class _Alpha:

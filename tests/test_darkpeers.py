@@ -1,12 +1,11 @@
-# ruff: noqa: S101
 """Regression tests for DarkPeers-specific BOOK and MUSIC title rules."""
 
 import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
-from src.meta import Meta
-from src.trackers.UNIT3D.darkpeers import DarkPeers
+from src.domain_models.release import Meta
+from src.integrations.trackers.UNIT3D.darkpeers import DarkPeers
 
 
 def test_darkpeers_rejects_malformed_filelists_for_all_categories():
@@ -747,7 +746,7 @@ def test_darkpeers_tv_year_rule_detects_a_distinct_exact_tmdb_title():
         ]
     }
 
-    with patch("src.trackers.UNIT3D.darkpeers.httpx.AsyncClient.get", new=AsyncMock(return_value=response)):
+    with patch("src.integrations.trackers.UNIT3D.darkpeers.httpx.AsyncClient.get", new=AsyncMock(return_value=response)):
         assert asyncio.run(adapter._tv_title_needs_year(meta)) is True
 
 
@@ -820,7 +819,7 @@ def test_darkpeers_tv_year_rule_does_not_count_the_only_tmdb_result_as_a_duplica
     response = Mock()
     response.json.return_value = {"results": [{"id": 279807, "name": "BLACK TORCH", "original_name": "BLACK TORCH"}]}
 
-    with patch("src.trackers.UNIT3D.darkpeers.httpx.AsyncClient.get", new=AsyncMock(return_value=response)):
+    with patch("src.integrations.trackers.UNIT3D.darkpeers.httpx.AsyncClient.get", new=AsyncMock(return_value=response)):
         assert asyncio.run(adapter._tv_title_needs_year(meta)) is False
 
 
@@ -1054,14 +1053,17 @@ def test_darkpeers_accepts_webdl_bitrate_when_configured_higher_quality_is_not_r
         audio_bitrate=160,
     )
 
-    assert _additional_checks_with_config(
-        meta,
-        {
-            "webl_min_video_kbps": {
-                "1080p": 1000,
-            }
-        },
-    ) is True
+    assert (
+        _additional_checks_with_config(
+            meta,
+            {
+                "webl_min_video_kbps": {
+                    "1080p": 1000,
+                }
+            },
+        )
+        is True
+    )
 
 
 def test_darkpeers_allows_480p_webdl_when_video_bitrate_threshold_is_unset():
@@ -1113,14 +1115,14 @@ def test_darkpeers_rejects_movie_tv_payload_with_non_video_only_files():
 
 
 def test_darkpeers_enforces_screenshot_count_rules_movie_tv():
-    base = dict(
-        category="MOVIE",
-        unattended=True,
-        language_checked=True,
-        audio_languages=["English"],
-        filelist=["Movie.mkv"],
-        resolution="1080p",
-    )
+    base = {
+        "category": "MOVIE",
+        "unattended": True,
+        "language_checked": True,
+        "audio_languages": ["English"],
+        "filelist": ["Movie.mkv"],
+        "resolution": "1080p",
+    }
 
     assert _additional_checks(Meta(**base, screens=2)) is False
     assert _additional_checks(Meta(**base, screens=3)) is True

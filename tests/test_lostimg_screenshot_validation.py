@@ -1,6 +1,6 @@
 import pytest
 
-from src.takescreens import LOSTIMG_MAX_SIZE, LOSTIMG_MIN_SIZE, is_valid_lostimg_image_size
+from src.integrations.media.screenshot_capture import LOSTIMG_MAX_SIZE, LOSTIMG_MIN_SIZE, is_valid_lostimg_image_size
 
 
 @pytest.mark.parametrize(
@@ -13,4 +13,4 @@ from src.takescreens import LOSTIMG_MAX_SIZE, LOSTIMG_MIN_SIZE, is_valid_lostimg
     ],
 )
 def test_lostimg_size_boundaries(image_size: int, valid: bool) -> None:
-    assert is_valid_lostimg_image_size(image_size) is valid  # noqa: S101
+    assert is_valid_lostimg_image_size(image_size) is valid

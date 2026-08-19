@@ -1,13 +1,12 @@
 # Assertions are the idiomatic pytest checks for this focused payload test.
-# ruff: noqa: S101
 
 from unittest.mock import AsyncMock
 
 import pytest
 
-from src.meta import Meta
-from src.rehostimages import check_tracker_image_hosts
-from src.trackers.UNIT3D.hawkeuno import HawkeUno
+from src.domain_models.release import Meta
+from src.integrations.image_hosts.rehosting import check_tracker_image_hosts
+from src.integrations.trackers.UNIT3D.hawkeuno import HawkeUno
 
 
 @pytest.mark.asyncio

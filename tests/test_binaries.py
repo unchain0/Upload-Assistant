@@ -1,10 +1,9 @@
-# ruff: noqa: S101
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from src.binaries import configured_binary
+from src.integrations.runtime_tools.configured_binaries import configured_binary
 
 
 def test_configured_binary_returns_existing_override(tmp_path: Path) -> None:
@@ -61,8 +60,8 @@ def test_configured_binary_rejects_non_executable_posix_override(tmp_path: Path)
     executable.touch()
 
     with (
-        patch("src.binaries.os.name", "posix"),
-        patch("src.binaries.os.access", return_value=False),
+        patch("src.integrations.runtime_tools.configured_binaries.os.name", "posix"),
+        patch("src.integrations.runtime_tools.configured_binaries.os.access", return_value=False),
         pytest.raises(FileNotFoundError, match="not executable"),
     ):
         configured_binary("ffmpeg_path", {"DEFAULT": {"ffmpeg_path": str(executable)}})

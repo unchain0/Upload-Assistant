@@ -1,9 +1,7 @@
-# ruff: noqa: S101
-
 import asyncio
 
-from src.exportmi import mi_resolution
-from src.video import VideoManager
+from src.integrations.media.media_info_export import mi_resolution
+from src.integrations.media.video import VideoManager
 
 
 def test_get_hdr_returns_empty_when_mediainfo_has_no_video_track() -> None:

@@ -1,11 +1,10 @@
-# ruff: noqa: S101
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
 from typing import Any
 
 import pytest
 
-import src.trackerhandle as trackerhandle
-from src.meta import Meta
+import src.services.tracker_upload_service as trackerhandle
+from src.domain_models.release import Meta
 
 
 class FakeClient:
@@ -186,8 +185,8 @@ async def test_prepared_zenith_book_can_keep_cjk_metadata(monkeypatch: pytest.Mo
         prepared.update({"zentag_prepared": True, "tracker_status": source.tracker_status})
         return prepared
 
-    monkeypatch.setattr("src.trackerhandle.prepare_tracker_meta", prepared_meta)
-    monkeypatch.setattr("src.trackerhandle.TrackerSetup.trackers_enabled", lambda _self, _meta: ["ZENITH"])
+    monkeypatch.setattr("src.services.tracker_upload_service.prepare_tracker_meta", prepared_meta)
+    monkeypatch.setattr("src.services.tracker_upload_service.TrackerSetup.trackers_enabled", lambda _self, _meta: ["ZENITH"])
 
     await trackerhandle.process_trackers(source, _config(), FakeClient(), ["ZENITH"], {"ZENITH": FakeZenith}, [], [])
 

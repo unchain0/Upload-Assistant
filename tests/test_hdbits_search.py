@@ -1,13 +1,11 @@
-# ruff: noqa: S101
-
 import asyncio
 
 import pytest
 
-from src.get_tracker_data import TrackerDataManager
-from src.meta import Meta
-from src.trackermeta import update_metadata_from_tracker
-from src.trackers.hdbits import HDBits
+from src.domain_models.release import Meta
+from src.integrations.trackers.hdbits import HDBits
+from src.services.tracker_metadata_parser import update_metadata_from_tracker
+from src.services.tracker_metadata_service import TrackerDataManager
 
 
 class _AuthErrorResponse:
@@ -31,7 +29,7 @@ class _FakeAsyncClient:
 
 
 def test_hdbits_search_returns_six_values_for_api_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("src.trackers.hdbits.httpx.AsyncClient", lambda **_kwargs: _FakeAsyncClient())
+    monkeypatch.setattr("src.integrations.trackers.hdbits.httpx.AsyncClient", lambda **_kwargs: _FakeAsyncClient())
     tracker = HDBits({"TRACKERS": {"HDBITS": {}}})
 
     result = asyncio.run(tracker.search_filename("Gladiator.2000.mkv", "file", Meta(category="MOVIE")))

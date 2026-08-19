@@ -1,12 +1,11 @@
-# ruff: noqa: S101
 """Regression tests for MidnightScene naming support."""
 
 import asyncio
 
 import pytest
 
-from src.meta import Meta
-from src.trackers.UNIT3D.midnightscene import MidnightScene
+from src.domain_models.release import Meta
+from src.integrations.trackers.UNIT3D.midnightscene import MidnightScene
 
 
 def _tracker() -> MidnightScene:
@@ -96,9 +95,7 @@ def test_midnightscene_reorders_year_before_aka_for_tv_names():
         language_checked=True,
     )
 
-    assert asyncio.run(_tracker().get_name(meta)) == {
-        "name": "Shrouding the Heavens AKA Zhe Tian 2023 S01E175 CHINESE 2160p WEB-DL DD+ 2.0 H.265-QHstudIo"
-    }
+    assert asyncio.run(_tracker().get_name(meta)) == {"name": "Shrouding the Heavens AKA Zhe Tian 2023 S01E175 CHINESE 2160p WEB-DL DD+ 2.0 H.265-QHstudIo"}
 
 
 def test_midnightscene_does_not_treat_dvdrip_as_an_unofficial_source():

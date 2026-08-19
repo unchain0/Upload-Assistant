@@ -1,6 +1,4 @@
-# ruff: noqa: S101
-
-from src.takescreens import discard_smallest_capture_result
+from src.integrations.media.screenshot_capture import discard_smallest_capture_result
 
 
 def test_discard_smallest_capture_result_only_removes_current_batch(tmp_path) -> None:

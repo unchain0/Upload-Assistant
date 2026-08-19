@@ -1,14 +1,13 @@
-# ruff: noqa: S101
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from PIL import Image
 
-from src.args import Args
-from src.artwork import MAX_ARTWORK_BYTES, _find_local_artwork_sources, _write_png, is_valid_cover_image, prepare_artwork
-from src.meta import Meta
-from src.trackers.UNIT3D import UNIT3D
+from src.delivery.cli.arguments import Args
+from src.domain_models.release import Meta
+from src.integrations.media.artwork import MAX_ARTWORK_BYTES, _find_local_artwork_sources, _write_png, is_valid_cover_image, prepare_artwork
+from src.integrations.trackers.UNIT3D import UNIT3D
 from upload import _prepare_book_artwork, _prompt_book_meta, _prompt_music_meta
 
 
@@ -118,7 +117,7 @@ async def test_explicit_local_artwork_honors_byte_limit(tmp_path: Path) -> None:
         output.truncate(MAX_ARTWORK_BYTES + 1)
     meta = Meta(base_dir=str(tmp_path), uuid="oversized-artwork", explicit_poster=str(source))
 
-    with patch("src.artwork.Image.open", side_effect=AssertionError("oversized explicit artwork must not be decoded")):
+    with patch("src.integrations.media.artwork.Image.open", side_effect=AssertionError("oversized explicit artwork must not be decoded")):
         await prepare_artwork(meta)
 
     assert not meta.artwork_path
@@ -141,7 +140,7 @@ async def test_generic_poster_url_is_normalized_and_retained(tmp_path: Path) -> 
     Image.new("RGB", (32, 48), "green").save(source)
     meta = Meta(base_dir=str(tmp_path), uuid="url-artwork", explicit_poster="https://images.example/poster.jpg")
 
-    with patch("src.artwork._download_public_image", new=AsyncMock(return_value=source.read_bytes())):
+    with patch("src.integrations.media.artwork._download_public_image", new=AsyncMock(return_value=source.read_bytes())):
         await prepare_artwork(meta)
 
     assert meta.artwork_url == "https://images.example/poster.jpg"

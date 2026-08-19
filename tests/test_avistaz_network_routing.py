@@ -2,8 +2,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.trackers.AVISTAZ.routing import AvistaZNetworkRouter
-from src.trackerstatus import merge_tracker_status
+from src.integrations.trackers.AVISTAZ.routing import AvistaZNetworkRouter
+from src.services.tracker_status_service import merge_tracker_status
 
 
 class FakeTracker:
@@ -40,9 +40,9 @@ async def test_old_privatehd_content_is_redirected_after_cookie_validation():
 
     await router().apply(meta)
 
-    assert meta.trackers == ["CINEMAZ"]  # noqa: S101
-    assert meta.tracker_status["PRIVATEHD"]["redirected_to"] == "CINEMAZ"  # noqa: S101
-    assert meta.tracker_status["CINEMAZ"]["redirected_from"] == ["PRIVATEHD"]  # noqa: S101
+    assert meta.trackers == ["CINEMAZ"]
+    assert meta.tracker_status["PRIVATEHD"]["redirected_to"] == "CINEMAZ"
+    assert meta.tracker_status["CINEMAZ"]["redirected_from"] == ["PRIVATEHD"]
 
 
 @pytest.mark.asyncio
@@ -54,8 +54,8 @@ async def test_redirect_keeps_source_when_destination_cookie_is_invalid():
     finally:
         FakeTracker.cookie_valid = True
 
-    assert meta.trackers == ["PRIVATEHD"]  # noqa: S101
-    assert "routing_error" in meta.tracker_status["PRIVATEHD"]  # noqa: S101
+    assert meta.trackers == ["PRIVATEHD"]
+    assert "routing_error" in meta.tracker_status["PRIVATEHD"]
 
 
 @pytest.mark.asyncio
@@ -64,8 +64,8 @@ async def test_conflicting_rules_require_manual_review():
 
     await router().apply(meta)
 
-    assert meta.trackers == ["PRIVATEHD"]  # noqa: S101
-    assert meta.tracker_status["PRIVATEHD"]["routing_suggested_to"] is None  # noqa: S101
+    assert meta.trackers == ["PRIVATEHD"]
+    assert meta.tracker_status["PRIVATEHD"]["routing_suggested_to"] is None
 
 
 @pytest.mark.asyncio
@@ -74,7 +74,7 @@ async def test_asian_privatehd_content_is_redirected_to_avistaz():
 
     await router().apply(meta)
 
-    assert meta.trackers == ["AVISTAZ"]  # noqa: S101
+    assert meta.trackers == ["AVISTAZ"]
 
 
 @pytest.mark.asyncio
@@ -83,8 +83,8 @@ async def test_disabled_string_value_does_not_enable_unattended_redirects():
 
     await router("false").apply(meta)
 
-    assert meta.trackers == ["PRIVATEHD"]  # noqa: S101
-    assert meta.tracker_status["PRIVATEHD"]["routing_suggested_to"] == "CINEMAZ"  # noqa: S101
+    assert meta.trackers == ["PRIVATEHD"]
+    assert meta.tracker_status["PRIVATEHD"]["routing_suggested_to"] == "CINEMAZ"
 
 
 @pytest.mark.asyncio
@@ -93,8 +93,8 @@ async def test_recent_english_content_on_cinemaz_is_only_suggested():
 
     await router().apply(meta)
 
-    assert meta.trackers == ["CINEMAZ"]  # noqa: S101
-    assert meta.tracker_status["CINEMAZ"]["routing_suggested_to"] == "PRIVATEHD"  # noqa: S101
+    assert meta.trackers == ["CINEMAZ"]
+    assert meta.tracker_status["CINEMAZ"]["routing_suggested_to"] == "PRIVATEHD"
 
 
 @pytest.mark.asyncio
@@ -103,7 +103,7 @@ async def test_sd_resolution_prevents_cinemaz_to_privatehd_suggestion():
 
     await router().apply(meta)
 
-    assert meta.tracker_status == {}  # noqa: S101
+    assert meta.tracker_status == {}
 
 
 def test_merge_tracker_status_preserves_routing_metadata():
@@ -112,5 +112,5 @@ def test_merge_tracker_status_preserves_routing_metadata():
         {"PRIVATEHD": {"redirected_to": "CINEMAZ", "skipped": True}, "CINEMAZ": {"redirected_from": ["PRIVATEHD"]}},
     )
 
-    assert merged["PRIVATEHD"]["redirected_to"] == "CINEMAZ"  # noqa: S101
-    assert merged["CINEMAZ"] == {"redirected_from": ["PRIVATEHD"], "upload": True, "skipped": False}  # noqa: S101
+    assert merged["PRIVATEHD"]["redirected_to"] == "CINEMAZ"
+    assert merged["CINEMAZ"] == {"redirected_from": ["PRIVATEHD"], "upload": True, "skipped": False}

@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from src.trackers.AVISTAZ.privatehd import PrivateHD
+from src.integrations.trackers.AVISTAZ.privatehd import PrivateHD
 
 
 def make_meta(**overrides):
@@ -38,7 +38,7 @@ def test_hdtv_transport_stream_is_allowed():
 
     warnings = tracker().rules(meta)
 
-    assert warnings == ""  # noqa: S101
+    assert warnings == ""
 
 
 def test_eac3_audio_is_allowed_when_format_commercial_name_is_missing():
@@ -46,7 +46,7 @@ def test_eac3_audio_is_allowed_when_format_commercial_name_is_missing():
 
     warnings = tracker().rules(meta)
 
-    assert warnings == ""  # noqa: S101
+    assert warnings == ""
 
 
 def test_crf_above_twenty_is_reported():
@@ -64,4 +64,4 @@ def test_crf_above_twenty_is_reported():
 
     warnings = tracker().rules(meta)
 
-    assert "CRF 21.5 exceeds" in warnings  # noqa: S101
+    assert "CRF 21.5 exceeds" in warnings

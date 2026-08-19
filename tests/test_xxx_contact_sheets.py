@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from src import takescreens
-from src.meta import Meta
-from src.screenshot_manifest import files as manifest_files
+from src.domain_models.release import Meta
+from src.integrations.filesystem.screenshot_manifest import files as manifest_files
+from src.integrations.media import screenshot_capture as takescreens
 
 
 def test_xxx_contact_sheet_settings_have_expected_defaults():
@@ -54,9 +54,9 @@ async def test_xxx_contact_sheets_create_one_grid_per_video_up_to_configured_lim
         output.write_bytes(b"contact sheet")
         return 0, b"", b""
 
-    monkeypatch.setattr("src.takescreens.ffmpeg.probe", fake_probe)
-    monkeypatch.setattr("src.takescreens.run_ffmpeg", fake_run_ffmpeg)
-    monkeypatch.setattr("src.takescreens._xxx_contact_sheet_fontfile", lambda: "C:/Windows/Fonts/arial.ttf")
+    monkeypatch.setattr("src.integrations.media.screenshot_capture.ffmpeg.probe", fake_probe)
+    monkeypatch.setattr("src.integrations.media.screenshot_capture.run_ffmpeg", fake_run_ffmpeg)
+    monkeypatch.setattr("src.integrations.media.screenshot_capture._xxx_contact_sheet_fontfile", lambda: "C:/Windows/Fonts/arial.ttf")
     meta = Meta(base_dir=str(tmp_path), uuid="xxx-release", category="XXX")
 
     sheets = await takescreens.xxx_contact_sheets(videos, meta.uuid, meta.base_dir, meta)
@@ -88,9 +88,9 @@ async def test_animated_xxx_contact_sheet_is_registered_as_webp(tmp_path, monkey
         output.write_bytes(b"animated webp")
         return 0, b"", b""
 
-    monkeypatch.setattr("src.takescreens.ffmpeg.probe", fake_probe)
-    monkeypatch.setattr("src.takescreens.run_ffmpeg", fake_run_ffmpeg)
-    monkeypatch.setattr("src.takescreens._xxx_contact_sheet_fontfile", lambda: "C:/Windows/Fonts/arial.ttf")
+    monkeypatch.setattr("src.integrations.media.screenshot_capture.ffmpeg.probe", fake_probe)
+    monkeypatch.setattr("src.integrations.media.screenshot_capture.run_ffmpeg", fake_run_ffmpeg)
+    monkeypatch.setattr("src.integrations.media.screenshot_capture._xxx_contact_sheet_fontfile", lambda: "C:/Windows/Fonts/arial.ttf")
     meta = Meta(base_dir=str(tmp_path), uuid="animated-xxx", category="XXX")
 
     sheets = await takescreens.xxx_contact_sheets([str(video)], meta.uuid, meta.base_dir, meta)

@@ -1,11 +1,9 @@
-# ruff: noqa: S101
-
 import os
 from pathlib import Path
 
 import pytest
 
-from bin import runtime_tool_paths
+from src.integrations.runtime_tools import runtime_tool_paths
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX ownership checks do not apply on Windows")
@@ -41,3 +39,15 @@ def test_trusted_executable_rejects_shared_writable_file(tmp_path: Path) -> None
     binary.chmod(0o777)
 
     assert runtime_tool_paths.trusted_executable(binary) is False
+
+
+def test_windows_runtime_tool_path_checks_use_access_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    binary = tmp_path / "tool.exe"
+    binary.write_bytes(b"tool")
+    directory = tmp_path / "directory"
+    directory.mkdir()
+    fake_os = type("FakeOS", (), {"name": "nt", "W_OK": os.W_OK, "X_OK": os.X_OK, "access": staticmethod(lambda _path, _mode: True)})()
+    monkeypatch.setattr(runtime_tool_paths, "os", fake_os)
+
+    assert runtime_tool_paths._is_private_writable_directory(directory)
+    assert runtime_tool_paths.trusted_executable(binary)

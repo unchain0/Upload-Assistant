@@ -4,9 +4,9 @@ from typing import Any
 
 import pytest
 
-import src.book_prep as book_prep
-from src.args import Args
-from src.meta import Meta
+import src.services.book_preparation as book_prep
+from src.delivery.cli.arguments import Args
+from src.domain_models.release import Meta
 
 
 def test_cli_accepts_complete_audiobook_edition_override(tmp_path: Path) -> None:
@@ -85,9 +85,9 @@ async def test_complete_audiobook_edition_override_survives_conflicting_enrichme
         return 64
 
     monkeypatch.setattr(book_prep, "export_info", export_stub)
-    monkeypatch.setattr("src.myanonamouse.myanonamouse_manager.search_by_id", mam_stub)
-    monkeypatch.setattr("src.google_books.google_books_manager.search_by_isbn", no_result)
-    monkeypatch.setattr("src.openlibrary.openlibrary_manager.search_by_isbn", no_result)
+    monkeypatch.setattr("src.integrations.external_apis.myanonamouse.myanonamouse_manager.search_by_id", mam_stub)
+    monkeypatch.setattr("src.integrations.external_apis.google_books.google_books_manager.search_by_isbn", no_result)
+    monkeypatch.setattr("src.integrations.external_apis.openlibrary.openlibrary_manager.search_by_isbn", no_result)
     monkeypatch.setattr(book_prep, "get_audiobook_duration", duration_stub)
     monkeypatch.setattr(book_prep, "get_audiobook_bitrate", bitrate_stub)
 

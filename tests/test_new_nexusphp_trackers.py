@@ -1,11 +1,10 @@
-# ruff: noqa: S101
 import asyncio
 
-from src.meta import Meta
-from src.trackers.NEXUSPHP.lemonhd import LemonHD
-from src.trackers.NEXUSPHP.oneptba import OnePTBA
-from src.trackers.NEXUSPHP.ptzone import PTZone
-from src.trackers.NEXUSPHP.xingyungept import XingyungePT
+from src.domain_models.release import Meta
+from src.integrations.trackers.NEXUSPHP.lemonhd import LemonHD
+from src.integrations.trackers.NEXUSPHP.oneptba import OnePTBA
+from src.integrations.trackers.NEXUSPHP.ptzone import PTZone
+from src.integrations.trackers.NEXUSPHP.xingyungept import XingyungePT
 
 dummy_config = {"DEFAULT": {"tmdb_api": "dummy_key"}, "TRACKERS": {}}
 

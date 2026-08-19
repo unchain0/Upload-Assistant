@@ -1,6 +1,4 @@
-# ruff: noqa: S101
-
-from src.disc_menus import discard_previous_menu_capture_files
+from src.integrations.media.disc_menus import discard_previous_menu_capture_files
 
 
 def test_discard_previous_menu_capture_files_only_removes_the_current_vob_batch(tmp_path) -> None:

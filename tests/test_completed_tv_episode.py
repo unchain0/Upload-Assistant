@@ -1,8 +1,6 @@
-# ruff: noqa: S101
-
-from src.meta import Meta
-from src.trackers.common import Common
-from src.trackerstatus import TrackerStatusManager
+from src.domain_models.release import Meta
+from src.integrations.trackers.common import Common
+from src.services.tracker_status_service import TrackerStatusManager
 
 
 def test_tmdb_ended_status_identifies_completed_episode() -> None:

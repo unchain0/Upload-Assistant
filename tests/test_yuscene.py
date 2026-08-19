@@ -1,11 +1,9 @@
-# ruff: noqa: S101
-
 import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
-from src.meta import Meta
-from src.trackers.UNIT3D.yuscene import YUSCENE
+from src.domain_models.release import Meta
+from src.integrations.trackers.UNIT3D.yuscene import YUSCENE
 
 
 def _tracker() -> YUSCENE:
@@ -109,16 +107,12 @@ def test_yuscene_translates_non_english_book_metadata_before_upload():
             "translations": [
                 {"translatedText": "Kenji Miyazawa"},
                 {"translatedText": "Complete Collection of Children's Stories"},
-                {
-                    "translatedText": (
-                        "This complete audiobook collection presents the celebrated children's stories written by Kenji Miyazawa."
-                    )
-                },
+                {"translatedText": ("This complete audiobook collection presents the celebrated children's stories written by Kenji Miyazawa.")},
             ]
         }
     }
 
-    with patch("src.trackers.UNIT3D.yuscene.httpx.AsyncClient.post", new=AsyncMock(return_value=response)) as translate:
+    with patch("src.integrations.trackers.UNIT3D.yuscene.httpx.AsyncClient.post", new=AsyncMock(return_value=response)) as translate:
         assert asyncio.run(tracker.get_additional_checks(meta)) is True
 
     translate.assert_awaited_once()
@@ -132,10 +126,7 @@ def test_yuscene_accepts_verified_english_book_metadata_with_original_text_optio
     meta = _book_meta(
         author="Kenji Miyazawa 宮沢 賢治",
         title="Complete Collection of Children's Stories 宮沢賢治童話全集",
-        book_overview=(
-            "This complete audiobook collection presents the celebrated children's stories written by Kenji Miyazawa. "
-            "Original Japanese title: 宮沢賢治童話全集."
-        ),
+        book_overview=("This complete audiobook collection presents the celebrated children's stories written by Kenji Miyazawa. Original Japanese title: 宮沢賢治童話全集."),
     )
 
     assert asyncio.run(_tracker().get_additional_checks(meta)) is True

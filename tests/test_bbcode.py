@@ -1,5 +1,4 @@
-# ruff: noqa: S101
-from src.bbcode import BBCODE
+from src.integrations.trackers.bbcode_formatting import BBCODE
 
 
 def test_clean_unit3d_description_removes_line_wrapped_align_center_signature() -> None:
