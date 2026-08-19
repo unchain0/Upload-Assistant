@@ -2,9 +2,6 @@
 import re
 from typing import Any
 
-from rich.markup import escape
-
-from src.domain_models.processing import ItemProcessingError
 from src.domain_models.release import Meta
 from src.integrations.media.language_adapter import languages_manager
 from src.integrations.observability.runtime_support import logger
@@ -91,76 +88,70 @@ class ItaTorrents(UNIT3D):
 
     async def get_name(self, meta: Meta) -> dict[str, str]:
         type_name = await self.get_type_name(meta) or ""
-        title = meta.title
-        year = str(meta.year) if meta.year is not None else ""
-        if meta.manual_year or 0 > 0:
-            year = str(meta.manual_year)
-        resolution = meta.resolution
-        if resolution == "OTHER":
-            resolution = ""
-        audio = meta.audio
-        season = str(meta.season or "")
-        episode = meta.episode or ""
-        repack = meta.repack
-        three_d = meta.three_d
-        tag = meta.tag or ""
-        source = str(meta.source)
-        hdr = meta.hdr
-        video_codec = meta.video_codec
-        region = str(meta.region)
-        if meta.is_disc == "BDMV":
-            video_codec = meta.video_codec
-            region = str(meta.region)
-        elif meta.is_disc == "DVD":
-            region = str(meta.region)
-        edition = meta.edition
-        if "hybrid" in edition.upper():
-            edition = edition.replace("Hybrid", "").strip()
-
-        if meta.category == "TV":
-            year = str(meta.year) if (meta.year is not None and meta.search_year != "") else ""
-            if meta.manual_date:
-                season = ""
-                episode = ""
-        if meta.no_season is True:
-            season = ""
-        if meta.no_year is True:
-            year = ""
-
+        year = self._display_year(meta)
+        season, episode = self._episode_tokens(meta)
+        edition = self._edition_name(meta.edition)
         dubs = await self.get_dubs(meta)
-
-        """
-        From https://itatorrents.xyz/wikis/20
-
-        Struttura Titolo per: Full Disc, Remux
-        Name Year S##E## Cut REPACK Resolution Edition Region 3D SOURCE TYPE Hi10P HDR VCodec Dub ACodec Channels Object-Tag
-
-        Struttura Titolo per: Encode, WEB-DL, WEBRip, HDTV, DLMux, BDMux, WEBMux, DVDMux, BDRip, DVDRip
-        Name Year S##E## Cut REPACK Resolution Edition 3D SOURCE TYPE Dub ACodec Channels Object Hi10P HDR VCodec-Tag
-        """
-
-        if type_name == "DISC" or type_name == "REMUX":
-            itt_name = f"{title} {year} {season}{episode} {repack} {resolution} {edition} {region} {three_d} {source} {'REMUX' if type_name == 'REMUX' else ''} {hdr} {video_codec} {dubs} {audio}"
-
+        if type_name in {"DISC", "REMUX"}:
+            name = self._disc_name(meta, type_name, year, season, episode, edition, dubs)
         else:
-            type_name = type_name.replace("WEBDL", "WEB-DL").replace("WEBRIP", "WEBRip").replace("DVDRIP", "DVDRip").replace("ENCODE", "BluRay")
-            itt_name = f"{title} {year} {season}{episode} {repack} {resolution} {edition} {three_d} {type_name} {dubs} {audio} {hdr} {video_codec}"
+            name = self._encoded_name(meta, type_name, year, season, episode, edition, dubs)
+        return {"name": self._clean_name(name, meta.tag or "")}
 
-        try:
-            itt_name = " ".join(itt_name.split())
-        except Exception:
-            logger.info(f"{self.tracker}: [bold red]Unable to generate name. Please re-run and correct any of the following args if needed.")
-            logger.info(f"{self.tracker}: --category [yellow]{escape(str(meta.category))}")
-            logger.info(f"{self.tracker}: --type [yellow]{escape(str(meta.type))}")
-            logger.info(f"{self.tracker}: --source [yellow]{escape(str(meta.source))}")
-            logger.info(f"{self.tracker}: [bold green]If you specified type, try also specifying source")
+    @classmethod
+    def _display_year(cls, meta: Meta) -> str:
+        if meta.no_year is True:
+            return ""
+        if meta.category == "TV":
+            return cls._tv_year(meta)
+        return cls._base_year(meta)
 
-            raise ItemProcessingError("ItaTorrents release naming failed because required metadata is incomplete.", str(meta.path or "")) from None
-        name_notag = itt_name
-        itt_name = name_notag + tag
-        itt_name = itt_name.replace("Dubbed", "").replace("Dual-Audio", "")
+    @staticmethod
+    def _tv_year(meta: Meta) -> str:
+        if meta.year is None or meta.search_year == "":
+            return ""
+        return str(meta.manual_year) if meta.manual_year else str(meta.year)
 
-        return {"name": re.sub(r"\s{2,}", " ", itt_name)}
+    @staticmethod
+    def _base_year(meta: Meta) -> str:
+        if meta.manual_year:
+            return str(meta.manual_year)
+        return str(meta.year) if meta.year is not None else ""
+
+    @staticmethod
+    def _episode_tokens(meta: Meta) -> tuple[str, str]:
+        season = str(meta.season or "")
+        episode = str(meta.episode or "")
+        if meta.manual_date or meta.no_season is True:
+            return "", ""
+        return season, episode
+
+    @staticmethod
+    def _edition_name(edition: str) -> str:
+        return re.sub(r"\bHybrid\b", "", edition or "", flags=re.IGNORECASE).strip()
+
+    @staticmethod
+    def _disc_name(meta: Meta, type_name: str, year: str, season: str, episode: str, edition: str, dubs: str) -> str:
+        remux = "REMUX" if type_name == "REMUX" else ""
+        resolution = "" if meta.resolution == "OTHER" else meta.resolution
+        return (
+            f"{meta.title} {year} {season}{episode} {meta.repack} {resolution} {edition} {meta.region} {meta.three_d} "
+            f"{meta.source} {remux} {meta.hdr} {meta.video_codec} {dubs} {meta.audio}"
+        )
+
+    @staticmethod
+    def _encoded_name(meta: Meta, type_name: str, year: str, season: str, episode: str, edition: str, dubs: str) -> str:
+        normalized_type = ItaTorrents._display_type(type_name)
+        resolution = "" if meta.resolution == "OTHER" else meta.resolution
+        return f"{meta.title} {year} {season}{episode} {meta.repack} {resolution} {edition} {meta.three_d} {normalized_type} {dubs} {meta.audio} {meta.hdr} {meta.video_codec}"
+
+    @staticmethod
+    def _display_type(type_name: str) -> str:
+        return type_name.replace("WEBDL", "WEB-DL").replace("WEBRIP", "WEBRip").replace("DVDRIP", "DVDRip").replace("ENCODE", "BluRay")
+
+    @staticmethod
+    def _clean_name(name: str, tag: str) -> str:
+        return re.sub(r"\s{2,}", " ", f"{name}{tag}".replace("Dubbed", "").replace("Dual-Audio", "").strip())
 
     async def get_dubs(self, meta: Meta) -> str:
         if not meta.language_checked:
