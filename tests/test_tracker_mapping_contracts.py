@@ -313,3 +313,52 @@ async def test_registered_trackers_implement_deterministic_mapping_contracts(tmp
     assert not unresolved, "Unresolved deterministic mapping contracts:\n" + "\n".join(
         f"{tracker}.{method}: {'; '.join(failures.get((tracker, method), [])[:3])}" for tracker, method in unresolved[:50]
     )
+
+
+def _mapping_mode_cases(signature: inspect.Signature, meta: Meta) -> list[dict[str, object]]:
+    cases: list[dict[str, object]] = []
+    if "mapping_only" in signature.parameters:
+        cases.append({"mapping_only": True})
+    if "reverse" in signature.parameters:
+        cases.append({"reverse": True})
+    for name, value in (("category", meta.category), ("type", meta.type), ("resolution", meta.resolution)):
+        if name in signature.parameters:
+            cases.append({name: value})
+    return cases
+
+
+async def _call_mapping_mode(method: Any, meta: Meta, kwargs: dict[str, object]) -> object:
+    result = method(meta, **kwargs)
+    return await result if inspect.isawaitable(result) else result
+
+
+def _mapping_method(tracker: object, method_name: str) -> Any | None:
+    method = getattr(tracker, method_name, None)
+    return method if callable(method) else None
+
+
+async def _exercise_tracker_mapping_modes(tracker_name: str, tracker: object, meta: Meta) -> int:
+    if tracker_name == "UNWALLED":
+        return 0
+    tracker_meta = meta.copy()
+    tracker_meta.tracker_status.setdefault(tracker_name, {})
+    attempted = 0
+    for method_name in ("get_category_id", "get_type_id", "get_resolution_id"):
+        method = _mapping_method(tracker, method_name)
+        if method is None:
+            continue
+        for kwargs in _mapping_mode_cases(inspect.signature(method), tracker_meta):
+            result = await _call_mapping_mode(method, tracker_meta, kwargs)
+            assert result is not None
+            attempted += 1
+    return attempted
+
+
+@pytest.mark.asyncio
+async def test_registered_mapping_modes_cover_forward_reverse_and_mapping_only(tmp_path: Path) -> None:
+    config = _configured_catalog()
+    meta = _release(tmp_path / "mapping-modes", category="MOVIE", release_type="DISC", resolution="2160p")
+    attempted = 0
+    for tracker_name, tracker_class in sorted(tracker_class_map.items()):
+        attempted += await _exercise_tracker_mapping_modes(tracker_name, tracker_class(config), meta)
+    assert attempted >= 300
