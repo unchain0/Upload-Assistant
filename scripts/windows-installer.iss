@@ -37,18 +37,16 @@ Source: "install-bundled-windows.ps1"; DestDir: "{tmp}"; Flags: deleteafterinsta
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
 [Icons]
-Name: "{group}\Upload Assistant WebUI"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File ""{app}\scripts\run-webui-tray.ps1"" -AppDir ""{app}"""; WorkingDir: "{app}"; IconFilename: "{app}\logo.ico"
 Name: "{group}\Upload Assistant Configuration"; Filename: "{app}\bin\ua-config.cmd"; WorkingDir: "{app}"; IconFilename: "{app}\logo.ico"
 Name: "{group}\Upload Assistant Command Prompt"; Filename: "{cmd}"; Parameters: "/k set PATH={app}\bin;%PATH% & title Upload Assistant"; WorkingDir: "{app}"; IconFilename: "{app}\logo.ico"
-Name: "{autodesktop}\Upload Assistant WebUI"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File ""{app}\scripts\run-webui-tray.ps1"" -AppDir ""{app}"""; WorkingDir: "{app}"; IconFilename: "{app}\logo.ico"; Tasks: desktopicon
 
 [Run]
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{tmp}\install-bundled-windows.ps1"" -InstallDir ""{app}"""; StatusMsg: "Installing Upload-Assistant and configuring environment (first installation may take a while)..."; Flags: waituntilterminated runhidden
 
 [Messages]
 FinishedHeadingLabel=Completing the [name] Setup Wizard
-FinishedLabelNoIcons=Setup has finished installing [name] on your computer.%n%nAvailable commands (open a new terminal window):%n  ua%n  ua-config%n  ua-update%n  ua-webui
-FinishedLabel=Setup has finished installing [name] on your computer.%n%nAvailable commands (open a new terminal window):%n  ua%n  ua-config%n  ua-update%n  ua-webui
+FinishedLabelNoIcons=Setup has finished installing [name] on your computer.%n%nAvailable commands (open a new terminal window):%n  ua%n  ua-config%n  ua-update
+FinishedLabel=Setup has finished installing [name] on your computer.%n%nAvailable commands (open a new terminal window):%n  ua%n  ua-config%n  ua-update
 
 [Code]
 function NextButtonClick(CurPageID: Integer): Boolean;

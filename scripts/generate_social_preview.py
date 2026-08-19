@@ -8,20 +8,42 @@ sys.path.append(str(Path(__file__).resolve().parent))
 from generate_icons import draw_logo
 
 
+def _draw_vertical_gradient(draw: ImageDraw.ImageDraw) -> None:
+    for y in range(640):
+        ratio = y / 639.0
+        red = int(12 + 16 * ratio)
+        green = int(10 + 15 * ratio)
+        blue = int(9 + 14 * ratio)
+        draw.line([(0, y), (1280, y)], fill=(red, green, blue, 255))
+
+
+def _draw_grid(draw: ImageDraw.ImageDraw) -> None:
+    grid_color = (41, 37, 36, 51)
+    for x in range(0, 1280, 40):
+        draw.line([(x, 0), (x, 640)], fill=grid_color, width=1)
+    for y in range(0, 640, 40):
+        draw.line([(0, y), (1280, y)], fill=grid_color, width=1)
+
+
+def _draw_glow(center_x: int, center_y: int) -> Image.Image:
+    layer = Image.new("RGBA", (1280, 640), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer)
+    for radius in range(500, 0, -10):
+        alpha = int(20 * (1.0 - radius / 500.0))
+        draw.ellipse(
+            [center_x - radius, center_y - radius, center_x + radius, center_y + radius],
+            fill=(180, 83, 9, alpha),
+        )
+    return layer
+
+
 def draw_social_preview():
     # 1. Canvas: 1280x640, transparent/RGBA
     img = Image.new("RGBA", (1280, 640), (0, 0, 0, 255))
     draw = ImageDraw.Draw(img)
 
     # 2. Background: vertical gradient
-    # Start: #0c0a09 (12, 10, 9)
-    # End: #1c1917 (28, 25, 23)
-    for y in range(640):
-        ratio = y / 639.0
-        r = int(12 + (28 - 12) * ratio)
-        g = int(10 + (25 - 10) * ratio)
-        b = int(9 + (23 - 9) * ratio)
-        draw.line([(0, y), (1280, y)], fill=(r, g, b, 255))
+    _draw_vertical_gradient(draw)
 
     # 3. Load Fonts
     try:
@@ -81,23 +103,12 @@ def draw_social_preview():
     glow_center_x = int(logo_x + logo_size / 2)
     glow_center_y = int(logo_y + logo_size / 2)
 
-    # 5. Ambient Glow behind the logo using concentric circles (blended alpha)
-    glow_layer = Image.new("RGBA", (1280, 640), (0, 0, 0, 0))
-    glow_draw = ImageDraw.Draw(glow_layer)
-    for r in range(500, 0, -10):
-        alpha = int(20 * (1.0 - r / 500.0))  # Max alpha ~8%
-        glow_draw.ellipse([glow_center_x - r, glow_center_y - r, glow_center_x + r, glow_center_y + r], fill=(180, 83, 9, alpha))
-    img = Image.alpha_composite(img, glow_layer)
+    # 5. Ambient Glow behind the logo using concentric circles
+    img = Image.alpha_composite(img, _draw_glow(glow_center_x, glow_center_y))
     draw = ImageDraw.Draw(img)
 
     # 6. Grid Overlay
-    grid_color = (41, 37, 36, 51)  # #292524 with ~20% alpha
-    # Vertical grid lines
-    for x in range(0, 1280, 40):
-        draw.line([(x, 0), (x, 640)], fill=grid_color, width=1)
-    # Horizontal grid lines
-    for y in range(0, 640, 40):
-        draw.line([(0, y), (1280, y)], fill=grid_color, width=1)
+    _draw_grid(draw)
 
     # 7. Typography (Left Column)
     title_x = x_start - title_bbox[0]

@@ -1,97 +1,52 @@
 #!/bin/sh
-set -e
+set -eu
 
-# ── Docker entrypoint ─────────────────────────────────────────────────
-# Handles directory ownership so that fresh volume mounts (created as
-# root by Docker) are writable by the runtime user.
-#
-# Supports two modes:
-#   1. PUID/PGID env vars (recommended) — container starts as root,
-#      fixes permissions, then drops to the requested UID/GID.
-#   2. No PUID/PGID — runs as whatever user Docker started (root or
-#      the UID from `user:` in compose / --user on CLI).
-# ──────────────────────────────────────────────────────────────────────
-
+# Prepare writable runtime state, optionally repair bind-mount ownership, then
+# execute the CLI. The application checkout remains read-only at runtime.
 TARGET_UID="${PUID:-}"
-TARGET_GID="${PGID:-}"
+TARGET_GID="${PGID:-${TARGET_UID:-}}"
+STATE_DIR="${UA_DATA_DIR:-/state}"
 
-restore_data() {
-    # Restore files hidden by an empty or older data volume before Python
-    # imports modules that depend on data.config. Existing user files are
-    # never replaced.
-    mkdir -p /Upload-Assistant/data
-    if [ -d /Upload-Assistant/defaults/data ]; then
-        cp -rn /Upload-Assistant/defaults/data/. /Upload-Assistant/data/
+prepare_state() {
+    mkdir -p "$STATE_DIR" "$STATE_DIR/data" "$STATE_DIR/tmp"
+
+    # Preserve the legacy config location expected by existing deployments,
+    # without replacing any user-owned file.
+    if [ ! -f "$STATE_DIR/data/config.py" ]; then
+        if [ -f /Upload-Assistant/data/config.py ]; then
+            cp /Upload-Assistant/data/config.py "$STATE_DIR/data/config.py"
+        elif [ -f /Upload-Assistant/data/example_config.py ]; then
+            cp /Upload-Assistant/data/example_config.py "$STATE_DIR/data/config.py"
+        fi
     fi
-    if [ ! -f /Upload-Assistant/data/config.py ] && [ -f /Upload-Assistant/data/example_config.py ]; then
-        cp /Upload-Assistant/data/example_config.py /Upload-Assistant/data/config.py
-    fi
-    chmod go-rwx /Upload-Assistant/data 2>/dev/null || true
-    find /Upload-Assistant/data -type f -exec chmod go-rwx {} + 2>/dev/null || true
+
+    chmod 700 "$STATE_DIR" "$STATE_DIR/data" "$STATE_DIR/tmp" 2>/dev/null || true
+    find "$STATE_DIR/data" -type f -exec chmod 600 {} + 2>/dev/null || true
 }
 
-# ── Fix directory ownership (only possible when running as root) ──────
 if [ "$(id -u)" = "0" ]; then
-    # Directories the app needs write access to
-    # - /state: config, caches and temporary release files
-    # - /root/.config/upload-assistant: webui-auth mount; when PUID is set,
-    #   the runtime user must traverse /root and write there
-    for dir in "${UA_DATA_DIR:-/state}" /root/.config/upload-assistant /Upload-Assistant/bin/dovi_tool /Upload-Assistant/bin/hdr10plus_tool; do
-        # If the path already exists as a non-directory (e.g. a file bind-mount),
-        # fix its ownership but don't try mkdir -p (which would fail under set -e).
-        if [ -e "$dir" ] && [ ! -d "$dir" ]; then
-            if [ -n "$TARGET_UID" ]; then
-                chown "$TARGET_UID:${TARGET_GID:-$TARGET_UID}" "$dir" 2>/dev/null || true
-            fi
-            continue
-        fi
+    prepare_state
+
+    for dir in \
+        "$STATE_DIR" \
+        /Upload-Assistant/bin/dovi_tool \
+        /Upload-Assistant/bin/hdr10plus_tool \
+        /Upload-Assistant/bin/nyuu \
+        /Upload-Assistant/bin/7z \
+        /Upload-Assistant/bin/par2 \
+        /Upload-Assistant/bin/pesto \
+        /Upload-Assistant/bin/zentag; do
         mkdir -p "$dir"
         if [ -n "$TARGET_UID" ]; then
-            # Recursively fix ownership so that user-placed files (e.g. config.py
-            # copied onto the host while the container was stopped) are owned by
-            # the runtime user.
-            chown -R "$TARGET_UID:${TARGET_GID:-$TARGET_UID}" "$dir" 2>/dev/null || true
+            chown -R "$TARGET_UID:$TARGET_GID" "$dir" 2>/dev/null || true
         fi
-        # Ensure sane permissions: directories traversable, files readable/writable
-        # by the owner.  Bind mounts from Unraid / NAS hosts can arrive with any
-        # mode bits; normalise them so the app can always read and write.
-        find "$dir" -type d ! -perm -u=rwx -exec chmod u+rwx {} + 2>/dev/null || true
-        find "$dir" -type f ! -perm -u=rw  -exec chmod u+rw  {} + 2>/dev/null || true
     done
 
-    # When dropping to non-root, the runtime user must traverse /root to reach
-    # /root/.config/upload-assistant (webui-auth mount). Make /root traversable.
     if [ -n "$TARGET_UID" ] && [ "$TARGET_UID" != "0" ]; then
-        chmod 711 /root 2>/dev/null || true
+        exec gosu "$TARGET_UID:$TARGET_GID" python /Upload-Assistant/upload.py "$@"
     fi
-
-    # Drop privileges if PUID was set
-    if [ -n "$TARGET_UID" ] && [ "$TARGET_UID" != "0" ]; then
-        # Ensure XDG_CONFIG_HOME is set so the app resolves the config
-        # directory reliably after gosu drops privileges.  When the target
-        # UID has no /etc/passwd entry (common in containers), Path.home()
-        # returns "/" and the mounted /root/.config/upload-assistant would
-        # never be found.
-        export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-/root/.config}"
-
-        exec gosu "$TARGET_UID:${TARGET_GID:-$TARGET_UID}" sh -c '
-            restore_data() {
-                mkdir -p /Upload-Assistant/data
-                if [ -d /Upload-Assistant/defaults/data ]; then
-                    cp -rn /Upload-Assistant/defaults/data/. /Upload-Assistant/data/
-                fi
-                if [ ! -f /Upload-Assistant/data/config.py ] && [ -f /Upload-Assistant/data/example_config.py ]; then
-                    cp /Upload-Assistant/data/example_config.py /Upload-Assistant/data/config.py
-                fi
-                chmod go-rwx /Upload-Assistant/data 2>/dev/null || true
-                find /Upload-Assistant/data -type f -exec chmod go-rwx {} + 2>/dev/null || true
-            }
-            restore_data
-            exec python /Upload-Assistant/upload.py "$@"
-        ' sh "$@"
-    fi
+else
+    prepare_state
 fi
 
-# Fallback: run as current user (root, or whatever `user:` specified)
-restore_data
 exec python /Upload-Assistant/upload.py "$@"

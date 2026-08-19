@@ -1,79 +1,177 @@
+[project]
+name = "upload-assistant"
+version = "3.6.0"
+description = "CLI for preparing media releases and uploading them to tracker and Usenet integrations"
+readme = "README.md"
+requires-python = ">=3.14,<3.15"
+license = "UAPL-1.0"
+authors = [
+  { name = "Upload Assistant contributors" },
+]
+dependencies = [
+  "aiofiles==25.1.0",
+  "anitopy==2.1.1",
+  "babel==2.17.0",
+  "bbcode==1.1.0",
+  "beautifulsoup4==4.14.2",
+  "bencode.py==4.0.0",
+  "certifi==2026.1.4",
+  "cli-ui==0.19.0",
+  "click==8.1.8",
+  "cloudscraper==1.2.71",
+  "defusedxml==0.7.1",
+  "deluge-client==1.10.2",
+  "ffmpeg-python==0.2.0",
+  "guessit==3.8.0",
+  "httpx==0.28.1",
+  "jinja2==3.1.6",
+  "langcodes==3.5.1",
+  "language-data==1.4.0",
+  "librosa==0.11.0",
+  "lxml==6.1.0",
+  "matplotlib==3.11.1",
+  "mobi==0.4.1",
+  "mutagen==1.47.0",
+  "numpy==2.4.4",
+  "packaging==24.2",
+  "pillow==12.3.0",
+  "psutil==7.2.2",
+  "pycountry==24.6.1",
+  "pyimgbox==1.0.7",
+  "pymupdf==1.28.0",
+  "pywinpty==3.0.5; sys_platform == 'win32'",
+  "qbittorrent-api==2026.6.0",
+  "rarfile==4.2",
+  "regex==2025.11.3",
+  "requests==2.33.0",
+  "rich==13.9.4",
+  "torf==4.3.0",
+  "tqdm==4.67.1",
+  "transmission-rpc==7.0.11",
+  "tvdb-v4-official==1.1.0",
+  "unidecode==1.4.0",
+]
+
+[dependency-groups]
+dev = [
+  "basedpyright>=1.31.4",
+  "coverage[toml]>=7.15.4",
+  "pytest>=9.1.1",
+  "pytest-asyncio>=1.4.0",
+  "pytest-cov>=7.1.0",
+  "radon==6.0.1",
+  "resvg-py==0.3.3",
+  "ruff>=0.16.3",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+addopts = [
+  "--strict-config",
+  "--strict-markers",
+  "-ra",
+]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+branch = false
+source = ["src"]
+relative_files = true
+
+[tool.coverage.report]
+fail_under = 100
+precision = 2
+show_missing = true
+skip_empty = true
+sort = "Cover"
+
+[tool.coverage.json]
+output = "build/coverage/coverage.json"
+pretty_print = true
+
+[tool.coverage.xml]
+output = "build/coverage/coverage.xml"
+
 [tool.ruff]
 line-length = 176
 target-version = "py314"
 exclude = [
   ".git",
-  "tests",
-  "__pycache__",
   ".pytest_cache",
   ".ruff_cache",
+  ".venv",
+  "build",
+  "data/cache",
+  "data/sessions",
   "tmp",
 ]
 
 [tool.ruff.lint]
 select = [
-  # Core correctness
-  "E",     # pycodestyle errors
-  "F",     # Pyflakes (logical and syntax errors)
-  "W",     # pycodestyle warnings
-  "B",     # flake8-bugbear (likely bugs and design issues)
-
-  # Imports & modernization
-  "I",     # isort (import sorting)
-  "UP",    # pyupgrade (code modernization)
-
-  # Code quality & safety
-  "C4",    # flake8-comprehensions (better list/dict/set comprehension syntax)
-  "SIM",   # flake8-simplify (code simplification suggestions)
-  "PERF",  # Perflint (performance anti-patterns detection)
-  "ARG",   # flake8-unused-arguments (unused function arguments)
-  "RUF",   # Ruff-specific rules and lints
-  "S",     # flake8-bandit (security testing and checks)
-  "PTH",   # flake8-use-pathlib (encourage pathlib over os.path)
-  "N",     # pep8-naming (naming conventions alignment)
-  "RET",   # flake8-return (return statement check)
-
-  # Dates & time
-  "DTZ",   # flake8-datetimez (prevent timezone-naive datetime usage)
-
-  # Async (if applicable)
-  "ASYNC", # flake8-async (concurrency and async checks)
+  "E",
+  "F",
+  "W",
+  "B",
+  "I",
+  "UP",
+  "C4",
+  "SIM",
+  "PERF",
+  "ARG",
+  "RUF",
+  "S",
+  "PTH",
+  "N",
+  "RET",
+  "DTZ",
+  "ASYNC",
 ]
 ignore = [
-  "ASYNC240", # Blocking pathlib methods in async functions
-  "E501",     # Line too long (line length violations)
-  "S314",     # Using vulnerable xml.etree.ElementTree for XML parsing
+  "ASYNC240",
+  "E501",
+  "S314",
 ]
 
 [tool.ruff.lint.per-file-ignores]
 "upload.py" = ["E402"]
-"src/trackers/UNIT3D/UNIT3D_TEMPLATE.py" = ["N999"]
+"tests/**/*.py" = ["S101", "S105"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["data", "src", "web_ui"]
+known-first-party = ["data", "src"]
 section-order = ["future", "standard-library", "third-party", "first-party", "local-folder"]
 
-[tool.pyright]
+[tool.basedpyright]
 pythonVersion = "3.14"
 typeCheckingMode = "standard"
-reportMissingImports = true
-reportMissingTypeStubs = false
-reportUnknownMemberType = true
-reportUnknownVariableType = true
+reportMissingImports = "error"
+reportMissingTypeStubs = "none"
+reportUnknownMemberType = "warning"
+reportUnknownVariableType = "warning"
+include = ["src", "upload.py", "config-generator.py"]
 exclude = [
-  "tests",
+  "build",
   "data",
+  "tests",
   "tmp",
-  "**/__pyrefly_virtual__/**",
-  "**/node_modules",
   "**/__pycache__",
-  "**/.*",
 ]
 
-[tool.pyrefly]
-disable-search-path-heuristics = true
-search-path = ["."]
-project-excludes = [
-    "**/__pyrefly_virtual__/**",
-    "**/tmp/**"
-]
+
+[tool.radon]
+cc_min = "B"
+cc_max = "F"
+show_complexity = true
+no_assert = true
+exclude = ".git,.venv,build,data/cache,data/sessions,tmp"
+
+[tool.upload-assistant.quality]
+max_architecture_violations = 0
+minimum_line_coverage = 100.0
+max_new_module_lines = 800
+max_new_function_lines = 120
+max_cyclomatic_complexity = 5
+complexity_paths = ["src", "upload.py", "config-generator.py", "scripts", "tests"]

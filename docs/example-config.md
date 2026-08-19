@@ -395,7 +395,7 @@ This section defines one or more torrent clients. The name of each client block 
 - "qbittorrent" is an example of a torrent client name.
 - IMPORTANT: do not change the torrent_client attribute, for example `"torrent_client": "rtorrent",` or `"torrent_client": "qbit",`
 
-Security note: these settings can allow the app (and the Web UI) to interact with your torrent client. Do not expose your client’s Web UI to the public internet.
+Security note: these settings allow the CLI to interact with your torrent client. Do not expose the torrent client’s API/Web UI to the public internet.
 
 ### qBittorrent (`torrent_client: "qbit"`)
 
@@ -403,7 +403,7 @@ Typical keys:
 
 - `qui_proxy_url` (str): Optional. [QUI reverse proxy](https://getqui.com/docs/features/reverse-proxy) URL for qBittorrent. Create a **Client Proxy API Key** in QUI (**Settings → Client Proxy Keys**): name the client (e.g. "Upload Assistant"), choose the qBittorrent instance, then copy the generated proxy URL. Use the **full** URL, e.g. `http://localhost:7476/proxy/<client-api-key>`. The instance is fixed by the key you create. This proxy is not used by **Bandwidth Control**; when that feature is enabled, configure `qbit_url` / `qbit_port` and either `qbit_api_key` or `qbit_user` / `qbit_pass` as well.
 - `enable_search` (bool): Search client for existing torrents to reuse hashes. NOTE: independant of auto_torrent_searching
-- `qbit_url` / `qbit_port` (str): Web UI host/port.
+- `qbit_url` / `qbit_port` (str): qBittorrent API/Web UI host and port.
 - `qbit_user` / `qbit_pass` (str): Credentials.
 - `qbit_api_key` (str): Optional. API Key to authenticate using stateless API Key authentication (qBittorrent v5.2.0+). When set, `qbit_user` and `qbit_pass` are ignored.
 - `super_seed_trackers` (list[str]): Trackers to enable super-seeding on.
