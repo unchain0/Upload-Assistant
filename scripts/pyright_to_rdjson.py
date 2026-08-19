@@ -35,54 +35,61 @@ def _position(raw: Mapping[str, object]) -> dict[str, int]:
     }
 
 
+def _diagnostic_message(item: Mapping[str, object], message: str) -> str:
+    rule = item.get("rule")
+    return f"[{rule}] {message}" if isinstance(rule, str) and rule else message
+
+
+def _reviewdog_range(raw_range: Mapping[str, object]) -> dict[str, object] | None:
+    start_value = raw_range.get("start")
+    if not isinstance(start_value, dict):
+        return None
+    reviewdog_range: dict[str, object] = {"start": _position(start_value)}
+    end_value = raw_range.get("end")
+    if isinstance(end_value, dict):
+        reviewdog_range["end"] = _position(end_value)
+    return reviewdog_range
+
+
+def _severity(item: Mapping[str, object]) -> str:
+    value = item.get("severity", "warning")
+    key = value.lower() if isinstance(value, str) else "warning"
+    return _SEVERITY.get(key, "WARNING")
+
+
+def _diagnostic_fields(item: Mapping[str, object]) -> tuple[str, str, dict[str, object]] | None:
+    file_value = item.get("file")
+    message = item.get("message")
+    raw_range = item.get("range")
+    if isinstance(file_value, str) and isinstance(message, str) and isinstance(raw_range, dict):
+        return file_value, message, raw_range
+    return None
+
+
+def _convert_item(raw_item: object) -> dict[str, object] | None:
+    if not isinstance(raw_item, dict):
+        return None
+    item = cast(dict[str, object], raw_item)
+    fields = _diagnostic_fields(item)
+    if fields is None:
+        return None
+    file_value, message, raw_range = fields
+    reviewdog_range = _reviewdog_range(raw_range)
+    if reviewdog_range is None:
+        return None
+    return {
+        "message": _diagnostic_message(item, message),
+        "location": {"path": _relative_path(file_value), "range": reviewdog_range},
+        "severity": _severity(item),
+    }
+
+
 def convert(payload: Mapping[str, object]) -> list[dict[str, object]]:
     raw_diagnostics = payload.get("generalDiagnostics", [])
     if not isinstance(raw_diagnostics, list):
         return []
-
-    diagnostics: list[dict[str, object]] = []
-    diagnostic_items = cast(list[object], raw_diagnostics)
-    for raw_item in diagnostic_items:
-        if not isinstance(raw_item, dict):
-            continue
-        item = cast(dict[str, object], raw_item)
-
-        file_value = item.get("file")
-        message = item.get("message")
-        raw_range_value = item.get("range")
-        if not isinstance(file_value, str) or not isinstance(message, str) or not isinstance(raw_range_value, dict):
-            continue
-        raw_range = cast(dict[str, object], raw_range_value)
-
-        start_value = raw_range.get("start")
-        end_value = raw_range.get("end")
-        if not isinstance(start_value, dict):
-            continue
-        start = cast(dict[str, object], start_value)
-
-        message_text = message
-        rule = item.get("rule")
-        if isinstance(rule, str) and rule:
-            message_text = f"[{rule}] {message_text}"
-
-        reviewdog_range: dict[str, object] = {"start": _position(start)}
-        if isinstance(end_value, dict):
-            reviewdog_range["end"] = _position(cast(dict[str, object], end_value))
-
-        severity_value = item.get("severity", "warning")
-        severity_key = severity_value.lower() if isinstance(severity_value, str) else "warning"
-        severity = _SEVERITY.get(severity_key, "WARNING")
-        diagnostics.append(
-            {
-                "message": message_text,
-                "location": {
-                    "path": _relative_path(file_value),
-                    "range": reviewdog_range,
-                },
-                "severity": severity,
-            }
-        )
-    return diagnostics
+    converted = (_convert_item(raw_item) for raw_item in cast(list[object], raw_diagnostics))
+    return [item for item in converted if item is not None]
 
 
 def main() -> int:

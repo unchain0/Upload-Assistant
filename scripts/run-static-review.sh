@@ -9,21 +9,12 @@ REVIEWDOG_REPORTER="${REVIEWDOG_REPORTER:-local}"
 REVIEWDOG_FILTER_MODE="${REVIEWDOG_FILTER_MODE:-nofilter}"
 REVIEWDOG_FAIL_LEVEL="${REVIEWDOG_FAIL_LEVEL:-error}"
 
-for command_name in reviewdog ruff semgrep shellcheck hadolint actionlint node; do
+for command_name in reviewdog ruff basedpyright semgrep shellcheck hadolint actionlint uv; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
         printf 'Required review tool is missing: %s\n' "$command_name" >&2
         exit 2
     fi
 done
-
-if [[ ! -x node_modules/.bin/pyright ]]; then
-    printf 'Pyright is not installed. Run npm ci at the repository root.\n' >&2
-    exit 2
-fi
-if [[ ! -x web_ui/static/js/node_modules/.bin/eslint ]]; then
-    printf 'ESLint is not installed. Run npm ci --prefix web_ui/static/js.\n' >&2
-    exit 2
-fi
 
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
@@ -73,12 +64,10 @@ mapfile -d '' changed_files < <(git diff --name-only --diff-filter=ACMR -z "$mer
 
 python_files=()
 pyright_files=()
-eslint_files=()
 shell_files=()
 docker_files=()
 workflow_files=()
 semgrep_files=()
-js_syntax_files=()
 
 for file in "${changed_files[@]}"; do
     [[ -f "$file" ]] || continue
@@ -89,17 +78,6 @@ for file in "${changed_files[@]}"; do
             if [[ "$file" != tests/* && "$file" != data/* && "$file" != tmp/* ]]; then
                 pyright_files+=("$file")
             fi
-            semgrep_files+=("$file")
-            ;;
-        web_ui/static/js/*.js|web_ui/static/js/*.jsx)
-            eslint_files+=("$file")
-            semgrep_files+=("$file")
-            ;;
-        *.js)
-            js_syntax_files+=("$file")
-            semgrep_files+=("$file")
-            ;;
-        *.jsx)
             semgrep_files+=("$file")
             ;;
         *.sh)
@@ -115,9 +93,7 @@ for file in "${changed_files[@]}"; do
             semgrep_files+=("$file")
             ;;
         *.yml|*.yaml|*.toml|*.json)
-            if [[ "$file" != package-lock.json && "$file" != */package-lock.json ]]; then
-                semgrep_files+=("$file")
-            fi
+            semgrep_files+=("$file")
             ;;
     esac
 done
@@ -129,37 +105,25 @@ if (( ${#python_files[@]} )); then
     ruff check --force-exclude --output-format=concise "${python_files[@]}" > "$tmp_dir/ruff.out" 2>&1 || ruff_status=$?
     check_tool_status "Ruff" "$ruff_status" "$tmp_dir/ruff.out"
     review_output "ruff" 'efm:%f:%l:%c: %m' "$tmp_dir/ruff.out"
+
+    radon_status=0
+    uv run --frozen --no-sync python scripts/check_radon_complexity.py --concise "${python_files[@]}" > "$tmp_dir/radon.out" 2>&1 || radon_status=$?
+    check_tool_status "Radon complexity" "$radon_status" "$tmp_dir/radon.out"
+    review_output "radon-complexity" 'efm:%f:%l:%c: %m' "$tmp_dir/radon.out"
 fi
 
 if (( ${#pyright_files[@]} )); then
     pyright_status=0
-    node_modules/.bin/pyright --outputjson "${pyright_files[@]}" > "$tmp_dir/pyright.json" 2> "$tmp_dir/pyright.err" || pyright_status=$?
+    basedpyright --outputjson "${pyright_files[@]}" > "$tmp_dir/basedpyright.json" 2> "$tmp_dir/basedpyright.err" || pyright_status=$?
     if (( pyright_status > 1 )); then
-        cat "$tmp_dir/pyright.err" >&2 || true
+        cat "$tmp_dir/basedpyright.err" >&2 || true
         internal_failure=1
-    elif python scripts/pyright_to_rdjson.py < "$tmp_dir/pyright.json" > "$tmp_dir/pyright.rdjsonl"; then
-        review_output "pyright" rdjsonl "$tmp_dir/pyright.rdjsonl"
+    elif python scripts/pyright_to_rdjson.py < "$tmp_dir/basedpyright.json" > "$tmp_dir/basedpyright.rdjsonl"; then
+        review_output "basedpyright" rdjsonl "$tmp_dir/basedpyright.rdjsonl"
     else
-        printf 'Failed to convert Pyright diagnostics to Reviewdog format.\n' >&2
+        printf 'Failed to convert BasedPyright diagnostics to Reviewdog format.\n' >&2
         internal_failure=1
     fi
-fi
-
-if (( ${#eslint_files[@]} )); then
-    eslint_status=0
-    web_ui/static/js/node_modules/.bin/eslint "${eslint_files[@]}" > "$tmp_dir/eslint.out" 2>&1 || eslint_status=$?
-    check_tool_status "ESLint" "$eslint_status" "$tmp_dir/eslint.out"
-    review_output "eslint" eslint "$tmp_dir/eslint.out"
-fi
-
-if (( ${#js_syntax_files[@]} )); then
-    for file in "${js_syntax_files[@]}"; do
-        if ! node --check "$file" > "$tmp_dir/node-check.out" 2>&1; then
-            printf 'JavaScript syntax check failed for %s:\n' "$file" >&2
-            cat "$tmp_dir/node-check.out" >&2
-            internal_failure=1
-        fi
-    done
 fi
 
 if (( ${#shell_files[@]} )); then
@@ -198,7 +162,6 @@ if (( ${#semgrep_files[@]} )); then
         --config "$SEMGREP_RULES_DIR/python/lang/correctness" \
         --config "$SEMGREP_RULES_DIR/python/lang/security" \
         --config "$SEMGREP_RULES_DIR/generic/secrets/security" \
-        --config "$SEMGREP_RULES_DIR/javascript/audit" \
         --config "$SEMGREP_RULES_DIR/dockerfile/correctness" \
         --config "$SEMGREP_RULES_DIR/dockerfile/security" \
         "${semgrep_files[@]}" > "$tmp_dir/semgrep.sarif" 2> "$tmp_dir/semgrep.err" || semgrep_status=$?
