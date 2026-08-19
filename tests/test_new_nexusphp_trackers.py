@@ -2,7 +2,10 @@ import asyncio
 
 from src.domain_models.release import Meta
 from src.integrations.trackers.NEXUSPHP.lemonhd import LemonHD
+from src.integrations.trackers.NEXUSPHP.longpt import LongPT
 from src.integrations.trackers.NEXUSPHP.oneptba import OnePTBA
+from src.integrations.trackers.NEXUSPHP.ptfans import PTFans
+from src.integrations.trackers.NEXUSPHP.ptgtk import PTGTK
 from src.integrations.trackers.NEXUSPHP.ptzone import PTZone
 from src.integrations.trackers.NEXUSPHP.xingyungept import XingyungePT
 
@@ -97,3 +100,36 @@ def test_ptzone_methods():
     assert tracker.get_type(Meta(category="TV", type="HDTV")) == 5
     assert tracker.get_douban_url(Meta(douban_id=12345)) == "https://movie.douban.com/subject/12345/"
     assert tracker.get_imdb_url(Meta(imdb_id="tt1234567", imdb_info={"imdb_url": "https://imdb.com/title/tt1234567"})) == ""
+
+
+def test_nexusphp_category_documentary_and_tv_show_branches():
+    cases = (
+        (LemonHD, 405, 407),
+        (PTGTK, 404, 403),
+        (PTZone, 404, 403),
+        (LongPT, 404, 403),
+        (XingyungePT, 404, 403),
+        (OnePTBA, 404, 403),
+        (PTFans, 406, 405),
+    )
+    documentary = Meta(category="TV", genres=["Documentary"], keywords=[])
+    tv_show = Meta(category="TV", genres=["game show"], keywords=[])
+    for tracker_class, documentary_id, tv_show_id in cases:
+        tracker = tracker_class(dummy_config)
+        assert tracker.get_category(documentary) == documentary_id
+        assert tracker.get_category(tv_show) == tv_show_id
+
+
+def test_nexusphp_remaining_codec_and_disc_mapping_branches():
+    assert LemonHD(dummy_config).get_audio_codec(Meta(audio="TrueHD Atmos")) == 1
+    assert LongPT(dummy_config).get_audio_codec(Meta(audio="DDP 5.1")) == 10
+    assert XingyungePT(dummy_config).get_audio_codec(Meta(audio="TrueHD Atmos")) == 12
+
+    diy_uhd = Meta(category="MOVIE", is_disc="BDMV", resolution="2160p", diy_disc=True)
+    oneptba = OnePTBA(dummy_config)
+    assert oneptba.get_type(diy_uhd) == 17
+    assert oneptba.get_region(diy_uhd) == 17
+
+    ptfans = PTFans(dummy_config)
+    assert ptfans.get_codec(Meta(video_codec="H264", source="bluray")) == 4
+    assert ptfans.get_codec(Meta(video_codec="VC-1", source="bluray")) == 3

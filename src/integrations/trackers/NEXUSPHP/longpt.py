@@ -145,43 +145,26 @@ class LongPT(NEXUSPHP):
 
     def get_audio_codec(self, meta: Meta) -> int:
         audio_codec = meta.audio.lower()
-
-        if "flac" in audio_codec:
-            return 1
-        if "dts-hd" in audio_codec:
-            return 3
-        if "dts:x" in audio_codec:
-            return 12
-        if "dts" in audio_codec:
-            return 13
-        if "lpcm" in audio_codec:
-            return 14
-        if "dd" in audio_codec:
-            return 15
-        if "alac" in audio_codec:
-            return 16
-        if "wav" in audio_codec:
-            return 17
-        if "av3a" in audio_codec:
-            return 18
-        if "true" in audio_codec:
-            return 19
-        if "ape" in audio_codec:
-            return 2
-        if "mp3" in audio_codec:
-            return 4
-        if "ogg" in audio_codec:
-            return 5
-        if "aac" in audio_codec:
-            return 6
-        if "m4a" in audio_codec:
-            return 8
-        if "atmos" in audio_codec:
-            return 9
-        if "ddp" in audio_codec:
-            return 10
-
-        return 11
+        mappings = (
+            ("flac", 1),
+            ("dts-hd", 3),
+            ("dts:x", 12),
+            ("dts", 13),
+            ("lpcm", 14),
+            ("ddp", 10),
+            ("dd", 15),
+            ("alac", 16),
+            ("wav", 17),
+            ("av3a", 18),
+            ("true", 19),
+            ("ape", 2),
+            ("mp3", 4),
+            ("ogg", 5),
+            ("aac", 6),
+            ("m4a", 8),
+            ("atmos", 9),
+        )
+        return next((value for token, value in mappings if token in audio_codec), 11)
 
     def get_group_tag(self, meta: Meta) -> int:
         group_tag = {
