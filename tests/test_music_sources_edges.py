@@ -356,3 +356,10 @@ def test_remaining_discogs_branches(tmp_path: Path, monkeypatch: pytest.MonkeyPa
 def test_final_music_source_guard_branches() -> None:
     assert MusicBrainzEnricher._select_release({"bad": True}, "Album", 0) is None
     assert DiscogsEnricher._release_type([{"descriptions": ["Unknown"]}]) == ""
+
+
+def test_musicbrainz_guard_helpers_reject_non_list_payloads() -> None:
+    assert music_sources._unique_nonempty_strings("not-a-list") == []
+    assert MusicBrainzEnricher._media_formats({"media": "bad"}) == []
+    assert MusicBrainzEnricher._media_track_counts({"media": "bad"}) == []
+    assert MusicBrainzEnricher._artists({"artist-credit": "bad"}) == []

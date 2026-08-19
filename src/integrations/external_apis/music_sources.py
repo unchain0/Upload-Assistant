@@ -43,6 +43,24 @@ async def _write_music_cache(path: Path | None, value: Any) -> None:
         pass
 
 
+def _unique_nonempty_strings(values: Any) -> list[str]:
+    if not isinstance(values, list):
+        return []
+    result: list[str] = []
+    for value in values:
+        text = str(value).strip()
+        if text and text not in result:
+            result.append(text)
+    return result
+
+
+def _safe_int(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except TypeError, ValueError:
+        return 0
+
+
 class MusicBrainzEnricher:
     """Small read-only MusicBrainz client.
 
@@ -60,98 +78,138 @@ class MusicBrainzEnricher:
         self.base_dir = base_dir
 
     async def enrich(self, release: MusicRelease) -> None:
-        artist, album = str(release.get("artist", "")), str(release.get("album", ""))
-        if not artist or not album:
+        identity = self._release_identity(release)
+        if identity is None:
             return
-        media = str(release.get("media", "")).strip()
-        # Prefer the directory value: it is parsed before enrichment and is not
-        # affected by a loose external match from an earlier provider.
-        catalogue_number = str(release.get("directory_catalogue_number", "") or release.get("release_catalogue_number", "") or release.get("catalogue_number", "")).strip()
+        artist, album, media, catalogue_number = identity
         result = await self._find_release(artist, album, len(release.tracks), media, catalogue_number)
-        if not result:
-            return
+        if result is not None:
+            self._apply_result(release, result)
+
+    @staticmethod
+    def _release_identity(release: MusicRelease) -> tuple[str, str, str, str] | None:
+        artist = str(release.get("artist", ""))
+        album = str(release.get("album", ""))
+        if not artist or not album:
+            return None
+        media = str(release.get("media", "")).strip()
+        catalogue = release.get("directory_catalogue_number", "") or release.get("release_catalogue_number", "") or release.get("catalogue_number", "")
+        return artist, album, media, str(catalogue).strip()
+
+    @classmethod
+    def _apply_result(cls, release: MusicRelease, result: dict[str, Any]) -> None:
         release.external_ids["musicbrainz_release"] = str(result.get("id", ""))
-        release_group_raw = result.get("release-group", {})
-        release_group = cast(dict[str, Any], release_group_raw) if isinstance(release_group_raw, dict) else {}
-        if release_group.get("id"):
-            release.external_ids["musicbrainz_release_group"] = str(release_group["id"])
+        release_group = cls._release_group(result)
+        group_id = release_group.get("id")
+        if group_id:
+            release.external_ids["musicbrainz_release_group"] = str(group_id)
         release.set_field("musicbrainz_release", result.get("id"), MetadataSource.EXTERNAL, 0.9)
-        _set_external_release_type(release, self._release_type(result), 0.72, "MusicBrainz")
-        # MusicBrainz's release ``date`` is a concrete release date.  Use the
-        # release-group's first date for the album group year when available.
+        _set_external_release_type(release, cls._release_type(result), 0.72, "MusicBrainz")
         release.set_field("year", str(release_group.get("first-release-date", ""))[:4], MetadataSource.EXTERNAL, 0.7)
         release.set_field("release_year", str(result.get("date", ""))[:4], MetadataSource.EXTERNAL, 0.78)
-        release.set_field("release_label", self._label(result), MetadataSource.EXTERNAL, 0.78)
-        release.set_field("release_catalogue_number", self._catalogue_number(result), MetadataSource.EXTERNAL, 0.78)
-        artists = self._artists(result)
+        release.set_field("release_label", cls._label(result), MetadataSource.EXTERNAL, 0.78)
+        release.set_field("release_catalogue_number", cls._catalogue_number(result), MetadataSource.EXTERNAL, 0.78)
+        artists = cls._artists(result)
         release.set_field("artists", artists, MetadataSource.EXTERNAL, 0.8)
         release.set_field("artist", " & ".join(artists), MetadataSource.EXTERNAL, 0.8)
 
+    @staticmethod
+    def _release_group(result: dict[str, Any]) -> dict[str, Any]:
+        value = result.get("release-group", {})
+        return cast(dict[str, Any], value) if isinstance(value, dict) else {}
+
     async def _find_release(self, artist: str, album: str, track_count: int = 0, media: str = "", catalogue_number: str = "") -> dict[str, Any] | None:
         key = (artist.casefold(), album.casefold(), str(track_count), media.casefold(), catalogue_number.casefold())
-        if key in self._cache:
-            return self._cache[key]
         cache_path = _music_cache_path(self.base_dir, "musicbrainz", "release_search", "\x1f".join(map(str, key)))
-        cached = await _read_music_cache(cache_path)
-        if isinstance(cached, dict):
-            if cached.get("not_found") is True:
-                self._cache[key] = None
-                return None
-            self._cache[key] = cached
-            return cached
-        async with self._lock:
-            if key in self._cache:
-                return self._cache[key]
-            cached = await _read_music_cache(cache_path)
-            if isinstance(cached, dict):
-                if cached.get("not_found") is True:
-                    self._cache[key] = None
-                    return None
-                self._cache[key] = cached
-                return cached
-            delay = 1.0 - (time.monotonic() - type(self)._last_request)
-            if delay > 0:
-                await asyncio.sleep(delay)
-            request_succeeded = False
-            try:
-                async with httpx.AsyncClient(timeout=httpx.Timeout(5.0), headers={"User-Agent": self.user_agent}) as client:
-                    barcode = self._barcode(catalogue_number)
-                    query = f"barcode:{barcode}" if barcode else f'artist:"{artist}" AND release:"{album}"'
-                    response = await client.get("https://musicbrainz.org/ws/2/release/", params={"query": query, "fmt": "json", "limit": 25})
-                    response.raise_for_status()
-                    releases = response.json().get("releases", [])
-                    result = self._select_release(releases, album, track_count, media, catalogue_number)
-                    request_succeeded = True
-            except httpx.HTTPError, ValueError:
-                result = None
-            type(self)._last_request = time.monotonic()
-            type(self)._cache[key] = result
-            if request_succeeded:
-                await _write_music_cache(cache_path, result if result is not None else {"not_found": True})
+        hit, result = await self._cached_release(key, cache_path)
+        if hit:
             return result
+        async with self._lock:
+            hit, result = await self._cached_release(key, cache_path)
+            return result if hit else await self._request_release(key, cache_path, artist, album, track_count, media, catalogue_number)
 
-    @staticmethod
-    def _select_release(releases: Any, album: str, track_count: int, media: str = "", catalogue_number: str = "") -> dict[str, Any] | None:
-        """Return only a MusicBrainz release that corroborates local evidence.
+    @classmethod
+    async def _cached_release(cls, key: tuple[str, str, str, str, str], cache_path: Path | None) -> tuple[bool, dict[str, Any] | None]:
+        if key in cls._cache:
+            return True, cls._cache[key]
+        cached = await _read_music_cache(cache_path)
+        if not isinstance(cached, dict):
+            return False, None
+        result = None if cached.get("not_found") is True else cached
+        cls._cache[key] = result
+        return True, result
 
-        A title search can return related releases or partial word matches.  It
-        must never fall back to the first search result: that turns an
-        unrelated single into metadata for a local album.  When local tracks
-        are available, require the candidate's total track count too.
-        """
+    async def _request_release(
+        self,
+        key: tuple[str, str, str, str, str],
+        cache_path: Path | None,
+        artist: str,
+        album: str,
+        track_count: int,
+        media: str,
+        catalogue_number: str,
+    ) -> dict[str, Any] | None:
+        await self._wait_for_request_slot()
+        try:
+            result = await self._search_remote(artist, album, track_count, media, catalogue_number)
+        except httpx.HTTPError, ValueError:
+            result, request_succeeded = None, False
+        else:
+            request_succeeded = True
+        type(self)._last_request = time.monotonic()
+        type(self)._cache[key] = result
+        if request_succeeded:
+            await _write_music_cache(cache_path, result if result is not None else {"not_found": True})
+        return result
+
+    @classmethod
+    async def _wait_for_request_slot(cls) -> None:
+        delay = 1.0 - (time.monotonic() - cls._last_request)
+        if delay > 0:
+            await asyncio.sleep(delay)
+
+    async def _search_remote(self, artist: str, album: str, track_count: int, media: str, catalogue_number: str) -> dict[str, Any] | None:
+        barcode = self._barcode(catalogue_number)
+        query = f"barcode:{barcode}" if barcode else f'artist:"{artist}" AND release:"{album}"'
+        async with httpx.AsyncClient(timeout=httpx.Timeout(5.0), headers={"User-Agent": self.user_agent}) as client:
+            response = await client.get("https://musicbrainz.org/ws/2/release/", params={"query": query, "fmt": "json", "limit": 25})
+            response.raise_for_status()
+            payload = response.json()
+        releases = payload.get("releases", []) if isinstance(payload, dict) else []
+        return self._select_release(releases, album, track_count, media, catalogue_number)
+
+    @classmethod
+    def _select_release(cls, releases: Any, album: str, track_count: int, media: str = "", catalogue_number: str = "") -> dict[str, Any] | None:
+        """Return only a MusicBrainz release that corroborates local evidence."""
         if not isinstance(releases, list):
             return None
-        normalised_album = MusicBrainzEnricher._normalise_title(album)
-        candidates = [item for item in releases if isinstance(item, dict) and MusicBrainzEnricher._normalise_title(item.get("title", "")) == normalised_album]
-        if track_count:
-            candidates = [item for item in candidates if MusicBrainzEnricher._track_count(item) == track_count]
-        if media:
-            candidates = [item for item in candidates if MusicBrainzEnricher._has_compatible_media(item, media)]
-        if catalogue_number:
-            candidates = [item for item in candidates if MusicBrainzEnricher._matches_catalogue_or_barcode(item, catalogue_number)]
-        if not candidates:
-            return None
-        return max(candidates, key=lambda item: int(item.get("score", 0) or 0))
+        candidates = cls._title_candidates(releases, album)
+        candidates = cls._track_candidates(candidates, track_count)
+        candidates = cls._media_candidates(candidates, media)
+        candidates = cls._catalogue_candidates(candidates, catalogue_number)
+        return max(candidates, key=cls._candidate_score) if candidates else None
+
+    @classmethod
+    def _title_candidates(cls, releases: list[Any], album: str) -> list[dict[str, Any]]:
+        expected = cls._normalise_title(album)
+        mappings = (item for item in releases if isinstance(item, dict))
+        return [item for item in mappings if cls._normalise_title(item.get("title", "")) == expected]
+
+    @classmethod
+    def _track_candidates(cls, releases: list[dict[str, Any]], track_count: int) -> list[dict[str, Any]]:
+        return releases if not track_count else [item for item in releases if cls._track_count(item) == track_count]
+
+    @classmethod
+    def _media_candidates(cls, releases: list[dict[str, Any]], media: str) -> list[dict[str, Any]]:
+        return releases if not media else [item for item in releases if cls._has_compatible_media(item, media)]
+
+    @classmethod
+    def _catalogue_candidates(cls, releases: list[dict[str, Any]], catalogue_number: str) -> list[dict[str, Any]]:
+        return releases if not catalogue_number else [item for item in releases if cls._matches_catalogue_or_barcode(item, catalogue_number)]
+
+    @staticmethod
+    def _candidate_score(item: dict[str, Any]) -> int:
+        return _safe_int(item.get("score", 0))
 
     @staticmethod
     def _barcode(value: Any) -> str:
@@ -167,27 +225,39 @@ class MusicBrainzEnricher:
             return True
         return any(isinstance(info, dict) and str(info.get("catalog-number", "")).strip().casefold() == expected for info in result.get("label-info", []))
 
-    @staticmethod
-    def _has_compatible_media(result: dict[str, Any], media: str) -> bool:
+    @classmethod
+    def _has_compatible_media(cls, result: dict[str, Any], media: str) -> bool:
         expected = {"web": "digital media"}.get(str(media).strip().casefold(), str(media).strip().casefold())
-        formats = [str(item.get("format", "")).strip().casefold() for item in result.get("media", []) if isinstance(item, dict)]
-        return any(candidate == expected or (expected == "vinyl" and "vinyl" in candidate) for candidate in formats)
+        return any(cls._media_format_matches(expected, candidate) for candidate in cls._media_formats(result))
+
+    @staticmethod
+    def _media_formats(result: dict[str, Any]) -> list[str]:
+        values = result.get("media", [])
+        if not isinstance(values, list):
+            return []
+        return [str(item.get("format", "")).strip().casefold() for item in values if isinstance(item, dict)]
+
+    @staticmethod
+    def _media_format_matches(expected: str, candidate: str) -> bool:
+        if candidate == expected:
+            return True
+        return expected == "vinyl" and "vinyl" in candidate
 
     @staticmethod
     def _normalise_title(value: Any) -> str:
         return re.sub(r"[\W_]+", "", str(value or "").casefold())
 
+    @classmethod
+    def _track_count(cls, result: dict[str, Any]) -> int:
+        media_total = sum(cls._media_track_counts(result))
+        return media_total or _safe_int(result.get("track-count", 0))
+
     @staticmethod
-    def _track_count(result: dict[str, Any]) -> int:
+    def _media_track_counts(result: dict[str, Any]) -> list[int]:
         media = result.get("media", [])
-        if isinstance(media, list):
-            counts = [int(item.get("track-count", 0) or 0) for item in media if isinstance(item, dict)]
-            if any(counts):
-                return sum(counts)
-        try:
-            return int(result.get("track-count", 0) or 0)
-        except TypeError, ValueError:
-            return 0
+        if not isinstance(media, list):
+            return []
+        return [_safe_int(item.get("track-count", 0)) for item in media if isinstance(item, dict)]
 
     @staticmethod
     def _release_type(result: dict[str, Any]) -> str:
@@ -207,17 +277,20 @@ class MusicBrainzEnricher:
         info = result.get("label-info", [])
         return str(info[0].get("catalog-number", "")) if info else ""
 
+    @classmethod
+    def _artists(cls, result: dict[str, Any]) -> list[str]:
+        credits = result.get("artist-credit", [])
+        if not isinstance(credits, list):
+            return []
+        return _unique_nonempty_strings([cls._artist_credit_name(credit) for credit in credits])
+
     @staticmethod
-    def _artists(result: dict[str, Any]) -> list[str]:
-        artists: list[str] = []
-        for credit in result.get("artist-credit", []):
-            if not isinstance(credit, dict):
-                continue
-            artist = credit.get("artist", {})
-            name = artist.get("name", "") if isinstance(artist, dict) else credit.get("name", "")
-            if str(name).strip() and str(name) not in artists:
-                artists.append(str(name))
-        return artists
+    def _artist_credit_name(credit: Any) -> str:
+        if not isinstance(credit, dict):
+            return ""
+        artist = credit.get("artist", {})
+        value = artist.get("name", "") if isinstance(artist, dict) else credit.get("name", "")
+        return str(value)
 
 
 class DiscogsEnricher:
