@@ -363,3 +363,14 @@ def test_musicbrainz_guard_helpers_reject_non_list_payloads() -> None:
     assert MusicBrainzEnricher._media_formats({"media": "bad"}) == []
     assert MusicBrainzEnricher._media_track_counts({"media": "bad"}) == []
     assert MusicBrainzEnricher._artists({"artist-credit": "bad"}) == []
+
+
+def test_discogs_refactor_guard_helpers(tmp_path: Path) -> None:
+    enricher = DiscogsEnricher(token="".join(("tok", "en")), base_dir=str(tmp_path))
+    target = release(tmp_path)
+    asyncio.run(enricher._master_enrichment(target, "", None))
+    assert DiscogsEnricher._cached_results({"results": "bad"}) == []
+    assert DiscogsEnricher._search_result_mappings({"results": "bad"}) == []
+    assert DiscogsEnricher._label_tuple("bad") is None
+    assert DiscogsEnricher._label_tuple({}) is None
+    assert music_sources._external_single_conflict(target, "Single") is None
