@@ -12,6 +12,7 @@ from rich.markup import escape
 from src.domain_models.release import Meta
 from src.domain_models.release_description import base_description
 from src.domain_models.tracker_image_policy import get_tracker_image_collection
+from src.integrations.filesystem.temp_paths import release_temp_dir
 from src.integrations.image_hosts.rehosting import ImageHostPolicy, RehostImagesManager
 from src.integrations.observability.runtime_support import logger
 from src.integrations.security.redaction import Redaction
@@ -80,132 +81,178 @@ class BEYONDHD:
     def __init__(self, config: dict[str, Any]) -> None:
         self.config = config
         self.rehost_images_manager = RehostImagesManager(config)
+        self.common = Common(config=config)
         trackers_cfg = cast(dict[str, Any], self.config.get("TRACKERS", {}))
         self.tracker_config = cast(dict[str, Any], trackers_cfg.get("BEYONDHD", {}))
         api_key = str(self.tracker_config.get("api_key", "")).strip()
         self.requests_url = f"{self.base_url}/api/requests/{api_key}"
 
     async def upload(self, meta: Meta) -> bool:
-        common = Common(config=self.config)
-        await common.create_torrent_for_upload(meta, self.tracker, self.source_flag)
-        cat_id = await self.get_cat_id(meta.category)
-        source_id = await self.get_source(str(meta.source))
-        type_id = await self.get_type(meta)
-        draft = await self.get_live(meta)
+        await self.common.create_torrent_for_upload(meta, self.tracker, self.source_flag)
         await self.edit_desc(meta)
+        data, files = await self._upload_request_parts(meta)
+        if meta.debug:
+            return await self._debug_upload(meta, data)
+        details_link = await self._post_upload(meta, data, files)
+        if details_link is None:
+            return False
+        return await self._seed_uploaded_torrent(meta, details_link)
+
+    async def _upload_request_parts(self, meta: Meta) -> tuple[dict[str, Any], dict[str, Any]]:
         tags = await self.get_tags(meta)
         custom, edition = await self.get_edition(meta, tags)
-        bhd_name = await self.get_name(meta)
-        anon = 0 if meta.anon == 0 and not self.config["TRACKERS"][self.tracker].get("anon", False) else 1
-
-        mi_dump = None
-        if meta.is_disc == "BDMV":
-            async with aiofiles.open(f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/BD_SUMMARY_00.txt", encoding="utf-8") as f:
-                mi_dump = await f.read()
-        else:
-            async with aiofiles.open(f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/MEDIAINFO.txt", encoding="utf-8") as f:
-                mi_dump = await f.read()
-
-        async with aiofiles.open(f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{self.tracker}]DESCRIPTION.txt", encoding="utf-8") as f:
-            desc = await f.read()
-        torrent_file_path = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{self.tracker}].torrent"
-        async with aiofiles.open(torrent_file_path, "rb") as f:
-            torrent_bytes = await f.read()
-
-        files = {
-            "mediainfo": mi_dump,
-            "file": ("torrent.torrent", torrent_bytes, "application/x-bittorrent"),
-        }
-
         data: dict[str, Any] = {
-            "name": bhd_name,
-            "category_id": cat_id,
-            "type": type_id,
-            "source": source_id,
+            "name": await self.get_name(meta),
+            "category_id": await self.get_cat_id(meta.category),
+            "type": await self.get_type(meta),
+            "source": await self.get_source(str(meta.source)),
             "imdb_id": meta.imdb,
             "tmdb_id": meta.tmdb,
-            "description": desc,
-            "anon": anon,
+            "description": await self._description_text(meta),
+            "anon": self._anonymous(meta),
             "sd": meta.sd,
-            "live": draft,
-            # 'internal' : 0,
-            # 'featured' : 0,
-            # 'free' : 0,
-            # 'double_up' : 0,
-            # 'sticky' : 0,
+            "live": await self.get_live(meta),
         }
-        # Internal
-        if meta.tag and (
-            self.config["TRACKERS"][self.tracker].get("internal", False) is True and meta.tag[1:] in self.config["TRACKERS"][self.tracker].get("internal_groups", [])
-        ):
+        self._apply_upload_options(data, meta, tags, custom, edition)
+        return data, await self._upload_files(meta)
+
+    async def _description_text(self, meta: Meta) -> str:
+        path = release_temp_dir(meta.base_dir, meta.uuid) / f"[{self.tracker}]DESCRIPTION.txt"
+        async with aiofiles.open(path, encoding="utf-8") as handle:
+            return await handle.read()
+
+    async def _upload_files(self, meta: Meta) -> dict[str, Any]:
+        media_info = await self._media_info_text(meta)
+        torrent_path = release_temp_dir(meta.base_dir, meta.uuid) / f"[{self.tracker}].torrent"
+        async with aiofiles.open(torrent_path, "rb") as handle:
+            torrent_bytes = await handle.read()
+        return {"mediainfo": media_info, "file": ("torrent.torrent", torrent_bytes, "application/x-bittorrent")}
+
+    async def _media_info_text(self, meta: Meta) -> str:
+        filename = "BD_SUMMARY_00.txt" if meta.is_disc == "BDMV" else "MEDIAINFO.txt"
+        path = release_temp_dir(meta.base_dir, meta.uuid) / filename
+        async with aiofiles.open(path, encoding="utf-8") as handle:
+            return await handle.read()
+
+    def _anonymous(self, meta: Meta) -> int:
+        configured = bool(self.tracker_config.get("anon", False))
+        return 0 if meta.anon == 0 and not configured else 1
+
+    def _apply_upload_options(self, data: dict[str, Any], meta: Meta, tags: list[str], custom: bool, edition: str) -> None:
+        self._apply_internal(data, meta)
+        self._apply_pack_special_region(data, meta)
+        self._apply_edition(data, custom, edition)
+        if tags:
+            data["tags"] = ",".join(tags)
+
+    def _apply_internal(self, data: dict[str, Any], meta: Meta) -> None:
+        if not meta.tag or not bool(self.tracker_config.get("internal", False)):
+            return
+        groups = self.tracker_config.get("internal_groups", [])
+        if isinstance(groups, list) and meta.tag[1:] in groups:
             data["internal"] = 1
 
+    @staticmethod
+    def _apply_pack_special_region(data: dict[str, Any], meta: Meta) -> None:
         if meta.tv_pack == 1:
             data["pack"] = 1
         if meta.season == "S00":
             data["special"] = 1
-        allowed_regions = ["AUS", "CAN", "CEE", "CHN", "ESP", "EUR", "FRA", "GBR", "GER", "HKG", "ITA", "JPN", "KOR", "NOR", "NLD", "RUS", "TWN", "USA"]
-        if meta.region in allowed_regions:
+        if meta.region in BEYONDHD._allowed_regions():
             data["region"] = meta.region
-        if custom is True:
+
+    @staticmethod
+    def _allowed_regions() -> set[str]:
+        return {"AUS", "CAN", "CEE", "CHN", "ESP", "EUR", "FRA", "GBR", "GER", "HKG", "ITA", "JPN", "KOR", "NOR", "NLD", "RUS", "TWN", "USA"}
+
+    @staticmethod
+    def _apply_edition(data: dict[str, Any], custom: bool, edition: str) -> None:
+        if custom:
             data["custom_edition"] = edition
-        elif edition != "":
+        elif edition:
             data["edition"] = edition
-        if len(tags) > 0:
-            data["tags"] = ",".join(tags)
-        headers = {
-            "User-Agent": f"{meta.ua_name} {(meta.current_version if meta.current_version is not None else 'github.com/wastaken7/Upload-Assistant')} ({platform.system()} {platform.release()})"
-        }
 
+    @staticmethod
+    def _user_agent(meta: Meta) -> str:
+        version = meta.current_version if meta.current_version is not None else "github.com/wastaken7/Upload-Assistant"
+        return f"{meta.ua_name} {version} ({platform.system()} {platform.release()})"
+
+    async def _debug_upload(self, meta: Meta, data: dict[str, Any]) -> bool:
+        logger.info(f"{self.tracker}: Request Data:")
+        logger.info(Redaction.redact_private_info(data))
+        meta.tracker_status[self.tracker]["status_message"] = "Debug mode enabled, not uploading."
+        await self.common.create_torrent_for_upload(meta, f"{self.tracker}_DEBUG", f"{self.tracker}_DEBUG", announce_url="https://fake.tracker")
+        return True
+
+    async def _post_upload(self, meta: Meta, data: dict[str, Any], files: dict[str, Any]) -> str | None:
+        try:
+            response = await self._submit_request(data, files, {"User-Agent": self._user_agent(meta)})
+            return await self._handle_upload_response(meta, data, files, response)
+        except Exception as error:
+            meta.tracker_status[self.tracker]["status_message"] = f"data error: {error}"
+            return None
+
+    async def _submit_request(self, data: dict[str, Any], files: dict[str, Any], headers: dict[str, str]) -> httpx.Response:
         url = self.upload_url + str(self.tracker_config.get("api_key", "")).strip()
-        details_link: str | None = None
-        if meta.debug is False:
-            try:
-                async with httpx.AsyncClient(timeout=60) as client:
-                    response = await client.post(url=url, files=files, data=data, headers=headers)
-                    response_json = cast(dict[str, Any], response.json())
-                    if int(response_json["status_code"]) == 0:
-                        logger.info(f"{self.tracker}: [red]{escape(response_json['status_message'])}")
-                        if response_json["status_message"].startswith("Invalid imdb_id"):
-                            logger.info(f"{self.tracker}: [yellow]RETRYING UPLOAD")
-                            data["imdb_id"] = 1
-                            response = await client.post(url=url, files=files, data=data, headers=headers)
-                            response_json = cast(dict[str, Any], response.json())
-                        elif response_json["status_message"].startswith("Invalid name value"):
-                            logger.info(f"{self.tracker}: [bold yellow]Submitted Name: {escape(bhd_name)}")
+        async with httpx.AsyncClient(timeout=60) as client:
+            return await client.post(url=url, files=files, data=data, headers=headers)
 
-                    if "status_message" in response_json:
-                        match = re.search(rf"{re.escape(self.base_url)}/torrent/download/.*\.(\d+)\.", response_json["status_message"])
-                        if match:
-                            torrent_id = match.group(1)
-                            meta.tracker_status[self.tracker]["torrent_id"] = torrent_id
-                            details_link = f"{self.base_url}/details/{torrent_id}"
-                            meta.tracker_status[self.tracker]["status_message"] = response_json
-                        else:
-                            meta.tracker_status[self.tracker]["status_message"] = "No valid details link found in status_message."
-                            return True
-                    else:
-                        meta.tracker_status[self.tracker]["status_message"] = "data error: No status_message in response."
-                        return False
+    async def _handle_upload_response(self, meta: Meta, data: dict[str, Any], files: dict[str, Any], response: httpx.Response) -> str | None:
+        payload = self._json_object(response)
+        payload = await self._maybe_retry_invalid_imdb(meta, data, files, payload)
+        self._log_invalid_name(payload, data.get("name"))
+        return self._details_link_from_payload(meta, payload)
 
-            except Exception as e:
-                meta.tracker_status[self.tracker]["status_message"] = f"data error: {e}"
-                return False
-        else:
-            logger.info(f"{self.tracker}: Request Data:")
-            logger.info(Redaction.redact_private_info(data))
-            meta.tracker_status[self.tracker]["status_message"] = "Debug mode enabled, not uploading."
-            await common.create_torrent_for_upload(meta, f"{self.tracker}" + "_DEBUG", f"{self.tracker}" + "_DEBUG", announce_url="https://fake.tracker")
+    @staticmethod
+    def _json_object(response: httpx.Response) -> dict[str, Any]:
+        payload = response.json()
+        return cast(dict[str, Any], payload) if isinstance(payload, dict) else {}
+
+    async def _maybe_retry_invalid_imdb(self, meta: Meta, data: dict[str, Any], files: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+        if int(payload.get("status_code", 1)) != 0:
+            return payload
+        message = str(payload.get("status_message", ""))
+        logger.info(f"{self.tracker}: [red]{escape(message)}")
+        if not message.startswith("Invalid imdb_id"):
+            return payload
+        logger.info(f"{self.tracker}: [yellow]RETRYING UPLOAD")
+        data["imdb_id"] = 1
+        response = await self._submit_request(data, files, {"User-Agent": self._user_agent(meta)})
+        return self._json_object(response)
+
+    def _log_invalid_name(self, payload: dict[str, Any], name: Any) -> None:
+        message = str(payload.get("status_message", ""))
+        if int(payload.get("status_code", 1)) == 0 and message.startswith("Invalid name value"):
+            logger.info(f"{self.tracker}: [bold yellow]Submitted Name: {escape(str(name or ''))}")
+
+    def _details_link_from_payload(self, meta: Meta, payload: dict[str, Any]) -> str | None:
+        if "status_message" not in payload:
+            meta.tracker_status[self.tracker]["status_message"] = "data error: No status_message in response."
+            return None
+        message = str(payload["status_message"])
+        match = re.search(rf"{re.escape(self.base_url)}/torrent/download/.*\.(\d+)\.", message)
+        if match is None:
+            meta.tracker_status[self.tracker]["status_message"] = "No valid details link found in status_message."
+            return ""
+        torrent_id = match.group(1)
+        meta.tracker_status[self.tracker]["torrent_id"] = torrent_id
+        meta.tracker_status[self.tracker]["status_message"] = payload
+        return f"{self.base_url}/details/{torrent_id}"
+
+    async def _seed_uploaded_torrent(self, meta: Meta, details_link: str) -> bool:
+        if details_link == "":
             return True
-
-        if details_link:
-            try:
-                await common.create_torrent_ready_to_seed(meta, self.tracker, self.source_flag, self.config["TRACKERS"][self.tracker].get("announce_url"), details_link)
-                return True
-            except Exception as e:
-                logger.info(f"{self.tracker}: Error while editing the torrent file: {e}")
-                return False
-        else:
+        try:
+            await self.common.create_torrent_ready_to_seed(
+                meta,
+                self.tracker,
+                self.source_flag,
+                self.tracker_config.get("announce_url"),
+                details_link,
+            )
+            return True
+        except Exception as error:
+            logger.info(f"{self.tracker}: Error while editing the torrent file: {error}")
             return False
 
     async def get_cat_id(self, category_name: str) -> str:
@@ -234,235 +281,393 @@ class BEYONDHD:
 
     async def get_type(self, meta: Meta) -> str:
         if meta.is_disc == "BDMV":
-            bdinfo = meta.bdinfo
-            bd_sizes = [25, 50, 66, 100]
-            bd_size = 100
-            for each in bd_sizes:
-                if bdinfo["size"] < each:
-                    bd_size = each
-                    break
-            type_id = f"UHD {bd_size}" if meta.uhd == "UHD" and bd_size != 25 else f"BD {bd_size}"
-            if type_id not in ["UHD 100", "UHD 66", "UHD 50", "BD 50", "BD 25"]:
-                type_id = "Other"
-        elif meta.is_disc == "DVD":
-            if "DVD5" in meta.dvd_size:
-                type_id = "DVD 5"
-            elif "DVD9" in meta.dvd_size:
-                type_id = "DVD 9"
-            else:
-                type_id = "Other"
-        else:
-            type_id = "Other"
-            if meta.type == "REMUX":
-                if meta.source == "BluRay":
-                    type_id = "BD Remux"
-                if meta.source in ("PAL DVD", "NTSC DVD"):
-                    type_id = "DVD Remux"
-                if meta.uhd == "UHD":
-                    type_id = "UHD Remux"
-                if meta.source == "HDDVD":
-                    type_id = "Other"
-            else:
-                acceptable_res = ["2160p", "1080p", "1080i", "720p", "576p", "576i", "540p", "480p", "Other"]
-                type_id = meta.resolution if meta.resolution in acceptable_res else "Other"
-        return type_id
+            return self._bdmv_type(meta)
+        if meta.is_disc == "DVD":
+            return self._dvd_type(meta)
+        if meta.type == "REMUX":
+            return self._remux_type(meta)
+        acceptable = {"2160p", "1080p", "1080i", "720p", "576p", "576i", "540p", "480p", "Other"}
+        return str(meta.resolution) if meta.resolution in acceptable else "Other"
+
+    @classmethod
+    def _bdmv_type(cls, meta: Meta) -> str:
+        bdinfo = meta.bdinfo if isinstance(meta.bdinfo, dict) else {}
+        bd_size = cls._bd_size(cls._safe_number(bdinfo.get("size"), 100))
+        type_id = cls._bd_type_label(meta.uhd, bd_size)
+        return type_id if type_id in cls._allowed_bd_types() else "Other"
+
+    @staticmethod
+    def _bd_size(size: float) -> int:
+        for candidate in (25, 50, 66, 100):
+            if size < candidate:
+                return candidate
+        return 100
+
+    @staticmethod
+    def _bd_type_label(uhd: str | None, bd_size: int) -> str:
+        if uhd == "UHD" and bd_size != 25:
+            return f"UHD {bd_size}"
+        return f"BD {bd_size}"
+
+    @staticmethod
+    def _allowed_bd_types() -> set[str]:
+        return {"UHD 100", "UHD 66", "UHD 50", "BD 50", "BD 25"}
+
+    @staticmethod
+    def _safe_number(value: Any, default: float) -> float:
+        try:
+            return float(value)
+        except TypeError, ValueError:
+            return default
+
+    @staticmethod
+    def _dvd_type(meta: Meta) -> str:
+        size = str(meta.dvd_size or "")
+        if "DVD5" in size:
+            return "DVD 5"
+        if "DVD9" in size:
+            return "DVD 9"
+        return "Other"
+
+    @staticmethod
+    def _remux_type(meta: Meta) -> str:
+        if meta.uhd == "UHD":
+            return "UHD Remux"
+        if meta.source == "BluRay":
+            return "BD Remux"
+        if meta.source in {"PAL DVD", "NTSC DVD"}:
+            return "DVD Remux"
+        return "Other"
 
     async def edit_desc(self, meta: Meta) -> None:
-        desc_path = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{self.tracker}]DESCRIPTION.txt"
-        base = base_description(meta)
+        description = await self._description_content(meta)
+        path = release_temp_dir(meta.base_dir, meta.uuid) / f"[{self.tracker}]DESCRIPTION.txt"
+        async with aiofiles.open(path, "w", encoding="utf-8") as handle:
+            await handle.write(description)
+
+    async def _description_content(self, meta: Meta) -> str:
+        base = self._rehosted_base_description(meta, base_description(meta))
+        parts = [*self._disc_description_blocks(meta), base.replace("[img]", "[img width=300]")]
+        comparison = self._comparison_block(meta)
+        if comparison:
+            parts.append(comparison)
+        tonemapped = self._tonemapped_header(meta)
+        if tonemapped:
+            parts.append(tonemapped)
+        screenshot_block = self._screenshot_block(meta)
+        if screenshot_block:
+            parts.append(screenshot_block)
+        parts.append(self._signature_block(meta))
+        return "".join(parts)
+
+    def _rehosted_base_description(self, meta: Meta, base: str) -> str:
+        result = base
         for collection_name in ("menu_images", "spectrograms_images", "dynamic_hdr_plot_images"):
-            original_images = getattr(meta, collection_name, [])
-            rehosted_images = get_tracker_image_collection(meta, self.tracker, collection_name)
-            if not isinstance(original_images, list) or not isinstance(rehosted_images, list):
-                continue
-            for original, rehosted in zip(original_images, rehosted_images, strict=False):
-                if not isinstance(original, dict) or not isinstance(rehosted, dict):
-                    continue
-                original_url = original.get("raw_url")
-                rehosted_url = rehosted.get("raw_url")
-                if isinstance(original_url, str) and isinstance(rehosted_url, str) and original_url != rehosted_url:
-                    base = base.replace(original_url, rehosted_url)
-        async with aiofiles.open(desc_path, "w", encoding="utf-8") as desc:
-            discs = cast(list[dict[str, Any]], meta.discs or [])
-            if discs:
-                if discs[0]["type"] == "DVD":
-                    await desc.write(f"[spoiler=VOB MediaInfo][code]{discs[0]['vob_mi']}[/code][/spoiler]")
-                    await desc.write("\n")
-                if len(discs) >= 2:
-                    for each in discs[1:]:
-                        if each["type"] == "BDMV":
-                            await desc.write(f"[spoiler={each.get('name', 'BDINFO')}][code]{each['summary']}[/code][/spoiler]")
-                            await desc.write("\n")
-                        elif each["type"] == "DVD":
-                            await desc.write(f"{each['name']}:\n")
-                            await desc.write(
-                                f"[spoiler={Path(each['vob']).name}][code][{each['vob_mi']}[/code][/spoiler] [spoiler={Path(each['ifo']).name}][code][{each['ifo_mi']}[/code][/spoiler]"
-                            )
-                            await desc.write("\n")
-                        elif each["type"] == "HDDVD":
-                            await desc.write(f"{each['name']}:\n")
-                            await desc.write(f"[spoiler={Path(each['largest_evo']).name}][code][{each['evo_mi']}[/code][/spoiler]\n")
-                            await desc.write("\n")
-            await desc.write(base.replace("[img]", "[img width=300]"))
-            if meta.comparison and meta.comparison_groups:
-                await desc.write("[center]")
-                comparison_groups = cast(dict[str, Any], meta.comparison_groups or {})
-                sorted_group_indices = sorted(comparison_groups.keys(), key=lambda x: int(str(x)))
+            result = self._replace_rehosted_collection(meta, result, collection_name)
+        return result
 
-                comp_sources: list[str] = []
-                for group_idx in sorted_group_indices:
-                    group_data = cast(dict[str, Any], comparison_groups.get(group_idx, {}))
-                    group_name = str(group_data.get("name", f"Group {group_idx}"))
-                    comp_sources.append(group_name)
+    def _replace_rehosted_collection(self, meta: Meta, text: str, collection_name: str) -> str:
+        original = getattr(meta, collection_name, [])
+        rehosted = get_tracker_image_collection(meta, self.tracker, collection_name)
+        if not isinstance(original, list) or not isinstance(rehosted, list):
+            return text
+        result = text
+        for source, target in zip(original, rehosted, strict=False):
+            result = self._replace_rehosted_url(result, source, target)
+        return result
 
-                sources_string = ", ".join(comp_sources)
-                await desc.write(f"[comparison={sources_string}]\n")
+    @classmethod
+    def _replace_rehosted_url(cls, text: str, source: Any, target: Any) -> str:
+        source_url = cls._raw_url(source)
+        target_url = cls._raw_url(target)
+        if not cls._should_replace_url(source_url, target_url):
+            return text
+        return text.replace(source_url, target_url)
 
-                images_per_group = min([len(cast(dict[str, Any], comparison_groups[idx]).get("urls", [])) for idx in sorted_group_indices])
+    @staticmethod
+    def _raw_url(value: Any) -> str:
+        if not isinstance(value, dict):
+            return ""
+        raw = value.get("raw_url")
+        return raw if isinstance(raw, str) else ""
 
-                for img_idx in range(images_per_group):
-                    for group_idx in sorted_group_indices:
-                        group_data = cast(dict[str, Any], comparison_groups.get(group_idx, {}))
-                        urls = cast(list[dict[str, Any]], group_data.get("urls", []))
-                        if img_idx < len(urls):
-                            img_url = urls[img_idx].get("raw_url", "")
-                            if img_url:
-                                await desc.write(f"{img_url}\n")
+    @staticmethod
+    def _should_replace_url(source_url: str, target_url: str) -> bool:
+        return bool(source_url and target_url and source_url != target_url)
 
-                await desc.write("[/comparison][/center]\n\n")
-            try:
-                if meta.tonemapped and self.config["DEFAULT"].get("tonemapped_header", None):
-                    tonemapped_header = self.config["DEFAULT"].get("tonemapped_header")
-                    await desc.write(tonemapped_header)
-                    await desc.write("\n\n")
-            except Exception as e:
-                logger.warning(f"{self.tracker}: [yellow]Warning: Error setting tonemapped header: {escape(str(e))}[/yellow]")
-            images = cast(list[dict[str, Any]], get_tracker_image_collection(meta, self.tracker, "screenshots"))
-            if len(images) > 0:
-                await desc.write("[align=center]")
-                for each in range(len(images[: meta.screens])):
-                    web_url = images[each]["web_url"]
-                    img_url = images[each]["img_url"]
-                    if each == len(images) - 1:
-                        await desc.write(f"[url={web_url}][img width=350]{img_url}[/img][/url]")
-                    elif (each + 1) % 2 == 0:
-                        await desc.write(f"[url={web_url}][img width=350]{img_url}[/img][/url]\n")
-                        await desc.write("\n")
-                    else:
-                        await desc.write(f"[url={web_url}][img width=350]{img_url}[/img][/url] ")
-                await desc.write("[/align]")
-            await desc.write(f"\n[align=right][url=https://github.com/wastaken7/Upload-Assistant][size=10]{meta.ua_signature}[/size][/url][/align]")
-            await desc.close()
-            return
+    @classmethod
+    def _disc_description_blocks(cls, meta: Meta) -> list[str]:
+        discs = cls._disc_entries(meta)
+        if not discs:
+            return []
+        first = cls._first_disc_block(discs[0])
+        additional = [cls._additional_disc_block(disc) for disc in discs[1:]]
+        return [part for part in [first, *additional] if part]
+
+    @staticmethod
+    def _first_disc_block(disc: dict[str, Any]) -> str:
+        if disc.get("type") != "DVD":
+            return ""
+        return f"[spoiler=VOB MediaInfo][code]{disc.get('vob_mi', '')}[/code][/spoiler]\n"
+
+    @staticmethod
+    def _disc_entries(meta: Meta) -> list[dict[str, Any]]:
+        return cast(list[dict[str, Any]], meta.discs) if isinstance(meta.discs, list) else []
+
+    @staticmethod
+    def _additional_disc_block(disc: dict[str, Any]) -> str:
+        disc_type = disc.get("type")
+        if disc_type == "BDMV":
+            return f"[spoiler={disc.get('name', 'BDINFO')}][code]{disc.get('summary', '')}[/code][/spoiler]\n"
+        if disc_type == "DVD":
+            return (
+                f"{disc.get('name', '')}:\n"
+                f"[spoiler={Path(str(disc.get('vob', ''))).name}][code]{disc.get('vob_mi', '')}[/code][/spoiler] "
+                f"[spoiler={Path(str(disc.get('ifo', ''))).name}][code]{disc.get('ifo_mi', '')}[/code][/spoiler]\n"
+            )
+        if disc_type == "HDDVD":
+            return f"{disc.get('name', '')}:\n[spoiler={Path(str(disc.get('largest_evo', ''))).name}][code]{disc.get('evo_mi', '')}[/code][/spoiler]\n"
+        return ""
+
+    @classmethod
+    def _comparison_block(cls, meta: Meta) -> str:
+        groups = cls._comparison_groups(meta)
+        if not groups:
+            return ""
+        indices = cls._comparison_indices(groups)
+        names = cls._comparison_names(groups, indices)
+        urls = cls._comparison_urls(groups, indices)
+        return f"[center][comparison={', '.join(names)}]\n{''.join(f'{url}\n' for url in urls)}[/comparison][/center]\n\n"
+
+    @staticmethod
+    def _comparison_groups(meta: Meta) -> dict[str, Any]:
+        if not meta.comparison or not isinstance(meta.comparison_groups, dict):
+            return {}
+        return cast(dict[str, Any], meta.comparison_groups)
+
+    @staticmethod
+    def _comparison_indices(groups: dict[str, Any]) -> list[str]:
+        return sorted(groups, key=lambda value: int(str(value)))
+
+    @staticmethod
+    def _comparison_names(groups: dict[str, Any], indices: list[str]) -> list[str]:
+        return [str(cast(dict[str, Any], groups[index]).get("name", f"Group {index}")) for index in indices]
+
+    @classmethod
+    def _comparison_urls(cls, groups: dict[str, Any], indices: list[str]) -> list[str]:
+        image_count = cls._comparison_image_count(groups, indices)
+        urls: list[str] = []
+        for image_index in range(image_count):
+            urls.extend(cls._comparison_row_urls(groups, indices, image_index))
+        return urls
+
+    @classmethod
+    def _comparison_image_count(cls, groups: dict[str, Any], indices: list[str]) -> int:
+        counts = [len(cls._group_urls(groups.get(index))) for index in indices]
+        return min(counts) if counts else 0
+
+    @classmethod
+    def _comparison_row_urls(cls, groups: dict[str, Any], indices: list[str], image_index: int) -> list[str]:
+        return [url for index in indices if (url := cls._group_raw_url(groups.get(index), image_index))]
+
+    @staticmethod
+    def _group_urls(value: Any) -> list[dict[str, Any]]:
+        if not isinstance(value, dict):
+            return []
+        urls = value.get("urls", [])
+        if not isinstance(urls, list):
+            return []
+        return [cast(dict[str, Any], item) for item in urls if isinstance(item, dict)]
+
+    @classmethod
+    def _group_raw_url(cls, value: Any, image_index: int) -> str:
+        urls = cls._group_urls(value)
+        if image_index >= len(urls):
+            return ""
+        return str(urls[image_index].get("raw_url") or "")
+
+    def _tonemapped_header(self, meta: Meta) -> str:
+        if not meta.tonemapped:
+            return ""
+        default_config = self.config.get("DEFAULT", {})
+        if not isinstance(default_config, dict):
+            return ""
+        value = default_config.get("tonemapped_header")
+        return f"{value}\n\n" if value else ""
+
+    def _screenshot_block(self, meta: Meta) -> str:
+        links = self._screenshot_links(meta)
+        if not links:
+            return ""
+        return f"[align=center]{self._paired_screenshot_rows(links)}[/align]"
+
+    def _screenshot_links(self, meta: Meta) -> list[str]:
+        images = get_tracker_image_collection(meta, self.tracker, "screenshots")
+        if not isinstance(images, list):
+            return []
+        selected = images[: self._screen_limit(meta.screens)]
+        return [link for image in selected if (link := self._screenshot_link(image))]
+
+    @staticmethod
+    def _paired_screenshot_rows(links: list[str]) -> str:
+        rows = [" ".join(links[index : index + 2]) for index in range(0, len(links), 2)]
+        return "\n\n".join(rows)
+
+    @staticmethod
+    def _screen_limit(value: Any) -> int:
+        try:
+            return max(0, int(value))
+        except TypeError, ValueError:
+            return 0
+
+    @staticmethod
+    def _screenshot_link(image: Any) -> str:
+        if not isinstance(image, dict):
+            return ""
+        web_url = image.get("web_url")
+        img_url = image.get("img_url")
+        if not web_url or not img_url:
+            return ""
+        return f"[url={web_url}][img width=350]{img_url}[/img][/url]"
+
+    @staticmethod
+    def _signature_block(meta: Meta) -> str:
+        return f"\n[align=right][url=https://github.com/wastaken7/Upload-Assistant][size=10]{meta.ua_signature}[/size][/url][/align]"
 
     async def get_additional_checks(self, meta: Meta) -> bool:
-        bhd_name = await self.get_name(meta)
-        if any(
-            phrase in bhd_name.lower()
-            for phrase in (
-                "-framestor",
-                "-bhdstudio",
-                "-bmf",
-                "-decibel",
-                "-d-zone",
-                "-hifi",
-                "-ncmt",
-                "-tdd",
-                "-flux",
-                "-crfw",
-                "-sonny",
-                "-zr-",
-                "-mkvultra",
-                "-rpg",
-                "-w4nk3r",
-                "-irobot",
-                "-beyondhd",
-            )
-        ):
-            if not meta.unattended or (meta.unattended and meta.unattended_confirm):
-                logger.info(f"{self.tracker}: [bold red]This is an internal {self.tracker} release, skipping upload[/bold red]")
-                if cli_ui.ask_yes_no("Do you want to upload anyway?", default=False):
-                    pass
-                else:
-                    return False
-            else:
-                return False
-
-        if not meta.valid_mi_settings:
-            logger.info(f"{self.tracker}: [bold red]No encoding settings in mediainfo, skipping {self.tracker} upload.[/bold red]")
+        if not await self._internal_release_policy(meta):
             return False
-
-        if meta.type in ["REMUX", "ENCODE", "WEBDL", "WEBRIP"] and meta.container not in ["mkv", "mp4"]:
-            logger.info(
-                f"{self.tracker}: [bold red]Container '{escape(str(meta.container))}' is not allowed for {escape(str(meta.type))}. Only MKV and MP4 are permitted. Skipping upload.[/bold red]"
-            )
+        if not self._mediainfo_policy(meta):
             return False
+        if not self._container_policy(meta):
+            return False
+        if not await self._group_policy(meta):
+            return False
+        return await self.common.check_and_confirm_adult_media_upload(meta, self.tracker)
 
-        if meta.type not in ["WEBDL"] and meta.tag and any(x in meta.tag for x in ["EVO"]):
-            if not meta.unattended or (meta.unattended and meta.unattended_confirm):
-                logger.info(f"{self.tracker}: [bold red]Group {escape(str(meta.tag))} is only allowed for raw type content at {self.tracker}[/bold red]")
-                if cli_ui.ask_yes_no("Do you want to upload anyway?", default=False):
-                    pass
-                else:
-                    return False
-            else:
-                return False
+    async def _internal_release_policy(self, meta: Meta) -> bool:
+        name = (await self.get_name(meta)).lower()
+        if not self._contains_internal_marker(name):
+            return True
+        logger.info(f"{self.tracker}: [bold red]This is an internal {self.tracker} release, skipping upload[/bold red]")
+        return self._optional_policy_override(meta)
 
-        common = Common(config=self.config)
-        return await common.check_and_confirm_adult_media_upload(meta, self.tracker)
+    @staticmethod
+    def _contains_internal_marker(name: str) -> bool:
+        markers = (
+            "-framestor",
+            "-bhdstudio",
+            "-bmf",
+            "-decibel",
+            "-d-zone",
+            "-hifi",
+            "-ncmt",
+            "-tdd",
+            "-flux",
+            "-crfw",
+            "-sonny",
+            "-zr-",
+            "-mkvultra",
+            "-rpg",
+            "-w4nk3r",
+            "-irobot",
+            "-beyondhd",
+        )
+        return any(marker in name for marker in markers)
+
+    @staticmethod
+    def _optional_policy_override(meta: Meta) -> bool:
+        if meta.unattended and not meta.unattended_confirm:
+            return False
+        return bool(cli_ui.ask_yes_no("Do you want to upload anyway?", default=False))
+
+    def _mediainfo_policy(self, meta: Meta) -> bool:
+        if meta.valid_mi_settings:
+            return True
+        logger.info(f"{self.tracker}: [bold red]No encoding settings in mediainfo, skipping {self.tracker} upload.[/bold red]")
+        return False
+
+    def _container_policy(self, meta: Meta) -> bool:
+        if meta.type not in {"REMUX", "ENCODE", "WEBDL", "WEBRIP"} or meta.container in {"mkv", "mp4"}:
+            return True
+        logger.info(
+            f"{self.tracker}: [bold red]Container '{escape(str(meta.container))}' is not allowed for {escape(str(meta.type))}. Only MKV and MP4 are permitted. Skipping upload.[/bold red]"
+        )
+        return False
+
+    async def _group_policy(self, meta: Meta) -> bool:
+        if meta.type == "WEBDL" or not meta.tag or "EVO" not in meta.tag:
+            return True
+        logger.info(f"{self.tracker}: [bold red]Group {escape(str(meta.tag))} is only allowed for raw type content at {self.tracker}[/bold red]")
+        return self._optional_policy_override(meta)
 
     async def search_existing(self, meta: Meta) -> list[dict[str, Any]]:
-        dupes: list[dict[str, Any]] = []
-        category = meta.category
-        tmdb_id_type = "movie" if category == "MOVIE" else "tv"
-        if category == "MOVIE":
-            category = "Movies"
-        elif category == "TV":
-            category = "TV"
-        if meta.is_disc == "DVD":
-            type_id: str | None = None
-        else:
-            type_id = await self.get_type(meta)
-        data: dict[str, Any] = {"action": "search", "types": type_id, "categories": category}
-        if meta.tmdb:
-            data["tmdb_id"] = f"{tmdb_id_type}/{meta.tmdb}"
-        if meta.sd == 1:
-            data["categories"] = None
-            data["types"] = None
-        if meta.category == "TV":
-            data["search"] = f"{meta.season}"
-        rss_key = self.tracker_config.get("bhd_rss_key", "") != ""
-        if rss_key:
-            data["rsskey"] = str(self.tracker_config.get("bhd_rss_key", "")).strip()
-
+        params, rss_key = await self._search_params(meta)
         url = f"{self.base_url}/api/torrents/{str(self.tracker_config.get('api_key', '')).strip()}"
         async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.post(url, params=data)
+            response = await client.post(url, params=params)
             response.raise_for_status()
-            response_data = cast(dict[str, Any], response.json())
-            if response_data.get("status_code") != 1:
-                raise RuntimeError(f"BEYONDHD API Error: {response_data.get('message', 'Unknown Error')}")
+        payload = self._search_payload(response)
+        return [self._search_result(item, rss_key) for item in self._search_items(payload)]
 
-            results = cast(list[dict[str, Any]], response_data.get("results", []))
-            for each in results:
-                # Extract HDR flags from BEYONDHD data
-                flags: list[str] = []
-                if each.get("dv") == 1:
-                    flags.append("DV")
-                if each.get("hdr10") == 1 or each.get("hdr10+") == 1:
-                    flags.append("HDR")
+    async def _search_params(self, meta: Meta) -> tuple[dict[str, Any], bool]:
+        category = "Movies" if meta.category == "MOVIE" else "TV"
+        type_id = None if meta.is_disc == "DVD" else await self.get_type(meta)
+        params: dict[str, Any] = {"action": "search", "types": type_id, "categories": category}
+        self._apply_search_identity(params, meta)
+        self._apply_search_scope(params, meta)
+        rss_key = bool(self.tracker_config.get("bhd_rss_key"))
+        if rss_key:
+            params["rsskey"] = str(self.tracker_config.get("bhd_rss_key", "")).strip()
+        return params, rss_key
 
-                result = {
-                    "name": each["name"],
-                    "link": each["url"],
-                    "size": each["size"],
-                    "flags": flags,
-                }
-                if rss_key:
-                    result["download"] = each.get("download_url", None)
-                dupes.append(result)
+    @staticmethod
+    def _apply_search_identity(params: dict[str, Any], meta: Meta) -> None:
+        if meta.tmdb:
+            kind = "movie" if meta.category == "MOVIE" else "tv"
+            params["tmdb_id"] = f"{kind}/{meta.tmdb}"
 
-        return dupes
+    @staticmethod
+    def _apply_search_scope(params: dict[str, Any], meta: Meta) -> None:
+        if meta.sd == 1:
+            params["categories"] = None
+            params["types"] = None
+        if meta.category == "TV":
+            params["search"] = str(meta.season)
+
+    def _search_payload(self, response: httpx.Response) -> dict[str, Any]:
+        payload = self._json_object(response)
+        if payload.get("status_code") != 1:
+            raise RuntimeError(f"BEYONDHD API Error: {payload.get('message', 'Unknown Error')}")
+        return payload
+
+    @staticmethod
+    def _search_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
+        value = payload.get("results", [])
+        if not isinstance(value, list):
+            return []
+        return [cast(dict[str, Any], item) for item in value if isinstance(item, dict)]
+
+    @classmethod
+    def _search_result(cls, item: dict[str, Any], rss_key: bool) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "name": item.get("name", ""),
+            "link": item.get("url", ""),
+            "size": item.get("size", 0),
+            "flags": cls._search_flags(item),
+        }
+        if rss_key:
+            result["download"] = item.get("download_url")
+        return result
+
+    @staticmethod
+    def _search_flags(item: dict[str, Any]) -> list[str]:
+        flags: list[str] = []
+        if item.get("dv") == 1:
+            flags.append("DV")
+        if item.get("hdr10") == 1 or item.get("hdr10+") == 1:
+            flags.append("HDR")
+        return flags
 
     def _is_true(self, value: Any) -> bool:
         """
@@ -477,52 +682,44 @@ class BEYONDHD:
         return 0 if draft_bool or meta.draft else 1
 
     async def get_edition(self, meta: Meta, tags: list[str]) -> tuple[bool, str]:
-        custom = False
-        edition = meta.edition
+        edition = str(meta.edition or "")
         if "Hybrid" in tags:
             edition = edition.replace("Hybrid", "").strip()
-        editions = ["collector", "cirector", "extended", "limited", "special", "theatrical", "uncut", "unrated"]
-        for each in editions:
-            if each in meta.edition:
-                edition = each
-            elif edition == "":
-                edition = ""
-            else:
-                custom = True
-        return custom, edition
+        if not edition:
+            return False, ""
+        known = self._known_edition(edition)
+        return (False, known) if known else (True, edition)
+
+    @staticmethod
+    def _known_edition(edition: str) -> str:
+        normalized = edition.lower()
+        editions = ("collector", "director", "cirector", "extended", "limited", "special", "theatrical", "uncut", "unrated")
+        return next((value for value in editions if value in normalized), "")
 
     async def get_tags(self, meta: Meta) -> list[str]:
-        tags: list[str] = []
-        if meta.type == "WEBRIP":
-            tags.append("WEBRip")
-        if meta.type == "WEBDL":
-            tags.append("WEBDL")
-        if meta.three_d == "3D":
-            tags.append("3D")
-        if "Dual-Audio" in meta.audio:
-            tags.append("DualAudio")
-        if "Dubbed" in meta.audio:
-            tags.append("EnglishDub")
-        if "Open Matte" in meta.edition:
-            tags.append("OpenMatte")
-        if meta.scene is True:
-            tags.append("Scene")
-        if meta.personalrelease is True:
-            tags.append("Personal")
-        if "hybrid" in meta.edition.lower():
-            tags.append("Hybrid")
-        if meta.has_commentary is True:
-            tags.append("Commentary")
-        if "DV" in meta.hdr:
-            tags.append("DV")
-        if "HDR" in meta.hdr:
-            if "HDR10+" in meta.hdr:
-                tags.append("HDR10+")
-            else:
-                tags.append("HDR10")
-        if "HLG" in meta.hdr:
-            tags.append("HLG")
-        return tags
+        return [tag for tag, matched in self._tag_rules(meta) if matched]
+
+    @staticmethod
+    def _tag_rules(meta: Meta) -> tuple[tuple[str, bool], ...]:
+        hdr = str(meta.hdr or "")
+        edition = str(meta.edition or "")
+        audio = str(meta.audio or "")
+        return (
+            ("WEBRip", meta.type == "WEBRIP"),
+            ("WEBDL", meta.type == "WEBDL"),
+            ("3D", meta.three_d == "3D"),
+            ("DualAudio", "Dual-Audio" in audio),
+            ("EnglishDub", "Dubbed" in audio),
+            ("OpenMatte", "Open Matte" in edition),
+            ("Scene", bool(meta.scene)),
+            ("Personal", bool(meta.personalrelease)),
+            ("Hybrid", "hybrid" in edition.lower()),
+            ("Commentary", bool(meta.has_commentary)),
+            ("DV", "DV" in hdr),
+            ("HDR10+", "HDR10+" in hdr),
+            ("HDR10", "HDR" in hdr and "HDR10+" not in hdr),
+            ("HLG", "HLG" in hdr),
+        )
 
     async def get_name(self, meta: Meta) -> str:
         name = meta.name or ""
