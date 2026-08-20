@@ -54,13 +54,8 @@ class Aura4K(UNIT3D):
         reverse: bool = False,
         mapping_only: bool = False,
     ) -> dict[str, str]:
-        type_id = {"DISC": "1", "REMUX": "2", "WEBDL": "4", "ENCODE": "3"}
-        if mapping_only:
-            return type_id
-        if reverse:
-            return {v: k for k, v in type_id.items()}
-        type_value = type if type is not None and type != "" else meta.type or ""
-        return {"type_id": type_id.get(type_value, "0")}
+        mapping = {"DISC": "1", "REMUX": "2", "WEBDL": "4", "ENCODE": "3"}
+        return self._mapping_response(mapping, type, meta.type, reverse=reverse, mapping_only=mapping_only, default="0", key="type_id")
 
     async def get_resolution_id(
         self,
@@ -69,91 +64,138 @@ class Aura4K(UNIT3D):
         reverse: bool = False,
         mapping_only: bool = False,
     ) -> dict[str, str]:
-        resolution_id = {
-            "4320p": "1",
-            "2160p": "2",
-        }
+        mapping = {"4320p": "1", "2160p": "2"}
+        return self._mapping_response(
+            mapping,
+            resolution,
+            meta.resolution,
+            reverse=reverse,
+            mapping_only=mapping_only,
+            default="10",
+            key="resolution_id",
+        )
+
+    @classmethod
+    def _mapping_response(
+        cls,
+        mapping: dict[str, str],
+        requested: str | None,
+        fallback: str | None,
+        *,
+        reverse: bool,
+        mapping_only: bool,
+        default: str,
+        key: str,
+    ) -> dict[str, str]:
+        mode = cls._mapping_mode(mapping, reverse=reverse, mapping_only=mapping_only)
+        if mode is not None:
+            return mode
+        return {key: mapping.get(cls._selected_mapping_value(requested, fallback), default)}
+
+    @staticmethod
+    def _mapping_mode(mapping: dict[str, str], *, reverse: bool, mapping_only: bool) -> dict[str, str] | None:
         if mapping_only:
-            return resolution_id
-        if reverse:
-            return {v: k for k, v in resolution_id.items()}
-        resolution_value = resolution if resolution is not None and resolution != "" else meta.resolution or ""
-        return {"resolution_id": resolution_id.get(resolution_value, "10")}
+            return mapping
+        return {value: name for name, value in mapping.items()} if reverse else None
+
+    @staticmethod
+    def _selected_mapping_value(requested: str | None, fallback: str | None) -> str:
+        return requested if requested else (fallback or "")
 
     async def get_additional_checks(self, meta: Meta) -> bool:
-        should_continue = True
-        if meta.resolution not in ["2160p", "4320p"]:
-            if not meta.unattended:
-                logger.info(f"{self.tracker}: [red]only accepts 4K uploads.")
+        if not self._resolution_policy_passes(meta):
             return False
-
-        if meta.type not in ["DISC", "REMUX", "WEBDL", "ENCODE"]:
-            if not meta.unattended:
-                logger.info(f"{self.tracker}: [red]only accepts DISC, REMUX, WEBDL, and ENCODE uploads.")
+        if not self._type_policy_passes(meta):
             return False
-
-        if meta.is_disc not in ["BDMV", "DVD"] and not await self.common.check_language_requirements(
-            meta, self.tracker, languages_to_check=["english"], check_audio=True, check_subtitle=True, original_language=True
-        ):
+        if not await self._language_policy_passes(meta):
             return False
+        return self._bitrate_policy_passes(meta)
 
-        # check bitrate requirements for AURA4K uploads, but only if it's not a disc upload since discs can have variable bitrates and AURA4K doesn't specify bitrate requirements for disc uploads
-        if not meta.is_disc and meta.type in ["ENCODE", "WEBDL"]:
-            tracks = meta.mediainfo.get("media", {}).get("track", [])
-            for track in tracks:
-                if track.get("@type") == "Video":
-                    encoding_settings = track.get("Encoded_Library_Settings", {})
+    def _resolution_policy_passes(self, meta: Meta) -> bool:
+        if meta.resolution in {"2160p", "4320p"}:
+            return True
+        self._log_attended(meta, "only accepts 4K uploads.")
+        return False
 
-                    if encoding_settings:
-                        bit_rate = track.get("BitRate")
-                        if bit_rate:
-                            try:
-                                bit_rate_num = int(bit_rate)
-                            except ValueError, TypeError:
-                                bit_rate_num = None
+    def _type_policy_passes(self, meta: Meta) -> bool:
+        if meta.type in {"DISC", "REMUX", "WEBDL", "ENCODE"}:
+            return True
+        self._log_attended(meta, "only accepts DISC, REMUX, WEBDL, and ENCODE uploads.")
+        return False
 
-                            if bit_rate_num is not None:
-                                bit_rate_kbps = bit_rate_num / 1000
-                                if meta.category == "MOVIE" and bit_rate_kbps < 15000:
-                                    if not meta.unattended:
-                                        logger.info(f"{self.tracker}: Video bitrate too low: {bit_rate_kbps:.0f} kbps for AURA4K movie uploads.")
-                                    return False
-                                if meta.category == "TV" and bit_rate_kbps < 10000:
-                                    if not meta.unattended:
-                                        logger.info(f"{self.tracker}: Video bitrate too low: {bit_rate_kbps:.0f} kbps for AURA4K TV uploads.")
-                                    return False
-                            else:
-                                if not meta.unattended or (meta.unattended and meta.unattended_confirm):
-                                    logger.info(f"{self.tracker}: [bold red]Could not determine video bitrate from mediainfo for {self.tracker} upload.[/bold red]")
-                                    logger.info(f"{self.tracker}: [yellow]Bitrate must be above 15000 kbps for movies and 10000 kbps for TV shows.[/yellow]")
-                                    if cli_ui.ask_yes_no("Do you want to upload anyway?", default=False):
-                                        pass
-                                    else:
-                                        return False
-                                else:
-                                    return False
-                        else:
-                            if not meta.unattended or (meta.unattended and meta.unattended_confirm):
-                                logger.info(f"{self.tracker}: [bold red]Could not determine video bitrate from mediainfo for {self.tracker} upload.[/bold red]")
-                                logger.info(f"{self.tracker}: [yellow]Bitrate must be above 15000 kbps for movies and 10000 kbps for TV shows.[/yellow]")
-                                if cli_ui.ask_yes_no("Do you want to upload anyway?", default=False):
-                                    pass
-                                else:
-                                    return False
-                            else:
-                                return False
-                    else:
-                        if not meta.unattended or (meta.unattended and meta.unattended_confirm):
-                            logger.info(f"{self.tracker}: [bold red]Could not determine video bitrate from mediainfo for {self.tracker} upload.[/bold red]")
-                            logger.info(f"{self.tracker}: [yellow]Bitrate must be above 15000 kbps for movies and 10000 kbps for TV shows.[/yellow]")
-                            if cli_ui.ask_yes_no("Do you want to upload anyway?", default=False):
-                                pass
-                            else:
-                                return False
-                        else:
-                            return False
+    async def _language_policy_passes(self, meta: Meta) -> bool:
+        if meta.is_disc in {"BDMV", "DVD"}:
+            return True
+        return await self.common.check_language_requirements(
+            meta,
+            self.tracker,
+            languages_to_check=["english"],
+            check_audio=True,
+            check_subtitle=True,
+            original_language=True,
+        )
 
-        return should_continue
+    def _bitrate_policy_passes(self, meta: Meta) -> bool:
+        if meta.is_disc or meta.type not in {"ENCODE", "WEBDL"}:
+            return True
+        return all(self._video_bitrate_policy_passes(meta, track) for track in self._video_tracks(meta))
+
+    @classmethod
+    def _video_tracks(cls, meta: Meta) -> list[dict[str, Any]]:
+        tracks = cls._media_tracks(meta)
+        return [track for track in tracks if track.get("@type") == "Video"]
+
+    @classmethod
+    def _media_tracks(cls, meta: Meta) -> list[dict[str, Any]]:
+        media = cls._media_mapping(meta)
+        tracks = media.get("track", [])
+        if not isinstance(tracks, list):
+            return []
+        return [track for track in tracks if isinstance(track, dict)]
+
+    @staticmethod
+    def _media_mapping(meta: Meta) -> dict[str, Any]:
+        if not isinstance(meta.mediainfo, dict):
+            return {}
+        media = meta.mediainfo.get("media", {})
+        return media if isinstance(media, dict) else {}
+
+    def _video_bitrate_policy_passes(self, meta: Meta, track: dict[str, Any]) -> bool:
+        if not track.get("Encoded_Library_Settings"):
+            return self._confirm_missing_bitrate(meta)
+        bitrate = self._bitrate_kbps(track.get("BitRate"))
+        if bitrate is None:
+            return self._confirm_missing_bitrate(meta)
+        return self._bitrate_above_minimum(meta, bitrate)
+
+    @staticmethod
+    def _bitrate_kbps(value: Any) -> float | None:
+        try:
+            return int(value) / 1000 if value is not None else None
+        except TypeError, ValueError:
+            return None
+
+    def _bitrate_above_minimum(self, meta: Meta, bitrate_kbps: float) -> bool:
+        minimum = self._minimum_bitrate(meta.category)
+        if minimum and bitrate_kbps < minimum:
+            self._log_attended(meta, f"Video bitrate too low: {bitrate_kbps:.0f} kbps for AURA4K {str(meta.category).lower()} uploads.")
+            return False
+        return True
+
+    @staticmethod
+    def _minimum_bitrate(category: str | None) -> int:
+        return {"MOVIE": 15000, "TV": 10000}.get(str(category or "").upper(), 0)
+
+    def _confirm_missing_bitrate(self, meta: Meta) -> bool:
+        if meta.unattended and not meta.unattended_confirm:
+            return False
+        logger.info(f"{self.tracker}: [bold red]Could not determine video bitrate from mediainfo for {self.tracker} upload.[/bold red]")
+        logger.info(f"{self.tracker}: [yellow]Bitrate must be above 15000 kbps for movies and 10000 kbps for TV shows.[/yellow]")
+        return bool(cli_ui.ask_yes_no("Do you want to upload anyway?", default=False))
+
+    def _log_attended(self, meta: Meta, message: str) -> None:
+        if not meta.unattended:
+            logger.info(f"{self.tracker}: [red]{message}")
 
     async def get_additional_data(self, meta: Meta) -> dict[str, Any]:
         return {
@@ -161,12 +203,18 @@ class Aura4K(UNIT3D):
         }
 
     async def get_name(self, meta: Meta) -> dict[str, str]:
-        a4k_name: str = meta.name
         if not meta.language_checked:
             await languages_manager.process_desc_language(meta, tracker=self.tracker)
-        audio_languages: list[str] = [] if not meta.audio_languages else meta.audio_languages
-        if audio_languages and not await languages_manager.has_english_language(audio_languages):
-            foreign_lang = audio_languages[0].upper()
-            if meta.is_disc != "BDMV":
-                a4k_name = a4k_name.replace(meta.resolution, f"{foreign_lang} {meta.resolution}", 1)
-        return {"name": a4k_name}
+        languages = self._string_list(meta.audio_languages)
+        return {"name": await self._foreign_language_name(meta, languages)}
+
+    async def _foreign_language_name(self, meta: Meta, languages: list[str]) -> str:
+        if not languages or await languages_manager.has_english_language(languages):
+            return meta.name
+        if meta.is_disc == "BDMV":
+            return meta.name
+        return meta.name.replace(meta.resolution, f"{languages[0].upper()} {meta.resolution}", 1)
+
+    @staticmethod
+    def _string_list(value: Any) -> list[str]:
+        return [str(item) for item in value] if isinstance(value, list) else []
