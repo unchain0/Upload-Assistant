@@ -1,7 +1,7 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
 import re
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from src.domain_models.release import Meta
 from src.integrations.observability.runtime_support import logger
@@ -57,115 +57,100 @@ class Portugas(UNIT3D):
 
     async def get_name(self, meta: Meta) -> dict[str, str]:
         name = meta.name.replace(" ", ".")
-
-        pt_name = name
         tag_value = meta.tag or ""
-        tag_lower = tag_value.lower()
-        invalid_tags = ["nogrp", "nogroup", "unknown", "-unk-"]
+        if self._needs_nogroup_tag(tag_value):
+            name = f"{self._strip_invalid_group_tags(name)}-NOGROUP"
+        return {"name": name}
 
-        if tag_value == "" or any(invalid_tag in tag_lower for invalid_tag in invalid_tags):
-            for invalid_tag in invalid_tags:
-                pt_name = re.sub(f"-{invalid_tag}", "", pt_name, flags=re.IGNORECASE)
-            pt_name = f"{pt_name}-NOGROUP"
+    @staticmethod
+    def _needs_nogroup_tag(tag_value: str) -> bool:
+        if not tag_value:
+            return True
+        lowered = tag_value.casefold()
+        return any(value in lowered for value in ("nogrp", "nogroup", "unknown", "-unk-"))
 
-        return {"name": pt_name}
+    @staticmethod
+    def _strip_invalid_group_tags(name: str) -> str:
+        result = name
+        for invalid_tag in ("nogrp", "nogroup", "unknown", "-unk-"):
+            result = re.sub(f"-{invalid_tag}", "", result, flags=re.IGNORECASE)
+        return result
 
     def get_audio(self, meta: Meta) -> int:
-        found_portuguese_audio = False
-
-        if meta.is_disc == "BDMV":
-            bdinfo = meta.bdinfo
-            audio_tracks = cast(list[dict[str, Any]], bdinfo.get("audio", []))
-            if audio_tracks:
-                for track in audio_tracks:
-                    lang = str(track.get("language", ""))
-                    if lang and lang.lower() == "portuguese":
-                        found_portuguese_audio = True
-                        break
-
-        needs_mediainfo_check = (meta.is_disc != "BDMV") or (meta.is_disc == "BDMV" and not found_portuguese_audio)
-
-        if needs_mediainfo_check:
-            base_dir = meta.base_dir if meta.base_dir is not None else "."
-            uuid = meta.uuid if meta.uuid is not None else "default_uuid"
-            media_info_path = Path(base_dir) / "tmp" / uuid / "MEDIAINFO.txt"
-
-            try:
-                if Path(media_info_path).exists():
-                    with Path(media_info_path).open(encoding="utf-8") as f:
-                        media_info_text = f.read()
-
-                    if not found_portuguese_audio:
-                        audio_sections = re.findall(r"Audio(?: #\d+)?\s*\n(.*?)(?=\n\n(?:Audio|Video|Text|Menu)|$)", media_info_text, re.DOTALL | re.IGNORECASE)
-                        for section in audio_sections:
-                            language_match = re.search(r"Language\s*:\s*(.+)", section, re.IGNORECASE)
-                            title_match = re.search(r"Title\s*:\s*(.+)", section, re.IGNORECASE)
-
-                            lang_raw = language_match.group(1).strip() if language_match else ""
-                            title_raw = title_match.group(1).strip() if title_match else ""
-
-                            text = f"{lang_raw} {title_raw}".lower()
-
-                            if "portuguese" in text and not any(keyword in text for keyword in ["(br)", "brazilian"]):
-                                found_portuguese_audio = True
-                                break
-
-            except FileNotFoundError:
-                pass
-            except Exception as e:
-                logger.info(f"ERRO: Falha ao processar MediaInfo para verificar áudio Português: {e}", extra={"markup": False})
-
-        return 1 if found_portuguese_audio else 0
+        found = self._bdmv_has_portuguese_audio(meta)
+        if not found:
+            found = self._mediainfo_has_portuguese(meta, "Audio")
+        return int(found)
 
     def get_subtitles(self, meta: Meta) -> int:
-        found_portuguese_subtitle = False
+        found = self._bdmv_has_portuguese_subtitle(meta)
+        if not found:
+            found = self._mediainfo_has_portuguese(meta, "Text") or self._mediainfo_has_portuguese(meta, "Subtitle")
+        return int(found)
 
-        if meta.is_disc == "BDMV":
-            bdinfo = meta.bdinfo
-            subtitle_tracks = cast(list[Any], bdinfo.get("subtitles", []))
-            if subtitle_tracks:
-                found_portuguese_subtitle = False
-                for track in subtitle_tracks:
-                    if isinstance(track, str) and track.lower() == "portuguese":
-                        found_portuguese_subtitle = True
-                        break
+    @staticmethod
+    def _bdmv_has_portuguese_audio(meta: Meta) -> bool:
+        if meta.is_disc != "BDMV":
+            return False
+        tracks = meta.bdinfo.get("audio", []) if isinstance(meta.bdinfo, dict) else []
+        return any(Portugas._audio_track_is_portuguese(track) for track in tracks if isinstance(track, dict))
 
-        needs_mediainfo_check = (meta.is_disc != "BDMV") or (meta.is_disc == "BDMV" and not found_portuguese_subtitle)
+    @staticmethod
+    def _audio_track_is_portuguese(track: dict[str, Any]) -> bool:
+        return str(track.get("language", "")).strip().casefold() == "portuguese"
 
-        if needs_mediainfo_check:
-            base_dir = meta.base_dir if meta.base_dir is not None else "."
-            uuid = meta.uuid if meta.uuid is not None else "default_uuid"
-            media_info_path = Path(base_dir) / "tmp" / uuid / "MEDIAINFO.txt"
+    @staticmethod
+    def _bdmv_has_portuguese_subtitle(meta: Meta) -> bool:
+        if meta.is_disc != "BDMV":
+            return False
+        tracks = meta.bdinfo.get("subtitles", []) if isinstance(meta.bdinfo, dict) else []
+        return any(isinstance(track, str) and track.strip().casefold() == "portuguese" for track in tracks)
 
-            try:
-                if Path(media_info_path).exists():
-                    with Path(media_info_path).open(encoding="utf-8") as f:
-                        media_info_text = f.read()
+    @classmethod
+    def _mediainfo_has_portuguese(cls, meta: Meta, section_name: str) -> bool:
+        text = cls._read_mediainfo_text(meta)
+        if not text:
+            return False
+        return any(cls._section_is_portuguese(section) for section in cls._mediainfo_sections(text, section_name))
 
-                    if not found_portuguese_subtitle:
-                        text_sections = re.findall(r"Text(?: #\d+)?\s*\n(.*?)(?=\n\n(?:Audio|Video|Text|Menu)|$)", media_info_text, re.DOTALL | re.IGNORECASE)
-                        if not text_sections:
-                            text_sections = re.findall(r"Subtitle(?: #\d+)?\s*\n(.*?)(?=\n\n(?:Audio|Video|Text|Menu)|$)", media_info_text, re.DOTALL | re.IGNORECASE)
+    @classmethod
+    def _read_mediainfo_text(cls, meta: Meta) -> str:
+        base_dir, uuid = cls._temp_identity(meta)
+        return cls._read_text_file(Path(base_dir) / "tmp" / uuid / "MEDIAINFO.txt")
 
-                        for section in text_sections:
-                            language_match = re.search(r"Language\s*:\s*(.+)", section, re.IGNORECASE)
-                            title_match = re.search(r"Title\s*:\s*(.+)", section, re.IGNORECASE)
+    @staticmethod
+    def _temp_identity(meta: Meta) -> tuple[str, str]:
+        base_dir = "." if meta.base_dir is None else str(meta.base_dir)
+        uuid = "default_uuid" if meta.uuid is None else str(meta.uuid)
+        return base_dir, uuid
 
-                            lang_raw = language_match.group(1).strip() if language_match else ""
-                            title_raw = title_match.group(1).strip() if title_match else ""
+    @staticmethod
+    def _read_text_file(path: Path) -> str:
+        if not path.exists():
+            return ""
+        try:
+            return path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return ""
+        except Exception as error:
+            logger.info(f"ERRO: Falha ao processar MediaInfo para verificar Português: {error}", extra={"markup": False})
+            return ""
 
-                            text = f"{lang_raw} {title_raw}".lower()
+    @staticmethod
+    def _mediainfo_sections(text: str, section_name: str) -> list[str]:
+        pattern = rf"{re.escape(section_name)}(?: #\d+)?\s*\n(.*?)(?=\n\n(?:Audio|Video|Text|Subtitle|Menu)|$)"
+        return re.findall(pattern, text, re.DOTALL | re.IGNORECASE)
 
-                            if "portuguese" in text and not any(keyword in text for keyword in ["(br)", "brazilian"]):
-                                found_portuguese_subtitle = True
-                                break
-
-            except FileNotFoundError:
-                pass
-            except Exception as e:
-                logger.info(f"ERRO: Falha ao processar MediaInfo para verificar legenda Português: {e}", extra={"markup": False})
-
-        return 1 if found_portuguese_subtitle else 0
+    @staticmethod
+    def _section_is_portuguese(section: str) -> bool:
+        language_match = re.search(r"Language\s*:\s*(.+)", section, re.IGNORECASE)
+        title_match = re.search(r"Title\s*:\s*(.+)", section, re.IGNORECASE)
+        language = language_match.group(1).strip() if language_match else ""
+        title = title_match.group(1).strip() if title_match else ""
+        text = f"{language} {title}".casefold()
+        if "portuguese" not in text:
+            return False
+        return "(br)" not in text and "brazilian" not in text
 
     async def get_distributor_ids(self, _meta: Meta) -> dict[str, str]:
         return {}
