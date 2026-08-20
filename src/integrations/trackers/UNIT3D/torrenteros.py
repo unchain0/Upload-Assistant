@@ -42,85 +42,82 @@ class Torrenteros(UNIT3D):
 
     def build_name(self, meta: Meta) -> str:
         name = meta.name_notag
-
-        def ask_spanish_type(kind: str) -> str:
-            logger.info(f"{self.tracker}: [green]Found Spanish {kind} track.[/green] [yellow]Is it Castellano or Latino?[/yellow]")
-            logger.info(f"{self.tracker}: 1 = Castellano")
-            logger.info(f"{self.tracker}: 2 = Latino")
-            logger.info(f"{self.tracker}: 3 = Castellano Latino")
-            return str(cli_ui.ask_string("Enter choice (1-3): "))
-
-        def get_spanish_type(lang_code: str) -> str | None:
-            if not lang_code:
-                return None
-            lang_code = lang_code.lower()
-            if lang_code in ("es-es", "es", "spa"):
-                return "Castellano"
-            if lang_code.startswith("es-"):
-                return "Latino"
-            return None
-
-        if meta.is_disc == "BDMV":
-            spanish_audio = "Spanish" in (meta.audio_languages or [])
-            spanish_subtitle = "Spanish" in (meta.subtitle_languages or [])
-            unattended = meta.unattended
-            confirm = meta.unattended_confirm
-
-            if spanish_audio:
-                if unattended or confirm:
-                    suffix = "Castellano"
-                else:
-                    user_choice = ask_spanish_type("audio")
-                    suffix = {"1": "Castellano", "2": "Latino", "3": "Castellano Latino"}.get(user_choice, "Castellano")
-                name += f" {suffix}"
-
-            elif spanish_subtitle:
-                if unattended or confirm:
-                    suffix = "Castellano Subs"
-                else:
-                    user_choice = ask_spanish_type("subtitle")
-                    suffix = {"1": "Castellano Subs", "2": "Latino Subs", "3": "Castellano Latino Subs"}.get(user_choice, "Castellano Subs")
-
-                name += f" {suffix}"
-
-        else:
-            tracks = cast(
-                list[dict[str, Any]],
-                meta.mediainfo.get("media", {}).get("track", []),
-            )
-            spanish_audio_type = None
-            spanish_subs_type = None
-
-            for track in tracks:
-                if track.get("@type") == "Audio":
-                    lang = track.get("Language", "")
-                    if isinstance(lang, dict):
-                        lang = ""
-                    spanish_audio_type = get_spanish_type(str(lang).strip())
-                    if spanish_audio_type:
-                        break
-
-            for track in tracks:
-                if track.get("@type") == "Text":
-                    lang = track.get("Language", "")
-                    if isinstance(lang, dict):
-                        lang = ""
-                    spanish_subs_type = get_spanish_type(str(lang).strip())
-                    if spanish_subs_type:
-                        break
-
-            if spanish_audio_type:
-                name += f" {spanish_audio_type}"
-            elif spanish_subs_type:
-                name += f" {spanish_subs_type} Subs"
-
-        tag = meta.tag
-        if tag:
-            name += tag
-
+        suffix = self._disc_language_suffix(meta) if meta.is_disc == "BDMV" else self._file_language_suffix(meta)
+        if suffix:
+            name += f" {suffix}"
+        if meta.tag:
+            name += meta.tag
         self.ttr_name = name
-
         return name
+
+    def _ask_spanish_type(self, kind: str) -> str:
+        logger.info(f"{self.tracker}: [green]Found Spanish {kind} track.[/green] [yellow]Is it Castellano or Latino?[/yellow]")
+        logger.info(f"{self.tracker}: 1 = Castellano")
+        logger.info(f"{self.tracker}: 2 = Latino")
+        logger.info(f"{self.tracker}: 3 = Castellano Latino")
+        return str(cli_ui.ask_string("Enter choice (1-3): "))
+
+    @staticmethod
+    def _spanish_type(lang_code: str) -> str:
+        normalized = lang_code.strip().casefold()
+        if normalized in {"es-es", "es", "spa"}:
+            return "Castellano"
+        if normalized.startswith("es-"):
+            return "Latino"
+        return ""
+
+    def _disc_language_suffix(self, meta: Meta) -> str:
+        spanish_audio = "Spanish" in (meta.audio_languages or [])
+        spanish_subtitle = "Spanish" in (meta.subtitle_languages or [])
+        if spanish_audio:
+            return self._disc_suffix(meta, "audio", subs=False)
+        if spanish_subtitle:
+            return self._disc_suffix(meta, "subtitle", subs=True)
+        return ""
+
+    def _disc_suffix(self, meta: Meta, kind: str, *, subs: bool) -> str:
+        if meta.unattended or meta.unattended_confirm:
+            return "Castellano Subs" if subs else "Castellano"
+        choice = self._ask_spanish_type(kind)
+        suffixes = {"1": "Castellano", "2": "Latino", "3": "Castellano Latino"}
+        suffix = suffixes.get(choice, "Castellano")
+        return f"{suffix} Subs" if subs else suffix
+
+    def _file_language_suffix(self, meta: Meta) -> str:
+        audio = self._first_spanish_track_type(meta, "Audio")
+        if audio:
+            return audio
+        subtitles = self._first_spanish_track_type(meta, "Text")
+        return f"{subtitles} Subs" if subtitles else ""
+
+    def _first_spanish_track_type(self, meta: Meta, track_type: str) -> str:
+        for track in self._media_tracks(meta):
+            if track.get("@type") != track_type:
+                continue
+            spanish_type = self._spanish_type(self._track_language(track))
+            if spanish_type:
+                return spanish_type
+        return ""
+
+    @classmethod
+    def _media_tracks(cls, meta: Meta) -> list[dict[str, Any]]:
+        media = cls._media_mapping(meta)
+        tracks = media.get("track", [])
+        if not isinstance(tracks, list):
+            return []
+        return [cast(dict[str, Any], track) for track in tracks if isinstance(track, dict)]
+
+    @staticmethod
+    def _media_mapping(meta: Meta) -> dict[str, Any]:
+        if not isinstance(meta.mediainfo, dict):
+            return {}
+        media = meta.mediainfo.get("media", {})
+        return cast(dict[str, Any], media) if isinstance(media, dict) else {}
+
+    @staticmethod
+    def _track_language(track: dict[str, Any]) -> str:
+        value = track.get("Language", "")
+        return "" if isinstance(value, dict) else str(value).strip()
 
     async def get_additional_data(self, meta: Meta) -> dict[str, Any]:
         data: dict[str, Any] = {
@@ -132,17 +129,23 @@ class Torrenteros(UNIT3D):
     async def get_additional_checks(self, meta: Meta) -> bool:
         if not meta.language_checked:
             await languages_manager.process_desc_language(meta, tracker=self.tracker)
+        if self._has_spanish_audio(meta):
+            return True
+        if not self._has_spanish_subtitles(meta):
+            logger.info(f"{self.tracker}: [bold red]requires at least one Spanish audio or subtitle track.")
+            return False
+        return self._allow_subtitle_only(meta)
 
-        if "Spanish" not in (meta.audio_languages or []):
-            if "Spanish" not in (meta.subtitle_languages or []):
-                logger.info(f"{self.tracker}: [bold red]requires at least one Spanish audio or subtitle track.")
-                return False
-            if meta.unattended:
-                if not meta.unattended_confirm:
-                    return False
-            else:
-                logger.info(f"{self.tracker}: [yellow]No Spanish audio track found, but Spanish subtitles are present.[/yellow]")
-                if not cli_ui.ask_yes_no("Do you want to upload anyway?", default=False):
-                    return False
+    @staticmethod
+    def _has_spanish_audio(meta: Meta) -> bool:
+        return "Spanish" in (meta.audio_languages or [])
 
-        return True
+    @staticmethod
+    def _has_spanish_subtitles(meta: Meta) -> bool:
+        return "Spanish" in (meta.subtitle_languages or [])
+
+    def _allow_subtitle_only(self, meta: Meta) -> bool:
+        if meta.unattended:
+            return bool(meta.unattended_confirm)
+        logger.info(f"{self.tracker}: [yellow]No Spanish audio track found, but Spanish subtitles are present.[/yellow]")
+        return bool(cli_ui.ask_yes_no("Do you want to upload anyway?", default=False))
