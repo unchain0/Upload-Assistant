@@ -27,6 +27,7 @@ from rich.markup import escape
 from torf import Torrent as _Torrent  # pyright: ignore[reportMissingImports,reportUnknownVariableType]
 
 from src.bootstrap import build_configuration_service
+from src.domain_models import application_version
 from src.delivery.cli.arguments import Args, partition_existing_paths, read_paths_from_stdin
 from src.domain_models.book_language import is_valid_book_language, resolve_book_language
 from src.domain_models.errors import ConfigurationError, NoWorkAvailableError, OperationAbortedError
@@ -2015,19 +2016,25 @@ async def save_processed_file(log_file: str, file_path: str) -> None:
         await f.write(json.dumps(processed_files, indent=4))
 
 
-def get_local_version(version_file: str | Path) -> str | None:
-    """Extracts the local version from the version.py file."""
+def get_local_version(version_file: str | Path) -> str:
+    """Resolve the installed application version without depending on CWD."""
+    path = Path(version_file)
     try:
-        with Path(version_file).open(encoding="utf-8") as f:
-            content = f.read()
-        match = re.search(r'__version__\s*=\s*"([^"]+)"', content)
-        if match:
-            return match.group(1)
-        logger.info("[red]Version not found in local file.")
-        return None
-    except FileNotFoundError:
-        logger.info("[red]Version file not found.")
-        return None
+        content = path.read_text(encoding="utf-8")
+    except OSError as error:
+        logger.debug(
+            f"Version metadata file unavailable at {path}: {error}. "
+            f"Using packaged version {application_version.__version__}."
+        )
+        return application_version.__version__
+    match = re.search(r'__version__\s*=\s*"([^"]+)"', content)
+    if match:
+        return match.group(1)
+    logger.debug(
+        f"Version metadata missing from {path}; using packaged version "
+        f"{application_version.__version__}."
+    )
+    return application_version.__version__
 
 
 def get_remote_version(url: str) -> tuple[str | None, str | None]:
