@@ -264,3 +264,89 @@ def test_yuscene_maps_rar_game_release_to_archive_type():
 
     assert asyncio.run(_tracker().get_additional_checks(meta)) is True
     assert asyncio.run(_tracker().get_type_id(meta)) == {"type_id": "22"}
+
+
+def test_yuscene_attended_confirmation_uses_prompt():
+    tracker = _tracker()
+    tracker.common.prompt_user_for_confirmation = AsyncMock(return_value=True)
+    assert asyncio.run(tracker._confirm_or_skip("Confirm", Meta(unattended=False))) is True
+    tracker.common.prompt_user_for_confirmation.assert_awaited_once()
+
+
+def test_yuscene_detects_sample_video_extra_and_bracket_title():
+    assert YUSCENE._contains_video_extras(["sample.mkv"]) == "sample.mkv"
+    assert YUSCENE._has_banned_title_chars("Movie [2024]") is True
+    assert YUSCENE._forbidden_tracker_host("not-a-url") == ""
+
+
+def test_yuscene_translation_requires_complete_source_values():
+    tracker = YUSCENE({"DEFAULT": {"google_translate_api_key": "translation-key"}, "TRACKERS": {"YUSCENE": {}}})
+    meta = _book_meta(title="")
+    assert asyncio.run(tracker._translate_book_metadata_to_english(meta)) is False
+
+
+def test_yuscene_translation_http_error_is_nonfatal():
+    import httpx
+
+    tracker = YUSCENE({"DEFAULT": {"google_translate_api_key": "translation-key"}, "TRACKERS": {"YUSCENE": {}}})
+    meta = _book_meta(author="宮沢 賢治", title="宮沢賢治童話全集", book_overview="日本語の説明です。")
+    request_error = httpx.RequestError("offline", request=httpx.Request("POST", "https://translation.googleapis.com"))
+    with patch("src.integrations.trackers.UNIT3D.yuscene.httpx.AsyncClient.post", new=AsyncMock(side_effect=request_error)):
+        assert asyncio.run(tracker._translate_book_metadata_to_english(meta)) is False
+
+
+def test_yuscene_translation_invalid_json_is_nonfatal():
+    tracker = YUSCENE({"DEFAULT": {"google_translate_api_key": "translation-key"}, "TRACKERS": {"YUSCENE": {}}})
+    meta = _book_meta(author="宮沢 賢治", title="宮沢賢治童話全集", book_overview="日本語の説明です。")
+    response = Mock()
+    response.raise_for_status.return_value = None
+    response.json.side_effect = ValueError("bad json")
+    with patch("src.integrations.trackers.UNIT3D.yuscene.httpx.AsyncClient.post", new=AsyncMock(return_value=response)):
+        assert asyncio.run(tracker._translate_book_metadata_to_english(meta)) is False
+
+
+def test_yuscene_translation_rejects_incomplete_results():
+    tracker = YUSCENE({"DEFAULT": {"google_translate_api_key": "translation-key"}, "TRACKERS": {"YUSCENE": {}}})
+    meta = _book_meta(author="宮沢 賢治", title="宮沢賢治童話全集", book_overview="日本語の説明です。")
+    response = Mock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {"data": {"translations": [{"translatedText": "Kenji Miyazawa"}]}}
+    with patch("src.integrations.trackers.UNIT3D.yuscene.httpx.AsyncClient.post", new=AsyncMock(return_value=response)):
+        assert asyncio.run(tracker._translate_book_metadata_to_english(meta)) is False
+
+
+def test_yuscene_translation_revalidates_translated_metadata():
+    tracker = YUSCENE({"DEFAULT": {"google_translate_api_key": "translation-key"}, "TRACKERS": {"YUSCENE": {}}})
+    meta = _book_meta(author="宮沢 賢治", title="宮沢賢治童話全集", book_overview="日本語の説明です。")
+    response = Mock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {
+        "data": {
+            "translations": [
+                {"translatedText": "Kenji Miyazawa"},
+                {"translatedText": "Stories"},
+                {"translatedText": "Short description"},
+            ]
+        }
+    }
+    tracker._has_english_book_metadata = Mock(return_value=False)
+    with patch("src.integrations.trackers.UNIT3D.yuscene.httpx.AsyncClient.post", new=AsyncMock(return_value=response)):
+        assert asyncio.run(tracker._translate_book_metadata_to_english(meta)) is False
+
+
+def test_yuscene_accepts_non_collection_keywords_payload():
+    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(keywords=123))) is True
+
+
+def test_yuscene_rejects_single_file_folder_and_unknown_tv_pack():
+    tracker = _tracker()
+    assert asyncio.run(tracker.get_additional_checks(_movie_meta(keep_folder=True))) is False
+    assert asyncio.run(tracker.get_additional_checks(_tv_meta(tv_pack=True, imdb_info={}))) is False
+
+
+def test_yuscene_rejects_movie_collection_name():
+    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(name="Example Movie Collection 2024"))) is False
+
+
+def test_yuscene_unknown_book_type_defaults_to_pdf():
+    assert asyncio.run(_tracker().get_type_id(Meta(category="BOOK", type="DOCX"))) == {"type_id": "21"}

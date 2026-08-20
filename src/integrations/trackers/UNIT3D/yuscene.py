@@ -194,26 +194,30 @@ class YUSCENE(UNIT3D):
                 return path.name
         return ""
 
-    @staticmethod
-    def _contains_other_tracker_mention(value: str) -> str:
+    @classmethod
+    def _contains_other_tracker_mention(cls, value: str) -> str:
         lowered = str(value or "").lower()
         url_pattern = re.compile(r"(?:https?:)?//[^\s]+")
+        forbidden = cls._first_forbidden_tracker_url(url_pattern.findall(lowered))
+        return forbidden or cls._tracker_keyword(url_pattern.sub(" ", lowered))
 
-        if urls := url_pattern.findall(lowered):
-            for raw_url in urls:
-                authority_match = re.match(r"(?:https?:)?//([^/?#\s]+)", raw_url)
-                if authority_match is None:
-                    continue
-                host = authority_match.group(1).rsplit("@", 1)[-1].partition(":")[0].lower().rstrip(".")
-                if host:
-                    for forbidden in YUSCENE._TRACKER_DOMAINS:
-                        if host == forbidden or host.endswith(f".{forbidden}"):
-                            return forbidden
+    @classmethod
+    def _first_forbidden_tracker_url(cls, urls: list[str]) -> str:
+        return next((host for raw_url in urls if (host := cls._forbidden_tracker_host(raw_url))), "")
 
-        tracker_terms_pattern = re.compile(r"(?<![a-z0-9])(?:" + "|".join(map(re.escape, YUSCENE._TRACKER_KEYWORDS)) + r")(?![a-z0-9])")
-        if match := tracker_terms_pattern.search(url_pattern.sub(" ", lowered)):
-            return match.group(0)
-        return ""
+    @classmethod
+    def _tracker_keyword(cls, value: str) -> str:
+        pattern = re.compile(r"(?<![a-z0-9])(?:" + "|".join(map(re.escape, cls._TRACKER_KEYWORDS)) + r")(?![a-z0-9])")
+        match = pattern.search(value)
+        return match.group(0) if match else ""
+
+    @classmethod
+    def _forbidden_tracker_host(cls, raw_url: str) -> str:
+        authority_match = re.match(r"(?:https?:)?//([^/?#\s]+)", raw_url)
+        if authority_match is None:
+            return ""
+        host = authority_match.group(1).rsplit("@", 1)[-1].partition(":")[0].lower().rstrip(".")
+        return next((forbidden for forbidden in cls._TRACKER_DOMAINS if host == forbidden or host.endswith(f".{forbidden}")), "")
 
     @staticmethod
     def _has_banned_title_chars(value: str) -> bool:
