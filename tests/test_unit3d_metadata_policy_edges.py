@@ -9,6 +9,8 @@ import pytest
 from data.example_config import config as example_config
 from src.domain_models.release import Meta
 from src.integrations.trackers import description_builder
+from src.integrations.trackers.UNIT3D import UNIT3D
+from src.integrations.trackers.UNIT3D import samaritano as samaritano_module
 from src.integrations.trackers.UNIT3D.homiehelpdesk import HomieHelpDesk
 from src.integrations.trackers.UNIT3D.itatorrents import ItaTorrents
 from src.integrations.trackers.UNIT3D.peergarden import PeerGarden
@@ -282,3 +284,41 @@ def test_samaritano_software_name_category_type_and_default_policy() -> None:
 def test_retromoviesclub_dvd_disc_type() -> None:
     tracker = RetroMoviesClub(_config())
     assert asyncio.run(tracker.get_type_id(Meta(category="MOVIE", is_disc="DVD", source="DVD"))) == {"type_id": "3"}
+
+
+def test_homiehelpdesk_default_book_category() -> None:
+    tracker = HomieHelpDesk(_config())
+    assert asyncio.run(tracker.get_category_id(Meta(category="BOOK"))) == {"category_id": "7"}
+
+
+def test_peergarden_anime_book_fallback_and_payload_filter(monkeypatch: pytest.MonkeyPatch) -> None:
+    tracker = PeerGarden(_config())
+    assert asyncio.run(tracker.get_category_id(Meta(category="TV", anime=True))) == {"category_id": "11"}
+    assert asyncio.run(tracker.get_type_id(Meta(category="BOOK", type="UNKNOWN"))) == {"type_id": "15"}
+    monkeypatch.setattr(UNIT3D, "get_data", AsyncMock(return_value={"free": 1, "featured": 1, "doubleup": 1, "sticky": 1, "keep": 2}))
+    assert asyncio.run(tracker.get_data(Meta())) == {"keep": 2}
+
+
+def test_samaritano_remaining_category_type_and_description(monkeypatch: pytest.MonkeyPatch) -> None:
+    tracker = Samaritano(_config())
+    assert asyncio.run(tracker.get_category_id(Meta(category="TV", anime=True))) == {"category_id": "3"}
+    assert asyncio.run(tracker.get_category_id(Meta(category="BOOK", audiobook=True))) == {"category_id": "8"}
+    assert asyncio.run(tracker.get_category_id(Meta(category="BOOK"))) == {"category_id": "6"}
+    assert asyncio.run(tracker.get_category_id(Meta(category="GAME", software=True))) == {"category_id": "9"}
+    assert asyncio.run(tracker.get_type_id(Meta(category="BOOK", type="UNKNOWN"))) == {"type_id": "68"}
+
+    class Builder:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        async def general_description_generator(self, *_args, **_kwargs) -> str:
+            return "description"
+
+    monkeypatch.setattr(samaritano_module, "DescriptionBuilder", Builder)
+    meta = Meta(ua_name="UA", current_version="1")
+    assert asyncio.run(tracker.get_description(meta)) == {"description": "description"}
+
+
+def test_samaritano_unknown_game_defaults_to_pc_type() -> None:
+    tracker = Samaritano(_config())
+    assert asyncio.run(tracker.get_type_id(Meta(category="GAME", type="GAME", platform="Unknown"))) == {"type_id": "50"}

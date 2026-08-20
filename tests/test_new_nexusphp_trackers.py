@@ -133,3 +133,11 @@ def test_nexusphp_remaining_codec_and_disc_mapping_branches():
     ptfans = PTFans(dummy_config)
     assert ptfans.get_codec(Meta(video_codec="H264", source="bluray")) == 4
     assert ptfans.get_codec(Meta(video_codec="VC-1", source="bluray")) == 3
+
+
+def test_nexusphp_remaining_small_mapping_branches():
+    longpt = LongPT(dummy_config)
+    assert longpt.get_type(Meta(type="REMUX", resolution="2160p")) == 11
+    assert longpt.get_douban_url(Meta()) == ""
+
+    assert OnePTBA(dummy_config).get_douban_url(Meta()) == ""
