@@ -57,73 +57,61 @@ class HDTorrents:
         cookie_jar = await self.cookie_validator.load_session_cookies(meta, self.tracker)
         if not cookie_jar:
             return False
-
-        configured_host = (urlparse(self.base_url).hostname or self.config_url).lower().lstrip(".")
-        cookie_hosts = {str(cookie.domain).lower().lstrip(".") for cookie in cookie_jar if cookie.domain}
-        if configured_host not in cookie_hosts:
+        configured_host = self._configured_host()
+        if configured_host not in self._cookie_hosts(cookie_jar):
             logger.error(f"{self.tracker}: Cookie domain does not match the configured base URL ({configured_host}). Please export cookies from {self.base_url}.")
             return False
-
         self.session.cookies = cookie_jar
         return True
 
+    def _configured_host(self) -> str:
+        return (urlparse(self.base_url).hostname or self.config_url).lower().lstrip(".")
+
+    @staticmethod
+    def _cookie_hosts(cookie_jar: Any) -> set[str]:
+        return {str(cookie.domain).lower().lstrip(".") for cookie in cookie_jar if getattr(cookie, "domain", None)}
+
     async def get_category_id(self, meta: Meta) -> int:
-        cat_id = 0
         category = str(meta.category)
-        resolution = meta.resolution
         if category == "MOVIE":
-            # BDMV
-            if meta.is_disc == "BDMV" or meta.type == "DISC":
-                if resolution == "2160p":
-                    # 70 = Movie/UHD/Blu-Ray
-                    cat_id = 70
-                if resolution in ("1080p", "1080i"):
-                    # 1 = Movie/Blu-Ray
-                    cat_id = 1
-
-            # REMUX
-            if meta.type == "REMUX":
-                cat_id = 71 if meta.uhd == "UHD" and meta.resolution == "2160p" else 2
-
-            # REST OF THE STUFF
-            if meta.type not in ("DISC", "REMUX"):
-                if resolution == "2160p":
-                    # 64 = Movie/2160p
-                    cat_id = 64
-                elif resolution in ("1080p", "1080i"):
-                    # 5 = Movie/1080p/i
-                    cat_id = 5
-                elif resolution == "720p":
-                    # 3 = Movie/720p
-                    cat_id = 3
-
+            return self._movie_category(meta)
         if category == "TV":
-            # BDMV
-            if meta.is_disc == "BDMV" or meta.type == "DISC":
-                if resolution == "2160p":
-                    # 72 = TV Show/UHD/Blu-ray
-                    cat_id = 72
-                if resolution in ("1080p", "1080i"):
-                    # 59 = TV Show/Blu-ray
-                    cat_id = 59
+            return self._tv_category(meta)
+        return 0
 
-            # REMUX
-            if meta.type == "REMUX":
-                cat_id = 73 if meta.uhd == "UHD" and meta.resolution == "2160p" else 60
+    @classmethod
+    def _movie_category(cls, meta: Meta) -> int:
+        disc = cls._disc_category(meta, uhd=70, hd=1)
+        if disc:
+            return disc
+        if meta.type == "REMUX":
+            return 71 if cls._is_uhd_remux(meta) else 2
+        return cls._resolution_category(meta, {"2160p": 64, "1080p": 5, "1080i": 5, "720p": 3})
 
-            # REST OF THE STUFF
-            if meta.type not in ("DISC", "REMUX"):
-                if resolution == "2160p":
-                    # 65 = TV Show/2160p
-                    cat_id = 65
-                elif resolution in ("1080p", "1080i"):
-                    # 30 = TV Show/1080p/i
-                    cat_id = 30
-                elif resolution == "720p":
-                    # 38 = TV Show/720p
-                    cat_id = 38
+    @classmethod
+    def _tv_category(cls, meta: Meta) -> int:
+        disc = cls._disc_category(meta, uhd=72, hd=59)
+        if disc:
+            return disc
+        if meta.type == "REMUX":
+            return 73 if cls._is_uhd_remux(meta) else 60
+        return cls._resolution_category(meta, {"2160p": 65, "1080p": 30, "1080i": 30, "720p": 38})
 
-        return cat_id
+    @staticmethod
+    def _disc_category(meta: Meta, *, uhd: int, hd: int) -> int:
+        if meta.is_disc != "BDMV" and meta.type != "DISC":
+            return 0
+        if meta.resolution == "2160p":
+            return uhd
+        return hd if meta.resolution in {"1080p", "1080i"} else 0
+
+    @staticmethod
+    def _is_uhd_remux(meta: Meta) -> bool:
+        return meta.uhd == "UHD" and meta.resolution == "2160p"
+
+    @staticmethod
+    def _resolution_category(meta: Meta, mapping: dict[str, int]) -> int:
+        return mapping.get(str(meta.resolution), 0)
 
     async def get_name(self, meta: Meta) -> str:
         hdt_name = meta.name
@@ -160,61 +148,73 @@ class HDTorrents:
         cookie_jar = await self.cookie_validator.load_session_cookies(meta, self.tracker)
         if cookie_jar:
             self.session.cookies = cookie_jar
+        response = await self._search_response(meta)
+        if await self._handle_login_redirect(meta, response):
+            return []
+        if not self._update_secret_token(meta, response.text):
+            return []
+        return self._search_results(response.text)
 
-        results: list[dict[str, str | None]] = []
-
-        search_url = f"{self.base_url}/torrents.php?"
-        if meta.imdb_id or 0 != 0:
-            params: dict[str, str | int] = {
-                "csrfToken": self.secret_token,
-                "search": meta.imdb_tt,
-                "active": "0",
-                "options": "2",
-                "category[]": await self.get_category_id(meta),
-            }
-        else:
-            params = {"csrfToken": self.secret_token, "search": meta.title, "category[]": await self.get_category_id(meta), "options": "3"}
-
-        response = await self.session.get(search_url, params=params, follow_redirects=True)
+    async def _search_response(self, meta: Meta) -> httpx.Response:
+        params = await self._search_params(meta)
+        response = await self.session.get(f"{self.base_url}/torrents.php?", params=params, follow_redirects=True)
         response.raise_for_status()
+        return response
 
-        if "login.php" in str(response.url) or "login.php" in response.text:
-            await self.cookie_validator.handle_validation_failure(meta, self.tracker, response.text)
-            meta.skipping = f"{self.tracker}"
-            return results
+    async def _search_params(self, meta: Meta) -> dict[str, str | int]:
+        params: dict[str, str | int] = {
+            "csrfToken": self.secret_token,
+            "category[]": await self.get_category_id(meta),
+        }
+        params.update(self._search_identity(meta))
+        return params
 
-        token_match = re.search(r'name="csrfToken" value="([^"]+)"', response.text)
+    @staticmethod
+    def _search_identity(meta: Meta) -> dict[str, str | int]:
+        if meta.imdb_id or 0 != 0:
+            return {"search": meta.imdb_tt, "active": "0", "options": "2"}
+        return {"search": meta.title, "options": "3"}
+
+    async def _handle_login_redirect(self, meta: Meta, response: httpx.Response) -> bool:
+        if "login.php" not in str(response.url) and "login.php" not in response.text:
+            return False
+        await self.cookie_validator.handle_validation_failure(meta, self.tracker, response.text)
+        meta.skipping = self.tracker
+        return True
+
+    def _update_secret_token(self, meta: Meta, html: str) -> bool:
+        token_match = re.search(r'name="csrfToken" value="([^"]+)"', html)
         if token_match:
-            HDTorrents.secret_token = token_match.group(1)
-        else:
-            logger.info(f"{self.tracker}: [bold red]Failed to find auth token on page.[/bold red]")
-            meta.skipping = f"{self.tracker}"
-            return results
+            type(self).secret_token = token_match.group(1)
+            return True
+        logger.info(f"{self.tracker}: [bold red]Failed to find auth token on page.[/bold red]")
+        meta.skipping = self.tracker
+        return False
 
-        soup = BeautifulSoup(response.text, "html.parser")
-        rows = soup.find_all("tr")
+    def _search_results(self, html: str) -> list[dict[str, str | None]]:
+        soup = BeautifulSoup(html, "html.parser")
+        return [result for row in soup.find_all("tr") if (result := self._row_result(row)) is not None]
 
-        for row in rows:
-            if row.find(string="Filename", attrs={"class": "mainblockcontent"}) is not None:  # type: ignore
-                continue
+    def _row_result(self, row: Any) -> dict[str, str | None] | None:
+        if row.find(string="Filename", attrs={"class": "mainblockcontent"}) is not None:
+            return None
+        name_tag = row.find("a", attrs={"href": re.compile(r"details\.php\?id=")})
+        if name_tag is None:
+            return None
+        href = str(name_tag.get("href", ""))
+        return {
+            "name": name_tag.text.strip(),
+            "size": self._row_size(row),
+            "link": f"{self.base_url}/{href}" if href else None,
+        }
 
-            name_tag = row.find("a", attrs={"href": re.compile(r"details\.php\?id=")})
-
-            name = name_tag.text.strip() if name_tag else None
-            link = f"{self.base_url}/{name_tag['href']}" if name_tag else None
-            size = None
-
-            cells = row.find_all("td", class_="mainblockcontent")
-            for cell in cells:
-                cell_text = cell.text.strip()
-                if "GiB" in cell_text or "MiB" in cell_text:
-                    size = cell_text
-                    break
-
-            if name:
-                results.append({"name": name, "size": size, "link": link})
-
-        return results
+    @staticmethod
+    def _row_size(row: Any) -> str | None:
+        for cell in row.find_all("td", class_="mainblockcontent"):
+            text = cell.text.strip()
+            if "GiB" in text or "MiB" in text:
+                return text
+        return None
 
     async def get_data(self, meta: Meta) -> dict[str, Any]:
         data: dict[str, Any] = {
@@ -223,39 +223,39 @@ class HDTorrents:
             "info": await self.edit_desc(meta),
             "csrfToken": self.secret_token,
         }
+        self._apply_visual_flags(data, meta)
+        self._apply_imdb_info(data, meta)
+        data["season"] = self._bool_string(self._is_season_pack(meta))
+        data["anonymous"] = self._bool_string(self._is_anonymous(meta))
+        return data
 
-        # 3D
+    @staticmethod
+    def _apply_visual_flags(data: dict[str, Any], meta: Meta) -> None:
         if "3D" in meta.three_d:
             data["3d"] = "true"
-
-        # HDR
-        hdr_value = meta.hdr
-        if "HDR" in hdr_value:
-            if "HDR10+" in hdr_value:
-                data["HDR10"] = "true"
-                data["HDR10Plus"] = "true"
-            else:
-                data["HDR10"] = "true"
-        if "DV" in hdr_value:
+        if "HDR" in meta.hdr:
+            data["HDR10"] = "true"
+        if "HDR10+" in meta.hdr:
+            data["HDR10Plus"] = "true"
+        if "DV" in meta.hdr:
             data["DolbyVision"] = "true"
 
-        # IMDB
+    @staticmethod
+    def _apply_imdb_info(data: dict[str, Any], meta: Meta) -> None:
         if meta.imdb_id or 0 != 0:
             data["infosite"] = f"{meta.imdb_info.get('imdb_url', '')}/"
 
-        # Full Season Pack
-        if int((meta.tv_pack if meta.tv_pack is not None else "0") or 0) != 0:
-            data["season"] = "true"
-        else:
-            data["season"] = "false"
+    @staticmethod
+    def _is_season_pack(meta: Meta) -> bool:
+        return int((meta.tv_pack if meta.tv_pack is not None else "0") or 0) != 0
 
-        # Anonymous check
-        if int(meta.anon or 0) == 0 and not self.config["TRACKERS"][self.tracker].get("anon", False):
-            data["anonymous"] = "false"
-        else:
-            data["anonymous"] = "true"
+    def _is_anonymous(self, meta: Meta) -> bool:
+        tracker_config = self.config["TRACKERS"][self.tracker]
+        return int(meta.anon or 0) != 0 or bool(tracker_config.get("anon", False))
 
-        return data
+    @staticmethod
+    def _bool_string(value: bool) -> str:
+        return "true" if value else "false"
 
     async def get_nfo(self, meta: Meta) -> dict[str, tuple[str, bytes, str]]:
         nfo_dir = Path(meta.base_dir) / "tmp" / meta.uuid
