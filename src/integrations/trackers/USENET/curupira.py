@@ -11,6 +11,7 @@ import langcodes
 
 from src.domain_models.release import Meta
 from src.domain_models.tracker_image_policy import get_tracker_image_collection
+from src.integrations.filesystem.temp_paths import release_temp_dir
 from src.integrations.observability.runtime_support import logger
 from src.integrations.security.redaction import Redaction
 from src.integrations.trackers.common import Common
@@ -133,129 +134,165 @@ class Curupira:
         return parse_newznab_dupes(response_text)
 
     async def search_existing(self, meta: Meta) -> list[Any]:
-        release_name = await self.get_name(meta)
-        cache_file = Path(meta.base_dir) / "tmp" / meta.uuid / f"{self.tracker}_upload_ok"
-        if release_name and Path(cache_file).exists():
-            logger.info(f"{self.tracker}: [yellow]Found local upload cache.[/yellow]")
-            return [release_name]
+        cached = await self._cached_upload_name(meta)
+        if cached:
+            return [cached]
+        params_list = await self._search_param_list(meta)
+        return await self._search_queries(params_list)
 
+    async def _cached_upload_name(self, meta: Meta) -> str:
+        release_name = await self.get_name(meta)
+        cache_file = release_temp_dir(meta.base_dir, meta.uuid) / f"{self.tracker}_upload_ok"
+        if release_name and cache_file.exists():
+            logger.info(f"{self.tracker}: [yellow]Found local upload cache.[/yellow]")
+            return release_name
+        return ""
+
+    async def _search_param_list(self, meta: Meta) -> list[dict[str, str]]:
         params_list: list[dict[str, str]] = []
         exact_name = await self.get_search_name(meta)
         if exact_name:
-            params_list.append(
-                {
-                    "t": "search",
-                    "q": exact_name,
-                }
-            )
+            params_list.append({"t": "search", "q": exact_name})
+        params_list.append(self._structured_search_params(meta))
+        return params_list
 
-        params: dict[str, str] = {}
-
-        category = meta.category.upper()
-
+    def _structured_search_params(self, meta: Meta) -> dict[str, str]:
+        category = str(meta.category or "").upper()
         if category == "TV":
-            params["t"] = "tvsearch"
-            if meta.tvdb_id and str(meta.tvdb_id).isdigit() and int(meta.tvdb_id) > 0:
-                params["tvdbid"] = str(meta.tvdb_id)
-            elif meta.tmdb_id and str(meta.tmdb_id).isdigit() and int(meta.tmdb_id) > 0:
-                params["tmdbid"] = str(meta.tmdb_id)
-            elif meta.imdb_id and int(meta.imdb_id) > 0:
-                params["imdbid"] = f"tt{meta.imdb}"
-            else:
-                params["q"] = self.get_search_query(meta)
-
-            if meta.season_int > 0:
-                params["season"] = str(meta.season_int)
-            if meta.episode_int > 0:
-                params["ep"] = str(meta.episode_int)
+            params = self._tv_search_params(meta)
         elif category == "MOVIE":
-            params["t"] = "movie"
-            if meta.imdb_id and int(meta.imdb_id) > 0:
-                params["imdbid"] = f"tt{meta.imdb}"
-            elif meta.tmdb_id and str(meta.tmdb_id).isdigit() and int(meta.tmdb_id) > 0:
-                params["tmdbid"] = str(meta.tmdb_id)
-            else:
-                params["q"] = self.get_search_query(meta)
+            params = self._movie_search_params(meta)
         else:
-            params["t"] = "search"
-            params["cat"] = self.get_category_id(meta)
+            params = {"t": "search", "cat": self.get_category_id(meta), "q": self.get_search_query(meta)}
+        if not params.get("q"):
             params["q"] = self.get_search_query(meta)
+        return params
 
-        if "q" not in params or not params["q"]:
+    def _tv_search_params(self, meta: Meta) -> dict[str, str]:
+        params = {"t": "tvsearch"}
+        params.update(self._tv_identifier(meta))
+        if meta.season_int > 0:
+            params["season"] = str(meta.season_int)
+        if meta.episode_int > 0:
+            params["ep"] = str(meta.episode_int)
+        return params
+
+    def _tv_identifier(self, meta: Meta) -> dict[str, str]:
+        if self._positive_numeric(meta.tvdb_id):
+            return {"tvdbid": str(meta.tvdb_id)}
+        if self._positive_numeric(meta.tmdb_id):
+            return {"tmdbid": str(meta.tmdb_id)}
+        if self._positive_numeric(meta.imdb_id):
+            return {"imdbid": f"tt{meta.imdb}"}
+        return {"q": self.get_search_query(meta)}
+
+    def _movie_search_params(self, meta: Meta) -> dict[str, str]:
+        params = {"t": "movie"}
+        if self._positive_numeric(meta.imdb_id):
+            params["imdbid"] = f"tt{meta.imdb}"
+        elif self._positive_numeric(meta.tmdb_id):
+            params["tmdbid"] = str(meta.tmdb_id)
+        else:
             params["q"] = self.get_search_query(meta)
+        return params
 
-        params_list.append(params)
+    @staticmethod
+    def _positive_numeric(value: Any) -> bool:
+        text = str(value or "")
+        return text.isdigit() and int(text) > 0
 
+    async def _search_queries(self, params_list: list[dict[str, str]]) -> list[dict[str, Any]]:
         dupes: list[dict[str, Any]] = []
-        seen_keys: set[str] = set()
+        seen: set[str] = set()
         async with httpx.AsyncClient(timeout=10.0) as client:
             for query_params in params_list:
-                try:
-                    request_params = {
-                        "apikey": str(self.api_key),
-                        "limit": "100",
-                        **query_params,
-                    }
-                    response = await client.get(f"{self.base_url}/api", params=request_params)
-
-                    if response.status_code != 200 or not response.text.strip():
-                        logger.info(f"{self.tracker}: [yellow]Duplicate search failed with HTTP {response.status_code}.[/yellow]")
-                        continue
-
-                    for dupe in self._parse_dupes_from_response(response.text):
-                        key = str(dupe.get("link") or dupe.get("name") or "")
-                        if key in seen_keys:
-                            continue
-                        seen_keys.add(key)
-                        dupes.append(dupe)
-                except ElementTree.ParseError:
-                    logger.info(f"{self.tracker}: [yellow]Failed to parse duplicate search response.[/yellow]")
-                except httpx.TimeoutException:
-                    logger.info(f"{self.tracker}: [yellow]Duplicate search timed out.[/yellow]")
-                except httpx.RequestError as e:
-                    logger.info(f"{self.tracker}: [yellow]Duplicate search request failed: {e}[/yellow]")
-
+                await self._append_query_results(client, query_params, dupes, seen)
         return dupes
+
+    async def _append_query_results(
+        self,
+        client: httpx.AsyncClient,
+        query_params: dict[str, str],
+        dupes: list[dict[str, Any]],
+        seen: set[str],
+    ) -> None:
+        response = await self._safe_search_response(client, query_params)
+        if response is None:
+            return
+        self._extend_unique_dupes(response.text, dupes, seen)
+
+    async def _safe_search_response(self, client: httpx.AsyncClient, query_params: dict[str, str]) -> httpx.Response | None:
+        try:
+            response = await client.get(
+                f"{self.base_url}/api",
+                params={"apikey": str(self.api_key), "limit": "100", **query_params},
+            )
+        except httpx.TimeoutException:
+            logger.info(f"{self.tracker}: [yellow]Duplicate search timed out.[/yellow]")
+            return None
+        except httpx.RequestError as error:
+            logger.info(f"{self.tracker}: [yellow]Duplicate search request failed: {error}[/yellow]")
+            return None
+        if self._search_response_usable(response):
+            return response
+        logger.info(f"{self.tracker}: [yellow]Duplicate search failed with HTTP {response.status_code}.[/yellow]")
+        return None
+
+    def _extend_unique_dupes(self, response_text: str, dupes: list[dict[str, Any]], seen: set[str]) -> None:
+        try:
+            parsed = self._parse_dupes_from_response(response_text)
+        except ElementTree.ParseError:
+            logger.info(f"{self.tracker}: [yellow]Failed to parse duplicate search response.[/yellow]")
+            return
+        for dupe in parsed:
+            self._append_unique_dupe(dupe, dupes, seen)
+
+    @staticmethod
+    def _search_response_usable(response: httpx.Response) -> bool:
+        return response.status_code == 200 and bool(response.text.strip())
+
+    @staticmethod
+    def _append_unique_dupe(dupe: dict[str, Any], dupes: list[dict[str, Any]], seen: set[str]) -> None:
+        key = str(dupe.get("link") or dupe.get("name") or "")
+        if key in seen:
+            return
+        seen.add(key)
+        dupes.append(dupe)
 
     async def get_additional_checks(self, _meta: Meta) -> bool:
         return True
 
     def get_category_id(self, meta: Meta) -> str:
-        # Check if anime
         if meta.anime:
             return "5070"
+        category = str(meta.category or "").upper()
+        resolver = {
+            "MOVIE": self._movie_category_id,
+            "TV": self._tv_category_id,
+            "BOOK": self._book_category_id,
+            "GAME": lambda _meta: "4050",
+            "MUSIC": lambda _meta: "3000",
+        }.get(category)
+        return "2000" if resolver is None else resolver(meta)
 
-        category = meta.category.upper()
-        resolution = meta.resolution.lower()
+    @staticmethod
+    def _movie_category_id(meta: Meta) -> str:
+        return Curupira._resolution_category(meta.resolution, uhd="2045", hd="2040", sd="2030")
 
-        uhd_resolutions = {"2160p", "4320p", "8640p"}
-        hd_resolutions = {"1080p", "1080i", "720p", "1440p"}
+    @staticmethod
+    def _tv_category_id(meta: Meta) -> str:
+        return Curupira._resolution_category(meta.resolution, uhd="5045", hd="5040", sd="5030")
 
-        if category == "MOVIE":
-            if resolution in uhd_resolutions:
-                return "2045"
-            if resolution in hd_resolutions:
-                return "2040"
-            return "2030"
-        if category == "TV":
-            if resolution in uhd_resolutions:
-                return "5045"
-            if resolution in hd_resolutions:
-                return "5040"
-            return "5030"
-        if category == "BOOK":
-            if meta.audiobook:
-                return "3030"
-            return "7020"
-        if category == "GAME":
-            return "4050"
-        if category == "MUSIC":
-            return "3000"
+    @staticmethod
+    def _book_category_id(meta: Meta) -> str:
+        return "3030" if meta.audiobook else "7020"
 
-        # Fallback to general TV HD or Movies HD/SD depending on category
-        if category == "TV":
-            return "5000"
-        return "2000"
+    @staticmethod
+    def _resolution_category(resolution: str | None, *, uhd: str, hd: str, sd: str) -> str:
+        value = str(resolution or "").casefold()
+        if value in {"2160p", "4320p", "8640p"}:
+            return uhd
+        return hd if value in {"1080p", "1080i", "720p", "1440p"} else sd
 
     async def get_name(self, meta: Meta) -> str:
         return meta.scene_name or meta.basename_no_ext
@@ -268,241 +305,259 @@ class Curupira:
         return None
 
     def get_source(self, meta: Meta) -> str | None:
-        source = meta.source
+        source = str(meta.source or "")
         if not source:
             return None
-        source_upper = source.upper()
-        if "BLU" in source_upper:
-            if meta.is_disc:
-                return "Full Disc"
-            return "BluRay"
-        if "WEB" in source_upper:
-            return "WEBRip" if meta.type == "WEBRIP" else "WEB-DL"
-        if "HDTV" in source_upper:
+        return self._known_source(meta, source)
+
+    def _known_source(self, meta: Meta, source: str) -> str:
+        upper = source.upper()
+        disc = self._bluray_source(meta, upper)
+        if disc is not None:
+            return disc
+        web = self._web_source(meta, upper)
+        if web is not None:
+            return web
+        return self._simple_source(upper, source)
+
+    @staticmethod
+    def _simple_source(upper: str, fallback: str) -> str:
+        if "HDTV" in upper:
             return "HDTV"
-        if "DVD" in source_upper:
-            return "DVD"
-        return source
+        return "DVD" if "DVD" in upper else fallback
+
+    @staticmethod
+    def _bluray_source(meta: Meta, upper: str) -> str | None:
+        if "BLU" not in upper:
+            return None
+        return "Full Disc" if meta.is_disc else "BluRay"
+
+    @staticmethod
+    def _web_source(meta: Meta, upper: str) -> str | None:
+        if "WEB" not in upper:
+            return None
+        return "WEBRip" if meta.type == "WEBRIP" else "WEB-DL"
 
     async def _prepare_files(self, meta: Meta) -> dict[str, Any] | None:
-        nzb_path = meta.nzb_path
-
-        if not nzb_path or not await self.common.check_nzb_file(self.tracker, meta):
+        if not meta.nzb_path or not await self.common.check_nzb_file(self.tracker, meta):
             return None
-
-        # Prepare multipart/form-data
-        async with aiofiles.open(nzb_path, "rb") as f:
-            nzb_content = await f.read()
-
-        files = {"nzb_file": (Path(nzb_path).name, nzb_content, "application/x-nzb")}
-
-        # NFO file (optional)
-        nfo_dir = Path(meta.base_dir) / "tmp" / meta.uuid
-        nfo_files = list(nfo_dir.glob("*.nfo"))
-        nfo_path = nfo_files[0] if nfo_files else None
-        if nfo_path and nfo_path.exists():
-            async with aiofiles.open(nfo_path, "rb") as f:
-                nfo_content = await f.read()
-            files["nfo_file"] = (nfo_path.name, nfo_content, "application/octet-stream")
-
+        files = {"nzb_file": await self._nzb_file_tuple(meta.nzb_path)}
+        nfo = await self._optional_nfo(meta)
+        if nfo is not None:
+            files["nfo_file"] = nfo
         return files
 
-    async def get_media_info(self, meta: Meta) -> str:
-        info_file_path = ""
-        info_file_path = (
-            f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/BD_SUMMARY_00.txt"
-            if meta.is_disc == "BDMV"
-            else f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/MEDIAINFO_CLEANPATH.txt"
-        )
+    @staticmethod
+    async def _nzb_file_tuple(path: str | Path) -> tuple[str, bytes, str]:
+        source = Path(path)
+        async with aiofiles.open(source, "rb") as handle:
+            return source.name, await handle.read(), "application/x-nzb"
 
-        if Path(info_file_path).exists():
-            try:
-                async with aiofiles.open(info_file_path, encoding="utf-8") as f:
-                    return await f.read()
-            except Exception as e:
-                logger.info(f"{self.tracker}: [bold red]Erro ao ler o arquivo de info em {info_file_path}: {e}[/bold red]")
-                return ""
-        else:
-            logger.info(f"[bold red]Arquivo de info não encontrado: {info_file_path}[/bold red]")
+    @staticmethod
+    async def _optional_nfo(meta: Meta) -> tuple[str, bytes, str] | None:
+        nfo_dir = release_temp_dir(meta.base_dir, meta.uuid)
+        nfo_path = next(iter(nfo_dir.glob("*.nfo")), None)
+        if nfo_path is None or not nfo_path.exists():
+            return None
+        async with aiofiles.open(nfo_path, "rb") as handle:
+            return nfo_path.name, await handle.read(), "application/octet-stream"
+
+    async def get_media_info(self, meta: Meta) -> str:
+        path = self._media_info_path(meta)
+        if not path.exists():
+            logger.info(f"[bold red]Arquivo de info não encontrado: {path}[/bold red]")
+            return ""
+        try:
+            async with aiofiles.open(path, encoding="utf-8") as handle:
+                return await handle.read()
+        except Exception as error:
+            logger.info(f"{self.tracker}: [bold red]Erro ao ler o arquivo de info em {path}: {error}[/bold red]")
             return ""
 
+    @staticmethod
+    def _media_info_path(meta: Meta) -> Path:
+        root = release_temp_dir(meta.base_dir, meta.uuid)
+        return root / ("BD_SUMMARY_00.txt" if meta.is_disc == "BDMV" else "MEDIAINFO_CLEANPATH.txt")
+
     def get_cover(self, meta: Meta) -> str:
-        covers = meta.hosted_artwork
-        if isinstance(covers, list):
-            for entry in covers:
-                if not isinstance(entry, dict):
-                    continue
-                raw_url = entry.get("raw_url")
-                if isinstance(raw_url, str) and raw_url.startswith("https://"):
-                    return raw_url
-
+        hosted = self._first_https_artwork(meta.hosted_artwork)
+        if hosted:
+            return hosted
         artwork_url = meta.artwork_url
-        if isinstance(artwork_url, str) and artwork_url.startswith("https://"):
-            return artwork_url
+        return artwork_url if isinstance(artwork_url, str) and artwork_url.startswith("https://") else ""
 
-        return ""
+    @classmethod
+    def _first_https_artwork(cls, value: Any) -> str:
+        entries = value if isinstance(value, list) else []
+        return next((url for entry in entries if (url := cls._https_artwork_url(entry))), "")
+
+    @staticmethod
+    def _https_artwork_url(entry: Any) -> str:
+        if not isinstance(entry, dict):
+            return ""
+        raw_url = entry.get("raw_url")
+        return raw_url if isinstance(raw_url, str) and raw_url.startswith("https://") else ""
 
     async def get_screens(self, meta: Meta) -> list[str]:
-        menu_images = [cast(dict[str, Any], img) for img in get_tracker_image_collection(meta, self.tracker, "menu_images") if isinstance(img, dict)]
-        images_value = get_tracker_image_collection(meta, self.tracker, "screenshots")
-        image_entries: list[Any] = cast(list[Any], images_value) if isinstance(images_value, list) else []
-        images_list = [cast(dict[str, Any], img) for img in image_entries if isinstance(img, dict)]
-        spectrograms_images = [cast(dict[str, Any], img) for img in get_tracker_image_collection(meta, self.tracker, "spectrograms_images") if isinstance(img, dict)]
-        dynamic_hdr_plot_images = [cast(dict[str, Any], img) for img in get_tracker_image_collection(meta, self.tracker, "dynamic_hdr_plot_images") if isinstance(img, dict)]
+        menu = self._image_dicts(get_tracker_image_collection(meta, self.tracker, "menu_images"))
+        screenshots = self._image_dicts(get_tracker_image_collection(meta, self.tracker, "screenshots"))
+        spectrograms = self._image_dicts(get_tracker_image_collection(meta, self.tracker, "spectrograms_images"))
+        dynamic_hdr = self._valid_raw_images(get_tracker_image_collection(meta, self.tracker, "dynamic_hdr_plot_images"))
+        reserved = max(0, 6 - len(dynamic_hdr))
+        combined = (menu + screenshots + spectrograms)[:reserved] + dynamic_hdr
+        return self._raw_urls(combined)[:6]
 
-        non_hdr_images = menu_images + images_list + spectrograms_images
-        valid_dynamic_hdr_plots = [image for image in dynamic_hdr_plot_images if isinstance(image.get("raw_url"), str) and image["raw_url"]]
-        # Curupira accepts at most six URLs. Reserve slots for metadata plots,
-        # which are appended after screenshots in the normal display order.
-        combined_images = non_hdr_images[: max(0, 6 - len(valid_dynamic_hdr_plots))] + valid_dynamic_hdr_plots
+    @staticmethod
+    def _image_dicts(value: Any) -> list[dict[str, Any]]:
+        return [cast(dict[str, Any], item) for item in value if isinstance(item, dict)] if isinstance(value, list) else []
 
-        urls: list[str] = []
-        for image in combined_images:
-            raw_url = image.get("raw_url")
-            if isinstance(raw_url, str) and raw_url:
-                urls.append(raw_url)
+    @classmethod
+    def _valid_raw_images(cls, value: Any) -> list[dict[str, Any]]:
+        return [image for image in cls._image_dicts(value) if cls._raw_url(image)]
 
-        return urls[:6]
+    @staticmethod
+    def _raw_url(image: dict[str, Any]) -> str:
+        value = image.get("raw_url")
+        return value if isinstance(value, str) and value else ""
+
+    @classmethod
+    def _raw_urls(cls, images: list[dict[str, Any]]) -> list[str]:
+        return [url for image in images if (url := cls._raw_url(image))]
 
     async def _prepare_data(self, meta: Meta) -> dict[str, Any]:
-        screenshot_urls = await self.get_screens(meta)
-        data = {
-            "name": await self.get_name(meta),
-            "category_id": self.get_category_id(meta),
-        }
+        screenshots = await self.get_screens(meta)
+        data: dict[str, Any] = {"name": await self.get_name(meta), "category_id": self.get_category_id(meta)}
+        await self._apply_optional_media_data(data, meta)
+        self._apply_disc_languages(data, meta)
+        self._apply_external_ids(data, meta)
+        self._apply_upload_flags(data, meta, screenshots)
+        return data
 
-        # Cover
-        if meta.category not in ("MOVIE", "TV"):
-            cover_url = self.get_cover(meta)
-            if cover_url:
-                data["custom_cover_url"] = cover_url
+    async def _apply_optional_media_data(self, data: dict[str, Any], meta: Meta) -> None:
+        self._apply_cover_data(data, meta)
+        await self._apply_mediainfo_data(data, meta)
+        self._apply_quality_data(data, meta)
+        self._apply_source_data(data, meta)
 
-        # MediaInfo text (optional)
-        if meta.category in ("TV", "MOVIE") or meta.audiobook:
+    def _apply_cover_data(self, data: dict[str, Any], meta: Meta) -> None:
+        if meta.category in {"MOVIE", "TV"}:
+            return
+        cover = self.get_cover(meta)
+        if cover:
+            data["custom_cover_url"] = cover
+
+    async def _apply_mediainfo_data(self, data: dict[str, Any], meta: Meta) -> None:
+        if meta.category in {"MOVIE", "TV"} or meta.audiobook:
             data["mediainfo_text"] = await self.get_media_info(meta)
 
-        # Quality (optional)
-        quality = meta.resolution
+    @staticmethod
+    def _apply_quality_data(data: dict[str, Any], meta: Meta) -> None:
+        quality = str(meta.resolution or "")
         if quality and quality.upper() != "OTHER":
             data["quality"] = quality
 
-        # Source (optional)
+    def _apply_source_data(self, data: dict[str, Any], meta: Meta) -> None:
         source = self.get_source(meta)
         if source:
             data["source"] = source
 
-        if meta.is_disc:
-            # Audio and Subtitles languages (optional, as ISO 639-1 JSON array)
-            audio_langs: list[str] = []
-            for lang in meta.audio_languages or []:
-                iso = self.get_iso_639_1(lang)
-                if iso:
-                    audio_langs.append(iso)
-            if audio_langs:
-                data["audio_langs"] = json.dumps(audio_langs)
-            subtitle_languages = meta.subtitle_languages
-            subtitle_langs = (
-                subtitle_languages if isinstance(subtitle_languages, list) else [subtitle_languages] if isinstance(subtitle_languages, str) and subtitle_languages else []
-            )
-            subs_langs: list[str] = []
-            for lang in subtitle_langs:
-                iso = self.get_iso_639_1(lang)
-                if iso:
-                    subs_langs.append(iso)
-            if subs_langs:
-                data["subs_langs"] = json.dumps(subs_langs)
+    def _apply_disc_languages(self, data: dict[str, Any], meta: Meta) -> None:
+        if not meta.is_disc:
+            return
+        audio = self._iso_language_codes(meta.audio_languages)
+        subtitles = self._iso_language_codes(self._language_values(meta.subtitle_languages))
+        if audio:
+            data["audio_langs"] = json.dumps(audio)
+        if subtitles:
+            data["subs_langs"] = json.dumps(subtitles)
 
-        # TMDb id and type (optional)
-        tmdb_id = meta.tmdb_id
-        if tmdb_id and str(tmdb_id).isdigit() and tmdb_id > 0:
-            data["tmdb_id"] = str(tmdb_id)
-            tmdb_type = meta.category.lower()
-            if tmdb_type in ("movie", "tv"):
-                data["tmdb_type"] = tmdb_type
+    @staticmethod
+    def _language_values(value: Any) -> list[str]:
+        if isinstance(value, list):
+            return [str(item) for item in value]
+        return [value] if isinstance(value, str) and value else []
 
-        # MyAnimeList id (optional)
-        mal_id = meta.mal_id
-        if mal_id and str(mal_id).isdigit() and mal_id > 0:
-            data["mal_id"] = str(mal_id)
+    def _iso_language_codes(self, values: Any) -> list[str]:
+        return [code for value in self._language_values(values) if (code := self.get_iso_639_1(value))]
 
-        # Anonymous (optional)
-        anon = 0 if meta.anon == 0 and not self.config.get("TRACKERS", {}).get(self.tracker, {}).get("anon", False) else 1
-        if anon:
+    def _apply_external_ids(self, data: dict[str, Any], meta: Meta) -> None:
+        if self._positive_numeric(meta.tmdb_id):
+            data["tmdb_id"] = str(meta.tmdb_id)
+            category = str(meta.category or "").casefold()
+            if category in {"movie", "tv"}:
+                data["tmdb_type"] = category
+        if self._positive_numeric(meta.mal_id):
+            data["mal_id"] = str(meta.mal_id)
+
+    def _apply_upload_flags(self, data: dict[str, Any], meta: Meta, screenshots: list[str]) -> None:
+        if self._anonymous(meta):
             data["anonymous"] = "true"
+        if screenshots:
+            data["screenshot_urls"] = json.dumps(screenshots[:6])
 
-        # Screenshots (optional)
-        if screenshot_urls:
-            data["screenshot_urls"] = json.dumps(screenshot_urls[:6])
-
-        return data
+    def _anonymous(self, meta: Meta) -> bool:
+        configured = bool(self.config.get("TRACKERS", {}).get(self.tracker, {}).get("anon", False))
+        return meta.anon != 0 or configured
 
     async def upload(self, meta: Meta) -> bool | None:
-        status_map = meta.tracker_status
-        if self.tracker not in status_map:
-            status_map[self.tracker] = {}
-        status_dict = status_map[self.tracker]
-
+        status = meta.tracker_status.setdefault(self.tracker, {})
         if not await self.common.check_nzb_file(self.tracker, meta):
-            status_dict["status_message"] = "data error: NZB file missing or password missing in header"
+            status["status_message"] = "data error: NZB file missing or password missing in header"
             return False
-
         files = await self._prepare_files(meta)
         if not files:
             logger.error(f"{self.tracker}: [red]Error: NZB file not found for {self.tracker}.[/red]")
-            status_dict["status_message"] = "data error: NZB file not found"
+            status["status_message"] = "data error: NZB file not found"
             return False
-
         data = await self._prepare_data(meta)
-
         if meta.debug:
-            logger.debug(f"{self.tracker}: [cyan]Upload (DEBUG MODE):[/cyan]")
-            logger.debug(f"{self.tracker}: URL: {self.upload_url}")
-            logger.debug(f"{self.tracker}: Category ID: {self.get_category_id(meta)}")
-            logger.debug(f"{self.tracker}: Fields:")
-            logger.debug(Redaction.redact_private_info(data))
-            logger.debug(f"{self.tracker}: Files:")
-            logger.debug({k: v[0] for k, v in files.items()})
-
-            status_dict["status_message"] = "Debug mode enabled, skipping upload."
+            self._log_debug_upload(meta, data, files)
+            status["status_message"] = "Debug mode enabled, skipping upload."
             return True
+        return await self._upload_release(meta, status, data, files)
 
-        # Perform actual upload
-        params = {"apikey": self.api_key}
+    def _log_debug_upload(self, meta: Meta, data: dict[str, Any], files: dict[str, Any]) -> None:
+        logger.debug(f"{self.tracker}: [cyan]Upload (DEBUG MODE):[/cyan]")
+        logger.debug(f"{self.tracker}: URL: {self.upload_url}")
+        logger.debug(f"{self.tracker}: Category ID: {self.get_category_id(meta)}")
+        logger.debug(f"{self.tracker}: Fields:")
+        logger.debug(Redaction.redact_private_info(data))
+        logger.debug(f"{self.tracker}: Files:")
+        logger.debug({key: value[0] for key, value in files.items()})
+
+    async def _upload_release(self, meta: Meta, status: dict[str, Any], data: dict[str, Any], files: dict[str, Any]) -> bool:
         try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                response = await client.post(
-                    self.upload_url,
-                    files=files,
-                    data=data,
-                    params=params,
-                    headers={"User-Agent": f"Upload-Assistant {(meta.current_version if meta.current_version is not None else 'github.com/wastaken7/Upload-Assistant')}"},
-                )
-
-            if response.status_code not in (200, 201):
-                status_dict["status_message"] = f"data error: HTTP {response.status_code} - {response.text}"
-                return False
-
-            response_json = response.json()
-            status_dict["status_message"] = "Upload successful"
-
-            cache_dir = Path(meta.base_dir) / "tmp" / meta.uuid
-            Path(cache_dir).mkdir(parents=True, exist_ok=True)
-            async with aiofiles.open(Path(cache_dir) / f"{self.tracker}_upload_ok", "w", encoding="utf-8") as cache_handle:
-                await cache_handle.write("ok")
-
-            # Try to grab release ID from response
-            release_id = response_json.get("public_id")
-            if release_id:
-                status_dict["torrent_id"] = str(release_id)
-
-            return True
-
+            response = await self._post_upload(meta, data, files)
+            return await self._handle_upload_response(meta, status, response)
         except httpx.TimeoutException:
-            status_dict["status_message"] = "data error: Request timed out after 60 seconds"
+            status["status_message"] = "data error: Request timed out after 60 seconds"
             return False
-        except httpx.RequestError as e:
-            status_dict["status_message"] = f"data error: Unable to upload. Error: {e}"
+        except httpx.RequestError as error:
+            status["status_message"] = f"data error: Unable to upload. Error: {error}"
             return False
-        except Exception as e:
-            status_dict["status_message"] = f"data error: Unexpected error. Error: {e}"
+        except Exception as error:
+            status["status_message"] = f"data error: Unexpected error. Error: {error}"
             return False
+
+    async def _post_upload(self, meta: Meta, data: dict[str, Any], files: dict[str, Any]) -> httpx.Response:
+        version = meta.current_version if meta.current_version is not None else "github.com/wastaken7/Upload-Assistant"
+        headers = {"User-Agent": f"Upload-Assistant {version}"}
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            return await client.post(self.upload_url, files=files, data=data, params={"apikey": self.api_key}, headers=headers)
+
+    async def _handle_upload_response(self, meta: Meta, status: dict[str, Any], response: httpx.Response) -> bool:
+        if response.status_code not in {200, 201}:
+            status["status_message"] = f"data error: HTTP {response.status_code} - {response.text}"
+            return False
+        payload = response.json()
+        status["status_message"] = "Upload successful"
+        await self._write_upload_cache(meta)
+        release_id = payload.get("public_id") if isinstance(payload, dict) else None
+        if release_id:
+            status["torrent_id"] = str(release_id)
+        return True
+
+    async def _write_upload_cache(self, meta: Meta) -> None:
+        cache_dir = release_temp_dir(meta.base_dir, meta.uuid)
+        async with aiofiles.open(cache_dir / f"{self.tracker}_upload_ok", "w", encoding="utf-8") as handle:
+            await handle.write("ok")
