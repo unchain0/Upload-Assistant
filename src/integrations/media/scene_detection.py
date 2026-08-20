@@ -230,44 +230,64 @@ class SceneManager:
         url = f"https://predb.pw/search.php?search={urllib.parse.quote(Path(video).name)}"
         logger.debug(f"Using predb url: {url}")
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(url, timeout=10.0)
-            if response.status_code == 200:
-                soup = BeautifulSoup(response.text, "lxml")
-                found = False
-                video_base = Path(video).name.lower()
-                for row in soup.select("table.zebra-striped tbody tr"):
-                    tds = row.find_all("td")
-                    if len(tds) >= 3:
-                        # The 3rd <td> contains the release name link
-                        release_a = tds[2].find("a", title=True)
-                        if release_a:
-                            release_attr = self._attr_to_string(release_a.get("title")).strip()
-                            if not release_attr:
-                                continue
-                            release_name = release_attr.lower()
-                            logger.debug(f"[yellow]Predb: Checking {release_name} against {video_base}")
-                            if release_name == video_base:
-                                found = True
-                                meta.scene_name = release_attr
-                                logger.info("[green]Predb: Match found")
-                                # The 4th <td> contains the group
-                                if len(tds) >= 4:
-                                    group_a = tds[3].find("a")
-                                    if group_a:
-                                        group = self._attr_to_string(group_a.get_text()).strip()
-                                        meta.tag = f"-{group}" if group and not group.startswith("-") else group
-                                return True
-                if not found:
-                    logger.info("[yellow]Predb: No match found")
-                    return False
-            else:
+            response = await self._predb_response(url)
+            if response.status_code != 200:
                 logger.info(f"[red]Predb: Error {response.status_code} while checking")
                 return False
+            return self._match_predb_response(meta, video, response.text)
         except httpx.RequestError as e:
             logger.info(f"[red]Predb: Request failed: {e}")
             return False
         except Exception as e:
             logger.info(f"[yellow]Predb error: {e}")
             return False
+
+    @staticmethod
+    async def _predb_response(url: str) -> httpx.Response:
+        async with httpx.AsyncClient() as client:
+            return await client.get(url, timeout=10.0)
+
+    def _match_predb_response(self, meta: Meta, video: str, html_text: str) -> bool:
+        soup = BeautifulSoup(html_text, "lxml")
+        video_base = Path(video).name.lower()
+        for row in soup.select("table.zebra-striped tbody tr"):
+            release = self._predb_row_release(row)
+            if release is None:
+                continue
+            release_name, group = release
+            logger.debug(f"[yellow]Predb: Checking {release_name.lower()} against {video_base}")
+            if release_name.lower() == video_base:
+                self._apply_predb_match(meta, release_name, group)
+                return True
+        logger.info("[yellow]Predb: No match found")
         return False
+
+    def _predb_row_release(self, row: Any) -> tuple[str, str] | None:
+        tds = row.find_all("td")
+        if len(tds) < 3:
+            return None
+        release_a = tds[2].find("a", title=True)
+        if release_a is None:
+            return None
+        release_attr = self._attr_to_string(release_a.get("title")).strip()
+        if not release_attr:
+            return None
+        return release_attr, self._predb_group(tds)
+
+    def _predb_group(self, tds: list[Any]) -> str:
+        if len(tds) < 4:
+            return ""
+        group_a = tds[3].find("a")
+        return "" if group_a is None else self._attr_to_string(group_a.get_text()).strip()
+
+    @staticmethod
+    def _apply_predb_match(meta: Meta, release_name: str, group: str) -> None:
+        meta.scene_name = release_name
+        meta.tag = SceneManager._predb_group_tag(group)
+        logger.info("[green]Predb: Match found")
+
+    @staticmethod
+    def _predb_group_tag(group: str) -> str:
+        if not group:
+            return ""
+        return group if group.startswith("-") else f"-{group}"

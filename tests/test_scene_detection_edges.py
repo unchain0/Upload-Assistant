@@ -8,6 +8,7 @@ from typing import Any, ClassVar, Self
 
 import httpx
 import pytest
+from bs4 import BeautifulSoup
 from bs4.element import AttributeValueList
 
 from src.domain_models.release import Meta
@@ -317,3 +318,17 @@ def test_invalid_details_cache_and_lower_nfo_exception(tmp_path: Path) -> None:
     Client.reset(Response(_scene_result(hasNFO="yes", imdbId="1234567")), RuntimeError("nfo failed"))
     _, scene, _ = asyncio.run(SceneManager({"DEFAULT": {}}).is_scene(lower.filename, lower, lower=True))
     assert scene and not lower.nfo
+
+
+def test_predb_row_and_group_helpers_cover_invalid_shapes() -> None:
+    manager = SceneManager({"DEFAULT": {}})
+    short_soup = BeautifulSoup("<table><tr><td>one</td></tr></table>", "lxml")
+    short_row = short_soup.find("tr")
+    assert short_row is not None
+    assert manager._predb_row_release(short_row) is None
+
+    no_link_soup = BeautifulSoup("<table><tr><td>1</td><td>2</td><td>release</td></tr></table>", "lxml")
+    no_link_row = no_link_soup.find("tr")
+    assert no_link_row is not None
+    assert manager._predb_row_release(no_link_row) is None
+    assert manager._predb_group_tag("") == ""
