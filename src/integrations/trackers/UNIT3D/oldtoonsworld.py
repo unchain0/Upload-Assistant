@@ -1,6 +1,5 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
-import re
-from typing import Any, cast
+from typing import Any
 
 import cli_ui
 
@@ -102,114 +101,162 @@ class OldToonsWorld(UNIT3D):
         self.common = Common(config)
 
     async def get_additional_checks(self, meta: Meta) -> bool:
-        combined_genres_value = meta.combined_genres
-        # Normalize combined_genres to a list of individual genre strings.
-        if isinstance(combined_genres_value, list):
-            combined_genres = cast(list[str], combined_genres_value)
-        else:
-            # Split comma-separated strings and strip whitespace
-            combined_genres = [g.strip() for g in str(combined_genres_value).split(",") if g.strip()]
+        genres = self._normalized_genres(meta.combined_genres)
+        if not self._genre_policy_passes(meta, genres):
+            return False
+        if not self._adult_policy_passes(meta, genres):
+            return False
+        if not self._reality_policy_passes(meta, genres):
+            return False
+        return self._group_policy_passes(meta)
 
-        if not any(genre in combined_genres for genre in ["Animation", "Family"]):
-            if not meta.unattended or (meta.unattended and meta.unattended_confirm):
-                logger.info(f"{self.tracker}: [bold red]Genre does not match Animation or Family for OldToonsWorld.")
-                if cli_ui.ask_yes_no("Do you want to upload anyway?", default=False):
-                    pass
-                else:
-                    return False
-            else:
-                return False
+    @classmethod
+    def _normalized_genres(cls, value: Any) -> list[str]:
+        if isinstance(value, list):
+            return cls._clean_strings(value)
+        return cls._split_genre_string(value)
 
-        keywords = ", ".join(meta.keywords)
-        combined_genres_text = ", ".join(combined_genres)
-        genres = f"{keywords} {combined_genres_text}"
-        adult_keywords = ["xxx", "erotic", "porn", "adult", "orgy", "hentai", "adult animation", "softcore"]
-        if any(re.search(rf"(^|,\s*){re.escape(keyword)}(\s*,|$)", genres, re.IGNORECASE) for keyword in adult_keywords):
-            if not meta.unattended or (meta.unattended and meta.unattended_confirm):
-                logger.info(f"{self.tracker}: [bold red]Adult animation not allowed at OldToonsWorld.")
-                if cli_ui.ask_yes_no("Do you want to upload anyway?", default=False):
-                    pass
-                else:
-                    return False
-            else:
-                return False
+    @staticmethod
+    def _clean_strings(values: list[Any]) -> list[str]:
+        return [text for item in values if (text := str(item).strip())]
 
-        game_show_keywords = ["reality", "game show", "game-show", "reality tv", "reality television"]
-        if any(re.search(rf"(^|,\s*){re.escape(keyword)}(\s*,|$)", genres, re.IGNORECASE) for keyword in game_show_keywords):
-            if not meta.unattended or (meta.unattended and meta.unattended_confirm):
-                logger.info(f"{self.tracker}: [bold red]Reality / Game Show content not allowed at OldToonsWorld.")
-                if cli_ui.ask_yes_no("Do you want to upload anyway?", default=False):
-                    pass
-                else:
-                    return False
-            else:
-                return False
+    @staticmethod
+    def _split_genre_string(value: Any) -> list[str]:
+        return [text for item in str(value or "").split(",") if (text := item.strip())]
 
-        if meta.type not in ["WEBDL"] and not meta.is_disc and meta.tag in ["CMRG", "EVO", "TERMiNAL", "ViSION"]:
-            if not meta.unattended or (meta.unattended and meta.unattended_confirm):
-                logger.info(f"{self.tracker}: [bold red]Group {meta.tag} is only allowed for raw type content at OldToonsWorld[/bold red]")
-                if cli_ui.ask_yes_no("Do you want to upload anyway?", default=False):
-                    pass
-                else:
-                    return False
-            else:
-                return False
+    def _genre_policy_passes(self, meta: Meta, genres: list[str]) -> bool:
+        if any(genre in genres for genre in ("Animation", "Family")):
+            return True
+        return self._confirm_policy_override(meta, "Genre does not match Animation or Family for OldToonsWorld.")
 
-        return True
+    def _adult_policy_passes(self, meta: Meta, genres: list[str]) -> bool:
+        keywords = ("xxx", "erotic", "porn", "adult", "orgy", "hentai", "adult animation", "softcore")
+        if not self._contains_metadata_keyword(meta, genres, keywords):
+            return True
+        return self._confirm_policy_override(meta, "Adult animation not allowed at OldToonsWorld.")
+
+    def _reality_policy_passes(self, meta: Meta, genres: list[str]) -> bool:
+        keywords = ("reality", "game show", "game-show", "reality tv", "reality television")
+        if not self._contains_metadata_keyword(meta, genres, keywords):
+            return True
+        return self._confirm_policy_override(meta, "Reality / Game Show content not allowed at OldToonsWorld.")
+
+    @classmethod
+    def _contains_metadata_keyword(cls, meta: Meta, genres: list[str], keywords: tuple[str, ...]) -> bool:
+        values = [*cls._string_values(meta.keywords), *genres]
+        normalized = {value.casefold().strip() for value in values if value.strip()}
+        return any(keyword.casefold() in normalized for keyword in keywords)
+
+    @staticmethod
+    def _string_values(value: Any) -> list[str]:
+        if isinstance(value, list):
+            return [str(item) for item in value]
+        if not value:
+            return []
+        return [str(value)]
+
+    def _group_policy_passes(self, meta: Meta) -> bool:
+        if not self._restricted_group_requires_override(meta):
+            return True
+        return self._confirm_policy_override(meta, f"Group {meta.tag} is only allowed for raw type content at OldToonsWorld")
+
+    @staticmethod
+    def _restricted_group_requires_override(meta: Meta) -> bool:
+        if meta.type == "WEBDL" or meta.is_disc:
+            return False
+        return meta.tag in {"CMRG", "EVO", "TERMiNAL", "ViSION"}
+
+    def _confirm_policy_override(self, meta: Meta, message: str) -> bool:
+        if meta.unattended and not meta.unattended_confirm:
+            return False
+        logger.info(f"{self.tracker}: [bold red]{message}[/bold red]")
+        return bool(cli_ui.ask_yes_no("Do you want to upload anyway?", default=False))
 
     async def get_type_id(self, meta: Meta, type: str | None = None, reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
-        type_id = {"DISC": "1", "REMUX": "2", "WEBDL": "4", "WEBRIP": "5", "HDTV": "6", "ENCODE": "3", "DVDRIP": "8"}
+        mapping = self._type_mapping()
+        mode_result = self._mapping_mode_result(mapping, reverse=reverse, mapping_only=mapping_only)
+        if mode_result is not None:
+            return mode_result
+        return {"type_id": self._resolved_type_id(meta, type, mapping)}
+
+    @staticmethod
+    def _mapping_mode_result(mapping: dict[str, str], *, reverse: bool, mapping_only: bool) -> dict[str, str] | None:
         if mapping_only:
-            return type_id
+            return mapping
         if reverse:
-            return {v: k for k, v in type_id.items()}
+            return {value: key for key, value in mapping.items()}
+        return None
+
+    @classmethod
+    def _resolved_type_id(cls, meta: Meta, requested_type: str | None, mapping: dict[str, str]) -> str:
+        disc_type = cls._disc_type_id(meta)
+        if disc_type:
+            return disc_type
+        selected = requested_type or str(meta.type)
+        return mapping.get(selected, "0")
+
+    @staticmethod
+    def _type_mapping() -> dict[str, str]:
+        return {"DISC": "1", "REMUX": "2", "WEBDL": "4", "WEBRIP": "5", "HDTV": "6", "ENCODE": "3", "DVDRIP": "8"}
+
+    @staticmethod
+    def _disc_type_id(meta: Meta) -> str:
         if meta.is_disc == "BDMV":
-            return {"type_id": "1"}
-        if meta.is_disc and meta.is_disc != "BDMV":
-            return {"type_id": "7"}
-        type_value = type if type is not None and type != "" else str(meta.type)
-        return {"type_id": type_id.get(type_value, "0")}
+            return "1"
+        return "7" if meta.is_disc else ""
 
     async def get_name(self, meta: Meta) -> dict[str, str]:
-        otw_name = meta.name
+        name = self._without_aka(meta.name, meta.aka)
+        name = self._apply_dvd_name_details(name, meta)
+        return {"name": self._apply_tv_year(name, meta)}
+
+    @staticmethod
+    def _without_aka(name: str, aka: str) -> str:
+        return name.replace(f"{aka} ", "") if aka else name
+
+    @classmethod
+    def _apply_dvd_name_details(cls, name: str, meta: Meta) -> str:
+        if not cls._uses_dvd_name_details(meta):
+            return name
         source = str(meta.source)
-        resolution = meta.resolution
-        aka = meta.aka
-        type = str(meta.type)
-        video_codec = meta.video_codec
-        if aka:
-            otw_name = otw_name.replace(f"{aka} ", "")
-        is_disc = str(meta.is_disc)
-        audio = meta.audio
-        if is_disc == "DVD" or (type == "REMUX" and source in ("PAL DVD", "NTSC DVD", "DVD")):
-            otw_name = otw_name.replace(source, f"{resolution} {source}", 1)
-            otw_name = otw_name.replace(audio, f"{video_codec} {audio}", 1)
-        if str(meta.category) == "TV":
-            years: list[int] = []
+        name = name.replace(source, f"{meta.resolution} {source}", 1)
+        return name.replace(meta.audio, f"{meta.video_codec} {meta.audio}", 1)
 
-            tmdb_year = str(meta.year) if meta.year is not None else ""
-            if tmdb_year and tmdb_year.isdigit():
-                year = tmdb_year
-            else:
-                if tmdb_year and tmdb_year.isdigit():
-                    years.append(int(tmdb_year))
+    @staticmethod
+    def _uses_dvd_name_details(meta: Meta) -> bool:
+        if meta.is_disc == "DVD":
+            return True
+        return str(meta.type) == "REMUX" and str(meta.source) in {"PAL DVD", "NTSC DVD", "DVD"}
 
-                imdb_info = cast(dict[str, Any], meta.imdb_info)
-                imdb_year = imdb_info.get("year")
-                if imdb_year and str(imdb_year).isdigit():
-                    years.append(int(imdb_year))
+    @classmethod
+    def _apply_tv_year(cls, name: str, meta: Meta) -> str:
+        if str(meta.category) != "TV" or meta.no_year or meta.search_year:
+            return name
+        year = cls._tv_year(meta)
+        if not year:
+            return name
+        return name.replace(meta.title, f"{meta.title} {year}", 1)
 
-                tvdb_episode_data = meta.tvdb_episode_data
-                series_year = tvdb_episode_data.get("series_year")
-                if series_year and str(series_year).isdigit():
-                    years.append(int(series_year))
-                # Use the oldest year if any found, else empty string
-                year = str(min(years)) if years else ""
-            if not meta.no_year and not meta.search_year:
-                title = meta.title
-                otw_name = otw_name.replace(title, f"{title} {year}", 1)
+    @classmethod
+    def _tv_year(cls, meta: Meta) -> str:
+        tmdb_year = cls._numeric_year(meta.year)
+        if tmdb_year:
+            return tmdb_year
+        candidates = [
+            cls._numeric_year(cls._mapping_value(meta.imdb_info, "year")),
+            cls._numeric_year(cls._mapping_value(meta.tvdb_episode_data, "series_year")),
+        ]
+        years = [int(value) for value in candidates if value]
+        return str(min(years)) if years else ""
 
-        return {"name": otw_name}
+    @staticmethod
+    def _mapping_value(value: Any, key: str) -> Any:
+        return value.get(key) if isinstance(value, dict) else None
+
+    @staticmethod
+    def _numeric_year(value: Any) -> str:
+        text = str(value or "")
+        return text if text.isdigit() else ""
 
     async def get_additional_data(self, meta: Meta) -> dict[str, Any]:
         data: dict[str, Any] = {
