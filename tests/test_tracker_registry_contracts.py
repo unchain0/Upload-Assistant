@@ -562,3 +562,235 @@ def test_comment_host_catalog_normalizes_class_and_runtime_urls(config: dict[str
         "announce.tracker.invalid",
     )
     assert "NOEND" not in hosts
+
+
+def test_registry_configuration_helper_edges(
+    setup: registry.TrackerSetup,
+    config: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(registry, "example_config", {"TRACKERS": {"TEST": "bad"}})
+    assert setup._missing_required_tracker_config("TEST") == []
+    broken = registry.TrackerSetup({"TRACKERS": "bad"})
+    assert broken._tracker_config("TEST") == {}
+    assert broken._beyondhd_configured() is False
+    assert registry._configured_comment_values("bad") == []
+    assert registry._as_comment_values("https://tracker.invalid") == ["https://tracker.invalid"]
+    assert config["TRACKERS"]["TEST"]["api_key"]
+
+
+@pytest.mark.asyncio
+async def test_registry_luminarr_and_claim_file_edges(
+    tmp_path: Path,
+    setup: registry.TrackerSetup,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / "data" / "banned" / "LUMINARR_banned_groups.json"
+
+    async def sync(path: str | Path) -> None:
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        Path(path).write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(setup, "sync_trash_groups", sync)
+    assert await setup.get_banned_groups(_meta(tmp_path), "LUMINARR") == target
+
+    monkeypatch.setattr(setup, "_trash_spec_value", lambda _spec: (_ for _ in ()).throw(ValueError("bad")))
+    assert setup._trash_spec_groups({}) == []
+
+    monkeypatch.setattr(setup, "_write_file", lambda *_args: (_ for _ in ()).throw(OSError("readonly")))
+    await setup.write_internal_claims_to_file(target, [{"attributes": {"title": "x"}}])
+
+    monkeypatch.setattr(setup, "_claim_mapping_ids", AsyncMock(side_effect=RuntimeError("bad mapping")))
+    assert not await setup._check_single_tracker_claim(_meta(tmp_path), "TEST")
+    assert await setup._claim_file_records(_meta(tmp_path), "MISSING") == []
+
+
+@pytest.mark.asyncio
+async def test_registry_request_helper_edges(
+    tmp_path: Path,
+    setup: registry.TrackerSetup,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    meta = _meta(tmp_path)
+    assert await setup._process_tracker_request(meta, "MISSING") is False
+    assert await setup._request_context(meta, "NOEND", _NoEndpoints(setup.config)) is None
+
+    values = await setup._mapped_id(_Tracker(setup.config).get_type_id, meta, "UNKNOWN", "Type")
+    assert values == [None]
+    assert setup._parse_request_log_text("{broken") == []
+    await setup._save_request_log(tmp_path / "empty.json", [])
+    assert not (tmp_path / "empty.json").exists()
+
+    request = {"category": 999, "type": 1, "resolution": 10, "claimed": False}
+    data: list[registry.JsonDict] = []
+    setup._process_unit3d_request(meta, "TEST", request, _Tracker.requests_url, {"categories": [100], "types": [1], "resolutions": [10]}, data, set())
+    assert data == []
+
+    assert setup._unit3d_request_match(meta, {"type": 999, "resolution": 10, "claimed": False}, {"types": [1], "resolutions": [10]}) == "partial"
+    assert setup._mapped_or_any(None, [1]) == (True, True)
+    assert not setup._unit3d_exact_request(meta, {"claimed": True}, True, True)
+    assert setup._safe_request_int("bad") == 0
+
+    partial = {"name": "Request", "claimed": False, "description": "check me"}
+    setup._log_unit3d_request(meta, "TEST", partial, "https://tracker.invalid/requests/1", "double_check")
+    setup._log_unit3d_request(meta, "TEST", partial, "https://tracker.invalid/requests/1", "partial")
+    entry = setup._request_log_entry(meta, partial, "https://tracker.invalid/requests/1", "partial")
+    assert entry["match_type"] == "partial"
+
+    monkeypatch.setattr(_Tracker, "get_requests", AsyncMock(return_value=[]))
+    assert await setup._process_tracker_request(meta, "ORPHEUS") is False
+
+
+def test_registry_beyondhd_matching_edges(tmp_path: Path, setup: registry.TrackerSetup) -> None:
+    meta = _meta(tmp_path)
+    assert setup._beyondhd_resolution_matches(_meta(tmp_path, is_disc="BDMV", resolution="1080p"), "BD 50")
+    assert setup._beyondhd_resolution_matches(meta, "1080p")
+    assert not setup._beyondhd_remux_resolution(_meta(tmp_path, type="ENCODE"), "uhd remux")
+    assert setup._beyondhd_disc_resolution(_meta(tmp_path, resolution="2160p"), "uhd disc")
+    assert setup._beyondhd_type_matches(_meta(tmp_path, type="ENCODE"), "Blu-ray", "1080p")
+    assert setup._beyondhd_type_matches(_meta(tmp_path, type="WEBDL"), "WEB", "1080p")
+
+    state: registry.JsonDict = {"type": False, "resolution": True, "unclaimed": True, "internal": False, "season": False, "dv": True, "hdr": True, "claimed_status": ""}
+    assert setup._beyondhd_match_kind(meta, state) == "partial"
+    assert setup._beyondhd_hdr_match_kind({"dv": False, "hdr": False}) == "hdr_mismatch"
+    assert setup._beyondhd_hdr_match_kind({"dv": True, "hdr": False}) == "partial"
+
+    request = {"name": "Req", "bounty": 1, "url": "https://bhd/1"}
+    setup._log_beyondhd_request(meta, "BEYONDHD", request, {"claimed_status": "Unfilled", "internal": True}, "hdr_mismatch")
+    setup._log_beyondhd_request(meta, "BEYONDHD", request, {"claimed_status": "", "internal": False}, "partial")
+
+    existing = {str(meta.uuid)}
+    data: list[registry.JsonDict] = []
+    setup._append_beyondhd_request_log(meta, data, existing, request, {"claimed_status": ""})
+    assert data == []
+
+
+@pytest.mark.asyncio
+async def test_registry_trumpable_helper_edges(
+    tmp_path: Path,
+    setup: registry.TrackerSetup,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    meta = _meta(tmp_path)
+    assert setup._trumpable_context(meta, "NOEND") is None
+    meta["TEST_matched_episode_ids"] = [{"id": "episode-7"}]
+    assert setup._first_matched_episode_id(meta, "TEST") == "episode-7"
+
+    meta.skip_upload_trackers = "bad"  # type: ignore[assignment]
+    setup._ensure_skip_upload_trackers(meta)
+    assert meta.skip_upload_trackers == []
+
+    monkeypatch.setattr(setup, "get_tracker_trumps", AsyncMock(return_value=([], 500)))
+    assert not await setup._existing_trump_reports_allow_upload(meta, "TEST", _Tracker.trumping_url, "7")
+    assert "TEST" in meta.skip_upload_trackers
+
+    meta.skip_upload_trackers = []
+    monkeypatch.setattr(setup, "get_tracker_trumps", AsyncMock(return_value=([], 200)))
+    assert await setup._existing_trump_reports_allow_upload(meta, "TEST", _Tracker.trumping_url, "7")
+
+    setup._log_trump_report({"id": 1, "title": "Pending", "trumping_torrent": []})
+    monkeypatch.setattr(registry.cli_ui, "ask_yes_no", lambda *_args, **_kwargs: (_ for _ in ()).throw(EOFError))
+    assert not setup._confirm_existing_trump_upload(meta, "TEST")
+
+    monkeypatch.setattr(setup, "_comparison_mode", lambda: None)
+    assert not await setup._collect_trump_comparisons(_meta(tmp_path, tv_pack=False), "TEST")
+    monkeypatch.setattr(setup, "_comparison_mode", lambda: "x")
+    assert not await setup._collect_trump_comparisons(_meta(tmp_path, tv_pack=False), "TEST")
+    monkeypatch.setattr(registry.TrackerSetup, "_comparison_link_prompts", classmethod(lambda _cls: ("", "x")))
+    assert not setup._collect_comparison_links(meta)
+
+
+def test_registry_comparison_prompt_edges(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(registry.cli_ui, "ask_string", lambda *_args, **_kwargs: (_ for _ in ()).throw(EOFError))
+    assert registry.TrackerSetup._comparison_mode() is None
+    assert registry.TrackerSetup._prompt_comparison_link_pair() is None
+
+    answers: Iterator[str] = iter(("", "x"))
+    monkeypatch.setattr(registry.cli_ui, "ask_string", lambda *_args, **_kwargs: next(answers))
+    assert registry.TrackerSetup._comparison_link_prompts() is None
+
+
+@pytest.mark.asyncio
+async def test_registry_trump_fetch_edge_cases(
+    setup: registry.TrackerSetup,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(setup, "_trump_page_loop", AsyncMock(side_effect=httpx.TimeoutException("slow")))
+    assert await setup._fetch_trump_pages("TEST", _Tracker.trumping_url, {}, {}) == ([], None)
+    monkeypatch.setattr(setup, "_trump_page_loop", AsyncMock(side_effect=RuntimeError("bad")))
+    assert await setup._fetch_trump_pages("TEST", _Tracker.trumping_url, {}, {}) == ([], None)
+
+    assert setup._parse_trump_page(_Response(200, [])) is None
+    page = setup._parse_trump_page(_Response(200, {"data": [], "meta": "bad"}))
+    assert page == ([], None, 200)
+    assert setup._normalized_trumping_torrents([{"id": 1}, "bad"]) == [{"id": 1}]
+    assert setup._normalized_trumping_torrents("bad") == []
+
+
+@pytest.mark.asyncio
+async def test_registry_trump_report_context_payload_and_post_edges(
+    tmp_path: Path,
+    setup: registry.TrackerSetup,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    meta = _meta(tmp_path)
+    assert setup._trump_report_context(meta, "MISSING") is None
+    assert setup._trumping_base_url("NOEND") is None
+    assert setup._stored_reported_torrent_id(meta, "TEST") == ""
+    assert setup._validated_trump_context(meta, "url", "7", None) is None
+    assert setup._trumping_torrent_id(meta, "TEST") is None
+
+    meta.screenshots_reported_torrent = ["a"]
+    meta.screenshots_trumping_torrent = ["b"]
+    meta.screenshots_in_description = True
+    payload: registry.JsonDict = {"message": "reason"}
+    setup._append_trump_screenshots(payload, meta)
+    assert payload["screenshots_reported_torrent"] == "a"
+    assert payload["screenshots_trumping_torrent"] == "b"
+    assert "in description" in str(payload["message"])
+
+    monkeypatch.setattr(registry.cli_ui, "ask_string", lambda *_args, **_kwargs: (_ for _ in ()).throw(EOFError))
+    assert setup._lst_user_message() is None
+
+    monkeypatch.setattr(registry.httpx, "AsyncClient", lambda *_args, **_kwargs: (_ for _ in ()).throw(httpx.TimeoutException("slow")))
+    assert not await setup._post_trump_report("TEST", "https://tracker.invalid", {})
+    monkeypatch.setattr(registry.httpx, "AsyncClient", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("bad")))
+    assert not await setup._post_trump_report("TEST", "https://tracker.invalid", {})
+
+
+def test_registry_last_uncovered_helper_edges(
+    tmp_path: Path,
+    setup: registry.TrackerSetup,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(registry.TrackerSetup, "_trash_spec_value", classmethod(lambda _cls, _spec: (_ for _ in ()).throw(ValueError("bad"))))
+    assert setup._trash_spec_groups({}) == []
+
+    noend = _NoEndpoints(setup.config)
+    assert __import__("asyncio").run(setup._process_tracker_request(_meta(tmp_path), "NOEND")) is False
+    assert __import__("asyncio").run(setup._request_context(_meta(tmp_path), "BEYONDHD", noend)) is None
+
+    monkeypatch.setattr(registry.TrackerSetup, "_comparison_link_prompts", classmethod(lambda _cls: None))
+    assert not setup._collect_comparison_links(_meta(tmp_path))
+    monkeypatch.setattr(registry.TrackerSetup, "_prompt_comparison_link_pair", staticmethod(lambda: None))
+    assert setup._comparison_link_prompts() is None
+
+
+@pytest.mark.asyncio
+async def test_registry_last_uncovered_trump_report_edges(
+    tmp_path: Path,
+    setup: registry.TrackerSetup,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    meta = _meta(tmp_path)
+    monkeypatch.setattr(setup, "_trumping_base_url", lambda _tracker: "https://tracker.invalid/api/trumps/filter")
+    assert setup._trump_report_context(meta, "TEST") is None
+
+    monkeypatch.setattr(setup, "_trump_report_context", lambda _meta, _tracker: ("https://tracker.invalid/api/trumps/create", "7", "8"))
+    monkeypatch.setattr(setup, "_trump_report_payload", lambda *_args: None)
+    assert not await setup.make_trumpable_report(meta, "TEST")
+
+
+def test_registry_comparison_prompts_propagates_cancel(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(registry.TrackerSetup, "_prompt_comparison_link_pair", staticmethod(lambda: None))
+    assert registry.TrackerSetup._comparison_link_prompts() is None
