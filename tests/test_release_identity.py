@@ -20,3 +20,20 @@ def test_release_year_identity_rejects_invalid_year_values_and_missing_imdb_mapp
     assert identity.canonical is None
     assert identity.imdb is None
     assert identity.canonical_text == ""
+
+
+def test_original_language_cannot_be_erased_by_empty_metadata_fallback() -> None:
+    meta = Meta(original_language="en")
+
+    meta.original_language = None
+    assert meta.original_language == "en"
+
+    meta.update({"original_language": ""})
+    assert meta.original_language == "en"
+
+    meta.original_language = "fa"
+    assert meta.original_language == "fa"
+
+
+def test_original_language_initializes_empty_when_no_source_exists() -> None:
+    assert Meta().original_language is None

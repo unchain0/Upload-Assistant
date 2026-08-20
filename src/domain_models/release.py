@@ -3,7 +3,7 @@
 
 from collections.abc import Mapping
 from dataclasses import MISSING, dataclass, field, fields
-from typing import Any
+from typing import Any, cast
 
 _TRACKER_ID_ALIASES = {
     "ANT": "ANTHELION",
@@ -530,6 +530,18 @@ class Meta:
     youtube: str | None = ""
     zentag_prepared: bool = False
 
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Keep established semantic metadata from being erased by empty fallbacks."""
+        if name == "original_language" and self._empty_original_language(value):
+            current = self.__dict__.get("original_language")
+            if not self._empty_original_language(current):
+                return
+        object.__setattr__(self, name, value)
+
+    @staticmethod
+    def _empty_original_language(value: Any) -> bool:
+        return value is None or (isinstance(value, str) and not value.strip())
+
     def __init__(self, _data: dict[str, Any] | None = None, **kwargs: Any) -> None:
         # Initialize default values
         for f in fields(self):
@@ -561,30 +573,46 @@ class Meta:
 
     def populate_cast(self, limit: int = 5) -> None:
         """Build the canonical cast list from manual, IMDb, and TMDb sources."""
-        source_lists = [self.manual_cast, self.imdb_info.get("stars", []) if isinstance(self.imdb_info, dict) else [], self.tmdb_cast]
+        self.cast = self._canonical_cast_names(self._cast_sources(), limit)
+
+    def _cast_sources(self) -> tuple[Any, ...]:
+        imdb_stars: Any = []
+        if isinstance(self.imdb_info, dict):
+            imdb_stars = self.imdb_info.get("stars", [])
+        return self.manual_cast, imdb_stars, self.tmdb_cast
+
+    @classmethod
+    def _canonical_cast_names(cls, sources: tuple[Any, ...], limit: int) -> list[str]:
         names: list[str] = []
         seen: set[str] = set()
-
-        for source in source_lists:
-            values = source.split(",") if isinstance(source, str) else source if isinstance(source, list) else []
-            for value in values:
-                if not isinstance(value, str):
-                    continue
-                name = " ".join(value.split())
-                key = name.casefold()
-                if not name or key in seen:
-                    continue
-                seen.add(key)
-                names.append(name)
+        for source in sources:
+            for value in cls._cast_values(source):
+                cls._append_cast_name(names, seen, value)
                 if len(names) >= limit:
-                    self.cast = names
-                    return
+                    return names
+        return names
 
-        self.cast = names
+    @staticmethod
+    def _cast_values(source: Any) -> list[str]:
+        if isinstance(source, str):
+            return source.split(",")
+        if not isinstance(source, list):
+            return []
+        values = cast(list[Any], source)
+        return [value for value in values if isinstance(value, str)]
+
+    @staticmethod
+    def _append_cast_name(names: list[str], seen: set[str], value: str) -> None:
+        name = " ".join(value.split())
+        key = name.casefold()
+        if not name or key in seen:
+            return
+        seen.add(key)
+        names.append(name)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to a dictionary representing defined fields."""
-        res = {}
+        res: dict[str, Any] = {}
         for f in fields(self):
             val = getattr(self, f.name)
             if val is not None:

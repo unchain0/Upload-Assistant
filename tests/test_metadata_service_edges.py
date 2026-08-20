@@ -729,3 +729,13 @@ def test_imdb_tmdb_tvdb_unexpected_imdb_and_tvdb_payloads(tmp_path: Path, monkey
 
     assert result.imdb_info == {}
     assert not result.we_checked_tvdb
+
+
+def test_imdb_tvdb_does_not_erase_existing_original_language_when_tmdb_omits_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    tmdb = _Tmdb(get_tmdb_from_imdb=("MOVIE", 909, None, False))
+    _patch_imdb_tvmaze(monkeypatch, imdb={"title": "IMDb"}, tvmaze_search=0)
+    meta = _meta(tmp_path, category="MOVIE", original_language="en")
+
+    result = asyncio.run(metadata_service.imdb_tvdb(meta, "file", _Tvdb(), tmdb))
+
+    assert result.original_language == "en"
