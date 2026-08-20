@@ -115,10 +115,10 @@ def test_zenith_ebook_series_edition_and_source_branches() -> None:
     assert tracker._declared_ebook_source(_book_meta(manual_source="SCAN")) == "SCAN"
 
 
-def test_zenith_imdb_year_and_empty_aka_branches() -> None:
+def test_zenith_canonical_year_and_empty_aka_branches() -> None:
     tracker = _tracker()
-    meta = _movie_meta(year=2020, imdb_info={"year": "2021"})
-    assert tracker._apply_imdb_year("Movie 2020", meta, "2020") == ("Movie 2021", "2021")
+    meta = _movie_meta(year=2020, search_year=2019, imdb_info={"year": "2021"})
+    assert tracker._release_year(meta) == "2020"
     assert tracker._normalize_aka_year_order("Movie 2020", "Movie", "AKA ", "2020") == "Movie 2020"
 
 
@@ -149,3 +149,11 @@ def test_zenith_video_storage_rejects_unsupported_disc_structure() -> None:
 
 def test_zenith_book_identity_rejects_banned_author() -> None:
     assert not _tracker()._book_identity_policy(_book_meta(author="J.R.R. Tolkien"))
+
+
+def test_zenith_tracker_name_values_support_scalar_tuple_and_set() -> None:
+    from src.integrations.trackers.UNIT3D.znth import _tracker_name_values
+
+    assert _tracker_name_values("ZENITH") == ["ZENITH"]
+    assert _tracker_name_values(("ZENITH", "PEERGARDEN")) == ["ZENITH", "PEERGARDEN"]
+    assert set(_tracker_name_values({"ZENITH", "PEERGARDEN"})) == {"ZENITH", "PEERGARDEN"}

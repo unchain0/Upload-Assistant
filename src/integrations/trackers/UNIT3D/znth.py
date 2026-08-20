@@ -1,11 +1,13 @@
 import re
 import unicodedata
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
 from src.domain_models.book_language import extract_first_author as _primary_name
 from src.domain_models.book_language import resolve_book_language
 from src.domain_models.release import Meta
+from src.domain_models.release_identity import ReleaseYearIdentity
 from src.integrations.observability.runtime_support import logger
 from src.integrations.trackers.common import Common
 from src.integrations.trackers.UNIT3D import UNIT3D, ParamsList
@@ -29,10 +31,20 @@ def _uses_zenith_music_layout(meta: Meta) -> bool:
 
 
 def _normalized_tracker_names(value: Any) -> set[str]:
-    values = [value] if isinstance(value, str) else value
-    if not isinstance(values, (list, tuple, set)):
-        return set()
+    values = _tracker_name_values(value)
     return {text.upper() for item in values if (text := str(item).strip())}
+
+
+def _tracker_name_values(value: Any) -> list[Any]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        return cast(list[Any], value)
+    if isinstance(value, tuple):
+        return list(cast(tuple[Any, ...], value))
+    if isinstance(value, set):
+        return list(cast(set[Any], value))
+    return []
 
 
 def _iso_639_2_code(iso3: str) -> str:
@@ -351,11 +363,12 @@ class Zenith(UNIT3D):
     def _music_release_error(cls, meta: Meta, filelist: list[Any]) -> str:
         release = cls._music_release(meta)
         root = Path(str(meta.path or ""))
-        for check in (
+        checks: tuple[Callable[[Path], str], ...] = (
             cls._music_root_error,
             lambda current: cls._music_artist_root_error(release, meta, current),
             lambda current: cls._music_album_root_error(release, meta, current),
-        ):
+        )
+        for check in checks:
             if error := check(root):
                 return error
         tracks = cls._music_tracks(release)
@@ -390,8 +403,11 @@ class Zenith(UNIT3D):
         if isinstance(artists, list):
             values.extend(artists)
         conflicts = release.get("conflicts")
-        if isinstance(conflicts, dict) and isinstance(conflicts.get("artist"), list):
-            values.extend(cast(list[Any], conflicts["artist"]))
+        if isinstance(conflicts, dict):
+            conflict_map = cast(dict[str, Any], conflicts)
+            artists = conflict_map.get("artist")
+            if isinstance(artists, list):
+                values.extend(cast(list[Any], artists))
         return values
 
     @staticmethod
@@ -610,7 +626,8 @@ class Zenith(UNIT3D):
     def _mapping_tracks(value: Any) -> list[dict[str, Any]]:
         if not isinstance(value, list):
             return []
-        return [cast(dict[str, Any], track) for track in value if isinstance(track, dict)]
+        tracks = cast(list[Any], value)
+        return [cast(dict[str, Any], track) for track in tracks if isinstance(track, dict)]
 
     @staticmethod
     def _audiobook_track_language_error(track: dict[str, Any], expected: str) -> str:
@@ -1094,9 +1111,8 @@ class Zenith(UNIT3D):
 
     def _video_release_name(self, meta: Meta) -> str:
         name = self._without_episode_title(meta.name, meta)
-        year = self._release_year(meta)
-        name, year = self._apply_imdb_year(name, meta, year)
-        return self._apply_aka_year_order(name, meta, year)
+        identity = ReleaseYearIdentity.from_release(meta)
+        return self._apply_aka_year_order(name, meta, identity.canonical_text)
 
     def _apply_aka_year_order(self, name: str, meta: Meta, year: str) -> str:
         title = str(meta.title or "").strip()
@@ -1116,30 +1132,7 @@ class Zenith(UNIT3D):
 
     @staticmethod
     def _release_year(meta: Meta) -> str:
-        if meta.manual_year:
-            return str(meta.manual_year)
-        return "" if meta.year is None else str(meta.year)
-
-    @classmethod
-    def _apply_imdb_year(cls, name: str, meta: Meta, year: str) -> tuple[str, str]:
-        imdb_year = cls._imdb_year(meta)
-        if not cls._should_replace_year(meta, year, imdb_year):
-            return name, year
-        return name.replace(year, imdb_year, 1), imdb_year
-
-    @staticmethod
-    def _imdb_year(meta: Meta) -> str:
-        if not isinstance(meta.imdb_info, dict):
-            return ""
-        return str(meta.imdb_info.get("year", ""))
-
-    @staticmethod
-    def _should_replace_year(meta: Meta, year: str, imdb_year: str) -> bool:
-        if meta.category == "TV":
-            return False
-        if not imdb_year.strip() or not year.strip():
-            return False
-        return imdb_year != year
+        return ReleaseYearIdentity.from_release(meta).canonical_text
 
     @classmethod
     def _normalize_aka_year_order(cls, name: str, title: str, aka: str, year: str) -> str:
@@ -1232,7 +1225,8 @@ class Zenith(UNIT3D):
     @staticmethod
     def _artist_collection_name(value: Any) -> str:
         if isinstance(value, list):
-            return " & ".join(text for item in value if (text := str(item).strip()))
+            items = cast(list[Any], value)
+            return " & ".join(text for item in items if (text := str(item).strip()))
         return str(value or "").strip()
 
     @staticmethod

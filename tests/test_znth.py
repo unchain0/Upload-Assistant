@@ -514,3 +514,22 @@ def test_zenith_reorders_tv_year_before_aka():
     )["name"]
 
     assert name == "Shrouding the Heavens AKA Zhe Tian 2023 S01E175 2160p WEB-DL DD+ 2.0 H.265-QHstudIo"
+
+
+def test_zenith_keeps_canonical_metadata_year_when_imdb_year_differs():
+    meta = Meta(
+        category="MOVIE",
+        title="Tatami",
+        year=2024,
+        search_year=2023,
+        imdb_info={"year": 2023},
+        name="Tatami 2024 1080p AMZN WEB-DL DD+ 5.1 H.264-FLY",
+        filelist=["Tatame.2023.1080p.AMZN.WEB-DL.DDP5.1.H.264.DUAL-FLY.mkv"],
+        resolution="1080p",
+        screens=3,
+    )
+
+    name = asyncio.run(_tracker().get_name(meta))["name"]
+
+    assert "Tatami 2024" in name
+    assert "Tatami 2023" not in name

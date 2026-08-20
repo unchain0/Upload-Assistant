@@ -50,6 +50,8 @@ def _movie_payload(**values: object) -> list[dict[str, Any]]:
         "imdbId": "tt1234567",
         "tmdbId": 123,
         "year": 2026,
+        "secondaryYear": 2025,
+        "title": "Movie",
         "genres": ["Drama"],
         "movieFile": {"originalFilePath": "/media/movie.mkv", "releaseGroup": "GROUP"},
     }
@@ -82,14 +84,21 @@ def _reset(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_radarr_extract_empty_invalid_list_filename_and_release_group() -> None:
     manager = RadarrManager({"DEFAULT": {}})
-    empty = {"imdb_id": None, "tmdb_id": None, "year": None, "genres": [], "release_group": None}
+    empty = {"imdb_id": None, "tmdb_id": None, "year": None, "secondary_year": None, "genres": [], "release_group": None}
     assert asyncio.run(manager.extract_movie_data(None)) == empty
     assert asyncio.run(manager.extract_movie_data({"bad": True})) == empty
     assert asyncio.run(manager.extract_movie_data([])) == empty
     assert asyncio.run(manager.extract_movie_data(_movie_payload(), "/other.mkv")) is None
 
     parsed = asyncio.run(manager.extract_movie_data(_movie_payload(), "/media/movie.mkv"))
-    assert parsed == {"imdb_id": 1234567, "tmdb_id": 123, "year": 2026, "genres": ["Drama"], "release_group": "GROUP"}
+    assert parsed == {
+        "imdb_id": 1234567,
+        "tmdb_id": 123,
+        "year": 2026,
+        "secondary_year": 2025,
+        "genres": ["Drama"],
+        "release_group": "GROUP",
+    }
     parsed = asyncio.run(manager.extract_movie_data(_movie_payload(imdbId="", movieFile={})))
     assert parsed["imdb_id"] is None and parsed["release_group"] is None
 
@@ -139,6 +148,32 @@ def test_radarr_response_errors_then_second_instance_success() -> None:
     result = asyncio.run(RadarrManager(config).get_radarr_data(tmdb_id=123))
     assert result and result["imdb_id"] == 1234567
     assert _Client.urls[-1].startswith("https://second.invalid")
+
+
+def test_radarr_accepts_strong_title_match_when_filename_year_matches_secondary_year() -> None:
+    manager = RadarrManager({"DEFAULT": {}})
+    payload = _movie_payload(
+        title="Tatami",
+        year=2024,
+        secondaryYear=2023,
+        tmdbId=1084066,
+        imdbId="tt26674818",
+        movieFile={},
+    )
+
+    parsed = asyncio.run(manager.extract_movie_data(payload, "Tatame.2023.1080p.AMZN.WEB-DL.DDP5.1.H.264.DUAL-FLY.mkv"))
+
+    assert parsed is not None
+    assert parsed["tmdb_id"] == 1084066
+    assert parsed["year"] == 2024
+    assert parsed["secondary_year"] == 2023
+
+
+def test_radarr_rejects_lookup_candidate_when_only_year_matches() -> None:
+    manager = RadarrManager({"DEFAULT": {}})
+    payload = _movie_payload(title="Completely Different", year=2024, secondaryYear=2023, movieFile={})
+
+    assert asyncio.run(manager.extract_movie_data(payload, "Tatame.2023.1080p.WEB-DL.mkv")) is None
 
 
 def test_sonarr_extract_empty_parse_list_and_invalid() -> None:
@@ -212,3 +247,17 @@ def test_sonarr_response_errors_then_second_instance_success() -> None:
     result = asyncio.run(SonarrManager(config).get_sonarr_data(tvdb_id=456))
     assert result and result["imdb_id"] == 1234567
     assert _Client.urls[-1].startswith("https://second.invalid")
+
+
+def test_radarr_matching_helper_guards_and_invalid_year_values() -> None:
+    manager = RadarrManager({"DEFAULT": {}})
+    assert not manager._exact_file_match({"movieFile": "bad"}, "/media/movie.mkv")
+    assert manager._best_title_similarity("", {"title": "Movie"}) == 0.0
+    assert manager._alternate_titles({"alternateTitles": "bad"}) == []
+    assert manager._candidate_years({"year": "bad", "secondaryYear": None}) == set()
+
+
+def test_radarr_alternate_titles_and_release_group_guards() -> None:
+    manager = RadarrManager({"DEFAULT": {}})
+    assert manager._alternate_titles({"alternateTitles": [{"title": "Alt"}, "bad"]}) == ["Alt"]
+    assert manager._release_group("bad") is None
