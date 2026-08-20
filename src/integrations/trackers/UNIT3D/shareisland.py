@@ -53,202 +53,361 @@ class ShareIsland(UNIT3D):
         self.audio_manager = AudioManager(config)
 
     def _get_language_code(self, track_or_string: Any) -> str:
-        """Extract and normalize language to ISO alpha-2 code"""
-        if isinstance(track_or_string, dict):
-            track_dict = cast(dict[str, Any], track_or_string)
-            lang = track_dict.get("Language", "")
-            if isinstance(lang, dict):
-                lang = cast(dict[str, Any], lang).get("String", "")
-        else:
-            lang = track_or_string
-        if not lang:
+        """Extract and normalize language to ISO alpha-2 code."""
+        language = self._raw_language(track_or_string)
+        if not language:
             return ""
-        lang_str = str(lang).lower()
+        normalized = self._language_base(language)
+        if len(normalized) == 2:
+            return normalized
+        return self._resolved_alpha2(normalized)
 
-        # Strip country code if present (e.g., "en-US" → "en")
-        if "-" in lang_str:
-            lang_str = lang_str.split("-")[0]
+    @staticmethod
+    def _raw_language(value: Any) -> str:
+        if not isinstance(value, dict):
+            return str(value or "")
+        language = value.get("Language", "")
+        if isinstance(language, dict):
+            language = language.get("String", "")
+        return str(language or "")
 
-        if len(lang_str) == 2:
-            return lang_str
+    @staticmethod
+    def _language_base(value: str) -> str:
+        return value.casefold().split("-", 1)[0]
+
+    @staticmethod
+    def _resolved_alpha2(value: str) -> str:
         try:
-            lang_obj = pycountry.languages.get(name=lang_str.title()) or pycountry.languages.get(alpha_2=lang_str) or pycountry.languages.get(alpha_3=lang_str)
-            return lang_obj.alpha_2.lower() if lang_obj else lang_str
+            language = pycountry.languages.get(name=value.title())
+            if language is None:
+                language = pycountry.languages.get(alpha_2=value)
+            if language is None:
+                language = pycountry.languages.get(alpha_3=value)
+            alpha2 = getattr(language, "alpha_2", None)
+            return str(alpha2).lower() if alpha2 else value
         except AttributeError, KeyError, LookupError:
-            return lang_str
+            return value
 
     async def get_additional_data(self, meta: Meta) -> dict[str, Any]:
         """Get additional tracker-specific upload data"""
         return {"mod_queue_opt_in": await self.get_flag(meta, "modq")}
 
     async def get_name(self, meta: Meta) -> dict[str, str]:
-        """
-        Rebuild release name from meta components following ShareIsland naming rules.
+        """Build a ShareIsland release name from normalized metadata."""
+        await self._ensure_language_metadata(meta)
+        title = self._selected_title(meta)
+        audio = await self._get_best_italian_audio_format(meta)
+        languages = self._audio_language_tag(meta)
+        release_type = self.get_effective_type(meta)
+        source = self._normalized_source(meta, release_type)
+        extras = self._name_extras(meta, title)
+        name = self._name_for_type(meta, title, audio, languages, release_type, source, extras)
+        return {"name": self._finalized_name(meta, name)}
 
-        Handles:
-        - REMUX detection from filename markers (VU/UNTOUCHED)
-        - Italian title substitution from IMDb AKAs
-        - Multi-language audio tags (ITA - ENG format using ISO 639-3 codes)
-        - Release group tag cleaning and validation
-        - DISC region injection
-        """
+    async def _ensure_language_metadata(self, meta: Meta) -> None:
         if not meta.language_checked:
             await languages_manager.process_desc_language(meta, tracker=self.tracker)
 
-        # Title and basic info
-        title = meta.title
-        italian_title = self._get_italian_title(meta.imdb_info)
-        use_italian_title = self.config["TRACKERS"][self.tracker].get("use_italian_title", False)
-        if italian_title and use_italian_title:
-            title = italian_title
+    def _selected_title(self, meta: Meta) -> str:
+        italian = self._get_italian_title(meta.imdb_info)
+        use_italian = bool(self.config["TRACKERS"][self.tracker].get("use_italian_title", False))
+        return italian if italian and use_italian else str(meta.title)
 
-        year_value: Any = meta.year
-        resolution_value: Any = meta.resolution
-        source_value: Any = meta.source
-        year = str(year_value) if year_value is not None else ""
-        resolution = str(resolution_value)
-        source = (str(cast(Any, source_value[0])) if source_value else "") if isinstance(source_value, list) else str(source_value)
-        video_codec = meta.video_codec
-        video_encode = meta.video_encode
+    def _audio_language_tag(self, meta: Meta) -> str:
+        languages = self._normalized_audio_languages(meta.audio_languages)
+        count = len(languages)
+        if count == 0:
+            return ""
+        if count == 1:
+            return languages[0]
+        if count == 2:
+            return self._two_language_tag(languages)
+        return "ITA - MULTI" if "ITA" in languages else "MULTI"
 
-        # TV specific
-        season = str(meta.season or "")
-        episode = meta.episode or ""
-        episode_title = meta.episode_title or ""
-        part = meta.part or ""
+    def _normalized_audio_languages(self, value: Any) -> list[str]:
+        values = value if isinstance(value, list) else []
+        normalized = [self._get_language_name(str(language)) for language in values]
+        return list(dict.fromkeys(language for language in normalized if language))
 
-        # Optional fields
-        edition = meta.edition or ""
-        hdr = meta.hdr or ""
-        uhd = str(meta.uhd or "")
-        three_d = meta.three_d or ""
+    @staticmethod
+    def _two_language_tag(languages: list[str]) -> str:
+        if "ITA" not in languages:
+            return " - ".join(languages)
+        other = next((language for language in languages if language != "ITA"), "")
+        return f"ITA - {other}" if other else "ITA"
 
-        # Clean audio: remove Dual-Audio and trailing language codes
-        audio = await self._get_best_italian_audio_format(meta)
+    @staticmethod
+    def _source_value(meta: Meta) -> str:
+        source = meta.source
+        if isinstance(source, list):
+            return str(source[0]) if source else ""
+        return str(source or "")
 
-        # Build audio language tag
-        audio_lang_str = ""
-        if meta.audio_languages:
-            # Normalize all to abbreviated ISO 639-3 codes
-            audio_langs_value = meta.audio_languages
-            audio_langs_raw = audio_langs_value if isinstance(audio_langs_value, list) else []
-            audio_langs = [self._get_language_name(str(lang)) for lang in audio_langs_raw]
-            audio_langs = [lang for lang in audio_langs if lang]  # Remove empty
-            audio_langs = list(dict.fromkeys(audio_langs))  # Dedupe preserving order
+    @classmethod
+    def _normalized_source(cls, meta: Meta, release_type: str) -> str:
+        source = cls._source_value(meta)
+        return source.replace("Blu-ray", "BluRay") if release_type != "DISC" else source
 
-            num_langs = len(audio_langs)
+    @classmethod
+    def _name_extras(cls, meta: Meta, title: str) -> dict[str, str]:
+        return {
+            "year": cls._year_text(meta.year),
+            "season": cls._text(meta.season),
+            "episode": cls._text(meta.episode),
+            "episode_title": cls._text(meta.episode_title),
+            "part": cls._text(meta.part),
+            "edition": cls._text(meta.edition),
+            "hdr": cls._text(meta.hdr),
+            "uhd": cls._text(meta.uhd),
+            "three_d": cls._text(meta.three_d),
+            "hybrid": cls._hybrid_marker(meta, title),
+            "repack": cls._text(meta.repack).strip(),
+            "resolution": cls._text(meta.resolution),
+        }
 
-            if num_langs == 1:
-                # One language (ITA or non-ITA)
-                audio_lang_str = audio_langs[0]
+    @staticmethod
+    def _text(value: Any) -> str:
+        return "" if value is None else str(value)
 
-            elif num_langs == 2:
-                # Two languages ("ITA - [lang]" if ITA is present, "[lang] - [lang]" if not)
-                if "ITA" in audio_langs:
-                    other = next(lang for lang in audio_langs if lang != "ITA")
-                    audio_lang_str = f"ITA - {other}"
-                else:
-                    audio_lang_str = " - ".join(audio_langs)
+    @staticmethod
+    def _year_text(value: Any) -> str:
+        return "" if value is None else str(value)
 
-            elif num_langs >= 3:
-                # Three or more languages, "ITA - MULTI" if ITA is present, "MULTI" only if not)
-                audio_lang_str = "ITA - MULTI" if "ITA" in audio_langs else "MULTI"
+    @staticmethod
+    def _hybrid_marker(meta: Meta, title: str) -> str:
+        if meta.edition:
+            return ""
+        source_is_hybrid = bool(meta.webdv) or isinstance(meta.source, list)
+        return "Hybrid" if source_is_hybrid and "HYBRID" not in title.upper() else ""
 
-        effective_type = self.get_effective_type(meta)
+    def _name_for_type(
+        self,
+        meta: Meta,
+        title: str,
+        audio: str,
+        languages: str,
+        release_type: str,
+        source: str,
+        extras: dict[str, str],
+    ) -> str:
+        known = self._known_type_name(meta, title, audio, languages, release_type, source, extras)
+        if known is not None:
+            return known
+        return str(meta.name or "").replace("Dual-Audio", "").strip()
 
-        if effective_type != "DISC":
-            source = source.replace("Blu-ray", "BluRay")
+    def _known_type_name(
+        self,
+        meta: Meta,
+        title: str,
+        audio: str,
+        languages: str,
+        release_type: str,
+        source: str,
+        extras: dict[str, str],
+    ) -> str | None:
+        if release_type == "DISC":
+            return self._disc_name(meta, title, audio, source, extras)
+        if release_type == "REMUX":
+            return self._remux_name(meta, title, audio, languages, source, extras)
+        return self._encoded_type_name(meta, title, audio, languages, release_type, source, extras)
 
-        # Detect Hybrid from filename if not in title
-        hybrid = ""
-        if not edition and (meta.webdv or isinstance(meta.source, list)) and "HYBRID" not in title.upper():
-            hybrid = "Hybrid"
+    def _encoded_type_name(
+        self,
+        meta: Meta,
+        title: str,
+        audio: str,
+        languages: str,
+        release_type: str,
+        source: str,
+        extras: dict[str, str],
+    ) -> str | None:
+        if release_type in {"DVDRIP", "BRRIP"}:
+            return self._rip_name(meta, title, audio, languages, release_type, extras)
+        if release_type in {"ENCODE", "HDTV"}:
+            return self._encode_name(meta, title, audio, languages, source, extras)
+        if release_type in {"WEBDL", "WEBRIP"}:
+            return self._web_name(meta, title, audio, languages, release_type, extras)
+        return None
 
-        repack = meta.repack.strip()
+    def _disc_name(self, meta: Meta, title: str, audio: str, source: str, extra: dict[str, str]) -> str:
+        region = self._disc_region(meta)
+        if meta.is_disc == "DVD":
+            return self._dvd_name(meta, title, audio, source, region, extra)
+        if meta.is_disc == "HDDVD":
+            return self._hddvd_name(meta, title, audio, source, region, extra)
+        return self._bdmv_name(meta, title, audio, source, region, extra)
 
-        name = None
-        # Build name per ShareIsland type-specific format
-        if effective_type == "DISC":
-            # Inject region from validated session data if available
-            region = _shri_session_data.get(meta.uuid, {}).get("_shri_region_name") or meta.region
-            if meta.is_disc == "BDMV":
-                # BDMV: Title Year 3D Edition Hybrid REPACK Resolution Region UHD Source HDR VideoCodec Audio
-                name = f"{title} {year} {season}{episode} {three_d} {edition} {hybrid} {repack} {resolution} {region} {uhd} {source} {hdr} {video_codec} {audio}"
-            elif meta.is_disc == "DVD":
-                dvd_size = meta.dvd_size
-                # DVD: Title Year 3D Edition REPACK Resolution Region Source DVDSize Audio
-                name = f"{title} {year} {season}{episode} {three_d} {edition} {repack} {resolution} {region} {source} {dvd_size} {audio}"
-            elif meta.is_disc == "HDDVD":
-                # HDDVD: Title Year Edition REPACK Resolution Region Source VideoCodec Audio
-                name = f"{title} {year} {edition} {repack} {resolution} {region} {source} {video_codec} {audio}"
+    @staticmethod
+    def _disc_region(meta: Meta) -> str:
+        stored = _shri_session_data.get(meta.uuid, {}).get("_shri_region_name")
+        return str(stored if stored else meta.region or "")
 
-        elif effective_type == "REMUX":
-            # REMUX: Title Year 3D LANG Edition Hybrid REPACK Resolution UHD Source REMUX HDR VideoCodec Audio
-            name = f"{title} {year} {season}{episode} {episode_title} {part} {three_d} {audio_lang_str} {edition} {hybrid} {repack} {resolution} {uhd} {source} REMUX {hdr} {video_codec} {audio}"
+    def _dvd_name(self, meta: Meta, title: str, audio: str, source: str, region: str, extra: dict[str, str]) -> str:
+        return self._join_name(
+            title,
+            extra["year"],
+            extra["season"] + extra["episode"],
+            extra["three_d"],
+            extra["edition"],
+            extra["repack"],
+            extra["resolution"],
+            region,
+            source,
+            self._text(meta.dvd_size),
+            audio,
+        )
 
-        elif effective_type in ("DVDRIP", "BRRIP"):
-            type_str = "DVDRip" if effective_type == "DVDRIP" else "BRRip"
-            # DVDRip/BRRip: Title Year LANG Edition Hybrid REPACK Resolution Type Audio HDR VideoCodec
-            name = f"{title} {year} {season} {audio_lang_str} {edition} {hybrid} {repack} {resolution} {type_str} {audio} {hdr} {video_encode}"
+    def _hddvd_name(self, meta: Meta, title: str, audio: str, source: str, region: str, extra: dict[str, str]) -> str:
+        return self._join_name(title, extra["year"], extra["edition"], extra["repack"], extra["resolution"], region, source, self._text(meta.video_codec), audio)
 
-        elif effective_type in ("ENCODE", "HDTV"):
-            # Encode/HDTV: Title Year LANG Edition Hybrid REPACK Resolution UHD Source Audio HDR VideoCodec
-            name = (
-                f"{title} {year} {season}{episode} {episode_title} {part} {audio_lang_str} {edition} {hybrid} {repack} {resolution} {uhd} {source} {audio} {hdr} {video_encode}"
-            )
+    def _bdmv_name(self, meta: Meta, title: str, audio: str, source: str, region: str, extra: dict[str, str]) -> str:
+        return self._join_name(
+            title,
+            extra["year"],
+            extra["season"] + extra["episode"],
+            extra["three_d"],
+            extra["edition"],
+            extra["hybrid"],
+            extra["repack"],
+            extra["resolution"],
+            region,
+            extra["uhd"],
+            source,
+            extra["hdr"],
+            self._text(meta.video_codec),
+            audio,
+        )
 
-        elif effective_type in ("WEBDL", "WEBRIP"):
-            service = meta.service
-            type_str = "WEB-DL" if effective_type == "WEBDL" else "WEBRip"
-            # WEB: Title Year LANG Edition Hybrid REPACK Resolution UHD Service Type Audio HDR VideoCodec
-            name = f"{title} {year} {season}{episode} {episode_title} {part} {audio_lang_str} {edition} {hybrid} {repack} {resolution} {uhd} {service} {type_str} {audio} {hdr} {video_encode}"
+    def _remux_name(self, meta: Meta, title: str, audio: str, languages: str, source: str, extra: dict[str, str]) -> str:
+        return self._join_name(
+            title,
+            extra["year"],
+            extra["season"] + extra["episode"],
+            extra["episode_title"],
+            extra["part"],
+            extra["three_d"],
+            languages,
+            extra["edition"],
+            extra["hybrid"],
+            extra["repack"],
+            extra["resolution"],
+            extra["uhd"],
+            source,
+            "REMUX",
+            extra["hdr"],
+            str(meta.video_codec or ""),
+            audio,
+        )
 
-        else:
-            # Fallback: use original name with cleaned audio
-            name = meta.name.replace("Dual-Audio", "").strip()
+    def _rip_name(self, meta: Meta, title: str, audio: str, languages: str, release_type: str, extra: dict[str, str]) -> str:
+        type_name = "DVDRip" if release_type == "DVDRIP" else "BRRip"
+        return self._join_name(
+            title,
+            extra["year"],
+            extra["season"],
+            languages,
+            extra["edition"],
+            extra["hybrid"],
+            extra["repack"],
+            extra["resolution"],
+            type_name,
+            audio,
+            extra["hdr"],
+            str(meta.video_encode or ""),
+        )
 
-        # Ensure name is always a string
+    def _encode_name(self, meta: Meta, title: str, audio: str, languages: str, source: str, extra: dict[str, str]) -> str:
+        return self._join_name(
+            title,
+            extra["year"],
+            extra["season"] + extra["episode"],
+            extra["episode_title"],
+            extra["part"],
+            languages,
+            extra["edition"],
+            extra["hybrid"],
+            extra["repack"],
+            extra["resolution"],
+            extra["uhd"],
+            source,
+            audio,
+            extra["hdr"],
+            str(meta.video_encode or ""),
+        )
+
+    def _web_name(self, meta: Meta, title: str, audio: str, languages: str, release_type: str, extra: dict[str, str]) -> str:
+        type_name = "WEB-DL" if release_type == "WEBDL" else "WEBRip"
+        return self._join_name(
+            title,
+            extra["year"],
+            extra["season"] + extra["episode"],
+            extra["episode_title"],
+            extra["part"],
+            languages,
+            extra["edition"],
+            extra["hybrid"],
+            extra["repack"],
+            extra["resolution"],
+            extra["uhd"],
+            str(meta.service or ""),
+            type_name,
+            audio,
+            extra["hdr"],
+            str(meta.video_encode or ""),
+        )
+
+    @staticmethod
+    def _join_name(*parts: str) -> str:
+        return " ".join(part for part in parts if part)
+
+    def _finalized_name(self, meta: Meta, value: str) -> str:
+        name = self.WHITESPACE_PATTERN.sub(" ", value).strip()
         if not name:
-            name = meta.name if meta.name is not None else "UNKNOWN"
-
-        # Cleanup whitespace
-        name = self.WHITESPACE_PATTERN.sub(" ", name).strip()
-
-        # Extract tag and append if valid
+            name = str(meta.name or "UNKNOWN")
         tag = self._extract_clean_release_group(meta)
-        if tag:
-            name = f"{name}-{tag}"
-
-        return {"name": name}
+        return f"{name}-{tag}" if tag else name
 
     def _extract_clean_release_group(self, meta: Meta) -> str:
-        """Extract release group - only accepts VU/UNTOUCHED markers from filename"""
-        raw_tag = meta.tag
-        tag = raw_tag.strip().lstrip("-") if isinstance(raw_tag, str) else ""
-        if tag and " " not in tag and not self.INVALID_TAG_PATTERN.search(tag):
-            return tag
+        """Extract a valid release-group marker accepted by ShareIsland."""
+        explicit = self._explicit_release_group(meta.tag)
+        if explicit:
+            return explicit
+        candidate = self._basename_release_group(meta)
+        return candidate if self._valid_marker_group(candidate) else "NoGroup"
 
+    def _explicit_release_group(self, value: Any) -> str:
+        tag = str(value).strip().lstrip("-") if isinstance(value, str) else ""
+        if not tag or " " in tag or self.INVALID_TAG_PATTERN.search(tag):
+            return ""
+        return tag
+
+    def _basename_release_group(self, meta: Meta) -> str:
+        basename = self._basename_without_extension(meta)
+        parts = re.split(r"[-.]", basename)
+        candidate = parts[-1].strip()
+        return candidate.split()[-1] if " " in candidate else candidate
+
+    def _basename_without_extension(self, meta: Meta) -> str:
         basename = self.get_basename(meta)
-        # Get extension from mediainfo and remove it
-        ext = meta.mediainfo.get("media", {}).get("track", [{}])[0].get("FileExtension", "")
-        name_no_ext = basename[: -len(ext) - 1] if ext and basename.endswith(f".{ext}") else basename
-        parts = re.split(r"[-.]", name_no_ext)
-        if not parts:
-            return "NoGroup"
+        extension = self._mediainfo_extension(meta)
+        suffix = f".{extension}" if extension else ""
+        return basename[: -len(suffix)] if suffix and basename.endswith(suffix) else basename
 
-        potential_tag = parts[-1].strip()
-        # Handle space-separated components
-        if " " in potential_tag:
-            potential_tag = potential_tag.split()[-1]
+    @staticmethod
+    def _mediainfo_extension(meta: Meta) -> str:
+        try:
+            return str(meta.mediainfo["media"]["track"][0].get("FileExtension", ""))
+        except KeyError, IndexError, TypeError, AttributeError:
+            return ""
 
-        if not potential_tag or len(potential_tag) > 30 or not potential_tag.replace("_", "").isalnum():
-            return "NoGroup"
+    def _valid_marker_group(self, candidate: str) -> bool:
+        if not self._valid_group_shape(candidate):
+            return False
+        return self.MARKER_PATTERN.search(candidate) is not None
 
-        # ONLY accept if it's a VU/UNTOUCHED marker
-        if not self.MARKER_PATTERN.search(potential_tag):
-            return "NoGroup"
-
-        return potential_tag
+    @staticmethod
+    def _valid_group_shape(candidate: str) -> bool:
+        return bool(candidate and len(candidate) <= 30 and candidate.replace("_", "").isalnum())
 
     async def get_type_id(
         self,
@@ -281,51 +440,63 @@ class ShareIsland(UNIT3D):
         return {"type_id": type_id}
 
     async def get_additional_checks(self, meta: Meta) -> Literal[True]:
-        """
-        Validate and prompt for DVD/HDDVD region/distributor before upload.
-        Stores validated IDs in module-level dict keyed by UUID for use during upload.
-        """
-        if meta.is_disc in ["DVD", "HDDVD"]:
-            region_name = meta.region
+        """Validate required disc region/distributor metadata."""
+        if meta.is_disc in {"DVD", "HDDVD"}:
+            await self._validate_disc_metadata(meta)
+        return await super().get_additional_checks(meta)  # type: ignore[return-value]
 
-            # Prompt for region if not in meta
-            if not region_name and (not meta.unattended or meta.unattended_confirm):
-                while True:
-                    region_name = cli_ui.ask_string("ShareIsland: Region code not found for disc. Please enter it manually (mandatory): ")
-                    region_name = region_name.strip().upper() if region_name else None
-                    if region_name:
-                        break
-                    logger.info(f"{self.tracker}: Region code is required.", extra={"markup": False})
+    async def _validate_disc_metadata(self, meta: Meta) -> None:
+        region_name = await self._required_region_name(meta)
+        region_id = await self._validated_region_id(region_name)
+        distributor_name = self._distributor_name(meta)
+        distributor_id = await self._optional_distributor_id(distributor_name)
+        _shri_session_data[meta.uuid] = {
+            "_shri_region_id": region_id,
+            "_shri_region_name": region_name,
+            "_shri_distributor_id": distributor_id,
+        }
 
-            # Validate region name was provided
-            if not region_name:
-                cli_ui.error("Region required; skipping ShareIsland.")
-                raise ValueError("Region required for disc upload")
+    async def _required_region_name(self, meta: Meta) -> str:
+        region = str(meta.region or "").strip().upper()
+        if region:
+            return region
+        if meta.unattended and not meta.unattended_confirm:
+            self._raise_missing_region()
+        return self._prompt_region()
 
-            # Validate region code with API
-            region_id = await self.common.unit3d_region_ids(region_name)
-            if not region_id:
-                cli_ui.error(f"Invalid region code '{region_name}'; skipping ShareIsland.")
-                raise ValueError(f"Invalid region code: {region_name}")
+    def _prompt_region(self) -> str:
+        while True:
+            value = cli_ui.ask_string("ShareIsland: Region code not found for disc. Please enter it manually (mandatory): ")
+            region = str(value or "").strip().upper()
+            if region:
+                return region
+            logger.info(f"{self.tracker}: Region code is required.", extra={"markup": False})
 
-            # Handle optional distributor
-            distributor_name = meta.distributor
-            distributor_id = None
-            if not distributor_name and not meta.unattended:
-                distributor_name = cli_ui.ask_string("ShareIsland: Distributor (optional, Enter to skip): ")
-                distributor_name = distributor_name.strip().upper() if distributor_name else None
+    @staticmethod
+    def _raise_missing_region() -> None:
+        cli_ui.error("Region required; skipping ShareIsland.")
+        raise ValueError("Region required for disc upload")
 
-            if distributor_name:
-                distributor_id = await self.common.unit3d_distributor_ids(distributor_name)
+    async def _validated_region_id(self, region_name: str) -> str:
+        region_id = await self.common.unit3d_region_ids(region_name)
+        if region_id:
+            return str(region_id)
+        cli_ui.error(f"Invalid region code '{region_name}'; skipping ShareIsland.")
+        raise ValueError(f"Invalid region code: {region_name}")
 
-            # Store in module-level dict keyed by UUID (survives instance recreation)
-            _shri_session_data[meta.uuid] = {
-                "_shri_region_id": region_id,
-                "_shri_region_name": region_name,
-                "_shri_distributor_id": distributor_id if distributor_name else None,
-            }
+    @staticmethod
+    def _distributor_name(meta: Meta) -> str:
+        existing = str(meta.distributor or "").strip().upper()
+        if existing or meta.unattended:
+            return existing
+        value = cli_ui.ask_string("ShareIsland: Distributor (optional, Enter to skip): ")
+        return str(value or "").strip().upper()
 
-        return await super().get_additional_checks(meta)  # type: ignore
+    async def _optional_distributor_id(self, name: str) -> str | None:
+        if not name:
+            return None
+        value = await self.common.unit3d_distributor_ids(name)
+        return str(value) if value else None
 
     async def get_region_id(self, meta: Meta) -> dict[str, Any]:
         """Override to use validated region ID stored in meta"""
@@ -362,151 +533,229 @@ class ShareIsland(UNIT3D):
         return self._analyze_encode_type(meta)
 
     def _has_remux_marker(self, meta: Meta) -> bool:
-        name_no_ext = Path(self.get_basename(meta)).stem.lower()
-        if "remux" in name_no_ext:
+        filename = Path(self.get_basename(meta)).stem.casefold()
+        if "remux" in filename or self.MARKER_PATTERN.search(filename):
             return True
-        if self.MARKER_PATTERN.search(name_no_ext):
-            return True
+        return self._makemkv_without_encoding(meta)
 
-        # Check for MakeMKV + no encoding
-        mediainfo = meta.mediainfo
-        media = cast(dict[str, Any], mediainfo.get("media", {}))
-        mi = cast(list[dict[str, Any]], media.get("track", []))
-        if mi:
-            general = mi[0]
-            encoded_app = str(general.get("Encoded_Application", "")).lower()
-            encoded_lib = str(general.get("Encoded_Library", "")).lower()
+    @classmethod
+    def _makemkv_without_encoding(cls, meta: Meta) -> bool:
+        tracks = cls._mediainfo_tracks(meta)
+        if not tracks or not cls._mentions_makemkv(tracks[0]):
+            return False
+        return cls._video_has_no_encoding_settings(tracks)
 
-            if "makemkv" in encoded_app or "makemkv" in encoded_lib:
-                video: dict[str, Any] = next((t for t in mi if t.get("@type") == "Video"), cast(dict[str, Any], {}))
-                settings = video.get("Encoded_Library_Settings")
-                if not settings or isinstance(settings, dict):
-                    return True
+    @staticmethod
+    def _video_has_no_encoding_settings(tracks: list[dict[str, Any]]) -> bool:
+        video = next((track for track in tracks if track.get("@type") == "Video"), {})
+        settings = video.get("Encoded_Library_Settings")
+        return not settings or isinstance(settings, dict)
 
-        return False
+    @staticmethod
+    def _mentions_makemkv(general: dict[str, Any]) -> bool:
+        app = str(general.get("Encoded_Application", "")).casefold()
+        library = str(general.get("Encoded_Library", "")).casefold()
+        return "makemkv" in app or "makemkv" in library
+
+    @classmethod
+    def _mediainfo_tracks(cls, meta: Meta) -> list[dict[str, Any]]:
+        media = cls._media_mapping(meta.mediainfo)
+        return cls._mapping_tracks(media.get("track", []))
+
+    @staticmethod
+    def _media_mapping(value: Any) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            return {}
+        media = value.get("media", {})
+        return cast(dict[str, Any], media) if isinstance(media, dict) else {}
+
+    @staticmethod
+    def _mapping_tracks(value: Any) -> list[dict[str, Any]]:
+        if not isinstance(value, list):
+            return []
+        return [cast(dict[str, Any], item) for item in value if isinstance(item, dict)]
 
     def _analyze_encode_type(self, meta: Meta) -> str:
-        """
-        Detect release type from MediaInfo technical analysis.
+        """Detect release type from normalized MediaInfo evidence."""
+        general, video = self._analysis_tracks(meta)
+        sources = self._analysis_sources(meta.source)
+        settings_present, settings = self._encoding_field(video, "Encoded_Library_Settings")
+        library_present, library = self._encoding_field(video, "Encoded_Library")
+        service = str(meta.service or "").upper()
+        for detected in (
+            self._streaming_dv_type(general, video, settings),
+            self._crf_type(settings, sources),
+            self._service_fingerprint_type(service, video, settings, library, library_present),
+            self._bluray_encode_type(general, video, sources, settings_present, library_present),
+            self._web_source_type(general, sources),
+            self._source_fallback_type(sources, service, settings_present, library_present),
+        ):
+            if detected is not None:
+                return detected
+        return self._fallback_type(meta)
 
-        Priority order:
-        1. DV profile (05/07/08) + no encoding -> WEB-DL (overrides source field)
-        2. CRF in settings -> WEBRIP/ENCODE
-        3. Service fingerprints -> WEB-DL (CR/Netflix patterns)
-        4. BluRay encoding detection -> ENCODE (settings, library, or GPU stripped metadata)
-        5. Encoding tools (source-aware) -> WEBRIP/ENCODE (Handbrake/Staxrip/etc in general track)
-        6. No encoding + WEB -> WEB-DL
-        7. Service override -> WEB-DL (handles misdetected sources)
-        8. No encoding + disc -> REMUX
-        """
+    @classmethod
+    def _analysis_tracks(cls, meta: Meta) -> tuple[dict[str, Any], dict[str, Any]]:
+        tracks = cls._mediainfo_tracks(meta)
+        general = tracks[0] if tracks else {}
+        video = tracks[1] if len(tracks) > 1 else {}
+        return general, video
 
-        def has_encoding_tools(general_track: dict[str, Any], tools: list[str]) -> bool:
-            """Check if general track contains specified encoding tools."""
-            encoded_app = str(general_track.get("Encoded_Application", "")).lower()
-            extra = general_track.get("extra", {})
-            writing_frontend = str(extra.get("Writing_frontend", "")).lower()
-            tool_string = f"{encoded_app} {writing_frontend}"
-            return any(tool in tool_string for tool in tools)
+    @staticmethod
+    def _analysis_sources(value: Any) -> list[str]:
+        if isinstance(value, list):
+            return [str(item).upper() for item in value]
+        return [str(value).upper()] if value else []
 
-        try:
-            mi = meta.mediainfo
-            media = cast(dict[str, Any], mi.get("media", {}))
-            tracks = cast(list[dict[str, Any]], media.get("track", []))
-            general_track = tracks[0] if len(tracks) > 0 else {}
-            video_track = tracks[1] if len(tracks) > 1 else {}
+    @staticmethod
+    def _encoding_field(video: dict[str, Any], key: str) -> tuple[bool, str]:
+        raw = video.get(key, "")
+        present = bool(raw) and not isinstance(raw, dict)
+        return present, str(raw).lower() if present else ""
 
-            # Normalize source list
-            source_value = meta.source
-            source = [str(s).upper() for s in cast(list[Any], source_value)] if isinstance(source_value, list) else [source_value.upper()] if source_value else []
+    @staticmethod
+    def _has_encoding_tools(general: dict[str, Any], tools: tuple[str, ...]) -> bool:
+        app = str(general.get("Encoded_Application", "")).lower()
+        extra = general.get("extra", {})
+        frontend = str(extra.get("Writing_frontend", "")).lower() if isinstance(extra, dict) else ""
+        combined = f"{app} {frontend}"
+        return any(tool in combined for tool in tools)
 
-            service = str(meta.service).upper()
+    @classmethod
+    def _streaming_dv_type(cls, general: dict[str, Any], video: dict[str, Any], settings: str) -> str | None:
+        profile = str(video.get("HDR_Format_Profile", ""))
+        streaming_dv = any(marker in profile for marker in ("dvhe.05", "dvhe.07", "dvhe.08"))
+        if not streaming_dv or settings:
+            return None
+        tools = ("handbrake", "staxrip", "megatagger")
+        return None if cls._has_encoding_tools(general, tools) else "WEBDL"
 
-            # Extract encoding metadata
-            raw_settings = video_track.get("Encoded_Library_Settings", "")
-            raw_library = video_track.get("Encoded_Library", "")
-            has_settings = raw_settings and not isinstance(raw_settings, dict)
-            has_library = raw_library and not isinstance(raw_library, dict)
-            encoding_settings = str(cast(Any, raw_settings)).lower() if has_settings else ""
-            encoded_library = str(cast(Any, raw_library)).lower() if has_library else ""
+    @classmethod
+    def _crf_type(cls, settings: str, sources: list[str]) -> str | None:
+        if "crf=" not in settings:
+            return None
+        return "WEBRIP" if cls._has_web_source(sources) else "ENCODE"
 
-            # ===== Priority 1: DV streaming profiles =====
-            # DV profiles 5/7/8 indicate streaming sources (overrides source field)
-            hdr_profile = str(video_track.get("HDR_Format_Profile", ""))
-            has_streaming_dv = any(prof in hdr_profile for prof in ["dvhe.05", "dvhe.07", "dvhe.08"])
+    @classmethod
+    def _service_fingerprint_type(
+        cls,
+        service: str,
+        video: dict[str, Any],
+        settings: str,
+        library: str,
+        library_present: bool,
+    ) -> str | None:
+        crunchyroll = cls._crunchyroll_type(service, settings, library, library_present)
+        if crunchyroll is not None:
+            return crunchyroll
+        return "WEBDL" if cls._is_netflix_fingerprint(video, settings, library) else None
 
-            # Ensure not re-encoded by user tools
-            if has_streaming_dv and not encoding_settings and not has_encoding_tools(general_track, ["handbrake", "staxrip", "megatagger"]):
-                return "WEBDL"
+    @classmethod
+    def _crunchyroll_type(cls, service: str, settings: str, library: str, library_present: bool) -> str | None:
+        if service != "CR":
+            return None
+        library_type = cls._crunchyroll_library_type(library, library_present)
+        if library_type is not None:
+            return library_type
+        return "WEBDL" if cls._crunchyroll_bitrate_setting(settings) else None
 
-            # ===== Priority 2: CRF detection =====
-            # CRF (Constant Rate Factor) indicates user re-encode
-            if "crf=" in encoding_settings:
-                return "WEBRIP" if any("WEB" in s for s in source) else "ENCODE"
+    @staticmethod
+    def _crunchyroll_library_type(library: str, library_present: bool) -> str | None:
+        if "core 142" in library:
+            return "WEBDL"
+        if not library_present:
+            return None
+        core = re.search(r"core (\d+)", library)
+        return "WEBRIP" if core and int(core.group(1)) >= 152 else None
 
-            # ===== Priority 3: Service fingerprints =====
-            # Crunchyroll detection
-            if service == "CR":
-                if "core 142" in encoded_library:
-                    return "WEBDL"
-                if has_library:
-                    core_match = re.search(r"core (\d+)", encoded_library)
-                    if core_match and int(core_match.group(1)) >= 152:
-                        return "WEBRIP"
-                if encoding_settings and "bitrate=" in encoding_settings:
-                    return "WEBDL"
+    @staticmethod
+    def _crunchyroll_bitrate_setting(settings: str) -> bool:
+        return bool(settings and "bitrate=" in settings)
 
-            # Netflix fingerprint detection
-            format_profile = video_track.get("Format_Profile", "")
-            if "Main@L4.0" in format_profile and "rc=2pass" in encoding_settings and ("core 118" in encoded_library or "core 148" in encoded_library):
-                return "WEBDL"
+    @staticmethod
+    def _is_netflix_fingerprint(video: dict[str, Any], settings: str, library: str) -> bool:
+        profile = str(video.get("Format_Profile", ""))
+        known_core = "core 118" in library or "core 148" in library
+        return "Main@L4.0" in profile and "rc=2pass" in settings and known_core
 
-            # ===== Priority 4: BluRay encoding detection =====
-            if any(s in ("BLURAY", "BLU-RAY") for s in source):
-                # GPU encode detection: empty BitDepth/Chroma metadata (dict type)
-                if isinstance(video_track.get("BitDepth"), dict):
-                    return "ENCODE"
-                # Any encoding settings or library info = encode (not remux)
-                # Catches x264/x265 in Encoded_Library or settings in Encoded_Library_Settings
-                if has_settings or has_library:
-                    return "ENCODE"
+    @classmethod
+    def _bluray_encode_type(
+        cls,
+        general: dict[str, Any],
+        video: dict[str, Any],
+        sources: list[str],
+        settings_present: bool,
+        library_present: bool,
+    ) -> str | None:
+        if not cls._has_bluray_source(sources):
+            return None
+        return "ENCODE" if cls._bluray_encode_evidence(general, video, settings_present, library_present) else None
 
-            # ===== Priority 5: Encoding tools (source-aware) =====
-            # Check general track for encoding tools (Handbrake, Staxrip, etc)
-            if any(s in ("BLURAY", "BLU-RAY") for s in source) and has_encoding_tools(
-                general_track,
-                ["x264", "x265", "handbrake", "staxrip", "megatagger"],
-            ):
-                return "ENCODE"
+    @classmethod
+    def _bluray_encode_evidence(
+        cls,
+        general: dict[str, Any],
+        video: dict[str, Any],
+        settings_present: bool,
+        library_present: bool,
+    ) -> bool:
+        if isinstance(video.get("BitDepth"), dict):
+            return True
+        if settings_present or library_present:
+            return True
+        tools = ("x264", "x265", "handbrake", "staxrip", "megatagger")
+        return cls._has_encoding_tools(general, tools)
 
-            # WEB sources: only explicit user tools indicate re-encode
-            if any("WEB" in s for s in source) and has_encoding_tools(general_track, ["handbrake", "staxrip", "megatagger"]):
-                return "WEBRIP"
+    @classmethod
+    def _web_source_type(cls, general: dict[str, Any], sources: list[str]) -> str | None:
+        if not cls._has_web_source(sources):
+            return None
+        tools = ("handbrake", "staxrip", "megatagger")
+        return "WEBRIP" if cls._has_encoding_tools(general, tools) else "WEBDL"
 
-            # ===== Priority 6: No encoding + WEB = WEB-DL =====
-            if any("WEB" in s for s in source):
-                return "WEBDL"
+    @classmethod
+    def _source_fallback_type(
+        cls,
+        sources: list[str],
+        service: str,
+        settings_present: bool,
+        library_present: bool,
+    ) -> str | None:
+        if cls._has_streaming_service(service):
+            return "WEBDL"
+        return cls._disc_fallback_type(sources, settings_present, library_present)
 
-            # ===== Priority 7: Service override =====
-            # If streaming service is set but source wasn't detected as Web,
-            # override to WEB-DL (handles upstream get_source.py misdetection)
-            if service and service not in ("", "NONE"):
-                return "WEBDL"
+    @staticmethod
+    def _has_streaming_service(service: str) -> bool:
+        return bool(service and service != "NONE")
 
-            # ===== Priority 8: No encoding + disc = REMUX =====
-            if any(s in ("BLURAY", "BLU-RAY", "HDDVD") for s in source):
-                return "REMUX"
+    @classmethod
+    def _disc_fallback_type(cls, sources: list[str], settings_present: bool, library_present: bool) -> str | None:
+        if cls._has_disc_source(sources):
+            return "REMUX"
+        dvd_remux = cls._has_dvd_source(sources) and not settings_present and not library_present
+        return "REMUX" if dvd_remux else None
 
-            # DVD REMUX detection
-            if any(s in ("NTSC", "PAL", "NTSC DVD", "PAL DVD", "DVD") for s in source) and not has_settings and not has_library:
-                return "REMUX"
+    @staticmethod
+    def _has_web_source(sources: list[str]) -> bool:
+        return any("WEB" in source for source in sources)
 
-        except IndexError, KeyError:
-            # Fallback on mediainfo parsing errors
-            pass
+    @staticmethod
+    def _has_bluray_source(sources: list[str]) -> bool:
+        return any(source in {"BLURAY", "BLU-RAY"} for source in sources)
 
-        # Final fallback: use meta type or default to ENCODE
-        type_value = meta.type if meta.type is not None else "ENCODE"
-        return type_value if isinstance(type_value, str) else "ENCODE"
+    @staticmethod
+    def _has_disc_source(sources: list[str]) -> bool:
+        return any(source in {"BLURAY", "BLU-RAY", "HDDVD"} for source in sources)
+
+    @staticmethod
+    def _has_dvd_source(sources: list[str]) -> bool:
+        return any(source in {"NTSC", "PAL", "NTSC DVD", "PAL DVD", "DVD"} for source in sources)
+
+    @staticmethod
+    def _fallback_type(meta: Meta) -> str:
+        value = meta.type if meta.type is not None else "ENCODE"
+        return value if isinstance(value, str) else "ENCODE"
 
     def get_effective_type(self, meta: Meta) -> str:
         """
@@ -517,48 +766,42 @@ class ShareIsland(UNIT3D):
         return self._detect_type_from_technical_analysis(meta)
 
     def _get_italian_title(self, imdb_info: dict[str, Any]) -> str | None:
-        """Extract Italian title from IMDb AKAs with priority"""
-        country_match: str | None = None
-        language_match: str | None = None
+        """Extract Italian IMDb AKA, preferring the country match."""
+        akas = self._aka_entries(imdb_info.get("akas", []))
+        country = self._aka_title(akas, "country")
+        return country if country is not None else self._aka_title(akas, "language")
 
-        akas_value = imdb_info.get("akas", [])
-        akas = cast(list[dict[str, Any]], akas_value) if isinstance(akas_value, list) else []
+    @staticmethod
+    def _aka_entries(value: Any) -> list[dict[str, Any]]:
+        values = value if isinstance(value, list) else []
+        return [cast(dict[str, Any], item) for item in values if isinstance(item, dict)]
+
+    @staticmethod
+    def _aka_title(akas: list[dict[str, Any]], field: str) -> str | None:
         for aka in akas:
-            if aka.get("country") == "Italy" and not aka.get("attributes"):
-                title = aka.get("title")
-                if isinstance(title, str):
-                    country_match = title
-                break  # Country match takes priority
-            if aka.get("language") == "Italy" and not language_match and not aka.get("attributes"):
-                title = aka.get("title")
-                if isinstance(title, str):
-                    language_match = title
-
-        return country_match or language_match
+            if aka.get(field) != "Italy" or aka.get("attributes"):
+                continue
+            title = aka.get("title")
+            return title if isinstance(title, str) else None
+        return None
 
     def _get_language_name(self, iso_code: str) -> str:
-        """Convert ISO language code to abbreviated 3-letter code (ITA, ENG, etc)"""
+        """Convert language input to uppercase ISO alpha-3 when possible."""
         if not iso_code:
             return ""
+        language = self._pycountry_language(iso_code)
+        alpha3 = getattr(language, "alpha_3", None)
+        return str(alpha3).upper() if alpha3 else iso_code.upper()
 
-        iso_lower = iso_code.lower()
-
-        # Try alpha_2 (IT, EN, etc) and convert to alpha_3
-        lang = pycountry.languages.get(alpha_2=iso_lower)
-        if lang and hasattr(lang, "alpha_3"):
-            return str(lang.alpha_3).upper()
-
-        # Try alpha_3 (ITA, ENG, etc)
-        lang = pycountry.languages.get(alpha_3=iso_lower)
-        if lang and hasattr(lang, "alpha_3"):
-            return str(lang.alpha_3).upper()
-
-        # Try full language name (Italian, English, etc)
-        lang = pycountry.languages.get(name=iso_code.title())
-        if lang and hasattr(lang, "alpha_3"):
-            return str(lang.alpha_3).upper()
-
-        return iso_code.upper()
+    @staticmethod
+    def _pycountry_language(value: str) -> Any:
+        lowered = value.lower()
+        language = pycountry.languages.get(alpha_2=lowered)
+        if language is None:
+            language = pycountry.languages.get(alpha_3=lowered)
+        if language is None:
+            language = pycountry.languages.get(name=value.title())
+        return language
 
     def _get_italian_language_name(self, iso_code: str) -> str:
         """Convert ISO language code to Italian language name using Babel"""
@@ -575,360 +818,460 @@ class ShareIsland(UNIT3D):
             return self._get_language_name(iso_code).title()
 
     async def _get_best_italian_audio_format(self, meta: Meta) -> str:
-        """Filter Italian tracks, select best, format via get_audio_v2"""
+        """Select and format the best Italian audio track."""
+        bdinfo_tracks = self._bdinfo_italian_tracks(meta)
+        if bdinfo_tracks:
+            return await self._formatted_bdinfo_audio(meta, bdinfo_tracks)
+        mediainfo_tracks = self._mediainfo_italian_tracks(meta)
+        if mediainfo_tracks:
+            return await self._formatted_mediainfo_audio(meta, mediainfo_tracks)
+        return self._clean_audio_string(meta.audio)
 
-        def extract_quality(track: dict[str, Any], is_bdinfo: bool) -> tuple[bool, int, bool, int]:
-            if is_bdinfo:
-                bitrate_match = re.search(r"(\d+)", track.get("bitrate", "0"))
-                return (
-                    any(x in track.get("codec", "").lower() for x in ["truehd", "dts-hd ma", "flac", "pcm"]),
-                    int(float(track.get("channels", "2.0").split(".")[0])),
-                    "atmos" in track.get("atmos_why_you_be_like_this", "").lower(),
-                    int(bitrate_match.group(1)) if bitrate_match else 0,
-                )
-            try:
-                bitrate_int = int(track.get("BitRate", 0)) if track.get("BitRate", 0) else 0
-            except (ValueError, TypeError) as e:
-                cli_ui.warning(f"Invalid BitRate value in audio track: {track.get('BitRate')}\nUsing 0 as default. Error: {e}.")
-                bitrate_int = 0
-            return (
-                track.get("Compression_Mode") == "Lossless",
-                int(track.get("Channels", 2)),
-                "JOC" in track.get("Format_AdditionalFeatures", "") or "Atmos" in track.get("Format_Commercial", ""),
-                bitrate_int,
-            )
+    @staticmethod
+    def _clean_audio_string(value: Any) -> str:
+        audio = value if isinstance(value, str) else ""
+        cleaned = audio.replace("Dual-Audio", "").replace("Dubbed", "")
+        return re.sub(r"\s*-[A-Z]{3}(-[A-Z]{3})*$", "", cleaned).strip()
 
-        def clean(audio_str: str) -> str:
-            return re.sub(r"\s*-[A-Z]{3}(-[A-Z]{3})*$", "", audio_str.replace("Dual-Audio", "").replace("Dubbed", "")).strip()
+    @staticmethod
+    def _bdinfo_audio_tracks(meta: Meta) -> list[dict[str, Any]]:
+        bdinfo = meta.bdinfo if isinstance(meta.bdinfo, dict) else {}
+        audio = bdinfo.get("audio", [])
+        values = audio if isinstance(audio, list) else []
+        return [cast(dict[str, Any], track) for track in values if isinstance(track, dict)]
 
-        bdinfo = meta.bdinfo
+    @classmethod
+    def _bdinfo_italian_tracks(cls, meta: Meta) -> list[dict[str, Any]]:
+        return [track for track in cls._bdinfo_audio_tracks(meta) if str(track.get("language", "")).lower() in ITALIAN_LANGS]
 
-        if bdinfo and bdinfo.get("audio"):
-            italian = [t for t in bdinfo["audio"] if t.get("language", "").lower() in ITALIAN_LANGS]
-            if not italian:
-                audio_value = meta.audio
-                return clean(audio_value if isinstance(audio_value, str) else "")
-            best = max(italian, key=lambda t: extract_quality(t, True))
-            audio_str, _, _ = await self.audio_manager.get_audio_v2({}, meta, {"audio": [best]})
-        else:
-            tracks = meta.mediainfo.get("media", {}).get("track", [])
-            italian = [
-                t for t in tracks[1:] if t.get("@type") == "Audio" and self._get_language_code(t) in ITALIAN_LANGS and "commentary" not in str(t.get("Title", "")).lower()
-            ]
-            if not italian:
-                audio_value = meta.audio
-                return clean(audio_value if isinstance(audio_value, str) else "")
-            best = max(italian, key=lambda t: extract_quality(t, False))
-            audio_str, _, _ = await self.audio_manager.get_audio_v2({"media": {"track": [tracks[0], best]}}, meta, None)
+    def _mediainfo_italian_tracks(self, meta: Meta) -> list[dict[str, Any]]:
+        tracks = self._mediainfo_tracks(meta)
+        return [track for track in tracks[1:] if self._is_italian_audio_track(track)]
 
-        return clean(audio_str)
+    def _is_italian_audio_track(self, track: dict[str, Any]) -> bool:
+        if track.get("@type") != "Audio":
+            return False
+        if "commentary" in str(track.get("Title", "")).lower():
+            return False
+        return self._get_language_code(track) in ITALIAN_LANGS
+
+    @classmethod
+    def _bdinfo_audio_quality(cls, track: dict[str, Any]) -> tuple[bool, int, bool, int]:
+        codec = str(track.get("codec", "")).lower()
+        lossless = any(marker in codec for marker in ("truehd", "dts-hd ma", "flac", "pcm"))
+        channels = cls._whole_channels(track.get("channels", "2.0"))
+        atmos = "atmos" in str(track.get("atmos_why_you_be_like_this", "")).lower()
+        bitrate = cls._digits_value(track.get("bitrate", "0"))
+        return lossless, channels, atmos, bitrate
+
+    @classmethod
+    def _mediainfo_audio_quality(cls, track: dict[str, Any]) -> tuple[bool, int, bool, int]:
+        lossless = track.get("Compression_Mode") == "Lossless"
+        channels = cls._whole_channels(track.get("Channels", 2))
+        atmos = cls._mediainfo_atmos(track)
+        bitrate = cls._safe_bitrate(track.get("BitRate", 0))
+        return lossless, channels, atmos, bitrate
+
+    @staticmethod
+    def _whole_channels(value: Any) -> int:
+        try:
+            return int(float(str(value).split(".", 1)[0]))
+        except TypeError, ValueError:
+            return 0
+
+    @staticmethod
+    def _digits_value(value: Any) -> int:
+        match = re.search(r"(\d+)", str(value))
+        return int(match.group(1)) if match else 0
+
+    @staticmethod
+    def _mediainfo_atmos(track: dict[str, Any]) -> bool:
+        additional = str(track.get("Format_AdditionalFeatures", ""))
+        commercial = str(track.get("Format_Commercial", ""))
+        return "JOC" in additional or "Atmos" in commercial
+
+    @staticmethod
+    def _safe_bitrate(value: Any) -> int:
+        try:
+            return int(value) if value else 0
+        except (ValueError, TypeError) as error:
+            cli_ui.warning(f"Invalid BitRate value in audio track: {value}\nUsing 0 as default. Error: {error}.")
+            return 0
+
+    async def _formatted_bdinfo_audio(self, meta: Meta, tracks: list[dict[str, Any]]) -> str:
+        best = max(tracks, key=self._bdinfo_audio_quality)
+        audio, _, _ = await self.audio_manager.get_audio_v2({}, meta, {"audio": [best]})
+        return self._clean_audio_string(audio)
+
+    async def _formatted_mediainfo_audio(self, meta: Meta, tracks: list[dict[str, Any]]) -> str:
+        all_tracks = self._mediainfo_tracks(meta)
+        general = all_tracks[0] if all_tracks else {}
+        best = max(tracks, key=self._mediainfo_audio_quality)
+        audio, _, _ = await self.audio_manager.get_audio_v2({"media": {"track": [general, best]}}, meta, None)
+        return self._clean_audio_string(audio)
 
     async def get_description(self, meta: Meta, is_test: bool = False) -> dict[str, str]:
-        """Generate Italian BBCode description for ShareIsland"""
-        title = meta.title if meta.title is not None else "Unknown"
-        italian_title = self._get_italian_title(meta.imdb_info)
-        if italian_title:
-            title = italian_title
-
-        category = meta.category if meta.category is not None else "MOVIE"
-
-        # Build info line: resolution, source, codec, audio, language
-        info_parts: list[str] = []
-        if meta.resolution:
-            info_parts.append(meta.resolution)
-
-        source_value: Any = meta.source
-        source = (str(cast(Any, source_value[0])) if source_value else "") if isinstance(source_value, list) else str(source_value)
-        if source:
-            info_parts.append(source.replace("Blu-ray", "BluRay").replace("Web", "WEB-DL"))
-
-        video_codec = meta.video_codec
-        if "HEVC" in video_codec or "H.265" in video_codec:
-            info_parts.append("x265")
-        elif "AVC" in video_codec or "H.264" in video_codec:
-            info_parts.append("x264")
-        elif video_codec:
-            info_parts.append(video_codec)
-
-        if meta.hdr and meta.hdr != "SDR":
-            info_parts.append(meta.hdr)
-
-        audio = await self._get_best_italian_audio_format(meta)
-        if audio:
-            info_parts.append(audio)
-
-        if meta.audio_languages:
-            audio_langs_value = meta.audio_languages
-            audio_langs = audio_langs_value if isinstance(audio_langs_value, list) else []
-            langs = [self._get_italian_language_name(self._get_language_code(lang)) for lang in audio_langs]
-            langs = [lang for lang in langs if lang]
-            if "Italiano" in langs:
-                info_parts.append("Italiano")
-            elif "Inglese" in langs:
-                info_parts.append("Inglese")
-            elif langs:
-                info_parts.append(langs[0].title())
-
-        info_line = " ".join(info_parts)
-
-        # Fetch TMDb data and format components
+        """Generate Italian BBCode description for ShareIsland."""
+        title = self._description_title(meta)
+        category = str(meta.category or "MOVIE")
+        info_line = await self._description_info_line(meta)
         summary, logo_url = await self._fetch_tmdb_italian(meta)
         screens = await self._format_screens_italian(meta)
-        synthetic_mi = await self._get_synthetic_mediainfo(meta)
-
-        bbcode = self._build_bbcode(title, info_line, logo_url, summary, screens, synthetic_mi, category, meta)
-
-        custom_description_header = self.config.get("DEFAULT", {}).get("custom_description_header", "")
-        if custom_description_header:
-            bbcode = bbcode.replace("[code]\n", f"[code]\n{custom_description_header}\n\n")
-
+        synthetic = await self._get_synthetic_mediainfo(meta)
+        bbcode = self._build_bbcode(title, info_line, logo_url, summary, screens, synthetic, category, meta)
+        bbcode = self._apply_custom_description_header(bbcode)
         if not is_test:
-            desc_file = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{self.tracker}]DESCRIPTION.txt"
-            async with aiofiles.open(desc_file, "w", encoding="utf-8") as f:
-                await f.write(bbcode)
-
+            await self._write_description(meta, bbcode)
         return {"description": bbcode}
 
+    def _description_title(self, meta: Meta) -> str:
+        italian = self._get_italian_title(meta.imdb_info)
+        if italian:
+            return italian
+        return str(meta.title) if meta.title is not None else "Unknown"
+
+    async def _description_info_line(self, meta: Meta) -> str:
+        parts = self._technical_info_parts(meta)
+        audio = await self._get_best_italian_audio_format(meta)
+        if audio:
+            parts.append(audio)
+        language = self._description_language(meta)
+        if language:
+            parts.append(language)
+        return " ".join(parts)
+
+    def _technical_info_parts(self, meta: Meta) -> list[str]:
+        values = (
+            str(meta.resolution or ""),
+            self._description_source(meta),
+            self._description_codec(meta.video_codec),
+            self._description_hdr(meta.hdr),
+        )
+        return [value for value in values if value]
+
+    @staticmethod
+    def _description_hdr(value: Any) -> str:
+        text = str(value or "")
+        return "" if text == "SDR" else text
+
+    @classmethod
+    def _description_source(cls, meta: Meta) -> str:
+        source = cls._source_value(meta)
+        return source.replace("Blu-ray", "BluRay").replace("Web", "WEB-DL")
+
+    @classmethod
+    def _description_codec(cls, value: Any) -> str:
+        codec = str(value or "")
+        mapped = cls._codec_alias(codec)
+        return mapped if mapped else codec
+
+    @staticmethod
+    def _codec_alias(codec: str) -> str:
+        aliases = (("HEVC", "x265"), ("H.265", "x265"), ("AVC", "x264"), ("H.264", "x264"))
+        return next((alias for marker, alias in aliases if marker in codec), "")
+
+    def _description_language(self, meta: Meta) -> str:
+        languages = self._description_languages(meta.audio_languages)
+        preferred = self._preferred_description_language(languages)
+        return preferred if preferred else self._first_description_language(languages)
+
+    def _description_languages(self, value: Any) -> list[str]:
+        values = value if isinstance(value, list) else []
+        names = [self._get_italian_language_name(self._get_language_code(item)) for item in values]
+        return [name for name in names if name]
+
+    @staticmethod
+    def _preferred_description_language(languages: list[str]) -> str:
+        for preferred in ("Italiano", "Inglese"):
+            if preferred in languages:
+                return preferred
+        return ""
+
+    @staticmethod
+    def _first_description_language(languages: list[str]) -> str:
+        return languages[0].title() if languages else ""
+
+    def _apply_custom_description_header(self, bbcode: str) -> str:
+        default = self.config.get("DEFAULT", {})
+        header = default.get("custom_description_header", "") if isinstance(default, dict) else ""
+        return bbcode.replace("[code]\n", f"[code]\n{header}\n\n") if header else bbcode
+
+    async def _write_description(self, meta: Meta, bbcode: str) -> None:
+        path = Path(meta.base_dir) / "tmp" / meta.uuid / f"[{self.tracker}]DESCRIPTION.txt"
+        async with aiofiles.open(path, "w", encoding="utf-8") as handle:
+            await handle.write(bbcode)
+
     async def _fetch_tmdb_italian(self, meta: Meta) -> tuple[str, str]:
-        """Fetch Italian overview and logo from TMDb API"""
-        api_key = self.config.get("DEFAULT", {}).get("tmdb_api", "N/A")
-        tmdb_id = meta.tmdb
-
-        summary = "Riassunto non disponibile."
-        logo_url = ""
-
-        if not tmdb_id:
-            return summary, logo_url
-
-        # Use /tv/ endpoint for series, /movie/ for films
-        category = meta.category if meta.category is not None else "MOVIE"
-        media_type = "tv" if category == "TV" else "movie"
-
+        """Fetch Italian overview and best available logo from TMDb."""
+        if not meta.tmdb:
+            return "Riassunto non disponibile.", ""
         try:
-            url = f"https://api.themoviedb.org/3/{media_type}/{tmdb_id}"
-            params = {"api_key": api_key, "language": "it-IT"}
-            resp = await asyncio.to_thread(requests.get, url, params=params, timeout=5, verify=certifi.where())
-            resp.encoding = "utf-8"
+            data = await self._tmdb_media_payload(meta)
+            summary = self._tmdb_summary(data)
+            logo = await self._tmdb_logo(meta, data)
+            return summary, logo
+        except Exception as error:
+            logger.info(f"{self.tracker}: [DEBUG] TMDb fetch error: {error}", extra={"markup": False})
+            return "Riassunto non disponibile.", ""
 
-            if resp.status_code == 200:
-                data = resp.json()
-                raw_summary = data.get("overview", "Riassunto non disponibile.")
-                summary = " ".join(raw_summary.split())
+    def _tmdb_api_key(self) -> str:
+        default = self.config.get("DEFAULT", {})
+        return str(default.get("tmdb_api", "N/A")) if isinstance(default, dict) else "N/A"
 
-                # Try meta logo first, then fetch from TMDb
-                logo_path = meta.tmdb_logo
-                if logo_path:
-                    logo_url = f"https://image.tmdb.org/t/p/w300/{logo_path}"
-                else:
-                    img_url = f"https://api.themoviedb.org/3/{media_type}/{tmdb_id}/images"
-                    img_resp = await asyncio.to_thread(
-                        requests.get,
-                        img_url,
-                        params={"api_key": api_key},
-                        timeout=5,
-                        verify=certifi.where(),
-                    )
-                    if img_resp.status_code == 200:
-                        img_data = img_resp.json()
-                        logos = img_data.get("logos", [])
-                        # Priority: Italian > English > any other > first available
-                        logo_url = ""
-                        fallback_logo = None
-                        for logo in logos:
-                            lang = logo.get("iso_639_1")
-                            path = logo.get("file_path")
-                            if lang == "it":
-                                logo_url = f"https://image.tmdb.org/t/p/w300{path}"
-                                break
-                            if lang == "en" and not logo_url:
-                                logo_url = f"https://image.tmdb.org/t/p/w300{path}"
-                            elif not fallback_logo:
-                                fallback_logo = path
-                        # Use fallback if no Italian/English found
-                        if not logo_url and fallback_logo:
-                            logo_url = f"https://image.tmdb.org/t/p/w300{fallback_logo}"
-        except Exception as e:
-            logger.info(f"{self.tracker}: [DEBUG] TMDb fetch error: {e}", extra={"markup": False})
+    @staticmethod
+    def _tmdb_media_type(meta: Meta) -> str:
+        return "tv" if meta.category == "TV" else "movie"
 
-        return summary, logo_url
+    async def _tmdb_media_payload(self, meta: Meta) -> dict[str, Any]:
+        media_type = self._tmdb_media_type(meta)
+        url = f"https://api.themoviedb.org/3/{media_type}/{meta.tmdb}"
+        response = await self._tmdb_get(url, {"api_key": self._tmdb_api_key(), "language": "it-IT"})
+        if response.status_code != 200:
+            return {}
+        payload = response.json()
+        return cast(dict[str, Any], payload) if isinstance(payload, dict) else {}
+
+    @staticmethod
+    async def _tmdb_get(url: str, params: dict[str, str]) -> Any:
+        response = await asyncio.to_thread(requests.get, url, params=params, timeout=5, verify=certifi.where())
+        response.encoding = "utf-8"
+        return response
+
+    @staticmethod
+    def _tmdb_summary(data: dict[str, Any]) -> str:
+        raw = str(data.get("overview") or "Riassunto non disponibile.")
+        return " ".join(raw.split())
+
+    async def _tmdb_logo(self, meta: Meta, _data: dict[str, Any]) -> str:
+        if meta.tmdb_logo:
+            return f"https://image.tmdb.org/t/p/w300/{meta.tmdb_logo}"
+        logos = await self._tmdb_logo_entries(meta)
+        path = self._preferred_logo_path(logos)
+        return f"https://image.tmdb.org/t/p/w300{path}" if path else ""
+
+    async def _tmdb_logo_entries(self, meta: Meta) -> list[dict[str, Any]]:
+        media_type = self._tmdb_media_type(meta)
+        url = f"https://api.themoviedb.org/3/{media_type}/{meta.tmdb}/images"
+        response = await self._tmdb_get(url, {"api_key": self._tmdb_api_key()})
+        if response.status_code != 200:
+            return []
+        return self._logo_entries_from_payload(response.json())
+
+    @classmethod
+    def _logo_entries_from_payload(cls, payload: Any) -> list[dict[str, Any]]:
+        data = cls._payload_mapping(payload)
+        return cls._mapping_items(data.get("logos", []))
+
+    @staticmethod
+    def _payload_mapping(payload: Any) -> dict[str, Any]:
+        return cast(dict[str, Any], payload) if isinstance(payload, dict) else {}
+
+    @staticmethod
+    def _mapping_items(value: Any) -> list[dict[str, Any]]:
+        if not isinstance(value, list):
+            return []
+        return [cast(dict[str, Any], item) for item in value if isinstance(item, dict)]
+
+    @classmethod
+    def _preferred_logo_path(cls, logos: list[dict[str, Any]]) -> str:
+        italian = cls._logo_path_for_language(logos, "it")
+        if italian:
+            return italian
+        english = cls._logo_path_for_language(logos, "en")
+        if english:
+            return english
+        return cls._first_logo_path(logos)
+
+    @staticmethod
+    def _logo_path_for_language(logos: list[dict[str, Any]], language: str) -> str:
+        return next((str(logo.get("file_path") or "") for logo in logos if logo.get("iso_639_1") == language and logo.get("file_path")), "")
+
+    @staticmethod
+    def _first_logo_path(logos: list[dict[str, Any]]) -> str:
+        return next((str(logo.get("file_path") or "") for logo in logos if logo.get("file_path")), "")
 
     async def _format_screens_italian(self, meta: Meta) -> str:
-        """Format up to 6 screenshots in 2-column grid with [img=350]"""
-        images_value = meta.image_list
-        images = images_value if isinstance(images_value, list) else []
-        if not images:
+        """Format up to six screenshots in a two-column grid."""
+        links = self._screen_links(meta.image_list)
+        if not links:
             return "[center]Nessuno screenshot disponibile[/center]"
+        return f"[center]{self._screen_rows(links)}[/center]"
 
-        screens: list[str] = []
-        for img in images[:6]:
-            raw_url = img.get("raw_url", "")
-            web_url = img.get("web_url", raw_url)
-            if raw_url:
-                screens.append(f"[url={web_url}][img=350]{raw_url}[/img][/url]")
+    @classmethod
+    def _screen_links(cls, value: Any) -> list[str]:
+        images = value if isinstance(value, list) else []
+        return [link for image in images[:6] if (link := cls._screen_link(image))]
 
-        if not screens:
-            return "[center]Nessuno screenshot disponibile[/center]"
+    @staticmethod
+    def _screen_link(image: Any) -> str:
+        if not isinstance(image, dict):
+            return ""
+        raw_url = str(image.get("raw_url") or "")
+        if not raw_url:
+            return ""
+        web_url = str(image.get("web_url") or raw_url)
+        return f"[url={web_url}][img=350]{raw_url}[/img][/url]"
 
-        # 2 screenshots per row
-        row1 = " ".join(screens[:2]) + " \n" if len(screens) >= 2 else " ".join(screens) + " \n"
-        row2 = " ".join(screens[2:4]) + " \n" if len(screens) > 2 else ""
-        row3 = " ".join(screens[4:6]) + " \n" if len(screens) > 4 else ""
-        return f"[center]{row1}{row2}{row3}[/center]"
+    @staticmethod
+    def _screen_rows(links: list[str]) -> str:
+        rows = [" ".join(links[index : index + 2]) + " \n" for index in range(0, len(links), 2)]
+        return "".join(rows)
 
     async def _get_synthetic_mediainfo(self, meta: Meta) -> dict[str, Any] | None:
-        """Extract formatted mediainfo from meta.json structure"""
-
-        def safe_int(val: Any, default: int = 0) -> int:
-            """Convert to int, handling dict/None cases"""
-            try:
-                return default if isinstance(val, dict) else int(val)
-            except ValueError, TypeError:
-                return default
-
-        def get_audio_format_details(audio_track: dict[str, Any]) -> tuple[str, str]:
-            """Map raw audio formats to commercial names"""
-            fmt_map = {
-                "E-AC-3": ("DDP", "Dolby Digital Plus"),
-                "AC-3": ("DD", "Dolby Digital"),
-                "TrueHD": ("TrueHD", "Dolby TrueHD"),
-                "MLP FBA": ("TrueHD", "Dolby TrueHD"),
-                "DTS-HD MA": ("DTS-HD MA", "DTS-HD Master Audio"),
-                "AAC": ("AAC", "Advanced Audio Codec"),
-            }
-
-            if not audio_track:
-                return "AAC", "AAC"
-
-            fmt_raw = audio_track.get("Format", "AAC")
-
-            # Detect Atmos in MLP FBA streams
-            if fmt_raw == "MLP FBA":
-                commercial = audio_track.get("Format_Commercial_IfAny", "")
-                if isinstance(commercial, str) and "atmos" in commercial.lower():
-                    return "TrueHD Atmos", "Dolby TrueHD with Atmos"
-
-            return fmt_map.get(fmt_raw, (fmt_raw, fmt_raw))
-
+        """Extract a compact Italian MediaInfo summary from normalized tracks."""
         try:
-            mediainfo = meta.mediainfo
-            media = cast(dict[str, Any], mediainfo.get("media", {}))
-            tracks = cast(list[dict[str, Any]], media.get("track", []))
-
-            # Parse track types
-            general: dict[str, Any] = next((t for t in tracks if t.get("@type") == "General"), cast(dict[str, Any], {}))
-            video: dict[str, Any] = next((t for t in tracks if t.get("@type") == "Video"), cast(dict[str, Any], {}))
-            audio_tracks = [t for t in tracks if t.get("@type") == "Audio"]
-            text_tracks = [t for t in tracks if t.get("@type") == "Text"]
-
-            # Prefer Italian audio, fallback to first track
-            ita_audio = next((t for t in audio_tracks if self._get_language_code(t) == "it"), None)
-            if not ita_audio and audio_tracks:
-                ita_audio = audio_tracks[0]
-
-            # General info
-            filelist = meta.filelist
-            fn = Path(filelist[0]).name if filelist else general.get("FileName", "file.mkv")
-            size = f"{safe_int(general.get('FileSize', 0)) / (1024**3):.1f} GiB"
-
-            dur_sec = float(general.get("Duration", 0))
-            hours = safe_int(dur_sec // 3600)
-            minutes = safe_int((dur_sec % 3600) // 60)
-            dur = f"{hours} h {minutes} min" if hours > 0 else f"{minutes} min"
-
-            total_br = f"{safe_int(general.get('OverallBitRate', 0)) / 1000000:.1f} Mb/s"
-            chap = "Si" if safe_int(general.get("MenuCount", 0)) > 0 else "No"
-
-            # Video info
-            vid_format = video.get("Format", "N/A")
-            vid_format_upper = vid_format.upper()
-            if "HEVC" in vid_format_upper:
-                codec = "x265"
-            elif "AVC" in vid_format_upper or "H.264" in vid_format_upper:
-                codec = "x264"
-            elif "MPEG VIDEO" in vid_format_upper or "MPEG-2" in vid_format_upper:
-                codec = "MPEG-2"
-            elif "VC-1" in vid_format_upper or "VC1" in vid_format_upper:
-                codec = "VC-1"
-            else:
-                codec = vid_format  # Fallback to format name
-            depth = f"{video.get('BitDepth', 10)} bits"
-            vid_br = f"{safe_int(video.get('BitRate', 0)) / 1000000:.1f} Mb/s"
-            res = meta.resolution if meta.resolution is not None else "N/A"
-            asp_decimal = video.get("DisplayAspectRatio")
-            asp_float = float(asp_decimal) if asp_decimal else 0.0
-            if 1.77 <= asp_float <= 1.79:
-                asp = "16:9"
-            elif 1.32 <= asp_float <= 1.34:
-                asp = "4:3"
-            elif 2.35 <= asp_float <= 2.45:
-                asp = "2.39:1"
-            else:
-                asp = f"{asp_float:.2f}:1" if asp_float != 0.0 else "N/A"
-
-            # Audio info
-            afmt = ita_audio.get("Format", "N/A") if ita_audio else "N/A"
-
-            # Try commercial name from mediainfo, fallback to mapping
-            afmt_name = ita_audio.get("Format_Commercial_IfAny", "") if ita_audio else ""
-            if isinstance(afmt_name, dict) or not afmt_name:
-                afmt_name = ita_audio.get("Title", "") if ita_audio else ""
-            if isinstance(afmt_name, dict) or not afmt_name:
-                _, afmt_name = get_audio_format_details(ita_audio) if ita_audio else ("", afmt)
-
-            # Map channel count to standard format
-            ch = ita_audio.get("Channels", "2") if ita_audio else "2"
-            if ch == "6":
-                ch = "5.1"
-            elif ch == "8":
-                ch = "7.1"
-            elif ch == "2":
-                ch = "2.0"
-
-            aud_br = f"{safe_int(ita_audio.get('BitRate', 0)) / 1000:.0f} kb/s" if ita_audio else "0 kb/s"
-            if ita_audio:
-                audio_lang_code = self._get_language_code(ita_audio)
-                lang = self._get_italian_language_name(audio_lang_code) if audio_lang_code else "Inglese"
-            else:
-                lang = "Inglese"
-
-            # Subtitle languages
-            if text_tracks:
-                sub_langs: set[str] = set()
-                for t in text_tracks:
-                    lang_code = self._get_language_code(t)
-                    if lang_code:
-                        lang_name = self._get_italian_language_name(lang_code)
-                        if lang_name:
-                            sub_langs.add(lang_name.title())
-                subs = ", ".join(sorted(sub_langs)) if sub_langs else "Assenti"
-            else:
-                subs = "Assenti"
-
-            return {
-                "fn": fn,
-                "size": size,
-                "dur": dur,
-                "total_br": total_br,
-                "chap": chap,
-                "vid_format": vid_format,
-                "codec": codec,
-                "depth": depth,
-                "vid_br": vid_br,
-                "res": res,
-                "asp": asp,
-                "aud_format": afmt,
-                "aud_name": afmt_name,
-                "ch": ch,
-                "aud_br": aud_br,
-                "lang": lang,
-                "subs": subs,
-            }
-        except Exception as e:
-            logger.info(f"{self.tracker}: [DEBUG] Mediainfo extraction error: {e}", extra={"markup": False})
-            import traceback
-
-            traceback.print_exc()
+            tracks = self._mediainfo_tracks(meta)
+            general = self._first_track(tracks, "General")
+            video = self._first_track(tracks, "Video")
+            audio = self._preferred_audio_track(tracks)
+            texts = self._tracks_of_type(tracks, "Text")
+            result = self._synthetic_general_info(meta, general)
+            result.update(self._synthetic_video_info(meta, video))
+            result.update(self._synthetic_audio_info(audio))
+            result["subs"] = self._synthetic_subtitles(texts)
+            return result
+        except Exception as error:
+            logger.info(f"{self.tracker}: [DEBUG] Mediainfo extraction error: {error}", extra={"markup": False})
             return None
+
+    @staticmethod
+    def _safe_int(value: Any, default: int = 0) -> int:
+        if isinstance(value, dict):
+            return default
+        try:
+            return int(value)
+        except ValueError, TypeError:
+            return default
+
+    @staticmethod
+    def _first_track(tracks: list[dict[str, Any]], track_type: str) -> dict[str, Any]:
+        return next((track for track in tracks if track.get("@type") == track_type), {})
+
+    @staticmethod
+    def _tracks_of_type(tracks: list[dict[str, Any]], track_type: str) -> list[dict[str, Any]]:
+        return [track for track in tracks if track.get("@type") == track_type]
+
+    def _preferred_audio_track(self, tracks: list[dict[str, Any]]) -> dict[str, Any]:
+        audio = self._tracks_of_type(tracks, "Audio")
+        italian = next((track for track in audio if self._get_language_code(track) == "it"), None)
+        return italian if italian is not None else (audio[0] if audio else {})
+
+    def _synthetic_general_info(self, meta: Meta, general: dict[str, Any]) -> dict[str, Any]:
+        duration = self._synthetic_duration(general.get("Duration", 0))
+        return {
+            "fn": self._synthetic_filename(meta, general),
+            "size": f"{self._safe_int(general.get('FileSize', 0)) / (1024**3):.1f} GiB",
+            "dur": duration,
+            "total_br": f"{self._safe_int(general.get('OverallBitRate', 0)) / 1_000_000:.1f} Mb/s",
+            "chap": "Si" if self._safe_int(general.get("MenuCount", 0)) > 0 else "No",
+        }
+
+    @staticmethod
+    def _synthetic_filename(meta: Meta, general: dict[str, Any]) -> str:
+        files = meta.filelist if isinstance(meta.filelist, list) else []
+        return Path(str(files[0])).name if files else str(general.get("FileName", "file.mkv"))
+
+    @classmethod
+    def _synthetic_duration(cls, value: Any) -> str:
+        seconds = cls._safe_float(value)
+        hours = cls._safe_int(seconds // 3600)
+        minutes = cls._safe_int((seconds % 3600) // 60)
+        return f"{hours} h {minutes} min" if hours > 0 else f"{minutes} min"
+
+    @staticmethod
+    def _safe_float(value: Any) -> float:
+        try:
+            return float(value or 0)
+        except TypeError, ValueError:
+            return 0.0
+
+    def _synthetic_video_info(self, meta: Meta, video: dict[str, Any]) -> dict[str, Any]:
+        video_format = str(video.get("Format", "N/A"))
+        return {
+            "vid_format": video_format,
+            "codec": self._synthetic_video_codec(video_format),
+            "depth": f"{video.get('BitDepth', 10)} bits",
+            "vid_br": f"{self._safe_int(video.get('BitRate', 0)) / 1_000_000:.1f} Mb/s",
+            "res": meta.resolution if meta.resolution is not None else "N/A",
+            "asp": self._synthetic_aspect_ratio(video.get("DisplayAspectRatio")),
+        }
+
+    @staticmethod
+    def _synthetic_video_codec(value: str) -> str:
+        upper = value.upper()
+        aliases = (("HEVC", "x265"), ("AVC", "x264"), ("H.264", "x264"), ("MPEG VIDEO", "MPEG-2"), ("MPEG-2", "MPEG-2"), ("VC-1", "VC-1"), ("VC1", "VC-1"))
+        return next((alias for marker, alias in aliases if marker in upper), value)
+
+    @classmethod
+    def _synthetic_aspect_ratio(cls, value: Any) -> str:
+        aspect = cls._safe_float(value)
+        for low, high, label in ((1.77, 1.79, "16:9"), (1.32, 1.34, "4:3"), (2.35, 2.45, "2.39:1")):
+            if low <= aspect <= high:
+                return label
+        return f"{aspect:.2f}:1" if aspect else "N/A"
+
+    def _synthetic_audio_info(self, audio: dict[str, Any]) -> dict[str, Any]:
+        audio_format = str(audio.get("Format", "N/A")) if audio else "N/A"
+        return {
+            "aud_format": audio_format,
+            "aud_name": self._synthetic_audio_name(audio, audio_format),
+            "ch": self._synthetic_channels(audio.get("Channels", "2") if audio else "2"),
+            "aud_br": f"{self._safe_int(audio.get('BitRate', 0)) / 1000:.0f} kb/s" if audio else "0 kb/s",
+            "lang": self._synthetic_audio_language(audio),
+        }
+
+    def _synthetic_audio_name(self, audio: dict[str, Any], fallback: str) -> str:
+        if not audio:
+            return fallback
+        commercial = self._string_audio_field(audio.get("Format_Commercial_IfAny"))
+        if commercial:
+            return commercial
+        title = self._string_audio_field(audio.get("Title"))
+        if title:
+            return title
+        return self._audio_format_details(audio)[1]
+
+    @staticmethod
+    def _string_audio_field(value: Any) -> str:
+        return value if isinstance(value, str) else ""
+
+    @staticmethod
+    def _audio_format_details(audio: dict[str, Any]) -> tuple[str, str]:
+        if not audio:
+            return "AAC", "AAC"
+        raw = str(audio.get("Format", "AAC"))
+        if raw == "MLP FBA" and "atmos" in str(audio.get("Format_Commercial_IfAny", "")).lower():
+            return "TrueHD Atmos", "Dolby TrueHD with Atmos"
+        mapping = {
+            "E-AC-3": ("DDP", "Dolby Digital Plus"),
+            "AC-3": ("DD", "Dolby Digital"),
+            "TrueHD": ("TrueHD", "Dolby TrueHD"),
+            "MLP FBA": ("TrueHD", "Dolby TrueHD"),
+            "DTS-HD MA": ("DTS-HD MA", "DTS-HD Master Audio"),
+            "AAC": ("AAC", "Advanced Audio Codec"),
+        }
+        return mapping.get(raw, (raw, raw))
+
+    @staticmethod
+    def _synthetic_channels(value: Any) -> str:
+        return {"2": "2.0", "6": "5.1", "8": "7.1"}.get(str(value), str(value))
+
+    def _synthetic_audio_language(self, audio: dict[str, Any]) -> str:
+        if not audio:
+            return "Inglese"
+        code = self._get_language_code(audio)
+        return self._get_italian_language_name(code) if code else "Inglese"
+
+    def _synthetic_subtitles(self, tracks: list[dict[str, Any]]) -> str:
+        languages = {name for track in tracks if (name := self._subtitle_language_name(track))}
+        return ", ".join(sorted(languages)) if languages else "Assenti"
+
+    def _subtitle_language_name(self, track: dict[str, Any]) -> str:
+        code = self._get_language_code(track)
+        if not code:
+            return ""
+        name = self._get_italian_language_name(code)
+        return name.title() if name else ""
 
     def _strip_bbcode(self, text: str) -> str:
         """Remove BBCode tags from text, keeping only plain content"""
@@ -946,39 +1289,69 @@ class ShareIsland(UNIT3D):
         category: str,
         meta: Meta,
     ) -> str:
-        """Build ShareIsland BBCode template"""
-        if category == "TV":
-            is_pack = meta.tv_pack == 1
-            category_header = "--- SERIE TV (STAGIONE) ---" if is_pack else "--- SERIE TV (EPISODIO) ---"
-        else:
-            category_header = "--- FILM ---"
-        release_group = meta.tag.lstrip("-").strip() if meta.tag else ""
+        """Build the ShareIsland Italian BBCode template."""
+        category_header = self._category_header(category, meta)
+        release_group = self._release_group(meta)
+        release_notes = self._release_notes_section(release_group, self._tonemapped_text(meta))
+        shoutouts = self._shoutouts(release_group)
+        logo_section = self._logo_section(logo_url)
+        links_section = self._links_section(meta, category)
+        mediainfo_section = self._mediainfo_section(synthetic_mi)
+        return self._bbcode_template(
+            title,
+            info_line,
+            logo_section,
+            summary,
+            screens,
+            links_section,
+            mediainfo_section,
+            release_notes,
+            shoutouts,
+            category_header,
+            str(meta.ua_signature),
+        )
 
-        tonemapped_text = ""
-        if meta.tonemapped:
-            tonemapped_header = self.config.get("DEFAULT", {}).get("tonemapped_header", "")
-            if tonemapped_header:
-                tonemapped_text = self._strip_bbcode(tonemapped_header)
+    @staticmethod
+    def _category_header(category: str, meta: Meta) -> str:
+        if category != "TV":
+            return "--- FILM ---"
+        return "--- SERIE TV (STAGIONE) ---" if meta.tv_pack == 1 else "--- SERIE TV (EPISODIO) ---"
 
-        if release_group.lower() == "island":
-            base_notes = "Release ShareIsland 🏴‍☠️\nFalla girare, condividila e contribuisci a mantenerla viva restando in seed il più possibile.\nGrazie per il supporto!"
-            if tonemapped_text:
-                release_notes_section = f"""[size=13][b][color=#e8024b]--- RELEASE NOTES ---[/color][/b][/size]
-[size=11][color=#FFFFFF]{base_notes}
-{tonemapped_text}[/color][/size]"""
-            else:
-                release_notes_section = f"""[size=13][b][color=#e8024b]--- RELEASE NOTES ---[/color][/b][/size]
-[size=11][color=#FFFFFF]{base_notes}[/color][/size]"""
-        else:
-            base_notes = "Nulla da aggiungere."
-            if tonemapped_text:
-                release_notes_section = f"""[size=13][b][color=#e8024b]--- RELEASE NOTES ---[/color][/b][/size]
-[size=11][color=#FFFFFF]{tonemapped_text}[/color][/size]"""
-            else:
-                release_notes_section = f"""[size=13][b][color=#e8024b]--- RELEASE NOTES ---[/color][/b][/size]
-[size=11][color=#FFFFFF]{base_notes}[/color][/size]"""
+    @staticmethod
+    def _release_group(meta: Meta) -> str:
+        return str(meta.tag or "").lstrip("-").strip()
 
-        pirate_shouts = [
+    def _tonemapped_text(self, meta: Meta) -> str:
+        if not meta.tonemapped:
+            return ""
+        default = self.config.get("DEFAULT", {})
+        header = default.get("tonemapped_header", "") if isinstance(default, dict) else ""
+        return self._strip_bbcode(str(header)) if header else ""
+
+    @staticmethod
+    def _release_notes_section(release_group: str, tonemapped_text: str) -> str:
+        island = release_group.casefold() == "island"
+        base = (
+            "Release ShareIsland 🏴‍☠️\nFalla girare, condividila e contribuisci a mantenerla viva restando in seed il più possibile.\nGrazie per il supporto!"
+            if island
+            else "Nulla da aggiungere."
+        )
+        content = f"{base}\n{tonemapped_text}" if island and tonemapped_text else (tonemapped_text or base)
+        return f"[size=13][b][color=#e8024b]--- RELEASE NOTES ---[/color][/b][/size]\n[size=11][color=#FFFFFF]{content}[/color][/size]"
+
+    @classmethod
+    def _shoutouts(cls, release_group: str) -> str:
+        if cls._generic_release_group(release_group):
+            return f"SHOUTOUTS : {random.choice(cls._pirate_shouts())}"  # nosec B311  # noqa: S311
+        return f"SHOUTOUTS : {release_group}"
+
+    @staticmethod
+    def _generic_release_group(release_group: str) -> bool:
+        return not release_group or release_group.casefold() in {"nogroup", "nogrp", "unknown", "unk"}
+
+    @staticmethod
+    def _pirate_shouts() -> tuple[str, ...]:
+        return (
             "The Scene never dies",
             "Arrr! Powered by Rum & Bandwidth",
             "Seed or walk the plank!",
@@ -988,64 +1361,74 @@ class ShareIsland(UNIT3D):
             "Pirates don't ask, they share",
             "For the glory of the Scene!",
             "Scene is the paradise",
-        ]
-        if not release_group or release_group.lower() in [
-            "nogroup",
-            "nogrp",
-            "unknown",
-            "unk",
-        ]:
-            shoutouts = f"SHOUTOUTS : {random.choice(pirate_shouts)}"  # nosec B311  # noqa: S311
-        else:
-            shoutouts = f"SHOUTOUTS : {release_group}"
-        logo_section = f"[center][img=250]{logo_url}[/img][/center]\n" if logo_url else ""
+        )
 
-        # Build LINKS section
-        imdb_id = meta.imdb
-        tmdb_id = meta.tmdb
-        media_type = "tv" if category == "TV" else "movie"
+    @staticmethod
+    def _logo_section(logo_url: str) -> str:
+        return f"[center][img=250]{logo_url}[/img][/center]\n" if logo_url else ""
 
-        links_section = ""
-        if imdb_id or tmdb_id:
-            links_section = "\n[size=13][b][color=#e8024b]--- LINKS ---[/color][/b][/size]\n"
-            if imdb_id:
-                links_section += f"[size=11][color=#FFFFFF]IMDb: https://www.imdb.com/title/tt{imdb_id}/[/color][/size]\n"
-            if tmdb_id:
-                links_section += f"[size=11][color=#FFFFFF]TMDb: https://www.themoviedb.org/{media_type}/{tmdb_id}[/color][/size]\n"
-            links_section += "\n"
+    @classmethod
+    def _links_section(cls, meta: Meta, category: str) -> str:
+        links = cls._metadata_link_lines(meta, category)
+        if not links:
+            return ""
+        return "\n[size=13][b][color=#e8024b]--- LINKS ---[/color][/b][/size]\n" + "".join(links) + "\n"
 
-        ua_sig = meta.ua_signature
+    @staticmethod
+    def _metadata_link_lines(meta: Meta, category: str) -> list[str]:
+        lines: list[str] = []
+        if meta.imdb:
+            lines.append(f"[size=11][color=#FFFFFF]IMDb: https://www.imdb.com/title/tt{meta.imdb}/[/color][/size]\n")
+        if meta.tmdb:
+            media_type = "tv" if category == "TV" else "movie"
+            lines.append(f"[size=11][color=#FFFFFF]TMDb: https://www.themoviedb.org/{media_type}/{meta.tmdb}[/color][/size]\n")
+        return lines
 
-        # Mediainfo section
-        mediainfo_section = ""
-        if synthetic_mi:
-            mediainfo_section = f"""[size=13][b][color=#da8d49]INFO GENERALI[/color][/b][/size]
-[size=11][color=#FFFFFF]Nome File       : {synthetic_mi["fn"]}[/color][/size]
-[size=11][color=#FFFFFF]Dimensioni File : {synthetic_mi["size"]}[/color][/size]
-[size=11][color=#FFFFFF]Durata          : {synthetic_mi["dur"]}[/color][/size]
-[size=11][color=#FFFFFF]Bitrate Totale  : {synthetic_mi["total_br"]}[/color][/size]
-[size=11][color=#FFFFFF]Capitoli        : {synthetic_mi["chap"]}[/color][/size]
+    @staticmethod
+    def _mediainfo_section(synthetic: dict[str, Any] | None) -> str:
+        if not synthetic:
+            return ""
+        return f"""[size=13][b][color=#da8d49]INFO GENERALI[/color][/b][/size]
+[size=11][color=#FFFFFF]Nome File       : {synthetic["fn"]}[/color][/size]
+[size=11][color=#FFFFFF]Dimensioni File : {synthetic["size"]}[/color][/size]
+[size=11][color=#FFFFFF]Durata          : {synthetic["dur"]}[/color][/size]
+[size=11][color=#FFFFFF]Bitrate Totale  : {synthetic["total_br"]}[/color][/size]
+[size=11][color=#FFFFFF]Capitoli        : {synthetic["chap"]}[/color][/size]
 
 [size=13][b][color=#da8d49]VIDEO[/color][/b][/size]
-[size=11][color=#FFFFFF]Formato         : {synthetic_mi["vid_format"]}[/color][/size]
-[size=11][color=#FFFFFF]Compressore     : {synthetic_mi["codec"]}[/color][/size]
-[size=11][color=#FFFFFF]Profondità Bit  : {synthetic_mi["depth"]}[/color][/size]
-[size=11][color=#FFFFFF]Bitrate         : {synthetic_mi["vid_br"]}[/color][/size]
-[size=11][color=#FFFFFF]Risoluzione     : {synthetic_mi["res"]}[/color][/size]
-[size=11][color=#FFFFFF]Rapporto        : {synthetic_mi["asp"]}[/color][/size]
+[size=11][color=#FFFFFF]Formato         : {synthetic["vid_format"]}[/color][/size]
+[size=11][color=#FFFFFF]Compressore     : {synthetic["codec"]}[/color][/size]
+[size=11][color=#FFFFFF]Profondità Bit  : {synthetic["depth"]}[/color][/size]
+[size=11][color=#FFFFFF]Bitrate         : {synthetic["vid_br"]}[/color][/size]
+[size=11][color=#FFFFFF]Risoluzione     : {synthetic["res"]}[/color][/size]
+[size=11][color=#FFFFFF]Rapporto        : {synthetic["asp"]}[/color][/size]
 
 [size=13][b][color=#da8d49]AUDIO[/color][/b][/size]
-[size=11][color=#FFFFFF]Formato         : {synthetic_mi["aud_format"]}[/color][/size]
-[size=11][color=#FFFFFF]Nome            : {synthetic_mi["aud_name"]}[/color][/size]
-[size=11][color=#FFFFFF]Canali          : {synthetic_mi["ch"]}[/color][/size]
-[size=11][color=#FFFFFF]Bitrate         : {synthetic_mi["aud_br"]}[/color][/size]
-[size=11][color=#FFFFFF]Lingua          : {synthetic_mi["lang"]}[/color][/size]
+[size=11][color=#FFFFFF]Formato         : {synthetic["aud_format"]}[/color][/size]
+[size=11][color=#FFFFFF]Nome            : {synthetic["aud_name"]}[/color][/size]
+[size=11][color=#FFFFFF]Canali          : {synthetic["ch"]}[/color][/size]
+[size=11][color=#FFFFFF]Bitrate         : {synthetic["aud_br"]}[/color][/size]
+[size=11][color=#FFFFFF]Lingua          : {synthetic["lang"]}[/color][/size]
 
 [size=13][b][color=#da8d49]SOTTOTITOLI[/color][/b][/size]
-[size=11][color=#FFFFFF]{synthetic_mi["subs"]}[/color][/size]
+[size=11][color=#FFFFFF]{synthetic["subs"]}[/color][/size]
 
 """
 
+    @staticmethod
+    def _bbcode_template(
+        title: str,
+        info_line: str,
+        logo_section: str,
+        summary: str,
+        screens: str,
+        links_section: str,
+        mediainfo_section: str,
+        release_notes: str,
+        shoutouts: str,
+        category_header: str,
+        signature: str,
+    ) -> str:
         return f"""[code]
 {logo_section}[center][size=13][b][color=#e8024b]{category_header}[/color][/b][/size][/center]
 [center][size=13][b][color=#ffffff]{title}[/color][/b][/size][/center]
@@ -1056,12 +1439,12 @@ class ShareIsland(UNIT3D):
 
 [center][size=13][b][color=#e8024b]--- SCREENS ---[/color][/b][/size][/center]
 {screens}
-{links_section}{mediainfo_section}{release_notes_section}
+{links_section}{mediainfo_section}{release_notes}
 
 [size=13][b][color=#e8024b]--- SHOUTOUTS ---[/color][/b][/size]
 [size=11][color=#FFFFFF]{shoutouts}[/color][/size]
 
 [size=13][color=#0592a3][size=16][b]BUON DOWNLOAD![/b][/size][/color][/size]
 
-[right][size=8]{ua_sig}[/size][/right]
+[right][size=8]{signature}[/size][/right]
 [/code]"""
