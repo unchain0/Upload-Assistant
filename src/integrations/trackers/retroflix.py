@@ -1,6 +1,7 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
 import base64
 import datetime
+import json
 import re
 from typing import Any, cast
 
@@ -8,6 +9,7 @@ import aiofiles
 import httpx
 
 from src.domain_models.release import Meta
+from src.integrations.filesystem.temp_paths import release_temp_dir
 from src.integrations.observability.runtime_support import logger
 from src.integrations.security.redaction import Redaction
 from src.integrations.trackers.common import Common
@@ -36,298 +38,326 @@ class RetroFlix:
 
     def __init__(self, config: dict[str, Any]) -> None:
         self.config = config
+        self.common = Common(config=config)
 
     async def upload(self, meta: Meta) -> bool:
-        """Upload a torrent to RETROFLIX tracker.
-
-        Args:
-            meta: Metadata dictionary containing torrent information (name, mediainfo, screenshots, etc.).
-            disctype: Type of disc (e.g., 'BD', 'DVD').
-
-        Returns:
-            True if upload was successful, False otherwise.
-        """
-        common = Common(config=self.config)
-        await common.create_torrent_for_upload(meta, self.tracker, self.source_flag)
+        await self.common.create_torrent_for_upload(meta, self.tracker, self.source_flag)
         await DescriptionBuilder(self.tracker, self.config).general_description_generator(
             meta,
             mediainfo=False,
             nfo=False,
             signature=self.forum_link,
         )
-        if meta.bdinfo:
-            mi_dump = None
-            async with aiofiles.open(f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/BD_SUMMARY_00.txt", encoding="utf-8") as f:
-                bd_dump = await f.read()
-        else:
-            async with aiofiles.open(f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/MEDIAINFO.txt", encoding="utf-8") as f:
-                mi_dump = await f.read()
-            bd_dump = None
+        json_data = await self._upload_payload(meta)
+        if meta.debug:
+            return await self._debug_upload(meta, json_data)
+        return await self._upload_release(meta, json_data)
 
-        screenshots = [image["raw_url"] for image in meta.image_list if image["raw_url"] is not None]
-
-        imdb_url_value = meta.imdb_info.get("imdb_url", "")
-        imdb_url = str(imdb_url_value) if imdb_url_value else ""
-        json_data: dict[str, Any] = {
+    async def _upload_payload(self, meta: Meta) -> dict[str, Any]:
+        media_info = await self._media_info_payload(meta)
+        data: dict[str, Any] = {
             "name": await self.get_name(meta),
-            # description does not work for some reason
             "description": "",
-            # editing mediainfo so that instead of 1 080p its 1,080p as site mediainfo parser wont work other wise.
-            "mediaInfo": re.sub(r"(\d+)\s+(\d+)", r"\1,\2", mi_dump or "") if bd_dump is None else f"{bd_dump}",
+            "mediaInfo": media_info,
             "nfo": "",
-            "url": f"{imdb_url}/" if imdb_url else "",
-            # auto pulled from IMDB
+            "url": self._imdb_url(meta),
             "descr": "",
             "poster": meta.artwork_url,
             "type": "401" if meta.category == "MOVIE" else "402",
-            "screenshots": screenshots,
-            "isAnonymous": self.config["TRACKERS"][self.tracker]["anon"],
+            "screenshots": self._screenshot_urls(meta),
+            "isAnonymous": self._tracker_config().get("anon", False),
         }
+        data["file"] = await self._torrent_payload(meta)
+        return data
 
-        async with aiofiles.open(f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{self.tracker}].torrent", "rb") as binary_file:
-            binary_file_data = await binary_file.read()
-            base64_encoded_data = base64.b64encode(binary_file_data)
-            base64_message = base64_encoded_data.decode("utf-8")
-            json_data["file"] = base64_message
+    async def _media_info_payload(self, meta: Meta) -> str:
+        if meta.bdinfo:
+            return await self._text_file(meta, "BD_SUMMARY_00.txt")
+        mediainfo = await self._text_file(meta, "MEDIAINFO.txt")
+        return re.sub(r"(\d+)\s+(\d+)", r"\1,\2", mediainfo)
 
-        headers: dict[str, Any] = {
+    @staticmethod
+    def _screenshot_urls(meta: Meta) -> list[str]:
+        images = meta.image_list if isinstance(meta.image_list, list) else []
+        return [str(image["raw_url"]) for image in images if isinstance(image, dict) and image.get("raw_url") is not None]
+
+    @staticmethod
+    def _imdb_url(meta: Meta) -> str:
+        imdb = meta.imdb_info if isinstance(meta.imdb_info, dict) else {}
+        value = str(imdb.get("imdb_url") or "")
+        return f"{value}/" if value else ""
+
+    async def _torrent_payload(self, meta: Meta) -> str:
+        path = release_temp_dir(meta.base_dir, meta.uuid) / f"[{self.tracker}].torrent"
+        async with aiofiles.open(path, "rb") as handle:
+            return base64.b64encode(await handle.read()).decode("utf-8")
+
+    @staticmethod
+    async def _text_file(meta: Meta, filename: str) -> str:
+        path = release_temp_dir(meta.base_dir, meta.uuid) / filename
+        async with aiofiles.open(path, encoding="utf-8") as handle:
+            return await handle.read()
+
+    def _tracker_config(self) -> dict[str, Any]:
+        trackers = self.config.get("TRACKERS", {})
+        if not isinstance(trackers, dict):
+            return {}
+        value = trackers.get(self.tracker, {})
+        return cast(dict[str, Any], value) if isinstance(value, dict) else {}
+
+    def _upload_headers(self) -> dict[str, str]:
+        return {
             "accept": "application/json",
             "Content-Type": "application/json",
-            "Authorization": self.config["TRACKERS"][self.tracker]["api_key"].strip(),
+            "Authorization": str(self._tracker_config().get("api_key", "")).strip(),
         }
 
-        if meta.debug is False:
-            try:
-                async with httpx.AsyncClient(timeout=40.0) as client:
-                    response = await client.post(url=self.upload_url, json=json_data, headers=headers)
-
-                    # Handle successful upload (201)
-                    if response.status_code == 201:
-                        try:
-                            response_json = response.json()
-
-                            # Check if there's an error in the response despite 201 status
-                            if response_json.get("error", False):
-                                error_msg = response_json.get("message", "Unknown error occurred")
-                                meta.tracker_status[self.tracker]["status_message"] = f"Upload error: {error_msg}"
-                                return False
-
-                            meta.tracker_status[self.tracker]["status_message"] = response_json
-                            t_id = response_json["torrent"]["id"]
-                            meta.tracker_status[self.tracker]["torrent_id"] = t_id
-                            await common.create_torrent_ready_to_seed(
-                                meta, self.tracker, self.source_flag, self.config["TRACKERS"][self.tracker].get("announce_url"), f"{self.base_url}/browse/t/" + str(t_id)
-                            )
-                            return True
-                        except KeyError as e:
-                            meta.tracker_status[self.tracker]["status_message"] = f"Error parsing response: {response.text}: missing key {e}"
-                            return False
-
-                    # Handle error responses
-                    elif response.status_code == 400:
-                        response_json = response.json()
-                        error_msg = response_json.get("message", "Bad request or torrent file")
-                        meta.tracker_status[self.tracker]["status_message"] = f"Bad request: {error_msg}"
-                        return False
-
-                    elif response.status_code == 403:
-                        response_json = response.json()
-                        error_msg = response_json.get("message", "You are not allowed to upload")
-                        meta.tracker_status[self.tracker]["status_message"] = f"Permission denied: {error_msg}"
-                        return False
-
-                    elif response.status_code == 409:
-                        response_json = response.json()
-                        error_msg = response_json.get("message", "Torrent already exists")
-                        meta.tracker_status[self.tracker]["status_message"] = f"Duplicate: {error_msg}"
-                        return False
-
-                    elif response.status_code == 413:
-                        response_json = response.json()
-                        error_msg = response_json.get("message", "Torrent file is too big or has too many files")
-                        meta.tracker_status[self.tracker]["status_message"] = f"File size error: {error_msg}"
-                        return False
-
-                    elif response.status_code == 422:
-                        response_json = response.json()
-                        error_msg = response_json.get("message", "Upload rejected based on rules")
-                        meta.tracker_status[self.tracker]["status_message"] = f"Upload rejected: {error_msg}"
-                        return False
-
-                    else:
-                        # Handle any other status codes
-                        try:
-                            response_json = response.json()
-                            error_msg = response_json.get("message", f"HTTP {response.status_code}")
-                        except Exception:
-                            error_msg = f"HTTP {response.status_code}: {response.text[:200]}"
-
-                        logger.info(f"{self.tracker}: [bold red]Unexpected response: {error_msg}")
-                        meta.tracker_status[self.tracker]["status_message"] = f"Unexpected response: {error_msg}"
-                        return False
-
-            except httpx.TimeoutException:
-                meta.tracker_status[self.tracker]["status_message"] = "data error: RETROFLIX request timed out while uploading."
-                return False
-            except httpx.RequestError as e:
-                meta.tracker_status[self.tracker]["status_message"] = f"data error: An error occurred while making the request: {e}"
-                return False
-            except Exception as e:
-                meta.tracker_status[self.tracker]["status_message"] = f"data error - Unexpected error: {e}"
-                return False
-
-        else:
-            logger.info(f"{self.tracker}: Request Data:")
-            debug_data = json_data.copy()
-            if debug_data.get("file"):
-                debug_data["file"] = f"{str(debug_data['file'])[:10]}..."
-            logger.info(Redaction.redact_private_info(debug_data))
-            meta.tracker_status[self.tracker]["status_message"] = "Debug mode enabled, not uploading."
-            await common.create_torrent_for_upload(meta, f"{self.tracker}" + "_DEBUG", f"{self.tracker}" + "_DEBUG", announce_url="https://fake.tracker")
-            return True  # Debug mode - simulated success
-
-    async def get_additional_checks(self, meta: Meta) -> bool:
-        common = Common(config=self.config)
-        if not await common.check_and_confirm_adult_media_upload(meta, self.tracker):
-            return False
-
-        year_value = meta.year
-        year = (year_value) if (isinstance(year_value, int) or (isinstance(year_value, str) and year_value.isdigit())) else None
-        # Collect all possible years from different sources
-        years: list[int] = []
-
-        # IMDB end year
-        imdb_end_year = meta.imdb_info.get("end_year")
-        if imdb_end_year and str(imdb_end_year).isdigit():
-            years.append(int(imdb_end_year))
-
-        # TVDB episode year
-        tvdb_episode_year = meta.tvdb_episode_year
-        if tvdb_episode_year and tvdb_episode_year.isdigit():
-            years.append(int(tvdb_episode_year))
-
-        # Get most recent aired date from all TVDB episodes
-        most_recent_aired_date = None
-        tvdb_episodes_value = meta.tvdb_episode_data.get("episodes", [])
-        tvdb_episodes = cast(list[dict[str, Any]], tvdb_episodes_value) if isinstance(tvdb_episodes_value, list) else []
-        if tvdb_episodes:
-            for episode in tvdb_episodes:
-                aired_date = str(episode.get("aired", ""))
-                if aired_date and "-" in aired_date:
-                    try:
-                        episode_date = datetime.datetime.strptime(aired_date, "%Y-%m-%d").replace(tzinfo=datetime.UTC).date()
-                        if most_recent_aired_date is None or episode_date > most_recent_aired_date:
-                            most_recent_aired_date = episode_date
-                    except ValueError, AttributeError:
-                        try:
-                            episode_year_value = aired_date.split("-")[0]
-                            if episode_year_value.isdigit():
-                                years.append(int(episode_year_value))
-                        except ValueError, AttributeError:
-                            continue
-
-        # Add the year from most recent aired date if found
-        if most_recent_aired_date:
-            years.append(most_recent_aired_date.year)
-
-        # Use the most recent year found, fallback to meta year
-        most_recent_year = max(years) if years else year
-
-        # Update year with the most recent year for TV shows
-        if meta.category == "TV":
-            year = most_recent_year
-
-        # Check if content is at least 10 years old using actual date comparison
-        if meta.category == "MOVIE" and meta.release_date:
-            try:
-                release_date = datetime.datetime.strptime(meta.release_date, "%Y-%m-%d").replace(tzinfo=datetime.UTC).date()
-                year = release_date.year
-                # Calculate date exactly 10 years ago from today
-                ten_years_ago = datetime.datetime.now(datetime.UTC).date() - datetime.timedelta(days=365 * 10 + 3)  # add leeway
-                if release_date > ten_years_ago:
-                    if not meta.unattended:
-                        logger.info(f"{self.tracker}: [red]Content must be older than 10 Years to upload at RETROFLIX")
-                    return False
-            except ValueError, AttributeError:
-                # If date parsing fails, fall back to year comparison
-                release_year = meta.release_date.split("-")[0]
-                if release_year.isdigit():
-                    year = int(release_year)
-                    if datetime.datetime.now(datetime.UTC).date().year - year <= 9:
-                        if not meta.unattended:
-                            logger.info(f"{self.tracker}: [red]Content must be older than 10 Years to upload at RETROFLIX")
-                        return False
-
-        elif meta.category == "TV" and most_recent_aired_date:
-            # For TV shows, use the most recent aired date for comparison if available
-            ten_years_ago = datetime.datetime.now(datetime.UTC).date() - datetime.timedelta(days=365 * 10 + 3)  # add leeway
-            if most_recent_aired_date > ten_years_ago:
-                if not meta.unattended:
-                    logger.info(f"{self.tracker}: [red]Content must be older than 10 Years to upload at RETROFLIX")
-                return False
-
-        else:
-            if year is not None and datetime.datetime.now(datetime.UTC).date().year - year <= 9:
-                if not meta.unattended:
-                    logger.info(f"{self.tracker}: [red]Content must be older than 10 Years to upload at RETROFLIX")
-                return False
+    async def _debug_upload(self, meta: Meta, json_data: dict[str, Any]) -> bool:
+        logger.info(f"{self.tracker}: Request Data:")
+        debug_data = json_data.copy()
+        if debug_data.get("file"):
+            debug_data["file"] = f"{str(debug_data['file'])[:10]}..."
+        logger.info(Redaction.redact_private_info(debug_data))
+        meta.tracker_status[self.tracker]["status_message"] = "Debug mode enabled, not uploading."
+        await self.common.create_torrent_for_upload(
+            meta,
+            f"{self.tracker}_DEBUG",
+            f"{self.tracker}_DEBUG",
+            announce_url="https://fake.tracker",
+        )
         return True
 
-    async def search_existing(self, meta: Meta) -> list[dict[str, Any]]:
-        """Search for existing torrents on RETROFLIX tracker.
+    async def _upload_release(self, meta: Meta, json_data: dict[str, Any]) -> bool:
+        try:
+            response = await self._post_upload(json_data)
+            return await self._handle_upload_response(meta, response)
+        except httpx.TimeoutException:
+            meta.tracker_status[self.tracker]["status_message"] = "data error: RETROFLIX request timed out while uploading."
+            return False
+        except httpx.RequestError as error:
+            meta.tracker_status[self.tracker]["status_message"] = f"data error: An error occurred while making the request: {error}"
+            return False
+        except Exception as error:
+            meta.tracker_status[self.tracker]["status_message"] = f"data error - Unexpected error: {error}"
+            return False
 
-        Searches for duplicate torrents using IMDB ID or title.
+    async def _post_upload(self, json_data: dict[str, Any]) -> httpx.Response:
+        async with httpx.AsyncClient(timeout=40.0) as client:
+            return await client.post(url=self.upload_url, json=json_data, headers=self._upload_headers())
 
-        Args:
-            meta: Metadata dictionary containing torrent information.
+    async def _handle_upload_response(self, meta: Meta, response: httpx.Response) -> bool:
+        if response.status_code == 201:
+            return await self._handle_created_upload(meta, response)
+        message = self._error_status_message(response)
+        meta.tracker_status[self.tracker]["status_message"] = message
+        if response.status_code not in {400, 403, 409, 413, 422}:
+            logger.info(f"{self.tracker}: [bold red]Unexpected response: {message.removeprefix('Unexpected response: ')}")
+        return False
 
-        Returns:
-            List of dictionaries containing information about existing torrents (dupes).
-            Returns empty list if search fails.
-        """
-        dupes: list[dict[str, Any]] = []
-        headers: dict[str, Any] = {
-            "accept": "application/json",
-            "Authorization": self.config["TRACKERS"][self.tracker]["api_key"].strip(),
+    async def _handle_created_upload(self, meta: Meta, response: httpx.Response) -> bool:
+        payload = self._json_object(response)
+        if payload.get("error", False):
+            error_msg = payload.get("message", "Unknown error occurred")
+            meta.tracker_status[self.tracker]["status_message"] = f"Upload error: {error_msg}"
+            return False
+        torrent_id = self._torrent_id(payload)
+        if torrent_id is None:
+            meta.tracker_status[self.tracker]["status_message"] = f"Error parsing response: {response.text}: missing key torrent.id"
+            return False
+        meta.tracker_status[self.tracker]["status_message"] = payload
+        meta.tracker_status[self.tracker]["torrent_id"] = torrent_id
+        await self.common.create_torrent_ready_to_seed(
+            meta,
+            self.tracker,
+            self.source_flag,
+            self._tracker_config().get("announce_url"),
+            f"{self.base_url}/browse/t/{torrent_id}",
+        )
+        return True
+
+    @staticmethod
+    def _json_object(response: httpx.Response) -> dict[str, Any]:
+        payload = response.json()
+        return cast(dict[str, Any], payload) if isinstance(payload, dict) else {}
+
+    @staticmethod
+    def _torrent_id(payload: dict[str, Any]) -> Any | None:
+        torrent = payload.get("torrent")
+        return torrent.get("id") if isinstance(torrent, dict) else None
+
+    def _error_status_message(self, response: httpx.Response) -> str:
+        defaults = {
+            400: ("Bad request", "Bad request or torrent file"),
+            403: ("Permission denied", "You are not allowed to upload"),
+            409: ("Duplicate", "Torrent already exists"),
+            413: ("File size error", "Torrent file is too big or has too many files"),
+            422: ("Upload rejected", "Upload rejected based on rules"),
         }
-        params = {"includingDead": "1"}
+        if response.status_code in defaults:
+            prefix, fallback = defaults[response.status_code]
+            return f"{prefix}: {self._response_message(response, fallback)}"
+        return f"Unexpected response: {self._response_message(response, f'HTTP {response.status_code}: {response.text[:200]}')}"
 
-        imdb_id_value = meta.imdb_id or 0
-        if imdb_id_value != 0:
-            imdb_id_str = str(meta.imdb_id)
-            params["imdbId"] = imdb_id_str if imdb_id_str.startswith("tt") else "tt" + imdb_id_str
-        else:
-            params["search"] = meta.title.replace(":", "").replace("'", "").replace(",", "")
+    @classmethod
+    def _response_message(cls, response: httpx.Response, fallback: str) -> str:
+        try:
+            payload = cls._json_object(response)
+        except ValueError, json.JSONDecodeError:
+            return fallback
+        return str(payload.get("message", fallback))
 
-        def build_download_url(entry: dict[str, Any]) -> str:
-            torrent_id = entry.get("id")
-            torrent_url = str(entry.get("url", ""))
-            if not torrent_id:
-                match = re.search(r"/browse/t/(\d+)", torrent_url)
-                if match:
-                    torrent_id = match.group(1)
+    async def get_additional_checks(self, meta: Meta) -> bool:
+        if not await self.common.check_and_confirm_adult_media_upload(meta, self.tracker):
+            return False
+        latest_year, latest_date = self._latest_release_age(meta)
+        if meta.category == "MOVIE":
+            return self._movie_age_policy(meta, latest_year)
+        if meta.category == "TV":
+            return self._tv_age_policy(meta, latest_year, latest_date)
+        return self._year_policy(meta, latest_year)
 
-            if torrent_id:
-                return f"{self.base_url}/api/torrent/{torrent_id}/download"
+    @classmethod
+    def _latest_release_age(cls, meta: Meta) -> tuple[int | None, datetime.date | None]:
+        years = cls._candidate_years(meta)
+        latest_date = cls._latest_episode_date(meta, years)
+        if latest_date is not None:
+            years.append(latest_date.year)
+        fallback = cls._numeric_year(meta.year)
+        return (max(years) if years else fallback), latest_date
 
-            return torrent_url
+    @classmethod
+    def _candidate_years(cls, meta: Meta) -> list[int]:
+        years: list[int] = []
+        imdb = meta.imdb_info if isinstance(meta.imdb_info, dict) else {}
+        cls._append_numeric_year(years, imdb.get("end_year"))
+        cls._append_numeric_year(years, meta.tvdb_episode_year)
+        return years
 
+    @staticmethod
+    def _numeric_year(value: Any) -> int | None:
+        text = str(value or "")
+        return int(text) if text.isdigit() else None
+
+    @classmethod
+    def _append_numeric_year(cls, years: list[int], value: Any) -> None:
+        year = cls._numeric_year(value)
+        if year is not None:
+            years.append(year)
+
+    @classmethod
+    def _latest_episode_date(cls, meta: Meta, years: list[int]) -> datetime.date | None:
+        episodes = cls._episode_values(meta)
+        dates: list[datetime.date] = []
+        for episode in episodes:
+            cls._collect_episode_age(episode, dates, years)
+        return max(dates) if dates else None
+
+    @staticmethod
+    def _episode_values(meta: Meta) -> list[dict[str, Any]]:
+        data = meta.tvdb_episode_data if isinstance(meta.tvdb_episode_data, dict) else {}
+        episodes = data.get("episodes", [])
+        values = episodes if isinstance(episodes, list) else []
+        return [cast(dict[str, Any], item) for item in values if isinstance(item, dict)]
+
+    @classmethod
+    def _collect_episode_age(cls, episode: dict[str, Any], dates: list[datetime.date], years: list[int]) -> None:
+        aired = str(episode.get("aired", ""))
+        if not aired:
+            return
+        parsed = cls._parse_date(aired)
+        if parsed is not None:
+            dates.append(parsed)
+            return
+        cls._append_numeric_year(years, aired.split("-", 1)[0])
+
+    @staticmethod
+    def _parse_date(value: Any) -> datetime.date | None:
+        try:
+            return datetime.datetime.strptime(str(value), "%Y-%m-%d").replace(tzinfo=datetime.UTC).date()
+        except ValueError, TypeError:
+            return None
+
+    def _movie_age_policy(self, meta: Meta, latest_year: int | None) -> bool:
+        if meta.release_date:
+            release_date = self._parse_date(meta.release_date)
+            if release_date is not None:
+                return self._date_policy(meta, release_date)
+            fallback_year = self._numeric_year(str(meta.release_date).split("-", 1)[0])
+            return self._year_policy(meta, fallback_year)
+        return self._year_policy(meta, latest_year)
+
+    def _tv_age_policy(self, meta: Meta, latest_year: int | None, latest_date: datetime.date | None) -> bool:
+        if latest_date is not None:
+            return self._date_policy(meta, latest_date)
+        return self._year_policy(meta, latest_year)
+
+    def _date_policy(self, meta: Meta, release_date: datetime.date) -> bool:
+        if release_date <= self._ten_year_cutoff():
+            return True
+        self._log_age_rejection(meta)
+        return False
+
+    def _year_policy(self, meta: Meta, year: int | None) -> bool:
+        if year is None or datetime.datetime.now(datetime.UTC).date().year - year >= 10:
+            return True
+        self._log_age_rejection(meta)
+        return False
+
+    @staticmethod
+    def _ten_year_cutoff() -> datetime.date:
+        today = datetime.datetime.now(datetime.UTC).date()
+        return today - datetime.timedelta(days=365 * 10 + 3)
+
+    def _log_age_rejection(self, meta: Meta) -> None:
+        if not meta.unattended:
+            logger.info(f"{self.tracker}: [red]Content must be older than 10 Years to upload at RETROFLIX")
+
+    async def search_existing(self, meta: Meta) -> list[dict[str, Any]]:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.get(self.search_url, params=params, headers=headers)
+            response = await client.get(self.search_url, params=self._search_params(meta), headers=self._search_headers())
             response.raise_for_status()
-            data = cast(list[dict[str, Any]], response.json())
-            for each in data:
-                download_url = build_download_url(each)
-                result: dict[str, Any] = {
-                    "name": str(each.get("name", "")),
-                    "size": each.get("size", 0),
-                    "files": str(each.get("name", "")),
-                    "link": str(each.get("url", "")),
-                    "download": download_url,
-                }
-                dupes.append(result)
+        payload = response.json()
+        values = payload if isinstance(payload, list) else []
+        return [self._search_entry(item) for item in values if isinstance(item, dict)]
 
-        return dupes
+    def _search_headers(self) -> dict[str, str]:
+        return {
+            "accept": "application/json",
+            "Authorization": str(self._tracker_config().get("api_key", "")).strip(),
+        }
+
+    @staticmethod
+    def _search_params(meta: Meta) -> dict[str, str]:
+        params = {"includingDead": "1"}
+        imdb_id = str(meta.imdb_id or "")
+        if imdb_id and imdb_id != "0":
+            params["imdbId"] = imdb_id if imdb_id.startswith("tt") else f"tt{imdb_id}"
+        else:
+            params["search"] = str(meta.title).replace(":", "").replace("'", "").replace(",", "")
+        return params
+
+    @classmethod
+    def _search_entry(cls, entry: dict[str, Any]) -> dict[str, Any]:
+        name = str(entry.get("name", ""))
+        return {
+            "name": name,
+            "size": entry.get("size", 0),
+            "files": name,
+            "link": str(entry.get("url", "")),
+            "download": cls._download_url(entry),
+        }
+
+    @classmethod
+    def _download_url(cls, entry: dict[str, Any]) -> str:
+        torrent_id = entry.get("id") or cls._torrent_id_from_url(entry.get("url"))
+        if torrent_id:
+            return f"{cls.base_url}/api/torrent/{torrent_id}/download"
+        return str(entry.get("url", ""))
+
+    @staticmethod
+    def _torrent_id_from_url(value: Any) -> str:
+        match = re.search(r"/browse/t/(\d+)", str(value or ""))
+        return match.group(1) if match else ""
 
     async def api_test(self, meta: Meta) -> bool | None:
         """Test if the stored API key is valid.
@@ -365,80 +395,72 @@ class RetroFlix:
             return None
 
     async def generate_new_api(self, meta: Meta) -> bool | None:
-        """Generate a new API key for RETROFLIX tracker.
-
-        Authenticates using username/password and retrieves a new API token,
-        then updates both the in-memory config and the config file on disk.
-
-        Args:
-            meta: Metadata dictionary containing base directory path for config file location.
-
-        Returns:
-            True if new API key was successfully generated and saved, None otherwise.
-        """
-        headers = {
-            "accept": "application/json",
-        }
-
-        json_data = {
-            "username": self.config["TRACKERS"][self.tracker]["username"],
-            "password": self.config["TRACKERS"][self.tracker]["password"],
-        }
-
-        base_dir = meta.base_dir if meta.base_dir is not None else "."
-        config_path = f"{base_dir}/data/config.py"
-
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(f"{self.base_url}/api/login", headers=headers, json=json_data)
-
-            if response.status_code == 201:
-                token = response.json().get("token")
-                if token:
-                    try:
-                        # Update the in-memory config dictionary
-                        self.config["TRACKERS"][self.tracker]["api_key"] = token
-
-                        # Now we update the config file on disk using utf-8 encoding
-                        async with aiofiles.open(config_path, encoding="utf-8") as file:
-                            config_data = await file.read()
-
-                        # Find the RETROFLIX tracker and replace the api_key value (supports single/double quotes and multiline blocks)
-                        pattern = r"(['\"]RETROFLIX['\"]\s*:\s*{.*?['\"]api_key['\"]\s*:\s*)(['\"])[^'\"]*(['\"])"
-                        new_config_data, replacements = re.subn(
-                            pattern,
-                            rf"\1\2{token}\3",
-                            config_data,
-                            count=1,
-                            flags=re.DOTALL,
-                        )
-                        if replacements == 0:
-                            logger.info(f"{self.tracker}: [bold red]Failed to update RETROFLIX api_key in config file.")
-                            return None
-
-                        # Write the updated config back to the file
-                        async with aiofiles.open(config_path, "w", encoding="utf-8") as file:
-                            await file.write(new_config_data)
-
-                        logger.info(f"{self.tracker}: [bold green]API Key successfully saved to {config_path}")
-                        return True
-                    except Exception as e:
-                        logger.info(f"{self.tracker}: [bold red]Failed to update config file: {e!s}")
-                        return None
-                else:
-                    logger.info(f"{self.tracker}: [bold red]API response does not contain a token.")
-                    return None
-            else:
+            response = await self._login_response()
+            if response.status_code != 201:
                 logger.info(f"{self.tracker}: [bold red]Error getting new API key: {response.status_code}, please check username and password in the config.")
                 return None
-
-        except httpx.RequestError as e:
-            logger.info(f"{self.tracker}: [bold red]An error occurred while requesting the API: {e!s}")
+            token = self._response_token(response)
+            if not token:
+                logger.info(f"{self.tracker}: [bold red]API response does not contain a token.")
+                return None
+            return await self._save_new_api(meta, token)
+        except httpx.RequestError as error:
+            logger.info(f"{self.tracker}: [bold red]An error occurred while requesting the API: {error!s}")
+            return None
+        except Exception as error:
+            logger.info(f"{self.tracker}: [bold red]An unexpected error occurred: {error!s}")
             return None
 
-        except Exception as e:
-            logger.info(f"{self.tracker}: [bold red]An unexpected error occurred: {e!s}")
+    async def _login_response(self) -> httpx.Response:
+        payload = {
+            "username": self._tracker_config().get("username", ""),
+            "password": self._tracker_config().get("password", ""),
+        }
+        async with httpx.AsyncClient() as client:
+            return await client.post(f"{self.base_url}/api/login", headers={"accept": "application/json"}, json=payload)
+
+    @classmethod
+    def _response_token(cls, response: httpx.Response) -> str:
+        payload = cls._json_object(response)
+        return str(payload.get("token") or "")
+
+    async def _save_new_api(self, meta: Meta, token: str) -> bool | None:
+        self._tracker_config()["api_key"] = token
+        path = self._config_path(meta)
+        try:
+            config_data = await self._read_config(path)
+            updated = self._updated_config(config_data, token)
+            if updated is None:
+                logger.info(f"{self.tracker}: [bold red]Failed to update RETROFLIX api_key in config file.")
+                return None
+            await self._write_config(path, updated)
+            logger.info(f"{self.tracker}: [bold green]API Key successfully saved to {path}")
+            return True
+        except (OSError, ValueError) as error:
+            logger.info(f"{self.tracker}: [bold red]Failed to update config file: {error!s}")
             return None
+
+    @staticmethod
+    def _config_path(meta: Meta) -> str:
+        base_dir = meta.base_dir if meta.base_dir is not None else "."
+        return f"{base_dir}/data/config.py"
+
+    @staticmethod
+    async def _read_config(path: str) -> str:
+        async with aiofiles.open(path, encoding="utf-8") as handle:
+            return await handle.read()
+
+    @staticmethod
+    def _updated_config(config_data: str, token: str) -> str | None:
+        pattern = r"""(['"]RETROFLIX['"]\s*:\s*{.*?['"]api_key['"]\s*:\s*)(['"])[^'"]*(['"])"""
+        updated, replacements = re.subn(pattern, rf"\1\2{token}\3", config_data, count=1, flags=re.DOTALL)
+        return updated if replacements else None
+
+    @staticmethod
+    async def _write_config(path: str, content: str) -> None:
+        async with aiofiles.open(path, "w", encoding="utf-8") as handle:
+            await handle.write(content)
 
     async def get_name(self, meta: Meta) -> str:
         return meta.name
