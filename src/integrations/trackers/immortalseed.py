@@ -1,6 +1,5 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
 import platform
-from pathlib import Path
 from typing import Any
 
 import aiofiles
@@ -8,6 +7,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from src.domain_models.release import Meta
+from src.integrations.filesystem.temp_paths import release_temp_dir
 from src.integrations.trackers.cookie_auth import CookieAuthUploader, CookieValidator
 from src.integrations.trackers.description_builder import DescriptionBuilder
 
@@ -37,12 +37,7 @@ class ImmortalSeed:
         self.session = httpx.AsyncClient(headers={"User-Agent": f"Upload-Assistant/2.3 ({platform.system()} {platform.release()})"}, timeout=30)
 
     async def validate_credentials(self, meta: Meta) -> bool:
-        cookies = await self.cookie_validator.load_session_cookies(meta, self.tracker)
-        self.session.cookies.clear()
-        if cookies is not None:
-            self.session.cookies.update(cookies)
-            return True
-        return False
+        return await self._load_cookies(meta)
 
     async def generate_description(self, meta: Meta) -> str:
         builder = DescriptionBuilder(self.tracker, self.config)
@@ -54,200 +49,201 @@ class ImmortalSeed:
         )
 
     async def search_existing(self, meta: Meta) -> list[dict[str, str | None]]:
+        await self._load_cookies(meta)
+        search = self._search_definition(meta)
+        if search is None:
+            return []
+        response = await self.session.get(self._search_url(*search))
+        if await self._search_requires_login(meta, response):
+            return []
+        response.raise_for_status()
+        return self._search_entries(response.text)
+
+    async def _load_cookies(self, meta: Meta) -> bool:
         cookies = await self.cookie_validator.load_session_cookies(meta, self.tracker)
         self.session.cookies.clear()
-        if cookies is not None:
-            self.session.cookies.update(cookies)
-        dupes: list[dict[str, str | None]] = []
+        if cookies is None:
+            return False
+        self.session.cookies.update(cookies)
+        return True
 
-        search_type = ""
-        search_query = ""
+    @staticmethod
+    def _search_definition(meta: Meta) -> tuple[str, str] | None:
         category = str(meta.category)
-
         if category == "MOVIE":
-            search_type = "t_genre"
-            search_query = str(meta.imdb_tt)
+            return "t_genre", str(meta.imdb_tt)
+        if category == "TV":
+            return "t_name", f"{meta.title} {meta.season}"
+        if category in {"BOOK", "GAME"}:
+            return "t_name", str(meta.title)
+        if category == "MUSIC":
+            return "t_name", f"{meta.artist} {meta.title}"
+        return None
 
-        elif category == "TV":
-            search_type = "t_name"
-            search_query = f"{meta.title} {meta.season}"
-        elif category in ("BOOK", "GAME"):
-            search_type = "t_name"
-            search_query = meta.title
-        elif category == "MUSIC":
-            search_type = "t_name"
-            search_query = f"{meta.artist} {meta.title}"
-        else:
-            return dupes
+    @classmethod
+    def _search_url(cls, search_type: str, search_query: str) -> str:
+        return f"{cls.base_url}/browse.php?do=search&keywords={search_query}&search_type={search_type}"
 
-        search_url = f"{self.base_url}/browse.php?do=search&keywords={search_query}&search_type={search_type}"
+    async def _search_requires_login(self, meta: Meta, response: httpx.Response) -> bool:
+        if not self._is_login_response(response):
+            return False
+        await self.cookie_validator.handle_validation_failure(meta, self.tracker, response.text)
+        meta.skipping = self.tracker
+        return True
 
-        response = await self.session.get(search_url)
-        if "Forget your password" in response.text or "login.php" in str(response.url) or "login.php" in response.text:
-            await self.cookie_validator.handle_validation_failure(meta, self.tracker, response.text)
-            meta.skipping = self.tracker
-            return dupes
-        response.raise_for_status()
-        soup = BeautifulSoup(response.text, "html.parser")
+    @staticmethod
+    def _is_login_response(response: httpx.Response) -> bool:
+        text = response.text
+        return "Forget your password" in text or "login.php" in str(response.url) or "login.php" in text
 
+    @classmethod
+    def _search_entries(cls, html: str) -> list[dict[str, str | None]]:
+        soup = BeautifulSoup(html, "html.parser")
         torrent_table = soup.find("table", id="sortabletable")
-
         if not torrent_table:
-            return dupes
+            return []
+        return [entry for row in torrent_table.select("tbody > tr")[1:] if (entry := cls._search_entry(row)) is not None]
 
-        torrent_rows = torrent_table.select("tbody > tr")[1:]
-
-        for row in torrent_rows:
-            name_tag = row.select_one('a[href*="details.php?id="]')
-            if not name_tag:
-                continue
-
-            name = name_tag.get_text(strip=True)
-            href_value = name_tag.get("href")
-            torrent_link = href_value if isinstance(href_value, str) else ""
-
-            size_tag = row.select_one("td:nth-of-type(5)")
-            size = size_tag.get_text(strip=True) if size_tag else None
-
-            duplicate_entry: dict[str, str | None] = {
-                "name": name,
-                "size": size,
-                "link": torrent_link,
-            }
-            dupes.append(duplicate_entry)
-
-        return dupes
+    @staticmethod
+    def _search_entry(row: Any) -> dict[str, str | None] | None:
+        name_tag = row.select_one('a[href*="details.php?id="]')
+        if not name_tag:
+            return None
+        href_value = name_tag.get("href")
+        size_tag = row.select_one("td:nth-of-type(5)")
+        return {
+            "name": name_tag.get_text(strip=True),
+            "size": size_tag.get_text(strip=True) if size_tag else None,
+            "link": href_value if isinstance(href_value, str) else "",
+        }
 
     def get_category_id(self, meta: Meta) -> int:
-        resolution = meta.resolution
-        category = str(meta.category)
-        genres = [g.lower() for g in meta.genres]
-        keywords = [k.lower() for k in meta.keywords]
-        is_anime = meta.anime
-        non_eng = False
-        sd = bool(meta.sd)
-        if str(meta.original_language) != "en":
-            non_eng = True
+        resolver = {
+            "MOVIE": self._movie_category_id,
+            "TV": self._tv_category_id,
+            "BOOK": self._book_category_id,
+            "MUSIC": self._music_category_id,
+            "GAME": self._game_category_id,
+        }.get(str(meta.category))
+        return 0 if resolver is None else resolver(meta)
 
-        anime = 32
-        childrens_cartoons = 31
-        documentary_hd = 54
-        documentary_sd = 53
+    @classmethod
+    def _movie_category_id(cls, meta: Meta) -> int:
+        special = cls._movie_special_category(meta)
+        if special is not None:
+            return special
+        return cls._movie_resolution_category(meta)
 
-        movies_4k = 59
-        movies_4k_non_english = 60
+    @classmethod
+    def _movie_special_category(cls, meta: Meta) -> int | None:
+        if cls._is_documentary(meta):
+            return 53 if bool(meta.sd) else 54
+        return 32 if meta.anime else None
 
-        movies_hd = 16
-        movies_hd_non_english = 18
+    @classmethod
+    def _movie_resolution_category(cls, meta: Meta) -> int:
+        tier = cls._movie_resolution_tier(meta)
+        return {
+            ("uhd", False): 59,
+            ("uhd", True): 60,
+            ("hd", False): 16,
+            ("hd", True): 18,
+            ("sd", False): 14,
+            ("sd", True): 34,
+        }[(tier, cls._is_non_english(meta))]
 
-        movies_low_def = 17
-        movies_low_def_non_english = 34
+    @staticmethod
+    def _movie_resolution_tier(meta: Meta) -> str:
+        if meta.resolution == "2160p":
+            return "uhd"
+        return "sd" if meta.sd else "hd"
 
-        movies_sd = 14
-        movies_sd_non_english = 33
+    @classmethod
+    def _tv_category_id(cls, meta: Meta) -> int:
+        special = cls._tv_special_category(meta)
+        if special is not None:
+            return special
+        return cls._tv_resolution_category(meta)
 
-        tv_480p = 47
-        tv_4k = 64
-        tv_hd = 8
-        tv_sd_x264 = 48
-        tv_sd_xvid = 9
+    @classmethod
+    def _tv_special_category(cls, meta: Meta) -> int | None:
+        documentary = cls._documentary_category(meta)
+        if documentary is not None:
+            return documentary
+        if meta.anime:
+            return 32
+        if cls._is_children_cartoon(meta):
+            return 31
+        return cls._tv_pack_category_id(meta) if meta.tv_pack else None
 
-        tv_season_packs_4k = 63
-        tv_season_packs_hd = 4
-        tv_season_packs_sd = 6
+    @classmethod
+    def _documentary_category(cls, meta: Meta) -> int | None:
+        if not cls._is_documentary(meta):
+            return None
+        return 53 if bool(meta.sd) else 54
 
-        audiobooks = 35
-        comics = 41
-        ebooks = 22
-        magazines = 46
+    @staticmethod
+    def _tv_resolution_category(meta: Meta) -> int:
+        if meta.resolution == "2160p":
+            return 64
+        if meta.resolution in {"1080p", "1080i", "720p"}:
+            return 8
+        if meta.sd:
+            return 9 if "xvid" in str(meta.video_encode).casefold() else 48
+        return 47
 
-        music_flac = 37
-        music_mp3 = 36
-        music_other = 39
+    @classmethod
+    def _book_category_id(cls, meta: Meta) -> int:
+        if meta.audiobook:
+            return 35
+        if meta.comic or meta.manga:
+            return 41
+        if meta.magazine:
+            return 46
+        return 22
 
-        game_nin = 61
-        game_pc = 26
-        game_playstation = 28
-        game_xbox = 29
+    @staticmethod
+    def _music_category_id(meta: Meta) -> int:
+        return {"FLAC": 37, "MP3": 36}.get(str(meta.format).upper(), 39)
 
-        if category == "MOVIE":
-            if "documentary" in genres or "documentary" in keywords:
-                if sd:
-                    return documentary_sd
-                return documentary_hd
-            if is_anime:
-                return anime
-            if resolution == "2160p":
-                if non_eng:
-                    return movies_4k_non_english
-                return movies_4k
-            if not sd:
-                if non_eng:
-                    return movies_hd_non_english
-                return movies_hd
-            if sd:
-                if non_eng:
-                    return movies_sd_non_english
-                return movies_sd
-            if non_eng:
-                return movies_low_def_non_english
-            return movies_low_def
+    @classmethod
+    def _game_category_id(cls, meta: Meta) -> int:
+        platform = str(meta.platform).upper()
+        if platform in {"NDS", "3DS", "SWITCH", "WII", "WIIU"}:
+            return 61
+        if platform in {"PS1", "PS2", "PS3", "PS4", "PS5", "PSP", "PSVITA"}:
+            return 28
+        if platform in {"XBOX", "X360", "XONE", "XSX"}:
+            return 29
+        return 26
 
-        if category == "TV":
-            if "documentary" in genres or "documentary" in keywords:
-                if sd:
-                    return documentary_sd
-                return documentary_hd
-            if is_anime:
-                return anime
-            if "children" in genres or "cartoons" in genres or "children" in keywords or "cartoons" in keywords or "cartoon" in keywords:
-                return childrens_cartoons
-            if meta.tv_pack:
-                if resolution == "2160p":
-                    return tv_season_packs_4k
-                if sd:
-                    return tv_season_packs_sd
-                return tv_season_packs_hd
-            if resolution == "2160p":
-                return tv_4k
-            if resolution in ["1080p", "1080i", "720p"]:
-                return tv_hd
-            if sd:
-                if "xvid" in meta.video_encode.lower():
-                    return tv_sd_xvid
-                return tv_sd_x264
-            return tv_480p
+    @staticmethod
+    def _tv_pack_category_id(meta: Meta) -> int:
+        if meta.resolution == "2160p":
+            return 63
+        return 6 if meta.sd else 4
 
-        if category == "BOOK":
-            if meta.audiobook:
-                return audiobooks
-            if meta.comic or meta.manga:
-                return comics
-            if meta.magazine:
-                return magazines
-            return ebooks
+    @classmethod
+    def _is_documentary(cls, meta: Meta) -> bool:
+        return "documentary" in cls._metadata_terms(meta)
 
-        if category == "MUSIC":
-            if meta.format == "FLAC":
-                return music_flac
-            if meta.format == "MP3":
-                return music_mp3
-            return music_other
+    @classmethod
+    def _is_children_cartoon(cls, meta: Meta) -> bool:
+        terms = cls._metadata_terms(meta)
+        return bool(terms & {"children", "cartoons", "cartoon"})
 
-        if category == "GAME":
-            platform = str(meta.platform).upper()
-            if platform in {"NDS", "3DS", "SWITCH", "WII", "WIIU"}:
-                return game_nin
-            if platform in {"PS1", "PS2", "PS3", "PS4", "PS5", "PSP", "PSVITA"}:
-                return game_playstation
-            if platform in {"XBOX", "X360", "XONE", "XSX"}:
-                return game_xbox
-            return game_pc
+    @staticmethod
+    def _metadata_terms(meta: Meta) -> set[str]:
+        genres = [str(value).casefold() for value in meta.genres] if isinstance(meta.genres, list) else []
+        keywords = [str(value).casefold() for value in meta.keywords] if isinstance(meta.keywords, list) else []
+        return set(genres + keywords)
 
-        return 0
+    @staticmethod
+    def _is_non_english(meta: Meta) -> bool:
+        return str(meta.original_language) != "en"
 
     async def get_nfo(self, meta: Meta) -> dict[str, tuple[str, bytes, str]]:
-        nfo_dir = Path(meta.base_dir) / "tmp" / meta.uuid
+        nfo_dir = release_temp_dir(meta.base_dir, meta.uuid)
         nfo_files = list(nfo_dir.glob("*.nfo"))
 
         if nfo_files:
@@ -267,51 +263,59 @@ class ImmortalSeed:
         return meta.basename_no_ext
 
     async def get_cover(self, meta: Meta) -> str:
-        covers = meta.hosted_artwork
-        if isinstance(covers, list):
-            for entry in covers:
-                if not isinstance(entry, dict):
-                    continue
-                raw_url = entry.get("raw_url")
-                if isinstance(raw_url, str) and raw_url.startswith("https://"):
-                    return raw_url
+        hosted = self._hosted_cover(meta.hosted_artwork)
+        if hosted:
+            return hosted
+        return self._https_url(meta.artwork_url)
 
-        artwork_url = meta.artwork_url
-        if isinstance(artwork_url, str) and artwork_url.startswith("https://"):
-            return artwork_url
+    @classmethod
+    def _hosted_cover(cls, covers: Any) -> str:
+        if not isinstance(covers, list):
+            return ""
+        return next((url for entry in covers if (url := cls._cover_entry_url(entry))), "")
 
-        return ""
+    @classmethod
+    def _cover_entry_url(cls, entry: Any) -> str:
+        if not isinstance(entry, dict):
+            return ""
+        return cls._https_url(entry.get("raw_url"))
+
+    @staticmethod
+    def _https_url(value: Any) -> str:
+        return value if isinstance(value, str) and value.startswith("https://") else ""
 
     async def get_data(self, meta: Meta) -> dict[str, Any]:
-        message = f"{meta.overview}\n\n[youtube]{meta.youtube}[/youtube]"
-        cover = await self.get_cover(meta)
-        if meta.category in ("BOOK", "MUSIC"):
-            message = meta.overview
-
+        message = self._description_message(meta)
         data: dict[str, Any] = {
             "UseNFOasDescr": "no",
             "message": message,
             "category": self.get_category_id(meta),
             "subject": await self.get_name(meta),
             "nothingtopost": "1",
-            "t_image_url": cover,
+            "t_image_url": await self.get_cover(meta),
             "submit": "Upload Torrent",
+            "anonymous": "yes" if self._is_anonymous(meta) else "no",
         }
-
         if meta.category == "MOVIE":
-            data["t_link"] = str(meta.imdb_info.get("imdb_url", ""))
-
-        # Anon
-        anon = not (int(meta.anon or 0) == 0 and not self.config["TRACKERS"][self.tracker].get("anon", False))
-        data.update({"anonymous": "yes" if anon else "no"})
-
+            data["t_link"] = self._imdb_url(meta)
         return data
 
+    @staticmethod
+    def _description_message(meta: Meta) -> str:
+        if meta.category in {"BOOK", "MUSIC"}:
+            return str(meta.overview)
+        return f"{meta.overview}\n\n[youtube]{meta.youtube}[/youtube]"
+
+    def _is_anonymous(self, meta: Meta) -> bool:
+        configured = bool(self.config["TRACKERS"][self.tracker].get("anon", False))
+        return int(meta.anon or 0) != 0 or configured
+
+    @staticmethod
+    def _imdb_url(meta: Meta) -> str:
+        return str(meta.imdb_info.get("imdb_url", "")) if isinstance(meta.imdb_info, dict) else ""
+
     async def upload(self, meta: Meta) -> bool:
-        cookies = await self.cookie_validator.load_session_cookies(meta, self.tracker)
-        self.session.cookies.clear()
-        if cookies is not None:
-            self.session.cookies.update(cookies)
+        await self._load_cookies(meta)
         data = await self.get_data(meta)
         files = await self.get_nfo(meta)
 
