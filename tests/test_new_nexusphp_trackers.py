@@ -1,9 +1,11 @@
 import asyncio
 
 from src.domain_models.release import Meta
+from src.integrations.trackers.NEXUSPHP.lajidui import Lajidui
 from src.integrations.trackers.NEXUSPHP.lemonhd import LemonHD
 from src.integrations.trackers.NEXUSPHP.longpt import LongPT
 from src.integrations.trackers.NEXUSPHP.oneptba import OnePTBA
+from src.integrations.trackers.NEXUSPHP.ptcafe import PTCafe
 from src.integrations.trackers.NEXUSPHP.ptfans import PTFans
 from src.integrations.trackers.NEXUSPHP.ptgtk import PTGTK
 from src.integrations.trackers.NEXUSPHP.ptzone import PTZone
@@ -141,3 +143,45 @@ def test_nexusphp_remaining_small_mapping_branches():
     assert longpt.get_douban_url(Meta()) == ""
 
     assert OnePTBA(dummy_config).get_douban_url(Meta()) == ""
+
+
+def test_lajidui_documentary_show_region_and_checkbox_branches():
+    tracker = Lajidui(dummy_config)
+    assert tracker.get_category(Meta(category="TV", genres=["Documentary"])) == 404
+    assert tracker.get_category(Meta(category="TV", genres=["game show"])) == 403
+    for country, expected in (("US", 1), ("CN", 7), ("TW", 2), ("HK", 8), ("JP", 10), ("KR", 11), ("IN", 3), ("TH", 6)):
+        assert tracker.get_region(Meta(origin_country=[country])) == expected
+    checkboxes = tracker.get_checkboxes(Meta(audio_languages=["Chinese", "English"], subtitle_languages=["Chinese", "English"]))
+    assert "15" in checkboxes
+    assert "16" in checkboxes
+
+
+def test_ptcafe_documentary_show_region_type_and_url_branches():
+    tracker = PTCafe(dummy_config)
+    assert tracker.get_category(Meta(category="TV", genres=["Documentary"])) == 404
+    assert tracker.get_category(Meta(category="TV", genres=["game show"])) == 403
+    for country, expected in (("US", 3), ("CN", 1), ("TW", 2), ("HK", 2), ("JP", 4), ("KR", 5), ("IN", 6), ("TH", 7)):
+        assert tracker.get_region(Meta(origin_country=[country])) == expected
+    assert tracker.get_type(Meta(is_disc="BDMV", resolution="2160p", diy_disc=True, type="DISC")) == 2
+    assert tracker.get_type(Meta(is_disc="", resolution="2160p", diy_disc=False, type="REMUX")) == 3
+    assert tracker.get_douban_url(Meta()) == ""
+    assert tracker.get_imdb_url(Meta()) == ""
+
+
+def test_ptcafe_codec_mapping_is_deterministic():
+    tracker = PTCafe(dummy_config)
+    cases = (
+        ("HEVC", 1),
+        ("x265", 1),
+        ("AVC", 2),
+        ("x264", 2),
+        ("VC-1", 5),
+        ("MPEG-2", 6),
+        ("MPEG-4", 7),
+        ("XviD", 8),
+        ("VP9", 9),
+        ("DivX", 10),
+        ("Unknown", 11),
+    )
+    for codec, expected in cases:
+        assert tracker.get_codec(Meta(video_codec=codec)) == expected

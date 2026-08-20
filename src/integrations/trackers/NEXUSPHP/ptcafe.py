@@ -243,42 +243,18 @@ class PTCafe(NEXUSPHP):
         return encode
 
     def get_codec(self, meta: Meta) -> int:
-        divx = 10
-        h264 = 2
-        h265 = 1
-        mpeg2 = 6
-        mpeg4 = 7
-        other = 11
-        vc1 = 5
-        vp9 = 9
-        x264 = 4
-        x265 = 3
-        xvid = 8
-
         codec = meta.video_codec.lower()
-
-        if "h265" in codec or "x265" in codec or "hevc" in codec:
-            return h265
-        if "h264" in codec or "x264" in codec or "avc" in codec:
-            return h264
-        if "vc1" in codec or "vc-1" in codec:
-            return vc1
-        if "mpeg2" in codec or "mpeg-2" in codec:
-            return mpeg2
-        if "mpeg4" in codec or "mpeg-4" in codec:
-            return mpeg4
-        if "xvid" in codec:
-            return xvid
-        if "vp9" in codec:
-            return vp9
-        if "divx" in codec:
-            return divx
-        if "x265" in codec:
-            return x265
-        if "x264" in codec:
-            return x264
-
-        return other
+        mappings = (
+            (("h265", "x265", "hevc"), 1),
+            (("h264", "x264", "avc"), 2),
+            (("vc1", "vc-1"), 5),
+            (("mpeg2", "mpeg-2"), 6),
+            (("mpeg4", "mpeg-4"), 7),
+            (("xvid",), 8),
+            (("vp9",), 9),
+            (("divx",), 10),
+        )
+        return next((value for tokens, value in mappings if any(token in codec for token in tokens)), 11)
 
     def get_resolution(self, meta: Meta) -> int:
         resolution = meta.resolution.lower()
