@@ -9,6 +9,7 @@ import aiofiles
 import httpx
 
 from src.domain_models.release import Meta
+from src.integrations.filesystem.temp_paths import release_temp_dir
 from src.integrations.image_hosts.rehosting import ImageHostPolicy, RehostImagesManager
 from src.integrations.observability.runtime_support import logger
 from src.integrations.security.redaction import Redaction
@@ -80,193 +81,226 @@ class DigitalCore:
         )
 
     def get_category_id(self, meta: Meta) -> int | None:
-        resolution = meta.resolution
-        category = meta.category
-        is_disc = meta.is_disc
-        tv_pack = meta.tv_pack
-        sd = meta.sd
+        disc_category = self._disc_category_id(meta)
+        if disc_category is not None:
+            return disc_category
+        special_category = self._special_category_id(meta)
+        if special_category is not None:
+            return special_category
+        return self._video_category_id(meta)
 
-        if is_disc == "BDMV":
-            if resolution == "1080p" and category == "MOVIE":
-                return 3
-            if resolution == "2160p" and category == "MOVIE":
-                return 38
-            if category == "TV":
-                return 14
-        if is_disc == "DVD":
-            if category == "MOVIE":
-                return 1
-            if category == "TV":
-                return 11
-        if category == "TV" and tv_pack == 1:
-            return 12
+    @staticmethod
+    def _disc_category_id(meta: Meta) -> int | None:
+        if meta.is_disc == "BDMV":
+            return DigitalCore._bdmv_category_id(meta.category, meta.resolution)
+        if meta.is_disc == "DVD":
+            return {"MOVIE": 1, "TV": 11}.get(str(meta.category))
+        return None
 
-        if category == "BOOK":
-            if meta.audiobook:
-                return 44
-            return 28
+    @staticmethod
+    def _bdmv_category_id(category: str | None, resolution: str | None) -> int | None:
+        if category == "TV":
+            return 14
+        if category != "MOVIE":
+            return None
+        return {"1080p": 3, "2160p": 38}.get(str(resolution))
 
-        if category == "GAME":
-            platform = meta.platform
-            if platform == "PC":
-                return 25
-            if platform == "MAC":
-                return 27
-            return 26  # Console
+    @classmethod
+    def _special_category_id(cls, meta: Meta) -> int | None:
+        tv_pack = cls._tv_pack_category_id(meta)
+        if tv_pack is not None:
+            return tv_pack
+        resolver = {
+            "BOOK": cls._book_category_id,
+            "GAME": cls._game_meta_category_id,
+            "MUSIC": cls._music_meta_category_id,
+        }.get(str(meta.category))
+        return None if resolver is None else resolver(meta)
 
-        if category == "MUSIC":
-            if meta.format.upper() == "FLAC":
-                return 23
-            if meta.format.upper() == "MP3":
-                return 22
+    @staticmethod
+    def _book_category_id(meta: Meta) -> int:
+        return 44 if meta.audiobook else 28
 
-        if sd == 1:
-            if category == "MOVIE":
-                return 2
-            if category == "TV":
-                return 10
+    @classmethod
+    def _game_meta_category_id(cls, meta: Meta) -> int:
+        return cls._game_category_id(meta.platform)
+
+    @classmethod
+    def _music_meta_category_id(cls, meta: Meta) -> int | None:
+        return cls._music_category_id(meta.format)
+
+    @staticmethod
+    def _tv_pack_category_id(meta: Meta) -> int | None:
+        return 12 if meta.category == "TV" and meta.tv_pack == 1 else None
+
+    @staticmethod
+    def _game_category_id(platform: str | None) -> int:
+        return {"PC": 25, "MAC": 27}.get(str(platform), 26)
+
+    @staticmethod
+    def _music_category_id(format_value: str | None) -> int | None:
+        return {"FLAC": 23, "MP3": 22}.get(str(format_value or "").upper())
+
+    @staticmethod
+    def _video_category_id(meta: Meta) -> int | None:
+        category = str(meta.category)
+        if meta.sd == 1:
+            return {"MOVIE": 2, "TV": 10}.get(category)
         category_map = {
             "MOVIE": {"2160p": 4, "1080p": 6, "1080i": 6, "720p": 5},
             "TV": {"2160p": 13, "1080p": 9, "1080i": 9, "720p": 8},
         }
-        if category in category_map:
-            return category_map[category].get(resolution)
-        return None
+        resolution_map = category_map.get(category)
+        return None if resolution_map is None else resolution_map.get(str(meta.resolution))
 
     async def search_existing(self, meta: Meta) -> list[dict[str, Any]]:
-        imdb_id = meta.imdb_info.get("imdbID")
-        category_id = self.get_category_id(meta)
-
-        search_params = {"search": meta.title}
-        if imdb_id:
-            search_params = {"searchText": imdb_id}
-
-        search_results: list[Any] = []
-        dupes: list[dict[str, Any]] = []
-        response = await self.session.get(self.api_base_url, params=search_params, headers=self.session.headers, timeout=15)
+        response = await self.session.get(
+            self.api_base_url,
+            params=self._search_params(meta),
+            headers=self.session.headers,
+            timeout=15,
+        )
         response.raise_for_status()
+        return self._matching_search_results(response, self.get_category_id(meta))
 
-        if response.text and response.text != "[]":
-            json_data = response.json()
-            if isinstance(json_data, list):
-                search_results = json_data
-            for each in search_results:
-                if not isinstance(each, dict):
-                    continue
-                each_dict = cast(dict[str, Any], each)
-                if each_dict.get("category") == category_id:
-                    name = each_dict.get("name")
-                    torrent_id = each_dict.get("id")
-                    size = each_dict.get("size")
-                    torrent_link = f"{self.torrent_url}{torrent_id}/" if torrent_id else None
-                    numfiles = each_dict.get("numfiles", "")
-                    dupe_entry: dict[str, Any] = {
-                        "id": torrent_id,
-                        "download": f"{self.api_base_url}/download/{torrent_id}",
-                        "file_count": numfiles,
-                        "name": name,
-                        "size": size,
-                        "link": torrent_link,
-                    }
-                    dupes.append(dupe_entry)
+    @staticmethod
+    def _search_params(meta: Meta) -> dict[str, str]:
+        imdb_id = meta.imdb_info.get("imdbID") if isinstance(meta.imdb_info, dict) else None
+        return {"searchText": str(imdb_id)} if imdb_id else {"search": str(meta.title)}
 
-            return dupes
+    @classmethod
+    def _matching_search_results(cls, response: httpx.Response, category_id: int | None) -> list[dict[str, Any]]:
+        payload = cls._search_payload(response)
+        return [entry for item in payload if (entry := cls._dupe_entry(item, category_id)) is not None]
 
-        return []
+    @staticmethod
+    def _search_payload(response: httpx.Response) -> list[Any]:
+        if not response.text or response.text == "[]":
+            return []
+        payload = response.json()
+        return payload if isinstance(payload, list) else []
+
+    @classmethod
+    def _dupe_entry(cls, item: Any, category_id: int | None) -> dict[str, Any] | None:
+        if not isinstance(item, dict):
+            return None
+        entry = cast(dict[str, Any], item)
+        if entry.get("category") != category_id:
+            return None
+        torrent_id = entry.get("id")
+        return {
+            "id": torrent_id,
+            "download": f"{cls.api_base_url}/download/{torrent_id}",
+            "file_count": entry.get("numfiles", ""),
+            "name": entry.get("name"),
+            "size": entry.get("size"),
+            "link": f"{cls.torrent_url}{torrent_id}/" if torrent_id else None,
+        }
 
     async def get_name(self, meta: Meta) -> str:
-        """
-        Edits the name according to DIGITALCORE's naming conventions.
-        Scene uploads should use the scene name.
-        Scene uploads should also have "[UNRAR]" in the name, as the UA only uploads unzipped files, which are considered "altered".
-        https://digitalcore.club/forum/17/topic/1051/uploading-for-beginners
-
-        Mod mentioned that adding [UNRAR] is unnecessary, but according to my tests, their system does not accept it if there is already a release with the same title.
-        Mod also mentioned that metadata-based titles are acceptable.
-        https://digitalcore.club/forum/6/topic/2810/clarification-needed-p2p-non-scene-torrent-naming-conventions
-        """
-        tracker_name = meta.basename_no_ext
         scene_name = meta.scene_name or ""
+        if self._use_metadata_name():
+            return self._metadata_release_name(meta, scene_name)
+        return f"{scene_name} [NORAR]" if scene_name else meta.basename_no_ext
 
-        use_metadata_name = self.config["TRACKERS"][self.tracker].get("use_metadata_name", False)
-        if use_metadata_name:
-            clean_name = meta.clean_name or ""
-            tracker_name = scene_name if scene_name else clean_name
-            # T1)  Acceptable characters are as follows:
-            #         ABCDEFGHIJKLMNOPQRSTUVWXYZ
-            #         abcdefghijklmnopqrstuvwxyz
-            #         0123456789 . -
-            # https://scenerules.org/html/2014_BLURAY.html
-            tracker_name = tracker_name.replace("DD+", "DDP").replace("DTS:", "DTS-").replace("HDR10+", "HDR10P")
-            tracker_name = unicodedata.normalize("NFD", tracker_name)
-            tracker_name = "".join(c for c in tracker_name if c.isascii() and (c.isalnum() or c in (" ", ".", "-")))
-            tracker_name = tracker_name.replace("!", "")
-            if scene_name:
-                tracker_name += " [NORAR]"
+    def _use_metadata_name(self) -> bool:
+        return bool(self.config["TRACKERS"][self.tracker].get("use_metadata_name", False))
 
-        else:
-            tracker_name = f"{scene_name} [NORAR]" if scene_name else meta.basename_no_ext
+    @classmethod
+    def _metadata_release_name(cls, meta: Meta, scene_name: str) -> str:
+        base_name = scene_name if scene_name else (meta.clean_name or "")
+        sanitized = cls._sanitize_release_name(base_name)
+        return f"{sanitized} [NORAR]" if scene_name else sanitized
 
-        return tracker_name
+    @staticmethod
+    def _sanitize_release_name(name: str) -> str:
+        normalized = name.replace("DD+", "DDP").replace("DTS:", "DTS-").replace("HDR10+", "HDR10P")
+        normalized = unicodedata.normalize("NFD", normalized)
+        normalized = "".join(char for char in normalized if char.isascii() and (char.isalnum() or char in (" ", ".", "-")))
+        return normalized.replace("!", "")
 
     async def get_additional_checks(self, meta: Meta) -> bool:
-        category = str(meta.category).upper()
+        if not self._codec_policy_passes(meta):
+            return False
+        if not self._source_policy_passes(meta):
+            return False
+        if str(meta.category).upper() not in {"MOVIE", "TV"}:
+            return True
+        if not self._file_policy_passes(meta):
+            return False
+        return self._screenshot_policy_passes(meta)
+
+    def _codec_policy_passes(self, meta: Meta) -> bool:
+        values = (str(meta.video_codec or "").lower(), str(meta.video_encode or "").lower())
+        if not self._contains_forbidden_codec(values):
+            return True
+        logger.info(f"{self.tracker}: DivX/XviD uploads are not allowed.")
+        return False
+
+    @staticmethod
+    def _contains_forbidden_codec(values: tuple[str, str]) -> bool:
+        return any(forbidden in value for forbidden in ("divx", "xvid") for value in values)
+
+    def _source_policy_passes(self, meta: Meta) -> bool:
         source = str(meta.source or "").upper()
         media_type = str(meta.type or "").upper()
-        video_codec = str(meta.video_codec or "").lower()
-        video_encode = str(meta.video_encode or "").lower()
+        if not self._has_forbidden_source(meta, source, media_type):
+            return True
+        logger.info(f"{self.tracker}: CAM/TS uploads are not allowed.")
+        return False
 
-        for forbidden in ("divx", "xvid"):
-            if forbidden in video_codec or forbidden in video_encode:
-                logger.info(f"{self.tracker}: DivX/XviD uploads are not allowed.")
+    @classmethod
+    def _has_forbidden_source(cls, meta: Meta, source: str, media_type: str) -> bool:
+        if cls._direct_forbidden_source(source, media_type):
+            return True
+        return cls._contains_forbidden_source_marker(cls._release_context(meta, source, media_type))
+
+    @staticmethod
+    def _direct_forbidden_source(source: str, media_type: str) -> bool:
+        return source in {"CAM", "TS"} or media_type in {"CAM", "TS"}
+
+    @staticmethod
+    def _release_context(meta: Meta, source: str, media_type: str) -> str:
+        values = (meta.name, meta.scene_name, meta.tag, meta.title, source, media_type)
+        return " ".join(str(value) for value in values if value)
+
+    def _file_policy_passes(self, meta: Meta) -> bool:
+        for item in self._filelist(meta):
+            if self._is_rar_file(str(item)):
+                logger.info(f"{self.tracker}: RAR files are not allowed: {item}")
                 return False
-        if source in {"CAM", "TS"} or media_type in {"CAM", "TS"}:
-            logger.info(f"{self.tracker}: CAM/TS uploads are not allowed.")
-            return False
-
-        release_context = " ".join(
-            value
-            for value in (
-                str(meta.name or ""),
-                str(meta.scene_name or ""),
-                str(meta.tag or ""),
-                str(meta.title or ""),
-                source,
-                media_type,
-            )
-            if value
-        )
-        if self._contains_forbidden_source_marker(release_context):
-            logger.info(f"{self.tracker}: CAM/TS uploads are not allowed.")
-            return False
-
-        if category in {"MOVIE", "TV"}:
-            raw_filelist = meta.filelist if isinstance(meta.filelist, (list, tuple, set)) else []
-            for item in raw_filelist:
-                if self._is_rar_file(str(item)):
-                    logger.info(f"{self.tracker}: RAR files are not allowed: {item}")
-                    return False
-
-            image_list = meta.image_list if isinstance(meta.image_list, (list, tuple)) else []
-            for image in image_list:
-                raw_url = ""
-                img_url = ""
-                web_url = ""
-                if isinstance(image, str):
-                    raw_url = image.strip()
-                elif isinstance(image, Mapping):
-                    raw_url = str(image.get("raw_url", "")).strip()
-                    img_url = str(image.get("img_url", "")).strip()
-                    web_url = str(image.get("web_url", "")).strip()
-                screenshot_url = raw_url or img_url or web_url
-                if not screenshot_url:
-                    continue
-                extension = Path(screenshot_url).suffix.lower()
-                if extension == ".webp":
-                    logger.info(f"{self.tracker}: Screenshots for DIGITALCORE must be JPG/PNG/GIF. WEBP is not allowed.")
-                    return False
-
         return True
+
+    @staticmethod
+    def _filelist(meta: Meta) -> list[Any]:
+        value = meta.filelist
+        return list(value) if isinstance(value, (list, tuple, set)) else []
+
+    def _screenshot_policy_passes(self, meta: Meta) -> bool:
+        return all(self._screenshot_is_allowed(image) for image in self._image_list(meta))
+
+    @staticmethod
+    def _image_list(meta: Meta) -> list[Any]:
+        value = meta.image_list
+        return list(value) if isinstance(value, (list, tuple)) else []
+
+    def _screenshot_is_allowed(self, image: Any) -> bool:
+        url = self._screenshot_url(image)
+        if not url or Path(url).suffix.lower() != ".webp":
+            return True
+        logger.info(f"{self.tracker}: Screenshots for DIGITALCORE must be JPG/PNG/GIF. WEBP is not allowed.")
+        return False
+
+    @staticmethod
+    def _screenshot_url(image: Any) -> str:
+        if isinstance(image, str):
+            return image.strip()
+        if not isinstance(image, Mapping):
+            return ""
+        return next(
+            (value for key in ("raw_url", "img_url", "web_url") if (value := str(image.get(key, "")).strip())),
+            "",
+        )
 
     @staticmethod
     def _contains_forbidden_source_marker(value: str) -> bool:
@@ -309,52 +343,80 @@ class DigitalCore:
     async def upload(self, meta: Meta) -> bool:
         data = await self.fetch_data(meta)
         torrent_title = await self.get_name(meta)
-        response = None
+        status = meta.tracker_status.setdefault(self.tracker, {})
+        if meta.debug:
+            return await self._debug_upload(meta, data, status)
+        return await self._upload_release(meta, data, torrent_title, status)
 
-        if not meta.debug:
-            try:
-                upload_url = f"{self.api_base_url}/upload"
-                await self.common.create_torrent_for_upload(meta, self.tracker, "DigitalCore.club")
-                torrent_path = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{self.tracker}].torrent"
+    async def _upload_release(self, meta: Meta, data: dict[str, Any], torrent_title: str, status: dict[str, Any]) -> bool:
+        try:
+            response = await self._submit_upload(meta, data, torrent_title)
+            return await self._handle_upload_response(meta, status, response)
+        except httpx.HTTPStatusError as error:
+            status["status_message"] = f"data error: HTTP {error.response.status_code} - {error.response.text}"
+            return False
+        except httpx.TimeoutException:
+            status["status_message"] = f"data error: Request timed out after {self.session.timeout.write} seconds"
+            return False
+        except httpx.RequestError as error:
+            status["status_message"] = self._request_error_message(error)
+            return False
+        except Exception as error:
+            status["status_message"] = f"data error: It may have uploaded, go check. Error: {error}.\nResponse: No response received"
+            return False
 
-                async with aiofiles.open(torrent_path, "rb") as torrent_file:
-                    torrent_bytes = await torrent_file.read()
-                files = {"file": (torrent_title + ".torrent", torrent_bytes, "application/x-bittorrent")}
+    async def _debug_upload(self, meta: Meta, data: dict[str, Any], status: dict[str, Any]) -> bool:
+        logger.info(f"{self.tracker}: Request Data:")
+        logger.info(Redaction.redact_private_info(data))
+        status["status_message"] = "Debug mode enabled, not uploading"
+        await self.common.create_torrent_for_upload(
+            meta,
+            f"{self.tracker}_DEBUG",
+            f"{self.tracker}_DEBUG",
+            announce_url="https://fake.tracker",
+        )
+        return True
 
-                response = await self.session.post(upload_url, data=data, files=files, headers=dict(self.session.headers), timeout=90)
-                response.raise_for_status()
-                response_json = response.json()
-                response_data: dict[str, Any] = cast(dict[str, Any], response_json) if isinstance(response_json, dict) else {}
+    async def _submit_upload(self, meta: Meta, data: dict[str, Any], torrent_title: str) -> httpx.Response:
+        await self.common.create_torrent_for_upload(meta, self.tracker, "DigitalCore.club")
+        files = {"file": (f"{torrent_title}.torrent", await self._torrent_bytes(meta), "application/x-bittorrent")}
+        response = await self.session.post(
+            f"{self.api_base_url}/upload",
+            data=data,
+            files=files,
+            headers=dict(self.session.headers),
+            timeout=90,
+        )
+        response.raise_for_status()
+        return response
 
-                if response.status_code == 200 and response_data.get("id"):
-                    torrent_id = str(response_data["id"])
-                    meta.tracker_status[self.tracker]["torrent_id"] = torrent_id + "/"
-                    meta.tracker_status[self.tracker]["status_message"] = response_data.get("message")
+    async def _torrent_bytes(self, meta: Meta) -> bytes:
+        torrent_path = release_temp_dir(meta.base_dir, meta.uuid) / f"[{self.tracker}].torrent"
+        async with aiofiles.open(torrent_path, "rb") as torrent_file:
+            return await torrent_file.read()
 
-                    await self.common.download_tracker_torrent(meta, self.tracker, headers=dict(self.session.headers), downurl=f"{self.api_base_url}/download/{torrent_id}")
-                    return True
+    async def _handle_upload_response(self, meta: Meta, status: dict[str, Any], response: httpx.Response) -> bool:
+        response_data = self._response_data(response)
+        if response.status_code != 200 or not response_data.get("id"):
+            status["status_message"] = f"data error: {response_data.get('message', 'Unknown API error.')}"
+            return False
+        torrent_id = str(response_data["id"])
+        status["torrent_id"] = f"{torrent_id}/"
+        status["status_message"] = response_data.get("message")
+        await self.common.download_tracker_torrent(
+            meta,
+            self.tracker,
+            headers=dict(self.session.headers),
+            downurl=f"{self.api_base_url}/download/{torrent_id}",
+        )
+        return True
 
-                meta.tracker_status[self.tracker]["status_message"] = f"data error: {response_data.get('message', 'Unknown API error.')}"
-                return False
+    @staticmethod
+    def _response_data(response: httpx.Response) -> dict[str, Any]:
+        payload = response.json()
+        return cast(dict[str, Any], payload) if isinstance(payload, dict) else {}
 
-            except httpx.HTTPStatusError as e:
-                meta.tracker_status[self.tracker]["status_message"] = f"data error: HTTP {e.response.status_code} - {e.response.text}"
-                return False
-            except httpx.TimeoutException:
-                meta.tracker_status[self.tracker]["status_message"] = f"data error: Request timed out after {self.session.timeout.write} seconds"
-                return False
-            except httpx.RequestError as e:
-                resp_text = getattr(getattr(e, "response", None), "text", "No response received")
-                meta.tracker_status[self.tracker]["status_message"] = f"data error: Unable to upload. Error: {e}.\nResponse: {resp_text}"
-                return False
-            except Exception as e:
-                resp_text = response.text if response is not None else "No response received"
-                meta.tracker_status[self.tracker]["status_message"] = f"data error: It may have uploaded, go check. Error: {e}.\nResponse: {resp_text}"
-                return False
-
-        else:
-            logger.info(f"{self.tracker}: Request Data:")
-            logger.info(Redaction.redact_private_info(data))
-            meta.tracker_status[self.tracker]["status_message"] = "Debug mode enabled, not uploading"
-            await self.common.create_torrent_for_upload(meta, f"{self.tracker}" + "_DEBUG", f"{self.tracker}" + "_DEBUG", announce_url="https://fake.tracker")
-            return True  # Debug mode - simulated success
+    @staticmethod
+    def _request_error_message(error: httpx.RequestError) -> str:
+        response_text = getattr(getattr(error, "response", None), "text", "No response received")
+        return f"data error: Unable to upload. Error: {error}.\nResponse: {response_text}"
