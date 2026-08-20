@@ -969,6 +969,82 @@ async def _prompt_music_meta(meta: Meta) -> None:
         meta.name_notag, meta.name, meta.clean_name, meta.potential_missing = await name_manager.get_name(meta)
 
 
+async def _process_optional_image_artifacts(
+    meta: Meta,
+    config: dict[str, Any],
+    uploadscreens_manager: UploadScreensManager,
+) -> None:
+    """Generate and host auxiliary images only after mandatory screenshots.
+
+    Auxiliary artifacts use purpose-scoped image-host circuits and must never
+    consume the availability state reserved for the release screenshots.
+    """
+    if meta.is_disc:
+        menus_data_file = Path(meta.base_dir) / "tmp" / meta.uuid / "menu_images.json"
+        default = config.get("DEFAULT", {})
+        default_map = cast(dict[str, Any], default) if isinstance(default, dict) else {}
+        wants_menus = bool(meta.path_to_menu_screenshots or default_map.get("auto_dvd_menus", False))
+        if wants_menus and not menus_data_file.exists() and not meta.menu_images:
+            try:
+                await process_disc_menus(meta, config)
+            except Exception as error:
+                logger.warning(
+                    "[yellow]Optional disc-menu processing failed; continuing "
+                    f"with the release screenshots: {error}[/yellow]"
+                )
+
+    should_process_spectrogram = meta.category not in {"BOOK", "GAME"} or bool(meta.audiobook)
+    default = config.get("DEFAULT", {})
+    default_map = cast(dict[str, Any], default) if isinstance(default, dict) else {}
+    wants_spectrogram = bool(
+        meta.audio_spectrogram
+        or meta.audio_spectrogram_tracks
+        or default_map.get("add_audio_spectrogram", False)
+    )
+    if should_process_spectrogram and wants_spectrogram:
+        if meta.debug:
+            logger.info("[yellow]Debug mode: audio spectrogram hosting skipped.[/yellow]")
+        else:
+            try:
+                await process_audio_spectrograms(meta, config, uploadscreens_manager)
+            except Exception as error:
+                logger.warning(
+                    "[yellow]Optional audio spectrogram processing failed; "
+                    "continuing with the release screenshots: "
+                    f"{error}[/yellow]"
+                )
+
+    if dynamic_hdr_plot_enabled(meta, config):
+        try:
+            await process_dynamic_hdr_plots(meta, config, uploadscreens_manager)
+        except Exception as error:
+            logger.warning(
+                "[yellow]Optional dynamic HDR plot processing failed; "
+                f"continuing with the release screenshots: {error}[/yellow]"
+            )
+
+
+async def _validate_screenshots_then_process_optional(
+    meta: Meta,
+    config: dict[str, Any],
+    uploadscreens_manager: UploadScreensManager,
+) -> None:
+    """Validate mandatory screenshots before any optional image artifact."""
+    local_screens, required_screens = available_screens(meta, configured_screenshot_minimum(config))
+    if meta.debug and meta.category in {"MOVIE", "TV"}:
+        if local_screens < required_screens:
+            raise ItemProcessingError(
+                f"Minimum of {required_screens} local screenshots required in debug mode, but only {local_screens} were captured.",
+                meta.path,
+            )
+    else:
+        screenshot_error = screenshot_requirement_error(meta, config, local_available=local_screens)
+        if screenshot_error:
+            raise ItemProcessingError(screenshot_error, meta.path)
+
+    await _process_optional_image_artifacts(meta, config, uploadscreens_manager)
+
+
 def available_screens(meta: Meta, min_successful_uploads: int) -> tuple[int, int]:
     screenshot_files = list(screenshots_dir(meta.base_dir, meta.uuid).glob("*.png"))
     actual_screens = len(screenshot_files)
@@ -1391,12 +1467,6 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
             meta.manual_frames = ""
         manual_frames = meta.manual_frames
 
-        if dynamic_hdr_plot_enabled(meta, config):
-            try:
-                await process_dynamic_hdr_plots(meta, config, uploadscreens_manager)
-            except Exception as e:
-                logger.error(f"[red]Error processing dynamic HDR plots: {e}[/red]")
-
         if meta.comparison:
             await ComparisonManager(meta, config).add_comparison()
 
@@ -1437,24 +1507,6 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
 
                     except Exception as e:
                         logger.info(f"[yellow]Could not load saved menu image data: {e!s}")
-                elif meta.path_to_menu_screenshots or config["DEFAULT"].get("auto_dvd_menus", False):
-                    await process_disc_menus(meta, config)
-
-            should_process_spectrogram = meta.category not in {"BOOK", "GAME"} or bool(meta.audiobook)
-            if meta.debug and should_process_spectrogram and (meta.audio_spectrogram or meta.audio_spectrogram_tracks or config["DEFAULT"].get("add_audio_spectrogram", False)):
-                logger.info("[yellow]Debug mode: audio spectrogram hosting skipped.[/yellow]")
-            elif should_process_spectrogram and (meta.audio_spectrogram or meta.audio_spectrogram_tracks or config["DEFAULT"].get("add_audio_spectrogram", False)):
-                try:
-                    await process_audio_spectrograms(meta, config, uploadscreens_manager)
-                except Exception as e:
-                    logger.error(f"[red]Error processing audio spectrograms: {e}[/red]")
-
-            if dynamic_hdr_plot_enabled(meta, config):
-                try:
-                    await process_dynamic_hdr_plots(meta, config, uploadscreens_manager)
-                except Exception as e:
-                    logger.error(f"[red]Error processing dynamic HDR plots: {e}[/red]")
-
             # Take Screenshots
             try:
                 if meta.category in ("MUSIC", "PODCAST"):
@@ -1805,17 +1857,8 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
             elif meta.skip_imghost_upload is True and not meta.image_list:
                 meta.image_list = []
 
-            if meta.debug and meta.category in {"MOVIE", "TV"}:
-                local_screens, required_screens = available_screens(meta, configured_screenshot_minimum(config))
-                if local_screens < required_screens:
-                    raise ItemProcessingError(
-                        f"Minimum of {required_screens} local screenshots required in debug mode, but only {local_screens} were captured.",
-                        meta.path,
-                    )
-            else:
-                screenshot_error = screenshot_requirement_error(meta, config)
-                if screenshot_error:
-                    raise ItemProcessingError(screenshot_error, meta.path)
+            # Mandatory screenshots are validated before optional artifacts.
+            await _validate_screenshots_then_process_optional(meta, config, uploadscreens_manager)
 
             # Host book cover if it's a BOOK and save to covers.json
             if meta.category == "BOOK" and not meta.debug:
