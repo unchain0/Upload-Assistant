@@ -209,18 +209,14 @@ class MidnightScene(UNIT3D):
 
         return {"type_id": val}
 
+    @classmethod
+    def _contains_unofficial_release_tag(cls, meta: Meta) -> bool:
+        values = (str(meta.scene_name or meta.name or "").lower(), str(meta.uuid).lower())
+        return any(cls._contains_release_marker(value, marker) for value in values for marker in cls.banned_release_markers)
+
     @staticmethod
-    def _contains_unofficial_release_tag(meta: Meta) -> bool:
-        title = str(meta.scene_name or meta.name or "").lower()
-        uuid = str(meta.uuid).lower()
-        for marker in MidnightScene.banned_release_markers:
-            if re.search(rf"(?:^|[._ -]){re.escape(marker)}(?:$|[._ -])", title):
-                return True
-            if marker == "upscale":
-                continue
-            if re.search(rf"(?:^|[._ -]){re.escape(marker)}(?:$|[._ -])", uuid):
-                return True
-        return False
+    def _contains_release_marker(value: str, marker: str) -> bool:
+        return re.search(rf"(?:^|[._ -]){re.escape(marker)}(?:$|[._ -])", value) is not None
 
     @staticmethod
     def _files_contain(path_values: list[Any], suffixes: set[str]) -> bool:

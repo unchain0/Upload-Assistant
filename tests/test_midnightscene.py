@@ -1,6 +1,7 @@
 """Regression tests for MidnightScene naming support."""
 
 import asyncio
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -120,3 +121,75 @@ def test_midnightscene_requires_confirmation_for_every_resolution_below_720p(res
     )
 
     assert asyncio.run(_tracker().get_additional_checks(meta)) is False
+
+
+def test_midnightscene_documentary_and_game_type_fallbacks():
+    tracker = _tracker()
+    assert asyncio.run(tracker.get_type_id(Meta(category="MOVIE", genres=["Documentary"], keywords=[]))) == {"type_id": "13"}
+    for platform, expected in (("PlayStation 5", "10"), ("Xbox Series X", "12"), ("Switch", "11")):
+        assert asyncio.run(tracker.get_type_id(Meta(category="GAME", platform=platform, genres=[], keywords=[]))) == {"type_id": expected}
+
+
+def test_midnightscene_unofficial_marker_sources_and_file_suffixes():
+    assert MidnightScene._contains_unofficial_release_tag(Meta(name="Movie CAM 2025", uuid="movie")) is True
+    assert MidnightScene._contains_unofficial_release_tag(Meta(name="Movie 2025", uuid="movie.upscale.release")) is False
+    assert MidnightScene._contains_unofficial_release_tag(Meta(name="Movie 2025", uuid="movie.telesync.release")) is True
+    assert MidnightScene._files_contain(["release.rar"], {".rar"}) is True
+
+
+def test_midnightscene_normalizes_empty_aka_and_attended_confirmation():
+    assert MidnightScene._normalize_aka_year_order("  Movie   2025  ", "Movie", "AKA ", 2025) == "Movie 2025"
+    tracker = _tracker()
+    tracker.common.prompt_user_for_confirmation = AsyncMock(return_value=True)
+    assert asyncio.run(tracker._confirm_or_skip("Confirm", Meta(unattended=False))) is True
+    tracker.common.prompt_user_for_confirmation.assert_awaited_once()
+
+
+def test_midnightscene_rejects_unmarked_upscale_and_unofficial_source():
+    upscale = Meta(
+        category="MOVIE",
+        name="Movie 2025",
+        uuid="Movie.2025.Upscale",
+        screens=3,
+        resolution="1080p",
+        unattended=True,
+        unattended_confirm=False,
+        filelist=[],
+    )
+    assert asyncio.run(_tracker().get_additional_checks(upscale)) is False
+
+    unofficial = Meta(
+        category="MOVIE",
+        name="Movie CAM 2025",
+        uuid="Movie.2025",
+        screens=3,
+        resolution="1080p",
+        unattended=True,
+        unattended_confirm=False,
+        filelist=[],
+    )
+    assert asyncio.run(_tracker().get_additional_checks(unofficial)) is False
+
+
+def test_midnightscene_rejects_non_scene_game_and_missing_scene_payload():
+    non_scene = Meta(category="GAME", scene=False, filelist=[], unattended=True, unattended_confirm=False)
+    assert asyncio.run(_tracker().get_additional_checks(non_scene)) is False
+
+    incomplete = Meta(category="GAME", scene=True, filelist=["release.rar"], unattended=True, unattended_confirm=False)
+    assert asyncio.run(_tracker().get_additional_checks(incomplete)) is False
+
+
+def test_midnightscene_dvd_remux_foreign_language_is_added_after_year():
+    meta = Meta(
+        category="MOVIE",
+        name="Movie 2025 480p DVD REMUX FLAC 2.0-GROUP",
+        title="Movie",
+        year=2025,
+        resolution="480p",
+        type="REMUX",
+        source="DVD",
+        is_disc="DVD",
+        audio_languages=["french"],
+        language_checked=True,
+    )
+    assert asyncio.run(_tracker().get_name(meta))["name"] == "Movie 2025 FRENCH 480p DVD REMUX FLAC 2.0-GROUP"
