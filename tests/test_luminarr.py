@@ -462,3 +462,42 @@ def test_luminarr_accepts_ended_tv_season_pack():
         )
         is True
     )
+
+
+def test_luminarr_sample_and_media_track_guard_helpers():
+    tracker = _tracker()
+    assert tracker._contains_sample_file(["Sample.Video.mkv"]) == "sample.video.mkv"
+    assert tracker._media_tracks(Meta(mediainfo={"media": {"track": "bad"}})) == []
+
+
+def test_luminarr_top_folder_failure_detects_multiple_folders():
+    assert _tracker()._top_folder_failure(["Season 1", "Season 2"]) == "Multi-file uploads must use a single top-level folder."
+
+
+@pytest.mark.asyncio
+async def test_luminarr_language_policy_direct_rejection(monkeypatch):
+    tracker = _tracker()
+    monkeypatch.setattr(tracker.common, "check_language_requirements", lambda *_args, **_kwargs: asyncio.sleep(0, result=False))
+    assert not await tracker._language_policy_passes(_movie_meta())
+
+
+def test_luminarr_tv_policy_direct_multi_season_rejection(monkeypatch):
+    tracker = _tracker()
+    monkeypatch.setattr(tracker.common, "extract_tv_seasons", lambda _files: {1, 2})
+    assert not tracker._tv_policy_passes(_tv_meta(), "TV", ["S01E01.mkv", "S02E01.mkv"])
+
+
+def test_luminarr_tv_policy_direct_nonpack_multi_episode_rejection(monkeypatch):
+    tracker = _tracker()
+    monkeypatch.setattr(tracker.common, "extract_tv_seasons", lambda _files: {1})
+    monkeypatch.setattr(tracker.common, "count_tv_episodes", lambda _files: 2)
+    meta = _tv_meta(tv_pack=False)
+    assert not tracker._tv_policy_passes(meta, "TV", ["S01E01.mkv", "S01E02.mkv"])
+
+
+def test_luminarr_final_policy_stops_when_tv_policy_fails(monkeypatch):
+    tracker = _tracker()
+    monkeypatch.setattr(tracker, "_format_and_screen_policy_passes", lambda *_args: True)
+    monkeypatch.setattr(tracker, "_extra_files_policy_passes", lambda *_args: True)
+    monkeypatch.setattr(tracker, "_tv_policy_passes", lambda *_args: False)
+    assert not tracker._final_policy_passes(_tv_meta(), "TV", ["episode.mkv"])
