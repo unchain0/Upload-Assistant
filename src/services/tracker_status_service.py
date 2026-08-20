@@ -1,18 +1,36 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
+from __future__ import annotations
+
 import asyncio
 import copy
-from collections.abc import Mapping
-from typing import Any, cast
+import inspect
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from typing import Any, Never, cast
 
 import cli_ui
 
 from src.domain_models.errors import OperationAbortedError
 from src.domain_models.release import Meta
-from src.engines.upload_safety_policy import blocks_automatic_upload, book_metadata_cjk_fields, content_paths_with_spaces
+from src.domain_models.tracker_upload_state import TrackerUploadState
+from src.engines.tracker_upload_eligibility import (
+    evaluate_tracker_upload_eligibility,
+)
+from src.engines.upload_safety_policy import (
+    blocks_automatic_upload,
+    book_metadata_cjk_fields,
+    content_paths_with_spaces,
+)
 from src.integrations.external_apis.imdb import imdb_manager
 from src.integrations.filesystem.cleanup import cleanup_manager
-from src.integrations.media.zentag import should_prepare_zenith_audiobook, should_prepare_zenith_ebook
-from src.integrations.observability.runtime_support import logger, prompt_in_thread
+from src.integrations.media.zentag import (
+    should_prepare_zenith_audiobook,
+    should_prepare_zenith_ebook,
+)
+from src.integrations.observability.runtime_support import (
+    logger,
+    prompt_in_thread,
+)
 from src.integrations.trackers.AVISTAZ.routing import AvistaZNetworkRouter
 from src.integrations.trackers.common import Common
 from src.integrations.trackers.passthepopcorn import PassThePopcorn
@@ -23,15 +41,20 @@ from src.services.metadata_service import get_douban_id
 from src.services.upload_decision_service import UploadHelper
 
 
-def merge_tracker_status(processed: dict[str, dict[str, Any]], existing: Mapping[str, Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
-    """Preserve routing metadata while keeping fresh processing results authoritative."""
+def merge_tracker_status(
+    processed: dict[str, dict[str, Any]],
+    existing: Mapping[str, Mapping[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Preserve routing metadata while fresh processing stays authoritative."""
     merged = {tracker: dict(status) for tracker, status in existing.items()}
     for tracker, status in processed.items():
         merged.setdefault(tracker, {}).update(status)
     return merged
 
 
-def missing_book_fields_for_tracker(meta: Meta, tracker_class: Any) -> list[str]:
+def missing_book_fields_for_tracker(
+    meta: Meta, tracker_class: Any
+) -> list[str]:
     from src.services.book_preparation import missing_book_fields
 
     missing = missing_book_fields(meta)
@@ -42,419 +65,1038 @@ def missing_book_fields_for_tracker(meta: Meta, tracker_class: Any) -> list[str]
     return [field for field in missing if field in required]
 
 
+@dataclass(slots=True)
+class _TrackerResult:
+    name: str
+    status: dict[str, Any]
+    display_name: str | None
+    tracker_class: Any
+
+
+@dataclass(slots=True)
+class _TrackerRuntime:
+    setup: Any
+    helper: Any
+    dupe_checker: DupeChecker
+    lock: asyncio.Lock
+
+
 class TrackerStatusManager:
     def __init__(self, config: dict[str, Any]) -> None:
         self.config = config
-        self.trackers_config = cast(Mapping[str, Mapping[str, Any]], config.get("TRACKERS", {}))
-
-    @staticmethod
-    def _block_completed_episode_uploads(meta: Meta, results: list[tuple[str, dict[str, Any], str | None, Any]]) -> bool:
-        if not Common.is_completed_tv_episode(meta):
-            return False
-        for _tracker_name, status, _display_name, _tracker_class in results:
-            if not status["dupe"]:
-                status["skipped"] = True
-                status["upload"] = False
-        return True
+        trackers = config.get("TRACKERS", {})
+        self.trackers_config = cast(
+            Mapping[str, Mapping[str, Any]],
+            trackers if isinstance(trackers, Mapping) else {},
+        )
 
     async def process_all_trackers(self, meta: Meta) -> int:
-        tracker_status: dict[str, dict[str, Any]] = {}
-        successful_trackers = 0
-        if blocks_automatic_upload(meta):
-            suspicious_paths = content_paths_with_spaces(meta)
-            displayed_paths = ", ".join(suspicious_paths[:5])
-            if len(suspicious_paths) > 5:
-                displayed_paths = f"{displayed_paths}, and {len(suspicious_paths) - 5} more"
-            reason = f"Content file/folder names contain spaces and may have been renamed: {displayed_paths}. Use --allow-spaces to explicitly permit this upload."
-            trackers = [meta.trackers] if isinstance(meta.trackers, str) else list(meta.trackers)
-            for tracker in trackers:
-                tracker_status[str(tracker)] = {
-                    "banned": False,
-                    "skipped": True,
-                    "dupe": False,
-                    "upload": False,
-                    "other": False,
-                    "skip_reason": reason,
-                }
-            meta.tracker_status = merge_tracker_status(tracker_status, meta.tracker_status)
-            logger.info(f"[bold red]{reason} All tracker uploads were skipped.[/bold red]")
+        blocked = self._block_unsafe_release(meta)
+        if blocked:
             return 0
+        runtime = await self._prepare_runtime(meta)
+        await self._ensure_required_imdb(meta)
+        results = await self._process_trackers(meta, runtime)
+        self._apply_completed_episode_rule(meta, results)
+        successful = await self._select_uploads(meta, results, runtime.helper)
+        self._log_debug_summary(meta, results, successful)
+        meta.tracker_status = merge_tracker_status(
+            {result.name: result.status for result in results},
+            meta.tracker_status,
+        )
+        return successful
 
-        tracker_setup: Any = TrackerSetup(config=self.config)
-        tracker_setup.filter_unsupported_trackers(meta)
+    def _block_unsafe_release(self, meta: Meta) -> bool:
+        if not blocks_automatic_upload(meta):
+            return False
+        reason = self._unsafe_path_reason(meta)
+        processed = {
+            tracker: self._blocked_status(reason)
+            for tracker in self._tracker_names(meta.trackers)
+        }
+        meta.tracker_status = merge_tracker_status(
+            processed, meta.tracker_status
+        )
+        logger.info(
+            f"[bold red]{reason} All tracker uploads were skipped.[/bold red]"
+        )
+        return True
+
+    @staticmethod
+    def _unsafe_path_reason(meta: Meta) -> str:
+        suspicious = content_paths_with_spaces(meta)
+        displayed = ", ".join(suspicious[:5])
+        if len(suspicious) > 5:
+            displayed = f"{displayed}, and {len(suspicious) - 5} more"
+        return (
+            "Content file/folder names contain spaces and may have been "
+            f"renamed: {displayed}. Use --allow-spaces to explicitly permit "
+            "this upload."
+        )
+
+    @staticmethod
+    def _blocked_status(reason: str) -> dict[str, Any]:
+        return {
+            "banned": False,
+            "skipped": True,
+            "dupe": False,
+            "upload": False,
+            "other": False,
+            "skip_reason": reason,
+        }
+
+    async def _prepare_runtime(self, meta: Meta) -> _TrackerRuntime:
+        setup = TrackerSetup(config=self.config)
+        setup.filter_unsupported_trackers(meta)
         await AvistaZNetworkRouter(self.config, tracker_class_map).apply(meta)
-        helper: Any = UploadHelper(self.config)
-        dupe_checker = DupeChecker(self.config)
-        if any(
-            tracker in meta.trackers
-            for tracker in [
-                "1PTBA",
-                "LAJIDUI",
-                "LEMONHD",
-                "LONGPT",
-                "MTEAM",
-                "PTCAFE",
-                "PTFANS",
-                "PTGTK",
-                "PTZONE",
-                "RAILGUNPT",
-                "XINGYUNGEPT",
-            ]
-        ):
+        self._ensure_status_entries(meta)
+        await self._populate_douban_if_needed(meta)
+        return _TrackerRuntime(
+            setup=setup,
+            helper=UploadHelper(self.config),
+            dupe_checker=DupeChecker(self.config),
+            lock=asyncio.Lock(),
+        )
+
+    @staticmethod
+    def _ensure_status_entries(meta: Meta) -> None:
+        for tracker in TrackerStatusManager._tracker_names(meta.trackers):
+            meta.tracker_status.setdefault(tracker, {})
+        meta.initial_dupes = (
+            meta.initial_dupes if isinstance(meta.initial_dupes, dict) else {}
+        )
+
+    async def _populate_douban_if_needed(self, meta: Meta) -> None:
+        douban_trackers = {
+            "1PTBA",
+            "LAJIDUI",
+            "LEMONHD",
+            "LONGPT",
+            "MTEAM",
+            "PTCAFE",
+            "PTFANS",
+            "PTGTK",
+            "PTZONE",
+            "RAILGUNPT",
+            "XINGYUNGEPT",
+        }
+        if douban_trackers.intersection(self._tracker_names(meta.trackers)):
             meta.douban_id = await get_douban_id(meta)
-        meta_lock = asyncio.Lock()
-        status_map = meta.tracker_status
-        for tracker in meta.trackers:
-            if tracker not in status_map:
-                status_map[tracker] = {}
 
-        # Prompt for IMDB ID once if any tracker needs it and it's missing in attended mode
-        if not meta.get("unattended", False) and meta.get("imdb_id", 0) == 0:
-            needs_imdb = "PASSTHEPOPCORN" in meta.trackers
-            if needs_imdb:
-                while True:
-                    try:
-                        imdb_id = await prompt_in_thread(
-                            cli_ui.ask_string, "Unable to find IMDB id, please enter e.g.(tt1234567) or press Enter to skip uploading to trackers requiring it:"
-                        )
-                    except EOFError:
-                        logger.info("\n[red]Exiting on user request (Ctrl+C)[/red]")
-                        await cleanup_manager.cleanup()
-                        cleanup_manager.reset_terminal()
-                        raise OperationAbortedError("Tracker selection was cancelled by the user.") from None
+    async def _ensure_required_imdb(self, meta: Meta) -> None:
+        if not self._needs_imdb_prompt(meta):
+            return
+        while True:
+            imdb_id = await self._prompt_imdb_id()
+            if not imdb_id:
+                meta.imdb_id = 0
+                return
+            if self._valid_imdb_id(imdb_id):
+                await self._apply_manual_imdb(meta, imdb_id)
+                return
+            cli_ui.error("Invalid IMDB ID format. Expected format: tt1234567")
 
-                    if imdb_id is None or imdb_id.strip() == "":
-                        meta["imdb_id"] = 0
-                        break
+    @classmethod
+    def _needs_imdb_prompt(cls, meta: Meta) -> bool:
+        return (
+            not bool(meta.unattended)
+            and int(meta.imdb_id or 0) == 0
+            and "PASSTHEPOPCORN" in cls._tracker_names(meta.trackers)
+        )
 
-                    imdb_id = imdb_id.strip().lower()
-                    if imdb_id.startswith("tt") and imdb_id[2:].isdigit():
-                        meta["imdb_id"] = int(imdb_id[2:])
-                        meta["imdb"] = imdb_id[2:].zfill(7)
-                        meta["imdb_info"] = await imdb_manager.get_imdb_info_api(
-                            meta["imdb_id"],
-                            manual_language=meta.get("manual_language"),
-                        )
-                        break
-                    cli_ui.error("Invalid IMDB ID format. Expected format: tt1234567")
+    @staticmethod
+    async def _prompt_imdb_id() -> str:
+        value: Any = ""
+        try:
+            value = await prompt_in_thread(
+                cli_ui.ask_string,
+                "Unable to find IMDB id, please enter e.g.(tt1234567) or "
+                "press Enter to skip uploading to trackers requiring it:",
+            )
+        except EOFError:
+            await TrackerStatusManager._abort_tracker_selection()
+        return str(value or "").strip().lower()
 
-        async def process_single_tracker(tracker_name: str, shared_meta: Meta) -> tuple[str, dict[str, Any], str | None, Any]:
-            local_meta = copy.deepcopy(shared_meta)  # Ensure each task gets its own copy of meta
-            local_tracker_status: dict[str, Any] = {"banned": False, "skipped": False, "dupe": False, "upload": False, "other": False}
-            display_name = None
-            tracker_class = None
+    @staticmethod
+    def _valid_imdb_id(value: str) -> bool:
+        return value.startswith("tt") and value[2:].isdigit()
 
-            if local_meta["name"].endswith("DUPE?"):
-                local_meta["name"] = local_meta["name"].replace(" DUPE?", "")
+    @staticmethod
+    async def _apply_manual_imdb(meta: Meta, imdb_id: str) -> None:
+        numeric = int(imdb_id[2:])
+        meta.imdb_id = numeric
+        meta.imdb = imdb_id[2:].zfill(7)
+        meta.imdb_info = await imdb_manager.get_imdb_info_api(
+            numeric, manual_language=meta.manual_language
+        )
 
-            if tracker_name in ("MANUAL", "USENET"):
-                local_tracker_status["upload"] = True
-                return tracker_name, local_tracker_status, None, None
+    @staticmethod
+    async def _abort_tracker_selection() -> Never:
+        logger.info("\n[red]Exiting on user request (Ctrl+C)[/red]")
+        await cleanup_manager.cleanup()
+        cleanup_manager.reset_terminal()
+        raise OperationAbortedError(
+            "Tracker selection was cancelled by the user."
+        )
 
-            if tracker_name in tracker_class_map:
-                tracker_class = tracker_class_map[tracker_name](config=self.config)
-                if tracker_name == "ZENITH" and (
-                    should_prepare_zenith_audiobook(Meta(**local_meta), self.config) or should_prepare_zenith_ebook(Meta(**local_meta), self.config)
-                ):
-                    local_meta["defer_zentag_validation"] = True
-                if tracker_name == "PASSTHEPOPCORN" and local_meta.get("imdb_id", 0) == 0:
-                    local_tracker_status["skipped"] = True
+    async def _process_trackers(
+        self, meta: Meta, runtime: _TrackerRuntime
+    ) -> list[_TrackerResult]:
+        trackers = self._tracker_names(meta.trackers)
+        searchable = [name for name in trackers if name in tracker_class_map]
+        if searchable:
+            logger.info(
+                "[yellow]Searching for existing torrents on selected "
+                "trackers..."
+            )
+        tasks = [
+            self._process_single_tracker(name, meta, runtime)
+            for name in trackers
+        ]
+        return list(await asyncio.gather(*tasks))
 
-                if not local_tracker_status["skipped"]:
-                    result = await tracker_setup.check_banned_group(tracker_class.tracker, tracker_class.banned_groups, local_meta)
-                    local_tracker_status["banned"] = bool(result)
+    async def _process_single_tracker(
+        self, tracker_name: str, shared_meta: Meta, runtime: _TrackerRuntime
+    ) -> _TrackerResult:
+        local_meta = copy.deepcopy(shared_meta)
+        self._remove_dupe_suffix(local_meta)
+        status = self._initial_status()
+        if tracker_name in {"MANUAL", "USENET"}:
+            status["upload"] = True
+            return _TrackerResult(tracker_name, status, None, None)
+        tracker_class = self._tracker_instance(tracker_name)
+        if tracker_class is None:
+            status["upload"] = True
+            return _TrackerResult(tracker_name, status, None, None)
+        await self._prepare_tracker_meta(
+            tracker_name, local_meta, tracker_class, status
+        )
+        if not status["skipped"] and not status["banned"]:
+            await self._evaluate_tracker(
+                tracker_name,
+                local_meta,
+                tracker_class,
+                status,
+                shared_meta,
+                runtime,
+            )
+        self._ensure_skip_reason(tracker_name, local_meta, status)
+        display_name = await self._display_name(
+            local_meta, tracker_class, status
+        )
+        return _TrackerResult(
+            tracker_name, status, display_name, tracker_class
+        )
 
-                if local_meta["tracker_status"][tracker_name].get("skip_upload"):
-                    local_tracker_status["skipped"] = True
-                elif "skipped" not in local_meta and not local_tracker_status["skipped"]:
-                    local_tracker_status["skipped"] = False
+    @staticmethod
+    def _remove_dupe_suffix(meta: Meta) -> None:
+        if str(meta.name).endswith("DUPE?"):
+            meta.name = str(meta.name).replace(" DUPE?", "")
 
-                # Check for missing required BOOK fields in unattended mode
-                if local_meta.get("category") == "BOOK" and local_meta.get("unattended", False):
-                    book_missing = missing_book_fields_for_tracker(Meta(**local_meta), tracker_class)
-                    if book_missing:
-                        logger.info(f"[yellow]{tracker_name}: Skipping upload because required BOOK fields are missing: {', '.join(book_missing)}[/yellow]")
-                        local_tracker_status["skipped"] = True
-                        local_tracker_status["skip_reason"] = f"Required BOOK fields missing: {', '.join(book_missing)}"
+    @staticmethod
+    def _initial_status() -> dict[str, Any]:
+        return {
+            "banned": False,
+            "skipped": False,
+            "dupe": False,
+            "upload": False,
+            "other": False,
+        }
 
-                # Check for missing required GAME fields in unattended mode
-                elif local_meta.get("category") == "GAME" and local_meta.get("unattended", False):
-                    game_missing = missing_game_fields(Meta(**local_meta))
-                    if game_missing:
-                        kind = "SOFTWARE" if local_meta.get("software") else "GAME"
-                        logger.info(f"[yellow]{tracker_name}: Skipping upload because required {kind} fields are missing: {', '.join(game_missing)}[/yellow]")
-                        local_tracker_status["skipped"] = True
-                        local_tracker_status["skip_reason"] = f"Required {kind} fields missing: {', '.join(game_missing)}"
+    def _tracker_instance(self, tracker_name: str) -> Any | None:
+        tracker_type = tracker_class_map.get(tracker_name)
+        return (
+            tracker_type(config=self.config)
+            if tracker_type is not None
+            else None
+        )
 
-                if not local_tracker_status["banned"] and not local_tracker_status["skipped"]:
-                    claimed = await tracker_setup.get_torrent_claims(local_meta, tracker_name)
-                    local_tracker_status["skipped"] = bool(claimed)
+    async def _prepare_tracker_meta(
+        self,
+        tracker_name: str,
+        meta: Meta,
+        tracker_class: Any,
+        status: dict[str, Any],
+    ) -> None:
+        self._defer_zenith_validation(tracker_name, meta)
+        self._apply_ptp_identity_requirement(tracker_name, meta, status)
+        if status["skipped"]:
+            return
+        status["banned"] = bool(
+            await TrackerSetup(config=self.config).check_banned_group(
+                tracker_class.tracker, tracker_class.banned_groups, meta
+            )
+        )
+        self._apply_preexisting_skip(tracker_name, meta, status)
+        self._apply_missing_field_skip(
+            tracker_name, meta, tracker_class, status
+        )
 
-                    if tracker_name not in {"PASSTHEPOPCORN"} and not local_tracker_status["skipped"]:
-                        if hasattr(tracker_class, "get_additional_checks"):
-                            import inspect
+    def _defer_zenith_validation(self, tracker_name: str, meta: Meta) -> None:
+        if tracker_name != "ZENITH":
+            return
+        if should_prepare_zenith_audiobook(
+            meta, self.config
+        ) or should_prepare_zenith_ebook(meta, self.config):
+            meta.defer_zentag_validation = True
 
-                            if inspect.iscoroutinefunction(tracker_class.get_additional_checks):
-                                should_continue = await tracker_class.get_additional_checks(local_meta)
-                            else:
-                                should_continue = tracker_class.get_additional_checks(local_meta)
-                            if not should_continue:
-                                local_tracker_status["skipped"] = True
-                                local_meta.skipping = tracker_name
+    @staticmethod
+    def _apply_ptp_identity_requirement(
+        tracker_name: str, meta: Meta, status: dict[str, Any]
+    ) -> None:
+        if tracker_name != "PASSTHEPOPCORN" or int(meta.imdb_id or 0) != 0:
+            return
+        TrackerStatusManager._mark_skipped(
+            status, "IMDb ID is required for PassThePopcorn duplicate checks."
+        )
 
-                        if not local_tracker_status["skipped"]:
-                            cjk_fields = book_metadata_cjk_fields(Meta(**local_meta))
-                            can_prepare_zenith = tracker_name == "ZENITH" and (
-                                should_prepare_zenith_audiobook(Meta(**local_meta), self.config) or should_prepare_zenith_ebook(Meta(**local_meta), self.config)
-                            )
-                            if cjk_fields and not can_prepare_zenith:
-                                fields = ", ".join(cjk_fields)
-                                reason = f"BOOK metadata contains CJK characters in: {fields}. Provide verified English metadata before uploading."
-                                logger.info(f"{tracker_name}: [bold red]{reason}[/bold red]")
-                                local_tracker_status["skipped"] = True
-                                local_tracker_status["skip_reason"] = reason
-                                local_meta.skipping = tracker_name
+    @staticmethod
+    def _apply_preexisting_skip(
+        tracker_name: str, meta: Meta, status: dict[str, Any]
+    ) -> None:
+        tracker_status = meta.tracker_status.get(tracker_name, {})
+        if not isinstance(tracker_status, Mapping):
+            return
+        tracker_status_map = cast(Mapping[str, Any], tracker_status)
+        if not tracker_status_map.get("skip_upload"):
+            return
+        reason = str(
+            tracker_status_map.get("skip_reason")
+            or tracker_status_map.get("status_message")
+            or (
+                "A previous tracker eligibility check requested this upload "
+                "be skipped."
+            )
+        )
+        TrackerStatusManager._mark_skipped(status, reason)
 
-                        if not local_tracker_status["skipped"]:
-                            async with meta_lock:
-                                prepared_meta = meta.setdefault("tracker_prepared_meta", {})
-                                prepared_meta[tracker_name] = local_meta.copy()
+    def _apply_missing_field_skip(
+        self,
+        tracker_name: str,
+        meta: Meta,
+        tracker_class: Any,
+        status: dict[str, Any],
+    ) -> None:
+        reason = self._missing_field_reason(meta, tracker_class)
+        if not reason:
+            return
+        logger.info(
+            f"[yellow]{tracker_name}: Skipping upload because "
+            f"{reason}[/yellow]"
+        )
+        self._mark_skipped(status, reason)
 
-                        if not local_tracker_status["skipped"]:
-                            try:
-                                dupes: list[Any] = cast(list[Any], await tracker_class.search_existing(local_meta))
-                                # set trackers here so that they are not double checked later with cross seeding
-                                async with meta_lock:
-                                    meta.setdefault("dupe_checked_trackers", []).append(tracker_name)
-                                if local_meta["tracker_status"][tracker_name].get("other", False):
-                                    local_tracker_status["other"] = True
-                            except Exception as e:
-                                logger.info(f"[bold red]Error searching for duplicates on {tracker_name}: {e}[/bold red]")
-                                if local_meta.get("unattended", False):
-                                    local_tracker_status["skipped"] = True
-                                    local_meta.skipping = tracker_name
-                                    dupes = []
-                                else:
-                                    try:
-                                        if await helper.prompt_yes_no(
-                                            f"Duplicate check failed on {tracker_name}. Do you want to proceed with the upload anyway?", default=False
-                                        ):
-                                            dupes = []
-                                            # set trackers here so that they are not double checked later with cross seeding
-                                            async with meta_lock:
-                                                meta.setdefault("dupe_checked_trackers", []).append(tracker_name)
-                                        else:
-                                            local_tracker_status["skipped"] = True
-                                            local_meta.skipping = tracker_name
-                                            dupes = []
-                                    except EOFError:
-                                        logger.info("\n[red]Exiting on user request (Ctrl+C)[/red]")
-                                        await cleanup_manager.cleanup()
-                                        cleanup_manager.reset_terminal()
-                                        raise OperationAbortedError("Tracker selection was cancelled by the user.") from None
-                        else:
-                            dupes = []
-                    elif tracker_name == "PASSTHEPOPCORN":
-                        ptp: Any = PassThePopcorn(config=self.config)
-                        if hasattr(ptp, "get_additional_checks"):
-                            import inspect
+    @classmethod
+    def _missing_field_reason(cls, meta: Meta, tracker_class: Any) -> str:
+        if not meta.unattended:
+            return ""
+        if meta.category == "BOOK":
+            return cls._missing_book_field_reason(meta, tracker_class)
+        if meta.category == "GAME":
+            return cls._missing_game_field_reason(meta)
+        return ""
 
-                            if inspect.iscoroutinefunction(ptp.get_additional_checks):
-                                should_continue = await ptp.get_additional_checks(local_meta)
-                            else:
-                                should_continue = ptp.get_additional_checks(local_meta)
-                            if not should_continue:
-                                local_tracker_status["skipped"] = True
-                                local_meta.skipping = tracker_name
+    @staticmethod
+    def _missing_book_field_reason(meta: Meta, tracker_class: Any) -> str:
+        fields = missing_book_fields_for_tracker(meta, tracker_class)
+        return (
+            f"Required BOOK fields missing: {', '.join(fields)}"
+            if fields
+            else ""
+        )
 
-                        if not local_tracker_status["skipped"]:
-                            try:
-                                group_id = await ptp.get_group_by_imdb(local_meta["imdb"])
-                                async with meta_lock:
-                                    meta.ptp_groupid = group_id
-                                dupes = cast(list[Any], await ptp.search_existing(group_id or "", cast(dict[str, Any], local_meta)))
-                            except Exception as e:
-                                logger.info(f"[bold red]Error searching for duplicates on {tracker_name}: {e}[/bold red]")
-                                if local_meta.get("unattended", False):
-                                    local_tracker_status["skipped"] = True
-                                    local_meta.skipping = tracker_name
-                                    dupes = []
-                                else:
-                                    try:
-                                        if await helper.prompt_yes_no(
-                                            f"Duplicate check failed on {tracker_name}. Do you want to proceed with the upload anyway?", default=False
-                                        ):
-                                            dupes = []
-                                        else:
-                                            local_tracker_status["skipped"] = True
-                                            local_meta.skipping = tracker_name
-                                            dupes = []
-                                    except EOFError:
-                                        logger.info("\n[red]Exiting on user request (Ctrl+C)[/red]")
-                                        await cleanup_manager.cleanup()
-                                        cleanup_manager.reset_terminal()
-                                        raise OperationAbortedError("Tracker selection was cancelled by the user.") from None
-                        else:
-                            dupes = []
-                    else:
-                        dupes = []
+    @staticmethod
+    def _missing_game_field_reason(meta: Meta) -> str:
+        fields = missing_game_fields(meta)
+        if not fields:
+            return ""
+        kind = "SOFTWARE" if meta.software else "GAME"
+        return f"Required {kind} fields missing: {', '.join(fields)}"
 
-                    async with meta_lock:
-                        meta.initial_dupes[tracker_name] = copy.deepcopy(dupes)
+    async def _evaluate_tracker(
+        self,
+        tracker_name: str,
+        local_meta: Meta,
+        tracker_class: Any,
+        status: dict[str, Any],
+        shared_meta: Meta,
+        runtime: _TrackerRuntime,
+    ) -> None:
+        if await self._claim_blocks_upload(
+            tracker_name, local_meta, status, runtime.setup
+        ):
+            return
+        if not await self._additional_checks_allow(
+            tracker_name, local_meta, tracker_class, status
+        ):
+            return
+        if not self._cjk_metadata_allows(tracker_name, local_meta, status):
+            return
+        await self._store_prepared_meta(
+            shared_meta, tracker_name, local_meta, runtime.lock
+        )
+        dupes = await self._search_tracker_dupes(
+            tracker_name,
+            local_meta,
+            tracker_class,
+            status,
+            shared_meta,
+            runtime,
+        )
+        await self._store_initial_dupes(
+            shared_meta, tracker_name, dupes, runtime.lock
+        )
+        if status["skipped"]:
+            return
+        self._warn_amigos_anonymous(tracker_name, local_meta)
+        await self._evaluate_dupes(
+            tracker_name, local_meta, dupes, status, shared_meta, runtime
+        )
 
-                    if tracker_name == "AMIGOSSHARE" and (meta.anon if meta.anon is not None else "false"):
-                        logger.info(
-                            "PORTUGAS: [yellow]Aviso: Você solicitou um upload anônimo, mas o AMIGOSSHARE não suporta essa opção.[/yellow][red] O envio não será anônimo.[/red]"
-                        )
-                        logger.warning(
-                            "EN: [yellow]Warning: You requested an anonymous upload, but AMIGOSSHARE does not support this option.[/yellow][red] The upload will not be anonymous.[/red]"
-                        )
+    @staticmethod
+    async def _claim_blocks_upload(
+        tracker_name: str,
+        meta: Meta,
+        status: dict[str, Any],
+        setup: Any,
+    ) -> bool:
+        claimed = bool(await setup.get_torrent_claims(meta, tracker_name))
+        if claimed:
+            TrackerStatusManager._mark_skipped(
+                status, "An existing tracker claim blocks this upload."
+            )
+        return claimed
 
-                    if ("skipping" not in local_meta or local_meta["skipping"] is None) and not local_tracker_status["skipped"]:
-                        dupes = cast(list[Any], await dupe_checker.filter_dupes(dupes, local_meta, tracker_name))
+    async def _additional_checks_allow(
+        self,
+        tracker_name: str,
+        meta: Meta,
+        tracker_class: Any,
+        status: dict[str, Any],
+    ) -> bool:
+        method = getattr(tracker_class, "get_additional_checks", None)
+        if method is None:
+            return True
+        result = (
+            await method(meta)
+            if inspect.iscoroutinefunction(method)
+            else method(meta)
+        )
+        if result:
+            return True
+        reason = self._tracker_skip_reason(
+            tracker_name,
+            meta,
+            "Tracker-specific eligibility check rejected the release.",
+        )
+        self._mark_skipped(status, reason)
+        meta.skipping = tracker_name
+        return False
 
-                        # Run dupe check first so it can modify local_meta (e.g., set cross-seed values)
-                        is_dupe, local_meta = await helper.dupe_check(dupes, local_meta, tracker_name)
-                        if is_dupe:
-                            local_tracker_status["dupe"] = True
+    def _cjk_metadata_allows(
+        self, tracker_name: str, meta: Meta, status: dict[str, Any]
+    ) -> bool:
+        fields = book_metadata_cjk_fields(meta)
+        if not fields or self._can_prepare_zenith(tracker_name, meta):
+            return True
+        reason = (
+            "BOOK metadata contains CJK characters in: "
+            f"{', '.join(fields)}. Provide verified English metadata "
+            "before uploading."
+        )
+        logger.info(f"{tracker_name}: [bold red]{reason}[/bold red]")
+        self._mark_skipped(status, reason)
+        meta.skipping = tracker_name
+        return False
 
-                        matched_episode_ids = local_meta.get(f"{tracker_name}_matched_episode_ids", [])
-                        trumpable_id = local_meta.get("trumpable_id")
-                        cross_seed_key = f"{tracker_name}_cross_seed"
-                        cross_seed_value = local_meta.get(cross_seed_key) if cross_seed_key in local_meta else None
+    def _can_prepare_zenith(self, tracker_name: str, meta: Meta) -> bool:
+        return tracker_name == "ZENITH" and (
+            should_prepare_zenith_audiobook(meta, self.config)
+            or should_prepare_zenith_ebook(meta, self.config)
+        )
 
-                        # Only shared-state writes go under the lock
-                        async with meta_lock:
-                            if matched_episode_ids:
-                                meta[f"{tracker_name}_matched_episode_ids"] = matched_episode_ids
-                            if trumpable_id:
-                                meta.trumpable_id = trumpable_id
-                            if cross_seed_key in local_meta and cross_seed_value:
-                                meta[cross_seed_key] = cross_seed_value
+    @staticmethod
+    async def _store_prepared_meta(
+        meta: Meta, tracker_name: str, local_meta: Meta, lock: asyncio.Lock
+    ) -> None:
+        async with lock:
+            prepared = meta.setdefault("tracker_prepared_meta", {})
+            if not isinstance(prepared, dict):
+                prepared = {}
+                meta["tracker_prepared_meta"] = prepared
+            prepared_map = cast(dict[str, Any], prepared)
+            prepared_map.setdefault(tracker_name, local_meta.copy())
 
-                        if tracker_name in ["AITHER", "LST"]:
-                            were_trumping = local_meta.get("were_trumping", False)
-                            trump_reason = local_meta.get("trump_reason")
-                            trumpable_id_after_dupe_check = local_meta.get(f"{tracker_name}_trumpable_id")
-                            async with meta_lock:
-                                if were_trumping:
-                                    meta.were_trumping = were_trumping
-                                if trump_reason:
-                                    meta.trump_reason = trump_reason
-                                if trumpable_id_after_dupe_check:
-                                    meta[f"{tracker_name}_trumpable_id"] = trumpable_id_after_dupe_check
+    async def _search_tracker_dupes(
+        self,
+        tracker_name: str,
+        meta: Meta,
+        tracker_class: Any,
+        status: dict[str, Any],
+        shared_meta: Meta,
+        runtime: _TrackerRuntime,
+    ) -> list[Any]:
+        if tracker_name == "PASSTHEPOPCORN":
+            return await self._search_ptp_dupes(
+                tracker_name, meta, status, shared_meta, runtime
+            )
+        return await self._search_regular_dupes(
+            tracker_name, meta, tracker_class, status, shared_meta, runtime
+        )
 
-                    elif "skipping" in local_meta:
-                        local_tracker_status["skipped"] = True
+    async def _search_regular_dupes(
+        self,
+        tracker_name: str,
+        meta: Meta,
+        tracker_class: Any,
+        status: dict[str, Any],
+        shared_meta: Meta,
+        runtime: _TrackerRuntime,
+    ) -> list[Any]:
+        try:
+            dupes = cast(list[Any], await tracker_class.search_existing(meta))
+            await self._mark_dupe_checked(
+                shared_meta, tracker_name, runtime.lock
+            )
+            tracker_status = meta.tracker_status.get(tracker_name, {})
+            status["other"] = self._tracker_other_status(tracker_status)
+            return dupes
+        except Exception as error:
+            return await self._handle_search_failure(
+                tracker_name,
+                meta,
+                status,
+                shared_meta,
+                runtime,
+                error,
+                mark_checked=True,
+            )
 
-                # Determine name change for display during interactive prompt
-                if not local_tracker_status["banned"] and not local_tracker_status["skipped"] and not local_tracker_status["dupe"]:
-                    try:
-                        tracker_rename = await tracker_class.get_name(local_meta)
-                    except Exception:
-                        tracker_rename = None
+    @staticmethod
+    def _tracker_other_status(value: Any) -> bool:
+        if not isinstance(value, Mapping):
+            return False
+        mapping = cast(Mapping[str, Any], value)
+        return bool(mapping.get("other", False))
 
-                    if tracker_rename is not None:
-                        if isinstance(tracker_rename, dict) and "name" in tracker_rename:
-                            display_name = cast(str, tracker_rename["name"])
-                        elif isinstance(tracker_rename, str):
-                            display_name = tracker_rename
+    async def _search_ptp_dupes(
+        self,
+        tracker_name: str,
+        meta: Meta,
+        status: dict[str, Any],
+        shared_meta: Meta,
+        runtime: _TrackerRuntime,
+    ) -> list[Any]:
+        ptp: Any = PassThePopcorn(config=self.config)
+        if not await self._ptp_additional_checks(
+            ptp, tracker_name, meta, status
+        ):
+            return []
+        try:
+            group_id = await ptp.get_group_by_imdb(meta.imdb)
+            async with runtime.lock:
+                shared_meta.ptp_groupid = group_id
+            return cast(
+                list[Any],
+                await ptp.search_existing(
+                    group_id or "", cast(dict[str, Any], meta)
+                ),
+            )
+        except Exception as error:
+            return await self._handle_search_failure(
+                tracker_name,
+                meta,
+                status,
+                shared_meta,
+                runtime,
+                error,
+                mark_checked=False,
+            )
 
-            return tracker_name, local_tracker_status, display_name, tracker_class
+    async def _ptp_additional_checks(
+        self, ptp: Any, tracker_name: str, meta: Meta, status: dict[str, Any]
+    ) -> bool:
+        method = getattr(ptp, "get_additional_checks", None)
+        if method is None:
+            return True
+        result = (
+            await method(meta)
+            if inspect.iscoroutinefunction(method)
+            else method(meta)
+        )
+        if result:
+            return True
+        reason = self._tracker_skip_reason(
+            tracker_name,
+            meta,
+            "PassThePopcorn eligibility check rejected the release.",
+        )
+        self._mark_skipped(status, reason)
+        meta.skipping = tracker_name
+        return False
 
-        searching_trackers: list[str] = [name for name in meta.trackers if name in tracker_class_map]
-        if searching_trackers:
-            logger.info("[yellow]Searching for existing torrents on selected trackers...")
-        tasks = [process_single_tracker(tracker_name, meta) for tracker_name in meta.trackers]
-        results = await asyncio.gather(*tasks)
-
-        if self._block_completed_episode_uploads(meta, results):
-            logger.info("[bold red]Individual episodes from completed TV series are not eligible for upload. Upload the complete season pack instead.[/bold red]")
-
-        # Collect passed trackers and skip reasons
-        passed_trackers: list[tuple[str, str | None, Any]] = []
-        dupe_trackers: list[str] = []
-        skipped_trackers: list[str] = []
-
-        for tracker_name, status, display_name, tracker_class in results:
-            tracker_status[tracker_name] = status
-            if status["banned"]:
-                pass
-            elif status["skipped"]:
-                skipped_trackers.append(tracker_name)
-            elif status["dupe"]:
-                dupe_trackers.append(tracker_name)
-            else:
-                passed_trackers.append((tracker_name, display_name, tracker_class))
-
-        if skipped_trackers:
-            logger.info(f"[red]Skipped due to specific tracker conditions: [bold yellow]{', '.join(skipped_trackers)}[/bold yellow].")
-        if dupe_trackers:
-            logger.info(f"[red]Found potential dupes on: [bold yellow]{', '.join(dupe_trackers)}[/bold yellow].\n")
-
-        # Now handle the confirmation/upload decisions
+    async def _handle_search_failure(
+        self,
+        tracker_name: str,
+        meta: Meta,
+        status: dict[str, Any],
+        shared_meta: Meta,
+        runtime: _TrackerRuntime,
+        error: Exception,
+        *,
+        mark_checked: bool,
+    ) -> list[Any]:
+        logger.info(
+            f"[bold red]Error searching for duplicates on {tracker_name}: "
+            f"{error}[/bold red]"
+        )
         if meta.unattended:
-            passed_names: list[str] = []
-            for tracker_name, _display_name, _tracker_class in passed_trackers:
-                tracker_status[tracker_name]["upload"] = True
-                successful_trackers += 1
-                passed_names.append(tracker_name)
-            if passed_names:
-                logger.info(f"[bold]{', '.join(passed_names)}[/bold]: [bold green]no potential dupes found.[/bold green]")
-        else:
-            # Attended mode
-            prompt_trackers = [tracker_name for tracker_name, _display_name, _tracker_class in passed_trackers if tracker_name not in ("MANUAL", "USENET")]
+            reason = f"Duplicate search failed: {error}"
+            self._mark_skipped(status, reason)
+            meta.skipping = tracker_name
+            return []
+        proceed = await self._confirm_failed_dupe_search(
+            runtime.helper, tracker_name
+        )
+        if proceed and mark_checked:
+            await self._mark_dupe_checked(
+                shared_meta, tracker_name, runtime.lock
+            )
+        if not proceed:
+            self._mark_skipped(
+                status, "Duplicate search failed and upload was not confirmed."
+            )
+            meta.skipping = tracker_name
+        return []
 
-            if not meta.get("debug", False) and prompt_trackers:
-                if len(prompt_trackers) == 1:
-                    tracker_name = prompt_trackers[0]
-                    logger.info(f"[bold]{tracker_name}:[/bold] [green]no potential dupes found.[/green]")
-                    prompt_msg = "Upload?"
-                else:
-                    logger.info(f"[bold]{', '.join(prompt_trackers)}:[/bold] [green]no potential dupes found.[/green]")
-                    prompt_msg = "Upload to all?"
+    @staticmethod
+    async def _confirm_failed_dupe_search(
+        helper: Any, tracker_name: str
+    ) -> bool:
+        try:
+            return bool(
+                await helper.prompt_yes_no(
+                    f"Duplicate check failed on {tracker_name}. Do you want "
+                    "to proceed with the upload anyway?",
+                    default=False,
+                )
+            )
+        except EOFError:
+            await TrackerStatusManager._abort_tracker_selection()
 
-                try:
-                    upload_all = await helper.prompt_yes_no(prompt_msg, default=False)
-                except EOFError:
-                    logger.info("\n[red]Exiting on user request (Ctrl+C)[/red]")
-                    await cleanup_manager.cleanup()
-                    cleanup_manager.reset_terminal()
-                    raise OperationAbortedError("Tracker processing was cancelled by the user.") from None
+    @staticmethod
+    async def _mark_dupe_checked(
+        meta: Meta, tracker_name: str, lock: asyncio.Lock
+    ) -> None:
+        async with lock:
+            checked = meta.setdefault("dupe_checked_trackers", [])
+            if tracker_name not in checked:
+                checked.append(tracker_name)
 
-                if upload_all:
-                    logger.info("[yellow]Processing approved uploads in the background...[/yellow]")
+    @staticmethod
+    async def _store_initial_dupes(
+        meta: Meta, tracker_name: str, dupes: list[Any], lock: asyncio.Lock
+    ) -> None:
+        async with lock:
+            meta.initial_dupes[tracker_name] = copy.deepcopy(dupes)
 
-                for tracker_name, _display_name, _tracker_class in passed_trackers:
-                    if tracker_name in ("MANUAL", "USENET"):
-                        tracker_status[tracker_name]["upload"] = True
-                        successful_trackers += 1
-                    else:
-                        if upload_all:
-                            tracker_status[tracker_name]["upload"] = True
-                            successful_trackers += 1
-                        else:
-                            tracker_status[tracker_name]["upload"] = False
-            else:
-                # No prompt required (either empty passed_trackers/prompt_trackers, or in debug mode)
-                for tracker_name, _display_name, _tracker_class in passed_trackers:
-                    tracker_status[tracker_name]["upload"] = True
-                    successful_trackers += 1
+    @staticmethod
+    def _warn_amigos_anonymous(tracker_name: str, meta: Meta) -> None:
+        if tracker_name != "AMIGOSSHARE" or not bool(meta.anon):
+            return
+        logger.info(
+            "PORTUGAS: [yellow]Aviso: Você solicitou um upload anônimo, mas o "
+            "AMIGOSSHARE não suporta essa opção.[/yellow][red] O envio não "
+            "será anônimo.[/red]"
+        )
+        logger.warning(
+            "EN: [yellow]Warning: You requested an anonymous upload, but "
+            "AMIGOSSHARE does not support this option.[/yellow][red] The "
+            "upload will not be anonymous.[/red]"
+        )
 
+    async def _evaluate_dupes(
+        self,
+        tracker_name: str,
+        local_meta: Meta,
+        dupes: list[Any],
+        status: dict[str, Any],
+        shared_meta: Meta,
+        runtime: _TrackerRuntime,
+    ) -> None:
+        if local_meta.skipping:
+            self._mark_skipped(
+                status,
+                self._tracker_skip_reason(
+                    tracker_name,
+                    local_meta,
+                    "Tracker marked this release to be skipped.",
+                ),
+            )
+            return
+        filtered = cast(
+            list[Any],
+            await runtime.dupe_checker.filter_dupes(
+                dupes, local_meta, tracker_name
+            ),
+        )
+        is_dupe, local_meta = await runtime.helper.dupe_check(
+            filtered, local_meta, tracker_name
+        )
+        status["dupe"] = bool(is_dupe)
+        if is_dupe:
+            status.setdefault("skip_reason", "A duplicate release was found.")
+        await self._copy_dupe_side_effects(
+            tracker_name, local_meta, shared_meta, runtime.lock
+        )
+
+    @staticmethod
+    async def _copy_dupe_side_effects(
+        tracker_name: str,
+        local_meta: Meta,
+        shared_meta: Meta,
+        lock: asyncio.Lock,
+    ) -> None:
+        values = TrackerStatusManager._dupe_side_effect_values(
+            tracker_name, local_meta
+        )
+        async with lock:
+            for key, value in values.items():
+                if value:
+                    shared_meta[key] = copy.deepcopy(value)
+
+    @staticmethod
+    def _dupe_side_effect_values(
+        tracker_name: str, meta: Meta
+    ) -> dict[str, Any]:
+        values: dict[str, Any] = {
+            f"{tracker_name}_matched_episode_ids": meta.get(
+                f"{tracker_name}_matched_episode_ids", []
+            ),
+            "trumpable_id": meta.get("trumpable_id"),
+            f"{tracker_name}_cross_seed": meta.get(
+                f"{tracker_name}_cross_seed"
+            ),
+        }
+        if tracker_name in {"AITHER", "LST"}:
+            values.update(
+                were_trumping=meta.get("were_trumping", False),
+                trump_reason=meta.get("trump_reason"),
+                **{
+                    f"{tracker_name}_trumpable_id": meta.get(
+                        f"{tracker_name}_trumpable_id"
+                    )
+                },
+            )
+        return values
+
+    @classmethod
+    async def _display_name(
+        cls, meta: Meta, tracker_class: Any, status: dict[str, Any]
+    ) -> str | None:
+        if cls._display_name_blocked(status):
+            return None
+        try:
+            value = await tracker_class.get_name(meta)
+        except Exception:
+            return None
+        return cls._display_name_value(value)
+
+    @staticmethod
+    def _display_name_blocked(status: Mapping[str, Any]) -> bool:
+        return any(
+            bool(status.get(key)) for key in ("banned", "skipped", "dupe")
+        )
+
+    @staticmethod
+    def _display_name_value(value: Any) -> str | None:
+        if isinstance(value, Mapping):
+            mapping = cast(Mapping[str, Any], value)
+            name = mapping.get("name")
+            return str(name) if name is not None else None
+        return value if isinstance(value, str) else None
+
+    @classmethod
+    def _ensure_skip_reason(
+        cls, tracker_name: str, meta: Meta, status: dict[str, Any]
+    ) -> None:
+        if not status.get("skipped"):
+            return
+        reason = str(
+            status.get("skip_reason")
+            or cls._tracker_skip_reason(
+                tracker_name,
+                meta,
+                "Tracker-specific condition skipped this upload.",
+            )
+        )
+        status["skip_reason"] = reason
+        logger.info(
+            f"{tracker_name}: [yellow]{reason} Skipping upload.[/yellow]"
+        )
+
+    @staticmethod
+    def _tracker_skip_reason(
+        tracker_name: str, meta: Meta, fallback: str
+    ) -> str:
+        value = meta.tracker_status.get(tracker_name, {})
+        if not isinstance(value, Mapping):
+            return fallback
+        mapping = cast(Mapping[str, Any], value)
+        reason = mapping.get("skip_reason") or mapping.get("status_message")
+        return str(reason) if reason else fallback
+
+    @staticmethod
+    def _mark_skipped(status: dict[str, Any], reason: str) -> None:
+        status["skipped"] = True
+        status["upload"] = False
+        status["skip_reason"] = reason
+
+    def _apply_completed_episode_rule(
+        self, meta: Meta, results: Sequence[_TrackerResult]
+    ) -> None:
+        if not Common.is_completed_tv_episode(meta):
+            return
+        changed = False
+        for result in results:
+            changed = self._block_completed_episode_result(result) or changed
+        if changed:
+            logger.info(
+                "[bold red]Individual episodes from completed TV series are "
+                "not eligible for upload. Upload the complete season pack "
+                "instead.[/bold red]"
+            )
+
+    @staticmethod
+    def _block_completed_episode_result(result: _TrackerResult) -> bool:
+        if result.status["dupe"]:
+            return False
+        TrackerStatusManager._mark_skipped(
+            result.status,
+            "Individual episode belongs to a completed TV series; upload the "
+            "season pack instead.",
+        )
+        return True
+
+    async def _select_uploads(
+        self, meta: Meta, results: list[_TrackerResult], helper: Any
+    ) -> int:
+        passed, dupes, skipped = self._classify_results(results)
+        self._log_result_groups(dupes, skipped)
+        if meta.unattended:
+            return self._enable_unattended_uploads(passed)
+        return await self._select_attended_uploads(meta, passed, helper)
+
+    @classmethod
+    def _classify_results(
+        cls, results: Sequence[_TrackerResult]
+    ) -> tuple[list[_TrackerResult], list[str], list[str]]:
+        eligibility = cls._eligibility_by_tracker(results)
+        passed = [
+            result for result in results if eligibility[result.name].eligible
+        ]
+        dupes = cls._result_names_with_flag(results, "dupe")
+        skipped = cls._result_names_with_flag(results, "skipped")
+        return passed, dupes, skipped
+
+    @classmethod
+    def _eligibility_by_tracker(
+        cls, results: Sequence[_TrackerResult]
+    ) -> dict[str, Any]:
+        states = [cls._state_from_result(result) for result in results]
+        return {
+            item.tracker: item
+            for item in evaluate_tracker_upload_eligibility(states)
+        }
+
+    @staticmethod
+    def _result_names_with_flag(
+        results: Sequence[_TrackerResult], flag: str
+    ) -> list[str]:
+        return [
+            result.name for result in results if bool(result.status.get(flag))
+        ]
+
+    @staticmethod
+    def _state_from_result(result: _TrackerResult) -> TrackerUploadState:
+        status = result.status
+        banned = bool(status["banned"])
+        skipped = bool(status["skipped"])
+        dupe = bool(status["dupe"])
+        return TrackerUploadState(
+            tracker=result.name,
+            upload_allowed=not any((banned, skipped, dupe)),
+            skipped=skipped,
+            banned=banned,
+            dupe=dupe,
+            reason=str(status.get("skip_reason", "")),
+        )
+
+    @staticmethod
+    def _log_result_groups(dupes: list[str], skipped: list[str]) -> None:
+        if skipped:
+            logger.info(
+                "[red]Skipped due to specific tracker conditions: "
+                "[bold yellow]"
+                f"{', '.join(skipped)}[/bold yellow]."
+            )
+        if dupes:
+            logger.info(
+                "[red]Found potential dupes on: [bold yellow]"
+                f"{', '.join(dupes)}[/bold yellow].\n"
+            )
+
+    @staticmethod
+    def _enable_unattended_uploads(passed: Sequence[_TrackerResult]) -> int:
+        names: list[str] = []
+        for result in passed:
+            result.status["upload"] = True
+            names.append(result.name)
+        if names:
+            logger.info(
+                f"[bold]{', '.join(names)}[/bold]: [bold green]no potential "
+                "dupes found.[/bold green]"
+            )
+        return len(names)
+
+    async def _select_attended_uploads(
+        self, meta: Meta, passed: list[_TrackerResult], helper: Any
+    ) -> int:
+        manual, prompt = self._partition_attended_results(passed)
+        self._enable_result_uploads(manual)
         if meta.debug:
-            logger.debug("\n[bold]Tracker Processing Summary:[/bold]")
-            for t_name, status in tracker_status.items():
-                banned_status = "Yes" if status["banned"] else "No"
-                skipped_status = "Yes" if status["skipped"] else "No"
-                dupe_status = "Yes" if status["dupe"] else "No"
-                upload_status = "Yes" if status["upload"] else "No"
-                logger.debug(f"Tracker: {t_name} | Banned: {banned_status} | Skipped: {skipped_status} | Dupe: {dupe_status} | [yellow]Upload:[/yellow] {upload_status}")
-            logger.debug(f"\n[bold]Trackers Passed all Checks:[/bold] {successful_trackers}")
-            logger.debug("", extra={"markup": False})
-            logger.debug("[bold red]DEBUG MODE does not upload to sites")
+            self._enable_result_uploads(prompt)
+            return len(passed)
+        selected = await self._prompt_attended_uploads(prompt, helper)
+        return len(manual) + selected
 
-        meta.tracker_status = merge_tracker_status(tracker_status, status_map)
-        return successful_trackers
+    @staticmethod
+    def _partition_attended_results(
+        passed: Sequence[_TrackerResult],
+    ) -> tuple[list[_TrackerResult], list[_TrackerResult]]:
+        manual_names = {"MANUAL", "USENET"}
+        manual = [result for result in passed if result.name in manual_names]
+        prompt = [
+            result for result in passed if result.name not in manual_names
+        ]
+        return manual, prompt
+
+    @staticmethod
+    def _enable_result_uploads(results: Sequence[_TrackerResult]) -> None:
+        for result in results:
+            result.status["upload"] = True
+
+    async def _prompt_attended_uploads(
+        self, prompt: list[_TrackerResult], helper: Any
+    ) -> int:
+        if not prompt:
+            return 0
+        self._log_prompt_candidates(prompt)
+        upload_all = await self._prompt_upload_decision(prompt, helper)
+        if not upload_all:
+            return 0
+        self._enable_result_uploads(prompt)
+        return len(prompt)
+
+    async def _prompt_upload_decision(
+        self, prompt: Sequence[_TrackerResult], helper: Any
+    ) -> bool:
+        try:
+            question = "Upload?" if len(prompt) == 1 else "Upload to all?"
+            return bool(await helper.prompt_yes_no(question, default=False))
+        except EOFError:
+            await self._abort_tracker_processing()
+
+    @staticmethod
+    def _log_prompt_candidates(prompt: Sequence[_TrackerResult]) -> None:
+        names = [result.name for result in prompt]
+        label = names[0] if len(names) == 1 else ", ".join(names)
+        logger.info(
+            f"[bold]{label}:[/bold] [green]no potential dupes found.[/green]"
+        )
+
+    @staticmethod
+    async def _abort_tracker_processing() -> Never:
+        logger.info("\n[red]Exiting on user request (Ctrl+C)[/red]")
+        await cleanup_manager.cleanup()
+        cleanup_manager.reset_terminal()
+        raise OperationAbortedError(
+            "Tracker processing was cancelled by the user."
+        )
+
+    @staticmethod
+    def _log_debug_summary(
+        meta: Meta, results: Sequence[_TrackerResult], successful: int
+    ) -> None:
+        if not meta.debug:
+            return
+        logger.debug("\n[bold]Tracker Processing Summary:[/bold]")
+        for result in results:
+            TrackerStatusManager._log_debug_result(result)
+        logger.debug(
+            f"\n[bold]Trackers Passed all Checks:[/bold] {successful}"
+        )
+        logger.debug("", extra={"markup": False})
+        logger.debug("[bold red]DEBUG MODE does not upload to sites")
+
+    @classmethod
+    def _log_debug_result(cls, result: _TrackerResult) -> None:
+        status = result.status
+        reason = str(status.get("skip_reason", ""))
+        logger.debug(
+            cls._debug_result_line(
+                result.name,
+                banned=bool(status["banned"]),
+                skipped=bool(status["skipped"]),
+                dupe=bool(status["dupe"]),
+                upload=bool(status["upload"]),
+                reason=reason,
+            )
+        )
+
+    @classmethod
+    def _debug_result_line(
+        cls,
+        tracker: str,
+        *,
+        banned: bool,
+        skipped: bool,
+        dupe: bool,
+        upload: bool,
+        reason: str,
+    ) -> str:
+        line = (
+            f"Tracker: {tracker} | Banned: {cls._yes_no(banned)} "
+            f"| Skipped: {cls._yes_no(skipped)} "
+            f"| Dupe: {cls._yes_no(dupe)} "
+            f"| [yellow]Upload:[/yellow] {cls._yes_no(upload)}"
+        )
+        return cls._append_debug_reason(line, reason)
+
+    @staticmethod
+    def _yes_no(value: bool) -> str:
+        return "Yes" if value else "No"
+
+    @staticmethod
+    def _append_debug_reason(line: str, reason: str) -> str:
+        return f"{line} | Reason: {reason}" if reason else line
+
+    @classmethod
+    def _tracker_names(cls, value: Any) -> list[str]:
+        values = cls._tracker_name_values(value)
+        return [name for item in values if (name := cls._tracker_name(item))]
+
+    @staticmethod
+    def _tracker_name_values(value: Any) -> Sequence[Any]:
+        if isinstance(value, str):
+            return value.split(",")
+        if isinstance(value, Sequence):
+            return cast(Sequence[Any], value)
+        return ()
+
+    @staticmethod
+    def _tracker_name(value: Any) -> str:
+        return str(value).strip().upper()
 
 
 async def process_all_trackers(meta: Meta, config: dict[str, Any]) -> int:
