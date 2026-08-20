@@ -114,3 +114,78 @@ def test_merge_tracker_status_preserves_routing_metadata():
 
     assert merged["PRIVATEHD"]["redirected_to"] == "CINEMAZ"
     assert merged["CINEMAZ"] == {"redirected_from": ["PRIVATEHD"], "upload": True, "skipped": False}
+
+
+def test_router_handles_invalid_year_and_explicit_sd():
+    current = router()
+    assert current._is_older_than_50_years(make_meta(year="bad")) is False
+    assert current._is_sd(make_meta(sd=True, resolution="1080p")) is True
+
+
+def test_privatehd_direct_region_decisions_cover_cinemaz_and_avistaz():
+    current = router()
+    cinema = current.decide("PRIVATEHD", make_meta(origin_country=["FR"], year=2020))
+    avista = current.decide("PRIVATEHD", make_meta(origin_country=["JP"], year=2020))
+    assert cinema is not None and cinema.destination == "CINEMAZ"
+    assert avista is not None and avista.destination == "AVISTAZ"
+
+
+def test_avistaz_direct_region_decisions_cover_privatehd_and_cinemaz():
+    current = router()
+    privatehd = current.decide("AVISTAZ", make_meta(origin_country=["US"], trackers=["AVISTAZ"]))
+    cinema = current.decide("AVISTAZ", make_meta(origin_country=["FR"], trackers=["AVISTAZ"]))
+    assert privatehd is not None and privatehd.destination == "PRIVATEHD"
+    assert cinema is not None and cinema.destination == "CINEMAZ"
+
+
+@pytest.mark.asyncio
+async def test_non_network_tracker_is_ignored():
+    meta = make_meta(trackers=["OTHER"])
+    await router().apply(meta)
+    assert meta.trackers == ["OTHER"]
+    assert meta.tracker_status == {}
+
+
+@pytest.mark.asyncio
+async def test_attended_user_can_decline_redirect(monkeypatch):
+    meta = make_meta(year=1970, unattended=False)
+    monkeypatch.setattr("src.integrations.trackers.AVISTAZ.routing.cli_ui.ask_yes_no", lambda *_args, **_kwargs: False)
+
+    await router().apply(meta)
+
+    assert meta.trackers == ["PRIVATEHD"]
+    assert meta.tracker_status["PRIVATEHD"]["routing_suggested_to"] == "CINEMAZ"
+
+
+@pytest.mark.asyncio
+async def test_missing_destination_class_records_routing_error():
+    current = AvistaZNetworkRouter({"DEFAULT": {"avistaz_network_auto_redirect": True}}, {"PRIVATEHD": FakeTracker})
+    meta = make_meta(year=1970)
+
+    await current.apply(meta)
+
+    assert meta.trackers == ["PRIVATEHD"]
+    assert "not available" in meta.tracker_status["PRIVATEHD"]["routing_error"]
+
+
+@pytest.mark.asyncio
+async def test_destination_validation_exception_records_routing_error():
+    class BrokenTracker(FakeTracker):
+        async def validate_credentials(self, _meta):
+            raise RuntimeError("broken credentials")
+
+    current = AvistaZNetworkRouter(
+        {"DEFAULT": {"avistaz_network_auto_redirect": True}},
+        {"PRIVATEHD": FakeTracker, "CINEMAZ": BrokenTracker, "AVISTAZ": FakeTracker},
+    )
+    meta = make_meta(year=1970)
+
+    await current.apply(meta)
+
+    assert meta.trackers == ["PRIVATEHD"]
+    assert "broken credentials" in meta.tracker_status["PRIVATEHD"]["routing_error"]
+
+
+def test_cinemaz_asian_production_routes_to_avistaz():
+    decision = router().decide("CINEMAZ", make_meta(origin_country=["JP"], trackers=["CINEMAZ"]))
+    assert decision is not None and decision.destination == "AVISTAZ"
