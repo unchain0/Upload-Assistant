@@ -115,9 +115,17 @@ class GreatPosterWall:
         self.rehost_images_manager = RehostImagesManager(config)
         self.common = Common(config)
         self.tmdb_manager = TmdbManager(config)
-        self.tracker_config: dict[str, Any] = self.config["TRACKERS"].get(self.tracker, {})
-        self.announce = self.tracker_config.get("announce_url", "")
-        self.api_key = self.tracker_config.get("api_key", "")
+        self.tracker_config = self._tracker_config()
+        self.announce = str(self.tracker_config.get("announce_url", ""))
+        self.api_key = str(self.tracker_config.get("api_key", ""))
+
+    def _tracker_config(self) -> dict[str, Any]:
+        trackers = self.config.get("TRACKERS", {})
+        if not isinstance(trackers, dict):
+            return {}
+        tracker_map = cast(dict[str, Any], trackers)
+        value = tracker_map.get(self.tracker, {})
+        return cast(dict[str, Any], value) if isinstance(value, dict) else {}
 
     async def load_cookies(self, meta: Meta) -> Any:
         from src.integrations.trackers.cookie_auth import find_cookie_file
@@ -150,29 +158,22 @@ class GreatPosterWall:
         return "Other"
 
     async def get_subtitle(self, meta: Meta) -> list[str]:
-        if not meta.language_checked:
-            await languages_manager.process_desc_language(meta, tracker=self.tracker)
-
-        found_language_strings_raw = meta.subtitle_languages
-        if not isinstance(found_language_strings_raw, list):
-            return []
-
-        found_language_strings_list = found_language_strings_raw
-        found_language_strings = [lang for lang in found_language_strings_list if isinstance(lang, str)]
-        return [lang.lower() for lang in found_language_strings]
+        await self._ensure_languages(meta)
+        return [value.lower() for value in self._language_strings(meta.subtitle_languages)]
 
     async def get_ch_dubs(self, meta: Meta) -> bool:
+        await self._ensure_languages(meta)
+        chinese_languages = {"mandarin", "chinese", "zh", "zh-cn", "zh-hans", "zh-hant", "putonghua", "国语", "普通话"}
+        return any(value.strip().lower() in chinese_languages for value in self._language_strings(meta.audio_languages))
+
+    async def _ensure_languages(self, meta: Meta) -> None:
         if not meta.language_checked:
             await languages_manager.process_desc_language(meta, tracker=self.tracker)
 
-        found_language_strings_raw = meta.audio_languages
-        if not isinstance(found_language_strings_raw, list):
-            return False
-        found_language_strings_list = found_language_strings_raw
-        found_language_strings = [lang for lang in found_language_strings_list if isinstance(lang, str)]
-
-        chinese_languages = {"mandarin", "chinese", "zh", "zh-cn", "zh-hans", "zh-hant", "putonghua", "国语", "普通话"}
-        return any(lang.strip().lower() in chinese_languages for lang in found_language_strings)
+    @staticmethod
+    def _language_strings(value: Any) -> list[str]:
+        values = cast(list[Any], value) if isinstance(value, list) else []
+        return [item for item in values if isinstance(item, str)]
 
     def get_codec(self, meta: Meta) -> str:
         video_encode = meta.video_encode.strip().lower()
@@ -196,45 +197,45 @@ class GreatPosterWall:
         return "Other"
 
     def get_audio_codec(self, meta: Meta) -> str:
-        priority_order = ["DTS-X", "E-AC-3 JOC", "TrueHD", "DTS-HD", "PCM", "FLAC", "DTS-ES", "DTS", "E-AC-3", "AC3", "AAC", "Opus", "Vorbis", "MP3", "MP2"]
-
-        codec_map = {
-            "DTS-X": ["DTS:X"],
-            "E-AC-3 JOC": ["DD+ 5.1 Atmos", "DD+ 7.1 Atmos"],
-            "TrueHD": ["TrueHD"],
-            "DTS-HD": ["DTS-HD"],
-            "PCM": ["LPCM"],
-            "FLAC": ["FLAC"],
-            "DTS-ES": ["DTS-ES"],
-            "DTS": ["DTS"],
-            "E-AC-3": ["DD+"],
-            "AC3": ["DD"],
-            "AAC": ["AAC"],
-            "Opus": ["Opus"],
-            "Vorbis": ["VORBIS"],
-            "MP2": ["MP2"],
-            "MP3": ["MP3"],
-        }
-
-        audio_description = meta.audio
-
-        if not audio_description or not isinstance(audio_description, str):
+        description = meta.audio
+        if not isinstance(description, str) or not description:
             return "Outro"
+        return self._matched_audio_codec(description)
 
-        for codec_name in priority_order:
-            search_terms = codec_map.get(codec_name, [])
-
-            for term in search_terms:
-                if term in audio_description:
-                    return codec_name
-
+    @classmethod
+    def _matched_audio_codec(cls, description: str) -> str:
+        for codec, terms in cls._audio_codec_terms():
+            if any(term in description for term in terms):
+                return codec
         return "Outro"
 
-    def get_title(self, meta: Meta) -> str:
-        title_value = self.tmdb_data.get("name") or self.tmdb_data.get("title") or ""
-        title = title_value if isinstance(title_value, str) else ""
+    @staticmethod
+    def _audio_codec_terms() -> tuple[tuple[str, tuple[str, ...]], ...]:
+        return (
+            ("DTS-X", ("DTS:X",)),
+            ("E-AC-3 JOC", ("DD+ 5.1 Atmos", "DD+ 7.1 Atmos")),
+            ("TrueHD", ("TrueHD",)),
+            ("DTS-HD", ("DTS-HD",)),
+            ("PCM", ("LPCM",)),
+            ("FLAC", ("FLAC",)),
+            ("DTS-ES", ("DTS-ES",)),
+            ("DTS", ("DTS",)),
+            ("E-AC-3", ("DD+",)),
+            ("AC3", ("DD",)),
+            ("AAC", ("AAC",)),
+            ("Opus", ("Opus",)),
+            ("Vorbis", ("VORBIS",)),
+            ("MP3", ("MP3",)),
+            ("MP2", ("MP2",)),
+        )
 
+    def get_title(self, meta: Meta) -> str:
+        title = self._localized_title_value()
         return title if title and title != meta.title else ""
+
+    def _localized_title_value(self) -> str:
+        value = self.tmdb_data.get("name") or self.tmdb_data.get("title") or ""
+        return value if isinstance(value, str) else ""
 
     def is_approved_image_url(self, image_url: str) -> bool:
         hostname = urlparse(image_url).hostname or ""
@@ -245,46 +246,78 @@ class GreatPosterWall:
 
     async def rehost_unapproved_images(self, meta: Meta) -> None:
         """Import public image URLs to GPW's KShare host before the normal host check."""
-        image_list = meta.image_list
-        if not isinstance(image_list, list) or not image_list:
+        images = self._image_entries(meta.image_list)
+        if not images:
             return
         if not self.api_key:
             logger.warning("[yellow]GREATPOSTERWALL: cannot rehost images because no API key is configured.[/yellow]")
             return
+        meta.image_list = await self._rehost_image_entries(images)
 
-        rehosted_images: list[dict[str, str]] = []
+    @staticmethod
+    def _image_entries(value: Any) -> list[dict[str, str]]:
+        values = cast(list[Any], value) if isinstance(value, list) else []
+        return [cast(dict[str, str], item) for item in values if isinstance(item, dict)]
+
+    async def _rehost_image_entries(self, images: list[dict[str, str]]) -> list[dict[str, str]]:
         async with httpx.AsyncClient(timeout=60) as client:
-            for image in cast(list[dict[str, str]], image_list):
-                raw_url = image.get("raw_url", "")
-                if not raw_url.startswith(("https://", "http://")) or self.is_approved_image_url(raw_url):
-                    rehosted_images.append(image)
-                    continue
+            return [await self._rehost_image_entry(client, image) for image in images]
 
-                try:
-                    response = await client.post(
-                        f"{self.base_url}/api.php",
-                        params={"action": "img_upload", "api_key": self.api_key},
-                        data={"urls[]": raw_url},
-                    )
-                    response_data = response.json()
-                    response_body = response_data.get("response", {})
-                    files = response_body.get("files", []) if isinstance(response_body, dict) else []
-                    hosted_url = files[0].get("name") if files else None
-                    if response.status_code != 200 or response_data.get("status") != 200 or not isinstance(hosted_url, str):
-                        error = response_body.get("Error", "no image URL returned") if isinstance(response_body, dict) else "no image URL returned"
-                        logger.warning(f"[yellow]GREATPOSTERWALL: could not rehost {raw_url}: {error}[/yellow]")
-                        rehosted_images.append(image)
-                        continue
-                except (httpx.HTTPError, TypeError, ValueError) as e:
-                    logger.warning(f"[yellow]GREATPOSTERWALL: could not rehost {raw_url}: {e!s}[/yellow]")
-                    rehosted_images.append(image)
-                    continue
+    async def _rehost_image_entry(self, client: httpx.AsyncClient, image: dict[str, str]) -> dict[str, str]:
+        raw_url = image.get("raw_url", "")
+        if not self._needs_image_rehost(raw_url):
+            return image
+        hosted_url = await self._rehost_image_url(client, raw_url)
+        if not hosted_url:
+            return image
+        result = image.copy()
+        result.update({"img_url": hosted_url, "raw_url": hosted_url, "web_url": hosted_url})
+        return result
 
-                rehosted_image = image.copy()
-                rehosted_image.update({"img_url": hosted_url, "raw_url": hosted_url, "web_url": hosted_url})
-                rehosted_images.append(rehosted_image)
+    def _needs_image_rehost(self, raw_url: str) -> bool:
+        return raw_url.startswith(("https://", "http://")) and not self.is_approved_image_url(raw_url)
 
-        meta.image_list = rehosted_images
+    async def _rehost_image_url(self, client: httpx.AsyncClient, raw_url: str) -> str:
+        try:
+            response = await client.post(
+                f"{self.base_url}/api.php",
+                params={"action": "img_upload", "api_key": self.api_key},
+                data={"urls[]": raw_url},
+            )
+            return self._hosted_image_url(response, raw_url)
+        except (httpx.HTTPError, TypeError, ValueError) as error:
+            logger.warning(f"[yellow]GREATPOSTERWALL: could not rehost {raw_url}: {error!s}[/yellow]")
+            return ""
+
+    def _hosted_image_url(self, response: httpx.Response, raw_url: str) -> str:
+        data, body = self._image_response_maps(response)
+        hosted_url = self._first_hosted_image_url(body)
+        if self._image_response_ok(response, data, hosted_url):
+            return hosted_url
+        logger.warning(f"[yellow]GREATPOSTERWALL: could not rehost {raw_url}: {body.get('Error', 'no image URL returned')}[/yellow]")
+        return ""
+
+    @staticmethod
+    def _image_response_maps(response: httpx.Response) -> tuple[dict[str, Any], dict[str, Any]]:
+        payload = response.json()
+        data = cast(dict[str, Any], payload) if isinstance(payload, dict) else {}
+        body_value = data.get("response", {})
+        body = cast(dict[str, Any], body_value) if isinstance(body_value, dict) else {}
+        return data, body
+
+    @classmethod
+    def _first_hosted_image_url(cls, body: dict[str, Any]) -> str:
+        files = cls._mapping_items(body.get("files", []))
+        return str(files[0].get("name", "")) if files else ""
+
+    @staticmethod
+    def _image_response_ok(response: httpx.Response, data: dict[str, Any], hosted_url: str) -> bool:
+        return response.status_code == 200 and data.get("status") == 200 and bool(hosted_url)
+
+    @staticmethod
+    def _mapping_items(value: Any) -> list[dict[str, Any]]:
+        values = cast(list[Any], value) if isinstance(value, list) else []
+        return [cast(dict[str, Any], item) for item in values if isinstance(item, dict)]
 
     async def check_image_hosts(self, meta: Meta) -> None:
         # Rule: 2.2.1. Screenshots: They have to be saved at kshare.club, pixhost.to, img.pterclub.com, yes.ilikeshots.club, imgbox.com, s3.pterclub.com
@@ -313,198 +346,217 @@ class GreatPosterWall:
         )
 
     def get_trailer(self, meta: Meta) -> str:
-        video_results: list[dict[str, Any]] = []
+        youtube = self._tmdb_trailer_key()
+        return youtube if youtube else self._meta_trailer_key(meta.youtube)
+
+    def _tmdb_trailer_key(self) -> str:
         videos = self.tmdb_data.get("videos")
-        if isinstance(videos, dict):
-            videos_dict = cast(dict[str, Any], videos)
-            results = videos_dict.get("results")
-            if isinstance(results, list):
-                results_list = results
-                video_results.extend(cast(dict[str, Any], result) for result in results_list if isinstance(result, dict))
+        if not isinstance(videos, dict):
+            return ""
+        video_map = cast(dict[str, Any], videos)
+        entries = self._mapping_items(video_map.get("results", []))
+        if not entries:
+            return ""
+        value = entries[-1].get("key", "")
+        return value if isinstance(value, str) else ""
 
-        youtube = ""
-
-        if video_results:
-            youtube_value = video_results[-1].get("key", "")
-            youtube = youtube_value if isinstance(youtube_value, str) else ""
-
-        if not youtube:
-            meta_trailer = str(meta.youtube)
-            if meta_trailer:
-                youtube = meta_trailer.replace("https://www.youtube.com/watch?v=", "").replace("/", "")
-
-        return youtube
+    @staticmethod
+    def _meta_trailer_key(value: Any) -> str:
+        if not value:
+            return ""
+        return str(value).replace("https://www.youtube.com/watch?v=", "").replace("/", "")
 
     async def get_tags(self, meta: Meta) -> str:
-        tags = ""
+        tags = self._normalized_genre_tags(meta.genres)
+        if tags:
+            return tags
+        return await self._prompt_genre_tags(meta)
 
-        genres = meta.genres
-        if genres:
-            genre_names = [genre.strip() for genre in genres if isinstance(genre, str) and genre.strip()]
-            if genre_names:
-                tags = ", ".join(unicodedata.normalize("NFKD", name).encode("ASCII", "ignore").decode("utf-8").replace(" ", ".").lower() for name in genre_names)
+    @classmethod
+    def _normalized_genre_tags(cls, value: Any) -> str:
+        names = cls._non_empty_strings(value)
+        return ", ".join(cls._normalize_genre_name(name) for name in names)
 
-        if not tags:
-            if meta.unattended and not meta.unattended_confirm:
-                logger.info(f"{self.tracker}: [yellow]Unattended mode: Enter genres not available. Skipping {self.tracker} upload.[/yellow]")
-                meta.skipping = f"{self.tracker}"
-                return ""
-            tags_raw = await prompt_in_thread(cli_ui.ask_string, f"Enter the genres (in {self.tracker} format): ")
-            tags = (tags_raw or "").strip()
+    @staticmethod
+    def _non_empty_strings(value: Any) -> list[str]:
+        values = cast(list[Any], value) if isinstance(value, list) else []
+        return [text for item in values if isinstance(item, str) if (text := item.strip())]
 
-        return tags
+    @staticmethod
+    def _normalize_genre_name(name: str) -> str:
+        return unicodedata.normalize("NFKD", name).encode("ASCII", "ignore").decode("utf-8").replace(" ", ".").lower()
+
+    async def _prompt_genre_tags(self, meta: Meta) -> str:
+        if meta.unattended and not meta.unattended_confirm:
+            logger.info(f"{self.tracker}: [yellow]Unattended mode: Enter genres not available. Skipping {self.tracker} upload.[/yellow]")
+            meta.skipping = self.tracker
+            return ""
+        value = await prompt_in_thread(cli_ui.ask_string, f"Enter the genres (in {self.tracker} format): ")
+        return str(value or "").strip()
 
     async def get_additional_checks(self, meta: Meta) -> bool:
-        media_type = str(meta.type).lower()
-        tag = "" if not meta.tag else meta.tag.strip().lower()
-        if media_type == "remux" and tag in ("-hdt", "-frds"):
-            logger.info(f"{self.tracker}: Remuxes from {meta.tag} are not allowed on {self.tracker}")
-            return False
-        if media_type == "webdl" and tag == "-evo":
-            logger.info(f"{self.tracker}: WEB-DLs from {meta.tag} are not allowed on {self.tracker}")
-            return False
+        reason = self._release_rejection_reason(meta)
+        if not reason:
+            return True
+        logger.info(f"{self.tracker}: {reason}")
+        return False
 
-        return True
+    def _release_rejection_reason(self, meta: Meta) -> str:
+        media_type = str(meta.type).lower()
+        tag = str(meta.tag or "").strip().lower()
+        blocked = self._blocked_release_kind(media_type, tag)
+        return f"{blocked} from {meta.tag} are not allowed on {self.tracker}" if blocked else ""
+
+    @staticmethod
+    def _blocked_release_kind(media_type: str, tag: str) -> str:
+        if media_type == "remux" and tag in {"-hdt", "-frds"}:
+            return "Remuxes"
+        return "WEB-DLs" if media_type == "webdl" and tag == "-evo" else ""
 
     async def search_existing(self, meta: Meta) -> list[dict[str, str]]:
-        dupes: list[dict[str, str]] = []
-
-        group_id = await self.get_groupid(meta)
-        if not group_id:
+        if not await self.get_groupid(meta):
             return []
-
-        imdb = dict(meta.imdb_info).get("imdbID", "")
+        imdb = self._imdb_identifier(meta)
         if not imdb:
             logger.info(f"{self.tracker}: IMDb ID not found in metadata. Skipping search.")
             return []
-
         cookies = await self.load_cookies(meta)
-        if not cookies:
-            search_url = f"{self.base_url}/api.php?api_key={self.api_key}&action=torrent&imdbID={imdb}"
-            async with httpx.AsyncClient(timeout=30) as client:
-                response = await client.get(search_url)
-                response.raise_for_status()
-                data = response.json()
-                data_dict = cast(dict[str, Any], data) if isinstance(data, dict) else {}
+        if cookies:
+            return await self._cookie_search_existing(meta, imdb, cookies)
+        return await self._api_search_existing(imdb)
 
-                if data_dict.get("status") == 200 and "response" in data_dict:
-                    response_list_raw = data_dict.get("response")
-                    response_list = cast(list[Any], response_list_raw) if isinstance(response_list_raw, list) else []
-                    for item in response_list:
-                        if not isinstance(item, dict):
-                            continue
-                        item_dict = cast(dict[str, Any], item)
-                        name = item_dict.get("Name", "")
-                        year = item_dict.get("Year", "")
-                        resolution = item_dict.get("Resolution", "")
-                        source = item_dict.get("Source", "")
-                        processing = item_dict.get("Processing", "")
-                        remaster = item_dict.get("RemasterTitle", "")
-                        codec = item_dict.get("Codec", "")
+    @staticmethod
+    def _imdb_identifier(meta: Meta) -> str:
+        imdb = meta.imdb_info if isinstance(meta.imdb_info, dict) else {}
+        return str(imdb.get("imdbID", "") or "")
 
-                        formatted = f"{name} {year} {resolution} {source} {processing} {remaster} {codec}".strip()
-                        formatted = re.sub(r"\s{2,}", " ", formatted)
-                        dupes.append({"name": formatted})
-                    return dupes
-                return []
+    async def _api_search_existing(self, imdb: str) -> list[dict[str, str]]:
+        url = f"{self.base_url}/api.php?api_key={self.api_key}&action=torrent&imdbID={imdb}"
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.get(url)
+        response.raise_for_status()
+        payload = response.json()
+        return self._api_duplicate_entries(payload)
 
-        imdb_value = str(imdb or "")
-        search_url = f"{self.base_url}/torrents.php?groupname={imdb_value.upper()}"  # using TT in imdb returns the search page instead of redirecting to the group page
-        found_items: list[dict[str, Any]] = []
+    @classmethod
+    def _api_duplicate_entries(cls, payload: Any) -> list[dict[str, str]]:
+        if not isinstance(payload, dict):
+            return []
+        data = cast(dict[str, Any], payload)
+        if data.get("status") != 200:
+            return []
+        rows = cls._mapping_items(data.get("response", []))
+        return [{"name": cls._formatted_api_duplicate(row)} for row in rows]
 
-        async with httpx.AsyncClient(
-            cookies=cookies,
-            timeout=30,
-            headers={"User-Agent": f"{meta.ua_name} {(meta.current_version if meta.current_version is not None else 'github.com/wastaken7/Upload-Assistant')}"},
-        ) as client:
-            response = await client.get(search_url)
+    @staticmethod
+    def _formatted_api_duplicate(item: dict[str, Any]) -> str:
+        parts = (
+            item.get("Name", ""),
+            item.get("Year", ""),
+            item.get("Resolution", ""),
+            item.get("Source", ""),
+            item.get("Processing", ""),
+            item.get("RemasterTitle", ""),
+            item.get("Codec", ""),
+        )
+        return re.sub(r"\s{2,}", " ", " ".join(str(value) for value in parts).strip())
+
+    async def _cookie_search_existing(self, meta: Meta, imdb: str, cookies: Any) -> list[dict[str, str]]:
+        url = f"{self.base_url}/torrents.php?groupname={imdb.upper()}"
+        async with httpx.AsyncClient(cookies=cookies, timeout=30, headers={"User-Agent": self._user_agent(meta)}) as client:
+            response = await client.get(url)
             response.raise_for_status()
-            soup = BeautifulSoup(response.text, "html.parser")
-
-            torrent_table = soup.find("table", id="torrent_table")
-            if not torrent_table:
-                return []
-
-            for torrent_row in torrent_table.find_all("tr", class_="TableTorrent-rowTitle"):
-                title_link = torrent_row.find("a", href=re.compile(r"torrentid=\d+"))
-                if not title_link:
-                    continue
-
-                tooltip_value = title_link.get("data-tooltip")
-                if not isinstance(tooltip_value, str):
-                    continue
-
-                name = tooltip_value
-
-                size_cell = torrent_row.find("td", class_="TableTorrent-cellStatSize")
-                size = size_cell.get_text(strip=True) if size_cell else None
-
-                href_value = title_link.get("href")
-                href_text = href_value if isinstance(href_value, str) else ""
-                match = re.search(r"torrentid=(\d+)", href_text)
-                torrent_link = f"{self.torrent_url}{match.group(1)}" if match else None
-
-                dupe_entry = {"name": name, "size": size, "link": torrent_link}
-
-                found_items.append(dupe_entry)
-
-            if found_items:
+            entries = self._html_duplicate_entries(response.text)
+            if entries:
                 await self.get_slots(meta, client, GreatPosterWall.group_id)
+            return entries
 
-            return found_items
+    @staticmethod
+    def _user_agent(meta: Meta) -> str:
+        version = meta.current_version if meta.current_version is not None else "github.com/wastaken7/Upload-Assistant"
+        return f"{meta.ua_name} {version}"
+
+    def _html_duplicate_entries(self, html: str) -> list[dict[str, str]]:
+        soup = BeautifulSoup(html, "html.parser")
+        table = soup.find("table", id="torrent_table")
+        if table is None:
+            return []
+        return [entry for row in table.find_all("tr", class_="TableTorrent-rowTitle") if (entry := self._html_duplicate_entry(row)) is not None]
+
+    def _html_duplicate_entry(self, row: Any) -> dict[str, str] | None:
+        link = row.find("a", href=re.compile(r"torrentid=\d+"))
+        if link is None:
+            return None
+        tooltip = link.get("data-tooltip")
+        if not isinstance(tooltip, str):
+            return None
+        size_cell = row.find("td", class_="TableTorrent-cellStatSize")
+        href = link.get("href")
+        return {
+            "name": tooltip,
+            "size": size_cell.get_text(strip=True) if size_cell else "",
+            "link": self._torrent_link_from_href(href),
+        }
+
+    def _torrent_link_from_href(self, href: Any) -> str:
+        value = href if isinstance(href, str) else ""
+        match = re.search(r"torrentid=(\d+)", value)
+        return f"{self.torrent_url}{match.group(1)}" if match else ""
 
     async def get_slots(self, meta: Meta, client: httpx.AsyncClient, group_id: str) -> None:
-        url = f"{self.base_url}/torrents.php?id={group_id}"
+        response = await self._slots_response(client, group_id)
+        if response is None:
+            return
+        soup = BeautifulSoup(response.text, "html.parser")
+        for row in soup.find_all("tr", class_="TableTorrent-rowEmptySlotNote"):
+            self._log_matching_slot(meta, row)
 
+    async def _slots_response(self, client: httpx.AsyncClient, group_id: str) -> httpx.Response | None:
+        url = f"{self.base_url}/torrents.php?id={group_id}"
         try:
             response = await client.get(url)
             response.raise_for_status()
-        except httpx.HTTPStatusError as e:
-            logger.info(f"{self.tracker}: Error on request: {e.response.status_code} - {e.response.reason_phrase}", extra={"markup": False})
+            return response
+        except httpx.HTTPStatusError as error:
+            logger.info(f"{self.tracker}: Error on request: {error.response.status_code} - {error.response.reason_phrase}", extra={"markup": False})
+            return None
+
+    def _log_matching_slot(self, meta: Meta, row: Any) -> None:
+        resolution = self._slot_resolution(row)
+        slots = self._slot_names(row)
+        if not slots or resolution != meta.resolution:
             return
+        logger.info(f"{self.tracker}: \n[green]Available Slots for[/green] {resolution}:")
+        logger.info(f"{self.tracker}: {'\n'.join(f'- {slot}' for slot in slots)}\n")
 
-        soup = BeautifulSoup(response.text, "html.parser")
+    @staticmethod
+    def _slot_resolution(row: Any) -> str:
+        edition_id = row.get("edition-id")
+        if edition_id == "1":
+            return "SD"
+        if edition_id == "3":
+            return "2160p"
+        cell = row.find("td", class_="TableTorrent-cellEmptySlotNote")
+        tag = cell.find("i") if cell else None
+        return tag.get_text(strip=True).replace("empty slots:", "").strip() if tag else ""
 
-        empty_slot_rows = soup.find_all("tr", class_="TableTorrent-rowEmptySlotNote")
+    @classmethod
+    def _slot_names(cls, row: Any) -> list[str]:
+        names = cls._direct_slot_names(row) + cls._tooltip_slot_names(row)
+        cleaned = [cls._clean_slot_name(name) for name in names]
+        return sorted({name for name in cleaned if name})
 
-        for row in empty_slot_rows:
-            edition_id = row.get("edition-id")
-            resolution = ""
+    @staticmethod
+    def _direct_slot_names(row: Any) -> list[str]:
+        return [tag.get_text(strip=True) for tag in row.find_all("i") if "empty slots:" not in tag.get_text(strip=True)]
 
-            if edition_id == "1":
-                resolution = "SD"
-            elif edition_id == "3":
-                resolution = "2160p"
+    @staticmethod
+    def _tooltip_slot_names(row: Any) -> list[str]:
+        return [icon.get_text(strip=True) for tag in row.find_all("span", class_="tooltipstered") if (icon := tag.find("i"))]
 
-            if not resolution:
-                slot_cell = row.find("td", class_="TableTorrent-cellEmptySlotNote")
-                slot_type_tag = slot_cell.find("i") if slot_cell else None
-                if slot_type_tag:
-                    resolution = slot_type_tag.get_text(strip=True).replace("empty slots:", "").strip()
-
-            slot_names: list[str] = []
-
-            i_tags = row.find_all("i")
-            for tag in i_tags:
-                text = tag.get_text(strip=True)
-                if "empty slots:" not in text:
-                    slot_names.append(text)
-
-            span_tags = row.find_all("span", class_="tooltipstered")
-            for tag in span_tags:
-                icon = tag.find("i")
-                if icon:
-                    slot_names.append(icon.get_text(strip=True))
-
-            final_slots_list = sorted(set(slot_names))
-            formatted_slots = [f"- {slot}" for slot in final_slots_list]
-            final_slots = "\n".join(formatted_slots)
-
-            if final_slots:
-                final_slots = final_slots.replace("Slot", "").replace("Empty slots:", "").strip()
-                if resolution == meta.resolution:
-                    logger.info(f"{self.tracker}: \n[green]Available Slots for[/green] {resolution}:")
-                    logger.info(f"{self.tracker}: {final_slots}\n")
+    @staticmethod
+    def _clean_slot_name(value: str) -> str:
+        return value.replace("Slot", "").replace("Empty slots:", "").strip()
 
     async def get_media_info(self, meta: Meta) -> str:
         info_file_path = ""
@@ -548,163 +600,144 @@ class GreatPosterWall:
         return ""
 
     def get_processing_other(self, meta: Meta) -> str:
-        if meta.type == "DISC":
-            is_disc_type = meta.is_disc
-
-            if is_disc_type == "BDMV":
-                disctype = meta.disctype
-                if isinstance(disctype, str) and disctype in ["BD100", "BD66", "BD50", "BD25"]:
-                    return disctype
-
-                try:
-                    size_in_gb = meta.bdinfo["size"]
-                except KeyError, IndexError, TypeError:
-                    size_in_gb = 0
-
-                if size_in_gb > 66:
-                    return "BD100"
-                if size_in_gb > 50:
-                    return "BD66"
-                if size_in_gb > 25:
-                    return "BD50"
-                return "BD25"
-
-            if is_disc_type == "DVD":
-                dvd_size = meta.dvd_size
-                if isinstance(dvd_size, str) and dvd_size in ["DVD9", "DVD5"]:
-                    return dvd_size
-                return "DVD9"
-
+        if meta.type != "DISC":
+            return ""
+        if meta.is_disc == "BDMV":
+            return self._bluray_disc_size(meta)
+        if meta.is_disc == "DVD":
+            return meta.dvd_size if meta.dvd_size in {"DVD9", "DVD5"} else "DVD9"
         return ""
 
-    def get_screens(self, meta: Meta) -> list[str]:
-        images_value = meta.image_list
-        images_list: list[Any] = cast(list[Any], images_value) if isinstance(images_value, list) else []
-        screenshot_urls: list[str] = []
-        for image in images_list:
-            if not isinstance(image, dict):
-                continue
-            image_dict = cast(dict[str, Any], image)
-            raw_url = image_dict.get("raw_url")
-            if isinstance(raw_url, str) and raw_url:
-                screenshot_urls.append(raw_url)
+    @classmethod
+    def _bluray_disc_size(cls, meta: Meta) -> str:
+        if meta.disctype in {"BD100", "BD66", "BD50", "BD25"}:
+            return str(meta.disctype)
+        size = cls._bdinfo_size(meta.bdinfo)
+        if size > 66:
+            return "BD100"
+        if size > 50:
+            return "BD66"
+        if size > 25:
+            return "BD50"
+        return "BD25"
 
-        return screenshot_urls
+    @staticmethod
+    def _bdinfo_size(value: Any) -> float:
+        if not isinstance(value, dict):
+            return 0
+        mapping = cast(dict[str, Any], value)
+        try:
+            return float(mapping.get("size", 0) or 0)
+        except TypeError, ValueError:
+            return 0
+
+    def get_screens(self, meta: Meta) -> list[str]:
+        return [url for image in self._mapping_items(meta.image_list) if (url := self._raw_image_url(image))]
+
+    @staticmethod
+    def _raw_image_url(image: dict[str, Any]) -> str:
+        value = image.get("raw_url")
+        return value if isinstance(value, str) and value else ""
 
     def get_credits(self, meta: Meta) -> str:
-        director_entries: list[str] = []
+        names = self._director_names(meta)
+        return ", ".join(list(dict.fromkeys(names))[:5]) if names else "N/A"
 
-        imdb_directors = dict(meta.imdb_info).get("directors")
-        if isinstance(imdb_directors, list):
-            imdb_directors_list = imdb_directors
-            director_entries.extend(name for name in imdb_directors_list if isinstance(name, str))
+    @classmethod
+    def _director_names(cls, meta: Meta) -> list[str]:
+        imdb = meta.imdb_info if isinstance(meta.imdb_info, dict) else {}
+        return cls._string_items(imdb.get("directors", [])) + cls._string_items(meta.tmdb_directors)
 
-        tmdb_directors = meta.tmdb_directors
-        if isinstance(tmdb_directors, list):
-            tmdb_directors_list = tmdb_directors
-            director_entries.extend(name for name in tmdb_directors_list if isinstance(name, str))
-
-        if director_entries:
-            unique_names = list(dict.fromkeys(director_entries))[:5]
-            return ", ".join(unique_names)
-
-        return "N/A"
+    @staticmethod
+    def _string_items(value: Any) -> list[str]:
+        values = cast(list[Any], value) if isinstance(value, list) else []
+        return [item for item in values if isinstance(item, str)]
 
     def get_remaster_title(self, meta: Meta) -> str:
-        found_tags: list[str] = []
+        tags: list[str] = []
+        self._append_unique_tag(tags, self._distributor_remaster_tag(meta.distributor))
+        self._append_unique_tag(tags, self._edition_remaster_tag(meta.edition))
+        self._append_release_feature_tags(tags, meta)
+        return " / ".join(tags)
 
-        def add_tag(tag_id: str) -> None:
-            if tag_id and tag_id not in found_tags:
-                found_tags.append(tag_id)
+    @staticmethod
+    def _append_unique_tag(tags: list[str], value: str) -> None:
+        if value and value not in tags:
+            tags.append(value)
 
-        # Collections
-        distributor = meta.distributor.upper()
-        if distributor in ("WARNER ARCHIVE", "WARNER ARCHIVE COLLECTION", "WAC"):
-            add_tag("warner_archive_collection")
-        elif distributor in ("CRITERION", "CRITERION COLLECTION", "CC"):
-            add_tag("the_criterion_collection")
-        elif distributor in ("MASTERS OF CINEMA", "MOC"):
-            add_tag("masters_of_cinema")
+    @staticmethod
+    def _distributor_remaster_tag(value: Any) -> str:
+        distributor = str(value or "").upper()
+        if distributor in {"WARNER ARCHIVE", "WARNER ARCHIVE COLLECTION", "WAC"}:
+            return "warner_archive_collection"
+        if distributor in {"CRITERION", "CRITERION COLLECTION", "CC"}:
+            return "the_criterion_collection"
+        if distributor in {"MASTERS OF CINEMA", "MOC"}:
+            return "masters_of_cinema"
+        return ""
 
-        # Editions
-        edition = meta.edition.lower()
-        if "director's cut" in edition:
-            add_tag("director_s_cut")
-        elif "extended" in edition:
-            add_tag("extended_edition")
-        elif "theatrical" in edition:
-            add_tag("theatrical_cut")
-        elif "rifftrax" in edition:
-            add_tag("rifftrax")
-        elif "uncut" in edition:
-            add_tag("uncut")
-        elif "unrated" in edition:
-            add_tag("unrated")
+    @staticmethod
+    def _edition_remaster_tag(value: Any) -> str:
+        edition = str(value or "").lower()
+        mapping = (
+            ("director's cut", "director_s_cut"),
+            ("extended", "extended_edition"),
+            ("theatrical", "theatrical_cut"),
+            ("rifftrax", "rifftrax"),
+            ("uncut", "uncut"),
+            ("unrated", "unrated"),
+        )
+        return next((tag for keyword, tag in mapping if keyword in edition), "")
 
-        # Audio
+    @classmethod
+    def _append_release_feature_tags(cls, tags: list[str], meta: Meta) -> None:
         if meta.dual_audio:
-            add_tag("dual_audio")
-
+            cls._append_unique_tag(tags, "dual_audio")
         if meta.extras:
-            add_tag("extras")
-
-        # Commentary
-        has_commentary = meta.has_commentary or meta.manual_commentary
-
-        # Ensure 'with_commentary' is last if it exists
-        if has_commentary:
-            add_tag("with_commentary")
-            if "with_commentary" in found_tags:
-                found_tags.remove("with_commentary")
-                found_tags.append("with_commentary")
-
-        if not found_tags:
-            return ""
-
-        return " / ".join(found_tags)
+            cls._append_unique_tag(tags, "extras")
+        if meta.has_commentary or meta.manual_commentary:
+            cls._append_unique_tag(tags, "with_commentary")
 
     async def get_groupid(self, meta: Meta) -> bool:
         GreatPosterWall.group_id = ""
-        search_url = f"{self.base_url}/api.php?api_key={self.api_key}&action=torrent&req=group&imdbID={meta.imdb_info.get('imdbID')}"
+        imdb = self._imdb_identifier(meta)
+        url = f"{self.base_url}/api.php?api_key={self.api_key}&action=torrent&req=group&imdbID={imdb}"
+        payload = await self._groupid_payload(url)
+        group_id = self._groupid_from_payload(payload)
+        if not group_id:
+            return False
+        GreatPosterWall.group_id = group_id
+        return True
 
+    async def _groupid_payload(self, url: str) -> dict[str, Any]:
         try:
             async with httpx.AsyncClient(timeout=30) as client:
-                response = await client.get(search_url)
+                response = await client.get(url)
                 response.raise_for_status()
+            payload = response.json()
+            return cast(dict[str, Any], payload) if isinstance(payload, dict) else {}
+        except httpx.HTTPStatusError as error:
+            logger.info(f"{self.tracker}: [bold red]HTTP error when fetching groupid: Status {error.response.status_code}[/bold red]")
+        except httpx.RequestError as error:
+            logger.info(f"{self.tracker}: [bold red]Network error fetching groupid: {error}[/bold red]")
+        except ValueError as error:
+            logger.info(f"{self.tracker}: [bold red]Error decoding JSON from groupid response: {error}[/bold red]")
+        return {}
 
-        except httpx.RequestError as e:
-            logger.info(f"{self.tracker}: [bold red]Network error fetching groupid: {e}[/bold red]")
-            return False
-        except httpx.HTTPStatusError as e:
-            logger.info(f"{self.tracker}: [bold red]HTTP error when fetching groupid: Status {e.response.status_code}[/bold red]")
-            return False
-
-        try:
-            data: dict[str, Any] = response.json()
-        except ValueError as e:
-            logger.info(f"{self.tracker}: [bold red]Error decoding JSON from groupid response: {e}[/bold red]")
-            return False
-
-        if data.get("status") == 200 and "response" in data and "ID" in data["response"]:
-            GreatPosterWall.group_id = str(data["response"]["ID"])
-            return True
-        return False
+    @staticmethod
+    def _groupid_from_payload(payload: dict[str, Any]) -> str:
+        if payload.get("status") != 200:
+            return ""
+        response = payload.get("response")
+        if not isinstance(response, dict):
+            return ""
+        value = cast(dict[str, Any], response).get("ID")
+        return str(value) if value is not None else ""
 
     async def get_additional_data(self, meta: Meta) -> dict[str, Any]:
-        imdb_identifier = str(meta.imdb_info.get("imdbID") or meta.imdb or "").strip()
-        tmdb_identifier = str(meta.tmdb_id or "").strip()
-        if imdb_identifier:
-            data_source = "imdb"
-            identifier = imdb_identifier
-        elif tmdb_identifier:
-            data_source = "tmdb"
-            identifier = tmdb_identifier
-        else:
-            data_source = "manual"
-            identifier = ""
-
-        data = {
-            "data_source": data_source,
+        source, identifier = self._additional_identifier(meta)
+        data: dict[str, Any] = {
+            "data_source": source,
             "identifier": identifier,
             "desc": self.tmdb_data.get("overview", ""),
             "image": f"https://image.tmdb.org/t/p/original{meta.tmdb_poster_path}",
@@ -713,239 +746,341 @@ class GreatPosterWall:
             "releasetype": self._get_movie_type(meta),
             "subname": self.get_title(meta),
             "tags": await self.get_tags(meta),
-            "year": str(meta.year) if meta.year is not None else "",
+            "year": "" if meta.year is None else str(meta.year),
         }
-
-        # Keep backward-compatible identifiers for sites/APIs that still parse legacy field names.
-        if imdb_identifier:
-            data["imdb"] = imdb_identifier
-        if tmdb_identifier:
-            data["tmdb"] = tmdb_identifier
-
-        # GREATPOSTERWALL API still requires explicit main-artist fields for new group creation.
+        self._append_legacy_identifiers(data, meta)
         data.update(await self._get_artist_data(meta))
         data["main_artist_number"] = "1"
-
         return data
 
+    @classmethod
+    def _additional_identifier(cls, meta: Meta) -> tuple[str, str]:
+        imdb = cls._imdb_identifier(meta).strip()
+        tmdb = str(meta.tmdb_id or "").strip()
+        if imdb:
+            return "imdb", imdb
+        if tmdb:
+            return "tmdb", tmdb
+        return "manual", ""
+
+    @classmethod
+    def _append_legacy_identifiers(cls, data: dict[str, Any], meta: Meta) -> None:
+        imdb = cls._imdb_identifier(meta).strip()
+        tmdb = str(meta.tmdb_id or "").strip()
+        if imdb:
+            data["imdb"] = imdb
+        if tmdb:
+            data["tmdb"] = tmdb
+
     async def _get_artist_data(self, meta: Meta) -> dict[str, Any]:
-        directors: list[str] = []
-        directors_id: list[str] = []
-        writers: list[str] = []
-        writers_id: list[str] = []
-        stars: list[str] = []
-        stars_id: list[str] = []
-        cast_character_map: dict[str, str] = {}
-        full_credits: list[dict[str, Any]] = []
+        credits = await self._artist_credit_data(meta)
+        director = await self._director_identity(meta, credits)
+        if director is None:
+            return {}
+        director_id, director_name, director_sub = director
+        post = self._new_artist_payload(director_id, director_name, director_sub)
+        self._append_contributors(post, credits["writers"], credits["writer_ids"], "2")
+        self._append_contributors(post, credits["stars"], credits["star_ids"], "6", credits["characters"])
+        return post
 
-        imdb_identifier = str(meta.imdb_info.get("imdbID") or meta.imdb or "").strip()
-        full_credits_success = False
-        if imdb_identifier:
-            movie_info_raw = await self._fetch_gpw_movie_info(meta, "imdb", imdb_identifier)
-            movie_info = movie_info_raw
-            if isinstance(movie_info_raw, dict) and isinstance(movie_info_raw.get("response"), dict):
-                movie_info = cast(dict[str, Any], movie_info_raw.get("response"))
-            if isinstance(movie_info, dict):
-                full_credits_value = movie_info.get("FullCredits") or movie_info.get("fullCredits")
-                if isinstance(full_credits_value, list):
-                    full_credits = [item for item in full_credits_value if isinstance(item, dict)]
-                    seen_director_ids: set[str] = set()
-                    seen_writer_ids: set[str] = set()
-                    seen_star_ids: set[str] = set()
-                    for credit in full_credits:
-                        role = str(credit.get("role") or "").strip().lower()
-                        person_id = str(credit.get("imdbId") or credit.get("imdbID") or "").strip()
-                        person_name = str(credit.get("name") or "").strip()
-                        character = str(credit.get("character") or "").strip()
-                        if not person_name or person_name.lower() == "n/a":
-                            continue
-                        if not re.match(r"^nm\d+$", person_id):
-                            continue
-                        if role == "director":
-                            if person_id in seen_director_ids:
-                                continue
-                            directors.append(person_name)
-                            directors_id.append(person_id)
-                            seen_director_ids.add(person_id)
-                        elif role == "writer":
-                            if person_id in seen_writer_ids:
-                                continue
-                            writers.append(person_name)
-                            writers_id.append(person_id)
-                            seen_writer_ids.add(person_id)
-                        elif role == "cast":
-                            if person_id in seen_star_ids:
-                                continue
-                            stars.append(person_name)
-                            stars_id.append(person_id)
-                            if character:
-                                cast_character_map[person_id] = character
-                            seen_star_ids.add(person_id)
-                    full_credits_success = bool(directors and directors_id)
+    async def _artist_credit_data(self, meta: Meta) -> dict[str, Any]:
+        full = await self._full_credit_data_for_meta(meta)
+        return full if self._has_director_credit(full) else self._fallback_credit_data(meta)
 
-        # Fallback: if FullCredits is unavailable/invalid, use existing imdb_info fields.
-        if not full_credits_success:
-            imdb_info = meta.imdb_info
-            raw_directors = imdb_info.get("directors", [])
-            raw_directors_id = imdb_info.get("directors_id", [])
-            raw_writers = imdb_info.get("writers", [])
-            raw_writers_id = imdb_info.get("writers_id", [])
-            raw_stars = imdb_info.get("stars", [])
-            raw_stars_id = imdb_info.get("stars_id", [])
+    async def _full_credit_data_for_meta(self, meta: Meta) -> dict[str, Any]:
+        imdb = self._imdb_identifier(meta).strip() or str(meta.imdb or "").strip()
+        if not imdb:
+            return self._empty_credit_data()
+        movie_info = await self._fetch_gpw_movie_info(meta, "imdb", imdb)
+        return self._full_credit_data(movie_info)
 
-            directors = [x.strip() for x in raw_directors if isinstance(x, str) and x.strip()]
-            directors_id = [x.strip() for x in raw_directors_id if isinstance(x, str) and re.match(r"^nm\d+$", x.strip())]
-            writers = [x.strip() for x in raw_writers if isinstance(x, str) and x.strip()]
-            writers_id = [x.strip() for x in raw_writers_id if isinstance(x, str) and re.match(r"^nm\d+$", x.strip())]
-            stars = [x.strip() for x in raw_stars if isinstance(x, str) and x.strip()]
-            stars_id = [x.strip() for x in raw_stars_id if isinstance(x, str) and re.match(r"^nm\d+$", x.strip())]
+    @staticmethod
+    def _has_director_credit(data: dict[str, Any]) -> bool:
+        return bool(data["directors"] and data["director_ids"])
 
-        first_director_id = directors_id[0].strip() if isinstance(directors_id, list) and directors_id else ""
-        first_director_name = directors[0].strip() if isinstance(directors, list) and directors else ""
-        has_valid_director = bool(re.match(r"^nm\d+$", first_director_id)) and bool(first_director_name) and first_director_name.lower() != "n/a"
+    @classmethod
+    def _full_credit_data(cls, movie_info: Any) -> dict[str, Any]:
+        info = cls._unwrap_movie_info(movie_info)
+        values: Any = info.get("FullCredits") or info.get("fullCredits") or []
+        credits = cls._mapping_items(values)
+        data = cls._empty_credit_data()
+        for credit in credits:
+            cls._append_full_credit(data, credit)
+        return data
 
-        if has_valid_director:
-            imdb_id = first_director_id
-            english_name = first_director_name
-            chinese_name = ""
-        else:
-            if meta.unattended and not meta.unattended_confirm:
-                logger.info(f"{self.tracker}: [yellow]Unattended mode: Director details required for movie missing in database. Skipping {self.tracker} upload.[/yellow]")
-                meta.skipping = f"{self.tracker}"
-                return {}
-            logger.info(f"{self.tracker}: This movie is not registered in the {self.tracker} database, please enter the details of 1 director")
+    @staticmethod
+    def _unwrap_movie_info(value: Any) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            return {}
+        mapping = cast(dict[str, Any], value)
+        response = mapping.get("response")
+        return cast(dict[str, Any], response) if isinstance(response, dict) else mapping
 
-            imdb_id = ""
-            while not re.match(r"^nm\d+$", imdb_id):
-                imdb_id_raw = await prompt_in_thread(cli_ui.ask_string, "Enter Director IMDb ID (e.g., nm0000138): ")
-                imdb_id = (imdb_id_raw or "").strip()
-                if not re.match(r"^nm\d+$", imdb_id):
-                    logger.info(f"{self.tracker}: [red]Invalid IMDb person ID. Format must be like nm0000138.[/red]")
-
-            english_name = ""
-            while not english_name:
-                english_name_raw = await prompt_in_thread(cli_ui.ask_string, "Enter Director English name: ")
-                english_name = (english_name_raw or "").strip()
-                if not english_name:
-                    logger.info(f"{self.tracker}: [red]Director English name cannot be empty.[/red]")
-
-            chinese_name_raw = await prompt_in_thread(cli_ui.ask_string, "Enter Director Chinese name (optional, press Enter to skip): ")
-            chinese_name = (chinese_name_raw or "").strip()
-
-        artists: list[str] = [english_name]
-        artist_ids: list[str] = [imdb_id]
-        importances: list[str] = ["1"]  # 1 = director (main artist)
-        artist_subs: list[str] = [chinese_name if chinese_name else ""]
-        characters: list[str] = [""]
-
-        # Add writer entries (best-effort).
-        if isinstance(writers, list) and isinstance(writers_id, list):
-            for idx, writer_name_value in enumerate(writers):
-                writer_name = writer_name_value.strip()
-                if not writer_name or writer_name.lower() == "n/a":
-                    continue
-                writer_id = writers_id[idx].strip() if idx < len(writers_id) else ""
-                if not re.match(r"^nm\d+$", writer_id):
-                    continue
-                if writer_id in artist_ids:
-                    continue
-                artists.append(writer_name)
-                artist_ids.append(writer_id)
-                importances.append("2")  # 2 = writer
-                artist_subs.append("")
-                characters.append("")
-
-        # Add cast entries (best-effort) so new groups include actor info.
-        if isinstance(stars, list) and isinstance(stars_id, list):
-            for idx, star_name_value in enumerate(stars):
-                star_name = star_name_value.strip()
-                if not star_name or star_name.lower() == "n/a":
-                    continue
-                star_id = stars_id[idx].strip() if idx < len(stars_id) else ""
-                if not re.match(r"^nm\d+$", star_id):
-                    continue
-                if star_id in artist_ids:
-                    continue
-                artists.append(star_name)
-                artist_ids.append(star_id)
-                importances.append("6")  # 6 = actor
-                artist_subs.append("")
-                characters.append(cast_character_map.get(star_id, "Unknown"))
-
-        post_data: dict[str, Any] = {
-            "artist_ids[]": artist_ids,
-            "artists[]": artists,
-            "importance[]": importances,
-            "characters[]": characters,
-            "artists_sub[]": artist_subs,
+    @staticmethod
+    def _empty_credit_data() -> dict[str, Any]:
+        return {
+            "directors": [],
+            "director_ids": [],
+            "writers": [],
+            "writer_ids": [],
+            "stars": [],
+            "star_ids": [],
+            "characters": {},
         }
-        return post_data
+
+    @classmethod
+    def _append_full_credit(cls, data: dict[str, Any], credit: dict[str, Any]) -> None:
+        identity = cls._credit_identity(credit)
+        target = cls._credit_target(identity[0]) if identity is not None else None
+        if identity is None or target is None:
+            return
+        role, person_id, person_name, character = identity
+        names_key, ids_key = target
+        if not cls._append_credit_identity(data, names_key, ids_key, person_id, person_name):
+            return
+        cls._store_credit_character(data, role, person_id, character)
+
+    @staticmethod
+    def _append_credit_identity(data: dict[str, Any], names_key: str, ids_key: str, person_id: str, person_name: str) -> bool:
+        names = cast(list[str], data[names_key])
+        ids = cast(list[str], data[ids_key])
+        if person_id in ids:
+            return False
+        names.append(person_name)
+        ids.append(person_id)
+        return True
+
+    @staticmethod
+    def _store_credit_character(data: dict[str, Any], role: str, person_id: str, character: str) -> None:
+        if role == "cast" and character:
+            cast(dict[str, str], data["characters"])[person_id] = character
+
+    @classmethod
+    def _credit_identity(cls, credit: dict[str, Any]) -> tuple[str, str, str, str] | None:
+        role = cls._credit_text(credit, "role").lower()
+        person_id = cls._credit_person_id(credit)
+        name = cls._credit_text(credit, "name")
+        character = cls._credit_text(credit, "character")
+        return (role, person_id, name, character) if cls._valid_credit_person(name, person_id) else None
+
+    @staticmethod
+    def _credit_text(credit: dict[str, Any], key: str) -> str:
+        return str(credit.get(key) or "").strip()
+
+    @staticmethod
+    def _credit_person_id(credit: dict[str, Any]) -> str:
+        return str(credit.get("imdbId") or credit.get("imdbID") or "").strip()
+
+    @staticmethod
+    def _valid_credit_person(name: str, person_id: str) -> bool:
+        return bool(name) and name.lower() != "n/a" and re.fullmatch(r"nm\d+", person_id) is not None
+
+    @staticmethod
+    def _credit_target(role: str) -> tuple[str, str] | None:
+        return {
+            "director": ("directors", "director_ids"),
+            "writer": ("writers", "writer_ids"),
+            "cast": ("stars", "star_ids"),
+        }.get(role)
+
+    @classmethod
+    def _fallback_credit_data(cls, meta: Meta) -> dict[str, Any]:
+        imdb = meta.imdb_info if isinstance(meta.imdb_info, dict) else {}
+        return {
+            "directors": cls._clean_names(imdb.get("directors", [])),
+            "director_ids": cls._clean_person_ids(imdb.get("directors_id", [])),
+            "writers": cls._clean_names(imdb.get("writers", [])),
+            "writer_ids": cls._clean_person_ids(imdb.get("writers_id", [])),
+            "stars": cls._clean_names(imdb.get("stars", [])),
+            "star_ids": cls._clean_person_ids(imdb.get("stars_id", [])),
+            "characters": {},
+        }
+
+    @staticmethod
+    def _clean_names(value: Any) -> list[str]:
+        values = cast(list[Any], value) if isinstance(value, list) else []
+        return [text for item in values if isinstance(item, str) if (text := item.strip())]
+
+    @classmethod
+    def _clean_person_ids(cls, value: Any) -> list[str]:
+        values = cast(list[Any], value) if isinstance(value, list) else []
+        return [person_id for item in values if (person_id := cls._clean_person_id(item))]
+
+    @staticmethod
+    def _clean_person_id(value: Any) -> str:
+        if not isinstance(value, str):
+            return ""
+        person_id = value.strip()
+        return person_id if re.fullmatch(r"nm\d+", person_id) else ""
+
+    async def _director_identity(self, meta: Meta, credits: dict[str, Any]) -> tuple[str, str, str] | None:
+        director_id = self._first_string(credits.get("director_ids"))
+        director_name = self._first_string(credits.get("directors"))
+        if self._valid_director(director_id, director_name):
+            return director_id, director_name, ""
+        if meta.unattended and not meta.unattended_confirm:
+            logger.info(f"{self.tracker}: [yellow]Unattended mode: Director details required for movie missing in database. Skipping {self.tracker} upload.[/yellow]")
+            meta.skipping = self.tracker
+            return None
+        return await self._prompt_director_identity()
+
+    @staticmethod
+    def _first_string(value: Any) -> str:
+        values = cast(list[Any], value) if isinstance(value, list) else []
+        return str(values[0]).strip() if values else ""
+
+    @staticmethod
+    def _valid_director(person_id: str, name: str) -> bool:
+        return re.fullmatch(r"nm\d+", person_id) is not None and bool(name) and name.lower() != "n/a"
+
+    async def _prompt_director_identity(self) -> tuple[str, str, str]:
+        logger.info(f"{self.tracker}: This movie is not registered in the {self.tracker} database, please enter the details of 1 director")
+        person_id = await self._prompt_person_id()
+        name = await self._prompt_person_name()
+        chinese_raw = await prompt_in_thread(cli_ui.ask_string, "Enter Director Chinese name (optional, press Enter to skip): ")
+        return person_id, name, str(chinese_raw or "").strip()
+
+    async def _prompt_person_id(self) -> str:
+        while True:
+            value = await prompt_in_thread(cli_ui.ask_string, "Enter Director IMDb ID (e.g., nm0000138): ")
+            if not isinstance(value, str):
+                return ""
+            person_id = value.strip()
+            if re.fullmatch(r"nm\d+", person_id):
+                return person_id
+            logger.info(f"{self.tracker}: [red]Invalid IMDb person ID. Format must be like nm0000138.[/red]")
+
+    async def _prompt_person_name(self) -> str:
+        while True:
+            value = await prompt_in_thread(cli_ui.ask_string, "Enter Director English name: ")
+            name = str(value or "").strip()
+            if name:
+                return name
+            logger.info(f"{self.tracker}: [red]Director English name cannot be empty.[/red]")
+
+    @staticmethod
+    def _new_artist_payload(person_id: str, name: str, chinese_name: str) -> dict[str, Any]:
+        return {
+            "artist_ids[]": [person_id],
+            "artists[]": [name],
+            "importance[]": ["1"],
+            "characters[]": [""],
+            "artists_sub[]": [chinese_name],
+        }
+
+    @classmethod
+    def _append_contributors(
+        cls,
+        post: dict[str, Any],
+        names_value: Any,
+        ids_value: Any,
+        importance: str,
+        characters_value: Any = None,
+    ) -> None:
+        rows = cls._contributor_rows(names_value, ids_value, characters_value)
+        for name, person_id, character in rows:
+            cls._append_contributor(post, name, person_id, importance, character)
+
+    @classmethod
+    def _contributor_rows(cls, names_value: Any, ids_value: Any, characters_value: Any) -> list[tuple[str, str, str]]:
+        names = cls._string_items(names_value)
+        ids = cls._string_items(ids_value)
+        characters = cls._string_mapping(characters_value)
+        return [cls._contributor_row(index, name, ids, characters) for index, name in enumerate(names)]
+
+    @staticmethod
+    def _string_mapping(value: Any) -> dict[str, str]:
+        if not isinstance(value, dict):
+            return {}
+        mapping = cast(dict[Any, Any], value)
+        return {str(key): str(item) for key, item in mapping.items()}
+
+    @staticmethod
+    def _contributor_row(index: int, name: str, ids: list[str], characters: dict[str, str]) -> tuple[str, str, str]:
+        person_id = ids[index].strip() if index < len(ids) else ""
+        return name.strip(), person_id, characters.get(person_id, "")
+
+    @classmethod
+    def _append_contributor(cls, post: dict[str, Any], name: str, person_id: str, importance: str, character: str) -> None:
+        if not cls._valid_credit_person(name, person_id):
+            return
+        artist_ids = cast(list[str], post["artist_ids[]"])
+        if person_id in artist_ids:
+            return
+        cls._store_contributor(post, name, person_id, importance, cls._contributor_character(importance, character))
+
+    @staticmethod
+    def _contributor_character(importance: str, character: str) -> str:
+        return character or ("Unknown" if importance == "6" else "")
+
+    @staticmethod
+    def _store_contributor(post: dict[str, Any], name: str, person_id: str, importance: str, character: str) -> None:
+        cast(list[str], post["artists[]"]).append(name)
+        cast(list[str], post["artist_ids[]"]).append(person_id)
+        cast(list[str], post["importance[]"]).append(importance)
+        cast(list[str], post["artists_sub[]"]).append("")
+        cast(list[str], post["characters[]"]).append(character)
 
     async def _fetch_gpw_movie_info(self, meta: Meta, data_source: str, identifier: str) -> dict[str, Any]:
         if not data_source or not identifier:
             return {}
+        candidates = await self._movie_info_candidates(meta, data_source, identifier)
+        return self._best_movie_info(candidates)
 
-        endpoint_candidates: list[tuple[str, dict[str, str], bool, str]] = [
+    async def _movie_info_candidates(self, meta: Meta, data_source: str, identifier: str) -> list[dict[str, Any]]:
+        candidates: list[dict[str, Any]] = []
+        cookies: Any = None
+        for url, params, use_cookies in self._movie_info_endpoints(data_source, identifier):
+            if use_cookies and cookies is None:
+                cookies = await self.load_cookies(meta)
+            candidates.append(await self._movie_info_candidate(meta, url, params, cookies if use_cookies else None))
+        return candidates
+
+    @classmethod
+    def _best_movie_info(cls, candidates: list[dict[str, Any]]) -> dict[str, Any]:
+        if not candidates:
+            return {}
+        return max(candidates, key=cls._credits_score)
+
+    def _movie_info_endpoints(self, data_source: str, identifier: str) -> list[tuple[str, dict[str, str], bool]]:
+        return [
             (
                 f"{self.base_url}/upload.php",
-                {
-                    "action": "movie_info",
-                    "source": data_source,
-                    "identifier": identifier,
-                },
+                {"action": "movie_info", "source": data_source, "identifier": identifier},
                 True,
-                "get",
             ),
             (
                 f"{self.base_url}/api.php",
-                {
-                    "api_key": self.api_key,
-                    "action": "movie_info",
-                    "imdbid": identifier,
-                },
+                {"api_key": self.api_key, "action": "movie_info", "imdbid": identifier},
                 False,
-                "get",
             ),
         ]
 
-        cookies: Any = None
-        best_response: dict[str, Any] = {}
-        best_score = -1
-        for url, params, use_cookies, method in endpoint_candidates:
-            try:
-                if use_cookies and cookies is None:
-                    cookies = await self.load_cookies(meta)
+    async def _movie_info_candidate(self, meta: Meta, url: str, params: dict[str, str], cookies: Any) -> dict[str, Any]:
+        try:
+            async with httpx.AsyncClient(timeout=15, cookies=cookies, headers={"User-Agent": self._user_agent(meta)}) as client:
+                response = await client.get(url, params=params)
+            response.raise_for_status()
+            return self._successful_movie_info_response(response.json())
+        except (ValueError, KeyError, TypeError, IndexError) as error:
+            logger.debug(f"{self.tracker}: Failed to process response payload on {self.tracker}: {escape(str(error))}", exc_info=True)
+            return {}
 
-                request_cookies = cookies if use_cookies and cookies else None
-                async with httpx.AsyncClient(
-                    timeout=15,
-                    cookies=request_cookies,
-                    headers={"User-Agent": f"{meta.ua_name} {(meta.current_version if meta.current_version is not None else 'github.com/wastaken7/Upload-Assistant')}"},
-                ) as client:
-                    if method == "post":
-                        response = await client.post(url, data=params)
-                    else:
-                        response = await client.get(url, params=params)
-                response.raise_for_status()
-                payload: Any = response.json()
-                if not isinstance(payload, dict):
-                    continue
-                status_value = str(payload.get("status", "")).strip().lower()
-                if status_value in {"success", "ok", "200"} or payload.get("status") == 200:
-                    response_data = payload.get("response")
-                    if isinstance(response_data, dict):
-                        full_credits_value = response_data.get("FullCredits") or response_data.get("fullCredits")
-                        score = len(full_credits_value) if isinstance(full_credits_value, list) else 0
-                        if score > best_score:
-                            best_response = response_data
-                            best_score = score
-                        if score >= 10:
-                            return response_data
-            except (ValueError, KeyError, TypeError, IndexError) as e:
-                logger.debug(f"{self.tracker}: Failed to process response payload on {self.tracker}: {escape(str(e))}", exc_info=True)
-                continue
+    @staticmethod
+    def _successful_movie_info_response(payload: Any) -> dict[str, Any]:
+        if not isinstance(payload, dict):
+            return {}
+        data = cast(dict[str, Any], payload)
+        status = str(data.get("status", "")).strip().lower()
+        if status not in {"success", "ok", "200"} and data.get("status") != 200:
+            return {}
+        response = data.get("response")
+        return cast(dict[str, Any], response) if isinstance(response, dict) else {}
 
-        return best_response
+    @staticmethod
+    def _credits_score(response: dict[str, Any]) -> int:
+        value: Any = response.get("FullCredits") or response.get("fullCredits") or []
+        return len(value) if isinstance(value, list) else 0
 
     def _get_movie_type(self, meta: Meta) -> str:
         movie_type = ""
@@ -996,37 +1131,40 @@ class GreatPosterWall:
         return type_map.get(release_type, "Untouched")
 
     def get_media_flags(self, meta: Meta) -> dict[str, str]:
-        audio = meta.audio.lower()
-        hdr = meta.hdr
-        bit_depth = meta.bit_depth
-        channels = meta.channels
-
         flags: dict[str, str] = {}
+        self._append_audio_flags(flags, meta)
+        self._append_video_flags(flags, meta)
+        return flags
 
-        # audio flags
+    @staticmethod
+    def _append_audio_flags(flags: dict[str, str], meta: Meta) -> None:
+        audio = str(meta.audio or "").lower()
         if "atmos" in audio:
             flags["dolby_atmos"] = "on"
-
         if "dts:x" in audio:
             flags["dts_x"] = "on"
+        channel_flag = {"5.1": "audio_51", "7.1": "audio_71"}.get(str(meta.channels))
+        if channel_flag:
+            flags[channel_flag] = "on"
 
-        if channels == "5.1":
-            flags["audio_51"] = "on"
+    @classmethod
+    def _append_video_flags(cls, flags: dict[str, str], meta: Meta) -> None:
+        hdr = str(meta.hdr or "")
+        cls._append_bit_depth_flag(flags, hdr, meta.bit_depth)
+        cls._append_hdr_flags(flags, hdr)
 
-        if channels == "7.1":
-            flags["audio_71"] = "on"
-
-        # video flags
-        if not hdr.strip() and bit_depth == "10":
+    @staticmethod
+    def _append_bit_depth_flag(flags: dict[str, str], hdr: str, bit_depth: Any) -> None:
+        if not hdr.strip() and str(bit_depth) == "10":
             flags["10_bit"] = "on"
 
-        if "DV" in hdr:
-            flags["dolby_vision"] = "on"
-
-            if "HDR" in hdr:
-                flags["hdr10plus" if "HDR10+" in hdr else "hdr10"] = "on"
-
-        return flags
+    @staticmethod
+    def _append_hdr_flags(flags: dict[str, str], hdr: str) -> None:
+        if "DV" not in hdr:
+            return
+        flags["dolby_vision"] = "on"
+        if "HDR" in hdr:
+            flags["hdr10plus" if "HDR10+" in hdr else "hdr10"] = "on"
 
     def get_resolution(self, meta: Meta) -> str:
         resolution = meta.resolution.lower()
@@ -1039,149 +1177,169 @@ class GreatPosterWall:
         return "Other"
 
     async def fetch_data(self, meta: Meta) -> dict[str, Any]:
-        await self.load_localized_data(meta)  #  keep this line FIRST to ensure localized data is loaded before proceeding
+        await self.load_localized_data(meta)
         await self.get_groupid(meta)
-        remaster_title = self.get_remaster_title(meta)
-        codec = self.get_codec(meta)
-        container = self.get_container(meta)
-
-        data: dict[str, Any] = {}
-
-        if not GreatPosterWall.group_id:
-            data.update(await self.get_additional_data(meta))
-
-        data.update(
-            {
-                "codec_other": meta.video_codec if codec == "Other" else "",
-                "codec": codec,
-                "container_other": meta.container if container == "Other" else "",
-                "container": container,
-                "mediainfo[]": await self.get_media_info(meta),
-                "movie_edition_information": "on" if remaster_title else "",
-                "processing_other": self.get_processing_other(meta) if meta.type == "DISC" else "",
-                "processing": self.get_processing(meta),
-                "release_desc": await self.get_release_desc(meta),
-                "remaster_custom_title": "",
-                "remaster_title": remaster_title,
-                "remaster_year": "",
-                "resolution_height": "",
-                "resolution_width": "",
-                "resolution": self.get_resolution(meta),
-                "source_other": "",
-                "source": self.get_source(meta),
-                "submit": "true",
-                "subtitle_type": ("2" if meta.hardcoded_subs else "1" if meta.subtitle_languages else "3"),
-                "subtitles[]": await self.get_subtitle(meta),
-            }
-        )
-        if GreatPosterWall.group_id:
-            data["groupid"] = GreatPosterWall.group_id
-
+        data = await self._group_or_new_movie_data(meta)
+        data.update(await self._release_upload_fields(meta))
         if await self.get_ch_dubs(meta):
-            data.update({"chinese_dubbed": "on"})
-
-        if meta.sfx_subtitles:
-            data.update({"special_effects_subtitles": "on"})
-
-        if meta.scene:
-            data.update({"scene": "on"})
-
-        if meta.personalrelease:
-            if meta.is_disc:
-                data.update({"buy": "on"})
-            else:
-                data.update({"diy": "on"})
-
-        exclusive_flag = None
-        if meta.exclusive or self.tracker_config.get("exclusive", False):
-            exclusive_flag = "1"
-        if exclusive_flag:
-            data.update({"jinzhuan": "on"})
-
+            data["chinese_dubbed"] = "on"
+        self._append_release_upload_flags(data, meta)
         data.update(self.get_media_flags(meta))
-
         return data
 
+    async def _group_or_new_movie_data(self, meta: Meta) -> dict[str, Any]:
+        if GreatPosterWall.group_id:
+            return {"groupid": GreatPosterWall.group_id}
+        return await self.get_additional_data(meta)
+
+    async def _release_upload_fields(self, meta: Meta) -> dict[str, Any]:
+        codec = self.get_codec(meta)
+        container = self.get_container(meta)
+        remaster = self.get_remaster_title(meta)
+        return {
+            "codec_other": meta.video_codec if codec == "Other" else "",
+            "codec": codec,
+            "container_other": meta.container if container == "Other" else "",
+            "container": container,
+            "mediainfo[]": await self.get_media_info(meta),
+            "movie_edition_information": "on" if remaster else "",
+            "processing_other": self.get_processing_other(meta) if meta.type == "DISC" else "",
+            "processing": self.get_processing(meta),
+            "release_desc": await self.get_release_desc(meta),
+            "remaster_custom_title": "",
+            "remaster_title": remaster,
+            "remaster_year": "",
+            "resolution_height": "",
+            "resolution_width": "",
+            "resolution": self.get_resolution(meta),
+            "source_other": "",
+            "source": self.get_source(meta),
+            "submit": "true",
+            "subtitle_type": self._subtitle_type(meta),
+            "subtitles[]": await self.get_subtitle(meta),
+        }
+
+    @staticmethod
+    def _subtitle_type(meta: Meta) -> str:
+        if meta.hardcoded_subs:
+            return "2"
+        return "1" if meta.subtitle_languages else "3"
+
+    def _append_release_upload_flags(self, data: dict[str, Any], meta: Meta) -> None:
+        self._append_optional_flag(data, "special_effects_subtitles", bool(meta.sfx_subtitles))
+        self._append_optional_flag(data, "scene", bool(meta.scene))
+        self._append_personal_release_flag(data, meta)
+        self._append_optional_flag(data, "jinzhuan", bool(meta.exclusive or self.tracker_config.get("exclusive", False)))
+
+    @staticmethod
+    def _append_optional_flag(data: dict[str, Any], key: str, enabled: bool) -> None:
+        if enabled:
+            data[key] = "on"
+
+    @staticmethod
+    def _append_personal_release_flag(data: dict[str, Any], meta: Meta) -> None:
+        if not meta.personalrelease:
+            return
+        data["buy" if meta.is_disc else "diy"] = "on"
+
     async def upload(self, meta: Meta) -> bool:
-        if getattr(meta, "skipping", None) == self.tracker:
+        if self._upload_skipped(meta):
             return False
         await self.common.create_torrent_for_upload(meta, self.tracker, self.source_flag)
         data = await self.fetch_data(meta)
-        if getattr(meta, "skipping", None) == self.tracker:
+        if self._upload_skipped(meta):
             return False
+        if meta.debug:
+            return await self._debug_upload(meta, data)
+        return await self._live_upload(meta, data)
 
-        if not meta.debug:
-            response_data = ""
-            torrent_id = ""
-            upload_url = f"{self.base_url}/api.php?api_key={self.api_key}&action=upload"
-            torrent_path = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{self.tracker}].torrent"
+    def _upload_skipped(self, meta: Meta) -> bool:
+        return getattr(meta, "skipping", None) == self.tracker
 
-            async with aiofiles.open(torrent_path, "rb") as torrent_file:
-                torrent_bytes = await torrent_file.read()
-            files = {"file_input": (f"{self.tracker}.placeholder.torrent", torrent_bytes, "application/x-bittorrent")}
+    async def _debug_upload(self, meta: Meta, data: dict[str, Any]) -> bool:
+        logger.info(f"{self.tracker}: Request Data:")
+        logger.info(Redaction.redact_private_info(data))
+        meta.tracker_status[self.tracker]["status_message"] = "Debug mode enabled, not uploading."
+        await self.common.create_torrent_for_upload(meta, f"{self.tracker}_DEBUG", f"{self.tracker}_DEBUG", announce_url="https://fake.tracker")
+        return True
 
-            try:
-                async with httpx.AsyncClient(timeout=30) as client:
+    async def _live_upload(self, meta: Meta, data: dict[str, Any]) -> bool:
+        try:
+            response = await self._upload_response(meta, data)
+            return await self._handle_upload_response(meta, response)
+        except httpx.TimeoutException:
+            meta.tracker_status[self.tracker]["status_message"] = "data error: Request timed out after 10 seconds"
+        except httpx.RequestError as error:
+            meta.tracker_status[self.tracker]["status_message"] = f"data error: Unable to upload. Error: {error}."
+        except Exception as error:
+            meta.tracker_status[self.tracker]["status_message"] = f"data error: It may have uploaded, go check. Error: {error}."
+        return False
 
-                    def _extract_torrent_id(payload: Any) -> str:
-                        if isinstance(payload, dict):
-                            torrent_id_value = payload.get("torrent_id")
-                            return str(torrent_id_value) if torrent_id_value is not None else ""
-                        if isinstance(payload, list) and payload:
-                            first_item = payload[0]
-                            if isinstance(first_item, dict):
-                                torrent_id_value = first_item.get("torrent_id")
-                                return str(torrent_id_value) if torrent_id_value is not None else ""
-                        return ""
+    async def _upload_response(self, meta: Meta, data: dict[str, Any]) -> httpx.Response:
+        upload_url = f"{self.base_url}/api.php?api_key={self.api_key}&action=upload"
+        torrent_path = Path(meta.base_dir) / "tmp" / meta.uuid / f"[{self.tracker}].torrent"
+        async with aiofiles.open(torrent_path, "rb") as torrent_file:
+            torrent_bytes = await torrent_file.read()
+        files = {"file_input": (f"{self.tracker}.placeholder.torrent", torrent_bytes, "application/x-bittorrent")}
+        async with httpx.AsyncClient(timeout=30) as client:
+            return await client.post(url=upload_url, files=files, data=data)
 
-                    response = await client.post(url=upload_url, files=files, data=data)
-                    try:
-                        response_data = response.json()
-                    except Exception as e:
-                        logger.info(f"{self.tracker}: Failed to decode JSON response: {e}")
-                        return False
-
-                    if not isinstance(response_data, dict):
-                        meta.tracker_status[self.tracker]["status_message"] = f"data error: Invalid API response: {response_data}"
-                        return False
-
-                    status_value = str(response_data.get("status", "")).strip().lower()
-                    response_payload = response_data.get("response")
-                    torrent_id_from_payload = _extract_torrent_id(response_payload)
-
-                    success_status = status_value in ("success", "ok", "200")
-                    if success_status and torrent_id_from_payload:
-                        torrent_id = torrent_id_from_payload
-                        meta.tracker_status[self.tracker]["torrent_id"] = torrent_id
-                        meta.tracker_status[self.tracker]["status_message"] = "Torrent uploaded successfully."
-                        await self.common.create_torrent_ready_to_seed(meta, self.tracker, self.source_flag, self.announce, self.torrent_url + torrent_id)
-                        return True
-
-                    error_message = str(response_data.get("error") or response_data.get("message") or "Upload failed")
-                    duplicate_phrase = "the exact same torrent file already exists on the site"
-                    if duplicate_phrase in error_message.lower():
-                        meta.tracker_status[self.tracker]["status_message"] = "data error: Torrent already exists on GREATPOSTERWALL (duplicate file)."
-                        return False
-
-                    meta.tracker_status[self.tracker]["status_message"] = f"data error: {error_message}."
-                    return False
-
-            except httpx.TimeoutException:
-                meta.tracker_status[self.tracker]["status_message"] = "data error: Request timed out after 10 seconds"
-                return False
-            except httpx.RequestError as e:
-                meta.tracker_status[self.tracker]["status_message"] = f"data error: Unable to upload. Error: {e}."
-                return False
-            except Exception as e:
-                meta.tracker_status[self.tracker]["status_message"] = f"data error: It may have uploaded, go check. Error: {e}."
-                return False
-
-        else:
-            logger.info(f"{self.tracker}: Request Data:")
-            logger.info(Redaction.redact_private_info(data))
-            meta.tracker_status[self.tracker]["status_message"] = "Debug mode enabled, not uploading."
-            await self.common.create_torrent_for_upload(meta, f"{self.tracker}" + "_DEBUG", f"{self.tracker}" + "_DEBUG", announce_url="https://fake.tracker")
+    async def _handle_upload_response(self, meta: Meta, response: httpx.Response) -> bool:
+        payload = self._decoded_upload_payload(meta, response)
+        if payload is None:
+            return False
+        torrent_id = self._successful_torrent_id(payload)
+        if torrent_id:
+            await self._record_successful_upload(meta, torrent_id)
             return True
+        self._record_failed_upload(meta, payload)
+        return False
+
+    def _decoded_upload_payload(self, meta: Meta, response: httpx.Response) -> dict[str, Any] | None:
+        try:
+            payload = response.json()
+        except Exception as error:
+            logger.info(f"{self.tracker}: Failed to decode JSON response: {error}")
+            return None
+        if isinstance(payload, dict):
+            return cast(dict[str, Any], payload)
+        meta.tracker_status[self.tracker]["status_message"] = f"data error: Invalid API response: {payload}"
+        return None
+
+    @classmethod
+    def _successful_torrent_id(cls, payload: dict[str, Any]) -> str:
+        status = str(payload.get("status", "")).strip().lower()
+        if status not in {"success", "ok", "200"}:
+            return ""
+        return cls._extract_torrent_id(payload.get("response"))
+
+    @classmethod
+    def _extract_torrent_id(cls, payload: Any) -> str:
+        mapping = cls._torrent_id_mapping(payload)
+        value = mapping.get("torrent_id")
+        return str(value) if value is not None else ""
+
+    @staticmethod
+    def _torrent_id_mapping(payload: Any) -> dict[str, Any]:
+        if isinstance(payload, dict):
+            return cast(dict[str, Any], payload)
+        if isinstance(payload, list) and payload and isinstance(payload[0], dict):
+            return cast(dict[str, Any], payload[0])
+        return {}
+
+    async def _record_successful_upload(self, meta: Meta, torrent_id: str) -> None:
+        status = meta.tracker_status[self.tracker]
+        status["torrent_id"] = torrent_id
+        status["status_message"] = "Torrent uploaded successfully."
+        await self.common.create_torrent_ready_to_seed(meta, self.tracker, self.source_flag, self.announce, self.torrent_url + torrent_id)
+
+    def _record_failed_upload(self, meta: Meta, payload: dict[str, Any]) -> None:
+        message = str(payload.get("error") or payload.get("message") or "Upload failed")
+        duplicate = "the exact same torrent file already exists on the site"
+        if duplicate in message.lower():
+            meta.tracker_status[self.tracker]["status_message"] = "data error: Torrent already exists on GREATPOSTERWALL (duplicate file)."
+            return
+        meta.tracker_status[self.tracker]["status_message"] = f"data error: {message}."
 
     async def get_name(self, meta: Meta) -> str:
         return meta.title
