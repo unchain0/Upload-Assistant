@@ -29,94 +29,88 @@ class Emuwarez(UNIT3D):
         self.tmdb_manager = TmdbManager(config)
 
     async def get_name(self, meta: Meta) -> dict[str, str]:
-        """
-        Generate Emuwarez-compliant torrent name format
-        Format: [Spanish Title] [Season] [Year] [Resolution] [Format] [Codec] [Audio] [SUBS] - [Group]
-
-        Examples:
-        - Hora punta 1998 1080p BluRay x264 ESP DD 5.1 ING DTS 5.1 SUBS-EMUWAREZ
-        - Sound! Euphonium S03 2025 1080p WEB-DL AVC JAP AAC 2.0 SUBS-Fool
-        """
-        # Get Spanish title if available and configured
         title = await self._get_title(meta)
-
-        # Get season using season_int
-        season = ""
-        if meta.category == "TV" and meta.season_int:
-            season = f"S{meta.season_int:02d}"
-
-        year = str(meta.year) if meta.year is not None else ""
-        resolution = self._map_resolution(meta.resolution)
-        video_format = self._map_format(meta)
-        video_codec = self._map_codec(meta)
-
-        # Process language information
         if not meta.language_checked:
             await languages_manager.process_desc_language(meta, tracker=self.tracker)
-
-        # Build audio string
-        audio_str = await self._build_audio_string(meta)
-
-        # Check for Spanish subtitles
+        parts = self._name_parts(meta, title, await self._build_audio_string(meta))
+        base_name = re.sub(r"\s{2,}", " ", " ".join(parts)).strip()
         subs_tag = " SUBS" if self._has_spanish_subs(meta) else ""
+        return {"name": f"{base_name}{subs_tag}-{self._release_group(meta.tag)}"}
 
-        # Get tag from meta.tag
-        tag = "" if not meta.tag else meta.tag.strip()
+    def _name_parts(self, meta: Meta, title: str, audio: str) -> list[str]:
+        values = (
+            title,
+            self._season_name(meta),
+            self._year_name(meta),
+            self._map_resolution(meta.resolution),
+            self._map_format(meta),
+            self._map_codec(meta),
+            audio,
+        )
+        return [value for value in values if value]
 
-        # Remove leading dash if present
-        if tag.startswith("-"):
-            tag = tag[1:]
+    @staticmethod
+    def _season_name(meta: Meta) -> str:
+        if meta.category != "TV" or not meta.season_int:
+            return ""
+        return f"S{meta.season_int:02d}"
 
-        # Filter out invalid tags and use default if needed
-        if not tag or tag.lower() in ["nogrp", "nogroup", "unknown", "unk", "hd.ma.5.1", "untouched"]:
-            tag = "EMUWAREZ"
+    @staticmethod
+    def _year_name(meta: Meta) -> str:
+        return "" if meta.year is None else str(meta.year)
 
-        # Build final name
-        name_parts = [part for part in [title, season, year, resolution, video_format, video_codec, audio_str] if part]
-        base_name = " ".join(name_parts)
-
-        # Clean up spaces and build final name
-        base_name = re.sub(r"\s{2,}", " ", base_name).strip()
-        emuwarez_name = f"{base_name}{subs_tag}-{tag}"
-
-        return {"name": emuwarez_name}
+    @staticmethod
+    def _release_group(value: Any) -> str:
+        tag = str(value or "").strip().lstrip("-")
+        invalid = {"", "nogrp", "nogroup", "unknown", "unk", "hd.ma.5.1", "untouched"}
+        return "EMUWAREZ" if tag.casefold() in invalid else tag
 
     async def _get_title(self, meta: Meta) -> str:
-        """Get Spanish title if available and configured"""
-        spanish_title = None
-
-        # Try to get from IMDb with priority: country match, then language match
-        imdb_info_raw = meta.imdb_info
-        imdb_info: dict[str, Any] = cast(dict[str, Any], imdb_info_raw) if isinstance(imdb_info_raw, dict) else {}
-        akas_raw = imdb_info.get("akas", [])
-        akas: list[Any] = akas_raw if isinstance(akas_raw, list) else []
-
-        country_match = None
-        language_match = None
-
-        for aka in akas:
-            if isinstance(aka, dict):
-                aka_dict = cast(dict[str, Any], aka)
-                if aka_dict.get("country") in ["Spain", "ES"]:
-                    country_match = aka_dict.get("title")
-                    break  # Country match takes priority
-                if aka_dict.get("language") in ["Spain", "Spanish", "ES"] and not language_match:
-                    language_match = aka_dict.get("title")
-
-        spanish_title = country_match or language_match
-
-        # Try TMDb if not found
-        tmdb_id_raw = meta.tmdb
-        tmdb_id = int(tmdb_id_raw) if isinstance(tmdb_id_raw, (int, str)) and str(tmdb_id_raw).isdigit() else 0
-        if not spanish_title and tmdb_id:
-            spanish_title = await self.tmdb_manager.get_tmdb_translations(tmdb_id=tmdb_id, category=meta.category, target_language="es")
-
-        # Use Spanish title if configured
-        use_spanish_title = self.config["TRACKERS"][self.tracker].get("use_spanish_title", False)
-        if isinstance(spanish_title, str) and spanish_title and use_spanish_title:
-            return spanish_title
-
+        spanish_title = self._imdb_spanish_title(meta)
+        if not spanish_title:
+            spanish_title = await self._tmdb_spanish_title(meta)
+        if self._use_spanish_title(spanish_title):
+            return str(spanish_title)
         return meta.title
+
+    def _imdb_spanish_title(self, meta: Meta) -> str:
+        imdb_info = cast(dict[str, Any], meta.imdb_info) if isinstance(meta.imdb_info, dict) else {}
+        akas = imdb_info.get("akas", [])
+        if not isinstance(akas, list):
+            return ""
+        country_match = self._first_aka_title(akas, self._country_spanish_title)
+        return country_match or self._first_aka_title(akas, self._language_spanish_title)
+
+    @staticmethod
+    def _first_aka_title(akas: list[Any], selector: Any) -> str:
+        return next((title for aka in akas if (title := selector(aka))), "")
+
+    @staticmethod
+    def _country_spanish_title(aka: Any) -> str:
+        if not isinstance(aka, dict) or aka.get("country") not in {"Spain", "ES"}:
+            return ""
+        return str(aka.get("title") or "")
+
+    @staticmethod
+    def _language_spanish_title(aka: Any) -> str:
+        if not isinstance(aka, dict) or aka.get("language") not in {"Spain", "Spanish", "ES"}:
+            return ""
+        return str(aka.get("title") or "")
+
+    async def _tmdb_spanish_title(self, meta: Meta) -> str:
+        tmdb_id = self._numeric_tmdb_id(meta.tmdb)
+        if not tmdb_id:
+            return ""
+        result = await self.tmdb_manager.get_tmdb_translations(tmdb_id=tmdb_id, category=meta.category, target_language="es")
+        return result if isinstance(result, str) else ""
+
+    @staticmethod
+    def _numeric_tmdb_id(value: Any) -> int:
+        text = str(value) if isinstance(value, (int, str)) else ""
+        return int(text) if text.isdigit() else 0
+
+    def _use_spanish_title(self, title: str) -> bool:
+        return bool(title) and bool(self.config["TRACKERS"][self.tracker].get("use_spanish_title", False))
 
     def _map_resolution(self, resolution: str) -> str:
         """Map resolution to Emuwarez nomenclature"""
@@ -132,32 +126,39 @@ class Emuwarez(UNIT3D):
         return resolution_map.get(resolution, resolution)
 
     def _map_format(self, meta: Meta) -> str:
-        """Map source format to Emuwarez nomenclature"""
-        source = str(meta.source)
-        type_name = str(meta.type)
+        format_map = {"BDMV": "FBD", "DVD": "FDVD", "REMUX": "BDRemux"}
+        disc_or_type = self._disc_or_type_format(meta, format_map)
+        if disc_or_type:
+            return disc_or_type
+        return self._source_format(str(meta.source))
 
-        format_map = {
-            "BDMV": "FBD",
-            "DVD": "FDVD",
-            "REMUX": "BDRemux",
-        }
+    @staticmethod
+    def _disc_or_type_format(meta: Meta, mapping: dict[str, str]) -> str:
+        is_disc = meta.is_disc if isinstance(meta.is_disc, str) else ""
+        if is_disc in mapping:
+            return mapping[is_disc]
+        return mapping.get(str(meta.type), "")
 
-        is_disc = meta.is_disc
-        if isinstance(is_disc, str) and is_disc in format_map:
-            return format_map[is_disc]
-        if type_name in format_map:
-            return format_map[type_name]
-
-        if "BluRay" in source or "Blu-ray" in source:
+    @classmethod
+    def _source_format(cls, source: str) -> str:
+        if cls._is_bluray_source(source):
             return "BluRay"
-        if "WEB" in source:
-            return "WEB-DL" if "WEB-DL" in source else "WEBRIP"
+        web = cls._web_source_format(source)
+        if web:
+            return web
         if "HDTV" in source:
             return "HDTV"
-        if "DVD" in source:
-            return "SD"
+        return "SD" if "DVD" in source else ""
 
-        return ""
+    @staticmethod
+    def _is_bluray_source(source: str) -> bool:
+        return "BluRay" in source or "Blu-ray" in source
+
+    @staticmethod
+    def _web_source_format(source: str) -> str:
+        if "WEB" not in source:
+            return ""
+        return "WEB-DL" if "WEB-DL" in source else "WEBRIP"
 
     def _map_codec(self, meta: Meta) -> str:
         """Map video codec to Emuwarez nomenclature with HDR/DV prefix"""
@@ -190,147 +191,129 @@ class Emuwarez(UNIT3D):
         return f"{hdr_prefix}{codec}".strip()
 
     async def _get_original_language(self, meta: Meta) -> str | None:
-        """Get the original language from existing metadata"""
-        original_lang = None
+        language = str(meta.original_language or "").strip()
+        if not language:
+            language = self._imdb_original_language(meta)
+        return self._map_language(language) if language else None
 
-        if meta.original_language:
-            original_lang = str(meta.original_language)
+    @classmethod
+    def _imdb_original_language(cls, meta: Meta) -> str:
+        imdb_info = cast(dict[str, Any], meta.imdb_info) if isinstance(meta.imdb_info, dict) else {}
+        value = imdb_info.get("language")
+        return cls._language_text(cls._first_language_value(value))
 
-        if not original_lang:
-            imdb_info_raw = meta.imdb_info
-            imdb_info: dict[str, Any] = cast(dict[str, Any], imdb_info_raw) if isinstance(imdb_info_raw, dict) else {}
-            imdb_lang: Any = imdb_info.get("language")
+    @staticmethod
+    def _first_language_value(value: Any) -> Any:
+        if isinstance(value, list):
+            return value[0] if value else ""
+        return value
 
-            if isinstance(imdb_lang, list):
-                imdb_lang_list = imdb_lang
-                imdb_lang = imdb_lang_list[0] if imdb_lang_list else ""
-
-            if imdb_lang:
-                if isinstance(imdb_lang, dict):
-                    imdb_lang_dict = cast(dict[str, Any], imdb_lang)
-                    imdb_lang_text = imdb_lang_dict.get("text", "")
-                    original_lang = str(imdb_lang_text).strip()
-                elif isinstance(imdb_lang, str):
-                    original_lang = imdb_lang.strip()
-                else:
-                    original_lang = str(imdb_lang).strip()
-
-        if original_lang:
-            return self._map_language(original_lang)
-
-        return None
+    @staticmethod
+    def _language_text(value: Any) -> str:
+        if isinstance(value, dict):
+            return str(value.get("text", "")).strip()
+        return str(value or "").strip()
 
     async def _build_audio_string(self, meta: Meta) -> str:
-        """
-        Build audio string in Emuwarez format with proper priority order
-
-        Priority Order:
-        1. DUAL: Exactly 2 audio tracks, same codec
-        2. MULTI: 4+ audio tracks, same codec
-        3. VOSE: Single audio (original lang) + Spanish subs + NO Spanish audio
-        4. V.O.: Single audio (original lang) + NO Spanish subs + NO Spanish audio
-        5. Normal: List all audio tracks
-        """
         audio_tracks = self._get_audio_tracks(meta)
-        if not audio_tracks:
-            return ""
-
         audio_langs = self._extract_audio_languages(audio_tracks, meta)
-        if not audio_langs:
+        if not audio_tracks or not audio_langs:
             return ""
+        special = await self._special_audio_string(meta, audio_tracks, audio_langs)
+        return special or self._listed_audio_string(audio_tracks, audio_langs)
 
-        original_lang = await self._get_original_language(meta)
-        has_spanish_audio = "ESP" in audio_langs or "LAT" in audio_langs
-        has_spanish_subs = self._has_spanish_subs(meta)
-        num_audio_tracks = len(audio_tracks)
+    async def _special_audio_string(self, meta: Meta, tracks: list[dict[str, Any]], languages: list[str]) -> str:
+        dual = self._dual_audio_string(tracks)
+        if dual:
+            return dual
+        multi = self._multi_audio_string(tracks)
+        if multi:
+            return multi
+        return await self._single_original_audio_string(meta, tracks, languages)
 
-        # DUAL - Exactly 2 audios, same codec
-        if num_audio_tracks == 2:
-            codec1 = self._map_audio_codec(audio_tracks[0])
-            codec2 = self._map_audio_codec(audio_tracks[1])
+    def _dual_audio_string(self, tracks: list[dict[str, Any]]) -> str:
+        if len(tracks) != 2:
+            return ""
+        codecs = [self._map_audio_codec(track) for track in tracks]
+        if codecs[0] != codecs[1]:
+            return ""
+        return f"DUAL {codecs[0]} {self._get_audio_channels(tracks[0])}"
 
-            if codec1 == codec2:
-                channels = self._get_audio_channels(audio_tracks[0])
-                return f"DUAL {codec1} {channels}"
+    def _multi_audio_string(self, tracks: list[dict[str, Any]]) -> str:
+        if len(tracks) < 4:
+            return ""
+        codecs = [self._map_audio_codec(track) for track in tracks]
+        if not self._all_equal(codecs):
+            return ""
+        return f"MULTI {codecs[0]} {self._get_audio_channels(tracks[0])}"
 
-        # MULTI - 4+ audios, same codec
-        if num_audio_tracks >= 4:
-            codecs = [self._map_audio_codec(t) for t in audio_tracks]
-            if all(c == codecs[0] for c in codecs):
-                channels = self._get_audio_channels(audio_tracks[0])
-                return f"MULTI {codecs[0]} {channels}"
+    @staticmethod
+    def _all_equal(values: list[str]) -> bool:
+        return bool(values) and all(value == values[0] for value in values)
 
-        # VOSE - Single audio (original) + Spanish subs + NO Spanish audio
-        if num_audio_tracks == 1 and original_lang and not has_spanish_audio and has_spanish_subs and audio_langs[0] == original_lang:
-            codec = self._map_audio_codec(audio_tracks[0])
-            channels = self._get_audio_channels(audio_tracks[0])
-            return f"VOSE {original_lang} {codec} {channels}"
+    async def _single_original_audio_string(self, meta: Meta, tracks: list[dict[str, Any]], languages: list[str]) -> str:
+        if len(tracks) != 1:
+            return ""
+        original = await self._get_original_language(meta)
+        if not self._single_original_matches(original, languages):
+            return ""
+        codec = self._map_audio_codec(tracks[0])
+        channels = self._get_audio_channels(tracks[0])
+        label = "VOSE" if self._has_spanish_subs(meta) else "V.O."
+        return f"{label} {original} {codec} {channels}"
 
-        # V.O. - Single audio (original) + NO Spanish subs + NO Spanish audio
-        if num_audio_tracks == 1 and original_lang and not has_spanish_audio and not has_spanish_subs and audio_langs[0] == original_lang:
-            codec = self._map_audio_codec(audio_tracks[0])
-            channels = self._get_audio_channels(audio_tracks[0])
-            return f"V.O. {original_lang} {codec} {channels}"
+    @staticmethod
+    def _single_original_matches(original: str | None, languages: list[str]) -> bool:
+        if not original or len(languages) != 1:
+            return False
+        if "ESP" in languages or "LAT" in languages:
+            return False
+        return languages[0] == original
 
-        # Normal listing
-        audio_parts: list[str] = []
-        for i, track in enumerate(audio_tracks):
-            if i < len(audio_langs):
-                lang = audio_langs[i]
-                codec = self._map_audio_codec(track)
-                channels = self._get_audio_channels(track)
-                audio_parts.append(f"{lang} {codec} {channels}")
+    def _listed_audio_string(self, tracks: list[dict[str, Any]], languages: list[str]) -> str:
+        parts = [self._audio_part(track, languages[index]) for index, track in enumerate(tracks) if index < len(languages)]
+        return " ".join(parts)
 
-        return " ".join(audio_parts)
+    def _audio_part(self, track: dict[str, Any], language: str) -> str:
+        return f"{language} {self._map_audio_codec(track)} {self._get_audio_channels(track)}"
 
-    def _get_audio_tracks(self, meta: Meta) -> list[dict[str, Any]]:
-        """Extract audio tracks from mediainfo"""
-        if "mediainfo" not in meta or "media" not in meta.mediainfo:
-            return []
+    @classmethod
+    def _get_audio_tracks(cls, meta: Meta) -> list[dict[str, Any]]:
+        return [track for track in cls._media_tracks(meta) if track.get("@type") == "Audio"]
 
-        media_info = meta.mediainfo
-        if not isinstance(media_info, dict):
-            return []
-        media_info_dict = media_info
-        media = media_info_dict.get("media")
-        if not isinstance(media, dict):
-            return []
-
-        media_dict = cast(dict[str, Any], media)
-        tracks = media_dict.get("track", [])
+    @classmethod
+    def _media_tracks(cls, meta: Meta) -> list[dict[str, Any]]:
+        media = cls._media_mapping(meta)
+        tracks = media.get("track", [])
         if not isinstance(tracks, list):
             return []
+        return [cast(dict[str, Any], track) for track in tracks if isinstance(track, dict)]
 
-        audio_tracks: list[dict[str, Any]] = []
-        tracks_list = tracks
-        for track in tracks_list:
-            if isinstance(track, dict):
-                track_dict = cast(dict[str, Any], track)
-                if track_dict.get("@type") == "Audio":
-                    audio_tracks.append(track_dict)
-
-        return audio_tracks
+    @staticmethod
+    def _media_mapping(meta: Meta) -> dict[str, Any]:
+        if not isinstance(meta.mediainfo, dict):
+            return {}
+        media = meta.mediainfo.get("media", {})
+        return cast(dict[str, Any], media) if isinstance(media, dict) else {}
 
     def _extract_audio_languages(self, audio_tracks: list[dict[str, Any]], meta: Meta) -> list[str]:
-        """Extract and normalize audio languages"""
-        audio_langs: list[str] = []
+        track_languages = self._mapped_unique_languages(track.get("Language", "") for track in audio_tracks)
+        if track_languages:
+            return track_languages
+        return self._mapped_unique_languages(self._fallback_audio_languages(meta))
 
-        for track in audio_tracks:
-            lang = track.get("Language", "")
-            if lang:
-                lang_code = self._map_language(str(lang))
-                if lang_code and lang_code not in audio_langs:
-                    audio_langs.append(lang_code)
+    def _mapped_unique_languages(self, values: Any) -> list[str]:
+        mapped: list[str] = []
+        for value in values:
+            code = self._map_language(str(value))
+            if code and code not in mapped:
+                mapped.append(code)
+        return mapped
 
-        if not audio_langs and meta.audio_languages:
-            audio_languages = meta.audio_languages
-            audio_languages_list: list[Any] = audio_languages if isinstance(audio_languages, list) else []
-            for lang in audio_languages_list:
-                lang_code = self._map_language(str(lang))
-                if lang_code and lang_code not in audio_langs:
-                    audio_langs.append(lang_code)
-
-        return audio_langs
+    @staticmethod
+    def _fallback_audio_languages(meta: Meta) -> list[Any]:
+        value = meta.audio_languages
+        return value if isinstance(value, list) else []
 
     def _map_language(self, lang: str) -> str:
         """Map language codes and names to Emuwarez nomenclature"""
@@ -457,39 +440,17 @@ class Emuwarez(UNIT3D):
         return channel_map.get(str(channels), "5.1")
 
     def _has_spanish_subs(self, meta: Meta) -> bool:
-        """Check if torrent has Spanish subtitles"""
-        if "mediainfo" not in meta or "media" not in meta.mediainfo:
-            return False
-        media_info = meta.mediainfo
-        if not isinstance(media_info, dict):
-            return False
-        media_info_dict = media_info
-        media = media_info_dict.get("media")
-        if not isinstance(media, dict):
-            return False
-        media_dict = cast(dict[str, Any], media)
-        tracks = media_dict.get("track", [])
-        if not isinstance(tracks, list):
-            return False
+        return any(self._is_spanish_subtitle(track) for track in self._media_tracks(meta))
 
-        tracks_list = tracks
-        for track in tracks_list:
-            if not isinstance(track, dict):
-                continue
-            track_dict = cast(dict[str, Any], track)
-            if track_dict.get("@type") == "Text":
-                lang = track_dict.get("Language", "")
-                lang = lang.lower() if isinstance(lang, str) else ""
-
-                title = track_dict.get("Title", "")
-                title = title.lower() if isinstance(title, str) else ""
-
-                if lang in ["es", "spa", "spanish", "es-es", "español"]:
-                    return True
-                if "spanish" in title or "español" in title or "castellano" in title:
-                    return True
-
-        return False
+    @staticmethod
+    def _is_spanish_subtitle(track: dict[str, Any]) -> bool:
+        if track.get("@type") != "Text":
+            return False
+        language = str(track.get("Language", "")).casefold()
+        title = str(track.get("Title", "")).casefold()
+        if language in {"es", "spa", "spanish", "es-es", "español"}:
+            return True
+        return any(term in title for term in ("spanish", "español", "castellano"))
 
     async def get_cat_id(self, category_name: str) -> str:
         """Categories: Movies(1), Series(2), Documentales(4), Musica(5), Juegos(6), Software(7)"""
@@ -510,49 +471,47 @@ class Emuwarez(UNIT3D):
         return resolution_map.get(resolution, "10")
 
     async def search_existing(self, meta: Meta) -> list[dict[str, Any]]:
-        """Search for duplicate torrents using cloudscraper for Cloudflare bypass.
-
-        Follows UNIT3D base logic:
-        - name is empty (or season only for TV): the full torrent name does not exist
-          yet at this point, filtering by it would miss all real duplicates
-        - tmdbId + category + resolution + type catches true duplicates (same content,
-          same quality tier) without false positives from unrelated torrents
-        """
-        dupes: list[dict[str, Any]] = []
-
-        # Mirror UNIT3D preflight: initialise tracker state, validate api_key,
-        # run additional checks — same guard rails as the base class
         meta.setdefault("tracker_status", {})
         meta.tracker_status.setdefault(self.tracker, {})
+        params = await self._search_params(meta)
+        response = self._scraper_response(params)
+        response.raise_for_status()
+        return self._search_results(response.json(), bool(meta.is_disc))
 
-        api_key = str(self.config["TRACKERS"][self.tracker].get("api_key", "")).strip()
-
-        # For TV use only the season token; for movies leave name empty
-        name = ""
-        if meta.category == "TV" and meta.season:
-            name = str(meta.season)
-
+    async def _search_params(self, meta: Meta) -> list[tuple[str, str]]:
         res_id = await self.get_res_id(meta.resolution)
-        type_id = (await self.get_type_id(meta))["type_id"]
-
-        # Use list of tuples to support duplicate keys (e.g. 1080p + 1080i)
         params: list[tuple[str, str]] = [
             ("categories[]", await self.get_cat_id(str(meta.category))),
-            ("name", name),
+            ("name", self._search_name(meta)),
             ("perPage", "100"),
         ]
         if meta.tmdb is not None:
             params.append(("tmdbId", str(meta.tmdb)))
+        params.extend(self._resolution_params(res_id))
+        params.append(("types[]", (await self.get_type_id(meta))["type_id"]))
+        return params
 
-        # 1080p (id=3) and 1080i (id=4) treated as same resolution tier
-        if res_id in ["3", "4"]:
-            params.append(("resolutions[]", "3"))
-            params.append(("resolutions[]", "4"))
-        else:
-            params.append(("resolutions[]", res_id))
+    @staticmethod
+    def _search_name(meta: Meta) -> str:
+        return str(meta.season) if meta.category == "TV" and meta.season else ""
 
-        params.append(("types[]", type_id))
-        headers = {
+    @staticmethod
+    def _resolution_params(res_id: str) -> list[tuple[str, str]]:
+        if res_id in {"3", "4"}:
+            return [("resolutions[]", "3"), ("resolutions[]", "4")]
+        return [("resolutions[]", res_id)]
+
+    def _scraper_response(self, params: list[tuple[str, str]]) -> Any:
+        api_key = str(self.config["TRACKERS"][self.tracker].get("api_key", "")).strip()
+        scraper = cast(Any, cloudscraper).create_scraper(
+            browser={"browser": "chrome", "platform": "windows", "mobile": False, "desktop": True},
+            delay=10,
+        )
+        scraper.get(self.base_url, timeout=15.0)
+        return scraper.get(url=self.search_url, params=params, headers=self._search_headers(api_key), timeout=15.0)
+
+    def _search_headers(self, api_key: str) -> dict[str, str]:
+        return {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
             "Accept": "application/json",
@@ -561,64 +520,50 @@ class Emuwarez(UNIT3D):
             "Origin": self.base_url,
         }
 
-        cloudscraper_module = cast(Any, cloudscraper)
-        create_scraper = cloudscraper_module.create_scraper
-        scraper = create_scraper(browser={"browser": "chrome", "platform": "windows", "mobile": False, "desktop": True}, delay=10)
+    @classmethod
+    def _search_results(cls, payload: Any, is_disc: bool) -> list[dict[str, Any]]:
+        items = cls._search_items(payload)
+        return [entry for item in items if (entry := cls._search_result(item, is_disc)) is not None]
 
-        # Establish session
-        scraper.get(self.base_url, timeout=15.0)
+    @staticmethod
+    def _search_items(payload: Any) -> list[Any]:
+        if not isinstance(payload, dict):
+            return []
+        items = payload.get("data")
+        return items if isinstance(items, list) else []
 
-        # Make API request — params is a list of tuples to support duplicate keys
-        response = scraper.get(url=self.search_url, params=params, headers=headers, timeout=15.0)
+    @classmethod
+    def _search_result(cls, torrent: Any, is_disc: bool) -> dict[str, Any] | None:
+        attributes = cls._torrent_attributes(torrent)
+        if not attributes or "name" not in attributes:
+            return None
+        result = {
+            "name": attributes["name"],
+            "size": attributes.get("size"),
+            "trumpable": attributes.get("trumpable", False),
+            "link": attributes.get("details_link"),
+        }
+        if not is_disc:
+            files = cls._torrent_files(attributes)
+            result["files"] = cls._file_names(files)
+            result["file_count"] = len(files)
+        return result
 
-        response.raise_for_status()
-        data = response.json()
-        if isinstance(data, dict):
-            data_dict = cast(dict[str, Any], data)
-            data_items_raw = data_dict.get("data")
-            if isinstance(data_items_raw, list):
-                data_items = data_items_raw
-                for torrent in data_items:
-                    if not isinstance(torrent, dict):
-                        continue
-                    torrent_dict = cast(dict[str, Any], torrent)
-                    attributes = torrent_dict.get("attributes")
-                    if not isinstance(attributes, dict):
-                        continue
-                    attributes_dict = cast(dict[str, Any], attributes)
-                    if "name" not in attributes_dict:
-                        continue
+    @staticmethod
+    def _torrent_attributes(torrent: Any) -> dict[str, Any]:
+        if not isinstance(torrent, dict):
+            return {}
+        attributes = torrent.get("attributes")
+        return cast(dict[str, Any], attributes) if isinstance(attributes, dict) else {}
 
-                    files_value = attributes_dict.get("files", [])
-                    files_list: list[Any] = files_value if isinstance(files_value, list) else []
-                    file_names: list[str] = []
-                    for file in files_list:
-                        if not isinstance(file, dict):
-                            continue
-                        file_dict = cast(dict[str, Any], file)
-                        name = file_dict.get("name")
-                        if isinstance(name, str):
-                            file_names.append(name)
+    @staticmethod
+    def _torrent_files(attributes: dict[str, Any]) -> list[Any]:
+        files = attributes.get("files", [])
+        return files if isinstance(files, list) else []
 
-                    if not meta.is_disc:
-                        result = {
-                            "name": attributes_dict["name"],
-                            "size": attributes_dict.get("size"),
-                            "files": file_names,
-                            "file_count": len(files_list),
-                            "trumpable": attributes_dict.get("trumpable", False),
-                            "link": attributes_dict.get("details_link", None),
-                        }
-                    else:
-                        result = {
-                            "name": attributes_dict["name"],
-                            "size": attributes_dict.get("size"),
-                            "trumpable": attributes_dict.get("trumpable", False),
-                            "link": attributes_dict.get("details_link", None),
-                        }
-                    dupes.append(result)
-
-        return dupes
+    @staticmethod
+    def _file_names(files: list[Any]) -> list[str]:
+        return [str(file["name"]) for file in files if isinstance(file, dict) and isinstance(file.get("name"), str)]
 
     async def get_upload_data(self, meta: Meta) -> dict[str, Any]:
         """Get upload data with Emuwarez-specific options"""
