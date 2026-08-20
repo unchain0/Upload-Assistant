@@ -32,110 +32,139 @@ class LatTeam(UNIT3D):
         self.common = Common(config)
 
     async def get_category_id(self, meta: Meta, category: str | None = None, reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
-        cat_map = {
-            "MOVIE": "1",
-            "TV": "2",
-            "EBOOK": "18",
-            "AUDIOBOOK": "11",
-            "MAGAZINE": "29",
-            "COMIC": "30",
-        }
-        if mapping_only:
-            return cat_map
-        if reverse:
-            return {v: k for k, v in cat_map.items()}
-
-        resolved_category = category if category is not None and category != "" else meta.category
-        if resolved_category == "BOOK":
-            if meta.audiobook:
-                resolved_category = "AUDIOBOOK"
-            elif meta.comic or meta.manga:
-                resolved_category = "COMIC"
-            elif meta.magazine:
-                resolved_category = "MAGAZINE"
-            else:
-                resolved_category = "EBOOK"
-
-        category_id = cat_map.get(resolved_category, "0")
-
-        keywords = [k.lower() for k in meta.keywords]
-        overview = meta.overview.lower()
-        genres = [g.lower() for g in meta.genres]
-        soap_keywords = ["telenovela", "novela", "soap", "culebrón", "culebron"]
-        origin_countries_value = meta.origin_country
-        origin_countries = cast(list[str], origin_countries_value) if isinstance(origin_countries_value, list) else []
-
-        if resolved_category == "TV":
-            # Anime
-            if meta.anime:
-                category_id = "5"
-            # Telenovela / Soap
-            elif any(kw in keywords for kw in soap_keywords) or any(kw in overview for kw in soap_keywords):
-                category_id = "8"
-            # Turkish & Asian
-            elif "drama" in genres and any(
-                c
-                in [
-                    "AE",
-                    "AF",
-                    "AM",
-                    "AZ",
-                    "BD",
-                    "BH",
-                    "BN",
-                    "BT",
-                    "CN",
-                    "CY",
-                    "GE",
-                    "HK",
-                    "ID",
-                    "IL",
-                    "IN",
-                    "IQ",
-                    "IR",
-                    "JO",
-                    "JP",
-                    "KG",
-                    "KH",
-                    "KP",
-                    "KR",
-                    "KW",
-                    "KZ",
-                    "LA",
-                    "LB",
-                    "LK",
-                    "MM",
-                    "MN",
-                    "MO",
-                    "MV",
-                    "MY",
-                    "NP",
-                    "OM",
-                    "PH",
-                    "PK",
-                    "PS",
-                    "QA",
-                    "SA",
-                    "SG",
-                    "SY",
-                    "TH",
-                    "TJ",
-                    "TL",
-                    "TM",
-                    "TR",
-                    "TW",
-                    "UZ",
-                    "VN",
-                    "YE",
-                ]
-                for c in origin_countries
-            ):
-                category_id = "20"
-
+        mapping = self._category_mapping()
+        mode = self._mapping_mode(mapping, reverse=reverse, mapping_only=mapping_only)
+        if mode is not None:
+            return mode
+        resolved = self._resolved_category(meta, category)
+        category_id = mapping.get(resolved, "0")
+        if resolved == "TV":
+            category_id = self._tv_category_id(meta, category_id)
         return {"category_id": category_id}
 
+    @staticmethod
+    def _category_mapping() -> dict[str, str]:
+        return {"MOVIE": "1", "TV": "2", "EBOOK": "18", "AUDIOBOOK": "11", "MAGAZINE": "29", "COMIC": "30"}
+
+    @classmethod
+    def _resolved_category(cls, meta: Meta, requested: str | None) -> str:
+        resolved = requested if requested else str(meta.category)
+        if resolved != "BOOK":
+            return resolved
+        return cls._book_category(meta)
+
+    @staticmethod
+    def _book_category(meta: Meta) -> str:
+        if meta.audiobook:
+            return "AUDIOBOOK"
+        if meta.comic or meta.manga:
+            return "COMIC"
+        if meta.magazine:
+            return "MAGAZINE"
+        return "EBOOK"
+
+    @classmethod
+    def _tv_category_id(cls, meta: Meta, fallback: str) -> str:
+        if meta.anime:
+            return "5"
+        if cls._is_soap(meta):
+            return "8"
+        if cls._is_asian_drama(meta):
+            return "20"
+        return fallback
+
+    @staticmethod
+    def _soap_keywords() -> tuple[str, ...]:
+        return ("telenovela", "novela", "soap", "culebrón", "culebron")
+
+    @classmethod
+    def _is_soap(cls, meta: Meta) -> bool:
+        keywords = {str(value).lower() for value in meta.keywords}
+        overview = str(meta.overview or "").lower()
+        return any(word in keywords or word in overview for word in cls._soap_keywords())
+
+    @classmethod
+    def _is_asian_drama(cls, meta: Meta) -> bool:
+        genres = {str(value).lower() for value in meta.genres}
+        if "drama" not in genres:
+            return False
+        countries = cls._origin_countries(meta.origin_country)
+        return any(country in cls._asian_countries() for country in countries)
+
+    @staticmethod
+    def _origin_countries(value: Any) -> list[str]:
+        return [str(item) for item in value] if isinstance(value, list) else []
+
+    @staticmethod
+    def _asian_countries() -> set[str]:
+        return {
+            "AE",
+            "AF",
+            "AM",
+            "AZ",
+            "BD",
+            "BH",
+            "BN",
+            "BT",
+            "CN",
+            "CY",
+            "GE",
+            "HK",
+            "ID",
+            "IL",
+            "IN",
+            "IQ",
+            "IR",
+            "JO",
+            "JP",
+            "KG",
+            "KH",
+            "KP",
+            "KR",
+            "KW",
+            "KZ",
+            "LA",
+            "LB",
+            "LK",
+            "MM",
+            "MN",
+            "MO",
+            "MV",
+            "MY",
+            "NP",
+            "OM",
+            "PH",
+            "PK",
+            "PS",
+            "QA",
+            "SA",
+            "SG",
+            "SY",
+            "TH",
+            "TJ",
+            "TL",
+            "TM",
+            "TR",
+            "TW",
+            "UZ",
+            "VN",
+            "YE",
+        }
+
     async def get_type_id(self, meta: Meta, type: str | None = None, reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
-        type_id = {
+        mapping = self._type_mapping()
+        mode = self._mapping_mode(mapping, reverse=reverse, mapping_only=mapping_only)
+        if mode is not None:
+            return mode
+        resolved = self._resolved_type(type if type else meta.type)
+        value = mapping.get(resolved, "0")
+        if meta.category == "BOOK" and value == "0":
+            value = "21"
+        return {"type_id": value}
+
+    @staticmethod
+    def _type_mapping() -> dict[str, str]:
+        return {
             "DISC": "1",
             "REMUX": "2",
             "ENCODE": "3",
@@ -159,153 +188,202 @@ class LatTeam(UNIT3D):
             "KFX": "26",
             "OTHER": "21",
         }
-        if mapping_only:
-            return type_id
-        if reverse:
-            return {v: k for k, v in type_id.items()}
 
-        resolved_type = type if type is not None and type != "" else meta.type
-        if isinstance(resolved_type, str):
-            resolved_type = resolved_type.upper().strip().lstrip(".")
-            if resolved_type in ("CBZ", "CBR"):
-                resolved_type = "CBZ"
-            elif resolved_type in ("AZW3", "MOBI", "KFX"):
-                resolved_type = "AZW3"
-
-        val = type_id.get(resolved_type or "", "0")
-        if meta.category == "BOOK" and val == "0":
-            val = "21"
-
-        return {"type_id": val}
+    @staticmethod
+    def _resolved_type(value: Any) -> str:
+        if not isinstance(value, str):
+            return ""
+        resolved = value.upper().strip().lstrip(".")
+        if resolved in {"CBZ", "CBR"}:
+            return "CBZ"
+        if resolved in {"AZW3", "MOBI", "KFX"}:
+            return "AZW3"
+        return resolved
 
     async def get_name(self, meta: Meta) -> dict[str, str]:
-        if meta.category == "BOOK":
-            author = meta.author.strip()
-            title = meta.title.strip()
-            fmt = str(meta.type).strip().upper()
+        name = self._book_name(meta) if meta.category == "BOOK" else self._video_name(meta)
+        return {"name": re.sub(r"\s{2,}", " ", name).strip()}
 
-            extra_info = []
+    @classmethod
+    def _book_name(cls, meta: Meta) -> str:
+        author = str(meta.author or "").strip()
+        title = str(meta.title or "").strip()
+        fmt = str(meta.type or "").strip().upper()
+        extra = cls._book_extra_info(meta)
+        identity = f"{author} - {title}" if author else title
+        return f"{identity}{cls._formatted_extra(extra)} {fmt}"
 
-            # If it's comic/manga/magazine/newspaper, we can add volume, issue/number info if available
-            volume = str(meta.manual_season or meta.season or "").strip()
-            issue = str(meta.manual_episode or meta.episode or "").strip()
+    @classmethod
+    def _book_extra_info(cls, meta: Meta) -> list[str]:
+        extra: list[str] = []
+        cls._append_book_issue_info(extra, meta)
+        cls._append_edition_info(extra, meta)
+        cls._append_narration_info(extra, meta)
+        return extra
 
-            if volume:
-                extra_info.append(f"Vol {volume}")
-            if issue:
-                extra_info.append(f"No {issue}")
+    @classmethod
+    def _append_book_issue_info(cls, extra: list[str], meta: Meta) -> None:
+        cls._append_optional(extra, "Vol", cls._volume_value(meta))
+        cls._append_optional(extra, "No", cls._issue_value(meta))
 
-            edition = str(meta.manual_edition or meta.edition or "").strip()
-            if edition:
-                if not any(x in edition.lower() for x in ["edición", "edicion", "edition", "ed.", "ed"]):
-                    extra_info.append(f"{edition} Edition")
-                else:
-                    extra_info.append(edition)
+    @staticmethod
+    def _volume_value(meta: Meta) -> str:
+        value = meta.manual_season if meta.manual_season else meta.season
+        return str(value or "").strip()
 
-            if meta.audiobook:
-                book_lang = meta.book_language.lower()
-                if "spain" in book_lang or "castilian" in book_lang or "castellano" in book_lang:
-                    extra_info.append("Narración en Castellano")
-                elif "latin" in book_lang or "latino" in book_lang:
-                    extra_info.append("Narración en Latino")
-                elif "portuguese" in book_lang or "português" in book_lang or "portugues" in book_lang:
-                    extra_info.append("Narración en Portugués")
-                elif book_lang:
-                    lang_title = meta.book_language.title()
-                    extra_info.append(f"Narración en {lang_title}")
+    @staticmethod
+    def _issue_value(meta: Meta) -> str:
+        value = meta.manual_episode if meta.manual_episode else meta.episode
+        return str(value or "").strip()
 
-            extra_str = ""
-            if extra_info:
-                extra_str = " " + " ".join(f"({info})" for info in extra_info)
+    @staticmethod
+    def _append_optional(extra: list[str], label: str, value: str) -> None:
+        if value:
+            extra.append(f"{label} {value}")
 
-            lt_name = f"{author} - {title}{extra_str} {fmt}" if author else f"{title}{extra_str} {fmt}"
+    @classmethod
+    def _append_edition_info(cls, extra: list[str], meta: Meta) -> None:
+        edition = str(meta.manual_edition or meta.edition or "").strip()
+        if not edition:
+            return
+        extra.append(edition if cls._has_edition_marker(edition) else f"{edition} Edition")
 
-            return {"name": re.sub(r"\s{2,}", " ", lt_name).strip()}
+    @staticmethod
+    def _has_edition_marker(value: str) -> bool:
+        lowered = value.lower()
+        return any(marker in lowered for marker in ("edición", "edicion", "edition", "ed.", "ed"))
 
-        aka_value = meta.aka
-        lt_name = meta.name.replace("Dual-Audio", "").replace("Dubbed", "").replace(aka_value, "")
+    @classmethod
+    def _append_narration_info(cls, extra: list[str], meta: Meta) -> None:
+        if not meta.audiobook:
+            return
+        narration = cls._narration_label(str(meta.book_language or ""))
+        if narration:
+            extra.append(narration)
 
-        if meta.type != "DISC":  # DISC don't have mediainfo
-            # Check if original language is "es" if true replace title for AKA if available
-            title_value = meta.title
-            if meta.original_language == "es" and aka_value:
-                lt_name = lt_name.replace(title_value, aka_value.replace("AKA", "")).strip()
-            # Check if audio Spanish exists
+    @classmethod
+    def _narration_label(cls, language: str) -> str:
+        lowered = language.lower()
+        if cls._contains_marker(lowered, ("spain", "castilian", "castellano")):
+            return "Narración en Castellano"
+        if cls._contains_marker(lowered, ("latin", "latino")):
+            return "Narración en Latino"
+        if cls._contains_marker(lowered, ("portuguese", "português", "portugues")):
+            return "Narración en Portugués"
+        return f"Narración en {language.title()}" if lowered else ""
 
-            audio_latino_check = {
-                "es-419",
-                "es-mx",
-                "es-ar",
-                "es-cl",
-                "es-ve",
-                "es-bo",
-                "es-co",
-                "es-cr",
-                "es-do",
-                "es-ec",
-                "es-sv",
-                "es-gt",
-                "es-hn",
-                "es-ni",
-                "es-pa",
-                "es-py",
-                "es-pe",
-                "es-pr",
-                "es-uy",
-            }
+    @staticmethod
+    def _contains_marker(value: str, markers: tuple[str, ...]) -> bool:
+        return any(marker in value for marker in markers)
 
-            audio_castilian_check = ["es", "es-es"]
-            # Use keywords instead of massive exact-match lists
-            # "latino" matches: "latino", "latinoamérica", "latinoamericano", etc.
-            latino_keywords = ["latino", "latin america"]
-            # "castellano" matches any title explicitly labeled as such.
-            castilian_keywords = ["castellano"]
+    @staticmethod
+    def _formatted_extra(extra: list[str]) -> str:
+        return "" if not extra else " " + " ".join(f"({value})" for value in extra)
 
-            audios: list[dict[str, Any]] = []
-            has_latino = False
-            has_castilian = False
+    @classmethod
+    def _video_name(cls, meta: Meta) -> str:
+        aka = str(meta.aka or "")
+        name = str(meta.name or "").replace("Dual-Audio", "").replace("Dubbed", "").replace(aka, "")
+        if meta.type == "DISC":
+            return name
+        name = cls._localized_title(name, meta, aka)
+        return cls._apply_spanish_audio_tag(name, meta)
 
-            tracks_value = meta.mediainfo.get("media", {}).get("track", [])
-            tracks_list = cast(list[Any], tracks_value) if isinstance(tracks_value, list) else []
-            for audio in tracks_list[2:]:
-                if not isinstance(audio, dict):
-                    continue
-                audio_map = cast(dict[str, Any], audio)
-                if audio_map.get("@type") != "Audio":
-                    continue
-                lang = str(audio_map.get("Language", "")).lower()
-                title = str(audio_map.get("Title", "")).lower()
+    @staticmethod
+    def _localized_title(name: str, meta: Meta, aka: str) -> str:
+        if meta.original_language != "es" or not aka:
+            return name
+        return name.replace(str(meta.title), aka.replace("AKA", "")).strip()
 
-                if "commentary" in title:
-                    continue
+    @classmethod
+    def _apply_spanish_audio_tag(cls, name: str, meta: Meta) -> str:
+        has_latino, has_castilian = cls._spanish_audio_presence(meta)
+        if has_castilian and not has_latino:
+            return cls._insert_marker(name, meta.tag, "[CAST]")
+        if not has_latino and not has_castilian:
+            return cls._insert_marker(name, meta.tag, "[SUBS]")
+        return name
 
-                # Check if title contains keywords
-                is_latino_title = any(kw in title for kw in latino_keywords)
-                is_castilian_title = any(kw in title for kw in castilian_keywords)
+    @classmethod
+    def _spanish_audio_presence(cls, meta: Meta) -> tuple[bool, bool]:
+        latino = False
+        castilian = False
+        for track in cls._audio_tracks(meta):
+            kind = cls._spanish_audio_kind(track)
+            latino = latino or kind == "latino"
+            castilian = castilian or kind == "castilian"
+        return latino, castilian
 
-                # 1. Check strict Latino language codes or Edge Case: Language is 'es' but Title contains Latino keywords
-                if lang in audio_latino_check or (lang == "es" and is_latino_title):
-                    has_latino = True
-                    audios.append(audio_map)
+    @classmethod
+    def _audio_tracks(cls, meta: Meta) -> list[dict[str, Any]]:
+        values = cls._media_track_values(meta)
+        return [track for track in values[2:] if track.get("@type") == "Audio"]
 
-                # 2. Edge Case: Language is 'es' and Title contains Castilian keywords or Fallback: Check strict Castilian codes (includes 'es' as default)
-                elif (lang == "es" and is_castilian_title) or lang in audio_castilian_check:
-                    has_castilian = True
-                    audios.append(audio_map)
+    @classmethod
+    def _media_track_values(cls, meta: Meta) -> list[dict[str, Any]]:
+        media = cls._media_mapping(meta)
+        return cls._mapping_tracks(media.get("track", []))
 
-            if len(audios) > 0:  # If there is at least 1 audio spanish
-                if not has_latino and has_castilian:
-                    tag_value = meta.tag
-                    lt_name = lt_name.replace(tag_value, f" [CAST]{tag_value}") if tag_value else f"{lt_name} [CAST]"
-                # else: no special tag needed for Latino-only or mixed audio
-            # if not audio Spanish exists, add "[SUBS]"
-            elif not meta.tag:
-                lt_name = lt_name + " [SUBS]"
-            else:
-                tag_value = meta.tag
-                lt_name = lt_name.replace(tag_value, f" [SUBS]{tag_value}")
+    @staticmethod
+    def _media_mapping(meta: Meta) -> dict[str, Any]:
+        if not isinstance(meta.mediainfo, dict):
+            return {}
+        media = meta.mediainfo.get("media", {})
+        return cast(dict[str, Any], media) if isinstance(media, dict) else {}
 
-        return {"name": re.sub(r"\s{2,}", " ", lt_name)}
+    @staticmethod
+    def _mapping_tracks(value: Any) -> list[dict[str, Any]]:
+        if not isinstance(value, list):
+            return []
+        return [cast(dict[str, Any], track) for track in value if isinstance(track, dict)]
+
+    @classmethod
+    def _spanish_audio_kind(cls, track: dict[str, Any]) -> str:
+        language = str(track.get("Language", "")).lower()
+        title = str(track.get("Title", "")).lower()
+        if "commentary" in title:
+            return ""
+        if cls._is_latino_audio(language, title):
+            return "latino"
+        if cls._is_castilian_audio(language, title):
+            return "castilian"
+        return ""
+
+    @staticmethod
+    def _is_latino_audio(language: str, title: str) -> bool:
+        codes = {
+            "es-419",
+            "es-mx",
+            "es-ar",
+            "es-cl",
+            "es-ve",
+            "es-bo",
+            "es-co",
+            "es-cr",
+            "es-do",
+            "es-ec",
+            "es-sv",
+            "es-gt",
+            "es-hn",
+            "es-ni",
+            "es-pa",
+            "es-py",
+            "es-pe",
+            "es-pr",
+            "es-uy",
+        }
+        return language in codes or (language == "es" and any(marker in title for marker in ("latino", "latin america")))
+
+    @staticmethod
+    def _is_castilian_audio(language: str, title: str) -> bool:
+        return (language == "es" and "castellano" in title) or language in {"es", "es-es"}
+
+    @staticmethod
+    def _insert_marker(name: str, tag: str | None, marker: str) -> str:
+        tag_value = str(tag or "")
+        if not tag_value:
+            return f"{name} {marker}"
+        return name.replace(tag_value, f" {marker}{tag_value}")
 
     async def get_additional_checks(self, meta: Meta) -> bool:
         if meta.category == "BOOK":

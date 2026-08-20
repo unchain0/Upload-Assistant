@@ -129,3 +129,11 @@ def test_latteam_castilian_audio_adds_cast_tag() -> None:
         },
     )
     assert "[CAST]-GROUP" in asyncio.run(_tracker().get_name(meta))["name"]
+
+
+def test_latteam_plain_ebook_and_marker_without_group_tag() -> None:
+    tracker = _tracker()
+    assert asyncio.run(tracker.get_category_id(Meta(category="BOOK", type="EPUB", title="Book"))) == {"category_id": "18"}
+    name = asyncio.run(tracker.get_name(Meta(category="BOOK", type="EPUB", title="Book", author="Author", edition="")))["name"]
+    assert name == "Author - Book EPUB"
+    assert tracker._insert_marker("Movie", "", "[SUBS]") == "Movie [SUBS]"
