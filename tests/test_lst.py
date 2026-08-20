@@ -93,3 +93,44 @@ def test_lst_ebook_name_includes_edition_type_and_isbn():
     name = asyncio.run(LST({"DEFAULT": {}, "TRACKERS": {"LST": {}}}).get_name(meta))["name"]
 
     assert name == "Liu Cixin - The Three-Body Problem Revised Edition 2008 PDF OCR 9780765377067-GROUP"
+
+
+def test_lst_language_requirement_rejection(monkeypatch):
+    tracker = LST({"DEFAULT": {}, "TRACKERS": {"LST": {}}})
+    monkeypatch.setattr(tracker.common, "check_language_requirements", lambda *_args, **_kwargs: asyncio.sleep(0, result=False))
+    meta = Meta(category="MOVIE", valid_mi_settings=True, is_disc="")
+    assert not asyncio.run(tracker.get_additional_checks(meta))
+
+
+def test_lst_music_type_falls_back_to_format():
+    tracker = LST({"DEFAULT": {}, "TRACKERS": {"LST": {}}})
+    meta = Meta(category="MUSIC", type="", format="flac")
+    assert asyncio.run(tracker.get_type_id(meta)) == {"type_id": "7"}
+
+
+def test_lst_book_unknown_type_maps_to_other():
+    tracker = LST({"DEFAULT": {}, "TRACKERS": {"LST": {}}})
+    meta = Meta(category="BOOK", type="CBZ")
+    assert asyncio.run(tracker.get_type_id(meta)) == {"type_id": "15"}
+
+
+def test_lst_lossless_audiobook_name_includes_depth_and_sample_rate():
+    tracker = LST({"DEFAULT": {}, "TRACKERS": {"LST": {}}})
+    meta = Meta(
+        category="BOOK",
+        audiobook=True,
+        author="Narrator",
+        title="Lossless Book",
+        year=2025,
+        source="WEB",
+        type="FLAC",
+        mediainfo={
+            "media": {
+                "track": [
+                    {"@type": "General"},
+                    {"@type": "Audio", "BitDepth_String": "24 bits", "SamplingRate_String": "48000 Hz"},
+                ]
+            }
+        },
+    )
+    assert asyncio.run(tracker.get_name(meta))["name"] == "Narrator - Lossless Book 2025 WEB FLAC 24-bit 48 kHz"
