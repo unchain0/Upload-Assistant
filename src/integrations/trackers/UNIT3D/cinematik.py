@@ -1,10 +1,7 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
 import re
-import urllib.error
-import urllib.request
 from pathlib import Path
 from typing import Any, cast
-from urllib.parse import urlparse
 
 import aiofiles
 import cli_ui
@@ -58,85 +55,71 @@ class Cinematik(UNIT3D):
         return data
 
     async def get_name(self, meta: Meta) -> dict[str, str]:
-        disctype = meta.disctype
-        filelist = meta.filelist
-        basename = Path(next(iter(filelist), str(meta.path))).name
-        type_value = str(meta.type)
-        title = meta.title.replace("AKA", "/").strip()
-        alt_title = meta.aka.replace("AKA", "/").strip()
-        year = str(meta.year) if meta.year is not None else ""
-        resolution = meta.resolution
-        season = str(meta.season)
-        repack = meta.repack
-        if repack.strip():
-            repack = f"[{repack}]"
-        three_d = meta.three_d
-        three_d_tag = f"[{three_d}]" if three_d else ""
-        tag = meta.tag.replace("-", "- ") if meta.tag else ""
-        if tag == "":
-            tag = "- NOGRP"
-        source = str(meta.source)
-        hdr = meta.hdr
-        if not hdr.strip():
-            hdr = "SDR"
-        video_codec = meta.video_codec
-        video_encode = meta.video_encode.replace(".", "")
-        if "x265" in basename:
-            video_encode = video_encode.replace("H", "x")
-        dvd_size = meta.dvd_size
-        search_year = str(meta.search_year)
-        if not search_year.strip():
-            search_year = year
-        meta.category_id = (await self.get_category_id(meta))["category_id"]
+        category_id = (await self.get_category_id(meta))["category_id"]
+        meta.category_id = category_id
+        if category_id in {"1", "3", "5", "6"}:
+            return {"name": self._film_disc_name(meta)}
+        if meta.category == "TV" and str(meta.type) == "DISC":
+            return {"name": self._tv_disc_name(meta)}
+        return {"name": ""}
 
-        name = ""
-        alt_title_part = f" {alt_title}" if alt_title else ""
-        if meta.category_id in ("1", "3", "5", "6"):
-            if meta.is_disc == "BDMV":
-                name = f"{title}{alt_title_part} ({year}) {disctype} {resolution} {video_codec} {three_d_tag}"
-            elif meta.is_disc == "DVD":
-                name = f"{title}{alt_title_part} ({year}) {source} {dvd_size}"
-        elif meta.category == "TV" and type_value == "DISC":  # TV SPECIFIC - Disk
-            if meta.is_disc == "BDMV":
-                name = f"{title}{alt_title_part} ({search_year}) {season} {disctype} {resolution} {video_codec}"
-            if meta.is_disc == "DVD":
-                name = f"{title}{alt_title_part} ({search_year}) {season} {source} {dvd_size}"
+    @classmethod
+    def _film_disc_name(cls, meta: Meta) -> str:
+        identity = cls._title_identity(meta, str(meta.year) if meta.year is not None else "")
+        if meta.is_disc == "BDMV":
+            return cls._compact_name(f"{identity} {meta.disctype} {meta.resolution} {meta.video_codec} {cls._three_d_tag(meta)}")
+        if meta.is_disc == "DVD":
+            return cls._compact_name(f"{identity} {meta.source} {meta.dvd_size}")
+        return ""
 
-        return {"name": name}
+    @classmethod
+    def _tv_disc_name(cls, meta: Meta) -> str:
+        year = str(meta.search_year or meta.year or "")
+        identity = cls._title_identity(meta, year)
+        if meta.is_disc == "BDMV":
+            return cls._compact_name(f"{identity} {meta.season} {meta.disctype} {meta.resolution} {meta.video_codec}")
+        if meta.is_disc == "DVD":
+            return cls._compact_name(f"{identity} {meta.season} {meta.source} {meta.dvd_size}")
+        return ""
+
+    @staticmethod
+    def _title_identity(meta: Meta, year: str) -> str:
+        title = str(meta.title).replace("AKA", "/").strip()
+        alt = str(meta.aka).replace("AKA", "/").strip()
+        alt_part = f" {alt}" if alt else ""
+        return f"{title}{alt_part} ({year})"
+
+    @staticmethod
+    def _three_d_tag(meta: Meta) -> str:
+        return f"[{meta.three_d}]" if meta.three_d else ""
+
+    @staticmethod
+    def _compact_name(value: str) -> str:
+        return " ".join(value.split())
 
     async def get_category_id(self, meta: Meta, category: str | None = None, reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
         _ = (category, reverse, mapping_only)
         category_name = str(meta.category)
-        foreign = meta.foreign
-        opera = meta.opera
-        asian = meta.asian
-        category_id = {
-            "FILM": "1",
-            "TV": "2",
-            "Foreign Film": "3",
-            "Foreign TV": "4",
-            "Opera & Musical": "5",
-            "Asian Film": "6",
-        }.get(category_name, "0")
-
         if category_name == "MOVIE":
-            if foreign:
-                category_id = "3"
-            elif opera:
-                category_id = "5"
-            elif asian:
-                category_id = "6"
-            else:
-                category_id = "1"
-        elif category_name == "TV":
-            if foreign:
-                category_id = "4"
-            elif opera:
-                category_id = "5"
-            else:
-                category_id = "2"
+            return {"category_id": self._movie_category_id(meta)}
+        if category_name == "TV":
+            return {"category_id": self._tv_category_id(meta)}
+        mapping = {"FILM": "1", "Foreign Film": "3", "Foreign TV": "4", "Opera & Musical": "5", "Asian Film": "6"}
+        return {"category_id": mapping.get(category_name, "0")}
 
-        return {"category_id": category_id}
+    @staticmethod
+    def _movie_category_id(meta: Meta) -> str:
+        if meta.foreign:
+            return "3"
+        if meta.opera:
+            return "5"
+        return "6" if meta.asian else "1"
+
+    @staticmethod
+    def _tv_category_id(meta: Meta) -> str:
+        if meta.foreign:
+            return "4"
+        return "5" if meta.opera else "2"
 
     async def get_type_id(self, meta: Meta, type: str | None = None, reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
         _ = (type, reverse, mapping_only)
@@ -171,244 +154,358 @@ class Cinematik(UNIT3D):
         return {"resolution_id": resolution_id}
 
     async def get_description(self, meta: Meta) -> dict[str, str]:
-        if meta.description_link or meta.description_file:
-            desc = await DescriptionBuilder(self.tracker, self.config).general_description_generator(
-                meta,
-                mediainfo=False,
-                nfo=False,
-            )
-
-            logger.info(f"{self.tracker}: Custom Description Link/File Path: {desc}", extra={"markup": False})
-            return {"description": desc}
-
-        discs = cast(list[dict[str, Any]], meta.discs)
-        summary = discs[0].get("summary", "") if len(discs) > 0 else None
-
-        # Proceed with matching Total Bitrate if the summary exists
-        if summary:
-            match = re.search(r"Total Bitrate: ([\d.]+ Mbps)", summary)
-            total_bitrate = match.group(1) if match else "Unknown"
-        else:
-            total_bitrate = "Unknown"
-
+        custom = await self._custom_description(meta)
+        if custom is not None:
+            return {"description": custom}
+        discs = self._disc_entries(meta)
+        total_bitrate = self._total_bitrate(discs)
         country_name = self.country_code_to_name(str(meta.region))
-
-        # Rehost poster if tmdb_poster is available
-        poster_url = f"https://image.tmdb.org/t/p/original{meta.tmdb_poster_path}"
-
-        # Define the paths for both jpg and png poster images
-        poster_dir = artwork_dir(meta.base_dir, meta.uuid)
-        poster_paths = [poster_dir / filename for filename in ("POSTER.png", "poster.png", "POSTER.jpg", "poster.jpg")]
-
-        # Check if either poster.jpg or poster.png already exists
-        existing_poster = next((path for path in poster_paths if path.is_file()), None)
-        if existing_poster is not None:
-            poster_path = str(existing_poster)
-            logger.info(f"{self.tracker}: [green]Cover already exists as {existing_poster.name}, skipping download.[/green]")
-        else:
-            # No poster file exists, download the poster image
-            poster_path = str(poster_dir / "poster.jpg")  # Default to saving as poster.jpg
-            try:
-                parsed_url = urlparse(poster_url)
-                if parsed_url.scheme not in ("http", "https"):
-                    raise ValueError(f"Invalid URL scheme: {parsed_url.scheme}")
-                urllib.request.urlretrieve(poster_url, poster_path)
-                logger.info(f"{self.tracker}: [green]Cover downloaded to {escape(str(poster_path))}[/green]")
-            except (urllib.error.URLError, OSError, ValueError) as e:
-                logger.error(f"{self.tracker}: [red]Error downloading poster: {escape(str(e))}[/red]")
-
-        # Upload the downloaded or existing poster image once
-        if Path(poster_path).exists():
-            try:
-                logger.info(f"{self.tracker}: Uploading standard poster to image host....")
-                new_poster_url, _ = await self.uploadscreens_manager.upload_screens(meta, 1, 1, 0, 1, [poster_path], {})
-
-                # Ensure that the new poster URL is assigned only once
-                poster_urls = new_poster_url
-                if len(poster_urls) > 0:
-                    poster_url = str(poster_urls[0].get("raw_url", poster_url))
-            except (httpx.HTTPError, ValueError, KeyError) as e:
-                logger.error(f"{self.tracker}: [red]Error uploading poster: {escape(str(e))}[/red]")
-        else:
-            logger.info(f"{self.tracker}: [red]Cover file not found, cannot upload.[/red]")
-
-        # Generate the description text
-        desc_text: list[str] = []
-
-        images = meta.image_list
-
-        if len(images) >= 6:
-            image_link_1 = images[0]["raw_url"]
-            image_link_2 = images[1]["raw_url"]
-            image_link_3 = images[2]["raw_url"]
-            image_link_4 = images[3]["raw_url"]
-            image_link_5 = images[4]["raw_url"]
-            image_link_6 = images[5]["raw_url"]
-        else:
-            image_link_1 = image_link_2 = image_link_3 = image_link_4 = image_link_5 = image_link_6 = ""
-
-        # Write the cover section with rehosted poster URL
-        desc_text.append(
-            "[h3]Cover[/h3] [color=red]A stock poster has been automatically added, but you'll get more love if you include a proper cover, see rule 6.6[/color]\n"
-        )
-        desc_text.append("[center]\n")
-        desc_text.append(f"[IMG=500]{poster_url}[/IMG]\n")
-        desc_text.append("[/center]\n\n")
-
-        # Write screenshots section
-        desc_text.append("[h3]Screenshots[/h3]\n")
-        desc_text.append("[center]\n")
-        desc_text.append(f"[URL={image_link_1}][IMG=300]{image_link_1}[/IMG][/URL] ")
-        desc_text.append(f"[URL={image_link_2}][IMG=300]{image_link_2}[/IMG][/URL] ")
-        desc_text.append(f"[URL={image_link_3}][IMG=300]{image_link_3}[/IMG][/URL]\n ")
-        desc_text.append(f"[URL={image_link_4}][IMG=300]{image_link_4}[/IMG][/URL] ")
-        desc_text.append(f"[URL={image_link_5}][IMG=300]{image_link_5}[/IMG][/URL] ")
-        desc_text.append(f"[URL={image_link_6}][IMG=300]{image_link_6}[/IMG][/URL]\n")
-        desc_text.append("[/center]\n\n")
-
-        # Write synopsis section with the custom title
-        desc_text.append("[h3]Synopsis/Review/Personal Thoughts (edit as needed)[/h3]\n")
-        desc_text.append(
-            "[color=red]Default TMDB sypnosis added, more love if you use a sypnosis from credible film institutions such as the BFI or directly quoting well-known film critics, see rule 6.3[/color]\n"
-        )
-        desc_text.append("[quote]\n")
-        desc_text.append(f"{(meta.overview if meta.overview is not None else 'No synopsis available.')}\n")
-        desc_text.append("[/quote]\n\n")
-
-        # Write technical info section
-        desc_text.append("[h3]Technical Info[/h3]\n")
-        desc_text.append("[code]\n")
-        bdinfo = meta.bdinfo
-        if meta.is_disc == "BDMV":
-            desc_text.append(f"  Disc Label.........:{bdinfo.get('label', '')}\n")
-        imdb_info = cast(dict[str, Any], meta.imdb_info)
-        desc_text.append(f"  IMDb...............: [url]{imdb_info.get('imdb_url', '')!s}{meta.imdb_rating}[/url]\n")
-        year_val = meta.year if meta.year is not None else ""
-        desc_text.append(f"  Year...............: {year_val}\n")
-        desc_text.append(f"  Country............: {country_name}\n")
-        if meta.is_disc == "BDMV":
-            desc_text.append(f"  Runtime............: {bdinfo.get('length', '')} hrs [color=red](double check this is actual runtime)[/color]\n")
-        else:
-            desc_text.append("  Runtime............:  [color=red]Insert the actual runtime[/color]\n")
-
-        if meta.is_disc == "BDMV":
-            audio_tracks = cast(list[dict[str, Any]], bdinfo.get("audio", []))
-            audio_languages = ", ".join([f"{track.get('language', 'Unknown')} {track.get('codec', 'Unknown')} {track.get('channels', 'Unknown')}" for track in audio_tracks])
-            desc_text.append(f"  Audio..............: {audio_languages}\n")
-            subtitles = cast(list[Any], bdinfo.get("subtitles", []))
-            desc_text.append(f"  Subtitles..........: {', '.join([str(sub) for sub in subtitles])}\n")
-        else:
-            # Process each disc's `vob_mi` or `ifo_mi` to extract audio and subtitles separately
-            for disc in discs:
-                vob_mi = str(disc.get("vob_mi", ""))
-                ifo_mi = str(disc.get("ifo_mi", ""))
-
-                unique_audio: set[str] = set()  # Store unique audio strings
-
-                audio_section = vob_mi.split("\n\nAudio\n")[1].split("\n\n")[0] if "Audio\n" in vob_mi else None
-                if audio_section:
-                    if "AC-3" in audio_section:
-                        codec = "AC-3"
-                    elif "DTS" in audio_section:
-                        codec = "DTS"
-                    elif "MPEG Audio" in audio_section:
-                        codec = "MPEG Audio"
-                    elif "PCM" in audio_section:
-                        codec = "PCM"
-                    elif "AAC" in audio_section:
-                        codec = "AAC"
-                    else:
-                        codec = "Unknown"
-
-                    channels = audio_section.split("Channel(s)")[1].split(":")[1].strip().split(" ")[0] if "Channel(s)" in audio_section else "Unknown"
-                    # Convert 6 channels to 5.1, otherwise leave as is
-                    channels = "5.1" if channels == "6" else channels
-                    ifo_full = str(disc.get("ifo_mi_full", ""))
-                    language = ifo_full.split("Language")[1].split(":")[1].strip().split("\n")[0] if "Language" in ifo_full else "Unknown"
-                    audio_info = f"{language} {codec} {channels}"
-                    unique_audio.add(audio_info)
-
-                # Append audio information to the description
-                if unique_audio:
-                    desc_text.append(f"  Audio..............: {', '.join(sorted(unique_audio))}\n")
-
-                # Subtitle extraction using the helper function
-                unique_subtitles = self.parse_subtitles(ifo_mi)
-
-                # Append subtitle information to the description
-                if unique_subtitles:
-                    desc_text.append(f"  Subtitles..........: {', '.join(sorted(unique_subtitles))}\n")
-
-        if meta.is_disc == "BDMV":
-            video_info = cast(list[dict[str, Any]], bdinfo.get("video", []))
-            video_resolution = video_info[0].get("resolution", "Unknown") if video_info else "Unknown"
-            desc_text.append(f"  Video Format.......: {video_resolution}\n")
-        else:
-            desc_text.append(f"  DVD Format.........: {(meta.source if meta.source is not None else 'Unknown')}\n")
-        desc_text.append("  Film Aspect Ratio..: [color=red]The actual aspect ratio of the content, not including the black bars[/color]\n")
-        if meta.is_disc == "BDMV":
-            desc_text.append(f"  Source.............: {(meta.disctype if meta.disctype is not None else 'Unknown')}\n")
-        else:
-            desc_text.append(f"  Source.............: {(meta.dvd_size if meta.dvd_size is not None else 'Unknown')}\n")
-        desc_text.append(
-            f"  Film Distributor...: [url={meta.distributor_link}]{(meta.distributor if meta.distributor is not None else 'Unknown')}[/url] [color=red]Don't forget the actual distributor link\n"
-        )
-        desc_text.append(f"  Average Bitrate....: {total_bitrate}\n")
-        desc_text.append("  Ripping Program....:  [color=red]Specify - if it's your rip or custom version, otherwise 'Not my rip'[/color]\n")
-        desc_text.append("\n")
-        if meta.untouched is True:
-            desc_text.append("  Menus......: [X] Untouched\n")
-            desc_text.append("  Video......: [X] Untouched\n")
-            desc_text.append("  Extras.....: [X] Untouched\n")
-            desc_text.append("  Audio......: [X] Untouched\n")
-        else:
-            desc_text.append("  Menus......: [ ] Untouched\n")
-            desc_text.append("               [ ] Stripped\n")
-            desc_text.append("  Video......: [ ] Untouched\n")
-            desc_text.append("               [ ] Re-encoded\n")
-            desc_text.append("  Extras.....: [ ] Untouched\n")
-            desc_text.append("               [ ] Stripped\n")
-            desc_text.append("               [ ] Re-encoded\n")
-            desc_text.append("               [ ] None\n")
-            desc_text.append("  Audio......: [ ] Untouched\n")
-            desc_text.append("               [ ] Stripped tracks\n")
-
-        desc_text.append("[/code]\n\n")
-
-        # Extras
-        desc_text.append("[h4]Extras[/h4]\n")
-        desc_text.append("[*] Insert special feature 1 here\n")
-        desc_text.append("[*] Insert special feature 2 here\n")
-        desc_text.append("... (add more special features as needed)\n\n")
-
-        # Uploader Comments
-        desc_text.append("[h4]Uploader Comments[/h4]\n")
-        desc_text.append(f" - {(meta.uploader_comments if meta.uploader_comments is not None else 'No comments.')}\n")
-
-        # Convert the list to a single string for the description
-        description = "".join(desc_text)
-
-        # Ask user if they want to edit or keep the description
-        if not meta.unattended or (meta.unattended and meta.unattended_confirm):
-            logger.info(f"{self.tracker}: Current description: {description}", extra={"markup": False})
-            logger.info(f"{self.tracker}: [cyan]Do you want to edit or keep the description?[/cyan]")
-            edit_choice = cli_ui.ask_string("Enter 'e' to edit, or press Enter to keep it as is: ")
-
-            if (edit_choice or "").lower() == "e":
-                edited_description = cast(str | None, click.edit(description))  # pyrefly: ignore [bad-argument-type]
-                if edited_description:
-                    description = edited_description.strip()
-                logger.info(f"{self.tracker}: Final description after editing: {description}", extra={"markup": False})
-            else:
-                logger.info(f"{self.tracker}: [green]Keeping the original description.[/green]")
-        else:
-            logger.info(f"{self.tracker}: [green]Unattended mode: Keeping the original description.[/green]")
-
-        # Write the final description to the file
-        async with aiofiles.open(f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{self.tracker}]DESCRIPTION.txt", "w", encoding="utf-8") as desc_file:
-            await desc_file.write(description)
-
+        poster_url = await self._poster_url(meta)
+        screenshots = self._screenshot_urls(meta)
+        description = self._build_description(meta, discs, total_bitrate, country_name, poster_url, screenshots)
+        description = await self._maybe_edit_description(meta, description)
+        await self._write_description(meta, description)
         return {"description": description}
+
+    async def _custom_description(self, meta: Meta) -> str | None:
+        if not meta.description_link and not meta.description_file:
+            return None
+        description = await DescriptionBuilder(self.tracker, self.config).general_description_generator(meta, mediainfo=False, nfo=False)
+        logger.info(f"{self.tracker}: Custom Description Link/File Path: {description}", extra={"markup": False})
+        return description
+
+    @staticmethod
+    def _disc_entries(meta: Meta) -> list[dict[str, Any]]:
+        return cast(list[dict[str, Any]], meta.discs) if isinstance(meta.discs, list) else []
+
+    @staticmethod
+    def _total_bitrate(discs: list[dict[str, Any]]) -> str:
+        summary = discs[0].get("summary", "") if discs else ""
+        if not summary:
+            return "Unknown"
+        match = re.search(r"Total Bitrate: ([\d.]+ Mbps)", str(summary))
+        return match.group(1) if match else "Unknown"
+
+    async def _poster_url(self, meta: Meta) -> str:
+        poster_url = f"https://image.tmdb.org/t/p/original{meta.tmdb_poster_path}"
+        poster_path = self._existing_poster_path(meta)
+        if poster_path is None:
+            poster_path = await self._download_poster(meta, poster_url)
+        if poster_path is None or not poster_path.exists():
+            logger.info(f"{self.tracker}: [red]Cover file not found, cannot upload.[/red]")
+            return poster_url
+        return await self._rehost_poster(meta, poster_path, poster_url)
+
+    @staticmethod
+    def _poster_candidates(meta: Meta) -> list[Path]:
+        root = artwork_dir(meta.base_dir, meta.uuid)
+        return [root / filename for filename in ("POSTER.png", "poster.png", "POSTER.jpg", "poster.jpg")]
+
+    def _existing_poster_path(self, meta: Meta) -> Path | None:
+        existing = next((path for path in self._poster_candidates(meta) if path.is_file()), None)
+        if existing is not None:
+            logger.info(f"{self.tracker}: [green]Cover already exists as {existing.name}, skipping download.[/green]")
+        return existing
+
+    async def _download_poster(self, meta: Meta, poster_url: str) -> Path | None:
+        target = artwork_dir(meta.base_dir, meta.uuid) / "poster.jpg"
+        try:
+            response = await self._poster_response(poster_url)
+            target.write_bytes(response.content)
+            logger.info(f"{self.tracker}: [green]Cover downloaded to {escape(str(target))}[/green]")
+            return target
+        except (httpx.HTTPError, OSError, ValueError) as error:
+            logger.error(f"{self.tracker}: [red]Error downloading poster: {escape(str(error))}[/red]")
+            return None
+
+    @staticmethod
+    async def _poster_response(url: str) -> httpx.Response:
+        Cinematik._validate_poster_url(url)
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            return response
+
+    @staticmethod
+    def _validate_poster_url(url: str) -> None:
+        if not url.startswith(("http://", "https://")):
+            raise ValueError("Poster URL must use HTTP(S)")
+
+    async def _rehost_poster(self, meta: Meta, poster_path: Path, fallback_url: str) -> str:
+        try:
+            logger.info(f"{self.tracker}: Uploading standard poster to image host....")
+            images, _ = await self.uploadscreens_manager.upload_screens(meta, 1, 1, 0, 1, [str(poster_path)], {})
+            return self._first_raw_url(images, fallback_url)
+        except (httpx.HTTPError, ValueError, KeyError) as error:
+            logger.error(f"{self.tracker}: [red]Error uploading poster: {escape(str(error))}[/red]")
+            return fallback_url
+
+    @staticmethod
+    def _first_raw_url(images: Any, fallback: str) -> str:
+        if not isinstance(images, list) or not images:
+            return fallback
+        first = images[0]
+        if not isinstance(first, dict):
+            return fallback
+        return str(first.get("raw_url", fallback))
+
+    @staticmethod
+    def _screenshot_urls(meta: Meta) -> list[str]:
+        images = meta.image_list if isinstance(meta.image_list, list) else []
+        urls = [str(item.get("raw_url", "")) for item in images[:6] if isinstance(item, dict)]
+        return (urls + [""] * 6)[:6]
+
+    def _build_description(
+        self,
+        meta: Meta,
+        discs: list[dict[str, Any]],
+        total_bitrate: str,
+        country_name: str,
+        poster_url: str,
+        screenshots: list[str],
+    ) -> str:
+        sections = [
+            self._cover_section(poster_url),
+            self._screens_section(screenshots),
+            self._synopsis_section(meta),
+            self._technical_section(meta, discs, total_bitrate, country_name),
+            self._extras_section(),
+            self._comments_section(meta),
+        ]
+        return "".join(sections)
+
+    @staticmethod
+    def _cover_section(poster_url: str) -> str:
+        return (
+            "[h3]Cover[/h3] [color=red]A stock poster has been automatically added, but you'll get more love if you include a proper cover, see rule 6.6[/color]\n"
+            "[center]\n"
+            f"[IMG=500]{poster_url}[/IMG]\n"
+            "[/center]\n\n"
+        )
+
+    @staticmethod
+    def _screens_section(urls: list[str]) -> str:
+        first, second, third, fourth, fifth, sixth = urls
+        return (
+            "[h3]Screenshots[/h3]\n[center]\n"
+            f"[URL={first}][IMG=300]{first}[/IMG][/URL] "
+            f"[URL={second}][IMG=300]{second}[/IMG][/URL] "
+            f"[URL={third}][IMG=300]{third}[/IMG][/URL]\n "
+            f"[URL={fourth}][IMG=300]{fourth}[/IMG][/URL] "
+            f"[URL={fifth}][IMG=300]{fifth}[/IMG][/URL] "
+            f"[URL={sixth}][IMG=300]{sixth}[/IMG][/URL]\n[/center]\n\n"
+        )
+
+    @staticmethod
+    def _synopsis_section(meta: Meta) -> str:
+        overview = meta.overview if meta.overview is not None else "No synopsis available."
+        return (
+            "[h3]Synopsis/Review/Personal Thoughts (edit as needed)[/h3]\n"
+            "[color=red]Default TMDB sypnosis added, more love if you use a sypnosis from credible film institutions such as the BFI or directly quoting well-known film critics, see rule 6.3[/color]\n"
+            f"[quote]\n{overview}\n[/quote]\n\n"
+        )
+
+    def _technical_section(self, meta: Meta, discs: list[dict[str, Any]], total_bitrate: str, country_name: str) -> str:
+        lines = ["[h3]Technical Info[/h3]\n", "[code]\n"]
+        self._append_technical_header(lines, meta, country_name)
+        self._append_audio_subtitles(lines, meta, discs)
+        self._append_video_source(lines, meta)
+        lines.append(f"  Average Bitrate....: {total_bitrate}\n")
+        lines.append("  Ripping Program....:  [color=red]Specify - if it's your rip or custom version, otherwise 'Not my rip'[/color]\n\n")
+        self._append_untouched_status(lines, meta)
+        lines.append("[/code]\n\n")
+        return "".join(lines)
+
+    def _append_technical_header(self, lines: list[str], meta: Meta, country_name: str) -> None:
+        bdinfo = meta.bdinfo if isinstance(meta.bdinfo, dict) else {}
+        if meta.is_disc == "BDMV":
+            lines.append(f"  Disc Label.........:{bdinfo.get('label', '')}\n")
+        imdb = meta.imdb_info if isinstance(meta.imdb_info, dict) else {}
+        lines.append(f"  IMDb...............: [url]{imdb.get('imdb_url', '')!s}{meta.imdb_rating}[/url]\n")
+        lines.append(f"  Year...............: {'' if meta.year is None else meta.year}\n")
+        lines.append(f"  Country............: {country_name}\n")
+        self._append_runtime(lines, meta, bdinfo)
+
+    @staticmethod
+    def _append_runtime(lines: list[str], meta: Meta, bdinfo: dict[str, Any]) -> None:
+        if meta.is_disc == "BDMV":
+            lines.append(f"  Runtime............: {bdinfo.get('length', '')} hrs [color=red](double check this is actual runtime)[/color]\n")
+        else:
+            lines.append("  Runtime............:  [color=red]Insert the actual runtime[/color]\n")
+
+    def _append_audio_subtitles(self, lines: list[str], meta: Meta, discs: list[dict[str, Any]]) -> None:
+        if meta.is_disc == "BDMV":
+            self._append_bdmv_audio_subtitles(lines, meta)
+            return
+        for disc in discs:
+            self._append_dvd_audio_subtitles(lines, disc)
+
+    @classmethod
+    def _append_bdmv_audio_subtitles(cls, lines: list[str], meta: Meta) -> None:
+        bdinfo = cls._bdinfo_mapping(meta)
+        lines.append(f"  Audio..............: {cls._bdmv_audio_text(bdinfo)}\n")
+        lines.append(f"  Subtitles..........: {cls._bdmv_subtitle_text(bdinfo)}\n")
+
+    @staticmethod
+    def _bdinfo_mapping(meta: Meta) -> dict[str, Any]:
+        return meta.bdinfo if isinstance(meta.bdinfo, dict) else {}
+
+    @staticmethod
+    def _bdmv_audio_text(bdinfo: dict[str, Any]) -> str:
+        audio = bdinfo.get("audio", [])
+        tracks = audio if isinstance(audio, list) else []
+        return ", ".join(Cinematik._bdmv_audio_track_text(track) for track in tracks if isinstance(track, dict))
+
+    @staticmethod
+    def _bdmv_audio_track_text(track: dict[str, Any]) -> str:
+        return f"{track.get('language', 'Unknown')} {track.get('codec', 'Unknown')} {track.get('channels', 'Unknown')}"
+
+    @staticmethod
+    def _bdmv_subtitle_text(bdinfo: dict[str, Any]) -> str:
+        subtitles = bdinfo.get("subtitles", [])
+        values = subtitles if isinstance(subtitles, list) else []
+        return ", ".join(str(value) for value in values)
+
+    def _append_dvd_audio_subtitles(self, lines: list[str], disc: dict[str, Any]) -> None:
+        audio = self._dvd_audio_info(disc)
+        if audio:
+            lines.append(f"  Audio..............: {audio}\n")
+        subtitles = self.parse_subtitles(str(disc.get("ifo_mi", "")))
+        if subtitles:
+            lines.append(f"  Subtitles..........: {', '.join(sorted(subtitles))}\n")
+
+    def _dvd_audio_info(self, disc: dict[str, Any]) -> str:
+        section = self._dvd_audio_section(str(disc.get("vob_mi", "")))
+        if not section:
+            return ""
+        codec = self._dvd_audio_codec(section)
+        channels = self._dvd_audio_channels(section)
+        language = self._dvd_audio_language(str(disc.get("ifo_mi_full", "")))
+        return f"{language} {codec} {channels}"
+
+    @staticmethod
+    def _dvd_audio_section(value: str) -> str:
+        if "Audio\n" not in value:
+            return ""
+        return value.split("\n\nAudio\n", 1)[1].split("\n\n", 1)[0]
+
+    @staticmethod
+    def _dvd_audio_codec(section: str) -> str:
+        mapping = (("AC-3", "AC-3"), ("DTS", "DTS"), ("MPEG Audio", "MPEG Audio"), ("PCM", "PCM"), ("AAC", "AAC"))
+        return next((value for key, value in mapping if key in section), "Unknown")
+
+    @staticmethod
+    def _dvd_audio_channels(section: str) -> str:
+        if "Channel(s)" not in section:
+            return "Unknown"
+        value = section.split("Channel(s)", 1)[1].split(":", 1)[1].strip().split(" ", 1)[0]
+        return "5.1" if value == "6" else value
+
+    @staticmethod
+    def _dvd_audio_language(value: str) -> str:
+        if "Language" not in value:
+            return "Unknown"
+        return value.split("Language", 1)[1].split(":", 1)[1].strip().split("\n", 1)[0]
+
+    @classmethod
+    def _append_video_source(cls, lines: list[str], meta: Meta) -> None:
+        lines.append(cls._video_format_line(meta))
+        lines.append("  Film Aspect Ratio..: [color=red]The actual aspect ratio of the content, not including the black bars[/color]\n")
+        lines.append(cls._technical_source_line(meta))
+        lines.append(cls._distributor_line(meta))
+
+    @classmethod
+    def _video_format_line(cls, meta: Meta) -> str:
+        if meta.is_disc != "BDMV":
+            return cls._dvd_format_line(meta)
+        return f"  Video Format.......: {cls._bdmv_video_resolution(meta)}\n"
+
+    @staticmethod
+    def _dvd_format_line(meta: Meta) -> str:
+        source = meta.source if meta.source is not None else "Unknown"
+        return f"  DVD Format.........: {source}\n"
+
+    @classmethod
+    def _bdmv_video_resolution(cls, meta: Meta) -> str:
+        video = cls._bdinfo_mapping(meta).get("video", [])
+        tracks = video if isinstance(video, list) else []
+        if not tracks or not isinstance(tracks[0], dict):
+            return "Unknown"
+        return str(tracks[0].get("resolution", "Unknown"))
+
+    @staticmethod
+    def _technical_source_line(meta: Meta) -> str:
+        source = meta.disctype if meta.is_disc == "BDMV" else meta.dvd_size
+        value = source if source is not None else "Unknown"
+        return f"  Source.............: {value}\n"
+
+    @staticmethod
+    def _distributor_line(meta: Meta) -> str:
+        distributor = meta.distributor if meta.distributor is not None else "Unknown"
+        return f"  Film Distributor...: [url={meta.distributor_link}]{distributor}[/url] [color=red]Don't forget the actual distributor link\n"
+
+    @staticmethod
+    def _append_untouched_status(lines: list[str], meta: Meta) -> None:
+        if meta.untouched is True:
+            lines.extend(
+                [
+                    "  Menus......: [X] Untouched\n",
+                    "  Video......: [X] Untouched\n",
+                    "  Extras.....: [X] Untouched\n",
+                    "  Audio......: [X] Untouched\n",
+                ]
+            )
+            return
+        lines.extend(
+            [
+                "  Menus......: [ ] Untouched\n",
+                "               [ ] Stripped\n",
+                "  Video......: [ ] Untouched\n",
+                "               [ ] Re-encoded\n",
+                "  Extras.....: [ ] Untouched\n",
+                "               [ ] Stripped\n",
+                "               [ ] Re-encoded\n",
+                "               [ ] None\n",
+                "  Audio......: [ ] Untouched\n",
+                "               [ ] Stripped tracks\n",
+            ]
+        )
+
+    @staticmethod
+    def _extras_section() -> str:
+        return "[h4]Extras[/h4]\n[*] Insert special feature 1 here\n[*] Insert special feature 2 here\n... (add more special features as needed)\n\n"
+
+    @staticmethod
+    def _comments_section(meta: Meta) -> str:
+        comments = meta.uploader_comments if meta.uploader_comments is not None else "No comments."
+        return f"[h4]Uploader Comments[/h4]\n - {comments}\n"
+
+    async def _maybe_edit_description(self, meta: Meta, description: str) -> str:
+        if meta.unattended and not meta.unattended_confirm:
+            logger.info(f"{self.tracker}: [green]Unattended mode: Keeping the original description.[/green]")
+            return description
+        return self._interactive_description(description)
+
+    def _interactive_description(self, description: str) -> str:
+        logger.info(f"{self.tracker}: Current description: {description}", extra={"markup": False})
+        logger.info(f"{self.tracker}: [cyan]Do you want to edit or keep the description?[/cyan]")
+        choice = cli_ui.ask_string("Enter 'e' to edit, or press Enter to keep it as is: ")
+        if (choice or "").lower() != "e":
+            logger.info(f"{self.tracker}: [green]Keeping the original description.[/green]")
+            return description
+        return self._edited_description(description)
+
+    def _edited_description(self, description: str) -> str:
+        edited = cast(str | None, click.edit(description))
+        result = edited.strip() if edited else description
+        logger.info(f"{self.tracker}: Final description after editing: {result}", extra={"markup": False})
+        return result
+
+    async def _write_description(self, meta: Meta, description: str) -> None:
+        path = Path(meta.base_dir) / "tmp" / meta.uuid / f"[{self.tracker}]DESCRIPTION.txt"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        async with aiofiles.open(path, "w", encoding="utf-8") as handle:
+            await handle.write(description)
 
     def parse_subtitles(self, disc_mi: str) -> set[str]:
         unique_subtitles: set[str] = set()  # Store unique subtitle strings
