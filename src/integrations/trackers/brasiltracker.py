@@ -1,5 +1,4 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
-import contextlib
 import platform
 import re
 import zipfile
@@ -170,106 +169,158 @@ class BrasilTracker:
             meta.episode_tmdb_data = self.episode_tmdb_data
 
     async def get_container(self, meta: Meta) -> str:
-        container = meta.container
-        container_str = container if container is not None else ""
-        container_lower = container_str.lower()
-
+        container = str(meta.container or "")
         if meta.category == "BOOK":
-            if meta.audiobook:
-                audio_format_map = {
-                    "acc": "ACC",
-                    "aac": "ACC",
-                    "ac3": "AC3",
-                    "dff": "DFF",
-                    "mp2": "MP2",
-                    "dsf": "DSF",
-                    "flac": "FLAC",
-                    "m4a": "M4A",
-                    "m4b": "M4B",
-                    "mp3": "MP3",
-                    "ogg": "OGG",
-                    "wav": "WAV",
-                    "wma": "WMA",
-                }
-                return audio_format_map.get(container_lower, "Outro")
-            if meta.magazine or meta.comic:
-                mag_comic_format_map = {
-                    "cbr": "CBR",
-                    "cbz": "CBR",
-                    "docx": "DOCX",
-                    "doc": "DOC",
-                    "epub": "ePUB",
-                    "gif": "GIF",
-                    "img": "IMG",
-                    "iso": "ISO",
-                    "jpg": "JPG",
-                    "jpeg": "JPG",
-                    "mobi": "MOBI",
-                    "nrg": "NRG",
-                    "pdf": "PDF",
-                    "png": "PNG",
-                }
-                return mag_comic_format_map.get(container_lower, "Outro")
-            ebook_format_map = {"azw3": "AZW3", "mobi": "MOBI", "pdf": "PDF", "epub": "ePub", "kfx": "KFX"}
-            return ebook_format_map.get(container_lower, "")
+            return self._book_container(meta, container.lower())
+        return self._video_container(container)
 
-        if container_str in ["avi", "m2ts", "m4v", "mkv", "mp4", "ts", "vob", "wmv", "mkv"]:
-            return container_str.upper()
+    @classmethod
+    def _book_container(cls, meta: Meta, container: str) -> str:
+        if meta.audiobook:
+            return cls._audiobook_container_map().get(container, "Outro")
+        if meta.magazine or meta.comic:
+            return cls._comic_container_map().get(container, "Outro")
+        return cls._ebook_container_map().get(container, "")
 
-        return "Outro"
+    @staticmethod
+    def _audiobook_container_map() -> dict[str, str]:
+        return {
+            "acc": "ACC",
+            "aac": "ACC",
+            "ac3": "AC3",
+            "dff": "DFF",
+            "mp2": "MP2",
+            "dsf": "DSF",
+            "flac": "FLAC",
+            "m4a": "M4A",
+            "m4b": "M4B",
+            "mp3": "MP3",
+            "ogg": "OGG",
+            "wav": "WAV",
+            "wma": "WMA",
+        }
+
+    @staticmethod
+    def _comic_container_map() -> dict[str, str]:
+        return {
+            "cbr": "CBR",
+            "cbz": "CBR",
+            "docx": "DOCX",
+            "doc": "DOC",
+            "epub": "ePUB",
+            "gif": "GIF",
+            "img": "IMG",
+            "iso": "ISO",
+            "jpg": "JPG",
+            "jpeg": "JPG",
+            "mobi": "MOBI",
+            "nrg": "NRG",
+            "pdf": "PDF",
+            "png": "PNG",
+        }
+
+    @staticmethod
+    def _ebook_container_map() -> dict[str, str]:
+        return {"azw3": "AZW3", "mobi": "MOBI", "pdf": "PDF", "epub": "ePub", "kfx": "KFX"}
+
+    @staticmethod
+    def _video_container(container: str) -> str:
+        allowed = {"avi", "m2ts", "m4v", "mkv", "mp4", "ts", "vob", "wmv"}
+        return container.upper() if container in allowed else "Outro"
 
     async def get_additional_checks(self, meta: Meta) -> bool:
-        if meta.category == "GAME":
-            pc_platforms = {"PC", "MAC", "LINUX"}
-            platform = meta.platform.upper().strip()
-            if platform in pc_platforms:
-                builder = DescriptionBuilder(self.tracker, self.config)
-                has_install_notes = await builder.get_user_description(meta)
-                if not has_install_notes:
-                    logger.info(
-                        f"{self.tracker}: [red]Installation notes are required for PC game uploads. "
-                        "Please provide them using [bold]-df[/bold] (path/to/file.txt) or [bold]-pb[/bold] (link to raw text).[/red]"
-                    )
-                    return False
+        if not await self._game_installation_policy(meta):
+            return False
+        if not self._imdb_policy(meta):
+            return False
+        return await self._portuguese_video_policy(meta)
 
-        is_book = meta.category == "BOOK"
-        is_game = meta.category == "GAME"
-        if not is_book and not is_game:
-            imdb_info: dict[str, Any] = meta.imdb_info
-            if not imdb_info.get("imdbID") and not meta.anime:
-                logger.info(f"{self.tracker}: [bold red]Ignorando upload devido à ausência de IMDb.[/bold red]")
-                return False
+    async def _game_installation_policy(self, meta: Meta) -> bool:
+        if meta.category != "GAME" or meta.platform.upper().strip() not in {"PC", "MAC", "LINUX"}:
+            return True
+        builder = DescriptionBuilder(self.tracker, self.config)
+        if await builder.get_user_description(meta):
+            return True
+        logger.info(
+            f"{self.tracker}: [red]Installation notes are required for PC game uploads. Please provide them using [bold]-df[/bold] (path/to/file.txt) or [bold]-pb[/bold] (link to raw text).[/red]"
+        )
+        return False
 
-            if meta.category in ("MOVIE", "TV"):
-                return await self.common.check_portuguese_video_requirements(meta, self.tracker)
+    def _imdb_policy(self, meta: Meta) -> bool:
+        if meta.category in {"BOOK", "GAME"}:
+            return True
+        imdb = meta.imdb_info if isinstance(meta.imdb_info, dict) else {}
+        if imdb.get("imdbID") or meta.anime:
+            return True
+        logger.info(f"{self.tracker}: [bold red]Ignorando upload devido à ausência de IMDb.[/bold red]")
+        return False
 
-        return True
+    async def _portuguese_video_policy(self, meta: Meta) -> bool:
+        if meta.category not in {"MOVIE", "TV"}:
+            return True
+        return await self.common.check_portuguese_video_requirements(meta, self.tracker)
 
     async def get_type(self, meta: Meta) -> str | None:
         if meta.anime:
             return "5"
+        if meta.category == "BOOK":
+            return self._book_type(meta)
+        return {"TV": "1", "MOVIE": "0", "GAME": "8"}.get(str(meta.category))
 
-        category = meta.category
-        if category == "BOOK":
-            if meta.audiobook:
-                return "15"
-            if meta.magazine:
-                return "9"
-            if meta.comic:
-                return "11"
-            return "12"
-
-        category_map = {
-            "TV": "1",
-            "MOVIE": "0",
-            "GAME": "8",
-        }
-
-        return category_map.get(category) if isinstance(category, str) else None
+    @staticmethod
+    def _book_type(meta: Meta) -> str:
+        if meta.audiobook:
+            return "15"
+        if meta.magazine:
+            return "9"
+        if meta.comic:
+            return "11"
+        return "12"
 
     def get_game_language(self, meta: Meta) -> str:
-        """Map game languages from IGDB to BRASILTRACKER idioma_ori field (same logic as BJS)."""
-        language_map: dict[str, str] = {
+        """Map game languages from IGDB to BRASILTRACKER idioma_ori."""
+        names = self._game_language_names(meta.languages)
+        return self._game_language_label(names)
+
+    @classmethod
+    def _game_language_label(cls, names: list[str]) -> str:
+        if not names:
+            return ""
+        if cls._multiple_with_portuguese(names):
+            return "Multilinguagem"
+        if len(names) == 1:
+            return cls._mapped_game_language(names[0])
+        return cls._first_mapped_language(names)
+
+    @classmethod
+    def _multiple_with_portuguese(cls, names: list[str]) -> bool:
+        return len(names) > 1 and cls._has_portuguese_language([name.lower() for name in names])
+
+    @classmethod
+    def _first_mapped_language(cls, names: list[str]) -> str:
+        for name in names:
+            value = cls._mapped_game_language(name)
+            if value != name:
+                return value
+        return names[0]
+
+    @staticmethod
+    def _game_language_names(value: Any) -> list[str]:
+        return [str(name) for name in value] if isinstance(value, dict) else []
+
+    @staticmethod
+    def _has_portuguese_language(names: list[str]) -> bool:
+        return any("portuguese" in name or "português" in name for name in names)
+
+    @classmethod
+    def _mapped_game_language(cls, name: str) -> str:
+        lowered = name.lower()
+        mapping = cls._game_language_map()
+        return next((value for key, value in mapping.items() if key in lowered), name)
+
+    @staticmethod
+    def _game_language_map() -> dict[str, str]:
+        return {
             "german": "Alemão",
             "spanish": "Espanhol",
             "french": "Francês",
@@ -279,37 +330,26 @@ class BrasilTracker:
             "russian": "Russo",
         }
 
-        languages = meta.languages
-        if not languages:
-            return ""
-
-        lang_names: list[str] = list(languages.keys()) if isinstance(languages, dict) else []
-        if not lang_names:
-            return ""
-
-        lang_names_lower = [ln.lower() for ln in lang_names]
-
-        has_portuguese = any("portuguese" in ln or "português" in ln for ln in lang_names_lower)
-
-        if has_portuguese and len(lang_names) > 1:
-            return "Multilinguagem"
-
-        if len(lang_names) == 1:
-            for key, value in language_map.items():
-                if key in lang_names_lower[0]:
-                    return value
-            return lang_names[0]
-
-        # Multiple languages, no Portuguese → first matching
-        for ln in lang_names_lower:
-            for key, value in language_map.items():
-                if key in ln:
-                    return value
-
-        return lang_names[0] if lang_names else ""
-
     def get_game_genre(self, meta: Meta) -> str:
-        genre_map: dict[str, str] = {
+        values = meta.genres or meta.keywords or []
+        return self._mapped_game_genre(values)
+
+    @classmethod
+    def _mapped_game_genre(cls, values: Any) -> str:
+        genres = values if isinstance(values, list) else []
+        for genre in genres:
+            match = cls._first_game_genre_match(str(genre).strip().lower())
+            if match:
+                return match
+        return ""
+
+    @classmethod
+    def _first_game_genre_match(cls, genre: str) -> str:
+        return next((value for key, value in cls._game_genre_map().items() if key in genre), "")
+
+    @staticmethod
+    def _game_genre_map() -> dict[str, str]:
+        return {
             "action": "Ação",
             "adventure": "Aventura",
             "arcade": "Arcade",
@@ -340,15 +380,6 @@ class BrasilTracker:
             "visual novel": "Ficção",
         }
 
-        genres_list = meta.genres or meta.keywords or []
-        for genre in genres_list:
-            genre_lower = genre.strip().lower()
-            for key, value in genre_map.items():
-                if key in genre_lower:
-                    return value
-
-        return ""
-
     def get_game_platform_bt(self, meta: Meta) -> str:
         """Map meta.platform to BRASILTRACKER plataforma_jogo dropdown value."""
         nin_term = (bytes([110, 105, 110, 116, 101, 110, 100, 111]).decode()).capitalize()
@@ -376,49 +407,46 @@ class BrasilTracker:
         return platform_map.get(platform, "")
 
     def get_game_os(self, meta: Meta) -> str:
-        """Map meta.platform to BRASILTRACKER sys_jogo dropdown value."""
-        platform = meta.platform.upper().strip()
-        if platform == "PC":
-            return "Windows"
-        if platform == "MAC":
-            return "Mac"
-        if platform == "LINUX":
-            return "Linux"
-        if platform == "MOBILE":
-            return "Android"
-        if platform in {"PS1", "PS2", "PS3", "PS4", "PS5", "PSVITA", "SWITCH", "WII", "WIIU", "XBOX", "X360", "XONE", "XSX"}:
-            return "Console"
-        return ""
+        platform_name = meta.platform.upper().strip()
+        direct = {"PC": "Windows", "MAC": "Mac", "LINUX": "Linux", "MOBILE": "Android"}.get(platform_name)
+        if direct:
+            return direct
+        return "Console" if platform_name in self._console_platforms() else ""
+
+    @staticmethod
+    def _console_platforms() -> set[str]:
+        return {"PS1", "PS2", "PS3", "PS4", "PS5", "PSVITA", "SWITCH", "WII", "WIIU", "XBOX", "X360", "XONE", "XSX"}
 
     def get_game_format(self, meta: Meta) -> str:
-        """Map game container/type to BRASILTRACKER formato_jogo dropdown value."""
-        platform = meta.platform.upper().strip()
-        container = meta.container.lower()
+        platform_name = meta.platform.upper().strip()
+        platform_format = self._platform_game_format(platform_name)
+        if platform_format:
+            return platform_format
+        mapped = self._container_game_format(str(meta.container or "").lower())
+        return mapped or "Outros"
 
-        if platform == "MOBILE":
+    @staticmethod
+    def _platform_game_format(platform_name: str) -> str:
+        if platform_name == "MOBILE":
             return "APK"
-        if container in ("exe", "exe"):
+        if platform_name in {"PS1", "PS2", "PS3", "PS4", "SWITCH"}:
+            return "ISO"
+        if platform_name == "PC":
             return "EXE"
-        if container in ("iso",):
-            return "ISO"
-        if container in ("rar", "zip", "7z"):
-            return "RAR/ZIP"
-        if container in ("bin",):
-            return "BIN"
-        if container in ("nrg",):
-            return "NRG"
-        if container in ("ndf",):
-            return "NDF"
+        return ""
 
-        # Infer from platform
-        if platform in {"PS1", "PS2"}:
-            return "ISO"
-        if platform in {"PS3", "PS4", "SWITCH"}:
-            return "ISO"
-        if platform == "PC":
-            return "EXE"
-
-        return "Outros"
+    @staticmethod
+    def _container_game_format(container: str) -> str:
+        return {
+            "exe": "EXE",
+            "iso": "ISO",
+            "rar": "RAR/ZIP",
+            "zip": "RAR/ZIP",
+            "7z": "RAR/ZIP",
+            "bin": "BIN",
+            "nrg": "NRG",
+            "ndf": "NDF",
+        }.get(container, "")
 
     async def get_languages(self, _meta: Meta) -> str | None:
         lang_code = self.main_tmdb_data.get("original_language")
@@ -433,59 +461,43 @@ class BrasilTracker:
             return lang_code
 
     async def get_audio(self, meta: Meta) -> str:
+        await self._ensure_languages(meta)
+        languages = self._language_strings(meta.audio_languages)
+        portuguese = self._has_portuguese_audio(languages)
+        if not portuguese:
+            return "Legendado"
+        return self._portuguese_audio_label(meta, languages)
+
+    async def _ensure_languages(self, meta: Meta) -> None:
         if not meta.language_checked:
             await languages_manager.process_desc_language(meta, tracker=self.tracker)
 
-        raw_audio_languages = meta.audio_languages
-        audio_languages_raw: list[Any] = []
-        if isinstance(raw_audio_languages, list):
-            audio_languages_raw = raw_audio_languages
-        audio_languages: set[str] = set()
-        for lang in audio_languages_raw:
-            if isinstance(lang, str):
-                audio_languages.add(lang)
-        audio_languages_lower = {lang.lower() for lang in audio_languages}
+    @staticmethod
+    def _language_strings(value: Any) -> set[str]:
+        values = value if isinstance(value, list) else []
+        return {str(item).lower() for item in values if isinstance(item, str)}
 
-        portuguese_languages = {"portuguese", "português", "pt"}
+    @staticmethod
+    def _has_portuguese_audio(languages: set[str]) -> bool:
+        return bool(languages.intersection({"portuguese", "português", "pt"}))
 
-        has_pt_audio = bool(audio_languages_lower.intersection(portuguese_languages))
-
-        original_lang = str(meta.original_language).lower()
-        is_original_pt = original_lang in portuguese_languages
-
-        if has_pt_audio:
-            if is_original_pt:
-                return "Nacional"
-            if len(audio_languages) > 1:
-                return "Dual Audio"
-            return "Dublado"
-
-        return "Legendado"
+    @staticmethod
+    def _portuguese_audio_label(meta: Meta, languages: set[str]) -> str:
+        original = str(meta.original_language).lower()
+        if original in {"portuguese", "português", "pt"}:
+            return "Nacional"
+        return "Dual Audio" if len(languages) > 1 else "Dublado"
 
     async def get_subtitle(self, meta: Meta) -> tuple[str, list[str]]:
-        if not meta.language_checked:
-            await languages_manager.process_desc_language(meta, tracker=self.tracker)
+        await self._ensure_languages(meta)
+        subtitle_ids = self._subtitle_ids(meta.subtitle_languages)
+        label = "Sim" if "49" in subtitle_ids else "Nao"
+        values = sorted(subtitle_ids) or ["44"]
+        return label, values
 
-        raw_subtitle_languages = meta.subtitle_languages
-        subtitle_languages_raw: list[Any] = []
-        if isinstance(raw_subtitle_languages, list):
-            subtitle_languages_raw = raw_subtitle_languages
-        found_language_strings = [lang for lang in subtitle_languages_raw if isinstance(lang, str)]
-
-        subtitle_ids: set[str] = set()
-        for lang_str in found_language_strings:
-            target_id = self.ultimate_lang_map.get(lang_str.lower())
-            if target_id:
-                subtitle_ids.add(target_id)
-
-        has_pt_subtitles = "Sim" if "49" in subtitle_ids else "Nao"
-
-        subtitle_id_list = sorted(subtitle_ids)
-
-        if not subtitle_id_list:
-            subtitle_id_list.append("44")
-
-        return has_pt_subtitles, subtitle_id_list
+    def _subtitle_ids(self, value: Any) -> set[str]:
+        languages = value if isinstance(value, list) else []
+        return {target for language in languages if isinstance(language, str) if (target := self.ultimate_lang_map.get(language.lower()))}
 
     async def get_resolution(self, meta: Meta) -> tuple[str, str]:
         width = ""
@@ -509,74 +521,72 @@ class BrasilTracker:
         return width, height
 
     async def get_video_codec(self, meta: Meta) -> str:
-        video_encode = meta.video_encode.strip().lower()
-        codec_final = meta.video_codec
-        is_hdr = bool(meta.hdr)
+        encoded = self._encoded_video_codec(meta)
+        if encoded:
+            return encoded
+        fallback = self._fallback_video_codec(meta)
+        return fallback or "Outro"
 
-        encode_map = {
-            "x265": "x265",
-            "h.265": "H.265",
-            "x264": "x264",
-            "h.264": "H.264",
-            "vp9": "VP9",
-            "xvid": "XviD",
-        }
+    @classmethod
+    def _encoded_video_codec(cls, meta: Meta) -> str:
+        value = str(meta.video_encode or "").strip().lower()
+        mapped = cls._first_codec_match(value, cls._encode_codec_map())
+        return cls._hdr_codec(mapped, meta) if mapped else ""
 
-        for key, value in encode_map.items():
-            if key in video_encode:
-                if value in ["x265", "H.265"] and is_hdr:
-                    return f"{value} HDR"
-                return value
+    @classmethod
+    def _fallback_video_codec(cls, meta: Meta) -> str:
+        value = str(meta.video_codec or "").lower()
+        mapped = cls._first_codec_match(value, cls._fallback_codec_map())
+        return cls._hdr_codec(mapped, meta) if mapped else str(meta.video_codec or "")
 
-        codec_lower = codec_final.lower()
+    @staticmethod
+    def _first_codec_match(value: str, mapping: dict[str, str]) -> str:
+        return next((mapped for key, mapped in mapping.items() if key in value), "")
 
-        codec_map = {
-            "hevc": "x265",
-            "avc": "x264",
-            "mpeg-2": "MPEG-2",
-            "vc-1": "VC-1",
-        }
+    @staticmethod
+    def _encode_codec_map() -> dict[str, str]:
+        return {"x265": "x265", "h.265": "H.265", "x264": "x264", "h.264": "H.264", "vp9": "VP9", "xvid": "XviD"}
 
-        for key, value in codec_map.items():
-            if key in codec_lower:
-                return f"{value} HDR" if value == "x265" and is_hdr else value
+    @staticmethod
+    def _fallback_codec_map() -> dict[str, str]:
+        return {"hevc": "x265", "avc": "x264", "mpeg-2": "MPEG-2", "vc-1": "VC-1"}
 
-        return codec_final if codec_final else "Outro"
+    @staticmethod
+    def _hdr_codec(codec: str, meta: Meta) -> str:
+        return f"{codec} HDR" if codec in {"x265", "H.265"} and bool(meta.hdr) else codec
 
     async def get_audio_codec(self, meta: Meta) -> str:
-        priority_order = ["DTS-X", "E-AC-3 JOC", "TrueHD", "DTS-HD", "PCM", "FLAC", "DTS-ES", "DTS", "E-AC-3", "AC3", "AAC", "Opus", "Vorbis", "MP3", "MP2"]
-
-        codec_map = {
-            "DTS-X": ["DTS:X"],
-            "E-AC-3 JOC": ["DD+ 5.1 Atmos", "DD+ 7.1 Atmos"],
-            "TrueHD": ["TrueHD"],
-            "DTS-HD": ["DTS-HD"],
-            "PCM": ["LPCM"],
-            "FLAC": ["FLAC"],
-            "DTS-ES": ["DTS-ES"],
-            "DTS": ["DTS"],
-            "E-AC-3": ["DD+"],
-            "AC3": ["DD"],
-            "AAC": ["AAC"],
-            "Opus": ["Opus"],
-            "Vorbis": ["VORBIS"],
-            "MP2": ["MP2"],
-            "MP3": ["MP3"],
-        }
-
-        audio_description = meta.audio
-
-        if not audio_description or not isinstance(audio_description, str):
+        description = meta.audio
+        if not isinstance(description, str) or not description:
             return "Outro"
+        return self._matched_audio_codec(description)
 
-        for codec_name in priority_order:
-            search_terms = codec_map.get(codec_name, [])
-
-            for term in search_terms:
-                if term in audio_description:
-                    return codec_name
-
+    @classmethod
+    def _matched_audio_codec(cls, description: str) -> str:
+        for codec, terms in cls._audio_codec_terms():
+            if any(term in description for term in terms):
+                return codec
         return "Outro"
+
+    @staticmethod
+    def _audio_codec_terms() -> tuple[tuple[str, tuple[str, ...]], ...]:
+        return (
+            ("DTS-X", ("DTS:X",)),
+            ("E-AC-3 JOC", ("DD+ 5.1 Atmos", "DD+ 7.1 Atmos")),
+            ("TrueHD", ("TrueHD",)),
+            ("DTS-HD", ("DTS-HD",)),
+            ("PCM", ("LPCM",)),
+            ("FLAC", ("FLAC",)),
+            ("DTS-ES", ("DTS-ES",)),
+            ("DTS", ("DTS",)),
+            ("E-AC-3", ("DD+",)),
+            ("AC3", ("DD",)),
+            ("AAC", ("AAC",)),
+            ("Opus", ("Opus",)),
+            ("Vorbis", ("VORBIS",)),
+            ("MP3", ("MP3",)),
+            ("MP2", ("MP2",)),
+        )
 
     async def get_name(self, meta: Meta) -> str:
         """This is for the terminal display of the name only, not the actual upload name."""
@@ -588,24 +598,38 @@ class BrasilTracker:
     def get_titles(self, meta: Meta) -> tuple[str, str]:
         if meta.category == "BOOK":
             return self.common.portuguese_title_capitalization(meta.title), ""
-
         if meta.category == "GAME":
-            return meta.title, ""
+            return str(meta.title), ""
+        if meta.category not in {"TV", "MOVIE"}:
+            return "", ""
+        return str(meta.title), self._localized_brazilian_title(meta)
 
-        if meta.category in ("TV", "MOVIE"):
-            original_title = meta.title
-            brazilian_title = ""
+    @classmethod
+    def _localized_brazilian_title(cls, meta: Meta) -> str:
+        data = cls._localized_main_data(meta)
+        return cls._validated_localized_title(meta, data)
 
-            localized_data = cast(dict[str, Any], meta.tmdb_localized_data.get("pt-BR") or {})
-            main_tmdb_data = cast(dict[str, Any], localized_data.get("main") or {})
-            original_name_title = main_tmdb_data.get("original_name") or main_tmdb_data.get("original_title")
-            tmdb_title = main_tmdb_data.get("name") or main_tmdb_data.get("title")
-            if tmdb_title and tmdb_title != meta.title and (not original_name_title or original_name_title != tmdb_title):
-                brazilian_title = tmdb_title
+    @staticmethod
+    def _localized_main_data(meta: Meta) -> dict[str, Any]:
+        if not isinstance(meta.tmdb_localized_data, dict):
+            return {}
+        localized = meta.tmdb_localized_data.get("pt-BR")
+        if not isinstance(localized, dict):
+            return {}
+        main = localized.get("main") or {}
+        return cast(dict[str, Any], main) if isinstance(main, dict) else {}
 
-            return original_title, brazilian_title
+    @classmethod
+    def _validated_localized_title(cls, meta: Meta, data: dict[str, Any]) -> str:
+        title = data.get("name") or data.get("title")
+        if not title:
+            return ""
+        return str(title) if cls._localized_title_differs(meta, data, title) else ""
 
-        return "", ""
+    @staticmethod
+    def _localized_title_differs(meta: Meta, data: dict[str, Any], title: Any) -> bool:
+        original = data.get("original_name") or data.get("original_title")
+        return title != meta.title and original != title
 
     async def get_description(self, meta: Meta) -> str:
         builder = DescriptionBuilder(self.tracker, self.config)
@@ -630,209 +654,249 @@ class BrasilTracker:
         )
 
     async def get_trailer(self, meta: Meta) -> str:
-        video_results: list[dict[str, Any]] = []
-        videos = self.main_tmdb_data.get("videos")
-        if isinstance(videos, dict):
-            videos_dict = cast(dict[str, Any], videos)
-            results = videos_dict.get("results")
-            if isinstance(results, list):
-                results_list = cast(list[Any], results)
-                video_results.extend(cast(dict[str, Any], result) for result in results_list if isinstance(result, dict))
+        youtube = self._tmdb_trailer_key()
+        if youtube:
+            return youtube
+        return self._meta_trailer_key(meta.youtube)
 
-        youtube = ""
+    def _tmdb_trailer_key(self) -> str:
+        entries = self._tmdb_video_entries(self.main_tmdb_data.get("videos"))
+        return self._video_key(entries[-1]) if entries else ""
 
-        if video_results:
-            last_result = video_results[-1]
-            youtube_value = last_result.get("key", "")
-            youtube = youtube_value if isinstance(youtube_value, str) else ""
+    @staticmethod
+    def _tmdb_video_entries(value: Any) -> list[dict[str, Any]]:
+        if not isinstance(value, dict):
+            return []
+        results = value.get("results")
+        if not isinstance(results, list):
+            return []
+        return [cast(dict[str, Any], item) for item in results if isinstance(item, dict)]
 
-        if not youtube:
-            meta_trailer = meta.youtube
-            if meta_trailer:
-                youtube = meta_trailer.replace("https://www.youtube.com/watch?v=", "").replace("/", "")
+    @staticmethod
+    def _video_key(value: dict[str, Any]) -> str:
+        key = value.get("key", "")
+        return key if isinstance(key, str) else ""
 
-        return youtube
+    @staticmethod
+    def _meta_trailer_key(value: Any) -> str:
+        if not value:
+            return ""
+        return str(value).replace("https://www.youtube.com/watch?v=", "").replace("/", "")
 
     async def get_tags(self, meta: Meta) -> str:
-        """Map genres from meta.genres or TMDB to Portuguese tags."""
         if meta.category == "BOOK":
             return ""
+        matched = self._genre_tags_for_meta(meta)
+        return unidecode(", ".join(matched)) if matched else await self._prompt_genre_tags(meta)
 
-        matched_tags: list[str] = []
+    def _genre_tags_for_meta(self, meta: Meta) -> list[str]:
+        matched = self._mapped_genre_tags(meta.genres or meta.keywords or [])
+        if matched:
+            return matched
+        return self._tmdb_genre_tags() if meta.category in {"TV", "MOVIE"} else []
 
-        genres_list = meta.genres or meta.keywords or []
-        for genre in genres_list:
-            genre_lower = genre.strip().lower()
-            mapped = ENG_TO_PTBR_GENRE_MAP.get(genre_lower)
+    @classmethod
+    def _mapped_genre_tags(cls, values: Any) -> list[str]:
+        genres = values if isinstance(values, list) else []
+        tags: list[str] = []
+        for genre in genres:
+            mapped = cls._mapped_genre(str(genre).strip().lower())
+            if mapped and mapped not in tags:
+                tags.append(mapped)
+        return tags
 
-            if not mapped and genre_lower in ENG_TO_PTBR_GENRE_MAP.values():
-                mapped = genre_lower
+    @staticmethod
+    def _mapped_genre(value: str) -> str:
+        mapped = ENG_TO_PTBR_GENRE_MAP.get(value)
+        if mapped:
+            return mapped
+        return value if value in ENG_TO_PTBR_GENRE_MAP.values() else ""
 
-            if mapped and mapped not in matched_tags:
-                matched_tags.append(mapped)
+    def _tmdb_genre_tags(self) -> list[str]:
+        genres = self.main_tmdb_data.get("genres", [])
+        values = genres if isinstance(genres, list) else []
+        names = [str(item.get("name", "")).lower() for item in values if isinstance(item, dict)]
+        return self._mapped_genre_tags(names)
 
-        if meta.category in ("TV", "MOVIE") and not matched_tags:
-            genres_data: list[dict[str, Any]] = self.main_tmdb_data.get("genres", [])
-            for g in genres_data:
-                name = str(g.get("name", "")).lower()
-                if name.strip():
-                    mapped = ENG_TO_PTBR_GENRE_MAP.get(name)
-                    if mapped and mapped not in matched_tags:
-                        matched_tags.append(mapped)
-
-        # If we have matched tags, return them
-        if matched_tags:
-            return unidecode(", ".join(matched_tags))
-
-        # Final fallback: ask user
+    async def _prompt_genre_tags(self, meta: Meta) -> str:
         if meta.unattended and not meta.unattended_confirm:
             logger.info(f"{self.tracker}: [yellow]Gêneros não encontrados em modo unattended. Plando upload para {self.tracker}.[/yellow]")
-            meta.skipping = f"{self.tracker}"
+            meta.skipping = self.tracker
             return ""
-
-        tags_raw = await prompt_in_thread(cli_ui.ask_string, f"Digite os gêneros (no formato do {self.tracker}): ")
-        return unidecode((tags_raw or "").strip())
+        value = await prompt_in_thread(cli_ui.ask_string, f"Digite os gêneros (no formato do {self.tracker}): ")
+        return unidecode(str(value or "").strip())
 
     async def search_existing(self, meta: Meta) -> list[dict[str, Any]]:
+        search_string = self._search_string(meta)
+        page = await self._search_page(meta, search_string)
+        if page is None:
+            return []
+        group_links = self._group_links(page)
         dupes: list[dict[str, Any]] = []
-        is_book = meta.category == "BOOK"
-        is_game = meta.category == "GAME"
+        for group_link in group_links:
+            dupes.extend(await self._group_dupes(meta, group_link))
+        return dupes
 
-        if is_book or is_game:
-            searchstr = meta.title
-        else:
-            imdb_info: dict[str, Any] = meta.imdb_info
-            searchstr = meta.title if meta.anime else imdb_info.get("imdbID")
+    @staticmethod
+    def _search_string(meta: Meta) -> str:
+        if meta.category in {"BOOK", "GAME"}:
+            return str(meta.title)
+        imdb = meta.imdb_info if isinstance(meta.imdb_info, dict) else {}
+        return str(meta.title) if meta.anime else str(imdb.get("imdbID", ""))
 
-        is_tv_pack = meta.tv_pack
-
-        search_url = f"{self.base_url}/torrents.php?searchstr={searchstr}"
+    async def _search_page(self, meta: Meta, search_string: str) -> BeautifulSoup | None:
         cookie_jar = await self.cookie_validator.load_session_cookies(meta, self.tracker)
         if cookie_jar is None:
-            return []
+            return None
         self.session.cookies = cast(Any, cookie_jar)
-
-        response = await self.session.get(search_url)
-        if "login.php" in str(response.url) or "login.php" in response.text:
+        response = await self.session.get(f"{self.base_url}/torrents.php?searchstr={search_string}")
+        if self._search_login_failed(response):
             await self.cookie_validator.handle_validation_failure(meta, self.tracker, response.text)
-            meta.skipping = f"{self.tracker}"
-            return dupes
-
-        # Extract auth token if present
-        auth_match = re.search(r"logout\.php\?auth=([a-f0-9]+)", response.text)
-        if auth_match:
-            BrasilTracker.secret_token = auth_match.group(1)
-        else:
+            meta.skipping = self.tracker
+            return None
+        if not self._capture_secret_token(response.text):
             logger.info(f"{self.tracker}: [bold red]Failed to find auth token on page.[/bold red]")
-            meta.skipping = f"{self.tracker}"
-            return dupes
-
+            meta.skipping = self.tracker
+            return None
         response.raise_for_status()
-        soup = BeautifulSoup(response.text, "html.parser")
+        return BeautifulSoup(response.text, "html.parser")
 
-        torrent_table = soup.find("table", id="torrent_table")
-        if not torrent_table:
+    @staticmethod
+    def _search_login_failed(response: httpx.Response) -> bool:
+        return "login.php" in str(response.url) or "login.php" in response.text
+
+    @classmethod
+    def _capture_secret_token(cls, html: str) -> bool:
+        match = re.search(r"logout\.php\?auth=([a-f0-9]+)", html)
+        if match is None:
+            return False
+        cls.secret_token = match.group(1)
+        return True
+
+    @classmethod
+    def _group_links(cls, page: BeautifulSoup) -> list[str]:
+        table = page.find("table", id="torrent_table")
+        if table is None:
             return []
+        links = {href for row in table.find_all("tr") if (href := cls._group_row_href(row))}
+        return sorted(links)
 
-        group_links: set[str] = set()
-        for group_row in torrent_table.find_all("tr"):
-            link = group_row.find("a", href=re.compile(r"torrents\.php\?id=\d+"))
-            href_value = link.get("href") if link else None
-            if isinstance(href_value, str) and "torrentid" not in href_value:
-                group_links.add(href_value)
+    @staticmethod
+    def _group_row_href(row: Any) -> str:
+        link = row.find("a", href=re.compile(r"torrents\.php\?id=\d+"))
+        href = link.get("href") if link else None
+        if not isinstance(href, str) or "torrentid" in href:
+            return ""
+        return href
 
-        if not group_links:
-            return []
-
-        for group_link in group_links:
-            group_url = f"{self.base_url}/{group_link}"
-            group_response = await self.session.get(group_url)
-            group_response.raise_for_status()
-            group_soup = BeautifulSoup(group_response.text, "html.parser")
-
-            for torrent_row in group_soup.find_all("tr", id=re.compile(r"^torrent\d+$")):
-                desc_link = torrent_row.find("a", onclick=re.compile(r"gtoggle"))
-                if not desc_link:
-                    continue
-                description_text = " ".join(desc_link.get_text(strip=True).split())
-
-                row_id = torrent_row.get("id")
-                if not isinstance(row_id, str):
-                    continue
-                torrent_id = row_id.replace("torrent", "")
-                file_div = group_soup.find("div", id=f"files_{torrent_id}")
-                if not file_div:
-                    continue
-
-                # Parse all files
-                files: list[str] = []
-                file_table = file_div.find("table", class_="filelist_table")
-                if file_table:
-                    for r in file_table.find_all("tr"):
-                        class_attr = r.get("class")
-                        class_list = []
-                        if isinstance(class_attr, str):
-                            class_list = [class_attr]
-                        elif isinstance(class_attr, list):
-                            class_list = list(class_attr)
-                        if "colhead_dark" in class_list:
-                            continue
-                        cell = r.find("td")
-                        if cell:
-                            fn = cell.get_text(strip=True)
-                            if fn:
-                                files.append(fn)
-
-                # Determine name (folder or first filename)
-                name = ""
-                is_existing_torrent_a_disc = any(keyword in description_text.lower() for keyword in ["bd25", "bd50", "bd66", "bd100", "dvd5", "dvd9", "m2ts"])
-
-                if is_existing_torrent_a_disc or is_tv_pack or is_game:
-                    path_div = file_div.find("div", class_="filelist_path")
-                    if path_div:
-                        folder_name = path_div.get_text(strip=True).strip("/")
-                        if folder_name:
-                            name = folder_name
-                else:
-                    if files:
-                        name = files[0]
-
-                if not name:
-                    name = description_text
-
-                # Size
-                tds = torrent_row.find_all("td")
-                size = tds[1].get_text(strip=True) if len(tds) > 1 else ""
-
-                link = f"{self.base_url}/torrents.php?torrentid={torrent_id}"
-                download = f"{self.base_url}/torrents.php?action=download&id={torrent_id}"
-
-                dupe_entry: dict[str, Any] = {
-                    "name": name,
-                    "size": size,
-                    "link": link,
-                    "download": download,
-                    "id": torrent_id,
-                    "files": files,
-                }
-
-                if is_book:
-                    audio_exts = {".mp3", ".m4b", ".flac", ".m4a", ".wav", ".ogg", ".aac", ".ac3", ".wma", ".opus"}
-                    name_lower = name.lower()
-                    is_dupe_audiobook = "audiobook" in name_lower or "audio book" in name_lower or any(any(f.lower().endswith(ext) for ext in audio_exts) for f in files)
-                    if is_dupe_audiobook:
-                        dupe_entry["type"] = "audiobook"
-                    else:
-                        for fmt in ["epub", "pdf", "mobi", "azw3", "cbr", "cbz"]:
-                            if fmt in name_lower:
-                                dupe_entry["type"] = fmt
-                                break
-                        else:
-                            dupe_entry["type"] = "ebook"
-
-                dupes.append(dupe_entry)
-
+    async def _group_dupes(self, meta: Meta, group_link: str) -> list[dict[str, Any]]:
+        response = await self.session.get(f"{self.base_url}/{group_link}")
+        response.raise_for_status()
+        page = BeautifulSoup(response.text, "html.parser")
+        dupes: list[dict[str, Any]] = []
+        for row in page.find_all("tr", id=re.compile(r"^torrent\d+$")):
+            entry = self._torrent_row_entry(meta, page, row)
+            if entry is not None:
+                dupes.append(entry)
         return dupes
+
+    def _torrent_row_entry(self, meta: Meta, page: BeautifulSoup, row: Any) -> dict[str, Any] | None:
+        description = self._row_description(row)
+        torrent_id = self._row_torrent_id(row)
+        if not description or not torrent_id:
+            return None
+        file_div = page.find("div", id=f"files_{torrent_id}")
+        if file_div is None:
+            return None
+        files = self._file_names(file_div)
+        name = self._torrent_entry_name(meta, description, files, file_div)
+        entry = self._base_dupe_entry(row, torrent_id, name, files)
+        if meta.category == "BOOK":
+            entry["type"] = self._book_dupe_type(name, files)
+        return entry
+
+    @staticmethod
+    def _row_description(row: Any) -> str:
+        link = row.find("a", onclick=re.compile(r"gtoggle"))
+        if link is None:
+            return ""
+        return " ".join(link.get_text(strip=True).split())
+
+    @staticmethod
+    def _row_torrent_id(row: Any) -> str:
+        value = row.get("id")
+        return value.replace("torrent", "") if isinstance(value, str) else ""
+
+    @classmethod
+    def _file_names(cls, file_div: Any) -> list[str]:
+        table = file_div.find("table", class_="filelist_table")
+        if table is None:
+            return []
+        names: list[str] = []
+        for row in table.find_all("tr"):
+            name = cls._file_row_name(row)
+            if name:
+                names.append(name)
+        return names
+
+    @staticmethod
+    def _file_row_name(row: Any) -> str:
+        classes = row.get("class")
+        class_list = [classes] if isinstance(classes, str) else list(classes or [])
+        if "colhead_dark" in class_list:
+            return ""
+        cell = row.find("td")
+        return cell.get_text(strip=True) if cell is not None else ""
+
+    @classmethod
+    def _torrent_entry_name(cls, meta: Meta, description: str, files: list[str], file_div: Any) -> str:
+        if cls._folder_name_required(meta, description):
+            folder = cls._folder_name(file_div)
+            if folder:
+                return folder
+        if not cls._folder_name_required(meta, description) and files:
+            return files[0]
+        return description
+
+    @staticmethod
+    def _folder_name_required(meta: Meta, description: str) -> bool:
+        disc_markers = ("bd25", "bd50", "bd66", "bd100", "dvd5", "dvd9", "m2ts")
+        existing_disc = any(marker in description.lower() for marker in disc_markers)
+        return bool(existing_disc or meta.tv_pack or meta.category == "GAME")
+
+    @staticmethod
+    def _folder_name(file_div: Any) -> str:
+        path_div = file_div.find("div", class_="filelist_path")
+        if path_div is None:
+            return ""
+        return path_div.get_text(strip=True).strip("/")
+
+    def _base_dupe_entry(self, row: Any, torrent_id: str, name: str, files: list[str]) -> dict[str, Any]:
+        cells = row.find_all("td")
+        size = cells[1].get_text(strip=True) if len(cells) > 1 else ""
+        return {
+            "name": name,
+            "size": size,
+            "link": f"{self.base_url}/torrents.php?torrentid={torrent_id}",
+            "download": f"{self.base_url}/torrents.php?action=download&id={torrent_id}",
+            "id": torrent_id,
+            "files": files,
+        }
+
+    @classmethod
+    def _book_dupe_type(cls, name: str, files: list[str]) -> str:
+        if cls._book_dupe_is_audio(name, files):
+            return "audiobook"
+        lowered = name.lower()
+        return next((fmt for fmt in ("epub", "pdf", "mobi", "azw3", "cbr", "cbz") if fmt in lowered), "ebook")
+
+    @staticmethod
+    def _book_dupe_is_audio(name: str, files: list[str]) -> bool:
+        audio_extensions = (".mp3", ".m4b", ".flac", ".m4a", ".wav", ".ogg", ".aac", ".ac3", ".wma", ".opus")
+        lowered = name.lower()
+        if "audiobook" in lowered or "audio book" in lowered:
+            return True
+        return any(file_name.lower().endswith(audio_extensions) for file_name in files)
 
     async def get_media_info(self, meta: Meta) -> str:
         info_file_path = ""
@@ -877,38 +941,47 @@ class BrasilTracker:
 
     async def get_bitrate(self, meta: Meta) -> str:
         if meta.type == "DISC":
-            is_disc_type = meta.is_disc
-
-            if is_disc_type == "BDMV":
-                disctype = meta.disctype
-                if isinstance(disctype, str) and disctype in ["BD100", "BD66", "BD50", "BD25"]:
-                    return disctype
-
-                try:
-                    size_in_gb = meta.bdinfo["size"]
-                except KeyError, IndexError, TypeError:
-                    size_in_gb = 0
-
-                if size_in_gb > 66:
-                    return "BD100"
-                if size_in_gb > 50:
-                    return "BD66"
-                if size_in_gb > 25:
-                    return "BD50"
-                return "BD25"
-
-            if is_disc_type == "DVD":
-                dvd_size = meta.dvd_size
-                if isinstance(dvd_size, str) and dvd_size in ["DVD9", "DVD5"]:
-                    return dvd_size
-                return "DVD9"
-
+            disc = self._disc_bitrate(meta)
+            if disc:
+                return disc
         source_type = meta.type
-
-        if not source_type or not isinstance(source_type, str):
+        if not isinstance(source_type, str) or not source_type:
             return "Outro"
+        return self._source_bitrate_map().get(source_type.lower(), "Outro")
 
-        keyword_map = {
+    @classmethod
+    def _disc_bitrate(cls, meta: Meta) -> str:
+        if meta.is_disc == "BDMV":
+            return cls._bluray_disc_size(meta)
+        if meta.is_disc == "DVD":
+            return meta.dvd_size if meta.dvd_size in {"DVD9", "DVD5"} else "DVD9"
+        return ""
+
+    @classmethod
+    def _bluray_disc_size(cls, meta: Meta) -> str:
+        if meta.disctype in {"BD100", "BD66", "BD50", "BD25"}:
+            return str(meta.disctype)
+        size = cls._bdinfo_size(meta.bdinfo)
+        if size > 66:
+            return "BD100"
+        if size > 50:
+            return "BD66"
+        if size > 25:
+            return "BD50"
+        return "BD25"
+
+    @staticmethod
+    def _bdinfo_size(value: Any) -> float:
+        if not isinstance(value, dict):
+            return 0
+        try:
+            return float(value.get("size", 0) or 0)
+        except TypeError, ValueError:
+            return 0
+
+    @staticmethod
+    def _source_bitrate_map() -> dict[str, str]:
+        return {
             "remux": "Remux",
             "webdl": "WEB-DL",
             "webrip": "WEBRip",
@@ -923,262 +996,332 @@ class BrasilTracker:
             "tvrip": "TVRip",
         }
 
-        return keyword_map.get(source_type.lower(), "Outro")
-
     async def get_screens(self, meta: Meta) -> list[str]:
-        menu_images = meta.menu_images
-        image_list = meta.image_list
-        spectrograms_images = meta.spectrograms_images
-        dynamic_hdr_plot_images = meta.dynamic_hdr_plot_images
+        images = self._all_image_entries(meta)
+        return [url for image in images if (url := self._raw_image_url(image))]
 
-        combined_images: list[dict[str, Any]] = []
-        if isinstance(menu_images, list):
-            menu_images_list = menu_images
-            combined_images.extend([cast(dict[str, Any], img) for img in menu_images_list if isinstance(img, dict)])
-        if isinstance(image_list, list):
-            image_list_items = image_list
-            combined_images.extend([img for img in image_list_items if isinstance(img, dict)])
-        if isinstance(spectrograms_images, list):
-            spectrograms_images_list = spectrograms_images
-            combined_images.extend([cast(dict[str, Any], img) for img in spectrograms_images_list if isinstance(img, dict)])
-        if isinstance(dynamic_hdr_plot_images, list):
-            combined_images.extend([cast(dict[str, Any], img) for img in dynamic_hdr_plot_images if isinstance(img, dict)])
+    @classmethod
+    def _all_image_entries(cls, meta: Meta) -> list[dict[str, Any]]:
+        images: list[dict[str, Any]] = []
+        for value in (meta.menu_images, meta.image_list, meta.spectrograms_images, meta.dynamic_hdr_plot_images):
+            images.extend(cls._image_entries(value))
+        return images
 
-        urls: list[str] = []
-        for image in combined_images:
-            raw_url = image.get("raw_url")
-            if isinstance(raw_url, str) and raw_url:
-                urls.append(raw_url)
+    @staticmethod
+    def _image_entries(value: Any) -> list[dict[str, Any]]:
+        values = value if isinstance(value, list) else []
+        return [cast(dict[str, Any], item) for item in values if isinstance(item, dict)]
 
-        return urls
+    @staticmethod
+    def _raw_image_url(image: dict[str, Any]) -> str:
+        value = image.get("raw_url")
+        return value if isinstance(value, str) and value else ""
 
     async def get_credits(self, meta: Meta) -> str:
-        director_entries: list[str] = []
+        names = self._director_names(meta)
+        if not names:
+            return "N/A"
+        return ", ".join(list(dict.fromkeys(names))[:5])
 
-        imdb_directors = meta.imdb_info.get("directors")
-        if isinstance(imdb_directors, list):
-            director_entries.extend(name for name in cast(list[Any], imdb_directors) if isinstance(name, str))
+    @classmethod
+    def _director_names(cls, meta: Meta) -> list[str]:
+        imdb = meta.imdb_info if isinstance(meta.imdb_info, dict) else {}
+        values = [imdb.get("directors"), meta.tmdb_directors]
+        return [name for value in values for name in cls._string_list(value)]
 
-        tmdb_directors = meta.tmdb_directors
-        if isinstance(tmdb_directors, list):
-            director_entries.extend(name for name in cast(list[Any], tmdb_directors) if isinstance(name, str))
-
-        if director_entries:
-            unique_names = list(dict.fromkeys(director_entries))[:5]
-            return ", ".join(unique_names)
-
-        return "N/A"
+    @staticmethod
+    def _string_list(value: Any) -> list[str]:
+        values = value if isinstance(value, list) else []
+        return [str(item) for item in values if isinstance(item, str)]
 
     async def get_data(self, meta: Meta) -> dict[str, Any]:
-        await self.load_localized_data(meta)  #  keep this line FIRST to ensure localized data is loaded before proceeding
+        await self.load_localized_data(meta)
         description = await self.get_description(meta)
         original_title, brazilian_title = self.get_titles(meta)
+        data = await self._base_upload_data(meta, original_title, description)
+        data.update(await self._category_upload_data(meta, description, original_title, brazilian_title))
+        self._apply_anonymous_flag(data, meta)
+        self._apply_internal_flag(data, meta)
+        return data
 
-        data: dict[str, Any] = {
+    async def _base_upload_data(self, meta: Meta, original_title: str, _description: str) -> dict[str, Any]:
+        return {
             "submit": "true",
             "auth": BrasilTracker.secret_token,
-            "year": str(meta.year) if meta.year is not None else "",
+            "year": "" if meta.year is None else str(meta.year),
             "title": original_title,
             "type": await self.get_type(meta),
         }
 
+    async def _category_upload_data(
+        self,
+        meta: Meta,
+        description: str,
+        original_title: str,
+        brazilian_title: str,
+    ) -> dict[str, Any]:
         if meta.category == "GAME":
-            overview = ""
-            localized_overviews = meta.localized_overviews
-            if isinstance(localized_overviews, dict):
-                overview = localized_overviews.get("brazilian", "") or meta.overview
-            if not overview:
-                overview = meta.overview
+            return await self._game_upload_data(meta, description)
+        if meta.category == "BOOK":
+            return await self._book_upload_data(meta, description, original_title)
+        if meta.category in {"MOVIE", "TV"}:
+            return await self._video_upload_data(meta, description, brazilian_title)
+        return {}
 
-            # Cover image
-            cover_url = ""
-            cover_path = meta.artwork_path
-            if isinstance(cover_path, str) and cover_path.startswith(("http://", "https://")):
-                cover_url = cover_path
-            elif meta.artwork_url and meta.artwork_url.startswith(("http://", "https://")):
-                cover_url = meta.artwork_url
+    async def _game_upload_data(self, meta: Meta, description: str) -> dict[str, Any]:
+        data: dict[str, Any] = {
+            "idioma_ori": self.get_game_language(meta),
+            "genero_jogo": self.get_game_genre(meta),
+            "plataforma_jogo": self.get_game_platform_bt(meta),
+            "sys_jogo": self.get_game_os(meta),
+            "format": self.get_game_format(meta),
+            "tags": await self.get_tags(meta),
+            "image": self._game_cover_url(meta),
+            "sinopse": self._game_overview(meta),
+            "especificas": description,
+            "screen[]": await self.get_screens(meta),
+            "releasedate": meta.igdb_first_release_date,
+            "vote": str(meta.igdb_rating_count),
+            "rating": str(meta.igdb_rating),
+        }
+        self._apply_game_version(data, meta)
+        self._apply_game_youtube(data, meta)
+        return data
 
-            data.update(
-                {
-                    "idioma_ori": self.get_game_language(meta),
-                    "genero_jogo": self.get_game_genre(meta),
-                    "plataforma_jogo": self.get_game_platform_bt(meta),
-                    "sys_jogo": self.get_game_os(meta),
-                    "format": self.get_game_format(meta),
-                    "tags": await self.get_tags(meta),
-                    "image": cover_url,
-                    "sinopse": overview,
-                    "especificas": description,
-                    "screen[]": await self.get_screens(meta),
-                    "releasedate": meta.igdb_first_release_date,
-                    "vote": str(meta.igdb_rating_count),
-                    "rating": str(meta.igdb_rating),
-                }
-            )
+    @staticmethod
+    def _game_overview(meta: Meta) -> str:
+        localized = meta.localized_overviews
+        if isinstance(localized, dict):
+            brazilian = localized.get("brazilian")
+            if brazilian:
+                return str(brazilian)
+        return str(meta.overview or "")
 
-            platform = meta.platform.upper().strip()
-            if platform == "PC":
-                tag = meta.tag
-                if tag:
-                    data["versaoapp"] = tag.lstrip("-")
+    @classmethod
+    def _game_cover_url(cls, meta: Meta) -> str:
+        artwork_path = cls._remote_url(meta.artwork_path)
+        return artwork_path if artwork_path else cls._remote_url(meta.artwork_url)
 
-            youtube = meta.youtube
-            if youtube:
-                data["youtube"] = youtube
+    @staticmethod
+    def _apply_game_version(data: dict[str, Any], meta: Meta) -> None:
+        if meta.platform.upper().strip() != "PC" or not meta.tag:
+            return
+        data["versaoapp"] = str(meta.tag).lstrip("-")
 
-        elif meta.category == "BOOK":
-            cover_url = await self.get_book_cover(meta)
-            resolved_lang = await self.get_book_language(meta)
-            resolved_format = await self.get_container(meta)
+    @staticmethod
+    def _apply_game_youtube(data: dict[str, Any], meta: Meta) -> None:
+        if meta.youtube:
+            data["youtube"] = meta.youtube
 
-            audiobook = meta.audiobook
-            magazine = meta.magazine
-            comic = meta.comic
+    async def _book_upload_data(self, meta: Meta, description: str, original_title: str) -> dict[str, Any]:
+        data: dict[str, Any] = {
+            "title": original_title,
+            "idioma_ori": await self.get_book_language(meta),
+            "format": await self.get_container(meta),
+            "image": await self.get_book_cover(meta),
+        }
+        data.update(await self._book_variant_data(meta, description))
+        return data
 
-            data["title"] = original_title
-            data.update(
-                {
-                    "idioma_ori": resolved_lang,
-                    "format": resolved_format,
-                    "image": cover_url,
-                }
-            )
+    async def _book_variant_data(self, meta: Meta, description: str) -> dict[str, Any]:
+        if meta.audiobook:
+            return self._audiobook_upload_data(meta, description)
+        if meta.magazine or meta.comic:
+            return await self._periodical_upload_data(meta, description)
+        return await self._ebook_upload_data(meta)
 
-            if audiobook:
-                data.update(
-                    {
-                        "banda": meta.author,
-                        "bitrate": self.get_audiobook_bitrate(meta),
-                        "especificas": description,
-                    }
-                )
+    def _audiobook_upload_data(self, meta: Meta, description: str) -> dict[str, Any]:
+        return {
+            "banda": meta.author,
+            "bitrate": self.get_audiobook_bitrate(meta),
+            "especificas": description,
+        }
 
-            elif magazine or comic:
-                edicao = str(meta.manual_edition or meta.edition or meta.episode or meta.manual_episode or "")
-                edicao_str = "".join(c for c in edicao if c.isdigit())
+    async def _periodical_upload_data(self, meta: Meta, description: str) -> dict[str, Any]:
+        data: dict[str, Any] = {
+            "diretor": meta.publisher or meta.author,
+            "edicao": self._edition_digits(meta),
+            "paginas": self.get_book_pages(meta),
+            "tags": await self.get_tags(meta),
+            "desc": html_to_bbcode(meta.overview),
+            "especificas": description,
+            "screen[]": await self.get_screens(meta),
+        }
+        if meta.magazine:
+            self._apply_magazine_fields(data, meta)
+        return data
 
-                data.update(
-                    {
-                        "diretor": meta.publisher or meta.author,
-                        "edicao": edicao_str,
-                        "paginas": self.get_book_pages(meta),
-                        "tags": await self.get_tags(meta),
-                        "desc": html_to_bbcode(meta.overview),
-                        "especificas": description,
-                        "screen[]": await self.get_screens(meta),
-                    }
-                )
+    @classmethod
+    def _edition_digits(cls, meta: Meta) -> str:
+        value = cls._first_non_empty(
+            meta.manual_edition,
+            meta.edition,
+            meta.episode,
+            meta.manual_episode,
+        )
+        return "".join(character for character in str(value) if character.isdigit())
 
-                if magazine:
-                    data["adulto"] = "1" if meta.adult_media or meta.tmdb_adult_media else "0"
+    @staticmethod
+    def _first_non_empty(*values: Any) -> Any:
+        return next((value for value in values if value), "")
 
-                    months_pt = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
-                    months_en = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
-                    text_to_search = (meta.title + " " + meta.basename_no_ext).lower()
-                    found_month = ""
-                    for m_pt, m_en in zip(months_pt, months_en, strict=False):
-                        if m_pt.lower() in text_to_search or m_en.lower() in text_to_search:
-                            found_month = m_pt
-                            break
-                    if found_month:
-                        data.update({"mensal": "on", "mes_resvista": found_month})
-            else:
-                # eBook
-                data.update(
-                    {
-                        "diretor": meta.author,
-                        "tags": await self.get_tags(meta),
-                        "desc": html_to_bbcode(meta.overview),
-                        "screen[]": await self.get_screens(meta),
-                    }
-                )
-        elif meta.category in ("MOVIE", "TV"):
-            has_pt_subtitles, subtitle_ids = await self.get_subtitle(meta)
-            resolution_width, resolution_height = await self.get_resolution(meta)
-            data.update(
-                {
-                    "audio_c": await self.get_audio_codec(meta),
-                    "audio": await self.get_audio(meta),
-                    "bitrate": await self.get_bitrate(meta),
-                    "desc": "",
-                    "diretor": await self.get_credits(meta),
-                    "duracao": f"{meta.runtime!s} min",
-                    "especificas": description,
-                    "format": await self.get_container(meta),
-                    "idioma_ori": await self.get_languages(meta) or meta.original_language,
-                    "image": f"https://image.tmdb.org/t/p/w500{self.main_tmdb_data.get('poster_path', '') or meta.tmdb_poster_path}",
-                    "legenda": has_pt_subtitles,
-                    "mediainfo": await self.get_media_info(meta),
-                    "resolucao_1": resolution_width,
-                    "resolucao_2": resolution_height,
-                    "screen[]": await self.get_screens(meta),
-                    "sinopse": self.main_tmdb_data.get("overview", "Nenhuma sinopse disponível."),
-                    "subtitles[]": subtitle_ids,
-                    "tags": await self.get_tags(meta),
-                    "video_c": await self.get_video_codec(meta),
-                    "youtube": await self.get_trailer(meta),
-                }
-            )
+    def _apply_magazine_fields(self, data: dict[str, Any], meta: Meta) -> None:
+        data["adulto"] = "1" if meta.adult_media or meta.tmdb_adult_media else "0"
+        month = self._magazine_month(meta)
+        if month:
+            data.update({"mensal": "on", "mes_resvista": month})
 
-            # Common data MOVIE/TV
-            if not meta.anime:
-                if meta.category in ("MOVIE", "TV"):
-                    data.update(
-                        {
-                            "3d": "Sim" if meta.three_d else "Nao",
-                            "adulto": "0",
-                            "imdb_input": meta.imdb_info.get("imdbID", ""),
-                            "nota_imdb": str(meta.imdb_info.get("rating", "")),
-                            "title_br": brazilian_title,
-                        }
-                    )
-                if meta.scene:
-                    data["scene"] = "on"
+    @staticmethod
+    def _magazine_month(meta: Meta) -> str:
+        months = (
+            ("Janeiro", "January"),
+            ("Fevereiro", "February"),
+            ("Março", "March"),
+            ("Abril", "April"),
+            ("Maio", "May"),
+            ("Junho", "June"),
+            ("Julho", "July"),
+            ("Agosto", "August"),
+            ("Setembro", "September"),
+            ("Outubro", "October"),
+            ("Novembro", "November"),
+            ("Dezembro", "December"),
+        )
+        text = f"{meta.title} {meta.basename_no_ext}".lower()
+        return next((portuguese for portuguese, english in months if portuguese.lower() in text or english.lower() in text), "")
 
-            # Common data TV/Anime
-            tv_pack = meta.tv_pack
-            if meta.category == "TV" or meta.anime:
-                data.update(
-                    {
-                        "episodio": meta.episode,
-                        "ntorrent": f"{meta.season}{meta.episode}",
-                        "temporada_e": meta.season if not tv_pack else "",
-                        "temporada": meta.season if tv_pack else "",
-                        "tipo": "ep_individual" if not tv_pack else "completa",
-                    }
-                )
+    async def _ebook_upload_data(self, meta: Meta) -> dict[str, Any]:
+        return {
+            "diretor": meta.author,
+            "tags": await self.get_tags(meta),
+            "desc": html_to_bbcode(meta.overview),
+            "screen[]": await self.get_screens(meta),
+        }
 
-            # Specific
-            if meta.category == "MOVIE":
-                data["versao"] = await self.get_edition(meta)
-            elif meta.anime:
-                data.update(
-                    {
-                        "fundo_torrent": meta.backdrop,
-                        "horas": "",
-                        "minutos": "",
-                        "rating": str(meta.imdb_info.get("rating", "")),
-                        "releasedate": str(meta.year) if meta.year is not None else "",
-                        "vote": "",
-                    }
-                )
+    async def _video_upload_data(self, meta: Meta, description: str, brazilian_title: str) -> dict[str, Any]:
+        subtitle_label, subtitle_ids = await self.get_subtitle(meta)
+        width, height = await self.get_resolution(meta)
+        data = await self._video_core_data(meta, description, subtitle_label, subtitle_ids, width, height)
+        self._apply_video_identity_fields(data, meta, brazilian_title)
+        self._apply_tv_anime_fields(data, meta)
+        await self._apply_video_specific_fields(data, meta)
+        return data
 
-        # Anon
-        anon = not (meta.anon == 0 and not self.config["TRACKERS"][self.tracker].get("anon", False))
-        if anon:
+    async def _video_core_data(
+        self,
+        meta: Meta,
+        description: str,
+        subtitle_label: str,
+        subtitle_ids: list[str],
+        width: str,
+        height: str,
+    ) -> dict[str, Any]:
+        return {
+            "audio_c": await self.get_audio_codec(meta),
+            "audio": await self.get_audio(meta),
+            "bitrate": await self.get_bitrate(meta),
+            "desc": "",
+            "diretor": await self.get_credits(meta),
+            "duracao": f"{meta.runtime!s} min",
+            "especificas": description,
+            "format": await self.get_container(meta),
+            "idioma_ori": await self.get_languages(meta) or meta.original_language,
+            "image": self._video_poster_url(meta),
+            "legenda": subtitle_label,
+            "mediainfo": await self.get_media_info(meta),
+            "resolucao_1": width,
+            "resolucao_2": height,
+            "screen[]": await self.get_screens(meta),
+            "sinopse": self.main_tmdb_data.get("overview", "Nenhuma sinopse disponível."),
+            "subtitles[]": subtitle_ids,
+            "tags": await self.get_tags(meta),
+            "video_c": await self.get_video_codec(meta),
+            "youtube": await self.get_trailer(meta),
+        }
+
+    def _video_poster_url(self, meta: Meta) -> str:
+        path = self.main_tmdb_data.get("poster_path", "") or meta.tmdb_poster_path
+        return f"https://image.tmdb.org/t/p/w500{path}"
+
+    @staticmethod
+    def _apply_video_identity_fields(data: dict[str, Any], meta: Meta, brazilian_title: str) -> None:
+        if meta.anime:
+            return
+        imdb = meta.imdb_info if isinstance(meta.imdb_info, dict) else {}
+        data.update(
+            {
+                "3d": "Sim" if meta.three_d else "Nao",
+                "adulto": "0",
+                "imdb_input": imdb.get("imdbID", ""),
+                "nota_imdb": str(imdb.get("rating", "")),
+                "title_br": brazilian_title,
+            }
+        )
+        if meta.scene:
+            data["scene"] = "on"
+
+    @classmethod
+    def _apply_tv_anime_fields(cls, data: dict[str, Any], meta: Meta) -> None:
+        if not cls._is_tv_or_anime(meta):
+            return
+        data.update(cls._tv_anime_payload(meta))
+
+    @staticmethod
+    def _is_tv_or_anime(meta: Meta) -> bool:
+        return meta.category == "TV" or bool(meta.anime)
+
+    @staticmethod
+    def _tv_anime_payload(meta: Meta) -> dict[str, Any]:
+        pack = bool(meta.tv_pack)
+        return {
+            "episodio": meta.episode,
+            "ntorrent": f"{meta.season}{meta.episode}",
+            "temporada_e": "" if pack else meta.season,
+            "temporada": meta.season if pack else "",
+            "tipo": "completa" if pack else "ep_individual",
+        }
+
+    async def _apply_video_specific_fields(self, data: dict[str, Any], meta: Meta) -> None:
+        if meta.category == "MOVIE":
+            data["versao"] = await self.get_edition(meta)
+            return
+        if meta.anime:
+            self._apply_anime_fields(data, meta)
+
+    @staticmethod
+    def _apply_anime_fields(data: dict[str, Any], meta: Meta) -> None:
+        imdb = meta.imdb_info if isinstance(meta.imdb_info, dict) else {}
+        data.update(
+            {
+                "fundo_torrent": meta.backdrop,
+                "horas": "",
+                "minutos": "",
+                "rating": str(imdb.get("rating", "")),
+                "releasedate": "" if meta.year is None else str(meta.year),
+                "vote": "",
+            }
+        )
+
+    def _apply_anonymous_flag(self, data: dict[str, Any], meta: Meta) -> None:
+        tracker_config = self._tracker_config()
+        anonymous = not (meta.anon == 0 and not tracker_config.get("anon", False))
+        if anonymous:
             data["anonymous"] = "1"
 
-        # Internal
-        if meta.tag and (
-            self.config["TRACKERS"][self.tracker].get("internal", False) is True and meta.tag[1:] in self.config["TRACKERS"][self.tracker].get("internal_groups", [])
-        ):
-            data.update(
-                {
-                    "internal": 1,
-                }
-            )
+    def _apply_internal_flag(self, data: dict[str, Any], meta: Meta) -> None:
+        if not meta.tag:
+            return
+        tracker_config = self._tracker_config()
+        groups = tracker_config.get("internal_groups", [])
+        if tracker_config.get("internal", False) is True and isinstance(groups, list) and meta.tag[1:] in groups:
+            data["internal"] = 1
 
-        return data
+    def _tracker_config(self) -> dict[str, Any]:
+        trackers = self.config.get("TRACKERS", {})
+        if not isinstance(trackers, dict):
+            return {}
+        value = trackers.get(self.tracker, {})
+        return cast(dict[str, Any], value) if isinstance(value, dict) else {}
 
     def get_audiobook_bitrate(self, meta: Meta) -> str:
         container_lower = meta.container.lower()
@@ -1207,17 +1350,22 @@ class BrasilTracker:
         return builder._build_book_desc_section(meta, header_size=3, table=False)
 
     async def get_book_cover(self, meta: Meta) -> str:
-        covers = meta.hosted_artwork
-        if isinstance(covers, list) and len(covers) > 0:
-            raw_url = covers[0].get("raw_url")
-            if raw_url:
-                return str(raw_url)
+        hosted = self._hosted_cover(meta.hosted_artwork)
+        if hosted:
+            return hosted
+        return self._remote_url(meta.artwork_url)
 
-        # Fallback to poster URL if remote
-        poster_url = meta.artwork_url
-        if isinstance(poster_url, str) and poster_url.startswith(("http://", "https://")):
-            return poster_url
+    @staticmethod
+    def _hosted_cover(value: Any) -> str:
+        if not isinstance(value, list) or not value or not isinstance(value[0], dict):
+            return ""
+        raw_url = value[0].get("raw_url")
+        return str(raw_url) if raw_url else ""
 
+    @staticmethod
+    def _remote_url(value: Any) -> str:
+        if isinstance(value, str) and value.startswith(("http://", "https://")):
+            return value
         return ""
 
     async def get_book_language(self, meta: Meta) -> str:
@@ -1247,26 +1395,52 @@ class BrasilTracker:
     def get_book_pages(self, meta: Meta) -> str:
         if meta.audiobook:
             return ""
-
-        file_path = meta.filelist[0] if meta.filelist else meta.path
-        if not file_path or not Path(file_path).exists():
+        path = self._book_file_path(meta)
+        if path is None:
             return ""
+        return self._book_page_count(path)
 
-        ext = Path(file_path).suffix.lower()
-        if ext == ".pdf":
-            with contextlib.suppress(Exception):
-                doc = fitz.open(file_path)
-                return str(len(doc))
-        elif ext in (".cbz", ".cbr"):
-            with contextlib.suppress(Exception):
-                if ext == ".cbz":
-                    with zipfile.ZipFile(file_path) as z:
-                        return str(len([f for f in z.namelist() if f.lower().endswith((".png", ".jpg", ".jpeg", ".webp"))]))
-                else:
-                    with rarfile.RarFile(file_path) as r:
-                        names = cast(list[str], r.namelist())
-                        return str(len([name for name in names if name.lower().endswith((".png", ".jpg", ".jpeg", ".webp"))]))
+    @staticmethod
+    def _book_file_path(meta: Meta) -> Path | None:
+        filelist = meta.filelist if isinstance(meta.filelist, list) else []
+        value = filelist[0] if filelist else meta.path
+        if not value:
+            return None
+        path = Path(str(value))
+        return path if path.exists() else None
+
+    @classmethod
+    def _book_page_count(cls, path: Path) -> str:
+        try:
+            if path.suffix.lower() == ".pdf":
+                return cls._pdf_pages(path)
+            if path.suffix.lower() == ".cbz":
+                return cls._cbz_pages(path)
+            if path.suffix.lower() == ".cbr":
+                return cls._cbr_pages(path)
+        except Exception:
+            return ""
         return ""
+
+    @staticmethod
+    def _pdf_pages(path: Path) -> str:
+        document = fitz.open(path)
+        return str(len(document))
+
+    @staticmethod
+    def _cbz_pages(path: Path) -> str:
+        with zipfile.ZipFile(path) as archive:
+            return str(sum(1 for name in archive.namelist() if BrasilTracker._image_archive_name(name)))
+
+    @staticmethod
+    def _cbr_pages(path: Path) -> str:
+        with rarfile.RarFile(path) as archive:
+            names = cast(list[str], archive.namelist())
+            return str(sum(1 for name in names if BrasilTracker._image_archive_name(name)))
+
+    @staticmethod
+    def _image_archive_name(name: str) -> bool:
+        return name.lower().endswith((".png", ".jpg", ".jpeg", ".webp"))
 
     async def upload(self, meta: Meta) -> bool:
         if getattr(meta, "skipping", None) == self.tracker:
