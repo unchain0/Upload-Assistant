@@ -102,3 +102,53 @@ def test_polishtorrent_tv_pack_status_and_disc_folder_handling():
     assert PolishTorrent._is_tv_pack_ended(unknown_pack) is None
     assert asyncio.run(tracker.get_additional_checks(unknown_pack)) is False
     assert asyncio.run(tracker.get_additional_checks(_movie_meta(is_disc="BDMV", keep_folder=True, mediainfo=None, filelist=["BDMV"]))) is True
+
+
+def test_polishtorrent_image_url_guard_branches():
+    assert PolishTorrent._extract_image_url("bad", "raw_url") == ""
+    assert PolishTorrent._extract_image_url({"raw_url": 123}, "raw_url") == ""
+    assert not PolishTorrent._is_forbidden_tracker_url("not-a-url")
+
+
+def test_polishtorrent_rejects_tracker_reference_in_description():
+    meta = _movie_meta(description="Mirrored from https://rutracker.net/release")
+    assert not asyncio.run(PolishTorrent({"TRACKERS": {}}).get_additional_checks(meta))
+
+
+def test_polishtorrent_rejects_unsupported_screenshot_metadata():
+    images = [
+        {"raw_url": "https://images.example/full-1.png", "img_url": "https://images.example/thumb-1.png"},
+        {"raw_url": "https://images.example/full-2.png", "img_url": "https://images.example/thumb-2.png"},
+        {"raw_url": "https://images.example/full-3.jpg", "img_url": "https://images.example/thumb-3.jpg"},
+    ]
+    assert not asyncio.run(PolishTorrent({"TRACKERS": {}}).get_additional_checks(_movie_meta(image_list=images)))
+
+
+def test_polishtorrent_rejects_screenshot_without_thumb_and_full_links():
+    images = [
+        {"raw_url": "https://images.example/full-1.png", "img_url": "https://images.example/thumb-1.png"},
+        {"raw_url": "https://images.example/full-2.png", "img_url": "https://images.example/thumb-2.png"},
+        {"raw_url": "https://images.example/full-3.png"},
+    ]
+    assert not asyncio.run(PolishTorrent({"TRACKERS": {}}).get_additional_checks(_movie_meta(image_list=images)))
+
+
+def test_polishtorrent_requires_mediainfo_for_non_disc_video():
+    assert not asyncio.run(PolishTorrent({"TRACKERS": {}}).get_additional_checks(_movie_meta(mediainfo=None)))
+
+
+def test_polishtorrent_rejects_movie_boxset():
+    meta = _movie_meta(name="Example Movie Collection 2024 1080p WEB-DL H264")
+    assert not asyncio.run(PolishTorrent({"TRACKERS": {}}).get_additional_checks(meta))
+
+
+def test_polishtorrent_rejects_ongoing_tv_pack(monkeypatch):
+    tracker = PolishTorrent({"TRACKERS": {}})
+    monkeypatch.setattr(PolishTorrent, "_is_tv_pack_ended", staticmethod(lambda _meta: False))
+    meta = _movie_meta(category="TV", tv_pack=True, name="Example Show S01 1080p WEB-DL H264")
+    assert not asyncio.run(tracker.get_additional_checks(meta))
+
+
+def test_polishtorrent_rejects_single_video_inside_folder():
+    meta = _movie_meta(keep_folder=True, filelist=["Example.Movie.2024.mkv"])
+    assert not asyncio.run(PolishTorrent({"TRACKERS": {}}).get_additional_checks(meta))

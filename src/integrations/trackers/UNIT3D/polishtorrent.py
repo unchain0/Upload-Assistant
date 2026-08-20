@@ -134,20 +134,22 @@ class PolishTorrent(UNIT3D):
             return True
         return bool(re.search(r"\s{2,}", value))
 
-    @staticmethod
-    def _contains_other_tracker_mention(value: str) -> bool:
+    @classmethod
+    def _contains_other_tracker_mention(cls, value: str) -> bool:
         lowered = value.lower()
         url_pattern = re.compile(r"(?:https?:)?//[^\s]+")
-        for raw_url in url_pattern.findall(lowered):
-            authority_match = re.match(r"(?:https?:)?//([^/?#\s]+)", raw_url)
-            if authority_match is None:
-                continue
-            host = authority_match.group(1).rsplit("@", 1)[-1].partition(":")[0].lower().strip("()[]{}<>").rstrip(".")
-            if any(host == forbidden or host.endswith(f".{forbidden}") for forbidden in PolishTorrent._TRACKER_DOMAINS):
-                return True
-
-        tracker_pattern = re.compile(r"(?<![a-z0-9])(?:" + "|".join(map(re.escape, PolishTorrent._TRACKER_TERMS)) + r")(?![a-z0-9])")
+        if any(cls._is_forbidden_tracker_url(raw_url) for raw_url in url_pattern.findall(lowered)):
+            return True
+        tracker_pattern = re.compile(r"(?<![a-z0-9])(?:" + "|".join(map(re.escape, cls._TRACKER_TERMS)) + r")(?![a-z0-9])")
         return bool(tracker_pattern.search(url_pattern.sub(" ", lowered)))
+
+    @classmethod
+    def _is_forbidden_tracker_url(cls, raw_url: str) -> bool:
+        authority_match = re.match(r"(?:https?:)?//([^/?#\s]+)", raw_url)
+        if authority_match is None:
+            return False
+        host = authority_match.group(1).rsplit("@", 1)[-1].partition(":")[0].lower().strip("()[]{}<>").rstrip(".")
+        return any(host == forbidden or host.endswith(f".{forbidden}") for forbidden in cls._TRACKER_DOMAINS)
 
     @staticmethod
     def _is_tv_pack_ended(meta: Meta) -> bool | None:
