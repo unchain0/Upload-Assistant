@@ -94,17 +94,26 @@ class Unwalled(UnwalledValidationMixin, UNIT3D):
 
     async def _resolve_option(self, value: str, plural: str) -> str:
         requested = value.strip()
-        if requested.isdigit() and int(requested) > 0:
-            return requested
+        numeric = self._positive_numeric_option(requested)
+        if numeric:
+            return numeric
+        singular = self._option_singular(plural)
         if not requested:
-            singular = plural.removesuffix("s")
             raise ValueError(f"Set --unwalled-{singular} or TRACKERS.UNWALLED.{singular}")
         catalog = await self.discover_options()
         option_id = catalog[plural].get(self._normalize_option(requested))
         if option_id:
             return option_id
         available = ", ".join(sorted(catalog[plural])) or "none discovered"
-        raise ValueError(f"Unknown Unwalled {plural.removesuffix('s')} {requested!r}; available: {available}. A numeric ID is also accepted")
+        raise ValueError(f"Unknown Unwalled {singular} {requested!r}; available: {available}. A numeric ID is also accepted")
+
+    @staticmethod
+    def _positive_numeric_option(value: str) -> str:
+        return value if value.isdigit() and int(value) > 0 else ""
+
+    @staticmethod
+    def _option_singular(plural: str) -> str:
+        return {"categories": "category", "types": "type"}.get(plural, plural.removesuffix("s"))
 
     async def get_category_id(self, meta: Meta, category: str = "", reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
         catalog = await self.discover_options() if mapping_only or reverse else self.option_catalog

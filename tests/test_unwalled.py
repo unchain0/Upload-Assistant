@@ -922,3 +922,94 @@ def test_unwalled_rejects_decompression_bomb_errors(tmp_path: Path) -> None:
 
 def test_podcast_prep_uses_cli_backed_mediainfo() -> None:
     assert podcast_prep.MediaInfo is mediainfo.MediaInfo
+
+
+def test_unwalled_catalog_guard_branches() -> None:
+    tracker = _tracker()
+    assert tracker.catalog_from_response({"data": "bad"}) == {"categories": {}, "types": {}}
+    payload = {"data": ["bad-entry", {"attributes": "bad-attributes"}]}
+    assert tracker.catalog_from_response(payload) == {"categories": {}, "types": {}}
+
+
+@pytest.mark.asyncio
+async def test_unwalled_discovery_reuses_completed_catalog() -> None:
+    tracker = _tracker()
+    tracker.option_catalog = {"categories": {"technology": "14"}, "types": {"free audio": "3"}}
+    tracker.option_discovery_complete = True
+    assert await tracker.discover_options() == tracker.option_catalog
+
+
+@pytest.mark.asyncio
+async def test_unwalled_discovery_stops_on_non_mapping_payload() -> None:
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=["unexpected"])
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    with patch("src.integrations.trackers.UNIT3D.unwalled.httpx.AsyncClient", return_value=client):
+        assert await _tracker().discover_options() == {"categories": {}, "types": {}}
+
+
+@pytest.mark.asyncio
+async def test_unwalled_mapping_modes_and_unknown_option() -> None:
+    tracker = _tracker()
+    tracker.option_catalog = {"categories": {"technology": "14"}, "types": {"free audio": "3"}}
+    tracker.option_discovery_complete = True
+    meta = Meta(category="PODCAST")
+
+    assert await tracker.get_category_id(meta, mapping_only=True) == {"technology": "14"}
+    assert await tracker.get_category_id(meta, reverse=True) == {"14": "technology"}
+    assert await tracker.get_type_id(meta, mapping_only=True) == {"free audio": "3"}
+    assert await tracker.get_type_id(meta, reverse=True) == {"3": "free audio"}
+    with pytest.raises(ValueError, match="Unknown Unwalled category"):
+        await tracker.get_category_id(meta, category="Missing")
+
+
+@pytest.mark.asyncio
+async def test_unwalled_additional_checks_require_title() -> None:
+    assert not await _tracker().get_additional_checks(Meta(category="PODCAST", podcast_title="", name=""))
+
+
+@pytest.mark.asyncio
+async def test_unwalled_option_resolution_error_is_a_clean_rejection(monkeypatch: pytest.MonkeyPatch) -> None:
+    tracker = _tracker()
+    monkeypatch.setattr(tracker, "_valid_torrent_paths", lambda _meta: True)
+    monkeypatch.setattr(tracker, "_valid_artwork", lambda _meta: True)
+    tracker.get_category_id = AsyncMock(side_effect=ValueError("bad option"))  # type: ignore[method-assign]
+    meta = Meta(
+        category="PODCAST",
+        podcast_title="Example Show [2026/MP3 - 128kbps]",
+        type="AUDIO",
+        filelist=["episode.mp3"],
+        debug=True,
+    )
+    assert not await tracker.get_additional_checks(meta)
+
+
+@pytest.mark.asyncio
+async def test_unwalled_rejects_artwork_that_consumes_bundle_budget(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    tracker = _tracker()
+    cover = tmp_path / "cover.jpg"
+    cover.write_bytes(b"x" * (1024 * 1024))
+    monkeypatch.setattr(tracker, "_valid_torrent_paths", lambda _meta: True)
+    monkeypatch.setattr(tracker, "_valid_artwork", lambda _meta: True)
+    tracker.get_category_id = AsyncMock(return_value={"category_id": "14"})  # type: ignore[method-assign]
+    tracker.get_type_id = AsyncMock(return_value={"type_id": "3"})  # type: ignore[method-assign]
+    meta = Meta(
+        base_dir=str(tmp_path),
+        uuid="art-budget",
+        category="PODCAST",
+        podcast_title="Example Show [2026/MP3 - 128kbps]",
+        type="AUDIO",
+        filelist=["episode.mp3"],
+        artwork_path=str(cover),
+        artwork_banner_path="",
+        debug=True,
+    )
+    assert not await tracker.get_additional_checks(meta)
+
+
+@pytest.mark.asyncio
+async def test_unwalled_upload_filename_requires_valid_personal_announce() -> None:
+    tracker = _tracker(announce_url="not-a-valid-url")
+    with pytest.raises(ValueError, match="valid personal Unwalled announce URL"):
+        await tracker.get_upload_torrent_filename(Meta(debug=False))
