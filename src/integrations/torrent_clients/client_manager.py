@@ -359,202 +359,250 @@ class Clients(QbittorrentClientMixin, RtorrentClientMixin, DelugeClientMixin, Tr
         return None
 
     async def _search_single_client_for_torrent(
-        self, meta: Meta, client_name: str, prefer_small_pieces: bool, piece_limit: bool, best_match: dict[str, Any] | None
+        self,
+        meta: Meta,
+        client_name: str,
+        prefer_small_pieces: bool,
+        piece_limit: bool,
+        best_match: dict[str, Any] | None,
     ) -> dict[str, Any] | str | None:
-        """Search a single client for an existing torrent by hash or via API search (qbit only)."""
+        """Search one configured client and return a validated reusable torrent."""
+        client = cast(dict[str, Any], self.config["TORRENT_CLIENTS"][client_name])
+        torrent_client = str(client.get("torrent_client", "")).lower()
+        storage_dir = self._torrent_storage_dir(client)
+        preset = await self._find_prespecified_hash_torrent(meta, client, torrent_client, storage_dir)
+        if preset is not None:
+            return preset
+        if not self._qbit_search_enabled(client, torrent_client):
+            return best_match
+        found_hash, qbt_client = await self._search_qbit_hash(meta, client)
+        if not found_hash:
+            return best_match
+        candidate = await self._prepare_qbit_candidate(meta, client, storage_dir, found_hash, qbt_client)
+        if candidate is None:
+            return best_match
+        return await self._validated_qbit_search_result(
+            meta,
+            client,
+            candidate,
+            found_hash,
+            prefer_small_pieces,
+            piece_limit,
+            best_match,
+        )
 
-        client = self.config["TORRENT_CLIENTS"][client_name]
-        torrent_client = client.get("torrent_client", "").lower()
-        torrent_storage_dir = client.get("torrent_storage_dir")
-        qbt_client: qbittorrentapi.Client | None = None
-        proxy_url: str | None = None
+    @staticmethod
+    def _torrent_storage_dir(client: dict[str, Any]) -> str | None:
+        value = client.get("torrent_storage_dir")
+        return str(value) if value else None
 
-        # Iterate through pre-specified hashes
-        for hash_key in ["torrenthash", "ext_torrenthash"]:
+    @staticmethod
+    def _qbit_search_enabled(client: dict[str, Any], torrent_client: str) -> bool:
+        return torrent_client == "qbit" and bool(client.get("enable_search"))
+
+    async def _find_prespecified_hash_torrent(
+        self,
+        meta: Meta,
+        client: dict[str, Any],
+        torrent_client: str,
+        storage_dir: str | None,
+    ) -> str | None:
+        for hash_key in ("torrenthash", "ext_torrenthash"):
             hash_value = meta.get(hash_key)
-            if hash_value:
-                hash_value_str = str(hash_value)
-                # If no torrent_storage_dir defined, use saved torrent from qbit
-                extracted_torrent_dir = Path(meta.base_dir) / "tmp" / meta.uuid
+            if not hash_value:
+                continue
+            torrent_hash = str(hash_value)
+            candidate = await self._prepare_hash_candidate(meta, client, torrent_client, storage_dir, torrent_hash)
+            if candidate is None:
+                continue
+            valid, resolved_path = await self.is_valid_torrent(meta, candidate, torrent_hash, torrent_client, client)
+            if valid:
+                return resolved_path
+        return None
 
-                if torrent_storage_dir:
-                    torrent_path = Path(torrent_storage_dir) / f"{hash_value_str}.torrent"
-                else:
-                    if torrent_client != "qbit":
-                        return None
+    async def _prepare_hash_candidate(
+        self,
+        meta: Meta,
+        client: dict[str, Any],
+        torrent_client: str,
+        storage_dir: str | None,
+        torrent_hash: str,
+    ) -> str | None:
+        existing = self._existing_torrent_candidate(meta, storage_dir, torrent_hash)
+        if existing is not None:
+            return existing
+        if storage_dir:
+            return str(Path(storage_dir) / f"{torrent_hash}.torrent")
+        if torrent_client != "qbit":
+            return None
+        return await self._export_qbit_torrent(meta, client, torrent_hash, qbt_client=None)
 
-                    try:
-                        proxy_url = client.get("qui_proxy_url")
-                        if proxy_url:
-                            qbt_proxy_url = proxy_url.rstrip("/")
-                            async with httpx.AsyncClient() as session:
-                                try:
-                                    response = await session.post(f"{qbt_proxy_url}/api/v2/torrents/export", data={"hash": hash_value_str})
-                                    if response.status_code == 200:
-                                        torrent_file_content = response.content
-                                    else:
-                                        logger.error(f"[red]Failed to export torrent via proxy: {response.status_code}")
-                                        continue
-                                except Exception as e:
-                                    logger.error(f"[red]Error exporting torrent via proxy: {e}")
-                                    continue
-                        else:
-                            potential_qbt_client = await self.init_qbittorrent_client(client)
-                            if not potential_qbt_client:
-                                continue
-                            qbt_client = potential_qbt_client
+    @classmethod
+    def _existing_torrent_candidate(cls, meta: Meta, storage_dir: str | None, torrent_hash: str) -> str | None:
+        for path in cls._candidate_torrent_paths(meta, storage_dir, torrent_hash):
+            if path.exists():
+                return str(path)
+        return None
 
-                            qbt_client_local: qbittorrentapi.Client = qbt_client
+    @staticmethod
+    def _candidate_torrent_paths(meta: Meta, storage_dir: str | None, torrent_hash: str) -> tuple[Path, ...]:
+        extracted = Path(meta.base_dir) / "tmp" / meta.uuid / f"{torrent_hash}.torrent"
+        if storage_dir:
+            return Path(storage_dir) / f"{torrent_hash}.torrent", extracted
+        return (extracted,)
 
-                            try:
-                                torrent_file_content = await self.retry_qbt_operation(
-                                    lambda qbt_client_local=qbt_client_local, hash_value_str=hash_value_str: asyncio.to_thread(
-                                        qbt_client_local.torrents_export, torrent_hash=hash_value_str
-                                    ),
-                                    f"Export torrent {hash_value_str}",
-                                )
-                            except TimeoutError, qbittorrentapi.APIError:
-                                continue
-                        if not torrent_file_content:
-                            logger.info(f"[bold red]qBittorrent returned an empty response for hash {hash_value_str}")
-                            continue  # Skip to the next hash
+    async def _search_qbit_hash(
+        self,
+        meta: Meta,
+        client: dict[str, Any],
+    ) -> tuple[str | None, qbittorrentapi.Client | None]:
+        qbt_client, qbt_session, proxy_url = await self._qbit_search_resources(client)
+        try:
+            return await self._run_qbit_search(meta, client, qbt_client, qbt_session, proxy_url)
+        finally:
+            if qbt_session is not None:
+                await qbt_session.aclose()
 
-                        # Save the .torrent file
-                        Path(extracted_torrent_dir).mkdir(parents=True, exist_ok=True)
-                        torrent_path = Path(extracted_torrent_dir) / f"{hash_value_str}.torrent"
+    async def _qbit_search_resources(
+        self,
+        client: dict[str, Any],
+    ) -> tuple[qbittorrentapi.Client | None, httpx.AsyncClient | None, str | None]:
+        proxy_url = self._proxy_url(client)
+        if proxy_url:
+            session = httpx.AsyncClient(timeout=10.0, verify=self.create_ssl_context_for_client(client))
+            return None, session, proxy_url
+        return await self.init_qbittorrent_client(client), None, None
 
-                        await asyncio.to_thread(Path(torrent_path).write_bytes, torrent_file_content)
+    async def _run_qbit_search(
+        self,
+        meta: Meta,
+        client: dict[str, Any],
+        qbt_client: qbittorrentapi.Client | None,
+        qbt_session: httpx.AsyncClient | None,
+        proxy_url: str | None,
+    ) -> tuple[str | None, qbittorrentapi.Client | None]:
+        try:
+            found_hash = await self.search_qbit_for_torrent(meta, client, qbt_client, qbt_session, proxy_url)
+            return found_hash, qbt_client
+        except KeyboardInterrupt:
+            logger.info("[bold red]Search cancelled by user")
+            raise
+        except TimeoutError:
+            raise
+        except Exception as error:
+            logger.info(f"[bold red]Error searching qBittorrent: {error}")
+            return None, qbt_client
 
-                        logger.info(f"[green]Successfully saved .torrent file: {torrent_path}")
+    @staticmethod
+    def _proxy_url(client: dict[str, Any]) -> str | None:
+        value = client.get("qui_proxy_url")
+        return str(value) if value else None
 
-                    except qbittorrentapi.APIError as e:
-                        logger.info(f"[bold red]Failed to fetch .torrent from qBittorrent for hash {hash_value_str}: {e}")
-                        continue
+    async def _prepare_qbit_candidate(
+        self,
+        meta: Meta,
+        client: dict[str, Any],
+        storage_dir: str | None,
+        found_hash: str,
+        qbt_client: qbittorrentapi.Client | None,
+    ) -> str | None:
+        existing = self._existing_torrent_candidate(meta, storage_dir, found_hash)
+        if existing is not None:
+            logger.debug(f"[cyan]DEBUG: .torrent file already exists at {existing}[/cyan]")
+            return existing
+        logger.info(f"[yellow]Exporting .torrent file from qBittorrent for hash: {found_hash}[/yellow]")
+        return await self._export_qbit_torrent(meta, client, found_hash, qbt_client=qbt_client)
 
-                # Validate the .torrent file
-                valid, resolved_path = await self.is_valid_torrent(meta, str(torrent_path), hash_value_str, torrent_client, client)
+    async def _export_qbit_torrent(
+        self,
+        meta: Meta,
+        client: dict[str, Any],
+        torrent_hash: str,
+        *,
+        qbt_client: qbittorrentapi.Client | None,
+    ) -> str | None:
+        try:
+            content = await self._qbit_export_content(client, torrent_hash, qbt_client)
+        except (TimeoutError, qbittorrentapi.APIError) as error:
+            logger.error(f"[red]Error exporting torrent: {error}")
+            return None
+        except Exception as error:
+            logger.error(f"[bold red]Unexpected error fetching .torrent from qBittorrent: {error}")
+            return None
+        if not content:
+            logger.info(f"[bold red]qBittorrent returned an empty response for hash {torrent_hash}")
+            return None
+        target = Path(meta.base_dir) / "tmp" / meta.uuid / f"{torrent_hash}.torrent"
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            await asyncio.to_thread(target.write_bytes, content)
+        except (OSError, TypeError, ValueError) as error:
+            logger.error(f"[bold red]Unexpected error saving exported .torrent: {error}")
+            return None
+        logger.info(f"[green]Successfully saved .torrent file: {target}")
+        return str(target)
 
-                if valid:
-                    return resolved_path
+    async def _qbit_export_content(
+        self,
+        client: dict[str, Any],
+        torrent_hash: str,
+        qbt_client: qbittorrentapi.Client | None,
+    ) -> bytes | None:
+        proxy_url = self._proxy_url(client)
+        if proxy_url:
+            return await self._proxy_export_content(proxy_url, torrent_hash)
+        active_client = qbt_client or await self.init_qbittorrent_client(client)
+        if active_client is None:
+            return None
+        return cast(
+            bytes | None,
+            await self.retry_qbt_operation(
+                lambda: asyncio.to_thread(active_client.torrents_export, torrent_hash=torrent_hash),
+                f"Export torrent {torrent_hash}",
+            ),
+        )
 
-        # Search the client if no pre-specified hash matches
-        if torrent_client == "qbit" and client.get("enable_search"):
-            qbt_session: httpx.AsyncClient | None = None
-            try:
-                proxy_url = client.get("qui_proxy_url")
+    @staticmethod
+    async def _proxy_export_content(proxy_url: str, torrent_hash: str) -> bytes | None:
+        async with httpx.AsyncClient() as session:
+            response = await session.post(f"{proxy_url.rstrip('/')}/api/v2/torrents/export", data={"hash": torrent_hash})
+        if response.status_code == 200:
+            return response.content
+        logger.error(f"[red]Failed to export torrent via proxy: {response.status_code}")
+        return None
 
-                if proxy_url:
-                    ssl_context = self.create_ssl_context_for_client(client)
-                    qbt_session = httpx.AsyncClient(timeout=10.0, verify=ssl_context)
-                else:
-                    qbt_client = await self.init_qbittorrent_client(client)
+    async def _validated_qbit_search_result(
+        self,
+        meta: Meta,
+        client: dict[str, Any],
+        candidate: str,
+        found_hash: str,
+        prefer_small_pieces: bool,
+        piece_limit: bool,
+        best_match: dict[str, Any] | None,
+    ) -> dict[str, Any] | str | None:
+        valid, resolved_path = await self.is_valid_torrent(meta, candidate, found_hash, "qbit", client)
+        if not valid:
+            return best_match
+        piece_size = Torrent.read(resolved_path).piece_size
+        if not prefer_small_pieces:
+            logger.debug(f"[green]Found a valid torrent from client search with piece size {piece_size / 1024 / 1024} MiB: [bold yellow]{found_hash}")
+            return resolved_path
+        if piece_limit and piece_size < 16 * 1024 * 1024:
+            logger.info(f"[green]Found a valid torrent with piece size under 16 MiB from client search: [bold yellow]{found_hash}")
+            return resolved_path
+        return self._better_piece_match(best_match, found_hash, resolved_path, piece_size)
 
-                found_hash = await self.search_qbit_for_torrent(meta, client, qbt_client, qbt_session, proxy_url)
-
-                # Clean up session if we created one
-                if qbt_session:
-                    await qbt_session.aclose()
-
-            except KeyboardInterrupt:
-                logger.info("[bold red]Search cancelled by user")
-                if qbt_session:
-                    await qbt_session.aclose()
-                raise
-            except TimeoutError:
-                if qbt_session:
-                    await qbt_session.aclose()
-                raise
-            except Exception as e:
-                logger.info(f"[bold red]Error searching qBittorrent: {e}")
-                found_hash = None
-                if qbt_session:
-                    await qbt_session.aclose()
-            if found_hash:
-                extracted_torrent_dir = Path(meta.base_dir) / "tmp" / meta.uuid
-
-                if torrent_storage_dir:
-                    found_torrent_path = Path(torrent_storage_dir) / f"{found_hash}.torrent"
-                else:
-                    found_torrent_path = Path(extracted_torrent_dir) / f"{found_hash}.torrent"
-
-                    if not Path(found_torrent_path).exists():
-                        logger.info(f"[yellow]Exporting .torrent file from qBittorrent for hash: {found_hash}[/yellow]")
-
-                        torrent_file_content: bytes | None = None
-
-                        try:
-                            proxy_url = client.get("qui_proxy_url")
-                            if proxy_url:
-                                qbt_proxy_url = proxy_url.rstrip("/")
-                                async with httpx.AsyncClient() as session:
-                                    try:
-                                        response = await session.post(f"{qbt_proxy_url}/api/v2/torrents/export", data={"hash": found_hash})
-                                        if response.status_code == 200:
-                                            torrent_file_content = response.content
-                                        else:
-                                            logger.error(f"[red]Failed to export torrent via proxy: {response.status_code}")
-                                            found_hash = None
-                                    except Exception as e:
-                                        logger.error(f"[red]Error exporting torrent via proxy: {e}")
-                                        found_hash = None
-                            else:
-                                # Reuse or create qbt_client if needed
-                                if qbt_client is None:
-                                    qbt_client = await self.init_qbittorrent_client(client)
-                                    if qbt_client is None:
-                                        logger.info("[bold red]Failed to connect to qBittorrent for export.")
-                                        found_hash = None
-
-                                if found_hash and qbt_client is not None:  # Only proceed if we still have a hash
-                                    active_qbt = qbt_client
-                                    try:
-                                        torrent_file_content = await self.retry_qbt_operation(
-                                            lambda qbt_client=active_qbt, found_hash=found_hash: asyncio.to_thread(qbt_client.torrents_export, torrent_hash=found_hash),
-                                            f"Export torrent {found_hash}",
-                                        )
-                                    except (TimeoutError, qbittorrentapi.APIError) as e:
-                                        logger.error(f"[red]Error exporting torrent: {e}")
-
-                            if found_hash:  # Only proceed if export succeeded
-                                if not torrent_file_content:
-                                    found_hash = None
-                                else:
-                                    Path(extracted_torrent_dir).mkdir(parents=True, exist_ok=True)
-                                    await asyncio.to_thread(Path(found_torrent_path).write_bytes, torrent_file_content)
-                                    logger.info(f"[green]Successfully saved .torrent file: {found_torrent_path}")
-                        except Exception as e:
-                            logger.error(f"[bold red]Unexpected error fetching .torrent from qBittorrent: {e}")
-                            logger.info("[cyan]DEBUG: Skipping found_hash due to unexpected error[/cyan]")
-                            found_hash = None
-                    else:
-                        logger.debug(f"[cyan]DEBUG: .torrent file already exists at {found_torrent_path}[/cyan]")
-
-                # Only validate if we still have a hash (export succeeded or file already existed)
-                resolved_path = ""
-                if found_hash:
-                    valid, resolved_path = await self.is_valid_torrent(meta, str(found_torrent_path), found_hash, torrent_client, client)
-                else:
-                    valid = False
-                    logger.info("[cyan]DEBUG: Skipping validation because found_hash is None[/cyan]")
-
-                if valid:
-                    torrent = Torrent.read(resolved_path)
-                    piece_size = torrent.piece_size
-                    piece_in_mib = piece_size / 1024 / 1024
-
-                    if not prefer_small_pieces:
-                        logger.debug(f"[green]Found a valid torrent from client search with piece size {piece_in_mib} MiB: [bold yellow]{found_hash}")
-                        return resolved_path
-
-                    # Track best match for small pieces
-                    if piece_size < 16777216 and piece_limit:  # 16 MiB
-                        logger.info(f"[green]Found a valid torrent with piece size under 16 MiB from client search: [bold yellow]{found_hash}")
-                        return resolved_path
-
-                    if best_match is None or piece_size < best_match["piece_size"]:
-                        best_match = {"torrenthash": found_hash, "torrent_path": resolved_path, "piece_size": piece_size}
-                        logger.info(f"[yellow]Storing valid torrent from client search as best match: [bold yellow]{found_hash}")
-
+    @staticmethod
+    def _better_piece_match(
+        best_match: dict[str, Any] | None,
+        torrent_hash: str,
+        torrent_path: str,
+        piece_size: int,
+    ) -> dict[str, Any]:
+        if best_match is None or piece_size < int(best_match["piece_size"]):
+            logger.info(f"[yellow]Storing valid torrent from client search as best match: [bold yellow]{torrent_hash}")
+            return {"torrenthash": torrent_hash, "torrent_path": torrent_path, "piece_size": piece_size}
         return best_match
 
     async def is_valid_torrent(self, meta: Meta, torrent_path: str, torrenthash: str, torrent_client: str, client: dict[str, Any]) -> tuple[bool, str]:

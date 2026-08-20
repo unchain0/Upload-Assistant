@@ -812,3 +812,68 @@ def test_final_client_manager_validation_branches(tmp_path: Path, monkeypatch: p
     monkeypatch.setattr(clients, "_read_torrent_compat", Mock(return_value=(broken, str(torrent_path))))
     valid, _ = asyncio.run(clients.is_valid_torrent(_meta(tmp_path), str(torrent_path), "ABC", "qbit", {}))
     assert not valid
+
+
+def test_search_qbit_reuses_temp_export_when_configured_storage_is_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A qBittorrent search may export to tmp even when configured storage is remote/unmounted."""
+    config = _config(tmp_path)
+    client = config["TORRENT_CLIENTS"]["main"]
+    client["enable_search"] = True
+    client["torrent_storage_dir"] = str(tmp_path / "remote-storage")
+    clients = Clients(config)
+    clients.init_qbittorrent_client = AsyncMock(return_value=Qbt())  # type: ignore[method-assign]
+    clients.search_qbit_for_torrent = AsyncMock(return_value="FOUND")  # type: ignore[method-assign]
+    clients.is_valid_torrent = AsyncMock(side_effect=_valid_path)  # type: ignore[method-assign]
+    monkeypatch.setattr(client_manager.Torrent, "read", lambda _path: FakeTorrent())
+
+    exported = tmp_path / "tmp" / "release" / "FOUND.torrent"
+    exported.parent.mkdir(parents=True, exist_ok=True)
+    exported.write_bytes(b"exported-by-search")
+
+    result = asyncio.run(clients._search_single_client_for_torrent(_meta(tmp_path), "main", False, False, None))
+
+    assert result == str(exported)
+    clients.is_valid_torrent.assert_awaited_once()
+    assert clients.is_valid_torrent.await_args.args[1] == str(exported)
+
+
+def test_preset_hash_prefers_existing_temp_export_over_missing_storage(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    storage = tmp_path / "storage"
+    config["TORRENT_CLIENTS"]["main"]["torrent_storage_dir"] = str(storage)
+    clients = Clients(config)
+    clients.is_valid_torrent = AsyncMock(side_effect=_valid_path)  # type: ignore[method-assign]
+    meta = _meta(tmp_path, torrenthash="ABC")
+    exported = tmp_path / "tmp" / "release" / "ABC.torrent"
+    exported.parent.mkdir(parents=True, exist_ok=True)
+    exported.write_bytes(b"exported")
+
+    result = asyncio.run(clients._search_single_client_for_torrent(meta, "main", False, False, None))
+
+    assert result == str(exported)
+    assert clients.is_valid_torrent.await_args.args[1] == str(exported)
+
+
+def test_validated_qbit_search_result_keeps_existing_best_on_invalid_candidate(tmp_path: Path) -> None:
+    clients = Clients(_config(tmp_path))
+    clients.is_valid_torrent = AsyncMock(return_value=(False, "candidate"))  # type: ignore[method-assign]
+    best = {"torrenthash": "OLD", "torrent_path": "old", "piece_size": 4 * 1024 * 1024}
+
+    result = asyncio.run(
+        clients._validated_qbit_search_result(
+            _meta(tmp_path),
+            _config(tmp_path)["TORRENT_CLIENTS"]["main"],
+            "candidate",
+            "NEW",
+            True,
+            True,
+            best,
+        )
+    )
+
+    assert result is best
+
+
+def test_better_piece_match_keeps_smaller_existing_match() -> None:
+    best = {"torrenthash": "OLD", "torrent_path": "old", "piece_size": 4 * 1024 * 1024}
+    assert Clients._better_piece_match(best, "NEW", "new", 8 * 1024 * 1024) is best
