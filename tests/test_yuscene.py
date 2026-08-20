@@ -45,7 +45,10 @@ def _book_meta(**kwargs: Any) -> Meta:
         "category": "BOOK",
         "author": "Kenji Miyazawa",
         "title": "Complete Collection of Children's Stories",
-        "book_overview": "This complete audiobook collection presents the celebrated children's stories written by Kenji Miyazawa.",
+        "book_overview": (
+            "This complete audiobook collection presents the celebrated"
+            " children's stories written by Kenji Miyazawa."
+        ),
         "filelist": ["audiobook.m4b"],
         "unattended": True,
         "unattended_confirm": False,
@@ -55,27 +58,78 @@ def _book_meta(**kwargs: Any) -> Meta:
 
 
 def test_yuscene_blocks_adult_keywords_when_unattended():
-    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(keywords=["Porn"], unattended=True, unattended_confirm=False))) is False
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(
+                _movie_meta(
+                    keywords=["Porn"],
+                    unattended=True,
+                    unattended_confirm=False,
+                )
+            )
+        )
+        is False
+    )
 
 
 def test_yuscene_blocks_string_adult_keyword_when_unattended():
-    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(keywords="Porn"))) is False
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(_movie_meta(keywords="Porn"))
+        )
+        is False
+    )
 
 
 def test_yuscene_blocks_delimited_adult_keyword_when_unattended():
-    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(keywords="Porn, Action"))) is False
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(
+                _movie_meta(keywords="Porn, Action")
+            )
+        )
+        is False
+    )
 
 
 def test_yuscene_rejects_malformed_filelist_and_screenshot_counts():
-    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(filelist=1))) is False
-    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(filelist=""))) is False
-    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(screens=None))) is False
-    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(screens="2"))) is False
-    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(screens=float("inf")))) is False
+    assert (
+        asyncio.run(_tracker().get_additional_checks(_movie_meta(filelist=1)))
+        is False
+    )
+    assert (
+        asyncio.run(_tracker().get_additional_checks(_movie_meta(filelist="")))
+        is False
+    )
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(_movie_meta(screens=None))
+        )
+        is False
+    )
+    assert (
+        asyncio.run(_tracker().get_additional_checks(_movie_meta(screens="2")))
+        is False
+    )
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(_movie_meta(screens=float("inf")))
+        )
+        is False
+    )
 
 
 def test_yuscene_blocks_adult_media_flag():
-    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(adult_media=True, unattended=True, unattended_confirm=False))) is False
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(
+                _movie_meta(
+                    adult_media=True, unattended=True, unattended_confirm=False
+                )
+            )
+        )
+        is False
+    )
 
 
 def test_yuscene_accepts_non_adult_movie_in_unattended_mode():
@@ -99,34 +153,60 @@ def test_yuscene_translates_non_english_book_metadata_before_upload():
         name="宮沢 賢治 - 宮沢賢治童話全集 2016 JAPANESE AUDIOBOOK",
         book_overview="※本タイトルは30時間を超えるため、宮沢賢治の童話を収録しています。",
     )
-    tracker = YUSCENE({"DEFAULT": {"google_translate_api_key": "translation-key"}, "TRACKERS": {"YUSCENE": {}}})
+    tracker = YUSCENE(
+        {
+            "DEFAULT": {"google_translate_api_key": "translation-key"},
+            "TRACKERS": {"YUSCENE": {}},
+        }
+    )
     response = Mock()
     response.raise_for_status.return_value = None
     response.json.return_value = {
         "data": {
             "translations": [
                 {"translatedText": "Kenji Miyazawa"},
-                {"translatedText": "Complete Collection of Children's Stories"},
-                {"translatedText": ("This complete audiobook collection presents the celebrated children's stories written by Kenji Miyazawa.")},
+                {
+                    "translatedText": (
+                        "Complete Collection of Children's Stories"
+                    )
+                },
+                {
+                    "translatedText": (
+                        "This complete audiobook collection presents the"
+                        " celebrated children's stories written by Kenji"
+                        " Miyazawa."
+                    )
+                },
             ]
         }
     }
 
-    with patch("src.integrations.trackers.UNIT3D.yuscene.httpx.AsyncClient.post", new=AsyncMock(return_value=response)) as translate:
+    with patch(
+        "src.integrations.trackers.UNIT3D.yuscene.httpx.AsyncClient.post",
+        new=AsyncMock(return_value=response),
+    ) as translate:
         assert asyncio.run(tracker.get_additional_checks(meta)) is True
 
     translate.assert_awaited_once()
     assert meta.author == "Kenji Miyazawa"
     assert meta.title == "Complete Collection of Children's Stories"
     assert meta.book_overview.startswith("This complete audiobook collection")
-    assert meta.name == "Kenji Miyazawa - Complete Collection of Children's Stories 2016 JAPANESE AUDIOBOOK"
+    assert (
+        meta.name
+        == "Kenji Miyazawa - Complete Collection of Children's Stories 2016"
+        " JAPANESE AUDIOBOOK"
+    )
 
 
-def test_yuscene_accepts_verified_english_book_metadata_with_original_text_optional():
+def test_yuscene_accepts_verified_english_book_meta_166519():
     meta = _book_meta(
         author="Kenji Miyazawa 宮沢 賢治",
         title="Complete Collection of Children's Stories 宮沢賢治童話全集",
-        book_overview=("This complete audiobook collection presents the celebrated children's stories written by Kenji Miyazawa. Original Japanese title: 宮沢賢治童話全集."),
+        book_overview=(
+            "This complete audiobook collection presents the celebrated"
+            " children's stories written by Kenji Miyazawa. Original Japanese"
+            " title: 宮沢賢治童話全集."
+        ),
     )
 
     assert asyncio.run(_tracker().get_additional_checks(meta)) is True
@@ -150,7 +230,10 @@ def test_yuscene_blocks_extra_files_in_movie_uploads():
         asyncio.run(
             _tracker().get_additional_checks(
                 _movie_meta(
-                    filelist=["Example.Movie.2024.mkv", "Example.Movie.2024.nfo"],
+                    filelist=[
+                        "Example.Movie.2024.mkv",
+                        "Example.Movie.2024.nfo",
+                    ],
                 )
             )
         )
@@ -159,7 +242,12 @@ def test_yuscene_blocks_extra_files_in_movie_uploads():
 
 
 def test_yuscene_requires_mediainfo_for_movie():
-    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(mediainfo={}))) is False
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(_movie_meta(mediainfo={}))
+        )
+        is False
+    )
 
 
 def test_yuscene_blocks_tv_pack_when_series_still_ongoing():
@@ -177,31 +265,69 @@ def test_yuscene_blocks_tv_pack_when_series_still_ongoing():
 
 
 def test_yuscene_does_not_classify_in_development_series_as_ended():
-    assert asyncio.run(_tracker().get_additional_checks(_tv_meta(tv_pack=True, imdb_info={"status": "In Development"}))) is False
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(
+                _tv_meta(tv_pack=True, imdb_info={"status": "In Development"})
+            )
+        )
+        is False
+    )
 
 
-def test_yuscene_blocks_title_chars_for_movie():
-    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(name="Example.Movie 2024"))) is False
+def test_yuscene_normalizes_tracker_name_before_validation():
+    tracker = _tracker()
+    meta = _movie_meta(name="Tatami 2024 1080p AMZN WEB-DL DDP 5.1 H.264-FLY")
+
+    assert asyncio.run(tracker.get_name(meta)) == {
+        "name": "Tatami 2024 1080p AMZN WEB-DL DDP 5 1 H 264-FLY"
+    }
+    assert asyncio.run(tracker.get_additional_checks(meta)) is True
+    assert meta.name == "Tatami 2024 1080p AMZN WEB-DL DDP 5.1 H.264-FLY"
 
 
 def test_yuscene_allows_movies_without_forbidden_title_chars():
-    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(name="Example Movie 2024"))) is True
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(
+                _movie_meta(name="Example Movie 2024")
+            )
+        )
+        is True
+    )
 
 
 def test_yuscene_blocks_other_tracker_mentions():
-    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(name="Example Movie 2024 yify"))) is False
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(
+                _movie_meta(name="Example Movie 2024 yify")
+            )
+        )
+        is False
+    )
 
 
 def test_yuscene_does_not_match_ambiguous_tracker_alias_inside_names():
-    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(name="Katniss Everdeen 2024"))) is True
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(
+                _movie_meta(name="Katniss Everdeen 2024")
+            )
+        )
+        is True
+    )
 
 
-def test_yuscene_allows_urls_in_description_when_tracker_reference_check_targets_title_only():
+def test_yuscene_allows_urls_desc_tracker_reference_54d066():
     assert (
         asyncio.run(
             _tracker().get_additional_checks(
                 _movie_meta(
-                    description="Screens: https://i.imgur.com/example1.jpg\nhttps://www.imdb.com/title/tt1234567/",
+                    description=(
+                        "Screens:"
+                        " https://i.imgur.com/example1.jpg\nhttps://www.imdb.com/title/tt1234567/"
+                    ),
                 )
             )
         )
@@ -210,7 +336,12 @@ def test_yuscene_allows_urls_in_description_when_tracker_reference_check_targets
 
 
 def test_yuscene_ignores_tracker_tokens_in_legitimate_url_paths():
-    assert YUSCENE._contains_other_tracker_mention("https://images.example/kat/rutracker/screen.png") == ""
+    assert (
+        YUSCENE._contains_other_tracker_mention(
+            "https://images.example/kat/rutracker/screen.png"
+        )
+        == ""
+    )
 
 
 def test_yuscene_tracker_detection_handles_malformed_urls():
@@ -218,11 +349,21 @@ def test_yuscene_tracker_detection_handles_malformed_urls():
 
 
 def test_yuscene_detects_protocol_relative_tracker_domain_with_trailing_dot():
-    assert YUSCENE._contains_other_tracker_mention("//rutracker.net./release") == "rutracker.net"
+    assert (
+        YUSCENE._contains_other_tracker_mention("//rutracker.net./release")
+        == "rutracker.net"
+    )
 
 
 def test_yuscene_blocks_disallowed_tracker_domains_in_title():
-    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(name="Example Movie 2024 from rutracker.net"))) is False
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(
+                _movie_meta(name="Example Movie 2024 from rutracker.net")
+            )
+        )
+        is False
+    )
 
 
 def test_yuscene_blocks_low_screenshot_count():
@@ -253,14 +394,24 @@ def test_yuscene_allows_movie_with_three_screenshots():
 
 
 def test_yuscene_rejects_game_package_without_valid_type_mapping():
-    meta = Meta(category="GAME", type="GAME", filelist=["dungeon_antiqua_2_enUS_20260717_.pkg"], unattended=True)
+    meta = Meta(
+        category="GAME",
+        type="GAME",
+        filelist=["dungeon_antiqua_2_enUS_20260717_.pkg"],
+        unattended=True,
+    )
 
     assert asyncio.run(_tracker().get_additional_checks(meta)) is False
     assert asyncio.run(_tracker().get_type_id(meta)) == {"type_id": "0"}
 
 
 def test_yuscene_maps_rar_game_release_to_archive_type():
-    meta = Meta(category="GAME", type="GAME", filelist=["release.rar", "release.r00"], unattended=True)
+    meta = Meta(
+        category="GAME",
+        type="GAME",
+        filelist=["release.rar", "release.r00"],
+        unattended=True,
+    )
 
     assert asyncio.run(_tracker().get_additional_checks(meta)) is True
     assert asyncio.run(_tracker().get_type_id(meta)) == {"type_id": "22"}
@@ -269,8 +420,31 @@ def test_yuscene_maps_rar_game_release_to_archive_type():
 def test_yuscene_attended_confirmation_uses_prompt():
     tracker = _tracker()
     tracker.common.prompt_user_for_confirmation = AsyncMock(return_value=True)
-    assert asyncio.run(tracker._confirm_or_skip("Confirm", Meta(unattended=False))) is True
+    assert (
+        asyncio.run(
+            tracker._confirm_or_skip("Confirm", Meta(unattended=False))
+        )
+        is True
+    )
     tracker.common.prompt_user_for_confirmation.assert_awaited_once()
+
+
+def test_yuscene_unattended_skip_logs_exact_reason():
+    tracker = _tracker()
+    with patch("src.integrations.trackers.UNIT3D.yuscene.logger.info") as info:
+        assert (
+            asyncio.run(
+                tracker._confirm_or_skip(
+                    "Specific tracker rule failed.",
+                    Meta(unattended=True, unattended_confirm=False),
+                )
+            )
+            is False
+        )
+
+    rendered = " ".join(str(call.args[0]) for call in info.call_args_list)
+    assert "Specific tracker rule failed." in rendered
+    assert "Skipping upload" in rendered
 
 
 def test_yuscene_detects_sample_video_extra_and_bracket_title():
@@ -280,44 +454,110 @@ def test_yuscene_detects_sample_video_extra_and_bracket_title():
 
 
 def test_yuscene_translation_requires_complete_source_values():
-    tracker = YUSCENE({"DEFAULT": {"google_translate_api_key": "translation-key"}, "TRACKERS": {"YUSCENE": {}}})
+    tracker = YUSCENE(
+        {
+            "DEFAULT": {"google_translate_api_key": "translation-key"},
+            "TRACKERS": {"YUSCENE": {}},
+        }
+    )
     meta = _book_meta(title="")
-    assert asyncio.run(tracker._translate_book_metadata_to_english(meta)) is False
+    assert (
+        asyncio.run(tracker._translate_book_metadata_to_english(meta)) is False
+    )
 
 
 def test_yuscene_translation_http_error_is_nonfatal():
     import httpx
 
-    tracker = YUSCENE({"DEFAULT": {"google_translate_api_key": "translation-key"}, "TRACKERS": {"YUSCENE": {}}})
-    meta = _book_meta(author="宮沢 賢治", title="宮沢賢治童話全集", book_overview="日本語の説明です。")
-    request_error = httpx.RequestError("offline", request=httpx.Request("POST", "https://translation.googleapis.com"))
-    with patch("src.integrations.trackers.UNIT3D.yuscene.httpx.AsyncClient.post", new=AsyncMock(side_effect=request_error)):
-        assert asyncio.run(tracker._translate_book_metadata_to_english(meta)) is False
+    tracker = YUSCENE(
+        {
+            "DEFAULT": {"google_translate_api_key": "translation-key"},
+            "TRACKERS": {"YUSCENE": {}},
+        }
+    )
+    meta = _book_meta(
+        author="宮沢 賢治",
+        title="宮沢賢治童話全集",
+        book_overview="日本語の説明です。",
+    )
+    request_error = httpx.RequestError(
+        "offline",
+        request=httpx.Request("POST", "https://translation.googleapis.com"),
+    )
+    with patch(
+        "src.integrations.trackers.UNIT3D.yuscene.httpx.AsyncClient.post",
+        new=AsyncMock(side_effect=request_error),
+    ):
+        assert (
+            asyncio.run(tracker._translate_book_metadata_to_english(meta))
+            is False
+        )
 
 
 def test_yuscene_translation_invalid_json_is_nonfatal():
-    tracker = YUSCENE({"DEFAULT": {"google_translate_api_key": "translation-key"}, "TRACKERS": {"YUSCENE": {}}})
-    meta = _book_meta(author="宮沢 賢治", title="宮沢賢治童話全集", book_overview="日本語の説明です。")
+    tracker = YUSCENE(
+        {
+            "DEFAULT": {"google_translate_api_key": "translation-key"},
+            "TRACKERS": {"YUSCENE": {}},
+        }
+    )
+    meta = _book_meta(
+        author="宮沢 賢治",
+        title="宮沢賢治童話全集",
+        book_overview="日本語の説明です。",
+    )
     response = Mock()
     response.raise_for_status.return_value = None
     response.json.side_effect = ValueError("bad json")
-    with patch("src.integrations.trackers.UNIT3D.yuscene.httpx.AsyncClient.post", new=AsyncMock(return_value=response)):
-        assert asyncio.run(tracker._translate_book_metadata_to_english(meta)) is False
+    with patch(
+        "src.integrations.trackers.UNIT3D.yuscene.httpx.AsyncClient.post",
+        new=AsyncMock(return_value=response),
+    ):
+        assert (
+            asyncio.run(tracker._translate_book_metadata_to_english(meta))
+            is False
+        )
 
 
 def test_yuscene_translation_rejects_incomplete_results():
-    tracker = YUSCENE({"DEFAULT": {"google_translate_api_key": "translation-key"}, "TRACKERS": {"YUSCENE": {}}})
-    meta = _book_meta(author="宮沢 賢治", title="宮沢賢治童話全集", book_overview="日本語の説明です。")
+    tracker = YUSCENE(
+        {
+            "DEFAULT": {"google_translate_api_key": "translation-key"},
+            "TRACKERS": {"YUSCENE": {}},
+        }
+    )
+    meta = _book_meta(
+        author="宮沢 賢治",
+        title="宮沢賢治童話全集",
+        book_overview="日本語の説明です。",
+    )
     response = Mock()
     response.raise_for_status.return_value = None
-    response.json.return_value = {"data": {"translations": [{"translatedText": "Kenji Miyazawa"}]}}
-    with patch("src.integrations.trackers.UNIT3D.yuscene.httpx.AsyncClient.post", new=AsyncMock(return_value=response)):
-        assert asyncio.run(tracker._translate_book_metadata_to_english(meta)) is False
+    response.json.return_value = {
+        "data": {"translations": [{"translatedText": "Kenji Miyazawa"}]}
+    }
+    with patch(
+        "src.integrations.trackers.UNIT3D.yuscene.httpx.AsyncClient.post",
+        new=AsyncMock(return_value=response),
+    ):
+        assert (
+            asyncio.run(tracker._translate_book_metadata_to_english(meta))
+            is False
+        )
 
 
 def test_yuscene_translation_revalidates_translated_metadata():
-    tracker = YUSCENE({"DEFAULT": {"google_translate_api_key": "translation-key"}, "TRACKERS": {"YUSCENE": {}}})
-    meta = _book_meta(author="宮沢 賢治", title="宮沢賢治童話全集", book_overview="日本語の説明です。")
+    tracker = YUSCENE(
+        {
+            "DEFAULT": {"google_translate_api_key": "translation-key"},
+            "TRACKERS": {"YUSCENE": {}},
+        }
+    )
+    meta = _book_meta(
+        author="宮沢 賢治",
+        title="宮沢賢治童話全集",
+        book_overview="日本語の説明です。",
+    )
     response = Mock()
     response.raise_for_status.return_value = None
     response.json.return_value = {
@@ -330,23 +570,81 @@ def test_yuscene_translation_revalidates_translated_metadata():
         }
     }
     tracker._has_english_book_metadata = Mock(return_value=False)
-    with patch("src.integrations.trackers.UNIT3D.yuscene.httpx.AsyncClient.post", new=AsyncMock(return_value=response)):
-        assert asyncio.run(tracker._translate_book_metadata_to_english(meta)) is False
+    with patch(
+        "src.integrations.trackers.UNIT3D.yuscene.httpx.AsyncClient.post",
+        new=AsyncMock(return_value=response),
+    ):
+        assert (
+            asyncio.run(tracker._translate_book_metadata_to_english(meta))
+            is False
+        )
 
 
 def test_yuscene_accepts_non_collection_keywords_payload():
-    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(keywords=123))) is True
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(_movie_meta(keywords=123))
+        )
+        is True
+    )
 
 
 def test_yuscene_rejects_single_file_folder_and_unknown_tv_pack():
     tracker = _tracker()
-    assert asyncio.run(tracker.get_additional_checks(_movie_meta(keep_folder=True))) is False
-    assert asyncio.run(tracker.get_additional_checks(_tv_meta(tv_pack=True, imdb_info={}))) is False
+    assert (
+        asyncio.run(
+            tracker.get_additional_checks(_movie_meta(keep_folder=True))
+        )
+        is False
+    )
+    assert (
+        asyncio.run(
+            tracker.get_additional_checks(_tv_meta(tv_pack=True, imdb_info={}))
+        )
+        is False
+    )
 
 
 def test_yuscene_rejects_movie_collection_name():
-    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(name="Example Movie Collection 2024"))) is False
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(
+                _movie_meta(name="Example Movie Collection 2024")
+            )
+        )
+        is False
+    )
 
 
 def test_yuscene_unknown_book_type_defaults_to_pdf():
-    assert asyncio.run(_tracker().get_type_id(Meta(category="BOOK", type="DOCX"))) == {"type_id": "21"}
+    assert asyncio.run(
+        _tracker().get_type_id(Meta(category="BOOK", type="DOCX"))
+    ) == {"type_id": "21"}
+
+
+def test_yuscene_translation_data_rejects_non_mapping() -> None:
+    assert YUSCENE._translation_data([]) == {}
+
+
+def test_yuscene_raw_title_policy_logs_and_rejects_unattended() -> None:
+    tracker = _tracker()
+    assert (
+        asyncio.run(
+            tracker._title_policy(
+                Meta(unattended=True, unattended_confirm=False),
+                "MOVIE",
+                "Movie [2024]",
+            )
+        )
+        is False
+    )
+
+
+def test_yuscene_ended_tv_pack_policy_is_allowed(monkeypatch) -> None:
+    tracker = _tracker()
+    monkeypatch.setattr(
+        tracker.common,
+        "is_tv_series_ended",
+        lambda *_args, **_kwargs: True,
+    )
+    assert asyncio.run(tracker._tv_pack_policy(_tv_meta(tv_pack=True), "TV"))
