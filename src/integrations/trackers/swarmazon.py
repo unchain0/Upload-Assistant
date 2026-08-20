@@ -1,10 +1,11 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
-from typing import Any, cast
+from typing import Any
 
 import aiofiles
 import httpx
 
 from src.domain_models.release import Meta
+from src.integrations.filesystem.temp_paths import release_temp_dir
 from src.integrations.observability.runtime_support import console, logger
 from src.integrations.security.redaction import Redaction
 from src.integrations.trackers.common import Common
@@ -40,114 +41,104 @@ class Swarmazon:
         common = Common(config=self.config)
         await common.create_torrent_for_upload(meta, self.tracker, self.source_flag)
         await self.edit_desc(meta)
-        cat_id = ""
-        sub_cat_id = ""
-
-        # Anime
-        if meta.mal_id:
-            cat_id = "7"
-            sub_cat_id = "47"
-
-            demographics_map = {"Shounen": "27", "Seinen": "28", "Shoujo": "29", "Josei": "30", "Kodomo": "31", "Mina": "47"}
-
-            demographic = meta.demographic if meta.demographic is not None else "Mina"
-            sub_cat_id = demographics_map.get(demographic, sub_cat_id)
-
-        category = meta.category
-        if category == "MOVIE":
-            cat_id = "1"
-            # sub cat is source so using source to get
-            sub_cat_id = await self.get_type_id(str(meta.source))
-        elif category == "TV":
-            cat_id = "2"
-            sub_cat_id = "6" if meta.tv_pack else "5"
-            # todo need to do a check for docs and add as subcat
-
-        mi_dump: str | None
-        bd_dump: str | None
-        if meta.bdinfo:
-            mi_dump = None
-            async with aiofiles.open(
-                f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/BD_SUMMARY_00.txt",
-                encoding="utf-8",
-            ) as bd_file:
-                bd_dump = await bd_file.read()
-        else:
-            async with aiofiles.open(
-                f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/MEDIAINFO.txt",
-                encoding="utf-8",
-            ) as mi_file:
-                mi_dump = await mi_file.read()
-            bd_dump = None
-        async with aiofiles.open(
-            f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{self.tracker}]DESCRIPTION.txt",
-            encoding="utf-8",
-        ) as desc_file:
-            desc = await desc_file.read()
-
-        async with aiofiles.open(f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{self.tracker}].torrent", "rb") as f:
-            tfile = await f.read()
-
-        # uploading torrent file.
-        files = {"torrent": (f"{meta.name}.torrent", tfile)}
-
-        # adding bd_dump to description if it exits and adding empty string to mediainfo
+        category_id, type_id = await self._upload_category(meta)
+        mi_dump, bd_dump = await self._read_media_dump(meta)
+        desc, torrent_bytes = await self._read_upload_files(meta)
         if bd_dump:
-            desc += "\n\n" + bd_dump
+            desc = f"{desc}\n\n{bd_dump}"
             mi_dump = ""
+        data = await self._upload_data(meta, category_id, type_id, desc, mi_dump)
+        files = {"torrent": (f"{meta.name}.torrent", torrent_bytes)}
+        return await self._submit_upload(meta, common, data, files)
 
-        api_key = str(self.config["TRACKERS"][self.tracker]["api_key"]).strip()
-        data: dict[str, Any] = {
-            "api_key": api_key,
+    async def _upload_category(self, meta: Meta) -> tuple[str, str]:
+        standard = await self._standard_upload_category(meta)
+        if standard is not None:
+            return standard
+        return self._anime_upload_category(meta)
+
+    async def _standard_upload_category(self, meta: Meta) -> tuple[str, str] | None:
+        if meta.category == "MOVIE":
+            return "1", await self.get_type_id(str(meta.source))
+        if meta.category == "TV":
+            return "2", "6" if meta.tv_pack else "5"
+        return None
+
+    @staticmethod
+    def _anime_upload_category(meta: Meta) -> tuple[str, str]:
+        if not meta.mal_id:
+            return "", ""
+        demographics = {"Shounen": "27", "Seinen": "28", "Shoujo": "29", "Josei": "30", "Kodomo": "31", "Mina": "47"}
+        return "7", demographics.get(meta.demographic or "Mina", "47")
+
+    async def _read_media_dump(self, meta: Meta) -> tuple[str | None, str | None]:
+        root = release_temp_dir(meta.base_dir, meta.uuid)
+        if meta.bdinfo:
+            async with aiofiles.open(root / "BD_SUMMARY_00.txt", encoding="utf-8") as handle:
+                return None, await handle.read()
+        async with aiofiles.open(root / "MEDIAINFO.txt", encoding="utf-8") as handle:
+            return await handle.read(), None
+
+    async def _read_upload_files(self, meta: Meta) -> tuple[str, bytes]:
+        root = release_temp_dir(meta.base_dir, meta.uuid)
+        async with aiofiles.open(root / f"[{self.tracker}]DESCRIPTION.txt", encoding="utf-8") as handle:
+            desc = await handle.read()
+        async with aiofiles.open(root / f"[{self.tracker}].torrent", "rb") as handle:
+            torrent_bytes = await handle.read()
+        return desc, torrent_bytes
+
+    async def _upload_data(self, meta: Meta, category_id: str, type_id: str, desc: str, mi_dump: str | None) -> dict[str, Any]:
+        return {
+            "api_key": str(self.config["TRACKERS"][self.tracker]["api_key"]).strip(),
             "name": await self.get_name(meta),
-            "category_id": cat_id,
-            "type_id": sub_cat_id,
+            "category_id": category_id,
+            "type_id": type_id,
             "media_ref": f"tt{meta.imdb}",
             "description": desc,
             "media_info": mi_dump,
         }
 
-        if not meta.debug:
-            try:
-                async with httpx.AsyncClient(timeout=30.0) as client:
-                    response = await client.post(self.upload_url, data=data, files=files)
-            except httpx.RequestError as e:
-                logger.info(f"{self.tracker}: [red]Request failed with error: {e}")
-                return False
+    async def _submit_upload(self, meta: Meta, common: Common, data: dict[str, Any], files: dict[str, tuple[str, bytes]]) -> bool:
+        if meta.debug:
+            return await self._debug_upload(meta, common, data)
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(self.upload_url, data=data, files=files)
+        except httpx.RequestError as error:
+            logger.info(f"{self.tracker}: [red]Request failed with error: {error}")
+            return False
+        return await self._handle_upload_response(meta, common, data, response)
 
-            try:
-                if response.json().get("success"):
-                    tracker_status = meta.tracker_status
-                    tracker_status.setdefault(self.tracker, {})
-                    tracker_status[self.tracker]["status_message"] = response.json()["link"]
-                    if "link" in response.json():
-                        announce_url = str(self.config["TRACKERS"][self.tracker].get("announce_url", ""))
-                        await common.create_torrent_ready_to_seed(
-                            meta,
-                            self.tracker,
-                            self.source_flag,
-                            announce_url,
-                            str(response.json()["link"]),
-                        )
-                        return True
-                    logger.info(f"{self.tracker}: [red]No Link in Response")
-                    return False
-                logger.info(f"{self.tracker}: [red]Did not upload successfully")
-                logger.info(response.json())
-                return False
-            except Exception:
-                logger.error(f"{self.tracker}: [red]Error! It may have uploaded, go check")
-                logger.info(Redaction.redact_private_info(data))
-                console.print_exception()
-                return False
-        else:
-            logger.info(f"{self.tracker}: Request Data:")
+    async def _handle_upload_response(self, meta: Meta, common: Common, data: dict[str, Any], response: httpx.Response) -> bool:
+        try:
+            payload = response.json()
+        except Exception:
+            logger.error(f"{self.tracker}: [red]Error! It may have uploaded, go check")
             logger.info(Redaction.redact_private_info(data))
-            tracker_status = meta.tracker_status
-            tracker_status.setdefault(self.tracker, {})
-            tracker_status[self.tracker]["status_message"] = "Debug mode enabled, not uploading."
-            await common.create_torrent_for_upload(meta, f"{self.tracker}" + "_DEBUG", f"{self.tracker}" + "_DEBUG", announce_url="https://fake.tracker")
-            return True  # Debug mode - simulated success
+            console.print_exception()
+            return False
+        if not isinstance(payload, dict) or not payload.get("success"):
+            logger.info(f"{self.tracker}: [red]Did not upload successfully")
+            logger.info(payload)
+            return False
+        return await self._handle_success(meta, common, payload)
+
+    async def _handle_success(self, meta: Meta, common: Common, payload: dict[str, Any]) -> bool:
+        link = str(payload.get("link", "")).strip()
+        if not link:
+            logger.info(f"{self.tracker}: [red]No Link in Response")
+            return False
+        meta.tracker_status.setdefault(self.tracker, {})["status_message"] = link
+        announce_url = str(self.config["TRACKERS"][self.tracker].get("announce_url", ""))
+        await common.create_torrent_ready_to_seed(meta, self.tracker, self.source_flag, announce_url, link)
+        return True
+
+    async def _debug_upload(self, meta: Meta, common: Common, data: dict[str, Any]) -> bool:
+        logger.info(f"{self.tracker}: Request Data:")
+        logger.info(Redaction.redact_private_info(data))
+        meta.tracker_status.setdefault(self.tracker, {})["status_message"] = "Debug mode enabled, not uploading."
+        await common.create_torrent_for_upload(meta, f"{self.tracker}_DEBUG", f"{self.tracker}_DEBUG", announce_url="https://fake.tracker")
+        return True
 
     async def edit_desc(self, meta: Meta) -> None:
         from src.domain_models.release_description import base_description
@@ -176,37 +167,36 @@ class Swarmazon:
         return
 
     async def search_existing(self, meta: Meta) -> list[str]:
-        dupes: list[str] = []
-        api_key = str(self.config["TRACKERS"][self.tracker]["api_key"]).strip()
-        params: dict[str, str] = {"api_key": api_key}
-
-        # Determine search parameters based on metadata
-        imdb_id = meta.imdb_id or 0
-        category = meta.category
-        title = meta.title
-        if imdb_id == 0:
-            if category == "TV":
-                params["filter"] = f"{title}{meta.season}"
-            else:
-                params["filter"] = title
-        else:
-            params["media_ref"] = f"tt{meta.imdb}"
-            if category == "TV":
-                params["filter"] = f"{meta.season}"
-            else:
-                params["filter"] = meta.resolution
-
+        params = self._search_params(meta)
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(self.search_url, params=params)
             response.raise_for_status()
-            data = cast(dict[str, Any], response.json())
-            items = cast(list[dict[str, Any]], data.get("data", []))
-            for item in items:
-                result = item.get("name")
-                if result:
-                    dupes.append(str(result))
+            payload = response.json()
+        return self._search_names(payload)
 
-        return dupes
+    def _search_params(self, meta: Meta) -> dict[str, str]:
+        params = {"api_key": str(self.config["TRACKERS"][self.tracker]["api_key"]).strip()}
+        if not meta.imdb_id:
+            params["filter"] = f"{meta.title}{meta.season}" if meta.category == "TV" else meta.title
+            return params
+        params["media_ref"] = f"tt{meta.imdb}"
+        params["filter"] = str(meta.season) if meta.category == "TV" else meta.resolution
+        return params
+
+    @classmethod
+    def _search_names(cls, payload: Any) -> list[str]:
+        if not isinstance(payload, dict):
+            return []
+        items = payload.get("data", [])
+        if not isinstance(items, list):
+            return []
+        return [name for item in items if (name := cls._search_item_name(item))]
+
+    @staticmethod
+    def _search_item_name(item: Any) -> str:
+        if not isinstance(item, dict):
+            return ""
+        return str(item.get("name") or "")
 
     async def get_name(self, meta: Meta) -> str:
         return meta.name
