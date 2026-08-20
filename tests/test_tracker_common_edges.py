@@ -158,6 +158,27 @@ def test_portuguese_video_description_attended_and_unattended(tmp_path: Path) ->
     assert not asyncio.run(manager.check_portuguese_description_requirements("English", "TEST", _meta(tmp_path, unattended=False)))
 
 
+def test_portuguese_description_prefers_localized_ptbr_overview(tmp_path: Path) -> None:
+    manager = Common(_config())
+    meta = _meta(
+        tmp_path,
+        unattended=True,
+        unattended_confirm=False,
+        tmdb_localized_data={"pt-BR": {"main": {"overview": ("Você não sabe onde estamos agora. Isso ficou muito bem e vamos continuar.")}}},
+    )
+
+    assert asyncio.run(manager.check_portuguese_description_requirements("This is an English fallback description.", "AMIGOSSHARE", meta))
+
+
+def test_portuguese_description_candidates_fall_back_without_localized_data(
+    tmp_path: Path,
+) -> None:
+    manager = Common(_config())
+    meta = _meta(tmp_path, tmdb_localized_data={})
+
+    assert manager._portuguese_description_candidates("fallback", meta) == ("fallback",)
+
+
 def test_async_filesystem_and_torrent_filename(tmp_path: Path) -> None:
     manager = Common(_config())
     directory = tmp_path / "nested"

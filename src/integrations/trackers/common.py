@@ -325,13 +325,38 @@ class Common:
         return len(words & self.PORTUGUESE_DESCRIPTION_WORDS) >= 3
 
     async def check_portuguese_description_requirements(self, description: str, tracker: str, meta: Meta) -> bool:
-        if self.is_portuguese_description(description):
+        candidates = self._portuguese_description_candidates(description, meta)
+        if any(self.is_portuguese_description(candidate) for candidate in candidates):
             return True
 
         if meta.unattended:
             return bool(meta.unattended_confirm)
 
         return await self.prompt_user_for_confirmation(f"{tracker}: Description does not appear to be in Portuguese. Do you want to proceed with the upload?")
+
+    @classmethod
+    def _portuguese_description_candidates(cls, description: str, meta: Meta) -> tuple[str, ...]:
+        localized = cls._localized_ptbr_overview(meta)
+        if localized:
+            return localized, description
+        return (description,)
+
+    @staticmethod
+    def _localized_ptbr_overview(meta: Meta) -> str:
+        localized_raw = getattr(meta, "tmdb_localized_data", {})
+        if not isinstance(localized_raw, dict):
+            return ""
+        localized = cast(dict[str, Any], localized_raw)
+        ptbr_raw = localized.get("pt-BR")
+        if not isinstance(ptbr_raw, dict):
+            return ""
+        ptbr = cast(dict[str, Any], ptbr_raw)
+        main_raw = ptbr.get("main")
+        if not isinstance(main_raw, dict):
+            return ""
+        main = cast(dict[str, Any], main_raw)
+        overview = main.get("overview")
+        return overview.strip() if isinstance(overview, str) else ""
 
     def _format_language_for_display(self, language: str) -> str:
         if not language:

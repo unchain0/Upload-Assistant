@@ -76,6 +76,17 @@ async def run_checks(
         await client.session.aclose()
 
 
+def test_movie_accepts_localized_ptbr_overview() -> None:
+    meta = make_meta(
+        audio_languages=["portuguese"],
+        unattended=True,
+        description="This is an English fallback description.",
+        tmdb_localized_data={"pt-BR": {"main": {"overview": ("Você não sabe onde estamos agora. Isso ficou muito bem e vamos continuar.")}}},
+    )
+
+    assert asyncio.run(run_checks(meta))
+
+
 def test_movie_passes_with_portuguese_audio():
     meta = make_meta(audio_languages=["portuguese"])
 
