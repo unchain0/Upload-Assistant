@@ -28,55 +28,85 @@ API_HIT_COUNTER_LOCK_POLL_SECONDS = 0.05
 
 def get_newznab_search_category_id(meta: Meta) -> str:
     category = meta.category.upper()
-    resolution = meta.resolution.lower()
-    uhd_resolutions = {"2160p", "4320p", "8640p"}
-    hd_resolutions = {"1080p", "1080i", "720p", "1440p"}
+    handlers = {
+        "MOVIE": _movie_newznab_category,
+        "TV": _tv_newznab_category,
+        "BOOK": _book_newznab_category,
+        "GAME": lambda _meta: "4050",
+        "MUSIC": lambda _meta: "3000",
+    }
+    handler = handlers.get(category)
+    return handler(meta) if handler is not None else "2000"
 
-    if category == "MOVIE":
-        if resolution in uhd_resolutions:
-            return "2045"
-        if resolution in hd_resolutions:
-            return "2040"
-        return "2030"
-    if category == "TV":
-        if resolution in uhd_resolutions:
-            return "5045"
-        if resolution in hd_resolutions:
-            return "5040"
-        return "5030"
-    if category == "BOOK":
-        if meta.audiobook:
-            return "3030"
-        return "7020"
-    if category == "GAME":
-        return "4050"
-    if category == "MUSIC":
-        return "3000"
-    return "2000"
+
+def _movie_newznab_category(meta: Meta) -> str:
+    return _quality_newznab_category(meta.resolution, uhd="2045", hd="2040", sd="2030")
+
+
+def _tv_newznab_category(meta: Meta) -> str:
+    return _quality_newznab_category(meta.resolution, uhd="5045", hd="5040", sd="5030")
+
+
+def _book_newznab_category(meta: Meta) -> str:
+    return "3030" if meta.audiobook else "7020"
+
+
+def _quality_newznab_category(resolution: str, *, uhd: str, hd: str, sd: str) -> str:
+    quality = _resolution_quality_band(resolution)
+    return {"uhd": uhd, "hd": hd}.get(quality, sd)
+
+
+def _resolution_quality_band(resolution: str) -> str:
+    value = resolution.lower()
+    if value in {"2160p", "4320p", "8640p"}:
+        return "uhd"
+    if value in {"1080p", "1080i", "720p", "1440p"}:
+        return "hd"
+    return "sd"
 
 
 def build_newznab_search_query(meta: Meta) -> str:
-    title = str(meta.title or meta.original_title or "").strip()
+    title = _search_title(meta)
+    category = meta.category.upper()
+    if category == "TV":
+        return _tv_search_query(meta, title)
+    if category == "MOVIE":
+        return _movie_search_query(meta, title)
+    return str(meta.basename_no_ext or title).strip()
+
+
+def _search_title(meta: Meta) -> str:
+    return str(meta.title or meta.original_title or "").strip()
+
+
+def _search_year(meta: Meta) -> int:
     raw_year = meta.year or meta.search_year or 0
     try:
-        year = int(raw_year)
+        return int(raw_year)
     except TypeError, ValueError:
-        year = 0
+        return 0
 
-    if meta.category.upper() == "TV":
-        if title and meta.season_int > 0 and meta.episode_int > 0:
-            return f"{title} S{meta.season_int:02d}E{meta.episode_int:02d}"
-        if title and meta.season_int > 0:
-            return f"{title} S{meta.season_int:02d}"
-        if title:
-            return title
-    elif meta.category.upper() == "MOVIE":
-        if title and year > 0:
-            return f"{title} {year}"
-        if title:
-            return title
 
-    return str(meta.basename_no_ext or title).strip()
+def _tv_search_query(meta: Meta, title: str) -> str:
+    if not title:
+        return str(meta.basename_no_ext or "").strip()
+    suffix = _tv_episode_suffix(meta)
+    return f"{title} {suffix}" if suffix else title
+
+
+def _tv_episode_suffix(meta: Meta) -> str:
+    season = meta.season_int
+    if season <= 0:
+        return ""
+    episode = meta.episode_int
+    return f"S{season:02d}E{episode:02d}" if episode > 0 else f"S{season:02d}"
+
+
+def _movie_search_query(meta: Meta, title: str) -> str:
+    if not title:
+        return str(meta.basename_no_ext or "").strip()
+    year = _search_year(meta)
+    return f"{title} {year}" if year > 0 else title
 
 
 def parse_newznab_dupes(
@@ -85,44 +115,69 @@ def parse_newznab_dupes(
     *,
     use_guid_attr_as_id: bool = False,
 ) -> list[dict[str, Any]]:
-    dupes: list[dict[str, Any]] = []
     response_xml = ElementTree.fromstring(response_text)
     channel = response_xml.find("channel")
     if channel is None:
-        return dupes
+        return []
+    return [_newznab_item_dupe(item, torrent_url, use_guid_attr_as_id=use_guid_attr_as_id) for item in channel.findall("item")]
 
-    for item in channel.findall("item"):
-        title = str(item.findtext("title") or "")
-        guid = str(item.findtext("guid") or "")
-        item_link = guid
-        size_text = "0"
 
-        enclosure = item.find("enclosure")
-        if enclosure is not None:
-            size_text = str(enclosure.attrib.get("length") or "0")
+def _newznab_item_dupe(item: Any, torrent_url: str | None, *, use_guid_attr_as_id: bool) -> dict[str, Any]:
+    title = str(item.findtext("title") or "")
+    guid = str(item.findtext("guid") or "")
+    size_text = _newznab_enclosure_size(item)
+    guid, size_text = _newznab_attributes(item, guid, size_text, use_guid_attr_as_id=use_guid_attr_as_id)
+    item_link = _newznab_item_link(item, guid, torrent_url)
+    return {
+        "name": title,
+        "files": title,
+        "size": int(size_text) if size_text.isdigit() else 0,
+        "link": item_link,
+    }
 
-        for attr in item.findall("{http://www.newznab.com/DTD/2010/feeds/attributes/}attr"):
-            attr_name = str(attr.attrib.get("name") or "").lower()
-            attr_value = str(attr.attrib.get("value") or "")
-            if attr_name == "size" and attr_value:
-                size_text = attr_value
-            elif use_guid_attr_as_id and attr_name == "guid" and attr_value and not guid:
-                guid = attr_value
 
-        item_link = str(item.findtext("link") or item_link)
-        if item_link and not item_link.startswith(("http://", "https://")) and guid and torrent_url:
-            item_link = f"{torrent_url}{guid}"
+def _newznab_enclosure_size(item: Any) -> str:
+    enclosure = item.find("enclosure")
+    return "0" if enclosure is None else str(enclosure.attrib.get("length") or "0")
 
-        dupes.append(
-            {
-                "name": title,
-                "files": title,
-                "size": int(size_text) if size_text.isdigit() else 0,
-                "link": item_link,
-            }
-        )
 
-    return dupes
+def _newznab_attributes(item: Any, guid: str, size_text: str, *, use_guid_attr_as_id: bool) -> tuple[str, str]:
+    for attr in item.findall("{http://www.newznab.com/DTD/2010/feeds/attributes/}attr"):
+        guid, size_text = _apply_newznab_attribute(attr, guid, size_text, use_guid_attr_as_id=use_guid_attr_as_id)
+    return guid, size_text
+
+
+def _apply_newznab_attribute(attr: Any, guid: str, size_text: str, *, use_guid_attr_as_id: bool) -> tuple[str, str]:
+    name = str(attr.attrib.get("name") or "").lower()
+    value = str(attr.attrib.get("value") or "")
+    if _is_size_attribute(name, value):
+        return guid, value
+    if _should_use_guid_attribute(name, value, guid, use_guid_attr_as_id):
+        return value, size_text
+    return guid, size_text
+
+
+def _is_size_attribute(name: str, value: str) -> bool:
+    return name == "size" and bool(value)
+
+
+def _should_use_guid_attribute(name: str, value: str, guid: str, enabled: bool) -> bool:
+    if not enabled or name != "guid":
+        return False
+    return bool(value) and not guid
+
+
+def _newznab_item_link(item: Any, guid: str, torrent_url: str | None) -> str:
+    link = str(item.findtext("link") or guid)
+    if _needs_torrent_url_prefix(link, guid, torrent_url):
+        return f"{torrent_url}{guid}"
+    return link
+
+
+def _needs_torrent_url_prefix(link: str, guid: str, torrent_url: str | None) -> bool:
+    if not link or link.startswith(("http://", "https://")):
+        return False
+    return bool(guid and torrent_url)
 
 
 def get_daily_api_hit_limit(tracker_cfg: dict[str, Any]) -> int:
@@ -203,35 +258,43 @@ def _write_api_hit_cache(cache_path: Path, tracker_hits: list[float]) -> None:
 def _reserve_daily_api_hit_sync(base_dir: str, tracker: str, limit: int) -> tuple[bool, int]:
     cache_path = _get_api_hit_counter_path(base_dir, tracker)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
-    lock_path = _get_api_hit_counter_lock_path(base_dir, tracker)
-    lock_file = _acquire_api_hit_counter_lock(lock_path)
+    lock_file = _acquire_api_hit_counter_lock(_get_api_hit_counter_lock_path(base_dir, tracker))
     try:
-        tracker_hits: list[Any] = []
-        if cache_path.exists():
-            try:
-                loaded_cache = json.loads(cache_path.read_text(encoding="utf-8"))
-                if isinstance(loaded_cache, list):
-                    tracker_hits = loaded_cache  # type: ignore
-            except OSError, json.JSONDecodeError:
-                tracker_hits = []
-
-        now = time.time()
-        cutoff = now - API_HIT_WINDOW_SECONDS
-        recent_hits: list[float] = []
-        for hit in tracker_hits:
-            if isinstance(hit, (int, float)):
-                hit_value = float(hit)
-                if hit_value >= cutoff:
-                    recent_hits.append(hit_value)
+        recent_hits = _recent_api_hits(_load_api_hit_cache(cache_path), time.time())
         if len(recent_hits) >= limit:
             _write_api_hit_cache(cache_path, recent_hits)
             return False, len(recent_hits)
-
-        recent_hits.append(now)
+        recent_hits.append(time.time())
         _write_api_hit_cache(cache_path, recent_hits)
         return True, len(recent_hits)
     finally:
         _release_api_hit_counter_lock(lock_file)
+
+
+def _load_api_hit_cache(cache_path: Path) -> list[Any]:
+    if not cache_path.exists():
+        return []
+    try:
+        loaded = json.loads(cache_path.read_text(encoding="utf-8"))
+    except OSError, json.JSONDecodeError:
+        return []
+    return loaded if isinstance(loaded, list) else []
+
+
+def _recent_api_hits(hits: list[Any], now: float) -> list[float]:
+    cutoff = now - API_HIT_WINDOW_SECONDS
+    recent: list[float] = []
+    for hit in hits:
+        value = _numeric_api_hit(hit)
+        if value is not None and value >= cutoff:
+            recent.append(value)
+    return recent
+
+
+def _numeric_api_hit(value: Any) -> float | None:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return None
+    return float(value)
 
 
 async def reserve_daily_api_hit(base_dir: str, tracker: str, limit: int) -> tuple[bool, int]:
