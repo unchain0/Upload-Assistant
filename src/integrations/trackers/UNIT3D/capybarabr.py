@@ -37,28 +37,60 @@ class CapybaraBR(UNIT3D):
         self.common = Common(config)
 
     async def get_category_id(self, meta: Meta, category: str = "", reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
-        category_id: dict[str, str] = {"MOVIE": "1", "TV": "2", "ANIMES": "4", "BOOK": "11", "COMIC_MANGA": "10", "GAME": "5"}
+        mapping = self._category_mapping()
+        mode = self._mapping_mode(mapping, reverse=reverse, mapping_only=mapping_only)
+        if mode is not None:
+            return mode
+        resolved = self._resolved_category(meta, category)
+        return {"category_id": mapping.get(resolved, "0")}
 
+    @staticmethod
+    def _category_mapping() -> dict[str, str]:
+        return {"MOVIE": "1", "TV": "2", "ANIMES": "4", "BOOK": "11", "COMIC_MANGA": "10", "GAME": "5"}
+
+    @staticmethod
+    def _mapping_mode(mapping: dict[str, str], *, reverse: bool, mapping_only: bool) -> dict[str, str] | None:
         if mapping_only:
-            return category_id
-        if reverse:
-            return {v: k for k, v in category_id.items()}
+            return mapping
+        return {value: key for key, value in mapping.items()} if reverse else None
 
-        resolved_category = category if category else meta.category
-        if meta.anime is True and resolved_category == "TV":
-            resolved_category = "ANIMES"
+    @classmethod
+    def _resolved_category(cls, meta: Meta, requested: str) -> str:
+        resolved = cls._base_category(meta, requested)
+        if cls._is_anime_tv(meta, resolved):
+            return "ANIMES"
+        return "COMIC_MANGA" if cls._is_comic_category(meta, resolved) else resolved
 
-        if resolved_category == "BOOK" and (str(meta.type).upper() in ("CBR", "CBZ") or meta.manga or meta.comic):
-            resolved_category = "COMIC_MANGA"
+    @staticmethod
+    def _base_category(meta: Meta, requested: str) -> str:
+        return requested if requested else str(meta.category or "")
 
-        if resolved_category:
-            return {"category_id": category_id.get(resolved_category, "0")}
+    @staticmethod
+    def _is_anime_tv(meta: Meta, resolved: str) -> bool:
+        return meta.anime is True and resolved == "TV"
 
-        return {"category_id": "0"}
+    @classmethod
+    def _is_comic_category(cls, meta: Meta, resolved: str) -> bool:
+        return resolved == "BOOK" and cls._is_comic_book(meta)
+
+    @staticmethod
+    def _is_comic_book(meta: Meta) -> bool:
+        return str(meta.type).upper() in {"CBR", "CBZ"} or bool(meta.manga) or bool(meta.comic)
 
     async def get_type_id(self, meta: Meta, type: str = "", reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
-        nin_term = (bytes([110, 105, 110, 116, 101, 110, 100, 111]).decode()).upper()
-        type_id = {
+        mapping = self._type_mapping()
+        mode = self._mapping_mode(mapping, reverse=reverse, mapping_only=mapping_only)
+        if mode is not None:
+            return mode
+        resolved = type or str(meta.type or "")
+        if self._is_game_type(meta, resolved, mapping):
+            return {"type_id": self._game_type_id(meta)}
+        return {"type_id": mapping.get(resolved, "0")}
+
+    @staticmethod
+    def _type_mapping() -> dict[str, str]:
+        console = bytes([110, 105, 110, 116, 101, 110, 100, 111]).decode().upper()
+        return {
             "DISC": "1",
             "REMUX": "2",
             "ENCODE": "3",
@@ -88,31 +120,28 @@ class CapybaraBR(UNIT3D):
             "PC": "46",
             "PLAYSTATION": "48",
             "XBOX": "49",
-            f"{nin_term}": "50",
+            console: "50",
         }
 
-        if mapping_only:
-            return type_id
-        if reverse:
-            return {v: k for k, v in type_id.items()}
+    @staticmethod
+    def _is_game_type(meta: Meta, resolved: str, mapping: dict[str, str]) -> bool:
+        return resolved == "GAME" or (meta.category == "GAME" and resolved not in mapping)
 
-        resolved_type = type if type else meta.type
-        if resolved_type == "GAME" or (meta.category == "GAME" and resolved_type not in type_id):
-            platform = meta.platform.lower()
-            nin_term = bytes([110, 105, 110, 116, 101, 110, 100, 111]).decode()
+    @staticmethod
+    def _game_type_id(meta: Meta) -> str:
+        platform = str(meta.platform or "").casefold()
+        console = bytes([110, 105, 110, 116, 101, 110, 100, 111]).decode()
+        if CapybaraBR._contains_any(platform, ("playstation", "ps5", "ps4", "ps3", "ps2", "ps1", "psp", "vita")):
+            return "48"
+        if "xbox" in platform:
+            return "49"
+        if CapybaraBR._contains_any(platform, (console, "switch", "wii", "3ds", "nds", "ds")):
+            return "50"
+        return "46"
 
-            if any(word in platform for word in ["playstation", "ps5", "ps4", "ps3", "ps2", "ps1", "psp", "vita"]):
-                resolved_id = "48"
-            elif "xbox" in platform:
-                resolved_id = "49"
-            elif any(word in platform for word in [f"{nin_term}", "switch", "wii", "3ds", "nds", "ds"]):
-                resolved_id = "50"
-            else:
-                resolved_id = "46"
-        else:
-            resolved_id = type_id.get(str(resolved_type), "0")
-
-        return {"type_id": resolved_id}
+    @staticmethod
+    def _contains_any(value: str, needles: tuple[str, ...]) -> bool:
+        return any(needle in value for needle in needles)
 
     async def get_resolution_id(self, meta: Meta, resolution: str = "", reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
         resolution_id = {
@@ -150,112 +179,209 @@ class CapybaraBR(UNIT3D):
         }
 
     async def get_name(self, meta: Meta) -> dict[str, str]:
-        category = meta.category
-        cbr_name = meta.name
+        name = self._name_for_category(meta, str(meta.category or ""))
+        return {"name": re.sub(r"\s{2,}", " ", name)}
 
+    def _name_for_category(self, meta: Meta, category: str) -> str:
         if category == "BOOK":
-            book_title = self.common.portuguese_title_capitalization(meta.title)
-            year_str = str(meta.year) if meta.year is not None else ""
-            cbr_name = f"{book_title} - {meta.author} [{year_str}] [AUDIOBOOK]" if meta.audiobook else f"{book_title} - {meta.author} [{year_str}]"
-            book_language_iso = meta.book_language_iso
-            if book_language_iso and book_language_iso != "por":
-                cbr_name += f" [{book_language_iso.upper()}]"
+            return self._book_name(meta)
+        if category == "GAME":
+            return self._game_name(meta)
+        if category in {"MOVIE", "TV"}:
+            return self._video_name(meta)
+        return str(meta.name or "")
 
-        elif category == "GAME":
-            tag = meta.tag
-            if tag:
-                tag = tag.lstrip("-")
-            game_has_multiple_languages = len(meta.languages) > 1
-            game_lang_has_pt = "PORTUGUESE" in str(meta.languages).upper()
-            game_lang_has_eng = "ENGLISH" in str(meta.languages).upper()
+    def _book_name(self, meta: Meta) -> str:
+        title = self.common.portuguese_title_capitalization(meta.title)
+        name = f"{title} - {meta.author} [{self._year_text(meta)}]{self._audiobook_suffix(meta)}"
+        return f"{name}{self._book_language_suffix(meta)}"
 
-            if game_has_multiple_languages and game_lang_has_pt:
-                game_lang = "[MULTI]"
-            elif game_lang_has_eng:
-                game_lang = "[INGLÊS]"
-            else:
-                game_lang = f"[{meta.language.upper()}]"
+    @staticmethod
+    def _year_text(meta: Meta) -> str:
+        return "" if meta.year is None else str(meta.year)
 
-            game_subcategory = meta.game_subcategory.lower()
-            update = "Update" if game_subcategory == "update" else ""
-            dlc = "[DLC]" if game_subcategory == "dlc" else "[+DLC]" if game_subcategory == "full_game_dlc" else ""
-            if dlc:
-                dlc = f" {dlc}"
+    @staticmethod
+    def _audiobook_suffix(meta: Meta) -> str:
+        return " [AUDIOBOOK]" if meta.audiobook else ""
 
-            year_str = str(meta.year) if meta.year is not None else ""
-            cbr_name = f"{meta.title} {update} {meta.game_version} {year_str} - {tag} {game_lang}{dlc}"
+    @staticmethod
+    def _book_language_suffix(meta: Meta) -> str:
+        language = str(meta.book_language_iso or "")
+        if not language or language == "por":
+            return ""
+        return f" [{language.upper()}]"
 
-        elif category in ("MOVIE", "TV"):
-            cbr_name = cbr_name.replace("DD+ ", "DDP").replace("DD ", "DD").replace("AAC ", "AAC").replace("FLAC ", "FLAC").replace("Dubbed", "").replace("Dual-Audio", "")
+    @staticmethod
+    def _game_name(meta: Meta) -> str:
+        tag = str(meta.tag or "").lstrip("-")
+        language = CapybaraBR._game_language_tag(meta)
+        subcategory = str(meta.game_subcategory or "").casefold()
+        update = "Update" if subcategory == "update" else ""
+        dlc = CapybaraBR._game_dlc_tag(subcategory)
+        year = "" if meta.year is None else str(meta.year)
+        return f"{meta.title} {update} {meta.game_version} {year} - {tag} {language}{dlc}"
 
-            # If it is a Series or Anime, remove the year from the title.
-            if meta.category in ["TV", "ANIMES"]:
-                year_str = str(meta.year) if meta.year is not None else ""
-                if year_str and year_str in cbr_name:
-                    cbr_name = cbr_name.replace(f"({year_str})", "").replace(year_str, "").strip()
+    @classmethod
+    def _game_language_tag(cls, meta: Meta) -> str:
+        languages = cls._game_languages(meta)
+        if cls._is_multilingual_portuguese(languages):
+            return "[MULTI]"
+        if cls._contains_language(languages, "ENGLISH"):
+            return "[INGLÊS]"
+        return f"[{str(meta.language or '').upper()}]"
 
-            # Remove the AKA title, unless it is Brazilian
-            if meta.original_language != "pt":
-                cbr_name = cbr_name.replace(meta.aka, "")
+    @staticmethod
+    def _game_languages(meta: Meta) -> list[str]:
+        return [str(value) for value in meta.languages] if isinstance(meta.languages, list) else []
 
-            # If it is Brazilian, use only the AKA title, deleting the foreign title
-            if meta.original_language == "pt" and meta.aka:
-                aka_clean = meta.aka.replace("AKA", "").strip()
-                title = meta.title
-                cbr_name = cbr_name.replace(meta.aka, "").replace(title, aka_clean).strip()
+    @classmethod
+    def _is_multilingual_portuguese(cls, languages: list[str]) -> bool:
+        if len(languages) <= 1:
+            return False
+        return cls._contains_language(languages, "PORTUGUESE")
 
-            if self.tracker == "CAPYBARABR" and meta.type == "DVDRIP":
-                title = meta.aka.replace("AKA", "").strip() if meta.original_language == "pt" and meta.aka else meta.title
-                episode = f"{meta.season}{meta.episode}" if category == "TV" else ""
-                audio = str(meta.audio).replace("DD+ ", "DDP").replace("DD ", "DD").replace("AAC ", "AAC").replace("FLAC ", "FLAC")
-                cbr_name = " ".join(part for part in (title, str(meta.year or ""), episode, meta.resolution, "DVDRip", audio, meta.video_encode) if part)
-                if meta.tag:
-                    cbr_name += meta.tag
+    @staticmethod
+    def _contains_language(languages: list[str], expected: str) -> bool:
+        return any(expected in value.upper() for value in languages)
 
-            tag_lower = "" if not meta.tag else meta.tag.lower()
-            invalid_tags = ["nogrp", "nogroup", "unknown", "-unk-"]
+    @staticmethod
+    def _game_dlc_tag(subcategory: str) -> str:
+        if subcategory == "dlc":
+            return " [DLC]"
+        if subcategory == "full_game_dlc":
+            return " [+DLC]"
+        return ""
 
-            if not meta.is_disc:
-                audio_tag = ""
-                audio_langs = meta.audio_languages
-                if audio_langs:
-                    try:
-                        audio_languages: set[str] = set(audio_langs)
-                    except TypeError:
-                        audio_languages = set()
+    def _video_name(self, meta: Meta) -> str:
+        name = self._normalized_video_base(meta)
+        name = self._localized_video_title(name, meta)
+        if self.tracker == "CAPYBARABR" and meta.type == "DVDRIP":
+            name = self._dvdrip_name(meta)
+        name = self._apply_video_audio_tag(name, meta)
+        return self._ensure_nogroup(name, meta.tag)
 
-                    if any(lang.lower() == "portuguese" or lang == "português" for lang in audio_languages):
-                        if len(audio_languages) >= 3:
-                            audio_tag = " MULTI"
-                        elif len(audio_languages) == 2:
-                            audio_tag = " DUAL"
-                        else:
-                            audio_tag = ""
+    @staticmethod
+    def _normalized_video_base(meta: Meta) -> str:
+        name = str(meta.name or "").replace("DD+ ", "DDP").replace("DD ", "DD").replace("AAC ", "AAC").replace("FLAC ", "FLAC").replace("Dubbed", "").replace("Dual-Audio", "")
+        if meta.category in {"TV", "ANIMES"}:
+            year = "" if meta.year is None else str(meta.year)
+            if year:
+                name = name.replace(f"({year})", "").replace(year, "").strip()
+        return name
 
-                if audio_tag:
-                    if "-" in cbr_name:
-                        parts = cbr_name.rsplit("-", 1)
+    @staticmethod
+    def _localized_video_title(name: str, meta: Meta) -> str:
+        if meta.original_language != "pt":
+            return name.replace(str(meta.aka or ""), "")
+        if not meta.aka:
+            return name
+        aka = str(meta.aka).replace("AKA", "").strip()
+        return name.replace(str(meta.aka), "").replace(str(meta.title), aka).strip()
 
-                        match = None
-                        for source_name in (meta.path, meta.uuid):
-                            if source_name:
-                                match = re.search(r"-([^.-]+)\.(?:DUAL|MULTI)(?=-|\.|$)", str(source_name), re.IGNORECASE)
-                                if match:
-                                    break
-                        current_group_tag = (meta.tag or "").lstrip("-")
-                        if match and match.group(1).casefold() != current_group_tag.casefold():
-                            cbr_name = f"{parts[0]}-{match.group(1)}{audio_tag}-{parts[1]}"
-                        else:
-                            cbr_name = f"{parts[0]}{audio_tag}-{parts[1]}"
-                    else:
-                        cbr_name += audio_tag
+    @classmethod
+    def _dvdrip_name(cls, meta: Meta) -> str:
+        parts = (
+            cls._dvdrip_title(meta),
+            str(meta.year or ""),
+            cls._episode_code(meta),
+            str(meta.resolution or ""),
+            "DVDRip",
+            cls._normalized_audio(meta.audio),
+            str(meta.video_encode or ""),
+        )
+        name = cls._compact_parts(parts)
+        return f"{name}{meta.tag}" if meta.tag else name
 
-            if not meta.tag or any(invalid_tag in tag_lower for invalid_tag in invalid_tags):
-                for invalid_tag in invalid_tags:
-                    cbr_name = re.sub(f"-{invalid_tag}", "", cbr_name, flags=re.IGNORECASE)
-                cbr_name = f"{cbr_name}-NoGroup"
+    @staticmethod
+    def _dvdrip_title(meta: Meta) -> str:
+        if meta.original_language == "pt" and meta.aka:
+            return str(meta.aka).replace("AKA", "").strip()
+        return str(meta.title)
 
-        return {"name": re.sub(r"\s{2,}", " ", cbr_name)}
+    @staticmethod
+    def _episode_code(meta: Meta) -> str:
+        return f"{meta.season}{meta.episode}" if meta.category == "TV" else ""
+
+    @staticmethod
+    def _normalized_audio(value: Any) -> str:
+        return str(value).replace("DD+ ", "DDP").replace("DD ", "DD").replace("AAC ", "AAC").replace("FLAC ", "FLAC")
+
+    @staticmethod
+    def _compact_parts(parts: tuple[str, ...]) -> str:
+        return " ".join(part for part in parts if part)
+
+    def _apply_video_audio_tag(self, name: str, meta: Meta) -> str:
+        if meta.is_disc:
+            return name
+        audio_tag = self._audio_tag(meta.audio_languages)
+        if not audio_tag:
+            return name
+        return self._insert_audio_tag(name, audio_tag, meta)
+
+    @classmethod
+    def _audio_tag(cls, audio_languages: Any) -> str:
+        languages = cls._unique_audio_languages(audio_languages)
+        if not languages or not cls._has_portuguese(languages):
+            return ""
+        return cls._audio_count_tag(len(languages))
+
+    @staticmethod
+    def _unique_audio_languages(audio_languages: Any) -> set[Any]:
+        if not audio_languages:
+            return set()
+        try:
+            return set(audio_languages)
+        except TypeError:
+            return set()
+
+    @staticmethod
+    def _has_portuguese(languages: set[Any]) -> bool:
+        return any(str(language).casefold() in {"portuguese", "português"} for language in languages)
+
+    @staticmethod
+    def _audio_count_tag(count: int) -> str:
+        if count >= 3:
+            return " MULTI"
+        return " DUAL" if count == 2 else ""
+
+    @classmethod
+    def _insert_audio_tag(cls, name: str, audio_tag: str, meta: Meta) -> str:
+        if "-" not in name:
+            return f"{name}{audio_tag}"
+        prefix, suffix = name.rsplit("-", 1)
+        original_group = cls._source_group(meta)
+        configured_group = str(meta.tag or "").lstrip("-")
+        if original_group and original_group.casefold() != configured_group.casefold():
+            return f"{prefix}-{original_group}{audio_tag}-{suffix}"
+        return f"{prefix}{audio_tag}-{suffix}"
+
+    @staticmethod
+    def _source_group(meta: Meta) -> str:
+        for source in (meta.path, meta.uuid):
+            match = re.search(r"-([^.-]+)\.(?:DUAL|MULTI)(?=-|\.|$)", str(source or ""), re.IGNORECASE)
+            if match:
+                return match.group(1)
+        return ""
+
+    @classmethod
+    def _ensure_nogroup(cls, name: str, tag: str | None) -> str:
+        if cls._valid_group_tag(tag):
+            return name
+        return f"{cls._strip_invalid_group_tags(name)}-NoGroup"
+
+    @staticmethod
+    def _valid_group_tag(tag: str | None) -> bool:
+        if not tag:
+            return False
+        lowered = str(tag).casefold()
+        return not any(value in lowered for value in ("nogrp", "nogroup", "unknown", "-unk-"))
+
+    @staticmethod
+    def _strip_invalid_group_tags(name: str) -> str:
+        result = name
+        for value in ("nogrp", "nogroup", "unknown", "-unk-"):
+            result = re.sub(f"-{value}", "", result, flags=re.IGNORECASE)
+        return result
 
     async def get_additional_data(self, meta: Meta) -> dict[str, str]:
         return {
@@ -263,36 +389,37 @@ class CapybaraBR(UNIT3D):
         }
 
     async def get_additional_checks(self, meta: Meta) -> bool:
-        if meta.category == "BOOK" and meta.audiobook and not meta.narrator:
+        if self._missing_audiobook_narrator(meta):
             logger.info(f"{self.tracker}: [bold red]Narrator is required for audiobooks. Skipping upload...[/bold red]")
             return False
+        if meta.category not in {"MOVIE", "TV"}:
+            return True
+        return await self._video_additional_checks(meta)
 
-        if meta.category in ["MOVIE", "TV"]:
-            upload_type = str(meta.type).lower()
-            upload_source = str(meta.source).lower()
+    @staticmethod
+    def _missing_audiobook_narrator(meta: Meta) -> bool:
+        return meta.category == "BOOK" and bool(meta.audiobook) and not bool(meta.narrator)
 
-            # Encodes must include the "Encode settings" field in the MediaInfo.
-            if upload_type == "encode" and not meta.has_encode_settings:
-                logger.info(f"{self.tracker}: [bold red]'Encode settings' field in the MediaInfo is required for encodes. Skipping upload...[/bold red]")
-                return False
+    async def _video_additional_checks(self, meta: Meta) -> bool:
+        release_type = str(meta.type or "").casefold()
+        if release_type == "encode" and not meta.has_encode_settings:
+            logger.info(f"{self.tracker}: [bold red]'Encode settings' field in the MediaInfo is required for encodes. Skipping upload...[/bold red]")
+            return False
+        if self._remux_requires_bdinfo(meta, release_type):
+            logger.info(
+                f"{self.tracker}: [bold red]BDInfo is required for Blu-ray remuxes that include 'Encode settings' field in the MediaInfo. "
+                "You can add BDInfo to the description using -df (path/to/file.txt) or -pb (Pastebin link). Skipping upload...[/bold red]"
+            )
+            return False
+        return await self.common.check_portuguese_video_requirements(meta, self.tracker)
 
-            # Blu-ray remuxes that include encode settings must also include BDInfo.
-            if (
-                upload_type == "remux"
-                and (upload_source == "bluray" or upload_source == "blu-ray")
-                and meta.has_encode_settings
-                and not self.common.has_bdinfo(f"{meta.description}\n{meta.description_link_content}\n{meta.description_file_content}")
-            ):
-                logger.info(
-                    f"{self.tracker}: [bold red]"
-                    "BDInfo is required for Blu-ray remuxes that include 'Encode settings' field in the MediaInfo. "
-                    "You can add BDInfo to the description using -df (path/to/file.txt) "
-                    "or -pb (Pastebin link). "
-                    "Skipping upload..."
-                    "[/bold red]"
-                )
-                return False
+    def _remux_requires_bdinfo(self, meta: Meta, release_type: str) -> bool:
+        if release_type != "remux" or str(meta.source or "").casefold() not in {"bluray", "blu-ray"}:
+            return False
+        if not meta.has_encode_settings:
+            return False
+        return not self.common.has_bdinfo(self._description_text(meta))
 
-            return await self.common.check_portuguese_video_requirements(meta, self.tracker)
-
-        return True
+    @staticmethod
+    def _description_text(meta: Meta) -> str:
+        return f"{meta.description}\n{meta.description_link_content}\n{meta.description_file_content}"
