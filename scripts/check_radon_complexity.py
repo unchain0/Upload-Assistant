@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import re
 import shutil
 import subprocess
@@ -50,10 +51,52 @@ def _parse_changed_lines(diff_text: str) -> dict[Path, set[int]]:
     return changed
 
 
-def _staged_changed_lines(root: Path) -> dict[Path, set[int]]:
-    git = shutil.which("git")
-    if git is None:
-        raise RuntimeError("git is required for --staged complexity checks")
+def _function_ast_records(source: str) -> dict[str, list[tuple[range, str]]]:
+    """Return function spans and semantic AST dumps keyed by qualified name."""
+    records: dict[str, list[tuple[range, str]]] = {}
+
+    def visit_body(body: list[ast.stmt], prefix: tuple[str, ...]) -> None:
+        for node in body:
+            if isinstance(node, ast.ClassDef):
+                visit_body(node.body, (*prefix, node.name))
+                continue
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            qualified_name = ".".join((*prefix, node.name))
+            end_line = int(node.end_lineno or node.lineno)
+            record = (range(node.lineno, end_line + 1), ast.dump(node, include_attributes=False))
+            records.setdefault(qualified_name, []).append(record)
+            visit_body(node.body, (*prefix, node.name))
+
+    visit_body(ast.parse(source).body, ())
+    return records
+
+
+def _semantic_changed_lines(current_source: str, previous_source: str, changed_lines: set[int]) -> set[int]:
+    """Ignore changed lines inside functions whose Python AST is unchanged."""
+    current_records = _function_ast_records(current_source)
+    previous_records = _function_ast_records(previous_source)
+    semantic_lines = set(changed_lines)
+    for name, records in current_records.items():
+        previous = previous_records.get(name, [])
+        for index, (span, dump) in enumerate(records):
+            if index < len(previous) and previous[index][1] == dump:
+                semantic_lines.difference_update(span)
+    return semantic_lines
+
+
+def _head_source(git: str, root: Path, path: Path) -> str | None:
+    result = subprocess.run(  # noqa: S603 -- resolved git executable; arguments are fixed apart from the repository path.
+        [git, "show", f"HEAD:{path.as_posix()}"],
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout if result.returncode == 0 else None
+
+
+def _staged_diff_text(git: str, root: Path) -> str:
     result = subprocess.run(  # noqa: S603 -- resolved git executable; arguments are constant.
         [git, "diff", "--cached", "--unified=0", "--no-color", "--", "*.py"],
         cwd=root,
@@ -61,7 +104,27 @@ def _staged_changed_lines(root: Path) -> dict[Path, set[int]]:
         capture_output=True,
         text=True,
     )
-    return _parse_changed_lines(result.stdout)
+    return result.stdout
+
+
+def _semantic_lines_for_path(git: str, root: Path, path: Path, lines: set[int]) -> set[int]:
+    previous_source = _head_source(git, root, path)
+    current_path = root / path
+    if previous_source is None or not current_path.is_file() or not lines:
+        return lines
+    try:
+        return _semantic_changed_lines(current_path.read_text(encoding="utf-8"), previous_source, lines)
+    except SyntaxError:
+        # Let the normal Python compilation/lint gates report malformed source.
+        return lines
+
+
+def _staged_changed_lines(root: Path) -> dict[Path, set[int]]:
+    git = shutil.which("git")
+    if git is None:
+        raise RuntimeError("git is required for --staged complexity checks")
+    changed = _parse_changed_lines(_staged_diff_text(git, root))
+    return {path: _semantic_lines_for_path(git, root, path, lines) for path, lines in changed.items()}
 
 
 def _block_touches_lines(block: Any, lines: set[int]) -> bool:

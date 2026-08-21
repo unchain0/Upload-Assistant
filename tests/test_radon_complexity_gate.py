@@ -135,6 +135,20 @@ def test_parse_changed_lines_and_filter_to_touched_blocks(tmp_path: Path) -> Non
     assert [item.name for item in violations] == ["touched"]
 
 
+def test_semantic_changed_lines_ignore_formatting_only_function_changes() -> None:
+    previous = "def complex_value(a, b, c, d, e, f):\n    return bool(a and b and c and d and e and f)\n"
+    current = "def complex_value(\n    a, b, c, d, e, f\n):\n    return bool(\n        a and b and c and d and e and f\n    )\n"
+
+    assert check_radon_complexity._semantic_changed_lines(current, previous, set(range(1, 7))) == set()
+
+
+def test_semantic_changed_lines_keep_real_function_changes() -> None:
+    previous = "def complex_value(a, b, c, d, e, f):\n    return bool(a and b and c and d and e and f)\n"
+    current = "def complex_value(a, b, c, d, e, f, g):\n    return bool(a and b and c and d and e and f and g)\n"
+
+    assert check_radon_complexity._semantic_changed_lines(current, previous, {1, 2}) == {1, 2}
+
+
 def test_parse_changed_lines_ignores_deleted_files_and_zero_length_hunks() -> None:
     diff = "\n".join(
         [
