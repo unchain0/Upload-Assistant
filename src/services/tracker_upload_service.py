@@ -11,7 +11,7 @@ from rich.markup import escape
 from src.domain_models.errors import OperationAbortedError
 from src.domain_models.release import Meta
 from src.domain_models.tracker_image_policy import screenshot_requirement_error
-from src.engines.upload_safety_policy import book_metadata_cjk_fields
+from src.engines.upload_safety_policy import book_metadata_cjk_fields, invalid_release_group_tag
 from src.integrations.filesystem.cleanup import cleanup_manager
 from src.integrations.image_hosts.rehosting import check_tracker_image_hosts, has_restricted_image_hosts, select_common_image_host
 from src.integrations.media.artwork import is_valid_cover_image
@@ -524,3 +524,41 @@ async def process_trackers(
             await process_single_tracker(tracker)
 
     logger.info(f"[green]All {upload_target} uploads processed.[/green]")
+
+
+_legacy_process_trackers = process_trackers
+
+
+async def _validated_process_trackers(
+    meta: Meta,
+    config: dict[str, Any],
+    client: Any,
+    api_trackers: Sequence[str],
+    tracker_class_map: Mapping[str, Any],
+    http_trackers: Sequence[str],
+    other_api_trackers: Sequence[str],
+    upload_target: str = "tracker",
+    argument_parser_factory: ArgumentParserFactory | None = None,
+) -> None:
+    """Refuse every tracker upload when the release group is episode syntax."""
+    invalid_group = invalid_release_group_tag(meta)
+    if invalid_group is None:
+        return await _legacy_process_trackers(
+            meta,
+            config,
+            client,
+            api_trackers,
+            tracker_class_map,
+            http_trackers,
+            other_api_trackers,
+            upload_target,
+            argument_parser_factory,
+        )
+    reason = f"Invalid release group {invalid_group!r} matches season/episode syntax"
+    for tracker in meta.trackers:
+        meta.tracker_status.setdefault(str(tracker), {}).update(upload=False, skipped=True, status_message=f"Skipped: {reason}")
+    logger.error(f"[bold red]{reason}. Refusing {upload_target} upload; correct or clear the release group and retry.[/bold red]")
+    return None
+
+
+process_trackers = _validated_process_trackers

@@ -4,6 +4,7 @@ from pathlib import PurePath, PurePosixPath, PureWindowsPath
 from typing import Any
 
 from src.domain_models.release import Meta
+from src.domain_models.release_group import release_group_has_episode_syntax, release_group_name
 
 _CJK_PATTERN = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
 
@@ -68,6 +69,12 @@ def _suspicious_path_part(part: str, suspicious: list[str]) -> bool:
 
 def blocks_automatic_upload(meta: Meta) -> bool:
     return not meta.allow_spaces and bool(content_paths_with_spaces(meta))
+
+
+def invalid_release_group_tag(meta: Meta) -> str | None:
+    """Return the invalid group name when a tag is season/episode syntax."""
+    group = release_group_name(meta.tag)
+    return group.strip(" _-") if group and release_group_has_episode_syntax(group) else None
 
 
 def book_metadata_cjk_fields(meta: Meta) -> list[str]:

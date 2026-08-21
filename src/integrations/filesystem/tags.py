@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from src.domain_models.release import Meta
+from src.domain_models.release_group import is_valid_prefixed_release_group, is_valid_release_group
 from src.integrations.observability.runtime_support import logger
 
 guessit_module = import_module("guessit")
@@ -21,6 +22,16 @@ SPACE_SEPARATED_RELEASE_GROUPS = {
 
 def guessit_fn(value: str, options: dict[str, Any] | None = None) -> dict[str, Any]:
     return cast(dict[str, Any], guessit_module.guessit(value, options))
+
+
+def _prefixed_release_group(video: str, meta: Meta) -> str | None:
+    if not meta.anime and meta.category not in ("TV", "MOVIE", "XXX"):
+        return None
+    match = re.search(r"^\s*\[([^\]]+)\]", Path(video).stem)
+    if match is None:
+        return None
+    candidate = match.group(1).strip()
+    return candidate if is_valid_prefixed_release_group(candidate) else None
 
 
 async def get_tag(video: str, meta: Meta, season_pack_check: bool = False) -> str:
@@ -149,6 +160,25 @@ async def get_tag(video: str, meta: Meta, season_pack_check: bool = False) -> st
         tag = ""
 
     return tag
+
+
+_legacy_get_tag = get_tag
+
+
+async def _validated_get_tag(video: str, meta: Meta, season_pack_check: bool = False) -> str:
+    """Detect a release group with prefix priority and semantic validation."""
+    prefixed = _prefixed_release_group(video, meta)
+    if prefixed:
+        logger.debug(f"Prefixed release-group match: {prefixed}")
+        return f"-{prefixed}"
+    tag = await _legacy_get_tag(video, meta, season_pack_check)
+    if not tag or is_valid_release_group(tag):
+        return tag
+    logger.warning(f"[yellow]Ignoring invalid release-group candidate {tag!r}: value matches season/episode syntax.[/yellow]")
+    return ""
+
+
+get_tag = _validated_get_tag
 
 
 async def tag_override(meta: Meta) -> Meta:

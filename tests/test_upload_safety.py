@@ -2,7 +2,7 @@ import asyncio
 
 from src.delivery.cli.arguments import Args
 from src.domain_models.release import Meta
-from src.engines.upload_safety_policy import blocks_automatic_upload, content_paths_with_spaces
+from src.engines.upload_safety_policy import blocks_automatic_upload, content_paths_with_spaces, invalid_release_group_tag
 from src.services.tracker_status_service import TrackerStatusManager
 
 
@@ -45,6 +45,28 @@ def test_allow_spaces_is_an_explicit_override() -> None:
     meta = Meta(path="Movie With Spaces.mkv", filelist=["Movie With Spaces.mkv"], allow_spaces=True)
 
     assert blocks_automatic_upload(meta) is False
+
+
+def test_invalid_release_group_tag_detects_episode_syntax() -> None:
+    assert invalid_release_group_tag(Meta(tag="-_S01E05_")) == "S01E05"
+    assert invalid_release_group_tag(Meta(tag="-Gecko")) is None
+
+
+def test_global_guard_refuses_episode_syntax_release_group() -> None:
+    meta = Meta(
+        path="Release.mkv",
+        filelist=["Release.mkv"],
+        trackers=["YUSCENE", "LUMINARR"],
+        tag="-_S01E05_",
+        unattended=True,
+    )
+
+    successful = asyncio.run(TrackerStatusManager({}).process_all_trackers(meta))
+
+    assert successful == 0
+    assert set(meta.tracker_status) == {"YUSCENE", "LUMINARR"}
+    assert all(status["skipped"] is True and status["upload"] is False for status in meta.tracker_status.values())
+    assert all("Release group 'S01E05' matches season/episode syntax" in status["skip_reason"] for status in meta.tracker_status.values())
 
 
 def test_allow_spaces_cli_option_sets_explicit_override() -> None:

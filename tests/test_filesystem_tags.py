@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from src.domain_models.release import Meta
+from src.domain_models.release_group import is_valid_prefixed_release_group, is_valid_release_group, release_group_has_episode_syntax, release_group_name
 from src.integrations.filesystem import tags
 
 
@@ -53,6 +54,41 @@ def test_get_tag_anime_and_non_anime_paths(tmp_path: Path) -> None:
 
     assert asyncio.run(tags.get_tag("Movie.2026.1080p.x265-GROUP", _meta())) == "-GROUP"
     assert asyncio.run(tags.get_tag("Movie.2026.1080p-GROUP.mkv", _meta())) == "-GROUP"
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "[Gecko]_False_Memory_-_S01E05_[BILI.WEB-DL_1080P_HEVC_AAC_D-SUB][5A86C56D].mkv",
+        "[SubsPlease] Title - 05 (1080p).mkv",
+        "[Erai-raws] Title - 05 [1080p].mkv",
+        "[Group] Title S01E05 [1080p].mkv",
+    ],
+)
+def test_get_tag_preserves_valid_prefix_group_for_tv_without_anime_flag(filename: str) -> None:
+    expected = filename.split("]", 1)[0].lstrip("[")
+    assert asyncio.run(tags.get_tag(filename, _meta(category="TV", anime=False))) == f"-{expected}"
+
+
+@pytest.mark.parametrize("candidate", ["S01", "S01E05", "E05", "01x05", "EP05", "Episode 05", "-_S01E05_"])
+def test_release_group_semantics_reject_episode_tokens(candidate: str) -> None:
+    assert release_group_has_episode_syntax(candidate)
+    assert not is_valid_release_group(candidate)
+
+
+def test_release_group_semantics_validate_prefix_candidates() -> None:
+    assert release_group_name("-Gecko") == "Gecko"
+    assert release_group_name("Gecko") == "Gecko"
+    assert is_valid_release_group("Gecko")
+    assert is_valid_prefixed_release_group("Gecko")
+    assert not is_valid_prefixed_release_group("5A86C56D")
+    assert not is_valid_prefixed_release_group("1080p")
+    assert not is_valid_prefixed_release_group("BILI.WEB-DL_1080P_HEVC_AAC_D-SUB")
+
+
+@pytest.mark.parametrize("filename", ["Show-S01.mkv", "Show-S01E05.mkv", "Show-E05.mkv", "Show-01x05.mkv", "Show-EP05.mkv", "Show-Episode 05.mkv", "Show-_S01E05_.mkv"])
+def test_get_tag_never_returns_episode_syntax_as_release_group(filename: str) -> None:
+    assert asyncio.run(tags.get_tag(filename, _meta(category="TV", anime=False))) == ""
 
 
 def test_get_tag_book_game_title_author_and_hyphen_guards() -> None:

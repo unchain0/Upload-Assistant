@@ -20,6 +20,7 @@ from src.engines.upload_safety_policy import (
     blocks_automatic_upload,
     book_metadata_cjk_fields,
     content_paths_with_spaces,
+    invalid_release_group_tag,
 )
 from src.integrations.external_apis.imdb import imdb_manager
 from src.integrations.filesystem.cleanup import cleanup_manager
@@ -105,13 +106,20 @@ class TrackerStatusManager:
         return successful
 
     def _block_unsafe_release(self, meta: Meta) -> bool:
-        if not blocks_automatic_upload(meta):
+        reason = self._unsafe_release_reason(meta)
+        if reason is None:
             return False
-        reason = self._unsafe_path_reason(meta)
         processed = {tracker: self._blocked_status(reason) for tracker in self._tracker_names(meta.trackers)}
         meta.tracker_status = merge_tracker_status(processed, meta.tracker_status)
         logger.info(f"[bold red]{reason} All tracker uploads were skipped.[/bold red]")
         return True
+
+    @staticmethod
+    def _unsafe_release_reason(meta: Meta) -> str | None:
+        invalid_group = invalid_release_group_tag(meta)
+        if invalid_group:
+            return f"Release group {invalid_group!r} matches season/episode syntax. Correct or clear the release group before uploading."
+        return TrackerStatusManager._unsafe_path_reason(meta) if blocks_automatic_upload(meta) else None
 
     @staticmethod
     def _unsafe_path_reason(meta: Meta) -> str:

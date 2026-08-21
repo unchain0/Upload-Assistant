@@ -395,6 +395,27 @@ def test_disabled_cover_cjk_zentag_and_dupe_status_guards(tmp_path: Path, monkey
     assert "upload_success" not in dupe.tracker_status["TEST"]
 
 
+def test_invalid_release_group_refuses_upload_before_tracker_adapter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_basics(monkeypatch, ["TEST"])
+
+    class NeverUpload(_Tracker):
+        tracker = "TEST"
+        calls = 0
+
+        async def upload(self, _meta: Meta) -> bool:
+            type(self).calls += 1
+            return True
+
+    meta = _meta(tmp_path, ["TEST"], tag="-_S01E05_")
+    _run(meta, _config(), {"TEST": NeverUpload}, api=("TEST",))
+
+    status = meta.tracker_status["TEST"]
+    assert status["upload"] is False
+    assert status["skipped"] is True
+    assert "Invalid release group 'S01E05'" in status["status_message"]
+    assert NeverUpload.calls == 0
+
+
 def test_bandwidth_invalid_no_wait_and_new_dupe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_basics(monkeypatch, ["TEST"])
     invalid = _meta(
