@@ -60,49 +60,19 @@ def test_polishtor_rejects_extension_screen_links_th_ea117a():
     }
 
     assert PolishTorrent._is_allowed_screenshot_image(image) is False
-    assert (
-        asyncio.run(
-            PolishTorrent({"TRACKERS": {}}).get_additional_checks(
-                _movie_meta(image_list=[image])
-            )
-        )
-        is False
-    )
+    assert asyncio.run(PolishTorrent({"TRACKERS": {}}).get_additional_checks(_movie_meta(image_list=[image]))) is False
 
 
 def test_polishtorrent_rejects_malformed_filelist_and_screenshot_counts():
     tracker = PolishTorrent({"TRACKERS": {}})
 
-    assert (
-        asyncio.run(tracker.get_additional_checks(_movie_meta(filelist=1)))
-        is False
-    )
-    assert (
-        asyncio.run(tracker.get_additional_checks(_movie_meta(filelist="")))
-        is False
-    )
-    assert (
-        asyncio.run(tracker.get_additional_checks(_movie_meta(image_list=1)))
-        is False
-    )
-    assert (
-        asyncio.run(tracker.get_additional_checks(_movie_meta(screens=None)))
-        is False
-    )
-    assert (
-        asyncio.run(tracker.get_additional_checks(_movie_meta(screens="2")))
-        is False
-    )
-    assert (
-        asyncio.run(
-            tracker.get_additional_checks(_movie_meta(screens=float("inf")))
-        )
-        is False
-    )
-    assert (
-        asyncio.run(tracker.get_additional_checks(_movie_meta(image_list=[])))
-        is False
-    )
+    assert asyncio.run(tracker.get_additional_checks(_movie_meta(filelist=1))) is False
+    assert asyncio.run(tracker.get_additional_checks(_movie_meta(filelist=""))) is False
+    assert asyncio.run(tracker.get_additional_checks(_movie_meta(image_list=1))) is False
+    assert asyncio.run(tracker.get_additional_checks(_movie_meta(screens=None))) is False
+    assert asyncio.run(tracker.get_additional_checks(_movie_meta(screens="2"))) is False
+    assert asyncio.run(tracker.get_additional_checks(_movie_meta(screens=float("inf")))) is False
+    assert asyncio.run(tracker.get_additional_checks(_movie_meta(image_list=[]))) is False
 
 
 @pytest.mark.parametrize(
@@ -112,14 +82,7 @@ def test_polishtorrent_rejects_malformed_filelist_and_screenshot_counts():
 def test_polishtorrent_rejects_extended_multipart_archives(
     archive: str,
 ) -> None:
-    assert (
-        asyncio.run(
-            PolishTorrent({"TRACKERS": {}}).get_additional_checks(
-                _movie_meta(filelist=["movie.mkv", archive])
-            )
-        )
-        is False
-    )
+    assert asyncio.run(PolishTorrent({"TRACKERS": {}}).get_additional_checks(_movie_meta(filelist=["movie.mkv", archive]))) is False
 
 
 @pytest.mark.parametrize(
@@ -133,47 +96,17 @@ def test_polishtorrent_rejects_extended_multipart_archives(
     ],
 )
 def test_polishtorrent_rejects_non_http_absolute_screenshot_links(url):
-    assert (
-        PolishTorrent._is_allowed_screenshot_image({"raw_url": url}) is False
-    )
+    assert PolishTorrent._is_allowed_screenshot_image({"raw_url": url}) is False
 
 
 def test_polishtor_tracker_detect_ignores_url_paths_ace353():
-    assert (
-        PolishTorrent._contains_other_tracker_mention(
-            "https://images.example/kat/rutracker/screen.png"
-        )
-        is False
-    )
-    assert (
-        PolishTorrent._contains_other_tracker_mention(
-            "//rutracker.net./release"
-        )
-        is True
-    )
-    assert (
-        PolishTorrent._contains_other_tracker_mention(
-            "https://rutracker.net?mirror=1"
-        )
-        is True
-    )
-    assert (
-        PolishTorrent._contains_other_tracker_mention(
-            "https://(rutracker.net)/release"
-        )
-        is True
-    )
-    assert (
-        PolishTorrent._contains_other_tracker_mention(
-            "https://limetorrents.cc/release"
-        )
-        is True
-    )
+    assert PolishTorrent._contains_other_tracker_mention("https://images.example/kat/rutracker/screen.png") is False
+    assert PolishTorrent._contains_other_tracker_mention("//rutracker.net./release") is True
+    assert PolishTorrent._contains_other_tracker_mention("https://rutracker.net?mirror=1") is True
+    assert PolishTorrent._contains_other_tracker_mention("https://(rutracker.net)/release") is True
+    assert PolishTorrent._contains_other_tracker_mention("https://limetorrents.cc/release") is True
     assert PolishTorrent._contains_other_tracker_mention("https://[") is False
-    assert (
-        PolishTorrent._contains_other_tracker_mention("mirrored from YIFY")
-        is True
-    )
+    assert PolishTorrent._contains_other_tracker_mention("mirrored from YIFY") is True
 
 
 @pytest.mark.parametrize(
@@ -193,9 +126,7 @@ def test_polishtor_tracker_detect_ignores_url_paths_ace353():
         ),
     ],
 )
-def test_polishtorrent_normalizes_tracker_name_before_validation(
-    name: str, expected: str
-) -> None:
+def test_polishtorrent_normalizes_tracker_name_before_validation(name: str, expected: str) -> None:
     tracker = PolishTorrent({"TRACKERS": {}})
     meta = _movie_meta(name=name)
 
@@ -241,12 +172,8 @@ def test_polishtorrent_image_url_guard_branches():
 
 
 def test_polishtorrent_rejects_tracker_reference_in_description():
-    meta = _movie_meta(
-        description="Mirrored from https://rutracker.net/release"
-    )
-    assert not asyncio.run(
-        PolishTorrent({"TRACKERS": {}}).get_additional_checks(meta)
-    )
+    meta = _movie_meta(description="Mirrored from https://rutracker.net/release")
+    assert not asyncio.run(PolishTorrent({"TRACKERS": {}}).get_additional_checks(meta))
 
 
 def test_polishtorrent_rejects_unsupported_screenshot_metadata():
@@ -264,11 +191,7 @@ def test_polishtorrent_rejects_unsupported_screenshot_metadata():
             "img_url": "https://images.example/thumb-3.jpg",
         },
     ]
-    assert not asyncio.run(
-        PolishTorrent({"TRACKERS": {}}).get_additional_checks(
-            _movie_meta(image_list=images)
-        )
-    )
+    assert not asyncio.run(PolishTorrent({"TRACKERS": {}}).get_additional_checks(_movie_meta(image_list=images)))
 
 
 def test_polishtorrent_rejects_screenshot_without_thumb_and_full_links():
@@ -283,44 +206,28 @@ def test_polishtorrent_rejects_screenshot_without_thumb_and_full_links():
         },
         {"raw_url": "https://images.example/full-3.png"},
     ]
-    assert not asyncio.run(
-        PolishTorrent({"TRACKERS": {}}).get_additional_checks(
-            _movie_meta(image_list=images)
-        )
-    )
+    assert not asyncio.run(PolishTorrent({"TRACKERS": {}}).get_additional_checks(_movie_meta(image_list=images)))
 
 
 def test_polishtorrent_requires_mediainfo_for_non_disc_video():
-    assert not asyncio.run(
-        PolishTorrent({"TRACKERS": {}}).get_additional_checks(
-            _movie_meta(mediainfo=None)
-        )
-    )
+    assert not asyncio.run(PolishTorrent({"TRACKERS": {}}).get_additional_checks(_movie_meta(mediainfo=None)))
 
 
 def test_polishtorrent_rejects_movie_boxset():
     meta = _movie_meta(name="Example Movie Collection 2024 1080p WEB-DL H264")
-    assert not asyncio.run(
-        PolishTorrent({"TRACKERS": {}}).get_additional_checks(meta)
-    )
+    assert not asyncio.run(PolishTorrent({"TRACKERS": {}}).get_additional_checks(meta))
 
 
 def test_polishtorrent_rejects_ongoing_tv_pack(monkeypatch):
     tracker = PolishTorrent({"TRACKERS": {}})
-    monkeypatch.setattr(
-        PolishTorrent, "_is_tv_pack_ended", staticmethod(lambda _meta: False)
-    )
-    meta = _movie_meta(
-        category="TV", tv_pack=True, name="Example Show S01 1080p WEB-DL H264"
-    )
+    monkeypatch.setattr(PolishTorrent, "_is_tv_pack_ended", staticmethod(lambda _meta: False))
+    meta = _movie_meta(category="TV", tv_pack=True, name="Example Show S01 1080p WEB-DL H264")
     assert not asyncio.run(tracker.get_additional_checks(meta))
 
 
 def test_polishtorrent_rejects_single_video_inside_folder():
     meta = _movie_meta(keep_folder=True, filelist=["Example.Movie.2024.mkv"])
-    assert not asyncio.run(
-        PolishTorrent({"TRACKERS": {}}).get_additional_checks(meta)
-    )
+    assert not asyncio.run(PolishTorrent({"TRACKERS": {}}).get_additional_checks(meta))
 
 
 def test_polishtorrent_raw_title_guard_branches() -> None:
@@ -338,9 +245,7 @@ def test_polishtorrent_ended_pack_and_multi_file_folder_are_allowed(
         "_is_tv_pack_ended",
         staticmethod(lambda _meta: True),
     )
-    assert tracker._tv_pack_policy(
-        _movie_meta(category="TV", tv_pack=True), "TV"
-    )
+    assert tracker._tv_pack_policy(_movie_meta(category="TV", tv_pack=True), "TV")
     assert tracker._folder_policy(
         _movie_meta(keep_folder=True),
         "MOVIE",
@@ -358,6 +263,4 @@ def test_polishtorrent_localizes_polish_title_before_normalization() -> None:
         imdb_info={"aka": "Polski Tytul"},
     )
 
-    assert asyncio.run(tracker.get_name(meta)) == {
-        "name": "Polski Tytul 2024 1080p WEB-DL H264"
-    }
+    assert asyncio.run(tracker.get_name(meta)) == {"name": "Polski Tytul 2024 1080p WEB-DL H264"}

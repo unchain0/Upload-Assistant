@@ -38,9 +38,7 @@ def _summarize_host_error(error: Any, limit: int = 300) -> str:
 
 
 def _remote_html_status(raw: str) -> str:
-    match = re.search(
-        r"(?:HTTP\s*)?(?<!\d)([45]\d{2})(?!\d)", raw, re.IGNORECASE
-    )
+    match = re.search(r"(?:HTTP\s*)?(?<!\d)([45]\d{2})(?!\d)", raw, re.IGNORECASE)
     if match is None or not _looks_like_html_error(raw):
         return ""
     return match.group(1)
@@ -48,16 +46,11 @@ def _remote_html_status(raw: str) -> str:
 
 def _looks_like_html_error(raw: str) -> bool:
     lowered = raw.lower()
-    return any(
-        marker in lowered
-        for marker in ("something went wrong", "<!doctype html", "<html")
-    )
+    return any(marker in lowered for marker in ("something went wrong", "<!doctype html", "<html"))
 
 
 def _clean_host_error_text(raw: str) -> str:
-    text = re.sub(
-        r"<style\b[^>]*>.*?</style>", " ", raw, flags=re.IGNORECASE | re.DOTALL
-    )
+    text = re.sub(r"<style\b[^>]*>.*?</style>", " ", raw, flags=re.IGNORECASE | re.DOTALL)
     text = re.sub(
         r"<script\b[^>]*>.*?</script>",
         " ",
@@ -81,18 +74,14 @@ def _json_mapping(response: httpx.Response) -> dict[str, Any]:
     return cast(dict[str, Any], payload)
 
 
-def _image_host_error(
-    payload: dict[str, Any], response: httpx.Response
-) -> str:
+def _image_host_error(payload: dict[str, Any], response: httpx.Response) -> str:
     payload_error = _payload_error_message(payload)
     if payload_error:
         return _summarize_host_error(payload_error)
     payload_message = _payload_status_message(payload)
     if payload_message:
         return _summarize_host_error(payload_message)
-    return _summarize_host_error(
-        response.text or f"HTTP {response.status_code}"
-    )
+    return _summarize_host_error(response.text or f"HTTP {response.status_code}")
 
 
 def _payload_error_message(payload: dict[str, Any]) -> Any:
@@ -117,11 +106,7 @@ def _chevereto_urls(payload: dict[str, Any]) -> tuple[str, str, str] | None:
         return None
     raw_url = image.get("url")
     web_url = image.get("url_viewer") or raw_url
-    img_url = (
-        _nested_url(image.get("medium"))
-        or _nested_url(image.get("thumb"))
-        or raw_url
-    )
+    img_url = _nested_url(image.get("medium")) or _nested_url(image.get("thumb")) or raw_url
     return _validated_url_triplet(img_url, raw_url, web_url)
 
 
@@ -133,9 +118,7 @@ def _nested_url(value: Any) -> Any:
     return _mapping_payload(value).get("url")
 
 
-def _validated_url_triplet(
-    img_url: Any, raw_url: Any, web_url: Any
-) -> tuple[str, str, str] | None:
+def _validated_url_triplet(img_url: Any, raw_url: Any, web_url: Any) -> tuple[str, str, str] | None:
     values = (img_url, raw_url, web_url)
     if not all(isinstance(value, str) and value for value in values):
         return None
@@ -172,9 +155,7 @@ async def _upload_chevereto(
         return _chevereto_exception_result(host_key, error)
 
 
-def _chevereto_preflight(
-    host_key: str, api_key: str | None, upload_url: str | None
-) -> dict[str, Any] | None:
+def _chevereto_preflight(host_key: str, api_key: str | None, upload_url: str | None) -> dict[str, Any] | None:
     if not api_key:
         return {
             "status": "failed",
@@ -211,9 +192,7 @@ async def _chevereto_request(
         )
 
 
-def _chevereto_response_result(
-    image: str, host_key: str, response: httpx.Response
-) -> dict[str, Any]:
+def _chevereto_response_result(image: str, host_key: str, response: httpx.Response) -> dict[str, Any]:
     payload = _safe_json_mapping(response)
     if payload is None:
         return _invalid_json_result(host_key, response)
@@ -235,45 +214,28 @@ def _safe_json_mapping(response: httpx.Response) -> dict[str, Any] | None:
         return None
 
 
-def _invalid_json_result(
-    host_key: str, response: httpx.Response
-) -> dict[str, Any]:
+def _invalid_json_result(host_key: str, response: httpx.Response) -> dict[str, Any]:
     return {
         "status": "failed",
-        "reason": (
-            f"{host_key} returned invalid JSON (HTTP {response.status_code}):"
-            f" {_summarize_host_error(response.text)}"
-        ),
+        "reason": (f"{host_key} returned invalid JSON (HTTP {response.status_code}): {_summarize_host_error(response.text)}"),
         "host_unavailable": response.status_code >= 500,
     }
 
 
-def _chevereto_response_success(
-    response: httpx.Response, payload: dict[str, Any]
-) -> bool:
-    return response.status_code in (200, 201) and payload.get(
-        "status_code"
-    ) in (None, 200)
+def _chevereto_response_success(response: httpx.Response, payload: dict[str, Any]) -> bool:
+    return response.status_code in (200, 201) and payload.get("status_code") in (None, 200)
 
 
-def _chevereto_http_failure(
-    host_key: str, response: httpx.Response, payload: dict[str, Any]
-) -> dict[str, Any]:
+def _chevereto_http_failure(host_key: str, response: httpx.Response, payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "status": "failed",
-        "reason": (
-            f"{host_key} upload failed (HTTP {response.status_code}):"
-            f" {_image_host_error(payload, response)}"
-        ),
+        "reason": (f"{host_key} upload failed (HTTP {response.status_code}): {_image_host_error(payload, response)}"),
         "host_unavailable": response.status_code >= 500,
-        "retryable": response.status_code == 429
-        or response.status_code >= 500,
+        "retryable": response.status_code == 429 or response.status_code >= 500,
     }
 
 
-def _chevereto_exception_result(
-    host_key: str, error: Exception
-) -> dict[str, Any]:
+def _chevereto_exception_result(host_key: str, error: Exception) -> dict[str, Any]:
     if isinstance(error, httpx.TimeoutException):
         return {
             "status": "failed",
@@ -282,23 +244,16 @@ def _chevereto_exception_result(
     if isinstance(error, httpx.RequestError):
         return {
             "status": "failed",
-            "reason": (
-                f"{host_key} request failed: {_summarize_host_error(error)}"
-            ),
+            "reason": (f"{host_key} request failed: {_summarize_host_error(error)}"),
             "host_unavailable": True,
         }
     return {
         "status": "failed",
-        "reason": (
-            f"Could not read image for {host_key}: "
-            f"{_summarize_host_error(error)}"
-        ),
+        "reason": (f"Could not read image for {host_key}: {_summarize_host_error(error)}"),
     }
 
 
-def _successful_image_result(
-    image: str, img_url: str, raw_url: str, web_url: str
-) -> dict[str, Any]:
+def _successful_image_result(image: str, img_url: str, raw_url: str, web_url: str) -> dict[str, Any]:
     return {
         "status": "success",
         "img_url": img_url,
@@ -308,9 +263,7 @@ def _successful_image_result(
     }
 
 
-async def _upload_imgbb(
-    image: str, api_key: str | None, *, request_timeout: float
-) -> dict[str, Any]:
+async def _upload_imgbb(image: str, api_key: str | None, *, request_timeout: float) -> dict[str, Any]:
     if not api_key:
         return {
             "status": "failed",
@@ -324,9 +277,7 @@ async def _upload_imgbb(
         return _imgbb_exception_result(error)
 
 
-async def _imgbb_request(
-    image: str, api_key: str, request_timeout: float
-) -> httpx.Response:
+async def _imgbb_request(image: str, api_key: str, request_timeout: float) -> httpx.Response:
     spec = IMAGE_HOST_SPECS["imgbb"]
     file_bytes = await _read_image_bytes(image)
     files = {"image": (Path(image).name, file_bytes)}
@@ -340,9 +291,7 @@ async def _imgbb_request(
         )
 
 
-def _imgbb_response_result(
-    image: str, response: httpx.Response
-) -> dict[str, Any]:
+def _imgbb_response_result(image: str, response: httpx.Response) -> dict[str, Any]:
     payload = _safe_json_mapping(response)
     if payload is None:
         return _invalid_json_result("imgbb", response)
@@ -358,9 +307,7 @@ def _imgbb_response_result(
     return _successful_image_result(image, *urls)
 
 
-def _imgbb_response_failure(
-    response: httpx.Response, payload: dict[str, Any]
-) -> dict[str, Any] | None:
+def _imgbb_response_failure(response: httpx.Response, payload: dict[str, Any]) -> dict[str, Any] | None:
     if response.status_code != 200 or payload.get("success") is not True:
         return _imgbb_failure_result(response, payload)
     if not _mapping_payload(payload.get("data")):
@@ -371,42 +318,28 @@ def _imgbb_response_failure(
     return None
 
 
-def _imgbb_failure_result(
-    response: httpx.Response, payload: dict[str, Any]
-) -> dict[str, Any]:
+def _imgbb_failure_result(response: httpx.Response, payload: dict[str, Any]) -> dict[str, Any]:
     reason = _image_host_error(payload, response)
-    classification = _imgbb_failure_classification(
-        response.status_code, reason
-    )
+    classification = _imgbb_failure_classification(response.status_code, reason)
     return {
         "status": "failed",
-        "reason": (
-            f"imgbb upload failed (HTTP {response.status_code}): {reason}"
-        ),
+        "reason": (f"imgbb upload failed (HTTP {response.status_code}): {reason}"),
         "host_unavailable": classification["host_unavailable"],
         "retryable": classification["retryable"],
     }
 
 
-def _imgbb_failure_classification(
-    status_code: int, reason: str
-) -> dict[str, bool]:
+def _imgbb_failure_classification(status_code: int, reason: str) -> dict[str, bool]:
     normalized = reason.casefold()
     rate_limited = _imgbb_rate_limited(status_code, normalized)
     credential_rejected = _imgbb_credential_rejected(status_code, normalized)
     unavailable = rate_limited or credential_rejected or status_code >= 500
-    retryable = (
-        False if rate_limited or credential_rejected else status_code >= 500
-    )
+    retryable = False if rate_limited or credential_rejected else status_code >= 500
     return {"host_unavailable": unavailable, "retryable": retryable}
 
 
 def _imgbb_rate_limited(status_code: int, reason: str) -> bool:
-    return (
-        status_code == 429
-        or "rate limit" in reason
-        or "too many request" in reason
-    )
+    return status_code == 429 or "rate limit" in reason or "too many request" in reason
 
 
 def _imgbb_credential_rejected(status_code: int, reason: str) -> bool:
@@ -451,18 +384,14 @@ def _imgbb_exception_result(error: Exception) -> dict[str, Any]:
         }
     return {
         "status": "failed",
-        "reason": (
-            f"Could not read image for imgbb: {_summarize_host_error(error)}"
-        ),
+        "reason": (f"Could not read image for imgbb: {_summarize_host_error(error)}"),
     }
 
 
 def _pixhost_raw_url(thumbnail_url: str) -> str:
     parsed = httpx.URL(thumbnail_url)
     hostname = parsed.host or ""
-    match = re.fullmatch(
-        r"t(\d+)\.(pixhost\.(?:to|cc)|pixho\.st)", hostname, re.IGNORECASE
-    )
+    match = re.fullmatch(r"t(\d+)\.(pixhost\.(?:to|cc)|pixho\.st)", hostname, re.IGNORECASE)
     path = parsed.path
     if match and "/thumbs/" in path:
         hostname = f"img{match.group(1)}.{match.group(2)}"
@@ -507,9 +436,7 @@ class UploadScreensManager:
         return self.unavailable_hosts_for("screenshots")
 
     def unavailable_hosts_for(self, purpose: str) -> set[str]:
-        normalized = (
-            str(purpose or "screenshots").strip().lower() or "screenshots"
-        )
+        normalized = str(purpose or "screenshots").strip().lower() or "screenshots"
         return self._unavailable_hosts_by_purpose.setdefault(normalized, set())
 
     @staticmethod
@@ -533,12 +460,8 @@ class UploadScreensManager:
         unavailable_hosts: set[str],
     ) -> None:
         default = self.config.get("DEFAULT", {})
-        default_map = (
-            cast(dict[str, Any], default) if isinstance(default, dict) else {}
-        )
-        configured = list(
-            image_host_fallback_plan(default_map, preferred_host=None)
-        )
+        default_map = cast(dict[str, Any], default) if isinstance(default, dict) else {}
+        configured = list(image_host_fallback_plan(default_map, preferred_host=None))
         logger.debug(
             f"[cyan]Image host plan: purpose={purpose}"
             f" preferred={meta.imghost!r} configured={configured}"
@@ -565,9 +488,7 @@ class UploadScreensManager:
         purpose = self.image_upload_purpose(custom_img_list)
         circuit = self.unavailable_hosts_for(purpose)
         self._log_host_plan(meta, purpose, allowed_hosts, circuit)
-        local_available = self._local_image_count(
-            meta, purpose, custom_img_list
-        )
+        local_available = self._local_image_count(meta, purpose, custom_img_list)
         result = await _upload_screens(
             self.config,
             meta,
@@ -594,9 +515,7 @@ class UploadScreensManager:
         return result
 
     @staticmethod
-    def _local_image_count(
-        meta: Meta, purpose: str, custom_img_list: Sequence[str | Path]
-    ) -> int:
+    def _local_image_count(meta: Meta, purpose: str, custom_img_list: Sequence[str | Path]) -> int:
         if purpose == "screenshots":
             return len(manifest_files(meta.base_dir, meta.uuid, "main"))
         return len(custom_img_list)
@@ -614,12 +533,8 @@ class UploadScreensManager:
         if hosted >= requested:
             return
         default = self.config.get("DEFAULT", {})
-        default_map = (
-            cast(dict[str, Any], default) if isinstance(default, dict) else {}
-        )
-        configured = list(
-            image_host_fallback_plan(default_map, preferred_host=None)
-        )
+        default_map = cast(dict[str, Any], default) if isinstance(default, dict) else {}
+        configured = list(image_host_fallback_plan(default_map, preferred_host=None))
         logger.warning(
             "[yellow]Image host fallback exhausted or incomplete:"
             f" purpose={purpose} preferred={meta.imghost!r}"
@@ -640,9 +555,7 @@ async def upload_image_task(args: Sequence[Any]) -> dict[str, Any]:
             return _unsupported_host_result(host)
         task_meta = cast(Meta, meta)
         task_meta.imghost = host
-        return await handler(
-            str(image), cast(dict[str, Any], config), task_meta, 60.0
-        )
+        return await handler(str(image), cast(dict[str, Any], config), task_meta, 60.0)
     except Exception as error:
         return {
             "status": "failed",
@@ -651,9 +564,7 @@ async def upload_image_task(args: Sequence[Any]) -> dict[str, Any]:
         }
 
 
-type ImageUploadHandler = Callable[
-    [str, dict[str, Any], Meta, float], Awaitable[dict[str, Any]]
-]
+type ImageUploadHandler = Callable[[str, dict[str, Any], Meta, float], Awaitable[dict[str, Any]]]
 
 
 def _image_upload_handler(host: str) -> ImageUploadHandler | None:
@@ -693,9 +604,7 @@ def _unsupported_host_result(host: str) -> dict[str, Any]:
     }
 
 
-async def _upload_imgbox_host(
-    image: str, _config: dict[str, Any], meta: Meta, _timeout: float
-) -> dict[str, Any]:
+async def _upload_imgbox_host(image: str, _config: dict[str, Any], meta: Meta, _timeout: float) -> dict[str, Any]:
     state: dict[str, Any] = {}
     images = await imgbox_upload(
         Path.cwd(),
@@ -706,15 +615,10 @@ async def _upload_imgbox_host(
     usable = _first_usable_image(images)
     if usable is not None:
         return {"status": "success", **usable, "local_file_path": image}
-    reason = str(
-        state.get("error") or "Imgbox did not return usable image URLs"
-    )
+    reason = str(state.get("error") or "Imgbox did not return usable image URLs")
     return {
         "status": "failed",
-        "reason": (
-            "Imgbox unavailable or upload rejected: "
-            f"{_summarize_host_error(reason)}"
-        ),
+        "reason": (f"Imgbox unavailable or upload rejected: {_summarize_host_error(reason)}"),
         "host_unavailable": bool(state.get("host_unavailable", True)),
     }
 
@@ -729,18 +633,12 @@ def _first_usable_image(
     return first if all(first.get(key) for key in required) else None
 
 
-async def _upload_imgbb_host(
-    image: str, config: dict[str, Any], _meta: Meta, request_timeout: float
-) -> dict[str, Any]:
+async def _upload_imgbb_host(image: str, config: dict[str, Any], _meta: Meta, request_timeout: float) -> dict[str, Any]:
     api_key = _default_image_config(config).get("imgbb_api")
-    return await _upload_imgbb(
-        image, cast(str | None, api_key), request_timeout=request_timeout
-    )
+    return await _upload_imgbb(image, cast(str | None, api_key), request_timeout=request_timeout)
 
 
-async def _upload_chevereto_host(
-    image: str, config: dict[str, Any], meta: Meta, request_timeout: float
-) -> dict[str, Any]:
+async def _upload_chevereto_host(image: str, config: dict[str, Any], meta: Meta, request_timeout: float) -> dict[str, Any]:
     host = _selected_host_from_meta(meta)
     api_key = _chevereto_api_key(_default_image_config(config), host)
     return await _upload_chevereto(
@@ -769,12 +667,8 @@ def _chevereto_api_key(default: dict[str, Any], host: str) -> str | None:
     return str(value) if value else None
 
 
-async def _upload_dalexni_host(
-    image: str, config: dict[str, Any], _meta: Meta, request_timeout: float
-) -> dict[str, Any]:
-    api_key = str(
-        _default_image_config(config).get("dalexni_api") or ""
-    ).strip()
+async def _upload_dalexni_host(image: str, config: dict[str, Any], _meta: Meta, request_timeout: float) -> dict[str, Any]:
+    api_key = str(_default_image_config(config).get("dalexni_api") or "").strip()
     if not api_key:
         return {
             "status": "failed",
@@ -785,14 +679,10 @@ async def _upload_dalexni_host(
         response = await _dalexni_request(image, api_key, request_timeout)
         return _dalexni_response_result(image, response)
     except (httpx.TimeoutException, httpx.RequestError, OSError) as error:
-        return _named_host_exception_result(
-            "dalexni", error, file_retryable=False
-        )
+        return _named_host_exception_result("dalexni", error, file_retryable=False)
 
 
-async def _dalexni_request(
-    image: str, api_key: str, request_timeout: float
-) -> httpx.Response:
+async def _dalexni_request(image: str, api_key: str, request_timeout: float) -> httpx.Response:
     encoded = base64.b64encode(await _read_image_bytes(image)).decode("utf8")
     data = {"key": api_key, "image": encoded}
     spec = IMAGE_HOST_SPECS["dalexni"]
@@ -805,9 +695,7 @@ async def _dalexni_request(
         )
 
 
-def _dalexni_response_result(
-    image: str, response: httpx.Response
-) -> dict[str, Any]:
+def _dalexni_response_result(image: str, response: httpx.Response) -> dict[str, Any]:
     payload = _safe_json_mapping(response)
     if payload is None:
         return _dalexni_non_json_failure(response)
@@ -829,19 +717,13 @@ def _dalexni_non_json_failure(response: httpx.Response) -> dict[str, Any]:
     unavailable = unavailable or response.status_code >= 500
     return {
         "status": "failed",
-        "reason": (
-            "dalexni returned non-JSON response "
-            f"(HTTP {response.status_code}): "
-            f"{_summarize_host_error(response.text)}"
-        ),
+        "reason": (f"dalexni returned non-JSON response (HTTP {response.status_code}): {_summarize_host_error(response.text)}"),
         "host_unavailable": unavailable,
         "retryable": False,
     }
 
 
-def _dalexni_response_failure(
-    response: httpx.Response, payload: dict[str, Any]
-) -> dict[str, Any] | None:
+def _dalexni_response_failure(response: httpx.Response, payload: dict[str, Any]) -> dict[str, Any] | None:
     if response.status_code != 200 or payload.get("success") is not True:
         return _standard_http_failure("dalexni", response, payload)
     if not _mapping_payload(payload.get("data")):
@@ -855,11 +737,7 @@ def _dalexni_response_failure(
 
 def _dalexni_urls(data: dict[str, Any]) -> tuple[str, str, str] | None:
     raw_url = _nested_url(data.get("image")) or data.get("url")
-    img_url = (
-        _nested_url(data.get("medium"))
-        or _nested_url(data.get("thumb"))
-        or raw_url
-    )
+    img_url = _nested_url(data.get("medium")) or _nested_url(data.get("thumb")) or raw_url
     web_url = data.get("url_viewer") or raw_url
     return _validated_url_triplet(img_url, raw_url, web_url)
 
@@ -886,9 +764,7 @@ async def _upload_pixhost_host(
         return _pixhost_exception_result(error)
 
 
-def _pixhost_size_failure(
-    image: str, limit: int | None
-) -> dict[str, Any] | None:
+def _pixhost_size_failure(image: str, limit: int | None) -> dict[str, Any] | None:
     size = Path(image).stat().st_size
     if limit is None or size <= limit:
         return None
@@ -899,9 +775,7 @@ def _pixhost_size_failure(
     }
 
 
-async def _pixhost_request(
-    image: str, meta: Meta, request_timeout: float
-) -> httpx.Response:
+async def _pixhost_request(image: str, meta: Meta, request_timeout: float) -> httpx.Response:
     file_bytes = await _read_image_bytes(image)
     data = {
         "content_type": "1" if _meta_is_adult(meta) else "0",
@@ -919,9 +793,7 @@ async def _pixhost_request(
         )
 
 
-def _pixhost_response_result(
-    image: str, response: httpx.Response
-) -> dict[str, Any]:
+def _pixhost_response_result(image: str, response: httpx.Response) -> dict[str, Any]:
     if response.status_code != 200:
         return _plain_http_failure("pixhost", response)
     payload = _json_mapping(response)
@@ -945,9 +817,7 @@ def _pixhost_exception_result(error: Exception) -> dict[str, Any]:
     return _named_host_exception_result("pixhost", error, file_retryable=None)
 
 
-async def _upload_zipline_host(
-    image: str, config: dict[str, Any], meta: Meta, request_timeout: float
-) -> dict[str, Any]:
+async def _upload_zipline_host(image: str, config: dict[str, Any], meta: Meta, request_timeout: float) -> dict[str, Any]:
     host = _selected_host_from_meta(meta)
     endpoint = _zipline_endpoint(_default_image_config(config), host)
     if endpoint is None:
@@ -965,9 +835,7 @@ async def _upload_zipline_host(
         return _zipline_exception_result(host_name, error)
 
 
-def _zipline_endpoint(
-    default: dict[str, Any], host: str
-) -> tuple[str, str, str] | None:
+def _zipline_endpoint(default: dict[str, Any], host: str) -> tuple[str, str, str] | None:
     if host == "midnightscene":
         url = "https://img.midnightscene.cc/api/upload"
         api_key = default.get("midnightscene_api_key")
@@ -981,9 +849,7 @@ def _zipline_endpoint(
     return str(url), str(api_key), name
 
 
-async def _zipline_request(
-    image: str, url: str, api_key: str, request_timeout: float
-) -> httpx.Response:
+async def _zipline_request(image: str, url: str, api_key: str, request_timeout: float) -> httpx.Response:
     file_bytes = await _read_image_bytes(image)
     headers = {"Authorization": api_key, "Accept": "application/json"}
     async with httpx.AsyncClient() as client:
@@ -995,16 +861,10 @@ async def _zipline_request(
         )
 
 
-def _zipline_response_result(
-    image: str, host_name: str, response: httpx.Response
-) -> dict[str, Any]:
+def _zipline_response_result(image: str, host_name: str, response: httpx.Response) -> dict[str, Any]:
     if response.status_code not in (200, 201):
         payload = _safe_json_mapping(response)
-        reason = (
-            _image_host_error(payload, response)
-            if payload is not None
-            else _summarize_host_error(response.text)
-        )
+        reason = _image_host_error(payload, response) if payload is not None else _summarize_host_error(response.text)
         return _plain_http_failure(host_name, response, reason=reason)
     payload = _json_mapping(response)
     url = _zipline_file_url(payload.get("files"))
@@ -1035,9 +895,7 @@ def _zipline_url_from_item(value: Any) -> str:
     return value if isinstance(value, str) else ""
 
 
-def _zipline_exception_result(
-    host_name: str, error: Exception
-) -> dict[str, Any]:
+def _zipline_exception_result(host_name: str, error: Exception) -> dict[str, Any]:
     if isinstance(error, ValueError):
         return {
             "status": "failed",
@@ -1046,9 +904,7 @@ def _zipline_exception_result(
     return _named_host_exception_result(host_name, error, file_retryable=None)
 
 
-async def _upload_seedpool_host(
-    image: str, config: dict[str, Any], _meta: Meta, request_timeout: float
-) -> dict[str, Any]:
+async def _upload_seedpool_host(image: str, config: dict[str, Any], _meta: Meta, request_timeout: float) -> dict[str, Any]:
     api_key = _default_image_config(config).get("seedpool_cdn_api")
     if not api_key:
         return {
@@ -1057,19 +913,13 @@ async def _upload_seedpool_host(
             "retryable": False,
         }
     try:
-        response = await _seedpool_request(
-            image, str(api_key), request_timeout
-        )
+        response = await _seedpool_request(image, str(api_key), request_timeout)
         return _seedpool_response_result(image, response)
     except (httpx.TimeoutException, httpx.RequestError, OSError) as error:
-        return _named_host_exception_result(
-            "seedpool_cdn", error, file_retryable=False
-        )
+        return _named_host_exception_result("seedpool_cdn", error, file_retryable=False)
 
 
-async def _seedpool_request(
-    image: str, api_key: str, request_timeout: float
-) -> httpx.Response:
+async def _seedpool_request(image: str, api_key: str, request_timeout: float) -> httpx.Response:
     file_bytes = await _read_image_bytes(image)
     spec = IMAGE_HOST_SPECS["seedpool_cdn"]
     headers = {
@@ -1086,9 +936,7 @@ async def _seedpool_request(
         )
 
 
-def _seedpool_response_result(
-    image: str, response: httpx.Response
-) -> dict[str, Any]:
+def _seedpool_response_result(image: str, response: httpx.Response) -> dict[str, Any]:
     payload = _safe_json_mapping(response)
     if payload is None:
         return _non_json_host_failure("seedpool_cdn", response)
@@ -1098,9 +946,7 @@ def _seedpool_response_result(
     if file_data is None:
         return {
             "status": "failed",
-            "reason": (
-                "seedpool_cdn returned an empty or malformed files response"
-            ),
+            "reason": ("seedpool_cdn returned an empty or malformed files response"),
             "retryable": False,
         }
     urls = _seedpool_urls(file_data)
@@ -1123,18 +969,11 @@ def _first_mapping(value: Any) -> dict[str, Any] | None:
 def _seedpool_urls(data: dict[str, Any]) -> tuple[str, str, str] | None:
     raw_url = data.get("url")
     variants = _mapping_payload(data.get("variants"))
-    img_url = (
-        data.get("thumbnail_url")
-        or variants.get("thumb")
-        or variants.get("medium")
-        or raw_url
-    )
+    img_url = data.get("thumbnail_url") or variants.get("thumb") or variants.get("medium") or raw_url
     return _validated_url_triplet(img_url, raw_url, raw_url)
 
 
-async def _upload_sharex_host(
-    image: str, config: dict[str, Any], _meta: Meta, request_timeout: float
-) -> dict[str, Any]:
+async def _upload_sharex_host(image: str, config: dict[str, Any], _meta: Meta, request_timeout: float) -> dict[str, Any]:
     default = _default_image_config(config)
     url = default.get("sharex_url", "https://img.digitalcore.club/api/upload")
     api_key = default.get("sharex_api_key")
@@ -1145,19 +984,13 @@ async def _upload_sharex_host(
             "retryable": False,
         }
     try:
-        response = await _sharex_request(
-            image, str(url), str(api_key), request_timeout
-        )
+        response = await _sharex_request(image, str(url), str(api_key), request_timeout)
         return _sharex_response_result(image, response)
     except (httpx.TimeoutException, httpx.RequestError, OSError) as error:
-        return _named_host_exception_result(
-            "sharex", error, file_retryable=False
-        )
+        return _named_host_exception_result("sharex", error, file_retryable=False)
 
 
-async def _sharex_request(
-    image: str, url: str, api_key: str, request_timeout: float
-) -> httpx.Response:
+async def _sharex_request(image: str, url: str, api_key: str, request_timeout: float) -> httpx.Response:
     file_bytes = await _read_image_bytes(image)
     headers = {"Authorization": api_key, "Accept": "application/json"}
     data = {"title": "Upload-Assistant screenshot"}
@@ -1172,9 +1005,7 @@ async def _sharex_request(
         )
 
 
-def _sharex_response_result(
-    image: str, response: httpx.Response
-) -> dict[str, Any]:
+def _sharex_response_result(image: str, response: httpx.Response) -> dict[str, Any]:
     payload = _safe_json_mapping(response)
     if payload is None:
         return _non_json_host_failure("sharex host", response)
@@ -1196,9 +1027,7 @@ def _sharex_link(payload: dict[str, Any]) -> str:
     return value if isinstance(value, str) else ""
 
 
-async def _upload_lostimg_host(
-    image: str, config: dict[str, Any], _meta: Meta, request_timeout: float
-) -> dict[str, Any]:
+async def _upload_lostimg_host(image: str, config: dict[str, Any], _meta: Meta, request_timeout: float) -> dict[str, Any]:
     api_key = _default_image_config(config).get("lostimg_api")
     if not api_key:
         return {
@@ -1210,14 +1039,10 @@ async def _upload_lostimg_host(
         response = await _lostimg_request(image, str(api_key), request_timeout)
         return _lostimg_response_result(image, response)
     except (httpx.TimeoutException, httpx.RequestError, OSError) as error:
-        return _named_host_exception_result(
-            "lostimg", error, file_retryable=False
-        )
+        return _named_host_exception_result("lostimg", error, file_retryable=False)
 
 
-async def _lostimg_request(
-    image: str, api_key: str, request_timeout: float
-) -> httpx.Response:
+async def _lostimg_request(image: str, api_key: str, request_timeout: float) -> httpx.Response:
     file_bytes = await _read_image_bytes(image)
     spec = IMAGE_HOST_SPECS["lostimg"]
     headers = {
@@ -1234,9 +1059,7 @@ async def _lostimg_request(
         )
 
 
-def _lostimg_response_result(
-    image: str, response: httpx.Response
-) -> dict[str, Any]:
+def _lostimg_response_result(image: str, response: httpx.Response) -> dict[str, Any]:
     payload = _safe_json_mapping(response)
     if payload is None:
         return _non_json_host_failure("lostimg", response)
@@ -1252,41 +1075,24 @@ def _lostimg_response_result(
     return _successful_image_result(image, raw_url, raw_url, raw_url)
 
 
-def _standard_http_failure(
-    host: str, response: httpx.Response, payload: dict[str, Any]
-) -> dict[str, Any]:
-    return _plain_http_failure(
-        host, response, reason=_image_host_error(payload, response)
-    )
+def _standard_http_failure(host: str, response: httpx.Response, payload: dict[str, Any]) -> dict[str, Any]:
+    return _plain_http_failure(host, response, reason=_image_host_error(payload, response))
 
 
-def _plain_http_failure(
-    host: str, response: httpx.Response, *, reason: str | None = None
-) -> dict[str, Any]:
-    message = (
-        reason if reason is not None else _summarize_host_error(response.text)
-    )
+def _plain_http_failure(host: str, response: httpx.Response, *, reason: str | None = None) -> dict[str, Any]:
+    message = reason if reason is not None else _summarize_host_error(response.text)
     return {
         "status": "failed",
-        "reason": (
-            f"{host} upload failed (HTTP {response.status_code}): {message}"
-        ),
+        "reason": (f"{host} upload failed (HTTP {response.status_code}): {message}"),
         "host_unavailable": response.status_code >= 500,
-        "retryable": response.status_code == 429
-        or response.status_code >= 500,
+        "retryable": response.status_code == 429 or response.status_code >= 500,
     }
 
 
-def _non_json_host_failure(
-    host: str, response: httpx.Response
-) -> dict[str, Any]:
+def _non_json_host_failure(host: str, response: httpx.Response) -> dict[str, Any]:
     return {
         "status": "failed",
-        "reason": (
-            f"{host} returned non-JSON response "
-            f"(HTTP {response.status_code}): "
-            f"{_summarize_host_error(response.text)}"
-        ),
+        "reason": (f"{host} returned non-JSON response (HTTP {response.status_code}): {_summarize_host_error(response.text)}"),
         "host_unavailable": response.status_code >= 500,
         "retryable": response.status_code >= 500,
     }
@@ -1311,9 +1117,7 @@ def _named_host_exception_result(
         }
     result: dict[str, Any] = {
         "status": "failed",
-        "reason": (
-            f"Could not read image for {host}: {_summarize_host_error(error)}"
-        ),
+        "reason": (f"Could not read image for {host}: {_summarize_host_error(error)}"),
     }
     if file_retryable is not None:
         result["retryable"] = file_retryable
@@ -1340,9 +1144,7 @@ async def _upload_screens(
     default_config = _default_image_config(config)
     started_at = time.time() if meta.debug else None
     os.chdir(screenshots_dir(meta.base_dir, meta.uuid))
-    attempted: set[str] = (
-        attempted_hosts if attempted_hosts is not None else set()
-    )
+    attempted: set[str] = attempted_hosts if attempted_hosts is not None else set()
     selection = _select_upload_host(
         meta,
         default_config,
@@ -1354,9 +1156,7 @@ async def _upload_screens(
     if selection is None:
         return meta.image_list, len(meta.image_list)
     img_host, selected_slot, initial_host = selection
-    source_files, existing_count, using_custom = await _upload_source_files(
-        meta, custom_img_list, return_dict
-    )
+    source_files, existing_count, using_custom = await _upload_source_files(meta, custom_img_list, return_dict)
     images_needed = _images_needed(total_screens, existing_count, retry_mode)
     early = _upload_early_result(
         meta,
@@ -1428,9 +1228,7 @@ async def _run_selected_upload_flow(
             started_at,
         )
     except asyncio.CancelledError:
-        logger.info(
-            "\n[red]Upload process interrupted! Cancelling tasks...[/red]"
-        )
+        logger.info("\n[red]Upload process interrupted! Cancelling tasks...[/red]")
         raise
 
 
@@ -1509,9 +1307,7 @@ def _select_upload_host(
     _log_host_switch(meta, host)
     meta.imghost = host
     slot = _configured_host_slot(default_config, host, img_host_num)
-    logger.debug(
-        f"[blue]Using image host: {host} (configured: {initial_host})[/blue]"
-    )
+    logger.debug(f"[blue]Using image host: {host} (configured: {initial_host})[/blue]")
     return host, slot, initial_host
 
 
@@ -1519,9 +1315,7 @@ def _configured_host(default_config: dict[str, Any], slot: int) -> str:
     return str(default_config.get(f"img_host_{slot}") or "").strip().lower()
 
 
-def _configured_host_slot(
-    default_config: dict[str, Any], host: str, fallback: int
-) -> int:
+def _configured_host_slot(default_config: dict[str, Any], host: str, fallback: int) -> int:
     for slot in range(1, MAX_IMAGE_HOST_SLOTS + 1):
         if _configured_host(default_config, slot) == host:
             return slot
@@ -1531,10 +1325,7 @@ def _configured_host_slot(
 def _log_host_switch(meta: Meta, host: str) -> None:
     preferred = str(meta.imghost or "").strip().lower()
     if preferred and preferred != host:
-        logger.info(
-            f"[yellow]Switching image host from '{meta.imghost}' to available"
-            f" host '{host}'.[/yellow]"
-        )
+        logger.info(f"[yellow]Switching image host from '{meta.imghost}' to available host '{host}'.[/yellow]")
 
 
 def _configured_host_plan(default_config: dict[str, Any]) -> list[str]:
@@ -1585,42 +1376,24 @@ async def _main_screenshot_files(meta: Meta) -> list[str]:
 async def _glob_relative_paths(patterns: Sequence[str]) -> list[str]:
     results: list[str] = []
     for pattern in patterns:
-        matches = await asyncio.to_thread(
-            lambda p=pattern: [
-                str(path.relative_to(Path.cwd()))
-                for path in Path.cwd().glob(p)
-            ]
-        )
+        matches = await asyncio.to_thread(lambda p=pattern: [str(path.relative_to(Path.cwd())) for path in Path.cwd().glob(p)])
         results.extend(matches)
     return results
 
 
 async def _unwanted_screenshot_files() -> set[str]:
-    patterns = tuple(
-        value
-        for base in ("FILE*", "PLAYLIST*", "POSTER*")
-        for value in (base, f".{base}")
-    )
+    patterns = tuple(value for base in ("FILE*", "PLAYLIST*", "POSTER*") for value in (base, f".{base}"))
     return set(await _glob_relative_paths(patterns))
 
 
 def _filter_menu_screenshots(meta: Meta, files: list[str]) -> list[str]:
     menu_basenames = _menu_screenshot_basenames(meta.menu_images)
-    return [
-        filename
-        for filename in files
-        if not _is_menu_screenshot(filename, menu_basenames)
-    ]
+    return [filename for filename in files if not _is_menu_screenshot(filename, menu_basenames)]
 
 
 def _menu_screenshot_basenames(value: Any) -> set[str]:
     images = cast(list[Any], value) if isinstance(value, list) else []
-    return {
-        Path(source).name
-        for image in images
-        if isinstance(image, dict)
-        if (source := _menu_image_source(cast(dict[str, Any], image)))
-    }
+    return {Path(source).name for image in images if isinstance(image, dict) if (source := _menu_image_source(cast(dict[str, Any], image)))}
 
 
 def _menu_image_source(image: dict[str, Any]) -> str:
@@ -1639,17 +1412,11 @@ def _numeric_screenshot_suffix(filename: str) -> float:
     return int(match.group(1)) if match else float("inf")
 
 
-def _exclude_uploaded_source_files(
-    files: list[str], return_dict: dict[str, Any]
-) -> list[str]:
+def _exclude_uploaded_source_files(files: list[str], return_dict: dict[str, Any]) -> list[str]:
     uploaded = return_dict.get("_uploaded_image_files")
     if not isinstance(uploaded, set):
         return files
-    return [
-        filename
-        for filename in files
-        if str(Path(filename).resolve()) not in uploaded
-    ]
+    return [filename for filename in files if str(Path(filename).resolve()) not in uploaded]
 
 
 def _existing_hosted_image_count(images: Any) -> int:
@@ -1664,9 +1431,7 @@ def _has_hosted_image_urls(image: Any) -> bool:
     return bool(mapping.get("img_url") and mapping.get("web_url"))
 
 
-def _images_needed(
-    total_screens: int, existing_count: int, retry_mode: bool
-) -> int:
+def _images_needed(total_screens: int, existing_count: int, retry_mode: bool) -> int:
     if retry_mode:
         return total_screens
     return max(0, total_screens - existing_count)
@@ -1683,10 +1448,7 @@ def _upload_early_result(
     img_host: str,
     initial_host: str,
 ) -> tuple[list[ImageDict], int] | None:
-    logger.debug(
-        f"[blue]Existing images: {existing_count}, Images needed:"
-        f" {images_needed}, Total screens: {total_screens}[/blue]"
-    )
+    logger.debug(f"[blue]Existing images: {existing_count}, Images needed: {images_needed}, Total screens: {total_screens}[/blue]")
     reason = _early_upload_reason(
         total_screens,
         existing_count,
@@ -1700,9 +1462,7 @@ def _upload_early_result(
     if not reason:
         return None
     logger.debug(f"[yellow]Skipping upload: {reason}[/yellow]")
-    return _early_upload_value(
-        meta, total_screens, images_needed, source_files
-    )
+    return _early_upload_value(meta, total_screens, images_needed, source_files)
 
 
 def _early_upload_reason(
@@ -1739,17 +1499,10 @@ def _existing_images_satisfy_request(
     img_host: str,
     initial_host: str,
 ) -> bool:
-    return (
-        existing_count >= total_screens
-        and not retry_mode
-        and not using_custom
-        and img_host == initial_host
-    )
+    return existing_count >= total_screens and not retry_mode and not using_custom and img_host == initial_host
 
 
-def _early_upload_value(
-    meta: Meta, total_screens: int, images_needed: int, source_files: list[str]
-) -> tuple[list[ImageDict], int]:
+def _early_upload_value(meta: Meta, total_screens: int, images_needed: int, source_files: list[str]) -> tuple[list[ImageDict], int]:
     if total_screens <= 0:
         return meta.image_list, 0
     if images_needed == 0:
@@ -1770,9 +1523,7 @@ async def _execute_upload_batch(
     unavailable_hosts: set[str] | None,
 ) -> list[tuple[int, dict[str, Any]]]:
     tasks = _upload_task_values(source_files, img_host, config, meta)
-    semaphore = asyncio.Semaphore(
-        _upload_worker_count(config, img_host, len(tasks))
-    )
+    semaphore = asyncio.Semaphore(_upload_worker_count(config, img_host, len(tasks)))
     wait_for_slot = _build_image_start_limiter(_image_upload_delay(config))
     running: set[asyncio.Task[dict[str, Any]]] = set()
     uploads = await _gather_upload_tasks(
@@ -1788,10 +1539,7 @@ async def _execute_upload_batch(
     )
     results = [result for result in uploads if result is not None]
     results.sort(key=lambda item: item[0])
-    logger.debug(
-        f"[blue]Successfully uploaded {len(results)} out of"
-        f" {len(tasks)} attempted uploads.[/blue]"
-    )
+    logger.debug(f"[blue]Successfully uploaded {len(results)} out of {len(tasks)} attempted uploads.[/blue]")
     return results
 
 
@@ -1836,20 +1584,13 @@ def _upload_task_values(
     config: dict[str, Any],
     meta: Meta,
 ) -> list[tuple[int, str, str, dict[str, Any], Meta]]:
-    return [
-        (index, image, img_host, config, meta)
-        for index, image in enumerate(source_files)
-    ]
+    return [(index, image, img_host, config, meta) for index, image in enumerate(source_files)]
 
 
-def _upload_worker_count(
-    config: dict[str, Any], host: str, task_count: int
-) -> int:
+def _upload_worker_count(config: dict[str, Any], host: str, task_count: int) -> int:
     default = _default_image_config(config)
     configured = _positive_int(default.get("image_upload_concurrency"), 0)
-    pool = (
-        configured if configured > 0 else _host_worker_limit(host, task_count)
-    )
+    pool = configured if configured > 0 else _host_worker_limit(host, task_count)
     return min(task_count, pool)
 
 
@@ -1925,9 +1666,7 @@ async def _retry_upload_attempts(
     return_dict: dict[str, Any],
 ) -> tuple[int, dict[str, Any]] | None:
     for attempt in range(max_retries + 1):
-        outcome = await _single_upload_attempt(
-            index, args, wait_for_slot, running, img_host
-        )
+        outcome = await _single_upload_attempt(index, args, wait_for_slot, running, img_host)
         if outcome is None:
             return None
         if outcome.get("status") == "success":
@@ -1969,9 +1708,7 @@ async def _single_upload_attempt(
         _cancel_cancelled_upload(index, future, running)
         raise
     except Exception as error:
-        logger.error(
-            f"[red]Error during upload for image {index}: {error!s}[/red]"
-        )
+        logger.error(f"[red]Error during upload for image {index}: {error!s}[/red]")
         return {"status": "failed", "reason": str(error), "retryable": True}
 
 
@@ -1981,11 +1718,7 @@ def _cancel_upload_future(
     future: asyncio.Task[dict[str, Any]] | None,
     running: set[asyncio.Task[dict[str, Any]]],
 ) -> None:
-    logger.warning(
-        f"[yellow]Upload task {index} timed out after 60 seconds."
-        f" Not retrying on {img_host} because the host may already have"
-        " stored it.[/yellow]"
-    )
+    logger.warning(f"[yellow]Upload task {index} timed out after 60 seconds. Not retrying on {img_host} because the host may already have stored it.[/yellow]")
     _cancel_future(future, running)
 
 
@@ -2034,21 +1767,13 @@ def _failed_upload_action(
     max_retries: int,
 ) -> str:
     reason = str(result.get("reason", "Unknown error"))
-    terminal = _terminal_upload_failure(
-        index, img_host, result, reason, unavailable_hosts
-    )
+    terminal = _terminal_upload_failure(index, img_host, result, reason, unavailable_hosts)
     if terminal:
         return "next_host"
     if attempt < max_retries:
-        logger.info(
-            f"[yellow]Retry {attempt + 1}/{max_retries} for image"
-            f" {index}: {reason}[/yellow]"
-        )
+        logger.info(f"[yellow]Retry {attempt + 1}/{max_retries} for image {index}: {reason}[/yellow]")
         return "retry"
-    logger.error(
-        f"[red]Failed to upload image {index} after {max_retries} attempts:"
-        f" {reason}[/red]"
-    )
+    logger.error(f"[red]Failed to upload image {index} after {max_retries} attempts: {reason}[/red]")
     return "next_host"
 
 
@@ -2063,45 +1788,27 @@ def _terminal_upload_failure(
         _open_host_circuit(img_host, reason, unavailable_hosts)
         return True
     if result.get("retryable") is False:
-        logger.info(
-            f"[yellow]Not retrying {img_host} for image {index}: {reason}."
-            " Trying the next configured host.[/yellow]"
-        )
+        logger.info(f"[yellow]Not retrying {img_host} for image {index}: {reason}. Trying the next configured host.[/yellow]")
         return True
     return _terminal_reason_failure(index, img_host, reason)
 
 
-def _open_host_circuit(
-    img_host: str, reason: str, unavailable_hosts: set[str] | None
-) -> None:
+def _open_host_circuit(img_host: str, reason: str, unavailable_hosts: set[str] | None) -> None:
     if unavailable_hosts is not None:
         unavailable_hosts.add(img_host)
-    logger.warning(
-        f"[yellow]Image host {img_host} is unavailable: {reason}."
-        " Trying the next configured host.[/yellow]"
-    )
+    logger.warning(f"[yellow]Image host {img_host} is unavailable: {reason}. Trying the next configured host.[/yellow]")
 
 
 def _terminal_reason_failure(index: int, img_host: str, reason: str) -> bool:
     lowered = reason.lower()
     if "upload outcome unknown" in lowered:
-        logger.warning(
-            f"[yellow]Not retrying image {index} on {img_host}: the host"
-            " may already have stored it. Trying the next configured image"
-            " host instead.[/yellow]"
-        )
+        logger.warning(f"[yellow]Not retrying image {index} on {img_host}: the host may already have stored it. Trying the next configured image host instead.[/yellow]")
         return True
     if "duplicate" in lowered:
-        logger.info(
-            f"[yellow]Skipping host because duplicate image {index}:"
-            f" {reason}[/yellow]"
-        )
+        logger.info(f"[yellow]Skipping host because duplicate image {index}: {reason}[/yellow]")
         return True
     if "api key" in lowered:
-        logger.info(
-            f"[red]API key error for {img_host}. Aborting further"
-            " attempts.[/red]"
-        )
+        logger.info(f"[red]API key error for {img_host}. Aborting further attempts.[/red]")
         return True
     return False
 
@@ -2123,18 +1830,12 @@ async def _fallback_after_partial_upload(
 ) -> tuple[list[ImageDict], int]:
     attempted_hosts.add(img_host)
     _store_partial_successes(meta, successes, using_custom)
-    next_host = _next_fallback_host(
-        config, allowed_hosts, unavailable_hosts, attempted_hosts
-    )
+    next_host = _next_fallback_host(config, allowed_hosts, unavailable_hosts, attempted_hosts)
     if next_host is None:
-        _log_no_more_hosts(
-            meta, config, allowed_hosts, unavailable_hosts, attempted_hosts
-        )
+        _log_no_more_hosts(meta, config, allowed_hosts, unavailable_hosts, attempted_hosts)
         return meta.image_list, len(meta.image_list)
     meta.imghost = next_host
-    next_slot = _configured_host_slot(
-        _default_image_config(config), next_host, selected_slot
-    )
+    next_slot = _configured_host_slot(_default_image_config(config), next_host, selected_slot)
     logger.info(f"[cyan]Switching to the next image host: {next_host}[/cyan]")
     gc.collect()
     return await _upload_screens(
@@ -2223,23 +1924,16 @@ def _store_final_screenshot_images(
     known = _existing_raw_urls(meta.image_list)
     for _index, upload in successes:
         _record_uploaded_image(meta, upload, known)
-    logger.info(
-        f"[green]Successfully obtained and uploaded {len(new_images)} images."
-    )
+    logger.info(f"[green]Successfully obtained and uploaded {len(new_images)} images.")
 
 
 def _log_upload_duration(meta: Meta, started_at: float | None) -> None:
     if not meta.debug or started_at is None:
         return
-    logger.info(
-        "Screenshot uploads processed in"
-        f" {time.time() - started_at:.4f} seconds"
-    )
+    logger.info(f"Screenshot uploads processed in {time.time() - started_at:.4f} seconds")
 
 
-def _final_upload_value(
-    meta: Meta, new_images: list[ImageDict], using_custom: bool
-) -> tuple[list[ImageDict], int]:
+def _final_upload_value(meta: Meta, new_images: list[ImageDict], using_custom: bool) -> tuple[list[ImageDict], int]:
     if using_custom:
         return new_images, len(new_images)
     return meta.image_list, len(meta.image_list)
@@ -2265,17 +1959,10 @@ def _new_image_dict(upload: dict[str, Any]) -> ImageDict:
 
 def _existing_raw_urls(images: Any) -> set[str]:
     values = cast(list[Any], images) if isinstance(images, list) else []
-    return {
-        str(mapping["raw_url"])
-        for image in values
-        if isinstance(image, dict)
-        if (mapping := cast(dict[str, Any], image)).get("raw_url")
-    }
+    return {str(mapping["raw_url"]) for image in values if isinstance(image, dict) if (mapping := cast(dict[str, Any], image)).get("raw_url")}
 
 
-def _record_uploaded_image(
-    meta: Meta, upload: dict[str, Any], known_raw_urls: set[str]
-) -> None:
+def _record_uploaded_image(meta: Meta, upload: dict[str, Any], known_raw_urls: set[str]) -> None:
     raw_url = str(upload["raw_url"])
     if raw_url in known_raw_urls:
         return
@@ -2290,18 +1977,13 @@ def _record_uploaded_image(
     _record_uploaded_image_size(meta, raw_url, upload.get("local_file_path"))
 
 
-def _record_uploaded_image_size(
-    meta: Meta, raw_url: str, local_file_path: Any
-) -> None:
+def _record_uploaded_image_size(meta: Meta, raw_url: str, local_file_path: Any) -> None:
     if not local_file_path:
         return
     try:
         meta.image_sizes[raw_url] = Path(str(local_file_path)).stat().st_size
     except OSError:
-        logger.debug(
-            "[yellow]Could not stat uploaded image source "
-            f"{local_file_path}.[/yellow]"
-        )
+        logger.debug(f"[yellow]Could not stat uploaded image source {local_file_path}.[/yellow]")
 
 
 async def imgbox_upload(
@@ -2322,15 +2004,11 @@ async def imgbox_upload(
         return []
 
 
-async def _imgbox_gallery_upload(
-    image_glob: list[str], adult: bool
-) -> tuple[list[dict[str, str]], list[str]]:
+async def _imgbox_gallery_upload(image_glob: list[str], adult: bool) -> tuple[list[dict[str, str]], list[str]]:
     images: list[dict[str, str]] = []
     errors: list[str] = []
     gallery_api = cast(Any, pyimgbox)
-    async with gallery_api.Gallery(
-        thumb_width=350, square_thumbs=False, adult=adult
-    ) as gallery:
+    async with gallery_api.Gallery(thumb_width=350, square_thumbs=False, adult=adult) as gallery:
         for image in image_glob:
             await _imgbox_process_image(gallery, image, images, errors)
     return images, errors
@@ -2348,10 +2026,7 @@ async def _imgbox_process_image(
     except Exception as error:
         summary = _summarize_host_error(error)
         errors.append(summary)
-        logger.warning(
-            f"[yellow]ImgBox upload failed for {Path(image).name}:"
-            f" {summary}[/yellow]"
-        )
+        logger.warning(f"[yellow]ImgBox upload failed for {Path(image).name}: {summary}[/yellow]")
 
 
 def _record_imgbox_submission(
@@ -2366,18 +2041,13 @@ def _record_imgbox_submission(
         return
     urls = _imgbox_submission_urls(data)
     if urls is None:
-        logger.warning(
-            "[yellow]ImgBox returned incomplete URLs"
-            f" for {Path(image).name}[/yellow]"
-        )
+        logger.warning(f"[yellow]ImgBox returned incomplete URLs for {Path(image).name}[/yellow]")
         return
     img_url, raw_url, web_url = urls
     images.append({"web_url": web_url, "img_url": img_url, "raw_url": raw_url})
 
 
-def _record_imgbox_submission_error(
-    data: dict[str, Any], errors: list[str]
-) -> None:
+def _record_imgbox_submission_error(data: dict[str, Any], errors: list[str]) -> None:
     summary = _summarize_host_error(data.get("error"))
     errors.append(summary)
     logger.warning(f"[yellow]ImgBox upload failed: {summary}[/yellow]")
@@ -2414,9 +2084,7 @@ def _imgbox_error_unavailable(error: str) -> bool:
     return "500" in error or "something went wrong" in lowered
 
 
-def _record_imgbox_unavailable(
-    return_dict: dict[str, Any], error: Exception
-) -> None:
+def _record_imgbox_unavailable(return_dict: dict[str, Any], error: Exception) -> None:
     summary = _summarize_host_error(error)
     return_dict["error"] = summary
     return_dict["host_unavailable"] = True

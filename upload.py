@@ -27,8 +27,8 @@ from rich.markup import escape
 from torf import Torrent as _Torrent  # pyright: ignore[reportMissingImports,reportUnknownVariableType]
 
 from src.bootstrap import build_configuration_service
-from src.domain_models import application_version
 from src.delivery.cli.arguments import Args, partition_existing_paths, read_paths_from_stdin
+from src.domain_models import application_version
 from src.domain_models.book_language import is_valid_book_language, resolve_book_language
 from src.domain_models.errors import ConfigurationError, NoWorkAvailableError, OperationAbortedError
 from src.domain_models.processing import ItemProcessingError
@@ -988,19 +988,12 @@ async def _process_optional_image_artifacts(
             try:
                 await process_disc_menus(meta, config)
             except Exception as error:
-                logger.warning(
-                    "[yellow]Optional disc-menu processing failed; continuing "
-                    f"with the release screenshots: {error}[/yellow]"
-                )
+                logger.warning(f"[yellow]Optional disc-menu processing failed; continuing with the release screenshots: {error}[/yellow]")
 
     should_process_spectrogram = meta.category not in {"BOOK", "GAME"} or bool(meta.audiobook)
     default = config.get("DEFAULT", {})
     default_map = cast(dict[str, Any], default) if isinstance(default, dict) else {}
-    wants_spectrogram = bool(
-        meta.audio_spectrogram
-        or meta.audio_spectrogram_tracks
-        or default_map.get("add_audio_spectrogram", False)
-    )
+    wants_spectrogram = bool(meta.audio_spectrogram or meta.audio_spectrogram_tracks or default_map.get("add_audio_spectrogram", False))
     if should_process_spectrogram and wants_spectrogram:
         if meta.debug:
             logger.info("[yellow]Debug mode: audio spectrogram hosting skipped.[/yellow]")
@@ -1008,20 +1001,13 @@ async def _process_optional_image_artifacts(
             try:
                 await process_audio_spectrograms(meta, config, uploadscreens_manager)
             except Exception as error:
-                logger.warning(
-                    "[yellow]Optional audio spectrogram processing failed; "
-                    "continuing with the release screenshots: "
-                    f"{error}[/yellow]"
-                )
+                logger.warning(f"[yellow]Optional audio spectrogram processing failed; continuing with the release screenshots: {error}[/yellow]")
 
     if dynamic_hdr_plot_enabled(meta, config):
         try:
             await process_dynamic_hdr_plots(meta, config, uploadscreens_manager)
         except Exception as error:
-            logger.warning(
-                "[yellow]Optional dynamic HDR plot processing failed; "
-                f"continuing with the release screenshots: {error}[/yellow]"
-            )
+            logger.warning(f"[yellow]Optional dynamic HDR plot processing failed; continuing with the release screenshots: {error}[/yellow]")
 
 
 async def _validate_screenshots_then_process_optional(
@@ -2065,18 +2051,12 @@ def get_local_version(version_file: str | Path) -> str:
     try:
         content = path.read_text(encoding="utf-8")
     except OSError as error:
-        logger.debug(
-            f"Version metadata file unavailable at {path}: {error}. "
-            f"Using packaged version {application_version.__version__}."
-        )
+        logger.debug(f"Version metadata file unavailable at {path}: {error}. Using packaged version {application_version.__version__}.")
         return application_version.__version__
     match = re.search(r'__version__\s*=\s*"([^"]+)"', content)
     if match:
         return match.group(1)
-    logger.debug(
-        f"Version metadata missing from {path}; using packaged version "
-        f"{application_version.__version__}."
-    )
+    logger.debug(f"Version metadata missing from {path}; using packaged version {application_version.__version__}.")
     return application_version.__version__
 
 

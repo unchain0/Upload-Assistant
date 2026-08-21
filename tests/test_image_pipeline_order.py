@@ -36,10 +36,7 @@ async def test_mandatory_hosted_screenshots_block_optional_artifacts(
     monkeypatch.setattr(
         upload,
         "screenshot_requirement_error",
-        lambda *_args, **_kwargs: (
-            "4 local screenshot(s) available, 0 successfully hosted; "
-            "minimum hosted required: 4."
-        ),
+        lambda *_args, **_kwargs: "4 local screenshot(s) available, 0 successfully hosted; minimum hosted required: 4.",
     )
     monkeypatch.setattr(upload, "_process_optional_image_artifacts", optional)
 
@@ -70,9 +67,7 @@ async def test_optional_artifacts_run_only_after_screenshot_validation(
     monkeypatch.setattr(upload, "screenshot_requirement_error", requirement)
     monkeypatch.setattr(upload, "_process_optional_image_artifacts", optional)
 
-    await upload._validate_screenshots_then_process_optional(
-        _meta(), {"DEFAULT": {"min_successful_image_uploads": 4}}, AsyncMock()
-    )
+    await upload._validate_screenshots_then_process_optional(_meta(), {"DEFAULT": {"min_successful_image_uploads": 4}}, AsyncMock())
 
     assert events == ["validated", "optional"]
 
@@ -101,9 +96,7 @@ async def test_optional_spectrogram_failure_does_not_abort_release(
 ) -> None:
     spectrogram = AsyncMock(side_effect=RuntimeError("host unavailable"))
     monkeypatch.setattr(upload, "process_audio_spectrograms", spectrogram)
-    monkeypatch.setattr(
-        upload, "dynamic_hdr_plot_enabled", lambda *_args: False
-    )
+    monkeypatch.setattr(upload, "dynamic_hdr_plot_enabled", lambda *_args: False)
 
     await upload._process_optional_image_artifacts(
         _meta(audio_spectrogram=True),
@@ -121,9 +114,7 @@ async def test_optional_disc_menu_and_hdr_failures_are_nonfatal(
     menus = AsyncMock(side_effect=RuntimeError("menu host failed"))
     hdr = AsyncMock(side_effect=RuntimeError("hdr host failed"))
     monkeypatch.setattr(upload, "process_disc_menus", menus)
-    monkeypatch.setattr(
-        upload, "dynamic_hdr_plot_enabled", lambda *_args: True
-    )
+    monkeypatch.setattr(upload, "dynamic_hdr_plot_enabled", lambda *_args: True)
     monkeypatch.setattr(upload, "process_dynamic_hdr_plots", hdr)
 
     await upload._process_optional_image_artifacts(

@@ -65,25 +65,16 @@ class DigitalCore:
         self.config = config
         self.common = Common(config)
         self.rehost_images_manager = RehostImagesManager(config)
-        self.api_key = (
-            self.config["TRACKERS"][self.tracker].get("api_key") or ""
-        )
-        self.session = httpx.AsyncClient(
-            headers={"X-API-KEY": self.api_key}, timeout=30.0
-        )
+        self.api_key = self.config["TRACKERS"][self.tracker].get("api_key") or ""
+        self.session = httpx.AsyncClient(headers={"X-API-KEY": self.api_key}, timeout=30.0)
 
     async def mediainfo(self, meta: Meta) -> str:
         mediainfo = ""
         if meta.category in ("TV", "MOVIE", "MUSIC") or meta.audiobook:
             if meta.is_disc == "BDMV":
-                mediainfo = await self.common.get_bdmv_mediainfo(
-                    meta, remove=["File size", "Overall bit rate"]
-                )
+                mediainfo = await self.common.get_bdmv_mediainfo(meta, remove=["File size", "Overall bit rate"])
             else:
-                mi_path = (
-                    f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/MEDIAINFO_"
-                    + "CLEANPATH.txt"
-                )
+                mi_path = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/MEDIAINFO_" + "CLEANPATH.txt"
                 async with aiofiles.open(mi_path, encoding="utf-8") as f:
                     mediainfo = await f.read()
 
@@ -112,17 +103,13 @@ class DigitalCore:
     @staticmethod
     def _disc_category_id(meta: Meta) -> int | None:
         if meta.is_disc == "BDMV":
-            return DigitalCore._bdmv_category_id(
-                meta.category, meta.resolution
-            )
+            return DigitalCore._bdmv_category_id(meta.category, meta.resolution)
         if meta.is_disc == "DVD":
             return {"MOVIE": 1, "TV": 11}.get(str(meta.category))
         return None
 
     @staticmethod
-    def _bdmv_category_id(
-        category: str | None, resolution: str | None
-    ) -> int | None:
+    def _bdmv_category_id(category: str | None, resolution: str | None) -> int | None:
         if category == "TV":
             return 14
         if category != "MOVIE":
@@ -176,11 +163,7 @@ class DigitalCore:
             "TV": {"2160p": 13, "1080p": 9, "1080i": 9, "720p": 8},
         }
         resolution_map = category_map.get(category)
-        return (
-            None
-            if resolution_map is None
-            else resolution_map.get(str(meta.resolution))
-        )
+        return None if resolution_map is None else resolution_map.get(str(meta.resolution))
 
     async def search_existing(self, meta: Meta) -> list[dict[str, Any]]:
         response = await self.session.get(
@@ -190,22 +173,12 @@ class DigitalCore:
             timeout=15,
         )
         response.raise_for_status()
-        return self._matching_search_results(
-            response, self.get_category_id(meta), meta
-        )
+        return self._matching_search_results(response, self.get_category_id(meta), meta)
 
     @staticmethod
     def _search_params(meta: Meta) -> dict[str, str]:
-        imdb_id = (
-            meta.imdb_info.get("imdbID")
-            if isinstance(meta.imdb_info, dict)
-            else None
-        )
-        return (
-            {"searchText": str(imdb_id)}
-            if imdb_id
-            else {"search": str(meta.title)}
-        )
+        imdb_id = meta.imdb_info.get("imdbID") if isinstance(meta.imdb_info, dict) else None
+        return {"searchText": str(imdb_id)} if imdb_id else {"search": str(meta.title)}
 
     @classmethod
     def _matching_search_results(
@@ -215,11 +188,7 @@ class DigitalCore:
         meta: Meta | None = None,
     ) -> list[dict[str, Any]]:
         payload = cls._search_payload(response)
-        return [
-            entry
-            for item in payload
-            if (entry := cls._dupe_entry(item, category_id, meta)) is not None
-        ]
+        return [entry for item in payload if (entry := cls._dupe_entry(item, category_id, meta)) is not None]
 
     @staticmethod
     def _search_payload(response: httpx.Response) -> list[Any]:
@@ -245,18 +214,14 @@ class DigitalCore:
         return cls._dupe_payload(entry, name, semantics)
 
     @staticmethod
-    def _category_entry(
-        item: Any, category_id: int | None
-    ) -> dict[str, Any] | None:
+    def _category_entry(item: Any, category_id: int | None) -> dict[str, Any] | None:
         if not isinstance(item, dict):
             return None
         entry = cast(dict[str, Any], item)
         return entry if entry.get("category") == category_id else None
 
     @classmethod
-    def _candidate_allowed(
-        cls, meta: Meta | None, semantics: dict[str, str]
-    ) -> bool:
+    def _candidate_allowed(cls, meta: Meta | None, semantics: dict[str, str]) -> bool:
         return meta is None or cls._candidate_matches_release(meta, semantics)
 
     @classmethod
@@ -288,10 +253,7 @@ class DigitalCore:
             return True
         target = cls._target_semantics(meta)
         keys = ("resolution", "type", "codec")
-        compatible = all(
-            cls._semantic_value_matches(target[key], semantics[key])
-            for key in keys
-        )
+        compatible = all(cls._semantic_value_matches(target[key], semantics[key]) for key in keys)
         return compatible and cls._has_required_candidate_semantics(semantics)
 
     @staticmethod
@@ -319,13 +281,9 @@ class DigitalCore:
     @classmethod
     def _candidate_semantics(cls, name: str) -> dict[str, str]:
         lowered = name.lower()
-        resolution_match = re.search(
-            r"(?<!\d)(480p|576p|720p|1080[pi]|1440p|2160p)(?!\d)", lowered
-        )
+        resolution_match = re.search(r"(?<!\d)(480p|576p|720p|1080[pi]|1440p|2160p)(?!\d)", lowered)
         return {
-            "resolution": resolution_match.group(1)
-            if resolution_match
-            else "",
+            "resolution": resolution_match.group(1) if resolution_match else "",
             "type": cls._source_type_from_name(lowered),
             "codec": cls._codec_from_name(lowered),
         }
@@ -334,11 +292,7 @@ class DigitalCore:
     def _source_type_from_name(cls, value: str) -> str:
         compact = re.sub(r"[ ._-]+", "", value).upper()
         return next(
-            (
-                kind
-                for pattern, kind in cls._source_patterns()
-                if re.search(pattern, compact)
-            ),
+            (kind for pattern, kind in cls._source_patterns() if re.search(pattern, compact)),
             "",
         )
 
@@ -379,11 +333,7 @@ class DigitalCore:
         return f"{scene_name} [NORAR]" if scene_name else meta.basename_no_ext
 
     def _use_metadata_name(self) -> bool:
-        return bool(
-            self.config["TRACKERS"][self.tracker].get(
-                "use_metadata_name", False
-            )
-        )
+        return bool(self.config["TRACKERS"][self.tracker].get("use_metadata_name", False))
 
     @classmethod
     def _metadata_release_name(cls, meta: Meta, scene_name: str) -> str:
@@ -393,17 +343,9 @@ class DigitalCore:
 
     @staticmethod
     def _sanitize_release_name(name: str) -> str:
-        normalized = (
-            name.replace("DD+", "DDP")
-            .replace("DTS:", "DTS-")
-            .replace("HDR10+", "HDR10P")
-        )
+        normalized = name.replace("DD+", "DDP").replace("DTS:", "DTS-").replace("HDR10+", "HDR10P")
         normalized = unicodedata.normalize("NFD", normalized)
-        normalized = "".join(
-            char
-            for char in normalized
-            if char.isascii() and (char.isalnum() or char in (" ", ".", "-"))
-        )
+        normalized = "".join(char for char in normalized if char.isascii() and (char.isalnum() or char in (" ", ".", "-")))
         return normalized.replace("!", "")
 
     async def get_additional_checks(self, meta: Meta) -> bool:
@@ -429,11 +371,7 @@ class DigitalCore:
 
     @staticmethod
     def _contains_forbidden_codec(values: tuple[str, str]) -> bool:
-        return any(
-            forbidden in value
-            for forbidden in ("divx", "xvid")
-            for value in values
-        )
+        return any(forbidden in value for forbidden in ("divx", "xvid") for value in values)
 
     def _source_policy_passes(self, meta: Meta) -> bool:
         source = str(meta.source or "").upper()
@@ -444,14 +382,10 @@ class DigitalCore:
         return False
 
     @classmethod
-    def _has_forbidden_source(
-        cls, meta: Meta, source: str, media_type: str
-    ) -> bool:
+    def _has_forbidden_source(cls, meta: Meta, source: str, media_type: str) -> bool:
         if cls._direct_forbidden_source(source, media_type):
             return True
-        return cls._contains_forbidden_source_marker(
-            cls._release_context(meta, source, media_type)
-        )
+        return cls._contains_forbidden_source_marker(cls._release_context(meta, source, media_type))
 
     @staticmethod
     def _direct_forbidden_source(source: str, media_type: str) -> bool:
@@ -472,9 +406,7 @@ class DigitalCore:
     def _file_policy_passes(self, meta: Meta) -> bool:
         for item in self._filelist(meta):
             if self._is_rar_file(str(item)):
-                logger.info(
-                    f"{self.tracker}: RAR files are not allowed: {item}"
-                )
+                logger.info(f"{self.tracker}: RAR files are not allowed: {item}")
                 return False
         return True
 
@@ -484,10 +416,7 @@ class DigitalCore:
         return list(value) if isinstance(value, (list, tuple, set)) else []
 
     def _screenshot_policy_passes(self, meta: Meta) -> bool:
-        return all(
-            self._screenshot_is_allowed(image)
-            for image in self._image_list(meta)
-        )
+        return all(self._screenshot_is_allowed(image) for image in self._image_list(meta))
 
     @staticmethod
     def _image_list(meta: Meta) -> list[Any]:
@@ -498,10 +427,7 @@ class DigitalCore:
         url = self._screenshot_url(image)
         if not url or Path(url).suffix.lower() != ".webp":
             return True
-        logger.info(
-            f"{self.tracker}: Screenshots for DIGITALCORE must be JPG/PNG/GIF."
-            " WEBP is not allowed."
-        )
+        logger.info(f"{self.tracker}: Screenshots for DIGITALCORE must be JPG/PNG/GIF. WEBP is not allowed.")
         return False
 
     @staticmethod
@@ -512,11 +438,7 @@ class DigitalCore:
             return ""
         mapping = cast(Mapping[str, Any], image)
         return next(
-            (
-                value
-                for key in ("raw_url", "img_url", "web_url")
-                if (value := str(mapping.get(key, "")).strip())
-            ),
+            (value for key in ("raw_url", "img_url", "web_url") if (value := str(mapping.get(key, "")).strip())),
             "",
         )
 
@@ -547,12 +469,7 @@ class DigitalCore:
         return bool(re.search(r"\.r\d{2,}$", lowered))
 
     async def fetch_data(self, meta: Meta) -> dict[str, Any]:
-        anon = (
-            "1"
-            if meta.anon
-            or self.config["TRACKERS"][self.tracker].get("anon", False)
-            else "0"
-        )
+        anon = "1" if meta.anon or self.config["TRACKERS"][self.tracker].get("anon", False) else "0"
 
         return {
             "category": self.get_category_id(meta),
@@ -588,30 +505,19 @@ class DigitalCore:
             response = await self._submit_upload(meta, data, torrent_title)
             return await self._handle_upload_response(meta, status, response)
         except httpx.HTTPStatusError as error:
-            status["status_message"] = (
-                f"data error: HTTP {error.response.status_code} -"
-                f" {error.response.text}"
-            )
+            status["status_message"] = f"data error: HTTP {error.response.status_code} - {error.response.text}"
             return False
         except httpx.TimeoutException:
-            status["status_message"] = (
-                "data error: Request timed out after"
-                f" {self.session.timeout.write} seconds"
-            )
+            status["status_message"] = f"data error: Request timed out after {self.session.timeout.write} seconds"
             return False
         except httpx.RequestError as error:
             status["status_message"] = self._request_error_message(error)
             return False
         except Exception as error:
-            status["status_message"] = (
-                "data error: It may have uploaded, go check. Error:"
-                f" {error}.\nResponse: No response received"
-            )
+            status["status_message"] = f"data error: It may have uploaded, go check. Error: {error}.\nResponse: No response received"
             return False
 
-    async def _debug_upload(
-        self, meta: Meta, data: dict[str, Any], status: dict[str, Any]
-    ) -> bool:
+    async def _debug_upload(self, meta: Meta, data: dict[str, Any], status: dict[str, Any]) -> bool:
         logger.info(f"{self.tracker}: Request Data:")
         logger.info(Redaction.redact_private_info(data))
         status["status_message"] = "Debug mode enabled, not uploading"
@@ -623,12 +529,8 @@ class DigitalCore:
         )
         return True
 
-    async def _submit_upload(
-        self, meta: Meta, data: dict[str, Any], torrent_title: str
-    ) -> httpx.Response:
-        await self.common.create_torrent_for_upload(
-            meta, self.tracker, "DigitalCore.club"
-        )
+    async def _submit_upload(self, meta: Meta, data: dict[str, Any], torrent_title: str) -> httpx.Response:
+        await self.common.create_torrent_for_upload(meta, self.tracker, "DigitalCore.club")
         files = {
             "file": (
                 f"{torrent_title}.torrent",
@@ -647,22 +549,14 @@ class DigitalCore:
         return response
 
     async def _torrent_bytes(self, meta: Meta) -> bytes:
-        torrent_path = (
-            release_temp_dir(meta.base_dir, meta.uuid)
-            / f"[{self.tracker}].torrent"
-        )
+        torrent_path = release_temp_dir(meta.base_dir, meta.uuid) / f"[{self.tracker}].torrent"
         async with aiofiles.open(torrent_path, "rb") as torrent_file:
             return await torrent_file.read()
 
-    async def _handle_upload_response(
-        self, meta: Meta, status: dict[str, Any], response: httpx.Response
-    ) -> bool:
+    async def _handle_upload_response(self, meta: Meta, status: dict[str, Any], response: httpx.Response) -> bool:
         response_data = self._response_data(response)
         if response.status_code != 200 or not response_data.get("id"):
-            status["status_message"] = (
-                "data error:"
-                f" {response_data.get('message', 'Unknown API error.')}"
-            )
+            status["status_message"] = f"data error: {response_data.get('message', 'Unknown API error.')}"
             return False
         torrent_id = str(response_data["id"])
         status["torrent_id"] = f"{torrent_id}/"
@@ -678,16 +572,9 @@ class DigitalCore:
     @staticmethod
     def _response_data(response: httpx.Response) -> dict[str, Any]:
         payload = response.json()
-        return (
-            cast(dict[str, Any], payload) if isinstance(payload, dict) else {}
-        )
+        return cast(dict[str, Any], payload) if isinstance(payload, dict) else {}
 
     @staticmethod
     def _request_error_message(error: httpx.RequestError) -> str:
-        response_text = getattr(
-            getattr(error, "response", None), "text", "No response received"
-        )
-        return (
-            f"data error: Unable to upload. Error: {error}.\nResponse:"
-            f" {response_text}"
-        )
+        response_text = getattr(getattr(error, "response", None), "text", "No response received")
+        return f"data error: Unable to upload. Error: {error}.\nResponse: {response_text}"

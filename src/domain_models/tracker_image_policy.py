@@ -21,13 +21,9 @@ _BASE_COLLECTION_FIELDS: dict[ImageCollection, str] = {
 }
 
 
-def get_tracker_image_collection(
-    meta: Meta, tracker: str, collection: ImageCollection
-) -> list[Any]:
+def get_tracker_image_collection(meta: Meta, tracker: str, collection: ImageCollection) -> list[Any]:
     """Return a tracker override or the release-wide collection as fallback."""
-    tracker_collections = cast(
-        dict[str, list[Any]], meta.tracker_image_collections.get(tracker, {})
-    )
+    tracker_collections = cast(dict[str, list[Any]], meta.tracker_image_collections.get(tracker, {}))
     if collection in tracker_collections:
         return tracker_collections[collection]
     images = getattr(meta, _BASE_COLLECTION_FIELDS[collection])
@@ -40,9 +36,7 @@ def configured_screenshot_minimum(config: dict[str, Any]) -> int:
         return 0
     default_config = cast(dict[str, Any], default_config_value)
     try:
-        return max(
-            0, int(default_config.get("min_successful_image_uploads", 3))
-        )
+        return max(0, int(default_config.get("min_successful_image_uploads", 3)))
     except TypeError, ValueError:
         return 3
 
@@ -53,11 +47,7 @@ def valid_screenshot_count(meta: Meta, tracker: str | None = None) -> int:
 
 
 def _screenshot_images(meta: Meta, tracker: str | None) -> list[Any]:
-    images = (
-        get_tracker_image_collection(meta, tracker, "screenshots")
-        if tracker
-        else meta.image_list
-    )
+    images = get_tracker_image_collection(meta, tracker, "screenshots") if tracker else meta.image_list
     return cast(list[Any], images) if isinstance(images, list) else []
 
 
@@ -97,22 +87,12 @@ def screenshot_requirement_error(
         scope = f" for {tracker}" if tracker else ""
         if local_available is not None:
             local_count = max(0, int(local_available))
-            return (
-                f"{local_count} local screenshot(s) available, {actual}"
-                " successfully hosted; minimum hosted required"
-                f"{scope}: {required}."
-            )
-        return (
-            f"Minimum of {required} successfully hosted screenshots"
-            f" required{scope}, but only {actual} hosted screenshot(s) are"
-            " available."
-        )
+            return f"{local_count} local screenshot(s) available, {actual} successfully hosted; minimum hosted required{scope}: {required}."
+        return f"Minimum of {required} successfully hosted screenshots required{scope}, but only {actual} hosted screenshot(s) are available."
     return None
 
 
-def has_tracker_image_collection(
-    meta: Meta, tracker: str, collection: ImageCollection
-) -> bool:
+def has_tracker_image_collection(meta: Meta, tracker: str, collection: ImageCollection) -> bool:
     """Return whether a tracker has an explicit collection override."""
     return collection in meta.tracker_image_collections.get(tracker, {})
 
@@ -126,6 +106,4 @@ def set_tracker_image_collection(
     """Store a tracker-local image collection without mutating shared
     metadata.
     """
-    meta.tracker_image_collections.setdefault(tracker, {})[collection] = [
-        dict(image) for image in images
-    ]
+    meta.tracker_image_collections.setdefault(tracker, {})[collection] = [dict(image) for image in images]

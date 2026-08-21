@@ -26,15 +26,7 @@ class _Response:
     ) -> None:
         self.status_code = status_code
         self._payload = payload
-        self.text = (
-            text
-            if text is not None
-            else (
-                str(payload)
-                if isinstance(payload, BaseException)
-                else json.dumps(payload)
-            )
-        )
+        self.text = text if text is not None else (str(payload) if isinstance(payload, BaseException) else json.dumps(payload))
 
     def json(self) -> object:
         if isinstance(self._payload, BaseException):
@@ -75,9 +67,7 @@ class _Client:
 
 
 def _request_error(message: str = "network") -> httpx.RequestError:
-    return httpx.RequestError(
-        message, request=httpx.Request("POST", "https://images.invalid/upload")
-    )
+    return httpx.RequestError(message, request=httpx.Request("POST", "https://images.invalid/upload"))
 
 
 def _image(tmp_path: Path, name: str = "screen.png", size: int = 5) -> Path:
@@ -117,40 +107,15 @@ def _http_client(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_payload_error_and_chevereto_helpers_cover_all_shapes() -> None:
-    assert (
-        uploader._summarize_host_error(
-            "<html><style>x{}</style><body>HTTP 503 something went"
-            " wrong</body></html>"
-        )
-        == "HTTP 503: remote service error"
-    )
-    assert (
-        uploader._summarize_host_error("<script>bad</script><p>Hello</p>", 4)
-        == "Hell"
-    )
+    assert uploader._summarize_host_error("<html><style>x{}</style><body>HTTP 503 something went wrong</body></html>") == "HTTP 503: remote service error"
+    assert uploader._summarize_host_error("<script>bad</script><p>Hello</p>", 4) == "Hell"
 
     response = _Response(500, {}, "fallback")
-    assert (
-        uploader._image_host_error({"error": {"message": "nested"}}, response)
-        == "nested"
-    )
-    assert (
-        uploader._image_host_error(
-            {"error": {"error": "nested-error"}}, response
-        )
-        == "nested-error"
-    )
-    assert (
-        uploader._image_host_error({"error": "scalar"}, response) == "scalar"
-    )
-    assert (
-        uploader._image_host_error({"message": "message"}, response)
-        == "message"
-    )
-    assert (
-        uploader._image_host_error({"status_txt": "status"}, response)
-        == "status"
-    )
+    assert uploader._image_host_error({"error": {"message": "nested"}}, response) == "nested"
+    assert uploader._image_host_error({"error": {"error": "nested-error"}}, response) == "nested-error"
+    assert uploader._image_host_error({"error": "scalar"}, response) == "scalar"
+    assert uploader._image_host_error({"message": "message"}, response) == "message"
+    assert uploader._image_host_error({"status_txt": "status"}, response) == "status"
     assert uploader._image_host_error({}, response) == "fallback"
 
     with pytest.raises(ValueError, match="non-object"):
@@ -170,15 +135,11 @@ def test_payload_error_and_chevereto_helpers_cover_all_shapes() -> None:
         "raw",
         "web",
     )
-    assert uploader._chevereto_urls(
-        {"image": {"url": "raw", "thumb": {"url": "thumb"}}}
-    ) == ("thumb", "raw", "raw")
+    assert uploader._chevereto_urls({"image": {"url": "raw", "thumb": {"url": "thumb"}}}) == ("thumb", "raw", "raw")
     assert uploader._chevereto_urls({"image": {"url": ""}}) is None
 
 
-def test_chevereto_missing_configuration_invalid_json_status_and_incomplete(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_chevereto_missing_configuration_invalid_json_status_and_incomplete(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     image = _image(tmp_path)
     assert (
         asyncio.run(
@@ -194,9 +155,7 @@ def test_chevereto_missing_configuration_invalid_json_status_and_incomplete(
     )
 
     original = IMAGE_HOST_SPECS["ptscreens"]
-    monkeypatch.setitem(
-        IMAGE_HOST_SPECS, "ptscreens", replace(original, upload_url=None)
-    )
+    monkeypatch.setitem(IMAGE_HOST_SPECS, "ptscreens", replace(original, upload_url=None))
     result = asyncio.run(
         uploader._upload_chevereto(
             str(image),
@@ -227,9 +186,7 @@ def test_chevereto_missing_configuration_invalid_json_status_and_incomplete(
     )
     assert result["host_unavailable"] and "invalid JSON" in result["reason"]
 
-    _Client.reset(
-        _Response(429, {"status_code": 429, "error": {"message": "limited"}})
-    )
+    _Client.reset(_Response(429, {"status_code": 429, "error": {"message": "limited"}}))
     result = asyncio.run(
         uploader._upload_chevereto(
             str(image),
@@ -255,15 +212,9 @@ def test_chevereto_missing_configuration_invalid_json_status_and_incomplete(
     assert "incomplete image" in result["reason"]
 
 
-def test_chevereto_timeout_request_and_file_errors(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_chevereto_timeout_request_and_file_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     image = _image(tmp_path)
-    _Client.reset(
-        httpx.ReadTimeout(
-            "timeout", request=httpx.Request("POST", "https://images.invalid")
-        )
-    )
+    _Client.reset(httpx.ReadTimeout("timeout", request=httpx.Request("POST", "https://images.invalid")))
     assert (
         "outcome unknown"
         in asyncio.run(
@@ -306,16 +257,9 @@ def test_chevereto_timeout_request_and_file_errors(
     assert "Could not read image" in result["reason"]
 
 
-def test_imgbb_success_url_fallbacks_and_all_failures(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_imgbb_success_url_fallbacks_and_all_failures(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     image = _image(tmp_path)
-    assert (
-        asyncio.run(
-            uploader._upload_imgbb(str(image), None, request_timeout=1)
-        )["retryable"]
-        is False
-    )
+    assert asyncio.run(uploader._upload_imgbb(str(image), None, request_timeout=1))["retryable"] is False
 
     _Client.reset(
         _Response(
@@ -332,14 +276,8 @@ def test_imgbb_success_url_fallbacks_and_all_failures(
             },
         )
     )
-    result = asyncio.run(
-        uploader._upload_imgbb(str(image), "key", request_timeout=1)
-    )
-    assert (
-        result["img_url"] == "medium"
-        and result["raw_url"] == "raw"
-        and result["web_url"] == "viewer"
-    )
+    result = asyncio.run(uploader._upload_imgbb(str(image), "key", request_timeout=1))
+    assert result["img_url"] == "medium" and result["raw_url"] == "raw" and result["web_url"] == "viewer"
 
     _Client.reset(
         _Response(
@@ -350,15 +288,11 @@ def test_imgbb_success_url_fallbacks_and_all_failures(
             },
         )
     )
-    result = asyncio.run(
-        uploader._upload_imgbb(str(image), "key", request_timeout=1)
-    )
+    result = asyncio.run(uploader._upload_imgbb(str(image), "key", request_timeout=1))
     assert result["img_url"] == "display" and result["web_url"] == "raw"
 
     _Client.reset(_Response(500, ValueError("bad"), "HTML"))
-    result = asyncio.run(
-        uploader._upload_imgbb(str(image), "key", request_timeout=1)
-    )
+    result = asyncio.run(uploader._upload_imgbb(str(image), "key", request_timeout=1))
     assert result["host_unavailable"] and "invalid JSON" in result["reason"]
 
     for status, payload in (
@@ -367,70 +301,34 @@ def test_imgbb_success_url_fallbacks_and_all_failures(
         (400, {"success": False, "error": "payload"}),
     ):
         _Client.reset(_Response(status, payload))
-        result = asyncio.run(
-            uploader._upload_imgbb(str(image), "key", request_timeout=1)
-        )
+        result = asyncio.run(uploader._upload_imgbb(str(image), "key", request_timeout=1))
         assert result["status"] == "failed"
         if status in {403, 500}:
             assert result["host_unavailable"]
 
     _Client.reset(_Response(200, {"success": True, "data": []}))
-    assert (
-        "incomplete image response"
-        in asyncio.run(
-            uploader._upload_imgbb(str(image), "key", request_timeout=1)
-        )["reason"]
-    )
-    _Client.reset(
-        _Response(200, {"success": True, "data": {"image": {"url": ""}}})
-    )
-    assert (
-        "incomplete image URLs"
-        in asyncio.run(
-            uploader._upload_imgbb(str(image), "key", request_timeout=1)
-        )["reason"]
-    )
+    assert "incomplete image response" in asyncio.run(uploader._upload_imgbb(str(image), "key", request_timeout=1))["reason"]
+    _Client.reset(_Response(200, {"success": True, "data": {"image": {"url": ""}}}))
+    assert "incomplete image URLs" in asyncio.run(uploader._upload_imgbb(str(image), "key", request_timeout=1))["reason"]
 
-    _Client.reset(
-        httpx.ReadTimeout(
-            "timeout", request=httpx.Request("POST", "https://images.invalid")
-        )
-    )
-    assert (
-        "outcome unknown"
-        in asyncio.run(
-            uploader._upload_imgbb(str(image), "key", request_timeout=1)
-        )["reason"]
-    )
+    _Client.reset(httpx.ReadTimeout("timeout", request=httpx.Request("POST", "https://images.invalid")))
+    assert "outcome unknown" in asyncio.run(uploader._upload_imgbb(str(image), "key", request_timeout=1))["reason"]
     _Client.reset(_request_error())
-    assert asyncio.run(
-        uploader._upload_imgbb(str(image), "key", request_timeout=1)
-    )["host_unavailable"]
+    assert asyncio.run(uploader._upload_imgbb(str(image), "key", request_timeout=1))["host_unavailable"]
     monkeypatch.setattr(
         uploader,
         "_read_image_bytes",
         lambda _path: (_ for _ in ()).throw(OSError("read failed")),
     )
-    assert (
-        "Could not read image"
-        in asyncio.run(
-            uploader._upload_imgbb(str(image), "key", request_timeout=1)
-        )["reason"]
-    )
+    assert "Could not read image" in asyncio.run(uploader._upload_imgbb(str(image), "key", request_timeout=1))["reason"]
 
 
 def test_pixhost_url_patterns_and_upload_task_missing_hosts(
     tmp_path: Path,
 ) -> None:
     image = _image(tmp_path)
-    assert (
-        uploader._pixhost_raw_url("https://t12.pixhost.to/thumbs/1/a.png")
-        == "https://img12.pixhost.to/images/1/a.png"
-    )
-    assert (
-        uploader._pixhost_raw_url("https://t3.pixho.st/thumbs/1/a.png")
-        == "https://img3.pixho.st/images/1/a.png"
-    )
+    assert uploader._pixhost_raw_url("https://t12.pixhost.to/thumbs/1/a.png") == "https://img12.pixhost.to/images/1/a.png"
+    assert uploader._pixhost_raw_url("https://t3.pixho.st/thumbs/1/a.png") == "https://img3.pixho.st/images/1/a.png"
 
     meta = Meta(category="MOVIE")
     for host, config_key in (
@@ -442,15 +340,9 @@ def test_pixhost_url_patterns_and_upload_task_missing_hosts(
         ("lostimg", "lostimg_api"),
     ):
         config = _config(**{config_key: ""})
-        result = asyncio.run(
-            uploader.upload_image_task([str(image), host, config, meta])
-        )
+        result = asyncio.run(uploader.upload_image_task([str(image), host, config, meta]))
         assert result["status"] == "failed" and "Missing" in result["reason"]
-    result = asyncio.run(
-        uploader.upload_image_task(
-            [str(image), "unsupported", _config(), meta]
-        )
-    )
+    result = asyncio.run(uploader.upload_image_task([str(image), "unsupported", _config(), meta]))
     assert "Unsupported image host" in result["reason"]
 
 
@@ -472,9 +364,7 @@ def test_dalexni_success_and_response_failures(tmp_path: Path) -> None:
             },
         )
     )
-    result = asyncio.run(
-        uploader.upload_image_task([str(image), "dalexni", config, meta])
-    )
+    result = asyncio.run(uploader.upload_image_task([str(image), "dalexni", config, meta]))
     assert result["raw_url"] == "raw" and result["img_url"] == "medium"
 
     _Client.reset(
@@ -484,52 +374,27 @@ def test_dalexni_success_and_response_failures(tmp_path: Path) -> None:
             "<!doctype html>HTTP 502 something went wrong",
         )
     )
-    result = asyncio.run(
-        uploader.upload_image_task([str(image), "dalexni", config, meta])
-    )
+    result = asyncio.run(uploader.upload_image_task([str(image), "dalexni", config, meta]))
     assert result["host_unavailable"] and "non-JSON" in result["reason"]
 
     _Client.reset(_Response(500, {"success": False, "message": "offline"}))
-    result = asyncio.run(
-        uploader.upload_image_task([str(image), "dalexni", config, meta])
-    )
+    result = asyncio.run(uploader.upload_image_task([str(image), "dalexni", config, meta]))
     assert result["retryable"] and result["host_unavailable"]
 
     _Client.reset(_Response(200, {"success": True, "data": []}))
-    assert (
-        "incomplete response"
-        in asyncio.run(
-            uploader.upload_image_task([str(image), "dalexni", config, meta])
-        )["reason"]
-    )
-    _Client.reset(
-        _Response(200, {"success": True, "data": {"image": {"url": ""}}})
-    )
-    assert (
-        "incomplete image URLs"
-        in asyncio.run(
-            uploader.upload_image_task([str(image), "dalexni", config, meta])
-        )["reason"]
-    )
+    assert "incomplete response" in asyncio.run(uploader.upload_image_task([str(image), "dalexni", config, meta]))["reason"]
+    _Client.reset(_Response(200, {"success": True, "data": {"image": {"url": ""}}}))
+    assert "incomplete image URLs" in asyncio.run(uploader.upload_image_task([str(image), "dalexni", config, meta]))["reason"]
 
 
-def test_pixhost_success_size_invalid_json_status_and_network(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_pixhost_success_size_invalid_json_status_and_network(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     image = _image(tmp_path)
     meta = Meta(category="XXX")
     config = _config()
 
     original = IMAGE_HOST_SPECS["pixhost"]
-    monkeypatch.setitem(
-        IMAGE_HOST_SPECS, "pixhost", replace(original, max_file_bytes=1)
-    )
-    assert (
-        "maximum image size"
-        in asyncio.run(
-            uploader.upload_image_task([str(image), "pixhost", config, meta])
-        )["reason"]
-    )
+    monkeypatch.setitem(IMAGE_HOST_SPECS, "pixhost", replace(original, max_file_bytes=1))
+    assert "maximum image size" in asyncio.run(uploader.upload_image_task([str(image), "pixhost", config, meta]))["reason"]
     monkeypatch.setitem(IMAGE_HOST_SPECS, "pixhost", original)
 
     _Client.reset(
@@ -541,46 +406,21 @@ def test_pixhost_success_size_invalid_json_status_and_network(
             },
         )
     )
-    result = asyncio.run(
-        uploader.upload_image_task([str(image), "pixhost", config, meta])
-    )
+    result = asyncio.run(uploader.upload_image_task([str(image), "pixhost", config, meta]))
     assert result["raw_url"] == "https://img1.pixhost.to/images/a.png"
     assert _Client.calls[0][1]["data"]["content_type"] == "1"
 
     _Client.reset(_Response(500, {}, "offline"))
-    result = asyncio.run(
-        uploader.upload_image_task([str(image), "pixhost", config, meta])
-    )
+    result = asyncio.run(uploader.upload_image_task([str(image), "pixhost", config, meta]))
     assert result["host_unavailable"] and result["retryable"]
     _Client.reset(_Response(200, {"bad": True}))
-    assert (
-        "incomplete API"
-        in asyncio.run(
-            uploader.upload_image_task([str(image), "pixhost", config, meta])
-        )["reason"]
-    )
+    assert "incomplete API" in asyncio.run(uploader.upload_image_task([str(image), "pixhost", config, meta]))["reason"]
     _Client.reset(_Response(200, ValueError("bad")))
-    assert (
-        "invalid JSON"
-        in asyncio.run(
-            uploader.upload_image_task([str(image), "pixhost", config, meta])
-        )["reason"]
-    )
-    _Client.reset(
-        httpx.ReadTimeout(
-            "timeout", request=httpx.Request("POST", "https://images.invalid")
-        )
-    )
-    assert (
-        "outcome unknown"
-        in asyncio.run(
-            uploader.upload_image_task([str(image), "pixhost", config, meta])
-        )["reason"]
-    )
+    assert "invalid JSON" in asyncio.run(uploader.upload_image_task([str(image), "pixhost", config, meta]))["reason"]
+    _Client.reset(httpx.ReadTimeout("timeout", request=httpx.Request("POST", "https://images.invalid")))
+    assert "outcome unknown" in asyncio.run(uploader.upload_image_task([str(image), "pixhost", config, meta]))["reason"]
     _Client.reset(_request_error())
-    assert asyncio.run(
-        uploader.upload_image_task([str(image), "pixhost", config, meta])
-    )["host_unavailable"]
+    assert asyncio.run(uploader.upload_image_task([str(image), "pixhost", config, meta]))["host_unavailable"]
 
 
 def test_zipline_midnightscene_success_shapes_and_failures(
@@ -596,43 +436,25 @@ def test_zipline_midnightscene_success_shapes_and_failures(
             "https://files.invalid/a.png",
         ):
             _Client.reset(_Response(201, {"files": [file_value]}))
-            result = asyncio.run(
-                uploader.upload_image_task([str(image), host, config, meta])
-            )
+            result = asyncio.run(uploader.upload_image_task([str(image), host, config, meta]))
             assert result["raw_url"] == "https://files.invalid/a.png"
         for payload in ({"files": []}, {"files": [{}]}, []):
             _Client.reset(_Response(200, payload))
-            result = asyncio.run(
-                uploader.upload_image_task([str(image), host, config, meta])
-            )
+            result = asyncio.run(uploader.upload_image_task([str(image), host, config, meta]))
             assert result["status"] == "failed"
         _Client.reset(_Response(500, {"message": "offline"}))
-        assert asyncio.run(
-            uploader.upload_image_task([str(image), host, config, meta])
-        )["host_unavailable"]
+        assert asyncio.run(uploader.upload_image_task([str(image), host, config, meta]))["host_unavailable"]
         _Client.reset(_Response(400, ValueError("bad"), "invalid"))
-        assert (
-            "upload failed"
-            in asyncio.run(
-                uploader.upload_image_task([str(image), host, config, meta])
-            )["reason"]
-        )
+        assert "upload failed" in asyncio.run(uploader.upload_image_task([str(image), host, config, meta]))["reason"]
         _Client.reset(
             httpx.ReadTimeout(
                 "timeout",
                 request=httpx.Request("POST", "https://images.invalid"),
             )
         )
-        assert (
-            "outcome unknown"
-            in asyncio.run(
-                uploader.upload_image_task([str(image), host, config, meta])
-            )["reason"]
-        )
+        assert "outcome unknown" in asyncio.run(uploader.upload_image_task([str(image), host, config, meta]))["reason"]
         _Client.reset(_request_error())
-        assert asyncio.run(
-            uploader.upload_image_task([str(image), host, config, meta])
-        )["host_unavailable"]
+        assert asyncio.run(uploader.upload_image_task([str(image), host, config, meta]))["host_unavailable"]
 
 
 def test_seedpool_sharex_lostimg_success_and_failures(tmp_path: Path) -> None:
@@ -654,91 +476,46 @@ def test_seedpool_sharex_lostimg_success_and_failures(tmp_path: Path) -> None:
             },
         )
     )
-    result = asyncio.run(
-        uploader.upload_image_task([str(image), "seedpool_cdn", config, meta])
-    )
+    result = asyncio.run(uploader.upload_image_task([str(image), "seedpool_cdn", config, meta]))
     assert result["img_url"] == "thumb" and result["raw_url"] == "raw"
     _Client.reset(
         _Response(
             200,
-            {
-                "files": [
-                    {"url": "raw", "variants": {"thumb": "variant-thumb"}}
-                ]
-            },
+            {"files": [{"url": "raw", "variants": {"thumb": "variant-thumb"}}]},
         )
     )
-    assert (
-        asyncio.run(
-            uploader.upload_image_task(
-                [str(image), "seedpool_cdn", config, meta]
-            )
-        )["img_url"]
-        == "variant-thumb"
-    )
+    assert asyncio.run(uploader.upload_image_task([str(image), "seedpool_cdn", config, meta]))["img_url"] == "variant-thumb"
     for payload in (
         {"files": []},
         {"files": ["bad"]},
         {"files": [{"url": ""}]},
     ):
         _Client.reset(_Response(200, payload))
-        assert (
-            asyncio.run(
-                uploader.upload_image_task(
-                    [str(image), "seedpool_cdn", config, meta]
-                )
-            )["status"]
-            == "failed"
-        )
+        assert asyncio.run(uploader.upload_image_task([str(image), "seedpool_cdn", config, meta]))["status"] == "failed"
     _Client.reset(_Response(500, {"message": "offline"}))
-    assert asyncio.run(
-        uploader.upload_image_task([str(image), "seedpool_cdn", config, meta])
-    )["host_unavailable"]
+    assert asyncio.run(uploader.upload_image_task([str(image), "seedpool_cdn", config, meta]))["host_unavailable"]
 
     for payload, expected in (
         ({"data": {"link": "share-link"}}, "share-link"),
         ({"link": "root-link"}, "root-link"),
     ):
         _Client.reset(_Response(200, payload))
-        result = asyncio.run(
-            uploader.upload_image_task([str(image), "sharex", config, meta])
-        )
+        result = asyncio.run(uploader.upload_image_task([str(image), "sharex", config, meta]))
         assert result["raw_url"] == expected
     _Client.reset(_Response(200, {}))
-    assert (
-        "missing link"
-        in asyncio.run(
-            uploader.upload_image_task([str(image), "sharex", config, meta])
-        )["reason"]
-    )
+    assert "missing link" in asyncio.run(uploader.upload_image_task([str(image), "sharex", config, meta]))["reason"]
     _Client.reset(_Response(500, {"message": "offline"}))
-    assert asyncio.run(
-        uploader.upload_image_task([str(image), "sharex", config, meta])
-    )["host_unavailable"]
+    assert asyncio.run(uploader.upload_image_task([str(image), "sharex", config, meta]))["host_unavailable"]
 
     _Client.reset(_Response(200, {"url": "lost-url"}))
-    assert (
-        asyncio.run(
-            uploader.upload_image_task([str(image), "lostimg", config, meta])
-        )["raw_url"]
-        == "lost-url"
-    )
+    assert asyncio.run(uploader.upload_image_task([str(image), "lostimg", config, meta]))["raw_url"] == "lost-url"
     _Client.reset(_Response(200, {}))
-    assert (
-        "missing url"
-        in asyncio.run(
-            uploader.upload_image_task([str(image), "lostimg", config, meta])
-        )["reason"]
-    )
+    assert "missing url" in asyncio.run(uploader.upload_image_task([str(image), "lostimg", config, meta]))["reason"]
     _Client.reset(_Response(500, {"message": "offline"}))
-    assert asyncio.run(
-        uploader.upload_image_task([str(image), "lostimg", config, meta])
-    )["host_unavailable"]
+    assert asyncio.run(uploader.upload_image_task([str(image), "lostimg", config, meta]))["host_unavailable"]
 
 
-def test_upload_image_task_imgbox_chevereto_routing_and_outer_exception(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_upload_image_task_imgbox_chevereto_routing_and_outer_exception(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     image = _image(tmp_path)
     config = _config()
     meta = Meta(category="XXX")
@@ -751,27 +528,16 @@ def test_upload_image_task_imgbox_chevereto_routing_and_outer_exception(
             result=[{"img_url": "thumb", "raw_url": "raw", "web_url": "web"}],
         ),
     )
-    result = asyncio.run(
-        uploader.upload_image_task([str(image), "imgbox", config, meta])
-    )
+    result = asyncio.run(uploader.upload_image_task([str(image), "imgbox", config, meta]))
     assert result["status"] == "success"
 
-    async def imgbox_failure(
-        *_args: object, **kwargs: object
-    ) -> list[dict[str, str]]:
-        kwargs["return_dict"].update(
-            error="HTTP 500 something went wrong", host_unavailable=True
-        )
+    async def imgbox_failure(*_args: object, **kwargs: object) -> list[dict[str, str]]:
+        kwargs["return_dict"].update(error="HTTP 500 something went wrong", host_unavailable=True)
         return []
 
     monkeypatch.setattr(uploader, "imgbox_upload", imgbox_failure)
-    result = asyncio.run(
-        uploader.upload_image_task([str(image), "imgbox", config, meta])
-    )
-    assert (
-        result["host_unavailable"]
-        and "remote service error" in result["reason"]
-    )
+    result = asyncio.run(uploader.upload_image_task([str(image), "imgbox", config, meta]))
+    assert result["host_unavailable"] and "remote service error" in result["reason"]
 
     routed: list[tuple[str, bool]] = []
 
@@ -800,12 +566,7 @@ def test_upload_image_task_imgbox_chevereto_routing_and_outer_exception(
         "lensdump",
         "passtheimage",
     ):
-        assert (
-            asyncio.run(
-                uploader.upload_image_task([str(image), host, config, meta])
-            )["status"]
-            == "success"
-        )
+        assert asyncio.run(uploader.upload_image_task([str(image), host, config, meta]))["status"] == "success"
     assert routed == [
         (host, True)
         for host in (
@@ -822,9 +583,7 @@ def test_upload_image_task_imgbox_chevereto_routing_and_outer_exception(
         "_upload_imgbb",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
     )
-    result = asyncio.run(
-        uploader.upload_image_task([str(image), "imgbb", config, meta])
-    )
+    result = asyncio.run(uploader.upload_image_task([str(image), "imgbb", config, meta]))
     assert result["reason"] == "boom" and result["retryable"] is False
 
 
@@ -859,9 +618,7 @@ class _Gallery:
         return iterator()
 
 
-def test_imgbox_upload_success_incomplete_failure_exception_and_gallery_error(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_imgbox_upload_success_incomplete_failure_exception_and_gallery_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     one = _image(tmp_path, "one.png")
     two = _image(tmp_path, "two.png")
     three = _image(tmp_path, "three.png")
@@ -884,9 +641,7 @@ def test_imgbox_upload_success_incomplete_failure_exception_and_gallery_error(
                 "image_url": "raw",
             }
         ],
-        str(three): [
-            {"success": False, "error": "HTTP 500 something went wrong"}
-        ],
+        str(three): [{"success": False, "error": "HTTP 500 something went wrong"}],
         str(four): [RuntimeError("per-image failed")],
     }
     monkeypatch.setattr(uploader.pyimgbox, "Gallery", _Gallery)
@@ -900,25 +655,16 @@ def test_imgbox_upload_success_incomplete_failure_exception_and_gallery_error(
         )
     )
     assert result == [{"web_url": "web", "img_url": "thumb", "raw_url": "raw"}]
-    assert (
-        state["host_unavailable"] is True
-        and "remote service error" in state["error"]
-    )
+    assert state["host_unavailable"] is True and "remote service error" in state["error"]
     assert _Gallery.kwargs["adult"] is True
 
     _Gallery.enter_error = RuntimeError("gallery unavailable")
     state = {}
-    assert (
-        asyncio.run(uploader.imgbox_upload(tmp_path, [str(one)], state)) == []
-    )
-    assert (
-        state["host_unavailable"] and state["error"] == "gallery unavailable"
-    )
+    assert asyncio.run(uploader.imgbox_upload(tmp_path, [str(one)], state)) == []
+    assert state["host_unavailable"] and state["error"] == "gallery unavailable"
 
 
-def test_upload_screens_no_plan_zero_existing_missin_4824c1(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_upload_screens_no_plan_zero_existing_missin_4824c1(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     root = tmp_path
     shot_dir = root / "tmp" / "release" / "screenshots"
     shot_dir.mkdir(parents=True)
@@ -933,9 +679,7 @@ def test_upload_screens_no_plan_zero_existing_missin_4824c1(
             debug=False,
         )
         config = {"DEFAULT": {}}
-        assert asyncio.run(
-            uploader._upload_screens(config, meta, 1, 1, 0, 1, [], {})
-        ) == ([], 0)
+        assert asyncio.run(uploader._upload_screens(config, meta, 1, 1, 0, 1, [], {})) == ([], 0)
 
         config = _config()
         meta = Meta(
@@ -945,9 +689,7 @@ def test_upload_screens_no_plan_zero_existing_missin_4824c1(
             imghost="imgbb",
             debug=False,
         )
-        assert asyncio.run(
-            uploader._upload_screens(config, meta, 0, 1, 0, 0, [], {})
-        ) == ([], 0)
+        assert asyncio.run(uploader._upload_screens(config, meta, 0, 1, 0, 0, [], {})) == ([], 0)
 
         existing = {"img_url": "i", "raw_url": "r", "web_url": "w"}
         meta = Meta(
@@ -957,9 +699,7 @@ def test_upload_screens_no_plan_zero_existing_missin_4824c1(
             imghost="imgbb",
             debug=False,
         )
-        assert asyncio.run(
-            uploader._upload_screens(config, meta, 1, 1, 0, 1, [], {})
-        ) == ([existing], 1)
+        assert asyncio.run(uploader._upload_screens(config, meta, 1, 1, 0, 1, [], {})) == ([existing], 1)
 
         image.unlink()
         meta = Meta(
@@ -969,9 +709,7 @@ def test_upload_screens_no_plan_zero_existing_missin_4824c1(
             imghost="imgbb",
             debug=False,
         )
-        assert asyncio.run(
-            uploader._upload_screens(config, meta, 1, 1, 0, 1, [], {})
-        ) == ([], 0)
+        assert asyncio.run(uploader._upload_screens(config, meta, 1, 1, 0, 1, [], {})) == ([], 0)
         image.write_bytes(b"image")
 
         async def success(args: list[object]) -> dict[str, Any]:
@@ -995,9 +733,7 @@ def test_upload_screens_no_plan_zero_existing_missin_4824c1(
         )
         result, count = asyncio.run(
             uploader._upload_screens(
-                _config(
-                    image_upload_concurrency="bad", image_upload_delay="bad"
-                ),
+                _config(image_upload_concurrency="bad", image_upload_delay="bad"),
                 meta,
                 1,
                 1,
@@ -1012,9 +748,7 @@ def test_upload_screens_no_plan_zero_existing_missin_4824c1(
         os.chdir(cwd)
 
 
-def test_private_host_transport_and_json_errors(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_private_host_transport_and_json_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     image = _image(tmp_path)
     meta = Meta(category="MOVIE")
     config = _config()
@@ -1026,22 +760,13 @@ def test_private_host_transport_and_json_errors(
                 request=httpx.Request("POST", "https://images.invalid"),
             )
         )
-        assert (
-            "outcome unknown"
-            in asyncio.run(
-                uploader.upload_image_task([str(image), host, config, meta])
-            )["reason"]
-        )
+        assert "outcome unknown" in asyncio.run(uploader.upload_image_task([str(image), host, config, meta]))["reason"]
         _Client.reset(_request_error())
-        assert asyncio.run(
-            uploader.upload_image_task([str(image), host, config, meta])
-        )["host_unavailable"]
+        assert asyncio.run(uploader.upload_image_task([str(image), host, config, meta]))["host_unavailable"]
 
     for host in ("seedpool_cdn", "sharex", "lostimg"):
         _Client.reset(_Response(500, ValueError("bad json"), "invalid"))
-        result = asyncio.run(
-            uploader.upload_image_task([str(image), host, config, meta])
-        )
+        result = asyncio.run(uploader.upload_image_task([str(image), host, config, meta]))
         assert "non-JSON" in result["reason"] and result["host_unavailable"]
 
     original_read = uploader._read_image_bytes
@@ -1051,9 +776,7 @@ def test_private_host_transport_and_json_errors(
 
     monkeypatch.setattr(uploader, "_read_image_bytes", fail_read)
     for host in ("dalexni", "pixhost", "seedpool_cdn", "sharex", "lostimg"):
-        result = asyncio.run(
-            uploader.upload_image_task([str(image), host, config, meta])
-        )
+        result = asyncio.run(uploader.upload_image_task([str(image), host, config, meta]))
         assert "Could not read image" in result["reason"]
     monkeypatch.setattr(uploader, "_read_image_bytes", original_read)
 
@@ -1061,15 +784,11 @@ def test_private_host_transport_and_json_errors(
 def test_zipline_invalid_success_json_is_distinguished(tmp_path: Path) -> None:
     image = _image(tmp_path)
     _Client.reset(_Response(200, ValueError("bad json"), "invalid"))
-    result = asyncio.run(
-        uploader.upload_image_task([str(image), "zipline", _config(), Meta()])
-    )
+    result = asyncio.run(uploader.upload_image_task([str(image), "zipline", _config(), Meta()]))
     assert "invalid JSON" in result["reason"]
 
 
-def test_upload_screens_manifest_menu_duplicate_stat_and_images_needed_zero(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_upload_screens_manifest_menu_duplicate_stat_and_images_needed_zero(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     root = tmp_path
     shot_dir = root / "tmp" / "release" / "screenshots"
     shot_dir.mkdir(parents=True)
@@ -1099,9 +818,7 @@ def test_upload_screens_manifest_menu_duplicate_stat_and_images_needed_zero(
             cutoff=1,
             menu_images=[{"local_file_path": str(menu)}],
         )
-        images, count = asyncio.run(
-            uploader._upload_screens(_config(), meta, 1, 1, 0, 1, [], {})
-        )
+        images, count = asyncio.run(uploader._upload_screens(_config(), meta, 1, 1, 0, 1, [], {}))
         assert count == 1 and images[0]["raw_url"].endswith("Release-1.png")
         assert meta.image_sizes[images[0]["raw_url"]] == one.stat().st_size
 
@@ -1118,9 +835,7 @@ def test_upload_screens_manifest_menu_duplicate_stat_and_images_needed_zero(
             imghost="imgbb",
             cutoff=2,
         )
-        images, count = asyncio.run(
-            uploader._upload_screens(_config(), meta, 2, 1, 0, 2, [one], {})
-        )
+        images, count = asyncio.run(uploader._upload_screens(_config(), meta, 2, 1, 0, 2, [one], {}))
         assert count == 1 and len(images) == 1
 
         config = _config(img_host_1="imgbox", img_host_2="imgbb")
@@ -1131,17 +846,13 @@ def test_upload_screens_manifest_menu_duplicate_stat_and_images_needed_zero(
             imghost="imgbb",
             cutoff=1,
         )
-        images, count = asyncio.run(
-            uploader._upload_screens(config, meta, 1, 1, 0, 1, [], {})
-        )
+        images, count = asyncio.run(uploader._upload_screens(config, meta, 1, 1, 0, 1, [], {}))
         assert images == [duplicate] and count == 1
     finally:
         os.chdir(cwd)
 
 
-def test_upload_screens_api_key_retry_exception_gather_and_no_fallback(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_upload_screens_api_key_retry_exception_gather_and_no_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     root = tmp_path
     shot_dir = root / "tmp" / "release" / "screenshots"
     shot_dir.mkdir(parents=True)
@@ -1279,19 +990,13 @@ def test_upload_screens_api_key_retry_exception_gather_and_no_fallback(
             imghost="imgbb",
             cutoff=1,
         )
-        assert asyncio.run(
-            uploader._upload_screens(
-                _config(img_host_2=""), meta, 1, 1, 0, 1, [image], {}
-            )
-        ) == ([], 0)
+        assert asyncio.run(uploader._upload_screens(_config(img_host_2=""), meta, 1, 1, 0, 1, [image], {})) == ([], 0)
         monkeypatch.setattr(uploader.asyncio, "gather", real_gather)
     finally:
         os.chdir(cwd)
 
 
-def test_upload_screens_wait_timeout_and_cancellation_cleanup(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_upload_screens_wait_timeout_and_cancellation_cleanup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     root = tmp_path
     shot_dir = root / "tmp" / "release" / "screenshots"
     shot_dir.mkdir(parents=True)
@@ -1321,11 +1026,7 @@ def test_upload_screens_wait_timeout_and_cancellation_cleanup(
             imghost="imgbb",
             cutoff=1,
         )
-        assert asyncio.run(
-            uploader._upload_screens(
-                _config(img_host_2=""), meta, 1, 1, 0, 1, [image], {}
-            )
-        ) == ([], 0)
+        assert asyncio.run(uploader._upload_screens(_config(img_host_2=""), meta, 1, 1, 0, 1, [image], {})) == ([], 0)
     finally:
         monkeypatch.setattr(uploader.asyncio, "wait_for", real_wait_for)
         os.chdir(cwd)
@@ -1369,9 +1070,7 @@ def test_upload_screens_wait_timeout_and_cancellation_cleanup(
         os.chdir(cwd)
 
 
-def test_upload_screens_duplicate_raw_and_negative_retry_guard(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_upload_screens_duplicate_raw_and_negative_retry_guard(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     root = tmp_path
     shot_dir = root / "tmp" / "release" / "screenshots"
     shot_dir.mkdir(parents=True)
@@ -1403,11 +1102,7 @@ def test_upload_screens_duplicate_raw_and_negative_retry_guard(
             imghost="imgbb",
             cutoff=1,
         )
-        images, count = asyncio.run(
-            uploader._upload_screens(
-                _config(img_host_2=""), meta, 1, 1, 0, 1, [], {}, max_retries=0
-            )
-        )
+        images, count = asyncio.run(uploader._upload_screens(_config(img_host_2=""), meta, 1, 1, 0, 1, [], {}, max_retries=0))
         assert images == [existing_raw_only] and count == 1
 
         calls = 0
@@ -1443,9 +1138,7 @@ def test_upload_screens_duplicate_raw_and_negative_retry_guard(
         os.chdir(cwd)
 
 
-def test_upload_screens_exception_exhaustion(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_upload_screens_exception_exhaustion(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     root = tmp_path
     shot_dir = root / "tmp" / "release" / "screenshots"
     shot_dir.mkdir(parents=True)
@@ -1494,9 +1187,7 @@ def test_upload_manager_scopes_unavailable_hosts_by_image_purpose() -> None:
     assert manager.unavailable_hosts == set()
 
 
-def test_auxiliary_host_failures_do_not_poison_screenshot_fallback(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_auxiliary_host_failures_do_not_poison_screenshot_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     root = tmp_path
     screenshots = root / "tmp" / "release" / "screenshots"
     spectrograms = root / "tmp" / "release" / "spectrograms"
@@ -1566,9 +1257,7 @@ def test_auxiliary_host_failures_do_not_poison_screenshot_fallback(
 
         phase = "screenshot"
         meta.imghost = "imgbb"
-        images, count = asyncio.run(
-            manager.upload_screens(meta, 1, 1, 0, 1, [], {})
-        )
+        images, count = asyncio.run(manager.upload_screens(meta, 1, 1, 0, 1, [], {}))
         assert count == 1
         assert images[0]["raw_url"] == "https://onlyimage.org/raw.png"
         assert ("screenshot", "onlyimage") in seen
@@ -1616,9 +1305,7 @@ def test_image_start_limiter_waits_between_calls() -> None:
 
 
 def test_configured_host_slot_returns_fallback_for_unconfigured_host() -> None:
-    assert (
-        uploader._configured_host_slot(_config()["DEFAULT"], "unknown", 7) == 7
-    )
+    assert uploader._configured_host_slot(_config()["DEFAULT"], "unknown", 7) == 7
 
 
 def test_upload_one_with_retries_stops_on_open_circuit() -> None:

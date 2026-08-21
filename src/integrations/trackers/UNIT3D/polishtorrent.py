@@ -89,9 +89,7 @@ class PolishTorrent(UNIT3D):
         "eztv",
         "showrss",
     )
-    _TV_ENDED_STATUSES: frozenset[str] = frozenset(
-        {"ended", "canceled", "cancelled", "finished", "completed"}
-    )
+    _TV_ENDED_STATUSES: frozenset[str] = frozenset({"ended", "canceled", "cancelled", "finished", "completed"})
     _TV_ONGOING_STATUSES: frozenset[str] = frozenset(
         {
             "returning",
@@ -139,12 +137,9 @@ class PolishTorrent(UNIT3D):
         for item in filelist:
             path = Path(str(item))
             lowered_name = path.name.casefold()
-            if (
-                path.suffix.lower() in PolishTorrent._ARCHIVE_EXTENSIONS
-                or re.search(
-                    r"(?:\.r\d{2,}|(?:\.rar|\.zip|\.7z)\.\d{3,})$",
-                    lowered_name,
-                )
+            if path.suffix.lower() in PolishTorrent._ARCHIVE_EXTENSIONS or re.search(
+                r"(?:\.r\d{2,}|(?:\.rar|\.zip|\.7z)\.\d{3,})$",
+                lowered_name,
             ):
                 return path.name
         return ""
@@ -177,15 +172,10 @@ class PolishTorrent(UNIT3D):
             (cls._extract_image_url(image, "web_url"), False),
             (cls._extract_image_url(image, "img_url"), True),
         )
-        return all(
-            cls._screenshot_url_allowed(url, required)
-            for url, required in urls
-        )
+        return all(cls._screenshot_url_allowed(url, required) for url, required in urls)
 
     @classmethod
-    def _screenshot_url_allowed(
-        cls, url: str, extension_required: bool
-    ) -> bool:
+    def _screenshot_url_allowed(cls, url: str, extension_required: bool) -> bool:
         if not url:
             return True
         extension = cls._image_extension(url)
@@ -215,16 +205,9 @@ class PolishTorrent(UNIT3D):
     def _contains_other_tracker_mention(cls, value: str) -> bool:
         lowered = value.lower()
         url_pattern = re.compile(r"(?:https?:)?//[^\s]+")
-        if any(
-            cls._is_forbidden_tracker_url(raw_url)
-            for raw_url in url_pattern.findall(lowered)
-        ):
+        if any(cls._is_forbidden_tracker_url(raw_url) for raw_url in url_pattern.findall(lowered)):
             return True
-        tracker_pattern = re.compile(
-            r"(?<![a-z0-9])(?:"
-            + "|".join(map(re.escape, cls._TRACKER_TERMS))
-            + r")(?![a-z0-9])"
-        )
+        tracker_pattern = re.compile(r"(?<![a-z0-9])(?:" + "|".join(map(re.escape, cls._TRACKER_TERMS)) + r")(?![a-z0-9])")
         return bool(tracker_pattern.search(url_pattern.sub(" ", lowered)))
 
     @classmethod
@@ -232,18 +215,8 @@ class PolishTorrent(UNIT3D):
         authority_match = re.match(r"(?:https?:)?//([^/?#\s]+)", raw_url)
         if authority_match is None:
             return False
-        host = (
-            authority_match.group(1)
-            .rsplit("@", 1)[-1]
-            .partition(":")[0]
-            .lower()
-            .strip("()[]{}<>")
-            .rstrip(".")
-        )
-        return any(
-            host == forbidden or host.endswith(f".{forbidden}")
-            for forbidden in cls._TRACKER_DOMAINS
-        )
+        host = authority_match.group(1).rsplit("@", 1)[-1].partition(":")[0].lower().strip("()[]{}<>").rstrip(".")
+        return any(host == forbidden or host.endswith(f".{forbidden}") for forbidden in cls._TRACKER_DOMAINS)
 
     @staticmethod
     def _is_tv_pack_ended(meta: Meta) -> bool | None:
@@ -263,9 +236,7 @@ class PolishTorrent(UNIT3D):
             "całość",
         )
         pattern = re.compile(
-            r"(?<!\w)(?:"
-            + "|".join(map(re.escape, boxset_keywords))
-            + r")(?!\w)",
+            r"(?<!\w)(?:" + "|".join(map(re.escape, boxset_keywords)) + r")(?!\w)",
             re.IGNORECASE,
         )
         return bool(pattern.search(name))
@@ -292,45 +263,29 @@ class PolishTorrent(UNIT3D):
     def _validated_filelist(self, meta: Meta) -> list[Any] | None:
         raw = [] if meta.filelist is None else meta.filelist
         if not isinstance(raw, (list, tuple, set)):
-            logger.info(
-                f"{self.tracker}: [bold red]File list metadata is"
-                " invalid.[/bold red]"
-            )
+            logger.info(f"{self.tracker}: [bold red]File list metadata is invalid.[/bold red]")
             return None
         return [item for item in raw if self._is_path_like_file(item)]
 
     def _adult_policy(self, meta: Meta) -> bool:
         if not meta.adult_media:
             return True
-        logger.info(
-            f"{self.tracker}: [bold red]Pornographic/XXX content is not"
-            " allowed.[/bold red]"
-        )
+        logger.info(f"{self.tracker}: [bold red]Pornographic/XXX content is not allowed.[/bold red]")
         return False
 
     def _title_policy(self, category: str, release_name: str) -> bool:
-        if category not in {"MOVIE", "TV"} or not self._has_banned_title_chars(
-            release_name
-        ):
+        if category not in {"MOVIE", "TV"} or not self._has_banned_title_chars(release_name):
             return True
-        logger.info(
-            f"{self.tracker}: [bold red]Tracker-formatted release name still"
-            " contains banned characters or extra spaces.[/bold red]"
-        )
+        logger.info(f"{self.tracker}: [bold red]Tracker-formatted release name still contains banned characters or extra spaces.[/bold red]")
         return False
 
-    def _tracker_reference_policy(
-        self, meta: Meta, category: str, release_name: str
-    ) -> bool:
+    def _tracker_reference_policy(self, meta: Meta, category: str, release_name: str) -> bool:
         if category not in {"MOVIE", "TV"}:
             return True
         context = self._release_context(meta, release_name)
         if not self._contains_other_tracker_mention(context):
             return True
-        logger.info(
-            f"{self.tracker}: [bold red]Do not include links or other"
-            " tracker references in title/description.[/bold red]"
-        )
+        logger.info(f"{self.tracker}: [bold red]Do not include links or other tracker references in title/description.[/bold red]")
         return False
 
     @staticmethod
@@ -347,10 +302,7 @@ class PolishTorrent(UNIT3D):
             return True
         screenshot_count = self._screenshot_count(meta.screens)
         if screenshot_count < 3:
-            logger.info(
-                f"{self.tracker}: [bold red]{self.tracker} requires at least"
-                " 3 screenshots for Movie/TV uploads.[/bold red]"
-            )
+            logger.info(f"{self.tracker}: [bold red]{self.tracker} requires at least 3 screenshots for Movie/TV uploads.[/bold red]")
             return False
         return self._screenshot_metadata_policy(meta, screenshot_count)
 
@@ -361,24 +313,17 @@ class PolishTorrent(UNIT3D):
         except TypeError, ValueError, OverflowError:
             return 0
 
-    def _screenshot_metadata_policy(
-        self, meta: Meta, screenshot_count: int
-    ) -> bool:
+    def _screenshot_metadata_policy(self, meta: Meta, screenshot_count: int) -> bool:
         images = self._image_metadata(meta.image_list)
         if images is None:
-            logger.info(
-                f"{self.tracker}: [bold red]Screenshot metadata is"
-                " invalid.[/bold red]"
-            )
+            logger.info(f"{self.tracker}: [bold red]Screenshot metadata is invalid.[/bold red]")
             return False
         error = self._screenshot_metadata_error(images, screenshot_count)
         if error:
             logger.info(f"{self.tracker}: [bold red]{error}[/bold red]")
             return False
         logger.info(
-            f"{self.tracker}: [yellow]Unable to validate screenshot layout"
-            " from available metadata. Keep screenshots organized in rows"
-            " (multi-column line layout).[/yellow]"
+            f"{self.tracker}: [yellow]Unable to validate screenshot layout from available metadata. Keep screenshots organized in rows (multi-column line layout).[/yellow]"
         )
         return True
 
@@ -387,82 +332,43 @@ class PolishTorrent(UNIT3D):
         if not isinstance(value, (list, tuple)):
             return None
         values = cast(list[Any] | tuple[Any, ...], value)
-        return [
-            cast(dict[str, Any], item)
-            for item in values
-            if isinstance(item, dict)
-        ]
+        return [cast(dict[str, Any], item) for item in values if isinstance(item, dict)]
 
     @classmethod
-    def _screenshot_metadata_error(
-        cls, images: list[dict[str, Any]], required: int
-    ) -> str:
+    def _screenshot_metadata_error(cls, images: list[dict[str, Any]], required: int) -> str:
         if len(images) < required:
-            return (
-                f"{cls.tracker} requires metadata for every required"
-                " screenshot."
-            )
+            return f"{cls.tracker} requires metadata for every required screenshot."
         if not cls._all_screenshot_formats_allowed(images):
-            return (
-                f"{cls.tracker} requires screenshot uploads in .PNG or .TIFF"
-                " and the current image metadata contains unsupported"
-                " formats."
-            )
+            return f"{cls.tracker} requires screenshot uploads in .PNG or .TIFF and the current image metadata contains unsupported formats."
         if not cls._all_screenshot_links_complete(images):
-            return (
-                f"{cls.tracker} requires thumbnail and full-size screenshot"
-                " links (img_url + raw/web_url) in screenshot metadata."
-            )
+            return f"{cls.tracker} requires thumbnail and full-size screenshot links (img_url + raw/web_url) in screenshot metadata."
         return ""
 
     @classmethod
-    def _all_screenshot_formats_allowed(
-        cls, images: list[dict[str, Any]]
-    ) -> bool:
+    def _all_screenshot_formats_allowed(cls, images: list[dict[str, Any]]) -> bool:
         return all(cls._is_allowed_screenshot_image(image) for image in images)
 
     @classmethod
-    def _all_screenshot_links_complete(
-        cls, images: list[dict[str, Any]]
-    ) -> bool:
-        return all(
-            cls._has_valid_screenshot_thumb_and_full(image) for image in images
-        )
+    def _all_screenshot_links_complete(cls, images: list[dict[str, Any]]) -> bool:
+        return all(cls._has_valid_screenshot_thumb_and_full(image) for image in images)
 
     def _mediainfo_policy(self, meta: Meta, category: str) -> bool:
-        valid = (
-            category not in {"MOVIE", "TV"}
-            or bool(meta.is_disc)
-            or bool(meta.mediainfo)
-        )
+        valid = category not in {"MOVIE", "TV"} or bool(meta.is_disc) or bool(meta.mediainfo)
         if not valid:
-            logger.info(
-                f"{self.tracker}: [bold red]Movie/TV uploads must include"
-                f" mediainfo on {self.tracker}.[/bold red]"
-            )
+            logger.info(f"{self.tracker}: [bold red]Movie/TV uploads must include mediainfo on {self.tracker}.[/bold red]")
         return valid
 
     def _archive_policy(self, category: str, filelist: list[Any]) -> bool:
         archive = self._contains_archive_file(filelist)
         if category not in {"MOVIE", "TV"} or not archive:
             return True
-        logger.info(
-            f"{self.tracker}: [bold red]Archive/multipart files are not"
-            f" allowed. Found: {archive}[/bold red]"
-        )
+        logger.info(f"{self.tracker}: [bold red]Archive/multipart files are not allowed. Found: {archive}[/bold red]")
         return False
 
-    def _collection_policy(
-        self, category: str, release_name: str, filelist: list[Any]
-    ) -> bool:
-        if category != "MOVIE" or not self._is_boxset_style(
-            release_name, filelist
-        ):
+    def _collection_policy(self, category: str, release_name: str, filelist: list[Any]) -> bool:
+        if category != "MOVIE" or not self._is_boxset_style(release_name, filelist):
             return True
-        logger.info(
-            f"{self.tracker}: [bold red]Movie boxsets/collections are not"
-            " allowed. Upload each movie separately.[/bold red]"
-        )
+        logger.info(f"{self.tracker}: [bold red]Movie boxsets/collections are not allowed. Upload each movie separately.[/bold red]")
         return False
 
     def _tv_pack_policy(self, meta: Meta, category: str) -> bool:
@@ -471,31 +377,16 @@ class PolishTorrent(UNIT3D):
         status = self._is_tv_pack_ended(meta)
         if status is True:
             return True
-        reason = (
-            "Unable to confirm TV series status"
-            if status is None
-            else "TV packs are allowed only for completed series"
-        )
-        logger.info(
-            f"{self.tracker}: [bold red]{reason} on {self.tracker}.[/bold red]"
-        )
+        reason = "Unable to confirm TV series status" if status is None else "TV packs are allowed only for completed series"
+        logger.info(f"{self.tracker}: [bold red]{reason} on {self.tracker}.[/bold red]")
         return False
 
-    def _folder_policy(
-        self, meta: Meta, category: str, filelist: list[Any]
-    ) -> bool:
-        if (
-            category not in {"MOVIE", "TV"}
-            or meta.is_disc
-            or not meta.keep_folder
-        ):
+    def _folder_policy(self, meta: Meta, category: str, filelist: list[Any]) -> bool:
+        if category not in {"MOVIE", "TV"} or meta.is_disc or not meta.keep_folder:
             return True
         if len(self._video_filelist(filelist)) > 1:
             return True
-        logger.info(
-            f"{self.tracker}: [bold red]Single-file Movie/TV uploads should be"
-            f" uploaded without a folder on {self.tracker}.[/bold red]"
-        )
+        logger.info(f"{self.tracker}: [bold red]Single-file Movie/TV uploads should be uploaded without a folder on {self.tracker}.[/bold red]")
         return False
 
     async def get_category_id(

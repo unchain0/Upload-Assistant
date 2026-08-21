@@ -17,19 +17,13 @@ def evaluate_tracker_upload_eligibility(
 def eligible_tracker_names(
     states: Sequence[TrackerUploadState],
 ) -> tuple[str, ...]:
-    return tuple(
-        result.tracker
-        for result in evaluate_tracker_upload_eligibility(states)
-        if result.eligible
-    )
+    return tuple(result.tracker for result in evaluate_tracker_upload_eligibility(states) if result.eligible)
 
 
 def _eligibility(state: TrackerUploadState) -> TrackerUploadEligibility:
     blocker = _blocker(state)
     if blocker:
-        return TrackerUploadEligibility(
-            tracker=state.tracker, eligible=False, reason=blocker
-        )
+        return TrackerUploadEligibility(tracker=state.tracker, eligible=False, reason=blocker)
     return TrackerUploadEligibility(tracker=state.tracker, eligible=True)
 
 
