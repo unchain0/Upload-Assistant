@@ -111,9 +111,31 @@ def test_tv_name_matrix(
     )
     name_notag, name, clean, missing = _name(meta)
     assert marker.casefold() in name_notag.casefold()
+    assert name_notag.startswith("Example Title Alt Title 2025")
     assert name.endswith("-GROUP")
     assert clean
     assert isinstance(missing, list)
+
+
+def test_tv_name_places_aka_before_year_for_cang_feng_regression() -> None:
+    meta = _base_meta(
+        "TV",
+        "WEBDL",
+        title="Cang Feng",
+        aka="AKA Sharp Turns",
+        year=2026,
+        search_year=2026,
+        season="S01",
+        episode="E10",
+        source="Web",
+        service="",
+        tag="-ADWeb",
+    )
+
+    name_notag, name, *_ = _name(meta)
+
+    assert name_notag.startswith("Cang Feng AKA Sharp Turns 2026 S01E10")
+    assert name.endswith("-ADWeb")
 
 
 def test_get_name_manual_xxx_podcast_flags_and_invalid_name() -> None:

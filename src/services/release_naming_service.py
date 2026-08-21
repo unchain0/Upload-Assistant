@@ -1,6 +1,7 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
 import re
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
@@ -31,216 +32,339 @@ TRACKER_DISC_REQUIREMENTS = {
 }
 
 
+@dataclass(frozen=True)
+class _NamingContext:
+    release_type: str
+    title: str
+    alt_title: str
+    year: str
+    resolution: str
+    audio: str
+    service: str
+    season: str
+    episode: str
+    episode_title: str
+    part: str
+    repack: str
+    three_d: str
+    tag: str
+    source: str
+    uhd: str
+    hdr: str
+    hybrid: str
+    video_codec: str
+    video_encode: str
+    region: str
+    dvd_size: str
+    edition: str
+
+
 class NameManager:
     def __init__(self, config: dict[str, Any]) -> None:
         self.config = config
         self.common = Common(config=config)
 
-    async def get_name(self, meta: Meta) -> tuple[str, str, str, list[str]]:
-        active_trackers: list[str] = [
+    @staticmethod
+    def _active_disc_trackers(meta: Meta) -> list[str]:
+        return [
             tracker
             for tracker in TRACKER_DISC_REQUIREMENTS
             if tracker in meta.trackers
         ]
-        if active_trackers:
-            (
-                region,
-                distributor,
-                trackers_to_remove,
-            ) = await self.missing_disc_info(meta, active_trackers)
-            configured_trackers = meta.trackers
-            for tracker in trackers_to_remove:
-                if (
-                    isinstance(configured_trackers, list)
-                    and tracker in configured_trackers
-                ):
-                    if meta.unattended:
-                        logger.info("")
-                        logger.info(
-                            f"[yellow]Removing tracker {tracker} due to missing distributor/region info.[/yellow]"
-                        )
-                    configured_trackers.remove(tracker)
-            if distributor and "SKIPPED" not in distributor:
-                meta.distributor = distributor
-            if region and "SKIPPED" not in region:
-                meta.region = region
-        type = str(meta.type).upper()
-        title = meta.title
-        alt_title = meta.aka
-        year = str(meta.year) if meta.year is not None else ""
-        manual_year_value = meta.manual_year
-        if manual_year_value is not None and manual_year_value > 0:
-            year = str(manual_year_value)
-        resolution = meta.resolution
-        if resolution == "OTHER":
-            resolution = ""
-        audio = meta.audio
-        service = str(meta.service)
-        season = str(meta.season)
-        episode = meta.episode
-        part = meta.part
-        repack = meta.repack
-        three_d = meta.three_d
-        tag = meta.tag or ""
-        source = str(meta.source)
-        uhd = str(meta.uhd)
-        hdr = meta.hdr
-        hybrid = "Hybrid" if meta.webdv else ""
-        if meta.manual_episode_title:
-            episode_title = meta.manual_episode_title
-        elif meta.daily_episode_title:
-            episode_title = meta.daily_episode_title
-        else:
-            episode_title = ""
-        video_codec = ""
-        video_encode = ""
-        region = ""
-        dvd_size = ""
-        if meta.is_disc == "BDMV":  # Disk
-            video_codec = meta.video_codec
-            region = str(meta.region or "")
-        elif meta.is_disc == "DVD":
-            region = str(meta.region or "")
-            dvd_size = meta.dvd_size
-        else:
-            video_codec = meta.video_codec
-            video_encode = meta.video_encode
-        edition = meta.edition
-        if "HYBRID" in edition.upper():
-            edition = re.sub(r"(?i)\bhybrid\b", "", edition).strip()
 
+    @staticmethod
+    def _remove_disc_trackers(meta: Meta, trackers: list[str]) -> None:
+        configured = meta.trackers
+        if not isinstance(configured, list):
+            return
+        for tracker in trackers:
+            if tracker not in configured:
+                continue
+            if meta.unattended:
+                logger.info("")
+                logger.info(
+                    f"[yellow]Removing tracker {tracker} due to missing "
+                    "distributor/region info.[/yellow]"
+                )
+            configured.remove(tracker)
+
+    @staticmethod
+    def _assign_disc_info(meta: Meta, region: str, distributor: str) -> None:
+        if distributor and "SKIPPED" not in distributor:
+            meta.distributor = distributor
+        if region and "SKIPPED" not in region:
+            meta.region = region
+
+    async def _apply_disc_requirements(self, meta: Meta) -> None:
+        active = self._active_disc_trackers(meta)
+        if not active:
+            return
+        region, distributor, trackers_to_remove = await self.missing_disc_info(
+            meta, active
+        )
+        self._remove_disc_trackers(meta, trackers_to_remove)
+        self._assign_disc_info(meta, region, distributor)
+
+    @staticmethod
+    def _base_year(meta: Meta) -> str:
+        year = str(meta.year) if meta.year is not None else ""
+        manual_year = meta.manual_year
+        return (
+            str(manual_year)
+            if manual_year is not None and manual_year > 0
+            else year
+        )
+
+    @classmethod
+    def _effective_year(cls, meta: Meta) -> str:
+        year = cls._base_year(meta)
         if meta.category == "TV":
             year = (
                 str(meta.year)
-                if (meta.year is not None and meta.search_year != "")
+                if meta.year is not None and meta.search_year != ""
                 else ""
             )
-            if meta.manual_date:
-                # Ignore season and year for --daily flagged shows, just use manual date stored in episode_name
-                season = ""
-                episode = ""
+        return "" if meta.no_year is True else year
+
+    @staticmethod
+    def _episode_title(meta: Meta) -> str:
+        if meta.manual_episode_title:
+            return meta.manual_episode_title
+        return meta.daily_episode_title or ""
+
+    @staticmethod
+    def _season_episode(meta: Meta) -> tuple[str, str]:
+        season = str(meta.season)
+        episode = str(meta.episode)
+        if meta.category == "TV" and meta.manual_date:
+            return "", ""
         if meta.no_season is True:
             season = ""
-        if meta.no_year is True:
-            year = ""
-        if meta.no_aka is True:
-            alt_title = ""
-        if meta.debug:
-            logger.debug("[cyan]get_name cat/type")
-            logger.debug(f"CATEGORY: {meta.category}")
-            logger.debug(f"TYPE: {meta.type}")
-            logger.debug("[cyan]get_name meta:")
-            # logger.debug(meta)
+        return season, episode
 
-        # YAY NAMING FUN
-        name = ""
-        potential_missing: list[str] = []
+    @staticmethod
+    def _video_fields(meta: Meta) -> tuple[str, str, str, str]:
+        if meta.is_disc == "BDMV":
+            return meta.video_codec, "", str(meta.region or ""), ""
+        if meta.is_disc == "DVD":
+            return "", "", str(meta.region or ""), meta.dvd_size
+        return meta.video_codec, meta.video_encode, "", ""
+
+    @staticmethod
+    def _edition(meta: Meta) -> str:
+        edition = meta.edition
+        if "HYBRID" not in edition.upper():
+            return edition
+        return re.sub(r"(?i)\bhybrid\b", "", edition).strip()
+
+    @classmethod
+    def _naming_context(cls, meta: Meta) -> _NamingContext:
+        season, episode = cls._season_episode(meta)
+        video_codec, video_encode, region, dvd_size = cls._video_fields(meta)
+        resolution = "" if meta.resolution == "OTHER" else meta.resolution
+        alt_title = "" if meta.no_aka is True else meta.aka
+        return _NamingContext(
+            release_type=str(meta.type).upper(),
+            title=meta.title,
+            alt_title=alt_title,
+            year=cls._effective_year(meta),
+            resolution=resolution,
+            audio=meta.audio,
+            service=str(meta.service),
+            season=season,
+            episode=episode,
+            episode_title=cls._episode_title(meta),
+            part=meta.part,
+            repack=meta.repack,
+            three_d=meta.three_d,
+            tag=meta.tag or "",
+            source=str(meta.source),
+            uhd=str(meta.uhd),
+            hdr=meta.hdr,
+            hybrid="Hybrid" if meta.webdv else "",
+            video_codec=video_codec,
+            video_encode=video_encode,
+            region=region,
+            dvd_size=dvd_size,
+            edition=cls._edition(meta),
+        )
+
+    @staticmethod
+    def _movie_disc_name(
+        meta: Meta, ctx: _NamingContext
+    ) -> tuple[str, list[str]]:
+        if meta.is_disc == "BDMV":
+            name = f"{ctx.title} {ctx.alt_title} {ctx.year} {ctx.three_d} {ctx.edition} {ctx.hybrid} {ctx.repack} {ctx.resolution} {ctx.region} {ctx.uhd} {ctx.source} {ctx.hdr} {ctx.video_codec} {ctx.audio}"
+            return name, ["edition", "region", "distributor"]
+        if meta.is_disc == "DVD":
+            name = f"{ctx.title} {ctx.alt_title} {ctx.year} {ctx.repack} {ctx.edition} {ctx.region} {ctx.source} {ctx.dvd_size} {ctx.audio}"
+            return name, ["edition", "distributor"]
+        if meta.is_disc == "HDDVD":
+            name = f"{ctx.title} {ctx.alt_title} {ctx.year} {ctx.edition} {ctx.repack} {ctx.resolution} {ctx.source} {ctx.video_codec} {ctx.audio}"
+            return name, ["edition", "region", "distributor"]
+        return "", []
+
+    @staticmethod
+    def _movie_remux_name(ctx: _NamingContext) -> tuple[str, list[str]]:
+        if ctx.source in {"BluRay", "HDDVD"}:
+            name = f"{ctx.title} {ctx.alt_title} {ctx.year} {ctx.three_d} {ctx.edition} {ctx.hybrid} {ctx.repack} {ctx.resolution} {ctx.uhd} {ctx.source} REMUX {ctx.hdr} {ctx.video_codec} {ctx.audio}"
+            return name, ["edition", "description"]
+        if ctx.source in {"PAL DVD", "NTSC DVD", "DVD"}:
+            name = f"{ctx.title} {ctx.alt_title} {ctx.year} {ctx.edition} {ctx.repack} {ctx.source} REMUX  {ctx.audio}"
+            return name, ["edition", "description"]
+        return "", []
+
+    @staticmethod
+    def _movie_encode_name(ctx: _NamingContext) -> tuple[str, list[str]]:
+        name = f"{ctx.title} {ctx.alt_title} {ctx.year} {ctx.edition} {ctx.hybrid} {ctx.repack} {ctx.resolution} {ctx.uhd} {ctx.source} {ctx.audio} {ctx.hdr} {ctx.video_encode}"
+        return name, ["edition", "description"]
+
+    @staticmethod
+    def _movie_webdl_name(ctx: _NamingContext) -> tuple[str, list[str]]:
+        name = f"{ctx.title} {ctx.alt_title} {ctx.year} {ctx.edition} {ctx.hybrid} {ctx.repack} {ctx.resolution} {ctx.uhd} {ctx.service} WEB-DL {ctx.audio} {ctx.hdr} {ctx.video_encode}"
+        return name, ["edition", "service"]
+
+    @staticmethod
+    def _movie_webrip_name(ctx: _NamingContext) -> tuple[str, list[str]]:
+        name = f"{ctx.title} {ctx.alt_title} {ctx.year} {ctx.edition} {ctx.hybrid} {ctx.repack} {ctx.resolution} {ctx.uhd} {ctx.service} WEBRip {ctx.audio} {ctx.hdr} {ctx.video_encode}"
+        return name, ["edition", "service"]
+
+    @staticmethod
+    def _movie_hdtv_name(ctx: _NamingContext) -> tuple[str, list[str]]:
+        name = f"{ctx.title} {ctx.alt_title} {ctx.year} {ctx.edition} {ctx.repack} {ctx.resolution} {ctx.source} {ctx.audio} {ctx.video_encode}"
+        return name, []
+
+    @staticmethod
+    def _movie_dvdrip_name(ctx: _NamingContext) -> tuple[str, list[str]]:
+        name = f"{ctx.title} {ctx.alt_title} {ctx.year} {ctx.source} {ctx.video_encode} DVDRip {ctx.audio}"
+        return name, []
+
+    def _movie_name(
+        self, meta: Meta, ctx: _NamingContext
+    ) -> tuple[str, list[str]]:
+        if ctx.release_type == "DISC":
+            return self._movie_disc_name(meta, ctx)
+        if ctx.release_type == "REMUX":
+            return self._movie_remux_name(ctx)
+        builders = {
+            "ENCODE": self._movie_encode_name,
+            "WEBDL": self._movie_webdl_name,
+            "WEBRIP": self._movie_webrip_name,
+            "HDTV": self._movie_hdtv_name,
+            "DVDRIP": self._movie_dvdrip_name,
+        }
+        builder = builders.get(ctx.release_type)
+        return builder(ctx) if builder is not None else ("", [])
+
+    @staticmethod
+    def _tv_disc_name(
+        meta: Meta, ctx: _NamingContext
+    ) -> tuple[str, list[str]]:
+        if meta.is_disc == "BDMV":
+            name = f"{ctx.title} {ctx.alt_title} {ctx.year} {ctx.season}{ctx.episode} {ctx.three_d} {ctx.edition} {ctx.hybrid} {ctx.repack} {ctx.resolution} {ctx.region} {ctx.uhd} {ctx.source} {ctx.hdr} {ctx.video_codec} {ctx.audio}"
+            return name, ["edition", "region", "distributor"]
+        if meta.is_disc == "DVD":
+            name = f"{ctx.title} {ctx.alt_title} {ctx.year} {ctx.season}{ctx.episode}{ctx.three_d} {ctx.repack} {ctx.edition} {ctx.region} {ctx.source} {ctx.dvd_size} {ctx.audio}"
+            return name, ["edition", "distributor"]
+        if meta.is_disc == "HDDVD":
+            name = f"{ctx.title} {ctx.alt_title} {ctx.year} {ctx.edition} {ctx.repack} {ctx.resolution} {ctx.source} {ctx.video_codec} {ctx.audio}"
+            return name, ["edition", "region", "distributor"]
+        return "", []
+
+    @staticmethod
+    def _tv_remux_name(ctx: _NamingContext) -> tuple[str, list[str]]:
+        prefix = f"{ctx.title} {ctx.alt_title} {ctx.year} {ctx.season}{ctx.episode} {ctx.episode_title} {ctx.part}"
+        if ctx.source in {"BluRay", "HDDVD"}:
+            name = f"{prefix} {ctx.three_d} {ctx.edition} {ctx.hybrid} {ctx.repack} {ctx.resolution} {ctx.uhd} {ctx.source} REMUX {ctx.hdr} {ctx.video_codec} {ctx.audio}"
+            return name, ["edition", "description"]
+        if ctx.source in {"PAL DVD", "NTSC DVD", "DVD"}:
+            name = f"{prefix} {ctx.edition} {ctx.repack} {ctx.source} REMUX {ctx.audio}"
+            return name, ["edition", "description"]
+        return "", []
+
+    @staticmethod
+    def _tv_encode_name(ctx: _NamingContext) -> tuple[str, list[str]]:
+        name = f"{ctx.title} {ctx.alt_title} {ctx.year} {ctx.season}{ctx.episode} {ctx.episode_title} {ctx.part} {ctx.edition} {ctx.hybrid} {ctx.repack} {ctx.resolution} {ctx.uhd} {ctx.source} {ctx.audio} {ctx.hdr} {ctx.video_encode}"
+        return name, ["edition", "description"]
+
+    @staticmethod
+    def _tv_webdl_name(ctx: _NamingContext) -> tuple[str, list[str]]:
+        name = f"{ctx.title} {ctx.alt_title} {ctx.year} {ctx.season}{ctx.episode} {ctx.episode_title} {ctx.part} {ctx.edition} {ctx.hybrid} {ctx.repack} {ctx.resolution} {ctx.uhd} {ctx.service} WEB-DL {ctx.audio} {ctx.hdr} {ctx.video_encode}"
+        return name, ["edition", "service"]
+
+    @staticmethod
+    def _tv_webrip_name(ctx: _NamingContext) -> tuple[str, list[str]]:
+        name = f"{ctx.title} {ctx.alt_title} {ctx.year} {ctx.season}{ctx.episode} {ctx.episode_title} {ctx.part} {ctx.edition} {ctx.hybrid} {ctx.repack} {ctx.resolution} {ctx.uhd} {ctx.service} WEBRip {ctx.audio} {ctx.hdr} {ctx.video_encode}"
+        return name, ["edition", "service"]
+
+    @staticmethod
+    def _tv_hdtv_name(ctx: _NamingContext) -> tuple[str, list[str]]:
+        name = f"{ctx.title} {ctx.alt_title} {ctx.year} {ctx.season}{ctx.episode} {ctx.episode_title} {ctx.part} {ctx.edition} {ctx.repack} {ctx.resolution} {ctx.source} {ctx.audio} {ctx.video_encode}"
+        return name, []
+
+    @staticmethod
+    def _tv_dvdrip_name(ctx: _NamingContext) -> tuple[str, list[str]]:
+        name = f"{ctx.title} {ctx.alt_title} {ctx.year} {ctx.season} {ctx.source} DVDRip {ctx.audio} {ctx.video_encode}"
+        return name, []
+
+    def _tv_name(
+        self, meta: Meta, ctx: _NamingContext
+    ) -> tuple[str, list[str]]:
+        if ctx.release_type == "DISC":
+            return self._tv_disc_name(meta, ctx)
+        if ctx.release_type == "REMUX":
+            return self._tv_remux_name(ctx)
+        builders = {
+            "ENCODE": self._tv_encode_name,
+            "WEBDL": self._tv_webdl_name,
+            "WEBRIP": self._tv_webrip_name,
+            "HDTV": self._tv_hdtv_name,
+            "DVDRIP": self._tv_dvdrip_name,
+        }
+        builder = builders.get(ctx.release_type)
+        return builder(ctx) if builder is not None else ("", [])
+
+    @staticmethod
+    def _xxx_name(meta: Meta) -> str:
+        release_name = str(
+            meta.scene_name or meta.basename_no_ext or meta.uuid or meta.title
+        )
+        return release_name.replace(".", " ")
+
+    def _other_category_name(self, meta: Meta) -> str:
+        builders = {
+            "BOOK": self.extract_book_name,
+            "GAME": self.extract_game_name,
+            "MUSIC": self.extract_music_name,
+        }
+        builder = builders.get(meta.category)
+        if builder is not None:
+            return builder(meta)
+        if meta.category == "PODCAST":
+            return meta.podcast_title or meta.name or meta.title
+        return ""
+
+    def _raw_name(
+        self, meta: Meta, ctx: _NamingContext
+    ) -> tuple[str, list[str]]:
         if meta.manual_name is not None:
-            name = str(meta.manual_name).strip()
-        elif meta.category == "XXX":
-            release_name = str(
-                meta.scene_name
-                or meta.basename_no_ext
-                or meta.uuid
-                or meta.title
-            )
-            name = release_name.replace(".", " ")
-        elif meta.category == "MOVIE":  # MOVIE SPECIFIC
-            if type == "DISC":  # Disk
-                if meta.is_disc == "BDMV":
-                    name = f"{title} {alt_title} {year} {three_d} {edition} {hybrid} {repack} {resolution} {region} {uhd} {source} {hdr} {video_codec} {audio}"
-                    potential_missing = ["edition", "region", "distributor"]
-                elif meta.is_disc == "DVD":
-                    name = f"{title} {alt_title} {year} {repack} {edition} {region} {source} {dvd_size} {audio}"
-                    potential_missing = ["edition", "distributor"]
-                elif meta.is_disc == "HDDVD":
-                    name = f"{title} {alt_title} {year} {edition} {repack} {resolution} {source} {video_codec} {audio}"
-                    potential_missing = ["edition", "region", "distributor"]
-            elif type == "REMUX" and source in (
-                "BluRay",
-                "HDDVD",
-            ):  # BluRay/HDDVD Remux
-                name = f"{title} {alt_title} {year} {three_d} {edition} {hybrid} {repack} {resolution} {uhd} {source} REMUX {hdr} {video_codec} {audio}"
-                potential_missing = ["edition", "description"]
-            elif type == "REMUX" and source in (
-                "PAL DVD",
-                "NTSC DVD",
-                "DVD",
-            ):  # DVD Remux
-                name = f"{title} {alt_title} {year} {edition} {repack} {source} REMUX  {audio}"
-                potential_missing = ["edition", "description"]
-            elif type == "ENCODE":  # Encode
-                name = f"{title} {alt_title} {year} {edition} {hybrid} {repack} {resolution} {uhd} {source} {audio} {hdr} {video_encode}"
-                potential_missing = ["edition", "description"]
-            elif type == "WEBDL":  # WEB-DL
-                name = f"{title} {alt_title} {year} {edition} {hybrid} {repack} {resolution} {uhd} {service} WEB-DL {audio} {hdr} {video_encode}"
-                potential_missing = ["edition", "service"]
-            elif type == "WEBRIP":  # WEBRip
-                name = f"{title} {alt_title} {year} {edition} {hybrid} {repack} {resolution} {uhd} {service} WEBRip {audio} {hdr} {video_encode}"
-                potential_missing = ["edition", "service"]
-            elif type == "HDTV":  # HDTV
-                name = f"{title} {alt_title} {year} {edition} {repack} {resolution} {source} {audio} {video_encode}"
-                potential_missing = []
-            elif type == "DVDRIP":
-                name = f"{title} {alt_title} {year} {source} {video_encode} DVDRip {audio}"
-                potential_missing = []
-        elif meta.category == "TV":  # TV SPECIFIC
-            if type == "DISC":  # Disk
-                if meta.is_disc == "BDMV":
-                    name = f"{title} {year} {alt_title} {season}{episode} {three_d} {edition} {hybrid} {repack} {resolution} {region} {uhd} {source} {hdr} {video_codec} {audio}"
-                    potential_missing = ["edition", "region", "distributor"]
-                if meta.is_disc == "DVD":
-                    name = f"{title} {year} {alt_title} {season}{episode}{three_d} {repack} {edition} {region} {source} {dvd_size} {audio}"
-                    potential_missing = ["edition", "distributor"]
-                elif meta.is_disc == "HDDVD":
-                    name = f"{title} {alt_title} {year} {edition} {repack} {resolution} {source} {video_codec} {audio}"
-                    potential_missing = ["edition", "region", "distributor"]
-            elif type == "REMUX" and source in (
-                "BluRay",
-                "HDDVD",
-            ):  # BluRay Remux
-                name = f"{title} {year} {alt_title} {season}{episode} {episode_title} {part} {three_d} {edition} {hybrid} {repack} {resolution} {uhd} {source} REMUX {hdr} {video_codec} {audio}"  # SOURCE
-                potential_missing = ["edition", "description"]
-            elif type == "REMUX" and source in (
-                "PAL DVD",
-                "NTSC DVD",
-                "DVD",
-            ):  # DVD Remux
-                name = f"{title} {year} {alt_title} {season}{episode} {episode_title} {part} {edition} {repack} {source} REMUX {audio}"  # SOURCE
-                potential_missing = ["edition", "description"]
-            elif type == "ENCODE":  # Encode
-                name = f"{title} {year} {alt_title} {season}{episode} {episode_title} {part} {edition} {hybrid} {repack} {resolution} {uhd} {source} {audio} {hdr} {video_encode}"  # SOURCE
-                potential_missing = ["edition", "description"]
-            elif type == "WEBDL":  # WEB-DL
-                name = f"{title} {year} {alt_title} {season}{episode} {episode_title} {part} {edition} {hybrid} {repack} {resolution} {uhd} {service} WEB-DL {audio} {hdr} {video_encode}"
-                potential_missing = ["edition", "service"]
-            elif type == "WEBRIP":  # WEBRip
-                name = f"{title} {year} {alt_title} {season}{episode} {episode_title} {part} {edition} {hybrid} {repack} {resolution} {uhd} {service} WEBRip {audio} {hdr} {video_encode}"
-                potential_missing = ["edition", "service"]
-            elif type == "HDTV":  # HDTV
-                name = f"{title} {year} {alt_title} {season}{episode} {episode_title} {part} {edition} {repack} {resolution} {source} {audio} {video_encode}"
-                potential_missing = []
-            elif type == "DVDRIP":
-                name = f"{title} {year} {alt_title} {season} {source} DVDRip {audio} {video_encode}"
-                potential_missing = []
-        elif meta.category == "BOOK":
-            name = self.extract_book_name(meta)
-            potential_missing = []
-        elif meta.category == "GAME":
-            name = self.extract_game_name(meta)
-            potential_missing = []
-        elif meta.category == "MUSIC":
-            name = self.extract_music_name(meta)
-            potential_missing = []
-        elif meta.category == "PODCAST":
-            name = meta.podcast_title or meta.name or meta.title
-            potential_missing = []
+            return str(meta.manual_name).strip(), []
+        if meta.category == "XXX":
+            return self._xxx_name(meta), []
+        if meta.category == "MOVIE":
+            return self._movie_name(meta, ctx)
+        if meta.category == "TV":
+            return self._tv_name(meta, ctx)
+        return self._other_category_name(meta), []
 
+    @staticmethod
+    def _normalize_name(meta: Meta, name: str) -> str:
         try:
-            name = " ".join(name.split())
+            return " ".join(name.split())
         except Exception:
             logger.info(
-                "[bold red]Unable to generate name. Please re-run and correct any of the following args if needed."
+                "[bold red]Unable to generate name. Please re-run and correct "
+                "any of the following args if needed."
             )
             logger.info(f"--category [yellow]{meta.category}")
             logger.info(f"--type [yellow]{meta.type}")
@@ -248,23 +372,37 @@ class NameManager:
             logger.info(
                 "[bold green]If you specified type, try also specifying source"
             )
-
             raise OperationAbortedError(
                 "Release naming was cancelled because required metadata is unavailable."
             ) from None
-        name_notag = name
 
-        tag_already_present = (
+    @staticmethod
+    def _tagged_name(meta: Meta, name_notag: str, tag: str) -> str:
+        tag_already_present = bool(
             meta.category == "XXX"
-            and bool(tag)
+            and tag
             and name_notag.casefold().endswith(tag.casefold())
         )
-        name = (
-            name_notag
-            if meta.manual_name is not None or tag_already_present
-            else name_notag + tag
-        )
+        if meta.manual_name is not None or tag_already_present:
+            return name_notag
+        return name_notag + tag
 
+    @staticmethod
+    def _log_name_context(meta: Meta) -> None:
+        if not meta.debug:
+            return
+        logger.debug("[cyan]get_name cat/type")
+        logger.debug(f"CATEGORY: {meta.category}")
+        logger.debug(f"TYPE: {meta.type}")
+        logger.debug("[cyan]get_name meta:")
+
+    async def get_name(self, meta: Meta) -> tuple[str, str, str, list[str]]:
+        await self._apply_disc_requirements(meta)
+        ctx = self._naming_context(meta)
+        self._log_name_context(meta)
+        raw_name, potential_missing = self._raw_name(meta, ctx)
+        name_notag = self._normalize_name(meta, raw_name)
+        name = self._tagged_name(meta, name_notag, ctx.tag)
         clean_name = await self.clean_filename(name)
         return name_notag, name, clean_name, potential_missing
 
