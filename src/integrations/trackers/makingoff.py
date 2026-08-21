@@ -156,20 +156,27 @@ class MakingOff:
             fmt = (meta.audio or "").strip()
         return self._normalize_codec(fmt, self.AUDIO_CODEC_MAP) if fmt else ""
 
+    @staticmethod
+    def _container_alias(fmt: str) -> str | None:
+        aliases = (
+            ("matroska", "MKV"),
+            ("avi", "AVI"),
+            ("mp4", "MP4"),
+            ("mpeg-4", "MP4"),
+        )
+        for token, label in aliases:
+            if token in fmt:
+                return label
+        return None
+
     def _mediainfo_container(
         self, general_track: dict[str, Any], fallback: str = ""
     ) -> str:
         """Return the container format, preferring mediainfo General track."""
-        fmt = (general_track.get("Format", "") or "").lower()
-        if "matroska" in fmt:
-            return "MKV"
-        if "avi" in fmt:
-            return "AVI"
-        if "mp4" in fmt or "mpeg-4" in fmt:
-            return "MP4"
-        if fmt:
-            return general_track.get("Format", fallback)
-        return fallback
+        raw_format = str(general_track.get("Format", "") or "")
+        if not raw_format:
+            return fallback
+        return self._container_alias(raw_format.lower()) or raw_format
 
     def _mediainfo_filesize(self, meta: Meta) -> str:
         """Return a human-readable file size (GB or MB)."""
@@ -211,66 +218,69 @@ class MakingOff:
         """Return the text unchanged (XenForo supports native UTF-8)."""
         return text
 
+    @staticmethod
+    def _screen_pair(left: str, right: str) -> str:
+        return (
+            f"[screenLeft][screenIma]{left}[/screenIma][/screenLeft]"
+            f"[screenRight][screenIma]{right}[/screenIma][/screenRight]"
+        )
+
     def _screen_rows(self, image_urls: list[str]) -> str:
-        """Pair screenshot URLs into two-column BBCode rows matching makingoff structure."""
-        # The forum permits no more than eight screenshots.  The upload check
-        # reports an overage, but retain this cap here as a defensive measure
-        # for callers which generate a description directly.
-        image_urls = image_urls[:8]
-        scr = [
-            image_urls[i] if i < len(image_urls) else ""
-            for i in range(max(4, len(image_urls)))
+        """Pair screenshot URLs into two-column BBCode rows matching MakingOff."""
+        urls = image_urls[:8]
+        pair_count = max(2, min(4, (len(urls) + 1) // 2))
+        padded = urls + [""] * (pair_count * 2 - len(urls))
+        pairs = [
+            self._screen_pair(padded[index], padded[index + 1])
+            for index in range(0, pair_count * 2, 2)
         ]
+        body = "[/tr][tr]".join(pairs)
+        return f"{body}[closeTab][/closeTab][/tr]"
 
-        # Row 4 already opened in _build_bbcode with [tr][poster]...[tableScreen]Screenshots[/tableScreen]
-        cg = f"[screenLeft][screenIma]{scr[0]}[/screenIma][/screenLeft][screenRight][screenIma]{scr[1]}[/screenIma][/screenRight][/tr]"
-        cg += f"[tr][screenLeft][screenIma]{scr[2]}[/screenIma][/screenLeft][screenRight][screenIma]{scr[3]}[/screenIma][/screenRight]"
+    @staticmethod
+    def _ffmpeg_arch(machine: str) -> str | None:
+        normalized = machine.lower()
+        if normalized in {"x86_64", "amd64"}:
+            return "amd"
+        if normalized in {"aarch64", "arm64"}:
+            return "arm"
+        return None
 
-        # Check if we have additional screens (5 & 6)
-        if len(scr) >= 5 and scr[4]:
-            scr5 = scr[4]
-            scr6 = scr[5] if len(scr) > 5 else ""
-            cg += f"[/tr][tr][screenLeft][screenIma]{scr5}[/screenIma][/screenLeft][screenRight][screenIma]{scr6}[/screenIma][/screenRight]"
-            # Check if we have 7 & 8
-            if len(scr) >= 7 and scr[6]:
-                scr7 = scr[6]
-                scr8 = scr[7] if len(scr) > 7 else ""
-                cg += f"[/tr][tr][screenLeft][screenIma]{scr7}[/screenIma][/screenLeft][screenRight][screenIma]{scr8}[/screenIma][/screenRight]"
+    @classmethod
+    def _linux_ffmpeg_candidate(cls, base_dir: str) -> Path | None:
+        arch = cls._ffmpeg_arch(platform.machine())
+        if arch is None:
+            return None
+        return Path(base_dir) / "bin" / "ffmpeg" / arch / "ffmpeg"
 
-        cg += "[closeTab][/closeTab][/tr]"
-        return cg
+    @staticmethod
+    def _windows_ffmpeg_candidate(base_dir: str) -> Path:
+        return Path(base_dir) / "bin" / "ffmpeg.exe"
+
+    @classmethod
+    def _bundled_ffmpeg_candidate(cls, base_dir: str) -> Path | None:
+        system = platform.system()
+        if system == "Linux":
+            return cls._linux_ffmpeg_candidate(base_dir)
+        if system == "Windows":
+            return cls._windows_ffmpeg_candidate(base_dir)
+        return None
 
     def _get_ffmpeg_path(self, meta: Meta) -> str:
-        if configured := configured_binary("ffmpeg_path", self.config):
+        configured = configured_binary("ffmpeg_path", self.config)
+        if configured:
             return configured
-
         base_dir = getattr(meta, "base_dir", "") or str(
             Path(__file__).parent.parent.parent
         )
-
-        if platform.system() == "Linux":
-            ff_bin_dir = Path(base_dir) / "bin" / "ffmpeg"
-            machine = platform.machine().lower()
-            if machine in ("x86_64", "amd64"):
-                arch = "amd"
-            elif machine in ("aarch64", "arm64"):
-                arch = "arm"
-            else:
-                arch = None
-            if arch:
-                candidate = Path(ff_bin_dir) / arch / "ffmpeg"
-                if candidate.exists():
-                    return str(candidate)
-        elif platform.system() == "Windows":
-            candidate = Path(base_dir) / "bin" / "ffmpeg.exe"
-            if candidate.exists():
-                return str(candidate)
-
+        candidate = self._bundled_ffmpeg_candidate(str(base_dir))
+        if candidate is not None and candidate.exists():
+            return str(candidate)
         return "ffmpeg"
 
-    def _is_subtitle_in_portuguese(self, file_path: str) -> bool:
-        # Common Portuguese words
-        pt_words = {
+    @staticmethod
+    def _subtitle_word_sets() -> tuple[set[str], set[str]]:
+        portuguese = {
             "que",
             "não",
             "uma",
@@ -289,8 +299,7 @@ class MakingOff:
             "estavam",
             "fazer",
         }
-        # Common English words
-        en_words = {
+        english = {
             "the",
             "and",
             "you",
@@ -306,27 +315,39 @@ class MakingOff:
             "here",
             "know",
         }
+        return portuguese, english
 
-        encodings = ["utf-8", "latin-1", "cp1252", "utf-16"]
-        content = ""
-        for enc in encodings:
+    def _read_subtitle_sample(self, file_path: str) -> str:
+        for encoding in ("utf-8", "latin-1", "cp1252", "utf-16"):
             try:
-                with Path(file_path).open(encoding=enc, errors="ignore") as f:
-                    content = f.read(4096).lower()
-                if content:
-                    break
-            except Exception as e:
+                content = (
+                    Path(file_path)
+                    .read_text(encoding=encoding, errors="ignore")[:4096]
+                    .lower()
+                )
+            except Exception as error:
                 logger.debug(
-                    f"{self.tracker}: Failed to read file {file_path} with encoding {enc}: {e}"
+                    f"{self.tracker}: Failed to read file {file_path} with "
+                    f"encoding {encoding}: {error}"
                 )
                 continue
+            if content:
+                return content
+        return ""
 
+    @classmethod
+    def _subtitle_language_counts(cls, content: str) -> tuple[int, int]:
+        portuguese, english = cls._subtitle_word_sets()
+        words = re.findall(r"\b\w+\b", content)
+        pt_count = sum(word in portuguese for word in words)
+        en_count = sum(word in english for word in words)
+        return pt_count, en_count
+
+    def _is_subtitle_in_portuguese(self, file_path: str) -> bool:
+        content = self._read_subtitle_sample(file_path)
         if not content:
             return False
-
-        words = re.findall(r"\b\w+\b", content)
-        pt_count = sum(1 for w in words if w in pt_words)
-        en_count = sum(1 for w in words if w in en_words)
+        pt_count, en_count = self._subtitle_language_counts(content)
         return pt_count > en_count
 
     @staticmethod
@@ -350,72 +371,82 @@ class MakingOff:
                 return True
         return False
 
+    @staticmethod
+    def _portuguese_subtitle_markers() -> tuple[str, ...]:
+        return (
+            ".pt",
+            ".por",
+            "portuguese",
+            "português",
+            "ptbr",
+            "pt_br",
+            "pt-pt",
+            "ptpt",
+        )
+
+    @classmethod
+    def _subtitle_name_is_portuguese(cls, name: str) -> bool:
+        lowered = name.lower()
+        return any(
+            marker in lowered for marker in cls._portuguese_subtitle_markers()
+        )
+
+    def _sidecar_is_portuguese(self, sub_file: str) -> bool:
+        path = Path(sub_file)
+        if not path.exists():
+            return False
+        if self._subtitle_name_is_portuguese(path.name):
+            return True
+        return self._is_subtitle_in_portuguese(str(path))
+
+    def _track_is_portuguese(self, track: dict[str, Any]) -> bool:
+        if track.get("@type") != "Text":
+            return False
+        if self._has_portuguese_language(track.get("Language", "")):
+            return True
+        return self._subtitle_name_is_portuguese(str(track.get("Title", "")))
+
+    def _embedded_portuguese_subtitle(self, meta: Meta) -> bool:
+        tracks = cast(
+            list[dict[str, Any]],
+            getattr(meta, "mediainfo", {}).get("media", {}).get("track", []),
+        )
+        return any(self._track_is_portuguese(track) for track in tracks)
+
     def _has_portuguese_subtitle(self, meta: Meta) -> bool:
         """Detect a Portuguese subtitle track, sidecar subtitle, or hard sub."""
         if self._has_portuguese_language(
             getattr(meta, "subtitle_languages", [])
         ):
             return True
-
-        for sub_file in getattr(meta, "subtitle_files", []):
-            path = Path(sub_file)
-            if not path.exists():
-                continue
-            name = path.name.lower()
-            if any(
-                term in name
-                for term in (
-                    ".pt",
-                    ".por",
-                    "portuguese",
-                    "português",
-                    "ptbr",
-                    "pt_br",
-                    "pt-pt",
-                    "ptpt",
-                )
-            ):
-                return True
-            if self._is_subtitle_in_portuguese(str(path)):
-                return True
-
-        tracks = cast(
-            list[dict[str, Any]],
-            getattr(meta, "mediainfo", {}).get("media", {}).get("track", []),
-        )
-        for track in tracks:
-            if track.get("@type") != "Text":
-                continue
-            if self._has_portuguese_language(track.get("Language", "")):
-                return True
-            title = str(track.get("Title", "")).lower()
-            if any(
-                term in title
-                for term in (
-                    "portuguese",
-                    "português",
-                    "pt-br",
-                    "ptbr",
-                    "pt_br",
-                    "pt-pt",
-                    "ptpt",
-                )
-            ):
-                return True
-
+        sidecars = getattr(meta, "subtitle_files", [])
+        if any(self._sidecar_is_portuguese(str(path)) for path in sidecars):
+            return True
+        if self._embedded_portuguese_subtitle(meta):
+            return True
         return bool(getattr(meta, "hardcoded_subs", False))
 
     @staticmethod
-    def _is_hidef(meta: Meta) -> bool:
-        """Apply MakingOff's definition of HD, falling back to UA resolution."""
+    def _dimension_value(value: object) -> int:
+        if not isinstance(value, (str, int, float)):
+            return 0
         try:
-            if (
-                int(meta.video_width or 0) > 1024
-                or int(meta.video_height or 0) > 576
-            ):
-                return True
+            return int(value)
         except TypeError, ValueError:
-            pass
+            return 0
+
+    @classmethod
+    def _dimensions_are_hidef(cls, width: object, height: object) -> bool:
+        return (
+            cls._dimension_value(width) > 1024
+            or cls._dimension_value(height) > 576
+        )
+
+    @classmethod
+    def _is_hidef(cls, meta: Meta) -> bool:
+        """Apply MakingOff's definition of HD, falling back to UA resolution."""
+        if cls._dimensions_are_hidef(meta.video_width, meta.video_height):
+            return True
         return str(getattr(meta, "resolution", "")).lower() in {
             "720p",
             "1080i",
@@ -439,154 +470,308 @@ class MakingOff:
             str(value) for value in (*fields, *filenames) if value
         ).lower()
 
-    async def _get_portuguese_subtitles(self, meta: Meta) -> list[str]:
-        """
-        Find and extract Portuguese subtitles for this release.
+    def _external_subtitle_match(self, path: Path) -> tuple[bool, bool]:
+        if not path.exists():
+            return False, False
+        marker_match = self._subtitle_name_is_portuguese(path.name)
+        content_match = self._is_subtitle_in_portuguese(str(path))
+        return marker_match, content_match
 
-        1. Checks external files (meta.subtitle_files) and matches files that contain
-           Portuguese keywords in filename or content.
-        2. Checks embedded tracks in the video and extracts them if they are Portuguese.
-
-        Returns:
-            list[str]: Paths to Portuguese subtitle files to upload.
-        """
-        pt_subs: list[str] = []
-
-        # 1. Check external subtitle files
+    def _external_portuguese_subtitles(self, meta: Meta) -> list[str]:
+        matches: list[str] = []
         for sub_file in getattr(meta, "subtitle_files", []):
-            if not Path(sub_file).exists():
+            path = Path(str(sub_file))
+            marker_match, content_match = self._external_subtitle_match(path)
+            if not marker_match and not content_match:
                 continue
-            name_lower = Path(sub_file).name.lower()
-            if any(
-                term in name_lower
-                for term in (
-                    ".pt",
-                    ".pt-br",
-                    ".por",
-                    "portuguese",
-                    "ptbr",
-                    "pt_br",
-                )
-            ):
-                pt_subs.append(sub_file)
-                logger.info(
-                    f"{self.tracker}: [green]Found external Portuguese subtitle:[/green] {Path(sub_file).name}"
-                )
-            elif self._is_subtitle_in_portuguese(sub_file):
-                pt_subs.append(sub_file)
-                logger.info(
-                    f"{self.tracker}: [green]Found external Portuguese subtitle (content-matched):[/green] {Path(sub_file).name}"
-                )
+            matches.append(str(path))
+            reason = "" if marker_match else " (content-matched)"
+            logger.info(
+                f"{self.tracker}: [green]Found external Portuguese "
+                f"subtitle{reason}:[/green] {path.name}"
+            )
+        return matches
 
-        # 2. Check embedded subtitle tracks (if it is a file upload, not a BD/DVD folder/disc structure)
-        if not meta.is_disc and meta.filelist and len(meta.filelist) > 0:
-            video_file = meta.filelist[0]
-            if Path(video_file).is_file() and video_file.lower().endswith(
-                (".mkv", ".mp4", ".m4v")
-            ):
-                tracks = meta.mediainfo.get("media", {}).get("track", [])
-                text_tracks = [t for t in tracks if t.get("@type") == "Text"]
+    @staticmethod
+    def _embedded_subtitle_video(meta: Meta) -> str | None:
+        if meta.is_disc or not meta.filelist:
+            return None
+        video_file = str(meta.filelist[0])
+        valid_extension = video_file.lower().endswith((".mkv", ".mp4", ".m4v"))
+        if not valid_extension or not Path(video_file).is_file():
+            return None
+        return video_file
 
-                for idx, track in enumerate(text_tracks):
-                    lang = str(track.get("Language", "")).lower()
-                    title = str(track.get("Title", "")).lower()
+    @staticmethod
+    def _embedded_text_tracks(meta: Meta) -> list[dict[str, Any]]:
+        tracks = cast(
+            list[dict[str, Any]],
+            meta.mediainfo.get("media", {}).get("track", []),
+        )
+        return [track for track in tracks if track.get("@type") == "Text"]
 
-                    is_pt = any(
-                        term in lang for term in ("portuguese", "pt", "por")
-                    ) or any(
-                        term in title
-                        for term in (
-                            "portuguese",
-                            "português",
-                            "pt-br",
-                            "ptbr",
-                            "pt_br",
-                            "pt-pt",
-                            "ptpt",
-                        )
-                    )
+    def _embedded_track_is_portuguese(self, track: dict[str, Any]) -> bool:
+        language = str(track.get("Language", ""))
+        if self._has_portuguese_language(language):
+            return True
+        return self._subtitle_name_is_portuguese(str(track.get("Title", "")))
 
-                    if is_pt:
-                        # Extract it
-                        fmt = str(track.get("Format", "")).upper()
-                        ext = ".srt"
-                        if "ASS" in fmt or "SSA" in fmt:
-                            ext = ".ass"
-                        elif "VTT" in fmt:
-                            ext = ".vtt"
-                        elif "PGS" in fmt or "SUP" in fmt:
-                            ext = ".sup"
+    @staticmethod
+    def _subtitle_extension(track: dict[str, Any]) -> str:
+        fmt = str(track.get("Format", "")).upper()
+        aliases = (
+            ("ASS", ".ass"),
+            ("SSA", ".ass"),
+            ("VTT", ".vtt"),
+            ("PGS", ".sup"),
+            ("SUP", ".sup"),
+        )
+        for token, extension in aliases:
+            if token in fmt:
+                return extension
+        return ".srt"
 
-                        temp_dir = (
-                            f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}"
-                        )
-                        Path(temp_dir).mkdir(parents=True, exist_ok=True)
-                        release_name = (
-                            meta.basename_no_ext or meta.name or meta.uuid
-                        )
-                        release_filename = release_name.replace(" ", ".")
+    @staticmethod
+    def _subtitle_title_slug(track: dict[str, Any]) -> str:
+        title = track.get("Title")
+        if not title:
+            return ""
+        clean = re.sub(r"[^a-zA-Z0-9_-]", "_", str(title))
+        return f"-{clean}"
 
-                        title_slug = ""
-                        if track.get("Title"):
-                            title_clean = re.sub(
-                                r"[^a-zA-Z0-9_-]", "_", str(track.get("Title"))
-                            )
-                            title_slug = f"-{title_clean}"
+    @classmethod
+    def _subtitle_output_path(
+        cls, meta: Meta, track: dict[str, Any], index: int
+    ) -> tuple[str, str]:
+        temp_dir = Path(str(meta.base_dir)) / "tmp" / str(meta.uuid)
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        release_name = meta.basename_no_ext or meta.name or meta.uuid
+        filename = str(release_name).replace(" ", ".")
+        output_name = (
+            f"{filename}.pt-{index}{cls._subtitle_title_slug(track)}"
+            f"{cls._subtitle_extension(track)}"
+        )
+        return output_name, str(temp_dir / output_name)
 
-                        output_name = (
-                            f"{release_filename}.pt-{idx}{title_slug}{ext}"
-                        )
-                        output_path = str(Path(temp_dir) / output_name)
+    @staticmethod
+    def _ffmpeg_command(
+        ffmpeg_path: str, video_file: str, index: int, output_path: str
+    ) -> list[str]:
+        return [
+            ffmpeg_path,
+            "-y",
+            "-i",
+            video_file,
+            "-map",
+            f"0:s:{index}",
+            output_path,
+        ]
 
-                        ffmpeg_path = self._get_ffmpeg_path(meta)
-                        cmd: list[str] = [
-                            ffmpeg_path,
-                            "-y",
-                            "-i",
-                            video_file,
-                            "-map",
-                            f"0:s:{idx}",
-                            output_path,
-                        ]
+    @staticmethod
+    def _extracted_subtitle_valid(process: Any, output_path: str) -> bool:
+        path = Path(output_path)
+        return bool(
+            process.returncode == 0
+            and path.exists()
+            and path.stat().st_size > 0
+        )
 
-                        logger.info(
-                            f"{self.tracker}: Extracting embedded Portuguese subtitle (stream {idx}) to {output_name}..."
-                        )
-                        try:
-                            if meta.debug:
-                                logger.debug(
-                                    f"{self.tracker}: Skipping ffmpeg extraction in debug mode. Command: {' '.join(cmd)}"
-                                )
-                            else:
-                                process = await asyncio.create_subprocess_exec(
-                                    *cmd,
-                                    stdout=asyncio.subprocess.PIPE,
-                                    stderr=asyncio.subprocess.PIPE,
-                                )
-                                _, stderr = await process.communicate()
-                                if (
-                                    process.returncode == 0
-                                    and Path(output_path).exists()
-                                    and Path(output_path).stat().st_size > 0
-                                ):
-                                    pt_subs.append(output_path)
-                                    logger.info(
-                                        f"{self.tracker}: [green]Successfully extracted embedded Portuguese subtitle.[/green]"
-                                    )
-                                else:
-                                    logger.warning(
-                                        f"{self.tracker}: [yellow]Failed to extract subtitle stream {idx}. ffmpeg exit code: {process.returncode}[/yellow]"
-                                    )
-                                    if stderr:
-                                        logger.debug(
-                                            f"{self.tracker}: ffmpeg stderr: {stderr.decode('utf-8', errors='ignore')}"
-                                        )
-                        except (OSError, ValueError) as e:
-                            logger.error(
-                                f"{self.tracker}: [red]Error running ffmpeg to extract subtitle: {e}[/red]"
-                            )
+    async def _extract_embedded_subtitle(
+        self,
+        meta: Meta,
+        video_file: str,
+        track: dict[str, Any],
+        index: int,
+    ) -> str | None:
+        output_name, output_path = self._subtitle_output_path(
+            meta, track, index
+        )
+        command = self._ffmpeg_command(
+            self._get_ffmpeg_path(meta), video_file, index, output_path
+        )
+        logger.info(
+            f"{self.tracker}: Extracting embedded Portuguese subtitle "
+            f"(stream {index}) to {output_name}..."
+        )
+        if meta.debug:
+            logger.debug(
+                f"{self.tracker}: Skipping ffmpeg extraction in debug mode. "
+                f"Command: {' '.join(command)}"
+            )
+            return None
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await process.communicate()
+        except (OSError, ValueError) as error:
+            logger.error(
+                f"{self.tracker}: [red]Error running ffmpeg to extract "
+                f"subtitle: {error}[/red]"
+            )
+            return None
+        if self._extracted_subtitle_valid(process, output_path):
+            logger.info(
+                f"{self.tracker}: [green]Successfully extracted embedded "
+                "Portuguese subtitle.[/green]"
+            )
+            return output_path
+        logger.warning(
+            f"{self.tracker}: [yellow]Failed to extract subtitle stream {index}. "
+            f"ffmpeg exit code: {process.returncode}[/yellow]"
+        )
+        if stderr:
+            logger.debug(
+                f"{self.tracker}: ffmpeg stderr: "
+                f"{stderr.decode('utf-8', errors='ignore')}"
+            )
+        return None
 
-        return sorted(set(pt_subs))
+    async def _embedded_portuguese_subtitles(self, meta: Meta) -> list[str]:
+        video_file = self._embedded_subtitle_video(meta)
+        if video_file is None:
+            return []
+        results: list[str] = []
+        for index, track in enumerate(self._embedded_text_tracks(meta)):
+            if not self._embedded_track_is_portuguese(track):
+                continue
+            output = await self._extract_embedded_subtitle(
+                meta, video_file, track, index
+            )
+            if output is not None:
+                results.append(output)
+        return results
+
+    async def _get_portuguese_subtitles(self, meta: Meta) -> list[str]:
+        """Find external and embedded Portuguese subtitles for the release."""
+        subtitles = self._external_portuguese_subtitles(meta)
+        subtitles.extend(await self._embedded_portuguese_subtitles(meta))
+        return sorted(set(subtitles))
+
+    @staticmethod
+    def _release_label(release: str) -> str:
+        value = release or "Release não informado"
+        return f"[release]{value}[/release][/tr]"
+
+    def _bbcode_intro(
+        self,
+        *,
+        title_br: str,
+        title_orig: str,
+        release: str,
+        poster_url: str,
+        overview: str,
+        image_urls: list[str],
+    ) -> str:
+        return (
+            "[tablePrinc][tr][titMasc]Título do Filme[/titMasc][/tr]"
+            f"[tr][titTrad]{title_br}[/titTrad][titOri]{title_orig}[/titOri]"
+            f"{self._release_label(release)}"
+            "[tr][posterMasc]Poster[/posterMasc][sinopseMasc]Sinopse[/sinopseMasc][/tr]"
+            f"[tr][poster][posterIma]{poster_url}[/posterIma][/poster]"
+            f"[sinopse]{overview}[/sinopse][tableScreen]Screenshots[/tableScreen]"
+            f"{self._screen_rows(image_urls)}[/tablePrinc]"
+        )
+
+    @staticmethod
+    def _optional_info_line(label: str, value: str, suffix: str = "") -> str:
+        return f"[b]{label}: [/b]{value}{suffix}\n" if value else ""
+
+    @classmethod
+    def _movie_info_block(
+        cls,
+        *,
+        genres: str,
+        directors: str,
+        duration: str,
+        year: str,
+        countries: str,
+        audio: str,
+        imdb_url: str,
+        homepage_url: str,
+    ) -> str:
+        lines = [
+            f"[info][b]Gênero: [/b]{genres}\n",
+            f"[b]Diretor: [/b]{directors}\n",
+            cls._optional_info_line("Duração", duration, " minutos"),
+            f"[b]Ano de Lançamento: [/b]{year}\n",
+            f"[b]País de Origem: [/b]{countries}\n",
+            f"[b]Idioma do Áudio: [/b]{audio}\n",
+        ]
+        if imdb_url:
+            lines.append(f"[b]IMDB: [/b][url={imdb_url}]{imdb_url}[/url]\n")
+        if homepage_url:
+            lines.append(
+                f"[b]Site Oficial: [/b][url={homepage_url}]"
+                f"{homepage_url}[/url]\n"
+            )
+        lines.append("[/info]")
+        return "".join(lines)
+
+    @staticmethod
+    def _valid_resolution_text(resolution: str) -> bool:
+        return bool(
+            resolution and "x0" not in resolution and "0x" not in resolution
+        )
+
+    @staticmethod
+    def _bitrate_line(label: str, value: str) -> str:
+        if not value or value == "None":
+            return ""
+        return f"[b]{label}: [/b]{value} Kbps\n"
+
+    @classmethod
+    def _resolution_line(cls, resolution: str) -> str:
+        if not cls._valid_resolution_text(resolution):
+            return ""
+        return f"[b]Resolução: [/b]{resolution}\n"
+
+    @classmethod
+    def _release_info_block(
+        cls,
+        *,
+        quality: str,
+        container: str,
+        video_codec: str,
+        video_brate: str,
+        audio_codec: str,
+        audio_brate: str,
+        res_str: str,
+        aspect: str,
+        fps_str: str,
+        filesize: str,
+        subs: str,
+    ) -> str:
+        lines = [
+            f"[info][b]Qualidade de Vídeo: [/b]{quality}\n",
+            cls._optional_info_line("Container", container),
+            cls._optional_info_line("Vídeo Codec", video_codec),
+            cls._bitrate_line("Vídeo Bitrate", video_brate),
+            cls._optional_info_line("Áudio Codec", audio_codec),
+            cls._bitrate_line("Áudio Bitrate", audio_brate),
+            cls._resolution_line(res_str),
+            cls._optional_info_line("Formato de Tela", aspect),
+            cls._optional_info_line("Frame Rate", fps_str),
+            f"[b]Tamanho: [/b]{filesize}\n",
+            f"[b]Legendas: [/b]{subs}[/info]",
+        ]
+        return "".join(lines)
+
+    @staticmethod
+    def _extra_info_rows(awards: str, trivia: str, critic: str) -> str:
+        sections = (
+            ("Premiações", awards),
+            ("Curiosidades", trivia),
+            ("Crítica", critic),
+        )
+        return "".join(
+            f"[/tr][tr][infoExtraMasc]{label}[/infoExtraMasc][/tr]"
+            f"[tr][infoExtra]{value}[/infoExtra]"
+            for label, value in sections
+            if value
+        )
 
     def _build_bbcode(
         self,
@@ -621,71 +806,52 @@ class MakingOff:
         trivia: str = "",
         critic: str = "",
     ) -> str:
-        """Render and return the complete BBCode post body matching MakingOff's JavaScript generator."""
-        s_rows = self._screen_rows(image_urls)
-
-        bbcode = "[tablePrinc][tr][titMasc]Título do Filme[/titMasc][/tr]"
-        bbcode += (
-            f"[tr][titTrad]{title_br}[/titTrad][titOri]{title_orig}[/titOri]"
+        """Render the complete MakingOff BBCode post body."""
+        intro = self._bbcode_intro(
+            title_br=title_br,
+            title_orig=title_orig,
+            release=release,
+            poster_url=poster_url,
+            overview=overview,
+            image_urls=image_urls,
         )
-        if release:
-            bbcode += f"[release]{release}[/release][/tr]"
-        else:
-            bbcode += "[release]Release não informado[/release][/tr]"
-
-        bbcode += "[tr][posterMasc]Poster[/posterMasc][sinopseMasc]Sinopse[/sinopseMasc][/tr]"
-        bbcode += f"[tr][poster][posterIma]{poster_url}[/posterIma][/poster][sinopse]{overview}[/sinopse]"
-        bbcode += "[tableScreen]Screenshots[/tableScreen]"
-        bbcode += f"{s_rows}[/tablePrinc]"
-
-        bbcode += "[tablePrinc][tr][posterMasc]Elenco[/posterMasc]"
-        bbcode += "[infoMasc]Informações sobre o filme[/infoMasc]"
-        bbcode += "[infoMasc]Informações sobre o release[/infoMasc][/tr]"
-        bbcode += f"[tr][elenco]{cast_text}[/elenco]"
-
-        bbcode += f"[info][b]Gênero: [/b]{genres}\n"
-        bbcode += f"[b]Diretor: [/b]{directors}\n"
-        if duration:
-            bbcode += f"[b]Duração: [/b]{duration} minutos\n"
-        bbcode += f"[b]Ano de Lançamento: [/b]{year}\n"
-        bbcode += f"[b]País de Origem: [/b]{countries}\n"
-        bbcode += f"[b]Idioma do Áudio: [/b]{audio}\n"
-        if imdb_url:
-            bbcode += f"[b]IMDB: [/b][url={imdb_url}]{imdb_url}[/url]\n"
-        if homepage_url:
-            bbcode += f"[b]Site Oficial: [/b][url={homepage_url}]{homepage_url}[/url]\n"
-        bbcode += "[/info]"
-
-        bbcode += f"[info][b]Qualidade de Vídeo: [/b]{quality}\n"
-        if container:
-            bbcode += f"[b]Container: [/b]{container}\n"
-        if video_codec:
-            bbcode += f"[b]Vídeo Codec: [/b]{video_codec}\n"
-        if video_brate and video_brate != "None":
-            bbcode += f"[b]Vídeo Bitrate: [/b]{video_brate} Kbps\n"
-        if audio_codec:
-            bbcode += f"[b]Áudio Codec: [/b]{audio_codec}\n"
-        if audio_brate and audio_brate != "None":
-            bbcode += f"[b]Áudio Bitrate: [/b]{audio_brate} Kbps\n"
-        if res_str and "x0" not in res_str and "0x" not in res_str:
-            bbcode += f"[b]Resolução: [/b]{res_str}\n"
-        if aspect:
-            bbcode += f"[b]Formato de Tela: [/b]{aspect}\n"
-        if fps_str:
-            bbcode += f"[b]Frame Rate: [/b]{fps_str}\n"
-        bbcode += f"[b]Tamanho: [/b]{filesize}\n"
-        bbcode += f"[b]Legendas: [/b]{subs}[/info]"
-
-        if awards:
-            bbcode += f"[/tr][tr][infoExtraMasc]Premiações[/infoExtraMasc][/tr][tr][infoExtra]{awards}[/infoExtra]"
-        if trivia:
-            bbcode += f"[/tr][tr][infoExtraMasc]Curiosidades[/infoExtraMasc][/tr][tr][infoExtra]{trivia}[/infoExtra]"
-        if critic:
-            bbcode += f"[/tr][tr][infoExtraMasc]Crítica[/infoExtraMasc][/tr][tr][infoExtra]{critic}[/infoExtra]"
-
-        bbcode += "[/tr][tr][rodape]Coopere, deixe semeando ao menos duas vezes o tamanho do arquivo que baixar.[/rodape][/tr][/tablePrinc]"
-
-        return self._html_encode(bbcode)
+        columns = (
+            "[tablePrinc][tr][posterMasc]Elenco[/posterMasc]"
+            "[infoMasc]Informações sobre o filme[/infoMasc]"
+            "[infoMasc]Informações sobre o release[/infoMasc][/tr]"
+            f"[tr][elenco]{cast_text}[/elenco]"
+        )
+        movie_info = self._movie_info_block(
+            genres=genres,
+            directors=directors,
+            duration=duration,
+            year=year,
+            countries=countries,
+            audio=audio,
+            imdb_url=imdb_url,
+            homepage_url=homepage_url,
+        )
+        release_info = self._release_info_block(
+            quality=quality,
+            container=container,
+            video_codec=video_codec,
+            video_brate=video_brate,
+            audio_codec=audio_codec,
+            audio_brate=audio_brate,
+            res_str=res_str,
+            aspect=aspect,
+            fps_str=fps_str,
+            filesize=filesize,
+            subs=subs,
+        )
+        extras = self._extra_info_rows(awards, trivia, critic)
+        footer = (
+            "[/tr][tr][rodape]Coopere, deixe semeando ao menos duas vezes o "
+            "tamanho do arquivo que baixar.[/rodape][/tr][/tablePrinc]"
+        )
+        return self._html_encode(
+            f"{intro}{columns}{movie_info}{release_info}{extras}{footer}"
+        )
 
     def _get_lang_name(self, lang_string: str) -> str:
         with contextlib.suppress(Exception):
@@ -694,85 +860,100 @@ class MakingOff:
                 return lang.display_name("pt").capitalize()
         return lang_string.capitalize()
 
-    def _localizer_countries(self, meta: Meta) -> str:
-        """Convert the first production country code to PT-BR name, matching the JS generator."""
+    @staticmethod
+    def _country_translations() -> tuple[Any | None, Any | None]:
         try:
-            pt_normal = gettext.translation(
+            normal = gettext.translation(
                 "iso3166-1", pycountry.LOCALES_DIR, languages=["pt_BR"]
             )
-            pt_historic = gettext.translation(
+            historic = gettext.translation(
                 "iso3166-3", pycountry.LOCALES_DIR, languages=["pt_BR"]
             )
+            return normal, historic
         except OSError:
-            pt_normal = None
-            pt_historic = None
+            return None, None
 
-        custom_country_mapping: dict[str, str] = {
-            "XC": "Checoslováquia",
-        }
+    @staticmethod
+    def _production_country_codes(meta: Meta) -> list[str]:
+        codes: list[str] = []
+        for country in meta.production_countries:
+            code = country.get("iso_3166_1")
+            if code:
+                codes.append(str(code))
+        return codes
 
-        prod_countries = meta.production_countries
-        origin_countries = meta.origin_country
+    @classmethod
+    def _country_codes(cls, meta: Meta) -> list[str]:
+        production = cls._production_country_codes(meta)
+        if production:
+            return production
+        return [str(code) for code in meta.origin_country if code]
 
-        codes = (
-            [
-                c.get("iso_3166_1", "")
-                for c in prod_countries
-                if c.get("iso_3166_1")
-            ]
-            if prod_countries
-            else [c for c in origin_countries if c]
+    @staticmethod
+    def _active_country_name(code: str, normal: Any | None) -> str | None:
+        country = pycountry.countries.get(alpha_2=code)
+        if country is None:
+            return None
+        return normal.gettext(country.name) if normal else str(country.name)
+
+    @staticmethod
+    def _historic_country_name(code: str, historic: Any | None) -> str | None:
+        country = pycountry.historic_countries.get(alpha_2=code)
+        if country is None:
+            return None
+        return (
+            historic.gettext(country.name) if historic else str(country.name)
         )
 
+    @classmethod
+    def _localized_country_name(
+        cls, code: str, normal: Any | None, historic: Any | None
+    ) -> str:
+        custom = {"XC": "Checoslováquia"}
+        upper = code.upper()
+        if upper in custom:
+            return custom[upper]
+        active = cls._active_country_name(upper, normal)
+        if active is not None:
+            return active
+        old = cls._historic_country_name(upper, historic)
+        return old or code
+
+    def _localizer_countries(self, meta: Meta) -> str:
+        """Convert the first production country code to PT-BR name."""
+        codes = self._country_codes(meta)
         if not codes or not codes[0]:
             return "Desconhecido"
+        normal, historic = self._country_translations()
+        return self._localized_country_name(codes[0], normal, historic)
 
-        code_upper = codes[0].upper()
-        if code_upper in custom_country_mapping:
-            return custom_country_mapping[code_upper]
+    @staticmethod
+    def _genre_values_from_list(values: list[object]) -> list[str]:
+        return [str(value).strip() for value in values if str(value).strip()]
 
-        # Tenta encontrar no pycountry (países ativos)
-        country = pycountry.countries.get(alpha_2=code_upper)
-        if country:
-            return (
-                pt_normal.gettext(country.name) if pt_normal else country.name
-            )
+    @staticmethod
+    def _genre_values_from_string(value: str) -> list[str]:
+        return [item.strip() for item in value.split(",") if item.strip()]
 
-        # Tenta encontrar no pycountry (países históricos, ex: SU)
-        historic_country = pycountry.historic_countries.get(alpha_2=code_upper)
-        if historic_country:
-            return (
-                pt_historic.gettext(historic_country.name)
-                if pt_historic
-                else historic_country.name
-            )
+    @classmethod
+    def _genre_list(cls, raw: object) -> list[str]:
+        if isinstance(raw, list):
+            return cls._genre_values_from_list(cast(list[object], raw))
+        if isinstance(raw, str):
+            return cls._genre_values_from_string(raw)
+        return []
 
-        return codes[0]
+    @staticmethod
+    def _localized_genre(genre: str) -> str:
+        translated = ENG_TO_PTBR_GENRE_MAP.get(genre.lower(), genre)
+        return translated.title() if translated != genre else genre
 
     def _localizer_genres(self, meta: Meta) -> str:
-        """Convert genre names to PT-BR.
-
-        Accepts both a comma-separated string and a list, as the Meta
-        object may expose genres in either form depending on UA version.
-        """
-        genres_raw = meta.genres or meta.combined_genres or ""
-        if not genres_raw:
+        """Convert genre names to PT-BR."""
+        genres = self._genre_list(meta.genres or meta.combined_genres or "")
+        if not genres:
             return "Desconhecido"
-        genre_list = (
-            [g.strip() for g in genres_raw if g.strip()]
-            if isinstance(genres_raw, list)
-            else [g.strip() for g in genres_raw.split(",") if g.strip()]
-        )
-        if not genre_list:
-            return "Desconhecido"
-
-        translated_genres: list[str] = []
-        for g in genre_list:
-            translated = ENG_TO_PTBR_GENRE_MAP.get(g.lower(), g)
-            if translated is not None and translated != g:
-                translated = translated.title()
-            translated_genres.append(translated)
-        return ", ".join(translated_genres)
+        return ", ".join(self._localized_genre(genre) for genre in genres)
 
     def _localizer_audio_language(self, meta: Meta) -> str:
         """
@@ -812,110 +993,96 @@ class MakingOff:
 
     # -- IPB client methods
 
+    @staticmethod
+    def _tag_attribute(tag: object, attribute: str) -> str:
+        if not hasattr(tag, "get"):
+            return ""
+        value = tag.get(attribute)  # type: ignore[union-attr]
+        return str(value).strip() if value else ""
+
     def _get_csrf_token(self, html: str) -> str:
         soup = BeautifulSoup(html, "html.parser")
-        html_tag = soup.find("html")
-        if html_tag and html_tag.has_attr("data-csrf"):
-            token = html_tag["data-csrf"]
-            if token:
-                return str(token).strip()
-
-        token_input = soup.find("input", {"name": "_xfToken"})
-        if token_input and token_input.has_attr("value"):
-            token = token_input["value"]
-            if token:
-                return str(token).strip()
-
+        html_token = self._tag_attribute(soup.find("html"), "data-csrf")
+        if html_token:
+            return html_token
+        input_token = self._tag_attribute(
+            soup.find("input", {"name": "_xfToken"}), "value"
+        )
+        if input_token:
+            return input_token
         match = re.search(r'csrf:\s*["\']([^"\']+)["\']', html)
-        if match:
-            return match.group(1).strip()
+        return match.group(1).strip() if match else ""
 
-        return ""
+    async def _session_home_html(self) -> str | None:
+        try:
+            response = await self.session.get(f"{self.base_url}/")
+            if response.status_code != 403:
+                response.raise_for_status()
+            return response.text
+        except httpx.HTTPError as error:
+            response = getattr(error, "response", None)
+            if response is not None:
+                return cast(httpx.Response, response).text
+            logger.error(f"{self.tracker}: Error validating session: {error}")
+            return None
+
+    @staticmethod
+    def _page_logged_in(html: str) -> bool:
+        tag = BeautifulSoup(html, "html.parser").find("html")
+        return bool(tag and tag.get("data-logged-in") == "true")
 
     async def refresh_session(self) -> bool:
-        try:
-            resp = await self.session.get(f"{self.base_url}/")
-            if resp.status_code == 403:
-                html = resp.text
-            else:
-                resp.raise_for_status()
-                html = resp.text
-        except httpx.HTTPError as e:
-            response = getattr(e, "response", None)
-            if response is not None:
-                html = cast(httpx.Response, response).text
-            else:
-                logger.error(f"{self.tracker}: Error validating session: {e}")
-                return False
-
-        soup = BeautifulSoup(html, "html.parser")
-        html_tag = soup.find("html")
-        logged_in = (
-            html_tag.get("data-logged-in") == "true" if html_tag else False
-        )
-
-        if not logged_in:
+        html = await self._session_home_html()
+        if html is None:
+            return False
+        if not self._page_logged_in(html):
             logger.warning(
                 f"{self.tracker}: The session is unauthenticated. Check the cookie file."
             )
             return False
-
         self._csrf_token = self._get_csrf_token(html)
         await self.cookie_validator.save_session_cookies(
             self.tracker, cast(Any, self.session.cookies.jar)
         )
         return True
 
-    async def get_new_post_tokens(self, forum_id: int) -> tuple[str, str, str]:
-        """
-        Retrieve tokens required to create a new forum topic.
-
-        Args:
-            forum_id (int): Target forum ID.
-
-        Returns:
-            tuple[str, str, str]: csrf_token, attachment_hash, attachment_hash_combined.
-        """
+    async def _new_post_page(self, forum_id: int) -> str | None:
         url = f"{self.base_url}/forums/{forum_id}/post-thread"
         try:
-            resp = await self.session.get(url)
-            resp.raise_for_status()
-        except httpx.HTTPError as e:
-            logger.error(f"{self.tracker}: Failed loading topic new page: {e}")
+            response = await self.session.get(url)
+            response.raise_for_status()
+            return response.text
+        except httpx.HTTPError as error:
+            logger.error(
+                f"{self.tracker}: Failed loading topic new page: {error}"
+            )
+            return None
+
+    @staticmethod
+    def _input_value(soup: BeautifulSoup, name: str) -> str:
+        tag = soup.find("input", {"name": name})
+        return str(tag.get("value", "")).strip() if tag else ""
+
+    async def get_new_post_tokens(self, forum_id: int) -> tuple[str, str, str]:
+        """Retrieve CSRF and attachment tokens required to create a topic."""
+        html = await self._new_post_page(forum_id)
+        if html is None:
             return "", "", ""
-
-        soup = BeautifulSoup(resp.text, "html.parser")
-
-        html_tag = soup.find("html")
-        logged_in = (
-            html_tag.get("data-logged-in") == "true" if html_tag else False
-        )
-        if not logged_in:
+        if not self._page_logged_in(html):
             logger.warning(
                 f"{self.tracker}: Unauthenticated session detected on this page."
             )
             return "", "", ""
-
-        csrf_token = self._get_csrf_token(resp.text)
-
-        attachment_hash = ""
-        hash_tag = soup.find("input", {"name": "attachment_hash"})
-        if hash_tag:
-            attachment_hash = str(hash_tag.get("value", "")).strip()
-
-        attachment_hash_combined = ""
-        combined_tag = soup.find("input", {"name": "attachment_hash_combined"})
-        if combined_tag:
-            attachment_hash_combined = str(
-                combined_tag.get("value", "")
-            ).strip()
-
+        soup = BeautifulSoup(html, "html.parser")
+        csrf_token = self._get_csrf_token(html)
+        attachment_hash = self._input_value(soup, "attachment_hash")
+        combined = self._input_value(soup, "attachment_hash_combined")
         if not csrf_token:
             logger.warning(
-                f"{self.tracker}: It wasn't possible to extract xfToken. Check if the session is valid."
+                f"{self.tracker}: It wasn't possible to extract xfToken. "
+                "Check if the session is valid."
             )
-
-        return csrf_token, attachment_hash, attachment_hash_combined
+        return csrf_token, attachment_hash, combined
 
     @staticmethod
     def _extract_post_height(text: str) -> int:
