@@ -1,5 +1,6 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
 import asyncio
+import http.cookiejar
 import json
 import re
 import urllib.parse
@@ -10,13 +11,20 @@ import aiofiles
 import cli_ui
 import httpx
 from bs4 import BeautifulSoup
+from bs4.element import Tag
 
 from src.domain_models.release import Meta
 from src.integrations.filesystem.temp_paths import release_temp_dir
 from src.integrations.media.media_info import MediaInfo
-from src.integrations.observability.runtime_support import logger, prompt_in_thread
+from src.integrations.observability.runtime_support import (
+    logger,
+    prompt_in_thread,
+)
 from src.integrations.trackers.common import Common
-from src.integrations.trackers.cookie_auth import CookieAuthUploader, CookieValidator
+from src.integrations.trackers.cookie_auth import (
+    CookieAuthUploader,
+    CookieValidator,
+)
 
 
 class AlphaRatio:
@@ -68,7 +76,15 @@ class AlphaRatio:
     def _anime_type(meta: Meta) -> str:
         if meta.sd:
             return "15"
-        resolutions = {"8640p", "4320p", "2160p", "1440p", "1080p", "1080i", "720p"}
+        resolutions = {
+            "8640p",
+            "4320p",
+            "2160p",
+            "1440p",
+            "1080p",
+            "1080i",
+            "720p",
+        }
         return "16" if meta.resolution in resolutions else "15"
 
     @classmethod
@@ -83,7 +99,11 @@ class AlphaRatio:
             return "4"
         if meta.resolution in {"8640p", "4320p", "2160p"}:
             return "6"
-        return "5" if meta.resolution in {"1440p", "1080p", "1080i", "720p"} else "4"
+        return (
+            "5"
+            if meta.resolution in {"1440p", "1080p", "1080i", "720p"}
+            else "4"
+        )
 
     @staticmethod
     def _tv_episode_type(meta: Meta) -> str:
@@ -91,7 +111,11 @@ class AlphaRatio:
             return "0"
         if meta.resolution in {"8640p", "4320p", "2160p"}:
             return "2"
-        return "1" if meta.resolution in {"1440p", "1080p", "1080i", "720p"} else "0"
+        return (
+            "1"
+            if meta.resolution in {"1440p", "1080p", "1080i", "720p"}
+            else "0"
+        )
 
     @staticmethod
     def _movie_type(meta: Meta) -> str:
@@ -101,22 +125,32 @@ class AlphaRatio:
             return "13"
         if meta.resolution in {"8640p", "4320p", "2160p"}:
             return "9"
-        return "8" if meta.resolution in {"1440p", "1080p", "1080i", "720p"} else "7"
+        return (
+            "8"
+            if meta.resolution in {"1440p", "1080p", "1080i", "720p"}
+            else "7"
+        )
 
     async def validate_credentials(self, meta: Meta) -> bool:
-        cookie_jar = await self.cookie_validator.load_session_cookies(meta, self.tracker)
+        cookie_jar = await self.cookie_validator.load_session_cookies(
+            meta, self.tracker
+        )
         return cookie_jar is not None
 
     def get_links(self, movie: Meta, subheading: str, heading_end: str) -> str:
         heading = f"\n{subheading}Links{heading_end}\n"
         images = self.config.get("IMAGES")
         if isinstance(images, dict):
-            links = self._image_metadata_links(movie, cast(dict[str, Any], images))
+            links = self._image_metadata_links(
+                movie, cast(dict[str, Any], images)
+            )
             return heading + "".join(links)
         return heading + "".join(self._plain_metadata_links(movie))
 
     @classmethod
-    def _image_metadata_links(cls, movie: Meta, images: dict[str, Any]) -> list[str]:
+    def _image_metadata_links(
+        cls, movie: Meta, images: dict[str, Any]
+    ) -> list[str]:
         values = cls._metadata_urls(movie)
         result: list[str] = []
         for key, url in values:
@@ -151,44 +185,72 @@ class AlphaRatio:
 
     @staticmethod
     def _tmdb_url(movie: Meta) -> str:
-        return f"https://www.themoviedb.org/{str(movie.category).lower()}/{movie.tmdb}" if movie.tmdb else ""
+        return (
+            f"https://www.themoviedb.org/{str(movie.category).lower()}/{movie.tmdb}"
+            if movie.tmdb
+            else ""
+        )
 
     @staticmethod
     def _tvdb_url(movie: Meta) -> str:
-        return f"https://www.thetvdb.com/?id={movie.tvdb_id}&tab=series" if movie.tvdb_id not in {None, 0} else ""
+        return (
+            f"https://www.thetvdb.com/?id={movie.tvdb_id}&tab=series"
+            if movie.tvdb_id not in {None, 0}
+            else ""
+        )
 
     @staticmethod
     def _tvmaze_url(movie: Meta) -> str:
-        return f"https://www.tvmaze.com/shows/{movie.tvmaze_id}" if movie.tvmaze_id not in {None, 0} else ""
+        return (
+            f"https://www.tvmaze.com/shows/{movie.tvmaze_id}"
+            if movie.tvmaze_id not in {None, 0}
+            else ""
+        )
 
     @staticmethod
     def _mal_url(movie: Meta) -> str:
-        return f"https://myanimelist.net/anime/{movie.mal_id}" if movie.mal_id not in {None, 0} else ""
+        return (
+            f"https://myanimelist.net/anime/{movie.mal_id}"
+            if movie.mal_id not in {None, 0}
+            else ""
+        )
 
     async def edit_desc(self, meta: Meta) -> None:
         heading = "[color=green][size=6]"
         subheading = "[color=red][size=4]"
         heading_end = "[/size][/color]"
-        description = self._description_header(meta, heading, subheading, heading_end)
+        description = self._description_header(
+            meta, heading, subheading, heading_end
+        )
         discs = self._disc_entries(meta)
         if discs:
             description += self._disc_description(meta, discs)
         else:
-            description += await self._file_description(meta, subheading, heading_end)
+            description += await self._file_description(
+                meta, subheading, heading_end
+            )
         await self._write_description(meta, description)
 
-    def _description_header(self, meta: Meta, heading: str, subheading: str, heading_end: str) -> str:
+    def _description_header(
+        self, meta: Meta, heading: str, subheading: str, heading_end: str
+    ) -> str:
         media_heading = "BDINFO" if meta.is_disc == "BDMV" else "MEDIAINFO"
         return f"{heading}{meta.name}{heading_end}\n{self.get_links(meta, subheading, heading_end)}\n\n{subheading}{media_heading}{heading_end}\n"
 
     @staticmethod
     def _disc_entries(meta: Meta) -> list[dict[str, Any]]:
-        return cast(list[dict[str, Any]], meta.discs) if isinstance(meta.discs, list) else []
+        return (
+            cast(list[dict[str, Any]], meta.discs)
+            if isinstance(meta.discs, list)
+            else []
+        )
 
     @classmethod
     def _disc_description(cls, meta: Meta, discs: list[dict[str, Any]]) -> str:
         if len(discs) >= 2:
-            return "".join(cls._additional_disc_block(each) for each in discs[1:])
+            return "".join(
+                cls._additional_disc_block(each) for each in discs[1:]
+            )
         return cls._single_disc_block(meta, discs[0])
 
     @staticmethod
@@ -211,53 +273,85 @@ class AlphaRatio:
             return f"[hide][code]{disc.get('summary', '')}[/code][/hide]\n\n"
         return ""
 
-    async def _file_description(self, meta: Meta, subheading: str, heading_end: str) -> str:
+    async def _file_description(
+        self, meta: Meta, subheading: str, heading_end: str
+    ) -> str:
         description = await self._mediainfo_description(meta)
-        description += self._narrative_description(meta, subheading, heading_end)
+        description += self._narrative_description(
+            meta, subheading, heading_end
+        )
         return description
 
     async def _mediainfo_description(self, meta: Meta) -> str:
         video = self._video_path(meta)
-        template = Path(meta.base_dir) / "data" / "templates" / "summary-mediainfo.csv"
+        template = (
+            Path(meta.base_dir)
+            / "data"
+            / "templates"
+            / "summary-mediainfo.csv"
+        )
         if template.exists():
             return await self._templated_mediainfo(meta, video, template)
-        logger.info(f"{self.tracker}: [bold red]Couldn't find the MediaInfo template")
-        logger.info(f"{self.tracker}: [green]Using normal MediaInfo for the description.")
+        logger.info(
+            f"{self.tracker}: [bold red]Couldn't find the MediaInfo template"
+        )
+        logger.info(
+            f"{self.tracker}: [green]Using normal MediaInfo for the description."
+        )
         cleaned = await self._clean_mediainfo_text(meta)
         return f"[code]\n{cleaned}\n[/code]\n\n"
 
     @staticmethod
     def _video_path(meta: Meta) -> str:
-        files = cast(list[str], meta.filelist) if isinstance(meta.filelist, list) else []
+        files = (
+            cast(list[str], meta.filelist)
+            if isinstance(meta.filelist, list)
+            else []
+        )
         return files[0] if files else str(meta.path or "")
 
-    async def _templated_mediainfo(self, meta: Meta, video: str, template: Path) -> str:
-        media_info = await self.parse_mediainfo_async(video, str(template.resolve()))
+    async def _templated_mediainfo(
+        self, meta: Meta, video: str, template: Path
+    ) -> str:
+        media_info = await self.parse_mediainfo_async(
+            video, str(template.resolve())
+        )
         full_mediainfo = await self._clean_mediainfo_text(meta)
         return f"[code]\n{media_info}\n[/code]\n[hide=FULL MEDIAINFO][code]{full_mediainfo}[/code][/hide]\n"
 
     @staticmethod
     async def _clean_mediainfo_text(meta: Meta) -> str:
-        path = release_temp_dir(meta.base_dir, meta.uuid) / "MEDIAINFO_CLEANPATH.txt"
+        path = (
+            release_temp_dir(meta.base_dir, meta.uuid)
+            / "MEDIAINFO_CLEANPATH.txt"
+        )
         async with aiofiles.open(path, encoding="utf-8") as handle:
             return await handle.read()
 
-    def _narrative_description(self, meta: Meta, subheading: str, heading_end: str) -> str:
+    def _narrative_description(
+        self, meta: Meta, subheading: str, heading_end: str
+    ) -> str:
         sections = [f"\n\n{subheading}PLOT{heading_end}\n{meta.overview}"]
         if meta.genres:
-            sections.append(f"\n\n{subheading}Genres{heading_end}\n{meta.genres}")
+            sections.append(
+                f"\n\n{subheading}Genres{heading_end}\n{meta.genres}"
+            )
         screenshots = self._screenshot_block(meta, subheading, heading_end)
         if screenshots:
             sections.append(screenshots)
         if "youtube" in meta:
-            sections.append(f"\n\n{subheading}Youtube{heading_end}\n{meta.youtube}")
+            sections.append(
+                f"\n\n{subheading}Youtube{heading_end}\n{meta.youtube}"
+            )
         notes = self._base_notes(meta)
         if len(notes) > 2:
             sections.append(f"\n\n{subheading}Notes{heading_end}\n{notes}")
         return "".join(sections)
 
     @classmethod
-    def _screenshot_block(cls, meta: Meta, subheading: str, heading_end: str) -> str:
+    def _screenshot_block(
+        cls, meta: Meta, subheading: str, heading_end: str
+    ) -> str:
         links = cls._screenshot_links(meta.image_list)
         if not links:
             return ""
@@ -266,7 +360,9 @@ class AlphaRatio:
     @classmethod
     def _screenshot_links(cls, value: Any) -> list[str]:
         images = value if isinstance(value, list) else []
-        return [link for image in images if (link := cls._screenshot_link(image))]
+        return [
+            link for image in images if (link := cls._screenshot_link(image))
+        ]
 
     @staticmethod
     def _screenshot_link(image: Any) -> str:
@@ -283,11 +379,24 @@ class AlphaRatio:
         from src.domain_models.release_description import base_description
 
         base = base_description(meta)
-        base = re.sub(r"\[center\]\[spoiler=Scene NFO:\].*?\[/center\]", "", base, flags=re.DOTALL)
-        return re.sub(r"\[center\]\[spoiler=FraMeSToR NFO:\].*?\[/center\]", "", base, flags=re.DOTALL)
+        base = re.sub(
+            r"\[center\]\[spoiler=Scene NFO:\].*?\[/center\]",
+            "",
+            base,
+            flags=re.DOTALL,
+        )
+        return re.sub(
+            r"\[center\]\[spoiler=FraMeSToR NFO:\].*?\[/center\]",
+            "",
+            base,
+            flags=re.DOTALL,
+        )
 
     async def _write_description(self, meta: Meta, description: str) -> None:
-        path = release_temp_dir(meta.base_dir, meta.uuid) / f"[{self.tracker}]DESCRIPTION.txt"
+        path = (
+            release_temp_dir(meta.base_dir, meta.uuid)
+            / f"[{self.tracker}]DESCRIPTION.txt"
+        )
         path.parent.mkdir(parents=True, exist_ok=True)
         async with aiofiles.open(path, "w", encoding="utf8") as handle:
             await handle.write(description)
@@ -309,7 +418,11 @@ class AlphaRatio:
         bdinfo = meta.bdinfo if isinstance(meta.bdinfo, dict) else {}
         audio = bdinfo.get("audio", [])
         values = audio if isinstance(audio, list) else []
-        return [cast(dict[str, Any], track) for track in values if isinstance(track, dict)]
+        return [
+            cast(dict[str, Any], track)
+            for track in values
+            if isinstance(track, dict)
+        ]
 
     @staticmethod
     def _has_english_bdmv_audio(tracks: list[dict[str, Any]]) -> bool:
@@ -363,7 +476,11 @@ class AlphaRatio:
     def _mapping_tracks(value: Any) -> list[dict[str, Any]]:
         if not isinstance(value, list):
             return []
-        return [cast(dict[str, Any], track) for track in value if isinstance(track, dict)]
+        return [
+            cast(dict[str, Any], track)
+            for track in value
+            if isinstance(track, dict)
+        ]
 
     @staticmethod
     def _track_is_english(track: dict[str, Any]) -> bool:
@@ -381,15 +498,19 @@ class AlphaRatio:
         return Path(path).name
 
     async def search_existing(self, meta: Meta) -> list[dict[str, str]]:
-        cookie_jar = await self.cookie_validator.load_session_cookies(meta, self.tracker)
+        cookie_jar = await self.cookie_validator.load_session_cookies(
+            meta, self.tracker
+        )
         if not cookie_jar:
-            logger.info(f"{self.tracker}: Cannot search without valid cookies.")
+            logger.info(
+                f"{self.tracker}: Cannot search without valid cookies."
+            )
             return []
         query = self._search_query(meta)
         if not query:
             logger.info(f"{self.tracker}: [red]Title is missing.")
             return []
-        response = await self._search_response(meta, query, cast(httpx.Cookies, cookie_jar))
+        response = await self._search_response(meta, query, cookie_jar)
         if await self._search_requires_login(meta, response):
             return []
         response.raise_for_status()
@@ -403,22 +524,39 @@ class AlphaRatio:
         year = "" if meta.year is None else str(meta.year).strip()
         return f"{title} {year}".strip()
 
-    async def _search_response(self, meta: Meta, query: str, cookie_jar: httpx.Cookies) -> httpx.Response:
+    async def _search_response(
+        self, meta: Meta, query: str, cookie_jar: http.cookiejar.CookieJar
+    ) -> httpx.Response:
         encoded = urllib.parse.quote(query)
         url = f"{self.base_url}/ajax.php?action=browse&searchstr={encoded}"
         logger.debug(f"{self.tracker}: [blue]{url}")
-        async with httpx.AsyncClient(headers=self._user_agent_header(meta), timeout=30.0, cookies=cookie_jar) as client:
+        async with httpx.AsyncClient(
+            headers=self._user_agent_header(meta),
+            timeout=30.0,
+            cookies=cookie_jar,
+        ) as client:
             return await client.get(url)
 
     @staticmethod
     def _user_agent_header(meta: Meta) -> dict[str, str]:
-        version = meta.current_version if meta.current_version is not None else "github.com/wastaken7/Upload-Assistant"
+        version = (
+            meta.current_version
+            if meta.current_version is not None
+            else "github.com/wastaken7/Upload-Assistant"
+        )
         return {"User-Agent": f"{meta.ua_name} {version}"}
 
-    async def _search_requires_login(self, meta: Meta, response: httpx.Response) -> bool:
-        if "login.php" not in str(response.url) and "login.php" not in response.text:
+    async def _search_requires_login(
+        self, meta: Meta, response: httpx.Response
+    ) -> bool:
+        if (
+            "login.php" not in str(response.url)
+            and "login.php" not in response.text
+        ):
             return False
-        await self.cookie_validator.handle_validation_failure(meta, self.tracker, response.text)
+        await self.cookie_validator.handle_validation_failure(
+            meta, self.tracker, response.text
+        )
         meta.skipping = self.tracker
         return True
 
@@ -426,15 +564,27 @@ class AlphaRatio:
         data = self._successful_search_payload(payload)
         results = data.get("results", [])
         values = results if isinstance(results, list) else []
-        return [entry for item in values if (entry := self._search_result(item)) is not None]
+        return [
+            entry
+            for item in values
+            if (entry := self._search_result(item)) is not None
+        ]
 
     def _successful_search_payload(self, payload: Any) -> dict[str, Any]:
         if not isinstance(payload, dict):
-            raise RuntimeError(f"{self.tracker}: API returned invalid response")
+            raise RuntimeError(
+                f"{self.tracker}: API returned invalid response"
+            )
         if payload.get("status") != "success":
-            raise RuntimeError(f"{self.tracker}: API returned unsuccessful status: {payload.get('error', 'unknown error')}")
+            raise RuntimeError(
+                f"{self.tracker}: API returned unsuccessful status: {payload.get('error', 'unknown error')}"
+            )
         response = payload.get("response", {})
-        return cast(dict[str, Any], response) if isinstance(response, dict) else {}
+        return (
+            cast(dict[str, Any], response)
+            if isinstance(response, dict)
+            else {}
+        )
 
     @classmethod
     def _search_result(cls, item: Any) -> dict[str, str] | None:
@@ -456,14 +606,22 @@ class AlphaRatio:
         saved = await self.cookie_validator.get_ar_auth_key(meta, self.tracker)
         if saved:
             return saved
-        logger.info(f"{self.tracker}: [yellow]Auth key not found. This may happen if you're using manually exported cookies.[/yellow]")
-        logger.info(f"{self.tracker}: [yellow]Attempting to extract auth key from torrents page...[/yellow]")
-        cookie_jar = await self.cookie_validator.load_session_cookies(meta, self.tracker)
+        logger.info(
+            f"{self.tracker}: [yellow]Auth key not found. This may happen if you're using manually exported cookies.[/yellow]"
+        )
+        logger.info(
+            f"{self.tracker}: [yellow]Attempting to extract auth key from torrents page...[/yellow]"
+        )
+        cookie_jar = await self.cookie_validator.load_session_cookies(
+            meta, self.tracker
+        )
         if not cookie_jar:
             return None
-        return await self._fetch_auth_key(meta, cast(httpx.Cookies, cookie_jar))
+        return await self._fetch_auth_key(meta, cookie_jar)
 
-    async def _fetch_auth_key(self, meta: Meta, cookie_jar: httpx.Cookies) -> str | None:
+    async def _fetch_auth_key(
+        self, meta: Meta, cookie_jar: http.cookiejar.CookieJar
+    ) -> str | None:
         try:
             response = await self._auth_page(meta, cookie_jar)
             auth_key = self._extract_auth_key(response.text)
@@ -472,11 +630,19 @@ class AlphaRatio:
             await self._save_auth_key(meta, auth_key)
             return auth_key
         except (httpx.HTTPError, OSError, ValueError) as error:
-            logger.error(f"{self.tracker}: [red]Error extracting auth key: {error}")
+            logger.error(
+                f"{self.tracker}: [red]Error extracting auth key: {error}"
+            )
             return None
 
-    async def _auth_page(self, meta: Meta, cookie_jar: httpx.Cookies) -> httpx.Response:
-        async with httpx.AsyncClient(headers=self._user_agent_header(meta), timeout=30.0, cookies=cookie_jar) as client:
+    async def _auth_page(
+        self, meta: Meta, cookie_jar: http.cookiejar.CookieJar
+    ) -> httpx.Response:
+        async with httpx.AsyncClient(
+            headers=self._user_agent_header(meta),
+            timeout=30.0,
+            cookies=cookie_jar,
+        ) as client:
             response = await client.get(self.test_url)
             response.raise_for_status()
             return response
@@ -484,8 +650,11 @@ class AlphaRatio:
     @staticmethod
     def _extract_auth_key(html: str) -> str | None:
         soup = BeautifulSoup(html, "html.parser")
-        logout_link = cast(Any, soup).find("a", href=True, string="Logout")
-        if logout_link is None:
+        logout_link = soup.find("a", href=re.compile(r"logout\.php"))
+        if (
+            not isinstance(logout_link, Tag)
+            or logout_link.get_text(strip=True) != "Logout"
+        ):
             return None
         href_value = logout_link.get("href")
         if not isinstance(href_value, str):
@@ -496,17 +665,25 @@ class AlphaRatio:
     async def _save_auth_key(self, meta: Meta, auth_key: str) -> None:
         from src.integrations.trackers.cookie_auth import find_cookie_file
 
-        cookie_file = find_cookie_file(meta.base_dir, self.tracker, self.config)
+        cookie_file = find_cookie_file(
+            meta.base_dir, self.tracker, self.config
+        )
         auth_file = cookie_file.replace(".txt", "_auth.txt")
         try:
-            async with aiofiles.open(auth_file, "w", encoding="utf-8") as handle:
+            async with aiofiles.open(
+                auth_file, "w", encoding="utf-8"
+            ) as handle:
                 await handle.write(auth_key)
-            logger.info(f"{self.tracker}: [green]Auth key saved for future use[/green]")
+            logger.info(
+                f"{self.tracker}: [green]Auth key saved for future use[/green]"
+            )
         except OSError:
             return
 
     async def upload(self, meta: Meta) -> bool:
-        await self.common.create_torrent_for_upload(meta, self.tracker, self.source_flag)
+        await self.common.create_torrent_for_upload(
+            meta, self.tracker, self.source_flag
+        )
         await self.edit_desc(meta)
         description = await self._upload_description(meta)
         if description is None:
@@ -516,22 +693,33 @@ class AlphaRatio:
             return False
         auth_key = await self.get_auth_key(meta)
         if not auth_key:
-            meta.tracker_status[self.tracker]["status_message"] = "data error: Failed to extract auth key"
+            meta.tracker_status[self.tracker]["status_message"] = (
+                "data error: Failed to extract auth key"
+            )
             return False
-        cookies = await self.cookie_validator.load_session_cookies(meta, self.tracker)
+        cookies = await self.cookie_validator.load_session_cookies(
+            meta, self.tracker
+        )
         if not cookies:
-            meta.tracker_status[self.tracker]["status_message"] = "data error: Failed to load cookies for upload"
+            meta.tracker_status[self.tracker]["status_message"] = (
+                "data error: Failed to load cookies for upload"
+            )
             return False
         data = await self._upload_data(meta, description, cover, auth_key)
-        return await self._submit_upload(meta, data, cast(httpx.Cookies, cookies))
+        return await self._submit_upload(meta, data, cookies)
 
     async def _upload_description(self, meta: Meta) -> str | None:
-        path = release_temp_dir(meta.base_dir, meta.uuid) / f"[{self.tracker}]DESCRIPTION.txt"
+        path = (
+            release_temp_dir(meta.base_dir, meta.uuid)
+            / f"[{self.tracker}]DESCRIPTION.txt"
+        )
         try:
             async with aiofiles.open(path, encoding="utf-8") as handle:
                 return await handle.read()
         except FileNotFoundError:
-            meta.tracker_status[self.tracker]["status_message"] = f"data error: Description file not found at {path}"
+            meta.tracker_status[self.tracker]["status_message"] = (
+                f"data error: Description file not found at {path}"
+            )
             return None
 
     async def _upload_cover(self, meta: Meta) -> str | None:
@@ -539,7 +727,9 @@ class AlphaRatio:
         if cover:
             return cover
         if meta.unattended and not meta.unattended_confirm:
-            logger.info(f"{self.tracker}: [yellow]Unattended mode: No cover image found. Skipping {self.tracker} upload.[/yellow]")
+            logger.info(
+                f"{self.tracker}: [yellow]Unattended mode: No cover image found. Skipping {self.tracker} upload.[/yellow]"
+            )
             meta.skipping = self.tracker
             return None
         return await self._prompt_cover()
@@ -553,16 +743,32 @@ class AlphaRatio:
 
     async def _prompt_cover(self) -> str:
         while True:
-            cover = await prompt_in_thread(cli_ui.ask_string, "No Cover was found. Please input a link to a cover:", default="") or ""
+            cover = (
+                await prompt_in_thread(
+                    cli_ui.ask_string,
+                    "No Cover was found. Please input a link to a cover:",
+                    default="",
+                )
+                or ""
+            )
             if self._valid_cover_url(cover):
                 return cover
-            logger.info(f"{self.tracker}: [red]Invalid image link. Please enter a link that ends with .jpg, .png, or .gif.")
+            logger.info(
+                f"{self.tracker}: [red]Invalid image link. Please enter a link that ends with .jpg, .png, or .gif."
+            )
 
     @staticmethod
     def _valid_cover_url(value: str) -> bool:
-        return re.fullmatch(r"https?://.*\.(?:jpg|png|gif)", value, flags=re.IGNORECASE) is not None
+        return (
+            re.fullmatch(
+                r"https?://.*\.(?:jpg|png|gif)", value, flags=re.IGNORECASE
+            )
+            is not None
+        )
 
-    async def _upload_data(self, meta: Meta, description: str, cover: str, auth_key: str) -> dict[str, Any]:
+    async def _upload_data(
+        self, meta: Meta, description: str, cover: str, auth_key: str
+    ) -> dict[str, Any]:
         return {
             "submit": "true",
             "auth": auth_key,
@@ -598,10 +804,19 @@ class AlphaRatio:
     def _split_genre_text(value: str) -> list[str]:
         parts: list[str] = []
         for item in value.split(","):
-            parts.extend(text for subitem in item.split("&") if (text := subitem.strip()))
+            parts.extend(
+                text
+                for subitem in item.split("&")
+                if (text := subitem.strip())
+            )
         return parts
 
-    async def _submit_upload(self, meta: Meta, data: dict[str, Any], cookies: httpx.Cookies) -> bool:
+    async def _submit_upload(
+        self,
+        meta: Meta,
+        data: dict[str, Any],
+        cookies: http.cookiejar.CookieJar,
+    ) -> bool:
         return await self.cookie_uploader.handle_upload(
             meta=meta,
             tracker=self.tracker,
@@ -615,19 +830,37 @@ class AlphaRatio:
             success_status_code="200",
         )
 
-    async def parse_mediainfo_async(self, video_path: str, template_path: str) -> str:
+    async def parse_mediainfo_async(
+        self, video_path: str, template_path: str
+    ) -> str:
         """Parse MediaInfo asynchronously using thread executor"""
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, lambda: MediaInfo.parse(video_path, output="STRING", full=False, mediainfo_options={"inform": f"file://{template_path}"}))
+        return await loop.run_in_executor(
+            None,
+            lambda: MediaInfo.parse(
+                video_path,
+                output="STRING",
+                full=False,
+                mediainfo_options={"inform": f"file://{template_path}"},
+            ),
+        )
 
     async def get_name(self, meta: Meta) -> str:
-        name = str(meta.scene_name or "") if meta.scene else self._normalized_release_name(str(meta.uuid or ""))
+        name = (
+            str(meta.scene_name or "")
+            if meta.scene
+            else self._normalized_release_name(str(meta.uuid or ""))
+        )
         return self._ensure_group_name(name, meta.tag)
 
     @staticmethod
     def _normalized_release_name(value: str) -> str:
         path = Path(value)
-        name = path.stem if path.suffix.lower() in {".mkv", ".mp4", ".avi", ".ts"} else value
+        name = (
+            path.stem
+            if path.suffix.lower() in {".mkv", ".mp4", ".avi", ".ts"}
+            else value
+        )
         for char in "':()[]{}":
             name = name.replace(char, "." if char in "()[]{}" else "")
         name = name.replace(" ", ".")
@@ -644,11 +877,16 @@ class AlphaRatio:
         if not tag:
             return False
         lowered = str(tag).lower()
-        return not any(invalid in lowered for invalid in ("nogrp", "nogroup", "unknown", "-unk-"))
+        return not any(
+            invalid in lowered
+            for invalid in ("nogrp", "nogroup", "unknown", "-unk-")
+        )
 
     @staticmethod
     def _strip_invalid_group_tags(name: str) -> str:
         result = name
         for invalid in ("nogrp", "nogroup", "unknown", "-unk-"):
-            result = re.sub(f"-{re.escape(invalid)}", "", result, flags=re.IGNORECASE)
+            result = re.sub(
+                f"-{re.escape(invalid)}", "", result, flags=re.IGNORECASE
+            )
         return result

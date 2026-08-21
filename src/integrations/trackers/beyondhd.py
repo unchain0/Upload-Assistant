@@ -11,11 +11,18 @@ from rich.markup import escape
 
 from src.domain_models.release import Meta
 from src.domain_models.release_description import base_description
-from src.domain_models.tracker_image_policy import ImageCollection, get_tracker_image_collection
+from src.domain_models.tracker_image_policy import (
+    ImageCollection,
+    get_tracker_image_collection,
+)
 from src.integrations.filesystem.temp_paths import release_temp_dir
-from src.integrations.image_hosts.rehosting import ImageHostPolicy, RehostImagesManager
+from src.integrations.image_hosts.rehosting import (
+    ImageHostPolicy,
+    RehostImagesManager,
+)
 from src.integrations.observability.runtime_support import logger
 from src.integrations.security.redaction import Redaction
+from src.integrations.trackers.announce_url import required_announce_url
 from src.integrations.trackers.common import Common
 
 
@@ -83,12 +90,16 @@ class BEYONDHD:
         self.rehost_images_manager = RehostImagesManager(config)
         self.common = Common(config=config)
         trackers_cfg = cast(dict[str, Any], self.config.get("TRACKERS", {}))
-        self.tracker_config = cast(dict[str, Any], trackers_cfg.get("BEYONDHD", {}))
+        self.tracker_config = cast(
+            dict[str, Any], trackers_cfg.get("BEYONDHD", {})
+        )
         api_key = str(self.tracker_config.get("api_key", "")).strip()
         self.requests_url = f"{self.base_url}/api/requests/{api_key}"
 
     async def upload(self, meta: Meta) -> bool:
-        await self.common.create_torrent_for_upload(meta, self.tracker, self.source_flag)
+        await self.common.create_torrent_for_upload(
+            meta, self.tracker, self.source_flag
+        )
         await self.edit_desc(meta)
         data, files = await self._upload_request_parts(meta)
         if meta.debug:
@@ -98,7 +109,9 @@ class BEYONDHD:
             return False
         return await self._seed_uploaded_torrent(meta, details_link)
 
-    async def _upload_request_parts(self, meta: Meta) -> tuple[dict[str, Any], dict[str, Any]]:
+    async def _upload_request_parts(
+        self, meta: Meta
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         tags = await self.get_tags(meta)
         custom, edition = await self.get_edition(meta, tags)
         data: dict[str, Any] = {
@@ -117,19 +130,34 @@ class BEYONDHD:
         return data, await self._upload_files(meta)
 
     async def _description_text(self, meta: Meta) -> str:
-        path = release_temp_dir(meta.base_dir, meta.uuid) / f"[{self.tracker}]DESCRIPTION.txt"
+        path = (
+            release_temp_dir(meta.base_dir, meta.uuid)
+            / f"[{self.tracker}]DESCRIPTION.txt"
+        )
         async with aiofiles.open(path, encoding="utf-8") as handle:
             return await handle.read()
 
     async def _upload_files(self, meta: Meta) -> dict[str, Any]:
         media_info = await self._media_info_text(meta)
-        torrent_path = release_temp_dir(meta.base_dir, meta.uuid) / f"[{self.tracker}].torrent"
+        torrent_path = (
+            release_temp_dir(meta.base_dir, meta.uuid)
+            / f"[{self.tracker}].torrent"
+        )
         async with aiofiles.open(torrent_path, "rb") as handle:
             torrent_bytes = await handle.read()
-        return {"mediainfo": media_info, "file": ("torrent.torrent", torrent_bytes, "application/x-bittorrent")}
+        return {
+            "mediainfo": media_info,
+            "file": (
+                "torrent.torrent",
+                torrent_bytes,
+                "application/x-bittorrent",
+            ),
+        }
 
     async def _media_info_text(self, meta: Meta) -> str:
-        filename = "BD_SUMMARY_00.txt" if meta.is_disc == "BDMV" else "MEDIAINFO.txt"
+        filename = (
+            "BD_SUMMARY_00.txt" if meta.is_disc == "BDMV" else "MEDIAINFO.txt"
+        )
         path = release_temp_dir(meta.base_dir, meta.uuid) / filename
         async with aiofiles.open(path, encoding="utf-8") as handle:
             return await handle.read()
@@ -138,7 +166,14 @@ class BEYONDHD:
         configured = bool(self.tracker_config.get("anon", False))
         return 0 if meta.anon == 0 and not configured else 1
 
-    def _apply_upload_options(self, data: dict[str, Any], meta: Meta, tags: list[str], custom: bool, edition: str) -> None:
+    def _apply_upload_options(
+        self,
+        data: dict[str, Any],
+        meta: Meta,
+        tags: list[str],
+        custom: bool,
+        edition: str,
+    ) -> None:
         self._apply_internal(data, meta)
         self._apply_pack_special_region(data, meta)
         self._apply_edition(data, custom, edition)
@@ -146,7 +181,9 @@ class BEYONDHD:
             data["tags"] = ",".join(tags)
 
     def _apply_internal(self, data: dict[str, Any], meta: Meta) -> None:
-        if not meta.tag or not bool(self.tracker_config.get("internal", False)):
+        if not meta.tag or not bool(
+            self.tracker_config.get("internal", False)
+        ):
             return
         groups = self.tracker_config.get("internal_groups", [])
         if isinstance(groups, list) and meta.tag[1:] in groups:
@@ -163,10 +200,31 @@ class BEYONDHD:
 
     @staticmethod
     def _allowed_regions() -> set[str]:
-        return {"AUS", "CAN", "CEE", "CHN", "ESP", "EUR", "FRA", "GBR", "GER", "HKG", "ITA", "JPN", "KOR", "NOR", "NLD", "RUS", "TWN", "USA"}
+        return {
+            "AUS",
+            "CAN",
+            "CEE",
+            "CHN",
+            "ESP",
+            "EUR",
+            "FRA",
+            "GBR",
+            "GER",
+            "HKG",
+            "ITA",
+            "JPN",
+            "KOR",
+            "NOR",
+            "NLD",
+            "RUS",
+            "TWN",
+            "USA",
+        }
 
     @staticmethod
-    def _apply_edition(data: dict[str, Any], custom: bool, edition: str) -> None:
+    def _apply_edition(
+        data: dict[str, Any], custom: bool, edition: str
+    ) -> None:
         if custom:
             data["custom_edition"] = edition
         elif edition:
@@ -174,41 +232,86 @@ class BEYONDHD:
 
     @staticmethod
     def _user_agent(meta: Meta) -> str:
-        version = meta.current_version if meta.current_version is not None else "github.com/wastaken7/Upload-Assistant"
+        version = (
+            meta.current_version
+            if meta.current_version is not None
+            else "github.com/wastaken7/Upload-Assistant"
+        )
         return f"{meta.ua_name} {version} ({platform.system()} {platform.release()})"
 
     async def _debug_upload(self, meta: Meta, data: dict[str, Any]) -> bool:
         logger.info(f"{self.tracker}: Request Data:")
         logger.info(Redaction.redact_private_info(data))
-        meta.tracker_status[self.tracker]["status_message"] = "Debug mode enabled, not uploading."
-        await self.common.create_torrent_for_upload(meta, f"{self.tracker}_DEBUG", f"{self.tracker}_DEBUG", announce_url="https://fake.tracker")
+        meta.tracker_status[self.tracker]["status_message"] = (
+            "Debug mode enabled, not uploading."
+        )
+        await self.common.create_torrent_for_upload(
+            meta,
+            f"{self.tracker}_DEBUG",
+            f"{self.tracker}_DEBUG",
+            announce_url="https://fake.tracker",
+        )
         return True
 
-    async def _post_upload(self, meta: Meta, data: dict[str, Any], files: dict[str, Any]) -> str | None:
+    async def _post_upload(
+        self, meta: Meta, data: dict[str, Any], files: dict[str, Any]
+    ) -> str | None:
         try:
-            response = await self._submit_request(data, files, {"User-Agent": self._user_agent(meta)})
-            return await self._handle_upload_response(meta, data, files, response)
+            response = await self._submit_request(
+                data, files, {"User-Agent": self._user_agent(meta)}
+            )
+            return await self._handle_upload_response(
+                meta, data, files, response
+            )
         except Exception as error:
-            meta.tracker_status[self.tracker]["status_message"] = f"data error: {error}"
+            meta.tracker_status[self.tracker]["status_message"] = (
+                f"data error: {error}"
+            )
             return None
 
-    async def _submit_request(self, data: dict[str, Any], files: dict[str, Any], headers: dict[str, str]) -> httpx.Response:
-        url = self.upload_url + str(self.tracker_config.get("api_key", "")).strip()
+    async def _submit_request(
+        self,
+        data: dict[str, Any],
+        files: dict[str, Any],
+        headers: dict[str, str],
+    ) -> httpx.Response:
+        url = (
+            self.upload_url
+            + str(self.tracker_config.get("api_key", "")).strip()
+        )
         async with httpx.AsyncClient(timeout=60) as client:
-            return await client.post(url=url, files=files, data=data, headers=headers)
+            return await client.post(
+                url=url, files=files, data=data, headers=headers
+            )
 
-    async def _handle_upload_response(self, meta: Meta, data: dict[str, Any], files: dict[str, Any], response: httpx.Response) -> str | None:
+    async def _handle_upload_response(
+        self,
+        meta: Meta,
+        data: dict[str, Any],
+        files: dict[str, Any],
+        response: httpx.Response,
+    ) -> str | None:
         payload = self._json_object(response)
-        payload = await self._maybe_retry_invalid_imdb(meta, data, files, payload)
+        payload = await self._maybe_retry_invalid_imdb(
+            meta, data, files, payload
+        )
         self._log_invalid_name(payload, data.get("name"))
         return self._details_link_from_payload(meta, payload)
 
     @staticmethod
     def _json_object(response: httpx.Response) -> dict[str, Any]:
         payload = response.json()
-        return cast(dict[str, Any], payload) if isinstance(payload, dict) else {}
+        return (
+            cast(dict[str, Any], payload) if isinstance(payload, dict) else {}
+        )
 
-    async def _maybe_retry_invalid_imdb(self, meta: Meta, data: dict[str, Any], files: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    async def _maybe_retry_invalid_imdb(
+        self,
+        meta: Meta,
+        data: dict[str, Any],
+        files: dict[str, Any],
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
         if int(payload.get("status_code", 1)) != 0:
             return payload
         message = str(payload.get("status_message", ""))
@@ -217,43 +320,69 @@ class BEYONDHD:
             return payload
         logger.info(f"{self.tracker}: [yellow]RETRYING UPLOAD")
         data["imdb_id"] = 1
-        response = await self._submit_request(data, files, {"User-Agent": self._user_agent(meta)})
+        response = await self._submit_request(
+            data, files, {"User-Agent": self._user_agent(meta)}
+        )
         return self._json_object(response)
 
     def _log_invalid_name(self, payload: dict[str, Any], name: Any) -> None:
         message = str(payload.get("status_message", ""))
-        if int(payload.get("status_code", 1)) == 0 and message.startswith("Invalid name value"):
-            logger.info(f"{self.tracker}: [bold yellow]Submitted Name: {escape(str(name or ''))}")
+        if int(payload.get("status_code", 1)) == 0 and message.startswith(
+            "Invalid name value"
+        ):
+            logger.info(
+                f"{self.tracker}: [bold yellow]Submitted Name: {escape(str(name or ''))}"
+            )
 
-    def _details_link_from_payload(self, meta: Meta, payload: dict[str, Any]) -> str | None:
+    def _details_link_from_payload(
+        self, meta: Meta, payload: dict[str, Any]
+    ) -> str | None:
         if "status_message" not in payload:
-            meta.tracker_status[self.tracker]["status_message"] = "data error: No status_message in response."
+            meta.tracker_status[self.tracker]["status_message"] = (
+                "data error: No status_message in response."
+            )
             return None
         message = str(payload["status_message"])
-        match = re.search(rf"{re.escape(self.base_url)}/torrent/download/.*\.(\d+)\.", message)
+        match = re.search(
+            rf"{re.escape(self.base_url)}/torrent/download/.*\.(\d+)\.",
+            message,
+        )
         if match is None:
-            meta.tracker_status[self.tracker]["status_message"] = "No valid details link found in status_message."
+            meta.tracker_status[self.tracker]["status_message"] = (
+                "No valid details link found in status_message."
+            )
             return ""
         torrent_id = match.group(1)
         meta.tracker_status[self.tracker]["torrent_id"] = torrent_id
         meta.tracker_status[self.tracker]["status_message"] = payload
         return f"{self.base_url}/details/{torrent_id}"
 
-    async def _seed_uploaded_torrent(self, meta: Meta, details_link: str) -> bool:
+    async def _seed_uploaded_torrent(
+        self, meta: Meta, details_link: str
+    ) -> bool:
         if details_link == "":
             return True
         try:
+            announce_url = self._announce_url()
             await self.common.create_torrent_ready_to_seed(
                 meta,
                 self.tracker,
                 self.source_flag,
-                cast(str | list[str], self.tracker_config.get("announce_url")),
+                announce_url,
                 details_link,
             )
             return True
         except Exception as error:
-            logger.info(f"{self.tracker}: Error while editing the torrent file: {error}")
+            logger.info(
+                f"{self.tracker}: Error while editing the torrent file: {error}"
+            )
             return False
+
+    def _announce_url(self) -> str | list[str]:
+        return required_announce_url(
+            self.tracker_config.get("announce_url"),
+            self.tracker,
+        )
 
     async def get_cat_id(self, category_name: str) -> str:
         return {
@@ -286,14 +415,28 @@ class BEYONDHD:
             return self._dvd_type(meta)
         if meta.type == "REMUX":
             return self._remux_type(meta)
-        acceptable = {"2160p", "1080p", "1080i", "720p", "576p", "576i", "540p", "480p", "Other"}
-        return str(meta.resolution) if meta.resolution in acceptable else "Other"
+        acceptable = {
+            "2160p",
+            "1080p",
+            "1080i",
+            "720p",
+            "576p",
+            "576i",
+            "540p",
+            "480p",
+            "Other",
+        }
+        return (
+            str(meta.resolution) if meta.resolution in acceptable else "Other"
+        )
 
     @classmethod
     def _bdmv_type(cls, meta: Meta) -> str:
         bdinfo = meta.bdinfo if isinstance(meta.bdinfo, dict) else {}
         bd_size = cls._bd_size(cls._safe_number(bdinfo.get("size"), 100))
-        type_id = cls._bd_type_label("UHD" if meta.uhd == "UHD" else None, bd_size)
+        type_id = cls._bd_type_label(
+            "UHD" if meta.uhd == "UHD" else None, bd_size
+        )
         return type_id if type_id in cls._allowed_bd_types() else "Other"
 
     @staticmethod
@@ -341,13 +484,19 @@ class BEYONDHD:
 
     async def edit_desc(self, meta: Meta) -> None:
         description = await self._description_content(meta)
-        path = release_temp_dir(meta.base_dir, meta.uuid) / f"[{self.tracker}]DESCRIPTION.txt"
+        path = (
+            release_temp_dir(meta.base_dir, meta.uuid)
+            / f"[{self.tracker}]DESCRIPTION.txt"
+        )
         async with aiofiles.open(path, "w", encoding="utf-8") as handle:
             await handle.write(description)
 
     async def _description_content(self, meta: Meta) -> str:
         base = self._rehosted_base_description(meta, base_description(meta))
-        parts = [*self._disc_description_blocks(meta), base.replace("[img]", "[img width=300]")]
+        parts = [
+            *self._disc_description_blocks(meta),
+            base.replace("[img]", "[img width=300]"),
+        ]
         comparison = self._comparison_block(meta)
         if comparison:
             parts.append(comparison)
@@ -362,14 +511,24 @@ class BEYONDHD:
 
     def _rehosted_base_description(self, meta: Meta, base: str) -> str:
         result = base
-        collections: tuple[ImageCollection, ...] = ("menu_images", "spectrograms_images", "dynamic_hdr_plot_images")
+        collections: tuple[ImageCollection, ...] = (
+            "menu_images",
+            "spectrograms_images",
+            "dynamic_hdr_plot_images",
+        )
         for collection_name in collections:
-            result = self._replace_rehosted_collection(meta, result, collection_name)
+            result = self._replace_rehosted_collection(
+                meta, result, collection_name
+            )
         return result
 
-    def _replace_rehosted_collection(self, meta: Meta, text: str, collection_name: ImageCollection) -> str:
+    def _replace_rehosted_collection(
+        self, meta: Meta, text: str, collection_name: ImageCollection
+    ) -> str:
         original = getattr(meta, collection_name, [])
-        rehosted = get_tracker_image_collection(meta, self.tracker, collection_name)
+        rehosted = get_tracker_image_collection(
+            meta, self.tracker, collection_name
+        )
         if not isinstance(original, list) or not isinstance(rehosted, list):
             return text
         result = text
@@ -413,7 +572,11 @@ class BEYONDHD:
 
     @staticmethod
     def _disc_entries(meta: Meta) -> list[dict[str, Any]]:
-        return cast(list[dict[str, Any]], meta.discs) if isinstance(meta.discs, list) else []
+        return (
+            cast(list[dict[str, Any]], meta.discs)
+            if isinstance(meta.discs, list)
+            else []
+        )
 
     @staticmethod
     def _additional_disc_block(disc: dict[str, Any]) -> str:
@@ -451,11 +614,22 @@ class BEYONDHD:
         return sorted(groups, key=lambda value: int(str(value)))
 
     @staticmethod
-    def _comparison_names(groups: dict[str, Any], indices: list[str]) -> list[str]:
-        return [str(cast(dict[str, Any], groups[index]).get("name", f"Group {index}")) for index in indices]
+    def _comparison_names(
+        groups: dict[str, Any], indices: list[str]
+    ) -> list[str]:
+        return [
+            str(
+                cast(dict[str, Any], groups[index]).get(
+                    "name", f"Group {index}"
+                )
+            )
+            for index in indices
+        ]
 
     @classmethod
-    def _comparison_urls(cls, groups: dict[str, Any], indices: list[str]) -> list[str]:
+    def _comparison_urls(
+        cls, groups: dict[str, Any], indices: list[str]
+    ) -> list[str]:
         image_count = cls._comparison_image_count(groups, indices)
         urls: list[str] = []
         for image_index in range(image_count):
@@ -463,13 +637,21 @@ class BEYONDHD:
         return urls
 
     @classmethod
-    def _comparison_image_count(cls, groups: dict[str, Any], indices: list[str]) -> int:
+    def _comparison_image_count(
+        cls, groups: dict[str, Any], indices: list[str]
+    ) -> int:
         counts = [len(cls._group_urls(groups.get(index))) for index in indices]
         return min(counts) if counts else 0
 
     @classmethod
-    def _comparison_row_urls(cls, groups: dict[str, Any], indices: list[str], image_index: int) -> list[str]:
-        return [url for index in indices if (url := cls._group_raw_url(groups.get(index), image_index))]
+    def _comparison_row_urls(
+        cls, groups: dict[str, Any], indices: list[str], image_index: int
+    ) -> list[str]:
+        return [
+            url
+            for index in indices
+            if (url := cls._group_raw_url(groups.get(index), image_index))
+        ]
 
     @staticmethod
     def _group_urls(value: Any) -> list[dict[str, Any]]:
@@ -478,7 +660,11 @@ class BEYONDHD:
         urls = value.get("urls", [])
         if not isinstance(urls, list):
             return []
-        return [cast(dict[str, Any], item) for item in urls if isinstance(item, dict)]
+        return [
+            cast(dict[str, Any], item)
+            for item in urls
+            if isinstance(item, dict)
+        ]
 
     @classmethod
     def _group_raw_url(cls, value: Any, image_index: int) -> str:
@@ -503,15 +689,24 @@ class BEYONDHD:
         return f"[align=center]{self._paired_screenshot_rows(links)}[/align]"
 
     def _screenshot_links(self, meta: Meta) -> list[str]:
-        images = get_tracker_image_collection(meta, self.tracker, "screenshots")
+        images = get_tracker_image_collection(
+            meta, self.tracker, "screenshots"
+        )
         if not isinstance(images, list):
             return []
         selected = images[: self._screen_limit(meta.screens)]
-        return [link for image in selected if (link := self._screenshot_link(image))]
+        return [
+            link
+            for image in selected
+            if (link := self._screenshot_link(image))
+        ]
 
     @staticmethod
     def _paired_screenshot_rows(links: list[str]) -> str:
-        rows = [" ".join(links[index : index + 2]) for index in range(0, len(links), 2)]
+        rows = [
+            " ".join(links[index : index + 2])
+            for index in range(0, len(links), 2)
+        ]
         return "\n\n".join(rows)
 
     @staticmethod
@@ -544,13 +739,17 @@ class BEYONDHD:
             return False
         if not await self._group_policy(meta):
             return False
-        return await self.common.check_and_confirm_adult_media_upload(meta, self.tracker)
+        return await self.common.check_and_confirm_adult_media_upload(
+            meta, self.tracker
+        )
 
     async def _internal_release_policy(self, meta: Meta) -> bool:
         name = (await self.get_name(meta)).lower()
         if not self._contains_internal_marker(name):
             return True
-        logger.info(f"{self.tracker}: [bold red]This is an internal {self.tracker} release, skipping upload[/bold red]")
+        logger.info(
+            f"{self.tracker}: [bold red]This is an internal {self.tracker} release, skipping upload[/bold red]"
+        )
         return self._optional_policy_override(meta)
 
     @staticmethod
@@ -580,16 +779,25 @@ class BEYONDHD:
     def _optional_policy_override(meta: Meta) -> bool:
         if meta.unattended and not meta.unattended_confirm:
             return False
-        return bool(cli_ui.ask_yes_no("Do you want to upload anyway?", default=False))
+        return bool(
+            cli_ui.ask_yes_no("Do you want to upload anyway?", default=False)
+        )
 
     def _mediainfo_policy(self, meta: Meta) -> bool:
         if meta.valid_mi_settings:
             return True
-        logger.info(f"{self.tracker}: [bold red]No encoding settings in mediainfo, skipping {self.tracker} upload.[/bold red]")
+        logger.info(
+            f"{self.tracker}: [bold red]No encoding settings in mediainfo, skipping {self.tracker} upload.[/bold red]"
+        )
         return False
 
     def _container_policy(self, meta: Meta) -> bool:
-        if meta.type not in {"REMUX", "ENCODE", "WEBDL", "WEBRIP"} or meta.container in {"mkv", "mp4"}:
+        if meta.type not in {
+            "REMUX",
+            "ENCODE",
+            "WEBDL",
+            "WEBRIP",
+        } or meta.container in {"mkv", "mp4"}:
             return True
         logger.info(
             f"{self.tracker}: [bold red]Container '{escape(str(meta.container))}' is not allowed for {escape(str(meta.type))}. Only MKV and MP4 are permitted. Skipping upload.[/bold red]"
@@ -599,7 +807,9 @@ class BEYONDHD:
     async def _group_policy(self, meta: Meta) -> bool:
         if meta.type == "WEBDL" or not meta.tag or "EVO" not in meta.tag:
             return True
-        logger.info(f"{self.tracker}: [bold red]Group {escape(str(meta.tag))} is only allowed for raw type content at {self.tracker}[/bold red]")
+        logger.info(
+            f"{self.tracker}: [bold red]Group {escape(str(meta.tag))} is only allowed for raw type content at {self.tracker}[/bold red]"
+        )
         return self._optional_policy_override(meta)
 
     async def search_existing(self, meta: Meta) -> list[dict[str, Any]]:
@@ -609,17 +819,26 @@ class BEYONDHD:
             response = await client.post(url, params=params)
             response.raise_for_status()
         payload = self._search_payload(response)
-        return [self._search_result(item, rss_key) for item in self._search_items(payload)]
+        return [
+            self._search_result(item, rss_key)
+            for item in self._search_items(payload)
+        ]
 
     async def _search_params(self, meta: Meta) -> tuple[dict[str, Any], bool]:
         category = "Movies" if meta.category == "MOVIE" else "TV"
         type_id = None if meta.is_disc == "DVD" else await self.get_type(meta)
-        params: dict[str, Any] = {"action": "search", "types": type_id, "categories": category}
+        params: dict[str, Any] = {
+            "action": "search",
+            "types": type_id,
+            "categories": category,
+        }
         self._apply_search_identity(params, meta)
         self._apply_search_scope(params, meta)
         rss_key = bool(self.tracker_config.get("bhd_rss_key"))
         if rss_key:
-            params["rsskey"] = str(self.tracker_config.get("bhd_rss_key", "")).strip()
+            params["rsskey"] = str(
+                self.tracker_config.get("bhd_rss_key", "")
+            ).strip()
         return params, rss_key
 
     @staticmethod
@@ -639,7 +858,9 @@ class BEYONDHD:
     def _search_payload(self, response: httpx.Response) -> dict[str, Any]:
         payload = self._json_object(response)
         if payload.get("status_code") != 1:
-            raise RuntimeError(f"BEYONDHD API Error: {payload.get('message', 'Unknown Error')}")
+            raise RuntimeError(
+                f"BEYONDHD API Error: {payload.get('message', 'Unknown Error')}"
+            )
         return payload
 
     @staticmethod
@@ -647,10 +868,16 @@ class BEYONDHD:
         value = payload.get("results", [])
         if not isinstance(value, list):
             return []
-        return [cast(dict[str, Any], item) for item in value if isinstance(item, dict)]
+        return [
+            cast(dict[str, Any], item)
+            for item in value
+            if isinstance(item, dict)
+        ]
 
     @classmethod
-    def _search_result(cls, item: dict[str, Any], rss_key: bool) -> dict[str, Any]:
+    def _search_result(
+        cls, item: dict[str, Any], rss_key: bool
+    ) -> dict[str, Any]:
         result: dict[str, Any] = {
             "name": item.get("name", ""),
             "link": item.get("url", ""),
@@ -677,12 +904,20 @@ class BEYONDHD:
         return str(value).strip().lower() in {"true", "1", "yes"}
 
     async def get_live(self, meta: Meta) -> int:
-        draft_value = self.config["TRACKERS"][self.tracker].get("draft_default", False)
-        draft_bool = draft_value if isinstance(draft_value, bool) else self._is_true(str(draft_value).strip())
+        draft_value = self.config["TRACKERS"][self.tracker].get(
+            "draft_default", False
+        )
+        draft_bool = (
+            draft_value
+            if isinstance(draft_value, bool)
+            else self._is_true(str(draft_value).strip())
+        )
 
         return 0 if draft_bool or meta.draft else 1
 
-    async def get_edition(self, meta: Meta, tags: list[str]) -> tuple[bool, str]:
+    async def get_edition(
+        self, meta: Meta, tags: list[str]
+    ) -> tuple[bool, str]:
         edition = str(meta.edition or "")
         if "Hybrid" in tags:
             edition = edition.replace("Hybrid", "").strip()
@@ -694,7 +929,17 @@ class BEYONDHD:
     @staticmethod
     def _known_edition(edition: str) -> str:
         normalized = edition.lower()
-        editions = ("collector", "director", "cirector", "extended", "limited", "special", "theatrical", "uncut", "unrated")
+        editions = (
+            "collector",
+            "director",
+            "cirector",
+            "extended",
+            "limited",
+            "special",
+            "theatrical",
+            "uncut",
+            "unrated",
+        )
         return next((value for value in editions if value in normalized), "")
 
     async def get_tags(self, meta: Meta) -> list[str]:

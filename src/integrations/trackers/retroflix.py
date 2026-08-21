@@ -12,6 +12,7 @@ from src.domain_models.release import Meta
 from src.integrations.filesystem.temp_paths import release_temp_dir
 from src.integrations.observability.runtime_support import logger
 from src.integrations.security.redaction import Redaction
+from src.integrations.trackers.announce_url import required_announce_url
 from src.integrations.trackers.common import Common
 from src.integrations.trackers.description_builder import DescriptionBuilder
 
@@ -41,8 +42,12 @@ class RetroFlix:
         self.common = Common(config=config)
 
     async def upload(self, meta: Meta) -> bool:
-        await self.common.create_torrent_for_upload(meta, self.tracker, self.source_flag)
-        await DescriptionBuilder(self.tracker, self.config).general_description_generator(
+        await self.common.create_torrent_for_upload(
+            meta, self.tracker, self.source_flag
+        )
+        await DescriptionBuilder(
+            self.tracker, self.config
+        ).general_description_generator(
             meta,
             mediainfo=False,
             nfo=False,
@@ -79,7 +84,11 @@ class RetroFlix:
     @staticmethod
     def _screenshot_urls(meta: Meta) -> list[str]:
         images = meta.image_list if isinstance(meta.image_list, list) else []
-        return [str(image["raw_url"]) for image in images if isinstance(image, dict) and image.get("raw_url") is not None]
+        return [
+            str(image["raw_url"])
+            for image in images
+            if isinstance(image, dict) and image.get("raw_url") is not None
+        ]
 
     @staticmethod
     def _imdb_url(meta: Meta) -> str:
@@ -88,7 +97,10 @@ class RetroFlix:
         return f"{value}/" if value else ""
 
     async def _torrent_payload(self, meta: Meta) -> str:
-        path = release_temp_dir(meta.base_dir, meta.uuid) / f"[{self.tracker}].torrent"
+        path = (
+            release_temp_dir(meta.base_dir, meta.uuid)
+            / f"[{self.tracker}].torrent"
+        )
         async with aiofiles.open(path, "rb") as handle:
             return base64.b64encode(await handle.read()).decode("utf-8")
 
@@ -105,20 +117,32 @@ class RetroFlix:
         value = trackers.get(self.tracker, {})
         return cast(dict[str, Any], value) if isinstance(value, dict) else {}
 
+    def _announce_url(self) -> str | list[str]:
+        return required_announce_url(
+            self._tracker_config().get("announce_url"),
+            self.tracker,
+        )
+
     def _upload_headers(self) -> dict[str, str]:
         return {
             "accept": "application/json",
             "Content-Type": "application/json",
-            "Authorization": str(self._tracker_config().get("api_key", "")).strip(),
+            "Authorization": str(
+                self._tracker_config().get("api_key", "")
+            ).strip(),
         }
 
-    async def _debug_upload(self, meta: Meta, json_data: dict[str, Any]) -> bool:
+    async def _debug_upload(
+        self, meta: Meta, json_data: dict[str, Any]
+    ) -> bool:
         logger.info(f"{self.tracker}: Request Data:")
         debug_data = json_data.copy()
         if debug_data.get("file"):
             debug_data["file"] = f"{str(debug_data['file'])[:10]}..."
         logger.info(Redaction.redact_private_info(debug_data))
-        meta.tracker_status[self.tracker]["status_message"] = "Debug mode enabled, not uploading."
+        meta.tracker_status[self.tracker]["status_message"] = (
+            "Debug mode enabled, not uploading."
+        )
         await self.common.create_torrent_for_upload(
             meta,
             f"{self.tracker}_DEBUG",
@@ -127,42 +151,64 @@ class RetroFlix:
         )
         return True
 
-    async def _upload_release(self, meta: Meta, json_data: dict[str, Any]) -> bool:
+    async def _upload_release(
+        self, meta: Meta, json_data: dict[str, Any]
+    ) -> bool:
         try:
             response = await self._post_upload(json_data)
             return await self._handle_upload_response(meta, response)
         except httpx.TimeoutException:
-            meta.tracker_status[self.tracker]["status_message"] = "data error: RETROFLIX request timed out while uploading."
+            meta.tracker_status[self.tracker]["status_message"] = (
+                "data error: RETROFLIX request timed out while uploading."
+            )
             return False
         except httpx.RequestError as error:
-            meta.tracker_status[self.tracker]["status_message"] = f"data error: An error occurred while making the request: {error}"
+            meta.tracker_status[self.tracker]["status_message"] = (
+                f"data error: An error occurred while making the request: {error}"
+            )
             return False
         except Exception as error:
-            meta.tracker_status[self.tracker]["status_message"] = f"data error - Unexpected error: {error}"
+            meta.tracker_status[self.tracker]["status_message"] = (
+                f"data error - Unexpected error: {error}"
+            )
             return False
 
     async def _post_upload(self, json_data: dict[str, Any]) -> httpx.Response:
         async with httpx.AsyncClient(timeout=40.0) as client:
-            return await client.post(url=self.upload_url, json=json_data, headers=self._upload_headers())
+            return await client.post(
+                url=self.upload_url,
+                json=json_data,
+                headers=self._upload_headers(),
+            )
 
-    async def _handle_upload_response(self, meta: Meta, response: httpx.Response) -> bool:
+    async def _handle_upload_response(
+        self, meta: Meta, response: httpx.Response
+    ) -> bool:
         if response.status_code == 201:
             return await self._handle_created_upload(meta, response)
         message = self._error_status_message(response)
         meta.tracker_status[self.tracker]["status_message"] = message
         if response.status_code not in {400, 403, 409, 413, 422}:
-            logger.info(f"{self.tracker}: [bold red]Unexpected response: {message.removeprefix('Unexpected response: ')}")
+            logger.info(
+                f"{self.tracker}: [bold red]Unexpected response: {message.removeprefix('Unexpected response: ')}"
+            )
         return False
 
-    async def _handle_created_upload(self, meta: Meta, response: httpx.Response) -> bool:
+    async def _handle_created_upload(
+        self, meta: Meta, response: httpx.Response
+    ) -> bool:
         payload = self._json_object(response)
         if payload.get("error", False):
             error_msg = payload.get("message", "Unknown error occurred")
-            meta.tracker_status[self.tracker]["status_message"] = f"Upload error: {error_msg}"
+            meta.tracker_status[self.tracker]["status_message"] = (
+                f"Upload error: {error_msg}"
+            )
             return False
         torrent_id = self._torrent_id(payload)
         if torrent_id is None:
-            meta.tracker_status[self.tracker]["status_message"] = f"Error parsing response: {response.text}: missing key torrent.id"
+            meta.tracker_status[self.tracker]["status_message"] = (
+                f"Error parsing response: {response.text}: missing key torrent.id"
+            )
             return False
         meta.tracker_status[self.tracker]["status_message"] = payload
         meta.tracker_status[self.tracker]["torrent_id"] = torrent_id
@@ -170,7 +216,7 @@ class RetroFlix:
             meta,
             self.tracker,
             self.source_flag,
-            cast(str | list[str], self._tracker_config().get("announce_url")),
+            self._announce_url(),
             f"{self.base_url}/browse/t/{torrent_id}",
         )
         return True
@@ -178,7 +224,9 @@ class RetroFlix:
     @staticmethod
     def _json_object(response: httpx.Response) -> dict[str, Any]:
         payload = response.json()
-        return cast(dict[str, Any], payload) if isinstance(payload, dict) else {}
+        return (
+            cast(dict[str, Any], payload) if isinstance(payload, dict) else {}
+        )
 
     @staticmethod
     def _torrent_id(payload: dict[str, Any]) -> Any | None:
@@ -190,7 +238,10 @@ class RetroFlix:
             400: ("Bad request", "Bad request or torrent file"),
             403: ("Permission denied", "You are not allowed to upload"),
             409: ("Duplicate", "Torrent already exists"),
-            413: ("File size error", "Torrent file is too big or has too many files"),
+            413: (
+                "File size error",
+                "Torrent file is too big or has too many files",
+            ),
             422: ("Upload rejected", "Upload rejected based on rules"),
         }
         if response.status_code in defaults:
@@ -207,7 +258,9 @@ class RetroFlix:
         return str(payload.get("message", fallback))
 
     async def get_additional_checks(self, meta: Meta) -> bool:
-        if not await self.common.check_and_confirm_adult_media_upload(meta, self.tracker):
+        if not await self.common.check_and_confirm_adult_media_upload(
+            meta, self.tracker
+        ):
             return False
         latest_year, latest_date = self._latest_release_age(meta)
         if meta.category == "MOVIE":
@@ -217,7 +270,9 @@ class RetroFlix:
         return self._year_policy(meta, latest_year)
 
     @classmethod
-    def _latest_release_age(cls, meta: Meta) -> tuple[int | None, datetime.date | None]:
+    def _latest_release_age(
+        cls, meta: Meta
+    ) -> tuple[int | None, datetime.date | None]:
         years = cls._candidate_years(meta)
         latest_date = cls._latest_episode_date(meta, years)
         if latest_date is not None:
@@ -245,7 +300,9 @@ class RetroFlix:
             years.append(year)
 
     @classmethod
-    def _latest_episode_date(cls, meta: Meta, years: list[int]) -> datetime.date | None:
+    def _latest_episode_date(
+        cls, meta: Meta, years: list[int]
+    ) -> datetime.date | None:
         episodes = cls._episode_values(meta)
         dates: list[datetime.date] = []
         for episode in episodes:
@@ -254,13 +311,26 @@ class RetroFlix:
 
     @staticmethod
     def _episode_values(meta: Meta) -> list[dict[str, Any]]:
-        data = meta.tvdb_episode_data if isinstance(meta.tvdb_episode_data, dict) else {}
+        data = (
+            meta.tvdb_episode_data
+            if isinstance(meta.tvdb_episode_data, dict)
+            else {}
+        )
         episodes = data.get("episodes", [])
         values = episodes if isinstance(episodes, list) else []
-        return [cast(dict[str, Any], item) for item in values if isinstance(item, dict)]
+        return [
+            cast(dict[str, Any], item)
+            for item in values
+            if isinstance(item, dict)
+        ]
 
     @classmethod
-    def _collect_episode_age(cls, episode: dict[str, Any], dates: list[datetime.date], years: list[int]) -> None:
+    def _collect_episode_age(
+        cls,
+        episode: dict[str, Any],
+        dates: list[datetime.date],
+        years: list[int],
+    ) -> None:
         aired = str(episode.get("aired", ""))
         if not aired:
             return
@@ -273,7 +343,11 @@ class RetroFlix:
     @staticmethod
     def _parse_date(value: Any) -> datetime.date | None:
         try:
-            return datetime.datetime.strptime(str(value), "%Y-%m-%d").replace(tzinfo=datetime.UTC).date()
+            return (
+                datetime.datetime.strptime(str(value), "%Y-%m-%d")
+                .replace(tzinfo=datetime.UTC)
+                .date()
+            )
         except ValueError, TypeError:
             return None
 
@@ -282,11 +356,18 @@ class RetroFlix:
             release_date = self._parse_date(meta.release_date)
             if release_date is not None:
                 return self._date_policy(meta, release_date)
-            fallback_year = self._numeric_year(str(meta.release_date).split("-", 1)[0])
+            fallback_year = self._numeric_year(
+                str(meta.release_date).split("-", 1)[0]
+            )
             return self._year_policy(meta, fallback_year)
         return self._year_policy(meta, latest_year)
 
-    def _tv_age_policy(self, meta: Meta, latest_year: int | None, latest_date: datetime.date | None) -> bool:
+    def _tv_age_policy(
+        self,
+        meta: Meta,
+        latest_year: int | None,
+        latest_date: datetime.date | None,
+    ) -> bool:
         if latest_date is not None:
             return self._date_policy(meta, latest_date)
         return self._year_policy(meta, latest_year)
@@ -298,7 +379,10 @@ class RetroFlix:
         return False
 
     def _year_policy(self, meta: Meta, year: int | None) -> bool:
-        if year is None or datetime.datetime.now(datetime.UTC).date().year - year >= 10:
+        if (
+            year is None
+            or datetime.datetime.now(datetime.UTC).date().year - year >= 10
+        ):
             return True
         self._log_age_rejection(meta)
         return False
@@ -310,20 +394,32 @@ class RetroFlix:
 
     def _log_age_rejection(self, meta: Meta) -> None:
         if not meta.unattended:
-            logger.info(f"{self.tracker}: [red]Content must be older than 10 Years to upload at RETROFLIX")
+            logger.info(
+                f"{self.tracker}: [red]Content must be older than 10 Years to upload at RETROFLIX"
+            )
 
     async def search_existing(self, meta: Meta) -> list[dict[str, Any]]:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.get(self.search_url, params=self._search_params(meta), headers=self._search_headers())
+            response = await client.get(
+                self.search_url,
+                params=self._search_params(meta),
+                headers=self._search_headers(),
+            )
             response.raise_for_status()
         payload = response.json()
         values = payload if isinstance(payload, list) else []
-        return [self._search_entry(item) for item in values if isinstance(item, dict)]
+        return [
+            self._search_entry(item)
+            for item in values
+            if isinstance(item, dict)
+        ]
 
     def _search_headers(self) -> dict[str, str]:
         return {
             "accept": "application/json",
-            "Authorization": str(self._tracker_config().get("api_key", "")).strip(),
+            "Authorization": str(
+                self._tracker_config().get("api_key", "")
+            ).strip(),
         }
 
     @staticmethod
@@ -331,9 +427,16 @@ class RetroFlix:
         params = {"includingDead": "1"}
         imdb_id = str(meta.imdb_id or "")
         if imdb_id and imdb_id != "0":
-            params["imdbId"] = imdb_id if imdb_id.startswith("tt") else f"tt{imdb_id}"
+            params["imdbId"] = (
+                imdb_id if imdb_id.startswith("tt") else f"tt{imdb_id}"
+            )
         else:
-            params["search"] = str(meta.title).replace(":", "").replace("'", "").replace(",", "")
+            params["search"] = (
+                str(meta.title)
+                .replace(":", "")
+                .replace("'", "")
+                .replace(",", "")
+            )
         return params
 
     @classmethod
@@ -349,7 +452,9 @@ class RetroFlix:
 
     @classmethod
     def _download_url(cls, entry: dict[str, Any]) -> str:
-        torrent_id = entry.get("id") or cls._torrent_id_from_url(entry.get("url"))
+        torrent_id = entry.get("id") or cls._torrent_id_from_url(
+            entry.get("url")
+        )
         if torrent_id:
             return f"{cls.base_url}/api/torrent/{torrent_id}/download"
         return str(entry.get("url", ""))
@@ -373,15 +478,21 @@ class RetroFlix:
         """
         headers: dict[str, Any] = {
             "accept": "application/json",
-            "Authorization": self.config["TRACKERS"][self.tracker]["api_key"].strip(),
+            "Authorization": self.config["TRACKERS"][self.tracker][
+                "api_key"
+            ].strip(),
         }
 
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(f"{self.base_url}/api/test", headers=headers)
+                response = await client.get(
+                    f"{self.base_url}/api/test", headers=headers
+                )
 
                 if response.status_code != 200:
-                    logger.info(f"{self.tracker}: [bold red]Your API key is incorrect SO generating a new one")
+                    logger.info(
+                        f"{self.tracker}: [bold red]Your API key is incorrect SO generating a new one"
+                    )
                     await self.generate_new_api(meta)
                     return None
                 return True
@@ -390,7 +501,9 @@ class RetroFlix:
             await self.generate_new_api(meta)
             return None
         except Exception as e:
-            logger.error(f"{self.tracker}: [bold red]Unexpected error testing API: {e!s}")
+            logger.error(
+                f"{self.tracker}: [bold red]Unexpected error testing API: {e!s}"
+            )
             await self.generate_new_api(meta)
             return None
 
@@ -398,18 +511,26 @@ class RetroFlix:
         try:
             response = await self._login_response()
             if response.status_code != 201:
-                logger.info(f"{self.tracker}: [bold red]Error getting new API key: {response.status_code}, please check username and password in the config.")
+                logger.info(
+                    f"{self.tracker}: [bold red]Error getting new API key: {response.status_code}, please check username and password in the config."
+                )
                 return None
             token = self._response_token(response)
             if not token:
-                logger.info(f"{self.tracker}: [bold red]API response does not contain a token.")
+                logger.info(
+                    f"{self.tracker}: [bold red]API response does not contain a token."
+                )
                 return None
             return await self._save_new_api(meta, token)
         except httpx.RequestError as error:
-            logger.info(f"{self.tracker}: [bold red]An error occurred while requesting the API: {error!s}")
+            logger.info(
+                f"{self.tracker}: [bold red]An error occurred while requesting the API: {error!s}"
+            )
             return None
         except Exception as error:
-            logger.info(f"{self.tracker}: [bold red]An unexpected error occurred: {error!s}")
+            logger.info(
+                f"{self.tracker}: [bold red]An unexpected error occurred: {error!s}"
+            )
             return None
 
     async def _login_response(self) -> httpx.Response:
@@ -418,7 +539,11 @@ class RetroFlix:
             "password": self._tracker_config().get("password", ""),
         }
         async with httpx.AsyncClient() as client:
-            return await client.post(f"{self.base_url}/api/login", headers={"accept": "application/json"}, json=payload)
+            return await client.post(
+                f"{self.base_url}/api/login",
+                headers={"accept": "application/json"},
+                json=payload,
+            )
 
     @classmethod
     def _response_token(cls, response: httpx.Response) -> str:
@@ -432,13 +557,19 @@ class RetroFlix:
             config_data = await self._read_config(path)
             updated = self._updated_config(config_data, token)
             if updated is None:
-                logger.info(f"{self.tracker}: [bold red]Failed to update RETROFLIX api_key in config file.")
+                logger.info(
+                    f"{self.tracker}: [bold red]Failed to update RETROFLIX api_key in config file."
+                )
                 return None
             await self._write_config(path, updated)
-            logger.info(f"{self.tracker}: [bold green]API Key successfully saved to {path}")
+            logger.info(
+                f"{self.tracker}: [bold green]API Key successfully saved to {path}"
+            )
             return True
         except (OSError, ValueError) as error:
-            logger.info(f"{self.tracker}: [bold red]Failed to update config file: {error!s}")
+            logger.info(
+                f"{self.tracker}: [bold red]Failed to update config file: {error!s}"
+            )
             return None
 
     @staticmethod
@@ -454,7 +585,9 @@ class RetroFlix:
     @staticmethod
     def _updated_config(config_data: str, token: str) -> str | None:
         pattern = r"""(['"]RETROFLIX['"]\s*:\s*{.*?['"]api_key['"]\s*:\s*)(['"])[^'"]*(['"])"""
-        updated, replacements = re.subn(pattern, rf"\1\2{token}\3", config_data, count=1, flags=re.DOTALL)
+        updated, replacements = re.subn(
+            pattern, rf"\1\2{token}\3", config_data, count=1, flags=re.DOTALL
+        )
         return updated if replacements else None
 
     @staticmethod
