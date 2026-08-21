@@ -243,7 +243,13 @@ async def test_unattended_zenith_m4b_is_transformed_and_validated(
     )
     monkeypatch.setattr(zentag, "_run_transform", fake_transform)
     monkeypatch.setattr(zentag, "_run_process", fake_process)
-    meta = Meta(path=str(source), trackers=["ZENITH"], unattended=True)
+    meta = Meta(
+        path=str(source),
+        trackers=["ZENITH"],
+        unattended=True,
+        author="Ellin Carsta",
+        title="Die unbeugsame Händlerstochter",
+    )
 
     prepared = await zentag.prepare_zenith_audiobook(
         meta, str(tmp_path), {"DEFAULT": {"auto_zentag": True}}
@@ -252,6 +258,11 @@ async def test_unattended_zenith_m4b_is_transformed_and_validated(
     assert prepared == str(output.resolve())
     assert "--asin" in calls[0]
     assert calls[0][calls[0].index("--asin") + 1] == "B07ZHYPJK1"
+    assert calls[0][calls[0].index("--author") + 1] == "Ellin Carsta"
+    assert (
+        calls[0][calls[0].index("--title") + 1]
+        == "Die unbeugsame Händlerstochter"
+    )
     assert calls[1][-1] == "--json"
 
 
@@ -277,8 +288,6 @@ async def test_unattended_zenith_ebook_is_organized_inside_directory(
 
     async def fake_process(command: list[str]) -> tuple[int, str, str]:
         calls.append(command)
-        if "check" in command:
-            return 0, "[]", ""
         output.mkdir(parents=True)
         output_file.write_bytes(b"pdf")
         return 0, f"Wrote {output_file}\n", ""
@@ -306,26 +315,25 @@ async def test_unattended_zenith_ebook_is_organized_inside_directory(
     assert calls[0][3:5] == ["ebook", str(source)]
     assert calls[0][calls[0].index("--isbn") + 1] == "1612680208"
     assert calls[0][calls[0].index("--language") + 1] == "eng"
-    assert calls[1][-2:] == [str(output), "--json"]
+    assert len(calls) == 1
+    assert "check" not in calls[0]
 
 
 @pytest.mark.asyncio
-async def test_zenith_ebook_with_compliance_violations_is_rejected(
+async def test_zenith_ebook_rejects_non_ebook_output(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
     source = tmp_path / "Book.pdf"
     source.write_bytes(b"pdf")
     output = tmp_path / "zentag-output" / "Author - Book [ENG PDF]"
-    output_file = output / "Author - Book (2026) [ENG PDF 9780000000002].pdf"
+    output_file = output / "unexpected.txt"
 
     async def fake_binary(_base_dir: str) -> str:
         return "/bin/zentag"
 
-    async def fake_process(command: list[str]) -> tuple[int, str, str]:
-        if "check" in command:
-            return 0, '[{"rule":"ebook-naming"}]', ""
+    async def fake_process(_command: list[str]) -> tuple[int, str, str]:
         output.mkdir(parents=True)
-        output_file.write_bytes(b"pdf")
+        output_file.write_text("unexpected", encoding="utf-8")
         return 0, f"Wrote {output_file}\n", ""
 
     monkeypatch.setattr(

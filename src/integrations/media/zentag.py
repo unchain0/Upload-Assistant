@@ -211,80 +211,190 @@ def _zentag_paths(
     return output_root, config_path
 
 
+def _append_cli_values(command: list[str], values: dict[str, object]) -> None:
+    for flag, value in values.items():
+        normalized = str(value or "").strip()
+        if normalized:
+            command.extend([flag, normalized])
+
+
+def _audiobook_asin(meta: Meta, source: Path) -> str:
+    asin = str(meta.book_asin or meta.asin or "").strip().upper()
+    if re.fullmatch(r"[A-Z0-9]{10}", asin):
+        return asin
+    match = re.search(r"\bB0[A-Z0-9]{8}\b", str(source).upper())
+    return match.group(0) if match else ""
+
+
+def _preferred_text(*values: object) -> str:
+    for value in values:
+        normalized = str(value or "").strip()
+        if normalized:
+            return normalized
+    return ""
+
+
+def _zentag_audio_source(meta: Meta) -> str:
+    source = str(meta.source or "").strip().upper()
+    return source if source in {"WEB", "CD", "VINYL", "CASSETTE"} else ""
+
+
+def _series_part(meta: Meta) -> str:
+    if not str(meta.book_series or "").strip():
+        return ""
+    return str(meta.book_series_index or "").strip()
+
+
+def _audiobook_override_values(meta: Meta, asin: str) -> dict[str, object]:
+    return {
+        "--author": _preferred_text(meta.author, meta.book_author),
+        "--title": _preferred_text(meta.title, meta.book_title),
+        "--publisher": _preferred_text(meta.publisher, meta.book_publisher),
+        "--year": meta.year,
+        "--narrator": meta.narrator,
+        "--series": meta.book_series,
+        "--series-part": _series_part(meta),
+        "--language": _preferred_text(
+            meta.book_language_iso, meta.book_language
+        ),
+        "--isbn": _preferred_text(meta.isbn, meta.book_isbn),
+        "--asin": asin,
+        "--edition": meta.edition,
+        "--source": _zentag_audio_source(meta),
+    }
+
+
+def _audiobook_command(
+    binary: str,
+    config_path: Path,
+    source: Path,
+    meta: Meta,
+) -> list[str]:
+    command = [
+        binary,
+        "--config",
+        str(config_path),
+        "transform",
+        str(source),
+        "--clean",
+    ]
+    _append_cli_values(
+        command,
+        _audiobook_override_values(meta, _audiobook_asin(meta, source)),
+    )
+    return command
+
+
+def _ebook_override_values(meta: Meta) -> dict[str, object]:
+    return {
+        "--author": _preferred_text(meta.author, meta.book_author),
+        "--title": _preferred_text(meta.title, meta.book_title),
+        "--year": meta.year,
+        "--isbn": _preferred_text(meta.isbn, meta.book_isbn),
+        "--series": meta.book_series,
+        "--series-part": _series_part(meta),
+        "--edition": meta.edition,
+        "--publisher": _preferred_text(meta.publisher, meta.book_publisher),
+        "--language": _preferred_text(
+            meta.book_language_iso, meta.book_language
+        ),
+        "--description": _preferred_text(meta.book_overview, meta.overview),
+        "--asin": _preferred_text(meta.book_asin, meta.asin),
+    }
+
+
+def _ebook_command(
+    binary: str, config_path: Path, source: Path, meta: Meta
+) -> list[str]:
+    command = [binary, "--config", str(config_path), "ebook", str(source)]
+    _append_cli_values(command, _ebook_override_values(meta))
+    return command
+
+
+def _run_error(
+    return_code: int, stdout: str, stderr: str, fallback: str
+) -> RuntimeError | None:
+    if return_code == 0:
+        return None
+    return RuntimeError(stderr.strip() or stdout.strip() or fallback)
+
+
+def _written_path(stdout: str, output_root: Path) -> Path | None:
+    match = re.search(r"Wrote (.+)$", stdout, re.MULTILINE)
+    if not match:
+        return None
+    try:
+        raw = match.group(1).strip()
+        value = json.loads(raw) if raw.startswith('"') else raw
+        path = Path(str(value)).resolve()
+        path.relative_to(output_root.resolve())
+    except json.JSONDecodeError, OSError, ValueError:
+        return None
+    return path if path.exists() else None
+
+
+def _ebook_output_directory(stdout: str, output_root: Path) -> Path | None:
+    output = _written_path(stdout, output_root)
+    if output is None or not output.is_file():
+        return None
+    if output.suffix.lower() not in EBOOK_SUFFIXES:
+        return None
+    return output.parent
+
+
+async def _validate_audiobook_output(
+    binary: str, config_path: Path, output: Path
+) -> None:
+    code, stdout, stderr = await _run_process(
+        [binary, "--config", str(config_path), "check", str(output), "--json"]
+    )
+    error = _run_error(code, stdout, stderr, "zentag compliance check failed")
+    if error is not None:
+        raise error
+    violations = json.loads(stdout or "[]")
+    if violations:
+        raise RuntimeError(
+            f"zentag compliance check returned {len(violations)} violation(s)"
+        )
+
+
+async def _prepare_audiobook_copy(
+    meta: Meta, source: Path, base_dir: str, config: dict[str, Any]
+) -> str:
+    binary = await ZentagBinaryManager.ensure_binary(base_dir)
+    output_root, config_path = _zentag_paths(
+        source, base_dir, config.get("DEFAULT", {})
+    )
+    command = _audiobook_command(binary, config_path, source, meta)
+    logger.info(
+        f"[cyan]ZENITH: preparing a compliant audiobook copy with zentag: {source.name}[/cyan]"
+    )
+    code, stdout, stderr = await _run_transform(command)
+    error = _run_error(
+        code, stdout, stderr, f"zentag exited with status {code}"
+    )
+    if error is not None:
+        raise error
+    output = _written_output(stdout, output_root)
+    if output is None:
+        raise RuntimeError("zentag did not report a valid output directory")
+    await _validate_audiobook_output(binary, config_path, output)
+    logger.info(
+        f"[green]ZENITH: zentag prepared and validated: {output}[/green]"
+    )
+    return str(output)
+
+
 async def prepare_zenith_audiobook(
     meta: Meta, base_dir: str, config: dict[str, Any]
 ) -> str | None:
     if not should_prepare_zenith_audiobook(meta, config):
         return None
-
     source = Path(str(meta.path or "")).expanduser().resolve()
     if not _contains_m4b(source):
         return None
-
     try:
-        binary = await ZentagBinaryManager.ensure_binary(base_dir)
-        output_root, config_path = _zentag_paths(
-            source, base_dir, config.get("DEFAULT", {})
-        )
-
-        asin = str(meta.book_asin or meta.asin or "").strip().upper()
-        if not re.fullmatch(r"[A-Z0-9]{10}", asin):
-            asin_match = re.search(r"\bB0[A-Z0-9]{8}\b", str(source).upper())
-            asin = asin_match.group(0) if asin_match else ""
-
-        command = [
-            binary,
-            "--config",
-            str(config_path),
-            "transform",
-            str(source),
-            "--clean",
-        ]
-        if asin:
-            command.extend(["--asin", asin])
-        logger.info(
-            f"[cyan]ZENITH: preparing a compliant audiobook copy with zentag: {source.name}[/cyan]"
-        )
-        return_code, stdout, stderr = await _run_transform(command)
-        if return_code != 0:
-            raise RuntimeError(
-                stderr.strip()
-                or stdout.strip()
-                or f"zentag exited with status {return_code}"
-            )
-
-        output = _written_output(stdout, output_root)
-        if output is None:
-            raise RuntimeError(
-                "zentag did not report a valid output directory"
-            )
-
-        check_code, check_stdout, check_stderr = await _run_process(
-            [
-                binary,
-                "--config",
-                str(config_path),
-                "check",
-                str(output),
-                "--json",
-            ]
-        )
-        if check_code != 0:
-            raise RuntimeError(
-                check_stderr.strip()
-                or check_stdout.strip()
-                or "zentag compliance check failed"
-            )
-        violations = json.loads(check_stdout or "[]")
-        if violations:
-            raise RuntimeError(
-                f"zentag compliance check returned {len(violations)} violation(s)"
-            )
-
-        logger.info(
-            f"[green]ZENITH: zentag prepared and validated: {output}[/green]"
-        )
-        return str(output)
+        return await _prepare_audiobook_copy(meta, source, base_dir, config)
     except (
         TimeoutError,
         OSError,
@@ -293,9 +403,36 @@ async def prepare_zenith_audiobook(
         json.JSONDecodeError,
     ) as error:
         logger.warning(
-            f"[yellow]ZENITH: automatic zentag preparation failed; keeping the original for other trackers: {error}[/yellow]"
+            "[yellow]ZENITH: automatic zentag preparation failed; keeping the "
+            f"original for other trackers: {error}[/yellow]"
         )
         return None
+
+
+async def _prepare_ebook_copy(
+    meta: Meta, source: Path, base_dir: str, config: dict[str, Any]
+) -> str:
+    binary = await ZentagBinaryManager.ensure_binary(base_dir)
+    output_root, config_path = _zentag_paths(
+        source, base_dir, config.get("DEFAULT", {})
+    )
+    command = _ebook_command(binary, config_path, source, meta)
+    logger.info(
+        f"[cyan]ZENITH: preparing a compliant ebook copy with zentag: {source.name}[/cyan]"
+    )
+    code, stdout, stderr = await _run_process(command)
+    error = _run_error(
+        code, stdout, stderr, f"zentag exited with status {code}"
+    )
+    if error is not None:
+        raise error
+    output = _ebook_output_directory(stdout, output_root)
+    if output is None:
+        raise RuntimeError("zentag did not report a valid ebook output file")
+    logger.info(
+        f"[green]ZENITH: zentag prepared and validated ebook: {output}[/green]"
+    )
+    return str(output)
 
 
 async def prepare_zenith_ebook(
@@ -306,71 +443,8 @@ async def prepare_zenith_ebook(
     source = _ebook_source(meta)
     if source is None:
         return None
-
     try:
-        binary = await ZentagBinaryManager.ensure_binary(base_dir)
-        output_root, config_path = _zentag_paths(
-            source, base_dir, config.get("DEFAULT", {})
-        )
-        command = [binary, "--config", str(config_path), "ebook", str(source)]
-        values: dict[str, object] = {
-            "--author": meta.author or meta.book_author,
-            "--title": meta.title or meta.book_title,
-            "--year": meta.year,
-            "--isbn": meta.isbn or meta.book_isbn,
-            "--series": meta.book_series,
-            "--series-part": meta.book_series_index,
-            "--edition": meta.edition,
-            "--publisher": meta.publisher or meta.book_publisher,
-            "--language": meta.book_language_iso or meta.book_language,
-            "--description": meta.book_overview or meta.overview,
-            "--asin": meta.book_asin or meta.asin,
-        }
-        for flag, value in values.items():
-            if str(value or "").strip():
-                command.extend([flag, str(value).strip()])
-        logger.info(
-            f"[cyan]ZENITH: preparing a compliant ebook copy with zentag: {source.name}[/cyan]"
-        )
-        return_code, stdout, stderr = await _run_process(command)
-        if return_code != 0:
-            raise RuntimeError(
-                stderr.strip()
-                or stdout.strip()
-                or f"zentag exited with status {return_code}"
-            )
-        output = _written_output(stdout, output_root)
-        if output is None:
-            raise RuntimeError(
-                "zentag did not report a valid ebook output directory"
-            )
-
-        check_code, check_stdout, check_stderr = await _run_process(
-            [
-                binary,
-                "--config",
-                str(config_path),
-                "check",
-                str(output),
-                "--json",
-            ]
-        )
-        if check_code != 0:
-            raise RuntimeError(
-                check_stderr.strip()
-                or check_stdout.strip()
-                or "zentag ebook compliance check failed"
-            )
-        violations = json.loads(check_stdout or "[]")
-        if violations:
-            raise RuntimeError(
-                f"zentag ebook compliance check returned {len(violations)} violation(s)"
-            )
-
-        logger.info(
-            f"[green]ZENITH: zentag prepared and validated ebook: {output}[/green]"
-        )
-        return str(output)
+        return await _prepare_ebook_copy(meta, source, base_dir, config)
     except (
         TimeoutError,
         OSError,
@@ -379,6 +453,7 @@ async def prepare_zenith_ebook(
         json.JSONDecodeError,
     ) as error:
         logger.warning(
-            f"[yellow]ZENITH: automatic ebook preparation failed; keeping the original for other trackers: {error}[/yellow]"
+            "[yellow]ZENITH: automatic ebook preparation failed; keeping the "
+            f"original for other trackers: {error}[/yellow]"
         )
         return None
