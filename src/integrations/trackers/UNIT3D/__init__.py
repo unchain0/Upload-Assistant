@@ -775,7 +775,10 @@ class UNIT3D:
         self, meta: Meta, files: dict[str, tuple[str, bytes, str]]
     ) -> None:
         await self._append_image_file(
-            files, "torrent-cover", meta.artwork_path
+            files,
+            "torrent-cover",
+            meta.artwork_path,
+            max_size=5 * 1024 * 1024,
         )
         await self._append_image_file(
             files, "torrent-banner", meta.artwork_banner_path
@@ -786,10 +789,14 @@ class UNIT3D:
         files: dict[str, tuple[str, bytes, str]],
         key: str,
         image_path: Any,
+        *,
+        max_size: int | None = None,
     ) -> None:
         if not image_path:
             return
-        image_file = await self.get_image_file(str(image_path))
+        image_file = await self.get_image_file(
+            str(image_path), max_size=max_size
+        )
         if image_file is not None:
             files[key] = image_file
 

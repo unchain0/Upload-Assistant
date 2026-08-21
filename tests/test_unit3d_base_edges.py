@@ -391,16 +391,13 @@ async def test_unit3d_additional_files_nfo_and_artwork(
     )
     assert files["nfo"][0] == "temp.nfo"
 
-    monkeypatch.setattr(
-        tracker,
-        "get_image_file",
-        AsyncMock(
-            side_effect=[
-                ("cover.png", b"c", "image/png"),
-                ("banner.png", b"b", "image/png"),
-            ]
-        ),
+    image_reader = AsyncMock(
+        side_effect=[
+            ("cover.png", b"c", "image/png"),
+            ("banner.png", b"b", "image/png"),
+        ]
     )
+    monkeypatch.setattr(tracker, "get_image_file", image_reader)
     book = _meta(
         tmp_path,
         category="BOOK",
@@ -409,6 +406,10 @@ async def test_unit3d_additional_files_nfo_and_artwork(
     )
     files = await tracker.get_additional_files(book)
     assert set(files) >= {"torrent-cover", "torrent-banner"}
+    assert (
+        image_reader.await_args_list[0].kwargs["max_size"] == 5 * 1024 * 1024
+    )
+    assert image_reader.await_args_list[1].kwargs["max_size"] is None
 
 
 @pytest.mark.asyncio
