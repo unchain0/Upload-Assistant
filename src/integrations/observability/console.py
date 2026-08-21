@@ -32,38 +32,59 @@ _shared_progress: Progress | None = None
 _shared_progress_users = 0
 
 
+def _progress_options(kwargs: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    # Shared Live state belongs to this adapter's concrete Rich console. Some
+    # integration callers hold only the narrow ConsolePort proxy, which cannot
+    # satisfy Rich's broader Console API (for example, ``get_time``).
+    kwargs["console"] = console
+    disabled = bool(kwargs.get("disable", False)) or is_cli_progress_suppressed()
+    if disabled:
+        kwargs["disable"] = True
+    return kwargs, not disabled
+
+
+def _started_progress(columns: tuple[Any, ...], options: dict[str, Any]) -> Progress:
+    progress = Progress(*columns, **options)
+    progress.start()
+    return progress
+
+
+def _acquire_progress(columns: tuple[Any, ...], options: dict[str, Any], shared: bool) -> Progress:
+    global _shared_progress, _shared_progress_users
+
+    if not shared:
+        return _started_progress(columns, options)
+    with _live_progress_lock:
+        progress = _shared_progress
+        if progress is None:
+            progress = _started_progress(columns, options)
+            _shared_progress = progress
+        _shared_progress_users += 1
+        return progress
+
+
+def _release_progress(progress: Progress, shared: bool) -> None:
+    global _shared_progress, _shared_progress_users
+
+    if not shared:
+        progress.stop()
+        return
+    with _live_progress_lock:
+        _shared_progress_users -= 1
+        if _shared_progress_users == 0 and _shared_progress is not None:
+            _shared_progress.stop()
+            _shared_progress = None
+
+
 @contextlib.contextmanager
 def progress_display(*columns: Any, **kwargs: Any) -> Generator[Progress]:
     """Yield a progress panel that safely shares the console's single Live display."""
-    global _shared_progress, _shared_progress_users
-
-    requested_disabled = bool(kwargs.get("disable", False)) or is_cli_progress_suppressed()
-    if requested_disabled:
-        kwargs["disable"] = True
-    shared = not requested_disabled
-    if shared:
-        with _live_progress_lock:
-            if _shared_progress is None:
-                new_progress = Progress(*columns, **kwargs)
-                new_progress.start()
-                _shared_progress = new_progress
-            progress = _shared_progress
-            _shared_progress_users += 1
-    else:
-        progress = Progress(*columns, **kwargs)
-        progress.start()
-
+    options, shared = _progress_options(kwargs)
+    progress = _acquire_progress(columns, options, shared)
     try:
         yield progress
     finally:
-        if shared:
-            with _live_progress_lock:
-                _shared_progress_users -= 1
-                if _shared_progress_users == 0 and _shared_progress is not None:
-                    _shared_progress.stop()
-                    _shared_progress = None
-        else:
-            progress.stop()
+        _release_progress(progress, shared)
 
 
 # Configure the consumer-owned application logger with safe CLI defaults.

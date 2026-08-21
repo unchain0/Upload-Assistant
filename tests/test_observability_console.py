@@ -53,7 +53,9 @@ def test_progress_display_shares_live_instance_and_honors_disabled_context(monke
     console_module._shared_progress = None
     console_module._shared_progress_users = 0
 
-    with console_module.progress_display("first") as first:
+    foreign_console = object()
+    with console_module.progress_display("first", console=foreign_console) as first:
+        assert first.kwargs["console"] is console_module.console
         with console_module.progress_display("second") as second:
             assert first is second
             assert console_module._shared_progress_users == 2
