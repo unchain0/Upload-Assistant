@@ -794,6 +794,7 @@ def test_handle_existing_screens_upload_write_restore_and_covers_cleanup(
         )
     )
     assert len(result[0]) == 2 and result[1] is False
+    assert _Uploader.calls[-1]["allowed_hosts"] == ["imgbb"]
     assert meta.imghost == "original"
     output = dirs["screens"] / "reuploaded_images.json"
     assert len(json.loads(output.read_text())) == 2

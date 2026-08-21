@@ -433,6 +433,45 @@ def test_get_ptp_from_hash_guards_dispatch(tmp_path: Path) -> None:
     )
 
 
+def test_qbit_reuse_rejects_unsupported_piece_length_before_torf(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    torrent_path = tmp_path / "abc.torrent"
+    torrent_path.write_bytes(
+        client_manager.bencodepy.encode(
+            {
+                b"announce": b"https://tracker.invalid/announce",
+                b"info": {
+                    b"length": 5,
+                    b"name": b"video.mkv",
+                    b"piece length": 16769024,
+                    b"pieces": b"0" * 20,
+                },
+            }
+        )
+    )
+    meta = _meta(tmp_path)
+    clients = Clients(_config(tmp_path))
+    read_torrent = Mock(side_effect=AssertionError("Torf must not parse it"))
+    monkeypatch.setattr(clients, "_read_torrent_compat", read_torrent)
+
+    valid, resolved = asyncio.run(
+        clients.is_valid_torrent(
+            meta,
+            str(torrent_path),
+            "abc",
+            "qbit",
+            {},
+        )
+    )
+
+    assert valid is False
+    assert resolved == str(torrent_path)
+    assert meta.rejected_reuse_torrent_path == str(torrent_path)
+    assert meta.rejected_reuse_piece_length == 16769024
+    read_torrent.assert_not_called()
+
+
 def test_invalid_prespecified_piece_length_is_rejected_and_cached(
     tmp_path: Path,
 ) -> None:

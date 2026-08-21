@@ -1024,6 +1024,302 @@ class Clients(
             }
         return best_match
 
+    @staticmethod
+    def _normalized_reuse_candidate(
+        torrent_path: str,
+        torrenthash: str,
+        torrent_client: str,
+    ) -> tuple[str, str]:
+        path = str(torrent_path)
+        if torrent_client in ("qbit", "deluge"):
+            normalized_hash = torrenthash.lower().strip()
+            return path.replace(
+                normalized_hash.upper(), normalized_hash
+            ), normalized_hash
+        if torrent_client == "rtorrent":
+            normalized_hash = torrenthash.upper().strip()
+            return path.replace(
+                normalized_hash.upper(), normalized_hash
+            ), normalized_hash
+        return path, torrenthash
+
+    @staticmethod
+    def _relative_layout(paths: list[str]) -> list[str]:
+        root = Path(os.path.commonpath(paths))
+        return sorted(
+            str(Path(path).relative_to(root)).replace("\\", "/")
+            for path in paths
+        )
+
+    @staticmethod
+    def _single_file_layout_matches(
+        torrent: Torrent, candidate: list[str]
+    ) -> bool:
+        if len(torrent.files) != 1 or len(candidate) != 1:
+            return False
+        info = cast(dict[str, Any], torrent.metainfo["info"])
+        return bool(
+            Path(str(torrent.files[0])).name == Path(candidate[0]).name
+            and "length" in info
+        )
+
+    @classmethod
+    def _multi_file_layout_matches(
+        cls, torrent: Torrent, candidate: list[str]
+    ) -> bool:
+        if len(torrent.files) != len(candidate):
+            return False
+        torrent_layout = cls._relative_layout(
+            [str(file) for file in torrent.files]
+        )
+        candidate_layout = cls._relative_layout(
+            [str(file) for file in candidate]
+        )
+        logger.debug(f"Torrent layout: {torrent_layout}")
+        logger.debug(f"Candidate layout: {candidate_layout}")
+        return torrent_layout == candidate_layout
+
+    @classmethod
+    def _candidate_layout_matches(
+        cls, torrent: Torrent, candidate: list[str]
+    ) -> bool:
+        if len(torrent.files) == len(candidate) == 1:
+            return cls._single_file_layout_matches(torrent, candidate)
+        return cls._multi_file_layout_matches(torrent, candidate)
+
+    @staticmethod
+    def _reuse_layout_candidates(meta: Meta) -> list[list[str]]:
+        filelist = [str(path) for path in cast(list[str], meta.filelist)]
+        candidates = [filelist]
+        if meta.subtitle_files:
+            candidates.append(
+                filelist + [str(path) for path in meta.subtitle_files]
+            )
+        return candidates
+
+    @staticmethod
+    def _folder_layout_matches(meta: Meta, torrent: Torrent) -> bool:
+        meta_path = meta.path
+        if meta_path is None:
+            return False
+        torrent_path = os.path.commonpath(
+            [str(path) for path in torrent.files]
+        )
+        return Path(meta_path).name in torrent_path
+
+    @staticmethod
+    def _uses_folder_layout(meta: Meta) -> bool:
+        has_disc = bool(meta.is_disc and meta.is_disc != "")
+        return has_disc or bool(meta.keep_folder and meta.isdir)
+
+    @classmethod
+    def _matches_any_reuse_layout(cls, meta: Meta, torrent: Torrent) -> bool:
+        for candidate in cls._reuse_layout_candidates(meta):
+            if cls._candidate_layout_matches(torrent, candidate):
+                return True
+        return False
+
+    @classmethod
+    def _torrent_layout_matches(cls, meta: Meta, torrent: Torrent) -> bool:
+        if not cls._uses_folder_layout(meta):
+            return cls._matches_any_reuse_layout(meta, torrent)
+        valid = cls._folder_layout_matches(meta, torrent)
+        logger.debug(
+            f"Torrent is valid based on disc/basename or keep-folder: {valid}"
+        )
+        return valid
+
+    @staticmethod
+    def _reuse_verify_path(meta: Meta) -> str | None:
+        meta_path = meta.path
+        if meta_path is None:
+            return None
+        filelist = [str(path) for path in cast(list[str], meta.filelist)]
+        if len(filelist) == 1 and Path(filelist[0]).is_file():
+            return filelist[0]
+        return str(meta_path)
+
+    @classmethod
+    async def _verify_reuse_content(cls, meta: Meta, torrent: Torrent) -> bool:
+        verify_path = cls._reuse_verify_path(meta)
+        if verify_path is None:
+            return False
+        try:
+            return bool(
+                await asyncio.to_thread(torrent.verify, verify_path, threads=1)
+            )
+        except Exception as error:
+            logger.debug(f"Torrent content verification failed: {error}")
+            return False
+
+    def _load_reuse_torrent(
+        self, meta: Meta, torrent_path: str
+    ) -> tuple[Torrent | None, str]:
+        unsupported_piece_length = self._unsupported_piece_length(torrent_path)
+        if unsupported_piece_length is not None:
+            meta.rejected_reuse_torrent_path = torrent_path
+            meta.rejected_reuse_piece_length = unsupported_piece_length
+            logger.warning(
+                "[yellow]Ignoring reusable .torrent with unsupported piece length "
+                f"{unsupported_piece_length}: {torrent_path}. A fresh torrent "
+                "will be created instead.[/yellow]"
+            )
+            return None, torrent_path
+        normalized_path = (
+            Path(meta.base_dir) / "tmp" / meta.uuid / Path(torrent_path).name
+        )
+        try:
+            return self._read_torrent_compat(torrent_path, normalized_path)
+        except Exception as error:
+            logger.info(f"[bold red]Error reading torrent file: {error}")
+            return None, torrent_path
+
+    @staticmethod
+    def _fails_four_mib_piece_policy(meta: Meta, torrent: Torrent) -> bool:
+        max_piece_size = meta.max_piece_size
+        size_policy = max_piece_size is None or max_piece_size >= 4
+        return bool(
+            torrent.pieces >= 5000
+            and torrent.piece_size < 4294304
+            and size_policy
+        )
+
+    @staticmethod
+    def _fails_eight_mib_piece_policy(meta: Meta, torrent: Torrent) -> bool:
+        max_piece_size = meta.max_piece_size
+        size_policy = max_piece_size is None or max_piece_size >= 8
+        return bool(
+            torrent.pieces >= 8000
+            and torrent.piece_size < 8488608
+            and size_policy
+            and not meta.prefer_small_pieces
+        )
+
+    @staticmethod
+    def _fails_piece_count_policy(meta: Meta, torrent: Torrent) -> bool:
+        return bool(meta.max_piece_size is None and torrent.pieces >= 12000)
+
+    @staticmethod
+    def _fails_minimum_piece_size(torrent: Torrent) -> bool:
+        return torrent.piece_size < 32768
+
+    @staticmethod
+    def _fails_torrent_file_size(meta: Meta, size_kib: float) -> bool:
+        return bool(meta.max_piece_size is None and size_kib > 250)
+
+    @classmethod
+    def _piece_policy_reason(
+        cls,
+        meta: Meta,
+        torrent: Torrent,
+        torrent_file_size_kib: float,
+    ) -> str | None:
+        checks = (
+            (
+                cls._fails_four_mib_piece_policy(meta, torrent),
+                "Torrent needs to have less than 5000 pieces with a 4 MiB piece size",
+            ),
+            (
+                cls._fails_eight_mib_piece_policy(meta, torrent),
+                "Torrent needs to have less than 8000 pieces with a 8 MiB piece size",
+            ),
+            (
+                cls._fails_piece_count_policy(meta, torrent),
+                "Torrent needs to have less than 12000 pieces to be valid",
+            ),
+            (
+                cls._fails_minimum_piece_size(torrent),
+                "Piece size too small to reuse",
+            ),
+            (
+                cls._fails_torrent_file_size(meta, torrent_file_size_kib),
+                "Torrent file size exceeds 250 KiB",
+            ),
+        )
+        for failed, reason in checks:
+            if failed:
+                return reason
+        return None
+
+    @classmethod
+    def _piece_policy_allows(
+        cls,
+        meta: Meta,
+        torrent: Torrent,
+        torrent_path: str,
+        torrenthash: str,
+    ) -> bool:
+        try:
+            torrent_file_size_kib = round(
+                Path(torrent_path).stat().st_size / 1024, 2
+            )
+            logger.debug(
+                "Checking piece size, count and size: "
+                f"pieces={torrent.pieces}, "
+                f"piece_size={torrent.piece_size / 1024 / 1024} MiB, "
+                f".torrent size={torrent_file_size_kib} KiB"
+            )
+            reason = cls._piece_policy_reason(
+                meta, torrent, torrent_file_size_kib
+            )
+            if reason is not None:
+                logger.debug(f"[bold red]{reason}")
+                return False
+            logger.debug(
+                "[bold green]REUSING .torrent with infohash: "
+                f"[bold yellow]{torrenthash}"
+            )
+            return True
+        except Exception as error:
+            logger.info(f"[bold red]Error checking reuse torrent: {error}")
+            return False
+
+    @staticmethod
+    def _log_normalized_reuse_path(meta: Meta, torrent_path: str) -> None:
+        if meta.debug:
+            logger.debug(f"Torrent path after normalization: {torrent_path}")
+
+    @staticmethod
+    def _reuse_candidate_available(meta: Meta, torrent_path: str) -> bool:
+        if meta.path is None:
+            return False
+        if Path(torrent_path).exists():
+            return True
+        logger.debug(
+            f"No reusable torrent found at {torrent_path}; a fresh torrent "
+            "can be created if needed"
+        )
+        return False
+
+    @staticmethod
+    def _log_invalid_reuse_layout(meta: Meta) -> None:
+        if meta.debug:
+            logger.debug("[bold yellow]Unwanted Files/Folders Identified")
+
+    @classmethod
+    async def _loaded_reuse_is_valid(
+        cls,
+        meta: Meta,
+        torrent: Torrent,
+        torrent_path: str,
+        torrenthash: str,
+    ) -> bool:
+        if not cls._torrent_layout_matches(meta, torrent):
+            cls._log_invalid_reuse_layout(meta)
+            return False
+        if not await cls._verify_reuse_content(meta, torrent):
+            logger.info(
+                "[yellow]Existing torrent matches the file layout but not the "
+                "current content; forcing a fresh torrent hash[/yellow]"
+            )
+            return False
+        valid = cls._piece_policy_allows(
+            meta, torrent, torrent_path, torrenthash
+        )
+        if meta.debug:
+            logger.debug(f"Final validity after piece checks: valid={valid}")
+        return valid
+
     async def is_valid_torrent(
         self,
         meta: Meta,
@@ -1034,211 +1330,18 @@ class Clients(
     ) -> tuple[bool, str]:
         """Validate a candidate torrent against files, layout, and piece limits."""
         del client
-        torrent_path = str(torrent_path)
-        valid = False
-        filelist = cast(list[str], meta.filelist)
-        meta_path = meta.path
-        if meta_path is None:
+        torrent_path, torrenthash = self._normalized_reuse_candidate(
+            torrent_path, torrenthash, torrent_client
+        )
+        self._log_normalized_reuse_path(meta, torrent_path)
+        if not self._reuse_candidate_available(meta, torrent_path):
             return False, torrent_path
-        meta_uuid = meta.uuid
-
-        # Normalize the torrent hash based on the client
-        if torrent_client in ("qbit", "deluge"):
-            torrenthash = torrenthash.lower().strip()
-            torrent_path = torrent_path.replace(
-                torrenthash.upper(), torrenthash
-            )
-        elif torrent_client == "rtorrent":
-            torrenthash = torrenthash.upper().strip()
-            torrent_path = torrent_path.replace(
-                torrenthash.upper(), torrenthash
-            )
-
-        if meta.debug:
-            logger.debug(f"Torrent path after normalization: {torrent_path}")
-
-        # Check if torrent file exists
-        torrent: Torrent | None = None
-        if Path(torrent_path).exists():
-            try:
-                normalized_path = (
-                    Path(meta.base_dir)
-                    / "tmp"
-                    / meta_uuid
-                    / Path(torrent_path).name
-                )
-                torrent, torrent_path = self._read_torrent_compat(
-                    torrent_path, normalized_path
-                )
-            except Exception as e:
-                logger.info(f"[bold red]Error reading torrent file: {e}")
-                return valid, torrent_path
-
-            # Reuse if disc and basename matches or --keep-folder was specified
-            if (meta.is_disc and meta.is_disc != "") or (
-                meta.keep_folder and meta.isdir
-            ):
-                torrent_name = torrent.metainfo["info"]["name"]
-                if meta_uuid != torrent_name and meta.debug:
-                    logger.info("Modified file structure, skipping hash")
-                    valid = False
-                torrent_filepath = os.path.commonpath(torrent.files)
-                if Path(meta_path).name in torrent_filepath:
-                    valid = True
-                logger.debug(
-                    f"Torrent is valid based on disc/basename or keep-folder: {valid}"
-                )
-
-            # Otherwise we match either only videos (no subtitles) OR videos + subtitles (if subtitles are present)
-            else:
-                subtitle_files = meta.subtitle_files
-                candidates = [filelist]
-                if subtitle_files:
-                    candidates.append(filelist + subtitle_files)
-
-                for cand in candidates:
-                    # If one file, check for folder
-                    if len(torrent.files) == len(cand) == 1:
-                        if (
-                            Path(torrent.files[0]).name == Path(cand[0]).name
-                            and "length" in torrent.metainfo["info"]
-                        ):
-                            valid = True
-                            break
-                        logger.debug(
-                            f"Single file match status: valid={valid}"
-                        )
-
-                    # Check complete relative layouts, not only filenames. Matching
-                    # basenames alone can reuse a torrent from a different folder
-                    # structure when releases have repeated filenames.
-                    elif len(torrent.files) == len(cand):
-
-                        def relative_layout(paths: list[str]) -> list[str]:
-                            """Normalize relative file layout for structural comparison."""
-                            root = Path(os.path.commonpath(paths))
-                            return sorted(
-                                str(Path(path).relative_to(root)).replace(
-                                    "\\", "/"
-                                )
-                                for path in paths
-                            )
-
-                        torrent_layout = relative_layout(
-                            [str(file) for file in torrent.files]
-                        )
-                        candidate_layout = relative_layout(
-                            [str(file) for file in cand]
-                        )
-
-                        logger.debug(f"Torrent layout: {torrent_layout}")
-                        logger.debug(f"Candidate layout: {candidate_layout}")
-
-                        if torrent_layout == candidate_layout:
-                            valid = True
-                            break
-                        logger.debug(
-                            f"Multiple file match status: valid={valid}"
-                        )
-
-            if valid:
-                verify_path = (
-                    filelist[0]
-                    if len(filelist) == 1 and Path(filelist[0]).is_file()
-                    else meta_path
-                )
-                try:
-                    valid = bool(
-                        await asyncio.to_thread(
-                            torrent.verify, str(verify_path), threads=1
-                        )
-                    )
-                except Exception as error:
-                    logger.debug(
-                        f"Torrent content verification failed: {error}"
-                    )
-                    valid = False
-                if not valid:
-                    logger.info(
-                        "[yellow]Existing torrent matches the file layout but not the current content; forcing a fresh torrent hash[/yellow]"
-                    )
-
-        else:
-            logger.debug(
-                f"No reusable torrent found at {torrent_path}; a fresh torrent can be created if needed"
-            )
-
-        # Additional checks if the torrent is valid so far
-        if valid and torrent is not None:
-            if Path(torrent_path).exists():
-                try:
-                    reuse_torrent = torrent
-                    piece_size = reuse_torrent.piece_size
-                    piece_in_mib = piece_size / 1024 / 1024
-                    torrent_storage_dir_valid = torrent_path
-                    torrent_file_size_kib = round(
-                        Path(torrent_storage_dir_valid).stat().st_size / 1024,
-                        2,
-                    )
-                    logger.debug(
-                        f"Checking piece size, count and size: pieces={reuse_torrent.pieces}, piece_size={piece_in_mib} MiB, .torrent size={torrent_file_size_kib} KiB"
-                    )
-
-                    # Piece size and count validations
-                    max_piece_size = meta.max_piece_size
-                    if (
-                        reuse_torrent.pieces >= 5000
-                        and reuse_torrent.piece_size < 4294304
-                        and (max_piece_size is None or max_piece_size >= 4)
-                    ):
-                        logger.debug(
-                            "[bold red]Torrent needs to have less than 5000 pieces with a 4 MiB piece size"
-                        )
-                        valid = False
-                    elif (
-                        reuse_torrent.pieces >= 8000
-                        and reuse_torrent.piece_size < 8488608
-                        and (max_piece_size is None or max_piece_size >= 8)
-                        and not meta.prefer_small_pieces
-                    ):
-                        logger.debug(
-                            "[bold red]Torrent needs to have less than 8000 pieces with a 8 MiB piece size"
-                        )
-                        valid = False
-                    elif (
-                        max_piece_size is None
-                        and reuse_torrent.pieces >= 12000
-                    ):
-                        logger.debug(
-                            "[bold red]Torrent needs to have less than 12000 pieces to be valid"
-                        )
-                        valid = False
-                    elif reuse_torrent.piece_size < 32768:
-                        logger.debug("[bold red]Piece size too small to reuse")
-                        valid = False
-                    elif (
-                        max_piece_size is None and torrent_file_size_kib > 250
-                    ):
-                        logger.debug(
-                            "[bold red]Torrent file size exceeds 250 KiB"
-                        )
-                        valid = False
-                    else:
-                        logger.debug(
-                            f"[bold green]REUSING .torrent with infohash: [bold yellow]{torrenthash}"
-                        )
-                except Exception as e:
-                    logger.info(f"[bold red]Error checking reuse torrent: {e}")
-                    valid = False
-
-            if meta.debug:
-                logger.debug(
-                    f"Final validity after piece checks: valid={valid}"
-                )
-        else:
-            if meta.debug:
-                logger.debug("[bold yellow]Unwanted Files/Folders Identified")
-
+        torrent, torrent_path = self._load_reuse_torrent(meta, torrent_path)
+        if torrent is None:
+            return False, torrent_path
+        valid = await self._loaded_reuse_is_valid(
+            meta, torrent, torrent_path, torrenthash
+        )
         return valid, torrent_path
 
     @staticmethod
