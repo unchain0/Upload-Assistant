@@ -20,41 +20,50 @@ def _content_path(value: str) -> PurePath:
 
 def content_paths_with_spaces(meta: Meta) -> list[str]:
     suspicious: list[str] = []
-    root_text = str(meta.path or "").strip()
-    root = _content_path(root_text) if root_text else None
-
-    def remember(parts: tuple[str, ...]) -> None:
-        for part in parts:
-            if part not in {"", ".", ".."} and _has_whitespace(part) and part not in suspicious:
-                suspicious.append(part)
-
-    if root is not None:
-        remember((root.name,))
-
-    raw_filelist: Any = meta.filelist
-    if not isinstance(raw_filelist, (list, tuple, set)):
-        return suspicious
-    items: list[Any] = list(raw_filelist)
-
-    for item in items:
-        item_text = str(item or "").strip()
-        if not item_text:
-            continue
-        item_path = _content_path(item_text)
-        if not item_path.is_absolute():
-            remember(item_path.parts)
-            continue
-        if root is not None:
-            try:
-                relative = item_path.relative_to(root)
-            except ValueError:
-                remember((item_path.name,))
-            else:
-                remember(relative.parts)
-        else:
-            remember((item_path.name,))
-
+    root = _root_content_path(meta.path)
+    _remember_path_parts(suspicious, (root.name,) if root is not None else ())
+    for item in _filelist_items(meta.filelist):
+        _inspect_content_item(suspicious, root, item)
     return suspicious
+
+
+def _root_content_path(value: Any) -> PurePath | None:
+    text = str(value or "").strip()
+    return _content_path(text) if text else None
+
+
+def _filelist_items(value: Any) -> list[Any]:
+    return list(value) if isinstance(value, (list, tuple, set)) else []
+
+
+def _inspect_content_item(suspicious: list[str], root: PurePath | None, value: Any) -> None:
+    text = str(value or "").strip()
+    if not text:
+        return
+    path = _content_path(text)
+    parts = _relative_content_parts(root, path)
+    _remember_path_parts(suspicious, parts)
+
+
+def _relative_content_parts(root: PurePath | None, path: PurePath) -> tuple[str, ...]:
+    if not path.is_absolute():
+        return path.parts
+    if root is None:
+        return (path.name,)
+    try:
+        return path.relative_to(root).parts
+    except ValueError:
+        return (path.name,)
+
+
+def _remember_path_parts(suspicious: list[str], parts: tuple[str, ...]) -> None:
+    for part in parts:
+        if _suspicious_path_part(part, suspicious):
+            suspicious.append(part)
+
+
+def _suspicious_path_part(part: str, suspicious: list[str]) -> bool:
+    return part not in {"", ".", ".."} and _has_whitespace(part) and part not in suspicious
 
 
 def blocks_automatic_upload(meta: Meta) -> bool:
@@ -64,10 +73,17 @@ def blocks_automatic_upload(meta: Meta) -> bool:
 def book_metadata_cjk_fields(meta: Meta) -> list[str]:
     if str(meta.category or "").upper() != "BOOK":
         return []
-    values: dict[str, str] = {
+    return [field for field, value in _book_metadata_values(meta).items() if _CJK_PATTERN.search(value)]
+
+
+def _book_metadata_values(meta: Meta) -> dict[str, str]:
+    return {
         "release name": str(meta.name or ""),
-        "author": str(meta.author or meta.book_author or ""),
-        "title": str(meta.title or meta.book_title or ""),
-        "description": str(meta.book_overview or meta.overview or ""),
+        "author": _first_text(meta.author, meta.book_author),
+        "title": _first_text(meta.title, meta.book_title),
+        "description": _first_text(meta.book_overview, meta.overview),
     }
-    return [field for field, value in values.items() if _CJK_PATTERN.search(value)]
+
+
+def _first_text(primary: Any, fallback: Any) -> str:
+    return str(primary if primary else fallback or "")

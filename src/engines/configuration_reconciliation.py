@@ -49,32 +49,21 @@ def _is_empty(value: MutableConfigValue | None) -> bool:
     if value is None:
         return True
     if isinstance(value, str):
-        normalized = value.strip().casefold()
-        if not normalized:
-            return True
-        placeholders = {
-            "api key",
-            "api_key",
-            "key here",
-            "password",
-            "token",
-            "token here",
-        }
-        placeholder_prefixes = (
-            "<",
-            "change me",
-            "changeme",
-            "example",
-            "get it from",
-            "get this from",
-            "insert ",
-            "replace ",
-            "your ",
-        )
-        return normalized in placeholders or normalized.startswith(placeholder_prefixes)
-    if isinstance(value, list | dict):
-        return len(value) == 0
-    return False
+        return _empty_setting_string(value)
+    return _empty_setting_collection(value)
+
+
+def _empty_setting_string(value: str) -> bool:
+    normalized = value.strip().casefold()
+    if not normalized:
+        return True
+    placeholders = {"api key", "api_key", "key here", "password", "token", "token here"}
+    prefixes = ("<", "change me", "changeme", "example", "get it from", "get this from", "insert ", "replace ", "your ")
+    return normalized in placeholders or normalized.startswith(prefixes)
+
+
+def _empty_setting_collection(value: MutableConfigValue) -> bool:
+    return isinstance(value, list | dict) and len(value) == 0
 
 
 def _fill_empty_user_settings(
@@ -86,16 +75,34 @@ def _fill_empty_user_settings(
     for key, source_value in source.items():
         current_path = (*path, str(key))
         if isinstance(source_value, Mapping):
-            target_value = target.get(key)
-            if not isinstance(target_value, dict):
-                target_value = {}
-                target[key] = target_value
-            _fill_empty_user_settings(target_value, source_value, current_path, migrated)
+            child = _target_child_mapping(target, key)
+            _fill_empty_user_settings(child, source_value, current_path, migrated)
             continue
-        target_value = target.get(key)
-        if is_user_setting(current_path, source_value) and (key not in target or _is_empty(target_value)):
-            target[key] = _clone(source_value)
-            migrated.append(current_path)
+        _fill_user_setting(target, key, source_value, current_path, migrated)
+
+
+def _target_child_mapping(target: MutableConfiguration, key: str) -> MutableConfiguration:
+    value = target.get(key)
+    if isinstance(value, dict):
+        return value
+    child: MutableConfiguration = {}
+    target[key] = child
+    return child
+
+
+def _fill_user_setting(
+    target: MutableConfiguration,
+    key: str,
+    source_value: ConfigValue,
+    path: ConfigPath,
+    migrated: list[ConfigPath],
+) -> None:
+    if not is_user_setting(path, source_value):
+        return
+    if key in target and not _is_empty(target.get(key)):
+        return
+    target[key] = _clone(source_value)
+    migrated.append(path)
 
 
 def _add_missing_defaults(

@@ -367,6 +367,25 @@ def test_music_validators_cover_errors_warnings_and_orpheus_rules() -> None:
     assert any(issue.level is ValidationLevel.WARNING for issue in single_issues)
 
 
+def test_music_validator_accepts_valid_edge_variants() -> None:
+    various = MusicRelease(
+        "/music",
+        tracks=[_track("titled.flac", track_number=None, title="Named Track")],
+        conflicts={"artist": ["Artist A", "Artist B"]},
+    )
+    various.set_field("artist", "Various Artists", MetadataSource.FILE_TAG, 1.0)
+    various.set_field("album", "Compilation", MetadataSource.FILE_TAG, 1.0)
+    codes = {issue.code for issue in MusicValidator().validate(various)}
+    assert "inconsistent_artist" not in codes
+    assert "untagged_track" not in codes
+
+    legal_mp3 = MusicRelease(
+        "/music",
+        tracks=[_track("legal.mp3", format="MP3", codec="MP3", bitrate=320_000, bitrate_mode="CBR")],
+    )
+    assert OrpheusMusicValidator._mp3_bitrate_issue(legal_mp3.tracks[0]) is None
+
+
 def test_region_distributor_and_service_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
     import src.engines.region_mapping as region_mapping
 

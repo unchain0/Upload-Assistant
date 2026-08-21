@@ -24,11 +24,21 @@ class TmdbCredential:
 
     @classmethod
     def parse(cls, raw_value: object) -> TmdbCredential:
+        normalized = cls._normalized_value(raw_value)
+        return cls(value=normalized, mode=cls._credential_mode(normalized))
+
+    @staticmethod
+    def _normalized_value(raw_value: object) -> str:
         if not isinstance(raw_value, str):
             raise TmdbCredentialMissingError("TMDb credential must be a string")
         normalized = raw_value.strip()
         if not normalized:
             raise TmdbCredentialMissingError("TMDb credential is empty")
+        return normalized
+
+    @staticmethod
+    def _credential_mode(normalized: str) -> TmdbCredentialMode:
         looks_like_jwt = normalized.startswith("eyJ") and normalized.count(".") >= 2
-        mode = TmdbCredentialMode.V4_READ_ACCESS_TOKEN if looks_like_jwt or len(normalized) > 64 else TmdbCredentialMode.V3_API_KEY
-        return cls(value=normalized, mode=mode)
+        if looks_like_jwt or len(normalized) > 64:
+            return TmdbCredentialMode.V4_READ_ACCESS_TOKEN
+        return TmdbCredentialMode.V3_API_KEY

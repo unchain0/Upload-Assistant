@@ -12,17 +12,30 @@ def resolve_book_language(raw: str) -> tuple[str, str]:
     """Return the English language name and ISO-639-3 code for an input."""
 
     normalized = raw.strip()
+    direct = _language_from_code(normalized)
+    return direct if direct is not None else _language_from_name(normalized)
+
+
+def _language_from_code(normalized: str) -> tuple[str, str] | None:
     with contextlib.suppress(Exception):
         language = langcodes.get(normalized.lower())
-        full_name = language.display_name("en") or normalized.title()
-        alpha3 = language.to_alpha3() or ""
-        if full_name and full_name.lower() != normalized.lower():
-            return full_name, alpha3
+        result = _language_result(language, normalized)
+        if result[0] and result[0].lower() != normalized.lower():
+            return result
+    return None
+
+
+def _language_from_name(normalized: str) -> tuple[str, str]:
     try:
-        language = langcodes.find(normalized)
-        return language.display_name("en") or normalized.title(), language.to_alpha3() or ""
+        return _language_result(langcodes.find(normalized), normalized)
     except Exception:
         return normalized.title(), ""
+
+
+def _language_result(language: langcodes.Language, normalized: str) -> tuple[str, str]:
+    display_name = language.display_name
+    to_alpha3 = language.to_alpha3
+    return display_name("en") or normalized.title(), to_alpha3() or ""
 
 
 def is_valid_book_language(full_name: str, iso_code: str) -> bool:
@@ -42,9 +55,17 @@ def extract_first_author(author: str) -> str:
 
     if not author:
         return ""
-    uses_underscores = "_" in author and " " not in author
+    uses_underscores = _underscore_delimited_author(author)
     normalized = author.replace("_", " ") if uses_underscores else author
-    split_pattern = r"\s*(?:,|;|&|/|\+|\band\b|\be\b|\by\b|\bwith\b|\s+-\s+)\s*"
-    parts = re.split(split_pattern, normalized, flags=re.IGNORECASE)
-    first_author = parts[0].strip() if parts else ""
+    first_author = _first_author_part(normalized)
     return first_author.replace(" ", "_") if uses_underscores else first_author
+
+
+def _underscore_delimited_author(author: str) -> bool:
+    return "_" in author and " " not in author
+
+
+def _first_author_part(author: str) -> str:
+    split_pattern = r"\s*(?:,|;|&|/|\+|\band\b|\be\b|\by\b|\bwith\b|\s+-\s+)\s*"
+    parts = re.split(split_pattern, author, flags=re.IGNORECASE)
+    return parts[0].strip() if parts else ""

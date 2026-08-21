@@ -543,18 +543,24 @@ class Meta:
         return value is None or (isinstance(value, str) and not value.strip())
 
     def __init__(self, _data: dict[str, Any] | None = None, **kwargs: Any) -> None:
-        # Initialize default values
-        for f in fields(self):
-            value = f.default_factory() if f.default_factory is not MISSING else f.default
-            setattr(self, f.name, value)
-
-        # Override with data or kwargs
-        if _data:
-            for k, v in _data.items():
-                setattr(self, k, v)
-        for k, v in kwargs.items():
-            setattr(self, k, v)
+        self._initialize_defaults()
+        self._apply_values(_data or {})
+        self._apply_values(kwargs)
         self.set_tracker_ids(self.tracker_ids)
+
+    def _initialize_defaults(self) -> None:
+        for field_info in fields(self):
+            setattr(self, field_info.name, self._field_default(field_info))
+
+    @staticmethod
+    def _field_default(field_info: Any) -> Any:
+        if field_info.default_factory is not MISSING:
+            return field_info.default_factory()
+        return field_info.default
+
+    def _apply_values(self, values: dict[str, Any]) -> None:
+        for name, value in values.items():
+            setattr(self, name, value)
 
     def copy(self) -> Meta:
         """Ensure copy returns a Meta instance with deep copied attributes."""

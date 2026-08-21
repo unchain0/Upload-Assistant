@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from types import MappingProxyType
+from typing import TypeGuard
 
 type ConfigScalar = str | int | float | bool | None
 type ConfigValue = ConfigScalar | tuple[ConfigValue, ...] | Mapping[str, ConfigValue]
@@ -78,11 +79,19 @@ class ConfigurationMigration:
 def _freeze_value(value: object) -> ConfigValue:
     if isinstance(value, Mapping):
         return _freeze_mapping(value)
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+    if _is_configuration_sequence(value):
         return tuple(_freeze_value(item) for item in value)
-    if isinstance(value, str | int | float | bool) or value is None:
+    if _is_configuration_scalar(value):
         return value
     raise TypeError(f"Unsupported configuration value: {type(value).__name__}")
+
+
+def _is_configuration_sequence(value: object) -> TypeGuard[Sequence[object]]:
+    return isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray))
+
+
+def _is_configuration_scalar(value: object) -> TypeGuard[ConfigScalar]:
+    return isinstance(value, str | int | float | bool) or value is None
 
 
 def _freeze_mapping(values: Mapping[object, object]) -> Mapping[str, ConfigValue]:

@@ -78,17 +78,35 @@ def score_release_name(search_term: object, release_name: object, *, explicit_id
     """Return a transparent 0-100 similarity score for an imported release."""
     if explicit_id:
         return 100
+    normalized = _normalized_release_names(search_term, release_name)
+    if normalized is None:
+        return 0
+    expected, actual = normalized
+    return _release_similarity_score(expected, actual)
+
+
+def _normalized_release_names(search_term: object, release_name: object) -> tuple[str, str] | None:
     if not isinstance(search_term, str) or not isinstance(release_name, str):
-        return 0
-    expected = re.sub(r"[^a-z0-9]+", " ", search_term.lower()).strip()
-    actual = re.sub(r"[^a-z0-9]+", " ", release_name.lower()).strip()
-    if not expected or not actual:
-        return 0
-    expected_tokens = set(expected.split())
-    actual_tokens = set(actual.split())
-    overlap = len(expected_tokens & actual_tokens) / len(expected_tokens | actual_tokens)
+        return None
+    expected = _normalized_release_name(search_term)
+    actual = _normalized_release_name(release_name)
+    return (expected, actual) if expected and actual else None
+
+
+def _normalized_release_name(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+
+
+def _release_similarity_score(expected: str, actual: str) -> int:
+    overlap = _token_overlap(expected, actual)
     sequence = SequenceMatcher(None, expected, actual).ratio()
     return round((sequence * 70) + (overlap * 30))
+
+
+def _token_overlap(expected: str, actual: str) -> float:
+    expected_tokens = set(expected.split())
+    actual_tokens = set(actual.split())
+    return len(expected_tokens & actual_tokens) / len(expected_tokens | actual_tokens)
 
 
 def add_candidate(meta: Any, candidate: DescriptionCandidate, *, selected: bool) -> None:

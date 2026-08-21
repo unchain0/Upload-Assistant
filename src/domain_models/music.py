@@ -7,10 +7,30 @@ with a lower-confidence directory or remote-service guess.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
+
+
+def _object_mapping(value: object) -> Mapping[object, object] | None:
+    if not isinstance(value, Mapping):
+        return None
+    return cast(Mapping[object, object], value)
+
+
+def _object_list(value: object) -> list[object] | None:
+    if not isinstance(value, list):
+        return None
+    return cast(list[object], value)
+
+
+def _keyword_mapping(value: object) -> Mapping[str, Any] | None:
+    values = _object_mapping(value)
+    if values is None or not all(isinstance(key, str) for key in values):
+        return None
+    return cast(Mapping[str, Any], values)
 
 
 class MetadataSource(StrEnum):
@@ -93,15 +113,37 @@ class MusicRelease:
         }[source]
 
     def set_field(self, name: str, value: Any, source: MetadataSource, confidence: float, *, force: bool = False) -> None:
-        if value in (None, "", [], {}):
+        if self._empty_field_value(value):
             return
         existing = self.fields.get(name)
-        if force or existing is None or confidence > existing.confidence:
+        if self._should_replace_field(existing, confidence, force):
             self.fields[name] = MetadataValue(value=value, source=source, confidence=confidence)
-        elif existing.value != value and self._source_tier(source) == self._source_tier(existing.source):
-            values = self.conflicts.setdefault(name, [str(existing.value)])
-            if str(value) not in values:
-                values.append(str(value))
+            return
+        self._record_same_tier_conflict(name, value, source, existing)
+
+    @staticmethod
+    def _empty_field_value(value: Any) -> bool:
+        return value in (None, "", [], {})
+
+    @staticmethod
+    def _should_replace_field(existing: MetadataValue | None, confidence: float, force: bool) -> bool:
+        return force or existing is None or confidence > existing.confidence
+
+    def _record_same_tier_conflict(
+        self,
+        name: str,
+        value: Any,
+        source: MetadataSource,
+        existing: MetadataValue | None,
+    ) -> None:
+        if existing is None or existing.value == value:
+            return
+        if self._source_tier(source) != self._source_tier(existing.source):
+            return
+        values = self.conflicts.setdefault(name, [str(existing.value)])
+        text = str(value)
+        if text not in values:
+            values.append(text)
 
     def get(self, name: str, default: Any = "") -> Any:
         item = self.fields.get(name)
@@ -127,21 +169,79 @@ class MusicRelease:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> MusicRelease:
+    def from_dict(cls, data: Mapping[str, object]) -> MusicRelease:
         release = cls(root=str(data.get("root", "")))
-        release.tracks = [AudioTrack(**track) for track in data.get("tracks", [])]
-        release.auxiliary = AuxiliaryFiles(**data.get("auxiliary", {}))
-        for key, value in data.get("fields", {}).items():
-            if isinstance(value, dict):
-                release.fields[key] = MetadataValue(
-                    value=value.get("value"),
-                    source=MetadataSource(value.get("source", "inferred")),
-                    confidence=float(value.get("confidence", 0)),
-                )
-        release.conflicts = {str(k): list(v) for k, v in data.get("conflicts", {}).items()}
-        release.warnings = list(data.get("warnings", []))
-        release.external_ids = {str(k): str(v) for k, v in data.get("external_ids", {}).items()}
+        release.tracks = cls._tracks_from_dict(data.get("tracks", []))
+        release.auxiliary = cls._auxiliary_from_dict(data.get("auxiliary", {}))
+        release.fields = cls._fields_from_dict(data.get("fields", {}))
+        release.conflicts = cls._conflicts_from_dict(data.get("conflicts", {}))
+        release.warnings = cls._warnings_from_dict(data.get("warnings", []))
+        release.external_ids = cls._external_ids_from_dict(data.get("external_ids", {}))
         return release
+
+    @staticmethod
+    def _tracks_from_dict(value: object) -> list[AudioTrack]:
+        values = _object_list(value)
+        if values is None:
+            return []
+        tracks: list[AudioTrack] = []
+        for track_value in values:
+            track = _keyword_mapping(track_value)
+            if track is not None:
+                tracks.append(AudioTrack(**track))
+        return tracks
+
+    @staticmethod
+    def _auxiliary_from_dict(value: object) -> AuxiliaryFiles:
+        auxiliary = _keyword_mapping(value)
+        return AuxiliaryFiles(**auxiliary) if auxiliary is not None else AuxiliaryFiles()
+
+    @staticmethod
+    def _fields_from_dict(value: object) -> dict[str, MetadataValue]:
+        values = _object_mapping(value)
+        if values is None:
+            return {}
+        fields: dict[str, MetadataValue] = {}
+        for key, field_value in values.items():
+            parsed = MusicRelease._metadata_value_from_dict(field_value)
+            if parsed is not None:
+                fields[str(key)] = parsed
+        return fields
+
+    @staticmethod
+    def _metadata_value_from_dict(value: object) -> MetadataValue | None:
+        values = _object_mapping(value)
+        if values is None:
+            return None
+        source_value = values.get("source", MetadataSource.INFERRED)
+        source = MetadataSource(source_value) if isinstance(source_value, str) else MetadataSource.INFERRED
+        confidence_value = values.get("confidence", 0)
+        confidence = float(confidence_value) if isinstance(confidence_value, str | int | float) else 0.0
+        return MetadataValue(value=values.get("value"), source=source, confidence=confidence)
+
+    @staticmethod
+    def _conflicts_from_dict(value: object) -> dict[str, list[str]]:
+        values = _object_mapping(value)
+        if values is None:
+            return {}
+        conflicts: dict[str, list[str]] = {}
+        for key, conflict_value in values.items():
+            conflict_items = _object_list(conflict_value)
+            if conflict_items is not None:
+                conflicts[str(key)] = [str(item) for item in conflict_items]
+        return conflicts
+
+    @staticmethod
+    def _warnings_from_dict(value: object) -> list[str]:
+        values = _object_list(value)
+        return [str(item) for item in values] if values is not None else []
+
+    @staticmethod
+    def _external_ids_from_dict(value: object) -> dict[str, str]:
+        values = _object_mapping(value)
+        if values is None:
+            return {}
+        return {str(key): str(external_id) for key, external_id in values.items()}
 
     @property
     def path(self) -> Path:
