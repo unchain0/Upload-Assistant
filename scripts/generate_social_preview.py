@@ -31,7 +31,12 @@ def _draw_glow(center_x: int, center_y: int) -> Image.Image:
     for radius in range(500, 0, -10):
         alpha = int(20 * (1.0 - radius / 500.0))
         draw.ellipse(
-            [center_x - radius, center_y - radius, center_x + radius, center_y + radius],
+            [
+                center_x - radius,
+                center_y - radius,
+                center_x + radius,
+                center_y + radius,
+            ],
             fill=(180, 83, 9, alpha),
         )
     return layer
@@ -75,7 +80,15 @@ def draw_social_preview():
 
     # Left Column dimensions
     left_column_w = max(title_w, sub_w)
-    left_column_h = title_h + gap_title_sub + sub_h + gap_sub_div + divider_h + gap_div_badges + badges_h
+    left_column_h = (
+        title_h
+        + gap_title_sub
+        + sub_h
+        + gap_sub_div
+        + divider_h
+        + gap_div_badges
+        + badges_h
+    )
 
     # Horizontal centering
     gap_left_logo = 100
@@ -112,22 +125,41 @@ def draw_social_preview():
 
     # 7. Typography (Left Column)
     title_x = x_start - title_bbox[0]
-    draw.text((title_x, title_y), title_text, fill=(255, 255, 255, 255), font=title_font)
+    draw.text(
+        (title_x, title_y),
+        title_text,
+        fill=(255, 255, 255, 255),
+        font=title_font,
+    )
 
     sub_x = x_start - sub_bbox[0]
-    draw.text((sub_x, sub_y), sub_text, fill=(168, 162, 158, 255), font=sub_font)
+    draw.text(
+        (sub_x, sub_y), sub_text, fill=(168, 162, 158, 255), font=sub_font
+    )
 
     # Divider
-    draw.line([(x_start, divider_y), (x_start + left_column_w, divider_y)], fill=(41, 37, 36, 255), width=divider_h)
+    draw.line(
+        [(x_start, divider_y), (x_start + left_column_w, divider_y)],
+        fill=(41, 37, 36, 255),
+        width=divider_h,
+    )
 
     # 8. Badges (Left Column)
     def draw_badge(x, y, w, h, bg_color, border_color, text, text_color):
         badge_layer = Image.new("RGBA", (1280, 640), (0, 0, 0, 0))
         b_draw = ImageDraw.Draw(badge_layer)
         # Background
-        b_draw.rounded_rectangle([x, y, x + w, y + h], radius=h / 2, fill=bg_color)
+        b_draw.rounded_rectangle(
+            [x, y, x + w, y + h], radius=h / 2, fill=bg_color
+        )
         # Border
-        b_draw.rounded_rectangle([x, y, x + w, y + h], radius=h / 2, fill=None, outline=border_color, width=2)
+        b_draw.rounded_rectangle(
+            [x, y, x + w, y + h],
+            radius=h / 2,
+            fill=None,
+            outline=border_color,
+            width=2,
+        )
         # Text centering based on actual bounding box
         bbox = b_draw.textbbox((0, 0), text, font=badge_font)
         text_w = bbox[2] - bbox[0]
@@ -143,11 +175,38 @@ def draw_social_preview():
     badge_w = 165
     badge_gap = 20
     # Badge 1: P2P
-    draw_badge(x_start, badges_y, badge_w, badges_h, (120, 53, 15, 38), (180, 83, 9, 255), "P2P / Torrents", (245, 158, 11, 255))
+    draw_badge(
+        x_start,
+        badges_y,
+        badge_w,
+        badges_h,
+        (120, 53, 15, 38),
+        (180, 83, 9, 255),
+        "P2P / Torrents",
+        (245, 158, 11, 255),
+    )
     # Badge 2: Usenet
-    draw_badge(x_start + badge_w + badge_gap, badges_y, badge_w, badges_h, (113, 63, 18, 38), (161, 98, 7, 255), "Usenet / NZB", (250, 204, 21, 255))
+    draw_badge(
+        x_start + badge_w + badge_gap,
+        badges_y,
+        badge_w,
+        badges_h,
+        (113, 63, 18, 38),
+        (161, 98, 7, 255),
+        "Usenet / NZB",
+        (250, 204, 21, 255),
+    )
     # Badge 3: CLI
-    draw_badge(x_start + (badge_w + badge_gap) * 2, badges_y, badge_w, badges_h, (41, 37, 36, 102), (87, 83, 78, 255), "CLI & Automation", (231, 229, 228, 255))
+    draw_badge(
+        x_start + (badge_w + badge_gap) * 2,
+        badges_y,
+        badge_w,
+        badges_h,
+        (41, 37, 36, 102),
+        (87, 83, 78, 255),
+        "CLI & Automation",
+        (231, 229, 228, 255),
+    )
 
     # 9. Render and Paste Logo
     logo_img = draw_logo(logo_size)

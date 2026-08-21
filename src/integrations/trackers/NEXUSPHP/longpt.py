@@ -58,7 +58,14 @@ class LongPT(NEXUSPHP):
                 "tv show",
                 "variety",
             ]
-            if any(re.search(rf"(^|,\s*){re.escape(keyword)}(\s*,|$)", genres, re.IGNORECASE) for keyword in game_show_keywords):
+            if any(
+                re.search(
+                    rf"(^|,\s*){re.escape(keyword)}(\s*,|$)",
+                    genres,
+                    re.IGNORECASE,
+                )
+                for keyword in game_show_keywords
+            ):
                 return tv_shows
             return tv_series
 
@@ -164,7 +171,9 @@ class LongPT(NEXUSPHP):
             ("m4a", 8),
             ("atmos", 9),
         )
-        return next((value for token, value in mappings if token in audio_codec), 11)
+        return next(
+            (value for token, value in mappings if token in audio_codec), 11
+        )
 
     def get_group_tag(self, meta: Meta) -> int:
         group_tag = {

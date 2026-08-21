@@ -15,9 +15,20 @@ def _default_data_dir() -> Path:
     if override:
         return Path(override).expanduser()
     if os.name == "nt":
-        return Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "Upload-Assistant"
+        return (
+            Path(
+                os.environ.get(
+                    "LOCALAPPDATA", Path.home() / "AppData" / "Local"
+                )
+            )
+            / "Upload-Assistant"
+        )
     xdg_data_home = os.environ.get("XDG_DATA_HOME", "").strip()
-    base = Path(xdg_data_home).expanduser() if xdg_data_home else Path.home() / ".local" / "share"
+    base = (
+        Path(xdg_data_home).expanduser()
+        if xdg_data_home
+        else Path.home() / ".local" / "share"
+    )
     primary = base / "Upload-Assistant"
     legacy = base / "upload-assistant"
     if not primary.exists() and legacy.exists():

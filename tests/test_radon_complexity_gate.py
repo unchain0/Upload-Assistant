@@ -7,7 +7,9 @@ import pytest
 from scripts import check_radon_complexity
 
 
-def _write_pyproject(root: Path, *, maximum: int = 5, paths: str = '["src"]') -> None:
+def _write_pyproject(
+    root: Path, *, maximum: int = 5, paths: str = '["src"]'
+) -> None:
     (root / "pyproject.toml").write_text(
         "\n".join(
             [
@@ -46,7 +48,10 @@ def test_scan_accepts_rank_a_and_rejects_rank_b(tmp_path: Path) -> None:
     src = tmp_path / "src"
     src.mkdir()
     simple = src / "simple.py"
-    simple.write_text("def simple(value):\n    if value:\n        return 1\n    return 0\n", encoding="utf-8")
+    simple.write_text(
+        "def simple(value):\n    if value:\n        return 1\n    return 0\n",
+        encoding="utf-8",
+    )
     complex_file = src / "complex.py"
     complex_file.write_text(
         "\n".join(
@@ -78,10 +83,17 @@ def test_scan_accepts_rank_a_and_rejects_rank_b(tmp_path: Path) -> None:
     assert violation.name == "complex_value"
     assert violation.complexity == 7
     assert violation.rank == "B"
-    assert check_radon_complexity.scan(tmp_path, (str(simple.relative_to(tmp_path)),), 5) == []
+    assert (
+        check_radon_complexity.scan(
+            tmp_path, (str(simple.relative_to(tmp_path)),), 5
+        )
+        == []
+    )
 
 
-def test_main_returns_failure_and_concise_diagnostic(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_main_returns_failure_and_concise_diagnostic(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     _write_pyproject(tmp_path)
     src = tmp_path / "src"
     src.mkdir()
@@ -90,17 +102,24 @@ def test_main_returns_failure_and_concise_diagnostic(tmp_path: Path, capsys: pyt
         encoding="utf-8",
     )
 
-    assert check_radon_complexity.main(["--root", str(tmp_path), "--concise"]) == 1
+    assert (
+        check_radon_complexity.main(["--root", str(tmp_path), "--concise"])
+        == 1
+    )
     output = capsys.readouterr().out
     assert "CC-A001" in output
     assert "rank B" in output
 
-    (src / "complex.py").write_text("def f():\n    return True\n", encoding="utf-8")
+    (src / "complex.py").write_text(
+        "def f():\n    return True\n", encoding="utf-8"
+    )
     assert check_radon_complexity.main(["--root", str(tmp_path)]) == 0
     assert "PASS" in capsys.readouterr().out
 
 
-def test_parse_changed_lines_and_filter_to_touched_blocks(tmp_path: Path) -> None:
+def test_parse_changed_lines_and_filter_to_touched_blocks(
+    tmp_path: Path,
+) -> None:
     _write_pyproject(tmp_path)
     src = tmp_path / "src"
     src.mkdir()
@@ -131,25 +150,38 @@ def test_parse_changed_lines_and_filter_to_touched_blocks(tmp_path: Path) -> Non
 
     changed = check_radon_complexity._parse_changed_lines(diff)
     assert changed == {Path("src/complex.py"): {5}}
-    violations = check_radon_complexity.scan(tmp_path, ("src",), 5, changed_lines=changed)
+    violations = check_radon_complexity.scan(
+        tmp_path, ("src",), 5, changed_lines=changed
+    )
     assert [item.name for item in violations] == ["touched"]
 
 
-def test_semantic_changed_lines_ignore_formatting_only_function_changes() -> None:
+def test_semantic_changed_lines_ignore_formatting_only_function_changes() -> (
+    None
+):
     previous = "def complex_value(a, b, c, d, e, f):\n    return bool(a and b and c and d and e and f)\n"
     current = "def complex_value(\n    a, b, c, d, e, f\n):\n    return bool(\n        a and b and c and d and e and f\n    )\n"
 
-    assert check_radon_complexity._semantic_changed_lines(current, previous, set(range(1, 7))) == set()
+    assert (
+        check_radon_complexity._semantic_changed_lines(
+            current, previous, set(range(1, 7))
+        )
+        == set()
+    )
 
 
 def test_semantic_changed_lines_keep_real_function_changes() -> None:
     previous = "def complex_value(a, b, c, d, e, f):\n    return bool(a and b and c and d and e and f)\n"
     current = "def complex_value(a, b, c, d, e, f, g):\n    return bool(a and b and c and d and e and f and g)\n"
 
-    assert check_radon_complexity._semantic_changed_lines(current, previous, {1, 2}) == {1, 2}
+    assert check_radon_complexity._semantic_changed_lines(
+        current, previous, {1, 2}
+    ) == {1, 2}
 
 
-def test_parse_changed_lines_ignores_deleted_files_and_zero_length_hunks() -> None:
+def test_parse_changed_lines_ignores_deleted_files_and_zero_length_hunks() -> (
+    None
+):
     diff = "\n".join(
         [
             "diff --git a/src/deleted.py b/src/deleted.py",
@@ -166,4 +198,6 @@ def test_parse_changed_lines_ignores_deleted_files_and_zero_length_hunks() -> No
         ]
     )
 
-    assert check_radon_complexity._parse_changed_lines(diff) == {Path("src/kept.py"): set()}
+    assert check_radon_complexity._parse_changed_lines(diff) == {
+        Path("src/kept.py"): set()
+    }

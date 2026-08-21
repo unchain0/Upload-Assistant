@@ -33,11 +33,25 @@ class _Client:
 
 def test_imdb_graphql_errors_are_not_negative_cached(monkeypatch, tmp_path):
     async def run():
-        monkeypatch.setattr("src.integrations.external_apis.imdb.httpx.AsyncClient", lambda: _Client({"errors": [{"message": "temporarily unavailable"}]}))
+        monkeypatch.setattr(
+            "src.integrations.external_apis.imdb.httpx.AsyncClient",
+            lambda: _Client(
+                {"errors": [{"message": "temporarily unavailable"}]}
+            ),
+        )
         config = {"DEFAULT": {"metadata_cache_dir": "cache"}}
 
-        assert await imdb_manager.get_imdb_info_api(1, base_dir=tmp_path, config=config) == {}
-        assert is_cache_miss(await cache_for(tmp_path, config).get("imdb", "title", "tt0000001|None"))
+        assert (
+            await imdb_manager.get_imdb_info_api(
+                1, base_dir=tmp_path, config=config
+            )
+            == {}
+        )
+        assert is_cache_miss(
+            await cache_for(tmp_path, config).get(
+                "imdb", "title", "tt0000001|None"
+            )
+        )
 
     asyncio.run(run())
 
@@ -45,10 +59,20 @@ def test_imdb_graphql_errors_are_not_negative_cached(monkeypatch, tmp_path):
 def test_imdb_graphql_requests_include_imdb_referer(monkeypatch, tmp_path):
     async def run():
         client = _Client({"data": {"title": {}}})
-        monkeypatch.setattr("src.integrations.external_apis.imdb.httpx.AsyncClient", lambda: client)
+        monkeypatch.setattr(
+            "src.integrations.external_apis.imdb.httpx.AsyncClient",
+            lambda: client,
+        )
 
-        await imdb_manager.get_imdb_info_api(1, base_dir=tmp_path, config={"DEFAULT": {"metadata_cache_dir": "cache"}})
+        await imdb_manager.get_imdb_info_api(
+            1,
+            base_dir=tmp_path,
+            config={"DEFAULT": {"metadata_cache_dir": "cache"}},
+        )
 
-        assert client.requests[0][1]["headers"]["Referer"] == "https://www.imdb.com/"
+        assert (
+            client.requests[0][1]["headers"]["Referer"]
+            == "https://www.imdb.com/"
+        )
 
     asyncio.run(run())

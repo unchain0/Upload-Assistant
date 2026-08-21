@@ -6,10 +6,16 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.services.queue_service import QueueManager, _trusted_existing_queue_log, _write_json_file
+from src.services.queue_service import (
+    QueueManager,
+    _trusted_existing_queue_log,
+    _write_json_file,
+)
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX file modes do not apply on Windows")
+@pytest.mark.skipif(
+    os.name == "nt", reason="POSIX file modes do not apply on Windows"
+)
 def test_existing_queue_log_is_restricted_to_owner(tmp_path: Path) -> None:
     log = tmp_path / "queue.log"
     log.write_text("old", encoding="utf-8")
@@ -20,7 +26,9 @@ def test_existing_queue_log_is_restricted_to_owner(tmp_path: Path) -> None:
     assert log.stat().st_mode & 0o777 == 0o600
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX symlink protections do not apply on Windows")
+@pytest.mark.skipif(
+    os.name == "nt", reason="POSIX symlink protections do not apply on Windows"
+)
 def test_queue_log_writer_rejects_symlink(tmp_path: Path) -> None:
     target = tmp_path / "target"
     target.write_text("protected", encoding="utf-8")
@@ -36,7 +44,9 @@ def test_queue_log_writer_rejects_symlink(tmp_path: Path) -> None:
 def test_windows_reparse_point_is_not_a_trusted_queue_log() -> None:
     attributes = SimpleNamespace(
         st_mode=stat.S_IFREG,
-        st_file_attributes=getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400),
+        st_file_attributes=getattr(
+            stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400
+        ),
         st_uid=0,
     )
 

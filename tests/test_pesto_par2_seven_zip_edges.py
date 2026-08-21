@@ -37,13 +37,17 @@ def _tar(path: Path, mode: str, *members: tuple[str, bytes]) -> None:
             archive.addfile(info, io.BytesIO(payload))
 
 
-def _platform(monkeypatch: pytest.MonkeyPatch, module, system: str, machine: str) -> None:
+def _platform(
+    monkeypatch: pytest.MonkeyPatch, module, system: str, machine: str
+) -> None:
     monkeypatch.setattr(module.platform, "system", lambda: system)
     monkeypatch.setattr(module.platform, "machine", lambda: machine)
     monkeypatch.setattr(module.httpx, "AsyncClient", _Client)
 
 
-def test_pesto_unsupported_cache_linux_windows_success_and_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_pesto_unsupported_cache_linux_windows_success_and_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     target = tmp_path / "pesto"
     target.mkdir()
     monkeypatch.setattr(pesto, "tool_install_dir", lambda *_args: target)
@@ -57,28 +61,41 @@ def test_pesto_unsupported_cache_linux_windows_success_and_failure(tmp_path: Pat
     binary.chmod(0o755)
     marker = target / "pesto-v0.6.0"
     marker.write_text("cached", encoding="utf-8")
-    assert asyncio.run(pesto.PestoBinaryManager.ensure_pesto_binary(tmp_path)) == str(binary)
+    assert asyncio.run(
+        pesto.PestoBinaryManager.ensure_pesto_binary(tmp_path)
+    ) == str(binary)
 
     marker.unlink()
     binary.unlink()
     stale = target / "pesto-v0.5.0"
     stale.write_text("stale", encoding="utf-8")
 
-    async def download(_client, _url: str, destination: Path, _asset: str) -> None:
+    async def download(
+        _client, _url: str, destination: Path, _asset: str
+    ) -> None:
         destination.write_bytes(b"new-pesto")
 
     monkeypatch.setattr(pesto, "download_verified_asset", download)
-    result = asyncio.run(pesto.PestoBinaryManager.ensure_pesto_binary(tmp_path))
+    result = asyncio.run(
+        pesto.PestoBinaryManager.ensure_pesto_binary(tmp_path)
+    )
     assert result == str(binary)
-    assert binary.read_bytes() == b"new-pesto" and binary.stat().st_mode & 0o100
+    assert (
+        binary.read_bytes() == b"new-pesto" and binary.stat().st_mode & 0o100
+    )
     assert marker.is_file() and not stale.exists()
-    assert not any(path.name.startswith("temp_") or path.name.startswith(".pesto") for path in target.iterdir())
+    assert not any(
+        path.name.startswith("temp_") or path.name.startswith(".pesto")
+        for path in target.iterdir()
+    )
 
     windows = tmp_path / "pesto-win"
     windows.mkdir()
     monkeypatch.setattr(pesto, "tool_install_dir", lambda *_args: windows)
     _platform(monkeypatch, pesto, "Windows", "AMD64")
-    result = asyncio.run(pesto.PestoBinaryManager.ensure_pesto_binary(tmp_path))
+    result = asyncio.run(
+        pesto.PestoBinaryManager.ensure_pesto_binary(tmp_path)
+    )
     assert Path(result).name == "pesto.exe"
 
     async def fail(*_args: object, **_kwargs: object) -> None:
@@ -93,7 +110,9 @@ def test_pesto_unsupported_cache_linux_windows_success_and_failure(tmp_path: Pat
     assert list(failed.iterdir()) == []
 
 
-def test_par2_unsupported_cache_zip_success_duplicate_and_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_par2_unsupported_cache_zip_success_duplicate_and_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     target = tmp_path / "par2"
     target.mkdir()
     monkeypatch.setattr(par2, "tool_install_dir", lambda *_args: target)
@@ -107,27 +126,37 @@ def test_par2_unsupported_cache_zip_success_duplicate_and_failure(tmp_path: Path
     binary.chmod(0o755)
     marker = target / "v1.4.0"
     marker.write_text("cached", encoding="utf-8")
-    assert asyncio.run(par2.Par2BinaryManager.ensure_par2_binary(tmp_path)) == str(binary)
+    assert asyncio.run(
+        par2.Par2BinaryManager.ensure_par2_binary(tmp_path)
+    ) == str(binary)
 
     binary.unlink()
     marker.unlink()
     stale = target / "v1.3.0"
     stale.write_text("stale", encoding="utf-8")
 
-    async def download(_client, _url: str, destination: Path, _asset: str) -> None:
+    async def download(
+        _client, _url: str, destination: Path, _asset: str
+    ) -> None:
         _zip(destination, ("bundle/par2", b"new-par2"))
 
     monkeypatch.setattr(par2, "download_verified_asset", download)
     result = asyncio.run(par2.Par2BinaryManager.ensure_par2_binary(tmp_path))
     assert result == str(binary) and binary.read_bytes() == b"new-par2"
-    assert binary.stat().st_mode & 0o100 and marker.is_file() and not stale.exists()
+    assert (
+        binary.stat().st_mode & 0o100
+        and marker.is_file()
+        and not stale.exists()
+    )
     assert not (target / ".par2-staging").exists()
 
     duplicate = tmp_path / "par2-duplicate"
     duplicate.mkdir()
     monkeypatch.setattr(par2, "tool_install_dir", lambda *_args: duplicate)
 
-    async def duplicate_download(_client, _url: str, destination: Path, _asset: str) -> None:
+    async def duplicate_download(
+        _client, _url: str, destination: Path, _asset: str
+    ) -> None:
         _zip(destination, ("one/par2", b"one"), ("two/par2", b"two"))
 
     monkeypatch.setattr(par2, "download_verified_asset", duplicate_download)
@@ -140,11 +169,18 @@ def test_par2_unsupported_cache_zip_success_duplicate_and_failure(tmp_path: Path
     monkeypatch.setattr(par2, "tool_install_dir", lambda *_args: windows)
     _platform(monkeypatch, par2, "Windows", "ARM64")
 
-    async def windows_download(_client, _url: str, destination: Path, _asset: str) -> None:
+    async def windows_download(
+        _client, _url: str, destination: Path, _asset: str
+    ) -> None:
         _zip(destination, ("par2.exe", b"windows"))
 
     monkeypatch.setattr(par2, "download_verified_asset", windows_download)
-    assert Path(asyncio.run(par2.Par2BinaryManager.ensure_par2_binary(tmp_path))).name == "par2.exe"
+    assert (
+        Path(
+            asyncio.run(par2.Par2BinaryManager.ensure_par2_binary(tmp_path))
+        ).name
+        == "par2.exe"
+    )
 
     failed = tmp_path / "par2-failed"
     failed.mkdir()
@@ -158,7 +194,9 @@ def test_par2_unsupported_cache_zip_success_duplicate_and_failure(tmp_path: Path
         asyncio.run(par2.Par2BinaryManager.ensure_par2_binary(tmp_path))
 
 
-def test_seven_zip_unsupported_cache_windows_linux_duplicate_and_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_seven_zip_unsupported_cache_windows_linux_duplicate_and_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     target = tmp_path / "seven"
     target.mkdir()
     monkeypatch.setattr(seven_zip, "tool_install_dir", lambda *_args: target)
@@ -172,18 +210,24 @@ def test_seven_zip_unsupported_cache_windows_linux_duplicate_and_failure(tmp_pat
     binary.chmod(0o755)
     marker = target / "26.01"
     marker.write_text("cached", encoding="utf-8")
-    assert asyncio.run(seven_zip.SevenZipBinaryManager.ensure_7z_binary(tmp_path)) == str(binary)
+    assert asyncio.run(
+        seven_zip.SevenZipBinaryManager.ensure_7z_binary(tmp_path)
+    ) == str(binary)
 
     binary.unlink()
     marker.unlink()
     stale = target / "25.01"
     stale.write_text("stale", encoding="utf-8")
 
-    async def linux_download(_client, _url: str, destination: Path, _asset: str) -> None:
+    async def linux_download(
+        _client, _url: str, destination: Path, _asset: str
+    ) -> None:
         _tar(destination, "w:xz", ("bundle/7zz", b"new-7z"))
 
     monkeypatch.setattr(seven_zip, "download_verified_asset", linux_download)
-    result = asyncio.run(seven_zip.SevenZipBinaryManager.ensure_7z_binary(tmp_path))
+    result = asyncio.run(
+        seven_zip.SevenZipBinaryManager.ensure_7z_binary(tmp_path)
+    )
     assert result == str(binary) and binary.read_bytes() == b"new-7z"
     assert not stale.exists() and not (target / ".7z-staging").exists()
 
@@ -192,23 +236,36 @@ def test_seven_zip_unsupported_cache_windows_linux_duplicate_and_failure(tmp_pat
     monkeypatch.setattr(seven_zip, "tool_install_dir", lambda *_args: windows)
     _platform(monkeypatch, seven_zip, "Windows", "x86")
 
-    async def windows_download(_client, _url: str, destination: Path, asset: str) -> None:
+    async def windows_download(
+        _client, _url: str, destination: Path, asset: str
+    ) -> None:
         assert asset == "26.01/7zr.exe"
         destination.write_bytes(b"windows")
 
     monkeypatch.setattr(seven_zip, "download_verified_asset", windows_download)
-    result = asyncio.run(seven_zip.SevenZipBinaryManager.ensure_7z_binary(tmp_path))
-    assert Path(result).name == "7zr.exe" and Path(result).read_bytes() == b"windows"
+    result = asyncio.run(
+        seven_zip.SevenZipBinaryManager.ensure_7z_binary(tmp_path)
+    )
+    assert (
+        Path(result).name == "7zr.exe"
+        and Path(result).read_bytes() == b"windows"
+    )
 
     duplicate = tmp_path / "seven-duplicate"
     duplicate.mkdir()
-    monkeypatch.setattr(seven_zip, "tool_install_dir", lambda *_args: duplicate)
+    monkeypatch.setattr(
+        seven_zip, "tool_install_dir", lambda *_args: duplicate
+    )
     _platform(monkeypatch, seven_zip, "Linux", "arm64")
 
-    async def duplicate_download(_client, _url: str, destination: Path, _asset: str) -> None:
+    async def duplicate_download(
+        _client, _url: str, destination: Path, _asset: str
+    ) -> None:
         _tar(destination, "w:xz", ("one/7zz", b"one"), ("two/7zz", b"two"))
 
-    monkeypatch.setattr(seven_zip, "download_verified_asset", duplicate_download)
+    monkeypatch.setattr(
+        seven_zip, "download_verified_asset", duplicate_download
+    )
     with pytest.raises(Exception, match="exactly one"):
         asyncio.run(seven_zip.SevenZipBinaryManager.ensure_7z_binary(tmp_path))
 

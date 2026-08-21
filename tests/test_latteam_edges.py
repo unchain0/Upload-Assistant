@@ -12,24 +12,46 @@ def _tracker() -> LatTeam:
 
 def test_latteam_book_categories_cover_comic_and_magazine() -> None:
     tracker = _tracker()
-    assert asyncio.run(tracker.get_category_id(Meta(category="BOOK", comic=True))) == {"category_id": "30"}
-    assert asyncio.run(tracker.get_category_id(Meta(category="BOOK", magazine=True))) == {"category_id": "29"}
+    assert asyncio.run(
+        tracker.get_category_id(Meta(category="BOOK", comic=True))
+    ) == {"category_id": "30"}
+    assert asyncio.run(
+        tracker.get_category_id(Meta(category="BOOK", magazine=True))
+    ) == {"category_id": "29"}
 
 
 def test_latteam_tv_categories_cover_soap_and_asian_drama() -> None:
     tracker = _tracker()
-    soap = Meta(category="TV", keywords=["telenovela"], genres=[], overview="", origin_country=[])
+    soap = Meta(
+        category="TV",
+        keywords=["telenovela"],
+        genres=[],
+        overview="",
+        origin_country=[],
+    )
     assert asyncio.run(tracker.get_category_id(soap)) == {"category_id": "8"}
 
-    asian = Meta(category="TV", keywords=[], genres=["Drama"], overview="", origin_country=["KR"])
+    asian = Meta(
+        category="TV",
+        keywords=[],
+        genres=["Drama"],
+        overview="",
+        origin_country=["KR"],
+    )
     assert asyncio.run(tracker.get_category_id(asian)) == {"category_id": "20"}
 
 
 def test_latteam_book_type_normalization_and_unknown_fallback() -> None:
     tracker = _tracker()
-    assert asyncio.run(tracker.get_type_id(Meta(category="BOOK", type="CBR"))) == {"type_id": "25"}
-    assert asyncio.run(tracker.get_type_id(Meta(category="BOOK", type="MOBI"))) == {"type_id": "26"}
-    assert asyncio.run(tracker.get_type_id(Meta(category="BOOK", type="DOCX"))) == {"type_id": "21"}
+    assert asyncio.run(
+        tracker.get_type_id(Meta(category="BOOK", type="CBR"))
+    ) == {"type_id": "25"}
+    assert asyncio.run(
+        tracker.get_type_id(Meta(category="BOOK", type="MOBI"))
+    ) == {"type_id": "26"}
+    assert asyncio.run(
+        tracker.get_type_id(Meta(category="BOOK", type="DOCX"))
+    ) == {"type_id": "21"}
 
 
 def test_latteam_book_name_existing_edition_and_narration_languages() -> None:
@@ -64,7 +86,9 @@ def _video_meta(**values: object) -> Meta:
         "type": "WEBDL",
         "audio": "AAC 2.0",
         "tag": "-GROUP",
-        "mediainfo": {"media": {"track": [{"@type": "General"}, {"@type": "Video"}]}},
+        "mediainfo": {
+            "media": {"track": [{"@type": "General"}, {"@type": "Video"}]}
+        },
     }
     state.update(values)
     return Meta(state)
@@ -86,7 +110,11 @@ def test_latteam_ignores_non_mapping_and_commentary_tracks() -> None:
                     {"@type": "General"},
                     {"@type": "Video"},
                     "bad-track",
-                    {"@type": "Audio", "Language": "es", "Title": "Director Commentary"},
+                    {
+                        "@type": "Audio",
+                        "Language": "es",
+                        "Title": "Director Commentary",
+                    },
                 ]
             }
         },
@@ -104,7 +132,11 @@ def test_latteam_latino_audio_needs_no_cast_tag() -> None:
                 "track": [
                     {"@type": "General"},
                     {"@type": "Video"},
-                    {"@type": "Audio", "Language": "es-419", "Title": "Latino"},
+                    {
+                        "@type": "Audio",
+                        "Language": "es-419",
+                        "Title": "Latino",
+                    },
                 ]
             }
         },
@@ -123,7 +155,11 @@ def test_latteam_castilian_audio_adds_cast_tag() -> None:
                 "track": [
                     {"@type": "General"},
                     {"@type": "Video"},
-                    {"@type": "Audio", "Language": "es", "Title": "Castellano"},
+                    {
+                        "@type": "Audio",
+                        "Language": "es",
+                        "Title": "Castellano",
+                    },
                 ]
             }
         },
@@ -133,7 +169,21 @@ def test_latteam_castilian_audio_adds_cast_tag() -> None:
 
 def test_latteam_plain_ebook_and_marker_without_group_tag() -> None:
     tracker = _tracker()
-    assert asyncio.run(tracker.get_category_id(Meta(category="BOOK", type="EPUB", title="Book"))) == {"category_id": "18"}
-    name = asyncio.run(tracker.get_name(Meta(category="BOOK", type="EPUB", title="Book", author="Author", edition="")))["name"]
+    assert asyncio.run(
+        tracker.get_category_id(
+            Meta(category="BOOK", type="EPUB", title="Book")
+        )
+    ) == {"category_id": "18"}
+    name = asyncio.run(
+        tracker.get_name(
+            Meta(
+                category="BOOK",
+                type="EPUB",
+                title="Book",
+                author="Author",
+                edition="",
+            )
+        )
+    )["name"]
     assert name == "Author - Book EPUB"
     assert tracker._insert_marker("Movie", "", "[SUBS]") == "Movie [SUBS]"

@@ -11,7 +11,9 @@ from src.integrations.trackers.brasiltracker import BrasilTracker
 def test_get_tags_removes_accents_from_mapped_tags(tracker_class):
     tracker = object.__new__(tracker_class)
     tracker.main_tmdb_data = {}
-    meta = SimpleNamespace(category="MOVIE", genres=["Action", "Mystery"], keywords=[])
+    meta = SimpleNamespace(
+        category="MOVIE", genres=["Action", "Mystery"], keywords=[]
+    )
 
     tags = asyncio.run(tracker.get_tags(meta))
 

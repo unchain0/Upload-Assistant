@@ -114,7 +114,10 @@ def _configured_catalog() -> dict[str, Any]:
 def _meta(tmp_path: Path, category: str) -> Meta:
     release_dir = tmp_path / category.lower()
     release_dir.mkdir(parents=True, exist_ok=True)
-    media_path = release_dir / "Example.Release.2024.1080p.WEB-DL.DDP5.1.H.264-GROUP.mkv"
+    media_path = (
+        release_dir
+        / "Example.Release.2024.1080p.WEB-DL.DDP5.1.H.264-GROUP.mkv"
+    )
     media_path.write_bytes(b"media")
     meta = Meta(
         base_dir=str(tmp_path),
@@ -160,13 +163,29 @@ def _meta(tmp_path: Path, category: str) -> Meta:
             "media": {
                 "track": [
                     {"@type": "General", "Format": "Matroska"},
-                    {"@type": "Video", "Format": "AVC", "Height": "1080", "Language": "en"},
-                    {"@type": "Audio", "Format": "E-AC-3", "Channels": "6", "Language": "en"},
+                    {
+                        "@type": "Video",
+                        "Format": "AVC",
+                        "Height": "1080",
+                        "Language": "en",
+                    },
+                    {
+                        "@type": "Audio",
+                        "Format": "E-AC-3",
+                        "Channels": "6",
+                        "Language": "en",
+                    },
                     {"@type": "Text", "Format": "UTF-8", "Language": "en"},
                 ]
             }
         },
-        bdinfo={"size": 25.0, "playlist": "00000.MPLS", "video": [], "audio": [], "subtitles": []},
+        bdinfo={
+            "size": 25.0,
+            "playlist": "00000.MPLS",
+            "video": [],
+            "audio": [],
+            "subtitles": [],
+        },
         audio_languages=["English"],
         subtitle_languages=["English"],
         languages=["English"],
@@ -208,14 +227,27 @@ def _meta(tmp_path: Path, category: str) -> Meta:
                     "overview": "A representative localized overview.",
                     "poster_path": "/poster.jpg",
                     "genres": [{"id": 18, "name": "Drama"}],
-                    "videos": {"results": [{"site": "YouTube", "type": "Trailer", "key": "example"}]},
+                    "videos": {
+                        "results": [
+                            {
+                                "site": "YouTube",
+                                "type": "Trailer",
+                                "key": "example",
+                            }
+                        ]
+                    },
                 },
                 "season": {"name": "Season 1", "overview": "Season overview"},
-                "episode": {"name": "Episode 1", "overview": "Episode overview"},
+                "episode": {
+                    "name": "Episode 1",
+                    "overview": "Episode overview",
+                },
             }
             for language in ("pt-BR", "zh-cn", "en-US")
         },
-        localized_overviews={"brazilian": "A representative localized overview."},
+        localized_overviews={
+            "brazilian": "A representative localized overview."
+        },
     )
     temp_dir = tmp_path / "tmp" / str(meta.uuid)
     temp_dir.mkdir(parents=True, exist_ok=True)
@@ -245,12 +277,18 @@ def _meta(tmp_path: Path, category: str) -> Meta:
     return meta
 
 
-def _is_deterministic_method(name: str, _method: Callable[..., object]) -> bool:
+def _is_deterministic_method(
+    name: str, _method: Callable[..., object]
+) -> bool:
     return name in _DETERMINISTIC_METHODS
 
 
-def _literal_scenarios(function: Callable[..., object], limit: int = 32) -> list[tuple[dict[str, object], dict[str, object]]]:
-    return literal_branch_scenarios(function, Meta.__dataclass_fields__, limit=limit)
+def _literal_scenarios(
+    function: Callable[..., object], limit: int = 32
+) -> list[tuple[dict[str, object], dict[str, object]]]:
+    return literal_branch_scenarios(
+        function, Meta.__dataclass_fields__, limit=limit
+    )
 
 
 def _with_meta_updates(meta: Meta, updates: Mapping[str, object]) -> Meta:
@@ -260,7 +298,13 @@ def _with_meta_updates(meta: Meta, updates: Mapping[str, object]) -> Meta:
     return updated
 
 
-def _argument(name: str, annotation: object, meta: Meta, tmp_path: Path, overrides: Mapping[str, object] | None = None) -> object:
+def _argument(
+    name: str,
+    annotation: object,
+    meta: Meta,
+    tmp_path: Path,
+    overrides: Mapping[str, object] | None = None,
+) -> object:
     normalized = name.casefold().lstrip("_")
     if overrides and name in overrides and name not in _PROTECTED_ARGUMENTS:
         return _coerce_override(overrides[name], annotation, meta, tmp_path)
@@ -330,23 +374,35 @@ def _argument(name: str, annotation: object, meta: Meta, tmp_path: Path, overrid
     if origin is dict or annotation is Mapping:
         return {}
     if origin is tuple:
-        return tuple(_argument(normalized, item, meta, tmp_path) for item in args if item is not Ellipsis)
+        return tuple(
+            _argument(normalized, item, meta, tmp_path)
+            for item in args
+            if item is not Ellipsis
+        )
     if origin is not None and type(None) in args:
         concrete = next((item for item in args if item is not type(None)), str)
         return _argument(normalized, concrete, meta, tmp_path)
     return "example"
 
 
-_PROTECTED_ARGUMENTS = frozenset({"meta", "config", "response", "response_data", "payload", "data"})
+_PROTECTED_ARGUMENTS = frozenset(
+    {"meta", "config", "response", "response_data", "payload", "data"}
+)
 
 
-def _coerce_override(value: object, annotation: object, meta: Meta, tmp_path: Path) -> object:
+def _coerce_override(
+    value: object, annotation: object, meta: Meta, tmp_path: Path
+) -> object:
     origin = get_origin(annotation)
     args = get_args(annotation)
     if annotation is Meta:
         return meta
     if annotation is Path:
-        return value if isinstance(value, Path) else tmp_path / str(value or "sample.txt")
+        return (
+            value
+            if isinstance(value, Path)
+            else tmp_path / str(value or "sample.txt")
+        )
     if annotation is str:
         return str(value)
     if annotation is bool:
@@ -373,7 +429,9 @@ def _coerce_override(value: object, annotation: object, meta: Meta, tmp_path: Pa
     if origin is set:
         return value if isinstance(value, set) else {value}
     if origin is not None and type(None) in args and value is not None:
-        concrete = next((item for item in args if item is not type(None)), object)
+        concrete = next(
+            (item for item in args if item is not type(None)), object
+        )
         return _coerce_override(value, concrete, meta, tmp_path)
     return value
 
@@ -388,11 +446,16 @@ async def _invoke(
     args: list[object] = []
     kwargs: dict[str, object] = {}
     for parameter in signature.parameters.values():
-        if parameter.kind in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}:
+        if parameter.kind in {
+            inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.VAR_KEYWORD,
+        }:
             continue
         if parameter.default is not inspect.Parameter.empty:
             continue
-        value = _argument(parameter.name, parameter.annotation, meta, tmp_path, overrides)
+        value = _argument(
+            parameter.name, parameter.annotation, meta, tmp_path, overrides
+        )
         if parameter.kind is inspect.Parameter.KEYWORD_ONLY:
             kwargs[parameter.name] = value
         else:
@@ -403,7 +466,9 @@ async def _invoke(
     return result
 
 
-def test_tracker_catalog_deterministic_rules_accept_domain_fixtures(tmp_path: Path) -> None:
+def test_tracker_catalog_deterministic_rules_accept_domain_fixtures(
+    tmp_path: Path,
+) -> None:
     (tmp_path / "sample.txt").write_text("sample", encoding="utf-8")
     config = _configured_catalog()
     categories = ("MOVIE", "TV", "MUSIC", "BOOK", "GAME", "XXX")
@@ -414,13 +479,24 @@ def test_tracker_catalog_deterministic_rules_accept_domain_fixtures(tmp_path: Pa
     async def exercise() -> None:
         for tracker_name, tracker_class in sorted(tracker_class_map.items()):
             tracker = tracker_class(config)
-            for method_name, method in inspect.getmembers(tracker, predicate=callable):
+            for method_name, method in inspect.getmembers(
+                tracker, predicate=callable
+            ):
                 if not _is_deterministic_method(method_name, method):
                     continue
                 attempted.add((tracker_name, method_name))
                 method_categories = (
                     categories
-                    if method_name in {"get_additional_checks", "get_category", "get_category_id", "get_name", "get_type", "get_type_id", "rules"}
+                    if method_name
+                    in {
+                        "get_additional_checks",
+                        "get_category",
+                        "get_category_id",
+                        "get_name",
+                        "get_type",
+                        "get_type_id",
+                        "rules",
+                    }
                     else categories[:1]
                 )
                 for category in method_categories:
@@ -428,19 +504,29 @@ def test_tracker_catalog_deterministic_rules_accept_domain_fixtures(tmp_path: Pa
                     try:
                         await _invoke(method, meta, tmp_path)
                     except (KeyboardInterrupt, SystemExit) as error:
-                        process_terminations.append(f"{tracker_name}.{method_name}: {error}")
+                        process_terminations.append(
+                            f"{tracker_name}.{method_name}: {error}"
+                        )
                     except Exception as error:
                         # A representative fixture cannot satisfy every tracker
                         # invariant. Reaching the validation path is still part
                         # of the adapter contract; focused tests assert exact
                         # behavior for supported tracker/category combinations.
                         validation_failures.append(type(error).__name__)
-                for meta_updates, argument_overrides in _literal_scenarios(method):
-                    meta = _with_meta_updates(_meta(tmp_path, "MOVIE"), meta_updates)
+                for meta_updates, argument_overrides in _literal_scenarios(
+                    method
+                ):
+                    meta = _with_meta_updates(
+                        _meta(tmp_path, "MOVIE"), meta_updates
+                    )
                     try:
-                        await _invoke(method, meta, tmp_path, argument_overrides)
+                        await _invoke(
+                            method, meta, tmp_path, argument_overrides
+                        )
                     except (KeyboardInterrupt, SystemExit) as error:
-                        process_terminations.append(f"{tracker_name}.{method_name}: {error}")
+                        process_terminations.append(
+                            f"{tracker_name}.{method_name}: {error}"
+                        )
                     except Exception as error:
                         validation_failures.append(type(error).__name__)
 
@@ -461,9 +547,18 @@ class _FakeResponse:
 
     @property
     def status_code(self) -> int:
-        return {"success": 200, "empty": 200, "unauthorized": 401, "rate_limited": 429, "server_error": 503}[self.scenario]
+        return {
+            "success": 200,
+            "empty": 200,
+            "unauthorized": 401,
+            "rate_limited": 429,
+            "server_error": 503,
+        }[self.scenario]
 
-    headers: ClassVar[dict[str, str]] = {"content-type": "application/json", "content-disposition": 'attachment; filename="result.torrent"'}
+    headers: ClassVar[dict[str, str]] = {
+        "content-type": "application/json",
+        "content-disposition": 'attachment; filename="result.torrent"',
+    }
     content = b"d4:infod4:name4:testee"
     cookies: ClassVar[_FakeCookies] = _FakeCookies(session="test-session")
 
@@ -478,13 +573,38 @@ class _FakeResponse:
 
     def json(self) -> dict[str, Any]:
         if self.scenario == "empty":
-            return {"success": True, "status": "success", "data": [], "results": [], "items": [], "torrents": []}
+            return {
+                "success": True,
+                "status": "success",
+                "data": [],
+                "results": [],
+                "items": [],
+                "torrents": [],
+            }
         if self.scenario == "unauthorized":
-            return {"success": False, "status": "error", "status_code": 401, "message": "invalid credentials", "data": []}
+            return {
+                "success": False,
+                "status": "error",
+                "status_code": 401,
+                "message": "invalid credentials",
+                "data": [],
+            }
         if self.scenario == "rate_limited":
-            return {"success": False, "status": "error", "status_code": 429, "message": "rate limit reached", "data": []}
+            return {
+                "success": False,
+                "status": "error",
+                "status_code": 429,
+                "message": "rate limit reached",
+                "data": [],
+            }
         if self.scenario == "server_error":
-            return {"success": False, "status": "error", "status_code": 503, "message": "service unavailable", "data": []}
+            return {
+                "success": False,
+                "status": "error",
+                "status_code": 503,
+                "message": "service unavailable",
+                "data": [],
+            }
         attributes = {
             "id": 1,
             "name": "Example Release 2024 1080p WEB-DL",
@@ -571,7 +691,9 @@ class _FakeAsyncClient:
     async def delete(self, *_args: object, **_kwargs: object) -> _FakeResponse:
         return _FakeResponse()
 
-    async def request(self, *_args: object, **_kwargs: object) -> _FakeResponse:
+    async def request(
+        self, *_args: object, **_kwargs: object
+    ) -> _FakeResponse:
         return _FakeResponse()
 
     def stream(self, *_args: object, **_kwargs: object) -> _FakeResponse:
@@ -614,7 +736,9 @@ class _FakeSession:
 
 
 @pytest.mark.parametrize("tracker_name", sorted(tracker_class_map))
-def test_tracker_effect_boundary_is_exercised_with_fakes(tracker_name: str, tmp_path: Path, monkeypatch: Any) -> None:
+def test_tracker_effect_boundary_is_exercised_with_fakes(
+    tracker_name: str, tmp_path: Path, monkeypatch: Any
+) -> None:
     """Smoke one tracker's effectful methods without touching a real service."""
 
     config = _configured_catalog()
@@ -635,9 +759,15 @@ def test_tracker_effect_boundary_is_exercised_with_fakes(tracker_name: str, tmp_
     monkeypatch.setattr(requests, "Session", _FakeSession)
     monkeypatch.setattr(requests, "get", _FakeSession().get)
     monkeypatch.setattr(requests, "post", _FakeSession().post)
-    monkeypatch.setattr(cloudscraper, "create_scraper", lambda *_args, **_kwargs: _FakeSession())
+    monkeypatch.setattr(
+        cloudscraper,
+        "create_scraper",
+        lambda *_args, **_kwargs: _FakeSession(),
+    )
 
-    async def no_sleep(_delay: float = 0, *_args: object, **_kwargs: object) -> None:
+    async def no_sleep(
+        _delay: float = 0, *_args: object, **_kwargs: object
+    ) -> None:
         return None
 
     async def affirmative_prompt(*_args: object, **_kwargs: object) -> bool:
@@ -646,7 +776,11 @@ def test_tracker_effect_boundary_is_exercised_with_fakes(tracker_name: str, tmp_
     monkeypatch.setattr(asyncio, "sleep", no_sleep)
     monkeypatch.setattr("builtins.input", lambda *_args, **_kwargs: "1")
     monkeypatch.setattr(cli_ui, "ask_yes_no", lambda *_args, **_kwargs: True)
-    monkeypatch.setattr(cli_ui, "ask_choice", lambda _message, choices, **_kwargs: next(iter(choices)))
+    monkeypatch.setattr(
+        cli_ui,
+        "ask_choice",
+        lambda _message, choices, **_kwargs: next(iter(choices)),
+    )
     monkeypatch.setattr(cli_ui, "ask_string", lambda *_args, **_kwargs: "1")
 
     excluded = _DETERMINISTIC_METHODS | {
@@ -675,7 +809,13 @@ def test_tracker_effect_boundary_is_exercised_with_fakes(tracker_name: str, tmp_
         "__subclasshook__",
     }
     categories = ("MOVIE", "TV", "MUSIC", "BOOK", "GAME", "XXX")
-    scenarios = ("success", "empty", "unauthorized", "rate_limited", "server_error")
+    scenarios = (
+        "success",
+        "empty",
+        "unauthorized",
+        "rate_limited",
+        "server_error",
+    )
     attempted: set[str] = set()
     process_terminations: list[str] = []
     validation_failures: list[str] = []
@@ -695,53 +835,108 @@ def test_tracker_effect_boundary_is_exercised_with_fakes(tracker_name: str, tmp_
                 monkeypatch.setattr(module, attribute, replacement)
 
         tracker = tracker_class(config)
-        supported = {str(value).upper() for value in getattr(tracker, "supported_categories", ()) or ()}
-        for method_name, method in inspect.getmembers(tracker, predicate=callable):
+        supported = {
+            str(value).upper()
+            for value in getattr(tracker, "supported_categories", ()) or ()
+        }
+        for method_name, method in inspect.getmembers(
+            tracker, predicate=callable
+        ):
             if method_name.startswith("__") or method_name in excluded:
                 continue
             attempted.add(method_name)
             effect_scenarios = (
                 scenarios
-                if method_name in {"upload", "search_existing", "validate_credentials", "get_requests", "api_test", "login", "download_new_torrent"}
+                if method_name
+                in {
+                    "upload",
+                    "search_existing",
+                    "validate_credentials",
+                    "get_requests",
+                    "api_test",
+                    "login",
+                    "download_new_torrent",
+                }
                 else ("success", "empty")
             )
-            eligible_categories = [category for category in categories if not supported or category in supported]
+            eligible_categories = [
+                category
+                for category in categories
+                if not supported or category in supported
+            ]
             if not eligible_categories:
                 continue
             for scenario in effect_scenarios:
                 _FakeResponse.scenario = scenario
                 for category in eligible_categories:
                     release = _meta(tmp_path, category)
-                    tracker_temp = Path(release.base_dir) / "tmp" / str(release.uuid)
-                    (tracker_temp / f"[{tracker_name}]DESCRIPTION.txt").write_text("[b]Example description[/b]", encoding="utf-8")
-                    (tracker_temp / f"[{tracker_name}]MEDIAINFO.txt").write_text("General\nFormat : Matroska", encoding="utf-8")
-                    release.type = {"MOVIE": "REMUX", "TV": "WEBDL", "MUSIC": "FLAC", "BOOK": "M4B", "GAME": "ISO", "XXX": "WEBDL"}[category]
-                    release.resolution = "2160p" if category in {"MOVIE", "XXX"} else "1080p"
-                    release.is_disc = "BDMV" if category == "MOVIE" and scenario == "empty" else ""
+                    tracker_temp = (
+                        Path(release.base_dir) / "tmp" / str(release.uuid)
+                    )
+                    (
+                        tracker_temp / f"[{tracker_name}]DESCRIPTION.txt"
+                    ).write_text(
+                        "[b]Example description[/b]", encoding="utf-8"
+                    )
+                    (
+                        tracker_temp / f"[{tracker_name}]MEDIAINFO.txt"
+                    ).write_text(
+                        "General\nFormat : Matroska", encoding="utf-8"
+                    )
+                    release.type = {
+                        "MOVIE": "REMUX",
+                        "TV": "WEBDL",
+                        "MUSIC": "FLAC",
+                        "BOOK": "M4B",
+                        "GAME": "ISO",
+                        "XXX": "WEBDL",
+                    }[category]
+                    release.resolution = (
+                        "2160p" if category in {"MOVIE", "XXX"} else "1080p"
+                    )
+                    release.is_disc = (
+                        "BDMV"
+                        if category == "MOVIE" and scenario == "empty"
+                        else ""
+                    )
                     release.anime = category == "TV" and scenario == "empty"
                     try:
                         await _invoke(method, release, tmp_path)
                     except (KeyboardInterrupt, SystemExit) as error:
-                        process_terminations.append(f"{method_name}:{type(error).__name__}")
+                        process_terminations.append(
+                            f"{method_name}:{type(error).__name__}"
+                        )
                     except Exception as error:
                         # Focused tests own provider-specific validation. Recording
                         # the semantic rejection keeps this smoke contract explicit
                         # without treating expected tracker policy failures as bugs.
-                        validation_failures.append(f"{method_name}:{type(error).__name__}")
+                        validation_failures.append(
+                            f"{method_name}:{type(error).__name__}"
+                        )
                     finally:
                         # Several legacy adapters use chdir while building payloads.
                         # Restore the repository before pytest removes this case's
                         # temporary directory so the next fixture remains valid.
                         os.chdir(repository_cwd)
             _FakeResponse.scenario = "success"
-            for meta_updates, argument_overrides in _literal_scenarios(method, limit=100):
-                release = _with_meta_updates(_meta(tmp_path, eligible_categories[0]), meta_updates)
+            for meta_updates, argument_overrides in _literal_scenarios(
+                method, limit=100
+            ):
+                release = _with_meta_updates(
+                    _meta(tmp_path, eligible_categories[0]), meta_updates
+                )
                 try:
-                    await _invoke(method, release, tmp_path, argument_overrides)
+                    await _invoke(
+                        method, release, tmp_path, argument_overrides
+                    )
                 except (KeyboardInterrupt, SystemExit) as error:
-                    process_terminations.append(f"{method_name}:{type(error).__name__}")
+                    process_terminations.append(
+                        f"{method_name}:{type(error).__name__}"
+                    )
                 except Exception as error:
-                    validation_failures.append(f"{method_name}:{type(error).__name__}")
+                    validation_failures.append(
+                        f"{method_name}:{type(error).__name__}"
+                    )
                 finally:
                     os.chdir(repository_cwd)
 
@@ -764,7 +959,9 @@ def test_tracker_private_helpers_use_domain_fixtures_without_terminating(
     config = _configured_catalog()
     repository_cwd = Path.cwd()
 
-    async def no_sleep(_delay: float = 0, *_args: object, **_kwargs: object) -> None:
+    async def no_sleep(
+        _delay: float = 0, *_args: object, **_kwargs: object
+    ) -> None:
         return None
 
     def prompt_value(message: object = "", choices: object = None) -> object:
@@ -789,7 +986,9 @@ def test_tracker_private_helpers_use_domain_fixtures_without_terminating(
             return "Example Person"
         return "1"
 
-    async def prompt_result(callback: Any, *args: object, **kwargs: object) -> object:
+    async def prompt_result(
+        callback: Any, *args: object, **kwargs: object
+    ) -> object:
         name = getattr(callback, "__name__", "")
         choices = kwargs.get("choices")
         message = args[0] if args else kwargs.get("message", "")
@@ -803,12 +1002,22 @@ def test_tracker_private_helpers_use_domain_fixtures_without_terminating(
     monkeypatch.setattr(requests, "Session", _FakeSession)
     monkeypatch.setattr(requests, "get", _FakeSession().get)
     monkeypatch.setattr(requests, "post", _FakeSession().post)
-    monkeypatch.setattr(cloudscraper, "create_scraper", lambda *_args, **_kwargs: _FakeSession())
+    monkeypatch.setattr(
+        cloudscraper,
+        "create_scraper",
+        lambda *_args, **_kwargs: _FakeSession(),
+    )
     monkeypatch.setattr(asyncio, "sleep", no_sleep)
     monkeypatch.setattr("builtins.input", lambda *_args, **_kwargs: "1")
     monkeypatch.setattr(cli_ui, "ask_yes_no", lambda *_args, **_kwargs: True)
-    monkeypatch.setattr(cli_ui, "ask_choice", lambda message, choices, **_kwargs: prompt_value(message, choices))
-    monkeypatch.setattr(cli_ui, "ask_string", lambda message, **_kwargs: prompt_value(message))
+    monkeypatch.setattr(
+        cli_ui,
+        "ask_choice",
+        lambda message, choices, **_kwargs: prompt_value(message, choices),
+    )
+    monkeypatch.setattr(
+        cli_ui, "ask_string", lambda message, **_kwargs: prompt_value(message)
+    )
 
     attempted: set[str] = set()
     terminations: list[str] = []
@@ -819,13 +1028,21 @@ def test_tracker_private_helpers_use_domain_fixtures_without_terminating(
         module = sys.modules[tracker_class.__module__]
         if hasattr(module, "prompt_in_thread"):
             monkeypatch.setattr(module, "prompt_in_thread", prompt_result)
-        for attribute, replacement in (("AsyncClient", _FakeAsyncClient), ("Client", _FakeSession), ("Session", _FakeSession)):
+        for attribute, replacement in (
+            ("AsyncClient", _FakeAsyncClient),
+            ("Client", _FakeSession),
+            ("Session", _FakeSession),
+        ):
             if hasattr(module, attribute):
                 monkeypatch.setattr(module, attribute, replacement)
 
         tracker = tracker_class(config)
         for method_name, static_member in inspect.getmembers_static(tracker):
-            if not method_name.startswith("_") or method_name.startswith("__") or not callable(static_member):
+            if (
+                not method_name.startswith("_")
+                or method_name.startswith("__")
+                or not callable(static_member)
+            ):
                 continue
             try:
                 method = getattr(tracker, method_name)
@@ -833,22 +1050,37 @@ def test_tracker_private_helpers_use_domain_fixtures_without_terminating(
                 rejections.append(f"{method_name}:{type(error).__name__}")
                 continue
             attempted.add(method_name)
-            supported = tuple(str(value).upper() for value in getattr(tracker, "supported_categories", ()) or ())
+            supported = tuple(
+                str(value).upper()
+                for value in getattr(tracker, "supported_categories", ()) or ()
+            )
             category = supported[0] if supported else "MOVIE"
             release = _meta(tmp_path, category)
             tracker_temp = Path(release.base_dir) / "tmp" / str(release.uuid)
-            (tracker_temp / f"[{tracker_name}]DESCRIPTION.txt").write_text("[b]Example description[/b]", encoding="utf-8")
-            (tracker_temp / f"[{tracker_name}]MEDIAINFO.txt").write_text("General\nFormat : Matroska", encoding="utf-8")
+            (tracker_temp / f"[{tracker_name}]DESCRIPTION.txt").write_text(
+                "[b]Example description[/b]", encoding="utf-8"
+            )
+            (tracker_temp / f"[{tracker_name}]MEDIAINFO.txt").write_text(
+                "General\nFormat : Matroska", encoding="utf-8"
+            )
             release.type = "DISC" if category == "MOVIE" else "WEBDL"
-            release.resolution = "2160p" if category in {"MOVIE", "TV", "XXX"} else "OTHER"
+            release.resolution = (
+                "2160p" if category in {"MOVIE", "TV", "XXX"} else "OTHER"
+            )
             release.is_disc = "BDMV" if release.type == "DISC" else ""
             scenarios = [({}, {}), *_literal_scenarios(method, limit=24)]
             for meta_updates, argument_overrides in scenarios:
-                scenario_release = _with_meta_updates(release.copy(), meta_updates)
+                scenario_release = _with_meta_updates(
+                    release.copy(), meta_updates
+                )
                 try:
-                    await _invoke(method, scenario_release, tmp_path, argument_overrides)
+                    await _invoke(
+                        method, scenario_release, tmp_path, argument_overrides
+                    )
                 except (KeyboardInterrupt, SystemExit) as error:
-                    terminations.append(f"{method_name}:{type(error).__name__}")
+                    terminations.append(
+                        f"{method_name}:{type(error).__name__}"
+                    )
                 except Exception as error:
                     rejections.append(f"{method_name}:{type(error).__name__}")
                 finally:

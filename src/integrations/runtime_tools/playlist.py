@@ -49,7 +49,9 @@ class MplsParser:
         """
         pos = self._get_pos()
         if pos != 0:
-            raise ValueError("MoviePlaylist: You should call it at the start of the mpls file!")
+            raise ValueError(
+                "MoviePlaylist: You should call it at the start of the mpls file!"
+            )
 
         data: dict[str, Any] = {
             "type_indicator": self.mpls.read(4).decode("ascii"),
@@ -77,7 +79,9 @@ class MplsParser:
         }
 
         if length != 0:
-            data["clip_information_filename"] = self.mpls.read(5).decode("utf-8")
+            data["clip_information_filename"] = self.mpls.read(5).decode(
+                "utf-8"
+            )
             self.mpls.read(4)  # clip_codec_identifier
             self.mpls.read(2)  # misc_flags_1
             self.mpls.read(1)  # ref_to_stcid
@@ -106,7 +110,9 @@ class MplsParser:
             self.mpls.read(2)  # reserved
             data["nb_play_items"] = self._unpack_byte(2)[0]
             data["nb_sub_paths"] = self._unpack_byte(2)[0]
-            data["play_items"] = [self._load_play_item() for _ in range(data["nb_play_items"])]
+            data["play_items"] = [
+                self._load_play_item() for _ in range(data["nb_play_items"])
+            ]
 
         self.mpls.seek(pos + length + 4)
         return self._as_namespace(data)

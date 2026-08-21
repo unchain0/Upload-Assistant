@@ -41,7 +41,13 @@ class _Uploader:
         )
 
 
-def _meta(tmp_path: Path, comparison: Path, *, index: str | int | None = None, debug: bool = False) -> Meta:
+def _meta(
+    tmp_path: Path,
+    comparison: Path,
+    *,
+    index: str | int | None = None,
+    debug: bool = False,
+) -> Meta:
     state = tmp_path / "tmp" / "comparison"
     state.mkdir(parents=True, exist_ok=True)
     return Meta(
@@ -54,8 +60,12 @@ def _meta(tmp_path: Path, comparison: Path, *, index: str | int | None = None, d
     )
 
 
-def _manager(meta: Meta, config: dict[str, Any] | None = None) -> tuple[ComparisonManager, _Uploader]:
-    manager = ComparisonManager(meta, config or {"DEFAULT": {"img_host_1": "imgbb"}})
+def _manager(
+    meta: Meta, config: dict[str, Any] | None = None
+) -> tuple[ComparisonManager, _Uploader]:
+    manager = ComparisonManager(
+        meta, config or {"DEFAULT": {"img_host_1": "imgbb"}}
+    )
     uploader = _Uploader()
     manager.uploadscreens_manager = uploader  # type: ignore[assignment]
     return manager, uploader
@@ -77,11 +87,23 @@ def test_constructor_and_missing_comparison_paths(tmp_path: Path) -> None:
     assert asyncio.run(manager.add_comparison()) == []
 
 
-def test_saved_dict_loads_selected_group_and_deduplicates(tmp_path: Path) -> None:
+def test_saved_dict_loads_selected_group_and_deduplicates(
+    tmp_path: Path,
+) -> None:
     comparison = tmp_path / "comparison"
     comparison.mkdir()
-    selected = {"img_url": "https://img/one", "raw_url": "https://raw/one", "web_url": "https://web/one"}
-    data = {"0": {"files": ["1-0-Source.png"], "urls": [selected], "name": "Source"}}
+    selected = {
+        "img_url": "https://img/one",
+        "raw_url": "https://raw/one",
+        "web_url": "https://web/one",
+    }
+    data = {
+        "0": {
+            "files": ["1-0-Source.png"],
+            "urls": [selected],
+            "name": "Source",
+        }
+    }
     _saved_path(tmp_path).write_text(json.dumps(data), encoding="utf-8")
     meta = _meta(tmp_path, comparison, index="0", debug=True)
     meta.image_list = [selected]
@@ -97,21 +119,35 @@ def test_saved_dict_loads_selected_group_and_deduplicates(tmp_path: Path) -> Non
     assert meta.image_list == []
 
 
-def test_saved_list_handles_valid_invalid_and_out_of_range_indices(tmp_path: Path) -> None:
+def test_saved_list_handles_valid_invalid_and_out_of_range_indices(
+    tmp_path: Path,
+) -> None:
     comparison = tmp_path / "comparison"
     comparison.mkdir()
-    selected = {"img_url": "https://img/one", "raw_url": "https://raw/one", "web_url": "https://web/one"}
-    data = [{"files": ["1-0-Source.png"], "urls": [selected], "name": "Source"}]
+    selected = {
+        "img_url": "https://img/one",
+        "raw_url": "https://raw/one",
+        "web_url": "https://web/one",
+    }
+    data = [
+        {"files": ["1-0-Source.png"], "urls": [selected], "name": "Source"}
+    ]
     _saved_path(tmp_path).write_text(json.dumps(data), encoding="utf-8")
 
-    for index, expected_images in ((0, [selected]), (5, []), ("not-an-int", [])):
+    for index, expected_images in (
+        (0, [selected]),
+        (5, []),
+        ("not-an-int", []),
+    ):
         meta = _meta(tmp_path, comparison, index=index, debug=True)
         manager, _ = _manager(meta)
         assert asyncio.run(manager.add_comparison()) == data
         assert meta.image_list == expected_images
 
 
-def test_invalid_saved_formats_fall_back_and_no_hosts_is_semantic_error(tmp_path: Path) -> None:
+def test_invalid_saved_formats_fall_back_and_no_hosts_is_semantic_error(
+    tmp_path: Path,
+) -> None:
     comparison = tmp_path / "comparison"
     comparison.mkdir()
     path = _saved_path(tmp_path)
@@ -122,16 +158,30 @@ def test_invalid_saved_formats_fall_back_and_no_hosts_is_semantic_error(tmp_path
             asyncio.run(manager.add_comparison())
 
 
-def test_generates_uploads_prompts_saves_and_selects_group(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_generates_uploads_prompts_saves_and_selects_group(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     comparison = tmp_path / "comparison"
     comparison.mkdir()
-    for name in ("2-0-Source.png", "1-0-Source.png", "1-1-Encode.png", "ignored.jpg", "bad.png"):
+    for name in (
+        "2-0-Source.png",
+        "1-0-Source.png",
+        "1-1-Encode.png",
+        "ignored.jpg",
+        "bad.png",
+    ):
         (comparison / name).write_bytes(b"image")
 
     answers = iter(("invalid", "1"))
-    monkeypatch.setattr(comparison_service.cli_ui, "ask_string", lambda *_args, **_kwargs: next(answers))
+    monkeypatch.setattr(
+        comparison_service.cli_ui,
+        "ask_string",
+        lambda *_args, **_kwargs: next(answers),
+    )
     meta = _meta(tmp_path, comparison, index=None, debug=True)
-    manager, uploader = _manager(meta, {"DEFAULT": {"img_host_2": 123, "img_host_bad": "ignored"}})
+    manager, uploader = _manager(
+        meta, {"DEFAULT": {"img_host_2": 123, "img_host_bad": "ignored"}}
+    )
 
     result = asyncio.run(manager.add_comparison())
 
@@ -148,7 +198,9 @@ def test_generates_uploads_prompts_saves_and_selects_group(tmp_path: Path, monke
     assert saved == result
 
 
-def test_save_failure_is_non_fatal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_save_failure_is_non_fatal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     comparison = tmp_path / "comparison"
     comparison.mkdir()
     meta = _meta(tmp_path, comparison, index="0")

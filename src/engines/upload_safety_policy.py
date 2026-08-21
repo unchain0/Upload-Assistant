@@ -4,9 +4,14 @@ from pathlib import PurePath, PurePosixPath, PureWindowsPath
 from typing import Any
 
 from src.domain_models.release import Meta
-from src.domain_models.release_group import release_group_has_episode_syntax, release_group_name
+from src.domain_models.release_group import (
+    release_group_has_episode_syntax,
+    release_group_name,
+)
 
-_CJK_PATTERN = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+_CJK_PATTERN = re.compile(
+    r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]"
+)
 
 
 def _has_whitespace(value: str) -> bool:
@@ -37,7 +42,9 @@ def _filelist_items(value: Any) -> list[Any]:
     return list(value) if isinstance(value, (list, tuple, set)) else []
 
 
-def _inspect_content_item(suspicious: list[str], root: PurePath | None, value: Any) -> None:
+def _inspect_content_item(
+    suspicious: list[str], root: PurePath | None, value: Any
+) -> None:
     text = str(value or "").strip()
     if not text:
         return
@@ -46,7 +53,9 @@ def _inspect_content_item(suspicious: list[str], root: PurePath | None, value: A
     _remember_path_parts(suspicious, parts)
 
 
-def _relative_content_parts(root: PurePath | None, path: PurePath) -> tuple[str, ...]:
+def _relative_content_parts(
+    root: PurePath | None, path: PurePath
+) -> tuple[str, ...]:
     if not path.is_absolute():
         return path.parts
     if root is None:
@@ -57,14 +66,20 @@ def _relative_content_parts(root: PurePath | None, path: PurePath) -> tuple[str,
         return (path.name,)
 
 
-def _remember_path_parts(suspicious: list[str], parts: tuple[str, ...]) -> None:
+def _remember_path_parts(
+    suspicious: list[str], parts: tuple[str, ...]
+) -> None:
     for part in parts:
         if _suspicious_path_part(part, suspicious):
             suspicious.append(part)
 
 
 def _suspicious_path_part(part: str, suspicious: list[str]) -> bool:
-    return part not in {"", ".", ".."} and _has_whitespace(part) and part not in suspicious
+    return (
+        part not in {"", ".", ".."}
+        and _has_whitespace(part)
+        and part not in suspicious
+    )
 
 
 def blocks_automatic_upload(meta: Meta) -> bool:
@@ -74,13 +89,21 @@ def blocks_automatic_upload(meta: Meta) -> bool:
 def invalid_release_group_tag(meta: Meta) -> str | None:
     """Return the invalid group name when a tag is season/episode syntax."""
     group = release_group_name(meta.tag)
-    return group.strip(" _-") if group and release_group_has_episode_syntax(group) else None
+    return (
+        group.strip(" _-")
+        if group and release_group_has_episode_syntax(group)
+        else None
+    )
 
 
 def book_metadata_cjk_fields(meta: Meta) -> list[str]:
     if str(meta.category or "").upper() != "BOOK":
         return []
-    return [field for field, value in _book_metadata_values(meta).items() if _CJK_PATTERN.search(value)]
+    return [
+        field
+        for field, value in _book_metadata_values(meta).items()
+        if _CJK_PATTERN.search(value)
+    ]
 
 
 def _book_metadata_values(meta: Meta) -> dict[str, str]:

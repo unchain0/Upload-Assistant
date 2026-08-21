@@ -87,13 +87,23 @@ class AsianCinema(UNIT3D):
         ]
 
         origin_country = meta.origin_country
-        if origin_country and any(country not in asia for country in origin_country):
-            logger.info(f"{self.tracker}: Origin country is not Asian, skipping upload...")
+        if origin_country and any(
+            country not in asia for country in origin_country
+        ):
+            logger.info(
+                f"{self.tracker}: Origin country is not Asian, skipping upload..."
+            )
             return False
 
         return True
 
-    async def get_resolution_id(self, meta: Meta, resolution: str = "", reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_resolution_id(
+        self,
+        meta: Meta,
+        resolution: str = "",
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         resolution_id = {
             "2160p": "1",
             "1080p": "2",
@@ -173,13 +183,20 @@ class AsianCinema(UNIT3D):
         if aka != "":
             # ugly fix to remove the extra space in the title
             aka = aka + " "
-            name = name.replace(aka, f" / {original_title} {chr(int('202A', 16))}")
+            name = name.replace(
+                aka, f" / {original_title} {chr(int('202A', 16))}"
+            )
         elif aka == "":
             if meta.title != original_title:
                 # name = f'{name[:name.find(year)]}/ {original_title} {chr(int("202A", 16))}{name[name.find(year):]}'
-                name = name.replace(meta.title, f"{meta.title} / {original_title} {chr(int('202A', 16))}")
+                name = name.replace(
+                    meta.title,
+                    f"{meta.title} / {original_title} {chr(int('202A', 16))}",
+                )
         if "AAC" in audio:
-            name = name.replace(audio.strip().replace("  ", " "), audio.replace("AAC ", "AAC"))
+            name = name.replace(
+                audio.strip().replace("  ", " "), audio.replace("AAC ", "AAC")
+            )
         name = name.replace("DD+ ", "DD+")
         name = name.replace("UHD BluRay REMUX", "Remux")
         name = name.replace("BluRay REMUX", "Remux")

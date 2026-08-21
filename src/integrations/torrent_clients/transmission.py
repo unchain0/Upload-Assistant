@@ -11,7 +11,15 @@ from src.integrations.torrent_clients.path_utils import map_save_path
 
 
 class TransmissionClientMixin:
-    def transmission(self, path: str, torrent: Torrent, local_path: str, remote_path: str, client: dict[str, Any], meta: Meta) -> None:
+    def transmission(
+        self,
+        path: str,
+        torrent: Torrent,
+        local_path: str,
+        remote_path: str,
+        client: dict[str, Any],
+        meta: Meta,
+    ) -> None:
         try:
             tr_client = transmission_rpc.Client(
                 protocol=client["transmission_protocol"],
@@ -27,7 +35,9 @@ class TransmissionClientMixin:
 
         logger.info("Connected to Transmission")
         # Remote path mount
-        path = map_save_path(path, local_path, remote_path, trailing_slash=False)
+        path = map_save_path(
+            path, local_path, remote_path, trailing_slash=False
+        )
 
         path = Path(path).parent.as_posix()
 
@@ -38,6 +48,8 @@ class TransmissionClientMixin:
         else:
             label = None
 
-        tr_client.add_torrent(torrent=torrent.dump(), download_dir=path, labels=label)
+        tr_client.add_torrent(
+            torrent=torrent.dump(), download_dir=path, labels=label
+        )
 
         logger.debug(f"[cyan]Path: {path}")

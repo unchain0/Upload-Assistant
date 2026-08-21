@@ -11,7 +11,9 @@ from src.domain_models.release import Meta
 from src.integrations.media.disc_parser import DiscParse
 from src.integrations.observability.runtime_support import logger
 from src.integrations.runtime_tools.bdinfo import BDInfoBinaryManager
-from src.integrations.runtime_tools.dvd_media_info import download_dvd_mediainfo
+from src.integrations.runtime_tools.dvd_media_info import (
+    download_dvd_mediainfo,
+)
 
 Disc = dict[str, Any]
 
@@ -31,32 +33,77 @@ class DiscInfoManager:
             for each in directories:
                 if each.upper() == "BDMV":  # BDMVs
                     is_disc = "BDMV"
-                    discs.append({"path": f"{path}/{each}", "name": Path(path).name, "type": "BDMV", "summary": "", "bdinfo": ""})
+                    discs.append(
+                        {
+                            "path": f"{path}/{each}",
+                            "name": Path(path).name,
+                            "type": "BDMV",
+                            "summary": "",
+                            "bdinfo": "",
+                        }
+                    )
                 elif each == "VIDEO_TS":  # DVDs
                     is_disc = "DVD"
-                    discs.append({"path": f"{path}/{each}", "name": Path(path).name, "type": "DVD", "vob_mi": "", "ifo_mi": "", "main_set": [], "size": ""})
+                    discs.append(
+                        {
+                            "path": f"{path}/{each}",
+                            "name": Path(path).name,
+                            "type": "DVD",
+                            "vob_mi": "",
+                            "ifo_mi": "",
+                            "main_set": [],
+                            "size": "",
+                        }
+                    )
                 elif each == "HVDVD_TS":
                     is_disc = "HDDVD"
-                    discs.append({"path": f"{path}/{each}", "name": Path(path).name, "type": "HDDVD", "evo_mi": "", "largest_evo": ""})
+                    discs.append(
+                        {
+                            "path": f"{path}/{each}",
+                            "name": Path(path).name,
+                            "type": "HDDVD",
+                            "evo_mi": "",
+                            "largest_evo": "",
+                        }
+                    )
 
         if is_disc == "BDMV":
             if meta.site_check:
-                logger.info("BDMV disc checking is not supported in site_check mode, yet.", extra={"markup": False})
-                raise RuntimeError("BDMV disc checking is not supported in site_check mode.")
+                logger.info(
+                    "BDMV disc checking is not supported in site_check mode, yet.",
+                    extra={"markup": False},
+                )
+                raise RuntimeError(
+                    "BDMV disc checking is not supported in site_check mode."
+                )
             # Ensure bdinfo binary is present for BDMV processing
             try:
-                await BDInfoBinaryManager.ensure_bdinfo_binary(meta.base_dir, "v0.3.1")
+                await BDInfoBinaryManager.ensure_bdinfo_binary(
+                    meta.base_dir, "v0.3.1"
+                )
             except Exception as e:
-                logger.error(f"[red]Failed to ensure bdinfo binary: {e}[/red]", extra={"markup": False})
+                logger.error(
+                    f"[red]Failed to ensure bdinfo binary: {e}[/red]",
+                    extra={"markup": False},
+                )
                 raise
 
             if meta.edit is False:
-                discs, bdinfo = await self._parser.get_bdinfo(meta, discs, meta.uuid, meta.base_dir, meta.discs)
+                discs, bdinfo = await self._parser.get_bdinfo(
+                    meta, discs, meta.uuid, meta.base_dir, meta.discs
+                )
             else:
-                discs, bdinfo = await self._parser.get_bdinfo(meta, meta.discs, meta.uuid, meta.base_dir, meta.discs)
+                discs, bdinfo = await self._parser.get_bdinfo(
+                    meta, meta.discs, meta.uuid, meta.base_dir, meta.discs
+                )
         elif is_disc == "DVD":
             download_dvd_mediainfo(meta.base_dir)
-            discs = cast(list[Disc], await cast(Any, self._parser).get_dvdinfo(discs, base_dir=meta.base_dir))
+            discs = cast(
+                list[Disc],
+                await cast(Any, self._parser).get_dvdinfo(
+                    discs, base_dir=meta.base_dir
+                ),
+            )
         elif is_disc == "HDDVD":
             discs = await self._parser.get_hddvd_info(discs, meta)
             async with aiofiles.open(
@@ -70,7 +117,9 @@ class DiscInfoManager:
         discs = sorted(discs, key=lambda d: d["name"])
         return is_disc, videoloc, bdinfo, discs
 
-    async def get_dvd_size(self, discs: Iterable[Disc], manual_dvds: str | None) -> str:
+    async def get_dvd_size(
+        self, discs: Iterable[Disc], manual_dvds: str | None
+    ) -> str:
         sizes = [str(each["size"]) for each in discs]
         dvd_sizes: list[str] = []
 

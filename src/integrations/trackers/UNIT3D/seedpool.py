@@ -35,7 +35,13 @@ class Seedpool(UNIT3D):
         self.config: Config = config
         self.common = Common(config)
 
-    async def get_category_id(self, meta: Meta, category: str | None = None, reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_category_id(
+        self,
+        meta: Meta,
+        category: str | None = None,
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         category_id = {
             "MOVIE": "1",
             "TV": "2",
@@ -63,7 +69,9 @@ class Seedpool(UNIT3D):
             return {"category_id": "6"}
 
         # Sports
-        if category_name in {"MOVIE", "TV"} and self.contains_sports_patterns(release_title):
+        if category_name in {"MOVIE", "TV"} and self.contains_sports_patterns(
+            release_title
+        ):
             return {"category_id": "8"}
 
         return {"category_id": category_id.get(category_name, "0")}
@@ -94,9 +102,18 @@ class Seedpool(UNIT3D):
             r".*overtake.*",
         ]
 
-        return any(re.search(pattern, release_title, re.IGNORECASE) for pattern in patterns)
+        return any(
+            re.search(pattern, release_title, re.IGNORECASE)
+            for pattern in patterns
+        )
 
-    async def get_type_id(self, meta: Meta, type: str | None = None, reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_type_id(
+        self,
+        meta: Meta,
+        type: str | None = None,
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         type_id = {
             "DISC": "1",
             "REMUX": "2",
@@ -181,13 +198,22 @@ class Seedpool(UNIT3D):
         else:
             type_value = normalise(meta.type)
 
-        return {"type_id": type_id.get(type_value, "17" if meta.category in {"BOOK", "GAME", "MUSIC"} else "0")}
+        return {
+            "type_id": type_id.get(
+                type_value,
+                "17" if meta.category in {"BOOK", "GAME", "MUSIC"} else "0",
+            )
+        }
 
     async def get_name(self, meta: Meta) -> dict[str, str]:
         known_extensions = {".mkv", ".mp4", ".avi", ".ts"}
         if meta.scene:
             scene_name = meta.scene_name
-            name = scene_name if scene_name != "" else meta.basename_no_ext.replace(" ", ".")
+            name = (
+                scene_name
+                if scene_name != ""
+                else meta.basename_no_ext.replace(" ", ".")
+            )
         elif bool(meta.is_disc):
             name = meta.name.replace(" ", ".")
         else:
@@ -203,10 +229,23 @@ class Seedpool(UNIT3D):
 
     async def get_additional_checks(self, meta: Meta) -> bool:
         resolution = meta.resolution
-        if meta.category in {"MOVIE", "TV"} and resolution not in ["8640p", "4320p", "2160p", "1440p", "1080p", "1080i"]:
-            logger.info(f"{self.tracker}: [bold red]Only 1080 or higher resolutions allowed at {self.tracker}.[/bold red]")
-            if not meta.unattended or (bool(meta.unattended) and meta.unattended_confirm):
-                if cli_ui.ask_yes_no("Do you want to upload anyway?", default=False):
+        if meta.category in {"MOVIE", "TV"} and resolution not in [
+            "8640p",
+            "4320p",
+            "2160p",
+            "1440p",
+            "1080p",
+            "1080i",
+        ]:
+            logger.info(
+                f"{self.tracker}: [bold red]Only 1080 or higher resolutions allowed at {self.tracker}.[/bold red]"
+            )
+            if not meta.unattended or (
+                bool(meta.unattended) and meta.unattended_confirm
+            ):
+                if cli_ui.ask_yes_no(
+                    "Do you want to upload anyway?", default=False
+                ):
                     pass
                 else:
                     return False
@@ -218,13 +257,27 @@ class Seedpool(UNIT3D):
         keywords = [k.strip() for k in meta.keywords if k.strip()]
         combined_genres_val = meta.combined_genres
         if isinstance(combined_genres_val, str):
-            combined_genres = [g.strip() for g in combined_genres_val.split(",") if g.strip()]
+            combined_genres = [
+                g.strip() for g in combined_genres_val.split(",") if g.strip()
+            ]
         else:
-            combined_genres = [str(g) for g in cast(list[Any], combined_genres_val)]
-        if any(keyword.lower() in disallowed_keywords for keyword in keywords) or any(genre.lower() in disallowed_genres for genre in combined_genres):
-            if not meta.unattended or (bool(meta.unattended) and meta.unattended_confirm):
-                logger.info(f"{self.tracker}: [bold red]Porn/xxx is not allowed at {self.tracker}.[/bold red]")
-                if cli_ui.ask_yes_no("Do you want to upload anyway?", default=False):
+            combined_genres = [
+                str(g) for g in cast(list[Any], combined_genres_val)
+            ]
+        if any(
+            keyword.lower() in disallowed_keywords for keyword in keywords
+        ) or any(
+            genre.lower() in disallowed_genres for genre in combined_genres
+        ):
+            if not meta.unattended or (
+                bool(meta.unattended) and meta.unattended_confirm
+            ):
+                logger.info(
+                    f"{self.tracker}: [bold red]Porn/xxx is not allowed at {self.tracker}.[/bold red]"
+                )
+                if cli_ui.ask_yes_no(
+                    "Do you want to upload anyway?", default=False
+                ):
                     pass
                 else:
                     return False

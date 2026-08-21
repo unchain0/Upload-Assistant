@@ -13,9 +13,13 @@ def _tracker() -> Torrenteros:
     return Torrenteros({"DEFAULT": {}, "TRACKERS": {"TORRENTEROS": {}}})
 
 
-def test_torrenteros_disc_audio_prompt_adds_selected_suffix(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_torrenteros_disc_audio_prompt_adds_selected_suffix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     tracker = _tracker()
-    monkeypatch.setattr(torrenteros_module.cli_ui, "ask_string", lambda *_args, **_kwargs: "2")
+    monkeypatch.setattr(
+        torrenteros_module.cli_ui, "ask_string", lambda *_args, **_kwargs: "2"
+    )
     meta = Meta(
         name_notag="Movie 1080p",
         tag="-GROUP",
@@ -28,9 +32,15 @@ def test_torrenteros_disc_audio_prompt_adds_selected_suffix(monkeypatch: pytest.
     assert tracker.build_name(meta) == "Movie 1080p Latino-GROUP"
 
 
-def test_torrenteros_disc_subtitle_prompt_defaults_to_castellano(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_torrenteros_disc_subtitle_prompt_defaults_to_castellano(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     tracker = _tracker()
-    monkeypatch.setattr(torrenteros_module.cli_ui, "ask_string", lambda *_args, **_kwargs: "invalid")
+    monkeypatch.setattr(
+        torrenteros_module.cli_ui,
+        "ask_string",
+        lambda *_args, **_kwargs: "invalid",
+    )
     meta = Meta(
         name_notag="Movie 1080p",
         tag="",
@@ -49,7 +59,9 @@ def test_torrenteros_file_audio_and_subtitle_detection() -> None:
         name_notag="Movie 1080p",
         tag="",
         is_disc="",
-        mediainfo={"media": {"track": [{"@type": "Audio", "Language": "es-MX"}]}},
+        mediainfo={
+            "media": {"track": [{"@type": "Audio", "Language": "es-MX"}]}
+        },
     )
     assert tracker.build_name(audio_meta) == "Movie 1080p Latino"
 
@@ -63,18 +75,29 @@ def test_torrenteros_file_audio_and_subtitle_detection() -> None:
 
 
 def test_torrenteros_media_tracks_rejects_non_list_payload() -> None:
-    assert Torrenteros._media_tracks(Meta(mediainfo={"media": {"track": "bad"}})) == []
+    assert (
+        Torrenteros._media_tracks(Meta(mediainfo={"media": {"track": "bad"}}))
+        == []
+    )
 
 
 def test_torrenteros_additional_checks_accept_spanish_audio() -> None:
     tracker = _tracker()
-    meta = Meta(language_checked=True, audio_languages=["Spanish"], subtitle_languages=[])
+    meta = Meta(
+        language_checked=True,
+        audio_languages=["Spanish"],
+        subtitle_languages=[],
+    )
     assert asyncio.run(tracker.get_additional_checks(meta))
 
 
-def test_torrenteros_additional_checks_subtitle_only_attended(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_torrenteros_additional_checks_subtitle_only_attended(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     tracker = _tracker()
-    monkeypatch.setattr(torrenteros_module.cli_ui, "ask_yes_no", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        torrenteros_module.cli_ui, "ask_yes_no", lambda *_args, **_kwargs: True
+    )
     meta = Meta(
         language_checked=True,
         audio_languages=[],
@@ -85,13 +108,19 @@ def test_torrenteros_additional_checks_subtitle_only_attended(monkeypatch: pytes
     assert asyncio.run(tracker.get_additional_checks(meta))
 
 
-def test_torrenteros_additional_checks_processes_missing_language_state(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_torrenteros_additional_checks_processes_missing_language_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     tracker = _tracker()
 
     async def process(meta: Meta, **_kwargs: object) -> None:
         meta.audio_languages = ["Spanish"]
         meta.language_checked = True
 
-    monkeypatch.setattr(torrenteros_module.languages_manager, "process_desc_language", process)
-    meta = Meta(language_checked=False, audio_languages=[], subtitle_languages=[])
+    monkeypatch.setattr(
+        torrenteros_module.languages_manager, "process_desc_language", process
+    )
+    meta = Meta(
+        language_checked=False, audio_languages=[], subtitle_languages=[]
+    )
     assert asyncio.run(tracker.get_additional_checks(meta))

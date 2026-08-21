@@ -10,7 +10,12 @@ import shutil
 from pathlib import Path
 
 from src.integrations.observability.console import logger
-from src.integrations.runtime_tools.download_integrity import download_bounded_asset_sync, promote_files_with_rollback, safe_extract_tar, verify_downloaded_asset
+from src.integrations.runtime_tools.download_integrity import (
+    download_bounded_asset_sync,
+    promote_files_with_rollback,
+    safe_extract_tar,
+    verify_downloaded_asset,
+)
 
 BDINFO_VERSION = "v0.3.1"
 BASE_RELEASE_URL = "https://github.com/autobrr/go-bdinfo/releases/download"
@@ -29,13 +34,19 @@ def secure_extract_tar(tar_path: Path, extract_to: Path) -> None:
         safe_extract_tar(tar_ref, extract_to)
 
 
-def download_bdinfo_for_docker(base_dir: Path = Path("/Upload-Assistant"), version: str = BDINFO_VERSION) -> str:
+def download_bdinfo_for_docker(
+    base_dir: Path = Path("/Upload-Assistant"), version: str = BDINFO_VERSION
+) -> str:
     system = platform.system().lower()
     machine = platform.machine().lower()
-    logger.info(f"System: {system}, Architecture: {machine}", extra={"markup": False})
+    logger.info(
+        f"System: {system}, Architecture: {machine}", extra={"markup": False}
+    )
 
     if system != "linux":
-        raise Exception(f"This script is only for Linux containers, got: {system}")
+        raise Exception(
+            f"This script is only for Linux containers, got: {system}"
+        )
 
     if machine in ("amd64", "x86_64"):
         asset = "linux_amd64.tar.gz"
@@ -55,12 +66,20 @@ def download_bdinfo_for_docker(base_dir: Path = Path("/Upload-Assistant"), versi
     binary_path = bin_dir / "bdinfo"
     version_path = bin_dir / version
 
-    if version_path.exists() and binary_path.exists() and os.access(binary_path, os.X_OK):
-        logger.info(f"bdinfo {version} already installed", extra={"markup": False})
+    if (
+        version_path.exists()
+        and binary_path.exists()
+        and os.access(binary_path, os.X_OK)
+    ):
+        logger.info(
+            f"bdinfo {version} already installed", extra={"markup": False}
+        )
         return str(binary_path)
 
     download_url = f"{BASE_RELEASE_URL}/{version}/{file_pattern}"
-    logger.info(f"Downloading bdinfo from: {download_url}", extra={"markup": False})
+    logger.info(
+        f"Downloading bdinfo from: {download_url}", extra={"markup": False}
+    )
 
     temp_archive = bin_dir / f"temp_{file_pattern}"
     staging = bin_dir / ".bdinfo-staging"
@@ -69,20 +88,37 @@ def download_bdinfo_for_docker(base_dir: Path = Path("/Upload-Assistant"), versi
     try:
         download_file(download_url, temp_archive)
         verify_downloaded_asset(temp_archive, file_pattern)
-        logger.info(f"Extracting {temp_archive} to {staging}", extra={"markup": False})
+        logger.info(
+            f"Extracting {temp_archive} to {staging}", extra={"markup": False}
+        )
         secure_extract_tar(temp_archive, staging)
     finally:
         temp_archive.unlink(missing_ok=True)
 
     try:
-        candidates = [candidate for candidate in staging.rglob("bdinfo") if candidate.is_file()]
+        candidates = [
+            candidate
+            for candidate in staging.rglob("bdinfo")
+            if candidate.is_file()
+        ]
         if len(candidates) != 1:
-            raise Exception(f"Failed to extract exactly one bdinfo binary for {binary_path}")
+            raise Exception(
+                f"Failed to extract exactly one bdinfo binary for {binary_path}"
+            )
         staged_binary = candidates[0]
         staged_binary.chmod(0o755)
         staged_version = staging / version
-        staged_version.write_text(f"autobrr/go-bdinfo version {version} installed successfully.", encoding="utf-8")
-        stale_markers = [candidate for candidate in bin_dir.iterdir() if candidate.is_file() and candidate.name.startswith("v") and candidate != version_path]
+        staged_version.write_text(
+            f"autobrr/go-bdinfo version {version} installed successfully.",
+            encoding="utf-8",
+        )
+        stale_markers = [
+            candidate
+            for candidate in bin_dir.iterdir()
+            if candidate.is_file()
+            and candidate.name.startswith("v")
+            and candidate != version_path
+        ]
         promote_files_with_rollback(
             [(staged_binary, binary_path), (staged_version, version_path)],
             bin_dir / ".bdinfo-backup",
@@ -100,8 +136,13 @@ def main() -> int:
 
     try:
         download_bdinfo_for_docker()
-        logger.info("bdinfo installation completed successfully!", extra={"markup": False})
+        logger.info(
+            "bdinfo installation completed successfully!",
+            extra={"markup": False},
+        )
         return 0
     except Exception as exc:
-        logger.info(f"ERROR: Failed to install bdinfo: {exc}", extra={"markup": False})
+        logger.info(
+            f"ERROR: Failed to install bdinfo: {exc}", extra={"markup": False}
+        )
         return 1

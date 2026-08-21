@@ -3,7 +3,6 @@ import asyncio
 import contextlib
 import json
 import os
-import random
 import re
 import secrets
 import shutil
@@ -27,16 +26,18 @@ def generate_random_poster() -> str:
     letters = "abcdefghijklmnopqrstuvwxyz"
     digits = "0123456789"
 
-    first_len = random.randint(5, 10)  # noqa: S311
-    last_len = random.randint(5, 10)  # noqa: S311
-    user_len = random.randint(6, 12)  # noqa: S311
-    domain_len = random.randint(5, 10)  # noqa: S311
+    first_len = 5 + secrets.randbelow(6)
+    last_len = 5 + secrets.randbelow(6)
+    user_len = 6 + secrets.randbelow(7)
+    domain_len = 5 + secrets.randbelow(6)
 
-    first = "".join(random.choice(letters) for _ in range(first_len))  # noqa: S311
-    last = "".join(random.choice(letters) for _ in range(last_len))  # noqa: S311
-    email_user = "".join(random.choice(letters + digits) for _ in range(user_len))  # noqa: S311
-    domain = "".join(random.choice(letters) for _ in range(domain_len))  # noqa: S311
-    tld = random.choice(["com", "net", "org", "info", "biz", "xyz", "io"])  # noqa: S311
+    first = "".join(secrets.choice(letters) for _ in range(first_len))
+    last = "".join(secrets.choice(letters) for _ in range(last_len))
+    email_user = "".join(
+        secrets.choice(letters + digits) for _ in range(user_len)
+    )
+    domain = "".join(secrets.choice(letters) for _ in range(domain_len))
+    tld = secrets.choice(["com", "net", "org", "info", "biz", "xyz", "io"])
 
     return f"{first.capitalize()} {last.capitalize()} <{email_user}@{domain}.{tld}>"
 
@@ -70,7 +71,11 @@ def get_dynamic_volume_size(total_bytes: int) -> str:
     return "1g"
 
 
-def compute_nyuu_connections(total_connections: int, nyuu_check_enabled: bool, check_connections_cfg: str | int | None) -> tuple[int, int | None]:
+def compute_nyuu_connections(
+    total_connections: int,
+    nyuu_check_enabled: bool,
+    check_connections_cfg: str | int | None,
+) -> tuple[int, int | None]:
     """Split the configured connection budget between nyuu posting and checking.
 
     Like pesto, nyuu checks concurrently with posting over its own connections,
@@ -95,7 +100,12 @@ def compute_nyuu_connections(total_connections: int, nyuu_check_enabled: bool, c
     return post_connections, check_connections
 
 
-async def check_binary(binary_name: str, config_path: str | None = None, meta: Meta | None = None, path_7z: str | None = None) -> str:
+async def check_binary(
+    binary_name: str,
+    config_path: str | None = None,
+    meta: Meta | None = None,
+    path_7z: str | None = None,
+) -> str:
     """Ensure binary exists, returning the resolved path or raising FileNotFoundError."""
     path = config_path or binary_name
     resolved = shutil.which(path)
@@ -107,25 +117,39 @@ async def check_binary(binary_name: str, config_path: str | None = None, meta: M
         base_dir = meta.base_dir
         try:
             if binary_name == "7z":
-                from src.integrations.runtime_tools.seven_zip import SevenZipBinaryManager
+                from src.integrations.runtime_tools.seven_zip import (
+                    SevenZipBinaryManager,
+                )
 
                 return await SevenZipBinaryManager.ensure_7z_binary(base_dir)
             if binary_name == "nyuu":
-                from src.integrations.runtime_tools.nyuu import NyuuBinaryManager
+                from src.integrations.runtime_tools.nyuu import (
+                    NyuuBinaryManager,
+                )
 
-                return await NyuuBinaryManager.ensure_nyuu_binary(base_dir, path_7z=path_7z)
+                return await NyuuBinaryManager.ensure_nyuu_binary(
+                    base_dir, path_7z=path_7z
+                )
             if binary_name == "par2":
-                from src.integrations.runtime_tools.par2 import Par2BinaryManager
+                from src.integrations.runtime_tools.par2 import (
+                    Par2BinaryManager,
+                )
 
                 return await Par2BinaryManager.ensure_par2_binary(base_dir)
             if binary_name == "pesto":
-                from src.integrations.runtime_tools.pesto import PestoBinaryManager
+                from src.integrations.runtime_tools.pesto import (
+                    PestoBinaryManager,
+                )
 
                 return await PestoBinaryManager.ensure_pesto_binary(base_dir)
         except Exception as e:
-            logger.debug(f"[yellow]Automatic download of '{binary_name}' failed: {e}[/yellow]")
+            logger.debug(
+                f"[yellow]Automatic download of '{binary_name}' failed: {e}[/yellow]"
+            )
 
-    raise FileNotFoundError(f"Binary '{path}' not found in PATH or config. Please install it.")
+    raise FileNotFoundError(
+        f"Binary '{path}' not found in PATH or config. Please install it."
+    )
 
 
 async def run_command_with_logging(cmd: list[str], description: str) -> None:
@@ -137,7 +161,9 @@ async def run_command_with_logging(cmd: list[str], description: str) -> None:
         if skip_next:
             skip_next = False
             continue
-        if arg in ("-p", "-u", "--password", "--username") and i + 1 < len(cmd):
+        if arg in ("-p", "-u", "--password", "--username") and i + 1 < len(
+            cmd
+        ):
             redacted_cmd.append(arg)
             redacted_cmd.append("********")
             skip_next = True
@@ -147,19 +173,33 @@ async def run_command_with_logging(cmd: list[str], description: str) -> None:
 
     logger.debug(f"[cyan]Running command: {redacted_str}[/cyan]")
     try:
-        process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
         stdout, stderr = await process.communicate()
 
         if process.returncode != 0:
-            logger.error(f"[red]Error running {description} (exit code {process.returncode}):[/red]")
+            logger.error(
+                f"[red]Error running {description} (exit code {process.returncode}):[/red]"
+            )
             if stdout:
-                logger.info(f"[red]STDOUT:[/red]\n{stdout.decode(errors='replace')}")
+                logger.info(
+                    f"[red]STDOUT:[/red]\n{stdout.decode(errors='replace')}"
+                )
             if stderr:
-                logger.info(f"[red]STDERR:[/red]\n{stderr.decode(errors='replace')}")
-            raise RuntimeError(f"Command '{redacted_str}' failed with exit code {process.returncode}")
+                logger.info(
+                    f"[red]STDERR:[/red]\n{stderr.decode(errors='replace')}"
+                )
+            raise RuntimeError(
+                f"Command '{redacted_str}' failed with exit code {process.returncode}"
+            )
 
     except Exception as e:
-        raise RuntimeError(f"Failed to execute command '{redacted_str}': {e}") from e
+        raise RuntimeError(
+            f"Failed to execute command '{redacted_str}': {e}"
+        ) from e
 
 
 def format_byte_size(value: int) -> str:
@@ -174,7 +214,13 @@ def format_byte_size(value: int) -> str:
     return f"{scaled_value:.1f} {unit}" if unit != "B" else f"{value} B"
 
 
-async def run_7z_with_progress(cmd: list[str], usenet_dir: str | Path, safe_name: str, _volume_size: str | None, total_size: int) -> None:
+async def run_7z_with_progress(
+    cmd: list[str],
+    usenet_dir: str | Path,
+    safe_name: str,
+    _volume_size: str | None,
+    total_size: int,
+) -> None:
     """Execute 7z archiving/splitting with byte-based real-time progress monitoring."""
     redacted_cmd = []
     skip_next = False
@@ -182,7 +228,9 @@ async def run_7z_with_progress(cmd: list[str], usenet_dir: str | Path, safe_name
         if skip_next:
             skip_next = False
             continue
-        if arg in ("-p", "-u", "--password", "--username") and i + 1 < len(cmd):
+        if arg in ("-p", "-u", "--password", "--username") and i + 1 < len(
+            cmd
+        ):
             redacted_cmd.append(arg)
             redacted_cmd.append("********")
             skip_next = True
@@ -196,8 +244,14 @@ async def run_7z_with_progress(cmd: list[str], usenet_dir: str | Path, safe_name
         # ``-bsp1`` makes 7z emit its own live percentage. File names and
         # temporary-volume behavior vary by 7z build, so directory size alone
         # is only a fallback when a structured progress observer is active.
-        progress_cmd = [cmd[0], cmd[1], "-bsp1", *cmd[2:]] if "-bsp1" not in cmd else cmd
-        process = await asyncio.create_subprocess_exec(*progress_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        progress_cmd = (
+            [cmd[0], cmd[1], "-bsp1", *cmd[2:]] if "-bsp1" not in cmd else cmd
+        )
+        process = await asyncio.create_subprocess_exec(
+            *progress_cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
 
         progress_total = max(total_size, 1)
 
@@ -228,17 +282,29 @@ async def run_7z_with_progress(cmd: list[str], usenet_dir: str | Path, safe_name
                 chunks.append(chunk)
                 buffer += chunk
                 while True:
-                    boundaries = [index for index in (buffer.find(b"\r"), buffer.find(b"\n")) if index >= 0]
+                    boundaries = [
+                        index
+                        for index in (buffer.find(b"\r"), buffer.find(b"\n"))
+                        if index >= 0
+                    ]
                     if not boundaries:
                         break
                     boundary = min(boundaries)
                     line = buffer[:boundary].decode(errors="replace")
                     buffer = buffer[boundary + 1 :]
-                    for match in re.finditer(r"(?<!\d)(\d{1,3}(?:\.\d+)?)%", line):
-                        reported_percent = max(reported_percent, min(float(match.group(1)), 99.9))
+                    for match in re.finditer(
+                        r"(?<!\d)(\d{1,3}(?:\.\d+)?)%", line
+                    ):
+                        reported_percent = max(
+                            reported_percent, min(float(match.group(1)), 99.9)
+                        )
             # Some 7z builds only flush the last progress update at EOF.
-            for match in re.finditer(r"(?<!\d)(\d{1,3}(?:\.\d+)?)%", buffer.decode(errors="replace")):
-                reported_percent = max(reported_percent, min(float(match.group(1)), 99.9))
+            for match in re.finditer(
+                r"(?<!\d)(\d{1,3}(?:\.\d+)?)%", buffer.decode(errors="replace")
+            ):
+                reported_percent = max(
+                    reported_percent, min(float(match.group(1)), 99.9)
+                )
             return b"".join(chunks).decode(errors="replace")
 
         stdout_task = asyncio.create_task(read_7z_progress(process.stdout))
@@ -252,7 +318,9 @@ async def run_7z_with_progress(cmd: list[str], usenet_dir: str | Path, safe_name
             transient=False,
             disable=False,
         ) as progress:
-            task = progress.add_task("Archiving/Splitting with 7z", total=progress_total)
+            task = progress.add_task(
+                "Archiving/Splitting with 7z", total=progress_total
+            )
 
             # The interactive confirmation prompt is synchronous: it blocks this
             # event loop while waiting for the user.  Keep archive observation
@@ -262,32 +330,62 @@ async def run_7z_with_progress(cmd: list[str], usenet_dir: str | Path, safe_name
             def monitor_progress() -> None:
                 nonlocal archive_process, bytes_read, bytes_written
                 while not monitor_stop.is_set():
-                    if archive_process is not None and read_bytes_start is not None:
+                    if (
+                        archive_process is not None
+                        and read_bytes_start is not None
+                    ):
                         try:
-                            bytes_read = max(archive_process.io_counters().read_bytes - read_bytes_start, 0)
-                        except psutil.AccessDenied, psutil.NoSuchProcess, OSError:
+                            bytes_read = max(
+                                archive_process.io_counters().read_bytes
+                                - read_bytes_start,
+                                0,
+                            )
+                        except (
+                            psutil.AccessDenied,
+                            psutil.NoSuchProcess,
+                            OSError,
+                        ):
                             archive_process = None
                     try:
                         archive_prefix = f"{safe_name}.7z"
-                        bytes_written = sum(entry.stat().st_size for entry in Path(usenet_dir).iterdir() if entry.is_file() and entry.name.startswith(archive_prefix))
+                        bytes_written = sum(
+                            entry.stat().st_size
+                            for entry in Path(usenet_dir).iterdir()
+                            if entry.is_file()
+                            and entry.name.startswith(archive_prefix)
+                        )
                     except OSError:
                         # A volume can be renamed while it is inspected. Keep
                         # the last known byte count and continue publishing 7z's
                         # own percentage rather than dropping the SSE update.
                         pass
 
-                    byte_percent = min((bytes_written / progress_total) * 100, 99.9)
-                    read_percent = min((bytes_read / progress_total) * 100, 99.9)
-                    observed_percent = max(reported_percent, byte_percent, read_percent)
+                    byte_percent = min(
+                        (bytes_written / progress_total) * 100, 99.9
+                    )
+                    read_percent = min(
+                        (bytes_read / progress_total) * 100, 99.9
+                    )
+                    observed_percent = max(
+                        reported_percent, byte_percent, read_percent
+                    )
                     processed_bytes = max(bytes_read, bytes_written)
                     detail = f"{format_byte_size(processed_bytes)} / {format_byte_size(total_size)} processed"
                     if reported_percent > max(byte_percent, read_percent):
                         detail = f"{detail} | 7z: {reported_percent:.1f}%"
-                    progress.update(task, completed=observed_percent, description=f"Archiving/Splitting with 7z | {detail}")
+                    progress.update(
+                        task,
+                        completed=observed_percent,
+                        description=f"Archiving/Splitting with 7z | {detail}",
+                    )
 
                     monitor_stop.wait(0.25)
 
-            monitor_thread = threading.Thread(target=monitor_progress, name="usenet-archive-progress", daemon=True)
+            monitor_thread = threading.Thread(
+                target=monitor_progress,
+                name="usenet-archive-progress",
+                daemon=True,
+            )
             monitor_thread.start()
             try:
                 await process.wait()
@@ -297,21 +395,31 @@ async def run_7z_with_progress(cmd: list[str], usenet_dir: str | Path, safe_name
                 await asyncio.to_thread(monitor_thread.join, 2)
 
             if process.returncode != 0:
-                logger.error(f"[red]Error running 7z Archiver (exit code {process.returncode}):[/red]")
+                logger.error(
+                    f"[red]Error running 7z Archiver (exit code {process.returncode}):[/red]"
+                )
                 if stdout:
                     logger.info(f"[red]STDOUT:[/red]\n{stdout}")
                 if stderr:
                     logger.info(f"[red]STDERR:[/red]\n{stderr}")
-                raise RuntimeError(f"Command '{redacted_str}' failed with exit code {process.returncode}")
+                raise RuntimeError(
+                    f"Command '{redacted_str}' failed with exit code {process.returncode}"
+                )
 
             # Finish progress display cleanly
-            progress.update(task, completed=progress_total, total=progress_total)
+            progress.update(
+                task, completed=progress_total, total=progress_total
+            )
 
     except Exception as e:
-        raise RuntimeError(f"Failed to execute command '{redacted_str}': {e}") from e
+        raise RuntimeError(
+            f"Failed to execute command '{redacted_str}': {e}"
+        ) from e
 
 
-async def run_par2_with_progress(cmd: list[str], cwd: str | None = None) -> None:
+async def run_par2_with_progress(
+    cmd: list[str], cwd: str | None = None
+) -> None:
     """Execute par2 c with real-time percentage progress via a persistent rich progress bar.
 
     par2 redraws its percentage in place using carriage returns with no trailing newline,
@@ -325,7 +433,9 @@ async def run_par2_with_progress(cmd: list[str], cwd: str | None = None) -> None
         if skip_next:
             skip_next = False
             continue
-        if arg in ("-p", "-u", "--password", "--username") and i + 1 < len(cmd):
+        if arg in ("-p", "-u", "--password", "--username") and i + 1 < len(
+            cmd
+        ):
             redacted_cmd.append(arg)
             redacted_cmd.append("********")
             skip_next = True
@@ -337,7 +447,12 @@ async def run_par2_with_progress(cmd: list[str], cwd: str | None = None) -> None
     logger.debug(f"[cyan]Running command: {redacted_str}{cwd_str}[/cyan]")
 
     try:
-        process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, cwd=cwd)
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            cwd=cwd,
+        )
 
         stdout_accum = []
 
@@ -386,8 +501,14 @@ async def run_par2_with_progress(cmd: list[str], cwd: str | None = None) -> None
                         elif "Loading" in line:
                             action = "Loading PAR2"
                         if "par2" not in tasks:
-                            tasks["par2"] = progress.add_task(action, total=100)
-                        progress.update(tasks["par2"], description=action, completed=percent)
+                            tasks["par2"] = progress.add_task(
+                                action, total=100
+                            )
+                        progress.update(
+                            tasks["par2"],
+                            description=action,
+                            completed=percent,
+                        )
 
             if "par2" in tasks:
                 progress.update(tasks["par2"], completed=100)
@@ -395,17 +516,25 @@ async def run_par2_with_progress(cmd: list[str], cwd: str | None = None) -> None
         await process.wait()
 
         if process.returncode != 0:
-            logger.error(f"[red]Error running PAR2 Creator (exit code {process.returncode}):[/red]")
+            logger.error(
+                f"[red]Error running PAR2 Creator (exit code {process.returncode}):[/red]"
+            )
             stdout_str = "".join(stdout_accum)
             if stdout_str:
                 logger.info(f"[red]OUTPUT:[/red]\n{stdout_str}")
-            raise RuntimeError(f"Command '{redacted_str}' failed with exit code {process.returncode}")
+            raise RuntimeError(
+                f"Command '{redacted_str}' failed with exit code {process.returncode}"
+            )
 
     except Exception as e:
-        raise RuntimeError(f"Failed to execute command '{redacted_str}': {e}") from e
+        raise RuntimeError(
+            f"Failed to execute command '{redacted_str}': {e}"
+        ) from e
 
 
-async def run_nyuu_with_progress(cmd: list[str], cwd: str | None = None) -> None:
+async def run_nyuu_with_progress(
+    cmd: list[str], cwd: str | None = None
+) -> None:
     """Execute nyuu upload, parsing its periodic `--progress log` output for posting/check status.
 
     Nyuu's default terminal progress indicator redraws a single line via carriage-return
@@ -419,7 +548,9 @@ async def run_nyuu_with_progress(cmd: list[str], cwd: str | None = None) -> None
         if skip_next:
             skip_next = False
             continue
-        if arg in ("-p", "-u", "--password", "--username") and i + 1 < len(cmd):
+        if arg in ("-p", "-u", "--password", "--username") and i + 1 < len(
+            cmd
+        ):
             redacted_cmd.append(arg)
             redacted_cmd.append("********")
             skip_next = True
@@ -431,10 +562,17 @@ async def run_nyuu_with_progress(cmd: list[str], cwd: str | None = None) -> None
     logger.debug(f"[cyan]Running command: {redacted_str}{cwd_str}[/cyan]")
 
     total_re = re.compile(r"Uploading (\d+) article\(s\)")
-    progress_re = re.compile(r"Article posting progress: \d+ read, (\d+) posted(?:, (\d+) checked)?")
+    progress_re = re.compile(
+        r"Article posting progress: \d+ read, (\d+) posted(?:, (\d+) checked)?"
+    )
 
     try:
-        process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, cwd=cwd)
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            cwd=cwd,
+        )
 
         stdout_accum = []
         total_articles = 0
@@ -469,13 +607,21 @@ async def run_nyuu_with_progress(cmd: list[str], cwd: str | None = None) -> None
                     if checked is not None:
                         checked = int(checked)
                         pct = ((checked + posted) / 2) / total_articles * 100
-                        description = "Verifying articles on server" if posted >= total_articles else "Posting & verifying to Usenet"
+                        description = (
+                            "Verifying articles on server"
+                            if posted >= total_articles
+                            else "Posting & verifying to Usenet"
+                        )
                     else:
                         pct = posted / total_articles * 100
                         description = "Posting to Usenet"
                     if "upload" not in tasks:
-                        tasks["upload"] = progress.add_task(description, total=100)
-                    progress.update(tasks["upload"], description=description, completed=pct)
+                        tasks["upload"] = progress.add_task(
+                            description, total=100
+                        )
+                    progress.update(
+                        tasks["upload"], description=description, completed=pct
+                    )
 
         result = await process.wait()
 
@@ -483,17 +629,25 @@ async def run_nyuu_with_progress(cmd: list[str], cwd: str | None = None) -> None
             progress.update(tasks["upload"], completed=100)
 
         if result != 0:
-            logger.error(f"[red]Error running Nyuu Uploader (exit code {process.returncode}):[/red]")
+            logger.error(
+                f"[red]Error running Nyuu Uploader (exit code {process.returncode}):[/red]"
+            )
             stdout_str = "".join(stdout_accum)
             if stdout_str:
                 logger.info(f"[red]OUTPUT:[/red]\n{stdout_str}")
-            raise RuntimeError(f"Command '{redacted_str}' failed with exit code {result}")
+            raise RuntimeError(
+                f"Command '{redacted_str}' failed with exit code {result}"
+            )
 
     except Exception as e:
-        raise RuntimeError(f"Failed to execute command '{redacted_str}': {e}") from e
+        raise RuntimeError(
+            f"Failed to execute command '{redacted_str}': {e}"
+        ) from e
 
 
-async def run_pesto_with_progress(cmd: list[str], cwd: str | None = None) -> None:
+async def run_pesto_with_progress(
+    cmd: list[str], cwd: str | None = None
+) -> None:
     """Execute pesto upload consuming its JSON event stream for progress reporting."""
     redacted_cmd = []
     skip_next = False
@@ -501,7 +655,12 @@ async def run_pesto_with_progress(cmd: list[str], cwd: str | None = None) -> Non
         if skip_next:
             skip_next = False
             continue
-        if arg in ("-p", "-u", "--auth-password", "--username") and i + 1 < len(cmd):
+        if arg in (
+            "-p",
+            "-u",
+            "--auth-password",
+            "--username",
+        ) and i + 1 < len(cmd):
             redacted_cmd.append(arg)
             redacted_cmd.append("********")
             skip_next = True
@@ -567,9 +726,13 @@ async def run_pesto_with_progress(cmd: list[str], cwd: str | None = None) -> Non
                     if etype == "segment_done":
                         pct = float(event.get("progress_pct", 0))
                         if "upload" not in tasks:
-                            tasks["upload"] = progress.add_task("Posting to Usenet", total=100)
+                            tasks["upload"] = progress.add_task(
+                                "Posting to Usenet", total=100
+                            )
                         progress.update(tasks["upload"], completed=pct)
-                        check_expected_total = event.get("total_segments", check_expected_total)
+                        check_expected_total = event.get(
+                            "total_segments", check_expected_total
+                        )
                         int(event.get("total_segments", 0) or 0)
                         int(event.get("segment_done", 0) or 0)
 
@@ -583,27 +746,45 @@ async def run_pesto_with_progress(cmd: list[str], cwd: str | None = None) -> Non
                     elif etype == "par2_encode_started":
                         total = event.get("input_slices", 0)
                         if "par2_encode" not in tasks:
-                            tasks["par2_encode"] = progress.add_task("Calculating PAR2 parity", total=total or 1)
+                            tasks["par2_encode"] = progress.add_task(
+                                "Calculating PAR2 parity", total=total or 1
+                            )
                         else:
-                            progress.update(tasks["par2_encode"], total=total or 1, completed=0)
+                            progress.update(
+                                tasks["par2_encode"],
+                                total=total or 1,
+                                completed=0,
+                            )
 
                     elif etype == "par2_encode_progress":
                         done = event.get("done", 0)
                         total = event.get("total", 0) or 1
                         if "par2_encode" not in tasks:
-                            tasks["par2_encode"] = progress.add_task("Calculating PAR2 parity", total=total)
-                        progress.update(tasks["par2_encode"], total=total, completed=done)
+                            tasks["par2_encode"] = progress.add_task(
+                                "Calculating PAR2 parity", total=total
+                            )
+                        progress.update(
+                            tasks["par2_encode"], total=total, completed=done
+                        )
 
                     elif etype == "par2_write_started":
                         total = event.get("total", 0)
                         if "par2_write" not in tasks:
-                            tasks["par2_write"] = progress.add_task("Writing PAR2 recovery files", total=total or 1)
+                            tasks["par2_write"] = progress.add_task(
+                                "Writing PAR2 recovery files", total=total or 1
+                            )
                         else:
-                            progress.update(tasks["par2_write"], total=total or 1, completed=0)
+                            progress.update(
+                                tasks["par2_write"],
+                                total=total or 1,
+                                completed=0,
+                            )
 
                     elif etype == "par2_slice_written":
                         if "par2_write" not in tasks:
-                            tasks["par2_write"] = progress.add_task("Writing PAR2 recovery files", total=1)
+                            tasks["par2_write"] = progress.add_task(
+                                "Writing PAR2 recovery files", total=1
+                            )
                         progress.advance(tasks["par2_write"])
                         progress.tasks[tasks["par2_write"]]
 
@@ -621,34 +802,62 @@ async def run_pesto_with_progress(cmd: list[str], cwd: str | None = None) -> Non
                         if not event.get("ok", True):
                             check_missing_count += 1
                         if "check" not in tasks:
-                            tasks["check"] = progress.add_task("Verifying articles on server", total=check_expected_total or None)
+                            tasks["check"] = progress.add_task(
+                                "Verifying articles on server",
+                                total=check_expected_total or None,
+                            )
                         else:
-                            progress.update(tasks["check"], total=check_expected_total or None)
+                            progress.update(
+                                tasks["check"],
+                                total=check_expected_total or None,
+                            )
                         description = "Verifying articles on server"
                         if check_missing_count:
-                            description += f" ({check_missing_count} failed so far)"
-                        progress.update(tasks["check"], description=description, completed=checked)
+                            description += (
+                                f" ({check_missing_count} failed so far)"
+                            )
+                        progress.update(
+                            tasks["check"],
+                            description=description,
+                            completed=checked,
+                        )
 
                     elif etype == "check_done":
                         failed = event.get("failed", 0)
                         check_missing_count = failed
                         if "check" in tasks:
-                            final_total = check_expected_total or check_checked_total or 1
-                            progress.update(tasks["check"], total=final_total, completed=final_total)
+                            final_total = (
+                                check_expected_total
+                                or check_checked_total
+                                or 1
+                            )
+                            progress.update(
+                                tasks["check"],
+                                total=final_total,
+                                completed=final_total,
+                            )
                         if not failed:
-                            logger.info("[green]Article check: all articles verified on server.[/green]")
+                            logger.info(
+                                "[green]Article check: all articles verified on server.[/green]"
+                            )
                         else:
-                            logger.info(f"[yellow]Article check: {failed} article(s) still missing after every repost attempt.[/yellow]")
+                            logger.info(
+                                f"[yellow]Article check: {failed} article(s) still missing after every repost attempt.[/yellow]"
+                            )
                     elif etype == "check_retrying":
                         attempt = event.get("attempt", 0)
                         max_attempts = event.get("max_attempts", 0)
                         delay = event.get("delay_secs", 0)
                         reason = event.get("reason", "article not found")
-                        logger.debug(f"[cyan]Article check: retry {attempt}/{max_attempts} in {delay}s ({reason})...[/cyan]")
+                        logger.debug(
+                            f"[cyan]Article check: retry {attempt}/{max_attempts} in {delay}s ({reason})...[/cyan]"
+                        )
                     elif etype == "check_reposted":
                         reposted = event.get("reposted", 0)
                         check_reposted_total = reposted
-                        logger.debug(f"[yellow]Article check: {reposted} article(s) reposted so far.[/yellow]")
+                        logger.debug(
+                            f"[yellow]Article check: {reposted} article(s) reposted so far.[/yellow]"
+                        )
                 except json.JSONDecodeError:
                     pass
 
@@ -661,8 +870,16 @@ async def run_pesto_with_progress(cmd: list[str], cwd: str | None = None) -> Non
         if result != 0:
             stderr_str = "".join(stderr_accum)
             if check_missing_count > 0:
-                total_checked = check_expected_total or check_checked_total or check_missing_count
-                repost_note = f" despite {check_reposted_total} repost attempt(s)" if check_reposted_total else ""
+                total_checked = (
+                    check_expected_total
+                    or check_checked_total
+                    or check_missing_count
+                )
+                repost_note = (
+                    f" despite {check_reposted_total} repost attempt(s)"
+                    if check_reposted_total
+                    else ""
+                )
                 logger.error(
                     f"[red]Pesto could not confirm {check_missing_count}/{total_checked} article(s) on the server{repost_note} "
                     "— the NZB is incomplete and will be discarded. Pesto already reposted and reverified these under "
@@ -672,14 +889,22 @@ async def run_pesto_with_progress(cmd: list[str], cwd: str | None = None) -> Non
                 )
                 if stderr_str:
                     logger.info(f"[red]STDERR:[/red]\n{stderr_str}")
-                raise RuntimeError(f"Pesto upload failed: {check_missing_count}/{total_checked} article(s) could not be confirmed on the server after every repost attempt.")
-            logger.error(f"[red]Error running Pesto Uploader (exit code {result}):[/red]")
+                raise RuntimeError(
+                    f"Pesto upload failed: {check_missing_count}/{total_checked} article(s) could not be confirmed on the server after every repost attempt."
+                )
+            logger.error(
+                f"[red]Error running Pesto Uploader (exit code {result}):[/red]"
+            )
             if stderr_str:
                 logger.info(f"[red]STDERR:[/red]\n{stderr_str}")
-            raise RuntimeError(f"Command '{redacted_str}' failed with exit code {result}")
+            raise RuntimeError(
+                f"Command '{redacted_str}' failed with exit code {result}"
+            )
 
     except Exception as e:
-        raise RuntimeError(f"Failed to execute command '{redacted_str}': {e}") from e
+        raise RuntimeError(
+            f"Failed to execute command '{redacted_str}': {e}"
+        ) from e
 
 
 async def is_valid_nzb(path: str | Path) -> bool:
@@ -707,13 +932,19 @@ async def inject_nzb_password(nzb_path: str | Path, password: str) -> None:
     if not await aiofiles.ospath.exists(nzb_path):
         return
     try:
-        async with aiofiles.open(nzb_path, encoding="utf-8", errors="ignore") as f:
+        async with aiofiles.open(
+            nzb_path, encoding="utf-8", errors="ignore"
+        ) as f:
             content = await f.read()
 
         head_match = re.search(r"<head\b[^>]*>", content, re.IGNORECASE)
         if head_match:
             idx = head_match.end()
-            new_content = content[:idx] + f'\n    <meta type="password">{password}</meta>' + content[idx:]
+            new_content = (
+                content[:idx]
+                + f'\n    <meta type="password">{password}</meta>'
+                + content[idx:]
+            )
         else:
             nzb_match = re.search(r"<nzb\b[^>]*>", content, re.IGNORECASE)
             if nzb_match:
@@ -735,25 +966,37 @@ async def verify_nzb_has_password(nzb_path: str) -> bool:
         return False
     with contextlib.suppress(Exception):
         # Read the first 4096 bytes (the head section is always at the beginning)
-        async with aiofiles.open(nzb_path, encoding="utf-8", errors="ignore") as f:
+        async with aiofiles.open(
+            nzb_path, encoding="utf-8", errors="ignore"
+        ) as f:
             header_sample = await f.read(4096)
 
-        head_match = re.search(r"<head\b[^>]*>(.*?)</head>", header_sample, re.IGNORECASE | re.DOTALL)
+        head_match = re.search(
+            r"<head\b[^>]*>(.*?)</head>",
+            header_sample,
+            re.IGNORECASE | re.DOTALL,
+        )
         if head_match:
             head_content = head_match.group(1)
-            if re.search(r'<meta\s+type=["\']password["\']', head_content, re.IGNORECASE):
+            if re.search(
+                r'<meta\s+type=["\']password["\']', head_content, re.IGNORECASE
+            ):
                 return True
     return False
 
 
-async def prepare_and_upload_usenet(meta: Meta, config: dict[str, Any], *, prepare_only: bool = False) -> str | None:
+async def prepare_and_upload_usenet(
+    meta: Meta, config: dict[str, Any], *, prepare_only: bool = False
+) -> str | None:
     """
     Prepare files (7z + PAR2) and upload them to Usenet via nyuu or pesto.
     Returns the absolute path to the generated NZB file if successful.
     """
     usenet_cfg = config.get("USENET", {})
     if not usenet_cfg:
-        logger.error("[red]Error: USENET section is missing from configuration.[/red]")
+        logger.error(
+            "[red]Error: USENET section is missing from configuration.[/red]"
+        )
         return None
 
     # Keep the configured password mode separate from the resolved value.  The
@@ -761,20 +1004,35 @@ async def prepare_and_upload_usenet(meta: Meta, config: dict[str, Any], *, prepa
     # posting pass can reuse it; that must not make a configured ``random``
     # password look like a static one on the second pass.
     configured_archive_password = usenet_cfg.get("archive_password")
-    configured_random_archive_password = str(configured_archive_password).lower() == "random"
-    random_archive_password = meta.usenet_archive_password_is_random if meta.usenet_archive_password_is_random is not None else configured_random_archive_password
+    configured_random_archive_password = (
+        str(configured_archive_password).lower() == "random"
+    )
+    random_archive_password = (
+        meta.usenet_archive_password_is_random
+        if meta.usenet_archive_password_is_random is not None
+        else configured_random_archive_password
+    )
     archive_password = meta.archive_password or configured_archive_password
     if archive_password:
-        if random_archive_password and str(archive_password).lower() == "random":
+        if (
+            random_archive_password
+            and str(archive_password).lower() == "random"
+        ):
             while True:
                 archive_password = secrets.token_urlsafe(16)
                 if not archive_password.startswith("-"):
                     break
-            logger.debug("[cyan]Generated a random Usenet archive password for this upload.[/cyan]")
+            logger.debug(
+                "[cyan]Generated a random Usenet archive password for this upload.[/cyan]"
+            )
         elif random_archive_password:
-            logger.debug("[cyan]Reusing the random Usenet archive password prepared for this upload.[/cyan]")
+            logger.debug(
+                "[cyan]Reusing the random Usenet archive password prepared for this upload.[/cyan]"
+            )
         else:
-            logger.info("[cyan]Using configured static password for Usenet archive encryption.[/cyan]")
+            logger.info(
+                "[cyan]Using configured static password for Usenet archive encryption.[/cyan]"
+            )
         meta.archive_password = archive_password
         meta.usenet_archive_password_is_random = random_archive_password
 
@@ -787,7 +1045,9 @@ async def prepare_and_upload_usenet(meta: Meta, config: dict[str, Any], *, prepa
     import hashlib
 
     # Shorten the UUID to prevent path-length issues (MAX_PATH limit of 260) on Windows specifically for Usenet staging
-    clean_uuid = "".join(c for c in meta.uuid if c.isalnum() or c in "._-")[:30]
+    clean_uuid = "".join(c for c in meta.uuid if c.isalnum() or c in "._-")[
+        :30
+    ]
     uuid_hash = hashlib.sha256(meta.uuid.encode("utf-8")).hexdigest()[:8]
     uuid = f"{clean_uuid}_{uuid_hash}" if clean_uuid else uuid_hash
     name = meta.basename_no_ext
@@ -801,7 +1061,9 @@ async def prepare_and_upload_usenet(meta: Meta, config: dict[str, Any], *, prepa
     if archive_password and not meta.get("usenet_archive_name"):
         archive_name = secrets.token_hex(16)
         meta.usenet_archive_name = archive_name
-        logger.debug(f"[cyan]Obfuscating archive filenames to: {archive_name}[/cyan]")
+        logger.debug(
+            f"[cyan]Obfuscating archive filenames to: {archive_name}[/cyan]"
+        )
 
     # NZB filename: prefer meta name (already properly constructed by UA).
     # For directories, fall back to the directory basename only when meta name is absent.
@@ -809,7 +1071,12 @@ async def prepare_and_upload_usenet(meta: Meta, config: dict[str, Any], *, prepa
         safe_nzb_name = safe_name
     elif Path(input_path).is_dir():
         folder_name = Path(input_path).name
-        safe_nzb_name = "".join(c for c in folder_name if c.isalnum() or c in "._- ").replace(" ", ".") or safe_name
+        safe_nzb_name = (
+            "".join(
+                c for c in folder_name if c.isalnum() or c in "._- "
+            ).replace(" ", ".")
+            or safe_name
+        )
     else:
         safe_nzb_name = safe_name
 
@@ -821,7 +1088,9 @@ async def prepare_and_upload_usenet(meta: Meta, config: dict[str, Any], *, prepa
     try:
         Path(nzb_output_dir).mkdir(parents=True, exist_ok=True)
     except Exception as e:
-        logger.warning(f"[yellow]Warning: Could not create nzb_output_dir '{nzb_output_dir}' ({e}). Falling back to default tmp dir.[/yellow]")
+        logger.warning(
+            f"[yellow]Warning: Could not create nzb_output_dir '{nzb_output_dir}' ({e}). Falling back to default tmp dir.[/yellow]"
+        )
         nzb_output_dir = Path(base_dir) / "tmp" / Path(input_path).name
         with contextlib.suppress(Exception):
             Path(nzb_output_dir).mkdir(parents=True, exist_ok=True)
@@ -833,7 +1102,9 @@ async def prepare_and_upload_usenet(meta: Meta, config: dict[str, Any], *, prepa
             Path(usenet_tmp_dir).mkdir(parents=True, exist_ok=True)
             tmp_base = usenet_tmp_dir
         except Exception as e:
-            logger.warning(f"[yellow]Warning: Could not create usenet_tmp_dir '{usenet_tmp_dir}' ({e}). Falling back to default tmp dir.[/yellow]")
+            logger.warning(
+                f"[yellow]Warning: Could not create usenet_tmp_dir '{usenet_tmp_dir}' ({e}). Falling back to default tmp dir.[/yellow]"
+            )
             tmp_base = Path(base_dir) / "tmp" / Path(input_path).name
     else:
         tmp_base = Path(base_dir) / "tmp" / Path(input_path).name
@@ -861,10 +1132,14 @@ async def prepare_and_upload_usenet(meta: Meta, config: dict[str, Any], *, prepa
 
     # 1. Resolve Binaries
     try:
-        path_7z = await check_binary("7z", usenet_cfg.get("7z_path"), meta=meta)
+        path_7z = await check_binary(
+            "7z", usenet_cfg.get("7z_path"), meta=meta
+        )
     except FileNotFoundError as e:
         if is_debug:
-            logger.warning(f"[yellow]Warning: {e} Using simulation mode for 7z.[/yellow]")
+            logger.warning(
+                f"[yellow]Warning: {e} Using simulation mode for 7z.[/yellow]"
+            )
         else:
             logger.info(f"[bold red]Configuration Error: {e}[/bold red]")
             return None
@@ -872,31 +1147,50 @@ async def prepare_and_upload_usenet(meta: Meta, config: dict[str, Any], *, prepa
     if use_pesto:
         if not prepare_only:
             try:
-                path_pesto = await check_binary("pesto", usenet_cfg.get("pesto_path"), meta=meta)
+                path_pesto = await check_binary(
+                    "pesto", usenet_cfg.get("pesto_path"), meta=meta
+                )
             except FileNotFoundError as e:
                 if is_debug:
-                    logger.warning(f"[yellow]Warning: {e} Using simulation mode for pesto.[/yellow]")
+                    logger.warning(
+                        f"[yellow]Warning: {e} Using simulation mode for pesto.[/yellow]"
+                    )
                 else:
-                    logger.info(f"[bold red]Configuration Error: {e}[/bold red]")
+                    logger.info(
+                        f"[bold red]Configuration Error: {e}[/bold red]"
+                    )
                     return None
     else:
         try:
-            path_par2 = await check_binary("par2", usenet_cfg.get("par2_path"), meta=meta)
+            path_par2 = await check_binary(
+                "par2", usenet_cfg.get("par2_path"), meta=meta
+            )
         except FileNotFoundError as e:
             if is_debug:
-                logger.warning(f"[yellow]Warning: {e} Using simulation mode for par2.[/yellow]")
+                logger.warning(
+                    f"[yellow]Warning: {e} Using simulation mode for par2.[/yellow]"
+                )
             else:
                 logger.info(f"[bold red]Configuration Error: {e}[/bold red]")
                 return None
 
         if not prepare_only:
             try:
-                path_nyuu = await check_binary("nyuu", usenet_cfg.get("nyuu_path"), meta=meta, path_7z=path_7z)
+                path_nyuu = await check_binary(
+                    "nyuu",
+                    usenet_cfg.get("nyuu_path"),
+                    meta=meta,
+                    path_7z=path_7z,
+                )
             except FileNotFoundError as e:
                 if is_debug:
-                    logger.warning(f"[yellow]Warning: {e} Using simulation mode for nyuu.[/yellow]")
+                    logger.warning(
+                        f"[yellow]Warning: {e} Using simulation mode for nyuu.[/yellow]"
+                    )
                 else:
-                    logger.info(f"[bold red]Configuration Error: {e}[/bold red]")
+                    logger.info(
+                        f"[bold red]Configuration Error: {e}[/bold red]"
+                    )
                     return None
 
     # 2. Archive and Split with 7z (mx=0 to store without compression)
@@ -907,11 +1201,18 @@ async def prepare_and_upload_usenet(meta: Meta, config: dict[str, Any], *, prepa
     cleanup_upload_root = True
     upload_files: list[Path] = []
     prepared_files = meta.get("usenet_prepared_files", [])
-    use_prepared_files = not skip_archive and isinstance(prepared_files, list) and bool(prepared_files) and all(Path(str(file_path)).is_file() for file_path in prepared_files)
+    use_prepared_files = (
+        not skip_archive
+        and isinstance(prepared_files, list)
+        and bool(prepared_files)
+        and all(Path(str(file_path)).is_file() for file_path in prepared_files)
+    )
 
     if use_prepared_files:
         upload_files = [Path(str(file_path)) for file_path in prepared_files]
-        logger.debug("[cyan]Reusing prepared Usenet archive and PAR2 files.[/cyan]")
+        logger.debug(
+            "[cyan]Reusing prepared Usenet archive and PAR2 files.[/cyan]"
+        )
     elif skip_archive:
         if archive_password:
             logger.warning(
@@ -921,11 +1222,17 @@ async def prepare_and_upload_usenet(meta: Meta, config: dict[str, Any], *, prepa
             )
         # Skip 7z entirely — upload straight from the source path to avoid
         # duplicating large full-disc trees into the temp staging area.
-        logger.info("[cyan]Skipping archive step; uploading directly from source files...[/cyan]")
+        logger.info(
+            "[cyan]Skipping archive step; uploading directly from source files...[/cyan]"
+        )
         if await aiofiles.ospath.isdir(input_path):
             upload_root = Path(input_path)
             cleanup_upload_root = False
-            upload_files = [file_path for file_path in sorted(upload_root.rglob("*")) if file_path.is_file()]
+            upload_files = [
+                file_path
+                for file_path in sorted(upload_root.rglob("*"))
+                if file_path.is_file()
+            ]
         else:
             source_file = Path(input_path)
             if is_debug and not await aiofiles.ospath.exists(input_path):
@@ -942,14 +1249,25 @@ async def prepare_and_upload_usenet(meta: Meta, config: dict[str, Any], *, prepa
         if volume_size and volume_size.lower() == "auto":
             volume_size = get_dynamic_volume_size(total_size)
             if is_debug:
-                logger.info(f"[cyan]Dynamic volume size chosen based on upload size ({total_size / (1024 * 1024 * 1024):.2f} GB): {volume_size.upper()}[/cyan]")
+                logger.info(
+                    f"[cyan]Dynamic volume size chosen based on upload size ({total_size / (1024 * 1024 * 1024):.2f} GB): {volume_size.upper()}[/cyan]"
+                )
 
         archive_out = Path(usenet_dir) / f"{archive_name}.7z"
 
-        if await aiofiles.ospath.isdir(input_path) or volume_size or archive_password:
-            archive_artifact_pattern = re.compile(rf"{re.escape(archive_out.name)}(?:\.\d+)?")
+        if (
+            await aiofiles.ospath.isdir(input_path)
+            or volume_size
+            or archive_password
+        ):
+            archive_artifact_pattern = re.compile(
+                rf"{re.escape(archive_out.name)}(?:\.\d+)?"
+            )
             for stale_archive in usenet_dir.iterdir():
-                if stale_archive.is_file() and archive_artifact_pattern.fullmatch(stale_archive.name):
+                if (
+                    stale_archive.is_file()
+                    and archive_artifact_pattern.fullmatch(stale_archive.name)
+                ):
                     stale_archive.unlink()
 
             cmd_7z = [path_7z or "7z", "a", "-mx=0"]
@@ -960,37 +1278,53 @@ async def prepare_and_upload_usenet(meta: Meta, config: dict[str, Any], *, prepa
             cmd_7z.extend([str(archive_out), str(input_path)])
 
             if is_debug and not path_7z:
-                logger.info(f"[yellow][DEBUG SIMULATION] Would run: {' '.join(cmd_7z)}[/yellow]")
+                logger.info(
+                    f"[yellow][DEBUG SIMULATION] Would run: {' '.join(cmd_7z)}[/yellow]"
+                )
                 mock_7z = f"{archive_out}.001" if volume_size else archive_out
                 async with aiofiles.open(mock_7z, "wb") as f:
                     await f.write(b"mock 7z volume content")
                 upload_files = [Path(mock_7z)]
             else:
-                await run_7z_with_progress(cmd_7z, usenet_dir, archive_name, volume_size, total_size)
+                await run_7z_with_progress(
+                    cmd_7z, usenet_dir, archive_name, volume_size, total_size
+                )
         else:
             logger.info("[cyan]Copying single file for upload...[/cyan]")
             dest_file = Path(usenet_dir) / Path(input_path).name
             if is_debug and not await aiofiles.ospath.exists(input_path):
-                logger.info(f"[yellow][DEBUG SIMULATION] Input path '{input_path}' doesn't exist, writing dummy file to '{dest_file}'[/yellow]")
+                logger.info(
+                    f"[yellow][DEBUG SIMULATION] Input path '{input_path}' doesn't exist, writing dummy file to '{dest_file}'[/yellow]"
+                )
                 async with aiofiles.open(dest_file, "wb") as f:
                     await f.write(b"mock single file content")
             else:
                 await asyncio.to_thread(shutil.copy, input_path, dest_file)
 
     if not upload_files:
-        upload_files = [file_path for file_path in sorted(Path(upload_root).rglob("*")) if file_path.is_file()]
+        upload_files = [
+            file_path
+            for file_path in sorted(Path(upload_root).rglob("*"))
+            if file_path.is_file()
+        ]
 
     par2_percentage = usenet_cfg.get("par2_percentage", "10")
 
     # 3. PAR2 — only when using nyuu (pesto handles PAR2 internally)
     if not use_pesto and not use_prepared_files:
-        target_files = [file_path for file_path in upload_files if file_path.is_file() and not file_path.name.endswith(".par2")]
+        target_files = [
+            file_path
+            for file_path in upload_files
+            if file_path.is_file() and not file_path.name.endswith(".par2")
+        ]
 
         if target_files:
             logger.debug("[cyan]Generating PAR2 parity files...[/cyan]")
             par2_output_dir = usenet_dir if skip_archive else upload_root
             par2_file = str(Path(par2_output_dir) / f"{archive_name}.par2")
-            relative_target_files = [str(Path(f).relative_to(upload_root)) for f in target_files]
+            relative_target_files = [
+                str(Path(f).relative_to(upload_root)) for f in target_files
+            ]
             # No -n/-u/-l flag: par2cmdline falls back to its default scheme of
             # exponentially-sized recovery volumes, matching standard Usenet posts
             # and letting repair tools fetch only as much recovery data as needed.
@@ -998,23 +1332,46 @@ async def prepare_and_upload_usenet(meta: Meta, config: dict[str, Any], *, prepa
             # ``skip_archive`` posts source files directly.  Explicitly set
             # the data-file base path so par2 does not infer it from the
             # output file's directory and reject the source files.
-            cmd_par2 = [path_par2 or "par2", "c", f"-r{par2_percentage}", f"-B{upload_root}", par2_file, *[str(f) for f in relative_target_files]]
+            cmd_par2 = [
+                path_par2 or "par2",
+                "c",
+                f"-r{par2_percentage}",
+                f"-B{upload_root}",
+                par2_file,
+                *[str(f) for f in relative_target_files],
+            ]
             if is_debug and not path_par2:
-                logger.info(f"[yellow][DEBUG SIMULATION] Would run: {' '.join(cmd_par2)}[/yellow]")
+                logger.info(
+                    f"[yellow][DEBUG SIMULATION] Would run: {' '.join(cmd_par2)}[/yellow]"
+                )
                 mock_par2 = os.path.normpath(par2_file)
                 async with aiofiles.open(mock_par2, "wb") as f:
                     await f.write(b"mock par2 content")
             else:
                 await run_par2_with_progress(cmd_par2, cwd=str(upload_root))
 
-            generated_par2_files = [file_path for file_path in sorted(Path(par2_output_dir).glob(f"{archive_name}.par2*")) if file_path.is_file()]
-            upload_files.extend(file_path for file_path in generated_par2_files if file_path not in upload_files)
+            generated_par2_files = [
+                file_path
+                for file_path in sorted(
+                    Path(par2_output_dir).glob(f"{archive_name}.par2*")
+                )
+                if file_path.is_file()
+            ]
+            upload_files.extend(
+                file_path
+                for file_path in generated_par2_files
+                if file_path not in upload_files
+            )
 
     if not skip_archive:
-        meta.usenet_prepared_files = [str(file_path) for file_path in upload_files]
+        meta.usenet_prepared_files = [
+            str(file_path) for file_path in upload_files
+        ]
 
     if prepare_only:
-        logger.debug("[cyan]Usenet archive and PAR2 preparation completed; posting will run later.[/cyan]")
+        logger.debug(
+            "[cyan]Usenet archive and PAR2 preparation completed; posting will run later.[/cyan]"
+        )
         return str(upload_root)
 
     # 4. Poster / From header
@@ -1024,7 +1381,9 @@ async def prepare_and_upload_usenet(meta: Meta, config: dict[str, Any], *, prepa
         poster = generate_random_poster()
         display_name = poster.split("<")[0].strip()
         if is_debug:
-            logger.info(f"[cyan]Generated anonymous poster: {display_name}[/cyan]")
+            logger.info(
+                f"[cyan]Generated anonymous poster: {display_name}[/cyan]"
+            )
 
     # 5. Subject line
     obscure_subject = usenet_cfg.get("obscure_subject", True)
@@ -1051,10 +1410,16 @@ async def prepare_and_upload_usenet(meta: Meta, config: dict[str, Any], *, prepa
             continue
         all_upload_files.append(str(file_path))
 
-    logger.debug(f"[yellow]Posting {len(all_upload_files)} files to Usenet via NNTP ({uploader})...[/yellow]")
+    logger.debug(
+        f"[yellow]Posting {len(all_upload_files)} files to Usenet via NNTP ({uploader})...[/yellow]"
+    )
 
     # Build mock NZB content used in debug/simulation mode
-    mock_nzb_password_tag = f'  <meta type="password">{archive_password}</meta>\n' if archive_password else ""
+    mock_nzb_password_tag = (
+        f'  <meta type="password">{archive_password}</meta>\n'
+        if archive_password
+        else ""
+    )
     mock_nzb_content = (
         '<?xml version="1.0" encoding="utf-8" ?>\n'
         '<!DOCTYPE nzb PUBLIC "-//newzBin//DTD NZB 1.1//EN" "http://www.newzbin.com/DTD/nzb/nzb-1.1.dtd">\n'
@@ -1083,12 +1448,18 @@ async def prepare_and_upload_usenet(meta: Meta, config: dict[str, Any], *, prepa
         try:
             if await aiofiles.ospath.exists(cleanup_path):
                 if is_debug:
-                    logger.info(f"[cyan][DEBUG SIMULATION] Would delete temporary Usenet folder: {cleanup_path}[/cyan]")
+                    logger.info(
+                        f"[cyan][DEBUG SIMULATION] Would delete temporary Usenet folder: {cleanup_path}[/cyan]"
+                    )
                 else:
                     await asyncio.to_thread(shutil.rmtree, cleanup_path)
-                    logger.info("[green]Cleaned up temporary compressed Usenet files.[/green]")
+                    logger.info(
+                        "[green]Cleaned up temporary compressed Usenet files.[/green]"
+                    )
         except OSError as e:
-            logger.warning(f"[yellow]Warning: Could not clean up temporary Usenet folder '{cleanup_path}' ({e})[/yellow]")
+            logger.warning(
+                f"[yellow]Warning: Could not clean up temporary Usenet folder '{cleanup_path}' ({e})[/yellow]"
+            )
 
     if use_pesto:
         # 6a. Upload via pesto
@@ -1145,11 +1516,20 @@ async def prepare_and_upload_usenet(meta: Meta, config: dict[str, Any], *, prepa
         # elsewhere. tmdb_type mirrors curupira.py's own mapping
         # (meta.category.lower() gated to "movie"/"tv").
         tmdb_type = meta.category.lower()
-        if meta.tmdb_id and str(meta.tmdb_id).isdigit() and int(meta.tmdb_id) > 0 and tmdb_type in ("movie", "tv"):
+        if (
+            meta.tmdb_id
+            and str(meta.tmdb_id).isdigit()
+            and int(meta.tmdb_id) > 0
+            and tmdb_type in ("movie", "tv")
+        ):
             cmd_pesto.extend(["--tmdb", f"{tmdb_type}/{meta.tmdb_id}"])
         if meta.imdb_tt:
             cmd_pesto.extend(["--imdb-id", meta.imdb_tt])
-        if meta.tvdb_id and str(meta.tvdb_id).isdigit() and int(meta.tvdb_id) > 0:
+        if (
+            meta.tvdb_id
+            and str(meta.tvdb_id).isdigit()
+            and int(meta.tvdb_id) > 0
+        ):
             cmd_pesto.extend(["--tvdb-id", str(meta.tvdb_id)])
         if meta.mal_id and str(meta.mal_id).isdigit() and int(meta.mal_id) > 0:
             cmd_pesto.extend(["--mal-id", str(meta.mal_id)])
@@ -1170,8 +1550,13 @@ async def prepare_and_upload_usenet(meta: Meta, config: dict[str, Any], *, prepa
             if check_retries is not None and str(check_retries).strip() != "":
                 cmd_pesto.extend(["--check-retries", str(check_retries)])
             check_connections = usenet_cfg.get("pesto_check_connections")
-            if check_connections is not None and str(check_connections).strip() != "":
-                cmd_pesto.extend(["--check-connections", str(check_connections)])
+            if (
+                check_connections is not None
+                and str(check_connections).strip() != ""
+            ):
+                cmd_pesto.extend(
+                    ["--check-connections", str(check_connections)]
+                )
             # Unlike the other check_* options above, this one is NOT left to
             # pesto's own default: pesto defaults to a single repost round
             # (1) for backwards compatibility with older callers, but that
@@ -1183,14 +1568,18 @@ async def prepare_and_upload_usenet(meta: Meta, config: dict[str, Any], *, prepa
             # own default instead.
             check_post_retries = usenet_cfg.get("pesto_check_post_retries", 3)
             if str(check_post_retries).strip() != "":
-                cmd_pesto.extend(["--check-post-retries", str(check_post_retries)])
+                cmd_pesto.extend(
+                    ["--check-post-retries", str(check_post_retries)]
+                )
         else:
             cmd_pesto.append("--no-check")
 
         cmd_pesto.extend(all_upload_files)
 
         if is_debug:
-            logger.info(f"[yellow][DEBUG SIMULATION] Would run Pesto upload: {' '.join(cmd_pesto)}[/yellow]")
+            logger.info(
+                f"[yellow][DEBUG SIMULATION] Would run Pesto upload: {' '.join(cmd_pesto)}[/yellow]"
+            )
             async with aiofiles.open(nzb_file, "w", encoding="utf-8") as f:
                 await f.write(mock_nzb_content)
         else:
@@ -1212,7 +1601,11 @@ async def prepare_and_upload_usenet(meta: Meta, config: dict[str, Any], *, prepa
         # 6b. Upload via nyuu
         total_connections = int(usenet_cfg.get("connections", 20))
         nyuu_check_enabled = usenet_cfg.get("nyuu_check", True)
-        post_connections, check_connections = compute_nyuu_connections(total_connections, nyuu_check_enabled, usenet_cfg.get("nyuu_check_connections"))
+        post_connections, check_connections = compute_nyuu_connections(
+            total_connections,
+            nyuu_check_enabled,
+            usenet_cfg.get("nyuu_check_connections"),
+        )
 
         cmd_nyuu = [
             path_nyuu or "nyuu",
@@ -1273,11 +1666,20 @@ async def prepare_and_upload_usenet(meta: Meta, config: dict[str, Any], *, prepa
         # pesto branch above (tmdb_type via meta.category.lower(), meta.imdb_tt
         # already zero-padded "tt...").
         tmdb_type = meta.category.lower()
-        if meta.tmdb_id and str(meta.tmdb_id).isdigit() and int(meta.tmdb_id) > 0 and tmdb_type in ("movie", "tv"):
+        if (
+            meta.tmdb_id
+            and str(meta.tmdb_id).isdigit()
+            and int(meta.tmdb_id) > 0
+            and tmdb_type in ("movie", "tv")
+        ):
             cmd_nyuu.extend(["-M", f"tmdbid: {tmdb_type}/{meta.tmdb_id}"])
         if meta.imdb_tt:
             cmd_nyuu.extend(["-M", f"imdbid: {meta.imdb_tt}"])
-        if meta.tvdb_id and str(meta.tvdb_id).isdigit() and int(meta.tvdb_id) > 0:
+        if (
+            meta.tvdb_id
+            and str(meta.tvdb_id).isdigit()
+            and int(meta.tvdb_id) > 0
+        ):
             cmd_nyuu.extend(["-M", f"tvdbid: {meta.tvdb_id}"])
         if meta.mal_id and str(meta.mal_id).isdigit() and int(meta.mal_id) > 0:
             cmd_nyuu.extend(["-M", f"malid: {meta.mal_id}"])
@@ -1285,7 +1687,9 @@ async def prepare_and_upload_usenet(meta: Meta, config: dict[str, Any], *, prepa
         cmd_nyuu.extend(all_upload_files)
 
         if is_debug:
-            logger.info(f"[yellow][DEBUG SIMULATION] Would run Nyuu upload: {' '.join(cmd_nyuu)}[/yellow]")
+            logger.info(
+                f"[yellow][DEBUG SIMULATION] Would run Nyuu upload: {' '.join(cmd_nyuu)}[/yellow]"
+            )
             async with aiofiles.open(nzb_file, "w", encoding="utf-8") as f:
                 await f.write(mock_nzb_content)
         else:
@@ -1309,11 +1713,19 @@ async def prepare_and_upload_usenet(meta: Meta, config: dict[str, Any], *, prepa
         # nyuu doesn't inject the password into the NZB — do it manually.
         # Skipped when skip_archive is on: no 7z archive was created to encrypt,
         # so the password never protected anything and shouldn't be advertised.
-        if archive_password and not skip_archive and await aiofiles.ospath.exists(nzb_file):
+        if (
+            archive_password
+            and not skip_archive
+            and await aiofiles.ospath.exists(nzb_file)
+        ):
             if is_debug:
-                logger.info(f"[cyan][DEBUG SIMULATION] Injecting password '{archive_password}' into NZB file...[/cyan]")
+                logger.info(
+                    f"[cyan][DEBUG SIMULATION] Injecting password '{archive_password}' into NZB file...[/cyan]"
+                )
             else:
-                logger.info("[cyan]Injecting password into NZB metadata...[/cyan]")
+                logger.info(
+                    "[cyan]Injecting password into NZB metadata...[/cyan]"
+                )
             await inject_nzb_password(nzb_file, archive_password)
 
     await cleanup_temp_upload_dir()
@@ -1323,15 +1735,23 @@ async def prepare_and_upload_usenet(meta: Meta, config: dict[str, Any], *, prepa
         try:
             await asyncio.to_thread(shutil.move, nzb_file, final_nzb_path)
             if is_debug:
-                logger.info(f"[bold green]NZB file saved to: {final_nzb_path}[/bold green]")
+                logger.info(
+                    f"[bold green]NZB file saved to: {final_nzb_path}[/bold green]"
+                )
         except Exception as e:
-            logger.error(f"[red]Error moving NZB file to final destination: {e}[/red]")
+            logger.error(
+                f"[red]Error moving NZB file to final destination: {e}[/red]"
+            )
             final_nzb_path = nzb_file
 
     # Clean up empty parent uuid folder
     uuid_dir = Path(tmp_base) / uuid
     with contextlib.suppress(Exception):
-        if not is_debug and await aiofiles.ospath.exists(uuid_dir) and not [p.name for p in Path(uuid_dir).iterdir()]:
+        if (
+            not is_debug
+            and await aiofiles.ospath.exists(uuid_dir)
+            and not [p.name for p in Path(uuid_dir).iterdir()]
+        ):
             await asyncio.to_thread(os.rmdir, uuid_dir)
 
     return str(final_nzb_path)

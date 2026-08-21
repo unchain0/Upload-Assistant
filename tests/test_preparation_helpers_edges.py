@@ -12,7 +12,9 @@ from src.domain_models.release import Meta
 from src.services import preparation_helpers as helpers
 
 
-def test_xxx_store_urls_and_search_year_helpers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_xxx_store_urls_and_search_year_helpers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     video = tmp_path / "WowGirls.XXX.1080p.mkv"
     video.write_bytes(b"video")
     assert helpers.is_xxx_video_release(video)
@@ -33,13 +35,25 @@ def test_xxx_store_urls_and_search_year_helpers(tmp_path: Path, monkeypatch: pyt
     assert helpers._is_igdb_url("https://www.igdb.com/games/example")
     assert helpers._is_igdb_url("https://igdb.com/games/example")
     assert not helpers._is_igdb_url("https://example.invalid/igdb.com")
-    assert helpers._is_steam_app_url("https://store.steampowered.com/app/123/example")
-    assert not helpers._is_steam_app_url("https://store.steampowered.com/sub/123")
-    assert helpers._nfo_has_store_link("Store: https://store.steampowered.com/app/123/example")
-    assert helpers._nfo_has_store_link("IGDB https://www.igdb.com/games/example")
+    assert helpers._is_steam_app_url(
+        "https://store.steampowered.com/app/123/example"
+    )
+    assert not helpers._is_steam_app_url(
+        "https://store.steampowered.com/sub/123"
+    )
+    assert helpers._nfo_has_store_link(
+        "Store: https://store.steampowered.com/app/123/example"
+    )
+    assert helpers._nfo_has_store_link(
+        "IGDB https://www.igdb.com/games/example"
+    )
     assert not helpers._nfo_has_store_link("https://example.invalid/app/123")
 
-    monkeypatch.setattr(helpers, "urlparse", lambda _value: (_ for _ in ()).throw(ValueError("bad")))
+    monkeypatch.setattr(
+        helpers,
+        "urlparse",
+        lambda _value: (_ for _ in ()).throw(ValueError("bad")),
+    )
     assert not helpers._is_igdb_url("bad")
     assert not helpers._is_steam_app_url("bad")
 
@@ -57,12 +71,20 @@ def test_pre_release_and_title_article_helpers() -> None:
     assert helpers.check_pre_release(Meta(type="HDCAMRIP"))
     assert not helpers.check_pre_release(Meta(type="WEBDL", source="WEB"))
     assert helpers._title_without_leading_article("The Movie") == "movie"
-    assert helpers._tvdb_title_drops_existing_leading_article("The Office", "Office")
-    assert not helpers._tvdb_title_drops_existing_leading_article(None, "Office")
-    assert not helpers._tvdb_title_drops_existing_leading_article("Office", "Office")
+    assert helpers._tvdb_title_drops_existing_leading_article(
+        "The Office", "Office"
+    )
+    assert not helpers._tvdb_title_drops_existing_leading_article(
+        None, "Office"
+    )
+    assert not helpers._tvdb_title_drops_existing_leading_article(
+        "Office", "Office"
+    )
 
 
-def test_calculate_source_size_files_disc_missing_and_stat_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_calculate_source_size_files_disc_missing_and_stat_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     one = tmp_path / "one.bin"
     two = tmp_path / "two.bin"
     one.write_bytes(b"123")
@@ -115,7 +137,9 @@ def _validation_meta(tmp_path: Path, **values: object) -> Meta:
     return Meta(state)
 
 
-def test_validate_media_conformance_prompt_cleanup_and_accept(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_validate_media_conformance_prompt_cleanup_and_accept(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     temp = tmp_path / "tmp" / "validation"
     temp.mkdir(parents=True)
     (temp / "meta.json").write_text("{}", encoding="utf-8")
@@ -125,7 +149,9 @@ def test_validate_media_conformance_prompt_cleanup_and_accept(tmp_path: Path, mo
         return ["bad"]
 
     monkeypatch.setattr(helpers, "get_conformance_error", issues)
-    monkeypatch.setattr(helpers.cli_ui, "ask_yes_no", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(
+        helpers.cli_ui, "ask_yes_no", lambda *_args, **_kwargs: False
+    )
     meta = _validation_meta(tmp_path, unattended=False)
     with pytest.raises(ItemProcessingError, match="Conformance errors"):
         asyncio.run(helpers.validate_media(None, meta))
@@ -134,21 +160,31 @@ def test_validate_media_conformance_prompt_cleanup_and_accept(tmp_path: Path, mo
 
     cleanup = AsyncMock()
     monkeypatch.setattr(helpers.cleanup_manager, "cleanup", cleanup)
-    monkeypatch.setattr(helpers.cleanup_manager, "reset_terminal", lambda: None)
-    monkeypatch.setattr(helpers.cli_ui, "ask_yes_no", lambda *_args, **_kwargs: (_ for _ in ()).throw(EOFError()))
+    monkeypatch.setattr(
+        helpers.cleanup_manager, "reset_terminal", lambda: None
+    )
+    monkeypatch.setattr(
+        helpers.cli_ui,
+        "ask_yes_no",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(EOFError()),
+    )
     meta = _validation_meta(tmp_path, unattended=False)
     with pytest.raises(ItemProcessingError, match="skipped by user"):
         asyncio.run(helpers.validate_media(None, meta))
     cleanup.assert_awaited_once()
 
-    monkeypatch.setattr(helpers.cli_ui, "ask_yes_no", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        helpers.cli_ui, "ask_yes_no", lambda *_args, **_kwargs: True
+    )
     monkeypatch.setattr(helpers, "validate_mediainfo", lambda _meta: True)
     meta = _validation_meta(tmp_path, unattended_confirm=True)
     asyncio.run(helpers.validate_media(None, meta))
     assert meta.valid_mi is True
 
 
-def test_validate_media_invalid_mediainfo_errors_subtitles_and_languages(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_validate_media_invalid_mediainfo_errors_subtitles_and_languages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     async def no_issues(_meta: Meta):
         return []
 
@@ -180,7 +216,11 @@ def test_validate_media_invalid_mediainfo_errors_subtitles_and_languages(tmp_pat
     with pytest.raises(NoAudioMediaError, match="does not support no audio"):
         asyncio.run(helpers.validate_media(None, _validation_meta(tmp_path)))
 
-    monkeypatch.setattr(helpers, "validate_mediainfo", lambda _meta: (_ for _ in ()).throw(RuntimeError("bad")))
+    monkeypatch.setattr(
+        helpers,
+        "validate_mediainfo",
+        lambda _meta: (_ for _ in ()).throw(RuntimeError("bad")),
+    )
     with pytest.raises(RuntimeError, match="bad"):
         asyncio.run(helpers.validate_media(None, _validation_meta(tmp_path)))
 
@@ -191,14 +231,28 @@ def test_validate_media_invalid_mediainfo_errors_subtitles_and_languages(tmp_pat
         AsyncMock(return_value={"audio": [{"language": "English"}]}),
     )
     with pytest.raises(Exception, match="Language check failed"):
-        asyncio.run(helpers.validate_media(None, _validation_meta(tmp_path, has_languages="en,pt")))
+        asyncio.run(
+            helpers.validate_media(
+                None, _validation_meta(tmp_path, has_languages="en,pt")
+            )
+        )
     with pytest.raises(Exception, match="Language check failed"):
-        asyncio.run(helpers.validate_media(None, _validation_meta(tmp_path, has_languages="French")))
-    asyncio.run(helpers.validate_media(None, _validation_meta(tmp_path, has_languages="English,French")))
+        asyncio.run(
+            helpers.validate_media(
+                None, _validation_meta(tmp_path, has_languages="French")
+            )
+        )
+    asyncio.run(
+        helpers.validate_media(
+            None, _validation_meta(tmp_path, has_languages="English,French")
+        )
+    )
 
 
 class _TorrentClient:
-    def __init__(self, path: str | None = None, *, includes_subtitles: bool = False) -> None:
+    def __init__(
+        self, path: str | None = None, *, includes_subtitles: bool = False
+    ) -> None:
         self.path = path
         self.includes_subtitles = includes_subtitles
         self.properties: list[tuple[bool, str | None]] = []
@@ -206,19 +260,31 @@ class _TorrentClient:
     async def find_existing_torrent(self, _meta: Meta) -> str | None:
         return self.path
 
-    def _torrent_includes_all_local_subtitles(self, _path: str, _meta: Meta) -> bool:
+    def _torrent_includes_all_local_subtitles(
+        self, _path: str, _meta: Meta
+    ) -> bool:
         return self.includes_subtitles
 
-    async def get_ptp_from_hash(self, _meta: Meta, *, pathed: bool, client_name: str | None) -> None:
+    async def get_ptp_from_hash(
+        self, _meta: Meta, *, pathed: bool, client_name: str | None
+    ) -> None:
         self.properties.append((pathed, client_name))
 
 
-def test_process_trackers_defaults_strings_existing_torrent_and_read_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    prep = SimpleNamespace(config={"TRACKERS": {"default_trackers": "aither, bhd"}})
+def test_process_trackers_defaults_strings_existing_torrent_and_read_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prep = SimpleNamespace(
+        config={"TRACKERS": {"default_trackers": "aither, bhd"}}
+    )
     torrent = tmp_path / "existing.torrent"
     torrent.write_bytes(b"d4:infod4:name4:teste")
     client = _TorrentClient(str(torrent), includes_subtitles=True)
-    monkeypatch.setattr(helpers.Torrent, "read", lambda _path: SimpleNamespace(infohash="abc123"))
+    monkeypatch.setattr(
+        helpers.Torrent,
+        "read",
+        lambda _path: SimpleNamespace(infohash="abc123"),
+    )
     meta = Meta(
         trackers=[],
         tracker_ids={},
@@ -226,7 +292,11 @@ def test_process_trackers_defaults_strings_existing_torrent_and_read_failure(tmp
         subtitle_files=["subtitle.srt"],
         reuse_torrent_client="qbit",
     )
-    asyncio.run(helpers.process_trackers_and_torrent(prep, meta, client, ["infohash"], [], "", ""))
+    asyncio.run(
+        helpers.process_trackers_and_torrent(
+            prep, meta, client, ["infohash"], [], "", ""
+        )
+    )
     assert meta.description == ""
     assert meta.trackers == ["AITHER", "BHD"]
     assert meta.requested_trackers == ["AITHER", "BHD"]
@@ -234,21 +304,44 @@ def test_process_trackers_defaults_strings_existing_torrent_and_read_failure(tmp
     assert meta.infohash
     assert client.properties == [(True, "qbit")]
 
-    client = _TorrentClient(str(tmp_path / "invalid.torrent"), includes_subtitles=False)
-    monkeypatch.setattr(helpers.Torrent, "read", lambda _path: (_ for _ in ()).throw(ValueError("invalid")))
+    client = _TorrentClient(
+        str(tmp_path / "invalid.torrent"), includes_subtitles=False
+    )
+    monkeypatch.setattr(
+        helpers.Torrent,
+        "read",
+        lambda _path: (_ for _ in ()).throw(ValueError("invalid")),
+    )
     meta = Meta(trackers="aither", tracker_ids={}, edit=False)
-    asyncio.run(helpers.process_trackers_and_torrent(prep, meta, client, ["infohash"], [], "", ""))
+    asyncio.run(
+        helpers.process_trackers_and_torrent(
+            prep, meta, client, ["infohash"], [], "", ""
+        )
+    )
     assert meta.trackers == ["AITHER"]
     assert meta.base_reuse_torrent_path.endswith("invalid.torrent")
 
-    meta = Meta(trackers=[" aither ", "bhd"], infohash="already", tracker_ids={}, edit=False)
+    meta = Meta(
+        trackers=[" aither ", "bhd"],
+        infohash="already",
+        tracker_ids={},
+        edit=False,
+    )
     client = _TorrentClient(str(torrent))
-    asyncio.run(helpers.process_trackers_and_torrent(prep, meta, client, ["infohash"], [], "", ""))
+    asyncio.run(
+        helpers.process_trackers_and_torrent(
+            prep, meta, client, ["infohash"], [], "", ""
+        )
+    )
     assert client.properties == []
 
 
 class _DiscInfo:
-    def __init__(self, result: tuple[str, str, dict, list] | None = None, error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        result: tuple[str, str, dict, list] | None = None,
+        error: Exception | None = None,
+    ) -> None:
         self.result = result
         self.error = error
 
@@ -259,16 +352,30 @@ class _DiscInfo:
         return self.result
 
 
-def _detection_prep(path: Path, *, disc: str = "", bdinfo: dict | None = None, discs: list | None = None):
-    return SimpleNamespace(disc_info_manager=_DiscInfo((disc, str(path), bdinfo or {}, discs or [])))
+def _detection_prep(
+    path: Path,
+    *,
+    disc: str = "",
+    bdinfo: dict | None = None,
+    discs: list | None = None,
+):
+    return SimpleNamespace(
+        disc_info_manager=_DiscInfo(
+            (disc, str(path), bdinfo or {}, discs or [])
+        )
+    )
 
 
-def test_detect_disc_manual_book_game_package_and_audio_categories(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_detect_disc_manual_book_game_package_and_audio_categories(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     async def exercise() -> None:
         iso = tmp_path / "Game.iso"
         iso.write_bytes(b"game")
         meta = Meta(path=str(iso))
-        location, _ = await helpers.detect_disc_and_category(_detection_prep(iso), meta)
+        location, _ = await helpers.detect_disc_and_category(
+            _detection_prep(iso), meta
+        )
         assert location == str(iso) and meta.category == "GAME"
 
         game_dir = tmp_path / "Game.Release"
@@ -296,7 +403,13 @@ def test_detect_disc_manual_book_game_package_and_audio_categories(tmp_path: Pat
         monkeypatch.setattr(
             audio_classification_service,
             "detect_audio_category",
-            AsyncMock(return_value=SimpleNamespace(category="MUSIC", is_audiobook=False, evidence=["music tags"])),
+            AsyncMock(
+                return_value=SimpleNamespace(
+                    category="MUSIC",
+                    is_audiobook=False,
+                    evidence=["music tags"],
+                )
+            ),
         )
         mp3 = tmp_path / "track.mp3"
         mp3.write_bytes(b"audio")
@@ -307,17 +420,31 @@ def test_detect_disc_manual_book_game_package_and_audio_categories(tmp_path: Pat
     asyncio.run(exercise())
 
 
-def test_detect_ambiguous_audio_choices_cancellation_and_unattended(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_detect_ambiguous_audio_choices_cancellation_and_unattended(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from src.services import audio_classification_service
 
     audio = tmp_path / "unknown.mp3"
     audio.write_bytes(b"audio")
-    result = SimpleNamespace(category="AMBIGUOUS", is_audiobook=False, evidence=["mixed"])
-    monkeypatch.setattr(audio_classification_service, "detect_audio_category", AsyncMock(return_value=result))
+    result = SimpleNamespace(
+        category="AMBIGUOUS", is_audiobook=False, evidence=["mixed"]
+    )
+    monkeypatch.setattr(
+        audio_classification_service,
+        "detect_audio_category",
+        AsyncMock(return_value=result),
+    )
 
-    async def detect(choice: object, *, unattended: bool = False, confirm: bool = False) -> Meta:
-        monkeypatch.setattr(helpers.cli_ui, "ask_choice", lambda *_args, **_kwargs: choice)
-        meta = Meta(path=str(audio), unattended=unattended, unattended_confirm=confirm)
+    async def detect(
+        choice: object, *, unattended: bool = False, confirm: bool = False
+    ) -> Meta:
+        monkeypatch.setattr(
+            helpers.cli_ui, "ask_choice", lambda *_args, **_kwargs: choice
+        )
+        meta = Meta(
+            path=str(audio), unattended=unattended, unattended_confirm=confirm
+        )
         await helpers.detect_disc_and_category(_detection_prep(audio), meta)
         return meta
 
@@ -325,24 +452,48 @@ def test_detect_ambiguous_audio_choices_cancellation_and_unattended(tmp_path: Pa
     audiobook = asyncio.run(detect("audiobook"))
     assert audiobook.category == "BOOK" and audiobook.audiobook is True
     assert asyncio.run(detect("3. Podcast")).category == "PODCAST"
-    assert asyncio.run(detect("music", unattended=True, confirm=True)).category == "MUSIC"
+    assert (
+        asyncio.run(detect("music", unattended=True, confirm=True)).category
+        == "MUSIC"
+    )
 
     with pytest.raises(ItemProcessingError, match="interactive selection"):
         asyncio.run(detect(None))
-    monkeypatch.setattr(helpers.cli_ui, "ask_choice", lambda *_args, **_kwargs: (_ for _ in ()).throw(EOFError()))
+    monkeypatch.setattr(
+        helpers.cli_ui,
+        "ask_choice",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(EOFError()),
+    )
     with pytest.raises(ItemProcessingError, match="interactive cancellation"):
-        asyncio.run(helpers.detect_disc_and_category(_detection_prep(audio), Meta(path=str(audio))))
+        asyncio.run(
+            helpers.detect_disc_and_category(
+                _detection_prep(audio), Meta(path=str(audio))
+            )
+        )
     with pytest.raises(ItemProcessingError, match="mixed audio signals"):
-        asyncio.run(helpers.detect_disc_and_category(_detection_prep(audio), Meta(path=str(audio), unattended=True, unattended_confirm=False)))
+        asyncio.run(
+            helpers.detect_disc_and_category(
+                _detection_prep(audio),
+                Meta(
+                    path=str(audio), unattended=True, unattended_confirm=False
+                ),
+            )
+        )
 
 
-def test_detect_fallback_book_game_nfo_group_and_xxx(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_detect_fallback_book_game_nfo_group_and_xxx(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from src.services import audio_classification_service
 
     monkeypatch.setattr(
         audio_classification_service,
         "detect_audio_category",
-        AsyncMock(return_value=SimpleNamespace(category="NONE", is_audiobook=False, evidence=[])),
+        AsyncMock(
+            return_value=SimpleNamespace(
+                category="NONE", is_audiobook=False, evidence=[]
+            )
+        ),
     )
 
     async def exercise() -> None:
@@ -377,7 +528,9 @@ def test_detect_fallback_book_game_nfo_group_and_xxx(tmp_path: Path, monkeypatch
 
         nfo_game = tmp_path / "Store.Game"
         nfo_game.mkdir()
-        (nfo_game / "release.nfo").write_text("https://store.steampowered.com/app/123/game", encoding="utf-8")
+        (nfo_game / "release.nfo").write_text(
+            "https://store.steampowered.com/app/123/game", encoding="utf-8"
+        )
         meta = Meta(path=str(nfo_game))
         await helpers.detect_disc_and_category(_detection_prep(nfo_game), meta)
         assert meta.category == "GAME"
@@ -392,9 +545,13 @@ def test_detect_fallback_book_game_nfo_group_and_xxx(tmp_path: Path, monkeypatch
 
 
 def test_detect_disc_error_is_propagated(tmp_path: Path) -> None:
-    prep = SimpleNamespace(disc_info_manager=_DiscInfo(error=RuntimeError("disc failed")))
+    prep = SimpleNamespace(
+        disc_info_manager=_DiscInfo(error=RuntimeError("disc failed"))
+    )
     with pytest.raises(RuntimeError, match="disc failed"):
-        asyncio.run(helpers.detect_disc_and_category(prep, Meta(path=str(tmp_path))))
+        asyncio.run(
+            helpers.detect_disc_and_category(prep, Meta(path=str(tmp_path)))
+        )
 
 
 class _Scene:
@@ -406,7 +563,11 @@ class _Scene:
 
 
 class _Names:
-    def __init__(self, result=("Example Title", "Secondary", 2024), error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        result=("Example Title", "Secondary", 2024),
+        error: Exception | None = None,
+    ) -> None:
         self.result = result
         self.error = error
 
@@ -422,7 +583,13 @@ class _DiscSize:
 
 
 class _MediaPrep:
-    def __init__(self, *, name_result=("Example Title", "Secondary", 2024), name_error=None, video="Scene.Release.mkv") -> None:
+    def __init__(
+        self,
+        *,
+        name_result=("Example Title", "Secondary", 2024),
+        name_error=None,
+        video="Scene.Release.mkv",
+    ) -> None:
         self.scene_manager = _Scene(video)
         self.name_manager = _Names(name_result, name_error)
         self.disc_info_manager = _DiscSize()
@@ -437,10 +604,14 @@ class _MediaPrep:
         meta.filelist = [location]
         return location, [location], Path(location).name, "file"
 
-    async def _gather_book_prep(self, _meta: Meta, _videopath: str, _base_dir: str):
+    async def _gather_book_prep(
+        self, _meta: Meta, _videopath: str, _base_dir: str
+    ):
         self.book_calls += 1
 
-    async def _gather_game_prep(self, _meta: Meta, _videopath: str, _base_dir: str):
+    async def _gather_game_prep(
+        self, _meta: Meta, _videopath: str, _base_dir: str
+    ):
         self.game_calls += 1
 
 
@@ -461,7 +632,9 @@ def _media_meta(tmp_path: Path, **values: object) -> Meta:
     return Meta(state)
 
 
-def test_process_media_files_bluray_title_fallback_hfr_and_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_process_media_files_bluray_title_fallback_hfr_and_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     async def resolution(*_args, **_kwargs):
         return "1080p"
 
@@ -470,31 +643,64 @@ def test_process_media_files_bluray_title_fallback_hfr_and_errors(tmp_path: Path
 
     monkeypatch.setattr(helpers, "mi_resolution", resolution)
     monkeypatch.setattr(helpers.video_manager, "is_sd", sd)
-    monkeypatch.setattr(helpers, "guessit_fn", lambda _value, _options=None: {"title": "Guessed", "year": 2023})
+    monkeypatch.setattr(
+        helpers,
+        "guessit_fn",
+        lambda _value, _options=None: {"title": "Guessed", "year": 2023},
+    )
 
     meta = _media_meta(tmp_path, is_disc="BDMV", resolution="")
-    bdinfo = {"title": "Disc-Title-2024", "label": "Disc-Label", "video": [{"fps": "60.000", "res": "1080p"}]}
-    result = asyncio.run(helpers.process_media_files(_MediaPrep(), meta, str(tmp_path), bdinfo))
+    bdinfo = {
+        "title": "Disc-Title-2024",
+        "label": "Disc-Label",
+        "video": [{"fps": "60.000", "res": "1080p"}],
+    }
+    result = asyncio.run(
+        helpers.process_media_files(_MediaPrep(), meta, str(tmp_path), bdinfo)
+    )
     assert result[0] == "Example Title"
     assert meta.secondary_title == "Secondary" and meta.year == 2024
-    assert meta.hfr is True and meta.search_year == 2023 and meta.resolution == "1080p"
+    assert (
+        meta.hfr is True
+        and meta.search_year == 2023
+        and meta.resolution == "1080p"
+    )
 
     meta = _media_meta(tmp_path, is_disc="BDMV", resolution="")
     prep = _MediaPrep(name_result=("", "", None))
-    result = asyncio.run(helpers.process_media_files(prep, meta, str(tmp_path), bdinfo))
+    result = asyncio.run(
+        helpers.process_media_files(prep, meta, str(tmp_path), bdinfo)
+    )
     assert result[0] == "Guessed"
 
     meta = _media_meta(tmp_path, is_disc="BDMV", resolution="1080p")
-    result = asyncio.run(helpers.process_media_files(_MediaPrep(name_error=RuntimeError("name failed")), meta, str(tmp_path), bdinfo))
+    result = asyncio.run(
+        helpers.process_media_files(
+            _MediaPrep(name_error=RuntimeError("name failed")),
+            meta,
+            str(tmp_path),
+            bdinfo,
+        )
+    )
     assert result[0] == "Guessed"
 
-    bad_bdinfo = {"title": "Title", "label": "Label", "video": [{"fps": "bad", "res": "1080p"}]}
+    bad_bdinfo = {
+        "title": "Title",
+        "label": "Label",
+        "video": [{"fps": "bad", "res": "1080p"}],
+    }
     meta = _media_meta(tmp_path, is_disc="BDMV", resolution="1080p")
-    asyncio.run(helpers.process_media_files(_MediaPrep(), meta, str(tmp_path), bad_bdinfo))
+    asyncio.run(
+        helpers.process_media_files(
+            _MediaPrep(), meta, str(tmp_path), bad_bdinfo
+        )
+    )
     assert meta.hfr is False
 
 
-def test_process_media_files_dvd_and_hddvd_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_process_media_files_dvd_and_hddvd_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     async def export(*_args, **_kwargs):
         return {"media": {"track": []}}
 
@@ -507,7 +713,11 @@ def test_process_media_files_dvd_and_hddvd_paths(tmp_path: Path, monkeypatch: py
     monkeypatch.setattr(helpers, "export_info", export)
     monkeypatch.setattr(helpers.video_manager, "get_resolution", resolution)
     monkeypatch.setattr(helpers.video_manager, "is_sd", sd)
-    monkeypatch.setattr(helpers, "guessit_fn", lambda _value, _options=None: {"title": "Guessed DVD", "year": 2001})
+    monkeypatch.setattr(
+        helpers,
+        "guessit_fn",
+        lambda _value, _options=None: {"title": "Guessed DVD", "year": 2001},
+    )
 
     dvd_root = tmp_path / "DVD-2001" / "VIDEO_TS"
     dvd_root.mkdir(parents=True)
@@ -518,7 +728,14 @@ def test_process_media_files_dvd_and_hddvd_paths(tmp_path: Path, monkeypatch: py
         path=str(dvd_root.parent),
         edit=False,
     )
-    result = asyncio.run(helpers.process_media_files(_MediaPrep(name_result=("", "", None)), meta, str(dvd_root.parent), {}))
+    result = asyncio.run(
+        helpers.process_media_files(
+            _MediaPrep(name_result=("", "", None)),
+            meta,
+            str(dvd_root.parent),
+            {},
+        )
+    )
     assert result[0] == "Guessed DVD"
     assert meta.dvd_size == "DVD9" and meta.sd == 1 and meta.mediainfo
 
@@ -530,7 +747,11 @@ def test_process_media_files_dvd_and_hddvd_paths(tmp_path: Path, monkeypatch: py
         edit=True,
         mediainfo={"cached": True},
     )
-    result = asyncio.run(helpers.process_media_files(_MediaPrep(), meta, str(dvd_root.parent), {}))
+    result = asyncio.run(
+        helpers.process_media_files(
+            _MediaPrep(), meta, str(dvd_root.parent), {}
+        )
+    )
     assert result[5] == {"cached": True}
 
     evo = tmp_path / "largest.evo"
@@ -538,28 +759,42 @@ def test_process_media_files_dvd_and_hddvd_paths(tmp_path: Path, monkeypatch: py
     meta = _media_meta(
         tmp_path,
         is_disc="HDDVD",
-        discs=[{"path": str(tmp_path / "HD-DVD-2002"), "largest_evo": str(evo)}],
+        discs=[
+            {"path": str(tmp_path / "HD-DVD-2002"), "largest_evo": str(evo)}
+        ],
         edit=False,
     )
-    result = asyncio.run(helpers.process_media_files(_MediaPrep(), meta, str(tmp_path), {}))
+    result = asyncio.run(
+        helpers.process_media_files(_MediaPrep(), meta, str(tmp_path), {})
+    )
     assert result[2] == str(evo)
     assert meta.search_year == 2001
 
 
-def test_process_media_files_book_game_and_video_subtitles(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_process_media_files_book_game_and_video_subtitles(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     prep = _MediaPrep(video="Book.Scene.mkv")
-    monkeypatch.setattr(helpers, "guessit_fn", lambda _value, _options=None: {"title": "Guessed", "year": 2024})
+    monkeypatch.setattr(
+        helpers,
+        "guessit_fn",
+        lambda _value, _options=None: {"title": "Guessed", "year": 2024},
+    )
 
     book = tmp_path / "book.epub"
     book.write_bytes(b"book")
     meta = _media_meta(tmp_path, path=str(book), category="BOOK")
-    result = asyncio.run(helpers.process_media_files(prep, meta, str(book), {}))
+    result = asyncio.run(
+        helpers.process_media_files(prep, meta, str(book), {})
+    )
     assert prep.book_calls == 1 and result[2] == str(book)
 
     game = tmp_path / "game.iso"
     game.write_bytes(b"game")
     meta = _media_meta(tmp_path, path=str(game), category="GAME")
-    result = asyncio.run(helpers.process_media_files(prep, meta, str(game), {}))
+    result = asyncio.run(
+        helpers.process_media_files(prep, meta, str(game), {})
+    )
     assert prep.game_calls == 1 and meta.filename
 
     release = tmp_path / "Release"
@@ -588,17 +823,27 @@ def test_process_media_files_book_game_and_video_subtitles(tmp_path: Path, monke
     monkeypatch.setattr(helpers, "export_info", export)
     monkeypatch.setattr(helpers.video_manager, "get_resolution", resolution)
     monkeypatch.setattr(helpers.video_manager, "is_sd", sd)
-    meta = _media_meta(tmp_path, path=str(release), isdir=True, category="MOVIE", edit=False)
-    asyncio.run(helpers.process_media_files(_MediaPrep(), meta, str(release), {}))
+    meta = _media_meta(
+        tmp_path, path=str(release), isdir=True, category="MOVIE", edit=False
+    )
+    asyncio.run(
+        helpers.process_media_files(_MediaPrep(), meta, str(release), {})
+    )
     assert str(release / "Movie.2024.en.srt") in meta.subtitle_files
     assert all("BDMV" not in item for item in meta.subtitle_files)
 
-    meta = _media_meta(tmp_path, path=str(video), isdir=False, category="MOVIE", edit=True)
-    asyncio.run(helpers.process_media_files(_MediaPrep(), meta, str(video), {}))
+    meta = _media_meta(
+        tmp_path, path=str(video), isdir=False, category="MOVIE", edit=True
+    )
+    asyncio.run(
+        helpers.process_media_files(_MediaPrep(), meta, str(video), {})
+    )
     assert meta.subtitle_files == [str(release / "Movie.2024.en.srt")]
 
 
-def test_process_media_files_name_and_metadata_errors_are_semantic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_process_media_files_name_and_metadata_errors_are_semantic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     video = tmp_path / "movie.mkv"
     video.write_bytes(b"video")
 
@@ -608,7 +853,14 @@ def test_process_media_files_name_and_metadata_errors_are_semantic(tmp_path: Pat
     monkeypatch.setattr(helpers.video_manager, "get_video", get_video)
     meta = _media_meta(tmp_path, path=str(video), category="MOVIE")
     with pytest.raises(Exception, match="Error extracting title and year"):
-        asyncio.run(helpers.process_media_files(_MediaPrep(name_error=RuntimeError("bad")), meta, str(video), {}))
+        asyncio.run(
+            helpers.process_media_files(
+                _MediaPrep(name_error=RuntimeError("bad")),
+                meta,
+                str(video),
+                {},
+            )
+        )
 
     prep = _MediaPrep(name_result=("Title", "", None))
 
@@ -618,8 +870,19 @@ def test_process_media_files_name_and_metadata_errors_are_semantic(tmp_path: Pat
         raise MediaInfoError("bad", command=["mediainfo"], stderr="details")
 
     monkeypatch.setattr(helpers, "export_info", media_error)
-    with pytest.raises(ItemProcessingError, match="MediaInfo could not inspect"):
-        asyncio.run(helpers.process_media_files(prep, _media_meta(tmp_path, path=str(video), category="MOVIE", edit=False), str(video), {}))
+    with pytest.raises(
+        ItemProcessingError, match="MediaInfo could not inspect"
+    ):
+        asyncio.run(
+            helpers.process_media_files(
+                prep,
+                _media_meta(
+                    tmp_path, path=str(video), category="MOVIE", edit=False
+                ),
+                str(video),
+                {},
+            )
+        )
 
 
 class _SearchManager:
@@ -628,7 +891,12 @@ class _SearchManager:
         self.sonarr_result: dict | None = None
         self.radarr_result: dict | None = None
         self.tmdb_id_result: tuple[int, str] = (0, "MOVIE")
-        self.tmdb_from_imdb_result: tuple[str, int, str, bool] = ("MOVIE", 0, "en", False)
+        self.tmdb_from_imdb_result: tuple[str, int, str, bool] = (
+            "MOVIE",
+            0,
+            "en",
+            False,
+        )
         self.mediainfo_ids: tuple[str, int, int, int] = ("MOVIE", 0, 0, 0)
 
     async def get_sonarr_data(self, **_kwargs):
@@ -747,14 +1015,32 @@ def _search_meta(tmp_path: Path, **values: object) -> Meta:
     return Meta(state)
 
 
-def _patch_search_globals(monkeypatch: pytest.MonkeyPatch, *, imdb_search: object = 0) -> None:
-    monkeypatch.setattr(helpers.video_manager, "get_type", AsyncMock(return_value="WEBDL"))
-    monkeypatch.setattr(helpers.video_manager, "get_video_duration", AsyncMock(return_value=120))
-    monkeypatch.setattr(helpers.imdb_manager, "search_imdb", AsyncMock(return_value=imdb_search))
-    monkeypatch.setattr(helpers.imdb_manager, "get_imdb_info_api", AsyncMock(return_value={"title": "IMDb Title"}))
+def _patch_search_globals(
+    monkeypatch: pytest.MonkeyPatch, *, imdb_search: object = 0
+) -> None:
+    monkeypatch.setattr(
+        helpers.video_manager, "get_type", AsyncMock(return_value="WEBDL")
+    )
+    monkeypatch.setattr(
+        helpers.video_manager,
+        "get_video_duration",
+        AsyncMock(return_value=120),
+    )
+    monkeypatch.setattr(
+        helpers.imdb_manager,
+        "search_imdb",
+        AsyncMock(return_value=imdb_search),
+    )
+    monkeypatch.setattr(
+        helpers.imdb_manager,
+        "get_imdb_info_api",
+        AsyncMock(return_value={"title": "IMDb Title"}),
+    )
 
 
-def test_search_metadata_manual_ids_missing_category_book_game_and_invalid_values(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_search_metadata_manual_ids_missing_category_book_game_and_invalid_values(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _patch_search_globals(monkeypatch)
     manager = _SearchManager()
     prep = _search_prep(manager)
@@ -770,19 +1056,60 @@ def test_search_metadata_manual_ids_missing_category_book_game_and_invalid_value
         path=str(tmp_path / "book.cbz"),
     )
     Path(meta.path).write_bytes(b"book")
-    asyncio.run(helpers.search_metadata(prep, meta, "Book", "Book", str(meta.path), "Book", "file", False, False, False, _SearchClient(), {}, {}))
+    asyncio.run(
+        helpers.search_metadata(
+            prep,
+            meta,
+            "Book",
+            "Book",
+            str(meta.path),
+            "Book",
+            "file",
+            False,
+            False,
+            False,
+            _SearchClient(),
+            {},
+            {},
+        )
+    )
     assert meta.category == "BOOK"
-    assert meta.tmdb_id == 0 and meta.imdb_id == 1234567 and meta.mal_id == 0 and meta.tvdb_id == 0
+    assert (
+        meta.tmdb_id == 0
+        and meta.imdb_id == 1234567
+        and meta.mal_id == 0
+        and meta.tvdb_id == 0
+    )
     assert meta.tvmaze_id == "tvmaze"
     assert meta.type == "CBZ" and meta.comic is True
 
-    game = _search_meta(tmp_path, category="GAME", path=str(tmp_path / "game.iso"))
+    game = _search_meta(
+        tmp_path, category="GAME", path=str(tmp_path / "game.iso")
+    )
     Path(game.path).write_bytes(b"game")
-    asyncio.run(helpers.search_metadata(prep, game, "Game", "Game", game.path, "Game", "file", False, False, False, _SearchClient(), {}, {}))
+    asyncio.run(
+        helpers.search_metadata(
+            prep,
+            game,
+            "Game",
+            "Game",
+            game.path,
+            "Game",
+            "file",
+            False,
+            False,
+            False,
+            _SearchClient(),
+            {},
+            {},
+        )
+    )
     assert game.type == "GAME"
 
 
-def test_search_metadata_sonarr_radarr_tracker_hash_ping_override_and_anime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_search_metadata_sonarr_radarr_tracker_hash_ping_override_and_anime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _patch_search_globals(monkeypatch)
     manager = _SearchManager()
     manager.sonarr_result = {
@@ -795,17 +1122,69 @@ def test_search_metadata_sonarr_radarr_tracker_hash_ping_override_and_anime(tmp_
         "year": 2020,
     }
     prep = _search_prep(manager)
-    meta = _search_meta(tmp_path, category="TV", skip_trackers=False, tvdb_id=0, manual_year=0, not_anime=False)
-    asyncio.run(helpers.search_metadata(prep, meta, "Show", "Show", meta.path, "Show", "file", True, False, False, _SearchClient(), {}, {}))
-    assert (meta.tvdb_id, meta.imdb_id, meta.tvmaze_id, meta.tmdb_id) == (101, 202, 303, 404)
+    meta = _search_meta(
+        tmp_path,
+        category="TV",
+        skip_trackers=False,
+        tvdb_id=0,
+        manual_year=0,
+        not_anime=False,
+    )
+    asyncio.run(
+        helpers.search_metadata(
+            prep,
+            meta,
+            "Show",
+            "Show",
+            meta.path,
+            "Show",
+            "file",
+            True,
+            False,
+            False,
+            _SearchClient(),
+            {},
+            {},
+        )
+    )
+    assert (meta.tvdb_id, meta.imdb_id, meta.tvmaze_id, meta.tmdb_id) == (
+        101,
+        202,
+        303,
+        404,
+    )
     assert meta.manual_year == 2020 and meta.not_anime is True
 
     manager = _SearchManager()
-    manager.radarr_result = {"imdb_id": 11, "tmdb_id": 22, "genres": ["Action"], "year": 2021, "release_group": "GROUP"}
+    manager.radarr_result = {
+        "imdb_id": 11,
+        "tmdb_id": 22,
+        "genres": ["Action"],
+        "year": 2021,
+        "release_group": "GROUP",
+    }
     prep = _search_prep(manager)
     meta = _search_meta(tmp_path, category="MOVIE", skip_trackers=False)
-    asyncio.run(helpers.search_metadata(prep, meta, "Movie", "Movie", meta.path, "Movie", "file", False, True, False, _SearchClient(), {}, {}))
-    assert meta.imdb_id == 11 and meta.tmdb_id == 22 and meta.manual_year == 2021
+    asyncio.run(
+        helpers.search_metadata(
+            prep,
+            meta,
+            "Movie",
+            "Movie",
+            meta.path,
+            "Movie",
+            "file",
+            False,
+            True,
+            False,
+            _SearchClient(),
+            {},
+            {},
+        )
+    )
+    assert (
+        meta.imdb_id == 11 and meta.tmdb_id == 22 and meta.manual_year == 2021
+    )
 
     manager = _SearchManager()
     manager.mediainfo_ids = ("MOVIE", 77, 123, 0)
@@ -826,39 +1205,136 @@ def test_search_metadata_sonarr_radarr_tracker_hash_ping_override_and_anime(tmp_
         mal_id=456,
         manual_language="Portuguese",
     )
-    asyncio.run(helpers.search_metadata(prep, meta, "Movie", "Movie", meta.path, "Movie", "file", False, False, False, client, {}, {}))
+    asyncio.run(
+        helpers.search_metadata(
+            prep,
+            meta,
+            "Movie",
+            "Movie",
+            meta.path,
+            "Movie",
+            "file",
+            False,
+            False,
+            False,
+            client,
+            {},
+            {},
+        )
+    )
     assert client.called == 1
-    assert {"tracker_data", "ping", "override", "set_tmdb"} <= set(manager.calls)
+    assert {"tracker_data", "ping", "override", "set_tmdb"} <= set(
+        manager.calls
+    )
     assert meta.anime is True and meta.not_anime is True
     assert meta.original_language == "portuguese"
 
 
-def test_search_metadata_sonarr_radarr_second_lookup_and_season(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_search_metadata_sonarr_radarr_second_lookup_and_season(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _patch_search_globals(monkeypatch)
-    ids = {"tvdb_id": 9, "imdb_id": 8, "tvmaze_id": 7, "tmdb_id": 6, "genres": ["Drama"], "year": 2022, "release_group": "G"}
+    ids = {
+        "tvdb_id": 9,
+        "imdb_id": 8,
+        "tvmaze_id": 7,
+        "tmdb_id": 6,
+        "genres": ["Drama"],
+        "year": 2022,
+        "release_group": "G",
+    }
     manager = _SearchManager()
     manager.sonarr_result = ids
     prep = _search_prep(manager)
-    meta = _search_meta(tmp_path, category="TV", skip_trackers=False, tvdb_id=9, matched_tracker=False, manual_date="2024-01-01")
-    asyncio.run(helpers.search_metadata(prep, meta, "Show", "Show", meta.path, "Show", "file", True, False, False, _SearchClient(), {}, {}))
+    meta = _search_meta(
+        tmp_path,
+        category="TV",
+        skip_trackers=False,
+        tvdb_id=9,
+        matched_tracker=False,
+        manual_date="2024-01-01",
+    )
+    asyncio.run(
+        helpers.search_metadata(
+            prep,
+            meta,
+            "Show",
+            "Show",
+            meta.path,
+            "Show",
+            "file",
+            True,
+            False,
+            False,
+            _SearchClient(),
+            {},
+            {},
+        )
+    )
     assert "sonarr" in manager.calls and "season" in manager.calls
 
     manager = _SearchManager()
-    manager.radarr_result = {"imdb_id": 8, "tmdb_id": 6, "genres": ["Drama"], "year": 2022, "release_group": "G"}
+    manager.radarr_result = {
+        "imdb_id": 8,
+        "tmdb_id": 6,
+        "genres": ["Drama"],
+        "year": 2022,
+        "release_group": "G",
+    }
     prep = _search_prep(manager)
-    meta = _search_meta(tmp_path, category="MOVIE", skip_trackers=False, tmdb_id=6, matched_tracker=False)
-    asyncio.run(helpers.search_metadata(prep, meta, "Movie", "Movie", meta.path, "Movie", "file", False, True, False, _SearchClient(), {}, {}))
+    meta = _search_meta(
+        tmp_path,
+        category="MOVIE",
+        skip_trackers=False,
+        tmdb_id=6,
+        matched_tracker=False,
+    )
+    asyncio.run(
+        helpers.search_metadata(
+            prep,
+            meta,
+            "Movie",
+            "Movie",
+            meta.path,
+            "Movie",
+            "file",
+            False,
+            True,
+            False,
+            _SearchClient(),
+            {},
+            {},
+        )
+    )
     assert "radarr" in manager.calls
 
 
-def test_search_metadata_no_ids_imdb_conversion_and_combination_routes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_search_metadata_no_ids_imdb_conversion_and_combination_routes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     manager = _SearchManager()
     manager.mediainfo_ids = ("MOVIE", 0, 0, 0)
     manager.tmdb_id_result = (123, "MOVIE")
     prep = _search_prep(manager)
     _patch_search_globals(monkeypatch, imdb_search=456)
     meta = _search_meta(tmp_path, category="MOVIE", skip_trackers=True)
-    asyncio.run(helpers.search_metadata(prep, meta, "Movie", "Movie", meta.path, "Movie", "file", False, False, False, _SearchClient(), {}, {}))
+    asyncio.run(
+        helpers.search_metadata(
+            prep,
+            meta,
+            "Movie",
+            "Movie",
+            meta.path,
+            "Movie",
+            "file",
+            False,
+            False,
+            False,
+            _SearchClient(),
+            {},
+            {},
+        )
+    )
     assert meta.tmdb_id == 123 and meta.imdb_id == 456
     assert meta.quickie_search is True and meta.no_ids is True
 
@@ -880,19 +1356,59 @@ def test_search_metadata_no_ids_imdb_conversion_and_combination_routes(tmp_path:
             original_language=None,
             tvdb_series_name="Bad TVDB Name",
         )
-        asyncio.run(helpers.search_metadata(prep, meta, "Movie", "Movie", meta.path, "Movie", "file", False, False, False, _SearchClient(), {}, {}))
+        asyncio.run(
+            helpers.search_metadata(
+                prep,
+                meta,
+                "Movie",
+                "Movie",
+                meta.path,
+                "Movie",
+                "file",
+                False,
+                False,
+                False,
+                _SearchClient(),
+                {},
+                {},
+            )
+        )
         assert expected in manager.calls
 
 
-def test_search_metadata_imdb_to_tmdb_mismatch_imdb_info_and_search_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_search_metadata_imdb_to_tmdb_mismatch_imdb_info_and_search_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     manager = _SearchManager()
     manager.mediainfo_ids = ("MOVIE", 0, 123, 0)
     manager.tmdb_from_imdb_result = ("MOVIE", 321, "fr", True)
     prep = _search_prep(manager)
     _patch_search_globals(monkeypatch)
-    meta = _search_meta(tmp_path, category="MOVIE", imdb_id=123, tmdb_id=0, imdb_info={})
-    asyncio.run(helpers.search_metadata(prep, meta, "Movie", "Movie", meta.path, "Movie", "file", False, False, False, _SearchClient(), {}, {}))
-    assert meta.tmdb_id == 321 and meta.original_language == "fr" and meta.no_ids is True
+    meta = _search_meta(
+        tmp_path, category="MOVIE", imdb_id=123, tmdb_id=0, imdb_info={}
+    )
+    asyncio.run(
+        helpers.search_metadata(
+            prep,
+            meta,
+            "Movie",
+            "Movie",
+            meta.path,
+            "Movie",
+            "file",
+            False,
+            False,
+            False,
+            _SearchClient(),
+            {},
+            {},
+        )
+    )
+    assert (
+        meta.tmdb_id == 321
+        and meta.original_language == "fr"
+        and meta.no_ids is True
+    )
     assert meta.imdb_info == {"title": "IMDb Title"}
 
     manager = _SearchManager()
@@ -908,18 +1424,56 @@ def test_search_metadata_imdb_to_tmdb_mismatch_imdb_info_and_search_failure(tmp_
         imdb_info={"title": "Old"},
         uuid="regular-release",
     )
-    asyncio.run(helpers.search_metadata(prep, meta, "Movie", "Movie", meta.path, "Movie", "file", False, False, False, _SearchClient(), {}, {}))
+    asyncio.run(
+        helpers.search_metadata(
+            prep,
+            meta,
+            "Movie",
+            "Movie",
+            meta.path,
+            "Movie",
+            "file",
+            False,
+            False,
+            False,
+            _SearchClient(),
+            {},
+            {},
+        )
+    )
     assert meta.imdb_id == 999
 
-    monkeypatch.setattr(helpers.imdb_manager, "search_imdb", AsyncMock(side_effect=RuntimeError("imdb failed")))
+    monkeypatch.setattr(
+        helpers.imdb_manager,
+        "search_imdb",
+        AsyncMock(side_effect=RuntimeError("imdb failed")),
+    )
     meta = _search_meta(tmp_path, category="MOVIE", tmdb_id=0, imdb_id=0)
     manager.mediainfo_ids = ("MOVIE", 0, 0, 0)
     manager.tmdb_id_result = (0, "MOVIE")
     with pytest.raises(RuntimeError, match="imdb failed"):
-        asyncio.run(helpers.search_metadata(prep, meta, "Movie", "Movie", meta.path, "Movie", "file", False, False, False, _SearchClient(), {}, {}))
+        asyncio.run(
+            helpers.search_metadata(
+                prep,
+                meta,
+                "Movie",
+                "Movie",
+                meta.path,
+                "Movie",
+                "file",
+                False,
+                False,
+                False,
+                _SearchClient(),
+                {},
+                {},
+            )
+        )
 
 
-def test_init_meta_sets_defaults_directory_mode_and_only_ids(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_init_meta_sets_defaults_directory_mode_and_only_ids(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     path = tmp_path / "Release"
     path.mkdir()
     created: list[dict] = []
@@ -943,7 +1497,13 @@ def test_init_meta_sets_defaults_directory_mode_and_only_ids(tmp_path: Path, mon
         "TRACKERS": {},
     }
     prep = SimpleNamespace(config=config)
-    meta = Meta(base_dir=str(tmp_path), path=str(path), uuid="", only_id=True, type="CAM")
+    meta = Meta(
+        base_dir=str(tmp_path),
+        path=str(path),
+        uuid="",
+        only_id=True,
+        type="CAM",
+    )
     result = helpers.init_meta(prep, meta, "cli")
     assert result[:4] == (True, True, result[2], True)
     assert result[4] == ["infohash", "torrent_hash", "skip_auto_torrent"]
@@ -957,18 +1517,26 @@ def test_init_meta_sets_defaults_directory_mode_and_only_ids(tmp_path: Path, mon
 
     file = tmp_path / "Movie.2024.mkv"
     file.write_bytes(b"video")
-    meta = Meta(base_dir=str(tmp_path), path=str(file), uuid="file", only_id=False)
+    meta = Meta(
+        base_dir=str(tmp_path), path=str(file), uuid="file", only_id=False
+    )
     result = helpers.init_meta(prep, meta, "batch")
     assert result[3] is False
     assert meta.keep_images is True and meta.basename_no_ext == "Movie.2024"
 
 
-def test_to_int_process_tracker_description_and_disc_stat_cleanup_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_to_int_process_tracker_description_and_disc_stat_cleanup_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     assert helpers._to_int("bad", 9) == 9
 
     prep = SimpleNamespace(config={"TRACKERS": {"default_trackers": ""}})
     meta = Meta(description=None, trackers=[], tracker_ids={}, edit=True)
-    asyncio.run(helpers.process_trackers_and_torrent(prep, meta, _TorrentClient(), [], [], "", ""))
+    asyncio.run(
+        helpers.process_trackers_and_torrent(
+            prep, meta, _TorrentClient(), [], [], "", ""
+        )
+    )
     assert meta.description == ""
 
     disc = tmp_path / "disc-error"
@@ -991,8 +1559,12 @@ def test_to_int_process_tracker_description_and_disc_stat_cleanup_errors(tmp_pat
     state = tmp_path / "tmp" / "cleanup"
     state.mkdir(parents=True)
     (state / "meta.json").write_text("{}", encoding="utf-8")
-    monkeypatch.setattr(helpers, "get_conformance_error", AsyncMock(return_value=["bad"]))
-    monkeypatch.setattr(helpers.cli_ui, "ask_yes_no", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(
+        helpers, "get_conformance_error", AsyncMock(return_value=["bad"])
+    )
+    monkeypatch.setattr(
+        helpers.cli_ui, "ask_yes_no", lambda *_args, **_kwargs: False
+    )
     original_iterdir = Path.iterdir
 
     def fail_iterdir(path: Path):
@@ -1002,7 +1574,12 @@ def test_to_int_process_tracker_description_and_disc_stat_cleanup_errors(tmp_pat
 
     monkeypatch.setattr(Path, "iterdir", fail_iterdir)
     with pytest.raises(ItemProcessingError, match="Conformance errors"):
-        asyncio.run(helpers.validate_media(None, _validation_meta(tmp_path, uuid="cleanup", unattended=False)))
+        asyncio.run(
+            helpers.validate_media(
+                None,
+                _validation_meta(tmp_path, uuid="cleanup", unattended=False),
+            )
+        )
 
 
 def _patch_process_video(monkeypatch: pytest.MonkeyPatch, video: Path) -> None:
@@ -1024,7 +1601,9 @@ def _patch_process_video(monkeypatch: pytest.MonkeyPatch, video: Path) -> None:
     monkeypatch.setattr(helpers.video_manager, "is_sd", sd)
 
 
-def test_process_media_disc_year_fallbacks_edit_and_low_fps(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_process_media_disc_year_fallbacks_edit_and_low_fps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     async def resolution(*_args, **_kwargs):
         return "1080p"
 
@@ -1038,10 +1617,14 @@ def test_process_media_disc_year_fallbacks_edit_and_low_fps(tmp_path: Path, monk
         return {"media": {"track": []}}
 
     monkeypatch.setattr(helpers, "mi_resolution", resolution)
-    monkeypatch.setattr(helpers.video_manager, "get_resolution", get_resolution)
+    monkeypatch.setattr(
+        helpers.video_manager, "get_resolution", get_resolution
+    )
     monkeypatch.setattr(helpers.video_manager, "is_sd", sd)
     monkeypatch.setattr(helpers, "export_info", export)
-    monkeypatch.setattr(helpers, "guessit_fn", lambda *_args, **_kwargs: {"title": "Guessed"})
+    monkeypatch.setattr(
+        helpers, "guessit_fn", lambda *_args, **_kwargs: {"title": "Guessed"}
+    )
 
     bdmv = _media_meta(tmp_path, is_disc="BDMV", resolution="")
     result = asyncio.run(
@@ -1049,10 +1632,16 @@ def test_process_media_disc_year_fallbacks_edit_and_low_fps(tmp_path: Path, monk
             _MediaPrep(name_result=("Title", "", 2024)),
             bdmv,
             str(tmp_path),
-            {"title": "Disc-Title", "label": "Disc-Label", "video": [{"fps": "24", "res": "1080p"}]},
+            {
+                "title": "Disc-Title",
+                "label": "Disc-Label",
+                "video": [{"fps": "24", "res": "1080p"}],
+            },
         )
     )
-    assert result[0] == "Title" and bdmv.hfr is False and bdmv.search_year == ""
+    assert (
+        result[0] == "Title" and bdmv.hfr is False and bdmv.search_year == ""
+    )
 
     fallback = _media_meta(tmp_path, is_disc="BDMV", resolution="1080p")
     result = asyncio.run(
@@ -1060,7 +1649,11 @@ def test_process_media_disc_year_fallbacks_edit_and_low_fps(tmp_path: Path, monk
             _MediaPrep(name_error=RuntimeError("name failed")),
             fallback,
             str(tmp_path),
-            {"title": "Disc-Title", "label": "Disc-Label", "video": [{"fps": "bad", "res": "1080p"}]},
+            {
+                "title": "Disc-Title",
+                "label": "Disc-Label",
+                "video": [{"fps": "bad", "res": "1080p"}],
+            },
         )
     )
     assert result[0] == "Guessed" and fallback.search_year == ""
@@ -1074,7 +1667,11 @@ def test_process_media_disc_year_fallbacks_edit_and_low_fps(tmp_path: Path, monk
         edit=True,
         mediainfo={"cached": True},
     )
-    result = asyncio.run(helpers.process_media_files(_MediaPrep(), dvd, str(dvd_root.parent), {}))
+    result = asyncio.run(
+        helpers.process_media_files(
+            _MediaPrep(), dvd, str(dvd_root.parent), {}
+        )
+    )
     assert result[5] == {"cached": True} and dvd.search_year == ""
 
     evo = tmp_path / "largest.evo"
@@ -1086,11 +1683,15 @@ def test_process_media_disc_year_fallbacks_edit_and_low_fps(tmp_path: Path, monk
         edit=True,
         mediainfo={"cached": True},
     )
-    result = asyncio.run(helpers.process_media_files(_MediaPrep(), hddvd, str(tmp_path), {}))
+    result = asyncio.run(
+        helpers.process_media_files(_MediaPrep(), hddvd, str(tmp_path), {})
+    )
     assert result[5] == {"cached": True} and hddvd.search_year == ""
 
 
-def test_process_media_filename_fallbacks_aka_and_metadata_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_process_media_filename_fallbacks_aka_and_metadata_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     video = tmp_path / "fallback.video.mkv"
     video.write_bytes(b"video")
     _patch_process_video(monkeypatch, video)
@@ -1106,10 +1707,20 @@ def test_process_media_filename_fallbacks_aka_and_metadata_errors(tmp_path: Path
 
     monkeypatch.setattr(helpers, "guessit_fn", fallback_guess)
     meta = _media_meta(tmp_path, path=str(video), category="MOVIE", edit=False)
-    result = asyncio.run(helpers.process_media_files(_MediaPrep(name_result=("", "", None)), meta, str(video), {}))
+    result = asyncio.run(
+        helpers.process_media_files(
+            _MediaPrep(name_result=("", "", None)), meta, str(video), {}
+        )
+    )
     assert result[0].strip() == "Fallback"
 
-    monkeypatch.setattr(helpers, "guessit_fn", lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("all guesses fail")))
+    monkeypatch.setattr(
+        helpers,
+        "guessit_fn",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            ValueError("all guesses fail")
+        ),
+    )
     with pytest.raises(Exception, match="Error processing filename"):
         asyncio.run(
             helpers.process_media_files(
@@ -1124,11 +1735,22 @@ def test_process_media_filename_fallbacks_aka_and_metadata_errors(tmp_path: Path
         async def _gather_book_prep(self, _meta, _videopath, _base_dir):
             raise ItemProcessingError("book rejected")
 
-    monkeypatch.setattr(helpers, "guessit_fn", lambda *_args, **_kwargs: {"title": "Book", "year": 2024})
+    monkeypatch.setattr(
+        helpers,
+        "guessit_fn",
+        lambda *_args, **_kwargs: {"title": "Book", "year": 2024},
+    )
     book = tmp_path / "book.epub"
     book.write_bytes(b"book")
     with pytest.raises(ItemProcessingError, match="book rejected"):
-        asyncio.run(helpers.process_media_files(BookFailure(), _media_meta(tmp_path, path=str(book), category="BOOK"), str(book), {}))
+        asyncio.run(
+            helpers.process_media_files(
+                BookFailure(),
+                _media_meta(tmp_path, path=str(book), category="BOOK"),
+                str(book),
+                {},
+            )
+        )
 
     class GameFailure(_MediaPrep):
         async def _gather_game_prep(self, _meta, _videopath, _base_dir):
@@ -1137,10 +1759,19 @@ def test_process_media_filename_fallbacks_aka_and_metadata_errors(tmp_path: Path
     game = tmp_path / "game.iso"
     game.write_bytes(b"game")
     with pytest.raises(RuntimeError, match="game rejected"):
-        asyncio.run(helpers.process_media_files(GameFailure(), _media_meta(tmp_path, path=str(game), category="GAME"), str(game), {}))
+        asyncio.run(
+            helpers.process_media_files(
+                GameFailure(),
+                _media_meta(tmp_path, path=str(game), category="GAME"),
+                str(game),
+                {},
+            )
+        )
 
 
-def test_detect_audiobook_fallback_audio_and_latin1_nfo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_detect_audiobook_fallback_audio_and_latin1_nfo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from src.services import audio_classification_service
 
     audiobook = tmp_path / "audiobook.mp3"
@@ -1148,10 +1779,16 @@ def test_detect_audiobook_fallback_audio_and_latin1_nfo(tmp_path: Path, monkeypa
     monkeypatch.setattr(
         audio_classification_service,
         "detect_audio_category",
-        AsyncMock(return_value=SimpleNamespace(category="BOOK", is_audiobook=True, evidence=["narrator"])),
+        AsyncMock(
+            return_value=SimpleNamespace(
+                category="BOOK", is_audiobook=True, evidence=["narrator"]
+            )
+        ),
     )
     meta = Meta(path=str(audiobook))
-    asyncio.run(helpers.detect_disc_and_category(_detection_prep(audiobook), meta))
+    asyncio.run(
+        helpers.detect_disc_and_category(_detection_prep(audiobook), meta)
+    )
     assert meta.category == "BOOK" and meta.audiobook is True
 
     fallback_dir = tmp_path / "fallback-audio"
@@ -1160,10 +1797,16 @@ def test_detect_audiobook_fallback_audio_and_latin1_nfo(tmp_path: Path, monkeypa
     monkeypatch.setattr(
         audio_classification_service,
         "detect_audio_category",
-        AsyncMock(return_value=SimpleNamespace(category="NONE", is_audiobook=False, evidence=[])),
+        AsyncMock(
+            return_value=SimpleNamespace(
+                category="NONE", is_audiobook=False, evidence=[]
+            )
+        ),
     )
     meta = Meta(path=str(fallback_dir))
-    asyncio.run(helpers.detect_disc_and_category(_detection_prep(fallback_dir), meta))
+    asyncio.run(
+        helpers.detect_disc_and_category(_detection_prep(fallback_dir), meta)
+    )
     assert meta.category == "BOOK"
 
     game_dir = tmp_path / "latin-game"
@@ -1182,57 +1825,191 @@ def test_detect_audiobook_fallback_audio_and_latin1_nfo(tmp_path: Path, monkeypa
 
     monkeypatch.setattr(helpers.aiofiles, "open", controlled_open)
     meta = Meta(path=str(game_dir))
-    asyncio.run(helpers.detect_disc_and_category(_detection_prep(game_dir), meta))
+    asyncio.run(
+        helpers.detect_disc_and_category(_detection_prep(game_dir), meta)
+    )
     assert meta.category == "GAME" and attempts == 2
 
 
-def test_search_metadata_plain_and_invalid_manual_imdb_ids(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_search_metadata_plain_and_invalid_manual_imdb_ids(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _patch_search_globals(monkeypatch)
     manager = _SearchManager()
     prep = _search_prep(manager)
 
-    plain = _search_meta(tmp_path, category="BOOK", imdb_id=0, imdb_manual="1234567")
-    asyncio.run(helpers.search_metadata(prep, plain, "Book", "Book", plain.path, "Book", "file", False, False, False, _SearchClient(), {}, {}))
+    plain = _search_meta(
+        tmp_path, category="BOOK", imdb_id=0, imdb_manual="1234567"
+    )
+    asyncio.run(
+        helpers.search_metadata(
+            prep,
+            plain,
+            "Book",
+            "Book",
+            plain.path,
+            "Book",
+            "file",
+            False,
+            False,
+            False,
+            _SearchClient(),
+            {},
+            {},
+        )
+    )
     assert plain.imdb_id == 1234567
 
-    invalid = _search_meta(tmp_path, category="BOOK", imdb_id=0, imdb_manual="invalid")
-    asyncio.run(helpers.search_metadata(prep, invalid, "Book", "Book", invalid.path, "Book", "file", False, False, False, _SearchClient(), {}, {}))
+    invalid = _search_meta(
+        tmp_path, category="BOOK", imdb_id=0, imdb_manual="invalid"
+    )
+    asyncio.run(
+        helpers.search_metadata(
+            prep,
+            invalid,
+            "Book",
+            "Book",
+            invalid.path,
+            "Book",
+            "file",
+            False,
+            False,
+            False,
+            _SearchClient(),
+            {},
+            {},
+        )
+    )
     assert invalid.imdb_id == 0
 
 
-def test_search_metadata_empty_first_and_second_sonarr_radarr_results(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_search_metadata_empty_first_and_second_sonarr_radarr_results(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _patch_search_globals(monkeypatch)
 
     manager = _SearchManager()
     manager.sonarr_result = None
     prep = _search_prep(manager)
-    tv = _search_meta(tmp_path, category="TV", tvdb_id=0, tmdb_id=0, skip_trackers=False, matched_tracker=False)
-    asyncio.run(helpers.search_metadata(prep, tv, "Show", "Show", tv.path, "Show", "file", True, False, False, _SearchClient(), {}, {}))
+    tv = _search_meta(
+        tmp_path,
+        category="TV",
+        tvdb_id=0,
+        tmdb_id=0,
+        skip_trackers=False,
+        matched_tracker=False,
+    )
+    asyncio.run(
+        helpers.search_metadata(
+            prep,
+            tv,
+            "Show",
+            "Show",
+            tv.path,
+            "Show",
+            "file",
+            True,
+            False,
+            False,
+            _SearchClient(),
+            {},
+            {},
+        )
+    )
     assert "sonarr" in manager.calls
 
     manager = _SearchManager()
     manager.radarr_result = None
     prep = _search_prep(manager)
-    movie = _search_meta(tmp_path, category="MOVIE", tmdb_id=0, skip_trackers=False, matched_tracker=False)
-    asyncio.run(helpers.search_metadata(prep, movie, "Movie", "Movie", movie.path, "Movie", "file", False, True, False, _SearchClient(), {}, {}))
+    movie = _search_meta(
+        tmp_path,
+        category="MOVIE",
+        tmdb_id=0,
+        skip_trackers=False,
+        matched_tracker=False,
+    )
+    asyncio.run(
+        helpers.search_metadata(
+            prep,
+            movie,
+            "Movie",
+            "Movie",
+            movie.path,
+            "Movie",
+            "file",
+            False,
+            True,
+            False,
+            _SearchClient(),
+            {},
+            {},
+        )
+    )
     assert "radarr" in manager.calls
 
     manager = _SearchManager()
     manager.sonarr_result = None
     prep = _search_prep(manager)
-    tv = _search_meta(tmp_path, category="TV", tvdb_id=77, tmdb_id=0, skip_trackers=False, matched_tracker=False)
-    asyncio.run(helpers.search_metadata(prep, tv, "Show", "Show", tv.path, "Show", "file", True, False, False, _SearchClient(), {}, {}))
+    tv = _search_meta(
+        tmp_path,
+        category="TV",
+        tvdb_id=77,
+        tmdb_id=0,
+        skip_trackers=False,
+        matched_tracker=False,
+    )
+    asyncio.run(
+        helpers.search_metadata(
+            prep,
+            tv,
+            "Show",
+            "Show",
+            tv.path,
+            "Show",
+            "file",
+            True,
+            False,
+            False,
+            _SearchClient(),
+            {},
+            {},
+        )
+    )
     assert manager.calls.count("sonarr") >= 1
 
     manager = _SearchManager()
     manager.radarr_result = None
     prep = _search_prep(manager)
-    movie = _search_meta(tmp_path, category="MOVIE", tmdb_id=77, skip_trackers=False, matched_tracker=False)
-    asyncio.run(helpers.search_metadata(prep, movie, "Movie", "Movie", movie.path, "Movie", "file", False, True, False, _SearchClient(), {}, {}))
+    movie = _search_meta(
+        tmp_path,
+        category="MOVIE",
+        tmdb_id=77,
+        skip_trackers=False,
+        matched_tracker=False,
+    )
+    asyncio.run(
+        helpers.search_metadata(
+            prep,
+            movie,
+            "Movie",
+            "Movie",
+            movie.path,
+            "Movie",
+            "file",
+            False,
+            True,
+            False,
+            _SearchClient(),
+            {},
+            {},
+        )
+    )
     assert manager.calls.count("radarr") >= 1
 
 
-def test_search_metadata_second_sonarr_and_radarr_fill_remaining_ids(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_search_metadata_second_sonarr_and_radarr_fill_remaining_ids(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _patch_search_globals(monkeypatch)
     manager = _SearchManager()
     manager.sonarr_result = {
@@ -1245,23 +2022,85 @@ def test_search_metadata_second_sonarr_and_radarr_fill_remaining_ids(tmp_path: P
         "release_group": "GROUP",
     }
     prep = _search_prep(manager)
-    tv = _search_meta(tmp_path, category="TV", tvdb_id=77, imdb_id=0, tvmaze_id=0, tmdb_id=0, skip_trackers=False, matched_tracker=False)
-    asyncio.run(helpers.search_metadata(prep, tv, "Show", "Show", tv.path, "Show", "file", True, False, False, _SearchClient(), {}, {}))
+    tv = _search_meta(
+        tmp_path,
+        category="TV",
+        tvdb_id=77,
+        imdb_id=0,
+        tvmaze_id=0,
+        tmdb_id=0,
+        skip_trackers=False,
+        matched_tracker=False,
+    )
+    asyncio.run(
+        helpers.search_metadata(
+            prep,
+            tv,
+            "Show",
+            "Show",
+            tv.path,
+            "Show",
+            "file",
+            True,
+            False,
+            False,
+            _SearchClient(),
+            {},
+            {},
+        )
+    )
     assert (tv.imdb_id, tv.tvmaze_id, tv.tmdb_id) == (88, 99, 111)
 
     manager = _SearchManager()
-    manager.radarr_result = {"imdb_id": 88, "tmdb_id": 77, "genres": ["Drama"], "year": 2024, "release_group": "GROUP"}
+    manager.radarr_result = {
+        "imdb_id": 88,
+        "tmdb_id": 77,
+        "genres": ["Drama"],
+        "year": 2024,
+        "release_group": "GROUP",
+    }
     prep = _search_prep(manager)
-    movie = _search_meta(tmp_path, category="MOVIE", tmdb_id=77, imdb_id=0, skip_trackers=False, matched_tracker=False)
-    asyncio.run(helpers.search_metadata(prep, movie, "Movie", "Movie", movie.path, "Movie", "file", False, True, False, _SearchClient(), {}, {}))
+    movie = _search_meta(
+        tmp_path,
+        category="MOVIE",
+        tmdb_id=77,
+        imdb_id=0,
+        skip_trackers=False,
+        matched_tracker=False,
+    )
+    asyncio.run(
+        helpers.search_metadata(
+            prep,
+            movie,
+            "Movie",
+            "Movie",
+            movie.path,
+            "Movie",
+            "file",
+            False,
+            True,
+            False,
+            _SearchClient(),
+            {},
+            {},
+        )
+    )
     assert movie.imdb_id == 88
 
 
-def test_search_metadata_full_imdb_failure_and_second_tmdb_conversion(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_search_metadata_full_imdb_failure_and_second_tmdb_conversion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     manager = _SearchManager()
     prep = _search_prep(manager)
-    monkeypatch.setattr(helpers.video_manager, "get_type", AsyncMock(return_value="WEBDL"))
-    monkeypatch.setattr(helpers.video_manager, "get_video_duration", AsyncMock(return_value=120))
+    monkeypatch.setattr(
+        helpers.video_manager, "get_type", AsyncMock(return_value="WEBDL")
+    )
+    monkeypatch.setattr(
+        helpers.video_manager,
+        "get_video_duration",
+        AsyncMock(return_value=120),
+    )
 
     async def fail_full_search(*_args, quickie: bool = False, **_kwargs):
         if quickie:
@@ -1269,14 +2108,34 @@ def test_search_metadata_full_imdb_failure_and_second_tmdb_conversion(tmp_path: 
         raise RuntimeError("full imdb failed")
 
     monkeypatch.setattr(helpers.imdb_manager, "search_imdb", fail_full_search)
-    meta = _search_meta(tmp_path, category="MOVIE", tmdb_id=123, imdb_id=0, skip_trackers=True)
+    meta = _search_meta(
+        tmp_path, category="MOVIE", tmdb_id=123, imdb_id=0, skip_trackers=True
+    )
     with pytest.raises(Exception, match="Error searching IMDb"):
-        asyncio.run(helpers.search_metadata(prep, meta, "Movie", "Movie", meta.path, "Movie", "file", False, False, False, _SearchClient(), {}, {}))
+        asyncio.run(
+            helpers.search_metadata(
+                prep,
+                meta,
+                "Movie",
+                "Movie",
+                meta.path,
+                "Movie",
+                "file",
+                False,
+                False,
+                False,
+                _SearchClient(),
+                {},
+                {},
+            )
+        )
 
     class SequentialManager(_SearchManager):
         def __init__(self) -> None:
             super().__init__()
-            self.responses = iter((("MOVIE", 0, "", False), ("MOVIE", 321, "es", True)))
+            self.responses = iter(
+                (("MOVIE", 0, "", False), ("MOVIE", 321, "es", True))
+            )
 
         async def get_tmdb_from_imdb(self, *_args, **_kwargs):
             self.calls.append("tmdb_from_imdb")
@@ -1284,8 +2143,36 @@ def test_search_metadata_full_imdb_failure_and_second_tmdb_conversion(tmp_path: 
 
     manager = SequentialManager()
     prep = _search_prep(manager)
-    monkeypatch.setattr(helpers.imdb_manager, "search_imdb", AsyncMock(return_value=1234567))
-    meta = _search_meta(tmp_path, category="MOVIE", imdb_id=1234567, tmdb_id=0, skip_trackers=True)
-    asyncio.run(helpers.search_metadata(prep, meta, "Movie", "Movie", meta.path, "Movie", "file", False, False, False, _SearchClient(), {}, {}))
+    monkeypatch.setattr(
+        helpers.imdb_manager, "search_imdb", AsyncMock(return_value=1234567)
+    )
+    meta = _search_meta(
+        tmp_path,
+        category="MOVIE",
+        imdb_id=1234567,
+        tmdb_id=0,
+        skip_trackers=True,
+    )
+    asyncio.run(
+        helpers.search_metadata(
+            prep,
+            meta,
+            "Movie",
+            "Movie",
+            meta.path,
+            "Movie",
+            "file",
+            False,
+            False,
+            False,
+            _SearchClient(),
+            {},
+            {},
+        )
+    )
     assert manager.calls.count("tmdb_from_imdb") == 2
-    assert meta.tmdb_id == 321 and meta.original_language == "es" and meta.no_ids is True
+    assert (
+        meta.tmdb_id == 321
+        and meta.original_language == "es"
+        and meta.no_ids is True
+    )

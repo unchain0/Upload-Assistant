@@ -23,7 +23,9 @@ class _Client:
         return None
 
 
-def _platform(monkeypatch: pytest.MonkeyPatch, system: str, machine: str) -> None:
+def _platform(
+    monkeypatch: pytest.MonkeyPatch, system: str, machine: str
+) -> None:
     monkeypatch.setattr(bdinfo.platform, "system", lambda: system)
     monkeypatch.setattr(bdinfo.platform, "machine", lambda: machine)
     monkeypatch.setattr(bdinfo.httpx, "AsyncClient", _Client)
@@ -44,7 +46,9 @@ def _zip(path: Path, *members: tuple[str, bytes]) -> None:
             archive.writestr(name, payload)
 
 
-def test_bdinfo_unsupported_and_cached_cleanup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_bdinfo_unsupported_and_cached_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     target = tmp_path / "bdinfo"
     target.mkdir()
     monkeypatch.setattr(bdinfo, "tool_install_dir", lambda *_args: target)
@@ -65,23 +69,36 @@ def test_bdinfo_unsupported_and_cached_cleanup(tmp_path: Path, monkeypatch: pyte
     plain = target / "plain.txt"
     plain.write_text("plain", encoding="utf-8")
 
-    assert asyncio.run(bdinfo.BDInfoBinaryManager.ensure_bdinfo_binary(tmp_path)) == str(binary)
+    assert asyncio.run(
+        bdinfo.BDInfoBinaryManager.ensure_bdinfo_binary(tmp_path)
+    ) == str(binary)
     assert not stale.exists()
-    assert marker.exists() and binary.exists() and ignored.exists() and plain.exists()
+    assert (
+        marker.exists()
+        and binary.exists()
+        and ignored.exists()
+        and plain.exists()
+    )
 
 
-def test_bdinfo_linux_tar_and_windows_zip_install(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_bdinfo_linux_tar_and_windows_zip_install(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     linux = tmp_path / "linux"
     linux.mkdir()
     monkeypatch.setattr(bdinfo, "tool_install_dir", lambda *_args: linux)
     _platform(monkeypatch, "Linux", "x86_64")
 
-    async def linux_download(_client, _url: str, destination: Path, asset: str) -> None:
+    async def linux_download(
+        _client, _url: str, destination: Path, asset: str
+    ) -> None:
         assert asset.endswith("linux_amd64.tar.gz")
         _tar(destination, ("bundle/bdinfo", b"linux-binary"))
 
     monkeypatch.setattr(bdinfo, "download_verified_asset", linux_download)
-    result = asyncio.run(bdinfo.BDInfoBinaryManager.ensure_bdinfo_binary(tmp_path))
+    result = asyncio.run(
+        bdinfo.BDInfoBinaryManager.ensure_bdinfo_binary(tmp_path)
+    )
     binary = Path(result)
     assert binary.read_bytes() == b"linux-binary"
     assert binary.stat().st_mode & 0o100
@@ -94,23 +111,31 @@ def test_bdinfo_linux_tar_and_windows_zip_install(tmp_path: Path, monkeypatch: p
     monkeypatch.setattr(bdinfo, "tool_install_dir", lambda *_args: windows)
     _platform(monkeypatch, "Windows", "AMD64")
 
-    async def windows_download(_client, _url: str, destination: Path, asset: str) -> None:
+    async def windows_download(
+        _client, _url: str, destination: Path, asset: str
+    ) -> None:
         assert asset.endswith("windows_amd64.zip")
         _zip(destination, ("bundle/bdinfo.exe", b"windows-binary"))
 
     monkeypatch.setattr(bdinfo, "download_verified_asset", windows_download)
-    result = asyncio.run(bdinfo.BDInfoBinaryManager.ensure_bdinfo_binary(tmp_path))
+    result = asyncio.run(
+        bdinfo.BDInfoBinaryManager.ensure_bdinfo_binary(tmp_path)
+    )
     assert Path(result).name == "bdinfo.exe"
     assert Path(result).read_bytes() == b"windows-binary"
 
 
-def test_bdinfo_missing_candidate_request_and_bad_archives(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_bdinfo_missing_candidate_request_and_bad_archives(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     target = tmp_path / "missing"
     target.mkdir()
     monkeypatch.setattr(bdinfo, "tool_install_dir", lambda *_args: target)
     _platform(monkeypatch, "Linux", "x86_64")
 
-    async def missing(_client, _url: str, destination: Path, _asset: str) -> None:
+    async def missing(
+        _client, _url: str, destination: Path, _asset: str
+    ) -> None:
         _tar(destination, ("bundle/other", b"other"))
 
     monkeypatch.setattr(bdinfo, "download_verified_asset", missing)
@@ -134,7 +159,9 @@ def test_bdinfo_missing_candidate_request_and_bad_archives(tmp_path: Path, monke
     monkeypatch.setattr(bdinfo, "tool_install_dir", lambda *_args: invalid_zip)
     _platform(monkeypatch, "Windows", "x86_64")
 
-    async def bad_zip(_client, _url: str, destination: Path, _asset: str) -> None:
+    async def bad_zip(
+        _client, _url: str, destination: Path, _asset: str
+    ) -> None:
         destination.write_bytes(b"not zip")
 
     monkeypatch.setattr(bdinfo, "download_verified_asset", bad_zip)
@@ -146,7 +173,9 @@ def test_bdinfo_missing_candidate_request_and_bad_archives(tmp_path: Path, monke
     monkeypatch.setattr(bdinfo, "tool_install_dir", lambda *_args: invalid_tar)
     _platform(monkeypatch, "Linux", "arm64")
 
-    async def bad_tar(_client, _url: str, destination: Path, _asset: str) -> None:
+    async def bad_tar(
+        _client, _url: str, destination: Path, _asset: str
+    ) -> None:
         destination.write_bytes(b"not tar")
 
     monkeypatch.setattr(bdinfo, "download_verified_asset", bad_tar)
@@ -154,13 +183,17 @@ def test_bdinfo_missing_candidate_request_and_bad_archives(tmp_path: Path, monke
         asyncio.run(bdinfo.BDInfoBinaryManager.ensure_bdinfo_binary(tmp_path))
 
 
-def test_bdinfo_temp_archive_unlink_warning_is_nonfatal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_bdinfo_temp_archive_unlink_warning_is_nonfatal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     target = tmp_path / "unlink"
     target.mkdir()
     monkeypatch.setattr(bdinfo, "tool_install_dir", lambda *_args: target)
     _platform(monkeypatch, "Linux", "x86_64")
 
-    async def download(_client, _url: str, destination: Path, _asset: str) -> None:
+    async def download(
+        _client, _url: str, destination: Path, _asset: str
+    ) -> None:
         _tar(destination, ("bdinfo", b"binary"))
 
     monkeypatch.setattr(bdinfo, "download_verified_asset", download)
@@ -172,6 +205,10 @@ def test_bdinfo_temp_archive_unlink_warning_is_nonfatal(tmp_path: Path, monkeypa
         original_unlink(path, *args, **kwargs)
 
     monkeypatch.setattr(Path, "unlink", fail_temp)
-    result = asyncio.run(bdinfo.BDInfoBinaryManager.ensure_bdinfo_binary(tmp_path))
+    result = asyncio.run(
+        bdinfo.BDInfoBinaryManager.ensure_bdinfo_binary(tmp_path)
+    )
     assert Path(result).read_bytes() == b"binary"
-    assert any(path.name.startswith("temp_bdinfo_") for path in target.iterdir())
+    assert any(
+        path.name.startswith("temp_bdinfo_") for path in target.iterdir()
+    )

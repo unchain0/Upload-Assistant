@@ -75,7 +75,13 @@ class _Response:
         if self.scenario == "malformed":
             raise ValueError("malformed response")
         if self.scenario == "empty":
-            return {"success": True, "results": [], "data": [], "items": [], "docs": []}
+            return {
+                "success": True,
+                "results": [],
+                "data": [],
+                "items": [],
+                "docs": [],
+            }
         if self.scenario != "success":
             return {
                 "success": False,
@@ -109,17 +115,39 @@ class _Response:
             "vote_count": 100,
             "genres": [{"id": 18, "name": "Drama"}],
             "genre_ids": [18],
-            "production_countries": [{"iso_3166_1": "US", "name": "United States"}],
-            "spoken_languages": [{"iso_639_1": "en", "english_name": "English"}],
+            "production_countries": [
+                {"iso_3166_1": "US", "name": "United States"}
+            ],
+            "spoken_languages": [
+                {"iso_639_1": "en", "english_name": "English"}
+            ],
             "external_ids": {"imdb_id": "tt1234567", "tvdb_id": 456},
-            "credits": {"crew": [{"job": "Director", "name": "Example Director"}], "cast": []},
-            "keywords": {"keywords": [{"name": "example"}], "results": [{"name": "example"}]},
+            "credits": {
+                "crew": [{"job": "Director", "name": "Example Director"}],
+                "cast": [],
+            },
+            "keywords": {
+                "keywords": [{"name": "example"}],
+                "results": [{"name": "example"}],
+            },
             "alternative_titles": {"titles": []},
             "translations": {"translations": []},
-            "videos": {"results": [{"site": "YouTube", "type": "Trailer", "key": "abc"}]},
+            "videos": {
+                "results": [
+                    {"site": "YouTube", "type": "Trailer", "key": "abc"}
+                ]
+            },
             "images": {"logos": [], "posters": [], "backdrops": []},
             "seasons": [{"season_number": 1, "episode_count": 1}],
-            "episodes": [{"id": 1, "season_number": 1, "episode_number": 1, "name": "Pilot", "air_date": "2024-01-02"}],
+            "episodes": [
+                {
+                    "id": 1,
+                    "season_number": 1,
+                    "episode_number": 1,
+                    "name": "Pilot",
+                    "air_date": "2024-01-02",
+                }
+            ],
         }
         release = {
             "id": "release-1",
@@ -138,7 +166,12 @@ class _Response:
             "artist-credit": [{"name": "Example Artist"}],
             "artists": [{"name": "Example Artist"}],
             "labels": [{"name": "Example Label", "catno": "CAT-001"}],
-            "label-info": [{"catalog-number": "CAT-001", "label": {"name": "Example Label"}}],
+            "label-info": [
+                {
+                    "catalog-number": "CAT-001",
+                    "label": {"name": "Example Label"},
+                }
+            ],
             "genres": ["Rock"],
             "styles": ["Alternative Rock"],
             "master_id": 99,
@@ -151,7 +184,9 @@ class _Response:
                 "publisher": "Example Publisher",
                 "publishedDate": "2024-01-02",
                 "description": "Example book description.",
-                "industryIdentifiers": [{"type": "ISBN_13", "identifier": "9780000000000"}],
+                "industryIdentifiers": [
+                    {"type": "ISBN_13", "identifier": "9780000000000"}
+                ],
                 "language": "en",
                 "pageCount": 320,
                 "categories": ["Fiction"],
@@ -174,7 +209,14 @@ class _Response:
             "masters": [release],
             "artists": [{"name": "Example Artist"}],
             "works": [{"key": "/works/OL1W", "title": "Example Book"}],
-            "docs": [{"key": "OL1W", "title": "Example Book", "author_name": ["Example Author"], "first_publish_year": 2024}],
+            "docs": [
+                {
+                    "key": "OL1W",
+                    "title": "Example Book",
+                    "author_name": ["Example Author"],
+                    "first_publish_year": 2024,
+                }
+            ],
             "movie_results": [movie],
             "tv_results": [movie],
             "person_results": [],
@@ -201,7 +243,12 @@ class _Response:
     async def __aenter__(self) -> Self:
         return self
 
-    async def __aexit__(self, exc_type: type[BaseException] | None, exc: BaseException | None, traceback: TracebackType | None) -> None:
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
         return None
 
 
@@ -213,7 +260,12 @@ class _AsyncClient:
     async def __aenter__(self) -> Self:
         return self
 
-    async def __aexit__(self, exc_type: type[BaseException] | None, exc: BaseException | None, traceback: TracebackType | None) -> None:
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
         return None
 
     async def get(self, *_args: object, **_kwargs: object) -> _Response:
@@ -252,7 +304,12 @@ class _Session:
     def __enter__(self) -> Self:
         return self
 
-    def __exit__(self, exc_type: type[BaseException] | None, exc: BaseException | None, traceback: TracebackType | None) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
         return None
 
 
@@ -305,7 +362,14 @@ def _meta(tmp_path: Path) -> Meta:
         service="AMZN",
         poster="https://images.example/poster.jpg",
         overview="Representative overview.",
-        mediainfo={"media": {"track": [{"@type": "General"}, {"@type": "Video", "Language": "en"}]}},
+        mediainfo={
+            "media": {
+                "track": [
+                    {"@type": "General"},
+                    {"@type": "Video", "Language": "en"},
+                ]
+            }
+        },
         imdb_info={"title": "Example Release", "year": 2024, "type": "movie"},
         unattended=True,
         debug=False,
@@ -320,10 +384,22 @@ def _meta(tmp_path: Path) -> Meta:
 
 
 def _modules() -> list[ModuleType]:
-    return [importlib.import_module(item.name) for item in pkgutil.iter_modules(external_api_package.__path__, f"{external_api_package.__name__}.")]
+    return [
+        importlib.import_module(item.name)
+        for item in pkgutil.iter_modules(
+            external_api_package.__path__, f"{external_api_package.__name__}."
+        )
+    ]
 
 
-def _value(name: str, annotation: object, meta: Meta, config: dict[str, Any], tmp_path: Path, profile: int) -> object:
+def _value(
+    name: str,
+    annotation: object,
+    meta: Meta,
+    config: dict[str, Any],
+    tmp_path: Path,
+    profile: int,
+) -> object:
     normalized = name.casefold().lstrip("_")
     response = _Response().json()
     values: dict[str, object] = {
@@ -486,7 +562,9 @@ def _coerce_override(
         if isinstance(value, list):
             return value
         element = args[0] if args else object
-        return [_coerce_override(value, element, meta, config, tmp_path, profile)]
+        return [
+            _coerce_override(value, element, meta, config, tmp_path, profile)
+        ]
     if origin is dict:
         return value if isinstance(value, dict) else _Response().json()
     if origin is tuple:
@@ -494,8 +572,12 @@ def _coerce_override(
     if origin is set:
         return value if isinstance(value, set) else {value}
     if origin is not None and type(None) in args and value is not None:
-        concrete = next((item for item in args if item is not type(None)), object)
-        return _coerce_override(value, concrete, meta, config, tmp_path, profile)
+        concrete = next(
+            (item for item in args if item is not type(None)), object
+        )
+        return _coerce_override(
+            value, concrete, meta, config, tmp_path, profile
+        )
     return value
 
 
@@ -516,14 +598,27 @@ async def _invoke(
     except NameError, TypeError:
         hints = {}
     for parameter in inspect.signature(function).parameters.values():
-        if parameter.kind in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}:
+        if parameter.kind in {
+            inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.VAR_KEYWORD,
+        }:
             continue
-        if parameter.default is not inspect.Parameter.empty and parameter.name not in overrides:
+        if (
+            parameter.default is not inspect.Parameter.empty
+            and parameter.name not in overrides
+        ):
             continue
         annotation = hints.get(parameter.name, parameter.annotation)
-        value = overrides.get(parameter.name, _value(parameter.name, annotation, meta, config, tmp_path, profile))
+        value = overrides.get(
+            parameter.name,
+            _value(
+                parameter.name, annotation, meta, config, tmp_path, profile
+            ),
+        )
         if parameter.name in overrides:
-            value = _coerce_override(value, annotation, meta, config, tmp_path, profile)
+            value = _coerce_override(
+                value, annotation, meta, config, tmp_path, profile
+            )
         if parameter.kind is inspect.Parameter.KEYWORD_ONLY:
             kwargs[parameter.name] = value
         else:
@@ -534,20 +629,30 @@ async def _invoke(
     return result
 
 
-def test_external_api_catalog_uses_deterministic_boundary_fakes(tmp_path: Path, monkeypatch: Any) -> None:
+def test_external_api_catalog_uses_deterministic_boundary_fakes(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
     config = _config()
     meta = _meta(tmp_path)
     monkeypatch.setattr(httpx, "AsyncClient", _AsyncClient)
     monkeypatch.setattr(requests, "Session", _Session)
     monkeypatch.setattr(requests, "get", _Session().get)
     monkeypatch.setattr(requests, "post", _Session().post)
-    monkeypatch.setattr(cloudscraper, "create_scraper", lambda *_args, **_kwargs: _Session())
+    monkeypatch.setattr(
+        cloudscraper, "create_scraper", lambda *_args, **_kwargs: _Session()
+    )
     monkeypatch.setattr(cli_ui, "ask_yes_no", lambda *_args, **_kwargs: True)
-    monkeypatch.setattr(cli_ui, "ask_choice", lambda _message, choices, **_kwargs: next(iter(choices)))
+    monkeypatch.setattr(
+        cli_ui,
+        "ask_choice",
+        lambda _message, choices, **_kwargs: next(iter(choices)),
+    )
     monkeypatch.setattr(cli_ui, "ask_string", lambda *_args, **_kwargs: "1")
     monkeypatch.setattr("builtins.input", lambda *_args, **_kwargs: "1")
 
-    async def no_sleep(_delay: float = 0, *_args: object, **_kwargs: object) -> None:
+    async def no_sleep(
+        _delay: float = 0, *_args: object, **_kwargs: object
+    ) -> None:
         return None
 
     async def affirmative_prompt(*_args: object, **_kwargs: object) -> bool:
@@ -559,79 +664,166 @@ def test_external_api_catalog_uses_deterministic_boundary_fakes(tmp_path: Path, 
     validation_errors: list[str] = []
 
     async def exercise() -> None:
-        scenarios = ("success", "empty", "not_found", "unauthorized", "rate_limited", "server_error", "malformed")
+        scenarios = (
+            "success",
+            "empty",
+            "not_found",
+            "unauthorized",
+            "rate_limited",
+            "server_error",
+            "malformed",
+        )
         for module in _modules():
             if hasattr(module, "prompt_in_thread"):
-                monkeypatch.setattr(module, "prompt_in_thread", affirmative_prompt)
+                monkeypatch.setattr(
+                    module, "prompt_in_thread", affirmative_prompt
+                )
             functions = [
-                (name, function) for name, function in inspect.getmembers(module, inspect.isfunction) if function.__module__ == module.__name__ and not name.startswith("__")
+                (name, function)
+                for name, function in inspect.getmembers(
+                    module, inspect.isfunction
+                )
+                if function.__module__ == module.__name__
+                and not name.startswith("__")
             ]
-            classes = [(class_name, class_type) for class_name, class_type in inspect.getmembers(module, inspect.isclass) if class_type.__module__ == module.__name__]
+            classes = [
+                (class_name, class_type)
+                for class_name, class_type in inspect.getmembers(
+                    module, inspect.isclass
+                )
+                if class_type.__module__ == module.__name__
+            ]
             for scenario_index, scenario in enumerate(scenarios):
                 _Response.scenario = scenario
                 profile = scenario_index % 2
                 for name, function in functions:
                     attempted.add(f"{module.__name__}.{name}")
                     try:
-                        await _invoke(function, meta.copy(), config, tmp_path, profile)
+                        await _invoke(
+                            function, meta.copy(), config, tmp_path, profile
+                        )
                     except (KeyboardInterrupt, SystemExit) as error:
-                        process_terminations.append(f"{module.__name__}.{name}:{type(error).__name__}")
+                        process_terminations.append(
+                            f"{module.__name__}.{name}:{type(error).__name__}"
+                        )
                     except Exception as error:
-                        validation_errors.append(f"{module.__name__}.{name}:{type(error).__name__}:{error}")
+                        validation_errors.append(
+                            f"{module.__name__}.{name}:{type(error).__name__}:{error}"
+                        )
 
                 for class_name, class_type in classes:
                     try:
-                        instance = await _invoke(class_type, meta.copy(), config, tmp_path, profile)
+                        instance = await _invoke(
+                            class_type, meta.copy(), config, tmp_path, profile
+                        )
                     except Exception as error:
-                        validation_errors.append(f"{module.__name__}.{class_name}.__init__:{type(error).__name__}:{error}")
+                        validation_errors.append(
+                            f"{module.__name__}.{class_name}.__init__:{type(error).__name__}:{error}"
+                        )
                         continue
-                    for method_name, method in inspect.getmembers(instance, callable):
+                    for method_name, method in inspect.getmembers(
+                        instance, callable
+                    ):
                         if method_name.startswith("__"):
                             continue
-                        attempted.add(f"{module.__name__}.{class_name}.{method_name}")
+                        attempted.add(
+                            f"{module.__name__}.{class_name}.{method_name}"
+                        )
                         try:
-                            await _invoke(method, meta.copy(), config, tmp_path, profile)
+                            await _invoke(
+                                method, meta.copy(), config, tmp_path, profile
+                            )
                         except (KeyboardInterrupt, SystemExit) as error:
-                            process_terminations.append(f"{module.__name__}.{class_name}.{method_name}:{type(error).__name__}")
+                            process_terminations.append(
+                                f"{module.__name__}.{class_name}.{method_name}:{type(error).__name__}"
+                            )
                         except Exception as error:
-                            validation_errors.append(f"{module.__name__}.{class_name}.{method_name}:{type(error).__name__}:{error}")
+                            validation_errors.append(
+                                f"{module.__name__}.{class_name}.{method_name}:{type(error).__name__}:{error}"
+                            )
 
             _Response.scenario = "success"
             for name, function in functions:
-                for meta_updates, argument_overrides in literal_branch_scenarios(function, Meta.__dataclass_fields__, limit=384):
-                    argument_overrides = {key: value for key, value in argument_overrides.items() if key not in _PROTECTED_SCENARIO_ARGUMENTS}
+                for (
+                    meta_updates,
+                    argument_overrides,
+                ) in literal_branch_scenarios(
+                    function, Meta.__dataclass_fields__, limit=384
+                ):
+                    argument_overrides = {
+                        key: value
+                        for key, value in argument_overrides.items()
+                        if key not in _PROTECTED_SCENARIO_ARGUMENTS
+                    }
                     scenario_meta = meta.copy()
                     for key, value in meta_updates.items():
                         if key in Meta.__dataclass_fields__:
                             setattr(scenario_meta, key, value)
                     try:
-                        await _invoke(function, scenario_meta, config, tmp_path, 0, argument_overrides)
+                        await _invoke(
+                            function,
+                            scenario_meta,
+                            config,
+                            tmp_path,
+                            0,
+                            argument_overrides,
+                        )
                     except (KeyboardInterrupt, SystemExit) as error:
-                        process_terminations.append(f"{module.__name__}.{name}:{type(error).__name__}")
+                        process_terminations.append(
+                            f"{module.__name__}.{name}:{type(error).__name__}"
+                        )
                     except Exception as error:
-                        validation_errors.append(f"{module.__name__}.{name}:{type(error).__name__}:{error}")
+                        validation_errors.append(
+                            f"{module.__name__}.{name}:{type(error).__name__}:{error}"
+                        )
 
             for class_name, class_type in classes:
                 try:
-                    instance = await _invoke(class_type, meta.copy(), config, tmp_path, 0)
+                    instance = await _invoke(
+                        class_type, meta.copy(), config, tmp_path, 0
+                    )
                 except Exception as error:
-                    validation_errors.append(f"{module.__name__}.{class_name}.__init__:{type(error).__name__}:{error}")
+                    validation_errors.append(
+                        f"{module.__name__}.{class_name}.__init__:{type(error).__name__}:{error}"
+                    )
                     continue
-                for method_name, method in inspect.getmembers(instance, callable):
+                for method_name, method in inspect.getmembers(
+                    instance, callable
+                ):
                     if method_name.startswith("__"):
                         continue
-                    for meta_updates, argument_overrides in literal_branch_scenarios(method, Meta.__dataclass_fields__, limit=384):
-                        argument_overrides = {key: value for key, value in argument_overrides.items() if key not in _PROTECTED_SCENARIO_ARGUMENTS}
+                    for (
+                        meta_updates,
+                        argument_overrides,
+                    ) in literal_branch_scenarios(
+                        method, Meta.__dataclass_fields__, limit=384
+                    ):
+                        argument_overrides = {
+                            key: value
+                            for key, value in argument_overrides.items()
+                            if key not in _PROTECTED_SCENARIO_ARGUMENTS
+                        }
                         scenario_meta = meta.copy()
                         for key, value in meta_updates.items():
                             if key in Meta.__dataclass_fields__:
                                 setattr(scenario_meta, key, value)
                         try:
-                            await _invoke(method, scenario_meta, config, tmp_path, 0, argument_overrides)
+                            await _invoke(
+                                method,
+                                scenario_meta,
+                                config,
+                                tmp_path,
+                                0,
+                                argument_overrides,
+                            )
                         except (KeyboardInterrupt, SystemExit) as error:
-                            process_terminations.append(f"{module.__name__}.{class_name}.{method_name}:{type(error).__name__}")
+                            process_terminations.append(
+                                f"{module.__name__}.{class_name}.{method_name}:{type(error).__name__}"
+                            )
                         except Exception as error:
-                            validation_errors.append(f"{module.__name__}.{class_name}.{method_name}:{type(error).__name__}:{error}")
+                            validation_errors.append(
+                                f"{module.__name__}.{class_name}.{method_name}:{type(error).__name__}:{error}"
+                            )
 
     asyncio.run(exercise())
 

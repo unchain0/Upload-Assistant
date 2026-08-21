@@ -10,7 +10,9 @@ from src.services import runtime_support
 class _Console:
     def __init__(self) -> None:
         self.printed: list[tuple[tuple[object, ...], dict[str, object]]] = []
-        self.exceptions: list[tuple[tuple[object, ...], dict[str, object]]] = []
+        self.exceptions: list[
+            tuple[tuple[object, ...], dict[str, object]]
+        ] = []
 
     def print(self, *objects: object, **kwargs: object) -> None:
         self.printed.append((objects, kwargs))
@@ -45,18 +47,24 @@ def test_buffer_factory_and_prompt_thread_are_explicitly_configured() -> None:
         finally:
             events.append("exit")
 
-    runtime_support.configure_runtime_support(console_adapter=adapter, buffer_factory=buffer)
+    runtime_support.configure_runtime_support(
+        console_adapter=adapter, buffer_factory=buffer
+    )
 
     async def exercise() -> None:
         async with runtime_support.buffer_console_logs():
             events.append("body")
-        result = await runtime_support.prompt_in_thread(lambda prefix, number: f"{prefix}{number}", "value-", 42)
+        result = await runtime_support.prompt_in_thread(
+            lambda prefix, number: f"{prefix}{number}", "value-", 42
+        )
         assert result == "value-42"
 
     asyncio.run(exercise())
     assert events == ["enter", "body", "exit", "enter", "exit"]
 
-    runtime_support.configure_runtime_support(console_adapter=adapter, buffer_factory=None)
+    runtime_support.configure_runtime_support(
+        console_adapter=adapter, buffer_factory=None
+    )
     asyncio.run(_exercise_without_buffer(events))
     assert events[-1] == "plain"
 
@@ -66,11 +74,21 @@ async def _exercise_without_buffer(events: list[str]) -> None:
         events.append("plain")
 
 
-def test_logging_console_emits_plain_messages_and_exception_trace(monkeypatch) -> None:
+def test_logging_console_emits_plain_messages_and_exception_trace(
+    monkeypatch,
+) -> None:
     messages: list[tuple[str, dict[str, Any]]] = []
     errors: list[tuple[str, dict[str, Any]]] = []
-    monkeypatch.setattr(runtime_support.logger, "info", lambda message, **kwargs: messages.append((message, kwargs)))
-    monkeypatch.setattr(runtime_support.logger, "error", lambda message, **kwargs: errors.append((message, kwargs)))
+    monkeypatch.setattr(
+        runtime_support.logger,
+        "info",
+        lambda message, **kwargs: messages.append((message, kwargs)),
+    )
+    monkeypatch.setattr(
+        runtime_support.logger,
+        "error",
+        lambda message, **kwargs: errors.append((message, kwargs)),
+    )
     fallback = runtime_support._LoggingConsole()
 
     fallback.print("hello", 42)
@@ -84,13 +102,23 @@ def test_logging_console_emits_plain_messages_and_exception_trace(monkeypatch) -
     assert errors[0][1] == {"extra": {"markup": False}}
 
 
-def test_integration_runtime_support_console_buffer_and_prompt(monkeypatch) -> None:
+def test_integration_runtime_support_console_buffer_and_prompt(
+    monkeypatch,
+) -> None:
     import src.integrations.observability.runtime_support as integration_support
 
     messages: list[str] = []
     errors: list[str] = []
-    monkeypatch.setattr(integration_support.logger, "info", lambda message, **_kwargs: messages.append(message))
-    monkeypatch.setattr(integration_support.logger, "error", lambda message, **_kwargs: errors.append(message))
+    monkeypatch.setattr(
+        integration_support.logger,
+        "info",
+        lambda message, **_kwargs: messages.append(message),
+    )
+    monkeypatch.setattr(
+        integration_support.logger,
+        "error",
+        lambda message, **_kwargs: errors.append(message),
+    )
 
     fallback = integration_support._LoggingConsole()
     fallback.print("hello", 42)
@@ -112,7 +140,9 @@ def test_integration_runtime_support_console_buffer_and_prompt(monkeypatch) -> N
         finally:
             events.append("exit")
 
-    integration_support.configure_runtime_support(console_adapter=adapter, buffer_factory=buffer)
+    integration_support.configure_runtime_support(
+        console_adapter=adapter, buffer_factory=buffer
+    )
     integration_support.console.print("value", end="")
     integration_support.console.print_exception("failure")
     assert adapter.printed and adapter.exceptions
@@ -125,8 +155,15 @@ def test_integration_runtime_support_console_buffer_and_prompt(monkeypatch) -> N
     async def exercise() -> None:
         async with integration_support.buffer_console_logs():
             events.append("body")
-        assert await integration_support.prompt_in_thread(lambda value: value + 1, 41) == 42
-        integration_support.configure_runtime_support(console_adapter=adapter, buffer_factory=None)
+        assert (
+            await integration_support.prompt_in_thread(
+                lambda value: value + 1, 41
+            )
+            == 42
+        )
+        integration_support.configure_runtime_support(
+            console_adapter=adapter, buffer_factory=None
+        )
         async with integration_support.buffer_console_logs():
             events.append("plain")
 

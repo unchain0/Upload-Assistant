@@ -16,18 +16,31 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Final
 
-LAYERS: Final = frozenset({"domain_models", "engines", "services", "integrations", "delivery"})
+LAYERS: Final = frozenset(
+    {"domain_models", "engines", "services", "integrations", "delivery"}
+)
 ALLOWED_IMPORTS: Final[dict[str, frozenset[str]]] = {
     "domain_models": frozenset({"domain_models"}),
     "engines": frozenset({"domain_models", "engines"}),
     # Services may coordinate explicit adapter dependencies; concrete wiring
     # remains visible in the composition root and adapter types must not leak
     # through public service contracts.
-    "services": frozenset({"domain_models", "engines", "services", "integrations"}),
+    "services": frozenset(
+        {"domain_models", "engines", "services", "integrations"}
+    ),
     "integrations": frozenset({"domain_models", "integrations"}),
     "delivery": frozenset({"domain_models", "services", "delivery"}),
     # Only the composition root and package root may connect concrete layers.
-    "root": frozenset({"domain_models", "engines", "services", "integrations", "delivery", "root"}),
+    "root": frozenset(
+        {
+            "domain_models",
+            "engines",
+            "services",
+            "integrations",
+            "delivery",
+            "root",
+        }
+    ),
 }
 COMPOSITION_ROOTS: Final = frozenset({Path("src/bootstrap.py")})
 
@@ -59,7 +72,9 @@ def _target_for(module: str) -> str | None:
     return parts[1] if len(parts) > 1 and parts[1] in LAYERS else "root"
 
 
-def _absolute_relative_module(node: ast.ImportFrom, path: Path, source_root: Path) -> str | None:
+def _absolute_relative_module(
+    node: ast.ImportFrom, path: Path, source_root: Path
+) -> str | None:
     if node.level == 0:
         return node.module
     relative = path.relative_to(source_root).with_suffix("")
@@ -84,16 +99,25 @@ def _compare_values(node: ast.AST) -> list[ast.AST] | None:
 
 
 def _has_name(values: list[ast.AST], name: str) -> bool:
-    return any(isinstance(value, ast.Name) and value.id == name for value in values)
+    return any(
+        isinstance(value, ast.Name) and value.id == name for value in values
+    )
 
 
 def _has_constant(values: list[ast.AST], expected: object) -> bool:
-    return any(isinstance(value, ast.Constant) and value.value == expected for value in values)
+    return any(
+        isinstance(value, ast.Constant) and value.value == expected
+        for value in values
+    )
 
 
 def _is_main_guard(node: ast.AST) -> bool:
     values = _compare_values(node)
-    return bool(values and _has_name(values, "__name__") and _has_constant(values, "__main__"))
+    return bool(
+        values
+        and _has_name(values, "__name__")
+        and _has_constant(values, "__main__")
+    )
 
 
 def _inside_main_guard(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> bool:
@@ -109,7 +133,11 @@ def _raised_termination(node: ast.AST) -> str | None:
     if not isinstance(node, ast.Raise):
         return None
     exception = node.exc.func if isinstance(node.exc, ast.Call) else node.exc
-    return "SystemExit" if isinstance(exception, ast.Name) and exception.id == "SystemExit" else None
+    return (
+        "SystemExit"
+        if isinstance(exception, ast.Name) and exception.id == "SystemExit"
+        else None
+    )
 
 
 def _named_termination(function: ast.AST) -> str | None:
@@ -119,7 +147,9 @@ def _named_termination(function: ast.AST) -> str | None:
 
 
 def _attribute_termination(function: ast.AST) -> str | None:
-    if not isinstance(function, ast.Attribute) or not isinstance(function.value, ast.Name):
+    if not isinstance(function, ast.Attribute) or not isinstance(
+        function.value, ast.Name
+    ):
         return None
     key = (function.value.id, function.attr)
     return {("sys", "exit"): "sys.exit", ("os", "_exit"): "os._exit"}.get(key)
@@ -143,9 +173,15 @@ def _syntax_violation(path: Path, owner: str, error: SyntaxError) -> Violation:
     )
 
 
-def _process_violation(node: ast.AST, owner: str, path: Path, parents: dict[ast.AST, ast.AST]) -> Violation | None:
+def _process_violation(
+    node: ast.AST, owner: str, path: Path, parents: dict[ast.AST, ast.AST]
+) -> Violation | None:
     termination = _termination_name(node)
-    if not termination or owner in {"delivery", "root"} or _inside_main_guard(node, parents):
+    if (
+        not termination
+        or owner in {"delivery", "root"}
+        or _inside_main_guard(node, parents)
+    ):
         return None
     return Violation(
         owner=owner,
@@ -166,18 +202,34 @@ def _import_modules(node: ast.AST, path: Path, source_root: Path) -> list[str]:
     return []
 
 
-def _import_violations(node: ast.AST, owner: str, path: Path, source_root: Path) -> list[Violation]:
+def _import_violations(
+    node: ast.AST, owner: str, path: Path, source_root: Path
+) -> list[Violation]:
     violations: list[Violation] = []
     for module in _import_modules(node, path, source_root):
         target = _target_for(module)
         if target is None or target in ALLOWED_IMPORTS[owner]:
             continue
-        violations.append(Violation(owner=owner, target=target, path=str(path), line=node.lineno, module=module))
+        violations.append(
+            Violation(
+                owner=owner,
+                target=target,
+                path=str(path),
+                line=node.lineno,
+                module=module,
+            )
+        )
     return violations
 
 
-def _scan_tree(tree: ast.AST, owner: str, path: Path, source_root: Path) -> list[Violation]:
-    parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+def _scan_tree(
+    tree: ast.AST, owner: str, path: Path, source_root: Path
+) -> list[Violation]:
+    parents = {
+        child: parent
+        for parent in ast.walk(tree)
+        for child in ast.iter_child_nodes(parent)
+    }
     violations: list[Violation] = []
     for node in ast.walk(tree):
         process = _process_violation(node, owner, path, parents)
@@ -207,10 +259,18 @@ def _render_text(violations: list[Violation]) -> str:
     if not violations:
         return "MASA architecture: PASS (0 boundary violations)"
     groups = Counter((item.owner, item.target) for item in violations)
-    lines = [f"MASA architecture: FAIL ({len(violations)} boundary violations)"]
-    lines.extend(f"  {owner} -> {target}: {count}" for (owner, target), count in sorted(groups.items()))
+    lines = [
+        f"MASA architecture: FAIL ({len(violations)} boundary violations)"
+    ]
+    lines.extend(
+        f"  {owner} -> {target}: {count}"
+        for (owner, target), count in sorted(groups.items())
+    )
     lines.append("")
-    lines.extend(f"{item.path}:{item.line}: {item.owner} -> {item.target}: {item.module} ({item.reason})" for item in violations)
+    lines.extend(
+        f"{item.path}:{item.line}: {item.owner} -> {item.target}: {item.module} ({item.reason})"
+        for item in violations
+    )
     return "\n".join(lines)
 
 
@@ -218,7 +278,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-root", type=Path, default=Path("src"))
     parser.add_argument("--json", dest="json_path", type=Path)
-    parser.add_argument("--report-only", action="store_true", help="write the report without returning a failing status")
+    parser.add_argument(
+        "--report-only",
+        action="store_true",
+        help="write the report without returning a failing status",
+    )
     args = parser.parse_args(argv)
 
     violations = scan(args.source_root)

@@ -3,7 +3,9 @@
 from src.integrations.torrent_clients.deluge import DelugeClientMixin
 from src.integrations.torrent_clients.qbittorrent import QbittorrentClientMixin
 from src.integrations.torrent_clients.rtorrent import RtorrentClientMixin
-from src.integrations.torrent_clients.transmission import TransmissionClientMixin
+from src.integrations.torrent_clients.transmission import (
+    TransmissionClientMixin,
+)
 
 __all__ = [
     "DelugeClientMixin",

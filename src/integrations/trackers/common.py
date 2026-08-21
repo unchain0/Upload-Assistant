@@ -25,15 +25,32 @@ from src.domain_models.errors import OperationAbortedError
 from src.domain_models.release import Meta
 from src.integrations.media.language_adapter import languages_manager
 from src.integrations.media.media_info_export import export_info
-from src.integrations.observability.runtime_support import console, logger, prompt_in_thread
+from src.integrations.observability.runtime_support import (
+    console,
+    logger,
+    prompt_in_thread,
+)
 from src.integrations.trackers.bbcode_formatting import BBCODE
 from src.integrations.usenet.creator import verify_nzb_has_password
 
 
 class Common:
-    TV_ENDED_STATUSES: frozenset[str] = frozenset({"ended", "canceled", "cancelled", "finished", "completed"})
-    TV_ONGOING_STATUSES: frozenset[str] = frozenset({"returning series", "in production", "ongoing", "planned", "pilot", "in development"})
-    PORTUGUESE_SUBTITLE_EXTENSIONS: frozenset[str] = frozenset({".ass", ".ssa", ".srt", ".sub", ".vtt"})
+    TV_ENDED_STATUSES: frozenset[str] = frozenset(
+        {"ended", "canceled", "cancelled", "finished", "completed"}
+    )
+    TV_ONGOING_STATUSES: frozenset[str] = frozenset(
+        {
+            "returning series",
+            "in production",
+            "ongoing",
+            "planned",
+            "pilot",
+            "in development",
+        }
+    )
+    PORTUGUESE_SUBTITLE_EXTENSIONS: frozenset[str] = frozenset(
+        {".ass", ".ssa", ".srt", ".sub", ".vtt"}
+    )
     PORTUGUESE_SUBTITLE_WORDS: frozenset[str] = frozenset(
         {
             "agora",
@@ -124,11 +141,63 @@ class Common:
     )
     PORTUGUESE_DESCRIPTION_MARKERS = re.compile(r"[ãõÃÕ]")
     LANGUAGE_EQUIVALENCE_GROUPS: tuple[set[str], ...] = (
-        {"chinese", "mandarin", "zh", "zho", "chi", "cmn", "chinese simplified", "chinese traditional", "zh hans", "zh hant"},
-        {"english", "eng", "en", "en us", "en gb", "english cc", "english sdh", "english forced"},
-        {"french", "fra", "fre", "fr", "francais", "français", "french canada", "french canadian"},
-        {"portuguese", "por", "pt", "pt pt", "brazilian portuguese", "portuguese brazil", "portuguese br", "pt br", "brazilian"},
-        {"spanish", "spa", "es", "es es", "spanish latin america", "latin american spanish", "es 419", "es mx", "castilian", "espanol", "español", "latino"},
+        {
+            "chinese",
+            "mandarin",
+            "zh",
+            "zho",
+            "chi",
+            "cmn",
+            "chinese simplified",
+            "chinese traditional",
+            "zh hans",
+            "zh hant",
+        },
+        {
+            "english",
+            "eng",
+            "en",
+            "en us",
+            "en gb",
+            "english cc",
+            "english sdh",
+            "english forced",
+        },
+        {
+            "french",
+            "fra",
+            "fre",
+            "fr",
+            "francais",
+            "français",
+            "french canada",
+            "french canadian",
+        },
+        {
+            "portuguese",
+            "por",
+            "pt",
+            "pt pt",
+            "brazilian portuguese",
+            "portuguese brazil",
+            "portuguese br",
+            "pt br",
+            "brazilian",
+        },
+        {
+            "spanish",
+            "spa",
+            "es",
+            "es es",
+            "spanish latin america",
+            "latin american spanish",
+            "es 419",
+            "es mx",
+            "castilian",
+            "espanol",
+            "español",
+            "latino",
+        },
     )
 
     def __init__(self, config: dict[str, Any]) -> None:
@@ -137,7 +206,9 @@ class Common:
 
     def _normalize_language_token(self, language: str) -> str:
         normalized = unicodedata.normalize("NFKD", language)
-        normalized = "".join(char for char in normalized if not unicodedata.combining(char))
+        normalized = "".join(
+            char for char in normalized if not unicodedata.combining(char)
+        )
         normalized = normalized.casefold()
         normalized = re.sub(r"[^a-z0-9]+", " ", normalized)
         return re.sub(r"\s+", " ", normalized).strip()
@@ -145,7 +216,11 @@ class Common:
     def _build_language_alias_lookup(self) -> dict[str, set[str]]:
         alias_lookup: dict[str, set[str]] = {}
         for group in self.LANGUAGE_EQUIVALENCE_GROUPS:
-            normalized_group = {self._normalize_language_token(value) for value in group if value}
+            normalized_group = {
+                self._normalize_language_token(value)
+                for value in group
+                if value
+            }
             for value in normalized_group:
                 alias_lookup[value] = set(normalized_group)
         return alias_lookup
@@ -157,7 +232,9 @@ class Common:
             return [value for value in values if isinstance(value, str)]
         return []
 
-    def _expand_language_candidates(self, language: str, alias_lookup: dict[str, set[str]]) -> set[str]:
+    def _expand_language_candidates(
+        self, language: str, alias_lookup: dict[str, set[str]]
+    ) -> set[str]:
         normalized = self._normalize_language_token(language)
         if not normalized:
             return set()
@@ -182,10 +259,17 @@ class Common:
                 language_code = parsed_lang.language
                 for value in (display_name, language_name, language_code):
                     if value:
-                        value_normalized = self._normalize_language_token(value)
+                        value_normalized = self._normalize_language_token(
+                            value
+                        )
                         if value_normalized:
                             candidates.add(value_normalized)
-            except tag_parser.LanguageTagError, LookupError, AttributeError, ValueError:
+            except (
+                tag_parser.LanguageTagError,
+                LookupError,
+                AttributeError,
+                ValueError,
+            ):
                 continue
 
         expanded = set(candidates)
@@ -195,27 +279,44 @@ class Common:
                 expanded.update(aliases)
         return expanded
 
-    def _expand_language_list(self, values: list[str], alias_lookup: dict[str, set[str]]) -> set[str]:
+    def _expand_language_list(
+        self, values: list[str], alias_lookup: dict[str, set[str]]
+    ) -> set[str]:
         expanded: set[str] = set()
         for value in values:
-            expanded.update(self._expand_language_candidates(value, alias_lookup))
+            expanded.update(
+                self._expand_language_candidates(value, alias_lookup)
+            )
         return expanded
 
     @staticmethod
     def extract_tv_seasons(filelist: list[Any]) -> set[int]:
         seasons: set[int] = set()
-        season_pattern = re.compile(r"(?<![A-Za-z0-9])[sS](\d{1,3})(?:[eE]\d{1,3}(?:[eE]\d{1,3})?)?")
+        season_pattern = re.compile(
+            r"(?<![A-Za-z0-9])[sS](\d{1,3})(?:[eE]\d{1,3}(?:[eE]\d{1,3})?)?"
+        )
         for item in filelist:
-            seasons.update(int(match) for match in season_pattern.findall(str(item)))
+            seasons.update(
+                int(match) for match in season_pattern.findall(str(item))
+            )
         return seasons
 
     @staticmethod
     def count_tv_episodes(filelist: list[Any]) -> int:
         episodes: set[tuple[int, int]] = set()
-        episode_pattern = re.compile(r"(?<![A-Za-z0-9])[sS](\d{1,3})[eE](\d{1,3})((?:[-_. ]?[eE]\d{1,3})*)")
+        episode_pattern = re.compile(
+            r"(?<![A-Za-z0-9])[sS](\d{1,3})[eE](\d{1,3})((?:[-_. ]?[eE]\d{1,3})*)"
+        )
         for item in filelist:
-            for season, first_episode, remaining_episodes in episode_pattern.findall(str(item)):
-                for episode in (first_episode, *re.findall(r"[eE](\d{1,3})", remaining_episodes)):
+            for (
+                season,
+                first_episode,
+                remaining_episodes,
+            ) in episode_pattern.findall(str(item)):
+                for episode in (
+                    first_episode,
+                    *re.findall(r"[eE](\d{1,3})", remaining_episodes),
+                ):
                     episodes.add((int(season), int(episode)))
         return len(episodes)
 
@@ -225,7 +326,11 @@ class Common:
         ended_values: set[str] | frozenset[str],
         ongoing_values: set[str] | frozenset[str],
     ) -> bool | None:
-        imdb_status = meta.imdb_info.get("status", "") if isinstance(meta.imdb_info, dict) else ""
+        imdb_status = (
+            meta.imdb_info.get("status", "")
+            if isinstance(meta.imdb_info, dict)
+            else ""
+        )
         for raw_status in (getattr(meta, "series_status", ""), imdb_status):
             status_text = str(raw_status or "").casefold().strip()
             if any(value in status_text for value in ended_values):
@@ -240,7 +345,10 @@ class Common:
             meta.category == "TV"
             and not meta.tv_pack
             and int(meta.episode_int or 0) > 0
-            and cls.is_tv_series_ended(meta, cls.TV_ENDED_STATUSES, cls.TV_ONGOING_STATUSES) is True
+            and cls.is_tv_series_ended(
+                meta, cls.TV_ENDED_STATUSES, cls.TV_ONGOING_STATUSES
+            )
+            is True
         )
 
     @staticmethod
@@ -267,7 +375,9 @@ class Common:
             "ptbr",
             "pt brasil",
         }
-        normalized_aliases = {self._normalize_language_token(alias) for alias in aliases}
+        normalized_aliases = {
+            self._normalize_language_token(alias) for alias in aliases
+        }
         text_paths: list[Path] = []
 
         for subtitle_file in meta.subtitle_files or []:
@@ -277,27 +387,43 @@ class Common:
             while filename_tokens and filename_tokens[-1] in {"forced", "sdh"}:
                 filename_tokens.pop()
             filename_without_flags = " ".join(filename_tokens)
-            if any(filename_without_flags == alias or filename_without_flags.endswith(f" {alias}") for alias in normalized_aliases):
+            if any(
+                filename_without_flags == alias
+                or filename_without_flags.endswith(f" {alias}")
+                for alias in normalized_aliases
+            ):
                 return True
             if path.suffix.casefold() in self.PORTUGUESE_SUBTITLE_EXTENSIONS:
                 text_paths.append(path)
 
         for path in text_paths:
             text = await asyncio.to_thread(self._read_subtitle_text, path)
-            words = set(re.findall(r"[a-z]+", self._normalize_language_token(text)))
+            words = set(
+                re.findall(r"[a-z]+", self._normalize_language_token(text))
+            )
             if len(words & self.PORTUGUESE_SUBTITLE_WORDS) >= 3:
                 return True
 
         return False
 
-    async def check_portuguese_video_requirements(self, meta: Meta, tracker: str) -> bool:
+    async def check_portuguese_video_requirements(
+        self, meta: Meta, tracker: str
+    ) -> bool:
         if await self.has_portuguese_external_subtitle(meta):
             return True
 
         subtitles = await self.check_language_requirements(
             meta,
             tracker,
-            languages_to_check=["portuguese", "português", "por", "pt", "pt-br", "pt br", "brazilian portuguese"],
+            languages_to_check=[
+                "portuguese",
+                "português",
+                "por",
+                "pt",
+                "pt-br",
+                "pt br",
+                "brazilian portuguese",
+            ],
             check_audio=True,
             check_subtitle=True,
             prompt_on_failure=False,
@@ -306,7 +432,9 @@ class Common:
             return True
         if meta.unattended:
             return bool(meta.unattended_confirm)
-        return await self.prompt_user_for_confirmation(f"{tracker}: No Portuguese audio or subtitles found. Do you want to proceed with the upload?")
+        return await self.prompt_user_for_confirmation(
+            f"{tracker}: No Portuguese audio or subtitles found. Do you want to proceed with the upload?"
+        )
 
     def _strip_bbcode_and_markup(self, text: str) -> str:
         without_bbcode = re.sub(r"\[[^\]]+\]", " ", text)
@@ -324,18 +452,27 @@ class Common:
         words = set(re.findall(r"[a-z]+", normalized))
         return len(words & self.PORTUGUESE_DESCRIPTION_WORDS) >= 3
 
-    async def check_portuguese_description_requirements(self, description: str, tracker: str, meta: Meta) -> bool:
+    async def check_portuguese_description_requirements(
+        self, description: str, tracker: str, meta: Meta
+    ) -> bool:
         candidates = self._portuguese_description_candidates(description, meta)
-        if any(self.is_portuguese_description(candidate) for candidate in candidates):
+        if any(
+            self.is_portuguese_description(candidate)
+            for candidate in candidates
+        ):
             return True
 
         if meta.unattended:
             return bool(meta.unattended_confirm)
 
-        return await self.prompt_user_for_confirmation(f"{tracker}: Description does not appear to be in Portuguese. Do you want to proceed with the upload?")
+        return await self.prompt_user_for_confirmation(
+            f"{tracker}: Description does not appear to be in Portuguese. Do you want to proceed with the upload?"
+        )
 
     @classmethod
-    def _portuguese_description_candidates(cls, description: str, meta: Meta) -> tuple[str, ...]:
+    def _portuguese_description_candidates(
+        cls, description: str, meta: Meta
+    ) -> tuple[str, ...]:
         localized = cls._localized_ptbr_overview(meta)
         if localized:
             return localized, description
@@ -365,7 +502,12 @@ class Common:
             parsed_lang = langcodes.Language.get(language)
             display_name = parsed_lang.display_name()
             return display_name.lower() if display_name else language.lower()
-        except tag_parser.LanguageTagError, LookupError, AttributeError, ValueError:
+        except (
+            tag_parser.LanguageTagError,
+            LookupError,
+            AttributeError,
+            ValueError,
+        ):
             return language.lower()
 
     async def path_exists(self, path: str) -> bool:
@@ -381,9 +523,16 @@ class Common:
     async def makedirs(self, path: str, exist_ok: bool = True) -> None:
         """Async wrapper for os.makedirs"""
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, lambda p, e: Path(p).mkdir(parents=True, exist_ok=e), path, exist_ok)
+        return await loop.run_in_executor(
+            None,
+            lambda p, e: Path(p).mkdir(parents=True, exist_ok=e),
+            path,
+            exist_ok,
+        )
 
-    async def get_torrent_filename(self, meta: Meta, tracker_config: Any) -> str:
+    async def get_torrent_filename(
+        self, meta: Meta, tracker_config: Any
+    ) -> str:
         """
         Decide which torrent filename/prefix to use (BASE or BASE_SUBS) depending on
         the allow_ext_subtitles setting and presence of the subtitles torrent.
@@ -391,7 +540,9 @@ class Common:
         torrent_filename = "BASE"
         allow_ext_subtitles = False
         if isinstance(tracker_config, dict):
-            allow_ext_subtitles = tracker_config.get("allow_ext_subtitles", False)
+            allow_ext_subtitles = tracker_config.get(
+                "allow_ext_subtitles", False
+            )
         if allow_ext_subtitles:
             subs_path = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/BASE_SUBS.torrent"
             if await self.path_exists(subs_path):
@@ -410,12 +561,16 @@ class Common:
     ) -> None:
         tracker_cfg = self.config.get("TRACKERS", {}).get(tracker, {})
         if torrent_filename == "BASE":
-            torrent_filename = await self.get_torrent_filename(meta, tracker_cfg)
+            torrent_filename = await self.get_torrent_filename(
+                meta, tracker_cfg
+            )
 
         path = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/{torrent_filename}.torrent"
         if await self.path_exists(path):
             loop = asyncio.get_running_loop()
-            new_torrent = await loop.run_in_executor(None, lambda: Torrent.read(path))
+            new_torrent = await loop.run_in_executor(
+                None, lambda: Torrent.read(path)
+            )
             for each in list(new_torrent.metainfo):
                 if each not in (
                     "announce",
@@ -439,7 +594,9 @@ class Common:
                 new_torrent.metainfo.get("info", {}).pop("private", None)
                 if public_trackers:
                     new_torrent.metainfo["announce"] = public_trackers[0]
-                    new_torrent.metainfo["announce-list"] = [[t] for t in public_trackers]
+                    new_torrent.metainfo["announce-list"] = [
+                        [t] for t in public_trackers
+                    ]
                 else:
                     new_torrent.metainfo.pop("announce", None)
                     new_torrent.metainfo.pop("announce-list", None)
@@ -447,14 +604,22 @@ class Common:
                 if announce_url:
                     new_torrent.metainfo["announce"] = announce_url
                 else:
-                    raw_announce = self.config["TRACKERS"][tracker].get("announce_url")
-                    new_torrent.metainfo["announce"] = str(raw_announce).strip() if raw_announce else "https://fake.tracker"
+                    raw_announce = self.config["TRACKERS"][tracker].get(
+                        "announce_url"
+                    )
+                    new_torrent.metainfo["announce"] = (
+                        str(raw_announce).strip()
+                        if raw_announce
+                        else "https://fake.tracker"
+                    )
                 new_torrent.metainfo["info"]["private"] = True
             new_torrent.metainfo["info"]["source"] = source_flag
             if "created by" in new_torrent.metainfo:
                 created_by = new_torrent.metainfo["created by"]
                 if "mkbrr" in created_by.lower():
-                    new_torrent.metainfo["created by"] = f"{created_by} using {meta.ua_name} {meta.current_version}"
+                    new_torrent.metainfo["created by"] = (
+                        f"{created_by} using {meta.ua_name} {meta.current_version}"
+                    )
             # setting comment as blank as if BASE.torrent is manually created then it can result in private info such as download link being exposed.
             new_torrent.metainfo["comment"] = ""
             entropy_value = meta.entropy
@@ -462,14 +627,23 @@ class Common:
                 try:
                     entropy_int = int(entropy_value)
                     if entropy_int == 32:
-                        new_torrent.metainfo["info"]["entropy"] = secrets.randbelow(2**32)  # type: ignore
+                        new_torrent.metainfo["info"]["entropy"] = (  # pyright: ignore[reportGeneralTypeIssues]
+                            secrets.randbelow(2**32)
+                        )
                     elif entropy_int == 64:
-                        new_torrent.metainfo["info"]["entropy"] = secrets.randbelow(2**64)  # type: ignore
+                        new_torrent.metainfo["info"]["entropy"] = (  # pyright: ignore[reportGeneralTypeIssues]
+                            secrets.randbelow(2**64)
+                        )
                 except ValueError, TypeError:
                     # Skip entropy setting if value is invalid
                     pass
             out_path = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{tracker}].torrent"
-            await loop.run_in_executor(None, lambda: Torrent.copy(new_torrent).write(out_path, overwrite=True))
+            await loop.run_in_executor(
+                None,
+                lambda: Torrent.copy(new_torrent).write(
+                    out_path, overwrite=True
+                ),
+            )
 
     async def download_tracker_torrent(
         self,
@@ -484,51 +658,91 @@ class Common:
         max_size: int | None = None,
         use_cookie_auth: bool = False,
     ) -> str | None:
-        path = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{tracker}_cross].torrent" if cross else f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{tracker}].torrent"
+        path = (
+            f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{tracker}_cross].torrent"
+            if cross
+            else f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{tracker}].torrent"
+        )
         if downurl:
             try:
                 cookie_jar = None
                 if use_cookie_auth:
                     with contextlib.suppress(Exception):
-                        from src.integrations.trackers.cookie_auth import CookieValidator
+                        from src.integrations.trackers.cookie_auth import (
+                            CookieValidator,
+                        )
 
                         cookie_validator = CookieValidator(self.config)
-                        cookie_jar = await cookie_validator.load_session_cookies(meta, tracker)
+                        cookie_jar = (
+                            await cookie_validator.load_session_cookies(
+                                meta, tracker
+                            )
+                        )
 
                 normalized_hosts = {host.casefold() for host in allowed_hosts}
                 current_url = downurl
-                async with httpx.AsyncClient(headers=headers, params=params, cookies=cookie_jar, follow_redirects=not normalized_hosts, timeout=30.0) as session:
+                async with httpx.AsyncClient(
+                    headers=headers,
+                    params=params,
+                    cookies=cookie_jar,
+                    follow_redirects=not normalized_hosts,
+                    timeout=30.0,
+                ) as session:
                     for _redirect in range(6):
                         parsed_url = urlsplit(current_url)
                         if normalized_hosts and (
                             parsed_url.scheme != "https"
-                            or (parsed_url.hostname or "").casefold() not in normalized_hosts
+                            or (parsed_url.hostname or "").casefold()
+                            not in normalized_hosts
                             or parsed_url.port not in (None, 443)
                             or parsed_url.username is not None
                             or parsed_url.password is not None
                         ):
-                            raise ValueError("Tracker download URL is outside the allowed HTTPS hosts")
-                        async with session.stream("GET", current_url) as response:
+                            raise ValueError(
+                                "Tracker download URL is outside the allowed HTTPS hosts"
+                            )
+                        async with session.stream(
+                            "GET", current_url
+                        ) as response:
                             if normalized_hosts and response.is_redirect:
                                 location = response.headers.get("location")
                                 if not location:
-                                    raise ValueError("Tracker download redirect is missing a location")
+                                    raise ValueError(
+                                        "Tracker download redirect is missing a location"
+                                    )
                                 current_url = urljoin(current_url, location)
                                 continue
                             response.raise_for_status()
-                            content_length = response.headers.get("content-length", "")
-                            if max_size is not None and content_length.isdigit() and int(content_length) > max_size:
-                                raise ValueError("Tracker torrent download exceeds the configured size limit")
+                            content_length = response.headers.get(
+                                "content-length", ""
+                            )
+                            if (
+                                max_size is not None
+                                and content_length.isdigit()
+                                and int(content_length) > max_size
+                            ):
+                                raise ValueError(
+                                    "Tracker torrent download exceeds the configured size limit"
+                                )
                             downloaded = 0
-                            async with aiofiles.open(path, "wb") as torrent_file:
+                            async with aiofiles.open(
+                                path, "wb"
+                            ) as torrent_file:
                                 async for chunk in response.aiter_bytes():
                                     downloaded += len(chunk)
-                                    if max_size is not None and downloaded > max_size:
-                                        raise ValueError("Tracker torrent download exceeds the configured size limit")
+                                    if (
+                                        max_size is not None
+                                        and downloaded > max_size
+                                    ):
+                                        raise ValueError(
+                                            "Tracker torrent download exceeds the configured size limit"
+                                        )
                                     await torrent_file.write(chunk)
                             break
                     else:
-                        raise ValueError("Tracker torrent download exceeded the redirect limit")
+                        raise ValueError(
+                            "Tracker torrent download exceeded the redirect limit"
+                        )
 
                 if cross:
                     return None
@@ -540,8 +754,12 @@ class Common:
             except Exception as e:
                 if allowed_hosts or max_size is not None:
                     Path(path).unlink(missing_ok=True)
-                logger.warning(f"[yellow]Warning: Could not download torrent file: {e!s}[/yellow]")
-                logger.info("[yellow]Download manually from the tracker.[/yellow]")
+                logger.warning(
+                    f"[yellow]Warning: Could not download torrent file: {e!s}[/yellow]"
+                )
+                logger.info(
+                    "[yellow]Download manually from the tracker.[/yellow]"
+                )
                 return None
 
         return None
@@ -561,10 +779,14 @@ class Common:
         path = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{tracker}].torrent"
         if await self.path_exists(path):
             loop = asyncio.get_running_loop()
-            new_torrent = await loop.run_in_executor(None, lambda: Torrent.read(path))
+            new_torrent = await loop.run_in_executor(
+                None, lambda: Torrent.read(path)
+            )
             if isinstance(new_tracker, list):
                 if not new_tracker:
-                    logger.error(f"[red]Error: Empty tracker list provided for {tracker}. Cannot create torrent.[/red]")
+                    logger.error(
+                        f"[red]Error: Empty tracker list provided for {tracker}. Cannot create torrent.[/red]"
+                    )
                     return None
                 new_torrent.metainfo["announce"] = new_tracker[0]
                 new_torrent.metainfo["announce-list"] = [new_tracker]
@@ -579,12 +801,17 @@ class Common:
                 bencode_module = cast(Any, bencodepy)
                 encode = cast(Callable[[Any], bytes], bencode_module.encode)
                 info_bytes = encode(info_data)
-                torrent_hash = hashlib.sha1(info_bytes, usedforsecurity=False).hexdigest()  # SHA1 required for torrent info hash
+                torrent_hash = hashlib.sha1(
+                    info_bytes, usedforsecurity=False
+                ).hexdigest()  # SHA1 required for torrent info hash
                 new_torrent.metainfo["comment"] = comment + torrent_hash
             else:
                 new_torrent.metainfo["comment"] = comment
 
-            await loop.run_in_executor(None, lambda: Torrent.copy(new_torrent).write(path, overwrite=True))
+            await loop.run_in_executor(
+                None,
+                lambda: Torrent.copy(new_torrent).write(path, overwrite=True),
+            )
 
             return torrent_hash
 
@@ -606,9 +833,16 @@ class Common:
             bencode_module = cast(Any, bencodepy)
             encode = cast(Callable[[Any], bytes], bencode_module.encode)
             info = encode(info_value)
-            return hashlib.sha1(info, usedforsecurity=False).hexdigest()  # SHA1 required for torrent info hash
+            return hashlib.sha1(
+                info, usedforsecurity=False
+            ).hexdigest()  # SHA1 required for torrent info hash
 
-    async def save_image_links(self, meta: Meta, image_key: str, image_list: list[dict[str, str]] | None) -> str | None:
+    async def save_image_links(
+        self,
+        meta: Meta,
+        image_key: str,
+        image_list: list[dict[str, str]] | None,
+    ) -> str | None:
         if image_list is None:
             logger.info("[yellow]No image links to save.[/yellow]")
             return None
@@ -629,13 +863,19 @@ class Common:
                         if isinstance(parsed, dict):
                             loaded_data = cast(dict[str, Any], parsed)
                         else:
-                            logger.warning("[yellow]Warning: Existing image data has invalid schema, reinitializing.[/yellow]")
+                            logger.warning(
+                                "[yellow]Warning: Existing image data has invalid schema, reinitializing.[/yellow]"
+                            )
 
                     # Validate schema: must have 'keys' as dict and 'total_count' as int
-                    if isinstance(loaded_data.get("keys"), dict) and isinstance(loaded_data.get("total_count"), int):
+                    if isinstance(
+                        loaded_data.get("keys"), dict
+                    ) and isinstance(loaded_data.get("total_count"), int):
                         existing_data = loaded_data
             except (json.JSONDecodeError, OSError) as e:
-                logger.warning(f"[yellow]Warning: Could not load existing image data: {e!s}[/yellow]")
+                logger.warning(
+                    f"[yellow]Warning: Could not load existing image data: {e!s}[/yellow]"
+                )
 
         # Create data structure if it doesn't exist or was invalid
         if not existing_data:
@@ -645,7 +885,9 @@ class Common:
         keys_raw = existing_data.get("keys", {})
         keys_data = cast(dict[str, dict[str, Any]], keys_raw)
 
-        if image_key not in keys_data or not isinstance(keys_data.get(image_key), dict):
+        if image_key not in keys_data or not isinstance(
+            keys_data.get(image_key), dict
+        ):
             keys_data[image_key] = {"count": 0, "images": []}
         key_entry = keys_data[image_key]
         images_list: list[dict[str, Any]] = []
@@ -658,7 +900,9 @@ class Common:
         # normalized at this filesystem boundary instead of leaking into the
         # rest of the upload flow.
         cached_count = key_entry.get("count")
-        base_count = cached_count if isinstance(cached_count, int) else len(images_list)
+        base_count = (
+            cached_count if isinstance(cached_count, int) else len(images_list)
+        )
         for idx, img in enumerate(image_list):
             image_entry: dict[str, Any] = {
                 "index": base_count + idx,
@@ -681,7 +925,9 @@ class Common:
             async with aiofiles.open(output_file, "w", encoding="utf-8") as f:
                 await f.write(json.dumps(existing_data, indent=2))
 
-            logger.debug(f"[green]Saved {len(image_list)} new images for key '{image_key}' (total: {existing_data['total_count']}):[/green]")
+            logger.debug(
+                f"[green]Saved {len(image_list)} new images for key '{image_key}' (total: {existing_data['total_count']}):[/green]"
+            )
             logger.debug(f"[blue]  - JSON: {output_file}[/blue]")
 
             return str(output_file)
@@ -689,7 +935,9 @@ class Common:
             logger.info(f"[bold red]Error saving image links: {e}[/bold red]")
             return None
 
-    async def unit3d_region_ids(self, region: str = "", reverse: bool = False, region_id: int = 0) -> str:
+    async def unit3d_region_ids(
+        self, region: str = "", reverse: bool = False, region_id: int = 0
+    ) -> str:
         region_map = {
             "AFG": 1,
             "AIA": 2,
@@ -950,7 +1198,12 @@ class Common:
         region_id_value = region_map.get(region)
         return str(region_id_value) if region_id_value else ""
 
-    async def unit3d_distributor_ids(self, distributor: str = "", reverse: bool = False, distributor_id: int = 0) -> str:
+    async def unit3d_distributor_ids(
+        self,
+        distributor: str = "",
+        reverse: bool = False,
+        distributor_id: int = 0,
+    ) -> str:
         distributor_map = {
             "01 DISTRIBUTION": 1,
             "100 DESTINATIONS TRAVEL FILM": 2,
@@ -2695,10 +2948,16 @@ class Common:
         tracker_name: str | None = None,
     ) -> bool:
         if not tracker_name:
-            tracker_name = "Tracker"  # Fallback if tracker_name is not provided
+            tracker_name = (
+                "Tracker"  # Fallback if tracker_name is not provided
+            )
 
         if imdb:
-            imdb = str(imdb).zfill(7)  # Convert to string and ensure IMDb ID is 7 characters long by adding leading zeros
+            imdb = str(
+                imdb
+            ).zfill(
+                7
+            )  # Convert to string and ensure IMDb ID is 7 characters long by adding leading zeros
             # console.print(f"[cyan]Found IMDb ID: https://www.imdb.com/title/tt{imdb}[/cyan]")
 
         if any([tmdb, imdb, tvdb, mal]):
@@ -2713,23 +2972,51 @@ class Common:
                 logger.info(f"MAL ID: {mal}")
 
         if filename:
-            logger.info(f"Filename: {filename}")  # Ensure filename is printed if available
+            logger.info(
+                f"Filename: {filename}"
+            )  # Ensure filename is printed if available
 
         if not meta.unattended:
             try:
-                selection = (await prompt_in_thread(cli_ui.ask_string, f"Do you want to use these IDs from {tracker_name}? (Y/n): ", default="") or "").strip().lower()
+                selection = (
+                    (
+                        await prompt_in_thread(
+                            cli_ui.ask_string,
+                            f"Do you want to use these IDs from {tracker_name}? (Y/n): ",
+                            default="",
+                        )
+                        or ""
+                    )
+                    .strip()
+                    .lower()
+                )
                 return selection in {"", "y", "yes"}
             except KeyboardInterrupt, EOFError:
-                raise OperationAbortedError("Tracker metadata selection was cancelled by the user.") from None
+                raise OperationAbortedError(
+                    "Tracker metadata selection was cancelled by the user."
+                ) from None
         return True
 
-    async def prompt_user_for_confirmation(self, message: str, meta: Meta | None = None) -> bool:
+    async def prompt_user_for_confirmation(
+        self, message: str, meta: Meta | None = None
+    ) -> bool:
         if meta and meta.unattended:
             return bool(meta.unattended_confirm)
-        response = (await prompt_in_thread(cli_ui.ask_string, f"{message} (Y/n): ", default="") or "").strip().lower()
+        response = (
+            (
+                await prompt_in_thread(
+                    cli_ui.ask_string, f"{message} (Y/n): ", default=""
+                )
+                or ""
+            )
+            .strip()
+            .lower()
+        )
         return response == "" or response == "y"
 
-    async def _apply_region_distributor(self, meta: Meta, attributes: dict[str, Any]) -> None:
+    async def _apply_region_distributor(
+        self, meta: Meta, attributes: dict[str, Any]
+    ) -> None:
         region_id = attributes.get("region_id", 0)
         distributor_id = attributes.get("distributor_id", 0)
 
@@ -2737,18 +3024,28 @@ class Common:
         logger.debug(f"[blue]Distributor ID: {distributor_id}[/blue]")
 
         if not meta.region and region_id:
-            region_name = await self.unit3d_region_ids(reverse=True, region_id=region_id)
+            region_name = await self.unit3d_region_ids(
+                reverse=True, region_id=region_id
+            )
             if region_name:
                 meta.region = region_name
-                logger.debug(f"[green]Mapped region_id {region_id} to '{region_name}'[/green]")
+                logger.debug(
+                    f"[green]Mapped region_id {region_id} to '{region_name}'[/green]"
+                )
 
         if not meta.distributor and distributor_id:
-            distributor_name = await self.unit3d_distributor_ids(reverse=True, distributor_id=distributor_id)
+            distributor_name = await self.unit3d_distributor_ids(
+                reverse=True, distributor_id=distributor_id
+            )
             if distributor_name:
                 meta.distributor = distributor_name
-                logger.debug(f"[green]Mapped distributor_id {distributor_id} to '{distributor_name}'[/green]")
+                logger.debug(
+                    f"[green]Mapped distributor_id {distributor_id} to '{distributor_name}'[/green]"
+                )
 
-    async def unit3d_region_distributor(self, meta: Meta, tracker: str, torrent_url: str, id: str = "") -> None:
+    async def unit3d_region_distributor(
+        self, meta: Meta, tracker: str, torrent_url: str, id: str = ""
+    ) -> None:
         """Get region and distributor information from API response"""
         raw_api_key = self.config["TRACKERS"][tracker].get("api_key")
         api_key = str(raw_api_key).strip() if raw_api_key else ""
@@ -2760,17 +3057,23 @@ class Common:
         url = f"{torrent_url}{id}"
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(url=url, params=params, headers=headers)
+                response = await client.get(
+                    url=url, params=params, headers=headers
+                )
                 json_response = response.json()
         except (httpx.RequestError, httpx.TimeoutException) as e:
-            logger.info(f"[yellow]Request error in unit3d_region_distributor: {e}[/yellow]")
+            logger.info(
+                f"[yellow]Request error in unit3d_region_distributor: {e}[/yellow]"
+            )
             return
         except ValueError:
             return
         try:
             data: list[dict[str, Any]] | str = json_response.get("data", [])
             if data == "404":
-                logger.info("[yellow]No data found (404). Returning None.[/yellow]")
+                logger.info(
+                    "[yellow]No data found (404). Returning None.[/yellow]"
+                )
                 return
 
             if data and isinstance(data, list):
@@ -2783,7 +3086,9 @@ class Common:
                 await self._apply_region_distributor(meta, attributes)
         except Exception as e:
             console.print_exception()
-            logger.info(f"[yellow]Invalid Response from {tracker} API. Error: {e!s}[/yellow]")
+            logger.info(
+                f"[yellow]Invalid Response from {tracker} API. Error: {e!s}[/yellow]"
+            )
             return
 
     async def unit3d_torrent_info(
@@ -2807,7 +3112,9 @@ class Common:
         list[dict[str, str]],
         str | list[str] | None,
     ]:
-        tmdb = imdb = tvdb = description = category = infohash = mal = files = None
+        tmdb = imdb = tvdb = description = category = infohash = mal = (
+            files
+        ) = None
         imagelist: list[dict[str, str]] = []
 
         # Build the params for the API request
@@ -2822,11 +3129,15 @@ class Common:
         # Determine the search method and add parameters accordingly
         if file_name:
             params["file_name"] = file_name  # Add file_name to params
-            logger.debug(f"[green]Searching {tracker} by file name: [bold yellow]{file_name}[/bold yellow]")
+            logger.debug(
+                f"[green]Searching {tracker} by file name: [bold yellow]{file_name}[/bold yellow]"
+            )
             url = search_url
         elif id:
             url = f"{torrent_url}{id}"
-            logger.debug(f"[green]Searching {tracker} by ID: [bold yellow]{id}[/bold yellow] via {url}")
+            logger.debug(
+                f"[green]Searching {tracker} by ID: [bold yellow]{id}[/bold yellow] via {url}"
+            )
         else:
             logger.debug("[red]No ID or file name provided for search.[/red]")
             return None, None, None, None, None, None, None, [], None
@@ -2835,13 +3146,21 @@ class Common:
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 if id and public_torrent_url:
-                    logger.info(f"Searching for information on [bold cyan]{tracker}[/bold cyan] ({public_torrent_url.rstrip('/')}/{id})")
+                    logger.info(
+                        f"Searching for information on [bold cyan]{tracker}[/bold cyan] ({public_torrent_url.rstrip('/')}/{id})"
+                    )
                 else:
-                    logger.info(f"Searching for information on [bold cyan]{tracker}[/bold cyan]")
-                response = await client.get(url=url, params=params, headers=headers)
+                    logger.info(
+                        f"Searching for information on [bold cyan]{tracker}[/bold cyan]"
+                    )
+                response = await client.get(
+                    url=url, params=params, headers=headers
+                )
                 json_response = response.json()
         except (httpx.RequestError, httpx.TimeoutException) as e:
-            logger.info(f"[yellow]Request error in unit3d_torrent_info: {e}[/yellow]")
+            logger.info(
+                f"[yellow]Request error in unit3d_torrent_info: {e}[/yellow]"
+            )
             return None, None, None, None, None, None, None, [], None
         except ValueError:
             return None, None, None, None, None, None, None, [], None
@@ -2850,10 +3169,14 @@ class Common:
             # Handle response when searching by file name (which might return a 'data' array)
             data: list[dict[str, Any]] | str = json_response.get("data", [])
             if data == "404":
-                logger.info("[yellow]No data found (404). Returning None.[/yellow]")
+                logger.info(
+                    "[yellow]No data found (404). Returning None.[/yellow]"
+                )
                 return None, None, None, None, None, None, None, [], None
 
-            if data and isinstance(data, list):  # Ensure data is a list before accessing it
+            if data and isinstance(
+                data, list
+            ):  # Ensure data is a list before accessing it
                 attributes = data[0].get("attributes", {})
 
                 # Extract data from the attributes
@@ -2870,12 +3193,16 @@ class Common:
                 imdb = 0 if imdb == 0 else imdb
                 if not meta.region and meta.is_disc in ("BDMV", "DVD"):
                     region_id = attributes.get("region_id")
-                    region_name = await self.unit3d_region_ids(reverse=True, region_id=region_id)
+                    region_name = await self.unit3d_region_ids(
+                        reverse=True, region_id=region_id
+                    )
                     if region_name:
                         meta.region = region_name
                 if not meta.distributor and meta.is_disc in ("BDMV", "DVD"):
                     distributor_id = attributes.get("distributor_id")
-                    distributor_name = await self.unit3d_distributor_ids(reverse=True, distributor_id=distributor_id)
+                    distributor_name = await self.unit3d_distributor_ids(
+                        reverse=True, distributor_id=distributor_id
+                    )
                     if distributor_name:
                         meta.distributor = distributor_name
             else:
@@ -2897,54 +3224,108 @@ class Common:
                     imdb = 0 if imdb == 0 else imdb
                     if not meta.region and meta.is_disc in ("BDMV", "DVD"):
                         region_id = attributes.get("region_id")
-                        region_name = await self.unit3d_region_ids(reverse=True, region_id=region_id)
+                        region_name = await self.unit3d_region_ids(
+                            reverse=True, region_id=region_id
+                        )
                         if region_name:
                             meta.region = region_name
-                    if not meta.distributor and meta.is_disc in ("BDMV", "DVD"):
+                    if not meta.distributor and meta.is_disc in (
+                        "BDMV",
+                        "DVD",
+                    ):
                         distributor_id = attributes.get("distributor_id")
-                        distributor_name = await self.unit3d_distributor_ids(reverse=True, distributor_id=distributor_id)
+                        distributor_name = await self.unit3d_distributor_ids(
+                            reverse=True, distributor_id=distributor_id
+                        )
                         if distributor_name:
                             meta.distributor = distributor_name
                     # Handle file name extraction
                     files = attributes.get("files", [])
                     if files:
-                        file_name = files[0]["name"] if len(files) == 1 else [file["name"] for file in files[:5]]
+                        file_name = (
+                            files[0]["name"]
+                            if len(files) == 1
+                            else [file["name"] for file in files[:5]]
+                        )
 
-                    logger.debug(f"[blue]Extracted filename(s): {file_name}[/blue]")  # Print the extracted filename(s)
+                    logger.debug(
+                        f"[blue]Extracted filename(s): {file_name}[/blue]"
+                    )  # Print the extracted filename(s)
 
             # The selection helper owns cancellation translation.
-            if (tmdb or imdb or tvdb) and not id and not await self.prompt_user_for_id_selection(meta, tmdb, imdb, tvdb, mal, file_name, tracker_name=tracker):
-                logger.info("[yellow]User chose to skip based on IDs.[/yellow]")
+            if (
+                (tmdb or imdb or tvdb)
+                and not id
+                and not await self.prompt_user_for_id_selection(
+                    meta,
+                    tmdb,
+                    imdb,
+                    tvdb,
+                    mal,
+                    file_name,
+                    tracker_name=tracker,
+                )
+            ):
+                logger.info(
+                    "[yellow]User chose to skip based on IDs.[/yellow]"
+                )
                 return None, None, None, None, None, None, None, [], None
 
             if description:
-                raw_descriptions = getattr(meta, "tracker_description_raw", {}) or {}
+                raw_descriptions = (
+                    getattr(meta, "tracker_description_raw", {}) or {}
+                )
                 raw_descriptions[tracker] = description
                 meta.tracker_description_raw = raw_descriptions
                 bbcode = BBCODE()
-                description, imagelist = bbcode.clean_unit3d_description(description, torrent_url)
+                description, imagelist = bbcode.clean_unit3d_description(
+                    description, torrent_url
+                )
                 if not skip_tracker_descriptions:
-                    logger.info(f"[green]Successfully grabbed description from {tracker}")
-                    logger.info(f"Extracted description: \n\n{description}\n\n", extra={"markup": False, "highlighter": None})
+                    logger.info(
+                        f"[green]Successfully grabbed description from {tracker}"
+                    )
+                    logger.info(
+                        f"Extracted description: \n\n{description}\n\n",
+                        extra={"markup": False, "highlighter": None},
+                    )
 
                     # A tracker ID only identifies the source of this metadata.  It
                     # must not suppress the interactive review of the description.
                     # Candidate collection sets ``unattended`` explicitly and is
                     # therefore still non-interactive.
                     if meta.unattended:
-                        return tmdb, imdb, tvdb, mal, description, category, infohash, imagelist, file_name
-                    logger.info("[cyan]Do you want to edit, discard or keep the description?[/cyan]")
-                    edit_choice = cli_ui.ask_string("Enter 'e' to edit, 'd' to discard, or press Enter to keep it as is:")
+                        return (
+                            tmdb,
+                            imdb,
+                            tvdb,
+                            mal,
+                            description,
+                            category,
+                            infohash,
+                            imagelist,
+                            file_name,
+                        )
+                    logger.info(
+                        "[cyan]Do you want to edit, discard or keep the description?[/cyan]"
+                    )
+                    edit_choice = cli_ui.ask_string(
+                        "Enter 'e' to edit, 'd' to discard, or press Enter to keep it as is:"
+                    )
 
                     if (edit_choice or "").lower() == "e":
-                        edited_description = cast(str | None, click.edit(cast(Any, description)))
+                        edited_description = cast(
+                            str | None, click.edit(cast(Any, description))
+                        )
                         if edited_description:
                             description = edited_description.strip()
                     elif (edit_choice or "").lower() == "d":
                         description = None
                         logger.info("[yellow]Description discarded.[/yellow]")
                     else:
-                        logger.info("[green]Keeping the original description.[/green]")
+                        logger.info(
+                            "[green]Keeping the original description.[/green]"
+                        )
                     if not meta.keep_images:
                         imagelist = []
                 else:
@@ -2952,11 +3333,23 @@ class Common:
                     if not meta.keep_images:
                         imagelist = []
 
-            return tmdb, imdb, tvdb, mal, description, category, infohash, imagelist, file_name
+            return (
+                tmdb,
+                imdb,
+                tvdb,
+                mal,
+                description,
+                category,
+                infohash,
+                imagelist,
+                file_name,
+            )
 
         except Exception as e:
             console.print_exception()
-            logger.info(f"[yellow]Invalid Response from {tracker} API. Error: {e!s}[/yellow]")
+            logger.info(
+                f"[yellow]Invalid Response from {tracker} API. Error: {e!s}[/yellow]"
+            )
             return None, None, None, None, None, None, None, [], None
 
     async def parse_cookie_file(self, cookiefile: str) -> dict[str, str]:
@@ -2974,7 +3367,9 @@ class Common:
                         cookies[line_fields[5]] = line_fields[6]
         return cookies
 
-    async def ptgen(self, meta: Meta, ptgen_site: str = "", ptgen_retry: int = 3) -> str:
+    async def ptgen(
+        self, meta: Meta, ptgen_site: str = "", ptgen_retry: int = 3
+    ) -> str:
         ptgen_text = ""
         url = "https://ptgen.zhenzhen.workers.dev"
         if ptgen_site != "":
@@ -2982,10 +3377,16 @@ class Common:
         params: dict[str, Any] = {}
         data: dict[str, Any] = {}
 
-        async def fetch_ptgen(client: httpx.AsyncClient, request_url: str, request_params: dict[str, Any]) -> dict[str, Any] | None:
+        async def fetch_ptgen(
+            client: httpx.AsyncClient,
+            request_url: str,
+            request_params: dict[str, Any],
+        ) -> dict[str, Any] | None:
             """Helper to fetch and parse ptgen response with error handling."""
             try:
-                response = await client.get(request_url, params=request_params, timeout=30.0)
+                response = await client.get(
+                    request_url, params=request_params, timeout=30.0
+                )
                 json_data: dict[str, Any] = response.json()
                 return json_data
             except httpx.RequestError, httpx.TimeoutException, ValueError:
@@ -2999,28 +3400,58 @@ class Common:
                     ptgen_json = await fetch_ptgen(client, url, data)
 
                     # Check for error and retry if needed
-                    if ptgen_json is None or ptgen_json.get("error") is not None:
+                    if (
+                        ptgen_json is None
+                        or ptgen_json.get("error") is not None
+                    ):
                         for _retry in range(ptgen_retry):
                             ptgen_json = await fetch_ptgen(client, url, data)
-                            if ptgen_json is not None and ptgen_json.get("error") is None:
+                            if (
+                                ptgen_json is not None
+                                and ptgen_json.get("error") is None
+                            ):
                                 break
 
                     # Try to extract douban link
                     try:
-                        if ptgen_json and "data" in ptgen_json and ptgen_json["data"]:
+                        if (
+                            ptgen_json
+                            and "data" in ptgen_json
+                            and ptgen_json["data"]
+                        ):
                             params["url"] = ptgen_json["data"][0]["link"]
                         else:
                             raise KeyError("No data in response")
                     except KeyError, IndexError, TypeError:
-                        logger.info("[red]Unable to get data from ptgen using IMDb")
-                        if not meta.unattended or (meta.unattended and meta.unattended_confirm):
-                            params["url"] = await prompt_in_thread(cli_ui.ask_string, "Please enter Douban link:", default="") or ""
+                        logger.info(
+                            "[red]Unable to get data from ptgen using IMDb"
+                        )
+                        if not meta.unattended or (
+                            meta.unattended and meta.unattended_confirm
+                        ):
+                            params["url"] = (
+                                await prompt_in_thread(
+                                    cli_ui.ask_string,
+                                    "Please enter Douban link:",
+                                    default="",
+                                )
+                                or ""
+                            )
                         else:
                             params["url"] = ""
                 else:
                     logger.info("[red]No IMDb id was found.")
-                    if not meta.unattended or (meta.unattended and meta.unattended_confirm):
-                        params["url"] = await prompt_in_thread(cli_ui.ask_string, "Please enter Douban link:", default="") or ""
+                    if not meta.unattended or (
+                        meta.unattended and meta.unattended_confirm
+                    ):
+                        params["url"] = (
+                            await prompt_in_thread(
+                                cli_ui.ask_string,
+                                "Please enter Douban link:",
+                                default="",
+                            )
+                            or ""
+                        )
                     else:
                         params["url"] = ""
 
@@ -3029,15 +3460,24 @@ class Common:
                 if ptgen_json is None or ptgen_json.get("error") is not None:
                     for _retry in range(ptgen_retry):
                         ptgen_json = await fetch_ptgen(client, url, params)
-                        if ptgen_json is not None and ptgen_json.get("error") is None:
+                        if (
+                            ptgen_json is not None
+                            and ptgen_json.get("error") is None
+                        ):
                             break
 
                 if ptgen_json is None or ptgen_json.get("error") is not None:
-                    logger.info("[bold red]Failed to get valid ptgen response after retries")
+                    logger.info(
+                        "[bold red]Failed to get valid ptgen response after retries"
+                    )
                     return ""
 
                 meta.ptgen = ptgen_json
-                async with aiofiles.open(f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/meta.json", "w", encoding="utf-8") as f:
+                async with aiofiles.open(
+                    f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/meta.json",
+                    "w",
+                    encoding="utf-8",
+                ) as f:
                     await f.write(json.dumps(meta.to_dict(), indent=4))
 
                 ptgen_text = ptgen_json.get("format", "")
@@ -3047,20 +3487,35 @@ class Common:
 
         except Exception:
             console.print_exception()
-            logger.info("[bold red]There was an error getting the ptgen \\nUploading without ptgen")
+            logger.info(
+                "[bold red]There was an error getting the ptgen \\nUploading without ptgen"
+            )
             return ""
         return ptgen_text
 
     class MediaInfoParser:
         def parse_mediainfo(self, mediainfo_text: str) -> dict[str, Any]:
             # Patterns for matching sections and fields
-            section_pattern = re.compile(r"^(General|Video|Audio|Text|Menu)(?:\s#\d+)?", re.IGNORECASE)
-            parsed_data: dict[str, Any] = {"general": {}, "video": [], "audio": [], "text": []}
+            section_pattern = re.compile(
+                r"^(General|Video|Audio|Text|Menu)(?:\s#\d+)?", re.IGNORECASE
+            )
+            parsed_data: dict[str, Any] = {
+                "general": {},
+                "video": [],
+                "audio": [],
+                "text": [],
+            }
             current_section: str | None = None
             current_track: dict[str, str] = {}
 
             # Field lists based on PHP definitions
-            general_fields = {"file_name", "format", "duration", "file_size", "bit_rate"}
+            general_fields = {
+                "file_name",
+                "format",
+                "duration",
+                "file_size",
+                "bit_rate",
+            }
             video_fields = {
                 "format",
                 "format_version",
@@ -3084,7 +3539,16 @@ class Common:
                 "transfer_characteristics",
                 "hdr_format",
             }
-            audio_fields = {"codec", "format", "bit_rate", "channels", "title", "language", "format_profile", "stream_size"}
+            audio_fields = {
+                "codec",
+                "format",
+                "bit_rate",
+                "channels",
+                "title",
+                "language",
+                "format_profile",
+                "stream_size",
+            }
             # text_fields = {'title', 'language'}
 
             # Split MediaInfo by lines and process each line
@@ -3110,20 +3574,34 @@ class Common:
 
                 # Split each line on the first colon to separate property and value
                 if ":" in line:
-                    property_name, property_value = map(str.strip, line.split(":", 1))
+                    property_name, property_value = map(
+                        str.strip, line.split(":", 1)
+                    )
                     property_name = property_name.lower().replace(" ", "_")
 
                     # Add property if it's a recognized field for the current section
                     if (
-                        (current_section == "general" and property_name in general_fields)
-                        or (current_section == "video" and property_name in video_fields)
-                        or (current_section == "audio" and property_name in audio_fields)
+                        (
+                            current_section == "general"
+                            and property_name in general_fields
+                        )
+                        or (
+                            current_section == "video"
+                            and property_name in video_fields
+                        )
+                        or (
+                            current_section == "audio"
+                            and property_name in audio_fields
+                        )
                     ):
                         current_track[property_name] = property_value
                     elif current_section == "text":
                         # Processing specific properties for text
                         # Process title field
-                        if property_name == "title" and "title" not in current_track:
+                        if (
+                            property_name == "title"
+                            and "title" not in current_track
+                        ):
                             # print(f"\nProcessing Title: '{property_value}'")  # Debugging output
 
                             # Store the title as-is since it should remain descriptive
@@ -3131,7 +3609,10 @@ class Common:
                             # print(f"Stored title: '{property_value}'")
 
                         # Process language field only if it hasn't already been set
-                        elif property_name == "language" and "language" not in current_track:
+                        elif (
+                            property_name == "language"
+                            and "language" not in current_track
+                        ):
                             current_track["language"] = property_value
 
             # Append the last track to the parsed data if it exists
@@ -3169,18 +3650,33 @@ class Common:
             # Format Audio Section
             if "audio" in parsed_mediainfo:
                 bbcode_output += "\n[b]Audio[/b]\n"
-                for index, track in enumerate(parsed_mediainfo["audio"], start=1):  # Start enumeration at 1
-                    parts = [f"{index}."]  # Start with track number without a trailing slash
+                for index, track in enumerate(
+                    parsed_mediainfo["audio"], start=1
+                ):  # Start enumeration at 1
+                    parts = [
+                        f"{index}."
+                    ]  # Start with track number without a trailing slash
 
                     language = track.get("language", "").lower()
                     parts.append(language.capitalize() if language else "")
 
                     # Other properties to concatenate (language already handled above)
-                    properties = ["codec", "format", "channels", "bit_rate", "format_profile", "stream_size"]
-                    parts.extend([track[prop] for prop in properties if track.get(prop)])
+                    properties = [
+                        "codec",
+                        "format",
+                        "channels",
+                        "bit_rate",
+                        "format_profile",
+                        "stream_size",
+                    ]
+                    parts.extend(
+                        [track[prop] for prop in properties if track.get(prop)]
+                    )
 
                     # Join parts (starting from index 1, after the track number) with slashes and add to bbcode_output
-                    bbcode_output += f"{parts[0]} " + " / ".join(parts[1:]) + "\n"
+                    bbcode_output += (
+                        f"{parts[0]} " + " / ".join(parts[1:]) + "\n"
+                    )
 
             # Format Text Section - Centered, spaced apart
             if "text" in parsed_mediainfo:
@@ -3194,7 +3690,9 @@ class Common:
             bbcode_output += "\n"
             return bbcode_output
 
-    async def get_bdmv_mediainfo(self, meta: Meta, remove: list[str] | None = None, char_limit: int = 0) -> str:
+    async def get_bdmv_mediainfo(
+        self, meta: Meta, remove: list[str] | None = None, char_limit: int = 0
+    ) -> str:
         """
         Generate and sanitize MediaInfo for BDMV discs.
 
@@ -3217,7 +3715,9 @@ class Common:
                 logger.debug("[blue]Generating MediaInfo for BDMV...[/blue]")
 
                 path = meta.discs[0]["playlists"][0]["path"]
-                await export_info(path, False, meta.uuid, meta.base_dir, is_dvd=False)
+                await export_info(
+                    path, False, meta.uuid, meta.base_dir, is_dvd=False
+                )
 
             # Helper to read and filter lines from the export file
             async def read_and_clean() -> str:
@@ -3228,7 +3728,14 @@ class Common:
                     lines = await f.readlines()
 
                 if remove:
-                    lines = [line for line in lines if not any(line.strip().startswith(prefix) for prefix in remove)]
+                    lines = [
+                        line
+                        for line in lines
+                        if not any(
+                            line.strip().startswith(prefix)
+                            for prefix in remove
+                        )
+                    ]
 
                 return "".join(lines)
 
@@ -3236,7 +3743,9 @@ class Common:
 
             # 2. Check char_limit and fallback to largest M2TS if necessary
             if char_limit and len(mediainfo) > char_limit:
-                logger.debug(f"[yellow]MediaInfo length ({len(mediainfo)}) exceeds limit ({char_limit}). Falling back to largest M2TS...[/yellow]")
+                logger.debug(
+                    f"[yellow]MediaInfo length ({len(mediainfo)}) exceeds limit ({char_limit}). Falling back to largest M2TS...[/yellow]"
+                )
 
                 items = meta.discs[0]["playlists"][0].get("items", [])
 
@@ -3245,9 +3754,17 @@ class Common:
                     largest_m2ts = largest_item.get("file")
 
                     if largest_m2ts:
-                        logger.debug(f"[blue]Selected largest M2TS from meta: {Path(largest_m2ts).name}[/blue]")
+                        logger.debug(
+                            f"[blue]Selected largest M2TS from meta: {Path(largest_m2ts).name}[/blue]"
+                        )
 
-                        await export_info(largest_m2ts, False, meta.uuid, meta.base_dir, is_dvd=False)
+                        await export_info(
+                            largest_m2ts,
+                            False,
+                            meta.uuid,
+                            meta.base_dir,
+                            is_dvd=False,
+                        )
 
                         mediainfo = await read_and_clean()
 
@@ -3304,7 +3821,10 @@ class Common:
             if book_language:
                 book_language_lower = book_language.lower()
                 languages_lower = [lang.lower() for lang in languages_to_check]
-                meets_requirement = not (languages_lower and book_language_lower not in languages_lower)
+                meets_requirement = not (
+                    languages_lower
+                    and book_language_lower not in languages_lower
+                )
                 if not meets_requirement:
                     logger.info(
                         f"[red]Language requirement not met for [bold]{tracker}[/bold].[/red]\n"
@@ -3321,19 +3841,33 @@ class Common:
 
         try:
             if not meta.language_checked:
-                await languages_manager.process_desc_language(meta, tracker=tracker)
+                await languages_manager.process_desc_language(
+                    meta, tracker=tracker
+                )
 
             alias_lookup = self._build_language_alias_lookup()
 
-            meta_audio_languages = self._coerce_language_values(meta.audio_languages)
-            meta_subtitle_languages = self._coerce_language_values(meta.subtitle_languages)
+            meta_audio_languages = self._coerce_language_values(
+                meta.audio_languages
+            )
+            meta_subtitle_languages = self._coerce_language_values(
+                meta.subtitle_languages
+            )
 
             languages_to_check = [lang.lower() for lang in languages_to_check]
             audio_languages = [lang.lower() for lang in meta_audio_languages]
-            subtitle_languages = [lang.lower() for lang in meta_subtitle_languages]
-            required_languages_expanded = self._expand_language_list(languages_to_check, alias_lookup)
-            audio_languages_expanded = self._expand_language_list(meta_audio_languages, alias_lookup)
-            subtitle_languages_expanded = self._expand_language_list(meta_subtitle_languages, alias_lookup)
+            subtitle_languages = [
+                lang.lower() for lang in meta_subtitle_languages
+            ]
+            required_languages_expanded = self._expand_language_list(
+                languages_to_check, alias_lookup
+            )
+            audio_languages_expanded = self._expand_language_list(
+                meta_audio_languages, alias_lookup
+            )
+            subtitle_languages_expanded = self._expand_language_list(
+                meta_subtitle_languages, alias_lookup
+            )
             language_display = None
             original_ok = False
             if original_language:
@@ -3342,17 +3876,36 @@ class Common:
                 if original_language_raw:
                     if isinstance(original_language_raw, str):
                         first_lang = original_language_raw
-                    elif isinstance(original_language_raw, list) and original_language_raw:
-                        first_lang = original_language_raw[0] if isinstance(original_language_raw[0], str) else ""
+                    elif (
+                        isinstance(original_language_raw, list)
+                        and original_language_raw
+                    ):
+                        first_lang = (
+                            original_language_raw[0]
+                            if isinstance(original_language_raw[0], str)
+                            else ""
+                        )
 
                 if first_lang:
                     first_lang = first_lang.strip()
-                    language_display = self._format_language_for_display(first_lang)
-                    original_language_expanded = self._expand_language_candidates(first_lang, alias_lookup)
-                    original_ok = bool(original_language_expanded.intersection(audio_languages_expanded))
+                    language_display = self._format_language_for_display(
+                        first_lang
+                    )
+                    original_language_expanded = (
+                        self._expand_language_candidates(
+                            first_lang, alias_lookup
+                        )
+                    )
+                    original_ok = bool(
+                        original_language_expanded.intersection(
+                            audio_languages_expanded
+                        )
+                    )
 
                     if meta.debug and not original_ok:
-                        logger.info(f"[blue]Debug: Original language expanded candidates: {', '.join(sorted(original_language_expanded)) or 'None'}[/blue]")
+                        logger.info(
+                            f"[blue]Debug: Original language expanded candidates: {', '.join(sorted(original_language_expanded)) or 'None'}[/blue]"
+                        )
 
             if original_required and not original_ok:
                 logger.info(
@@ -3367,13 +3920,29 @@ class Common:
                     )
                 return False
 
-            audio_ok = not check_audio or bool(required_languages_expanded.intersection(audio_languages_expanded))
-            subtitle_ok = not check_subtitle or bool(required_languages_expanded.intersection(subtitle_languages_expanded))
+            audio_ok = not check_audio or bool(
+                required_languages_expanded.intersection(
+                    audio_languages_expanded
+                )
+            )
+            subtitle_ok = not check_subtitle or bool(
+                required_languages_expanded.intersection(
+                    subtitle_languages_expanded
+                )
+            )
 
-            logger.debug(f"[blue]Debug: Audio Languages Found: {audio_languages}[/blue]")
-            logger.debug(f"[blue]Debug: Subtitle Languages Found: {subtitle_languages}[/blue]")
-            logger.debug(f"[blue]Debug: Original Audio Language: {language_display}[/blue]")
-            logger.debug(f"[blue]Debug: Audio OK: {audio_ok}, Subtitle OK: {subtitle_ok}, Original OK: {original_ok}[/blue]")
+            logger.debug(
+                f"[blue]Debug: Audio Languages Found: {audio_languages}[/blue]"
+            )
+            logger.debug(
+                f"[blue]Debug: Subtitle Languages Found: {subtitle_languages}[/blue]"
+            )
+            logger.debug(
+                f"[blue]Debug: Original Audio Language: {language_display}[/blue]"
+            )
+            logger.debug(
+                f"[blue]Debug: Audio OK: {audio_ok}, Subtitle OK: {subtitle_ok}, Original OK: {original_ok}[/blue]"
+            )
 
             if not audio_ok and original_ok:
                 if subtitle_ok:
@@ -3391,7 +3960,12 @@ class Common:
             if not check_audio and not check_subtitle:
                 return True
 
-            meets_requirement = audio_ok and subtitle_ok if require_both else (check_audio and audio_ok) or (check_subtitle and subtitle_ok)
+            meets_requirement = (
+                audio_ok and subtitle_ok
+                if require_both
+                else (check_audio and audio_ok)
+                or (check_subtitle and subtitle_ok)
+            )
 
             if require_both:
                 if not meets_requirement:
@@ -3421,10 +3995,14 @@ class Common:
 
         except Exception as e:
             console.print_exception()
-            logger.error(f"[red]Error checking language requirements: {e}[/red]")
+            logger.error(
+                f"[red]Error checking language requirements: {e}[/red]"
+            )
             return False
 
-    async def save_html_file(self, meta: Meta, tracker: str, text: str = "", file_name: str = "") -> str:
+    async def save_html_file(
+        self, meta: Meta, tracker: str, text: str = "", file_name: str = ""
+    ) -> str:
         """
         Save provided text as an HTML file.
 
@@ -3456,7 +4034,9 @@ class Common:
 
         return f"{resolution} @ {video_bitrate} kbps - {audio} @ {audio_bitrate} kbps"
 
-    async def check_and_confirm_adult_media_upload(self, meta: Meta, tracker: str) -> bool:
+    async def check_and_confirm_adult_media_upload(
+        self, meta: Meta, tracker: str
+    ) -> bool:
         """
         Check if the media is categorized as adult/pornographic and prompt the user for confirmation before uploading to a non-adult tracker.
 
@@ -3465,10 +4045,14 @@ class Common:
         :return: True if the user confirms or if the media is not adult, False otherwise.
         """
         if meta.adult_media:
-            logger.info(f"[bold red]Pornography is not allowed at {tracker}.[/bold red]")
+            logger.info(
+                f"[bold red]Pornography is not allowed at {tracker}.[/bold red]"
+            )
             if meta.unattended:
                 return bool(meta.unattended_confirm)
-            return await self.prompt_user_for_confirmation("Do you want to upload anyway?", meta)
+            return await self.prompt_user_for_confirmation(
+                "Do you want to upload anyway?", meta
+            )
 
         return True
 
@@ -3547,7 +4131,11 @@ class Common:
                 suffix_match = re.search(r"[^\w]+$", token)
                 suffix = suffix_match.group(0) if suffix_match else ""
 
-                core = token[len(prefix) : len(token) - len(suffix)] if suffix else token[len(prefix) :]
+                core = (
+                    token[len(prefix) : len(token) - len(suffix)]
+                    if suffix
+                    else token[len(prefix) :]
+                )
 
                 if not core:
                     # No alphanumeric chars, keep as is
@@ -3559,11 +4147,15 @@ class Common:
 
                 if word_count == 0:
                     # First word in the segment
-                    capitalized_core = core[0].upper() + core[1:] if len(core) > 0 else core
+                    capitalized_core = (
+                        core[0].upper() + core[1:] if len(core) > 0 else core
+                    )
                 elif clean_core in lowercase_words:
                     capitalized_core = clean_core
                 else:
-                    capitalized_core = core[0].upper() + core[1:] if len(core) > 0 else core
+                    capitalized_core = (
+                        core[0].upper() + core[1:] if len(core) > 0 else core
+                    )
 
                 formatted_tokens.append(prefix + capitalized_core + suffix)
                 word_count += 1
@@ -3575,7 +4167,9 @@ class Common:
     async def check_nzb_file(self, tracker: str, meta: Meta) -> bool:
         nzb_path = meta.nzb_path
         if not nzb_path or not Path(nzb_path).exists():
-            logger.error(f"{tracker}: [red]Error: The NZB file is missing. Aborting upload...[/red]")
+            logger.error(
+                f"{tracker}: [red]Error: The NZB file is missing. Aborting upload...[/red]"
+            )
             return False
 
         usenet_cfg = self.config.get("USENET", {})
@@ -3583,9 +4177,13 @@ class Common:
         # --nzb-password only tags NZB metadata, it doesn't encrypt), so a
         # configured password was never applied and won't be in the NZB.
         # That's expected, not an error.
-        password_applies = bool(meta.archive_password or usenet_cfg.get("archive_password")) and not usenet_cfg.get("skip_archive", False)
+        password_applies = bool(
+            meta.archive_password or usenet_cfg.get("archive_password")
+        ) and not usenet_cfg.get("skip_archive", False)
         if password_applies and not await verify_nzb_has_password(nzb_path):
-            logger.error(f"{tracker}: [red]Error: The NZB file does not contain the password in its metadata header. Aborting upload...[/red]")
+            logger.error(
+                f"{tracker}: [red]Error: The NZB file does not contain the password in its metadata header. Aborting upload...[/red]"
+            )
             return False
         return True
 

@@ -25,7 +25,9 @@ def _diff_header_path(line: str) -> tuple[bool, Path | None]:
     if not line.startswith("+++ "):
         return False, None
     value = line[4:].strip()
-    return True, None if value == "/dev/null" else Path(value.removeprefix("b/"))
+    return True, None if value == "/dev/null" else Path(
+        value.removeprefix("b/")
+    )
 
 
 def _hunk_lines(line: str) -> range:
@@ -64,7 +66,10 @@ def _function_ast_records(source: str) -> dict[str, list[tuple[range, str]]]:
                 continue
             qualified_name = ".".join((*prefix, node.name))
             end_line = int(node.end_lineno or node.lineno)
-            record = (range(node.lineno, end_line + 1), ast.dump(node, include_attributes=False))
+            record = (
+                range(node.lineno, end_line + 1),
+                ast.dump(node, include_attributes=False),
+            )
             records.setdefault(qualified_name, []).append(record)
             visit_body(node.body, (*prefix, node.name))
 
@@ -72,7 +77,9 @@ def _function_ast_records(source: str) -> dict[str, list[tuple[range, str]]]:
     return records
 
 
-def _semantic_changed_lines(current_source: str, previous_source: str, changed_lines: set[int]) -> set[int]:
+def _semantic_changed_lines(
+    current_source: str, previous_source: str, changed_lines: set[int]
+) -> set[int]:
     """Ignore changed lines inside functions whose Python AST is unchanged."""
     current_records = _function_ast_records(current_source)
     previous_records = _function_ast_records(previous_source)
@@ -107,13 +114,17 @@ def _staged_diff_text(git: str, root: Path) -> str:
     return result.stdout
 
 
-def _semantic_lines_for_path(git: str, root: Path, path: Path, lines: set[int]) -> set[int]:
+def _semantic_lines_for_path(
+    git: str, root: Path, path: Path, lines: set[int]
+) -> set[int]:
     previous_source = _head_source(git, root, path)
     current_path = root / path
     if previous_source is None or not current_path.is_file() or not lines:
         return lines
     try:
-        return _semantic_changed_lines(current_path.read_text(encoding="utf-8"), previous_source, lines)
+        return _semantic_changed_lines(
+            current_path.read_text(encoding="utf-8"), previous_source, lines
+        )
     except SyntaxError:
         # Let the normal Python compilation/lint gates report malformed source.
         return lines
@@ -124,7 +135,10 @@ def _staged_changed_lines(root: Path) -> dict[Path, set[int]]:
     if git is None:
         raise RuntimeError("git is required for --staged complexity checks")
     changed = _parse_changed_lines(_staged_diff_text(git, root))
-    return {path: _semantic_lines_for_path(git, root, path, lines) for path, lines in changed.items()}
+    return {
+        path: _semantic_lines_for_path(git, root, path, lines)
+        for path, lines in changed.items()
+    }
 
 
 def _block_touches_lines(block: Any, lines: set[int]) -> bool:
@@ -145,11 +159,20 @@ class ComplexityViolation:
 
 def _quality_config(root: Path) -> tuple[int, tuple[str, ...]]:
     data = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
-    quality = data.get("tool", {}).get("upload-assistant", {}).get("quality", {})
+    quality = (
+        data.get("tool", {}).get("upload-assistant", {}).get("quality", {})
+    )
     maximum = int(quality.get("max_cyclomatic_complexity", 5))
-    configured_paths = quality.get("complexity_paths", ["src", "upload.py", "config-generator.py", "scripts", "tests"])
-    if not isinstance(configured_paths, list) or not all(isinstance(item, str) for item in configured_paths):
-        raise ValueError("tool.upload-assistant.quality.complexity_paths must be a list of strings")
+    configured_paths = quality.get(
+        "complexity_paths",
+        ["src", "upload.py", "config-generator.py", "scripts", "tests"],
+    )
+    if not isinstance(configured_paths, list) or not all(
+        isinstance(item, str) for item in configured_paths
+    ):
+        raise ValueError(
+            "tool.upload-assistant.quality.complexity_paths must be a list of strings"
+        )
     return maximum, tuple(configured_paths)
 
 
@@ -179,7 +202,9 @@ def _radon_no_assert(root: Path) -> bool:
     return bool(data.get("tool", {}).get("radon", {}).get("no_assert", False))
 
 
-def _violation_for_block(block: Any, relative_path: Path, maximum: int) -> ComplexityViolation | None:
+def _violation_for_block(
+    block: Any, relative_path: Path, maximum: int
+) -> ComplexityViolation | None:
     if isinstance(block, RadonClass):
         return None
     complexity = int(block.complexity)
@@ -201,7 +226,9 @@ def _filtered_violation(
     maximum: int,
     changed_lines: set[int] | None,
 ) -> ComplexityViolation | None:
-    if changed_lines is not None and not _block_touches_lines(block, changed_lines):
+    if changed_lines is not None and not _block_touches_lines(
+        block, changed_lines
+    ):
         return None
     return _violation_for_block(block, relative_path, maximum)
 
@@ -216,8 +243,21 @@ def _violations_for_file(
 ) -> list[ComplexityViolation]:
     relative_path = path.relative_to(root)
     source = path.read_text(encoding="utf-8")
-    blocks = (block for top_level in cc_visit(source, no_assert=no_assert) for block in _nested_blocks(top_level))
-    return [violation for block in blocks if (violation := _filtered_violation(block, relative_path, maximum, changed_lines)) is not None]
+    blocks = (
+        block
+        for top_level in cc_visit(source, no_assert=no_assert)
+        for block in _nested_blocks(top_level)
+    )
+    return [
+        violation
+        for block in blocks
+        if (
+            violation := _filtered_violation(
+                block, relative_path, maximum, changed_lines
+            )
+        )
+        is not None
+    ]
 
 
 def scan(
@@ -234,22 +274,45 @@ def scan(
         if changed_lines is not None and relative_path not in changed_lines:
             continue
         lines = None if changed_lines is None else changed_lines[relative_path]
-        violations.extend(_violations_for_file(path, root, maximum, no_assert=no_assert, changed_lines=lines))
-    return sorted(violations, key=lambda item: (str(item.path), item.line, item.column, item.name))
+        violations.extend(
+            _violations_for_file(
+                path, root, maximum, no_assert=no_assert, changed_lines=lines
+            )
+        )
+    return sorted(
+        violations,
+        key=lambda item: (str(item.path), item.line, item.column, item.name),
+    )
 
 
 def _argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("paths", nargs="*", help="Optional Python files/directories. Defaults to pyproject complexity_paths.")
+    parser.add_argument(
+        "paths",
+        nargs="*",
+        help="Optional Python files/directories. Defaults to pyproject complexity_paths.",
+    )
     parser.add_argument("--root", type=Path, default=Path())
-    parser.add_argument("--concise", action="store_true", help="Emit Reviewdog-friendly path:line:column diagnostics.")
-    parser.add_argument("--staged", action="store_true", help="Check only blocks touched by staged Python additions/modifications.")
+    parser.add_argument(
+        "--concise",
+        action="store_true",
+        help="Emit Reviewdog-friendly path:line:column diagnostics.",
+    )
+    parser.add_argument(
+        "--staged",
+        action="store_true",
+        help="Check only blocks touched by staged Python additions/modifications.",
+    )
     return parser
 
 
-def _print_violations(violations: list[ComplexityViolation], maximum: int, *, concise: bool) -> None:
+def _print_violations(
+    violations: list[ComplexityViolation], maximum: int, *, concise: bool
+) -> None:
     if not concise:
-        print(f"Radon complexity: FAIL ({len(violations)} blocks exceed rank A / CC {maximum})")
+        print(
+            f"Radon complexity: FAIL ({len(violations)} blocks exceed rank A / CC {maximum})"
+        )
     for item in violations:
         message = f"CC-A001 {item.name} has cyclomatic complexity {item.complexity} (rank {item.rank}); maximum allowed is rank A (CC <= {maximum})"
         print(f"{item.path}:{item.line}:{item.column}: {message}")
@@ -260,7 +323,13 @@ def _run_check(args: argparse.Namespace) -> int:
     maximum, configured_paths = _quality_config(root)
     paths = tuple(args.paths) or configured_paths
     changed_lines = _staged_changed_lines(root) if args.staged else None
-    violations = scan(root, paths, maximum, no_assert=_radon_no_assert(root), changed_lines=changed_lines)
+    violations = scan(
+        root,
+        paths,
+        maximum,
+        no_assert=_radon_no_assert(root),
+        changed_lines=changed_lines,
+    )
     if not violations:
         print(f"Radon complexity: PASS (all blocks rank A, CC <= {maximum})")
         return 0

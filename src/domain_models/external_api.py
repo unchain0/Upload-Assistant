@@ -30,7 +30,9 @@ class TmdbCredential:
     @staticmethod
     def _normalized_value(raw_value: object) -> str:
         if not isinstance(raw_value, str):
-            raise TmdbCredentialMissingError("TMDb credential must be a string")
+            raise TmdbCredentialMissingError(
+                "TMDb credential must be a string"
+            )
         normalized = raw_value.strip()
         if not normalized:
             raise TmdbCredentialMissingError("TMDb credential is empty")
@@ -38,7 +40,9 @@ class TmdbCredential:
 
     @staticmethod
     def _credential_mode(normalized: str) -> TmdbCredentialMode:
-        looks_like_jwt = normalized.startswith("eyJ") and normalized.count(".") >= 2
+        looks_like_jwt = (
+            normalized.startswith("eyJ") and normalized.count(".") >= 2
+        )
         if looks_like_jwt or len(normalized) > 64:
             return TmdbCredentialMode.V4_READ_ACCESS_TOKEN
         return TmdbCredentialMode.V3_API_KEY

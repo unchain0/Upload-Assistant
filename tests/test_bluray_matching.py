@@ -12,7 +12,9 @@ from src.domain_models.release import Meta
 from src.integrations.external_apis import bluray
 
 
-def _meta(tmp_path: Path, *, interactive: bool = False, debug: bool = True) -> Meta:
+def _meta(
+    tmp_path: Path, *, interactive: bool = False, debug: bool = True
+) -> Meta:
     release_id = "bluray-contract"
     temp = tmp_path / "tmp" / release_id
     temp.mkdir(parents=True)
@@ -110,7 +112,9 @@ def _install_identity_fetch(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
 
 
 @pytest.mark.asyncio
-async def test_perfect_bluray_release_is_selected_without_prompt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_perfect_bluray_release_is_selected_without_prompt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     meta = _meta(tmp_path)
     release = _release()
     fetch = _install_identity_fetch(monkeypatch)
@@ -127,7 +131,9 @@ async def test_perfect_bluray_release_is_selected_without_prompt(tmp_path: Path,
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("answer", "selected"), [(True, True), (False, False)])
+@pytest.mark.parametrize(
+    ("answer", "selected"), [(True, True), (False, False)]
+)
 async def test_single_imperfect_release_honors_interactive_confirmation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -145,7 +151,9 @@ async def test_single_imperfect_release_honors_interactive_confirmation(
         subtitles=["German", "French"],
     )
     _install_identity_fetch(monkeypatch)
-    monkeypatch.setattr(bluray.cli_ui, "ask_yes_no", lambda *_args, **_kwargs: answer)
+    monkeypatch.setattr(
+        bluray.cli_ui, "ask_yes_no", lambda *_args, **_kwargs: answer
+    )
 
     result = await bluray.process_all_releases([release], meta)
 
@@ -158,7 +166,9 @@ async def test_single_imperfect_release_honors_interactive_confirmation(
 
 
 @pytest.mark.asyncio
-async def test_multiple_close_releases_can_print_logs_then_select(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_multiple_close_releases_can_print_logs_then_select(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     meta = _meta(tmp_path, interactive=True)
     first = _release(title="First Edition", release_format="BD")
     second = _release(
@@ -173,7 +183,9 @@ async def test_multiple_close_releases_can_print_logs_then_select(tmp_path: Path
     )
     _install_identity_fetch(monkeypatch)
     answers = iter(("p", "1", "2"))
-    monkeypatch.setattr(bluray.cli_ui, "ask_string", lambda *_args, **_kwargs: next(answers))
+    monkeypatch.setattr(
+        bluray.cli_ui, "ask_string", lambda *_args, **_kwargs: next(answers)
+    )
 
     result = await bluray.process_all_releases([first, second], meta)
 
@@ -207,17 +219,25 @@ async def test_unattended_multiple_match_respects_score_threshold(
 
 
 @pytest.mark.asyncio
-async def test_missing_specs_and_empty_catalog_are_safe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_missing_specs_and_empty_catalog_are_safe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     meta = _meta(tmp_path, interactive=True)
     release = _release(include_specs=False, include_cover=False)
     _install_identity_fetch(monkeypatch)
-    monkeypatch.setattr(bluray.cli_ui, "ask_yes_no", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(
+        bluray.cli_ui, "ask_yes_no", lambda *_args, **_kwargs: False
+    )
 
     assert await bluray.process_all_releases([], meta) == []
-    assert await bluray.process_all_releases([copy.deepcopy(release)], meta) == []
+    assert (
+        await bluray.process_all_releases([copy.deepcopy(release)], meta) == []
+    )
 
 
-def test_country_mapping_and_section_extraction_cover_unknown_and_mixed_nodes() -> None:
+def test_country_mapping_and_section_extraction_cover_unknown_and_mixed_nodes() -> (
+    None
+):
     from bs4 import BeautifulSoup
 
     soup = BeautifulSoup(

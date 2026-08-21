@@ -35,7 +35,9 @@ class Locadora(UNIT3D):
         self.common = Common(config)
 
     async def get_name(self, meta: Meta) -> dict[str, str]:
-        name_value = meta.name if meta.is_disc == "BDMV" else meta.basename_no_ext
+        name_value = (
+            meta.name if meta.is_disc == "BDMV" else meta.basename_no_ext
+        )
         name = name_value
 
         replacements = {
@@ -72,7 +74,9 @@ class Locadora(UNIT3D):
 
         tag_lower = meta.tag.lower() if meta.tag else ""
         invalid_tags = ["nogrp", "nogroup", "unknown", "-unk-"]
-        if meta.tag == "" or any(invalid_tag in tag_lower for invalid_tag in invalid_tags):
+        if meta.tag == "" or any(
+            invalid_tag in tag_lower for invalid_tag in invalid_tags
+        ):
             for invalid_tag in invalid_tags:
                 name = re.sub(f"-{invalid_tag}", "", name, flags=re.IGNORECASE)
             name = f"{name}-NoGroup"
@@ -92,9 +96,16 @@ class Locadora(UNIT3D):
 
     async def get_mediainfo(self, meta: Meta) -> dict[str, str]:
         if meta.is_disc == "BDMV":
-            mediainfo = await self.common.get_bdmv_mediainfo(meta, remove=["File size", "Overall bit rate"], char_limit=20000)
+            mediainfo = await self.common.get_bdmv_mediainfo(
+                meta,
+                remove=["File size", "Overall bit rate"],
+                char_limit=20000,
+            )
         else:
-            async with aiofiles.open(f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/MEDIAINFO_CLEANPATH.txt", encoding="utf-8") as f:
+            async with aiofiles.open(
+                f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/MEDIAINFO_CLEANPATH.txt",
+                encoding="utf-8",
+            ) as f:
                 mediainfo = await f.read()
 
         return {"mediainfo": mediainfo}
@@ -102,7 +113,9 @@ class Locadora(UNIT3D):
     async def get_description(self, meta: Meta) -> dict[str, str]:
         signature = f"[right][url=https://github.com/wastaken7/Upload-Assistant][size=4]Compartilhado com {meta.ua_name} {meta.current_version} (fork)[/size][/url][/right]"
         return {
-            "description": await DescriptionBuilder(self.tracker, self.config).general_description_generator(
+            "description": await DescriptionBuilder(
+                self.tracker, self.config
+            ).general_description_generator(
                 meta,
                 mediainfo=False,
                 nfo=False,
@@ -110,19 +123,46 @@ class Locadora(UNIT3D):
             )
         }
 
-    async def get_category_id(self, meta: Meta, category: str | None = None, reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_category_id(
+        self,
+        meta: Meta,
+        category: str | None = None,
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         _ = (category, reverse, mapping_only)
-        category_id = {"MOVIE": "1", "TV": "2", "ANIMES": "6"}.get(meta.category, "0")
+        category_id = {"MOVIE": "1", "TV": "2", "ANIMES": "6"}.get(
+            meta.category, "0"
+        )
         if meta.anime is True and category_id == "2":
             category_id = "6"
         return {"category_id": category_id}
 
-    async def get_type_id(self, meta: Meta, type: str | None = None, reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_type_id(
+        self,
+        meta: Meta,
+        type: str | None = None,
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         _ = (type, reverse, mapping_only)
-        type_id = {"DISC": "1", "REMUX": "2", "ENCODE": "3", "WEBDL": "4", "WEBRIP": "5", "HDTV": "6"}.get(meta.type or "", "0")
+        type_id = {
+            "DISC": "1",
+            "REMUX": "2",
+            "ENCODE": "3",
+            "WEBDL": "4",
+            "WEBRIP": "5",
+            "HDTV": "6",
+        }.get(meta.type or "", "0")
         return {"type_id": type_id}
 
-    async def get_resolution_id(self, meta: Meta, resolution: str | None = None, reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_resolution_id(
+        self,
+        meta: Meta,
+        resolution: str | None = None,
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         _ = (resolution, reverse, mapping_only)
         resolution_id = {
             "4320p": "1",
@@ -139,4 +179,6 @@ class Locadora(UNIT3D):
         return {"resolution_id": resolution_id}
 
     async def get_additional_checks(self, meta: Meta) -> bool:
-        return await self.common.check_portuguese_video_requirements(meta, self.tracker)
+        return await self.common.check_portuguese_video_requirements(
+            meta, self.tracker
+        )

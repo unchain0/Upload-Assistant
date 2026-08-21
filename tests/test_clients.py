@@ -3,7 +3,10 @@ from unittest.mock import patch
 
 from src.domain_models.release import Meta
 from src.integrations.torrent_clients.client_manager import Clients
-from src.services.configuration_validation_service import DEFAULT_KEY_TYPES, validate_config
+from src.services.configuration_validation_service import (
+    DEFAULT_KEY_TYPES,
+    validate_config,
+)
 
 
 def test_empty_inject_delay_is_a_no_op() -> None:
@@ -14,10 +17,18 @@ def test_empty_inject_delay_is_a_no_op() -> None:
         sleep_calls += 1
 
     async def exercise() -> None:
-        clients = Clients({"DEFAULT": {"inject_delay": 3}, "TRACKERS": {"TEST": {"inject_delay": ""}}})
+        clients = Clients(
+            {
+                "DEFAULT": {"inject_delay": 3},
+                "TRACKERS": {"TEST": {"inject_delay": ""}},
+            }
+        )
         await clients.inject_delay(Meta(), "TEST", "qbit")
 
-    with patch("src.integrations.torrent_clients.client_manager.asyncio.sleep", new=fake_sleep):
+    with patch(
+        "src.integrations.torrent_clients.client_manager.asyncio.sleep",
+        new=fake_sleep,
+    ):
         asyncio.run(exercise())
 
     assert sleep_calls == 0
@@ -38,19 +49,29 @@ def test_config_validator_checks_tenth_image_host_credentials() -> None:
     )
 
     assert not is_valid
-    assert "Image host 'imgbb' requires config setting 'imgbb_api' but it is not set" in errors
+    assert (
+        "Image host 'imgbb' requires config setting 'imgbb_api' but it is not set"
+        in errors
+    )
 
 
 def test_config_validator_checks_all_sharex_settings() -> None:
     is_valid, errors, _warnings = validate_config(
         {
-            "DEFAULT": {"tmdb_api": "test-key", "img_host_1": "sharex", "sharex_api_key": "token"},
+            "DEFAULT": {
+                "tmdb_api": "test-key",
+                "img_host_1": "sharex",
+                "sharex_api_key": "token",
+            },
             "TRACKERS": {},
         }
     )
 
     assert not is_valid
-    assert "Image host 'sharex' requires config setting 'sharex_url' but it is not set" in errors
+    assert (
+        "Image host 'sharex' requires config setting 'sharex_url' but it is not set"
+        in errors
+    )
 
 
 def test_config_validator_warns_for_invalid_image_upload_limits() -> None:
@@ -74,7 +95,10 @@ def test_config_validator_warns_for_invalid_image_upload_limits() -> None:
 def test_config_validator_warns_for_nonfinite_image_upload_delay() -> None:
     _, _, warnings = validate_config(
         {
-            "DEFAULT": {"tmdb_api": "test-key", "image_upload_delay": float("nan")},
+            "DEFAULT": {
+                "tmdb_api": "test-key",
+                "image_upload_delay": float("nan"),
+            },
             "TRACKERS": {},
         }
     )
@@ -82,12 +106,21 @@ def test_config_validator_warns_for_nonfinite_image_upload_delay() -> None:
     assert any(warning.key == "image_upload_delay" for warning in warnings)
 
 
-def test_config_validator_warns_for_infinite_image_upload_concurrency() -> None:
+def test_config_validator_warns_for_infinite_image_upload_concurrency() -> (
+    None
+):
     _, _, warnings = validate_config(
         {
-            "DEFAULT": {"tmdb_api": "test-key", "image_upload_concurrency": float("inf")},
+            "DEFAULT": {
+                "tmdb_api": "test-key",
+                "image_upload_concurrency": float("inf"),
+            },
             "TRACKERS": {},
         }
     )
 
-    assert any(warning.key == "image_upload_concurrency" and "Cannot parse" in warning.message for warning in warnings)
+    assert any(
+        warning.key == "image_upload_concurrency"
+        and "Cannot parse" in warning.message
+        for warning in warnings
+    )

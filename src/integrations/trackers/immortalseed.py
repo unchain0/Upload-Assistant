@@ -8,7 +8,10 @@ from bs4 import BeautifulSoup
 
 from src.domain_models.release import Meta
 from src.integrations.filesystem.temp_paths import release_temp_dir
-from src.integrations.trackers.cookie_auth import CookieAuthUploader, CookieValidator
+from src.integrations.trackers.cookie_auth import (
+    CookieAuthUploader,
+    CookieValidator,
+)
 from src.integrations.trackers.description_builder import DescriptionBuilder
 
 Config = dict[str, Any]
@@ -34,7 +37,12 @@ class ImmortalSeed:
         self.config: Config = config
         self.cookie_validator = CookieValidator(config)
         self.cookie_auth_uploader = CookieAuthUploader(config)
-        self.session = httpx.AsyncClient(headers={"User-Agent": f"Upload-Assistant/2.3 ({platform.system()} {platform.release()})"}, timeout=30)
+        self.session = httpx.AsyncClient(
+            headers={
+                "User-Agent": f"Upload-Assistant/2.3 ({platform.system()} {platform.release()})"
+            },
+            timeout=30,
+        )
 
     async def validate_credentials(self, meta: Meta) -> bool:
         return await self._load_cookies(meta)
@@ -60,7 +68,9 @@ class ImmortalSeed:
         return self._search_entries(response.text)
 
     async def _load_cookies(self, meta: Meta) -> bool:
-        cookies = await self.cookie_validator.load_session_cookies(meta, self.tracker)
+        cookies = await self.cookie_validator.load_session_cookies(
+            meta, self.tracker
+        )
         self.session.cookies.clear()
         if cookies is None:
             return False
@@ -84,17 +94,25 @@ class ImmortalSeed:
     def _search_url(cls, search_type: str, search_query: str) -> str:
         return f"{cls.base_url}/browse.php?do=search&keywords={search_query}&search_type={search_type}"
 
-    async def _search_requires_login(self, meta: Meta, response: httpx.Response) -> bool:
+    async def _search_requires_login(
+        self, meta: Meta, response: httpx.Response
+    ) -> bool:
         if not self._is_login_response(response):
             return False
-        await self.cookie_validator.handle_validation_failure(meta, self.tracker, response.text)
+        await self.cookie_validator.handle_validation_failure(
+            meta, self.tracker, response.text
+        )
         meta.skipping = self.tracker
         return True
 
     @staticmethod
     def _is_login_response(response: httpx.Response) -> bool:
         text = response.text
-        return "Forget your password" in text or "login.php" in str(response.url) or "login.php" in text
+        return (
+            "Forget your password" in text
+            or "login.php" in str(response.url)
+            or "login.php" in text
+        )
 
     @classmethod
     def _search_entries(cls, html: str) -> list[dict[str, str | None]]:
@@ -102,7 +120,11 @@ class ImmortalSeed:
         torrent_table = soup.find("table", id="sortabletable")
         if not torrent_table:
             return []
-        return [entry for row in torrent_table.select("tbody > tr")[1:] if (entry := cls._search_entry(row)) is not None]
+        return [
+            entry
+            for row in torrent_table.select("tbody > tr")[1:]
+            if (entry := cls._search_entry(row)) is not None
+        ]
 
     @staticmethod
     def _search_entry(row: Any) -> dict[str, str | None] | None:
@@ -234,8 +256,16 @@ class ImmortalSeed:
 
     @staticmethod
     def _metadata_terms(meta: Meta) -> set[str]:
-        genres = [str(value).casefold() for value in meta.genres] if isinstance(meta.genres, list) else []
-        keywords = [str(value).casefold() for value in meta.keywords] if isinstance(meta.keywords, list) else []
+        genres = (
+            [str(value).casefold() for value in meta.genres]
+            if isinstance(meta.genres, list)
+            else []
+        )
+        keywords = (
+            [str(value).casefold() for value in meta.keywords]
+            if isinstance(meta.keywords, list)
+            else []
+        )
         return set(genres + keywords)
 
     @staticmethod
@@ -250,11 +280,19 @@ class ImmortalSeed:
             nfo_path = nfo_files[0]
             async with aiofiles.open(nfo_path, "rb") as nfo_file:
                 nfo_bytes = await nfo_file.read()
-            return {"nfofile": (nfo_path.name, nfo_bytes, "application/octet-stream")}
+            return {
+                "nfofile": (
+                    nfo_path.name,
+                    nfo_bytes,
+                    "application/octet-stream",
+                )
+            }
         nfo_content = await self.generate_description(meta)
         nfo_bytes = nfo_content.encode("utf-8")
         nfo_filename = f"{(meta.scene_name or meta.basename_no_ext)}.nfo"
-        return {"nfofile": (nfo_filename, nfo_bytes, "application/octet-stream")}
+        return {
+            "nfofile": (nfo_filename, nfo_bytes, "application/octet-stream")
+        }
 
     async def get_name(self, meta: Meta) -> str:
         if meta.scene_name:
@@ -272,7 +310,10 @@ class ImmortalSeed:
     def _hosted_cover(cls, covers: Any) -> str:
         if not isinstance(covers, list):
             return ""
-        return next((url for entry in covers if (url := cls._cover_entry_url(entry))), "")
+        return next(
+            (url for entry in covers if (url := cls._cover_entry_url(entry))),
+            "",
+        )
 
     @classmethod
     def _cover_entry_url(cls, entry: Any) -> str:
@@ -282,7 +323,11 @@ class ImmortalSeed:
 
     @staticmethod
     def _https_url(value: Any) -> str:
-        return value if isinstance(value, str) and value.startswith("https://") else ""
+        return (
+            value
+            if isinstance(value, str) and value.startswith("https://")
+            else ""
+        )
 
     async def get_data(self, meta: Meta) -> dict[str, Any]:
         message = self._description_message(meta)
@@ -307,12 +352,18 @@ class ImmortalSeed:
         return f"{meta.overview}\n\n[youtube]{meta.youtube}[/youtube]"
 
     def _is_anonymous(self, meta: Meta) -> bool:
-        configured = bool(self.config["TRACKERS"][self.tracker].get("anon", False))
+        configured = bool(
+            self.config["TRACKERS"][self.tracker].get("anon", False)
+        )
         return int(meta.anon or 0) != 0 or configured
 
     @staticmethod
     def _imdb_url(meta: Meta) -> str:
-        return str(meta.imdb_info.get("imdb_url", "")) if isinstance(meta.imdb_info, dict) else ""
+        return (
+            str(meta.imdb_info.get("imdb_url", ""))
+            if isinstance(meta.imdb_info, dict)
+            else ""
+        )
 
     async def upload(self, meta: Meta) -> bool:
         await self._load_cookies(meta)

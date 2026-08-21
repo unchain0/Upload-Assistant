@@ -57,7 +57,9 @@ class Suio:
         self.tracker_cfg = self._tracker_config(config)
         self.api_key = str(self.tracker_cfg.get("api_key", "")).strip()
         self.daily_api_hit_limit = get_daily_api_hit_limit(self.tracker_cfg)
-        self.upload_url, self.torrent_url, self.search_url = self._configured_urls(self.tracker_cfg)
+        self.upload_url, self.torrent_url, self.search_url = (
+            self._configured_urls(self.tracker_cfg)
+        )
 
     @classmethod
     def _tracker_config(cls, config: Config) -> dict[str, Any]:
@@ -68,7 +70,9 @@ class Suio:
         return value if isinstance(value, dict) else {}
 
     @classmethod
-    def _configured_urls(cls, tracker_cfg: dict[str, Any]) -> tuple[str | None, str | None, str | None]:
+    def _configured_urls(
+        cls, tracker_cfg: dict[str, Any]
+    ) -> tuple[str | None, str | None, str | None]:
         base_url = str(tracker_cfg.get("base_url", "")).strip().rstrip("/")
         if not base_url:
             return None, None, None
@@ -78,23 +82,38 @@ class Suio:
             return None, None, None
 
     @classmethod
-    def _validated_urls(cls, base_url: str) -> tuple[str | None, str | None, str | None]:
-        url_to_parse = base_url if base_url.startswith(("http://", "https://")) else "https://" + base_url
+    def _validated_urls(
+        cls, base_url: str
+    ) -> tuple[str | None, str | None, str | None]:
+        url_to_parse = (
+            base_url
+            if base_url.startswith(("http://", "https://"))
+            else "https://" + base_url
+        )
         parsed = urlparse(url_to_parse)
         hostname = parsed.netloc.lower().split(":")[0]
         if not cls._allowed_domain(hostname):
-            logger.info(f"{cls.tracker}: [red]base_url from config.py does not match the expected domain. Skipping...[/red]")
+            logger.info(
+                f"{cls.tracker}: [red]base_url from config.py does not match the expected domain. Skipping...[/red]"
+            )
             return None, None, None
         scheme = parsed.scheme or "https"
         api_hostname = (parsed.netloc or parsed.path).split("@")[-1]
-        return f"{base_url}/api-upload", f"{base_url}/details.php?id=", f"{scheme}://api.{api_hostname}/api"
+        return (
+            f"{base_url}/api-upload",
+            f"{base_url}/details.php?id=",
+            f"{scheme}://api.{api_hostname}/api",
+        )
 
     @staticmethod
     def _allowed_domain(hostname: str) -> bool:
         parts = hostname.split(".")
         main_domain = ".".join(parts[-2:]) if len(parts) >= 2 else hostname
         domain_hash = hashlib.sha256(main_domain.encode("utf-8")).hexdigest()
-        return domain_hash == "a0fcf409be81cbcec4e212cb69331960e5d709449c0e9cad40e36369d8da8f3c"
+        return (
+            domain_hash
+            == "a0fcf409be81cbcec4e212cb69331960e5d709449c0e9cad40e36369d8da8f3c"
+        )
 
     def get_search_query(self, meta: Meta) -> str:
         return build_newznab_search_query(meta)
@@ -102,8 +121,12 @@ class Suio:
     async def get_search_name(self, meta: Meta) -> str:
         return await self.get_name(meta)
 
-    def _parse_dupes_from_response(self, response_text: str) -> list[dict[str, Any]]:
-        return parse_newznab_dupes(response_text, self.torrent_url, use_guid_attr_as_id=True)
+    def _parse_dupes_from_response(
+        self, response_text: str
+    ) -> list[dict[str, Any]]:
+        return parse_newznab_dupes(
+            response_text, self.torrent_url, use_guid_attr_as_id=True
+        )
 
     async def search_existing(self, meta: Meta) -> list[Any]:
         cached = await self._cached_search_result(meta)
@@ -116,9 +139,16 @@ class Suio:
 
     async def _cached_search_result(self, meta: Meta) -> list[str] | None:
         release_name = await self.get_name(meta)
-        cache_file = Path(meta.base_dir) / "tmp" / meta.uuid / f"{self.tracker}_upload_ok"
+        cache_file = (
+            Path(meta.base_dir)
+            / "tmp"
+            / meta.uuid
+            / f"{self.tracker}_upload_ok"
+        )
         if release_name and cache_file.exists():
-            logger.info(f"{self.tracker}: [yellow]Found local upload cache.[/yellow]")
+            logger.info(
+                f"{self.tracker}: [yellow]Found local upload cache.[/yellow]"
+            )
             return [release_name]
         return None
 
@@ -127,7 +157,9 @@ class Suio:
             return False
         if self.daily_api_hit_limit > 0:
             return True
-        logger.info(f"{self.tracker}: [yellow]Duplicate search via API is disabled because daily_api_hit_limit is 0.[/yellow]")
+        logger.info(
+            f"{self.tracker}: [yellow]Duplicate search via API is disabled because daily_api_hit_limit is 0.[/yellow]"
+        )
         return False
 
     async def _search_queries(self, meta: Meta) -> list[dict[str, str]]:
@@ -150,7 +182,10 @@ class Suio:
         return params
 
     def _tv_search_params(self, meta: Meta) -> dict[str, str]:
-        params: dict[str, str] = {"t": "tvsearch", **self._tv_identity_params(meta)}
+        params: dict[str, str] = {
+            "t": "tvsearch",
+            **self._tv_identity_params(meta),
+        }
         params.update(self._tv_episode_params(meta))
         return params
 
@@ -174,12 +209,16 @@ class Suio:
             return {"t": "movie", "imdbid": meta.imdb_tt}
         return {"t": "movie", "q": self.get_search_query(meta)}
 
-    async def _execute_search_queries(self, meta: Meta, queries: list[dict[str, str]]) -> list[dict[str, Any]]:
+    async def _execute_search_queries(
+        self, meta: Meta, queries: list[dict[str, str]]
+    ) -> list[dict[str, Any]]:
         dupes: list[dict[str, Any]] = []
         seen_keys: set[str] = set()
         async with httpx.AsyncClient(timeout=10.0) as client:
             for query in queries:
-                if not await self._execute_search_query(meta, client, query, dupes, seen_keys):
+                if not await self._execute_search_query(
+                    meta, client, query, dupes, seen_keys
+                ):
                     break
         return dupes
 
@@ -191,30 +230,51 @@ class Suio:
         dupes: list[dict[str, Any]],
         seen_keys: set[str],
     ) -> bool:
-        allowed, used_hits = await reserve_daily_api_hit(meta.base_dir, self.tracker, self.daily_api_hit_limit)
+        allowed, used_hits = await reserve_daily_api_hit(
+            meta.base_dir, self.tracker, self.daily_api_hit_limit
+        )
         if not allowed:
-            logger.info(f"{self.tracker}: [yellow]Duplicate search stopped because the 24-hour API hit limit ({self.daily_api_hit_limit}) has been reached.[/yellow]")
+            logger.info(
+                f"{self.tracker}: [yellow]Duplicate search stopped because the 24-hour API hit limit ({self.daily_api_hit_limit}) has been reached.[/yellow]"
+            )
             return False
         search_url = self.search_url
         if search_url is None:
             return False
-        response = await client.get(search_url, params=self._request_params(query))
-        logger.debug(f"{self.tracker}: Duplicate search used API hit {used_hits}/{self.daily_api_hit_limit} in the last 24 hours.")
+        response = await client.get(
+            search_url, params=self._request_params(query)
+        )
+        logger.debug(
+            f"{self.tracker}: Duplicate search used API hit {used_hits}/{self.daily_api_hit_limit} in the last 24 hours."
+        )
         response.raise_for_status()
         self._append_search_dupes(response.text, dupes, seen_keys)
         return True
 
     def _request_params(self, query: dict[str, str]) -> dict[str, str]:
-        return {"apikey": self.api_key, "limit": "100", "extended": "1", "pw": "2", **query}
+        return {
+            "apikey": self.api_key,
+            "limit": "100",
+            "extended": "1",
+            "pw": "2",
+            **query,
+        }
 
-    def _append_search_dupes(self, response_text: str, dupes: list[dict[str, Any]], seen_keys: set[str]) -> None:
+    def _append_search_dupes(
+        self,
+        response_text: str,
+        dupes: list[dict[str, Any]],
+        seen_keys: set[str],
+    ) -> None:
         if not response_text.strip():
             return
         for dupe in self._parse_dupes_from_response(response_text):
             self._append_search_dupe(dupe, dupes, seen_keys)
 
     @staticmethod
-    def _append_search_dupe(dupe: dict[str, Any], dupes: list[dict[str, Any]], seen_keys: set[str]) -> None:
+    def _append_search_dupe(
+        dupe: dict[str, Any], dupes: list[dict[str, Any]], seen_keys: set[str]
+    ) -> None:
         key = str(dupe.get("link") or dupe.get("name") or "")
         if key in seen_keys:
             return
@@ -225,7 +285,9 @@ class Suio:
         tracker_cfg = self.config.get("TRACKERS", {}).get(self.tracker, {})
         username = tracker_cfg.get("username", "").strip()
         if not (username and self.upload_url and self.torrent_url):
-            logger.info(f"{self.tracker}: [red]Skipping due to missing Username or base_url.[/red]")
+            logger.info(
+                f"{self.tracker}: [red]Skipping due to missing Username or base_url.[/red]"
+            )
             return False
         return True
 
@@ -267,7 +329,9 @@ class Suio:
 
     @classmethod
     def _movie_category_id(cls, meta: Meta) -> str:
-        by_resolution = {"uhd": "31", "hd": "16", "sd": "15"}.get(cls._resolution_class(meta.resolution))
+        by_resolution = {"uhd": "31", "hd": "16", "sd": "15"}.get(
+            cls._resolution_class(meta.resolution)
+        )
         if by_resolution:
             return by_resolution
         if meta.is_disc == "BDMV":
@@ -276,11 +340,15 @@ class Suio:
 
     @classmethod
     def _tv_category_id(cls, meta: Meta) -> str:
-        return {"uhd": "30", "hd": "20", "sd": "19"}.get(cls._resolution_class(meta.resolution), "tv")
+        return {"uhd": "30", "hd": "20", "sd": "19"}.get(
+            cls._resolution_class(meta.resolution), "tv"
+        )
 
     @classmethod
     def _xxx_category_id(cls, meta: Meta) -> str:
-        return {"uhd": "33", "hd": "27"}.get(cls._resolution_class(meta.resolution), "xxx")
+        return {"uhd": "33", "hd": "27"}.get(
+            cls._resolution_class(meta.resolution), "xxx"
+        )
 
     @staticmethod
     def _game_category_id(meta: Meta) -> str:
@@ -305,12 +373,16 @@ class Suio:
     def _map_single_language_to_id(self, lang: str) -> str:
         normalized = lang.lower().strip()
         if not normalized:
-            logger.info(f"{self.tracker}: No audio languages found, setting to Auto ([red]0[/red])")
+            logger.info(
+                f"{self.tracker}: No audio languages found, setting to Auto ([red]0[/red])"
+            )
             return "0"
         language_id = self._matched_language_id(normalized)
         if language_id is not None:
             return language_id
-        logger.info(f"{self.tracker}: Could not find language {normalized} ID, setting to Other ([red]10[/red])")
+        logger.info(
+            f"{self.tracker}: Could not find language {normalized} ID, setting to Other ([red]10[/red])"
+        )
         return "10"
 
     @classmethod
@@ -321,8 +393,12 @@ class Suio:
         return None
 
     @classmethod
-    def _matches_language_alias(cls, value: str, aliases: tuple[str, ...]) -> bool:
-        return any(cls._matches_one_language_alias(value, alias) for alias in aliases)
+    def _matches_language_alias(
+        cls, value: str, aliases: tuple[str, ...]
+    ) -> bool:
+        return any(
+            cls._matches_one_language_alias(value, alias) for alias in aliases
+        )
 
     @staticmethod
     def _matches_one_language_alias(value: str, alias: str) -> bool:
@@ -400,7 +476,9 @@ class Suio:
             return self._dual_language_id(languages, meta.original_language)
         if len(languages) >= 3:
             return "9"
-        logger.info(f"{self.tracker}: No audio languages found, setting to Auto ([red]0[/red])")
+        logger.info(
+            f"{self.tracker}: No audio languages found, setting to Auto ([red]0[/red])"
+        )
         return "0"
 
     def _resolve_language_enabled(self) -> bool:
@@ -424,8 +502,14 @@ class Suio:
             return [value]
         return list(value)
 
-    def _dual_language_id(self, languages: list[str], original_language: str | None) -> str:
-        selected = languages[1] if self._is_same_language(languages[0], original_language) else languages[0]
+    def _dual_language_id(
+        self, languages: list[str], original_language: str | None
+    ) -> str:
+        selected = (
+            languages[1]
+            if self._is_same_language(languages[0], original_language)
+            else languages[0]
+        )
         return self._map_single_language_to_id(selected)
 
     async def _prepare_files(self, meta: Meta) -> dict[str, Any] | None:
@@ -443,7 +527,9 @@ class Suio:
 
     async def _nzb_file(self, meta: Meta) -> tuple[str, bytes, str] | None:
         nzb_path = meta.nzb_path
-        if not nzb_path or not await self.common.check_nzb_file(self.tracker, meta):
+        if not nzb_path or not await self.common.check_nzb_file(
+            self.tracker, meta
+        ):
             return None
         content = await self._read_bytes(Path(nzb_path))
         return Path(nzb_path).name, content, "application/x-nzb"
@@ -453,7 +539,11 @@ class Suio:
         if candidate is None:
             return None
         filename, path = candidate
-        return filename, await self._read_bytes(path), "application/octet-stream"
+        return (
+            filename,
+            await self._read_bytes(path),
+            "application/octet-stream",
+        )
 
     def _nfo_candidate(self, meta: Meta) -> tuple[str, Path] | None:
         root = Path(meta.base_dir) / "tmp" / meta.uuid
@@ -465,7 +555,9 @@ class Suio:
     @staticmethod
     def _first_nfo(root: Path) -> tuple[str, Path] | None:
         path = next(root.glob("*.nfo"), None)
-        return (path.name, path) if path is not None and path.exists() else None
+        return (
+            (path.name, path) if path is not None and path.exists() else None
+        )
 
     @staticmethod
     def _preferred_nfo(meta: Meta, root: Path) -> tuple[str, Path] | None:
@@ -523,7 +615,9 @@ class Suio:
     async def get_name(self, meta: Meta) -> str:
         name = meta.scene_name or meta.basename_no_ext or ""
         normalized = unicodedata.normalize("NFKD", name)
-        return "".join(char for char in normalized if not unicodedata.combining(char))
+        return "".join(
+            char for char in normalized if not unicodedata.combining(char)
+        )
 
     async def _prepare_data(self, meta: Meta) -> dict[str, Any]:
         return {
@@ -537,12 +631,16 @@ class Suio:
     async def upload(self, meta: Meta) -> bool | None:
         status = meta.tracker_status.setdefault(self.tracker, {})
         if not self.upload_url:
-            logger.info(f"{self.tracker}: [red]base_url missing. Cannot upload.[/red]")
+            logger.info(
+                f"{self.tracker}: [red]base_url missing. Cannot upload.[/red]"
+            )
             status["status_message"] = "data error: base_url missing"
             return False
         files = await self._prepare_files(meta)
         if not files:
-            status["status_message"] = "data error: NZB file missing or password missing in header"
+            status["status_message"] = (
+                "data error: NZB file missing or password missing in header"
+            )
             return False
         data = await self._prepare_data(meta)
         username = str(self.tracker_cfg.get("username", "")).strip()
@@ -550,7 +648,13 @@ class Suio:
             return self._debug_upload(status, username, data, files)
         return await self._submit_upload(meta, status, username, data, files)
 
-    def _debug_upload(self, status: dict[str, Any], username: str, data: dict[str, Any], files: dict[str, Any]) -> bool:
+    def _debug_upload(
+        self,
+        status: dict[str, Any],
+        username: str,
+        data: dict[str, Any],
+        files: dict[str, Any],
+    ) -> bool:
         logger.debug(f"{self.tracker}: [cyan]Upload (DEBUG MODE):[/cyan]")
         logger.debug(f"{self.tracker}: User: {username}")
         logger.debug(f"{self.tracker}: Fields:")
@@ -570,29 +674,54 @@ class Suio:
     ) -> bool:
         try:
             response = await self._upload_response(meta, username, data, files)
-            return await self._handle_upload_response(meta, status, username, data, response)
+            return await self._handle_upload_response(
+                meta, status, username, data, response
+            )
         except httpx.TimeoutException:
-            status["status_message"] = "data error: Request timed out after 60 seconds"
+            status["status_message"] = (
+                "data error: Request timed out after 60 seconds"
+            )
             return False
         except httpx.RequestError as error:
-            status["status_message"] = f"data error: Unable to upload. Error: {error}"
+            status["status_message"] = (
+                f"data error: Unable to upload. Error: {error}"
+            )
             return False
         except Exception as error:
-            status["status_message"] = f"data error: Unexpected error. Error: {error}"
+            status["status_message"] = (
+                f"data error: Unexpected error. Error: {error}"
+            )
             return False
 
-    async def _upload_response(self, meta: Meta, username: str, data: dict[str, Any], files: dict[str, Any]) -> httpx.Response:
+    async def _upload_response(
+        self,
+        meta: Meta,
+        username: str,
+        data: dict[str, Any],
+        files: dict[str, Any],
+    ) -> httpx.Response:
         params = {"user": username, "api": self.api_key}
         headers = {"User-Agent": self._user_agent(meta)}
         upload_url = self.upload_url
         if upload_url is None:
             raise ValueError("SUIO upload URL is not configured")
         async with httpx.AsyncClient(timeout=60.0) as client:
-            return await client.post(upload_url, files=files, data=data, params=params, headers=headers, follow_redirects=True)
+            return await client.post(
+                upload_url,
+                files=files,
+                data=data,
+                params=params,
+                headers=headers,
+                follow_redirects=True,
+            )
 
     @staticmethod
     def _user_agent(meta: Meta) -> str:
-        version = meta.current_version if meta.current_version is not None else "github.com/Audionut/Upload-Assistant"
+        version = (
+            meta.current_version
+            if meta.current_version is not None
+            else "github.com/Audionut/Upload-Assistant"
+        )
         return f"{meta.ua_name} {version}"
 
     async def _handle_upload_response(
@@ -605,9 +734,13 @@ class Suio:
     ) -> bool:
         parsed = self._parsed_upload_response(response)
         if self._response_failed(response, parsed):
-            status["status_message"] = "data error: " + self._redacted_message(meta, data, username, self._failure_message(response, parsed))
+            status["status_message"] = "data error: " + self._redacted_message(
+                meta, data, username, self._failure_message(response, parsed)
+            )
             return False
-        status["status_message"] = self._redacted_message(meta, data, username, parsed["comment"] or "Upload successful")
+        status["status_message"] = self._redacted_message(
+            meta, data, username, parsed["comment"] or "Upload successful"
+        )
         await self._write_upload_cache(meta)
         torrent_id = self._response_id(response, parsed["comment"])
         if torrent_id:
@@ -615,21 +748,36 @@ class Suio:
         return True
 
     @staticmethod
-    def _parsed_upload_response(response: httpx.Response) -> _ParsedUploadResponse:
+    def _parsed_upload_response(
+        response: httpx.Response,
+    ) -> _ParsedUploadResponse:
         comment = Suio._response_comment(response.text)
         font_error = Suio._font_error(response.text)
         final_url = str(response.url)
-        error = "inf=err" in final_url or "/404" in final_url or bool(font_error) or Suio._comment_is_error(comment)
+        error = (
+            "inf=err" in final_url
+            or "/404" in final_url
+            or bool(font_error)
+            or Suio._comment_is_error(comment)
+        )
         return {"comment": comment, "font_error": font_error, "error": error}
 
     @staticmethod
     def _response_comment(text: str) -> str:
-        match = re.search(r"<!--\s*<response>(.*?)</response>\s*-->", text, re.IGNORECASE | re.DOTALL)
+        match = re.search(
+            r"<!--\s*<response>(.*?)</response>\s*-->",
+            text,
+            re.IGNORECASE | re.DOTALL,
+        )
         return re.sub(r"\s+", " ", match.group(1).strip()) if match else ""
 
     @staticmethod
     def _font_error(text: str) -> str:
-        match = re.search(r'<font[^>]*color=["\']?red["\']?[^>]*>(.*?)</font>', text, re.IGNORECASE | re.DOTALL)
+        match = re.search(
+            r'<font[^>]*color=["\']?red["\']?[^>]*>(.*?)</font>',
+            text,
+            re.IGNORECASE | re.DOTALL,
+        )
         if not match:
             return ""
         value = re.sub(r"<[^>]+>", " ", match.group(1))
@@ -638,42 +786,66 @@ class Suio:
     @staticmethod
     def _comment_is_error(comment: str) -> bool:
         lowered = comment.lower()
-        return any(marker in lowered for marker in ("invalid", "error", "did not select", "fail"))
+        return any(
+            marker in lowered
+            for marker in ("invalid", "error", "did not select", "fail")
+        )
 
     @staticmethod
-    def _response_failed(response: httpx.Response, parsed: _ParsedUploadResponse) -> bool:
+    def _response_failed(
+        response: httpx.Response, parsed: _ParsedUploadResponse
+    ) -> bool:
         return response.status_code not in {200, 201} or bool(parsed["error"])
 
     @staticmethod
-    def _failure_message(response: httpx.Response, parsed: _ParsedUploadResponse) -> str:
+    def _failure_message(
+        response: httpx.Response, parsed: _ParsedUploadResponse
+    ) -> str:
         font_error = str(parsed["font_error"])
         if font_error:
             return font_error
         comment = str(parsed["comment"])
         if comment:
             return comment
-        return f"HTTP {response.status_code}" if response.status_code not in {200, 201} else "Unknown upload failure"
+        return (
+            f"HTTP {response.status_code}"
+            if response.status_code not in {200, 201}
+            else "Unknown upload failure"
+        )
 
     @staticmethod
-    def _redacted_message(meta: Meta, data: dict[str, Any], username: str, message: str) -> str:
+    def _redacted_message(
+        meta: Meta, data: dict[str, Any], username: str, message: str
+    ) -> str:
         result = message
-        values = (Path(str(meta.nzb_path or "")).name, str(data.get("rlsname", "")), username)
+        values = (
+            Path(str(meta.nzb_path or "")).name,
+            str(data.get("rlsname", "")),
+            username,
+        )
         for value in values:
             if value:
-                result = re.sub(re.escape(value), "[redacted]", result, flags=re.IGNORECASE)
+                result = re.sub(
+                    re.escape(value), "[redacted]", result, flags=re.IGNORECASE
+                )
         return result
 
     @staticmethod
     async def _write_upload_cache(meta: Meta) -> None:
         cache_dir = Path(meta.base_dir) / "tmp" / meta.uuid
         cache_dir.mkdir(parents=True, exist_ok=True)
-        async with aiofiles.open(cache_dir / "SUIO_upload_ok", "w", encoding="utf-8") as handle:
+        async with aiofiles.open(
+            cache_dir / "SUIO_upload_ok", "w", encoding="utf-8"
+        ) as handle:
             await handle.write("ok")
 
     @staticmethod
     def _response_id(response: httpx.Response, comment: str) -> str:
         candidates = (comment, response.text, str(response.url))
-        patterns = (r"ID:\s*([a-zA-Z0-9]+)", r"(?:details\.php\?id=|details/|id=)([a-zA-Z0-9]+)")
+        patterns = (
+            r"ID:\s*([a-zA-Z0-9]+)",
+            r"(?:details\.php\?id=|details/|id=)([a-zA-Z0-9]+)",
+        )
         for candidate in candidates:
             for pattern in patterns:
                 match = re.search(pattern, candidate, re.IGNORECASE)

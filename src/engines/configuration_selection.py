@@ -5,9 +5,15 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping, Sequence
 
-from src.domain_models.configuration import ApplicationConfiguration, ConfigurationSourceKind, ConfigValue
+from src.domain_models.configuration import (
+    ApplicationConfiguration,
+    ConfigurationSourceKind,
+    ConfigValue,
+)
 
-_CREDENTIAL_KEY = re.compile(r"(?:^|_)(?:api(?:_key)?|token|password|cookie|secret|passkey|username)$")
+_CREDENTIAL_KEY = re.compile(
+    r"(?:^|_)(?:api(?:_key)?|token|password|cookie|secret|passkey|username)$"
+)
 _SELECTION_KEYS = {
     "default_trackers",
     "default_torrent_client",
@@ -73,7 +79,9 @@ def _preferred_user_configuration(
     defaults: ApplicationConfiguration,
 ) -> ApplicationConfiguration | None:
     for candidate in (runtime, legacy):
-        if candidate is not None and configuration_has_user_settings(candidate, defaults):
+        if candidate is not None and configuration_has_user_settings(
+            candidate, defaults
+        ):
             return candidate
     return None
 
@@ -118,8 +126,25 @@ def _empty_setting_string(value: str) -> bool:
     normalized = value.strip().casefold()
     if not normalized:
         return True
-    prefixes = ("<", "change me", "changeme", "example", "get it from", "get this from", "insert ", "replace ", "your ")
-    values = {"api key", "api_key", "key here", "password", "token", "token here"}
+    prefixes = (
+        "<",
+        "change me",
+        "changeme",
+        "example",
+        "get it from",
+        "get this from",
+        "insert ",
+        "replace ",
+        "your ",
+    )
+    values = {
+        "api key",
+        "api_key",
+        "key here",
+        "password",
+        "token",
+        "token here",
+    }
     return normalized in values or normalized.startswith(prefixes)
 
 
@@ -133,5 +158,9 @@ def _normalized(value: ConfigValue | None) -> object:
     return value
 
 
-def _normalized_mapping(value: Mapping[str, ConfigValue]) -> tuple[tuple[str, object], ...]:
-    return tuple(sorted((str(key), _normalized(item)) for key, item in value.items()))
+def _normalized_mapping(
+    value: Mapping[str, ConfigValue],
+) -> tuple[tuple[str, object], ...]:
+    return tuple(
+        sorted((str(key), _normalized(item)) for key, item in value.items())
+    )

@@ -8,12 +8,29 @@ from src.integrations.trackers.UNIT3D.capybarabr import CapybaraBR
 from src.integrations.trackers.UNIT3D.samaritano import Samaritano
 
 
-def test_samaritano_rejects_malformed_filelists_before_category_dispatch() -> None:
+def test_samaritano_rejects_malformed_filelists_before_category_dispatch() -> (
+    None
+):
     tracker = Samaritano({"TRACKERS": {}})
 
-    assert asyncio.run(tracker.get_additional_checks(Meta(category="MOVIE", filelist=1))) is False
-    assert asyncio.run(tracker.get_additional_checks(Meta(category="BOOK", filelist=1))) is False
-    assert asyncio.run(tracker.get_additional_checks(Meta(category="BOOK", filelist=None))) is True
+    assert (
+        asyncio.run(
+            tracker.get_additional_checks(Meta(category="MOVIE", filelist=1))
+        )
+        is False
+    )
+    assert (
+        asyncio.run(
+            tracker.get_additional_checks(Meta(category="BOOK", filelist=1))
+        )
+        is False
+    )
+    assert (
+        asyncio.run(
+            tracker.get_additional_checks(Meta(category="BOOK", filelist=None))
+        )
+        is True
+    )
 
 
 @pytest.mark.parametrize(
@@ -29,7 +46,11 @@ def test_samaritano_rejects_malformed_filelists_before_category_dispatch() -> No
         (["Portuguese", "English", "Japanese"], "MULTI"),
     ],
 )
-def test_brazilian_trackers_audio_tags_require_portuguese(tracker_class: type[CapybaraBR] | type[Samaritano], audio_languages: list[str], expected_tag: str) -> None:
+def test_brazilian_trackers_audio_tags_require_portuguese(
+    tracker_class: type[CapybaraBR] | type[Samaritano],
+    audio_languages: list[str],
+    expected_tag: str,
+) -> None:
     meta = Meta(
         category="TV",
         name="Example Show 2026 WEB-DL - GROUP",
@@ -46,7 +67,9 @@ def test_brazilian_trackers_audio_tags_require_portuguese(tracker_class: type[Ca
     assert (" MULTI-" in name) == (expected_tag == "MULTI")
 
 
-def test_capybarabr_formats_dvdrips_with_resolution_before_audio_and_codec() -> None:
+def test_capybarabr_formats_dvdrips_with_resolution_before_audio_and_codec() -> (
+    None
+):
     meta = Meta(
         category="MOVIE",
         name="Example Movie 2001 DVD x264 DVDRip DD 2.0-DDOS",
@@ -97,10 +120,18 @@ def _tracker() -> Samaritano:
 
 
 def test_samaritano_maps_mac_software_to_programs_without_game_name_formatting():
-    meta = Meta(category="GAME", software=True, name="Guitar Pro v8.1.5-31 MAC-atb", platform="MAC", type="GAME")
+    meta = Meta(
+        category="GAME",
+        software=True,
+        name="Guitar Pro v8.1.5-31 MAC-atb",
+        platform="MAC",
+        type="GAME",
+    )
     tracker = _tracker()
 
-    assert asyncio.run(tracker.get_name(meta)) == {"name": "Guitar Pro v8.1.5-31 MAC-atb"}
+    assert asyncio.run(tracker.get_name(meta)) == {
+        "name": "Guitar Pro v8.1.5-31 MAC-atb"
+    }
     assert asyncio.run(tracker.get_category_id(meta)) == {"category_id": "9"}
     assert asyncio.run(tracker.get_type_id(meta)) == {"type_id": "76"}
 
@@ -110,7 +141,10 @@ def test_samaritano_rejects_movie_with_multiple_video_files():
         asyncio.run(
             _tracker().get_additional_checks(
                 _movie_meta(
-                    filelist=["Example.Movie.2024.mkv", "Example.Movie.Extra.2024.mkv"],
+                    filelist=[
+                        "Example.Movie.2024.mkv",
+                        "Example.Movie.Extra.2024.mkv",
+                    ],
                 )
             )
         )
@@ -157,7 +191,11 @@ def test_samaritano_rejects_tv_uploads_with_multiple_episodes_without_pack():
         asyncio.run(
             Samaritano({"TRACKERS": {}}).get_additional_checks(
                 _tv_meta(
-                    filelist=["Show.S01E01.mkv", "Show.S01E02.mkv", "Show.S01E03.mkv"],
+                    filelist=[
+                        "Show.S01E01.mkv",
+                        "Show.S01E02.mkv",
+                        "Show.S01E03.mkv",
+                    ],
                 )
             )
         )
@@ -171,7 +209,11 @@ def test_samaritano_accepts_tv_pack_for_ended_series():
             Samaritano({"TRACKERS": {}}).get_additional_checks(
                 _tv_meta(
                     tv_pack=True,
-                    filelist=["Show.S01E01.mkv", "Show.S01E02.mkv", "Show.S01E03.mkv"],
+                    filelist=[
+                        "Show.S01E01.mkv",
+                        "Show.S01E02.mkv",
+                        "Show.S01E03.mkv",
+                    ],
                     imdb_info={"status": "Ended"},
                 )
             )
@@ -186,7 +228,11 @@ def test_samaritano_rejects_tv_pack_for_ended_series_without_portuguese():
             Samaritano({"TRACKERS": {}}).get_additional_checks(
                 _tv_meta(
                     tv_pack=True,
-                    filelist=["Show.S01E01.mkv", "Show.S01E02.mkv", "Show.S01E03.mkv"],
+                    filelist=[
+                        "Show.S01E01.mkv",
+                        "Show.S01E02.mkv",
+                        "Show.S01E03.mkv",
+                    ],
                     audio_languages=["English"],
                     imdb_info={"status": "Ended"},
                     unattended=True,

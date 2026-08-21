@@ -19,7 +19,10 @@ def test_book_name_does_not_repeat_author_when_prefixed_in_title():
         source="SCAN",
     )
 
-    assert _book_name(meta) == "Taylor Driggers - Queering Faith in Fantasy Literature 2022 SCAN eBOOK"
+    assert (
+        _book_name(meta)
+        == "Taylor Driggers - Queering Faith in Fantasy Literature 2022 SCAN eBOOK"
+    )
 
 
 def test_book_name_keeps_title_when_author_prefix_does_not_match():
@@ -32,7 +35,10 @@ def test_book_name_keeps_title_when_author_prefix_does_not_match():
         source="SCAN",
     )
 
-    assert _book_name(meta) == "Taylor Driggers - Not the Author - Queering Faith in Fantasy Literature 2022 SCAN eBOOK"
+    assert (
+        _book_name(meta)
+        == "Taylor Driggers - Not the Author - Queering Faith in Fantasy Literature 2022 SCAN eBOOK"
+    )
 
 
 def test_book_name_deduplicates_publisher_when_author_is_missing():
@@ -45,7 +51,10 @@ def test_book_name_deduplicates_publisher_when_author_is_missing():
         source="RETAIL",
     )
 
-    assert _book_name(meta) == "Bloomsbury Publishing Plc - The C Programming Language 2022 RETAiL ePUB eBOOK"
+    assert (
+        _book_name(meta)
+        == "Bloomsbury Publishing Plc - The C Programming Language 2022 RETAiL ePUB eBOOK"
+    )
 
 
 def test_book_name_preserves_title_with_colon_after_author_name():
@@ -58,7 +67,10 @@ def test_book_name_preserves_title_with_colon_after_author_name():
         source="RETAIL",
     )
 
-    assert _book_name(meta) == "Cher - Cher: The Memoir, Part One 2022 RETAiL ePUB eBOOK"
+    assert (
+        _book_name(meta)
+        == "Cher - Cher: The Memoir, Part One 2022 RETAiL ePUB eBOOK"
+    )
 
 
 def test_audiobook_name_keeps_publisher_when_author_missing_and_prefix_matches():
@@ -71,4 +83,7 @@ def test_audiobook_name_keeps_publisher_when_author_missing_and_prefix_matches()
         source="SCAN",
     )
 
-    assert _book_name(meta) == "Bloomsbury Publishing Plc - The C Programming Language 2022 AUDIOBOOK"
+    assert (
+        _book_name(meta)
+        == "Bloomsbury Publishing Plc - The C Programming Language 2022 AUDIOBOOK"
+    )

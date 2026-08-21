@@ -10,7 +10,10 @@ from src.integrations.filesystem.paths import _default_data_dir
 def test_user_data_override_holds_runtime_config(tmp_path: Path) -> None:
     """``data.config`` must resolve from UA_DATA_DIR, never the checkout."""
     state_dir = tmp_path / "state"
-    environment = os.environ | {"PYTHONPATH": str(Path.cwd()), "UA_DATA_DIR": str(state_dir)}
+    environment = os.environ | {
+        "PYTHONPATH": str(Path.cwd()),
+        "UA_DATA_DIR": str(state_dir),
+    }
 
     result = subprocess.run(
         [
@@ -46,7 +49,10 @@ def test_default_data_dir_unix_default(monkeypatch) -> None:
     monkeypatch.setattr("pathlib.Path.exists", lambda _self: False)
 
     with patch("src.integrations.filesystem.paths.os.name", "posix"):
-        assert _default_data_dir().as_posix() == "/home/user/.local/share/Upload-Assistant"
+        assert (
+            _default_data_dir().as_posix()
+            == "/home/user/.local/share/Upload-Assistant"
+        )
 
 
 def test_default_data_dir_unix_xdg_data_home(monkeypatch) -> None:
@@ -77,7 +83,9 @@ def test_default_data_dir_unix_legacy_fallback(monkeypatch) -> None:
         assert _default_data_dir().as_posix() == legacy_dir
 
 
-def test_runtime_path_service_override_windows_and_legacy(monkeypatch, tmp_path: Path) -> None:
+def test_runtime_path_service_override_windows_and_legacy(
+    monkeypatch, tmp_path: Path
+) -> None:
     from src.services import runtime_paths_service
 
     override = tmp_path / "override"
@@ -88,18 +96,32 @@ def test_runtime_path_service_override_windows_and_legacy(monkeypatch, tmp_path:
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
     with (
         patch.object(runtime_paths_service.os, "name", "nt"),
-        patch.object(runtime_paths_service, "Path", side_effect=lambda value: PurePosixPath(value)) as path_factory,
+        patch.object(
+            runtime_paths_service,
+            "Path",
+            side_effect=lambda value: PurePosixPath(value),
+        ) as path_factory,
     ):
         path_factory.home.return_value = PurePosixPath(str(tmp_path / "home"))
-        assert runtime_paths_service._state_dir() == tmp_path / "local" / "Upload-Assistant"
+        assert (
+            runtime_paths_service._state_dir()
+            == tmp_path / "local" / "Upload-Assistant"
+        )
 
     monkeypatch.delenv("LOCALAPPDATA")
     with (
         patch.object(runtime_paths_service.os, "name", "nt"),
-        patch.object(runtime_paths_service, "Path", side_effect=lambda value: PurePosixPath(value)) as path_factory,
+        patch.object(
+            runtime_paths_service,
+            "Path",
+            side_effect=lambda value: PurePosixPath(value),
+        ) as path_factory,
     ):
         path_factory.home.return_value = PurePosixPath(str(tmp_path / "home"))
-        assert runtime_paths_service._state_dir() == tmp_path / "home" / "AppData" / "Local" / "Upload-Assistant"
+        assert (
+            runtime_paths_service._state_dir()
+            == tmp_path / "home" / "AppData" / "Local" / "Upload-Assistant"
+        )
 
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
     legacy = tmp_path / "xdg" / "upload-assistant"
@@ -113,17 +135,25 @@ def test_runtime_path_service_override_windows_and_legacy(monkeypatch, tmp_path:
         assert runtime_paths_service._state_dir() == primary
 
 
-def test_runtime_paths_service_resolves_all_runtime_locations(monkeypatch, tmp_path: Path) -> None:
+def test_runtime_paths_service_resolves_all_runtime_locations(
+    monkeypatch, tmp_path: Path
+) -> None:
     from src.services import runtime_paths_service
 
     state = tmp_path / "state"
     monkeypatch.setenv("UA_DATA_DIR", str(state))
     paths = runtime_paths_service.resolve_runtime_paths()
 
-    assert paths.code_dir == Path(runtime_paths_service.__file__).resolve().parents[2]
+    assert (
+        paths.code_dir
+        == Path(runtime_paths_service.__file__).resolve().parents[2]
+    )
     assert paths.state_dir == state
     assert paths.data_dir == state / "data"
     assert paths.tmp_dir == state / "tmp"
     assert paths.config_path == state / "data" / "config.py"
     assert paths.legacy_config_path == paths.code_dir / "data" / "config.py"
-    assert paths.example_config_path == paths.code_dir / "data" / "example_config.py"
+    assert (
+        paths.example_config_path
+        == paths.code_dir / "data" / "example_config.py"
+    )

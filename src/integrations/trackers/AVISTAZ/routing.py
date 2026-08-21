@@ -12,10 +12,63 @@ from src.integrations.observability.runtime_support import logger
 
 # These are the country groups used by the three tracker rule implementations.
 PRIVATEHD_COUNTRIES = frozenset(
-    ["AG", "AI", "AU", "BB", "BM", "BS", "BZ", "CA", "CW", "DM", "GB", "GD", "IE", "JM", "KN", "KY", "LC", "MS", "NZ", "PR", "TC", "TT", "US", "VC", "VG", "VI"]
+    [
+        "AG",
+        "AI",
+        "AU",
+        "BB",
+        "BM",
+        "BS",
+        "BZ",
+        "CA",
+        "CW",
+        "DM",
+        "GB",
+        "GD",
+        "IE",
+        "JM",
+        "KN",
+        "KY",
+        "LC",
+        "MS",
+        "NZ",
+        "PR",
+        "TC",
+        "TT",
+        "US",
+        "VC",
+        "VG",
+        "VI",
+    ]
 )
 AVISTAZ_COUNTRIES = frozenset(
-    ["BD", "BN", "BT", "CN", "HK", "ID", "IN", "JP", "KH", "KP", "KR", "LA", "LK", "MM", "MN", "MO", "MY", "NP", "PH", "PK", "SG", "TH", "TL", "TW", "VN"]
+    [
+        "BD",
+        "BN",
+        "BT",
+        "CN",
+        "HK",
+        "ID",
+        "IN",
+        "JP",
+        "KH",
+        "KP",
+        "KR",
+        "LA",
+        "LK",
+        "MM",
+        "MN",
+        "MO",
+        "MY",
+        "NP",
+        "PH",
+        "PK",
+        "SG",
+        "TH",
+        "TL",
+        "TW",
+        "VN",
+    ]
 )
 ASIAN_COUNTRIES = frozenset(
     [
@@ -234,7 +287,9 @@ class AvistaZNetworkRouter:
 
     network_trackers = frozenset({"AVISTAZ", "CINEMAZ", "PRIVATEHD"})
 
-    def __init__(self, config: dict[str, Any], tracker_class_map: dict[str, Any]):
+    def __init__(
+        self, config: dict[str, Any], tracker_class_map: dict[str, Any]
+    ):
         """Store configuration and tracker factories used for redirect validation."""
         self.config = config
         self.tracker_class_map = tracker_class_map
@@ -242,7 +297,11 @@ class AvistaZNetworkRouter:
     @staticmethod
     def _countries(meta: Meta) -> set[str]:
         """Return normalized production-country ISO codes from metadata."""
-        raw_countries = meta.origin_country if isinstance(meta.origin_country, list) else []
+        raw_countries = (
+            meta.origin_country
+            if isinstance(meta.origin_country, list)
+            else []
+        )
         return {str(country).upper() for country in raw_countries if country}
 
     @staticmethod
@@ -264,7 +323,11 @@ class AvistaZNetworkRouter:
     @staticmethod
     def _config_enabled(value: Any) -> bool:
         """Interpret boolean configuration values without treating non-empty strings as true."""
-        return value if isinstance(value, bool) else str(value).strip().lower() in {"1", "true", "yes", "on"}
+        return (
+            value
+            if isinstance(value, bool)
+            else str(value).strip().lower() in {"1", "true", "yes", "on"}
+        )
 
     def decide(self, source: str, meta: Meta) -> RoutingDecision | None:
         """Return an automatic redirect or manual-review decision for one source tracker."""
@@ -278,27 +341,52 @@ class AvistaZNetworkRouter:
             if countries & ASIAN_COUNTRIES:
                 destinations.append(("AVISTAZ", "Asian production"))
             elif countries & CINEMAZ_COUNTRIES:
-                destinations.append(("CINEMAZ", "production belongs to CinemaZ's region"))
+                destinations.append(
+                    ("CINEMAZ", "production belongs to CinemaZ's region")
+                )
 
         elif source == "CINEMAZ":
             if countries & AVISTAZ_COUNTRIES:
                 destinations.append(("AVISTAZ", "Asian production"))
-            elif countries & PRIVATEHD_COUNTRIES and not self._is_older_than_50_years(meta) and not self._is_sd(meta):
+            elif (
+                countries & PRIVATEHD_COUNTRIES
+                and not self._is_older_than_50_years(meta)
+                and not self._is_sd(meta)
+            ):
                 # Mainstream status cannot be inferred safely, so this remains a suggestion.
-                return RoutingDecision(source, "PRIVATEHD", "recent HD content from a major English-speaking country may belong on PrivateHD", automatic=False)
+                return RoutingDecision(
+                    source,
+                    "PRIVATEHD",
+                    "recent HD content from a major English-speaking country may belong on PrivateHD",
+                    automatic=False,
+                )
 
         elif source == "AVISTAZ":
             if countries & PRIVATEHD_COUNTRIES:
-                destinations.append(("PRIVATEHD", "production belongs to a major English-speaking country"))
-            elif countries & (CINEMAZ_COUNTRIES | (ASIAN_COUNTRIES - AVISTAZ_COUNTRIES)):
-                destinations.append(("CINEMAZ", "production belongs to CinemaZ's region"))
+                destinations.append(
+                    (
+                        "PRIVATEHD",
+                        "production belongs to a major English-speaking country",
+                    )
+                )
+            elif countries & (
+                CINEMAZ_COUNTRIES | (ASIAN_COUNTRIES - AVISTAZ_COUNTRIES)
+            ):
+                destinations.append(
+                    ("CINEMAZ", "production belongs to CinemaZ's region")
+                )
 
         if not destinations:
             return None
         target_names = {target for target, _reason in destinations}
         if len(target_names) != 1:
             reasons = "; ".join(reason for _target, reason in destinations)
-            return RoutingDecision(source, None, f"conflicting routing rules: {reasons}", automatic=False)
+            return RoutingDecision(
+                source,
+                None,
+                f"conflicting routing rules: {reasons}",
+                automatic=False,
+            )
         destination, reason = destinations[0]
         return RoutingDecision(source, destination, reason, automatic=True)
 
@@ -316,12 +404,18 @@ class AvistaZNetworkRouter:
             source_status["routing_reason"] = decision.reason
             if not decision.automatic or not decision.destination:
                 source_status["routing_suggested_to"] = decision.destination
-                logger.info(f"{source}: [yellow]Routing requires review: {decision.reason}[/yellow]")
+                logger.info(
+                    f"{source}: [yellow]Routing requires review: {decision.reason}[/yellow]"
+                )
                 continue
 
             destination = decision.destination
             if meta.unattended:
-                enabled = self._config_enabled(self.config.get("DEFAULT", {}).get("avistaz_network_auto_redirect", False))
+                enabled = self._config_enabled(
+                    self.config.get("DEFAULT", {}).get(
+                        "avistaz_network_auto_redirect", False
+                    )
+                )
                 if not enabled:
                     source_status["routing_suggested_to"] = destination
                     logger.info(
@@ -336,25 +430,46 @@ class AvistaZNetworkRouter:
 
             destination_class = self.tracker_class_map.get(destination)
             if destination_class is None:
-                source_status["routing_error"] = f"Destination {destination} is not available."
+                source_status["routing_error"] = (
+                    f"Destination {destination} is not available."
+                )
                 continue
             try:
                 destination_tracker = destination_class(config=self.config)
                 if not await destination_tracker.validate_credentials(meta):
-                    source_status["routing_error"] = f"Destination {destination} has no valid cookie session."
-                    logger.info(f"{source}: [yellow]Not redirecting to {destination}: cookie validation failed.[/yellow]")
+                    source_status["routing_error"] = (
+                        f"Destination {destination} has no valid cookie session."
+                    )
+                    logger.info(
+                        f"{source}: [yellow]Not redirecting to {destination}: cookie validation failed.[/yellow]"
+                    )
                     continue
             except Exception as exc:
-                source_status["routing_error"] = f"Could not validate {destination} credentials: {exc}"
-                logger.info(f"{source}: [yellow]Not redirecting to {destination}: credential validation failed.[/yellow]")
+                source_status["routing_error"] = (
+                    f"Could not validate {destination} credentials: {exc}"
+                )
+                logger.info(
+                    f"{source}: [yellow]Not redirecting to {destination}: credential validation failed.[/yellow]"
+                )
                 continue
 
             trackers = [tracker for tracker in trackers if tracker != source]
             if destination not in trackers:
                 trackers.append(destination)
-            source_status.update({"upload": False, "skipped": True, "redirected_to": destination, "status_message": f"Redirected to {destination}: {decision.reason}"})
-            destination_status = meta.tracker_status.setdefault(destination, {})
+            source_status.update(
+                {
+                    "upload": False,
+                    "skipped": True,
+                    "redirected_to": destination,
+                    "status_message": f"Redirected to {destination}: {decision.reason}",
+                }
+            )
+            destination_status = meta.tracker_status.setdefault(
+                destination, {}
+            )
             destination_status.setdefault("redirected_from", []).append(source)
-            logger.info(f"{source}: [green]Redirected to {destination}: {decision.reason}.[/green]")
+            logger.info(
+                f"{source}: [green]Redirected to {destination}: {decision.reason}.[/green]"
+            )
 
         meta.trackers = trackers

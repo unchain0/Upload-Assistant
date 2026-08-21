@@ -84,10 +84,14 @@ class PrivateHD(AZTrackerBase):
 
         # This also checks the rule 'FANRES content is not allowed'
         if meta.category not in ("MOVIE", "TV"):
-            warnings.append("The only allowed content to be uploaded are Movies and TV Shows.\nAnything else, like games, music, software and porn is not allowed!")
+            warnings.append(
+                "The only allowed content to be uploaded are Movies and TV Shows.\nAnything else, like games, music, software and porn is not allowed!"
+            )
 
         if meta.anime:
-            warnings.append("Upload Anime content to our sister site AnimeTorrents.me instead. If it's on AniDB, it's an anime.")
+            warnings.append(
+                "Upload Anime content to our sister site AnimeTorrents.me instead. If it's on AniDB, it's an anime."
+            )
 
         current_year = datetime.now(UTC).year
         try:
@@ -97,7 +101,9 @@ class PrivateHD(AZTrackerBase):
         if year:
             is_older_than_50_years = (current_year - year) >= 50
             if is_older_than_50_years:
-                warnings.append("Upload movies/series 50+ years old to our sister site CINEMAZ.to instead.")
+                warnings.append(
+                    "Upload movies/series 50+ years old to our sister site CINEMAZ.to instead."
+                )
 
         # https://en.wikipedia.org/wiki/List_of_ISO_3166_country_codes
 
@@ -396,17 +402,27 @@ class PrivateHD(AZTrackerBase):
         ]
 
         all_countries = africa + america + europe + oceania
-        cinemaz_countries = list(set(all_countries) - set(phd_allowed_countries))
+        cinemaz_countries = list(
+            set(all_countries) - set(phd_allowed_countries)
+        )
 
         origin_countries_codes_value = meta.origin_country
-        origin_countries_codes = cast(list[str], origin_countries_codes_value) if isinstance(origin_countries_codes_value, list) else []
+        origin_countries_codes = (
+            cast(list[str], origin_countries_codes_value)
+            if isinstance(origin_countries_codes_value, list)
+            else []
+        )
 
-        if any(code in phd_allowed_countries for code in origin_countries_codes):
+        if any(
+            code in phd_allowed_countries for code in origin_countries_codes
+        ):
             pass
 
         # CINEMAZ
         elif any(code in cinemaz_countries for code in origin_countries_codes):
-            warnings.append("Upload European (EXCLUDING United Kingdom and Ireland), South American and African content to our sister site CINEMAZ.to instead.")
+            warnings.append(
+                "Upload European (EXCLUDING United Kingdom and Ireland), South American and African content to our sister site CINEMAZ.to instead."
+            )
 
         # AVISTAZ
         elif any(code in asia for code in origin_countries_codes):
@@ -417,7 +433,9 @@ class PrivateHD(AZTrackerBase):
                 f"Origin country for your upload: {origin_country_str}"
             )
 
-        elif not any(code in phd_allowed_countries for code in origin_countries_codes):
+        elif not any(
+            code in phd_allowed_countries for code in origin_countries_codes
+        ):
             warnings.append(
                 "Only upload content to PRIVATEHD from all major English speaking countries.\nIncluding United States, Canada, UK, Ireland, Australia, and New Zealand."
             )
@@ -427,10 +445,14 @@ class PrivateHD(AZTrackerBase):
         if tag:
             tag = tag.strip().lower()
             if tag in ("rarbg", "fgt", "grym", "tbs"):
-                warnings.append("Do not upload RARBG, FGT, Grym or TBS. Existing uploads by these groups can be trumped at any time.")
+                warnings.append(
+                    "Do not upload RARBG, FGT, Grym or TBS. Existing uploads by these groups can be trumped at any time."
+                )
 
             if tag == "evo" and source != "web":
-                warnings.append("Do not upload non-web EVO releases. Existing uploads by this group can be trumped at any time.")
+                warnings.append(
+                    "Do not upload non-web EVO releases. Existing uploads by this group can be trumped at any time."
+                )
 
         if meta.sd == 1:
             warnings.append("SD (Standard Definition) content is forbidden.")
@@ -441,38 +463,87 @@ class PrivateHD(AZTrackerBase):
             allowed_containers.update({"ts", "tp"})
         if not is_bd_disc and container not in allowed_containers:
             allowed = ", ".join(sorted(allowed_containers)).upper()
-            warnings.append(f"Container not allowed for this rip type: {container or 'unknown'}. Allowed: {allowed}.")
+            warnings.append(
+                f"Container not allowed for this rip type: {container or 'unknown'}. Allowed: {allowed}."
+            )
 
         # Video codec
         # 1
-        if release_type == "remux" and video_codec not in ("mpeg-2", "vc-1", "h.264", "h.265", "avc"):
-            warnings.append("Allowed Video Codecs for BluRay (Untouched + REMUX): MPEG-2, VC-1, H.264, H.265")
+        if release_type == "remux" and video_codec not in (
+            "mpeg-2",
+            "vc-1",
+            "h.264",
+            "h.265",
+            "avc",
+        ):
+            warnings.append(
+                "Allowed Video Codecs for BluRay (Untouched + REMUX): MPEG-2, VC-1, H.264, H.265"
+            )
 
         # 2
-        if release_type == "encode" and source == "bluray" and video_encode not in ("h.264", "h.265", "x264", "x265"):
-            warnings.append("Allowed Video Codecs for BluRay (Encoded): H.264, H.265 (x264 and x265 respectively are the only permitted encoders)")
+        if (
+            release_type == "encode"
+            and source == "bluray"
+            and video_encode not in ("h.264", "h.265", "x264", "x265")
+        ):
+            warnings.append(
+                "Allowed Video Codecs for BluRay (Encoded): H.264, H.265 (x264 and x265 respectively are the only permitted encoders)"
+            )
 
         # 3
-        if release_type in ("webdl", "web-dl") and source == "web" and video_encode not in ("h.264", "h.265", "vp9"):
-            warnings.append("Allowed Video Codecs for WEB (Untouched): H.264, H.265, VP9")
+        if (
+            release_type in ("webdl", "web-dl")
+            and source == "web"
+            and video_encode not in ("h.264", "h.265", "vp9")
+        ):
+            warnings.append(
+                "Allowed Video Codecs for WEB (Untouched): H.264, H.265, VP9"
+            )
 
         # 4
-        if release_type == "encode" and source == "web" and video_encode not in ("h.264", "h.265", "x264", "x265"):
-            warnings.append("Allowed Video Codecs for WEB (Encoded): H.264, H.265 (x264 and x265 respectively are the only permitted encoders)")
+        if (
+            release_type == "encode"
+            and source == "web"
+            and video_encode not in ("h.264", "h.265", "x264", "x265")
+        ):
+            warnings.append(
+                "Allowed Video Codecs for WEB (Encoded): H.264, H.265 (x264 and x265 respectively are the only permitted encoders)"
+            )
 
         # 5
-        if release_type == "encode" and video_encode == "x265" and meta.bit_depth != "10":
-            warnings.append("Allowed Video Codecs for x265 encodes must be 10-bit")
+        if (
+            release_type == "encode"
+            and video_encode == "x265"
+            and meta.bit_depth != "10"
+        ):
+            warnings.append(
+                "Allowed Video Codecs for x265 encodes must be 10-bit"
+            )
 
         # 6
-        resolution_text = meta.resolution.lower().replace("p", "").replace("i", "")
+        resolution_text = (
+            meta.resolution.lower().replace("p", "").replace("i", "")
+        )
         resolution = int(resolution_text) if resolution_text.isdigit() else 0
         if resolution > 1080 and video_encode in ("h.264", "x264"):
             warnings.append("H.264/x264 only allowed for 1080p and below.")
 
         # 7
-        if video_codec not in ("avc", "mpeg-2", "vc-1", "avc", "h.264", "vp9", "h.265", "x264", "x265", "hevc"):
-            warnings.append(f"Video codec not allowed in your upload: {video_codec}.")
+        if video_codec not in (
+            "avc",
+            "mpeg-2",
+            "vc-1",
+            "avc",
+            "h.264",
+            "vp9",
+            "h.265",
+            "x264",
+            "x265",
+            "hevc",
+        ):
+            warnings.append(
+                f"Video codec not allowed in your upload: {video_codec}."
+            )
 
         mediainfo = meta.mediainfo
         media = cast(dict[str, Any], mediainfo.get("media", {}))
@@ -483,7 +554,18 @@ class PrivateHD(AZTrackerBase):
             pass
         else:
             # 1
-            allowed_keywords = ["AC3", "E-AC3", "E-AC-3", "Dolby Digital", "Dolby TrueHD", "DTS", "DTS-HD", "FLAC", "AAC", "Dolby"]
+            allowed_keywords = [
+                "AC3",
+                "E-AC3",
+                "E-AC-3",
+                "Dolby Digital",
+                "Dolby TrueHD",
+                "DTS",
+                "DTS-HD",
+                "FLAC",
+                "AAC",
+                "Dolby",
+            ]
 
             # 2
             forbidden_keywords = ["LPCM", "PCM", "Linear PCM"]
@@ -491,23 +573,45 @@ class PrivateHD(AZTrackerBase):
             audio_tracks: list[dict[str, str]] = []
             for track in media_tracks:
                 if track.get("@type") == "Audio":
-                    codec_info = track.get("Format_Commercial_IfAny") or track.get("Format")
+                    codec_info = track.get(
+                        "Format_Commercial_IfAny"
+                    ) or track.get("Format")
                     codec = codec_info if isinstance(codec_info, str) else ""
-                    audio_tracks.append({"codec": codec, "language": str(track.get("Language", ""))})
+                    audio_tracks.append(
+                        {
+                            "codec": codec,
+                            "language": str(track.get("Language", "")),
+                        }
+                    )
 
             # 3
             original_language = str(meta.original_language)
-            language_track = audio_tracks[0].get("language", "") if audio_tracks else ""
+            language_track = (
+                audio_tracks[0].get("language", "") if audio_tracks else ""
+            )
             if original_language and language_track:
                 # Filter to only have audio tracks that are in the original language
-                original_language_tracks = [track for track in audio_tracks if track.get("language", "").lower() == original_language.lower()]
+                original_language_tracks = [
+                    track
+                    for track in audio_tracks
+                    if track.get("language", "").lower()
+                    == original_language.lower()
+                ]
 
                 # Now checks are only done on the original language track list
                 if original_language_tracks:
-                    has_truehd_atmos = any("truehd" in track["codec"].lower() and "atmos" in track["codec"].lower() for track in original_language_tracks)
+                    has_truehd_atmos = any(
+                        "truehd" in track["codec"].lower()
+                        and "atmos" in track["codec"].lower()
+                        for track in original_language_tracks
+                    )
 
                     # Check if there is an AC-3 compatibility track in the same language
-                    has_ac3_compat_track = any("ac-3" in track["codec"].lower() or "dolby digital" in track["codec"].lower() for track in original_language_tracks)
+                    has_ac3_compat_track = any(
+                        "ac-3" in track["codec"].lower()
+                        or "dolby digital" in track["codec"].lower()
+                        for track in original_language_tracks
+                    )
 
                     if has_truehd_atmos and not has_ac3_compat_track:
                         warnings.append(
@@ -523,12 +627,16 @@ class PrivateHD(AZTrackerBase):
                 if not codec:
                     continue
 
-                is_forbidden = any(kw.lower() in codec.lower() for kw in forbidden_keywords)
+                is_forbidden = any(
+                    kw.lower() in codec.lower() for kw in forbidden_keywords
+                )
                 if is_forbidden:
                     invalid_codecs.append(codec)
                     continue
 
-                is_allowed = any(kw.lower() in codec.lower() for kw in allowed_keywords)
+                is_allowed = any(
+                    kw.lower() in codec.lower() for kw in allowed_keywords
+                )
                 if not is_allowed:
                     invalid_codecs.append(codec)
 
@@ -586,10 +694,18 @@ class PrivateHD(AZTrackerBase):
             for track in media_tracks:
                 if track.get("@type") != "Video":
                     continue
-                encoding_settings = str(track.get("Encoded_Library_Settings", "") or "")
-                crf_match = re.search(r"\bcrf[ =:]+(\d+(?:\.\d+)?)", encoding_settings, re.IGNORECASE)
+                encoding_settings = str(
+                    track.get("Encoded_Library_Settings", "") or ""
+                )
+                crf_match = re.search(
+                    r"\bcrf[ =:]+(\d+(?:\.\d+)?)",
+                    encoding_settings,
+                    re.IGNORECASE,
+                )
                 if crf_match and float(crf_match.group(1)) > 20:
-                    warnings.append(f"CRF {crf_match.group(1)} exceeds PrivateHD's maximum CRF of 20.")
+                    warnings.append(
+                        f"CRF {crf_match.group(1)} exceeds PrivateHD's maximum CRF of 20."
+                    )
                 break
 
         if resolution < 720:
@@ -597,7 +713,10 @@ class PrivateHD(AZTrackerBase):
             warnings.append(rule)
 
         # Hybrid
-        if release_type in ("remux", "encode") and "hybrid" in meta.name.lower():
+        if (
+            release_type in ("remux", "encode")
+            and "hybrid" in meta.name.lower()
+        ):
             warnings.append(
                 "Hybrid Remuxes and Encodes are subject to the following condition:\n\n"
                 "Hybrid user releases are permitted, but are treated similarly to regular "
@@ -625,7 +744,16 @@ class PrivateHD(AZTrackerBase):
 
     def get_rip_type(self, meta: Meta, display_name: bool = False) -> str:
         # Translation from meta keywords to site display labels
-        translation = {"bdrip": "BDRip", "encode": "BluRay", "disc": "BluRay Raw", "hdrip": "HDRip", "hdtv": "HDTV", "remux": "REMUX", "webdl": "WEB-DL", "webrip": "WEBRip"}
+        translation = {
+            "bdrip": "BDRip",
+            "encode": "BluRay",
+            "disc": "BluRay Raw",
+            "hdrip": "HDRip",
+            "hdtv": "HDTV",
+            "remux": "REMUX",
+            "webdl": "WEB-DL",
+            "webrip": "WEBRip",
+        }
 
         # Available rip types from HTML
         available_rip_types = {

@@ -28,7 +28,9 @@ class ConsolePort(Protocol):
 
 class _LoggingConsole:
     def print(self, *objects: object, **_kwargs: object) -> None:
-        logger.info(" ".join(str(item) for item in objects), extra={"markup": False})
+        logger.info(
+            " ".join(str(item) for item in objects), extra={"markup": False}
+        )
 
     def print_exception(self, *_args: object, **_kwargs: object) -> None:
         logger.error(traceback.format_exc(), extra={"markup": False})
@@ -52,10 +54,16 @@ console = _ConsoleProxy()
 
 type BufferFactory = Callable[[], contextlib.AbstractAsyncContextManager[None]]
 _buffer_factory: BufferFactory | None = None
-_suppress_cli_progress = contextvars.ContextVar("suppress_cli_progress", default=False)
+_suppress_cli_progress = contextvars.ContextVar(
+    "suppress_cli_progress", default=False
+)
 
 
-def configure_runtime_support(*, console_adapter: ConsolePort, buffer_factory: BufferFactory | None = None) -> None:
+def configure_runtime_support(
+    *,
+    console_adapter: ConsolePort,
+    buffer_factory: BufferFactory | None = None,
+) -> None:
     """Bind concrete terminal behavior at the composition boundary."""
 
     global _buffer_factory

@@ -6,7 +6,10 @@ from collections.abc import Mapping
 from typing import Any
 from urllib.parse import urlparse
 
-from src.domain_models.tracker_catalog import KNOWN_TRACKERS, TRACKER_DEFINITIONS
+from src.domain_models.tracker_catalog import (
+    KNOWN_TRACKERS,
+    TRACKER_DEFINITIONS,
+)
 
 
 def _hostname(value: object) -> str | None:
@@ -16,11 +19,15 @@ def _hostname(value: object) -> str | None:
     return parsed.hostname.lower() if parsed.hostname else None
 
 
-def get_tracker_comment_hosts(config: Mapping[str, Any]) -> dict[str, tuple[str, ...]]:
+def get_tracker_comment_hosts(
+    config: Mapping[str, Any],
+) -> dict[str, tuple[str, ...]]:
     """Return catalog aliases merged with runtime URL overrides."""
 
     trackers_value = config.get("TRACKERS", {})
-    tracker_config = trackers_value if isinstance(trackers_value, Mapping) else {}
+    tracker_config = (
+        trackers_value if isinstance(trackers_value, Mapping) else {}
+    )
     result: dict[str, tuple[str, ...]] = {}
 
     for tracker_name, definition in TRACKER_DEFINITIONS.items():
@@ -39,4 +46,7 @@ def get_tracker_comment_hosts(config: Mapping[str, Any]) -> dict[str, tuple[str,
 def is_known_tracker(tracker_name: str) -> bool:
     """Return whether a tracker identifier exists in the domain catalog."""
 
-    return tracker_name.strip().upper() in KNOWN_TRACKERS | {"MANUAL", "USENET"}
+    return tracker_name.strip().upper() in KNOWN_TRACKERS | {
+        "MANUAL",
+        "USENET",
+    }

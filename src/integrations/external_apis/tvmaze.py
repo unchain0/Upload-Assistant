@@ -29,13 +29,17 @@ class TvmazeManager:
         - If `return_full_tuple=True`, returns `(tvmaze_id, imdb_id, tvdb_id)`.
         - Otherwise, only returns `tvmaze_id`.
         """
-        logger.debug(f"[cyan]Searching TVMaze for TVDB {tvdb_id} or IMDB {imdb_id} or {filename} ({year}) and returning {return_full_tuple}.[/cyan]")
+        logger.debug(
+            f"[cyan]Searching TVMaze for TVDB {tvdb_id} or IMDB {imdb_id} or {filename} ({year}) and returning {return_full_tuple}.[/cyan]"
+        )
         # Convert TVDB ID to integer
         if isinstance(tvdb_id, (int, str)) and tvdb_id not in ("", "0"):
             try:
                 tvdb_id = int(tvdb_id)
             except ValueError, TypeError:
-                logger.error(f"[red]Error: tvdb_id is not a valid integer. Received: {tvdb_id}[/red]")
+                logger.error(
+                    f"[red]Error: tvdb_id is not a valid integer. Received: {tvdb_id}[/red]"
+                )
                 tvdb_id = 0
         else:
             tvdb_id = 0
@@ -49,26 +53,48 @@ class TvmazeManager:
             else:
                 imdb_id = 0
         except ValueError, TypeError:
-            logger.error(f"[red]Error: imdb_id is not a valid integer. Received: {imdb_id}[/red]")
+            logger.error(
+                f"[red]Error: imdb_id is not a valid integer. Received: {imdb_id}[/red]"
+            )
             imdb_id = 0
 
         # If manual selection has been provided, return it directly
         if tvmaze_manual:
             try:
                 tvmaze_id = int(tvmaze_manual)
-                return (tvmaze_id, imdb_id, tvdb_id) if return_full_tuple else tvmaze_id
+                return (
+                    (tvmaze_id, imdb_id, tvdb_id)
+                    if return_full_tuple
+                    else tvmaze_id
+                )
             except ValueError, TypeError:
-                logger.error(f"[red]Error: tvmaze_manual is not a valid integer. Received: {tvmaze_manual}[/red]")
+                logger.error(
+                    f"[red]Error: tvmaze_manual is not a valid integer. Received: {tvmaze_manual}[/red]"
+                )
                 tvmaze_id = 0
-                return (tvmaze_id, imdb_id, tvdb_id) if return_full_tuple else tvmaze_id
+                return (
+                    (tvmaze_id, imdb_id, tvdb_id)
+                    if return_full_tuple
+                    else tvmaze_id
+                )
 
         tvmaze_id = 0
         results: list[dict[str, Any]] = []
 
-        async def fetch_tvmaze_data(url: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+        async def fetch_tvmaze_data(
+            url: str, params: dict[str, Any]
+        ) -> list[dict[str, Any]]:
             """Fetch and dress TVMaze responses into show dictionaries."""
-            response = await self._make_tvmaze_request(url, params, base_dir, config)
-            raw_items = [response] if isinstance(response, dict) else response if isinstance(response, list) else []
+            response = await self._make_tvmaze_request(
+                url, params, base_dir, config
+            )
+            raw_items = (
+                [response]
+                if isinstance(response, dict)
+                else response
+                if isinstance(response, list)
+                else []
+            )
             shows: list[dict[str, Any]] = []
             for item in raw_items:
                 if not isinstance(item, dict):
@@ -80,18 +106,36 @@ class TvmazeManager:
             return shows
 
         if tvdb_id:
-            results.extend(await fetch_tvmaze_data("https://api.tvmaze.com/lookup/shows", {"thetvdb": tvdb_id}))
+            results.extend(
+                await fetch_tvmaze_data(
+                    "https://api.tvmaze.com/lookup/shows", {"thetvdb": tvdb_id}
+                )
+            )
 
         if not results and imdb_id:
-            results.extend(await fetch_tvmaze_data("https://api.tvmaze.com/lookup/shows", {"imdb": f"tt{imdb_id:07d}"}))
+            results.extend(
+                await fetch_tvmaze_data(
+                    "https://api.tvmaze.com/lookup/shows",
+                    {"imdb": f"tt{imdb_id:07d}"},
+                )
+            )
 
         if not results:
-            results.extend(await fetch_tvmaze_data("https://api.tvmaze.com/search/shows", {"q": filename}))
+            results.extend(
+                await fetch_tvmaze_data(
+                    "https://api.tvmaze.com/search/shows", {"q": filename}
+                )
+            )
 
         if not results:
             first_two_words = " ".join(filename.split()[:2])
             if first_two_words and first_two_words != filename:
-                results.extend(await fetch_tvmaze_data("https://api.tvmaze.com/search/shows", {"q": first_two_words}))
+                results.extend(
+                    await fetch_tvmaze_data(
+                        "https://api.tvmaze.com/search/shows",
+                        {"q": first_two_words},
+                    )
+                )
 
         # Deduplicate results by TVMaze ID
         seen: set[int] = set()
@@ -104,20 +148,32 @@ class TvmazeManager:
 
         if not unique_results:
             logger.debug("[yellow]No TVMaze results found.[/yellow]")
-            return (tvmaze_id, imdb_id, tvdb_id) if return_full_tuple else tvmaze_id
+            return (
+                (tvmaze_id, imdb_id, tvdb_id)
+                if return_full_tuple
+                else tvmaze_id
+            )
 
         # Ambiguous title results require an explicit selection. Date-based
         # workflows also preserve the historical manual-selection behavior.
         if manual_date is not None or len(unique_results) > 1:
             logger.info("[bold]Search results:[/bold]")
             for idx, show in enumerate(unique_results):
-                logger.info(f"[bold red]{idx + 1}[/bold red]. [green]{show.get('name', 'Unknown')} (TVmaze ID:[/green] [bold red]{show['id']}[/bold red])")
-                logger.info(f"[yellow]   Premiered: {show.get('premiered', 'Unknown')}[/yellow]")
-                logger.info(f"   Externals: {json.dumps(show.get('externals', {}), indent=2)}")
+                logger.info(
+                    f"[bold red]{idx + 1}[/bold red]. [green]{show.get('name', 'Unknown')} (TVmaze ID:[/green] [bold red]{show['id']}[/bold red])"
+                )
+                logger.info(
+                    f"[yellow]   Premiered: {show.get('premiered', 'Unknown')}[/yellow]"
+                )
+                logger.info(
+                    f"   Externals: {json.dumps(show.get('externals', {}), indent=2)}"
+                )
 
             while True:
                 try:
-                    choice_raw = cli_ui.ask_string(f"Enter the number of the correct show (1-{len(unique_results)}) or 0 to skip: ")
+                    choice_raw = cli_ui.ask_string(
+                        f"Enter the number of the correct show (1-{len(unique_results)}) or 0 to skip: "
+                    )
                     choice = int((choice_raw or "").strip())
                     if choice == 0:
                         logger.info("Skipping selection.")
@@ -127,22 +183,40 @@ class TvmazeManager:
                         tvmaze_id = int(selected_show["id"])
                         # set the tvdb id since it's sure to be correct
                         # won't get returned outside manual date since full tuple is not returned
-                        if "externals" in selected_show and "thetvdb" in selected_show["externals"]:
+                        if (
+                            "externals" in selected_show
+                            and "thetvdb" in selected_show["externals"]
+                        ):
                             new_tvdb_id = selected_show["externals"]["thetvdb"]
                             if new_tvdb_id:
                                 tvdb_id = int(new_tvdb_id)
-                                logger.info(f"[green]Updated TVDb ID to: {tvdb_id}[/green]")
-                        logger.info(f"Selected show: {selected_show.get('name')} (TVmaze ID: {tvmaze_id})")
+                                logger.info(
+                                    f"[green]Updated TVDb ID to: {tvdb_id}[/green]"
+                                )
+                        logger.info(
+                            f"Selected show: {selected_show.get('name')} (TVmaze ID: {tvmaze_id})"
+                        )
                         break
-                    logger.info(f"Invalid choice. Please choose a number between 1 and {len(unique_results)}, or 0 to skip.")
+                    logger.info(
+                        f"Invalid choice. Please choose a number between 1 and {len(unique_results)}, or 0 to skip."
+                    )
                 except ValueError:
                     logger.info("Invalid input. Please enter a number.")
         else:
             selected_show = unique_results[0]
             tvmaze_id = int(selected_show["id"])
-            logger.debug(f"[cyan]Automatically selected show: {selected_show.get('name')} (TVmaze ID: {tvmaze_id})[/cyan]")
+            logger.debug(
+                f"[cyan]Automatically selected show: {selected_show.get('name')} (TVmaze ID: {tvmaze_id})[/cyan]"
+            )
 
-        selected = next((show for show in unique_results if int(show.get("id", 0)) == tvmaze_id), None)
+        selected = next(
+            (
+                show
+                for show in unique_results
+                if int(show.get("id", 0)) == tvmaze_id
+            ),
+            None,
+        )
         adopt_selected_externals = not tvdb_id and not imdb_id
         if selected is not None and adopt_selected_externals:
             externals = selected.get("externals")
@@ -161,8 +235,12 @@ class TvmazeManager:
                 f"[cyan]Returning TVmaze ID: {tvmaze_id} (type: {type(tvmaze_id).__name__}), IMDb ID: {imdb_id} (type: {type(imdb_id).__name__}), TVDB ID: {tvdb_id} (type: {type(tvdb_id).__name__})[/cyan]"
             )
         else:
-            logger.debug(f"[cyan]Returning TVmaze ID: {tvmaze_id} (type: {type(tvmaze_id).__name__})[/cyan]")
-        return (tvmaze_id, imdb_id, tvdb_id) if return_full_tuple else tvmaze_id
+            logger.debug(
+                f"[cyan]Returning TVmaze ID: {tvmaze_id} (type: {type(tvmaze_id).__name__})[/cyan]"
+            )
+        return (
+            (tvmaze_id, imdb_id, tvdb_id) if return_full_tuple else tvmaze_id
+        )
 
     async def _make_tvmaze_request(
         self,
@@ -172,7 +250,9 @@ class TvmazeManager:
         config: dict[str, Any] | None = None,
     ) -> dict[str, Any] | list[dict[str, Any]] | None:
         """Sync function to make the request inside ThreadPoolExecutor."""
-        cache_key = json.dumps({"url": url, "params": params}, sort_keys=True, default=str)
+        cache_key = json.dumps(
+            {"url": url, "params": params}, sort_keys=True, default=str
+        )
         cache = cache_for(base_dir, config)
         cached = await cache.get("tvmaze", "response", cache_key)
         if not is_cache_miss(cached) and isinstance(cached, (dict, list)):
@@ -186,15 +266,31 @@ class TvmazeManager:
                         await cache.set("tvmaze", "response", cache_key, data)
                         return cast(dict[str, Any], data)
                     if isinstance(data, list):
-                        result = [cast(dict[str, Any], item) for item in data if isinstance(item, dict)]
-                        await cache.set("tvmaze", "response", cache_key, result, negative=not bool(result))
+                        result = [
+                            cast(dict[str, Any], item)
+                            for item in data
+                            if isinstance(item, dict)
+                        ]
+                        await cache.set(
+                            "tvmaze",
+                            "response",
+                            cache_key,
+                            result,
+                            negative=not bool(result),
+                        )
                         return result
                     return None
                 return None
         except httpx.HTTPStatusError as e:
-            logger.info(f"[ERROR] TVmaze API error: {e.response.status_code}", extra={"markup": False})
+            logger.info(
+                f"[ERROR] TVmaze API error: {e.response.status_code}",
+                extra={"markup": False},
+            )
         except httpx.RequestError as e:
-            logger.info(f"[ERROR] Network error while accessing TVmaze: {e}", extra={"markup": False})
+            logger.info(
+                f"[ERROR] Network error while accessing TVmaze: {e}",
+                extra={"markup": False},
+            )
         return None
 
     async def get_show_details(
@@ -207,13 +303,19 @@ class TvmazeManager:
         cache = cache_for(base_dir, config)
         cached = await cache.get("tvmaze", "show", cache_key)
         if not is_cache_miss(cached) and isinstance(cached, dict):
-            return {} if cached.get("not_found") else cast(dict[str, Any], cached)
+            return (
+                {} if cached.get("not_found") else cast(dict[str, Any], cached)
+            )
 
-        data = await self._make_tvmaze_request(f"https://api.tvmaze.com/shows/{tvmaze_id}", {}, base_dir, config)
+        data = await self._make_tvmaze_request(
+            f"https://api.tvmaze.com/shows/{tvmaze_id}", {}, base_dir, config
+        )
         if isinstance(data, dict) and data:
             await cache.set("tvmaze", "show", cache_key, data)
             return data
-        await cache.set("tvmaze", "show", cache_key, {"not_found": True}, negative=True)
+        await cache.set(
+            "tvmaze", "show", cache_key, {"not_found": True}, negative=True
+        )
         return {}
 
     async def get_episode_by_date(
@@ -227,7 +329,9 @@ class TvmazeManager:
         cache = cache_for(base_dir, config)
         cached = await cache.get("tvmaze", "episode-date", cache_key)
         if not is_cache_miss(cached) and isinstance(cached, dict):
-            return {} if cached.get("not_found") else cast(dict[str, Any], cached)
+            return (
+                {} if cached.get("not_found") else cast(dict[str, Any], cached)
+            )
 
         try:
             response = await self._make_tvmaze_request(
@@ -236,39 +340,91 @@ class TvmazeManager:
                 base_dir,
                 config,
             )
-            if not isinstance(response, list) or not response or not isinstance(response[0], dict):
-                await cache.set("tvmaze", "episode-date", cache_key, {"not_found": True}, negative=True)
+            if (
+                not isinstance(response, list)
+                or not response
+                or not isinstance(response[0], dict)
+            ):
+                await cache.set(
+                    "tvmaze",
+                    "episode-date",
+                    cache_key,
+                    {"not_found": True},
+                    negative=True,
+                )
                 return {}
             episode = response[0]
-            links = episode.get("_links") if isinstance(episode.get("_links"), dict) else {}
-            show_link = links.get("show") if isinstance(links, dict) and isinstance(links.get("show"), dict) else {}
-            show_url = show_link.get("href") if isinstance(show_link, dict) else None
+            links = (
+                episode.get("_links")
+                if isinstance(episode.get("_links"), dict)
+                else {}
+            )
+            show_link = (
+                links.get("show")
+                if isinstance(links, dict)
+                and isinstance(links.get("show"), dict)
+                else {}
+            )
+            show_url = (
+                show_link.get("href") if isinstance(show_link, dict) else None
+            )
             if not isinstance(show_url, str) or not show_url:
                 show_url = f"https://api.tvmaze.com/shows/{tvmaze_id}"
             show_data: dict[str, Any] = {}
-            show_response = await self._make_tvmaze_request(show_url, {}, base_dir, config)
+            show_response = await self._make_tvmaze_request(
+                show_url, {}, base_dir, config
+            )
             if isinstance(show_response, dict):
                 show_data = show_response
 
             def clean_html(value: object) -> str:
-                return str(value or "").replace("<p>", "").replace("</p>", "").strip()
+                return (
+                    str(value or "")
+                    .replace("<p>", "")
+                    .replace("</p>", "")
+                    .strip()
+                )
 
             episode_image_value = episode.get("image")
             show_image_value = show_data.get("image")
             externals_value = show_data.get("externals")
-            episode_image_data: dict[str, Any] = episode_image_value if isinstance(episode_image_value, dict) else {}
-            show_image_data: dict[str, Any] = show_image_value if isinstance(show_image_value, dict) else {}
-            externals: dict[str, Any] = externals_value if isinstance(externals_value, dict) else {}
+            episode_image_data: dict[str, Any] = (
+                episode_image_value
+                if isinstance(episode_image_value, dict)
+                else {}
+            )
+            show_image_data: dict[str, Any] = (
+                show_image_value if isinstance(show_image_value, dict) else {}
+            )
+            externals: dict[str, Any] = (
+                externals_value if isinstance(externals_value, dict) else {}
+            )
             result: dict[str, Any] = {
                 "episode_name": str(episode.get("name") or ""),
                 "season": int(episode.get("season") or 0),
                 "episode": int(episode.get("number") or 0),
                 "airdate": str(episode.get("airdate") or ""),
                 "runtime": int(episode.get("runtime") or 0),
-                "episode_image": str(episode_image_data.get("original") or episode_image_data.get("medium") or ""),
-                "show_name": str(show_data.get("name") or (show_link.get("name") if isinstance(show_link, dict) else "") or ""),
+                "episode_image": str(
+                    episode_image_data.get("original")
+                    or episode_image_data.get("medium")
+                    or ""
+                ),
+                "show_name": str(
+                    show_data.get("name")
+                    or (
+                        show_link.get("name")
+                        if isinstance(show_link, dict)
+                        else ""
+                    )
+                    or ""
+                ),
                 "show_overview": clean_html(show_data.get("summary")),
-                "show_image": str(show_image_data.get("original") or show_image_data.get("medium") or ""),
+                "show_image": str(
+                    show_image_data.get("original")
+                    or show_image_data.get("medium")
+                    or ""
+                ),
                 "tvdb_id": int(externals.get("thetvdb") or 0),
                 "imdb_id": str(externals.get("imdb") or ""),
             }
@@ -300,17 +456,30 @@ class TvmazeManager:
                 if data:
                     # Get show data for additional information
                     show_data: dict[str, Any] = {}
-                    if "show" in data.get("_links", {}) and "href" in data["_links"]["show"]:
+                    if (
+                        "show" in data.get("_links", {})
+                        and "href" in data["_links"]["show"]
+                    ):
                         show_url = data["_links"]["show"]["href"]
                         show_name = data["_links"]["show"].get("name", "")
 
-                        show_response = await client.get(show_url, timeout=10.0)
-                        show_data = show_response.json() if show_response.status_code == 200 else {"name": show_name}
+                        show_response = await client.get(
+                            show_url, timeout=10.0
+                        )
+                        show_data = (
+                            show_response.json()
+                            if show_response.status_code == 200
+                            else {"name": show_name}
+                        )
 
                     # Clean HTML tags from summary
                     summary = data.get("summary", "")
                     if summary:
-                        summary = summary.replace("<p>", "").replace("</p>", "").strip()
+                        summary = (
+                            summary.replace("<p>", "")
+                            .replace("</p>", "")
+                            .strip()
+                        )
 
                     # Format the response in a consistent structure
                     return {
@@ -320,20 +489,46 @@ class TvmazeManager:
                         "episode_number": data.get("number", episode),
                         "air_date": data.get("airdate", ""),
                         "runtime": data.get("runtime", 0),
-                        "series_name": show_data.get("name", data.get("_links", {}).get("show", {}).get("name", "")),
-                        "series_overview": show_data.get("summary", "").replace("<p>", "").replace("</p>", "").strip(),
-                        "image": data.get("image", {}).get("original", None) if data.get("image") else None,
-                        "image_medium": data.get("image", {}).get("medium", None) if data.get("image") else None,
-                        "series_image": show_data.get("image", {}).get("original", None) if show_data.get("image") else None,
-                        "series_image_medium": show_data.get("image", {}).get("medium", None) if show_data.get("image") else None,
+                        "series_name": show_data.get(
+                            "name",
+                            data.get("_links", {})
+                            .get("show", {})
+                            .get("name", ""),
+                        ),
+                        "series_overview": show_data.get("summary", "")
+                        .replace("<p>", "")
+                        .replace("</p>", "")
+                        .strip(),
+                        "image": data.get("image", {}).get("original", None)
+                        if data.get("image")
+                        else None,
+                        "image_medium": data.get("image", {}).get(
+                            "medium", None
+                        )
+                        if data.get("image")
+                        else None,
+                        "series_image": show_data.get("image", {}).get(
+                            "original", None
+                        )
+                        if show_data.get("image")
+                        else None,
+                        "series_image_medium": show_data.get("image", {}).get(
+                            "medium", None
+                        )
+                        if show_data.get("image")
+                        else None,
                     }
 
-                logger.info(f"[yellow]No episode data found for S{season:02d}E{episode:02d}[/yellow]")
+                logger.info(
+                    f"[yellow]No episode data found for S{season:02d}E{episode:02d}[/yellow]"
+                )
                 return None
 
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404 and meta is not None:
-                logger.info("[yellow]Episode not found using season/episode, trying date-based lookup...[/yellow]")
+                logger.info(
+                    "[yellow]Episode not found using season/episode, trying date-based lookup...[/yellow]"
+                )
 
                 # Try to get airdate from meta data
                 airdate = None
@@ -355,7 +550,9 @@ class TvmazeManager:
                         tvdb_data_dict = tvdb_data
                         tvdb_episodes_raw = tvdb_data_dict.get("episodes", [])
                         if isinstance(tvdb_episodes_raw, list):
-                            episodes = list(cast(list[dict[str, Any]], tvdb_episodes_raw))
+                            episodes = list(
+                                cast(list[dict[str, Any]], tvdb_episodes_raw)
+                            )
                     elif isinstance(tvdb_data, list):
                         episodes = list(cast(list[dict[str, Any]], tvdb_data))
 
@@ -364,27 +561,41 @@ class TvmazeManager:
                             ep_airdate = ep.get("aired")
                             if isinstance(ep_airdate, str):
                                 airdate = ep_airdate
-                                logger.debug(f"[cyan]Found airdate from TVDB episode data: {airdate}[/cyan]")
+                                logger.debug(
+                                    f"[cyan]Found airdate from TVDB episode data: {airdate}[/cyan]"
+                                )
                                 break
 
                     if not airdate and meta.debug:
-                        logger.info(f"[yellow]Could not find airdate for TVDB episode ID {tvdb_episode_id}[/yellow]")
+                        logger.info(
+                            f"[yellow]Could not find airdate for TVDB episode ID {tvdb_episode_id}[/yellow]"
+                        )
 
                 # Try date-based lookup if we have an airdate
                 if isinstance(airdate, str) and airdate:
-                    logger.debug(f"[cyan]Attempting TVMaze lookup by date: {airdate}[/cyan]")
-                    return await self.get_tvmaze_episode_data_by_date(tvmaze_id, airdate)
-                logger.debug("[yellow]No airdate available for fallback lookup[/yellow]")
+                    logger.debug(
+                        f"[cyan]Attempting TVMaze lookup by date: {airdate}[/cyan]"
+                    )
+                    return await self.get_tvmaze_episode_data_by_date(
+                        tvmaze_id, airdate
+                    )
+                logger.debug(
+                    "[yellow]No airdate available for fallback lookup[/yellow]"
+                )
                 return None
             return None
         except httpx.RequestError as e:
             logger.info(f"[red]TVMaze Request error occurred: {e}[/red]")
             return None
         except Exception as e:
-            logger.info(f"[red]TVMaze Error fetching TVMaze episode data: {e}[/red]")
+            logger.info(
+                f"[red]TVMaze Error fetching TVMaze episode data: {e}[/red]"
+            )
             return None
 
-    async def get_tvmaze_episode_data_by_date(self, tvmaze_id: int, airdate: str) -> dict[str, Any] | None:
+    async def get_tvmaze_episode_data_by_date(
+        self, tvmaze_id: int, airdate: str
+    ) -> dict[str, Any] | None:
         url = f"https://api.tvmaze.com/shows/{tvmaze_id}/episodesbydate"
         params = {"date": airdate}
 
@@ -400,17 +611,32 @@ class TvmazeManager:
 
                     # Get show data for additional information
                     show_data: dict[str, Any] = {}
-                    if "show" in episode_data.get("_links", {}) and "href" in episode_data["_links"]["show"]:
+                    if (
+                        "show" in episode_data.get("_links", {})
+                        and "href" in episode_data["_links"]["show"]
+                    ):
                         show_url = episode_data["_links"]["show"]["href"]
-                        show_name = episode_data["_links"]["show"].get("name", "")
+                        show_name = episode_data["_links"]["show"].get(
+                            "name", ""
+                        )
 
-                        show_response = await client.get(show_url, timeout=10.0)
-                        show_data = show_response.json() if show_response.status_code == 200 else {"name": show_name}
+                        show_response = await client.get(
+                            show_url, timeout=10.0
+                        )
+                        show_data = (
+                            show_response.json()
+                            if show_response.status_code == 200
+                            else {"name": show_name}
+                        )
 
                     # Clean HTML tags from summary
                     summary = episode_data.get("summary", "")
                     if summary:
-                        summary = summary.replace("<p>", "").replace("</p>", "").strip()
+                        summary = (
+                            summary.replace("<p>", "")
+                            .replace("</p>", "")
+                            .strip()
+                        )
 
                     # Format the response in a consistent structure
                     return {
@@ -420,25 +646,57 @@ class TvmazeManager:
                         "episode_number": episode_data.get("number", 0),
                         "air_date": episode_data.get("airdate", ""),
                         "runtime": episode_data.get("runtime", 0),
-                        "series_name": show_data.get("name", episode_data.get("_links", {}).get("show", {}).get("name", "")),
-                        "series_overview": show_data.get("summary", "").replace("<p>", "").replace("</p>", "").strip(),
-                        "image": episode_data.get("image", {}).get("original", None) if episode_data.get("image") else None,
-                        "image_medium": episode_data.get("image", {}).get("medium", None) if episode_data.get("image") else None,
-                        "series_image": show_data.get("image", {}).get("original", None) if show_data.get("image") else None,
-                        "series_image_medium": show_data.get("image", {}).get("medium", None) if show_data.get("image") else None,
+                        "series_name": show_data.get(
+                            "name",
+                            episode_data.get("_links", {})
+                            .get("show", {})
+                            .get("name", ""),
+                        ),
+                        "series_overview": show_data.get("summary", "")
+                        .replace("<p>", "")
+                        .replace("</p>", "")
+                        .strip(),
+                        "image": episode_data.get("image", {}).get(
+                            "original", None
+                        )
+                        if episode_data.get("image")
+                        else None,
+                        "image_medium": episode_data.get("image", {}).get(
+                            "medium", None
+                        )
+                        if episode_data.get("image")
+                        else None,
+                        "series_image": show_data.get("image", {}).get(
+                            "original", None
+                        )
+                        if show_data.get("image")
+                        else None,
+                        "series_image_medium": show_data.get("image", {}).get(
+                            "medium", None
+                        )
+                        if show_data.get("image")
+                        else None,
                     }
 
-                logger.info(f"[yellow]No episode data found for date {airdate}[/yellow]")
+                logger.info(
+                    f"[yellow]No episode data found for date {airdate}[/yellow]"
+                )
                 return None
 
         except httpx.HTTPStatusError as e:
-            logger.info(f"[red]TVMaze HTTP error occurred in episodesbydate: {e.response.status_code} - {e.response.text}[/red]")
+            logger.info(
+                f"[red]TVMaze HTTP error occurred in episodesbydate: {e.response.status_code} - {e.response.text}[/red]"
+            )
             return None
         except httpx.RequestError as e:
-            logger.info(f"[red]TVMaze Request error occurred in episodesbydate: {e}[/red]")
+            logger.info(
+                f"[red]TVMaze Request error occurred in episodesbydate: {e}[/red]"
+            )
             return None
         except Exception as e:
-            logger.info(f"[red]TVMaze Error fetching TVMaze episode data by date: {e}[/red]")
+            logger.info(
+                f"[red]TVMaze Error fetching TVMaze episode data by date: {e}[/red]"
+            )
             return None
 
 

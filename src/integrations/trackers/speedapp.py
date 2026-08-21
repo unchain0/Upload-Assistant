@@ -15,7 +15,10 @@ from src.integrations.media.language_adapter import languages_manager
 from src.integrations.observability.runtime_support import console, logger
 from src.integrations.security.redaction import Redaction
 from src.integrations.trackers.common import Common
-from src.integrations.trackers.description_builder import DescriptionBuilder, html_to_bbcode
+from src.integrations.trackers.description_builder import (
+    DescriptionBuilder,
+    html_to_bbcode,
+)
 
 Config = dict[str, Any]
 
@@ -54,7 +57,9 @@ class SpeedApp:
 
     async def get_cat_id(self, meta: Meta) -> int:
         if not meta.language_checked:
-            await languages_manager.process_desc_language(meta, tracker=self.tracker)
+            await languages_manager.process_desc_language(
+                meta, tracker=self.tracker
+            )
         romanian = self._has_romanian_language(meta)
         special = self._special_category(meta, romanian)
         if special is not None:
@@ -84,7 +89,10 @@ class SpeedApp:
 
     @classmethod
     def _has_romanian_language(cls, meta: Meta) -> bool:
-        values = [*cls._language_values(meta.subtitle_languages), *cls._language_values(meta.audio_languages)]
+        values = [
+            *cls._language_values(meta.subtitle_languages),
+            *cls._language_values(meta.audio_languages),
+        ]
         return any(value.casefold() == "romanian" for value in values)
 
     @staticmethod
@@ -93,7 +101,11 @@ class SpeedApp:
 
     @staticmethod
     def _origin_category(meta: Meta, category: str) -> int | None:
-        countries = meta.origin_country if isinstance(meta.origin_country, list) else []
+        countries = (
+            meta.origin_country
+            if isinstance(meta.origin_country, list)
+            else []
+        )
         if "RO" not in countries:
             return None
         return {"TV": 60, "MOVIE": 59}.get(category)
@@ -148,11 +160,15 @@ class SpeedApp:
         return meta.resolution == "2160p" and media_type != "DISC"
 
     @staticmethod
-    def _romanian_choice(romanian_id: int, default_id: int, romanian: bool) -> int:
+    def _romanian_choice(
+        romanian_id: int, default_id: int, romanian: bool
+    ) -> int:
         return romanian_id if romanian else default_id
 
     @classmethod
-    def _category_choice(cls, category: tuple[int, int] | None, romanian: bool) -> int:
+    def _category_choice(
+        cls, category: tuple[int, int] | None, romanian: bool
+    ) -> int:
         if category is None:
             return 0
         return cls._romanian_choice(category[0], category[1], romanian)
@@ -181,7 +197,12 @@ class SpeedApp:
             return await handle.read()
 
     async def get_screenshots(self, meta: Meta) -> list[str]:
-        images = cast(list[dict[str, Any]], meta.menu_images) + meta.image_list + meta.spectrograms_images + meta.dynamic_hdr_plot_images
+        images = (
+            cast(list[dict[str, Any]], meta.menu_images)
+            + meta.image_list
+            + meta.spectrograms_images
+            + meta.dynamic_hdr_plot_images
+        )
         return [image["raw_url"] for image in images if image.get("raw_url")]
 
     async def search_existing(self, meta: Meta) -> list[dict[str, Any]]:
@@ -191,14 +212,24 @@ class SpeedApp:
             headers=self.session.headers,
         )
         response.raise_for_status()
-        return [entry for item in self._search_payload(response) if (entry := self._search_entry(item)) is not None]
+        return [
+            entry
+            for item in self._search_payload(response)
+            if (entry := self._search_entry(item)) is not None
+        ]
 
     @staticmethod
     def _search_params(meta: Meta) -> dict[str, str]:
         if meta.imdb_id:
             return {"imdbId": str(meta.imdb_tt)}
-        title = f"{meta.artist} {meta.title}" if meta.category == "MUSIC" else str(meta.title)
-        return {"search": title.replace(":", "").replace("'", "").replace(",", "")}
+        title = (
+            f"{meta.artist} {meta.title}"
+            if meta.category == "MUSIC"
+            else str(meta.title)
+        )
+        return {
+            "search": title.replace(":", "").replace("'", "").replace(",", "")
+        }
 
     @staticmethod
     def _search_payload(response: httpx.Response) -> list[Any]:
@@ -227,12 +258,16 @@ class SpeedApp:
         try:
             return await self._lookup_channel(str(requested))
         except Exception as error:
-            logger.error(f"{self.tracker}: [bold red]Unexpected error: {escape(str(error))}[/bold red]")
+            logger.error(
+                f"{self.tracker}: [bold red]Unexpected error: {escape(str(error))}[/bold red]"
+            )
             console.print_exception()
             return None
 
     def _requested_channel(self, meta: Meta) -> Any:
-        return meta.spd_channel or self.config["TRACKERS"][self.tracker].get("channel", "")
+        return meta.spd_channel or self.config["TRACKERS"][self.tracker].get(
+            "channel", ""
+        )
 
     @staticmethod
     def _direct_channel_id(value: Any) -> int | None:
@@ -251,18 +286,30 @@ class SpeedApp:
             headers=self.session.headers,
         )
         if response.status_code != 200:
-            logger.info(f"{self.tracker}: [bold red]HTTP request failed. Status: {response.status_code}[/bold red]")
+            logger.info(
+                f"{self.tracker}: [bold red]HTTP request failed. Status: {response.status_code}[/bold red]"
+            )
             return None
         channel_id = self._matching_channel_id(response.json(), tag)
         if channel_id is None:
-            logger.info(f"{self.tracker}: [{self.tracker}]Could not find the channel ID matching your input. Please check if you entered it correctly.")
+            logger.info(
+                f"{self.tracker}: [{self.tracker}]Could not find the channel ID matching your input. Please check if you entered it correctly."
+            )
         return channel_id
 
     @classmethod
     def _matching_channel_id(cls, payload: Any, tag: str) -> int | None:
         if not isinstance(payload, list):
             return None
-        return next((channel_id for entry in payload if (channel_id := cls._channel_entry_id(entry, tag)) is not None), None)
+        return next(
+            (
+                channel_id
+                for entry in payload
+                if (channel_id := cls._channel_entry_id(entry, tag))
+                is not None
+            ),
+            None,
+        )
 
     @staticmethod
     def _channel_entry_id(entry: Any, tag: str) -> int | None:
@@ -297,20 +344,40 @@ class SpeedApp:
 
     @staticmethod
     def _fallback_name(meta: Meta) -> str:
-        return str(meta.scene_name) if meta.scene_name else str(meta.basename_no_ext)
+        return (
+            str(meta.scene_name)
+            if meta.scene_name
+            else str(meta.basename_no_ext)
+        )
 
     @staticmethod
     def _metadata_name(meta: Meta) -> str:
-        return str(meta.scene_name) if meta.scene_name else str(meta.clean_name or "")
+        return (
+            str(meta.scene_name)
+            if meta.scene_name
+            else str(meta.clean_name or "")
+        )
 
     def _use_metadata_name(self) -> bool:
-        return bool(self.config["TRACKERS"][self.tracker].get("use_metadata_name", False))
+        return bool(
+            self.config["TRACKERS"][self.tracker].get(
+                "use_metadata_name", False
+            )
+        )
 
     @staticmethod
     def _sanitize_release_name(name: str) -> str:
-        value = name.replace("DD+", "DDP").replace("DTS:", "DTS-").replace("HDR10+", "HDR10P")
+        value = (
+            name.replace("DD+", "DDP")
+            .replace("DTS:", "DTS-")
+            .replace("HDR10+", "HDR10P")
+        )
         value = unicodedata.normalize("NFD", value)
-        value = "".join(char for char in value if char.isascii() and (char.isalnum() or char in (" ", ".", "-")))
+        value = "".join(
+            char
+            for char in value
+            if char.isascii() and (char.isalnum() or char in (" ", ".", "-"))
+        )
         return value.replace("!", "")
 
     async def encode_to_base64(self, file_path: str) -> str:
@@ -330,7 +397,9 @@ class SpeedApp:
 
     def get_requirements(self, meta: Meta) -> str:
         requirements_minimum = html_to_bbcode(meta.requirements_minimum)
-        requirements_recommended = html_to_bbcode(meta.requirements_recommended)
+        requirements_recommended = html_to_bbcode(
+            meta.requirements_recommended
+        )
         requirements = ""
 
         if requirements_minimum:
@@ -359,7 +428,9 @@ class SpeedApp:
             "type": await self.get_cat_id(meta),
         }
 
-    async def _apply_category_upload_data(self, data: dict[str, Any], meta: Meta) -> None:
+    async def _apply_category_upload_data(
+        self, data: dict[str, Any], meta: Meta
+    ) -> None:
         if meta.category in {"MOVIE", "TV"}:
             await self._apply_video_upload_data(data, meta)
             return
@@ -368,7 +439,9 @@ class SpeedApp:
             if requirements:
                 data["systemRequirements"] = requirements
 
-    async def _apply_video_upload_data(self, data: dict[str, Any], meta: Meta) -> None:
+    async def _apply_video_upload_data(
+        self, data: dict[str, Any], meta: Meta
+    ) -> None:
         media_info, bd_info = await self.get_file_info(meta)
         data["plot"] = (meta.overview_meta or meta.overview,)
         data["bdInfo"] = bd_info
@@ -377,12 +450,23 @@ class SpeedApp:
 
     @staticmethod
     def _imdb_url(meta: Meta) -> str:
-        return str(meta.imdb_info.get("imdb_url", "")) if isinstance(meta.imdb_info, dict) else ""
+        return (
+            str(meta.imdb_info.get("imdb_url", ""))
+            if isinstance(meta.imdb_info, dict)
+            else ""
+        )
 
-    async def _attach_torrent_data(self, data: dict[str, Any], meta: Meta) -> None:
+    async def _attach_torrent_data(
+        self, data: dict[str, Any], meta: Meta
+    ) -> None:
         tracker_config = self.config.get("TRACKERS", {}).get(self.tracker, {})
-        torrent_filename = await self.common.get_torrent_filename(meta, tracker_config)
-        torrent_path = release_temp_dir(meta.base_dir, meta.uuid) / f"{torrent_filename}.torrent"
+        torrent_filename = await self.common.get_torrent_filename(
+            meta, tracker_config
+        )
+        torrent_path = (
+            release_temp_dir(meta.base_dir, meta.uuid)
+            / f"{torrent_filename}.torrent"
+        )
         data["file"] = await self.encode_to_base64(str(torrent_path))
 
     @staticmethod
@@ -405,7 +489,9 @@ class SpeedApp:
             return await self._debug_upload(meta, data, status)
         return await self._upload_release(meta, data, status)
 
-    async def _debug_upload(self, meta: Meta, data: dict[str, Any], status: dict[str, Any]) -> bool:
+    async def _debug_upload(
+        self, meta: Meta, data: dict[str, Any], status: dict[str, Any]
+    ) -> bool:
         logger.info(f"{self.tracker}: Request Data:")
         logger.info(Redaction.redact_private_info(data))
         status["status_message"] = "Debug mode enabled, not uploading."
@@ -417,36 +503,50 @@ class SpeedApp:
         )
         return True
 
-    async def _upload_release(self, meta: Meta, data: dict[str, Any], status: dict[str, Any]) -> bool:
+    async def _upload_release(
+        self, meta: Meta, data: dict[str, Any], status: dict[str, Any]
+    ) -> bool:
         try:
             response = await self._post_upload(data)
             return await self._handle_upload_response(meta, status, response)
         except httpx.HTTPStatusError as error:
-            status["status_message"] = f"data error: HTTP {error.response.status_code} - {error.response.text}"
+            status["status_message"] = (
+                f"data error: HTTP {error.response.status_code} - {error.response.text}"
+            )
             return False
         except httpx.TimeoutException:
-            status["status_message"] = f"data error: Request timed out after {self.session.timeout.write} seconds"
+            status["status_message"] = (
+                f"data error: Request timed out after {self.session.timeout.write} seconds"
+            )
             return False
         except httpx.RequestError as error:
             status["status_message"] = self._request_error_message(error)
             return False
         except Exception as error:
-            status["status_message"] = f"data error: It may have uploaded, go check. Error: {error!r}.\nResponse: no response"
+            status["status_message"] = (
+                f"data error: It may have uploaded, go check. Error: {error!r}.\nResponse: no response"
+            )
             return False
 
     async def _post_upload(self, data: dict[str, Any]) -> httpx.Response:
-        response = await self.session.post(url=self.upload_url, json=data, headers=self.session.headers)
+        response = await self.session.post(
+            url=self.upload_url, json=data, headers=self.session.headers
+        )
         response.raise_for_status()
         return response
 
-    async def _handle_upload_response(self, meta: Meta, status: dict[str, Any], response: httpx.Response) -> bool:
+    async def _handle_upload_response(
+        self, meta: Meta, status: dict[str, Any], response: httpx.Response
+    ) -> bool:
         payload = self._response_mapping(response)
         if not self._upload_succeeded(payload):
             status["status_message"] = f"data error: {payload}"
             return False
         status["status_message"] = "Torrent uploaded successfully."
         if "downloadUrl" not in payload:
-            status["status_message"] = f"data error: No downloadUrl in response, check manually if it uploaded. Response: \n{payload}"
+            status["status_message"] = (
+                f"data error: No downloadUrl in response, check manually if it uploaded. Response: \n{payload}"
+            )
             return False
         torrent_id = self._torrent_id(payload)
         if torrent_id:
@@ -454,7 +554,11 @@ class SpeedApp:
         await self.common.download_tracker_torrent(
             meta,
             tracker=self.tracker,
-            headers={"Authorization": str(self.config["TRACKERS"][self.tracker]["api_key"])},
+            headers={
+                "Authorization": str(
+                    self.config["TRACKERS"][self.tracker]["api_key"]
+                )
+            },
             downurl=f"{self.url}/api/torrent/{torrent_id}/download",
         )
         return True
@@ -462,7 +566,9 @@ class SpeedApp:
     @staticmethod
     def _response_mapping(response: httpx.Response) -> dict[str, Any]:
         payload = response.json()
-        return cast(dict[str, Any], payload) if isinstance(payload, dict) else {}
+        return (
+            cast(dict[str, Any], payload) if isinstance(payload, dict) else {}
+        )
 
     @staticmethod
     def _upload_succeeded(payload: dict[str, Any]) -> bool:
@@ -476,5 +582,9 @@ class SpeedApp:
     @staticmethod
     def _request_error_message(error: httpx.RequestError) -> str:
         response = getattr(error, "response", None)
-        response_info = getattr(response, "text", "no response") if response is not None else "no response"
+        response_info = (
+            getattr(response, "text", "no response")
+            if response is not None
+            else "no response"
+        )
         return f"data error: Unable to upload. Error: {error!r}.\nResponse: {response_info}"

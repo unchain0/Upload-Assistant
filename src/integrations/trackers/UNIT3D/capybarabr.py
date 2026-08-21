@@ -36,9 +36,17 @@ class CapybaraBR(UNIT3D):
         self.config = config
         self.common = Common(config)
 
-    async def get_category_id(self, meta: Meta, category: str = "", reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_category_id(
+        self,
+        meta: Meta,
+        category: str = "",
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         mapping = self._category_mapping()
-        mode = self._mapping_mode(mapping, reverse=reverse, mapping_only=mapping_only)
+        mode = self._mapping_mode(
+            mapping, reverse=reverse, mapping_only=mapping_only
+        )
         if mode is not None:
             return mode
         resolved = self._resolved_category(meta, category)
@@ -46,20 +54,35 @@ class CapybaraBR(UNIT3D):
 
     @staticmethod
     def _category_mapping() -> dict[str, str]:
-        return {"MOVIE": "1", "TV": "2", "ANIMES": "4", "BOOK": "11", "COMIC_MANGA": "10", "GAME": "5"}
+        return {
+            "MOVIE": "1",
+            "TV": "2",
+            "ANIMES": "4",
+            "BOOK": "11",
+            "COMIC_MANGA": "10",
+            "GAME": "5",
+        }
 
     @staticmethod
-    def _mapping_mode(mapping: dict[str, str], *, reverse: bool, mapping_only: bool) -> dict[str, str] | None:
+    def _mapping_mode(
+        mapping: dict[str, str], *, reverse: bool, mapping_only: bool
+    ) -> dict[str, str] | None:
         if mapping_only:
             return mapping
-        return {value: key for key, value in mapping.items()} if reverse else None
+        return (
+            {value: key for key, value in mapping.items()} if reverse else None
+        )
 
     @classmethod
     def _resolved_category(cls, meta: Meta, requested: str) -> str:
         resolved = cls._base_category(meta, requested)
         if cls._is_anime_tv(meta, resolved):
             return "ANIMES"
-        return "COMIC_MANGA" if cls._is_comic_category(meta, resolved) else resolved
+        return (
+            "COMIC_MANGA"
+            if cls._is_comic_category(meta, resolved)
+            else resolved
+        )
 
     @staticmethod
     def _base_category(meta: Meta, requested: str) -> str:
@@ -75,11 +98,23 @@ class CapybaraBR(UNIT3D):
 
     @staticmethod
     def _is_comic_book(meta: Meta) -> bool:
-        return str(meta.type).upper() in {"CBR", "CBZ"} or bool(meta.manga) or bool(meta.comic)
+        return (
+            str(meta.type).upper() in {"CBR", "CBZ"}
+            or bool(meta.manga)
+            or bool(meta.comic)
+        )
 
-    async def get_type_id(self, meta: Meta, type: str = "", reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_type_id(
+        self,
+        meta: Meta,
+        type: str = "",
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         mapping = self._type_mapping()
-        mode = self._mapping_mode(mapping, reverse=reverse, mapping_only=mapping_only)
+        mode = self._mapping_mode(
+            mapping, reverse=reverse, mapping_only=mapping_only
+        )
         if mode is not None:
             return mode
         resolved = type or str(meta.type or "")
@@ -89,7 +124,9 @@ class CapybaraBR(UNIT3D):
 
     @staticmethod
     def _type_mapping() -> dict[str, str]:
-        console = bytes([110, 105, 110, 116, 101, 110, 100, 111]).decode().upper()
+        console = (
+            bytes([110, 105, 110, 116, 101, 110, 100, 111]).decode().upper()
+        )
         return {
             "DISC": "1",
             "REMUX": "2",
@@ -124,18 +161,27 @@ class CapybaraBR(UNIT3D):
         }
 
     @staticmethod
-    def _is_game_type(meta: Meta, resolved: str, mapping: dict[str, str]) -> bool:
-        return resolved == "GAME" or (meta.category == "GAME" and resolved not in mapping)
+    def _is_game_type(
+        meta: Meta, resolved: str, mapping: dict[str, str]
+    ) -> bool:
+        return resolved == "GAME" or (
+            meta.category == "GAME" and resolved not in mapping
+        )
 
     @staticmethod
     def _game_type_id(meta: Meta) -> str:
         platform = str(meta.platform or "").casefold()
         console = bytes([110, 105, 110, 116, 101, 110, 100, 111]).decode()
-        if CapybaraBR._contains_any(platform, ("playstation", "ps5", "ps4", "ps3", "ps2", "ps1", "psp", "vita")):
+        if CapybaraBR._contains_any(
+            platform,
+            ("playstation", "ps5", "ps4", "ps3", "ps2", "ps1", "psp", "vita"),
+        ):
             return "48"
         if "xbox" in platform:
             return "49"
-        if CapybaraBR._contains_any(platform, (console, "switch", "wii", "3ds", "nds", "ds")):
+        if CapybaraBR._contains_any(
+            platform, (console, "switch", "wii", "3ds", "nds", "ds")
+        ):
             return "50"
         return "46"
 
@@ -143,7 +189,13 @@ class CapybaraBR(UNIT3D):
     def _contains_any(value: str, needles: tuple[str, ...]) -> bool:
         return any(needle in value for needle in needles)
 
-    async def get_resolution_id(self, meta: Meta, resolution: str = "", reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_resolution_id(
+        self,
+        meta: Meta,
+        resolution: str = "",
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         resolution_id = {
             "4320p": "1",
             "2160p": "2",
@@ -170,7 +222,9 @@ class CapybaraBR(UNIT3D):
     async def get_description(self, meta: Meta) -> dict[str, str]:
         signature = f"[right][url=https://github.com/wastaken7/Upload-Assistant][size=4]Compartilhado com {meta.ua_name} {meta.current_version} (fork)[/size][/url][/right]"
         return {
-            "description": await DescriptionBuilder(self.tracker, self.config).general_description_generator(
+            "description": await DescriptionBuilder(
+                self.tracker, self.config
+            ).general_description_generator(
                 meta,
                 mediainfo=False,
                 nfo=False,
@@ -232,7 +286,11 @@ class CapybaraBR(UNIT3D):
 
     @staticmethod
     def _game_languages(meta: Meta) -> list[str]:
-        return [str(value) for value in meta.languages] if isinstance(meta.languages, list) else []
+        return (
+            [str(value) for value in meta.languages]
+            if isinstance(meta.languages, list)
+            else []
+        )
 
     @classmethod
     def _is_multilingual_portuguese(cls, languages: list[str]) -> bool:
@@ -262,7 +320,15 @@ class CapybaraBR(UNIT3D):
 
     @staticmethod
     def _normalized_video_base(meta: Meta) -> str:
-        name = str(meta.name or "").replace("DD+ ", "DDP").replace("DD ", "DD").replace("AAC ", "AAC").replace("FLAC ", "FLAC").replace("Dubbed", "").replace("Dual-Audio", "")
+        name = (
+            str(meta.name or "")
+            .replace("DD+ ", "DDP")
+            .replace("DD ", "DD")
+            .replace("AAC ", "AAC")
+            .replace("FLAC ", "FLAC")
+            .replace("Dubbed", "")
+            .replace("Dual-Audio", "")
+        )
         if meta.category in {"TV", "ANIMES"}:
             year = "" if meta.year is None else str(meta.year)
             if year:
@@ -276,7 +342,11 @@ class CapybaraBR(UNIT3D):
         if not meta.aka:
             return name
         aka = str(meta.aka).replace("AKA", "").strip()
-        return name.replace(str(meta.aka), "").replace(str(meta.title), aka).strip()
+        return (
+            name.replace(str(meta.aka), "")
+            .replace(str(meta.title), aka)
+            .strip()
+        )
 
     @classmethod
     def _dvdrip_name(cls, meta: Meta) -> str:
@@ -304,7 +374,13 @@ class CapybaraBR(UNIT3D):
 
     @staticmethod
     def _normalized_audio(value: Any) -> str:
-        return str(value).replace("DD+ ", "DDP").replace("DD ", "DD").replace("AAC ", "AAC").replace("FLAC ", "FLAC")
+        return (
+            str(value)
+            .replace("DD+ ", "DDP")
+            .replace("DD ", "DD")
+            .replace("AAC ", "AAC")
+            .replace("FLAC ", "FLAC")
+        )
 
     @staticmethod
     def _compact_parts(parts: tuple[str, ...]) -> str:
@@ -336,7 +412,10 @@ class CapybaraBR(UNIT3D):
 
     @staticmethod
     def _has_portuguese(languages: set[Any]) -> bool:
-        return any(str(language).casefold() in {"portuguese", "português"} for language in languages)
+        return any(
+            str(language).casefold() in {"portuguese", "português"}
+            for language in languages
+        )
 
     @staticmethod
     def _audio_count_tag(count: int) -> str:
@@ -351,14 +430,21 @@ class CapybaraBR(UNIT3D):
         prefix, suffix = name.rsplit("-", 1)
         original_group = cls._source_group(meta)
         configured_group = str(meta.tag or "").lstrip("-")
-        if original_group and original_group.casefold() != configured_group.casefold():
+        if (
+            original_group
+            and original_group.casefold() != configured_group.casefold()
+        ):
             return f"{prefix}-{original_group}{audio_tag}-{suffix}"
         return f"{prefix}{audio_tag}-{suffix}"
 
     @staticmethod
     def _source_group(meta: Meta) -> str:
         for source in (meta.path, meta.uuid):
-            match = re.search(r"-([^.-]+)\.(?:DUAL|MULTI)(?=-|\.|$)", str(source or ""), re.IGNORECASE)
+            match = re.search(
+                r"-([^.-]+)\.(?:DUAL|MULTI)(?=-|\.|$)",
+                str(source or ""),
+                re.IGNORECASE,
+            )
             if match:
                 return match.group(1)
         return ""
@@ -374,7 +460,10 @@ class CapybaraBR(UNIT3D):
         if not tag:
             return False
         lowered = str(tag).casefold()
-        return not any(value in lowered for value in ("nogrp", "nogroup", "unknown", "-unk-"))
+        return not any(
+            value in lowered
+            for value in ("nogrp", "nogroup", "unknown", "-unk-")
+        )
 
     @staticmethod
     def _strip_invalid_group_tags(name: str) -> str:
@@ -390,7 +479,9 @@ class CapybaraBR(UNIT3D):
 
     async def get_additional_checks(self, meta: Meta) -> bool:
         if self._missing_audiobook_narrator(meta):
-            logger.info(f"{self.tracker}: [bold red]Narrator is required for audiobooks. Skipping upload...[/bold red]")
+            logger.info(
+                f"{self.tracker}: [bold red]Narrator is required for audiobooks. Skipping upload...[/bold red]"
+            )
             return False
         if meta.category not in {"MOVIE", "TV"}:
             return True
@@ -398,12 +489,18 @@ class CapybaraBR(UNIT3D):
 
     @staticmethod
     def _missing_audiobook_narrator(meta: Meta) -> bool:
-        return meta.category == "BOOK" and bool(meta.audiobook) and not bool(meta.narrator)
+        return (
+            meta.category == "BOOK"
+            and bool(meta.audiobook)
+            and not bool(meta.narrator)
+        )
 
     async def _video_additional_checks(self, meta: Meta) -> bool:
         release_type = str(meta.type or "").casefold()
         if release_type == "encode" and not meta.has_encode_settings:
-            logger.info(f"{self.tracker}: [bold red]'Encode settings' field in the MediaInfo is required for encodes. Skipping upload...[/bold red]")
+            logger.info(
+                f"{self.tracker}: [bold red]'Encode settings' field in the MediaInfo is required for encodes. Skipping upload...[/bold red]"
+            )
             return False
         if self._remux_requires_bdinfo(meta, release_type):
             logger.info(
@@ -411,10 +508,14 @@ class CapybaraBR(UNIT3D):
                 "You can add BDInfo to the description using -df (path/to/file.txt) or -pb (Pastebin link). Skipping upload...[/bold red]"
             )
             return False
-        return await self.common.check_portuguese_video_requirements(meta, self.tracker)
+        return await self.common.check_portuguese_video_requirements(
+            meta, self.tracker
+        )
 
     def _remux_requires_bdinfo(self, meta: Meta, release_type: str) -> bool:
-        if release_type != "remux" or str(meta.source or "").casefold() not in {"bluray", "blu-ray"}:
+        if release_type != "remux" or str(
+            meta.source or ""
+        ).casefold() not in {"bluray", "blu-ray"}:
             return False
         if not meta.has_encode_settings:
             return False

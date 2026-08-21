@@ -16,7 +16,9 @@ from src.integrations.external_apis import bluray
 
 
 class _Response:
-    def __init__(self, status_code: int = 200, text: str = "", content: bytes = b"") -> None:
+    def __init__(
+        self, status_code: int = 200, text: str = "", content: bytes = b""
+    ) -> None:
         self.status_code = status_code
         self.text = text
         self.content = content
@@ -52,7 +54,9 @@ class _Client:
 
 
 def _request_error() -> httpx.RequestError:
-    return httpx.RequestError("network", request=httpx.Request("GET", "https://www.blu-ray.com/"))
+    return httpx.RequestError(
+        "network", request=httpx.Request("GET", "https://www.blu-ray.com/")
+    )
 
 
 def _meta(tmp_path: Path, **values: object) -> Meta:
@@ -101,21 +105,44 @@ def test_style_release_type_product_and_image_helpers() -> None:
     assert bluray._style_gray("color: #999999")
     assert bluray._style_specs("font-size: 12px")
 
-    assert bluray._derive_release_type(Meta(three_d="yes", resolution="1080p", is_disc="BDMV")) == ("3D", True, False, False)
-    assert bluray._derive_release_type(Meta(three_d="yes", resolution="2160p", is_disc="BDMV")) == ("4K", True, True, False)
-    assert bluray._derive_release_type(Meta(three_d="no", resolution="480p", is_disc="DVD")) == ("DVD", False, False, True)
-    assert asyncio.run(bluray.extract_product_id("https://www.blu-ray.com/movies/Example/12345/")) == "12345"
+    assert bluray._derive_release_type(
+        Meta(three_d="yes", resolution="1080p", is_disc="BDMV")
+    ) == ("3D", True, False, False)
+    assert bluray._derive_release_type(
+        Meta(three_d="yes", resolution="2160p", is_disc="BDMV")
+    ) == ("4K", True, True, False)
+    assert bluray._derive_release_type(
+        Meta(three_d="no", resolution="480p", is_disc="DVD")
+    ) == ("DVD", False, False, True)
+    assert (
+        asyncio.run(
+            bluray.extract_product_id(
+                "https://www.blu-ray.com/movies/Example/12345/"
+            )
+        )
+        == "12345"
+    )
     assert asyncio.run(bluray.extract_product_id("invalid")) is None
 
     assert bluray.clean_image_url(None) is None
     assert bluray.clean_image_url("") == ""
-    assert bluray.clean_image_url("https://x/a.JPG?size=large") == "https://x/a.JPG"
-    assert bluray.clean_image_url("https://x/no-extension") == "https://x/no-extension"
+    assert (
+        bluray.clean_image_url("https://x/a.JPG?size=large")
+        == "https://x/a.JPG"
+    )
+    assert (
+        bluray.clean_image_url("https://x/no-extension")
+        == "https://x/no-extension"
+    )
 
 
-def test_search_bluray_cache_success_invalid_fetch_save_and_read_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_search_bluray_cache_success_invalid_fetch_save_and_read_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     meta = _meta(tmp_path)
-    cached = tmp_path / "tmp" / meta.uuid / "debug_bluray_search_tt1234567.html"
+    cached = (
+        tmp_path / "tmp" / meta.uuid / "debug_bluray_search_tt1234567.html"
+    )
     cached.write_text("cached valid html", encoding="utf-8")
     assert asyncio.run(bluray.search_bluray(meta)) == "cached valid html"
 
@@ -150,19 +177,31 @@ def test_search_bluray_cache_success_invalid_fetch_save_and_read_failure(tmp_pat
     assert asyncio.run(bluray.search_bluray(meta)) == "unsaved html"
 
 
-def test_search_bluray_block_status_request_retries_and_failure(tmp_path: Path) -> None:
+def test_search_bluray_block_status_request_retries_and_failure(
+    tmp_path: Path,
+) -> None:
     meta = _meta(tmp_path)
-    _Client.reset(_Response(200, "No index"), _Response(200, "No index"), _Response(200, "No index"))
+    _Client.reset(
+        _Response(200, "No index"),
+        _Response(200, "No index"),
+        _Response(200, "No index"),
+    )
     assert asyncio.run(bluray.search_bluray(meta)) is None
 
-    _Client.reset(_Response(500, "failure"), _Response(502, "failure"), _Response(503, "failure"))
+    _Client.reset(
+        _Response(500, "failure"),
+        _Response(502, "failure"),
+        _Response(503, "failure"),
+    )
     assert asyncio.run(bluray.search_bluray(meta)) is None
 
     _Client.reset(_request_error(), _request_error(), _request_error())
     assert asyncio.run(bluray.search_bluray(meta)) is None
 
 
-def test_extract_bluray_links_full_empty_invalid_and_parser_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_extract_bluray_links_full_empty_invalid_and_parser_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     assert bluray.extract_bluray_links(None) is None
     assert bluray.extract_bluray_links("<html></html>") is None
     html = """
@@ -174,10 +213,24 @@ def test_extract_bluray_links_full_empty_invalid_and_parser_failure(monkeypatch:
     <div class="figure"><a class="alphaborder" href="https://www.blu-ray.com/movies/Unknown/101/"></a></div>
     """
     assert bluray.extract_bluray_links(html) == [
-        {"title": "Example Film", "year": "2026", "releases_url": "https://www.blu-ray.com/movies/Example/100/#Releases"},
-        {"title": "Unknown Title", "year": "Unknown Year", "releases_url": "https://www.blu-ray.com/movies/Unknown/101/#Releases"},
+        {
+            "title": "Example Film",
+            "year": "2026",
+            "releases_url": "https://www.blu-ray.com/movies/Example/100/#Releases",
+        },
+        {
+            "title": "Unknown Title",
+            "year": "Unknown Year",
+            "releases_url": "https://www.blu-ray.com/movies/Unknown/101/#Releases",
+        },
     ]
-    monkeypatch.setattr(bluray, "BeautifulSoup", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("parse failed")))
+    monkeypatch.setattr(
+        bluray,
+        "BeautifulSoup",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("parse failed")
+        ),
+    )
     assert bluray.extract_bluray_links(html) is None
 
 
@@ -211,18 +264,36 @@ def _release_sections_html() -> str:
         ({"three_d": "no", "resolution": "480p", "is_disc": "DVD"}, "1004"),
     ],
 )
-def test_extract_release_info_all_types(tmp_path: Path, values: dict[str, object], release_id: str) -> None:
+def test_extract_release_info_all_types(
+    tmp_path: Path, values: dict[str, object], release_id: str
+) -> None:
     meta = _meta(tmp_path, **values)
-    releases = asyncio.run(bluray.extract_bluray_release_info(_release_sections_html(), meta, "product"))
+    releases = asyncio.run(
+        bluray.extract_bluray_release_info(
+            _release_sections_html(), meta, "product"
+        )
+    )
     assert releases[0]["release_id"] == release_id
     if release_id == "1001":
-        assert releases[0]["country"] == "United States" and releases[0]["price"] == "$19.99"
+        assert (
+            releases[0]["country"] == "United States"
+            and releases[0]["price"] == "$19.99"
+        )
 
 
-def test_extract_release_info_empty_missing_parent_save_and_parser_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_extract_release_info_empty_missing_parent_save_and_parser_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     meta = _meta(tmp_path)
     assert asyncio.run(bluray.extract_bluray_release_info("", meta, "1")) == []
-    assert asyncio.run(bluray.extract_bluray_release_info("<h3>Blu-ray Editions</h3>", meta, "1")) == []
+    assert (
+        asyncio.run(
+            bluray.extract_bluray_release_info(
+                "<h3>Blu-ray Editions</h3>", meta, "1"
+            )
+        )
+        == []
+    )
 
     original_write = Path.write_text
 
@@ -232,13 +303,26 @@ def test_extract_release_info_empty_missing_parent_save_and_parser_errors(tmp_pa
         return original_write(path, *_args, **_kwargs)
 
     monkeypatch.setattr(Path, "write_text", fail_write)
-    assert asyncio.run(bluray.extract_bluray_release_info(_release_sections_html(), meta, "1"))
+    assert asyncio.run(
+        bluray.extract_bluray_release_info(_release_sections_html(), meta, "1")
+    )
     monkeypatch.setattr(Path, "write_text", original_write)
-    monkeypatch.setattr(bluray, "BeautifulSoup", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("parse failed")))
-    assert asyncio.run(bluray.extract_bluray_release_info("html", meta, "1")) == []
+    monkeypatch.setattr(
+        bluray,
+        "BeautifulSoup",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("parse failed")
+        ),
+    )
+    assert (
+        asyncio.run(bluray.extract_bluray_release_info("html", meta, "1"))
+        == []
+    )
 
 
-def _specs_html(*, short: bool = False, multi: str = "Two-disc set (2 BD-50)") -> str:
+def _specs_html(
+    *, short: bool = False, multi: str = "Two-disc set (2 BD-50)"
+) -> str:
     audio_id = "shortaudio" if short else "longaudio"
     subs_id = "shortsubs" if short else "longsubs"
     return f"""
@@ -255,27 +339,57 @@ def _specs_html(*, short: bool = False, multi: str = "Two-disc set (2 BD-50)") -
     """
 
 
-def test_parse_release_details_full_short_single_multi_images_and_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_parse_release_details_full_short_single_multi_images_and_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     meta = _meta(tmp_path, use_bluray_images=True)
     release: dict[str, Any] = {"title": "UHD"}
-    result = asyncio.run(bluray.parse_release_details(_specs_html(), release, meta))
+    result = asyncio.run(
+        bluray.parse_release_details(_specs_html(), release, meta)
+    )
     specs = result["specs"]
     assert specs["video"] == {"codec": "HEVC", "resolution": "2160p"}
     assert specs["audio"][0].startswith("English: Dolby TrueHD Atmos 7.1")
     assert "Note: immersive" in specs["audio"][0]
     assert specs["subtitles"] == ["English", "French", "Spanish"]
-    assert specs["discs"]["count"] == 2 and specs["discs"]["format"] == "2 BD-50"
+    assert (
+        specs["discs"]["count"] == 2 and specs["discs"]["format"] == "2 BD-50"
+    )
     assert specs["playback"] == {"region": "B", "region_notes": "locked"}
     assert result["cover_images"]["front"].endswith("front.jpg")
 
-    short = asyncio.run(bluray.parse_release_details(_specs_html(short=True, multi="Single disc (1 BD-25)"), {"title": "Short"}, meta))
-    assert short["specs"]["discs"] == {"type": "Ultra HD Blu-ray", "count": 1, "format": "BD-25"}
+    short = asyncio.run(
+        bluray.parse_release_details(
+            _specs_html(short=True, multi="Single disc (1 BD-25)"),
+            {"title": "Short"},
+            meta,
+        )
+    )
+    assert short["specs"]["discs"] == {
+        "type": "Ultra HD Blu-ray",
+        "count": 1,
+        "format": "BD-25",
+    }
 
     no_specs: dict[str, Any] = {"title": "No Specs"}
-    assert asyncio.run(bluray.parse_release_details("<html></html>", no_specs, meta)) is no_specs
-    monkeypatch.setattr(bluray, "BeautifulSoup", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("parse failed")))
+    assert (
+        asyncio.run(
+            bluray.parse_release_details("<html></html>", no_specs, meta)
+        )
+        is no_specs
+    )
+    monkeypatch.setattr(
+        bluray,
+        "BeautifulSoup",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("parse failed")
+        ),
+    )
     failed: dict[str, Any] = {"title": "Failed"}
-    assert asyncio.run(bluray.parse_release_details("html", failed, meta)) is failed
+    assert (
+        asyncio.run(bluray.parse_release_details("html", failed, meta))
+        is failed
+    )
 
 
 def test_extract_cover_images_scripts_overlay_and_cleaning() -> None:
@@ -322,12 +436,18 @@ def test_extract_section_mixed_siblings() -> None:
     assert bluray.extract_section(soup.find("td"), "Missing") is None
 
 
-def test_download_cover_images_cache_success_mismatch_corrupt_and_downloads(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    meta = _meta(tmp_path, bluray_cover_urls={}, release_url="https://release/1")
+def test_download_cover_images_cache_success_mismatch_corrupt_and_downloads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    meta = _meta(
+        tmp_path, bluray_cover_urls={}, release_url="https://release/1"
+    )
     assert not asyncio.run(bluray.download_cover_images(meta))
 
     covers = tmp_path / "tmp" / meta.uuid / "covers.json"
-    covers.write_text(json.dumps([{"release_url": meta.release_url}]), encoding="utf-8")
+    covers.write_text(
+        json.dumps([{"release_url": meta.release_url}]), encoding="utf-8"
+    )
     meta.bluray_cover_urls = {"front": "https://images/front.jpg"}
     assert asyncio.run(bluray.download_cover_images(meta))
 
@@ -343,8 +463,13 @@ def test_download_cover_images_cache_success_mismatch_corrupt_and_downloads(tmp_
         "slip": "https://images/slip.webp",
     }
     assert asyncio.run(bluray.download_cover_images(meta))
-    assert meta.downloaded_bluray_cover_paths["front"].endswith("cover_front.jpg")
-    assert Path(meta.downloaded_bluray_cover_paths["front"]).read_bytes() == b"front"
+    assert meta.downloaded_bluray_cover_paths["front"].endswith(
+        "cover_front.jpg"
+    )
+    assert (
+        Path(meta.downloaded_bluray_cover_paths["front"]).read_bytes()
+        == b"front"
+    )
     assert not covers.exists()
 
     covers.write_text("not json", encoding="utf-8")
@@ -366,14 +491,18 @@ def test_download_cover_images_cache_success_mismatch_corrupt_and_downloads(tmp_
     assert not asyncio.run(bluray.download_cover_images(meta))
 
 
-def test_fetch_release_details_cache_success_invalid_network_retries_and_failures(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_fetch_release_details_cache_success_invalid_network_retries_and_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     meta = _meta(tmp_path)
     release: dict[str, Any] = {
         "title": "Release",
         "url": "https://www.blu-ray.com/movies/Release/123/",
         "release_id": "123",
     }
-    parse = AsyncMock(side_effect=lambda _html, value, _meta: {**value, "parsed": True})
+    parse = AsyncMock(
+        side_effect=lambda _html, value, _meta: {**value, "parsed": True}
+    )
     monkeypatch.setattr(bluray, "parse_release_details", parse)
     cached = tmp_path / "tmp" / meta.uuid / "debug_release_123.html"
     cached.write_text("cached details", encoding="utf-8")
@@ -395,7 +524,9 @@ def test_fetch_release_details_cache_success_invalid_network_retries_and_failure
 
     monkeypatch.setattr(Path, "read_text", fail_read)
     _Client.reset(_Response(200, "after read error"))
-    assert asyncio.run(bluray.fetch_release_details(dict(release), meta))["parsed"]
+    assert asyncio.run(bluray.fetch_release_details(dict(release), meta))[
+        "parsed"
+    ]
     monkeypatch.setattr(Path, "read_text", original_read)
 
     cached.unlink(missing_ok=True)
@@ -408,61 +539,124 @@ def test_fetch_release_details_cache_success_invalid_network_retries_and_failure
 
     monkeypatch.setattr(Path, "write_text", fail_write)
     _Client.reset(_Response(200, "unsaved"))
-    assert asyncio.run(bluray.fetch_release_details(dict(release), meta))["parsed"]
+    assert asyncio.run(bluray.fetch_release_details(dict(release), meta))[
+        "parsed"
+    ]
     monkeypatch.setattr(Path, "write_text", original_write)
 
     for responses in (
-        (_Response(200, "No index"), _Response(200, "No index"), _Response(200, "No index")),
-        (_Response(500, "failure"), _Response(502, "failure"), _Response(503, "failure")),
+        (
+            _Response(200, "No index"),
+            _Response(200, "No index"),
+            _Response(200, "No index"),
+        ),
+        (
+            _Response(500, "failure"),
+            _Response(502, "failure"),
+            _Response(503, "failure"),
+        ),
         (_request_error(), _request_error(), _request_error()),
     ):
         cached.unlink(missing_ok=True)
         _Client.reset(*responses)
         unchanged = dict(release)
-        assert asyncio.run(bluray.fetch_release_details(unchanged, meta)) is unchanged
+        assert (
+            asyncio.run(bluray.fetch_release_details(unchanged, meta))
+            is unchanged
+        )
 
 
-def test_get_bluray_releases_guards_cache_and_unattended(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_bluray_releases_guards_cache_and_unattended(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     meta = _meta(tmp_path)
     monkeypatch.setattr(bluray, "search_bluray", AsyncMock(return_value=None))
     assert asyncio.run(bluray.get_bluray_releases(meta)) == []
 
-    monkeypatch.setattr(bluray, "search_bluray", AsyncMock(return_value="search"))
+    monkeypatch.setattr(
+        bluray, "search_bluray", AsyncMock(return_value="search")
+    )
     monkeypatch.setattr(bluray, "extract_bluray_links", lambda _html: None)
     assert asyncio.run(bluray.get_bluray_releases(meta)) == []
 
     movies = [
         {"title": "Invalid", "year": "2025", "releases_url": "invalid"},
-        {"title": "Valid", "year": "2026", "releases_url": "https://www.blu-ray.com/movies/Valid/123/#Releases"},
+        {
+            "title": "Valid",
+            "year": "2026",
+            "releases_url": "https://www.blu-ray.com/movies/Valid/123/#Releases",
+        },
     ]
     monkeypatch.setattr(bluray, "extract_bluray_links", lambda _html: movies)
     extract_id = AsyncMock(side_effect=[None, "123"])
     monkeypatch.setattr(bluray, "extract_product_id", extract_id)
     cached = tmp_path / "tmp" / meta.uuid / "debug_bluray_BD_123.html"
     cached.write_text("cached releases", encoding="utf-8")
-    release = {"title": "Edition", "url": "https://release", "country": "Canada", "publisher": "Publisher", "price": "$1"}
-    monkeypatch.setattr(bluray, "extract_bluray_release_info", AsyncMock(return_value=[release]))
+    release = {
+        "title": "Edition",
+        "url": "https://release",
+        "country": "Canada",
+        "publisher": "Publisher",
+        "price": "$1",
+    }
+    monkeypatch.setattr(
+        bluray,
+        "extract_bluray_release_info",
+        AsyncMock(return_value=[release]),
+    )
     process = AsyncMock(return_value=[release])
     monkeypatch.setattr(bluray, "process_all_releases", process)
     result = asyncio.run(bluray.get_bluray_releases(meta))
     assert result == [release]
-    assert release["movie_title"] == "Valid" and release["movie_year"] == "2026"
+    assert (
+        release["movie_title"] == "Valid" and release["movie_year"] == "2026"
+    )
     process.assert_awaited_once()
 
 
-def test_get_bluray_releases_network_retries_and_outer_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_bluray_releases_network_retries_and_outer_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     meta = _meta(tmp_path, unattended=True, unattended_confirm=False)
-    movie = {"title": "Valid", "year": "2026", "releases_url": "https://www.blu-ray.com/movies/Valid/123/#Releases"}
-    monkeypatch.setattr(bluray, "search_bluray", AsyncMock(return_value="search"))
+    movie = {
+        "title": "Valid",
+        "year": "2026",
+        "releases_url": "https://www.blu-ray.com/movies/Valid/123/#Releases",
+    }
+    monkeypatch.setattr(
+        bluray, "search_bluray", AsyncMock(return_value="search")
+    )
     monkeypatch.setattr(bluray, "extract_bluray_links", lambda _html: [movie])
-    monkeypatch.setattr(bluray, "extract_product_id", AsyncMock(return_value="123"))
-    release = {"title": "Edition", "url": "https://release", "country": "Canada", "publisher": "Publisher", "price": "$1"}
-    monkeypatch.setattr(bluray, "extract_bluray_release_info", AsyncMock(return_value=[release]))
-    monkeypatch.setattr(bluray, "process_all_releases", AsyncMock(return_value=[release]))
+    monkeypatch.setattr(
+        bluray, "extract_product_id", AsyncMock(return_value="123")
+    )
+    release = {
+        "title": "Edition",
+        "url": "https://release",
+        "country": "Canada",
+        "publisher": "Publisher",
+        "price": "$1",
+    }
+    monkeypatch.setattr(
+        bluray,
+        "extract_bluray_release_info",
+        AsyncMock(return_value=[release]),
+    )
+    monkeypatch.setattr(
+        bluray, "process_all_releases", AsyncMock(return_value=[release])
+    )
 
-    _Client.reset(_Response(200, "No index"), _Response(200, "No index"), _Response(200, "No index"))
+    _Client.reset(
+        _Response(200, "No index"),
+        _Response(200, "No index"),
+        _Response(200, "No index"),
+    )
     assert asyncio.run(bluray.get_bluray_releases(meta)) == []
-    _Client.reset(_Response(500, "failure"), _Response(500, "failure"), _Response(500, "failure"))
+    _Client.reset(
+        _Response(500, "failure"),
+        _Response(500, "failure"),
+        _Response(500, "failure"),
+    )
     assert asyncio.run(bluray.get_bluray_releases(meta)) == []
     _Client.reset(_request_error(), _request_error(), _request_error())
     assert asyncio.run(bluray.get_bluray_releases(meta)) == []
@@ -474,55 +668,116 @@ def test_get_bluray_releases_network_retries_and_outer_error(tmp_path: Path, mon
         async def __aexit__(self, *_args: object) -> None:
             return None
 
-    monkeypatch.setattr(bluray.httpx, "AsyncClient", lambda *_args, **_kwargs: BrokenClient())
+    monkeypatch.setattr(
+        bluray.httpx, "AsyncClient", lambda *_args, **_kwargs: BrokenClient()
+    )
     assert asyncio.run(bluray.get_bluray_releases(meta)) == []
 
 
-def test_get_bluray_releases_interactive_all_skip_invalid_selected_images_and_cancel(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    meta = _meta(tmp_path, unattended=False, unattended_confirm=False, use_bluray_images=True)
+def test_get_bluray_releases_interactive_all_skip_invalid_selected_images_and_cancel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    meta = _meta(
+        tmp_path,
+        unattended=False,
+        unattended_confirm=False,
+        use_bluray_images=True,
+    )
     releases = [
-        {"title": "One", "url": "https://one", "country": "United States", "publisher": "Criterion", "price": "$1"},
-        {"title": "Two", "url": "https://two", "country": "United Kingdom", "publisher": "Arrow", "price": "$2"},
+        {
+            "title": "One",
+            "url": "https://one",
+            "country": "United States",
+            "publisher": "Criterion",
+            "price": "$1",
+        },
+        {
+            "title": "Two",
+            "url": "https://two",
+            "country": "United Kingdom",
+            "publisher": "Arrow",
+            "price": "$2",
+        },
     ]
-    movie = {"title": "Movie", "year": "2026", "releases_url": "https://www.blu-ray.com/movies/Movie/123/#Releases"}
-    monkeypatch.setattr(bluray, "search_bluray", AsyncMock(return_value="search"))
+    movie = {
+        "title": "Movie",
+        "year": "2026",
+        "releases_url": "https://www.blu-ray.com/movies/Movie/123/#Releases",
+    }
+    monkeypatch.setattr(
+        bluray, "search_bluray", AsyncMock(return_value="search")
+    )
     monkeypatch.setattr(bluray, "extract_bluray_links", lambda _html: [movie])
-    monkeypatch.setattr(bluray, "extract_product_id", AsyncMock(return_value="123"))
-    monkeypatch.setattr(bluray, "extract_bluray_release_info", AsyncMock(return_value=[dict(value) for value in releases]))
+    monkeypatch.setattr(
+        bluray, "extract_product_id", AsyncMock(return_value="123")
+    )
+    monkeypatch.setattr(
+        bluray,
+        "extract_bluray_release_info",
+        AsyncMock(return_value=[dict(value) for value in releases]),
+    )
     _Client.reset(_Response(200, "release html"))
     process = AsyncMock(return_value=releases)
     monkeypatch.setattr(bluray, "process_all_releases", process)
-    monkeypatch.setattr(bluray.cli_ui, "ask_string", lambda *_args, **_kwargs: "a")
+    monkeypatch.setattr(
+        bluray.cli_ui, "ask_string", lambda *_args, **_kwargs: "a"
+    )
     assert asyncio.run(bluray.get_bluray_releases(meta)) == releases
 
     _Client.reset(_Response(200, "release html"))
-    monkeypatch.setattr(bluray.cli_ui, "ask_string", lambda *_args, **_kwargs: "n")
+    monkeypatch.setattr(
+        bluray.cli_ui, "ask_string", lambda *_args, **_kwargs: "n"
+    )
     assert asyncio.run(bluray.get_bluray_releases(meta)) == []
 
     _Client.reset(_Response(200, "release html"))
     answers = iter(("bad", "9", "2"))
-    monkeypatch.setattr(bluray.cli_ui, "ask_string", lambda *_args, **_kwargs: next(answers))
+    monkeypatch.setattr(
+        bluray.cli_ui, "ask_string", lambda *_args, **_kwargs: next(answers)
+    )
     detailed = {**releases[1], "cover_images": {"front": "https://cover"}}
-    monkeypatch.setattr(bluray, "fetch_release_details", AsyncMock(return_value=detailed))
+    monkeypatch.setattr(
+        bluray, "fetch_release_details", AsyncMock(return_value=detailed)
+    )
     download = AsyncMock(return_value=True)
     monkeypatch.setattr(bluray, "download_cover_images", download)
     result = asyncio.run(bluray.get_bluray_releases(meta))
     assert result == [detailed]
-    assert meta.region == "GBR" and meta.distributor == "ARROW" and meta.release_url == "https://two"
+    assert (
+        meta.region == "GBR"
+        and meta.distributor == "ARROW"
+        and meta.release_url == "https://two"
+    )
     assert meta.bluray_cover_urls == {"front": "https://cover"}
     download.assert_awaited_once_with(meta)
 
     _Client.reset(_Response(200, "release html"))
-    monkeypatch.setattr(bluray.cli_ui, "ask_string", lambda *_args, **_kwargs: (_ for _ in ()).throw(EOFError()))
+    monkeypatch.setattr(
+        bluray.cli_ui,
+        "ask_string",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(EOFError()),
+    )
     with pytest.raises(OperationAbortedError, match="cancelled"):
         asyncio.run(bluray.get_bluray_releases(meta))
 
 
-def test_get_bluray_releases_no_matches_debug_save_and_write_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_bluray_releases_no_matches_debug_save_and_write_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     meta = _meta(tmp_path, imdb_id=None, title=None)
-    monkeypatch.setattr(bluray, "search_bluray", AsyncMock(return_value="search"))
-    monkeypatch.setattr(bluray, "extract_bluray_links", lambda _html: [{"title": "Invalid", "year": "", "releases_url": "invalid"}])
-    monkeypatch.setattr(bluray, "extract_product_id", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        bluray, "search_bluray", AsyncMock(return_value="search")
+    )
+    monkeypatch.setattr(
+        bluray,
+        "extract_bluray_links",
+        lambda _html: [
+            {"title": "Invalid", "year": "", "releases_url": "invalid"}
+        ],
+    )
+    monkeypatch.setattr(
+        bluray, "extract_product_id", AsyncMock(return_value=None)
+    )
     assert asyncio.run(bluray.get_bluray_releases(meta)) == []
 
     original_write = Path.write_text
@@ -553,7 +808,9 @@ def _match_meta(
     temp.mkdir(parents=True, exist_ok=True)
     if subtitles:
         (temp / "BD_SUMMARY_00.txt").write_text(
-            "\n".join(f"Subtitle: {language} / 10.0 kbps" for language in subtitles),
+            "\n".join(
+                f"Subtitle: {language} / 10.0 kbps" for language in subtitles
+            ),
             encoding="utf-8",
         )
     return Meta(
@@ -614,7 +871,9 @@ def _match_release(
     if specs:
         result["specs"] = {
             "video": {"codec": codec, "resolution": resolution},
-            "audio": audio if audio is not None else ["English DTS-HD MA 5.1 48 kHz 24-bit 3500 kbps"],
+            "audio": audio
+            if audio is not None
+            else ["English DTS-HD MA 5.1 48 kHz 24-bit 3500 kbps"],
             "subtitles": subtitles if subtitles is not None else ["English"],
             "discs": {"format": release_format},
         }
@@ -624,11 +883,15 @@ def _match_release(
 def _identity_details(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
     fetch = AsyncMock(side_effect=lambda release, _meta: release)
     monkeypatch.setattr(bluray, "fetch_release_details", fetch)
-    monkeypatch.setattr(bluray, "download_cover_images", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        bluray, "download_cover_images", AsyncMock(return_value=True)
+    )
     return fetch
 
 
-def test_remaining_release_info_parse_and_cover_branches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_remaining_release_info_parse_and_cover_branches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     meta = _meta(tmp_path)
     invalid_html = """
     <table><tr><td><h3>Blu-ray Editions</h3>
@@ -639,38 +902,77 @@ def test_remaining_release_info_parse_and_cover_branches(tmp_path: Path, monkeyp
     """
     original_search = bluray.re.search
 
-    def flaky_search(pattern: object, value: object, *args: object, **kwargs: object):
+    def flaky_search(
+        pattern: object, value: object, *args: object, **kwargs: object
+    ):
         if "Broken" in str(value):
             raise RuntimeError("release parse failed")
         return original_search(pattern, value, *args, **kwargs)
 
     monkeypatch.setattr(bluray.re, "search", flaky_search)
-    assert asyncio.run(bluray.extract_bluray_release_info(invalid_html, meta, "1")) == []
+    assert (
+        asyncio.run(
+            bluray.extract_bluray_release_info(invalid_html, meta, "1")
+        )
+        == []
+    )
     monkeypatch.setattr(bluray.re, "search", original_search)
 
-    five_one = _specs_html().replace("English: Dolby TrueHD 7.1", "English: Dolby Digital 5.1")
-    parsed = asyncio.run(bluray.parse_release_details(five_one, {"title": "5.1"}, _meta(tmp_path, use_bluray_images=False)))
+    five_one = _specs_html().replace(
+        "English: Dolby TrueHD 7.1", "English: Dolby Digital 5.1"
+    )
+    parsed = asyncio.run(
+        bluray.parse_release_details(
+            five_one,
+            {"title": "5.1"},
+            _meta(tmp_path, use_bluray_images=False),
+        )
+    )
     assert "5.1" in parsed["specs"]["audio"][0]
 
     digit = _specs_html(multi="3-disc set")
-    parsed = asyncio.run(bluray.parse_release_details(digit, {"title": "Digit"}, meta))
-    assert parsed["specs"]["discs"] == {"type": "Ultra HD Blu-ray", "count": 3, "format": "multiple discs"}
+    parsed = asyncio.run(
+        bluray.parse_release_details(digit, {"title": "Digit"}, meta)
+    )
+    assert parsed["specs"]["discs"] == {
+        "type": "Ultra HD Blu-ray",
+        "count": 3,
+        "format": "multiple discs",
+    }
 
     unknown_format = _specs_html(multi="Two-disc set (DVD extras)")
-    parsed = asyncio.run(bluray.parse_release_details(unknown_format, {"title": "Unknown"}, meta))
+    parsed = asyncio.run(
+        bluray.parse_release_details(
+            unknown_format, {"title": "Unknown"}, meta
+        )
+    )
     assert parsed["specs"]["discs"]["format"] == "multiple discs"
 
-    images = bluray.extract_cover_images("<script></script><div class='simple_overlay'><img id='' src='' /></div>")
+    images = bluray.extract_cover_images(
+        "<script></script><div class='simple_overlay'><img id='' src='' /></div>"
+    )
     assert images == {}
 
 
-def test_get_releases_invalid_cache_and_cache_read_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_releases_invalid_cache_and_cache_read_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     meta = _meta(tmp_path)
-    movie = {"title": "Movie", "year": "2026", "releases_url": "https://www.blu-ray.com/movies/Movie/123/#Releases"}
-    monkeypatch.setattr(bluray, "search_bluray", AsyncMock(return_value="search"))
+    movie = {
+        "title": "Movie",
+        "year": "2026",
+        "releases_url": "https://www.blu-ray.com/movies/Movie/123/#Releases",
+    }
+    monkeypatch.setattr(
+        bluray, "search_bluray", AsyncMock(return_value="search")
+    )
     monkeypatch.setattr(bluray, "extract_bluray_links", lambda _html: [movie])
-    monkeypatch.setattr(bluray, "extract_product_id", AsyncMock(return_value="123"))
-    monkeypatch.setattr(bluray, "extract_bluray_release_info", AsyncMock(return_value=[]))
+    monkeypatch.setattr(
+        bluray, "extract_product_id", AsyncMock(return_value="123")
+    )
+    monkeypatch.setattr(
+        bluray, "extract_bluray_release_info", AsyncMock(return_value=[])
+    )
     cache = tmp_path / "tmp" / meta.uuid / "debug_bluray_BD_123.html"
     cache.write_text("No index", encoding="utf-8")
     _Client.reset(_Response(200, "fresh"))
@@ -689,7 +991,9 @@ def test_get_releases_invalid_cache_and_cache_read_error(tmp_path: Path, monkeyp
     assert asyncio.run(bluray.get_bluray_releases(meta)) == []
 
 
-def test_process_local_summary_missing_invalid_and_incomplete_specs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_process_local_summary_missing_invalid_and_incomplete_specs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _identity_details(monkeypatch)
     release = _match_release("Incomplete")
     release["specs"] = {"video": {}, "audio": [], "subtitles": [], "discs": {}}
@@ -716,16 +1020,40 @@ def test_process_local_summary_missing_invalid_and_incomplete_specs(tmp_path: Pa
     asyncio.run(bluray.process_all_releases([dict(release)], broken))
 
 
-def test_process_disc_size_codec_and_resolution_branches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_process_disc_size_codec_and_resolution_branches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _identity_details(monkeypatch)
     scenarios = [
-        (30.0, {"codec": "AVC", "res": "1080p"}, "BD-25", "H.264 AVC", "1080p"),
-        (55.0, {"codec": "HEVC", "res": "2160p"}, "BD-66", "H.265 HEVC", "4K 2160p"),
+        (
+            30.0,
+            {"codec": "AVC", "res": "1080p"},
+            "BD-25",
+            "H.264 AVC",
+            "1080p",
+        ),
+        (
+            55.0,
+            {"codec": "HEVC", "res": "2160p"},
+            "BD-66",
+            "H.265 HEVC",
+            "4K 2160p",
+        ),
         (70.0, {"codec": "VC-1", "res": "1080p"}, "BD-100", "VC-1", "1080p"),
-        (30.0, {"codec": "MPEG-2", "res": "1080p"}, "BD-50", "MPEG-2", "1080p"),
+        (
+            30.0,
+            {"codec": "MPEG-2", "res": "1080p"},
+            "BD-50",
+            "MPEG-2",
+            "1080p",
+        ),
     ]
-    for index, (size, video, release_format, codec, resolution) in enumerate(scenarios):
-        meta = _match_meta(tmp_path, key=f"video-{index}", size=size, video=video)
+    for index, (size, video, release_format, codec, resolution) in enumerate(
+        scenarios
+    ):
+        meta = _match_meta(
+            tmp_path, key=f"video-{index}", size=size, video=video
+        )
         release = _match_release(
             f"Video {index}",
             release_format=release_format,
@@ -737,7 +1065,9 @@ def test_process_disc_size_codec_and_resolution_branches(tmp_path: Path, monkeyp
         assert result
 
 
-def test_process_atmos_partial_missing_audio_and_subtitle_branches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_process_atmos_partial_missing_audio_and_subtitle_branches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _identity_details(monkeypatch)
     atmos = [
         {
@@ -767,7 +1097,9 @@ def test_process_atmos_partial_missing_audio_and_subtitle_branches(tmp_path: Pat
             "bitrate": "128 kbps",
         },
     ]
-    meta = _match_meta(tmp_path, key="atmos", audio=atmos, subtitles=("English", "French"))
+    meta = _match_meta(
+        tmp_path, key="atmos", audio=atmos, subtitles=("English", "French")
+    )
     release = _match_release(
         "Atmos",
         audio=[
@@ -783,7 +1115,16 @@ def test_process_atmos_partial_missing_audio_and_subtitle_branches(tmp_path: Pat
     single_partial = _match_meta(
         tmp_path,
         key="single-partial",
-        audio=[{"language": "English", "codec": "DTS-HD MA", "channels": "5.1", "sample_rate": "", "bit_depth": "", "bitrate": ""}],
+        audio=[
+            {
+                "language": "English",
+                "codec": "DTS-HD MA",
+                "channels": "5.1",
+                "sample_rate": "",
+                "bit_depth": "",
+                "bitrate": "",
+            }
+        ],
     )
     partial = _match_release("Partial", audio=["English DTS-HD MA 2.0"])
     assert asyncio.run(bluray.process_all_releases([partial], single_partial))
@@ -791,9 +1132,20 @@ def test_process_atmos_partial_missing_audio_and_subtitle_branches(tmp_path: Pat
     single_missing = _match_meta(
         tmp_path,
         key="single-missing",
-        audio=[{"language": "English", "codec": "DTS-HD MA", "channels": "5.1", "sample_rate": "", "bit_depth": "", "bitrate": ""}],
+        audio=[
+            {
+                "language": "English",
+                "codec": "DTS-HD MA",
+                "channels": "5.1",
+                "sample_rate": "",
+                "bit_depth": "",
+                "bitrate": "",
+            }
+        ],
     )
-    missing = _match_release("Missing", audio=["French LPCM 2.0"], subtitles=[])
+    missing = _match_release(
+        "Missing", audio=["French LPCM 2.0"], subtitles=[]
+    )
     assert asyncio.run(bluray.process_all_releases([missing], single_missing))
 
     no_audio = _match_meta(tmp_path, key="no-audio", audio=[], subtitles=())
@@ -801,15 +1153,24 @@ def test_process_atmos_partial_missing_audio_and_subtitle_branches(tmp_path: Pat
     assert asyncio.run(bluray.process_all_releases([no_compare], no_audio))
 
 
-def test_process_multiple_close_interactive_error_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_process_multiple_close_interactive_error_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _identity_details(monkeypatch)
     first = _match_release("First", specs=False)
     second = _match_release("Second", specs=False)
 
     # Explicit skip and missing-specs warning.
     meta = _match_meta(tmp_path, key="close-skip", interactive=True)
-    monkeypatch.setattr(bluray.cli_ui, "ask_string", lambda *_args, **_kwargs: "n")
-    assert asyncio.run(bluray.process_all_releases([dict(first), dict(second)], meta)) == []
+    monkeypatch.setattr(
+        bluray.cli_ui, "ask_string", lambda *_args, **_kwargs: "n"
+    )
+    assert (
+        asyncio.run(
+            bluray.process_all_releases([dict(first), dict(second)], meta)
+        )
+        == []
+    )
 
     # Log-selection branch: invalid index, non-number, KeyboardInterrupt, then
     # valid release selection with a cover.
@@ -824,10 +1185,14 @@ def test_process_multiple_close_interactive_error_paths(tmp_path: Path, monkeypa
         return value
 
     monkeypatch.setattr(bluray.cli_ui, "ask_string", answer)
-    result = asyncio.run(bluray.process_all_releases([dict(first), dict(second)], meta))
+    result = asyncio.run(
+        bluray.process_all_releases([dict(first), dict(second)], meta)
+    )
     assert result and meta.release_url.endswith("Second")
 
-    cancel_meta = _match_meta(tmp_path, key="close-log-cancel", interactive=True)
+    cancel_meta = _match_meta(
+        tmp_path, key="close-log-cancel", interactive=True
+    )
     cancel_answers = iter(("p", KeyboardInterrupt()))
 
     def cancel_answer(*_args: object, **_kwargs: object) -> str:
@@ -837,11 +1202,15 @@ def test_process_multiple_close_interactive_error_paths(tmp_path: Path, monkeypa
         return value
 
     monkeypatch.setattr(bluray.cli_ui, "ask_string", cancel_answer)
-    assert asyncio.run(bluray.process_all_releases([dict(first), dict(second)], cancel_meta))
+    assert asyncio.run(
+        bluray.process_all_releases([dict(first), dict(second)], cancel_meta)
+    )
     assert cancel_meta.release_url == ""
 
 
-def test_process_single_and_best_only_unattended_and_interactive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_process_single_and_best_only_unattended_and_interactive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _identity_details(monkeypatch)
     imperfect = _match_release("Imperfect", release_format="BD-50", cover=True)
 
@@ -850,29 +1219,62 @@ def test_process_single_and_best_only_unattended_and_interactive(tmp_path: Path,
     assert high.release_url.endswith("Imperfect")
 
     low = _match_meta(tmp_path, key="single-low", single_score=101)
-    assert asyncio.run(bluray.process_all_releases([dict(imperfect)], low)) == []
+    assert (
+        asyncio.run(bluray.process_all_releases([dict(imperfect)], low)) == []
+    )
 
     # Two releases more than 40 points apart enter the isolated-best branch.
     best = _match_release("Best", cover=True)
-    bad = _match_release("Bad", release_format="BD-100", codec="MPEG2", resolution="480p", audio=[], subtitles=[])
-    for suffix, answer, expected in (("yes", True, True), ("no", False, False)):
+    bad = _match_release(
+        "Bad",
+        release_format="BD-100",
+        codec="MPEG2",
+        resolution="480p",
+        audio=[],
+        subtitles=[],
+    )
+    for suffix, answer, expected in (
+        ("yes", True, True),
+        ("no", False, False),
+    ):
         meta = _match_meta(tmp_path, key=f"best-{suffix}", interactive=True)
-        monkeypatch.setattr(bluray.cli_ui, "ask_yes_no", lambda *_args, value=answer, **_kwargs: value)
-        result = asyncio.run(bluray.process_all_releases([dict(best), dict(bad)], meta))
+        monkeypatch.setattr(
+            bluray.cli_ui,
+            "ask_yes_no",
+            lambda *_args, value=answer, **_kwargs: value,
+        )
+        result = asyncio.run(
+            bluray.process_all_releases([dict(best), dict(bad)], meta)
+        )
         assert bool(result) is expected
 
     meta = _match_meta(tmp_path, key="best-cancel", interactive=True)
-    monkeypatch.setattr(bluray.cli_ui, "ask_yes_no", lambda *_args, **_kwargs: (_ for _ in ()).throw(KeyboardInterrupt()))
-    assert asyncio.run(bluray.process_all_releases([dict(best), dict(bad)], meta))
+    monkeypatch.setattr(
+        bluray.cli_ui,
+        "ask_yes_no",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(KeyboardInterrupt()),
+    )
+    assert asyncio.run(
+        bluray.process_all_releases([dict(best), dict(bad)], meta)
+    )
 
     unattended = _match_meta(tmp_path, key="best-unattended", score=-1000)
-    assert asyncio.run(bluray.process_all_releases([dict(best), dict(bad)], unattended))
+    assert asyncio.run(
+        bluray.process_all_releases([dict(best), dict(bad)], unattended)
+    )
     assert unattended.release_url.endswith("Best")
     rejected = _match_meta(tmp_path, key="best-rejected", score=101)
-    assert asyncio.run(bluray.process_all_releases([dict(best), dict(bad)], rejected)) == []
+    assert (
+        asyncio.run(
+            bluray.process_all_releases([dict(best), dict(bad)], rejected)
+        )
+        == []
+    )
 
 
-def test_process_multiple_close_unattended_cover(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_process_multiple_close_unattended_cover(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _identity_details(monkeypatch)
     one = _match_release("One", release_format="BD", cover=True)
     two = _match_release("Two", release_format="BD", cover=True)
@@ -881,16 +1283,24 @@ def test_process_multiple_close_unattended_cover(tmp_path: Path, monkeypatch: py
     assert meta.bluray_cover_urls
 
 
-def test_process_remaining_video_and_keyboard_cancellation_branches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_process_remaining_video_and_keyboard_cancellation_branches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _identity_details(monkeypatch)
 
     no_video = _match_meta(tmp_path, key="no-video-specs")
     no_video.discs[0]["bdinfo"]["video"] = []
-    assert asyncio.run(bluray.process_all_releases([_match_release("No Video")], no_video))
+    assert asyncio.run(
+        bluray.process_all_releases([_match_release("No Video")], no_video)
+    )
 
     single = _match_meta(tmp_path, key="single-keyboard", interactive=True)
     imperfect = _match_release("Keyboard", release_format="BD-50")
-    monkeypatch.setattr(bluray.cli_ui, "ask_yes_no", lambda *_args, **_kwargs: (_ for _ in ()).throw(KeyboardInterrupt()))
+    monkeypatch.setattr(
+        bluray.cli_ui,
+        "ask_yes_no",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(KeyboardInterrupt()),
+    )
     assert asyncio.run(bluray.process_all_releases([imperfect], single))
     assert single.release_url == ""
 
@@ -910,6 +1320,10 @@ def test_process_remaining_video_and_keyboard_cancellation_branches(tmp_path: Pa
     first = _match_release("First", specs=False)
     second = _match_release("Second", specs=False)
     multiple = _match_meta(tmp_path, key="multiple-keyboard", interactive=True)
-    monkeypatch.setattr(bluray.cli_ui, "ask_string", lambda *_args, **_kwargs: InterruptSelection())
+    monkeypatch.setattr(
+        bluray.cli_ui,
+        "ask_string",
+        lambda *_args, **_kwargs: InterruptSelection(),
+    )
     assert asyncio.run(bluray.process_all_releases([first, second], multiple))
     assert multiple.release_url == ""

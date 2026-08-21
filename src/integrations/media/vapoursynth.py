@@ -32,7 +32,9 @@ def custom_frame_info(clip: Any, _text: str) -> Any:
         return core.text.Text(clip, info)
 
     # Apply frame_props to each frame
-    return core.std.FrameEval(clip, partial(frame_props, clip=clip), prop_src=clip)
+    return core.std.FrameEval(
+        clip, partial(frame_props, clip=clip), prop_src=clip
+    )
 
 
 def optimize_images(image: str | Path, config: dict[str, Any]) -> None:
@@ -57,11 +59,19 @@ def optimize_images(image: str | Path, config: dict[str, Any]) -> None:
             else:
                 oxipng.optimize(image, level=3)
         except Exception as e:
-            logger.info(f"Image optimization failed: {e}", extra={"markup": False})
+            logger.info(
+                f"Image optimization failed: {e}", extra={"markup": False}
+            )
     return
 
 
-def vs_screengn(source: str, encode: str | None = None, num: int = 5, dir: str = ".", config: dict[str, Any] | None = None) -> None:
+def vs_screengn(
+    source: str,
+    encode: str | None = None,
+    num: int = 5,
+    dir: str = ".",
+    config: dict[str, Any] | None = None,
+) -> None:
     if config is None:
         config = {"optimize_images": True}  # Default configuration
 
@@ -72,7 +82,10 @@ def vs_screengn(source: str, encode: str | None = None, num: int = 5, dir: str =
         with Path(screens_file).open() as txt:
             frames: list[int] = [int(line.strip()) for line in txt.readlines()]
         if len(frames) == num and all(f >= 0 for f in frames):
-            logger.info(f"Using existing frame numbers from {screens_file}", extra={"markup": False})
+            logger.info(
+                f"Using existing frame numbers from {screens_file}",
+                extra={"markup": False},
+            )
         else:
             frames = []
     else:
@@ -80,27 +93,44 @@ def vs_screengn(source: str, encode: str | None = None, num: int = 5, dir: str =
 
     # Indexing the source using ffms2 or lsmash for m2ts files
     if source.endswith(".m2ts"):
-        logger.info(f"Indexing {source} with LSMASHSource... This may take a while.", extra={"markup": False})
+        logger.info(
+            f"Indexing {source} with LSMASHSource... This may take a while.",
+            extra={"markup": False},
+        )
         src: Any = core.lsmas.LWLibavSource(source)
     else:
         cachefile = f"{Path(dir).resolve()!s}{os.sep}ffms2.ffms2"
         if not Path(cachefile).exists():
-            logger.info(f"Indexing {source} with ffms2... This may take a while.", extra={"markup": False})
+            logger.info(
+                f"Indexing {source} with ffms2... This may take a while.",
+                extra={"markup": False},
+            )
         try:
             src = core.ffms2.Source(source, cachefile=cachefile)
         except Exception as e:
-            logger.info(f"Error during indexing: {e!s}", extra={"markup": False})
+            logger.info(
+                f"Error during indexing: {e!s}", extra={"markup": False}
+            )
             raise
         if Path(cachefile).exists():
-            logger.info(f"Indexing completed and cached at: {cachefile}", extra={"markup": False})
+            logger.info(
+                f"Indexing completed and cached at: {cachefile}",
+                extra={"markup": False},
+            )
         else:
-            logger.info("Indexing did not complete as expected.", extra={"markup": False})
+            logger.info(
+                "Indexing did not complete as expected.",
+                extra={"markup": False},
+            )
 
     # Check if encode is provided
     enc: Any | None = None
     if encode:
         if not Path(encode).exists():
-            logger.info(f"Encode file {encode} not found. Skipping encode processing.", extra={"markup": False})
+            logger.info(
+                f"Encode file {encode} not found. Skipping encode processing.",
+                extra={"markup": False},
+            )
             encode = None
         else:
             enc = core.ffms2.Source(encode)
@@ -119,13 +149,25 @@ def vs_screengn(source: str, encode: str | None = None, num: int = 5, dir: str =
         # Write the frame numbers to a file for reuse
         with Path(screens_file).open("w") as txt:
             txt.writelines(frame_lines)
-        logger.info(f"Generated and saved new frame numbers to {screens_file}", extra={"markup": False})
+        logger.info(
+            f"Generated and saved new frame numbers to {screens_file}",
+            extra={"markup": False},
+        )
 
     # If an encode exists and is provided, crop and resize
-    if encode and enc is not None and (src.width != enc.width or src.height != enc.height):
+    if (
+        encode
+        and enc is not None
+        and (src.width != enc.width or src.height != enc.height)
+    ):
         ref: Any = zresize(enc, preset=src.height)
-        crop: list[float] = [(src.width - ref.width) / 2, (src.height - ref.height) / 2]
-        src = src.std.Crop(left=crop[0], right=crop[0], top=crop[1], bottom=crop[1])
+        crop: list[float] = [
+            (src.width - ref.width) / 2,
+            (src.height - ref.height) / 2,
+        ]
+        src = src.std.Crop(
+            left=crop[0], right=crop[0], top=crop[1], bottom=crop[1]
+        )
         width: int | None
         height: int | None
         if enc.width / enc.height > 16 / 9:
@@ -141,9 +183,13 @@ def vs_screengn(source: str, encode: str | None = None, num: int = 5, dir: str =
     frame: Any = src.get_frame(0)
     if frame.props["_Primaries"] == 9:
         tonemapped = True
-        src = DynamicTonemap(src, src_fmt=False, libplacebo=True, adjust_gamma=True)
+        src = DynamicTonemap(
+            src, src_fmt=False, libplacebo=True, adjust_gamma=True
+        )
         if encode and enc is not None:
-            enc = DynamicTonemap(enc, src_fmt=False, libplacebo=True, adjust_gamma=True)
+            enc = DynamicTonemap(
+                enc, src_fmt=False, libplacebo=True, adjust_gamma=True
+            )
 
     # Use the custom FrameInfo function
     if tonemapped:

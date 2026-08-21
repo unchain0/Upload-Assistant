@@ -13,11 +13,14 @@ from bs4 import BeautifulSoup
 from rich.markup import escape
 from unidecode import unidecode
 
-from src.domain_models.processing import *  # noqa F403
+from src.domain_models.processing import LoginError, UploadError
 from src.domain_models.release import Meta
 from src.domain_models.release_description import base_description
 from src.integrations.filesystem.temp_paths import screenshots_dir
-from src.integrations.observability.runtime_support import logger, prompt_in_thread
+from src.integrations.observability.runtime_support import (
+    logger,
+    prompt_in_thread,
+)
 from src.integrations.security.redaction import Redaction
 from src.integrations.trackers.common import Common
 from src.integrations.trackers.cookie_auth import CookieValidator
@@ -45,9 +48,15 @@ class FileList:
         self.username: str = str(tracker_cfg.get("username", "")).strip()
         self.password: str = str(tracker_cfg.get("password", "")).strip()
         fltools_raw = tracker_cfg.get("fltools", {})
-        self.fltools: dict[str, Any] = cast(dict[str, Any], fltools_raw) if isinstance(fltools_raw, dict) else {}
+        self.fltools: dict[str, Any] = (
+            cast(dict[str, Any], fltools_raw)
+            if isinstance(fltools_raw, dict)
+            else {}
+        )
         uploader_name_raw = tracker_cfg.get("uploader_name")
-        self.uploader_name: str | None = str(uploader_name_raw) if uploader_name_raw else None
+        self.uploader_name: str | None = (
+            str(uploader_name_raw) if uploader_name_raw else None
+        )
 
         self.cookie_validator = CookieValidator(config)
 
@@ -121,10 +130,23 @@ class FileList:
         if "Atmos" in audio and "Atmos" not in meta.basename_no_ext:
             fl_name = fl_name.replace("Atmos", "")
 
-        fl_name = fl_name.replace("BluRay REMUX", "Remux").replace("BluRay Remux", "Remux").replace("Bluray Remux", "Remux")
+        fl_name = (
+            fl_name.replace("BluRay REMUX", "Remux")
+            .replace("BluRay Remux", "Remux")
+            .replace("Bluray Remux", "Remux")
+        )
         fl_name = fl_name.replace("PQ10", "HDR").replace("HDR10+", "HDR")
-        fl_name = fl_name.replace("DoVi HDR HEVC", "HEVC DoVi HDR").replace("HDR HEVC", "HEVC HDR").replace("DoVi HEVC", "HEVC DoVi")
-        fl_name = fl_name.replace("DTS7.1", "DTS").replace("DTS5.1", "DTS").replace("DTS2.0", "DTS").replace("DTS1.0", "DTS")
+        fl_name = (
+            fl_name.replace("DoVi HDR HEVC", "HEVC DoVi HDR")
+            .replace("HDR HEVC", "HEVC HDR")
+            .replace("DoVi HEVC", "HEVC DoVi")
+        )
+        fl_name = (
+            fl_name.replace("DTS7.1", "DTS")
+            .replace("DTS5.1", "DTS")
+            .replace("DTS2.0", "DTS")
+            .replace("DTS1.0", "DTS")
+        )
         fl_name = fl_name.replace("Dubbed", "").replace("Dual-Audio", "")
         fl_name = " ".join(fl_name.split())
         fl_name = re.sub(r"[^0-9a-zA-ZÀ-ÿ. &+'\-\[\]]+", "", fl_name)
@@ -149,7 +171,9 @@ class FileList:
                             if len(line_fields) >= 7:
                                 cookies[line_fields[5]] = line_fields[6]
             except Exception as e:
-                logger.error(f"{self.tracker}: [red]Error parsing {self.tracker} Netscape cookie file: {escape(str(e))}[/red]")
+                logger.error(
+                    f"{self.tracker}: [red]Error parsing {self.tracker} Netscape cookie file: {escape(str(e))}[/red]"
+                )
             return cookies
 
         # If it's a pickle file (ends with .pkl or .pickle)
@@ -161,16 +185,27 @@ class FileList:
                     session_cookies = pickle.load(f)  # noqa: S301
                 # Save it as JSON with same name but .json extension (standard migration)
                 json_path = path.with_suffix(".json")
-                self.cookie_validator._save_cookies_secure(session_cookies, str(json_path))  # pyright: ignore[reportPrivateUsage]
-                return {cookie.name: cookie.value for cookie in session_cookies}
+                self.cookie_validator._save_cookies_secure(
+                    session_cookies, str(json_path)
+                )  # pyright: ignore[reportPrivateUsage]
+                return {
+                    cookie.name: cookie.value for cookie in session_cookies
+                }
             except Exception as e:
-                logger.error(f"{self.tracker}: [red]Failed to migrate legacy cookies from pickle: {e}[/red]")
+                logger.error(
+                    f"{self.tracker}: [red]Failed to migrate legacy cookies from pickle: {e}[/red]"
+                )
                 return {}
 
         # Default to loading as JSON
         try:
-            raw_cookies = self.cookie_validator._load_cookies_dict_secure(str(path))  # pyright: ignore[reportPrivateUsage]
-            return {name: str(data.get("value", "")) for name, data in raw_cookies.items()}
+            raw_cookies = self.cookie_validator._load_cookies_dict_secure(
+                str(path)
+            )  # pyright: ignore[reportPrivateUsage]
+            return {
+                name: str(data.get("value", ""))
+                for name, data in raw_cookies.items()
+            }
         except Exception:
             # Maybe it's a raw JSON dict of {name: value} or {name: {"value": val}}?
             try:
@@ -179,16 +214,26 @@ class FileList:
                 if isinstance(data, dict):
                     if data:
                         first_val = next(iter(data.values()))
-                        if isinstance(first_val, dict) and "value" in first_val:
-                            return {name: str(item.get("value", "")) for name, item in data.items()}
+                        if (
+                            isinstance(first_val, dict)
+                            and "value" in first_val
+                        ):
+                            return {
+                                name: str(item.get("value", ""))
+                                for name, item in data.items()
+                            }
                     return {name: str(val) for name, val in data.items()}
             except Exception as e:
-                logger.error(f"{self.tracker}: [yellow]Warning: Error parsing cookie file: {e}[/yellow]")
+                logger.error(
+                    f"{self.tracker}: [yellow]Warning: Error parsing cookie file: {e}[/yellow]"
+                )
             return {}
 
     async def upload(self, meta: Meta) -> bool:
         common = Common(config=self.config)
-        await common.create_torrent_for_upload(meta, self.tracker, self.source_flag)
+        await common.create_torrent_for_upload(
+            meta, self.tracker, self.source_flag
+        )
         await self.edit_desc(meta)
         fl_name = await self.get_name(meta)
         cat_id = await self.get_category_id(meta)
@@ -197,9 +242,13 @@ class FileList:
         # Confirm the correct naming order for FILELIST
         cli_ui.info(f"Filelist name: {fl_name}")
         if meta.unattended is False:
-            fl_confirm = await prompt_in_thread(cli_ui.ask_yes_no, "Correct?", default=False)
+            fl_confirm = await prompt_in_thread(
+                cli_ui.ask_yes_no, "Correct?", default=False
+            )
             if fl_confirm is not True:
-                fl_name_manually = await prompt_in_thread(cli_ui.ask_string, "Please enter a proper name", default="")
+                fl_name_manually = await prompt_in_thread(
+                    cli_ui.ask_string, "Please enter a proper name", default=""
+                )
                 if fl_name_manually == "":
                     logger.info(f"{self.tracker}: No proper name given")
                     logger.info(f"{self.tracker}: Aborting...")
@@ -208,23 +257,42 @@ class FileList:
 
         # Torrent File Naming
         # Note: Don't Edit .torrent filename after creation, SubsPlease anime releases (because of their weird naming) are an exception
-        torrent_file_name = str(fl_name) if meta.anime is True and meta.tag == "-SubsPlease" else meta.basename_no_ext
+        torrent_file_name = (
+            str(fl_name)
+            if meta.anime is True and meta.tag == "-SubsPlease"
+            else meta.basename_no_ext
+        )
 
         # Download new .torrent from site
         desc_path = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{self.tracker}]DESCRIPTION.txt"
-        async with aiofiles.open(desc_path, newline="", encoding="utf-8") as desc_file:
+        async with aiofiles.open(
+            desc_path, newline="", encoding="utf-8"
+        ) as desc_file:
             fl_desc = await desc_file.read()
         torrent_path = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{self.tracker}].torrent"
         mi_path = (
-            f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/BD_SUMMARY_00.txt" if meta.bdinfo else f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/MEDIAINFO_CLEANPATH.txt"
+            f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/BD_SUMMARY_00.txt"
+            if meta.bdinfo
+            else f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/MEDIAINFO_CLEANPATH.txt"
         )
         async with aiofiles.open(mi_path, encoding="utf-8") as mi_file:
             mi_dump = await mi_file.read()
         async with aiofiles.open(torrent_path, "rb") as torrent_file:
             torrent_bytes = await torrent_file.read()
         torrent_file_name = unidecode(torrent_file_name)
-        files = {"file": (f"{torrent_file_name}.torrent", torrent_bytes, "application/x-bittorent")}
-        data = {"name": fl_name, "type": cat_id, "descr": fl_desc.strip(), "nfo": mi_dump}
+        files = {
+            "file": (
+                f"{torrent_file_name}.torrent",
+                torrent_bytes,
+                "application/x-bittorent",
+            )
+        }
+        data = {
+            "name": fl_name,
+            "type": cat_id,
+            "descr": fl_desc.strip(),
+            "nfo": mi_dump,
+        }
 
         imdb_id_value = str(meta.imdb_id if meta.imdb_id is not None else "0")
         if imdb_id_value.isdigit() and int(imdb_id_value) != 0:
@@ -232,7 +300,9 @@ class FileList:
             imdb_info = meta.imdb_info
             imdb_info_dict = imdb_info if isinstance(imdb_info, dict) else {}
             data["description"] = imdb_info_dict.get("genres", "")
-        if self.uploader_name not in ("", None) and not self._is_true(self.config["TRACKERS"][self.tracker].get("anon", "False")):
+        if self.uploader_name not in ("", None) and not self._is_true(
+            self.config["TRACKERS"][self.tracker].get("anon", "False")
+        ):
             data["epenis"] = self.uploader_name
         if has_ro_audio:
             data["materialro"] = "on"
@@ -248,27 +318,44 @@ class FileList:
         if meta.debug:
             logger.debug(url)
             logger.debug(Redaction.redact_private_info(data))
-            meta.tracker_status[self.tracker]["status_message"] = "Debug mode enabled, not uploading."
-            await common.create_torrent_for_upload(meta, f"{self.tracker}" + "_DEBUG", f"{self.tracker}" + "_DEBUG", announce_url="https://fake.tracker")
+            meta.tracker_status[self.tracker]["status_message"] = (
+                "Debug mode enabled, not uploading."
+            )
+            await common.create_torrent_for_upload(
+                meta,
+                f"{self.tracker}" + "_DEBUG",
+                f"{self.tracker}" + "_DEBUG",
+                announce_url="https://fake.tracker",
+            )
             return True  # Debug mode - simulated success
         from src.integrations.trackers.cookie_auth import find_cookie_file
 
         cookiefile = find_cookie_file(meta.base_dir, self.tracker, self.config)
         cookies = self._load_cookie_dict(cookiefile)
-        async with httpx.AsyncClient(cookies=cookies, timeout=60.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(
+            cookies=cookies, timeout=60.0, follow_redirects=True
+        ) as client:
             up = await client.post(url=url, data=data, files=files)
 
         # Match url to verify successful upload
-        match = re.match(rf".*?{re.escape(self.base_url.replace('https://', ''))}/details\.php\?id=(\d+)&uploaded=(\d+)", str(up.url))
+        match = re.match(
+            rf".*?{re.escape(self.base_url.replace('https://', ''))}/details\.php\?id=(\d+)&uploaded=(\d+)",
+            str(up.url),
+        )
         if match:
-            meta.tracker_status[self.tracker]["status_message"] = match.group(0)
+            meta.tracker_status[self.tracker]["status_message"] = match.group(
+                0
+            )
             torrent_id = match.group(1)
             await self.download_new_torrent(cookies, torrent_id, torrent_path)
             return True
         logger.info(data)
         logger.info(f"{self.tracker}: \n\n")
         logger.info(up.text)
-        raise UploadError(f"Upload to FILELIST Failed: result URL {up.url} ({up.status_code}) was not expected", "red")  # noqa F405
+        raise UploadError(
+            f"Upload to FILELIST Failed: result URL {up.url} ({up.status_code}) was not expected",
+            "red",
+        )
 
     async def search_existing(self, meta: Meta) -> list[str]:
         dupes: list[str] = []
@@ -281,9 +368,17 @@ class FileList:
 
         imdb_id_value = str(meta.imdb_id if meta.imdb_id is not None else "0")
         if imdb_id_value.isdigit() and int(imdb_id_value) != 0:
-            params = {"search": meta.imdb, "cat": await self.get_category_id(meta), "searchin": "3"}
+            params = {
+                "search": meta.imdb,
+                "cat": await self.get_category_id(meta),
+                "searchin": "3",
+            }
         else:
-            params = {"search": meta.title, "cat": await self.get_category_id(meta), "searchin": "0"}
+            params = {
+                "search": meta.title,
+                "cat": await self.get_category_id(meta),
+                "searchin": "0",
+            }
 
         async with httpx.AsyncClient(cookies=cookies, timeout=10.0) as client:
             response = await client.get(search_url, params=params)
@@ -293,7 +388,12 @@ class FileList:
             for each in find:
                 href_attr = each.get("href")
                 title_attr = each.get("title")
-                if isinstance(href_attr, str) and href_attr.startswith("details.php?id=") and "&" not in href_attr and isinstance(title_attr, str):
+                if (
+                    isinstance(href_attr, str)
+                    and href_attr.startswith("details.php?id=")
+                    and "&" not in href_attr
+                    and isinstance(title_attr, str)
+                ):
                     dupes.append(title_attr)
             await asyncio.sleep(0.5)
 
@@ -308,9 +408,15 @@ class FileList:
             await self.login(cookiefile)
         vcookie = await self.validate_cookies(meta, cookiefile)
         if vcookie is not True:
-            logger.error(f"{self.tracker}: [red]Failed to validate cookies. Please confirm that the site is up and your passkey is valid.")
-            if not meta.unattended or (meta.unattended and meta.unattended_confirm):
-                recreate = await prompt_in_thread(cli_ui.ask_yes_no, "Log in again and create new session?")
+            logger.error(
+                f"{self.tracker}: [red]Failed to validate cookies. Please confirm that the site is up and your passkey is valid."
+            )
+            if not meta.unattended or (
+                meta.unattended and meta.unattended_confirm
+            ):
+                recreate = await prompt_in_thread(
+                    cli_ui.ask_yes_no, "Log in again and create new session?"
+                )
                 if recreate is True:
                     if Path(cookiefile).exists():
                         Path(cookiefile).unlink()
@@ -326,23 +432,31 @@ class FileList:
         cookiefile = find_cookie_file(meta.base_dir, self.tracker, self.config)
         cookies = self._load_cookie_dict(cookiefile)
         if cookies:
-            async with httpx.AsyncClient(cookies=cookies, timeout=30.0) as client:
+            async with httpx.AsyncClient(
+                cookies=cookies, timeout=30.0
+            ) as client:
                 resp = await client.get(url=url)
             logger.debug(resp.url)
             return resp.text.find("Logout") != -1
         return False
 
     async def login(self, cookiefile: str) -> None:
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(
+            timeout=30.0, follow_redirects=True
+        ) as client:
             r = await client.get(f"{self.base_url}/login.php")
             await asyncio.sleep(0.5)
             soup = BeautifulSoup(r.text, "html.parser")
             validator_input = soup.find("input", {"name": "validator"})
             if validator_input is None:
-                raise LoginError("Unable to locate validator input on FILELIST login page.")  # noqa: F405
+                raise LoginError(
+                    "Unable to locate validator input on FILELIST login page."
+                )
             validator_value = validator_input.get("value")
             if not isinstance(validator_value, str):
-                raise LoginError("Validator input missing value attribute on FILELIST login page.")  # noqa: F405
+                raise LoginError(
+                    "Validator input missing value attribute on FILELIST login page."
+                )
             validator = validator_value
             data = {
                 "validator": validator,
@@ -354,14 +468,22 @@ class FileList:
             index = f"{self.base_url}/index.php"
             response = await client.get(index)
             if response.text.find("Logout") != -1:
-                logger.info(f"{self.tracker}: [green]Successfully logged into {self.tracker}")
-                self.cookie_validator._save_cookies_secure(client.cookies.jar, cookiefile)  # pyright: ignore[reportPrivateUsage]
+                logger.info(
+                    f"{self.tracker}: [green]Successfully logged into {self.tracker}"
+                )
+                self.cookie_validator._save_cookies_secure(
+                    client.cookies.jar, cookiefile
+                )  # pyright: ignore[reportPrivateUsage]
             else:
-                logger.info(f"{self.tracker}: [bold red]Something went wrong while trying to log into {self.tracker}")
+                logger.info(
+                    f"{self.tracker}: [bold red]Something went wrong while trying to log into {self.tracker}"
+                )
                 logger.info(response.url)
         return
 
-    async def download_new_torrent(self, cookies: dict[str, str], id: str, torrent_path: str) -> None:
+    async def download_new_torrent(
+        self, cookies: dict[str, str], id: str, torrent_path: str
+    ) -> None:
         download_url = f"{self.base_url}/download.php?id={id}"
         async with httpx.AsyncClient(cookies=cookies, timeout=30.0) as client:
             r = await client.get(url=download_url)
@@ -369,13 +491,20 @@ class FileList:
             async with aiofiles.open(torrent_path, "wb") as tor:
                 await tor.write(r.content)
         else:
-            logger.info(f"{self.tracker}: [red]There was an issue downloading the new .torrent from {self.tracker}")
+            logger.info(
+                f"{self.tracker}: [red]There was an issue downloading the new .torrent from {self.tracker}"
+            )
             logger.info(r.text)
         return
 
     async def edit_desc(self, meta: Meta) -> None:
         base = base_description(meta)
-        async with aiofiles.open(f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{self.tracker}]DESCRIPTION.txt", "w", newline="", encoding="utf-8") as descfile:
+        async with aiofiles.open(
+            f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{self.tracker}]DESCRIPTION.txt",
+            "w",
+            newline="",
+            encoding="utf-8",
+        ) as descfile:
             from src.integrations.trackers.bbcode_formatting import BBCODE
 
             bbcode = BBCODE()
@@ -389,48 +518,102 @@ class FileList:
             if meta.is_disc != "BDMV":
                 url = "https://up.img4k.net/api/description"
                 mediainfo_path = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/MEDIAINFO_CLEANPATH.txt"
-                async with aiofiles.open(mediainfo_path, encoding="utf-8") as mi_file:
+                async with aiofiles.open(
+                    mediainfo_path, encoding="utf-8"
+                ) as mi_file:
                     data = {
                         "mediainfo": await mi_file.read(),
                     }
                 if meta.imdb_id:
                     data["imdbURL"] = f"tt{meta.imdb_id}"
                 screen_dir = screenshots_dir(meta.base_dir, meta.uuid)
-                screen_glob = [f.name for f in screen_dir.glob(f"{glob.escape(meta.filename)}-*.png")]
+                screen_glob = [
+                    f.name
+                    for f in screen_dir.glob(
+                        f"{glob.escape(meta.filename)}-*.png"
+                    )
+                ]
                 files = []
                 for screen in screen_glob:
-                    async with aiofiles.open(screen_dir / screen, "rb") as image_file:
+                    async with aiofiles.open(
+                        screen_dir / screen, "rb"
+                    ) as image_file:
                         image_bytes = await image_file.read()
-                    files.append(("images", (Path(screen).name, image_bytes, "image/png")))
+                    files.append(
+                        (
+                            "images",
+                            (Path(screen).name, image_bytes, "image/png"),
+                        )
+                    )
                 async with httpx.AsyncClient(timeout=30.0) as client:
-                    response = await client.post(url, data=data, files=files, auth=(self.fltools["user"], self.fltools["pass"]))
+                    response = await client.post(
+                        url,
+                        data=data,
+                        files=files,
+                        auth=(self.fltools["user"], self.fltools["pass"]),
+                    )
                 final_desc = response.text.replace("\r\n", "\n")
             else:
                 # BD Description Generator
                 bd_summary_path = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/BD_SUMMARY_EXT.txt"
-                async with aiofiles.open(bd_summary_path, encoding="utf-8") as bd_file:
+                async with aiofiles.open(
+                    bd_summary_path, encoding="utf-8"
+                ) as bd_file:
                     final_desc = await bd_file.read()
-                if final_desc.strip() != "":  # Use BD_SUMMARY_EXT and bbcode format it
-                    final_desc = final_desc.replace("[/pre][/quote]", f"[/pre][/quote]\n\n{desc}\n", 1)
+                if (
+                    final_desc.strip() != ""
+                ):  # Use BD_SUMMARY_EXT and bbcode format it
+                    final_desc = final_desc.replace(
+                        "[/pre][/quote]", f"[/pre][/quote]\n\n{desc}\n", 1
+                    )
                     final_desc = (
-                        final_desc.replace("DISC INFO:", "[pre][quote=BD_Info][b][color=#FF0000]DISC INFO:[/color][/b]")
-                        .replace("PLAYLIST REPORT:", "[b][color=#FF0000]PLAYLIST REPORT:[/color][/b]")
-                        .replace("VIDEO:", "[b][color=#FF0000]VIDEO:[/color][/b]")
-                        .replace("AUDIO:", "[b][color=#FF0000]AUDIO:[/color][/b]")
-                        .replace("SUBTITLES:", "[b][color=#FF0000]SUBTITLES:[/color][/b]")
+                        final_desc.replace(
+                            "DISC INFO:",
+                            "[pre][quote=BD_Info][b][color=#FF0000]DISC INFO:[/color][/b]",
+                        )
+                        .replace(
+                            "PLAYLIST REPORT:",
+                            "[b][color=#FF0000]PLAYLIST REPORT:[/color][/b]",
+                        )
+                        .replace(
+                            "VIDEO:", "[b][color=#FF0000]VIDEO:[/color][/b]"
+                        )
+                        .replace(
+                            "AUDIO:", "[b][color=#FF0000]AUDIO:[/color][/b]"
+                        )
+                        .replace(
+                            "SUBTITLES:",
+                            "[b][color=#FF0000]SUBTITLES:[/color][/b]",
+                        )
                     )
                     final_desc += "[/pre][/quote]\n"  # Closed bbcode tags
                     # Upload screens and append to the end of the description
                     url = "https://up.img4k.net/api/description"
                     screen_dir = screenshots_dir(meta.base_dir, meta.uuid)
-                    screen_glob = [f.name for f in screen_dir.glob(f"{glob.escape(meta.filename)}-*.png")]
+                    screen_glob = [
+                        f.name
+                        for f in screen_dir.glob(
+                            f"{glob.escape(meta.filename)}-*.png"
+                        )
+                    ]
                     files = []
                     for screen in screen_glob:
-                        async with aiofiles.open(screen_dir / screen, "rb") as image_file:
+                        async with aiofiles.open(
+                            screen_dir / screen, "rb"
+                        ) as image_file:
                             image_bytes = await image_file.read()
-                        files.append(("images", (Path(screen).name, image_bytes, "image/png")))
+                        files.append(
+                            (
+                                "images",
+                                (Path(screen).name, image_bytes, "image/png"),
+                            )
+                        )
                     async with httpx.AsyncClient(timeout=30.0) as client:
-                        response = await client.post(url, files=files, auth=(self.fltools["user"], self.fltools["pass"]))
+                        response = await client.post(
+                            url,
+                            files=files,
+                            auth=(self.fltools["user"], self.fltools["pass"]),
+                        )
                     final_desc += response.text.replace("\r\n", "\n")
             await descfile.write(final_desc)
 
@@ -453,9 +636,15 @@ class FileList:
                             if not isinstance(track, dict):
                                 continue
                             track_dict = cast(dict[str, Any], track)
-                            if track_dict.get("@type") == "Text" and track_dict.get("Language") == "ro":
+                            if (
+                                track_dict.get("@type") == "Text"
+                                and track_dict.get("Language") == "ro"
+                            ):
                                 has_ro_sub = True
-                            if track_dict.get("@type") == "Audio" and track_dict.get("Audio") == "ro":
+                            if (
+                                track_dict.get("@type") == "Audio"
+                                and track_dict.get("Audio") == "ro"
+                            ):
                                 has_ro_audio = True
         else:
             bdinfo = meta.bdinfo
@@ -469,7 +658,9 @@ class FileList:
                     audio_tracks_list = audio_tracks
                     for audio_track in audio_tracks_list:
                         if isinstance(audio_track, dict):
-                            audio_track_dict = cast(dict[str, Any], audio_track)
+                            audio_track_dict = cast(
+                                dict[str, Any], audio_track
+                            )
                         else:
                             continue
                         if audio_track_dict.get("language") == "Romanian":

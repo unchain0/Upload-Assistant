@@ -32,8 +32,15 @@ def is_public_http_url(value: str | None) -> bool:
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         return False
     try:
-        addresses = {result[4][0] for result in socket.getaddrinfo(parsed.hostname, None, type=socket.SOCK_STREAM)}
-        return bool(addresses) and all(ipaddress.ip_address(address).is_global for address in addresses)
+        addresses = {
+            result[4][0]
+            for result in socket.getaddrinfo(
+                parsed.hostname, None, type=socket.SOCK_STREAM
+            )
+        }
+        return bool(addresses) and all(
+            ipaddress.ip_address(address).is_global for address in addresses
+        )
     except OSError, ValueError:
         return False
 
@@ -47,11 +54,22 @@ def is_valid_image_bytes(image_bytes: bytes) -> bool:
         with warnings.catch_warnings():
             warnings.simplefilter("error", Image.DecompressionBombWarning)
             with Image.open(BytesIO(image_bytes)) as image:
-                if image.format not in _SUPPORTED_COVER_FORMATS or image.width <= 0 or image.height <= 0 or image.width * image.height > MAX_ARTWORK_PIXELS:
+                if (
+                    image.format not in _SUPPORTED_COVER_FORMATS
+                    or image.width <= 0
+                    or image.height <= 0
+                    or image.width * image.height > MAX_ARTWORK_PIXELS
+                ):
                     return False
                 image.verify()
         return True
-    except OSError, SyntaxError, ValueError, Image.DecompressionBombError, Image.DecompressionBombWarning:
+    except (
+        OSError,
+        SyntaxError,
+        ValueError,
+        Image.DecompressionBombError,
+        Image.DecompressionBombWarning,
+    ):
         return False
 
 
@@ -83,7 +101,10 @@ def _find_local_artwork_sources(media_path: str) -> dict[str, Path]:
     if not directory.is_dir():
         return {}
 
-    candidates: dict[str, list[tuple[tuple[int, int, str], Path]]] = {"poster": [], "banner": []}
+    candidates: dict[str, list[tuple[tuple[int, int, str], Path]]] = {
+        "poster": [],
+        "banner": [],
+    }
     for candidate in directory.iterdir():
         # Filter by suffix before opening anything: this runs over every file
         # sitting next to the media, so without it a release stored beside other
@@ -98,24 +119,58 @@ def _find_local_artwork_sources(media_path: str) -> dict[str, Path]:
         words = set(re.findall(r"[a-z0-9]+", candidate.stem.casefold()))
         is_banner = any(keyword in words for keyword in _BANNER_KEYWORDS)
         if is_banner:
-            priority = min(_BANNER_KEYWORDS.index(keyword) for keyword in words if keyword in _BANNER_KEYWORDS)
-            candidates["banner"].append(((priority, int(candidate.stem.casefold() not in _BANNER_KEYWORDS), candidate.name.casefold()), candidate))
+            priority = min(
+                _BANNER_KEYWORDS.index(keyword)
+                for keyword in words
+                if keyword in _BANNER_KEYWORDS
+            )
+            candidates["banner"].append(
+                (
+                    (
+                        priority,
+                        int(candidate.stem.casefold() not in _BANNER_KEYWORDS),
+                        candidate.name.casefold(),
+                    ),
+                    candidate,
+                )
+            )
             continue
         if any(keyword in words for keyword in _POSTER_KEYWORDS):
-            priority = min(_POSTER_KEYWORDS.index(keyword) for keyword in words if keyword in _POSTER_KEYWORDS)
-            candidates["poster"].append(((priority, int(candidate.stem.casefold() not in _POSTER_KEYWORDS), candidate.name.casefold()), candidate))
+            priority = min(
+                _POSTER_KEYWORDS.index(keyword)
+                for keyword in words
+                if keyword in _POSTER_KEYWORDS
+            )
+            candidates["poster"].append(
+                (
+                    (
+                        priority,
+                        int(candidate.stem.casefold() not in _POSTER_KEYWORDS),
+                        candidate.name.casefold(),
+                    ),
+                    candidate,
+                )
+            )
 
-    return {kind: min(matches, key=lambda item: item[0])[1] for kind, matches in candidates.items() if matches}
+    return {
+        kind: min(matches, key=lambda item: item[0])[1]
+        for kind, matches in candidates.items()
+        if matches
+    }
 
 
 async def _download_public_image(url: str) -> bytes | None:
     """Download an explicit image without following redirects to private hosts."""
     current_url = url
     try:
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=False, trust_env=False) as client:
+        async with httpx.AsyncClient(
+            timeout=30.0, follow_redirects=False, trust_env=False
+        ) as client:
             for _ in range(4):
                 if not is_public_http_url(current_url):
-                    logger.warning("[yellow]Artwork URL is not a public HTTP(S) URL; ignoring it.[/yellow]")
+                    logger.warning(
+                        "[yellow]Artwork URL is not a public HTTP(S) URL; ignoring it.[/yellow]"
+                    )
                     return None
                 async with client.stream("GET", current_url) as response:
                     if response.is_redirect:
@@ -125,17 +180,29 @@ async def _download_public_image(url: str) -> bytes | None:
                         current_url = str(response.url.join(location))
                         continue
                     content_length = response.headers.get("Content-Length")
-                    if response.status_code != 200 or (content_length and (not content_length.isdigit() or int(content_length) > MAX_ARTWORK_BYTES)):
-                        logger.warning("[yellow]Artwork URL did not return a supported image; ignoring it.[/yellow]")
+                    if response.status_code != 200 or (
+                        content_length
+                        and (
+                            not content_length.isdigit()
+                            or int(content_length) > MAX_ARTWORK_BYTES
+                        )
+                    ):
+                        logger.warning(
+                            "[yellow]Artwork URL did not return a supported image; ignoring it.[/yellow]"
+                        )
                         return None
                     content = bytearray()
                     async for chunk in response.aiter_bytes():
                         content.extend(chunk)
                         if len(content) > MAX_ARTWORK_BYTES:
-                            logger.warning("[yellow]Artwork download exceeds the 10 MiB limit; ignoring it.[/yellow]")
+                            logger.warning(
+                                "[yellow]Artwork download exceeds the 10 MiB limit; ignoring it.[/yellow]"
+                            )
                             return None
                     if not is_valid_image_bytes(bytes(content)):
-                        logger.warning("[yellow]Artwork URL did not return a supported image; ignoring it.[/yellow]")
+                        logger.warning(
+                            "[yellow]Artwork URL did not return a supported image; ignoring it.[/yellow]"
+                        )
                         return None
                     return bytes(content)
     except httpx.HTTPError as error:
@@ -160,16 +227,29 @@ def _write_png(source: Path | bytes, destination: Path) -> bool:
         with warnings.catch_warnings():
             warnings.simplefilter("error", Image.DecompressionBombWarning)
             with Image.open(image_source) as image:
-                if image.format not in _SUPPORTED_COVER_FORMATS or image.width <= 0 or image.height <= 0 or image.width * image.height > MAX_ARTWORK_PIXELS:
+                if (
+                    image.format not in _SUPPORTED_COVER_FORMATS
+                    or image.width <= 0
+                    or image.height <= 0
+                    or image.width * image.height > MAX_ARTWORK_PIXELS
+                ):
                     return False
                 image.load()
                 if image.mode not in {"RGB", "RGBA"}:
-                    image = image.convert("RGBA" if "transparency" in image.info else "RGB")
+                    image = image.convert(
+                        "RGBA" if "transparency" in image.info else "RGB"
+                    )
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 image.save(temporary, "PNG")
         temporary.replace(destination)
         return True
-    except OSError, SyntaxError, ValueError, Image.DecompressionBombError, Image.DecompressionBombWarning:
+    except (
+        OSError,
+        SyntaxError,
+        ValueError,
+        Image.DecompressionBombError,
+        Image.DecompressionBombWarning,
+    ):
         with contextlib.suppress(OSError):
             temporary.unlink(missing_ok=True)
         return False
@@ -182,18 +262,24 @@ async def prepare_artwork(meta: Meta) -> None:
     over category-specific extraction and remote metadata providers.
     """
     output_dir = artwork_dir(meta.base_dir, meta.uuid)
-    local_sources = await asyncio.to_thread(_find_local_artwork_sources, str(meta.path or ""))
+    local_sources = await asyncio.to_thread(
+        _find_local_artwork_sources, str(meta.path or "")
+    )
     for input_name, output_name, meta_name in (
         ("explicit_poster", "POSTER.png", "artwork_path"),
         ("explicit_banner", "POSTER_BANNER.png", "artwork_banner_path"),
     ):
         value = str(getattr(meta, input_name) or "").strip()
         kind = "poster" if input_name == "explicit_poster" else "banner"
-        source_path = Path(value).expanduser() if value else local_sources.get(kind)
+        source_path = (
+            Path(value).expanduser() if value else local_sources.get(kind)
+        )
         is_discovered_local = not value and source_path is not None
         if source_path is None:
             current_path = Path(str(getattr(meta, meta_name) or ""))
-            source_path = current_path if is_valid_cover_image(current_path) else None
+            source_path = (
+                current_path if is_valid_cover_image(current_path) else None
+            )
         source: Path | bytes | None
         if source_path is not None and source_path.is_file():
             source = source_path
@@ -202,14 +288,20 @@ async def prepare_artwork(meta: Meta) -> None:
         elif kind == "poster" and is_public_http_url(meta.artwork_url):
             source = await _download_public_image(meta.artwork_url)
         elif value:
-            logger.warning(f"[yellow]{input_name.replace('_', ' ')} must be an existing image file or public HTTP(S) URL; ignoring it.[/yellow]")
+            logger.warning(
+                f"[yellow]{input_name.replace('_', ' ')} must be an existing image file or public HTTP(S) URL; ignoring it.[/yellow]"
+            )
             continue
         else:
             continue
 
         destination = output_dir / output_name
-        if source is None or not await asyncio.to_thread(_write_png, source, destination):
-            logger.warning(f"[yellow]Could not prepare {input_name.replace('_', ' ')}; ignoring it.[/yellow]")
+        if source is None or not await asyncio.to_thread(
+            _write_png, source, destination
+        ):
+            logger.warning(
+                f"[yellow]Could not prepare {input_name.replace('_', ' ')}; ignoring it.[/yellow]"
+            )
             continue
 
         setattr(meta, meta_name, str(destination))

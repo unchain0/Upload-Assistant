@@ -62,8 +62,16 @@ def _reset(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(mam.httpx, "AsyncClient", _Client)
 
 
-def test_normalize_isbn_title_and_metadata_values(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(mam, "validate_isbn_checksum", lambda value: value if value in {"0123456789", "9780306406157"} else None)
+def test_normalize_isbn_title_and_metadata_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        mam,
+        "validate_isbn_checksum",
+        lambda value: (
+            value if value in {"0123456789", "9780306406157"} else None
+        ),
+    )
     assert mam._normalize_mam_isbn("123456789") == "0123456789"
     assert mam._normalize_mam_isbn("978-0-306-40615-7") == "9780306406157"
     assert mam._normalize_mam_isbn("bad") is None
@@ -83,9 +91,17 @@ def test_normalize_isbn_title_and_metadata_values(monkeypatch: pytest.MonkeyPatc
     assert mam._metadata_values(123) == ["123"]
 
 
-def test_parse_torrent_full_fields_and_categories(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(mam, "validate_isbn_checksum", lambda value: value if value == "9780306406157" else None)
-    monkeypatch.setattr(mam, "resolve_book_language", lambda _value: ("English", "eng"))
+def test_parse_torrent_full_fields_and_categories(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        mam,
+        "validate_isbn_checksum",
+        lambda value: value if value == "9780306406157" else None,
+    )
+    monkeypatch.setattr(
+        mam, "resolve_book_language", lambda _value: ("English", "eng")
+    )
     monkeypatch.setattr(mam, "is_valid_book_language", lambda *_args: True)
     item = {
         "title": "Alice Writer - Example Book.epub",
@@ -123,7 +139,9 @@ def test_parse_torrent_full_fields_and_categories(monkeypatch: pytest.MonkeyPatc
     }
 
 
-def test_parse_torrent_author_narrator_errors_optional_fields_and_cover_types(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_parse_torrent_author_narrator_errors_optional_fields_and_cover_types(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     manager = MyAnonamouseManager()
     bad = manager._parse_torrent_info(
         {
@@ -138,20 +156,41 @@ def test_parse_torrent_author_narrator_errors_optional_fields_and_cover_types(mo
         }
     )
     assert bad["title"] == "Name" and bad["artwork_url"].endswith("1.gif")
-    assert "author" not in bad and "narrator" not in bad and "asin" not in bad and "year" not in bad
+    assert (
+        "author" not in bad
+        and "narrator" not in bad
+        and "asin" not in bad
+        and "year" not in bad
+    )
 
-    monkeypatch.setattr(mam, "resolve_book_language", lambda _value: ("Unknown", ""))
+    monkeypatch.setattr(
+        mam, "resolve_book_language", lambda _value: ("Unknown", "")
+    )
     monkeypatch.setattr(mam, "is_valid_book_language", lambda *_args: False)
-    assert "book_language" not in manager._parse_torrent_info({"title": "Name", "lang_code": "xx"})
-    monkeypatch.setattr(mam, "resolve_book_language", lambda _value: (_ for _ in ()).throw(LookupError("bad")))
-    assert "book_language" not in manager._parse_torrent_info({"title": "Name", "lang_code": "xx"})
+    assert "book_language" not in manager._parse_torrent_info(
+        {"title": "Name", "lang_code": "xx"}
+    )
+    monkeypatch.setattr(
+        mam,
+        "resolve_book_language",
+        lambda _value: (_ for _ in ()).throw(LookupError("bad")),
+    )
+    assert "book_language" not in manager._parse_torrent_info(
+        {"title": "Name", "lang_code": "xx"}
+    )
 
-    jpeg = manager._parse_torrent_info({"title": "Name", "id": 2, "poster_type": "image/jpeg"})
+    jpeg = manager._parse_torrent_info(
+        {"title": "Name", "id": 2, "poster_type": "image/jpeg"}
+    )
     assert jpeg["artwork_url"].endswith("2.jpeg")
-    assert "artwork_url" not in manager._parse_torrent_info({"title": "Name", "id": 2})
+    assert "artwork_url" not in manager._parse_torrent_info(
+        {"title": "Name", "id": 2}
+    )
 
 
-def test_search_invalid_cache_api_key_success_not_found_status_and_error(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_search_invalid_cache_api_key_success_not_found_status_and_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     manager = MyAnonamouseManager()
     assert asyncio.run(manager.search_by_id("")) is None
     assert asyncio.run(manager.search_by_id("abc")) is None
@@ -161,14 +200,22 @@ def test_search_invalid_cache_api_key_success_not_found_status_and_error(monkeyp
     monkeypatch.setattr(mam, "is_cache_miss", lambda _value: False)
     assert asyncio.run(manager.search_by_id("123", api_key="cookie")) is None
     cache.value = {"title": "Cached"}
-    assert asyncio.run(manager.search_by_id("123", api_key="cookie")) == {"title": "Cached"}
+    assert asyncio.run(manager.search_by_id("123", api_key="cookie")) == {
+        "title": "Cached"
+    }
 
     cache.value = object()
     monkeypatch.setattr(mam, "is_cache_miss", lambda _value: True)
     assert asyncio.run(manager.search_by_id("123")) is None
 
-    monkeypatch.setattr(mam, "validate_isbn_checksum", lambda value: value if value == "9780306406157" else None)
-    _Client.queue = [_Response(200, {"data": [{"title": "Book", "isbn": "9780306406157"}]})]
+    monkeypatch.setattr(
+        mam,
+        "validate_isbn_checksum",
+        lambda value: value if value == "9780306406157" else None,
+    )
+    _Client.queue = [
+        _Response(200, {"data": [{"title": "Book", "isbn": "9780306406157"}]})
+    ]
     result = asyncio.run(manager.search_by_id("123", api_key="cookie"))
     assert result and result["title"] == "Book"
     assert _Client.requests[-1]["cookies"] == {"mam_id": "cookie"}
@@ -183,8 +230,13 @@ def test_search_invalid_cache_api_key_success_not_found_status_and_error(monkeyp
 
     for status in (401, 403, 500):
         _Client.queue = [_Response(status, {})]
-        assert asyncio.run(manager.search_by_id("123", api_key="cookie")) is None
-    _Client.queue = [_Response(200, RuntimeError("bad json")), RuntimeError("network")]
+        assert (
+            asyncio.run(manager.search_by_id("123", api_key="cookie")) is None
+        )
+    _Client.queue = [
+        _Response(200, RuntimeError("bad json")),
+        RuntimeError("network"),
+    ]
     assert asyncio.run(manager.search_by_id("123", api_key="cookie")) is None
     assert asyncio.run(manager.search_by_id("123", api_key="cookie")) is None
 
@@ -200,8 +252,12 @@ def test_parse_author_dict_unknown_type_narrator_string_and_error() -> None:
     )
     assert result["author"] == "Author" and result["narrator"] == "Narrator"
 
-    result = manager._parse_torrent_info({"title": "Book", "author_info": ["ignored"]})
+    result = manager._parse_torrent_info(
+        {"title": "Book", "author_info": ["ignored"]}
+    )
     assert "author" not in result
 
-    result = manager._parse_torrent_info({"title": "Book", "narrator_info": "bad json"})
+    result = manager._parse_torrent_info(
+        {"title": "Book", "narrator_info": "bad json"}
+    )
     assert "narrator" not in result

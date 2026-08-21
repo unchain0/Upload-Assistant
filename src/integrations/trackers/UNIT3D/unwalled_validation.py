@@ -21,7 +21,10 @@ class UnwalledValidationMixin:
     @staticmethod
     def _has_symlink_component(path: Path) -> bool:
         absolute = path.expanduser().absolute()
-        return any(component.is_symlink() for component in (*reversed(absolute.parents), absolute))
+        return any(
+            component.is_symlink()
+            for component in (*reversed(absolute.parents), absolute)
+        )
 
     @classmethod
     def _valid_filename(cls, name: str) -> bool:
@@ -60,16 +63,31 @@ class UnwalledValidationMixin:
 
     @staticmethod
     def _reserved_names() -> set[str]:
-        return {"CON", "PRN", "AUX", "NUL", *(f"COM{number}" for number in range(1, 10)), *(f"LPT{number}" for number in range(1, 10))}
+        return {
+            "CON",
+            "PRN",
+            "AUX",
+            "NUL",
+            *(f"COM{number}" for number in range(1, 10)),
+            *(f"LPT{number}" for number in range(1, 10)),
+        }
 
     @classmethod
-    def _image_details(cls, path_value: str) -> tuple[Path, str, tuple[int, int]] | None:
+    def _image_details(
+        cls, path_value: str
+    ) -> tuple[Path, str, tuple[int, int]] | None:
         path = Path(path_value)
         if not cls._image_path_is_safe(path):
             return None
         try:
             return cls._verified_image_details(path)
-        except OSError, SyntaxError, ValueError, Image.DecompressionBombError, Image.DecompressionBombWarning:
+        except (
+            OSError,
+            SyntaxError,
+            ValueError,
+            Image.DecompressionBombError,
+            Image.DecompressionBombWarning,
+        ):
             return None
 
     @classmethod
@@ -79,7 +97,9 @@ class UnwalledValidationMixin:
         return path.stat().st_size < 1024 * 1024
 
     @classmethod
-    def _verified_image_details(cls, path: Path) -> tuple[Path, str, tuple[int, int]] | None:
+    def _verified_image_details(
+        cls, path: Path
+    ) -> tuple[Path, str, tuple[int, int]] | None:
         with warnings.catch_warnings():
             warnings.simplefilter("error", Image.DecompressionBombWarning)
             with Image.open(path) as image:
@@ -93,7 +113,9 @@ class UnwalledValidationMixin:
     @staticmethod
     def _image_dimensions_are_safe(size: tuple[int, int]) -> bool:
         width, height = size
-        return width <= 3840 and height <= 3840 and width * height <= 16_000_000
+        return (
+            width <= 3840 and height <= 3840 and width * height <= 16_000_000
+        )
 
     @classmethod
     def _valid_torrent_paths(cls, meta: Meta) -> bool:
@@ -104,7 +126,10 @@ class UnwalledValidationMixin:
         base, resolved_base = prepared
         if not cls._valid_root_name(root):
             return False
-        return all(cls._valid_file_path(base, resolved_base, value) for value in meta.filelist)
+        return all(
+            cls._valid_file_path(base, resolved_base, value)
+            for value in meta.filelist
+        )
 
     @classmethod
     def _valid_root_name(cls, root: Path) -> bool:
@@ -123,7 +148,9 @@ class UnwalledValidationMixin:
             return None
 
     @classmethod
-    def _valid_file_path(cls, base: Path, resolved_base: Path, file_value: object) -> bool:
+    def _valid_file_path(
+        cls, base: Path, resolved_base: Path, file_value: object
+    ) -> bool:
         file_path = Path(str(file_value))
         if cls._has_symlink_component(file_path) or not file_path.is_file():
             return False
@@ -133,14 +160,18 @@ class UnwalledValidationMixin:
         return cls._valid_relative_components(base, relative_path)
 
     @staticmethod
-    def _relative_file_path(file_path: Path, resolved_base: Path) -> Path | None:
+    def _relative_file_path(
+        file_path: Path, resolved_base: Path
+    ) -> Path | None:
         try:
             return file_path.resolve(strict=True).relative_to(resolved_base)
         except OSError, ValueError:
             return None
 
     @classmethod
-    def _valid_relative_components(cls, base: Path, relative_path: Path) -> bool:
+    def _valid_relative_components(
+        cls, base: Path, relative_path: Path
+    ) -> bool:
         current_path = base
         for component in relative_path.parts:
             current_path /= component
@@ -173,7 +204,9 @@ class UnwalledValidationMixin:
         return all(checks)
 
     @classmethod
-    def _torrent_metainfo(cls, path: Path) -> tuple[dict[bytes, object], dict[bytes, object]] | None:
+    def _torrent_metainfo(
+        cls, path: Path
+    ) -> tuple[dict[bytes, object], dict[bytes, object]] | None:
         if not cls._torrent_path_is_safe(path):
             return None
         decoded = cls._decode_torrent(path)
@@ -187,13 +220,22 @@ class UnwalledValidationMixin:
 
     @staticmethod
     def _torrent_path_is_safe(path: Path) -> bool:
-        return not path.is_symlink() and path.is_file() and path.stat().st_size < 1024 * 1024
+        return (
+            not path.is_symlink()
+            and path.is_file()
+            and path.stat().st_size < 1024 * 1024
+        )
 
     @staticmethod
     def _decode_torrent(path: Path) -> object | None:
         try:
             return bdecode(path.read_bytes())
-        except OSError, RecursionError, ValueError, bencodepy.BencodeDecodeError:
+        except (
+            OSError,
+            RecursionError,
+            ValueError,
+            bencodepy.BencodeDecodeError,
+        ):
             return None
 
     @classmethod
@@ -212,7 +254,9 @@ class UnwalledValidationMixin:
         return False
 
     @classmethod
-    def _v1_header(cls, info: dict[bytes, object]) -> tuple[str, int, bytes] | None:
+    def _v1_header(
+        cls, info: dict[bytes, object]
+    ) -> tuple[str, int, bytes] | None:
         raw_name = info.get(b"name")
         piece_length = info.get(b"piece length")
         pieces = info.get(b"pieces")
@@ -259,18 +303,28 @@ class UnwalledValidationMixin:
         return "single" if has_length else "multi"
 
     @classmethod
-    def _valid_single_file_info(cls, info: dict[bytes, object], pieces: bytes, piece_length: int) -> bool:
+    def _valid_single_file_info(
+        cls, info: dict[bytes, object], pieces: bytes, piece_length: int
+    ) -> bool:
         length = info.get(b"length")
         if not cls._valid_file_length(length):
             return False
-        return cls._piece_count_matches(pieces, piece_length, cast(int, length))
+        return cls._piece_count_matches(
+            pieces, piece_length, cast(int, length)
+        )
 
     @staticmethod
     def _valid_file_length(value: object) -> bool:
-        return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+        return (
+            isinstance(value, int)
+            and not isinstance(value, bool)
+            and value >= 0
+        )
 
     @classmethod
-    def _valid_multi_file_info(cls, info: dict[bytes, object], pieces: bytes, piece_length: int) -> bool:
+    def _valid_multi_file_info(
+        cls, info: dict[bytes, object], pieces: bytes, piece_length: int
+    ) -> bool:
         raw_files = cls._raw_file_list(info)
         if not raw_files:
             return False
@@ -295,12 +349,16 @@ class UnwalledValidationMixin:
         return total
 
     @classmethod
-    def _valid_v1_file_entry(cls, raw_file: object) -> tuple[tuple[str, ...], int] | None:
+    def _valid_v1_file_entry(
+        cls, raw_file: object
+    ) -> tuple[tuple[str, ...], int] | None:
         entry = cls._torrent_entry_mapping(raw_file)
         return None if entry is None else cls._complete_v1_file_entry(entry)
 
     @classmethod
-    def _complete_v1_file_entry(cls, entry: dict[bytes, object]) -> tuple[tuple[str, ...], int] | None:
+    def _complete_v1_file_entry(
+        cls, entry: dict[bytes, object]
+    ) -> tuple[tuple[str, ...], int] | None:
         length = cls._torrent_entry_length(entry)
         if length is None:
             return None
@@ -314,7 +372,11 @@ class UnwalledValidationMixin:
 
     @staticmethod
     def _torrent_entry_mapping(raw_file: object) -> dict[bytes, object] | None:
-        return cast(dict[bytes, object], raw_file) if isinstance(raw_file, dict) else None
+        return (
+            cast(dict[bytes, object], raw_file)
+            if isinstance(raw_file, dict)
+            else None
+        )
 
     @classmethod
     def _torrent_entry_length(cls, entry: dict[bytes, object]) -> int | None:
@@ -324,7 +386,11 @@ class UnwalledValidationMixin:
     @staticmethod
     def _torrent_entry_path(entry: dict[bytes, object]) -> list[object] | None:
         value = entry.get(b"path")
-        return cast(list[object], value) if isinstance(value, list) and value else None
+        return (
+            cast(list[object], value)
+            if isinstance(value, list) and value
+            else None
+        )
 
     @staticmethod
     def _is_symlink_torrent_entry(entry: dict[bytes, object]) -> bool:
@@ -332,7 +398,9 @@ class UnwalledValidationMixin:
         return isinstance(attr, bytes) and b"l" in attr
 
     @classmethod
-    def _decoded_torrent_path(cls, raw_path: list[object]) -> tuple[str, ...] | None:
+    def _decoded_torrent_path(
+        cls, raw_path: list[object]
+    ) -> tuple[str, ...] | None:
         components: list[str] = []
         for raw_component in raw_path:
             component = cls._decoded_path_component(raw_component)
@@ -351,11 +419,18 @@ class UnwalledValidationMixin:
         return component if cls._valid_filename(component) else None
 
     @staticmethod
-    def _piece_count_matches(pieces: bytes, piece_length: int, total_length: int) -> bool:
-        return len(pieces) // 20 == (total_length + piece_length - 1) // piece_length
+    def _piece_count_matches(
+        pieces: bytes, piece_length: int, total_length: int
+    ) -> bool:
+        return (
+            len(pieces) // 20
+            == (total_length + piece_length - 1) // piece_length
+        )
 
     @classmethod
-    def _torrent_matches_files(cls, info: dict[bytes, object], meta: Meta) -> bool:
+    def _torrent_matches_files(
+        cls, info: dict[bytes, object], meta: Meta
+    ) -> bool:
         root = Path(str(meta.path or ""))
         try:
             if not cls._torrent_root_matches(info, root):
@@ -367,7 +442,9 @@ class UnwalledValidationMixin:
             return False
 
     @classmethod
-    def _torrent_root_matches(cls, info: dict[bytes, object], root: Path) -> bool:
+    def _torrent_root_matches(
+        cls, info: dict[bytes, object], root: Path
+    ) -> bool:
         if cls._has_symlink_component(root) or not root.exists():
             return False
         raw_name = info.get(b"name")
@@ -377,14 +454,21 @@ class UnwalledValidationMixin:
         return name == root.name
 
     @staticmethod
-    def _single_torrent_matches(info: dict[bytes, object], meta: Meta, root: Path) -> bool:
+    def _single_torrent_matches(
+        info: dict[bytes, object], meta: Meta, root: Path
+    ) -> bool:
         if len(meta.filelist) != 1:
             return False
         listed = Path(str(meta.filelist[0])).resolve(strict=True)
-        return listed == root.resolve(strict=True) and info.get(b"length") == root.stat().st_size
+        return (
+            listed == root.resolve(strict=True)
+            and info.get(b"length") == root.stat().st_size
+        )
 
     @classmethod
-    def _directory_torrent_matches(cls, info: dict[bytes, object], meta: Meta, root: Path) -> bool:
+    def _directory_torrent_matches(
+        cls, info: dict[bytes, object], meta: Meta, root: Path
+    ) -> bool:
         expected = cls._expected_files(meta, root)
         if expected is None:
             return False
@@ -392,19 +476,25 @@ class UnwalledValidationMixin:
         return actual is not None and actual == expected
 
     @classmethod
-    def _expected_files(cls, meta: Meta, root: Path) -> dict[tuple[str, ...], int] | None:
+    def _expected_files(
+        cls, meta: Meta, root: Path
+    ) -> dict[tuple[str, ...], int] | None:
         expected: dict[tuple[str, ...], int] = {}
         resolved_root = root.resolve(strict=True)
         for value in meta.filelist:
             path = Path(str(value))
             if not path.is_file() or cls._has_symlink_component(path):
                 return None
-            relative = tuple(path.resolve(strict=True).relative_to(resolved_root).parts)
+            relative = tuple(
+                path.resolve(strict=True).relative_to(resolved_root).parts
+            )
             expected[relative] = path.stat().st_size
         return expected
 
     @classmethod
-    def _actual_torrent_files(cls, info: dict[bytes, object]) -> dict[tuple[str, ...], int] | None:
+    def _actual_torrent_files(
+        cls, info: dict[bytes, object]
+    ) -> dict[tuple[str, ...], int] | None:
         raw_files = info.get(b"files")
         if not isinstance(raw_files, list):
             return None
@@ -420,7 +510,9 @@ class UnwalledValidationMixin:
         return actual
 
     @classmethod
-    def _torrent_file_entry(cls, raw_file: object) -> tuple[tuple[str, ...], int] | None:
+    def _torrent_file_entry(
+        cls, raw_file: object
+    ) -> tuple[tuple[str, ...], int] | None:
         if not isinstance(raw_file, dict):
             return None
         entry = cast(dict[bytes, object], raw_file)
@@ -444,28 +536,38 @@ class UnwalledValidationMixin:
     def _valid_artwork(self, meta: Meta) -> bool:
         cover = self._image_details(meta.artwork_path)
         if not self._cover_is_valid(cover):
-            logger.info(f"{self.tracker}: [bold red]Cover must be a square JPEG of at least 400x400.[/bold red]")
+            logger.info(
+                f"{self.tracker}: [bold red]Cover must be a square JPEG of at least 400x400.[/bold red]"
+            )
             return False
         banner = self._image_details(str(meta.artwork_banner_path or ""))
         if not self._banner_is_valid(banner):
-            logger.info(f"{self.tracker}: [bold red]Banner must be a 16:9 JPEG of at least 960x540.[/bold red]")
+            logger.info(
+                f"{self.tracker}: [bold red]Banner must be a 16:9 JPEG of at least 960x540.[/bold red]"
+            )
             return False
         cover_value = cast(tuple[Path, str, tuple[int, int]], cover)
         banner_value = cast(tuple[Path, str, tuple[int, int]], banner)
         if not self._artwork_is_distinct(cover_value[0], banner_value[0]):
-            logger.info(f"{self.tracker}: [bold red]Cover and banner must be different images.[/bold red]")
+            logger.info(
+                f"{self.tracker}: [bold red]Cover and banner must be different images.[/bold red]"
+            )
             return False
         return True
 
     @staticmethod
-    def _cover_is_valid(details: tuple[Path, str, tuple[int, int]] | None) -> bool:
+    def _cover_is_valid(
+        details: tuple[Path, str, tuple[int, int]] | None,
+    ) -> bool:
         if details is None:
             return False
         _path, image_format, (width, height) = details
         return image_format == "JPEG" and width == height and width >= 400
 
     @staticmethod
-    def _banner_is_valid(details: tuple[Path, str, tuple[int, int]] | None) -> bool:
+    def _banner_is_valid(
+        details: tuple[Path, str, tuple[int, int]] | None,
+    ) -> bool:
         if details is None:
             return False
         _path, image_format, (width, height) = details
@@ -482,7 +584,9 @@ class UnwalledValidationMixin:
     def _valid_upload_bundle(self, meta: Meta, torrent_path: Path) -> bool:
         torrent = self._validated_upload_torrent(meta, torrent_path)
         if torrent is None:
-            logger.info(f"{self.tracker}: [bold red]Unwalled requires a valid V1 torrent.[/bold red]")
+            logger.info(
+                f"{self.tracker}: [bold red]Unwalled requires a valid V1 torrent.[/bold red]"
+            )
             return False
         if not self._upload_metadata_is_valid(meta, torrent):
             return False
@@ -499,7 +603,9 @@ class UnwalledValidationMixin:
             return False
         if self._private_metadata_is_valid(meta, info, announce):
             return True
-        logger.info(f"{self.tracker}: [bold red]The upload torrent is missing required Unwalled private metadata.[/bold red]")
+        logger.info(
+            f"{self.tracker}: [bold red]The upload torrent is missing required Unwalled private metadata.[/bold red]"
+        )
         return False
 
     def _upload_assets_are_valid(self, meta: Meta, torrent_path: Path) -> bool:
@@ -507,11 +613,15 @@ class UnwalledValidationMixin:
             return False
         if self._bundle_files_are_safe(meta, torrent_path):
             return True
-        logger.info(f"{self.tracker}: [bold red]Torrent, cover and banner must total less than 1 MiB.[/bold red]")
+        logger.info(
+            f"{self.tracker}: [bold red]Torrent, cover and banner must total less than 1 MiB.[/bold red]"
+        )
         return False
 
     @classmethod
-    def _validated_upload_torrent(cls, meta: Meta, torrent_path: Path) -> tuple[dict[bytes, object], dict[bytes, object]] | None:
+    def _validated_upload_torrent(
+        cls, meta: Meta, torrent_path: Path
+    ) -> tuple[dict[bytes, object], dict[bytes, object]] | None:
         torrent = cls._torrent_metainfo(torrent_path)
         if torrent is None:
             return None
@@ -528,7 +638,9 @@ class UnwalledValidationMixin:
         return cls._decode_utf8(raw_announce)
 
     @classmethod
-    def _private_metadata_is_valid(cls, meta: Meta, info: dict[bytes, object], announce: str) -> bool:
+    def _private_metadata_is_valid(
+        cls, meta: Meta, info: dict[bytes, object], announce: str
+    ) -> bool:
         if info.get(b"private") != 1 or info.get(b"source") != b"Unwalled":
             return False
         if meta.debug:
@@ -543,8 +655,14 @@ class UnwalledValidationMixin:
         return sum(path.stat().st_size for path in paths) < 1024 * 1024
 
     @staticmethod
-    def _bundle_paths(meta: Meta, torrent_path: Path) -> tuple[Path, Path, Path]:
-        return torrent_path, Path(meta.artwork_path), Path(str(meta.artwork_banner_path or ""))
+    def _bundle_paths(
+        meta: Meta, torrent_path: Path
+    ) -> tuple[Path, Path, Path]:
+        return (
+            torrent_path,
+            Path(meta.artwork_path),
+            Path(str(meta.artwork_banner_path or "")),
+        )
 
     @classmethod
     def _bundle_path_is_safe(cls, path: Path) -> bool:

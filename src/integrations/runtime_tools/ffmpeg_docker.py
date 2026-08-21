@@ -18,12 +18,16 @@ class FfmpegBinaryManager:
         logger.info(f"[blue]Detected system: {system}[/blue]")
 
         if "linux" not in system:
-            raise Exception(f"This script is for Docker/Linux only, detected: {system}")
+            raise Exception(
+                f"This script is for Docker/Linux only, detected: {system}"
+            )
 
         del base_dir
         ffmpeg = shutil.which("ffmpeg")
         if ffmpeg is None:
-            raise RuntimeError("ffmpeg must be installed by the operating system package manager")
+            raise RuntimeError(
+                "ffmpeg must be installed by the operating system package manager"
+            )
         logger.info(f"[green]Using system ffmpeg: {ffmpeg}[/green]")
         return ffmpeg
 

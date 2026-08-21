@@ -13,5 +13,7 @@ from src.services.preparation_helpers import _normalize_search_year
         ("not a year", None),
     ],
 )
-def test_normalize_search_year_uses_the_first_valid_year(value: object, expected: str | None) -> None:
+def test_normalize_search_year_uses_the_first_valid_year(
+    value: object, expected: str | None
+) -> None:
     assert _normalize_search_year(value) == expected

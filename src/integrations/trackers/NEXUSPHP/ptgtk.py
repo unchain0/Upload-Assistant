@@ -58,7 +58,14 @@ class PTGTK(NEXUSPHP):
                 "tv show",
                 "variety",
             ]
-            if any(re.search(rf"(^|,\s*){re.escape(keyword)}(\s*,|$)", genres, re.IGNORECASE) for keyword in game_show_keywords):
+            if any(
+                re.search(
+                    rf"(^|,\s*){re.escape(keyword)}(\s*,|$)",
+                    genres,
+                    re.IGNORECASE,
+                )
+                for keyword in game_show_keywords
+            ):
                 return tv_shows
             return tv_series
 
@@ -189,4 +196,7 @@ class PTGTK(NEXUSPHP):
         return checkboxes
 
     def get_anonymous(self, meta: Meta) -> bool:
-        return not (meta.anon == 0 and not self.config["TRACKERS"][self.tracker].get("anon", False))
+        return not (
+            meta.anon == 0
+            and not self.config["TRACKERS"][self.tracker].get("anon", False)
+        )

@@ -184,10 +184,14 @@ class RetroMoviesClub(UNIT3D):
 
     async def get_additional_checks(self, meta: Meta) -> bool:
         if meta.category != "MOVIE":
-            logger.info(f"{self.tracker}: [bold red]Only movies are allowed.[/bold red]")
+            logger.info(
+                f"{self.tracker}: [bold red]Only movies are allowed.[/bold red]"
+            )
             return False
         if meta.year is not None and meta.year > 2000:
-            logger.info(f"{self.tracker}: [bold red]Only movies released in 2000 or earlier are allowed.[/bold red]")
+            logger.info(
+                f"{self.tracker}: [bold red]Only movies released in 2000 or earlier are allowed.[/bold red]"
+            )
             return False
         return True
 

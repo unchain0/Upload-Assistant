@@ -31,11 +31,17 @@ class Emuwarez(UNIT3D):
     async def get_name(self, meta: Meta) -> dict[str, str]:
         title = await self._get_title(meta)
         if not meta.language_checked:
-            await languages_manager.process_desc_language(meta, tracker=self.tracker)
-        parts = self._name_parts(meta, title, await self._build_audio_string(meta))
+            await languages_manager.process_desc_language(
+                meta, tracker=self.tracker
+            )
+        parts = self._name_parts(
+            meta, title, await self._build_audio_string(meta)
+        )
         base_name = re.sub(r"\s{2,}", " ", " ".join(parts)).strip()
         subs_tag = " SUBS" if self._has_spanish_subs(meta) else ""
-        return {"name": f"{base_name}{subs_tag}-{self._release_group(meta.tag)}"}
+        return {
+            "name": f"{base_name}{subs_tag}-{self._release_group(meta.tag)}"
+        }
 
     def _name_parts(self, meta: Meta, title: str, audio: str) -> list[str]:
         values = (
@@ -62,7 +68,15 @@ class Emuwarez(UNIT3D):
     @staticmethod
     def _release_group(value: Any) -> str:
         tag = str(value or "").strip().lstrip("-")
-        invalid = {"", "nogrp", "nogroup", "unknown", "unk", "hd.ma.5.1", "untouched"}
+        invalid = {
+            "",
+            "nogrp",
+            "nogroup",
+            "unknown",
+            "unk",
+            "hd.ma.5.1",
+            "untouched",
+        }
         return "EMUWAREZ" if tag.casefold() in invalid else tag
 
     async def _get_title(self, meta: Meta) -> str:
@@ -74,12 +88,20 @@ class Emuwarez(UNIT3D):
         return meta.title
 
     def _imdb_spanish_title(self, meta: Meta) -> str:
-        imdb_info = cast(dict[str, Any], meta.imdb_info) if isinstance(meta.imdb_info, dict) else {}
+        imdb_info = (
+            cast(dict[str, Any], meta.imdb_info)
+            if isinstance(meta.imdb_info, dict)
+            else {}
+        )
         akas = imdb_info.get("akas", [])
         if not isinstance(akas, list):
             return ""
-        country_match = self._first_aka_title(akas, self._country_spanish_title)
-        return country_match or self._first_aka_title(akas, self._language_spanish_title)
+        country_match = self._first_aka_title(
+            akas, self._country_spanish_title
+        )
+        return country_match or self._first_aka_title(
+            akas, self._language_spanish_title
+        )
 
     @staticmethod
     def _first_aka_title(akas: list[Any], selector: Any) -> str:
@@ -87,13 +109,20 @@ class Emuwarez(UNIT3D):
 
     @staticmethod
     def _country_spanish_title(aka: Any) -> str:
-        if not isinstance(aka, dict) or aka.get("country") not in {"Spain", "ES"}:
+        if not isinstance(aka, dict) or aka.get("country") not in {
+            "Spain",
+            "ES",
+        }:
             return ""
         return str(aka.get("title") or "")
 
     @staticmethod
     def _language_spanish_title(aka: Any) -> str:
-        if not isinstance(aka, dict) or aka.get("language") not in {"Spain", "Spanish", "ES"}:
+        if not isinstance(aka, dict) or aka.get("language") not in {
+            "Spain",
+            "Spanish",
+            "ES",
+        }:
             return ""
         return str(aka.get("title") or "")
 
@@ -101,7 +130,9 @@ class Emuwarez(UNIT3D):
         tmdb_id = self._numeric_tmdb_id(meta.tmdb)
         if not tmdb_id:
             return ""
-        result = await self.tmdb_manager.get_tmdb_translations(tmdb_id=tmdb_id, category=meta.category, target_language="es")
+        result = await self.tmdb_manager.get_tmdb_translations(
+            tmdb_id=tmdb_id, category=meta.category, target_language="es"
+        )
         return result if isinstance(result, str) else ""
 
     @staticmethod
@@ -110,7 +141,11 @@ class Emuwarez(UNIT3D):
         return int(text) if text.isdigit() else 0
 
     def _use_spanish_title(self, title: str) -> bool:
-        return bool(title) and bool(self.config["TRACKERS"][self.tracker].get("use_spanish_title", False))
+        return bool(title) and bool(
+            self.config["TRACKERS"][self.tracker].get(
+                "use_spanish_title", False
+            )
+        )
 
     def _map_resolution(self, resolution: str) -> str:
         """Map resolution to Emuwarez nomenclature"""
@@ -186,7 +221,9 @@ class Emuwarez(UNIT3D):
 
         video_codec = meta.video_codec
         video_encode = meta.video_encode
-        codec = codec_map.get(video_codec) or codec_map.get(video_encode, video_codec)
+        codec = codec_map.get(video_codec) or codec_map.get(
+            video_encode, video_codec
+        )
 
         return f"{hdr_prefix}{codec}".strip()
 
@@ -198,7 +235,11 @@ class Emuwarez(UNIT3D):
 
     @classmethod
     def _imdb_original_language(cls, meta: Meta) -> str:
-        imdb_info = cast(dict[str, Any], meta.imdb_info) if isinstance(meta.imdb_info, dict) else {}
+        imdb_info = (
+            cast(dict[str, Any], meta.imdb_info)
+            if isinstance(meta.imdb_info, dict)
+            else {}
+        )
         value = imdb_info.get("language")
         return cls._language_text(cls._first_language_value(value))
 
@@ -219,17 +260,23 @@ class Emuwarez(UNIT3D):
         audio_langs = self._extract_audio_languages(audio_tracks, meta)
         if not audio_tracks or not audio_langs:
             return ""
-        special = await self._special_audio_string(meta, audio_tracks, audio_langs)
+        special = await self._special_audio_string(
+            meta, audio_tracks, audio_langs
+        )
         return special or self._listed_audio_string(audio_tracks, audio_langs)
 
-    async def _special_audio_string(self, meta: Meta, tracks: list[dict[str, Any]], languages: list[str]) -> str:
+    async def _special_audio_string(
+        self, meta: Meta, tracks: list[dict[str, Any]], languages: list[str]
+    ) -> str:
         dual = self._dual_audio_string(tracks)
         if dual:
             return dual
         multi = self._multi_audio_string(tracks)
         if multi:
             return multi
-        return await self._single_original_audio_string(meta, tracks, languages)
+        return await self._single_original_audio_string(
+            meta, tracks, languages
+        )
 
     def _dual_audio_string(self, tracks: list[dict[str, Any]]) -> str:
         if len(tracks) != 2:
@@ -251,7 +298,9 @@ class Emuwarez(UNIT3D):
     def _all_equal(values: list[str]) -> bool:
         return bool(values) and all(value == values[0] for value in values)
 
-    async def _single_original_audio_string(self, meta: Meta, tracks: list[dict[str, Any]], languages: list[str]) -> str:
+    async def _single_original_audio_string(
+        self, meta: Meta, tracks: list[dict[str, Any]], languages: list[str]
+    ) -> str:
         if len(tracks) != 1:
             return ""
         original = await self._get_original_language(meta)
@@ -263,15 +312,23 @@ class Emuwarez(UNIT3D):
         return f"{label} {original} {codec} {channels}"
 
     @staticmethod
-    def _single_original_matches(original: str | None, languages: list[str]) -> bool:
+    def _single_original_matches(
+        original: str | None, languages: list[str]
+    ) -> bool:
         if not original or len(languages) != 1:
             return False
         if "ESP" in languages or "LAT" in languages:
             return False
         return languages[0] == original
 
-    def _listed_audio_string(self, tracks: list[dict[str, Any]], languages: list[str]) -> str:
-        parts = [self._audio_part(track, languages[index]) for index, track in enumerate(tracks) if index < len(languages)]
+    def _listed_audio_string(
+        self, tracks: list[dict[str, Any]], languages: list[str]
+    ) -> str:
+        parts = [
+            self._audio_part(track, languages[index])
+            for index, track in enumerate(tracks)
+            if index < len(languages)
+        ]
         return " ".join(parts)
 
     def _audio_part(self, track: dict[str, Any], language: str) -> str:
@@ -279,7 +336,11 @@ class Emuwarez(UNIT3D):
 
     @classmethod
     def _get_audio_tracks(cls, meta: Meta) -> list[dict[str, Any]]:
-        return [track for track in cls._media_tracks(meta) if track.get("@type") == "Audio"]
+        return [
+            track
+            for track in cls._media_tracks(meta)
+            if track.get("@type") == "Audio"
+        ]
 
     @classmethod
     def _media_tracks(cls, meta: Meta) -> list[dict[str, Any]]:
@@ -287,7 +348,11 @@ class Emuwarez(UNIT3D):
         tracks = media.get("track", [])
         if not isinstance(tracks, list):
             return []
-        return [cast(dict[str, Any], track) for track in tracks if isinstance(track, dict)]
+        return [
+            cast(dict[str, Any], track)
+            for track in tracks
+            if isinstance(track, dict)
+        ]
 
     @staticmethod
     def _media_mapping(meta: Meta) -> dict[str, Any]:
@@ -296,11 +361,17 @@ class Emuwarez(UNIT3D):
         media = meta.mediainfo.get("media", {})
         return cast(dict[str, Any], media) if isinstance(media, dict) else {}
 
-    def _extract_audio_languages(self, audio_tracks: list[dict[str, Any]], meta: Meta) -> list[str]:
-        track_languages = self._mapped_unique_languages(track.get("Language", "") for track in audio_tracks)
+    def _extract_audio_languages(
+        self, audio_tracks: list[dict[str, Any]], meta: Meta
+    ) -> list[str]:
+        track_languages = self._mapped_unique_languages(
+            track.get("Language", "") for track in audio_tracks
+        )
         if track_languages:
             return track_languages
-        return self._mapped_unique_languages(self._fallback_audio_languages(meta))
+        return self._mapped_unique_languages(
+            self._fallback_audio_languages(meta)
+        )
 
     def _mapped_unique_languages(self, values: Any) -> list[str]:
         mapped: list[str] = []
@@ -402,7 +473,10 @@ class Emuwarez(UNIT3D):
         """Map audio codec to Emuwarez nomenclature"""
         codec = str(audio_track.get("Format", "")).upper()
 
-        if "atmos" in str(audio_track.get("Format_AdditionalFeatures", "")).lower():
+        if (
+            "atmos"
+            in str(audio_track.get("Format_AdditionalFeatures", "")).lower()
+        ):
             return "Atmos"
 
         codec_map = {
@@ -440,7 +514,10 @@ class Emuwarez(UNIT3D):
         return channel_map.get(str(channels), "5.1")
 
     def _has_spanish_subs(self, meta: Meta) -> bool:
-        return any(self._is_spanish_subtitle(track) for track in self._media_tracks(meta))
+        return any(
+            self._is_spanish_subtitle(track)
+            for track in self._media_tracks(meta)
+        )
 
     @staticmethod
     def _is_spanish_subtitle(track: dict[str, Any]) -> bool:
@@ -450,24 +527,51 @@ class Emuwarez(UNIT3D):
         title = str(track.get("Title", "")).casefold()
         if language in {"es", "spa", "spanish", "es-es", "español"}:
             return True
-        return any(term in title for term in ("spanish", "español", "castellano"))
+        return any(
+            term in title for term in ("spanish", "español", "castellano")
+        )
 
     async def get_cat_id(self, category_name: str) -> str:
         """Categories: Movies(1), Series(2), Documentales(4), Musica(5), Juegos(6), Software(7)"""
         category_map = {"MOVIE": "1", "TV": "2", "FANRES": "1"}
         return category_map.get(category_name, "1")
 
-    async def get_type_id(self, meta: Meta, type: Any = None, reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_type_id(
+        self,
+        meta: Meta,
+        type: Any = None,
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         _ = (type, reverse, mapping_only)
         """Types: Full Disc(1), Remux(2), Encode(3), WEB-DL(4), WEBRIP(5), HDTV(6), SD(7)"""
-        type_map = {"DISC": "1", "REMUX": "2", "ENCODE": "3", "WEBDL": "4", "WEBRIP": "5", "HDTV": "6", "SD": "7"}
+        type_map = {
+            "DISC": "1",
+            "REMUX": "2",
+            "ENCODE": "3",
+            "WEBDL": "4",
+            "WEBRIP": "5",
+            "HDTV": "6",
+            "SD": "7",
+        }
         meta_type = meta.type
         type_id = type_map.get(str(meta_type), "3")
         return {"type_id": type_id}
 
     async def get_res_id(self, resolution: str) -> str:
         """Resolutions: 4320p(1), 2160p(2), 1080p(3), 1080i(4), 720p(5), 576p(6), 540p(7), 480p(8), Otras(10)"""
-        resolution_map = {"4320p": "1", "2160p": "2", "1080p": "3", "1080i": "4", "720p": "5", "576p": "6", "540p": "7", "480p": "8", "SD": "10", "OTHER": "10"}
+        resolution_map = {
+            "4320p": "1",
+            "2160p": "2",
+            "1080p": "3",
+            "1080i": "4",
+            "720p": "5",
+            "576p": "6",
+            "540p": "7",
+            "480p": "8",
+            "SD": "10",
+            "OTHER": "10",
+        }
         return resolution_map.get(resolution, "10")
 
     async def search_existing(self, meta: Meta) -> list[dict[str, Any]]:
@@ -493,7 +597,9 @@ class Emuwarez(UNIT3D):
 
     @staticmethod
     def _search_name(meta: Meta) -> str:
-        return str(meta.season) if meta.category == "TV" and meta.season else ""
+        return (
+            str(meta.season) if meta.category == "TV" and meta.season else ""
+        )
 
     @staticmethod
     def _resolution_params(res_id: str) -> list[tuple[str, str]]:
@@ -502,13 +608,25 @@ class Emuwarez(UNIT3D):
         return [("resolutions[]", res_id)]
 
     def _scraper_response(self, params: list[tuple[str, str]]) -> Any:
-        api_key = str(self.config["TRACKERS"][self.tracker].get("api_key", "")).strip()
+        api_key = str(
+            self.config["TRACKERS"][self.tracker].get("api_key", "")
+        ).strip()
         scraper = cast(Any, cloudscraper).create_scraper(
-            browser={"browser": "chrome", "platform": "windows", "mobile": False, "desktop": True},
+            browser={
+                "browser": "chrome",
+                "platform": "windows",
+                "mobile": False,
+                "desktop": True,
+            },
             delay=10,
         )
         scraper.get(self.base_url, timeout=15.0)
-        return scraper.get(url=self.search_url, params=params, headers=self._emu_search_headers(api_key), timeout=15.0)
+        return scraper.get(
+            url=self.search_url,
+            params=params,
+            headers=self._emu_search_headers(api_key),
+            timeout=15.0,
+        )
 
     def _emu_search_headers(self, api_key: str) -> dict[str, str]:
         return {
@@ -521,9 +639,15 @@ class Emuwarez(UNIT3D):
         }
 
     @classmethod
-    def _search_results(cls, payload: Any, is_disc: bool) -> list[dict[str, Any]]:
+    def _search_results(
+        cls, payload: Any, is_disc: bool
+    ) -> list[dict[str, Any]]:
         items = cls._search_items(payload)
-        return [entry for item in items if (entry := cls._emu_search_result(item, is_disc)) is not None]
+        return [
+            entry
+            for item in items
+            if (entry := cls._emu_search_result(item, is_disc)) is not None
+        ]
 
     @staticmethod
     def _search_items(payload: Any) -> list[Any]:
@@ -533,7 +657,9 @@ class Emuwarez(UNIT3D):
         return items if isinstance(items, list) else []
 
     @classmethod
-    def _emu_search_result(cls, torrent: Any, is_disc: bool) -> dict[str, Any] | None:
+    def _emu_search_result(
+        cls, torrent: Any, is_disc: bool
+    ) -> dict[str, Any] | None:
         attributes = cls._torrent_attributes(torrent)
         if not attributes or "name" not in attributes:
             return None
@@ -554,7 +680,11 @@ class Emuwarez(UNIT3D):
         if not isinstance(torrent, dict):
             return {}
         attributes = torrent.get("attributes")
-        return cast(dict[str, Any], attributes) if isinstance(attributes, dict) else {}
+        return (
+            cast(dict[str, Any], attributes)
+            if isinstance(attributes, dict)
+            else {}
+        )
 
     @staticmethod
     def _torrent_files(attributes: dict[str, Any]) -> list[Any]:
@@ -563,7 +693,11 @@ class Emuwarez(UNIT3D):
 
     @staticmethod
     def _emu_file_names(files: list[Any]) -> list[str]:
-        return [str(file["name"]) for file in files if isinstance(file, dict) and isinstance(file.get("name"), str)]
+        return [
+            str(file["name"])
+            for file in files
+            if isinstance(file, dict) and isinstance(file.get("name"), str)
+        ]
 
     async def get_upload_data(self, meta: Meta) -> dict[str, Any]:
         """Get upload data with Emuwarez-specific options"""

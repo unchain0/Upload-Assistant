@@ -8,7 +8,9 @@ from src.integrations.usenet import creator as usenetcreate
 
 
 @pytest.mark.asyncio
-async def test_skip_archive_sets_par2_base_path_to_source_directory(tmp_path, monkeypatch):
+async def test_skip_archive_sets_par2_base_path_to_source_directory(
+    tmp_path, monkeypatch
+):
     source_dir = tmp_path / "source"
     source_dir.mkdir()
     source_file = source_dir / "release.mkv"
@@ -29,7 +31,14 @@ async def test_skip_archive_sets_par2_base_path_to_source_directory(tmp_path, mo
     monkeypatch.setattr(usenetcreate, "check_binary", fake_check_binary)
     monkeypatch.setattr(usenetcreate, "run_par2_with_progress", fake_run_par2)
 
-    meta = Meta({"base_dir": str(tmp_path), "path": str(source_file), "uuid": "test", "basename_no_ext": "release"})
+    meta = Meta(
+        {
+            "base_dir": str(tmp_path),
+            "path": str(source_file),
+            "uuid": "test",
+            "basename_no_ext": "release",
+        }
+    )
     result = await usenetcreate.prepare_and_upload_usenet(
         meta,
         {"USENET": {"skip_archive": True, "usenet_tmp_dir": str(staging_dir)}},
@@ -42,7 +51,9 @@ async def test_skip_archive_sets_par2_base_path_to_source_directory(tmp_path, mo
 
 
 @pytest.mark.asyncio
-async def test_archive_retry_removes_only_stale_current_archive_volumes_before_7z(tmp_path, monkeypatch):
+async def test_archive_retry_removes_only_stale_current_archive_volumes_before_7z(
+    tmp_path, monkeypatch
+):
     source_dir = tmp_path / "source"
     source_dir.mkdir()
     (source_dir / "release.mkv").write_bytes(b"video")
@@ -63,7 +74,9 @@ async def test_archive_retry_removes_only_stale_current_archive_volumes_before_7
     async def fake_run_7z(cmd, *_args):
         archive_out = Path(cmd[-2])
         fresh_volume = Path(f"{archive_out}.001")
-        assert not fresh_volume.exists(), "stale current-attempt archive volume still exists when 7z starts"
+        assert not fresh_volume.exists(), (
+            "stale current-attempt archive volume still exists when 7z starts"
+        )
         fresh_volume.write_bytes(b"fresh")
 
     async def fake_run_par2(cmd, cwd=None):
@@ -74,10 +87,22 @@ async def test_archive_retry_removes_only_stale_current_archive_volumes_before_7
     monkeypatch.setattr(usenetcreate, "run_7z_with_progress", fake_run_7z)
     monkeypatch.setattr(usenetcreate, "run_par2_with_progress", fake_run_par2)
 
-    meta = Meta({"base_dir": str(tmp_path), "path": str(source_dir), "uuid": release_uuid, "basename_no_ext": "release"})
+    meta = Meta(
+        {
+            "base_dir": str(tmp_path),
+            "path": str(source_dir),
+            "uuid": release_uuid,
+            "basename_no_ext": "release",
+        }
+    )
     result = await usenetcreate.prepare_and_upload_usenet(
         meta,
-        {"USENET": {"usenet_tmp_dir": str(staging_root), "rar_volume_size": "100m"}},
+        {
+            "USENET": {
+                "usenet_tmp_dir": str(staging_root),
+                "rar_volume_size": "100m",
+            }
+        },
         prepare_only=True,
     )
 

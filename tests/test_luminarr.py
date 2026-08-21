@@ -57,11 +57,21 @@ def _tv_meta(**kwargs: Any) -> Meta:
 
 
 def test_luminarr_rejects_malformed_filelist():
-    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(filelist=1))) is False
+    assert (
+        asyncio.run(_tracker().get_additional_checks(_movie_meta(filelist=1)))
+        is False
+    )
 
 
 def test_luminarr_requires_tmdb_identifier():
-    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(tmdb=0, tmdb_id=None, imdb_id=0))) is False
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(
+                _movie_meta(tmdb=0, tmdb_id=None, imdb_id=0)
+            )
+        )
+        is False
+    )
 
 
 def test_luminarr_accepts_valid_movie_metadata():
@@ -74,7 +84,12 @@ def test_luminarr_rejects_primary_mp3_audio():
             "track": [
                 {"@type": "General"},
                 {"@type": "Video", "Format": "AVC"},
-                {"@type": "Audio", "Format": "MPEG Audio", "Format_Profile": "Layer 3", "Title": "English"},
+                {
+                    "@type": "Audio",
+                    "Format": "MPEG Audio",
+                    "Format_Profile": "Layer 3",
+                    "Title": "English",
+                },
             ]
         }
     }
@@ -82,7 +97,10 @@ def test_luminarr_rejects_primary_mp3_audio():
     tracker = _tracker()
     meta = _tv_meta(type="HDTV", mediainfo=mediainfo)
 
-    assert tracker._invalid_audio_reason(meta) == "MP3 is permitted only for supplementary audio tracks (for example, commentary) under rule 6.2.5.3."
+    assert (
+        tracker._invalid_audio_reason(meta)
+        == "MP3 is permitted only for supplementary audio tracks (for example, commentary) under rule 6.2.5.3."
+    )
     assert asyncio.run(tracker.get_additional_checks(meta)) is False
 
 
@@ -93,18 +111,43 @@ def test_luminarr_allows_mp3_for_commentary_only():
                 {"@type": "General"},
                 {"@type": "Video", "Format": "AVC"},
                 {"@type": "Audio", "Format": "AAC", "Title": "English"},
-                {"@type": "Audio", "Format": "MPEG Audio", "CodecID": "A_MPEG/L3", "Title": "Director Commentary"},
+                {
+                    "@type": "Audio",
+                    "Format": "MPEG Audio",
+                    "CodecID": "A_MPEG/L3",
+                    "Title": "Director Commentary",
+                },
             ]
         }
     }
 
-    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(type="WEBDL", mediainfo=mediainfo))) is True
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(
+                _movie_meta(type="WEBDL", mediainfo=mediainfo)
+            )
+        )
+        is True
+    )
 
 
 def test_luminarr_rejects_primary_vorbis_audio():
-    mediainfo = {"media": {"track": [{"@type": "Audio", "Format": "Vorbis", "Title": "English"}]}}
+    mediainfo = {
+        "media": {
+            "track": [
+                {"@type": "Audio", "Format": "Vorbis", "Title": "English"}
+            ]
+        }
+    }
 
-    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(type="WEBDL", mediainfo=mediainfo))) is False
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(
+                _movie_meta(type="WEBDL", mediainfo=mediainfo)
+            )
+        )
+        is False
+    )
 
 
 def test_luminarr_rejects_single_pass_abr_encode():
@@ -122,7 +165,14 @@ def test_luminarr_rejects_single_pass_abr_encode():
         }
     }
 
-    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(type="WEBDL", mediainfo=mediainfo))) is False
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(
+                _movie_meta(type="WEBDL", mediainfo=mediainfo)
+            )
+        )
+        is False
+    )
 
 
 def test_luminarr_rejects_single_pass_abr_encode_with_dict_settings():
@@ -140,7 +190,14 @@ def test_luminarr_rejects_single_pass_abr_encode_with_dict_settings():
         }
     }
 
-    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(type="WEBDL", mediainfo=mediainfo))) is False
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(
+                _movie_meta(type="WEBDL", mediainfo=mediainfo)
+            )
+        )
+        is False
+    )
 
 
 def test_luminarr_accepts_crf_encode():
@@ -148,13 +205,24 @@ def test_luminarr_accepts_crf_encode():
         "media": {
             "track": [
                 {"@type": "General"},
-                {"@type": "Video", "Format": "AVC", "Encoded_Library_Settings": "cabac=1 / crf=21.0 / ref=1 / deblock=1:0:0"},
+                {
+                    "@type": "Video",
+                    "Format": "AVC",
+                    "Encoded_Library_Settings": "cabac=1 / crf=21.0 / ref=1 / deblock=1:0:0",
+                },
                 {"@type": "Audio", "Format": "AAC", "Title": "English"},
             ]
         }
     }
 
-    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(type="WEBDL", mediainfo=mediainfo))) is True
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(
+                _movie_meta(type="WEBDL", mediainfo=mediainfo)
+            )
+        )
+        is True
+    )
 
 
 def test_luminarr_accepts_multi_pass_abr_encode_with_pass_counter():
@@ -172,7 +240,14 @@ def test_luminarr_accepts_multi_pass_abr_encode_with_pass_counter():
         }
     }
 
-    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(type="WEBDL", mediainfo=mediainfo))) is True
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(
+                _movie_meta(type="WEBDL", mediainfo=mediainfo)
+            )
+        )
+        is True
+    )
 
 
 def test_luminarr_accepts_multi_pass_abr_encode_with_rc_2pass():
@@ -190,7 +265,14 @@ def test_luminarr_accepts_multi_pass_abr_encode_with_rc_2pass():
         }
     }
 
-    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(type="WEBDL", mediainfo=mediainfo))) is True
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(
+                _movie_meta(type="WEBDL", mediainfo=mediainfo)
+            )
+        )
+        is True
+    )
 
 
 def test_luminarr_accepts_multi_pass_abr_encode_with_colon_delimiter():
@@ -208,7 +290,14 @@ def test_luminarr_accepts_multi_pass_abr_encode_with_colon_delimiter():
         }
     }
 
-    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(type="WEBDL", mediainfo=mediainfo))) is True
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(
+                _movie_meta(type="WEBDL", mediainfo=mediainfo)
+            )
+        )
+        is True
+    )
 
 
 def test_luminarr_accepts_x265_multi_pass_abr_with_stats_read_marker():
@@ -226,37 +315,122 @@ def test_luminarr_accepts_x265_multi_pass_abr_with_stats_read_marker():
         }
     }
 
-    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(type="WEBDL", mediainfo=mediainfo))) is True
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(
+                _movie_meta(type="WEBDL", mediainfo=mediainfo)
+            )
+        )
+        is True
+    )
 
 
 def test_luminarr_allows_primary_mp2_for_hdtv():
-    mediainfo = {"media": {"track": [{"@type": "Audio", "Format": "MPEG Audio", "Format_Profile": "Layer 2", "Title": "English"}]}}
+    mediainfo = {
+        "media": {
+            "track": [
+                {
+                    "@type": "Audio",
+                    "Format": "MPEG Audio",
+                    "Format_Profile": "Layer 2",
+                    "Title": "English",
+                }
+            ]
+        }
+    }
 
-    assert asyncio.run(_tracker().get_additional_checks(_tv_meta(type="HDTV", mediainfo=mediainfo))) is True
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(
+                _tv_meta(type="HDTV", mediainfo=mediainfo)
+            )
+        )
+        is True
+    )
 
 
 def test_luminarr_rejects_primary_mp2_for_webdl():
-    mediainfo = {"media": {"track": [{"@type": "Audio", "Format": "MPEG Audio", "Format_Profile": "Layer 2", "Title": "English"}]}}
+    mediainfo = {
+        "media": {
+            "track": [
+                {
+                    "@type": "Audio",
+                    "Format": "MPEG Audio",
+                    "Format_Profile": "Layer 2",
+                    "Title": "English",
+                }
+            ]
+        }
+    }
 
-    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(type="WEBDL", mediainfo=mediainfo))) is False
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(
+                _movie_meta(type="WEBDL", mediainfo=mediainfo)
+            )
+        )
+        is False
+    )
 
 
 def test_luminarr_rejects_tagged_video_filename_renamed_with_spaces():
     renamed = "Oh Boy Was I Wrong About Her S01E01 REPACK 1080p CR WEB-DL DDP2.0 H.264-Kitsune.mkv"
     original = "Oh.Boy.Was.I.Wrong.About.Her.S01E01.REPACK.1080p.CR.WEB-DL.DDP2.0.H.264-Kitsune.mkv"
 
-    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(tag="-Kitsune", filelist=[renamed]))) is False
-    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(tag="-Kitsune", filelist=[original]))) is True
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(
+                _movie_meta(tag="-Kitsune", filelist=[renamed])
+            )
+        )
+        is False
+    )
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(
+                _movie_meta(tag="-Kitsune", filelist=[original])
+            )
+        )
+        is True
+    )
 
 
 def test_luminarr_rejects_bootleg_markers_in_release_name():
-    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(name="Example Movie Cam"))) is False
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(
+                _movie_meta(name="Example Movie Cam")
+            )
+        )
+        is False
+    )
 
 
 def test_luminarr_allows_tc_as_trailing_release_group():
-    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(name="Example Movie 2024-TC"))) is True
-    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(name="Example Movie TC 2024-GRP"))) is False
-    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(name="Example Movie TC 2024-TC"))) is False
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(
+                _movie_meta(name="Example Movie 2024-TC")
+            )
+        )
+        is True
+    )
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(
+                _movie_meta(name="Example Movie TC 2024-GRP")
+            )
+        )
+        is False
+    )
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(
+                _movie_meta(name="Example Movie TC 2024-TC")
+            )
+        )
+        is False
+    )
 
 
 def test_luminarr_accepts_release_with_none_name_when_no_bootleg_marker_present():
@@ -273,7 +447,12 @@ def test_luminarr_accepts_release_with_none_name_when_no_bootleg_marker_present(
 
 
 def test_luminarr_rejects_low_resolution_unless_confirmed():
-    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(resolution="480p"))) is False
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(_movie_meta(resolution="480p"))
+        )
+        is False
+    )
 
 
 def test_luminarr_rejects_archive_files_for_non_disc():
@@ -281,7 +460,10 @@ def test_luminarr_rejects_archive_files_for_non_disc():
         asyncio.run(
             _tracker().get_additional_checks(
                 _movie_meta(
-                    filelist=["Example.Movie.2024.1080p.mkv", "Example.Movie.2024.part01.rar"],
+                    filelist=[
+                        "Example.Movie.2024.1080p.mkv",
+                        "Example.Movie.2024.part01.rar",
+                    ],
                 )
             )
         )
@@ -294,7 +476,10 @@ def test_luminarr_rejects_extra_file_types_for_non_disc():
         asyncio.run(
             _tracker().get_additional_checks(
                 _movie_meta(
-                    filelist=["Example.Movie.2024.1080p.mkv", "Example.Movie.screenshot.nfo"],
+                    filelist=[
+                        "Example.Movie.2024.1080p.mkv",
+                        "Example.Movie.screenshot.nfo",
+                    ],
                 )
             )
         )
@@ -303,15 +488,28 @@ def test_luminarr_rejects_extra_file_types_for_non_disc():
 
 
 def test_luminarr_rejects_non_discs_without_three_screenshots():
-    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(screens=2))) is False
+    assert (
+        asyncio.run(_tracker().get_additional_checks(_movie_meta(screens=2)))
+        is False
+    )
 
 
 def test_luminarr_treats_missing_screenshot_count_as_zero():
-    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(screens=None))) is False
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(_movie_meta(screens=None))
+        )
+        is False
+    )
 
 
 def test_luminarr_rejects_pornography_metadata():
-    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(adult_media=True))) is False
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(_movie_meta(adult_media=True))
+        )
+        is False
+    )
 
 
 def test_luminarr_rejects_original_audio_missing_for_foreign_audio_release():
@@ -329,11 +527,25 @@ def test_luminarr_rejects_original_audio_missing_for_foreign_audio_release():
 
 
 def test_luminarr_accepts_english_subtitle_alias():
-    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(subtitle_languages=["eng"]))) is True
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(
+                _movie_meta(subtitle_languages=["eng"])
+            )
+        )
+        is True
+    )
 
 
 def test_luminarr_accepts_english_audio_without_english_subtitles():
-    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(subtitle_languages=["Serbian", "Croatian"]))) is True
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(
+                _movie_meta(subtitle_languages=["Serbian", "Croatian"])
+            )
+        )
+        is True
+    )
 
 
 def test_luminarr_rejects_nested_single_file_for_movie():
@@ -355,7 +567,10 @@ def test_luminarr_rejects_multi_files_without_common_top_folder():
         asyncio.run(
             _tracker().get_additional_checks(
                 _movie_meta(
-                    filelist=["Example.Movie.2024.1080p_part1.mkv", "Example.Movie.2024.1080p_part2.mkv"],
+                    filelist=[
+                        "Example.Movie.2024.1080p_part1.mkv",
+                        "Example.Movie.2024.1080p_part2.mkv",
+                    ],
                 )
             )
         )
@@ -364,15 +579,50 @@ def test_luminarr_rejects_multi_files_without_common_top_folder():
 
 
 def test_luminarr_rejects_bd_release_without_bdinfo():
-    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(is_disc="BDMV", filelist=["BDMV"], bdinfo={}, valid_mi_settings=False))) is False
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(
+                _movie_meta(
+                    is_disc="BDMV",
+                    filelist=["BDMV"],
+                    bdinfo={},
+                    valid_mi_settings=False,
+                )
+            )
+        )
+        is False
+    )
 
 
 def test_luminarr_accepts_bd_release_when_bdinfo_is_present():
-    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(is_disc="BDMV", filelist=["BDMV"], bdinfo={"disc_title": "sample"}, valid_mi_settings=False))) is True
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(
+                _movie_meta(
+                    is_disc="BDMV",
+                    filelist=["BDMV"],
+                    bdinfo={"disc_title": "sample"},
+                    valid_mi_settings=False,
+                )
+            )
+        )
+        is True
+    )
 
 
 def test_luminarr_disc_types_do_not_require_mediainfo_encoding_settings():
-    assert asyncio.run(_tracker().get_additional_checks(_movie_meta(is_disc="DVD", filelist=["VIDEO_TS"], valid_mi_settings=False))) is True
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(
+                _movie_meta(
+                    is_disc="DVD",
+                    filelist=["VIDEO_TS"],
+                    valid_mi_settings=False,
+                )
+            )
+        )
+        is True
+    )
 
 
 @pytest.mark.asyncio
@@ -389,17 +639,24 @@ async def test_luminarr_keeps_existing_same_episode_and_resolution_as_dupe():
     tiered: dict[str, Any] = {
         "name": "My Adventures with Superman S03E09 1080p AMZN WEB-DL DDP5.1 H.264-NTb",
         "size": 1,
-        "files": ["My.Adventures.with.Superman.S03E09.1080p.AMZN.WEB-DL.DDP5.1.H.264-NTb.mkv"],
+        "files": [
+            "My.Adventures.with.Superman.S03E09.1080p.AMZN.WEB-DL.DDP5.1.H.264-NTb.mkv"
+        ],
         "id": 123,
         "res": "1080p",
         "type": "WEB-DL",
     }
 
-    result = await DupeChecker({"DEFAULT": {}}).filter_dupes([tiered], meta, "LUMINARR")
+    result = await DupeChecker({"DEFAULT": {}}).filter_dupes(
+        [tiered], meta, "LUMINARR"
+    )
 
     assert len(result) == 1
     assert result[0].get("name") == tiered["name"]
-    assert meta.get("LUMINARR_matched_reason") == "luminarr_same_episode_resolution"
+    assert (
+        meta.get("LUMINARR_matched_reason")
+        == "luminarr_same_episode_resolution"
+    )
 
 
 @pytest.mark.asyncio
@@ -414,11 +671,22 @@ async def test_luminarr_does_not_block_different_episode_or_resolution():
         resolution="1080p",
     )
     candidates: list[dict[str, Any]] = [
-        {"name": "My Adventures with Superman S03E08 1080p AMZN WEB-DL DDP5.1 H.264-NTb", "size": 1},
-        {"name": "My Adventures with Superman S03E09 2160p AMZN WEB-DL DDP5.1 H.265-NTb", "size": 1},
+        {
+            "name": "My Adventures with Superman S03E08 1080p AMZN WEB-DL DDP5.1 H.264-NTb",
+            "size": 1,
+        },
+        {
+            "name": "My Adventures with Superman S03E09 2160p AMZN WEB-DL DDP5.1 H.265-NTb",
+            "size": 1,
+        },
     ]
 
-    assert await DupeChecker({"DEFAULT": {}}).filter_dupes(candidates, meta, "LUMINARR") == []
+    assert (
+        await DupeChecker({"DEFAULT": {}}).filter_dupes(
+            candidates, meta, "LUMINARR"
+        )
+        == []
+    )
 
 
 def test_luminarr_rejects_tv_uploads_with_multiple_seasons():
@@ -426,7 +694,10 @@ def test_luminarr_rejects_tv_uploads_with_multiple_seasons():
         asyncio.run(
             _tracker().get_additional_checks(
                 _tv_meta(
-                    filelist=["Example.Show.S01E01.mkv", "Example.Show.S02E01.mkv"],
+                    filelist=[
+                        "Example.Show.S01E01.mkv",
+                        "Example.Show.S02E01.mkv",
+                    ],
                 )
             )
         )
@@ -440,7 +711,10 @@ def test_luminarr_rejects_ongoing_tv_pack_without_confirmation():
             _tracker().get_additional_checks(
                 _tv_meta(
                     tv_pack=True,
-                    filelist=["Example.Show.S01E01.mkv", "Example.Show.S01E02.mkv"],
+                    filelist=[
+                        "Example.Show.S01E01.mkv",
+                        "Example.Show.S01E02.mkv",
+                    ],
                     imdb_info={"status": "Returning Series"},
                 )
             )
@@ -455,7 +729,10 @@ def test_luminarr_accepts_ended_tv_season_pack():
             _tracker().get_additional_checks(
                 _tv_meta(
                     tv_pack=True,
-                    filelist=["Example.Show.S01/Example.Show.S01E01.mkv", "Example.Show.S01/Example.Show.S01E02.mkv"],
+                    filelist=[
+                        "Example.Show.S01/Example.Show.S01E01.mkv",
+                        "Example.Show.S01/Example.Show.S01E02.mkv",
+                    ],
                     imdb_info={"status": "Ended"},
                 )
             )
@@ -466,38 +743,65 @@ def test_luminarr_accepts_ended_tv_season_pack():
 
 def test_luminarr_sample_and_media_track_guard_helpers():
     tracker = _tracker()
-    assert tracker._contains_sample_file(["Sample.Video.mkv"]) == "sample.video.mkv"
-    assert tracker._media_tracks(Meta(mediainfo={"media": {"track": "bad"}})) == []
+    assert (
+        tracker._contains_sample_file(["Sample.Video.mkv"])
+        == "sample.video.mkv"
+    )
+    assert (
+        tracker._media_tracks(Meta(mediainfo={"media": {"track": "bad"}}))
+        == []
+    )
 
 
 def test_luminarr_top_folder_failure_detects_multiple_folders():
-    assert _tracker()._top_folder_failure(["Season 1", "Season 2"]) == "Multi-file uploads must use a single top-level folder."
+    assert (
+        _tracker()._top_folder_failure(["Season 1", "Season 2"])
+        == "Multi-file uploads must use a single top-level folder."
+    )
 
 
 @pytest.mark.asyncio
 async def test_luminarr_language_policy_direct_rejection(monkeypatch):
     tracker = _tracker()
-    monkeypatch.setattr(tracker.common, "check_language_requirements", lambda *_args, **_kwargs: asyncio.sleep(0, result=False))
+    monkeypatch.setattr(
+        tracker.common,
+        "check_language_requirements",
+        lambda *_args, **_kwargs: asyncio.sleep(0, result=False),
+    )
     assert not await tracker._language_policy_passes(_movie_meta())
 
 
 def test_luminarr_tv_policy_direct_multi_season_rejection(monkeypatch):
     tracker = _tracker()
-    monkeypatch.setattr(tracker.common, "extract_tv_seasons", lambda _files: {1, 2})
-    assert not tracker._tv_policy_passes(_tv_meta(), "TV", ["S01E01.mkv", "S02E01.mkv"])
+    monkeypatch.setattr(
+        tracker.common, "extract_tv_seasons", lambda _files: {1, 2}
+    )
+    assert not tracker._tv_policy_passes(
+        _tv_meta(), "TV", ["S01E01.mkv", "S02E01.mkv"]
+    )
 
 
-def test_luminarr_tv_policy_direct_nonpack_multi_episode_rejection(monkeypatch):
+def test_luminarr_tv_policy_direct_nonpack_multi_episode_rejection(
+    monkeypatch,
+):
     tracker = _tracker()
-    monkeypatch.setattr(tracker.common, "extract_tv_seasons", lambda _files: {1})
+    monkeypatch.setattr(
+        tracker.common, "extract_tv_seasons", lambda _files: {1}
+    )
     monkeypatch.setattr(tracker.common, "count_tv_episodes", lambda _files: 2)
     meta = _tv_meta(tv_pack=False)
-    assert not tracker._tv_policy_passes(meta, "TV", ["S01E01.mkv", "S01E02.mkv"])
+    assert not tracker._tv_policy_passes(
+        meta, "TV", ["S01E01.mkv", "S01E02.mkv"]
+    )
 
 
 def test_luminarr_final_policy_stops_when_tv_policy_fails(monkeypatch):
     tracker = _tracker()
-    monkeypatch.setattr(tracker, "_format_and_screen_policy_passes", lambda *_args: True)
-    monkeypatch.setattr(tracker, "_extra_files_policy_passes", lambda *_args: True)
+    monkeypatch.setattr(
+        tracker, "_format_and_screen_policy_passes", lambda *_args: True
+    )
+    monkeypatch.setattr(
+        tracker, "_extra_files_policy_passes", lambda *_args: True
+    )
     monkeypatch.setattr(tracker, "_tv_policy_passes", lambda *_args: False)
     assert not tracker._final_policy_passes(_tv_meta(), "TV", ["episode.mkv"])

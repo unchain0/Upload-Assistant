@@ -30,7 +30,14 @@ class TmdbCredentialRejectedError(UploadAssistantError):
 class MediaInfoError(UploadAssistantError, RuntimeError):
     """MediaInfo execution failure with concise text and diagnostic details."""
 
-    def __init__(self, message: str, *, command: list[str], stdout: str = "", stderr: str = "") -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        command: list[str],
+        stdout: str = "",
+        stderr: str = "",
+    ) -> None:
         self.command = command
         self.stdout = stdout
         self.stderr = stderr

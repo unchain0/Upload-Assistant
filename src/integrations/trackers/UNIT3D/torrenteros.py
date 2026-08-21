@@ -42,7 +42,11 @@ class Torrenteros(UNIT3D):
 
     def build_name(self, meta: Meta) -> str:
         name = meta.name_notag
-        suffix = self._disc_language_suffix(meta) if meta.is_disc == "BDMV" else self._file_language_suffix(meta)
+        suffix = (
+            self._disc_language_suffix(meta)
+            if meta.is_disc == "BDMV"
+            else self._file_language_suffix(meta)
+        )
         if suffix:
             name += f" {suffix}"
         if meta.tag:
@@ -51,7 +55,9 @@ class Torrenteros(UNIT3D):
         return name
 
     def _ask_spanish_type(self, kind: str) -> str:
-        logger.info(f"{self.tracker}: [green]Found Spanish {kind} track.[/green] [yellow]Is it Castellano or Latino?[/yellow]")
+        logger.info(
+            f"{self.tracker}: [green]Found Spanish {kind} track.[/green] [yellow]Is it Castellano or Latino?[/yellow]"
+        )
         logger.info(f"{self.tracker}: 1 = Castellano")
         logger.info(f"{self.tracker}: 2 = Latino")
         logger.info(f"{self.tracker}: 3 = Castellano Latino")
@@ -105,7 +111,11 @@ class Torrenteros(UNIT3D):
         tracks = media.get("track", [])
         if not isinstance(tracks, list):
             return []
-        return [cast(dict[str, Any], track) for track in tracks if isinstance(track, dict)]
+        return [
+            cast(dict[str, Any], track)
+            for track in tracks
+            if isinstance(track, dict)
+        ]
 
     @staticmethod
     def _media_mapping(meta: Meta) -> dict[str, Any]:
@@ -128,11 +138,15 @@ class Torrenteros(UNIT3D):
 
     async def get_additional_checks(self, meta: Meta) -> bool:
         if not meta.language_checked:
-            await languages_manager.process_desc_language(meta, tracker=self.tracker)
+            await languages_manager.process_desc_language(
+                meta, tracker=self.tracker
+            )
         if self._has_spanish_audio(meta):
             return True
         if not self._has_spanish_subtitles(meta):
-            logger.info(f"{self.tracker}: [bold red]requires at least one Spanish audio or subtitle track.")
+            logger.info(
+                f"{self.tracker}: [bold red]requires at least one Spanish audio or subtitle track."
+            )
             return False
         return self._allow_subtitle_only(meta)
 
@@ -147,5 +161,9 @@ class Torrenteros(UNIT3D):
     def _allow_subtitle_only(self, meta: Meta) -> bool:
         if meta.unattended:
             return bool(meta.unattended_confirm)
-        logger.info(f"{self.tracker}: [yellow]No Spanish audio track found, but Spanish subtitles are present.[/yellow]")
-        return bool(cli_ui.ask_yes_no("Do you want to upload anyway?", default=False))
+        logger.info(
+            f"{self.tracker}: [yellow]No Spanish audio track found, but Spanish subtitles are present.[/yellow]"
+        )
+        return bool(
+            cli_ui.ask_yes_no("Do you want to upload anyway?", default=False)
+        )

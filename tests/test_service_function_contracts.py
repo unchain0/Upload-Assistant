@@ -68,10 +68,18 @@ _SKIP_FUNCTIONS = {
 }
 
 
-def _release(tmp_path: Path, category: str, release_type: str, resolution: str) -> Meta:
-    release_dir = tmp_path / f"{category.lower()}-{release_type.lower()}-{resolution.lower()}"
+def _release(
+    tmp_path: Path, category: str, release_type: str, resolution: str
+) -> Meta:
+    release_dir = (
+        tmp_path
+        / f"{category.lower()}-{release_type.lower()}-{resolution.lower()}"
+    )
     release_dir.mkdir(parents=True, exist_ok=True)
-    media = release_dir / "Example.Release.2026.1080p.WEB-DL.H.264.DDP5.1-GROUP.mkv"
+    media = (
+        release_dir
+        / "Example.Release.2026.1080p.WEB-DL.H.264.DDP5.1-GROUP.mkv"
+    )
     media.write_bytes(b"media")
     text = release_dir / "Example Release.epub"
     text.write_bytes(b"book")
@@ -84,7 +92,9 @@ def _release(tmp_path: Path, category: str, release_type: str, resolution: str) 
         category=category,
         type=release_type,
         resolution=resolution,
-        source="BluRay" if release_type in {"DISC", "REMUX", "ENCODE"} else "WEB",
+        source="BluRay"
+        if release_type in {"DISC", "REMUX", "ENCODE"}
+        else "WEB",
         is_disc="BDMV" if release_type == "DISC" else "",
         title="Example Release",
         name="Example Release 2026 1080p WEB-DL H.264 DDP 5.1-GROUP",
@@ -117,14 +127,37 @@ def _release(tmp_path: Path, category: str, release_type: str, resolution: str) 
         mediainfo={
             "media": {
                 "track": [
-                    {"@type": "General", "Format": "Matroska", "Duration": "7200000", "FileSize": "1000000"},
-                    {"@type": "Video", "Format": "AVC", "Height": "1080", "Width": "1920", "Language": "en"},
-                    {"@type": "Audio", "Format": "E-AC-3", "Channels": "6", "BitRate": "640000", "Language": "en"},
+                    {
+                        "@type": "General",
+                        "Format": "Matroska",
+                        "Duration": "7200000",
+                        "FileSize": "1000000",
+                    },
+                    {
+                        "@type": "Video",
+                        "Format": "AVC",
+                        "Height": "1080",
+                        "Width": "1920",
+                        "Language": "en",
+                    },
+                    {
+                        "@type": "Audio",
+                        "Format": "E-AC-3",
+                        "Channels": "6",
+                        "BitRate": "640000",
+                        "Language": "en",
+                    },
                     {"@type": "Text", "Format": "UTF-8", "Language": "en"},
                 ]
             }
         },
-        bdinfo={"size": 25.0, "playlist": "00000.MPLS", "video": [], "audio": [], "subtitles": []},
+        bdinfo={
+            "size": 25.0,
+            "playlist": "00000.MPLS",
+            "video": [],
+            "audio": [],
+            "subtitles": [],
+        },
         trackers=["AITHER"],
         tracker_status={},
         image_list=[],
@@ -152,7 +185,12 @@ def _release(tmp_path: Path, category: str, release_type: str, resolution: str) 
 
 
 def _modules() -> list[ModuleType]:
-    return [importlib.import_module(info.name) for info in pkgutil.iter_modules(services_package.__path__, f"{services_package.__name__}.")]
+    return [
+        importlib.import_module(info.name)
+        for info in pkgutil.iter_modules(
+            services_package.__path__, f"{services_package.__name__}."
+        )
+    ]
 
 
 def _literal_candidates(function: Callable[..., object]) -> list[object]:
@@ -170,18 +208,30 @@ def _literal_candidates(function: Callable[..., object]) -> list[object]:
         return []
     values: list[object] = []
     for node in ast.walk(tree):
-        if isinstance(node, ast.Constant) and isinstance(node.value, str | int | float | bool):
+        if isinstance(node, ast.Constant) and isinstance(
+            node.value, str | int | float | bool
+        ):
             value = node.value
             if value not in values and len(str(value)) <= 80:
                 values.append(value)
         elif isinstance(node, ast.List | ast.Tuple | ast.Set):
             for item in node.elts:
-                if isinstance(item, ast.Constant) and isinstance(item.value, str | int | float | bool) and item.value not in values:
+                if (
+                    isinstance(item, ast.Constant)
+                    and isinstance(item.value, str | int | float | bool)
+                    and item.value not in values
+                ):
                     values.append(item.value)
     return values[:20]
 
 
-def _argument(name: str, annotation: object, meta: Meta, tmp_path: Path, literal: object | None = None) -> object:
+def _argument(
+    name: str,
+    annotation: object,
+    meta: Meta,
+    tmp_path: Path,
+    literal: object | None = None,
+) -> object:
     normalized = name.casefold().lstrip("_")
     config = copy.deepcopy(example_config)
     rich_mapping: dict[str, Any] = {
@@ -257,7 +307,9 @@ def _argument(name: str, annotation: object, meta: Meta, tmp_path: Path, literal
     if annotation is int:
         return int(literal) if isinstance(literal, int | float | bool) else 1
     if annotation is float:
-        return float(literal) if isinstance(literal, int | float | bool) else 1.0
+        return (
+            float(literal) if isinstance(literal, int | float | bool) else 1.0
+        )
     if annotation is str:
         return str(literal) if literal is not None else "example"
     if annotation is Path:
@@ -267,14 +319,23 @@ def _argument(name: str, annotation: object, meta: Meta, tmp_path: Path, literal
     if origin in {dict, Mapping}:
         return rich_mapping
     if origin is tuple:
-        return tuple(_argument(normalized, item, meta, tmp_path, literal) for item in args if item is not Ellipsis)
+        return tuple(
+            _argument(normalized, item, meta, tmp_path, literal)
+            for item in args
+            if item is not Ellipsis
+        )
     if origin is not None and type(None) in args:
         concrete = next((item for item in args if item is not type(None)), str)
         return _argument(normalized, concrete, meta, tmp_path, literal)
     return literal if literal is not None else "example"
 
 
-async def _invoke(function: Callable[..., object], meta: Meta, tmp_path: Path, literal: object | None = None) -> object:
+async def _invoke(
+    function: Callable[..., object],
+    meta: Meta,
+    tmp_path: Path,
+    literal: object | None = None,
+) -> object:
     signature = inspect.signature(function)
     hint_target = function.__init__ if inspect.isclass(function) else function
     try:
@@ -284,11 +345,20 @@ async def _invoke(function: Callable[..., object], meta: Meta, tmp_path: Path, l
     args: list[object] = []
     kwargs: dict[str, object] = {}
     for parameter in signature.parameters.values():
-        if parameter.kind in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}:
+        if parameter.kind in {
+            inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.VAR_KEYWORD,
+        }:
             continue
         if parameter.default is not inspect.Parameter.empty:
             continue
-        value = _argument(parameter.name, hints.get(parameter.name, parameter.annotation), meta, tmp_path, literal)
+        value = _argument(
+            parameter.name,
+            hints.get(parameter.name, parameter.annotation),
+            meta,
+            tmp_path,
+            literal,
+        )
         if parameter.kind is inspect.Parameter.KEYWORD_ONLY:
             kwargs[parameter.name] = value
         else:
@@ -299,7 +369,9 @@ async def _invoke(function: Callable[..., object], meta: Meta, tmp_path: Path, l
     return result
 
 
-def test_public_service_functions_accept_dressed_domain_values(tmp_path: Path) -> None:
+def test_public_service_functions_accept_dressed_domain_values(
+    tmp_path: Path,
+) -> None:
     variants = [
         _release(tmp_path, "MOVIE", "DISC", "2160p"),
         _release(tmp_path, "MOVIE", "REMUX", "1080p"),
@@ -316,12 +388,21 @@ def test_public_service_functions_accept_dressed_domain_values(tmp_path: Path) -
 
     async def exercise() -> None:
         for module in _modules():
-            for name, function in inspect.getmembers(module, inspect.isfunction):
-                if name.startswith("__") or name in _SKIP_FUNCTIONS or function.__module__ != module.__name__:
+            for name, function in inspect.getmembers(
+                module, inspect.isfunction
+            ):
+                if (
+                    name.startswith("__")
+                    or name in _SKIP_FUNCTIONS
+                    or function.__module__ != module.__name__
+                ):
                     continue
                 qualified = f"{module.__name__}.{name}"
                 attempted.add(qualified)
-                literals: list[object | None] = [None, *_literal_candidates(function)]
+                literals: list[object | None] = [
+                    None,
+                    *_literal_candidates(function),
+                ]
                 # Pair literals with representative releases rather than taking
                 # the Cartesian product. This preserves boundary diversity while
                 # keeping the contract fast enough for every local/CI run.
@@ -330,9 +411,13 @@ def test_public_service_functions_accept_dressed_domain_values(tmp_path: Path) -
                     try:
                         await _invoke(function, meta.copy(), tmp_path, literal)
                     except (KeyboardInterrupt, SystemExit) as error:
-                        process_terminations.append(f"{qualified}: {type(error).__name__}")
+                        process_terminations.append(
+                            f"{qualified}: {type(error).__name__}"
+                        )
                     except Exception as error:
-                        validation_failures.append(f"{qualified}: {type(error).__name__}")
+                        validation_failures.append(
+                            f"{qualified}: {type(error).__name__}"
+                        )
                     else:
                         successes.add(qualified)
 

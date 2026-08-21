@@ -11,7 +11,14 @@ class _Response:
 
     @staticmethod
     def json():
-        return {"status": 200, "response": {"files": [{"name": "https://img2.kshare.club/gpw/user/1/test.png"}]}}
+        return {
+            "status": 200,
+            "response": {
+                "files": [
+                    {"name": "https://img2.kshare.club/gpw/user/1/test.png"}
+                ]
+            },
+        }
 
 
 class _Client:
@@ -34,11 +41,22 @@ class _Client:
 
 
 def test_greatposterwall_rehosts_only_unapproved_urls(monkeypatch):
-    monkeypatch.setattr("src.integrations.trackers.greatposterwall.httpx.AsyncClient", _Client)
-    tracker = GreatPosterWall({"DEFAULT": {"tmdb_api": "test"}, "TRACKERS": {"GREATPOSTERWALL": {"api_key": "test-key"}}})
+    monkeypatch.setattr(
+        "src.integrations.trackers.greatposterwall.httpx.AsyncClient", _Client
+    )
+    tracker = GreatPosterWall(
+        {
+            "DEFAULT": {"tmdb_api": "test"},
+            "TRACKERS": {"GREATPOSTERWALL": {"api_key": "test-key"}},
+        }
+    )
     meta = Meta(
         image_list=[
-            {"img_url": "https://lostimg.cc/example.png", "raw_url": "https://lostimg.cc/example.png", "web_url": "https://lostimg.cc/example.png"},
+            {
+                "img_url": "https://lostimg.cc/example.png",
+                "raw_url": "https://lostimg.cc/example.png",
+                "web_url": "https://lostimg.cc/example.png",
+            },
             {
                 "img_url": "https://img2.kshare.club/gpw/user/1/kept.png",
                 "raw_url": "https://img2.kshare.club/gpw/user/1/kept.png",
@@ -61,12 +79,17 @@ def test_greatposterwall_rehosts_only_unapproved_urls(monkeypatch):
             "web_url": "https://img2.kshare.club/gpw/user/1/kept.png",
         },
     ]
-    assert _Client.request_params == {"action": "img_upload", "api_key": "test-key"}
+    assert _Client.request_params == {
+        "action": "img_upload",
+        "api_key": "test-key",
+    }
     assert _Client.request_data == {"urls[]": "https://lostimg.cc/example.png"}
 
 
 def test_greatposterwall_leaves_images_unchanged_without_api_key():
-    tracker = GreatPosterWall({"DEFAULT": {"tmdb_api": "test"}, "TRACKERS": {"GREATPOSTERWALL": {}}})
+    tracker = GreatPosterWall(
+        {"DEFAULT": {"tmdb_api": "test"}, "TRACKERS": {"GREATPOSTERWALL": {}}}
+    )
     meta = Meta(image_list=[{"raw_url": "https://lostimg.cc/example.png"}])
 
     asyncio.run(tracker.rehost_unapproved_images(meta))

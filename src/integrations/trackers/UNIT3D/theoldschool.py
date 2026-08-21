@@ -50,9 +50,17 @@ class TheOldSchool(UNIT3D):
         _ = (category, reverse, mapping_only)
         tags_lower = meta.tag.lower() if meta.tag else ""
         if "vostfr" in tags_lower or "subfrench" in tags_lower:
-            category_id = "9" if meta.category == "TV" and meta.tv_pack else {"MOVIE": "6", "TV": "7"}.get(meta.category, "0")
+            category_id = (
+                "9"
+                if meta.category == "TV" and meta.tv_pack
+                else {"MOVIE": "6", "TV": "7"}.get(meta.category, "0")
+            )
         else:
-            category_id = "8" if meta.category == "TV" and meta.tv_pack else {"MOVIE": "1", "TV": "2"}.get(meta.category, "0")
+            category_id = (
+                "8"
+                if meta.category == "TV" and meta.tv_pack
+                else {"MOVIE": "1", "TV": "2"}.get(meta.category, "0")
+            )
         return {"category_id": category_id}
 
     async def get_type_id(
@@ -96,22 +104,38 @@ class TheOldSchool(UNIT3D):
         # Hook into this function for torrent file recreation if needed
         if meta.keep_nfo:
             tracker_config = self.config["TRACKERS"].get(self.tracker, {})
-            tracker_url = str(tracker_config.get("announce_url", "https://fake.tracker")).strip()
+            tracker_url = str(
+                tracker_config.get("announce_url", "https://fake.tracker")
+            ).strip()
             torrent_create = f"[{self.tracker}]"
             try:
-                cooldown = int(self.config.get("DEFAULT", {}).get("rehash_cooldown", 0) or 0)
+                cooldown = int(
+                    self.config.get("DEFAULT", {}).get("rehash_cooldown", 0)
+                    or 0
+                )
             except ValueError, TypeError:
                 cooldown = 0
             if cooldown > 0:
-                await asyncio.sleep(cooldown)  # Small cooldown before rehashing
+                await asyncio.sleep(
+                    cooldown
+                )  # Small cooldown before rehashing
 
-            await TorrentCreator.create_torrent(meta, str(meta.path), torrent_create, tracker_url=tracker_url)
+            await TorrentCreator.create_torrent(
+                meta, str(meta.path), torrent_create, tracker_url=tracker_url
+            )
 
         return {"name": base_name}
 
     async def get_additional_checks(self, meta: Meta) -> bool:
         # Check language requirements: must be French audio OR original audio with French subtitles
-        french_languages = ["french", "fre", "fra", "fr", "français", "francais"]
+        french_languages = [
+            "french",
+            "fre",
+            "fra",
+            "fr",
+            "français",
+            "francais",
+        ]
         if not await self.common.check_language_requirements(
             meta,
             self.tracker,
@@ -121,7 +145,9 @@ class TheOldSchool(UNIT3D):
             require_both=False,
             original_language=True,
         ):
-            logger.info(f"{self.tracker}: [bold red]Language requirements not met for {self.tracker}.[/bold red]")
+            logger.info(
+                f"{self.tracker}: [bold red]Language requirements not met for {self.tracker}.[/bold red]"
+            )
             return False
 
         # Check if it's a Scene release without NFO - TheOldSchool requires NFO for Scene releases
@@ -129,6 +155,8 @@ class TheOldSchool(UNIT3D):
         has_nfo = meta.nfo or meta.auto_nfo
 
         if is_scene and not has_nfo:
-            logger.info(f"{self.tracker}: [red]Scene release detected but no NFO file found. {self.tracker} requires NFO files for Scene releases.[/red]")
+            logger.info(
+                f"{self.tracker}: [red]Scene release detected but no NFO file found. {self.tracker} requires NFO files for Scene releases.[/red]"
+            )
             return False
         return True

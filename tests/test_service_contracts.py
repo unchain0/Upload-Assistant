@@ -39,7 +39,14 @@ class _Response:
     headers: ClassVar[dict[str, str]] = {}
 
     def json(self) -> dict[str, Any]:
-        return {"success": True, "data": [], "results": [], "items": [], "id": 1, "status": "ok"}
+        return {
+            "success": True,
+            "data": [],
+            "results": [],
+            "items": [],
+            "id": 1,
+            "status": "ok",
+        }
 
     def raise_for_status(self) -> None:
         return None
@@ -87,14 +94,28 @@ class _CompletedProcess:
 
 class _Repository:
     def load(self, *_args: object, **_kwargs: object) -> Any:
-        from src.domain_models.configuration import ApplicationConfiguration, ConfigurationSource, ConfigurationSourceKind
-
-        return ApplicationConfiguration.from_mapping(
-            {"DEFAULT": {"tmdb_api": "0123456789abcdef0123456789abcdef", "img_host_1": "imgbb"}, "TRACKERS": {}},
-            ConfigurationSource(path="config.py", kind=ConfigurationSourceKind.RUNTIME),
+        from src.domain_models.configuration import (
+            ApplicationConfiguration,
+            ConfigurationSource,
+            ConfigurationSourceKind,
         )
 
-    def copy_atomically(self, *_args: object, **_kwargs: object) -> Path | None:
+        return ApplicationConfiguration.from_mapping(
+            {
+                "DEFAULT": {
+                    "tmdb_api": "0123456789abcdef0123456789abcdef",
+                    "img_host_1": "imgbb",
+                },
+                "TRACKERS": {},
+            },
+            ConfigurationSource(
+                path="config.py", kind=ConfigurationSourceKind.RUNTIME
+            ),
+        )
+
+    def copy_atomically(
+        self, *_args: object, **_kwargs: object
+    ) -> Path | None:
         return None
 
     def write_atomically(self, *_args: object, **_kwargs: object) -> None:
@@ -168,13 +189,23 @@ class _ManagerPort(_Universal):
     def _meta(args: tuple[object, ...]) -> Meta:
         return next((arg for arg in args if isinstance(arg, Meta)), Meta())
 
-    async def get_disc(self, meta: Meta) -> tuple[str, str, dict[str, Any], list[dict[str, Any]]]:
+    async def get_disc(
+        self, meta: Meta
+    ) -> tuple[str, str, dict[str, Any], list[dict[str, Any]]]:
         return "", str(meta.path or ""), {}, []
 
-    async def is_scene(self, path: str, meta: Meta, imdb_id: object = 0) -> tuple[str, bool, object]:
-        return Path(path).stem or meta.title or "Example Release", False, imdb_id
+    async def is_scene(
+        self, path: str, meta: Meta, imdb_id: object = 0
+    ) -> tuple[str, bool, object]:
+        return (
+            Path(path).stem or meta.title or "Example Release",
+            False,
+            imdb_id,
+        )
 
-    async def extract_title_and_year(self, meta: Meta, _video: str) -> tuple[str, str, int]:
+    async def extract_title_and_year(
+        self, meta: Meta, _video: str
+    ) -> tuple[str, str, int]:
         return meta.title or "Example Release", "", int(meta.year or 2024)
 
     async def get_dvd_size(self, *_args: object, **_kwargs: object) -> float:
@@ -186,7 +217,9 @@ class _ManagerPort(_Universal):
     async def check_season_pack_completeness(self, _meta: Meta) -> None:
         return None
 
-    async def get_tvmaze_tvdb(self, *_args: object, **_kwargs: object) -> tuple[int, int, dict[str, Any], str]:
+    async def get_tvmaze_tvdb(
+        self, *_args: object, **_kwargs: object
+    ) -> tuple[int, int, dict[str, Any], str]:
         return 0, 0, {}, ""
 
     async def get_tv_data(self, meta: Meta) -> Meta:
@@ -204,31 +237,79 @@ class _ManagerPort(_Universal):
     async def imdb_tmdb(self, meta: Meta, _filename: str) -> Meta:
         return meta
 
-    async def get_tmdb_imdb_from_mediainfo(self, _mi: dict[str, Any], meta: Meta) -> tuple[str, int, int, int]:
-        return meta.category or "MOVIE", int(meta.tmdb_id or 123), int(meta.imdb_id or 1234567), int(meta.tvdb_id or 456)
+    async def get_tmdb_imdb_from_mediainfo(
+        self, _mi: dict[str, Any], meta: Meta
+    ) -> tuple[str, int, int, int]:
+        return (
+            meta.category or "MOVIE",
+            int(meta.tmdb_id or 123),
+            int(meta.imdb_id or 1234567),
+            int(meta.tvdb_id or 456),
+        )
 
-    async def get_tmdb_id(self, *_args: object, **_kwargs: object) -> tuple[int, str]:
+    async def get_tmdb_id(
+        self, *_args: object, **_kwargs: object
+    ) -> tuple[int, str]:
         return 123, "MOVIE"
 
-    async def get_tmdb_from_imdb(self, *_args: object, **kwargs: object) -> tuple[str, int, str, bool]:
-        return str(kwargs.get("category_preference") or "MOVIE"), 123, "en", False
+    async def get_tmdb_from_imdb(
+        self, *_args: object, **kwargs: object
+    ) -> tuple[str, int, str, bool]:
+        return (
+            str(kwargs.get("category_preference") or "MOVIE"),
+            123,
+            "en",
+            False,
+        )
 
-    async def set_tmdb_metadata(self, meta: Meta, _filename: str | None = None) -> None:
+    async def set_tmdb_metadata(
+        self, meta: Meta, _filename: str | None = None
+    ) -> None:
         meta.title = meta.title or "Example Release"
         meta.year = meta.year or 2024
         meta.original_language = meta.original_language or "en"
         meta.overview = meta.overview or "Representative overview."
 
-    async def get_tmdb_localized_data(self, _meta: Meta, data_type: str, language: str, append_to_response: str) -> dict[str, Any]:
-        return {"language": language, "type": data_type, "append": append_to_response}
+    async def get_tmdb_localized_data(
+        self,
+        _meta: Meta,
+        data_type: str,
+        language: str,
+        append_to_response: str,
+    ) -> dict[str, Any]:
+        return {
+            "language": language,
+            "type": data_type,
+            "append": append_to_response,
+        }
 
-    async def get_sonarr_data(self, *_args: object, **_kwargs: object) -> dict[str, Any]:
-        return {"tvdb_id": 456, "imdb_id": 1234567, "tvmaze_id": 789, "tmdb_id": 123, "genres": ["Drama"], "release_group": "GROUP", "year": 2024}
+    async def get_sonarr_data(
+        self, *_args: object, **_kwargs: object
+    ) -> dict[str, Any]:
+        return {
+            "tvdb_id": 456,
+            "imdb_id": 1234567,
+            "tvmaze_id": 789,
+            "tmdb_id": 123,
+            "genres": ["Drama"],
+            "release_group": "GROUP",
+            "year": 2024,
+        }
 
-    async def get_radarr_data(self, *_args: object, **_kwargs: object) -> dict[str, Any]:
-        return {"imdb_id": 1234567, "tmdb_id": 123, "genres": ["Drama"], "release_group": "GROUP", "year": 2024}
+    async def get_radarr_data(
+        self, *_args: object, **_kwargs: object
+    ) -> dict[str, Any]:
+        return {
+            "imdb_id": 1234567,
+            "tmdb_id": 123,
+            "genres": ["Drama"],
+            "release_group": "GROUP",
+            "year": 2024,
+        }
 
-    async def get_tracker_data(self, *_args: object, **_kwargs: object) -> Meta:
+    async def get_tracker_data(
+        self, *_args: object, **_kwargs: object
+    ) -> Meta:
         return self._meta(_args)
 
     async def get_ptp_from_hash(self, meta: Meta) -> Meta:
@@ -240,13 +321,19 @@ class _ManagerPort(_Universal):
     async def get_source_override(self, meta: Meta, **_kwargs: object) -> Meta:
         return meta
 
-    async def get_audio_v2(self, *_args: object, **_kwargs: object) -> tuple[str, str, bool]:
+    async def get_audio_v2(
+        self, *_args: object, **_kwargs: object
+    ) -> tuple[str, str, bool]:
         return "DDP 5.1", "5.1", False
 
-    async def check_hosts(self, meta: Meta, *_args: object, **_kwargs: object) -> tuple[list[dict[str, str]], bool, bool]:
+    async def check_hosts(
+        self, meta: Meta, *_args: object, **_kwargs: object
+    ) -> tuple[list[dict[str, str]], bool, bool]:
         return list(meta.image_list or []), False, False
 
-    async def search_tvdb_series(self, *_args: object, **_kwargs: object) -> tuple[list[dict[str, Any]], int]:
+    async def search_tvdb_series(
+        self, *_args: object, **_kwargs: object
+    ) -> tuple[list[dict[str, Any]], int]:
         return [{"id": 456, "name": "Example Series"}], 456
 
     async def search_tvmaze(self, *_args: object, **_kwargs: object) -> int:
@@ -255,26 +342,59 @@ class _ManagerPort(_Universal):
     async def search_imdb(self, *_args: object, **_kwargs: object) -> int:
         return 1234567
 
-    async def get_imdb_info_api(self, *_args: object, **_kwargs: object) -> dict[str, Any]:
-        return {"title": "Example Release", "year": 2024, "type": "movie", "aka": "", "genres": ["Drama"], "stars": ["Example Actor"]}
+    async def get_imdb_info_api(
+        self, *_args: object, **_kwargs: object
+    ) -> dict[str, Any]:
+        return {
+            "title": "Example Release",
+            "year": 2024,
+            "type": "movie",
+            "aka": "",
+            "genres": ["Drama"],
+            "stars": ["Example Actor"],
+        }
 
-    async def get_imdb_from_episode(self, *_args: object, **_kwargs: object) -> dict[str, Any]:
+    async def get_imdb_from_episode(
+        self, *_args: object, **_kwargs: object
+    ) -> dict[str, Any]:
         return {"series": {"series_id": "tt1234567"}}
 
-    async def __getattr_awaitable(self, *_args: object, **_kwargs: object) -> _AwaitableValue:
+    async def __getattr_awaitable(
+        self, *_args: object, **_kwargs: object
+    ) -> _AwaitableValue:
         return _AwaitableValue()
 
     def __getattr__(self, name: str) -> Any:
-        if name.startswith(("get_", "search", "fetch", "load", "prepare", "upload", "check", "process", "create", "update", "find", "resolve", "set_")):
+        if name.startswith(
+            (
+                "get_",
+                "search",
+                "fetch",
+                "load",
+                "prepare",
+                "upload",
+                "check",
+                "process",
+                "create",
+                "update",
+                "find",
+                "resolve",
+                "set_",
+            )
+        ):
             return self.__getattr_awaitable
         return super().__getattr__(name)
 
 
 class _VideoPort(_ManagerPort):
-    async def get_video(self, videoloc: str, _mode: str, _sorted_filelist: bool = False) -> tuple[str, list[str]]:
+    async def get_video(
+        self, videoloc: str, _mode: str, _sorted_filelist: bool = False
+    ) -> tuple[str, list[str]]:
         return videoloc, [videoloc]
 
-    async def get_resolution(self, *_args: object, **_kwargs: object) -> tuple[str, bool]:
+    async def get_resolution(
+        self, *_args: object, **_kwargs: object
+    ) -> tuple[str, bool]:
         return "1080p", False
 
     async def is_sd(self, _resolution: str) -> int:
@@ -301,7 +421,9 @@ class _VideoPort(_ManagerPort):
     async def get_video_codec(self, *_args: object, **_kwargs: object) -> str:
         return "H.264"
 
-    async def get_video_encode(self, *_args: object, **_kwargs: object) -> tuple[str, str, bool, str]:
+    async def get_video_encode(
+        self, *_args: object, **_kwargs: object
+    ) -> tuple[str, str, bool, str]:
         return "H.264", "x264", False, "10"
 
 
@@ -328,7 +450,9 @@ class _PreparationPort(_Universal):
             setattr(self, name, manager)
 
     @staticmethod
-    def _resolve_book_filelist(meta: Meta, videoloc: str) -> tuple[str, list[str], str, str]:
+    def _resolve_book_filelist(
+        meta: Meta, videoloc: str
+    ) -> tuple[str, list[str], str, str]:
         path = str(meta.path or videoloc)
         return path, [path], Path(path).name, "file"
 
@@ -356,9 +480,26 @@ class _PreparationPort(_Universal):
 
 class _Port(_Universal):
     def __getattr__(self, name: str) -> Any:
-        if name.startswith(("get_", "search", "fetch", "load", "prepare", "upload", "check", "process", "create", "update", "find", "resolve")):
+        if name.startswith(
+            (
+                "get_",
+                "search",
+                "fetch",
+                "load",
+                "prepare",
+                "upload",
+                "check",
+                "process",
+                "create",
+                "update",
+                "find",
+                "resolve",
+            )
+        ):
 
-            def awaitable_method(*_args: object, **_kwargs: object) -> _AwaitableValue:
+            def awaitable_method(
+                *_args: object, **_kwargs: object
+            ) -> _AwaitableValue:
                 return _AwaitableValue()
 
             return awaitable_method
@@ -427,17 +568,39 @@ def _meta(tmp_path: Path, profile: int = 0) -> Meta:
         channels="5.1",
         description="Representative description.",
         overview="Representative overview.",
-        image_list=[{"img_url": "https://images.example/1.jpg", "raw_url": "https://images.example/1.jpg", "web_url": "https://images.example/1"}],
+        image_list=[
+            {
+                "img_url": "https://images.example/1.jpg",
+                "raw_url": "https://images.example/1.jpg",
+                "web_url": "https://images.example/1",
+            }
+        ],
         mediainfo={
             "media": {
                 "track": [
                     {"@type": "General", "Format": "Matroska"},
-                    {"@type": "Video", "Format": "AVC", "Height": "1080", "Language": "en"},
-                    {"@type": "Audio", "Format": "E-AC-3", "Channels": "6", "Language": "en"},
+                    {
+                        "@type": "Video",
+                        "Format": "AVC",
+                        "Height": "1080",
+                        "Language": "en",
+                    },
+                    {
+                        "@type": "Audio",
+                        "Format": "E-AC-3",
+                        "Channels": "6",
+                        "Language": "en",
+                    },
                 ]
             }
         },
-        bdinfo={"size": 25.0, "playlist": "00000.MPLS", "video": [], "audio": [], "subtitles": []},
+        bdinfo={
+            "size": 25.0,
+            "playlist": "00000.MPLS",
+            "video": [],
+            "audio": [],
+            "subtitles": [],
+        },
         audio_languages=["English"],
         subtitle_languages=["English"],
         languages=["English"],
@@ -463,7 +626,12 @@ def _meta(tmp_path: Path, profile: int = 0) -> Meta:
 
 
 def _modules() -> list[ModuleType]:
-    return [importlib.import_module(item.name) for item in pkgutil.iter_modules(services_package.__path__, f"{services_package.__name__}.")]
+    return [
+        importlib.import_module(item.name)
+        for item in pkgutil.iter_modules(
+            services_package.__path__, f"{services_package.__name__}."
+        )
+    ]
 
 
 def _safe_callable(function: Callable[..., object]) -> bool:
@@ -486,7 +654,9 @@ def _safe_callable(function: Callable[..., object]) -> bool:
 
 
 def _literal_values(node: ast.AST) -> list[object]:
-    if isinstance(node, ast.Constant) and isinstance(node.value, (str, int, float, bool, type(None))):
+    if isinstance(node, ast.Constant) and isinstance(
+        node.value, (str, int, float, bool, type(None))
+    ):
         return [node.value]
     if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
         values: list[object] = []
@@ -496,10 +666,16 @@ def _literal_values(node: ast.AST) -> list[object]:
     return []
 
 
-def _scenario_target(node: ast.AST, meta_names: set[str], parameter_names: set[str]) -> tuple[str, str] | None:
+def _scenario_target(
+    node: ast.AST, meta_names: set[str], parameter_names: set[str]
+) -> tuple[str, str] | None:
     if isinstance(node, ast.Name) and node.id in parameter_names:
         return ("parameter", node.id)
-    if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id in meta_names:
+    if (
+        isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id in meta_names
+    ):
         return ("meta", node.attr)
     if (
         isinstance(node, ast.Call)
@@ -512,14 +688,20 @@ def _scenario_target(node: ast.AST, meta_names: set[str], parameter_names: set[s
         and isinstance(node.args[0].value, str)
     ):
         return ("meta", node.args[0].value)
-    if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) and node.value.id in meta_names:
+    if (
+        isinstance(node, ast.Subscript)
+        and isinstance(node.value, ast.Name)
+        and node.value.id in meta_names
+    ):
         key = node.slice
         if isinstance(key, ast.Constant) and isinstance(key.value, str):
             return ("meta", key.value)
     return None
 
 
-def _literal_scenarios(function: Callable[..., object], limit: int = 96) -> list[tuple[dict[str, object], dict[str, object]]]:
+def _literal_scenarios(
+    function: Callable[..., object], limit: int = 96
+) -> list[tuple[dict[str, object], dict[str, object]]]:
     target = getattr(function, "__func__", function)
     try:
         tree = ast.parse(textwrap.dedent(inspect.getsource(target)))
@@ -527,7 +709,9 @@ def _literal_scenarios(function: Callable[..., object], limit: int = 96) -> list
     except OSError, TypeError, SyntaxError, ValueError:
         return []
     parameter_names = set(signature.parameters)
-    meta_names = {name for name in parameter_names if "meta" in name.casefold()}
+    meta_names = {
+        name for name in parameter_names if "meta" in name.casefold()
+    }
     meta_fields = set(Meta.__dataclass_fields__)
     scenarios: list[tuple[dict[str, object], dict[str, object]]] = []
     seen: set[tuple[str, str, str]] = set()
@@ -539,13 +723,17 @@ def _literal_scenarios(function: Callable[..., object], limit: int = 96) -> list
         if key in seen or len(scenarios) >= limit:
             return
         seen.add(key)
-        scenarios.append(({name: value}, {}) if kind == "meta" else ({}, {name: value}))
+        scenarios.append(
+            ({name: value}, {}) if kind == "meta" else ({}, {name: value})
+        )
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Compare):
             operands = [node.left, *node.comparators]
             for index, operand in enumerate(operands):
-                target_info = _scenario_target(operand, meta_names, parameter_names)
+                target_info = _scenario_target(
+                    operand, meta_names, parameter_names
+                )
                 if target_info is None:
                     continue
                 for other_index, other in enumerate(operands):
@@ -554,18 +742,30 @@ def _literal_scenarios(function: Callable[..., object], limit: int = 96) -> list
                     for value in _literal_values(other):
                         add(*target_info, value)
         elif isinstance(node, ast.If):
-            target_info = _scenario_target(node.test, meta_names, parameter_names)
+            target_info = _scenario_target(
+                node.test, meta_names, parameter_names
+            )
             if target_info is not None:
                 add(*target_info, True)
                 add(*target_info, False)
-            elif isinstance(node.test, ast.UnaryOp) and isinstance(node.test.op, ast.Not):
-                target_info = _scenario_target(node.test.operand, meta_names, parameter_names)
+            elif isinstance(node.test, ast.UnaryOp) and isinstance(
+                node.test.op, ast.Not
+            ):
+                target_info = _scenario_target(
+                    node.test.operand, meta_names, parameter_names
+                )
                 if target_info is not None:
                     add(*target_info, True)
                     add(*target_info, False)
-        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.args:
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.args
+        ):
             if node.func.attr in {"startswith", "endswith"}:
-                target_info = _scenario_target(node.func.value, meta_names, parameter_names)
+                target_info = _scenario_target(
+                    node.func.value, meta_names, parameter_names
+                )
                 if target_info is not None:
                     for value in _literal_values(node.args[0]):
                         add(*target_info, value)
@@ -576,18 +776,30 @@ def _annotation_text(annotation: object) -> str:
     if annotation is inspect.Parameter.empty:
         return ""
     if isinstance(annotation, str):
-        return annotation.replace("typing.", "").replace("collections.abc.", "")
-    return str(annotation).replace("typing.", "").replace("collections.abc.", "")
+        return annotation.replace("typing.", "").replace(
+            "collections.abc.", ""
+        )
+    return (
+        str(annotation).replace("typing.", "").replace("collections.abc.", "")
+    )
 
 
-def _coerce_contract_value(value: object, annotation: object, path: Path) -> object:
+def _coerce_contract_value(
+    value: object, annotation: object, path: Path
+) -> object:
     text = _annotation_text(annotation)
     origin = get_origin(annotation)
     args = get_args(annotation)
     if origin is not None and type(None) in args and value is not None:
-        concrete = next((item for item in args if item is not type(None)), object)
+        concrete = next(
+            (item for item in args if item is not type(None)), object
+        )
         return _coerce_contract_value(value, concrete, path)
-    if annotation is Path or text in {"Path", "<class 'pathlib.Path'>"} or ("Path" in text and "list" not in text.casefold()):
+    if (
+        annotation is Path
+        or text in {"Path", "<class 'pathlib.Path'>"}
+        or ("Path" in text and "list" not in text.casefold())
+    ):
         return value if isinstance(value, Path) else path
     if annotation is str or text in {"str", "<class 'str'>"}:
         return str(value)
@@ -620,14 +832,35 @@ def _coerce_contract_value(value: object, annotation: object, path: Path) -> obj
     return value
 
 
-def _value(name: str, annotation: object, meta: Meta, config: dict[str, Any], tmp_path: Path, profile: int) -> object:
+def _value(
+    name: str,
+    annotation: object,
+    meta: Meta,
+    config: dict[str, Any],
+    tmp_path: Path,
+    profile: int,
+) -> object:
     normalized = name.casefold().lstrip("_")
     path = tmp_path / "Example.Release.2024.mkv"
     path.write_bytes(b"media")
-    path_names = {"root", "directory", "dir_path", "temp_dir", "output_dir", "destination", "source_path"}
+    path_names = {
+        "root",
+        "directory",
+        "dir_path",
+        "temp_dir",
+        "output_dir",
+        "destination",
+        "source_path",
+    }
     if normalized in path_names:
         return _coerce_contract_value(tmp_path, annotation, path)
-    string_path_names = {"videopath", "videoloc", "torrent_path", "media_path", "input_path"}
+    string_path_names = {
+        "videopath",
+        "videoloc",
+        "torrent_path",
+        "media_path",
+        "input_path",
+    }
     if normalized in string_path_names:
         return _coerce_contract_value(str(path), annotation, path)
     values: dict[str, object] = {
@@ -646,8 +879,18 @@ def _value(name: str, annotation: object, meta: Meta, config: dict[str, Any], tm
             "title": "Example Release",
             "label": "Example Release",
             "size": 25_000_000_000,
-            "video": [{"fps": "24.000", "3d": "", "codec": "AVC", "resolution": "1080p", "bitrate": "20000 kbps"}],
-            "audio": [{"codec": "E-AC-3", "channels": "5.1", "bitrate": "640 kbps"}],
+            "video": [
+                {
+                    "fps": "24.000",
+                    "3d": "",
+                    "codec": "AVC",
+                    "resolution": "1080p",
+                    "bitrate": "20000 kbps",
+                }
+            ],
+            "audio": [
+                {"codec": "E-AC-3", "channels": "5.1", "bitrate": "640 kbps"}
+            ],
             "subtitles": ["English"],
         },
         "argument_parser_factory": None,
@@ -736,7 +979,9 @@ def _value(name: str, annotation: object, meta: Meta, config: dict[str, Any], tm
     origin = get_origin(annotation)
     args = get_args(annotation)
     annotation_text = _annotation_text(annotation)
-    if normalized == "trackers" and (origin is dict or annotation_text.startswith("dict[")):
+    if normalized == "trackers" and (
+        origin is dict or annotation_text.startswith("dict[")
+    ):
         return dict(config.get("TRACKERS", {}))
     if normalized in values:
         return _coerce_contract_value(values[normalized], annotation, path)
@@ -748,10 +993,17 @@ def _value(name: str, annotation: object, meta: Meta, config: dict[str, Any], tm
         return 1.0
     if annotation is str or annotation_text in {"str", "<class 'str'>"}:
         return "example"
-    if annotation is Path or annotation_text in {"Path", "<class 'pathlib.Path'>"}:
+    if annotation is Path or annotation_text in {
+        "Path",
+        "<class 'pathlib.Path'>",
+    }:
         return path
     if origin is list or annotation_text.startswith("list["):
-        return [path] if "Path" in annotation_text else ([] if profile else ["example"])
+        return (
+            [path]
+            if "Path" in annotation_text
+            else ([] if profile else ["example"])
+        )
     if origin is dict or annotation_text.startswith("dict["):
         return {}
     if origin is tuple or annotation_text.startswith("tuple["):
@@ -800,13 +1052,26 @@ async def _invoke(
     except NameError, TypeError:
         hints = {}
     for parameter in inspect.signature(function).parameters.values():
-        if parameter.kind in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}:
+        if parameter.kind in {
+            inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.VAR_KEYWORD,
+        }:
             continue
-        if parameter.default is not inspect.Parameter.empty and parameter.name not in overrides:
+        if (
+            parameter.default is not inspect.Parameter.empty
+            and parameter.name not in overrides
+        ):
             continue
         annotation = hints.get(parameter.name, parameter.annotation)
-        value = overrides.get(parameter.name, _value(parameter.name, annotation, meta, config, tmp_path, profile))
-        value = _coerce_contract_value(value, annotation, tmp_path / "Example.Release.2024.mkv")
+        value = overrides.get(
+            parameter.name,
+            _value(
+                parameter.name, annotation, meta, config, tmp_path, profile
+            ),
+        )
+        value = _coerce_contract_value(
+            value, annotation, tmp_path / "Example.Release.2024.mkv"
+        )
         if parameter.kind is inspect.Parameter.KEYWORD_ONLY:
             keywords[parameter.name] = value
         else:
@@ -817,31 +1082,51 @@ async def _invoke(
     return result
 
 
-def test_service_catalog_accepts_domain_fixtures_and_boundary_doubles(tmp_path: Path, monkeypatch: Any) -> None:
+def test_service_catalog_accepts_domain_fixtures_and_boundary_doubles(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
     config = _config()
     modules = _modules()
     monkeypatch.setattr(httpx, "AsyncClient", _AsyncClient)
     monkeypatch.setattr(requests, "Session", _Session)
     monkeypatch.setattr(requests, "get", _Session().get)
     monkeypatch.setattr(requests, "post", _Session().post)
-    monkeypatch.setattr(subprocess, "run", lambda *_args, **_kwargs: _CompletedProcess())
-    monkeypatch.setattr(subprocess, "check_output", lambda *_args, **_kwargs: b"ok")
+    monkeypatch.setattr(
+        subprocess, "run", lambda *_args, **_kwargs: _CompletedProcess()
+    )
+    monkeypatch.setattr(
+        subprocess, "check_output", lambda *_args, **_kwargs: b"ok"
+    )
     # Return warning-free awaitable doubles even if a tested validation branch
     # abandons the provider result before awaiting it.
-    monkeypatch.setattr(ImdbManager, "get_imdb_info_api", lambda *_args, **_kwargs: _AwaitableValue())
-    monkeypatch.setattr(TvmazeManager, "search_tvmaze", lambda *_args, **_kwargs: _AwaitableValue())
+    monkeypatch.setattr(
+        ImdbManager,
+        "get_imdb_info_api",
+        lambda *_args, **_kwargs: _AwaitableValue(),
+    )
+    monkeypatch.setattr(
+        TvmazeManager,
+        "search_tvmaze",
+        lambda *_args, **_kwargs: _AwaitableValue(),
+    )
 
     import src.services.preparation_helpers as preparation_helpers
 
     manager_double = _ManagerPort(config, tmp_path)
-    monkeypatch.setattr(preparation_helpers, "video_manager", _VideoPort(config, tmp_path))
+    monkeypatch.setattr(
+        preparation_helpers, "video_manager", _VideoPort(config, tmp_path)
+    )
     monkeypatch.setattr(preparation_helpers, "imdb_manager", manager_double)
     monkeypatch.setattr(preparation_helpers, "tvmaze_manager", manager_double)
 
-    async def no_sleep(_delay: float = 0, *_args: object, **_kwargs: object) -> None:
+    async def no_sleep(
+        _delay: float = 0, *_args: object, **_kwargs: object
+    ) -> None:
         return None
 
-    async def affirmative_prompt(callback: Callable[..., object], *_args: object, **kwargs: object) -> object:
+    async def affirmative_prompt(
+        callback: Callable[..., object], *_args: object, **kwargs: object
+    ) -> object:
         name = getattr(callback, "__name__", "")
         if "choice" in name:
             choices = kwargs.get("choices", ["example"])
@@ -858,62 +1143,145 @@ def test_service_catalog_accepts_domain_fixtures_and_boundary_doubles(tmp_path: 
     async def exercise() -> None:
         for module in modules:
             if hasattr(module, "prompt_in_thread"):
-                monkeypatch.setattr(module, "prompt_in_thread", affirmative_prompt)
-            for name, function in inspect.getmembers(module, inspect.isfunction):
-                if function.__module__ != module.__name__ or not _safe_callable(function):
+                monkeypatch.setattr(
+                    module, "prompt_in_thread", affirmative_prompt
+                )
+            for name, function in inspect.getmembers(
+                module, inspect.isfunction
+            ):
+                if (
+                    function.__module__ != module.__name__
+                    or not _safe_callable(function)
+                ):
                     continue
                 attempted.add(f"{module.__name__}.{name}")
                 for profile in range(6):
                     try:
-                        await _invoke(function, _meta(tmp_path, profile), config, tmp_path, profile)
+                        await _invoke(
+                            function,
+                            _meta(tmp_path, profile),
+                            config,
+                            tmp_path,
+                            profile,
+                        )
                     except (KeyboardInterrupt, SystemExit) as error:
-                        process_terminations.append(f"{module.__name__}.{name}:{type(error).__name__}")
+                        process_terminations.append(
+                            f"{module.__name__}.{name}:{type(error).__name__}"
+                        )
                     except Exception as error:
-                        validation_errors.append(f"{module.__name__}.{name}:{type(error).__name__}:{error}")
-                for meta_updates, argument_overrides in literal_branch_scenarios(function, Meta.__dataclass_fields__):
-                    argument_overrides = {key: value for key, value in argument_overrides.items() if key not in _PROTECTED_SCENARIO_ARGUMENTS}
+                        validation_errors.append(
+                            f"{module.__name__}.{name}:{type(error).__name__}:{error}"
+                        )
+                for (
+                    meta_updates,
+                    argument_overrides,
+                ) in literal_branch_scenarios(
+                    function, Meta.__dataclass_fields__
+                ):
+                    argument_overrides = {
+                        key: value
+                        for key, value in argument_overrides.items()
+                        if key not in _PROTECTED_SCENARIO_ARGUMENTS
+                    }
                     scenario_meta = _meta(tmp_path, 0)
                     for key, value in meta_updates.items():
                         if key in Meta.__dataclass_fields__:
                             setattr(scenario_meta, key, value)
                     try:
-                        await _invoke(function, scenario_meta, config, tmp_path, 0, argument_overrides)
+                        await _invoke(
+                            function,
+                            scenario_meta,
+                            config,
+                            tmp_path,
+                            0,
+                            argument_overrides,
+                        )
                     except (KeyboardInterrupt, SystemExit) as error:
-                        process_terminations.append(f"{module.__name__}.{name}:{type(error).__name__}")
+                        process_terminations.append(
+                            f"{module.__name__}.{name}:{type(error).__name__}"
+                        )
                     except Exception as error:
-                        validation_errors.append(f"{module.__name__}.{name}:{type(error).__name__}:{error}")
+                        validation_errors.append(
+                            f"{module.__name__}.{name}:{type(error).__name__}:{error}"
+                        )
 
-            for class_name, class_type in inspect.getmembers(module, inspect.isclass):
-                if class_type.__module__ != module.__name__ or getattr(class_type, "_is_protocol", False):
+            for class_name, class_type in inspect.getmembers(
+                module, inspect.isclass
+            ):
+                if class_type.__module__ != module.__name__ or getattr(
+                    class_type, "_is_protocol", False
+                ):
                     continue
                 try:
-                    instance = await _invoke(class_type, _meta(tmp_path), config, tmp_path, 0)
+                    instance = await _invoke(
+                        class_type, _meta(tmp_path), config, tmp_path, 0
+                    )
                 except Exception as error:
-                    validation_errors.append(f"{module.__name__}.{class_name}.__init__:{type(error).__name__}:{error}")
+                    validation_errors.append(
+                        f"{module.__name__}.{class_name}.__init__:{type(error).__name__}:{error}"
+                    )
                     continue
-                for method_name, method in inspect.getmembers(instance, callable):
-                    if getattr(method, "__module__", None) != module.__name__ or method_name.startswith("__") or not _safe_callable(method):
+                for method_name, method in inspect.getmembers(
+                    instance, callable
+                ):
+                    if (
+                        getattr(method, "__module__", None) != module.__name__
+                        or method_name.startswith("__")
+                        or not _safe_callable(method)
+                    ):
                         continue
-                    attempted.add(f"{module.__name__}.{class_name}.{method_name}")
+                    attempted.add(
+                        f"{module.__name__}.{class_name}.{method_name}"
+                    )
                     for profile in range(6):
                         try:
-                            await _invoke(method, _meta(tmp_path, profile), config, tmp_path, profile)
+                            await _invoke(
+                                method,
+                                _meta(tmp_path, profile),
+                                config,
+                                tmp_path,
+                                profile,
+                            )
                         except (KeyboardInterrupt, SystemExit) as error:
-                            process_terminations.append(f"{module.__name__}.{class_name}.{method_name}:{type(error).__name__}")
+                            process_terminations.append(
+                                f"{module.__name__}.{class_name}.{method_name}:{type(error).__name__}"
+                            )
                         except Exception as error:
-                            validation_errors.append(f"{module.__name__}.{class_name}.{method_name}:{type(error).__name__}:{error}")
-                    for meta_updates, argument_overrides in literal_branch_scenarios(method, Meta.__dataclass_fields__):
-                        argument_overrides = {key: value for key, value in argument_overrides.items() if key not in _PROTECTED_SCENARIO_ARGUMENTS}
+                            validation_errors.append(
+                                f"{module.__name__}.{class_name}.{method_name}:{type(error).__name__}:{error}"
+                            )
+                    for (
+                        meta_updates,
+                        argument_overrides,
+                    ) in literal_branch_scenarios(
+                        method, Meta.__dataclass_fields__
+                    ):
+                        argument_overrides = {
+                            key: value
+                            for key, value in argument_overrides.items()
+                            if key not in _PROTECTED_SCENARIO_ARGUMENTS
+                        }
                         scenario_meta = _meta(tmp_path, 0)
                         for key, value in meta_updates.items():
                             if key in Meta.__dataclass_fields__:
                                 setattr(scenario_meta, key, value)
                         try:
-                            await _invoke(method, scenario_meta, config, tmp_path, 0, argument_overrides)
+                            await _invoke(
+                                method,
+                                scenario_meta,
+                                config,
+                                tmp_path,
+                                0,
+                                argument_overrides,
+                            )
                         except (KeyboardInterrupt, SystemExit) as error:
-                            process_terminations.append(f"{module.__name__}.{class_name}.{method_name}:{type(error).__name__}")
+                            process_terminations.append(
+                                f"{module.__name__}.{class_name}.{method_name}:{type(error).__name__}"
+                            )
                         except Exception as error:
-                            validation_errors.append(f"{module.__name__}.{class_name}.{method_name}:{type(error).__name__}:{error}")
+                            validation_errors.append(
+                                f"{module.__name__}.{class_name}.{method_name}:{type(error).__name__}:{error}"
+                            )
 
     asyncio.run(exercise())
 

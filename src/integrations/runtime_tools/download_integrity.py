@@ -70,11 +70,18 @@ def _safe_destination(base: Path, member_name: str) -> Path:
         raise RuntimeError(f"Unsafe archive member: {member_name}")
     destination = (base / member_path).resolve()
     if destination != base and base not in destination.parents:
-        raise RuntimeError(f"Archive member escapes destination: {member_name}")
+        raise RuntimeError(
+            f"Archive member escapes destination: {member_name}"
+        )
     return destination
 
 
-def safe_extract_zip(archive: zipfile.ZipFile, destination: Path, *, max_bytes: int = MAX_EXTRACTED_BYTES) -> None:
+def safe_extract_zip(
+    archive: zipfile.ZipFile,
+    destination: Path,
+    *,
+    max_bytes: int = MAX_EXTRACTED_BYTES,
+) -> None:
     """Extract regular ZIP members with path, type and expanded-size limits."""
     base = destination.resolve()
     total = 0
@@ -83,35 +90,60 @@ def safe_extract_zip(archive: zipfile.ZipFile, destination: Path, *, max_bytes: 
         mode = member.external_attr >> 16
         file_type = stat.S_IFMT(mode)
         if stat.S_ISLNK(mode):
-            raise RuntimeError(f"Archive links are not allowed: {member.filename}")
+            raise RuntimeError(
+                f"Archive links are not allowed: {member.filename}"
+            )
         if file_type and not (stat.S_ISREG(mode) or stat.S_ISDIR(mode)):
-            raise RuntimeError(f"Unsupported archive member: {member.filename}")
+            raise RuntimeError(
+                f"Unsupported archive member: {member.filename}"
+            )
         if member.is_dir():
             target.mkdir(parents=True, exist_ok=True)
             continue
         total += member.file_size
         if member.file_size > max_bytes or total > max_bytes:
-            raise RuntimeError(f"Archive exceeds the {max_bytes}-byte expanded-size limit")
+            raise RuntimeError(
+                f"Archive exceeds the {max_bytes}-byte expanded-size limit"
+            )
         target.parent.mkdir(parents=True, exist_ok=True)
         with archive.open(member) as source, target.open("wb") as output:
             shutil.copyfileobj(source, output, length=1024 * 1024)
 
 
-def extract_zip_regular_member(archive: zipfile.ZipFile, member_name: str, destination: Path, *, max_bytes: int = MAX_EXTRACTED_BYTES) -> None:
+def extract_zip_regular_member(
+    archive: zipfile.ZipFile,
+    member_name: str,
+    destination: Path,
+    *,
+    max_bytes: int = MAX_EXTRACTED_BYTES,
+) -> None:
     """Copy one regular ZIP member to a fixed destination with an expanded-size limit."""
     member = archive.getinfo(member_name)
     mode = member.external_attr >> 16
     file_type = stat.S_IFMT(mode)
-    if member.is_dir() or stat.S_ISLNK(mode) or (file_type and not stat.S_ISREG(mode)):
-        raise RuntimeError(f"Archive member is not a regular file: {member_name}")
+    if (
+        member.is_dir()
+        or stat.S_ISLNK(mode)
+        or (file_type and not stat.S_ISREG(mode))
+    ):
+        raise RuntimeError(
+            f"Archive member is not a regular file: {member_name}"
+        )
     if member.file_size > max_bytes:
-        raise RuntimeError(f"Archive member exceeds the {max_bytes}-byte expanded-size limit")
+        raise RuntimeError(
+            f"Archive member exceeds the {max_bytes}-byte expanded-size limit"
+        )
     destination.parent.mkdir(parents=True, exist_ok=True)
     with archive.open(member) as source, destination.open("wb") as output:
         shutil.copyfileobj(source, output, length=1024 * 1024)
 
 
-def safe_extract_tar(archive: tarfile.TarFile, destination: Path, *, max_bytes: int = MAX_EXTRACTED_BYTES) -> None:
+def safe_extract_tar(
+    archive: tarfile.TarFile,
+    destination: Path,
+    *,
+    max_bytes: int = MAX_EXTRACTED_BYTES,
+) -> None:
     """Extract regular TAR members with path, type and expanded-size limits."""
     base = destination.resolve()
     total = 0
@@ -124,7 +156,9 @@ def safe_extract_tar(archive: tarfile.TarFile, destination: Path, *, max_bytes: 
             raise RuntimeError(f"Unsupported archive member: {member.name}")
         total += member.size
         if member.size > max_bytes or total > max_bytes:
-            raise RuntimeError(f"Archive exceeds the {max_bytes}-byte expanded-size limit")
+            raise RuntimeError(
+                f"Archive exceeds the {max_bytes}-byte expanded-size limit"
+            )
         source = archive.extractfile(member)
         if source is None:
             raise RuntimeError(f"Unable to read archive member: {member.name}")
@@ -144,9 +178,13 @@ def promote_files_with_rollback(
     targets.extend(remove_targets or [])
     target_names = [target.name for target in targets]
     if len(target_names) != len(set(target_names)):
-        raise ValueError("Transactional promotion targets must have unique filenames")
+        raise ValueError(
+            "Transactional promotion targets must have unique filenames"
+        )
     if backup_dir.exists():
-        raise RuntimeError(f"Recovery backup must be resolved before another update: {backup_dir}")
+        raise RuntimeError(
+            f"Recovery backup must be resolved before another update: {backup_dir}"
+        )
     backup_dir.mkdir(parents=True)
     backups: list[tuple[Path, Path]] = []
     promoted: list[Path] = []
@@ -180,7 +218,9 @@ def promote_files_with_rollback(
             ) from promotion_error
         raise
     finally:
-        if promotion_succeeded or not any(backup.exists() for backup, _target in backups):
+        if promotion_succeeded or not any(
+            backup.exists() for backup, _target in backups
+        ):
             shutil.rmtree(backup_dir, ignore_errors=True)
 
 
@@ -227,7 +267,9 @@ async def download_bounded_asset(
     destination.unlink(missing_ok=True)
 
     async def transfer() -> None:
-        async with client.stream("GET", url, timeout=min(timeout_seconds, 60.0)) as response:
+        async with client.stream(
+            "GET", url, timeout=min(timeout_seconds, 60.0)
+        ) as response:
             response.raise_for_status()
             _validate_declared_size(response, max_bytes)
             received = 0
@@ -235,7 +277,9 @@ async def download_bounded_asset(
                 async for chunk in response.aiter_bytes(chunk_size=8192):
                     received += len(chunk)
                     if received > max_bytes:
-                        raise RuntimeError(f"Download exceeds the {max_bytes}-byte limit")
+                        raise RuntimeError(
+                            f"Download exceeds the {max_bytes}-byte limit"
+                        )
                     output.write(chunk)
 
     try:
@@ -245,7 +289,9 @@ async def download_bounded_asset(
         raise
 
 
-async def download_verified_asset(client: Any, url: str, destination: Path, asset: str) -> None:
+async def download_verified_asset(
+    client: Any, url: str, destination: Path, asset: str
+) -> None:
     """Download a bounded asset and fail closed unless its pinned digest matches."""
     try:
         await download_bounded_asset(client, url, destination)
@@ -266,13 +312,23 @@ def download_bounded_asset_sync(
     import httpx
 
     async def download() -> None:
-        async with httpx.AsyncClient(timeout=min(timeout_seconds, 60.0), follow_redirects=True) as client:
-            await download_bounded_asset(client, url, destination, max_bytes=max_bytes, timeout_seconds=timeout_seconds)
+        async with httpx.AsyncClient(
+            timeout=min(timeout_seconds, 60.0), follow_redirects=True
+        ) as client:
+            await download_bounded_asset(
+                client,
+                url,
+                destination,
+                max_bytes=max_bytes,
+                timeout_seconds=timeout_seconds,
+            )
 
     asyncio.run(download())
 
 
-def download_verified_asset_sync(url: str, destination: Path, asset: str) -> None:
+def download_verified_asset_sync(
+    url: str, destination: Path, asset: str
+) -> None:
     """Synchronous bounded download with pinned checksum verification."""
     try:
         download_bounded_asset_sync(url, destination)

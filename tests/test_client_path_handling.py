@@ -6,8 +6,17 @@ from unittest.mock import AsyncMock, patch
 
 from src.domain_models.release import Meta
 from src.integrations.torrent_clients.client_manager import Clients
-from src.integrations.torrent_clients.path_utils import coerce_str_list, is_path_under, map_save_path, tracker_directory
-from src.integrations.torrent_clients.qbittorrent import QbittorrentClientMixin, async_link_directory, create_cross_seed_links
+from src.integrations.torrent_clients.path_utils import (
+    coerce_str_list,
+    is_path_under,
+    map_save_path,
+    tracker_directory,
+)
+from src.integrations.torrent_clients.qbittorrent import (
+    QbittorrentClientMixin,
+    async_link_directory,
+    create_cross_seed_links,
+)
 
 
 def test_qbittorrent_coerce_str_list_parses_stringified_paths() -> None:
@@ -16,7 +25,9 @@ def test_qbittorrent_coerce_str_list_parses_stringified_paths() -> None:
 
 
 def test_qbittorrent_map_save_path_accepts_path_objects() -> None:
-    mapped_path = map_save_path(Path("/local/links/AMIGOSSHARE"), Path("/local"), Path("/remote"))
+    mapped_path = map_save_path(
+        Path("/local/links/AMIGOSSHARE"), Path("/local"), Path("/remote")
+    )
 
     assert mapped_path == "/remote/links/AMIGOSSHARE/"
 
@@ -27,9 +38,19 @@ def test_map_save_path_does_not_rewrite_sibling_paths() -> None:
     assert mapped_path == "/locality/release/"
 
 
-def test_map_save_path_preserves_case_insensitive_mapping_and_client_format() -> None:
-    assert map_save_path("/Local/Release", "/local", "/remote") == "/remote/Release/"
-    assert map_save_path("/local/Release", "/local", "/remote", trailing_slash=False) == "/remote/Release"
+def test_map_save_path_preserves_case_insensitive_mapping_and_client_format() -> (
+    None
+):
+    assert (
+        map_save_path("/Local/Release", "/local", "/remote")
+        == "/remote/Release/"
+    )
+    assert (
+        map_save_path(
+            "/local/Release", "/local", "/remote", trailing_slash=False
+        )
+        == "/remote/Release"
+    )
 
 
 def test_clients_remote_path_map_parses_stringified_path_lists() -> None:
@@ -38,10 +59,16 @@ def test_clients_remote_path_map_parses_stringified_path_lists() -> None:
         meta = Meta({"path": "/local/content/release"})
         return await clients.remote_path_map(
             meta,
-            {"local_path": "['/local', '/other']", "remote_path": "['/remote', '/elsewhere']"},
+            {
+                "local_path": "['/local', '/other']",
+                "remote_path": "['/remote', '/elsewhere']",
+            },
         )
 
-    assert asyncio.run(exercise()) == (os.path.normpath("/local"), os.path.normpath("/remote"))
+    assert asyncio.run(exercise()) == (
+        os.path.normpath("/local"),
+        os.path.normpath("/remote"),
+    )
 
 
 def test_rtorrent_coerce_str_list_parses_stringified_paths() -> None:
@@ -49,7 +76,9 @@ def test_rtorrent_coerce_str_list_parses_stringified_paths() -> None:
 
 
 def test_tracker_directory_falls_back_to_tracker_name() -> None:
-    assert tracker_directory("/links", "", "AMIGOSSHARE") == Path("/links/AMIGOSSHARE")
+    assert tracker_directory("/links", "", "AMIGOSSHARE") == Path(
+        "/links/AMIGOSSHARE"
+    )
 
 
 def test_tracker_directory_rejects_paths_outside_link_root() -> None:
@@ -76,7 +105,9 @@ def test_tracker_directory_rejects_paths_outside_link_root() -> None:
             tracker_directory("/links", directory_name, "AMIGOSSHARE")
         except ValueError:
             continue
-        raise AssertionError(f"accepted unsafe tracker directory: {directory_name}")
+        raise AssertionError(
+            f"accepted unsafe tracker directory: {directory_name}"
+        )
 
 
 def test_automatic_management_paths_require_path_boundaries() -> None:
@@ -97,51 +128,87 @@ def test_cross_seed_links_normalize_component_paths(tmp_path: Path) -> None:
         },
         name="Release",
     )
-    meta = Meta({"path": str(source_dir), "filelist": [str(source_dir / "episode.mkv")]})
+    meta = Meta(
+        {
+            "path": str(source_dir),
+            "filelist": [str(source_dir / "episode.mkv")],
+        }
+    )
 
     async def exercise() -> bool:
-        with patch("src.integrations.torrent_clients.qbittorrent.async_link_directory", new=AsyncMock(return_value=True)):
-            return await create_cross_seed_links(meta, torrent, str(tmp_path / "tracker"), use_hardlink=False)
+        with patch(
+            "src.integrations.torrent_clients.qbittorrent.async_link_directory",
+            new=AsyncMock(return_value=True),
+        ):
+            return await create_cross_seed_links(
+                meta, torrent, str(tmp_path / "tracker"), use_hardlink=False
+            )
 
     assert asyncio.run(exercise())
 
 
-def test_cross_seed_links_reject_torrent_name_outside_tracker_root(tmp_path: Path) -> None:
+def test_cross_seed_links_reject_torrent_name_outside_tracker_root(
+    tmp_path: Path,
+) -> None:
     source = tmp_path / "episode.mkv"
     source.write_bytes(b"episode")
     tracker_dir = tmp_path / "tracker"
     torrent = SimpleNamespace(
-        metainfo={"info": {"name": "../escaped", "files": [{"path": ["episode.mkv"], "length": 7}]}},
+        metainfo={
+            "info": {
+                "name": "../escaped",
+                "files": [{"path": ["episode.mkv"], "length": 7}],
+            }
+        },
         name="../escaped",
     )
     meta = Meta(path=str(source), filelist=[str(source)])
 
-    assert not asyncio.run(create_cross_seed_links(meta, torrent, str(tracker_dir), use_hardlink=False))
+    assert not asyncio.run(
+        create_cross_seed_links(
+            meta, torrent, str(tracker_dir), use_hardlink=False
+        )
+    )
     assert not (tmp_path / "escaped").exists()
 
 
-def test_cross_seed_links_reject_single_file_name_outside_tracker_root(tmp_path: Path) -> None:
+def test_cross_seed_links_reject_single_file_name_outside_tracker_root(
+    tmp_path: Path,
+) -> None:
     source = tmp_path / "episode.mkv"
     source.write_bytes(b"episode")
     tracker_dir = tmp_path / "tracker"
     torrent = SimpleNamespace(
-        metainfo={"info": {"name": "../escaped", "length": source.stat().st_size}},
+        metainfo={
+            "info": {"name": "../escaped", "length": source.stat().st_size}
+        },
         name="../escaped",
     )
     meta = Meta(path=str(source), filelist=[str(source)])
 
-    assert not asyncio.run(create_cross_seed_links(meta, torrent, str(tracker_dir), use_hardlink=False))
+    assert not asyncio.run(
+        create_cross_seed_links(
+            meta, torrent, str(tracker_dir), use_hardlink=False
+        )
+    )
     assert not (tmp_path / "escaped").exists()
 
 
-def test_qbittorrent_maps_single_file_torrent_from_kept_source_folder(tmp_path: Path) -> None:
+def test_qbittorrent_maps_single_file_torrent_from_kept_source_folder(
+    tmp_path: Path,
+) -> None:
     source_dir = tmp_path / "source"
     source_dir.mkdir()
     source_file = source_dir / "01-track.mp3"
     source_file.write_bytes(b"audio")
     links = tmp_path / "links"
     torrent = SimpleNamespace(
-        metainfo={"info": {"name": source_file.name, "length": source_file.stat().st_size}},
+        metainfo={
+            "info": {
+                "name": source_file.name,
+                "length": source_file.stat().st_size,
+            }
+        },
         name=source_file.name,
         infohash="abc123",
     )
@@ -162,9 +229,19 @@ def test_qbittorrent_maps_single_file_torrent_from_kept_source_folder(tmp_path: 
 
     async def exercise() -> None:
         with (
-            patch.object(qbit, "init_qbittorrent_client", new=AsyncMock(return_value=None)),
-            patch("src.integrations.torrent_clients.qbittorrent.create_cross_seed_links", new=AsyncMock(return_value=True)) as mapper,
-            patch("src.integrations.torrent_clients.qbittorrent.async_link_directory", new=AsyncMock(return_value=True)) as direct_link,
+            patch.object(
+                qbit,
+                "init_qbittorrent_client",
+                new=AsyncMock(return_value=None),
+            ),
+            patch(
+                "src.integrations.torrent_clients.qbittorrent.create_cross_seed_links",
+                new=AsyncMock(return_value=True),
+            ) as mapper,
+            patch(
+                "src.integrations.torrent_clients.qbittorrent.async_link_directory",
+                new=AsyncMock(return_value=True),
+            ) as direct_link,
         ):
             await qbit.qbittorrent(
                 path=str(source_dir),
@@ -205,7 +282,9 @@ def test_async_link_directory_rejects_stale_file(tmp_path: Path) -> None:
     assert destination.read_bytes() == b"stale audiobook"
 
 
-def test_async_link_directory_repairs_partial_tree_and_rejects_stale_files(tmp_path: Path) -> None:
+def test_async_link_directory_repairs_partial_tree_and_rejects_stale_files(
+    tmp_path: Path,
+) -> None:
     source = tmp_path / "source"
     destination = tmp_path / "links" / "source"
     source.mkdir()

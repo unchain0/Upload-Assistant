@@ -10,7 +10,12 @@ def test_populate_cast_merges_sources_in_priority_order() -> None:
 
     meta.populate_cast()
 
-    assert meta.cast == ["Manual Name", "Shared Name", "IMDb Name", "TMDb Name"]
+    assert meta.cast == [
+        "Manual Name",
+        "Shared Name",
+        "IMDb Name",
+        "TMDb Name",
+    ]
 
 
 def test_populate_cast_normalizes_and_limits_entries() -> None:

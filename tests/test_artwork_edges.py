@@ -22,7 +22,9 @@ def _png_bytes(mode: str = "RGB") -> bytes:
     return buffer.getvalue()
 
 
-def test_public_url_validation_all_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_public_url_validation_all_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     assert not artwork.is_public_http_url(None)
     assert not artwork.is_public_http_url("file:///tmp/a.png")
     assert not artwork.is_public_http_url("https:///missing-host")
@@ -45,13 +47,21 @@ def test_public_url_validation_all_paths(monkeypatch: pytest.MonkeyPatch) -> Non
     )
     assert not artwork.is_public_http_url("https://example.com/a.png")
 
-    monkeypatch.setattr(artwork.socket, "getaddrinfo", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        artwork.socket, "getaddrinfo", lambda *_args, **_kwargs: []
+    )
     assert not artwork.is_public_http_url("https://example.com/a.png")
-    monkeypatch.setattr(artwork.socket, "getaddrinfo", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("dns")))
+    monkeypatch.setattr(
+        artwork.socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("dns")),
+    )
     assert not artwork.is_public_http_url("https://example.com/a.png")
 
 
-def test_image_bytes_and_cover_error_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_image_bytes_and_cover_error_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     assert not artwork.is_valid_image_bytes(b"")
     assert not artwork.is_valid_image_bytes(b"not-image")
     assert artwork.is_valid_image_bytes(_png_bytes())
@@ -70,21 +80,34 @@ def test_image_bytes_and_cover_error_paths(tmp_path: Path, monkeypatch: pytest.M
         def verify(self) -> None:
             return None
 
-    monkeypatch.setattr(artwork.Image, "open", lambda *_args, **_kwargs: FakeImage())
+    monkeypatch.setattr(
+        artwork.Image, "open", lambda *_args, **_kwargs: FakeImage()
+    )
     assert not artwork.is_valid_image_bytes(b"x")
 
     file = tmp_path / "cover.png"
     file.write_bytes(_png_bytes())
     original_stat = Path.stat
-    monkeypatch.setattr(Path, "stat", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("stat")))
+    monkeypatch.setattr(
+        Path,
+        "stat",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("stat")),
+    )
     assert not artwork.is_valid_cover_image(file)
     monkeypatch.setattr(Path, "stat", original_stat)
     assert not artwork.is_valid_cover_image(tmp_path / "missing.png")
 
 
-def test_local_artwork_discovery_priorities_and_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_local_artwork_discovery_priorities_and_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     assert artwork._find_local_artwork_sources("") == {}
-    assert artwork._find_local_artwork_sources(str(tmp_path / "missing" / "movie.mkv")) == {}
+    assert (
+        artwork._find_local_artwork_sources(
+            str(tmp_path / "missing" / "movie.mkv")
+        )
+        == {}
+    )
     media = tmp_path / "movie.mkv"
     media.write_bytes(b"video")
     for name, color in (
@@ -101,7 +124,11 @@ def test_local_artwork_discovery_priorities_and_missing(tmp_path: Path, monkeypa
     assert sources["banner"].name == "z-banner.webp"
 
     original_iterdir = Path.iterdir
-    monkeypatch.setattr(Path, "iterdir", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("list")))
+    monkeypatch.setattr(
+        Path,
+        "iterdir",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("list")),
+    )
     with pytest.raises(OSError):
         artwork._find_local_artwork_sources(str(media))
     monkeypatch.setattr(Path, "iterdir", original_iterdir)
@@ -163,46 +190,95 @@ class _StreamClient:
         return value
 
 
-def test_download_public_image_success_redirects_and_failures(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_download_public_image_success_redirects_and_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(artwork, "is_public_http_url", lambda _url: True)
     monkeypatch.setattr(artwork.httpx, "AsyncClient", _StreamClient)
     valid = _png_bytes()
 
-    _StreamClient.queue = [_StreamResponse(chunks=[valid], headers={"Content-Length": str(len(valid))})]
-    assert asyncio.run(artwork._download_public_image("https://example.com/a.png")) == valid
+    _StreamClient.queue = [
+        _StreamResponse(
+            chunks=[valid], headers={"Content-Length": str(len(valid))}
+        )
+    ]
+    assert (
+        asyncio.run(
+            artwork._download_public_image("https://example.com/a.png")
+        )
+        == valid
+    )
 
     _StreamClient.queue = [
         _StreamResponse(redirect=True, headers={"Location": "/next"}),
         _StreamResponse(chunks=[valid]),
     ]
-    assert asyncio.run(artwork._download_public_image("https://example.com/a.png")) == valid
+    assert (
+        asyncio.run(
+            artwork._download_public_image("https://example.com/a.png")
+        )
+        == valid
+    )
 
     for response in (
         _StreamResponse(redirect=True),
         _StreamResponse(status=404),
         _StreamResponse(headers={"Content-Length": "bad"}),
-        _StreamResponse(headers={"Content-Length": str(artwork.MAX_ARTWORK_BYTES + 1)}),
+        _StreamResponse(
+            headers={"Content-Length": str(artwork.MAX_ARTWORK_BYTES + 1)}
+        ),
         _StreamResponse(chunks=[b"bad"]),
         _StreamResponse(chunks=[b"x" * (artwork.MAX_ARTWORK_BYTES + 1)]),
     ):
         _StreamClient.queue = [response]
-        assert asyncio.run(artwork._download_public_image("https://example.com/a.png")) is None
+        assert (
+            asyncio.run(
+                artwork._download_public_image("https://example.com/a.png")
+            )
+            is None
+        )
 
     monkeypatch.setattr(artwork, "is_public_http_url", lambda _url: False)
-    assert asyncio.run(artwork._download_public_image("https://example.com/a.png")) is None
+    assert (
+        asyncio.run(
+            artwork._download_public_image("https://example.com/a.png")
+        )
+        is None
+    )
 
     monkeypatch.setattr(artwork, "is_public_http_url", lambda _url: True)
-    _StreamClient.queue = [httpx.RequestError("offline", request=httpx.Request("GET", "https://example.com"))]
-    assert asyncio.run(artwork._download_public_image("https://example.com/a.png")) is None
+    _StreamClient.queue = [
+        httpx.RequestError(
+            "offline", request=httpx.Request("GET", "https://example.com")
+        )
+    ]
+    assert (
+        asyncio.run(
+            artwork._download_public_image("https://example.com/a.png")
+        )
+        is None
+    )
 
-    _StreamClient.queue = [_StreamResponse(redirect=True, headers={"Location": "/next"}) for _ in range(4)]
-    assert asyncio.run(artwork._download_public_image("https://example.com/a.png")) is None
+    _StreamClient.queue = [
+        _StreamResponse(redirect=True, headers={"Location": "/next"})
+        for _ in range(4)
+    ]
+    assert (
+        asyncio.run(
+            artwork._download_public_image("https://example.com/a.png")
+        )
+        is None
+    )
 
 
-def test_write_png_bytes_modes_limits_and_cleanup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_write_png_bytes_modes_limits_and_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     destination = tmp_path / "out.png"
     assert not artwork._write_png(b"", destination)
-    assert not artwork._write_png(b"x" * (artwork.MAX_ARTWORK_BYTES + 1), destination)
+    assert not artwork._write_png(
+        b"x" * (artwork.MAX_ARTWORK_BYTES + 1), destination
+    )
 
     source = tmp_path / "palette.gif"
     image = Image.new("P", (8, 12))
@@ -216,35 +292,53 @@ def test_write_png_bytes_modes_limits_and_cleanup(tmp_path: Path, monkeypatch: p
     assert not artwork._write_png(source, destination)
 
     original_replace = Path.replace
-    monkeypatch.setattr(Path, "replace", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("replace")))
+    monkeypatch.setattr(
+        Path,
+        "replace",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("replace")),
+    )
     assert not artwork._write_png(_png_bytes(), destination)
     monkeypatch.setattr(Path, "replace", original_replace)
     assert not destination.with_suffix(".tmp").exists()
 
 
-def test_prepare_artwork_provider_url_invalid_explicit_and_failed_write(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_prepare_artwork_provider_url_invalid_explicit_and_failed_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     valid = _png_bytes()
     download = AsyncMock(return_value=valid)
     monkeypatch.setattr(artwork, "_download_public_image", download)
-    monkeypatch.setattr(artwork, "is_public_http_url", lambda value: bool(value))
-    meta = Meta(base_dir=str(tmp_path), uuid="provider", artwork_url="https://provider.example/poster.png")
+    monkeypatch.setattr(
+        artwork, "is_public_http_url", lambda value: bool(value)
+    )
+    meta = Meta(
+        base_dir=str(tmp_path),
+        uuid="provider",
+        artwork_url="https://provider.example/poster.png",
+    )
     asyncio.run(artwork.prepare_artwork(meta))
     assert Path(meta.artwork_path).is_file()
     download.assert_awaited_once()
 
-    invalid = Meta(base_dir=str(tmp_path), uuid="invalid", explicit_banner="not-a-path")
+    invalid = Meta(
+        base_dir=str(tmp_path), uuid="invalid", explicit_banner="not-a-path"
+    )
     asyncio.run(artwork.prepare_artwork(invalid))
     assert not invalid.artwork_banner_path
 
     source = tmp_path / "source.png"
     source.write_bytes(valid)
     monkeypatch.setattr(artwork, "_write_png", lambda *_args, **_kwargs: False)
-    failed = Meta(base_dir=str(tmp_path), uuid="failed", explicit_poster=str(source))
+    failed = Meta(
+        base_dir=str(tmp_path), uuid="failed", explicit_poster=str(source)
+    )
     asyncio.run(artwork.prepare_artwork(failed))
     assert not failed.artwork_path
 
 
-def test_local_discovery_skips_invalid_cover_and_write_png_rejects_unsupported_format(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_local_discovery_skips_invalid_cover_and_write_png_rejects_unsupported_format(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     media = tmp_path / "movie.mkv"
     media.write_bytes(b"video")
     (tmp_path / "cover.jpg").write_bytes(b"not-an-image")
@@ -266,5 +360,7 @@ def test_local_discovery_skips_invalid_cover_and_write_png_rejects_unsupported_f
         def load(self) -> None:
             return None
 
-    monkeypatch.setattr(artwork.Image, "open", lambda *_args, **_kwargs: UnsupportedImage())
+    monkeypatch.setattr(
+        artwork.Image, "open", lambda *_args, **_kwargs: UnsupportedImage()
+    )
     assert not artwork._write_png(b"image", tmp_path / "output.png")

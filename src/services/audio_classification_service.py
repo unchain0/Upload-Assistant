@@ -15,7 +15,24 @@ import mutagen
 from src.services.book_preparation import BOOK_EXTENSIONS
 
 AUDIOBOOK_CONTAINER_EXTENSIONS = frozenset({".m4b", ".aax", ".aaxc"})
-SHARED_AUDIO_EXTENSIONS = frozenset({".mp3", ".flac", ".m4a", ".aac", ".ac3", ".dts", ".wav", ".aiff", ".alac", ".ogg", ".opus", ".ape", ".wv", ".wma"})
+SHARED_AUDIO_EXTENSIONS = frozenset(
+    {
+        ".mp3",
+        ".flac",
+        ".m4a",
+        ".aac",
+        ".ac3",
+        ".dts",
+        ".wav",
+        ".aiff",
+        ".alac",
+        ".ogg",
+        ".opus",
+        ".ape",
+        ".wv",
+        ".wma",
+    }
+)
 
 PODCAST_GENRES = frozenset({"podcast", "podcasts", "news & politics"})
 
@@ -92,9 +109,15 @@ AUDIOBOOK_FILENAME_REGEX = re.compile(
     r"(?i)\b(?:chapter|part|pt|section|act|bk|book)\s*\d+|\b(?:part|ch|chapter)\d+\b|\btrack\s*\d+\s*[-_]\s*chapter\b|\b(?:audiobook|unabridged|abridged|read by|narrated by)\b"
 )
 
-MUSIC_FILENAME_REGEX = re.compile(r"^\s*\d{1,3}\s*[-._]\s*(?![cC]hapter|[pP]art|[bB]ook)\w+")
-SCENE_MUSIC_RELEASE_REGEX = re.compile(r"(?i)(?:^|[-_.])(?:SINGLE|EP|LP|ALBUM)[-_.]+WEB(?:[-_.]|$)|[-_.]WEB[-_.](?:19|20)\d{2}[-_.][A-Z0-9]+$")
-DATED_MUSIC_RELEASE_REGEX = re.compile(r"^\s*\S.*?\s+-\s+(?:19|20)\d{2}-\d{2}-\d{2}\s+-\s+\S", re.I)
+MUSIC_FILENAME_REGEX = re.compile(
+    r"^\s*\d{1,3}\s*[-._]\s*(?![cC]hapter|[pP]art|[bB]ook)\w+"
+)
+SCENE_MUSIC_RELEASE_REGEX = re.compile(
+    r"(?i)(?:^|[-_.])(?:SINGLE|EP|LP|ALBUM)[-_.]+WEB(?:[-_.]|$)|[-_.]WEB[-_.](?:19|20)\d{2}[-_.][A-Z0-9]+$"
+)
+DATED_MUSIC_RELEASE_REGEX = re.compile(
+    r"^\s*\S.*?\s+-\s+(?:19|20)\d{2}-\d{2}-\d{2}\s+-\s+\S", re.I
+)
 
 
 @dataclass
@@ -145,7 +168,9 @@ def _inspect_audio_file(filepath: Path) -> dict[str, Any]:
             if hasattr(audio, "info") and audio.info:
                 info_dict["channels"] = getattr(audio.info, "channels", 0) or 0
                 info_dict["bitrate"] = getattr(audio.info, "bitrate", 0) or 0
-                info_dict["sample_rate"] = getattr(audio.info, "sample_rate", 0) or 0
+                info_dict["sample_rate"] = (
+                    getattr(audio.info, "sample_rate", 0) or 0
+                )
                 info_dict["length"] = getattr(audio.info, "length", 0.0) or 0.0
 
             tags = getattr(audio, "tags", None)
@@ -155,7 +180,11 @@ def _inspect_audio_file(filepath: Path) -> dict[str, Any]:
                     for k in tags:
                         k_str = str(k)
                         k_lower = k_str.lower()
-                        if k_str.startswith("CHAP") or k_str.startswith("CTOC") or "chapter" in k_lower:
+                        if (
+                            k_str.startswith("CHAP")
+                            or k_str.startswith("CTOC")
+                            or "chapter" in k_lower
+                        ):
                             info_dict["has_chapters"] = True
 
                 if hasattr(tags, "items"):
@@ -164,7 +193,11 @@ def _inspect_audio_file(filepath: Path) -> dict[str, Any]:
                         v_str = str(v)
                         all_text_pieces.append(f"{k_str}={v_str}")
 
-                        if "narrator" in k_str or "read by" in k_str or "reader" in k_str:
+                        if (
+                            "narrator" in k_str
+                            or "read by" in k_str
+                            or "reader" in k_str
+                        ):
                             info_dict["narrator"] = v_str
                         if "author" in k_str or "writer" in k_str:
                             info_dict["author"] = v_str
@@ -178,19 +211,28 @@ def _inspect_audio_file(filepath: Path) -> dict[str, Any]:
                             info_dict["has_musicbrainz"] = True
                         if "discogs" in k_str:
                             info_dict["has_discogs"] = True
-                        if "catalognumber" in k_str or "catno" in k_str or "label" in k_str:
+                        if (
+                            "catalognumber" in k_str
+                            or "catno" in k_str
+                            or "label" in k_str
+                        ):
                             info_dict["has_catalog_no"] = True
                         if "genre" in k_str and not info_dict["genres"]:
                             info_dict["genres"].append(v_str)
 
                 info_dict["raw_tag_text"] = " ".join(all_text_pieces).lower()
-                if "chapter00" in info_dict["raw_tag_text"] or "chapter01" in info_dict["raw_tag_text"]:
+                if (
+                    "chapter00" in info_dict["raw_tag_text"]
+                    or "chapter01" in info_dict["raw_tag_text"]
+                ):
                     info_dict["has_chapters"] = True
 
     return info_dict
 
 
-async def detect_audio_category(_meta: Any, path: Path | str) -> AudioCategoryResult:
+async def detect_audio_category(
+    _meta: Any, path: Path | str
+) -> AudioCategoryResult:
     """Classify audio as BOOK (audiobook), MUSIC, PODCAST, AMBIGUOUS, or NONE."""
     path_obj = Path(path)
     if not path_obj.exists():
@@ -206,21 +248,36 @@ async def detect_audio_category(_meta: Any, path: Path | str) -> AudioCategoryRe
     video_extensions = {".mkv", ".mp4", ".ts", ".avi", ".m2ts"}
     has_video = any(f.suffix.lower() in video_extensions for f in all_files)
     if has_video:
-        return AudioCategoryResult(category="NONE", evidence=["Contains video files"])
+        return AudioCategoryResult(
+            category="NONE", evidence=["Contains video files"]
+        )
 
     ebook_extensions = BOOK_EXTENSIONS - {".txt", ".html", ".htm"}
     has_ebook = any(f.suffix.lower() in ebook_extensions for f in all_files)
-    has_audiobook_container = any(f.suffix.lower() in AUDIOBOOK_CONTAINER_EXTENSIONS for f in all_files)
+    has_audiobook_container = any(
+        f.suffix.lower() in AUDIOBOOK_CONTAINER_EXTENSIONS for f in all_files
+    )
 
-    audio_files = [f for f in all_files if f.suffix.lower() in SHARED_AUDIO_EXTENSIONS or f.suffix.lower() in AUDIOBOOK_CONTAINER_EXTENSIONS]
+    audio_files = [
+        f
+        for f in all_files
+        if f.suffix.lower() in SHARED_AUDIO_EXTENSIONS
+        or f.suffix.lower() in AUDIOBOOK_CONTAINER_EXTENSIONS
+    ]
 
     if has_audiobook_container and not has_video:
-        exts = {f.suffix.lower() for f in all_files if f.suffix.lower() in AUDIOBOOK_CONTAINER_EXTENSIONS}
+        exts = {
+            f.suffix.lower()
+            for f in all_files
+            if f.suffix.lower() in AUDIOBOOK_CONTAINER_EXTENSIONS
+        }
         return AudioCategoryResult(
             category="BOOK",
             is_audiobook=True,
             confidence=1.0,
-            evidence=[f"audiobook-specific container format ({', '.join(sorted(exts))})"],
+            evidence=[
+                f"audiobook-specific container format ({', '.join(sorted(exts))})"
+            ],
         )
 
     if has_ebook and audio_files:
@@ -260,16 +317,36 @@ async def detect_audio_category(_meta: Any, path: Path | str) -> AudioCategoryRe
         elif MUSIC_FILENAME_REGEX.search(name):
             music_track_matches += 1
 
-    if chapter_part_matches > 0 and chapter_part_matches >= len(audio_files) * 0.3:
+    if (
+        chapter_part_matches > 0
+        and chapter_part_matches >= len(audio_files) * 0.3
+    ):
         book_score += 4.0
-        book_evidence.append(f"chapter/part filename pattern ({chapter_part_matches}/{len(audio_files)} files)")
+        book_evidence.append(
+            f"chapter/part filename pattern ({chapter_part_matches}/{len(audio_files)} files)"
+        )
 
-    if music_track_matches > 0 and music_track_matches >= len(audio_files) * 0.5:
+    if (
+        music_track_matches > 0
+        and music_track_matches >= len(audio_files) * 0.5
+    ):
         music_score += 2.0
-        music_evidence.append(f"standard numbered song titles ({music_track_matches}/{len(audio_files)} files)")
+        music_evidence.append(
+            f"standard numbered song titles ({music_track_matches}/{len(audio_files)} files)"
+        )
 
     parent_dir_name = path_obj.name.lower()
-    if any(w in parent_dir_name for w in ("audiobook", "audiobooks", "audio book", "audio books", "readarr", "libby")):
+    if any(
+        w in parent_dir_name
+        for w in (
+            "audiobook",
+            "audiobooks",
+            "audio book",
+            "audio books",
+            "readarr",
+            "libby",
+        )
+    ):
         book_score += 2.0
         book_evidence.append(f"parent directory hint ('{path_obj.name}')")
 
@@ -280,7 +357,13 @@ async def detect_audio_category(_meta: Any, path: Path | str) -> AudioCategoryRe
 
     release_name = path_obj.name.replace("_", " ")
     has_artist_album_shape = bool(re.search(r"\S\s+-\s+\S", release_name))
-    has_music_release_marker = bool(re.search(r"(?:\b(?:16|24)BIT\b|\b(?:WEB|CD)[ ._-]*(?:FLAC|MP3|AAC)\b|\[(?:FLAC|MP3|AAC)\])", release_name, re.I))
+    has_music_release_marker = bool(
+        re.search(
+            r"(?:\b(?:16|24)BIT\b|\b(?:WEB|CD)[ ._-]*(?:FLAC|MP3|AAC)\b|\[(?:FLAC|MP3|AAC)\])",
+            release_name,
+            re.I,
+        )
+    )
     if has_artist_album_shape and has_music_release_marker:
         music_score += 3.0
         music_evidence.append("structured artist/album music release name")
@@ -384,19 +467,30 @@ async def detect_audio_category(_meta: Any, path: Path | str) -> AudioCategoryRe
 
     if mono_count > 0 and mono_count >= len(sample_files) * 0.5:
         book_score += 3.0
-        book_evidence.append(f"mono audio ({mono_count}/{len(sample_files)} files)")
+        book_evidence.append(
+            f"mono audio ({mono_count}/{len(sample_files)} files)"
+        )
 
     if low_bitrate_count > 0 and low_bitrate_count >= len(sample_files) * 0.5:
         book_score += 2.0
-        book_evidence.append(f"low bitrate audio ({low_bitrate_count}/{len(sample_files)} files)")
+        book_evidence.append(
+            f"low bitrate audio ({low_bitrate_count}/{len(sample_files)} files)"
+        )
 
-    if low_samplerate_count > 0 and low_samplerate_count >= len(sample_files) * 0.5:
+    if (
+        low_samplerate_count > 0
+        and low_samplerate_count >= len(sample_files) * 0.5
+    ):
         book_score += 2.0
-        book_evidence.append(f"low sample rate audio ({low_samplerate_count}/{len(sample_files)} files)")
+        book_evidence.append(
+            f"low sample rate audio ({low_samplerate_count}/{len(sample_files)} files)"
+        )
 
     if long_track_count > 0:
         book_score += 3.0
-        book_evidence.append(f"long individual tracks (>15 min) ({long_track_count} files)")
+        book_evidence.append(
+            f"long individual tracks (>15 min) ({long_track_count} files)"
+        )
 
     # C. Decision logic
     if podcast_score >= 4.0 and podcast_score > max(book_score, music_score):

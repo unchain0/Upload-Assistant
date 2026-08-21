@@ -13,7 +13,12 @@ import aiofiles
 import httpx
 
 from src.integrations.observability.console import logger
-from src.integrations.runtime_tools.download_integrity import MAX_EXTRACTED_BYTES, download_verified_asset, promote_files_with_rollback, safe_extract_tar
+from src.integrations.runtime_tools.download_integrity import (
+    MAX_EXTRACTED_BYTES,
+    download_verified_asset,
+    promote_files_with_rollback,
+    safe_extract_tar,
+)
 from src.integrations.runtime_tools.runtime_tool_paths import tool_install_dir
 
 
@@ -21,33 +26,74 @@ class NyuuBinaryManager:
     """Download Nyuu binaries for the host architecture."""
 
     @staticmethod
-    async def ensure_nyuu_binary(base_dir: str | Path, path_7z: str | None = None, version: str = "v0.4.2") -> str:
+    async def ensure_nyuu_binary(
+        base_dir: str | Path,
+        path_7z: str | None = None,
+        version: str = "v0.4.2",
+    ) -> str:
         system = platform.system().lower()
         machine = platform.machine().lower()
-        logger.debug(f"[blue]Nyuu: Detected system: {system}, architecture: {machine}[/blue]")
+        logger.debug(
+            f"[blue]Nyuu: Detected system: {system}, architecture: {machine}[/blue]"
+        )
 
         platform_map: dict[str, dict[str, dict[str, str]]] = {
             "windows": {
-                "x86_64": {"file": "nyuu-v0.4.2-win32.7z", "folder": "windows/x86_64"},
-                "amd64": {"file": "nyuu-v0.4.2-win32.7z", "folder": "windows/x86_64"},
-                "x86": {"file": "nyuu-v0.4.2-win32.7z", "folder": "windows/x86"},
-                "arm64": {"file": "nyuu-v0.4.2-win32.7z", "folder": "windows/arm64"},
+                "x86_64": {
+                    "file": "nyuu-v0.4.2-win32.7z",
+                    "folder": "windows/x86_64",
+                },
+                "amd64": {
+                    "file": "nyuu-v0.4.2-win32.7z",
+                    "folder": "windows/x86_64",
+                },
+                "x86": {
+                    "file": "nyuu-v0.4.2-win32.7z",
+                    "folder": "windows/x86",
+                },
+                "arm64": {
+                    "file": "nyuu-v0.4.2-win32.7z",
+                    "folder": "windows/arm64",
+                },
             },
             "darwin": {
-                "arm64": {"file": "nyuu-v0.4.2-macos-x64.tar.xz", "folder": "macos/arm64"},
-                "x86_64": {"file": "nyuu-v0.4.2-macos-x64.tar.xz", "folder": "macos/x86_64"},
-                "amd64": {"file": "nyuu-v0.4.2-macos-x64.tar.xz", "folder": "macos/x86_64"},
+                "arm64": {
+                    "file": "nyuu-v0.4.2-macos-x64.tar.xz",
+                    "folder": "macos/arm64",
+                },
+                "x86_64": {
+                    "file": "nyuu-v0.4.2-macos-x64.tar.xz",
+                    "folder": "macos/x86_64",
+                },
+                "amd64": {
+                    "file": "nyuu-v0.4.2-macos-x64.tar.xz",
+                    "folder": "macos/x86_64",
+                },
             },
             "linux": {
-                "x86_64": {"file": "nyuu-v0.4.2-linux-amd64.tar.xz", "folder": "linux/amd64"},
-                "amd64": {"file": "nyuu-v0.4.2-linux-amd64.tar.xz", "folder": "linux/amd64"},
-                "arm64": {"file": "nyuu-v0.4.2-linux-aarch64.tar.xz", "folder": "linux/arm64"},
-                "aarch64": {"file": "nyuu-v0.4.2-linux-aarch64.tar.xz", "folder": "linux/arm64"},
+                "x86_64": {
+                    "file": "nyuu-v0.4.2-linux-amd64.tar.xz",
+                    "folder": "linux/amd64",
+                },
+                "amd64": {
+                    "file": "nyuu-v0.4.2-linux-amd64.tar.xz",
+                    "folder": "linux/amd64",
+                },
+                "arm64": {
+                    "file": "nyuu-v0.4.2-linux-aarch64.tar.xz",
+                    "folder": "linux/arm64",
+                },
+                "aarch64": {
+                    "file": "nyuu-v0.4.2-linux-aarch64.tar.xz",
+                    "folder": "linux/arm64",
+                },
             },
         }
 
         if system not in platform_map or machine not in platform_map[system]:
-            raise Exception(f"Unsupported platform for Nyuu: {system} {machine}")
+            raise Exception(
+                f"Unsupported platform for Nyuu: {system} {machine}"
+            )
 
         platform_info = platform_map[system][machine]
         file_pattern = platform_info["file"]
@@ -60,15 +106,28 @@ class NyuuBinaryManager:
         version_path = bin_dir / version
 
         binary_exists = binary_path.exists() and binary_path.is_file()
-        binary_executable = system == "windows" or os.access(binary_path, os.X_OK)
+        binary_executable = system == "windows" or os.access(
+            binary_path, os.X_OK
+        )
         binary_valid = binary_exists and binary_executable
 
-        version_markers = [candidate for candidate in bin_dir.glob("v*") if candidate.is_file()]
-        if version_path.exists() and version_path.is_file() and binary_valid and version_markers == [version_path]:
+        version_markers = [
+            candidate
+            for candidate in bin_dir.glob("v*")
+            if candidate.is_file()
+        ]
+        if (
+            version_path.exists()
+            and version_path.is_file()
+            and binary_valid
+            and version_markers == [version_path]
+        ):
             logger.debug("[blue]Nyuu binary is up to date[/blue]")
             return str(binary_path)
 
-        logger.info("[yellow]Binary 'nyuu' not found. Attempting to download automatically...[/yellow]")
+        logger.info(
+            "[yellow]Binary 'nyuu' not found. Attempting to download automatically...[/yellow]"
+        )
 
         download_url = f"https://github.com/animetosho/Nyuu/releases/download/{version}/{file_pattern}"
         logger.debug(f"[blue]Nyuu Download URL: {download_url}[/blue]")
@@ -78,50 +137,96 @@ class NyuuBinaryManager:
         shutil.rmtree(staging_dir, ignore_errors=True)
         staging_dir.mkdir()
         try:
-            async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
-                await download_verified_asset(client, download_url, temp_file, file_pattern)
+            async with httpx.AsyncClient(
+                timeout=60.0, follow_redirects=True
+            ) as client:
+                await download_verified_asset(
+                    client, download_url, temp_file, file_pattern
+                )
 
-            logger.debug(f"[green]Downloaded Nyuu package: {file_pattern}[/green]")
+            logger.debug(
+                f"[green]Downloaded Nyuu package: {file_pattern}[/green]"
+            )
             if file_pattern.endswith(".7z"):
                 if not path_7z:
-                    from src.integrations.runtime_tools.seven_zip import SevenZipBinaryManager
+                    from src.integrations.runtime_tools.seven_zip import (
+                        SevenZipBinaryManager,
+                    )
 
-                    path_7z = await SevenZipBinaryManager.ensure_7z_binary(base_dir)
-                command = [path_7z, "e", "-y", "-r", f"-o{staging_dir}", str(temp_file), "nyuu.exe"]
+                    path_7z = await SevenZipBinaryManager.ensure_7z_binary(
+                        base_dir
+                    )
+                command = [
+                    path_7z,
+                    "e",
+                    "-y",
+                    "-r",
+                    f"-o{staging_dir}",
+                    str(temp_file),
+                    "nyuu.exe",
+                ]
                 process = await asyncio.create_subprocess_exec(
                     *command,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
-                    creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+                    creationflags=getattr(
+                        subprocess, "CREATE_NEW_PROCESS_GROUP", 0
+                    ),
                 )
                 try:
-                    _stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=120)
+                    _stdout, stderr = await asyncio.wait_for(
+                        process.communicate(), timeout=120
+                    )
                 except TimeoutError:
                     await NyuuBinaryManager._terminate_process_tree(process)
-                    raise RuntimeError("7z extraction timed out after 120 seconds") from None
+                    raise RuntimeError(
+                        "7z extraction timed out after 120 seconds"
+                    ) from None
                 except BaseException:
                     await NyuuBinaryManager._terminate_process_tree(process)
                     raise
                 if process.returncode != 0:
-                    raise RuntimeError(f"7z extraction failed: {stderr.decode(errors='replace')}")
+                    raise RuntimeError(
+                        f"7z extraction failed: {stderr.decode(errors='replace')}"
+                    )
             else:
                 with tarfile.open(temp_file, "r:xz") as tar_ref:
-                    safe_extract_tar(tar_ref, staging_dir, max_bytes=MAX_EXTRACTED_BYTES)
+                    safe_extract_tar(
+                        tar_ref, staging_dir, max_bytes=MAX_EXTRACTED_BYTES
+                    )
 
-            extracted = [candidate for candidate in staging_dir.rglob(binary_name) if candidate.is_file()]
+            extracted = [
+                candidate
+                for candidate in staging_dir.rglob(binary_name)
+                if candidate.is_file()
+            ]
             if len(extracted) != 1:
-                raise RuntimeError(f"Downloaded archive does not contain the expected {binary_name} executable")
+                raise RuntimeError(
+                    f"Downloaded archive does not contain the expected {binary_name} executable"
+                )
             staged_binary = extracted[0]
             if staged_binary.stat().st_size > MAX_EXTRACTED_BYTES:
-                raise RuntimeError(f"Extracted {binary_name} exceeds the allowed size")
+                raise RuntimeError(
+                    f"Extracted {binary_name} exceeds the allowed size"
+                )
 
             if system != "windows":
-                staged_binary.chmod(staged_binary.stat().st_mode | stat.S_IEXEC)
+                staged_binary.chmod(
+                    staged_binary.stat().st_mode | stat.S_IEXEC
+                )
 
             staged_version = staging_dir / version
-            async with aiofiles.open(staged_version, "w", encoding="utf-8") as version_file:
-                await version_file.write(f"Nyuu version {version} installed successfully.")
-            stale_markers = [candidate for candidate in version_markers if candidate != version_path]
+            async with aiofiles.open(
+                staged_version, "w", encoding="utf-8"
+            ) as version_file:
+                await version_file.write(
+                    f"Nyuu version {version} installed successfully."
+                )
+            stale_markers = [
+                candidate
+                for candidate in version_markers
+                if candidate != version_path
+            ]
             promote_files_with_rollback(
                 [(staged_binary, binary_path), (staged_version, version_path)],
                 bin_dir / ".nyuu-backup",
@@ -137,7 +242,9 @@ class NyuuBinaryManager:
             shutil.rmtree(staging_dir, ignore_errors=True)
 
     @staticmethod
-    async def _terminate_process_tree(process: asyncio.subprocess.Process) -> None:
+    async def _terminate_process_tree(
+        process: asyncio.subprocess.Process,
+    ) -> None:
         pid = getattr(process, "pid", None)
         if platform.system().lower() == "windows" and pid is not None:
             tree_killer = None
@@ -153,13 +260,17 @@ class NyuuBinaryManager:
                 )
                 await asyncio.wait_for(tree_killer.communicate(), timeout=10)
                 if tree_killer.returncode != 0:
-                    logger.warning("taskkill could not terminate the complete 7z process tree")
+                    logger.warning(
+                        "taskkill could not terminate the complete 7z process tree"
+                    )
             except TimeoutError:
                 if tree_killer is not None and tree_killer.returncode is None:
                     with suppress(ProcessLookupError):
                         tree_killer.kill()
                     with suppress(ProcessLookupError, TimeoutError):
-                        await asyncio.wait_for(tree_killer.communicate(), timeout=10)
+                        await asyncio.wait_for(
+                            tree_killer.communicate(), timeout=10
+                        )
             except OSError:
                 pass
         if process.returncode is None:

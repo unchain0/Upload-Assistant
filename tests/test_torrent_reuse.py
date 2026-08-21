@@ -12,23 +12,40 @@ from src.integrations.torrent_clients.client_manager import Clients
 
 
 @pytest.mark.asyncio
-async def test_qbittorrent_search_propagates_keyboard_interrupt(tmp_path, monkeypatch):
+async def test_qbittorrent_search_propagates_keyboard_interrupt(
+    tmp_path, monkeypatch
+):
     config = {
-        "DEFAULT": {"default_torrent_client": "qbit", "prefer_max_16_torrent": False},
+        "DEFAULT": {
+            "default_torrent_client": "qbit",
+            "prefer_max_16_torrent": False,
+        },
         "TRACKERS": {},
-        "TORRENT_CLIENTS": {"qbit": {"torrent_client": "qbit", "enable_search": True}},
+        "TORRENT_CLIENTS": {
+            "qbit": {"torrent_client": "qbit", "enable_search": True}
+        },
     }
     clients = Clients(config)
-    monkeypatch.setattr(clients, "init_qbittorrent_client", AsyncMock(return_value=object()))
-    monkeypatch.setattr(clients, "search_qbit_for_torrent", AsyncMock(side_effect=KeyboardInterrupt))
+    monkeypatch.setattr(
+        clients, "init_qbittorrent_client", AsyncMock(return_value=object())
+    )
+    monkeypatch.setattr(
+        clients,
+        "search_qbit_for_torrent",
+        AsyncMock(side_effect=KeyboardInterrupt),
+    )
     meta = Meta(base_dir=str(tmp_path), uuid="interrupt", client="qbit")
 
     with pytest.raises(KeyboardInterrupt):
-        await clients._search_single_client_for_torrent(meta, "qbit", False, False, None)
+        await clients._search_single_client_for_torrent(
+            meta, "qbit", False, False, None
+        )
 
 
 @pytest.mark.asyncio
-async def test_base_subs_contains_external_subtitle_with_custom_torrent(tmp_path):
+async def test_base_subs_contains_external_subtitle_with_custom_torrent(
+    tmp_path,
+):
     video = tmp_path / "release.mkv"
     subtitle = tmp_path / "release.pt-BR.srt"
     video.write_bytes(b"video data")
@@ -57,7 +74,9 @@ async def test_base_subs_contains_external_subtitle_with_custom_torrent(tmp_path
     from torf import Torrent
 
     torrent = Torrent.read(tmp_path / "tmp" / meta.uuid / "BASE_SUBS.torrent")
-    assert sorted(path.name for path in torrent.files) == sorted([video.name, subtitle.name])
+    assert sorted(path.name for path in torrent.files) == sorted(
+        [video.name, subtitle.name]
+    )
 
 
 @pytest.mark.asyncio
@@ -92,20 +111,32 @@ async def test_base_subs_excludes_unselected_subtitles(tmp_path):
     from torf import Torrent
 
     torrent = Torrent.read(tmp_path / "tmp" / meta.uuid / "BASE_SUBS.torrent")
-    assert sorted(path.name for path in torrent.files) == sorted([video.name, selected_subtitle.name])
+    assert sorted(path.name for path in torrent.files) == sorted(
+        [video.name, selected_subtitle.name]
+    )
 
 
 @pytest.mark.asyncio
-async def test_reuse_validation_rejects_same_basenames_in_different_layouts(tmp_path, monkeypatch):
+async def test_reuse_validation_rejects_same_basenames_in_different_layouts(
+    tmp_path, monkeypatch
+):
     torrent_path = tmp_path / "candidate.torrent"
     torrent_path.write_bytes(b"placeholder")
-    local_files = [tmp_path / "release" / "season-01" / "episode.mkv", tmp_path / "release" / "season-02" / "episode.mkv"]
+    local_files = [
+        tmp_path / "release" / "season-01" / "episode.mkv",
+        tmp_path / "release" / "season-02" / "episode.mkv",
+    ]
     for path in local_files:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"video")
 
-    fake_torrent = SimpleNamespace(files=["Release/episode.mkv", "Release/bonus/episode.mkv"])
-    monkeypatch.setattr("src.integrations.torrent_clients.client_manager.Torrent.read", lambda _path: fake_torrent)
+    fake_torrent = SimpleNamespace(
+        files=["Release/episode.mkv", "Release/bonus/episode.mkv"]
+    )
+    monkeypatch.setattr(
+        "src.integrations.torrent_clients.client_manager.Torrent.read",
+        lambda _path: fake_torrent,
+    )
 
     meta = Meta(
         {
@@ -121,13 +152,17 @@ async def test_reuse_validation_rejects_same_basenames_in_different_layouts(tmp_
     )
     client = Clients({"DEFAULT": {}, "TORRENT_CLIENTS": {}})
 
-    valid, _ = await client.is_valid_torrent(meta, str(torrent_path), "hash", "qbit", {})
+    valid, _ = await client.is_valid_torrent(
+        meta, str(torrent_path), "hash", "qbit", {}
+    )
 
     assert not valid
 
 
 @pytest.mark.asyncio
-async def test_reuse_validation_normalizes_binary_md5sum_in_working_copy(tmp_path):
+async def test_reuse_validation_normalizes_binary_md5sum_in_working_copy(
+    tmp_path,
+):
     import bencodepy
 
     book = tmp_path / "book.epub"
@@ -147,9 +182,21 @@ async def test_reuse_validation_normalizes_binary_md5sum_in_working_copy(tmp_pat
         }
     )
     torrent_path.write_bytes(original_metainfo)
-    meta = Meta(path=str(book), filelist=[str(book)], subtitle_files=[], is_disc="", keep_folder=False, isdir=False, uuid="book.epub", base_dir=str(tmp_path), debug=False)
+    meta = Meta(
+        path=str(book),
+        filelist=[str(book)],
+        subtitle_files=[],
+        is_disc="",
+        keep_folder=False,
+        isdir=False,
+        uuid="book.epub",
+        base_dir=str(tmp_path),
+        debug=False,
+    )
 
-    valid, resolved_path = await Clients({"DEFAULT": {}, "TORRENT_CLIENTS": {}}).is_valid_torrent(meta, str(torrent_path), "hash", "qbit", {})
+    valid, resolved_path = await Clients(
+        {"DEFAULT": {}, "TORRENT_CLIENTS": {}}
+    ).is_valid_torrent(meta, str(torrent_path), "hash", "qbit", {})
 
     assert valid
     normalized_path = tmp_path / "tmp" / "book.epub" / "candidate.torrent"
@@ -167,15 +214,29 @@ async def test_reuse_validation_rejects_same_size_content_changes(tmp_path):
     torrent.generate(threads=1)
     torrent.write(torrent_path)
     book.write_bytes(b"modified")
-    meta = Meta(path=str(book), filelist=[str(book)], subtitle_files=[], is_disc="", keep_folder=False, isdir=False, uuid="book.epub", base_dir=str(tmp_path), debug=False)
+    meta = Meta(
+        path=str(book),
+        filelist=[str(book)],
+        subtitle_files=[],
+        is_disc="",
+        keep_folder=False,
+        isdir=False,
+        uuid="book.epub",
+        base_dir=str(tmp_path),
+        debug=False,
+    )
 
-    valid, _ = await Clients({"DEFAULT": {}, "TORRENT_CLIENTS": {}}).is_valid_torrent(meta, str(torrent_path), "hash", "qbit", {})
+    valid, _ = await Clients(
+        {"DEFAULT": {}, "TORRENT_CLIENTS": {}}
+    ).is_valid_torrent(meta, str(torrent_path), "hash", "qbit", {})
 
     assert not valid
 
 
 @pytest.mark.asyncio
-async def test_client_search_prefers_torrent_with_all_local_subtitles(tmp_path, monkeypatch):
+async def test_client_search_prefers_torrent_with_all_local_subtitles(
+    tmp_path, monkeypatch
+):
     video_only = tmp_path / "video-only.torrent"
     with_subtitles = tmp_path / "with-subtitles.torrent"
     video_only.touch()
@@ -185,16 +246,29 @@ async def test_client_search_prefers_torrent_with_all_local_subtitles(tmp_path, 
 
     torrents = {
         str(video_only): SimpleNamespace(files=["release.mkv"]),
-        str(with_subtitles): SimpleNamespace(files=["release.mkv", "release.srt"]),
+        str(with_subtitles): SimpleNamespace(
+            files=["release.mkv", "release.srt"]
+        ),
     }
-    monkeypatch.setattr("src.integrations.torrent_clients.client_manager.Torrent.read", lambda path: torrents[str(path)])
+    monkeypatch.setattr(
+        "src.integrations.torrent_clients.client_manager.Torrent.read",
+        lambda path: torrents[str(path)],
+    )
 
     async def fake_search(_self, _meta, client_name, *_args):
-        return str(video_only) if client_name == "first" else str(with_subtitles)
+        return (
+            str(video_only) if client_name == "first" else str(with_subtitles)
+        )
 
-    monkeypatch.setattr(Clients, "_search_single_client_for_torrent", fake_search)
+    monkeypatch.setattr(
+        Clients, "_search_single_client_for_torrent", fake_search
+    )
     config = {
-        "DEFAULT": {"default_torrent_client": "first", "searching_client_list": ["first", "second"], "prefer_max_16_torrent": False},
+        "DEFAULT": {
+            "default_torrent_client": "first",
+            "searching_client_list": ["first", "second"],
+            "prefer_max_16_torrent": False,
+        },
         "TRACKERS": {},
         "TORRENT_CLIENTS": {"first": {}, "second": {}},
     }
@@ -207,7 +281,9 @@ async def test_client_search_prefers_torrent_with_all_local_subtitles(tmp_path, 
 
 
 @pytest.mark.asyncio
-async def test_client_search_rejects_partially_subtitled_fallback(tmp_path, monkeypatch):
+async def test_client_search_rejects_partially_subtitled_fallback(
+    tmp_path, monkeypatch
+):
     partial_subtitles = tmp_path / "partial-subtitles.torrent"
     partial_subtitles.touch()
     selected_subtitle = tmp_path / "release.pt-BR.srt"
@@ -215,24 +291,42 @@ async def test_client_search_rejects_partially_subtitled_fallback(tmp_path, monk
     selected_subtitle.touch()
     missing_subtitle.touch()
 
-    monkeypatch.setattr("src.integrations.torrent_clients.client_manager.Torrent.read", lambda _path: SimpleNamespace(files=["release.mkv", selected_subtitle.name]))
+    monkeypatch.setattr(
+        "src.integrations.torrent_clients.client_manager.Torrent.read",
+        lambda _path: SimpleNamespace(
+            files=["release.mkv", selected_subtitle.name]
+        ),
+    )
 
     async def fake_search(_self, _meta, _client_name, *_args):
         return str(partial_subtitles)
 
-    monkeypatch.setattr(Clients, "_search_single_client_for_torrent", fake_search)
+    monkeypatch.setattr(
+        Clients, "_search_single_client_for_torrent", fake_search
+    )
     config = {
-        "DEFAULT": {"default_torrent_client": "first", "searching_client_list": ["first"], "prefer_max_16_torrent": False},
+        "DEFAULT": {
+            "default_torrent_client": "first",
+            "searching_client_list": ["first"],
+            "prefer_max_16_torrent": False,
+        },
         "TRACKERS": {},
         "TORRENT_CLIENTS": {"first": {}},
     }
-    meta = Meta({"client": "none", "subtitle_files": [str(selected_subtitle), str(missing_subtitle)]})
+    meta = Meta(
+        {
+            "client": "none",
+            "subtitle_files": [str(selected_subtitle), str(missing_subtitle)],
+        }
+    )
 
     assert await Clients(config).find_existing_torrent(meta) is None
 
 
 @pytest.mark.asyncio
-async def test_client_search_keeps_best_piece_size_video_only_fallback(tmp_path, monkeypatch):
+async def test_client_search_keeps_best_piece_size_video_only_fallback(
+    tmp_path, monkeypatch
+):
     small_piece_torrent = tmp_path / "small-piece.torrent"
     large_piece_torrent = tmp_path / "large-piece.torrent"
     selected_subtitle = tmp_path / "release.srt"
@@ -241,23 +335,42 @@ async def test_client_search_keeps_best_piece_size_video_only_fallback(tmp_path,
     selected_subtitle.touch()
 
     torrents = {
-        str(small_piece_torrent): SimpleNamespace(files=["release.mkv"], piece_size=4 * 1024 * 1024),
-        str(large_piece_torrent): SimpleNamespace(files=["release.mkv"], piece_size=32 * 1024 * 1024),
+        str(small_piece_torrent): SimpleNamespace(
+            files=["release.mkv"], piece_size=4 * 1024 * 1024
+        ),
+        str(large_piece_torrent): SimpleNamespace(
+            files=["release.mkv"], piece_size=32 * 1024 * 1024
+        ),
     }
-    monkeypatch.setattr("src.integrations.torrent_clients.client_manager.Torrent.read", lambda path: torrents[str(path)])
+    monkeypatch.setattr(
+        "src.integrations.torrent_clients.client_manager.Torrent.read",
+        lambda path: torrents[str(path)],
+    )
 
     async def fake_search(_self, _meta, client_name, *_args):
-        return str(large_piece_torrent) if client_name == "first" else str(small_piece_torrent)
+        return (
+            str(large_piece_torrent)
+            if client_name == "first"
+            else str(small_piece_torrent)
+        )
 
-    monkeypatch.setattr(Clients, "_search_single_client_for_torrent", fake_search)
+    monkeypatch.setattr(
+        Clients, "_search_single_client_for_torrent", fake_search
+    )
     config = {
-        "DEFAULT": {"default_torrent_client": "first", "searching_client_list": ["first", "second"], "prefer_max_16_torrent": True},
+        "DEFAULT": {
+            "default_torrent_client": "first",
+            "searching_client_list": ["first", "second"],
+            "prefer_max_16_torrent": True,
+        },
         "TRACKERS": {},
         "TORRENT_CLIENTS": {"first": {}, "second": {}},
     }
     meta = Meta({"client": "none", "subtitle_files": [str(selected_subtitle)]})
 
-    assert await Clients(config).find_existing_torrent(meta) == str(small_piece_torrent)
+    assert await Clients(config).find_existing_torrent(meta) == str(
+        small_piece_torrent
+    )
     assert meta.reuse_torrent_client == "second"
 
 
@@ -266,7 +379,10 @@ async def test_metadata_lookup_uses_reuse_source_client(monkeypatch):
     source_client = {"torrent_client": "qbit"}
     config = {
         "DEFAULT": {"default_torrent_client": "default"},
-        "TORRENT_CLIENTS": {"default": {"torrent_client": "qbit"}, "source": source_client},
+        "TORRENT_CLIENTS": {
+            "default": {"torrent_client": "qbit"},
+            "source": source_client,
+        },
     }
     clients = Clients(config)
     called_with = None
@@ -278,6 +394,8 @@ async def test_metadata_lookup_uses_reuse_source_client(monkeypatch):
 
     monkeypatch.setattr(clients, "get_ptp_from_hash_qbit", fake_lookup)
 
-    await clients.get_ptp_from_hash(Meta({}), pathed=True, client_name="source")
+    await clients.get_ptp_from_hash(
+        Meta({}), pathed=True, client_name="source"
+    )
 
     assert called_with is source_client

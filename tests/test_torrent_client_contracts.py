@@ -77,17 +77,28 @@ class _QbitClient:
     def auth_log_out(self) -> None:
         return None
 
-    def torrents_info(self, *_args: object, **_kwargs: object) -> list[_TorrentInfo]:
+    def torrents_info(
+        self, *_args: object, **_kwargs: object
+    ) -> list[_TorrentInfo]:
         return [_TorrentInfo(self.root, self.profile)]
 
-    def torrents_files(self, *_args: object, **_kwargs: object) -> list[_TorrentFile]:
+    def torrents_files(
+        self, *_args: object, **_kwargs: object
+    ) -> list[_TorrentFile]:
         return [_TorrentFile()]
 
-    def torrents_trackers(self, *_args: object, **_kwargs: object) -> list[dict[str, Any]]:
+    def torrents_trackers(
+        self, *_args: object, **_kwargs: object
+    ) -> list[dict[str, Any]]:
         return [{"url": "https://tracker.example/announce", "status": 2}]
 
-    def torrents_properties(self, *_args: object, **_kwargs: object) -> dict[str, Any]:
-        return {"comment": "https://passthepopcorn.me/torrents.php?id=1&torrentid=2", "save_path": str(self.root)}
+    def torrents_properties(
+        self, *_args: object, **_kwargs: object
+    ) -> dict[str, Any]:
+        return {
+            "comment": "https://passthepopcorn.me/torrents.php?id=1&torrentid=2",
+            "save_path": str(self.root),
+        }
 
     def torrents_export(self, *_args: object, **_kwargs: object) -> bytes:
         return _torrent_bytes()
@@ -144,7 +155,9 @@ class _TransmissionClient:
     def add_torrent(self, *_args: object, **_kwargs: object) -> dict[str, int]:
         return {"id": 1}
 
-    def get_torrents(self, *_args: object, **_kwargs: object) -> list[_TorrentInfo]:
+    def get_torrents(
+        self, *_args: object, **_kwargs: object
+    ) -> list[_TorrentInfo]:
         return [_TorrentInfo(Path.cwd())]
 
     def close(self) -> None:
@@ -160,7 +173,12 @@ class _DelugeClient:
 
     def call(self, method: str, *_args: object, **_kwargs: object) -> object:
         if "get_torrents_status" in method:
-            return {b"a" * 40: {b"name": b"Example Release", b"save_path": str(Path.cwd()).encode()}}
+            return {
+                b"a" * 40: {
+                    b"name": b"Example Release",
+                    b"save_path": str(Path.cwd()).encode(),
+                }
+            }
         return b"a" * 40
 
     def disconnect(self) -> None:
@@ -200,7 +218,10 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path]:
 
 
 def _config(tmp_path: Path) -> dict[str, Any]:
-    config = {key: value.copy() if isinstance(value, dict) else value for key, value in example_config.items()}
+    config = {
+        key: value.copy() if isinstance(value, dict) else value
+        for key, value in example_config.items()
+    }
     default = config.setdefault("DEFAULT", {})
     default.update(
         {
@@ -269,10 +290,25 @@ def _meta(tmp_path: Path, media: Path, torrent: Path, profile: int) -> Meta:
 
 
 def _modules() -> list[ModuleType]:
-    return [importlib.import_module(info.name) for info in pkgutil.iter_modules(torrent_clients_package.__path__, f"{torrent_clients_package.__name__}.")]
+    return [
+        importlib.import_module(info.name)
+        for info in pkgutil.iter_modules(
+            torrent_clients_package.__path__,
+            f"{torrent_clients_package.__name__}.",
+        )
+    ]
 
 
-def _value(name: str, annotation: object, meta: Meta, config: dict[str, Any], tmp_path: Path, media: Path, torrent: Path, profile: int) -> object:
+def _value(
+    name: str,
+    annotation: object,
+    meta: Meta,
+    config: dict[str, Any],
+    tmp_path: Path,
+    media: Path,
+    torrent: Path,
+    profile: int,
+) -> object:
     normalized = name.casefold().lstrip("_")
     client = _QbitClient()
     client.root = tmp_path
@@ -347,7 +383,16 @@ def _value(name: str, annotation: object, meta: Meta, config: dict[str, Any], tm
         return ()
     if origin is not None and type(None) in args:
         concrete = next((item for item in args if item is not type(None)), str)
-        return _value(normalized, concrete, meta, config, tmp_path, media, torrent, profile)
+        return _value(
+            normalized,
+            concrete,
+            meta,
+            config,
+            tmp_path,
+            media,
+            torrent,
+            profile,
+        )
     return None
 
 
@@ -400,7 +445,11 @@ def _coerce_override(
         if isinstance(value, list):
             return value
         element = args[0] if args else object
-        return [_coerce_override(value, element, meta, config, tmp_path, media, torrent, profile)]
+        return [
+            _coerce_override(
+                value, element, meta, config, tmp_path, media, torrent, profile
+            )
+        ]
     if origin in {dict, Mapping}:
         return value if isinstance(value, dict) else {}
     if origin is tuple:
@@ -408,8 +457,12 @@ def _coerce_override(
     if origin is set:
         return value if isinstance(value, set) else {value}
     if origin is not None and type(None) in args and value is not None:
-        concrete = next((item for item in args if item is not type(None)), object)
-        return _coerce_override(value, concrete, meta, config, tmp_path, media, torrent, profile)
+        concrete = next(
+            (item for item in args if item is not type(None)), object
+        )
+        return _coerce_override(
+            value, concrete, meta, config, tmp_path, media, torrent, profile
+        )
     return value
 
 
@@ -432,14 +485,41 @@ async def _invoke(
     except NameError, TypeError:
         hints = {}
     for parameter in inspect.signature(function).parameters.values():
-        if parameter.kind in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}:
+        if parameter.kind in {
+            inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.VAR_KEYWORD,
+        }:
             continue
-        if parameter.default is not inspect.Parameter.empty and parameter.name not in overrides:
+        if (
+            parameter.default is not inspect.Parameter.empty
+            and parameter.name not in overrides
+        ):
             continue
         annotation = hints.get(parameter.name, parameter.annotation)
-        value = _value(parameter.name, annotation, meta, config, tmp_path, media, torrent, profile)
-        if parameter.name in overrides and parameter.name not in _PROTECTED_ARGUMENTS:
-            value = _coerce_override(overrides[parameter.name], annotation, meta, config, tmp_path, media, torrent, profile)
+        value = _value(
+            parameter.name,
+            annotation,
+            meta,
+            config,
+            tmp_path,
+            media,
+            torrent,
+            profile,
+        )
+        if (
+            parameter.name in overrides
+            and parameter.name not in _PROTECTED_ARGUMENTS
+        ):
+            value = _coerce_override(
+                overrides[parameter.name],
+                annotation,
+                meta,
+                config,
+                tmp_path,
+                media,
+                torrent,
+                profile,
+            )
         if parameter.kind is inspect.Parameter.KEYWORD_ONLY:
             keywords[parameter.name] = value
         else:
@@ -450,7 +530,9 @@ async def _invoke(
     return result
 
 
-def test_torrent_client_catalog_uses_local_fakes(tmp_path: Path, monkeypatch: Any) -> None:
+def test_torrent_client_catalog_uses_local_fakes(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
     media, torrent = _fixture(tmp_path)
     config = _config(tmp_path)
     monkeypatch.setattr(qbittorrentapi, "Client", _QbitClient)
@@ -459,7 +541,9 @@ def test_torrent_client_catalog_uses_local_fakes(tmp_path: Path, monkeypatch: An
     monkeypatch.setattr("xmlrpc.client.ServerProxy", _XmlRpc)
     monkeypatch.setattr(httpx, "AsyncClient", _AsyncClient)
 
-    async def no_sleep(_delay: float = 0, *_args: object, **_kwargs: object) -> None:
+    async def no_sleep(
+        _delay: float = 0, *_args: object, **_kwargs: object
+    ) -> None:
         return None
 
     monkeypatch.setattr(asyncio, "sleep", no_sleep)
@@ -470,68 +554,156 @@ def test_torrent_client_catalog_uses_local_fakes(tmp_path: Path, monkeypatch: An
     async def exercise() -> None:
         for module in _modules():
             functions = [
-                (name, function) for name, function in inspect.getmembers(module, inspect.isfunction) if function.__module__ == module.__name__ and not name.startswith("__")
+                (name, function)
+                for name, function in inspect.getmembers(
+                    module, inspect.isfunction
+                )
+                if function.__module__ == module.__name__
+                and not name.startswith("__")
             ]
             for name, function in functions:
                 qualified = f"{module.__name__}.{name}"
                 attempted.add(qualified)
                 for profile in range(4):
                     try:
-                        await _invoke(function, _meta(tmp_path, media, torrent, profile), config, tmp_path, media, torrent, profile)
+                        await _invoke(
+                            function,
+                            _meta(tmp_path, media, torrent, profile),
+                            config,
+                            tmp_path,
+                            media,
+                            torrent,
+                            profile,
+                        )
                     except (KeyboardInterrupt, SystemExit) as error:
-                        terminations.append(f"{qualified}:{type(error).__name__}")
+                        terminations.append(
+                            f"{qualified}:{type(error).__name__}"
+                        )
                     except Exception as error:
-                        expected_rejections.append(f"{qualified}:{type(error).__name__}")
-                for meta_updates, argument_overrides in literal_branch_scenarios(function, Meta.__dataclass_fields__, limit=256):
-                    argument_overrides = {key: value for key, value in argument_overrides.items() if key not in _PROTECTED_ARGUMENTS}
+                        expected_rejections.append(
+                            f"{qualified}:{type(error).__name__}"
+                        )
+                for (
+                    meta_updates,
+                    argument_overrides,
+                ) in literal_branch_scenarios(
+                    function, Meta.__dataclass_fields__, limit=256
+                ):
+                    argument_overrides = {
+                        key: value
+                        for key, value in argument_overrides.items()
+                        if key not in _PROTECTED_ARGUMENTS
+                    }
                     scenario_meta = _meta(tmp_path, media, torrent, 0)
                     for key, value in meta_updates.items():
                         if key in Meta.__dataclass_fields__:
                             setattr(scenario_meta, key, value)
                     try:
-                        await _invoke(function, scenario_meta, config, tmp_path, media, torrent, 0, argument_overrides)
+                        await _invoke(
+                            function,
+                            scenario_meta,
+                            config,
+                            tmp_path,
+                            media,
+                            torrent,
+                            0,
+                            argument_overrides,
+                        )
                     except (KeyboardInterrupt, SystemExit) as error:
-                        terminations.append(f"{qualified}:{type(error).__name__}")
+                        terminations.append(
+                            f"{qualified}:{type(error).__name__}"
+                        )
                     except Exception as error:
-                        expected_rejections.append(f"{qualified}:{type(error).__name__}")
+                        expected_rejections.append(
+                            f"{qualified}:{type(error).__name__}"
+                        )
 
             classes = [
                 (class_name, class_type)
-                for class_name, class_type in inspect.getmembers(module, inspect.isclass)
-                if class_type.__module__ == module.__name__ and not class_name.startswith("_")
+                for class_name, class_type in inspect.getmembers(
+                    module, inspect.isclass
+                )
+                if class_type.__module__ == module.__name__
+                and not class_name.startswith("_")
             ]
             for class_name, class_type in classes:
                 try:
-                    instance = await _invoke(class_type, _meta(tmp_path, media, torrent, 0), config, tmp_path, media, torrent, 0)
+                    instance = await _invoke(
+                        class_type,
+                        _meta(tmp_path, media, torrent, 0),
+                        config,
+                        tmp_path,
+                        media,
+                        torrent,
+                        0,
+                    )
                 except Exception as error:
-                    expected_rejections.append(f"{module.__name__}.{class_name}.__init__:{type(error).__name__}")
+                    expected_rejections.append(
+                        f"{module.__name__}.{class_name}.__init__:{type(error).__name__}"
+                    )
                     continue
                 if hasattr(instance, "config"):
                     instance.config = config
-                for method_name, method in inspect.getmembers(instance, callable):
+                for method_name, method in inspect.getmembers(
+                    instance, callable
+                ):
                     if method_name.startswith("__"):
                         continue
                     qualified = f"{module.__name__}.{class_name}.{method_name}"
                     attempted.add(qualified)
                     for profile in range(4):
                         try:
-                            await _invoke(method, _meta(tmp_path, media, torrent, profile), config, tmp_path, media, torrent, profile)
+                            await _invoke(
+                                method,
+                                _meta(tmp_path, media, torrent, profile),
+                                config,
+                                tmp_path,
+                                media,
+                                torrent,
+                                profile,
+                            )
                         except (KeyboardInterrupt, SystemExit) as error:
-                            terminations.append(f"{qualified}:{type(error).__name__}")
+                            terminations.append(
+                                f"{qualified}:{type(error).__name__}"
+                            )
                         except Exception as error:
-                            expected_rejections.append(f"{qualified}:{type(error).__name__}")
-                    for meta_updates, argument_overrides in literal_branch_scenarios(method, Meta.__dataclass_fields__, limit=256):
-                        argument_overrides = {key: value for key, value in argument_overrides.items() if key not in _PROTECTED_ARGUMENTS}
+                            expected_rejections.append(
+                                f"{qualified}:{type(error).__name__}"
+                            )
+                    for (
+                        meta_updates,
+                        argument_overrides,
+                    ) in literal_branch_scenarios(
+                        method, Meta.__dataclass_fields__, limit=256
+                    ):
+                        argument_overrides = {
+                            key: value
+                            for key, value in argument_overrides.items()
+                            if key not in _PROTECTED_ARGUMENTS
+                        }
                         scenario_meta = _meta(tmp_path, media, torrent, 0)
                         for key, value in meta_updates.items():
                             if key in Meta.__dataclass_fields__:
                                 setattr(scenario_meta, key, value)
                         try:
-                            await _invoke(method, scenario_meta, config, tmp_path, media, torrent, 0, argument_overrides)
+                            await _invoke(
+                                method,
+                                scenario_meta,
+                                config,
+                                tmp_path,
+                                media,
+                                torrent,
+                                0,
+                                argument_overrides,
+                            )
                         except (KeyboardInterrupt, SystemExit) as error:
-                            terminations.append(f"{qualified}:{type(error).__name__}")
+                            terminations.append(
+                                f"{qualified}:{type(error).__name__}"
+                            )
                         except Exception as error:
-                            expected_rejections.append(f"{qualified}:{type(error).__name__}")
+                            expected_rejections.append(
+                                f"{qualified}:{type(error).__name__}"
+                            )
 
     asyncio.run(exercise())
 

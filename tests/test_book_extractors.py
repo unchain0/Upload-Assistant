@@ -54,7 +54,13 @@ _RICH_OPF = """<?xml version="1.0" encoding="UTF-8"?>
 """
 
 
-def _epub(path: Path, opf: str = _RICH_OPF, *, include_container: bool = True, opf_name: str = "OEBPS/content.opf") -> Path:
+def _epub(
+    path: Path,
+    opf: str = _RICH_OPF,
+    *,
+    include_container: bool = True,
+    opf_name: str = "OEBPS/content.opf",
+) -> Path:
     with zipfile.ZipFile(path, "w") as archive:
         if include_container:
             archive.writestr(
@@ -76,11 +82,18 @@ def test_zip_safety_and_series_helpers(tmp_path: Path) -> None:
     assert extractors.normalize_series_index("5.0") == "5"
     assert extractors.normalize_series_index("5.5") == "5.5"
     assert extractors.normalize_series_index("  unknown  ") == "unknown"
-    assert extractors.extract_series_from_filename("Author - Series Name #5.0 - Title.epub") == ("Series Name", "5")
-    assert extractors.extract_series_from_filename("No series.epub") == ("", "")
+    assert extractors.extract_series_from_filename(
+        "Author - Series Name #5.0 - Title.epub"
+    ) == ("Series Name", "5")
+    assert extractors.extract_series_from_filename("No series.epub") == (
+        "",
+        "",
+    )
 
 
-def test_epub_metadata_and_formatted_output_cover_all_metadata_shapes(tmp_path: Path) -> None:
+def test_epub_metadata_and_formatted_output_cover_all_metadata_shapes(
+    tmp_path: Path,
+) -> None:
     epub = _epub(tmp_path / "rich.epub")
 
     metadata = extractors.extract_epub_metadata(str(epub))
@@ -120,9 +133,18 @@ def test_epub_metadata_and_formatted_output_cover_all_metadata_shapes(tmp_path: 
         assert expected in output
 
 
-def test_epub_fallbacks_and_malformed_archives(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    fallback = _epub(tmp_path / "fallback.epub", include_container=False, opf_name="content.opf")
-    assert extractors.extract_epub_metadata(str(fallback))["title"] == "Example Book"
+def test_epub_fallbacks_and_malformed_archives(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fallback = _epub(
+        tmp_path / "fallback.epub",
+        include_container=False,
+        opf_name="content.opf",
+    )
+    assert (
+        extractors.extract_epub_metadata(str(fallback))["title"]
+        == "Example Book"
+    )
     assert "title" in (extractors.get_epubmeta_output(str(fallback)) or "")
 
     no_opf = tmp_path / "no-opf.epub"
@@ -134,8 +156,12 @@ def test_epub_fallbacks_and_malformed_archives(tmp_path: Path, monkeypatch: pyte
     malformed = _epub(tmp_path / "malformed.epub", "<not-xml")
     assert extractors.extract_epub_metadata(str(malformed)) == {}
     assert extractors.get_epubmeta_output(str(malformed)) is None
-    assert extractors.extract_epub_metadata(str(tmp_path / "missing.epub")) == {}
-    assert extractors.get_epubmeta_output(str(tmp_path / "missing.epub")) is None
+    assert (
+        extractors.extract_epub_metadata(str(tmp_path / "missing.epub")) == {}
+    )
+    assert (
+        extractors.get_epubmeta_output(str(tmp_path / "missing.epub")) is None
+    )
 
     huge = tmp_path / "huge.epub"
     with zipfile.ZipFile(huge, "w") as archive:
@@ -145,12 +171,18 @@ def test_epub_fallbacks_and_malformed_archives(tmp_path: Path, monkeypatch: pyte
     assert extractors.get_epubmeta_output(str(huge)) is None
 
     with zipfile.ZipFile(fallback) as archive:
-        monkeypatch.setattr(archive, "read", lambda _name: (_ for _ in ()).throw(OSError("read failed")))
+        monkeypatch.setattr(
+            archive,
+            "read",
+            lambda _name: (_ for _ in ()).throw(OSError("read failed")),
+        )
         with pytest.raises(OSError):
             archive.read("content.opf")
 
 
-def test_comic_metadata_for_cbz_cbr_and_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_comic_metadata_for_cbz_cbr_and_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     comic_xml = b"""<ComicInfo><Series>Series</Series><Title>Issue</Title><Writer>Writer</Writer>
     <Penciller>Penciller</Penciller><Publisher>Publisher</Publisher><Year>2025</Year>
     <LanguageISO>pt-BR</LanguageISO><Summary>Summary</Summary><Genre>Action, Adventure</Genre></ComicInfo>"""
@@ -170,8 +202,14 @@ def test_comic_metadata_for_cbz_cbr_and_errors(tmp_path: Path, monkeypatch: pyte
 
     title_only = tmp_path / "title-only.cbz"
     with zipfile.ZipFile(title_only, "w") as archive:
-        archive.writestr("ComicInfo.xml", b"<ComicInfo><Title>Issue</Title><Penciller>Artist</Penciller></ComicInfo>")
-    assert extractors.extract_cbr_cbz_metadata(str(title_only)) == {"title": "Issue", "author": "Artist"}
+        archive.writestr(
+            "ComicInfo.xml",
+            b"<ComicInfo><Title>Issue</Title><Penciller>Artist</Penciller></ComicInfo>",
+        )
+    assert extractors.extract_cbr_cbz_metadata(str(title_only)) == {
+        "title": "Issue",
+        "author": "Artist",
+    }
 
     class FakeRar:
         def __init__(self, _path: str, _mode: str) -> None:
@@ -189,7 +227,9 @@ def test_comic_metadata_for_cbz_cbr_and_errors(tmp_path: Path, monkeypatch: pyte
         def read(self, _name: str) -> bytes:
             return comic_xml
 
-    monkeypatch.setattr(extractors, "rarfile", SimpleNamespace(RarFile=FakeRar))
+    monkeypatch.setattr(
+        extractors, "rarfile", SimpleNamespace(RarFile=FakeRar)
+    )
     cbr = tmp_path / "comic.cbr"
     cbr.write_bytes(b"rar")
     assert extractors.extract_cbr_cbz_metadata(str(cbr))["title"] == "Series"
@@ -199,7 +239,10 @@ def test_comic_metadata_for_cbz_cbr_and_errors(tmp_path: Path, monkeypatch: pyte
     broken = tmp_path / "broken.cbz"
     broken.write_bytes(b"not zip")
     assert extractors.extract_cbr_cbz_metadata(str(broken)) == {}
-    assert extractors.extract_cbr_cbz_metadata(str(tmp_path / "missing.cbz")) == {}
+    assert (
+        extractors.extract_cbr_cbz_metadata(str(tmp_path / "missing.cbz"))
+        == {}
+    )
 
     malformed = tmp_path / "malformed.cbz"
     with zipfile.ZipFile(malformed, "w") as archive:
@@ -207,7 +250,9 @@ def test_comic_metadata_for_cbz_cbr_and_errors(tmp_path: Path, monkeypatch: pyte
     assert extractors.extract_cbr_cbz_metadata(str(malformed)) == {}
 
 
-def test_mobi_metadata_success_parse_failure_import_failure_and_cleanup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_mobi_metadata_success_parse_failure_import_failure_and_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     source = tmp_path / "book.mobi"
     source.write_bytes(b"mobi")
     extracted = tmp_path / "extracted"
@@ -237,9 +282,13 @@ def test_mobi_metadata_success_parse_failure_import_failure_and_cleanup(tmp_path
 
     opf.write_bytes(b"\xff<broken")
     assert extractors.extract_mobi_metadata(str(source)) == {}
-    fake_mobi.extract = lambda _path: (_ for _ in ()).throw(OSError("extract failed"))  # type: ignore[attr-defined]
+    fake_mobi.extract = lambda _path: (_ for _ in ()).throw(
+        OSError("extract failed")
+    )  # type: ignore[attr-defined]
     assert extractors.extract_mobi_metadata(str(source)) == {}
-    assert extractors.extract_mobi_metadata(str(tmp_path / "missing.mobi")) == {}
+    assert (
+        extractors.extract_mobi_metadata(str(tmp_path / "missing.mobi")) == {}
+    )
 
     real_import = builtins.__import__
 
@@ -253,8 +302,13 @@ def test_mobi_metadata_success_parse_failure_import_failure_and_cleanup(tmp_path
     assert extractors.extract_mobi_metadata(str(source)) == {}
 
 
-def test_isbn_pdf_and_date_helpers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    assert extractors.validate_isbn_checksum("978-0-306-40615-7") == "9780306406157"
+def test_isbn_pdf_and_date_helpers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert (
+        extractors.validate_isbn_checksum("978-0-306-40615-7")
+        == "9780306406157"
+    )
     assert extractors.validate_isbn_checksum("0-306-40615-2") == "0306406152"
     assert extractors.validate_isbn_checksum("invalid") is None
     assert extractors.validate_isbn_checksum("9780306406158") is None
@@ -289,7 +343,9 @@ def test_isbn_pdf_and_date_helpers(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     tools = SimpleNamespace(mupdf_display_errors=lambda _enabled: None)
     fake_fitz = types.ModuleType("fitz")
     fake_fitz.TOOLS = tools  # type: ignore[attr-defined]
-    fake_fitz.open = lambda _path: Document([Page("front"), Page("ISBN 978-0-306-40615-7"), Page(123)])  # type: ignore[attr-defined]
+    fake_fitz.open = lambda _path: Document(
+        [Page("front"), Page("ISBN 978-0-306-40615-7"), Page(123)]
+    )  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "fitz", fake_fitz)
     assert extractors.extract_pdf_page_count(str(pdf)) == 3
     assert extractors.extract_isbn_from_pdf(str(pdf)) == "9780306406157"
@@ -300,8 +356,13 @@ def test_isbn_pdf_and_date_helpers(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     fake_fitz.open = lambda _path: (_ for _ in ()).throw(OSError("bad pdf"))  # type: ignore[attr-defined]
     assert extractors.extract_pdf_page_count(str(pdf)) is None
     assert extractors.extract_isbn_from_pdf(str(pdf)) is None
-    assert extractors.extract_pdf_page_count(str(tmp_path / "missing.pdf")) is None
-    assert extractors.extract_isbn_from_pdf(str(tmp_path / "missing.pdf")) is None
+    assert (
+        extractors.extract_pdf_page_count(str(tmp_path / "missing.pdf"))
+        is None
+    )
+    assert (
+        extractors.extract_isbn_from_pdf(str(tmp_path / "missing.pdf")) is None
+    )
 
     assert extractors.date_event_from_str(None) == "Epub"
     expected = {
@@ -321,13 +382,17 @@ def test_isbn_pdf_and_date_helpers(tmp_path: Path, monkeypatch: pytest.MonkeyPat
         assert extractors.date_event_from_str(value) == result
     assert extractors.date_event_from_str("unknown") is None
 
-    element = extractors.ET.fromstring('<node plain="value" xmlns:x="urn:x" x:namespaced="other"/>')
+    element = extractors.ET.fromstring(
+        '<node plain="value" xmlns:x="urn:x" x:namespaced="other"/>'
+    )
     assert extractors.get_attr_ignore_ns(element, "plain") == "value"
     assert extractors.get_attr_ignore_ns(element, "namespaced") == "other"
     assert extractors.get_attr_ignore_ns(element, "missing") is None
 
 
-def test_book_extractor_optional_import_and_archive_error_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_book_extractor_optional_import_and_archive_error_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import runpy
 
     real_import = builtins.__import__
@@ -343,8 +408,12 @@ def test_book_extractor_optional_import_and_archive_error_paths(tmp_path: Path, 
     assert namespace["rarfile"] is None
 
     oversized = tmp_path / "oversized.zip"
-    with zipfile.ZipFile(oversized, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr("payload", b"0" * (extractors._MAX_EPUB_MEMBER_SIZE + 1))
+    with zipfile.ZipFile(
+        oversized, "w", compression=zipfile.ZIP_DEFLATED
+    ) as archive:
+        archive.writestr(
+            "payload", b"0" * (extractors._MAX_EPUB_MEMBER_SIZE + 1)
+        )
     with zipfile.ZipFile(oversized) as archive:
         assert extractors._safe_zip_member_bytes(archive, "payload") is None
 
@@ -354,7 +423,9 @@ def test_book_extractor_optional_import_and_archive_error_paths(tmp_path: Path, 
 
     cbr = tmp_path / "broken.cbr"
     cbr.write_bytes(b"rar")
-    monkeypatch.setattr(extractors, "rarfile", SimpleNamespace(RarFile=BrokenRar))
+    monkeypatch.setattr(
+        extractors, "rarfile", SimpleNamespace(RarFile=BrokenRar)
+    )
     assert extractors.extract_cbr_cbz_metadata(str(cbr)) == {}
 
 
@@ -366,21 +437,39 @@ def test_epub_output_minimal_and_rejected_opf_members(tmp_path: Path) -> None:
     simple = _epub(tmp_path / "simple.epub", simple_opf)
     output = extractors.get_epubmeta_output(str(simple))
     assert output is not None
-    for line in ("title: Simple", "creator: Author", "contributor: Editor", "source: Source", "description: Description"):
+    for line in (
+        "title: Simple",
+        "creator: Author",
+        "contributor: Editor",
+        "source: Source",
+        "description: Description",
+    ):
         assert line in output
 
-    no_metadata = _epub(tmp_path / "no-metadata.epub", '<package version="2.0"><manifest/></package>')
+    no_metadata = _epub(
+        tmp_path / "no-metadata.epub",
+        '<package version="2.0"><manifest/></package>',
+    )
     assert extractors.get_epubmeta_output(str(no_metadata)) is None
 
     oversized_opf = tmp_path / "oversized-opf.epub"
-    with zipfile.ZipFile(oversized_opf, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr("META-INF/container.xml", '<container><rootfile full-path="content.opf"/></container>')
-        archive.writestr("content.opf", "0" * (extractors._MAX_EPUB_MEMBER_SIZE + 1))
+    with zipfile.ZipFile(
+        oversized_opf, "w", compression=zipfile.ZIP_DEFLATED
+    ) as archive:
+        archive.writestr(
+            "META-INF/container.xml",
+            '<container><rootfile full-path="content.opf"/></container>',
+        )
+        archive.writestr(
+            "content.opf", "0" * (extractors._MAX_EPUB_MEMBER_SIZE + 1)
+        )
     assert extractors.extract_epub_metadata(str(oversized_opf)) == {}
     assert extractors.get_epubmeta_output(str(oversized_opf)) is None
 
 
-def test_mobi_isbn_prefix_and_pdf_import_and_pagination_edges(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_mobi_isbn_prefix_and_pdf_import_and_pagination_edges(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     source = tmp_path / "alternate.mobi"
     source.write_bytes(b"mobi")
     extracted = tmp_path / "mobi-output"
@@ -394,7 +483,9 @@ def test_mobi_isbn_prefix_and_pdf_import_and_pagination_edges(tmp_path: Path, mo
     fake_mobi.extract = lambda _path: (str(extracted), None)  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "mobi", fake_mobi)
     monkeypatch.setattr(extractors.shutil, "rmtree", lambda _path: None)
-    assert extractors.extract_mobi_metadata(str(source))["isbn"] == "0306406152"
+    assert (
+        extractors.extract_mobi_metadata(str(source))["isbn"] == "0306406152"
+    )
 
     pdf = tmp_path / "long.pdf"
     pdf.write_bytes(b"pdf")
@@ -424,7 +515,11 @@ def test_mobi_isbn_prefix_and_pdf_import_and_pagination_edges(tmp_path: Path, mo
             return None
 
     fake_fitz = types.ModuleType("fitz")
-    fake_fitz.TOOLS = SimpleNamespace(mupdf_display_errors=lambda _enabled: (_ for _ in ()).throw(RuntimeError("ignored")))  # type: ignore[attr-defined]
+    fake_fitz.TOOLS = SimpleNamespace(
+        mupdf_display_errors=lambda _enabled: (_ for _ in ()).throw(
+            RuntimeError("ignored")
+        )
+    )  # type: ignore[attr-defined]
     fake_fitz.open = lambda _path: Document()  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "fitz", fake_fitz)
     assert extractors.extract_isbn_from_pdf(str(pdf)) == "9780306406157"

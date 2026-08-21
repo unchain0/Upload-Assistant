@@ -13,13 +13,18 @@ def test_tracker_id_accepts_explicit_tracker_and_id():
 def test_tracker_id_accepts_aither_torrent_url():
     args = Args({"TRACKERS": {}})
 
-    assert args.parse_tracker_id("https://aither.cc/torrents/415499") == ("AITHER", "415499")
+    assert args.parse_tracker_id("https://aither.cc/torrents/415499") == (
+        "AITHER",
+        "415499",
+    )
 
 
 def test_tracker_id_accepts_beyondhd_dotted_torrent_url():
     args = Args({"TRACKERS": {}})
 
-    assert args.parse_tracker_id("https://beyond-hd.me/download/release.12345") == ("BEYONDHD", "12345")
+    assert args.parse_tracker_id(
+        "https://beyond-hd.me/download/release.12345"
+    ) == ("BEYONDHD", "12345")
 
 
 def test_tracker_id_accepts_beyondhd_alias():
@@ -55,7 +60,9 @@ def test_tracker_ids_persist_and_expose_tracker_field():
         ("huno", "HAWKEUNO"),
     ],
 )
-def test_tracker_id_aliases_are_stored_under_canonical_tracker_names(alias, tracker_name):
+def test_tracker_id_aliases_are_stored_under_canonical_tracker_names(
+    alias, tracker_name
+):
     meta = Meta()
 
     meta.set_tracker_ids({alias: "123"})

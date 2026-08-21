@@ -28,7 +28,9 @@ def _track(tmp_path: Path, **values: object) -> AudioTrack:
     return AudioTrack(**state)  # type: ignore[arg-type]
 
 
-def _release(tmp_path: Path, tracks: list[AudioTrack] | None = None) -> MusicRelease:
+def _release(
+    tmp_path: Path, tracks: list[AudioTrack] | None = None
+) -> MusicRelease:
     return MusicRelease(root=str(tmp_path), tracks=list(tracks or []))
 
 
@@ -48,19 +50,50 @@ def test_basic_helpers_cover_missing_formats_and_modes(tmp_path: Path) -> None:
     class UnknownAudio:
         pass
 
-    assert music_analyzer._format_for(tmp_path / "x.flac", UnknownAudio()) == ("FLAC", "FLAC")
-    assert music_analyzer._format_for(tmp_path / "x.aac", MP4Audio()) == ("AAC", "AAC")
-    assert music_analyzer._format_for(tmp_path / "x.ogg", VorbisAudio()) == ("Ogg Vorbis", "Vorbis")
-    assert music_analyzer._format_for(tmp_path / "x.ac3", UnknownAudio()) == ("AC3", "AC-3")
-    assert music_analyzer._format_for(tmp_path / "x.dts", UnknownAudio()) == ("DTS", "DTS")
-    assert music_analyzer._format_for(tmp_path / "x.wav", UnknownAudio()) == ("WAV", "UnknownAudio")
+    assert music_analyzer._format_for(tmp_path / "x.flac", UnknownAudio()) == (
+        "FLAC",
+        "FLAC",
+    )
+    assert music_analyzer._format_for(tmp_path / "x.aac", MP4Audio()) == (
+        "AAC",
+        "AAC",
+    )
+    assert music_analyzer._format_for(tmp_path / "x.ogg", VorbisAudio()) == (
+        "Ogg Vorbis",
+        "Vorbis",
+    )
+    assert music_analyzer._format_for(tmp_path / "x.ac3", UnknownAudio()) == (
+        "AC3",
+        "AC-3",
+    )
+    assert music_analyzer._format_for(tmp_path / "x.dts", UnknownAudio()) == (
+        "DTS",
+        "DTS",
+    )
+    assert music_analyzer._format_for(tmp_path / "x.wav", UnknownAudio()) == (
+        "WAV",
+        "UnknownAudio",
+    )
 
-    for value, expected in (("VBR", "VBR"), ("variable", "VBR"), ("ABR", "ABR"), ("average", "ABR"), ("CBR", "CBR"), ("constant", "CBR"), ("other", None)):
-        assert music_analyzer._bitrate_mode(SimpleNamespace(bitrate_mode=value)) == expected
+    for value, expected in (
+        ("VBR", "VBR"),
+        ("variable", "VBR"),
+        ("ABR", "ABR"),
+        ("average", "ABR"),
+        ("CBR", "CBR"),
+        ("constant", "CBR"),
+        ("other", None),
+    ):
+        assert (
+            music_analyzer._bitrate_mode(SimpleNamespace(bitrate_mode=value))
+            == expected
+        )
     assert music_analyzer._bitrate_mode(SimpleNamespace()) is None
 
 
-def test_analyze_missing_path_and_auxiliary_classification(tmp_path: Path) -> None:
+def test_analyze_missing_path_and_auxiliary_classification(
+    tmp_path: Path,
+) -> None:
     analyzer = MusicReleaseAnalyzer()
     missing = analyzer.analyze(tmp_path / "missing")
     assert missing.warnings and "does not exist" in missing.warnings[0]
@@ -87,17 +120,25 @@ def test_analyze_missing_path_and_auxiliary_classification(tmp_path: Path) -> No
         assert name in getattr(release.auxiliary, bucket)
 
 
-def test_disc_from_path_and_track_read_edges(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_disc_from_path_and_track_read_edges(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     root = tmp_path / "release"
     disc = root / "Disc 2"
     disc.mkdir(parents=True)
     path = disc / "01.flac"
     path.write_bytes(b"audio")
     assert MusicReleaseAnalyzer._disc_from_path(path, root) == 2
-    assert MusicReleaseAnalyzer._disc_from_path(root / "plain.flac", root) is None
+    assert (
+        MusicReleaseAnalyzer._disc_from_path(root / "plain.flac", root) is None
+    )
 
     analyzer = MusicReleaseAnalyzer()
-    monkeypatch.setattr(music_analyzer.mutagen, "File", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("bad")))
+    monkeypatch.setattr(
+        music_analyzer.mutagen,
+        "File",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("bad")),
+    )
     assert analyzer._read_track(path, root) is None
 
     calls = 0
@@ -111,7 +152,9 @@ def test_disc_from_path_and_track_read_edges(tmp_path: Path, monkeypatch: pytest
     assert analyzer._read_track(path, root) is None and calls == 2
 
 
-def test_read_track_builds_normalized_track(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_read_track_builds_normalized_track(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     root = tmp_path / "release"
     disc = root / "CD2"
     disc.mkdir(parents=True)
@@ -134,9 +177,20 @@ def test_read_track_builds_normalized_track(tmp_path: Path, monkeypatch: pytest.
         },
         info=SimpleNamespace(),
     )
-    technical = SimpleNamespace(info=SimpleNamespace(bitrate=320000, bitrate_mode="CBR", bits_per_sample=16, sample_rate=44100, channels=2, length=180.5))
+    technical = SimpleNamespace(
+        info=SimpleNamespace(
+            bitrate=320000,
+            bitrate_mode="CBR",
+            bits_per_sample=16,
+            sample_rate=44100,
+            channels=2,
+            length=180.5,
+        )
+    )
     values = iter((easy, technical))
-    monkeypatch.setattr(music_analyzer.mutagen, "File", lambda *_args, **_kwargs: next(values))
+    monkeypatch.setattr(
+        music_analyzer.mutagen, "File", lambda *_args, **_kwargs: next(values)
+    )
 
     track = MusicReleaseAnalyzer()._read_track(path, root)
     assert track is not None
@@ -147,7 +201,9 @@ def test_read_track_builds_normalized_track(tmp_path: Path, monkeypatch: pytest.
     assert track.label == "Label" and track.catalogue_number == "CAT-1"
 
 
-def test_read_sidecar_encodings_and_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_read_sidecar_encodings_and_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     utf16 = tmp_path / "utf16.nfo"
     utf16.write_bytes("hello".encode("utf-16"))
     assert "hello" in MusicReleaseAnalyzer._read_sidecar(utf16)
@@ -170,7 +226,9 @@ def test_read_sidecar_encodings_and_errors(tmp_path: Path, monkeypatch: pytest.M
     assert MusicReleaseAnalyzer._read_sidecar(latin) == ""
 
 
-def test_nfo_metadata_extracts_quality_store_dates_and_conflicts(tmp_path: Path) -> None:
+def test_nfo_metadata_extracts_quality_store_dates_and_conflicts(
+    tmp_path: Path,
+) -> None:
     nfo = tmp_path / "scene.nfo"
     nfo.write_text(
         "Artist : Auxiliary Artist\nAlbum: Auxiliary Album\nLabel: Aux Label\nGenre: Rock; Pop\nSource: WEB\n"
@@ -186,56 +244,88 @@ def test_nfo_metadata_extracts_quality_store_dates_and_conflicts(tmp_path: Path)
     assert release.get("media") == "WEB"
     assert release.get("store_url") == "https://store.example/item"
     assert release.get("release_year") == "2024"
-    assert release.get("nfo_bit_depth") == 24 and release.get("nfo_sample_rate") == 96000
+    assert (
+        release.get("nfo_bit_depth") == 24
+        and release.get("nfo_sample_rate") == 96000
+    )
     assert len(release.warnings) == 2
 
 
-def test_playlist_and_sfv_membership_with_missing_files(tmp_path: Path) -> None:
+def test_playlist_and_sfv_membership_with_missing_files(
+    tmp_path: Path,
+) -> None:
     track = _track(tmp_path, relative_path="track.flac")
     release = _release(tmp_path, [track])
-    (tmp_path / "list.m3u").write_text("#EXTM3U\ntrack.flac\nmissing.flac\n", encoding="utf-8")
-    (tmp_path / "checks.sfv").write_text("track.flac ABCDEF12\nmissing.flac 12345678\ninvalid\n", encoding="utf-8")
+    (tmp_path / "list.m3u").write_text(
+        "#EXTM3U\ntrack.flac\nmissing.flac\n", encoding="utf-8"
+    )
+    (tmp_path / "checks.sfv").write_text(
+        "track.flac ABCDEF12\nmissing.flac 12345678\ninvalid\n",
+        encoding="utf-8",
+    )
     release.auxiliary.playlists.append("list.m3u")
     release.auxiliary.sfvs.append("checks.sfv")
     analyzer = MusicReleaseAnalyzer()
     analyzer._inspect_playlists(release)
     analyzer._inspect_sfvs(release)
-    assert release.get("playlist_tracks") == 2 and release.get("playlist_missing_files") == ["missing.flac"]
-    assert release.get("sfv_entries") == 2 and release.get("sfv_missing_files") == ["missing.flac"]
+    assert release.get("playlist_tracks") == 2 and release.get(
+        "playlist_missing_files"
+    ) == ["missing.flac"]
+    assert release.get("sfv_entries") == 2 and release.get(
+        "sfv_missing_files"
+    ) == ["missing.flac"]
     assert len(release.warnings) == 2
 
 
 def test_set_artists_conflict_and_empty(tmp_path: Path) -> None:
-    empty = _release(tmp_path, [_track(tmp_path, artist="", album_artist="", tags={})])
+    empty = _release(
+        tmp_path, [_track(tmp_path, artist="", album_artist="", tags={})]
+    )
     MusicReleaseAnalyzer._set_artists(empty)
     assert not empty.get("artist")
 
     one = _track(tmp_path, artist="A", album_artist="", tags={"artist": ["A"]})
-    two = _track(tmp_path, relative_path="two.flac", artist="B", album_artist="", tags={"artist": ["B"]})
+    two = _track(
+        tmp_path,
+        relative_path="two.flac",
+        artist="B",
+        album_artist="",
+        tags={"artist": ["B"]},
+    )
     release = _release(tmp_path, [one, two])
     MusicReleaseAnalyzer._set_artists(release)
     assert release.get("artist") in {"A", "B"}
     assert release.conflicts["artist"] == ["A", "B"]
 
 
-def test_directory_derivation_regional_and_catalogue_paths(tmp_path: Path) -> None:
+def test_directory_derivation_regional_and_catalogue_paths(
+    tmp_path: Path,
+) -> None:
     release = _release(tmp_path, [_track(tmp_path)])
-    MusicReleaseAnalyzer._derive_from_directory(release, "Artist - Album [Japan Edition]")
+    MusicReleaseAnalyzer._derive_from_directory(
+        release, "Artist - Album [Japan Edition]"
+    )
     assert release.get("release_title") == "Japan Edition"
 
     release = _release(tmp_path, [_track(tmp_path)])
-    MusicReleaseAnalyzer._derive_from_directory(release, "Artist - Album [2014 WEB FLAC][Label Name][886444460446]")
+    MusicReleaseAnalyzer._derive_from_directory(
+        release, "Artist - Album [2014 WEB FLAC][Label Name][886444460446]"
+    )
     assert release.get("release_year") == "2014"
     assert release.get("release_label") == "Label Name"
     assert release.get("release_catalogue_number") == "886444460446"
 
     release = _release(tmp_path, [_track(tmp_path)])
-    MusicReleaseAnalyzer._derive_from_directory(release, "Artist - Album {Roc-A-Fella B001219802 CD}")
+    MusicReleaseAnalyzer._derive_from_directory(
+        release, "Artist - Album {Roc-A-Fella B001219802 CD}"
+    )
     assert release.get("release_label") == "Roc-A-Fella"
     assert release.get("directory_catalogue_number") == "B001219802"
 
 
-def test_log_inference_and_release_type_remaining_paths(tmp_path: Path) -> None:
+def test_log_inference_and_release_type_remaining_paths(
+    tmp_path: Path,
+) -> None:
     release = _release(tmp_path, [_track(tmp_path)])
     release.auxiliary.logs.append("missing.log")
     MusicReleaseAnalyzer._infer_media_from_logs(release)
@@ -251,7 +341,10 @@ def test_log_inference_and_release_type_remaining_paths(tmp_path: Path) -> None:
     MusicReleaseAnalyzer._derive_release_type(long_single)
     assert long_single.warnings and not long_single.get("release_type")
 
-    ep = _release(tmp_path, [_track(tmp_path), _track(tmp_path, relative_path="two.flac")])
+    ep = _release(
+        tmp_path,
+        [_track(tmp_path), _track(tmp_path, relative_path="two.flac")],
+    )
     MusicReleaseAnalyzer._derive_release_type(ep)
     assert ep.get("release_type") == "EP"
 
@@ -263,7 +356,10 @@ def test_release_type_various_artists_rewrites_artist(tmp_path: Path) -> None:
             relative_path=f"{index}.flac",
             artist=f"Artist {index}",
             album_artist="Various Artists",
-            tags={"albumartist": ["Various Artists"], "artist": [f"Artist {index}"]},
+            tags={
+                "albumartist": ["Various Artists"],
+                "artist": [f"Artist {index}"],
+            },
         )
         for index in range(4)
     ]
@@ -276,11 +372,15 @@ def test_release_type_various_artists_rewrites_artist(tmp_path: Path) -> None:
 
 def test_final_directory_and_release_type_branches(tmp_path: Path) -> None:
     catalogue = _release(tmp_path, [_track(tmp_path)])
-    MusicReleaseAnalyzer._derive_from_directory(catalogue, "Artist - Album [2015 B001219802]")
+    MusicReleaseAnalyzer._derive_from_directory(
+        catalogue, "Artist - Album [2015 B001219802]"
+    )
     assert catalogue.get("release_catalogue_number") == "B001219802"
 
     edition = _release(tmp_path, [_track(tmp_path)])
-    MusicReleaseAnalyzer._derive_from_directory(edition, "Artist - Album [Deluxe Edition]")
+    MusicReleaseAnalyzer._derive_from_directory(
+        edition, "Artist - Album [Deluxe Edition]"
+    )
     assert edition.get("edition") == "Deluxe Edition"
 
     soundtrack = _release(tmp_path, [_track(tmp_path, album="Movie OST")])

@@ -25,7 +25,13 @@ class TorrentHR(UNIT3D):
         super().__init__(config, tracker_name=self.tracker)
         self.common = Common(config)
 
-    async def get_category_id(self, meta: Meta, category: str | None = None, reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_category_id(
+        self,
+        meta: Meta,
+        category: str | None = None,
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         category_id = {
             "MOVIE_SD": "4",
             "MOVIE_DVD": "14",
@@ -42,7 +48,11 @@ class TorrentHR(UNIT3D):
         if reverse:
             return {value: key for key, value in category_id.items()}
 
-        resolved_category = category if category is not None and category != "" else meta.category
+        resolved_category = (
+            category
+            if category is not None and category != ""
+            else meta.category
+        )
         genres = f"{meta.combined_genres} {meta.keywords}".lower()
         if "documentary" in genres:
             resolved_key = "DOCUMENTARY"

@@ -41,7 +41,9 @@ class DrunkenSlug:
     def __init__(self, config: Config) -> None:
         self.config = config
         self.common = Common(config)
-        self.tracker_cfg = self.config.get("TRACKERS", {}).get(self.tracker, {})
+        self.tracker_cfg = self.config.get("TRACKERS", {}).get(
+            self.tracker, {}
+        )
         self.api_key = str(self.tracker_cfg.get("api_key", "")).strip()
         self.daily_api_hit_limit = get_daily_api_hit_limit(self.tracker_cfg)
 
@@ -50,16 +52,25 @@ class DrunkenSlug:
         if cached:
             return [cached]
         if self.daily_api_hit_limit <= 0:
-            logger.info(f"{self.tracker}: [yellow]Duplicate search via API is disabled because daily_api_hit_limit is 0.[/yellow]")
+            logger.info(
+                f"{self.tracker}: [yellow]Duplicate search via API is disabled because daily_api_hit_limit is 0.[/yellow]"
+            )
             return []
         params = self._search_params(meta)
         return await self._api_search(meta, params)
 
     async def _cached_upload_name(self, meta: Meta) -> str:
         release_name = await self.get_name(meta)
-        cache_file = Path(meta.base_dir) / "tmp" / meta.uuid / f"{self.tracker}_upload_ok"
+        cache_file = (
+            Path(meta.base_dir)
+            / "tmp"
+            / meta.uuid
+            / f"{self.tracker}_upload_ok"
+        )
         if release_name and cache_file.exists():
-            logger.info(f"{self.tracker}: [yellow]Found local upload cache.[/yellow]")
+            logger.info(
+                f"{self.tracker}: [yellow]Found local upload cache.[/yellow]"
+            )
             return release_name
         return ""
 
@@ -69,7 +80,11 @@ class DrunkenSlug:
             return self._tv_search_params(meta)
         if category == "MOVIE":
             return self._movie_search_params(meta)
-        return {"cat": get_newznab_search_category_id(meta), "t": "search", "q": self.get_search_query(meta)}
+        return {
+            "cat": get_newznab_search_category_id(meta),
+            "t": "search",
+            "q": self.get_search_query(meta),
+        }
 
     def _tv_search_params(self, meta: Meta) -> dict[str, str]:
         params = {"cat": get_newznab_search_category_id(meta), "t": "tvsearch"}
@@ -104,20 +119,35 @@ class DrunkenSlug:
         text = str(value or "")
         return text.isdigit() and int(text) > 0
 
-    async def _api_search(self, meta: Meta, params: dict[str, str]) -> list[dict[str, Any]]:
-        allowed, used_hits = await reserve_daily_api_hit(meta.base_dir, self.tracker, self.daily_api_hit_limit)
+    async def _api_search(
+        self, meta: Meta, params: dict[str, str]
+    ) -> list[dict[str, Any]]:
+        allowed, used_hits = await reserve_daily_api_hit(
+            meta.base_dir, self.tracker, self.daily_api_hit_limit
+        )
         if not allowed:
-            logger.info(f"{self.tracker}: [yellow]Duplicate search skipped because the 24-hour API hit limit ({self.daily_api_hit_limit}) has been reached.[/yellow]")
+            logger.info(
+                f"{self.tracker}: [yellow]Duplicate search skipped because the 24-hour API hit limit ({self.daily_api_hit_limit}) has been reached.[/yellow]"
+            )
             return []
         response = await self._search_response(params)
-        logger.debug(f"{self.tracker}: Duplicate search used API hit {used_hits}/{self.daily_api_hit_limit} in the last 24 hours.")
+        logger.debug(
+            f"{self.tracker}: Duplicate search used API hit {used_hits}/{self.daily_api_hit_limit} in the last 24 hours."
+        )
         response.raise_for_status()
         if not response.text.strip():
             return []
-        return self._dedupe_results(self._parse_dupes_from_response(response.text))
+        return self._dedupe_results(
+            self._parse_dupes_from_response(response.text)
+        )
 
     async def _search_response(self, params: dict[str, str]) -> httpx.Response:
-        request_params = {"apikey": self.api_key, "limit": "100", "extended": "1", **params}
+        request_params = {
+            "apikey": self.api_key,
+            "limit": "100",
+            "extended": "1",
+            **params,
+        }
         async with httpx.AsyncClient(timeout=10.0) as client:
             return await client.get(self.search_url, params=request_params)
 
@@ -139,13 +169,17 @@ class DrunkenSlug:
     def get_search_query(self, meta: Meta) -> str:
         return build_newznab_search_query(meta)
 
-    def _parse_dupes_from_response(self, response_text: str) -> list[dict[str, Any]]:
+    def _parse_dupes_from_response(
+        self, response_text: str
+    ) -> list[dict[str, Any]]:
         return parse_newznab_dupes(response_text)
 
     async def upload(self, meta: Meta) -> bool:
         status = meta.tracker_status.setdefault(self.tracker, {})
         if not await self._nzb_is_uploadable(meta):
-            status["status_message"] = "data error: NZB file missing or password missing in header"
+            status["status_message"] = (
+                "data error: NZB file missing or password missing in header"
+            )
             return False
         nzb_name = f"{await self.get_name(meta)}.nzb"
         nzb_content = await self._read_nzb(meta.nzb_path)
@@ -155,43 +189,75 @@ class DrunkenSlug:
         return await self._upload_nzb(meta, status, nzb_name, nzb_content)
 
     async def _nzb_is_uploadable(self, meta: Meta) -> bool:
-        return bool(meta.nzb_path) and await self.common.check_nzb_file(self.tracker, meta)
+        return bool(meta.nzb_path) and await self.common.check_nzb_file(
+            self.tracker, meta
+        )
 
     @staticmethod
     async def _read_nzb(nzb_path: str | Path) -> bytes:
         async with aiofiles.open(nzb_path, "rb") as handle:
             return await handle.read()
 
-    async def _upload_nzb(self, meta: Meta, status: dict[str, Any], nzb_name: str, nzb_content: bytes) -> bool:
+    async def _upload_nzb(
+        self,
+        meta: Meta,
+        status: dict[str, Any],
+        nzb_name: str,
+        nzb_content: bytes,
+    ) -> bool:
         try:
             response = await self._post_nzb(nzb_name, nzb_content)
-            return await self._handle_upload_response(meta, status, nzb_name, response)
+            return await self._handle_upload_response(
+                meta, status, nzb_name, response
+            )
         except httpx.TimeoutException:
-            status["status_message"] = "data error: Request timed out after 60 seconds"
+            status["status_message"] = (
+                "data error: Request timed out after 60 seconds"
+            )
             return False
         except httpx.RequestError as error:
-            status["status_message"] = f"data error: Unable to upload. Error: {error}"
+            status["status_message"] = (
+                f"data error: Unable to upload. Error: {error}"
+            )
             return False
         except Exception as error:
-            status["status_message"] = f"data error: Unexpected error. Error: {error}"
+            status["status_message"] = (
+                f"data error: Unexpected error. Error: {error}"
+            )
             return False
 
-    async def _post_nzb(self, nzb_name: str, nzb_content: bytes) -> httpx.Response:
+    async def _post_nzb(
+        self, nzb_name: str, nzb_content: bytes
+    ) -> httpx.Response:
         files = {"files[]": (nzb_name, nzb_content, "application/x-nzb")}
         headers = {"X-API-Key": self.api_key}
         async with httpx.AsyncClient() as client:
-            return await client.post("https://nzbs.drunkenslug.com/upload.php", headers=headers, files=files)
+            return await client.post(
+                "https://nzbs.drunkenslug.com/upload.php",
+                headers=headers,
+                files=files,
+            )
 
-    async def _handle_upload_response(self, meta: Meta, status: dict[str, Any], nzb_name: str, response: httpx.Response) -> bool:
+    async def _handle_upload_response(
+        self,
+        meta: Meta,
+        status: dict[str, Any],
+        nzb_name: str,
+        response: httpx.Response,
+    ) -> bool:
         if response.status_code not in {200, 201}:
-            status["status_message"] = f"data error: HTTP {response.status_code} - {response.text}"
+            status["status_message"] = (
+                f"data error: HTTP {response.status_code} - {response.text}"
+            )
             return False
         data = self._json_payload(response, status)
         if data is None:
             return False
         result = self._first_result(data)
         if result is None:
-            status["status_message"] = "data error: No results returned from tracker."
+            status["status_message"] = (
+                "data error: No results returned from tracker."
+            )
             return False
         status["status_message"] = self._clean_upload_result(result, nzb_name)
         status["torrent_id"] = nzb_name.removesuffix(".nzb")
@@ -199,11 +265,15 @@ class DrunkenSlug:
         return True
 
     @staticmethod
-    def _json_payload(response: httpx.Response, status: dict[str, Any]) -> dict[str, Any] | None:
+    def _json_payload(
+        response: httpx.Response, status: dict[str, Any]
+    ) -> dict[str, Any] | None:
         try:
             payload = response.json()
         except json.JSONDecodeError:
-            status["status_message"] = "data error: Could not decode JSON response."
+            status["status_message"] = (
+                "data error: Could not decode JSON response."
+            )
             return None
         return payload if isinstance(payload, dict) else {}
 
@@ -217,10 +287,17 @@ class DrunkenSlug:
     @staticmethod
     def _clean_upload_result(result: str, nzb_name: str) -> str:
         cleaned = result.replace(f"{nzb_name}: ", "[redacted]: ")
-        return re.sub(r"(\buploaded by\s+)\S+", r"\1[redacted]", cleaned, flags=re.IGNORECASE)
+        return re.sub(
+            r"(\buploaded by\s+)\S+",
+            r"\1[redacted]",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
 
     async def _write_upload_cache(self, meta: Meta) -> None:
         cache_dir = Path(meta.base_dir) / "tmp" / meta.uuid
         cache_dir.mkdir(parents=True, exist_ok=True)
-        async with aiofiles.open(cache_dir / f"{self.tracker}_upload_ok", "w", encoding="utf-8") as handle:
+        async with aiofiles.open(
+            cache_dir / f"{self.tracker}_upload_ok", "w", encoding="utf-8"
+        ) as handle:
             await handle.write("ok")

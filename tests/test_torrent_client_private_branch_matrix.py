@@ -30,7 +30,14 @@ class _Universal(dict[str, Any]):
     def __getattr__(self, name: str) -> Any:
         if name.startswith(("is_", "has_", "should_")):
             return False
-        if name in {"returncode", "progress", "ratio", "size", "num_files", "piece_size"}:
+        if name in {
+            "returncode",
+            "progress",
+            "ratio",
+            "size",
+            "num_files",
+            "piece_size",
+        }:
             return 0
         return _Universal()
 
@@ -85,7 +92,9 @@ class _Torrent:
     def copy(cls, _torrent: object) -> _Torrent:
         return cls()
 
-    def write(self, path: str | Path, *_args: object, **_kwargs: object) -> None:
+    def write(
+        self, path: str | Path, *_args: object, **_kwargs: object
+    ) -> None:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         Path(path).write_bytes(b"d4:infod4:name4:teste")
 
@@ -99,7 +108,11 @@ class _Torrent:
         return True
 
     def __getitem__(self, _key: str) -> Any:
-        return {"name": "Example", "piece length": self.piece_size, "files": []}
+        return {
+            "name": "Example",
+            "piece length": self.piece_size,
+            "files": [],
+        }
 
 
 class _Process:
@@ -108,7 +121,9 @@ class _Process:
     stdout = None
     stderr = None
 
-    async def communicate(self, _input: bytes | None = None) -> tuple[bytes, bytes]:
+    async def communicate(
+        self, _input: bytes | None = None
+    ) -> tuple[bytes, bytes]:
         return b"ok", b""
 
     async def wait(self) -> int:
@@ -128,8 +143,18 @@ class _Completed:
 
 
 class _Client(_Universal):
-    def torrents_info(self, *_args: object, **_kwargs: object) -> list[_Universal]:
-        return [_Universal(hash="abc123", name="Example", progress=1.0, state="seeding", content_path="/media/Example.mkv")]
+    def torrents_info(
+        self, *_args: object, **_kwargs: object
+    ) -> list[_Universal]:
+        return [
+            _Universal(
+                hash="abc123",
+                name="Example",
+                progress=1.0,
+                state="seeding",
+                content_path="/media/Example.mkv",
+            )
+        ]
 
     def torrents_add(self, *_args: object, **_kwargs: object) -> bool:
         return True
@@ -142,7 +167,12 @@ class _Client(_Universal):
 
 
 def _modules() -> list[ModuleType]:
-    return [importlib.import_module(info.name) for info in pkgutil.iter_modules(torrent_clients.__path__, f"{torrent_clients.__name__}.")]
+    return [
+        importlib.import_module(info.name)
+        for info in pkgutil.iter_modules(
+            torrent_clients.__path__, f"{torrent_clients.__name__}."
+        )
+    ]
 
 
 def _files(tmp_path: Path) -> dict[str, Path]:
@@ -155,7 +185,12 @@ def _files(tmp_path: Path) -> dict[str, Path]:
     directory = root / "Release"
     directory.mkdir()
     (directory / "Example.mkv").write_bytes(b"media")
-    return {"root": root, "media": media, "torrent": torrent, "directory": directory}
+    return {
+        "root": root,
+        "media": media,
+        "torrent": torrent,
+        "directory": directory,
+    }
 
 
 def _config(tmp_path: Path) -> dict[str, Any]:
@@ -188,9 +223,20 @@ def _config(tmp_path: Path) -> dict[str, Any]:
                 "local_path": [str(tmp_path)],
                 "remote_path": [str(tmp_path)],
             },
-            "deluge": {"torrent_client": "deluge", "local_path": [str(tmp_path)], "remote_path": [str(tmp_path)]},
-            "transmission": {"torrent_client": "transmission", "local_path": [str(tmp_path)], "remote_path": [str(tmp_path)]},
-            "watch": {"torrent_client": "watch", "watch_folder": str(tmp_path)},
+            "deluge": {
+                "torrent_client": "deluge",
+                "local_path": [str(tmp_path)],
+                "remote_path": [str(tmp_path)],
+            },
+            "transmission": {
+                "torrent_client": "transmission",
+                "local_path": [str(tmp_path)],
+                "remote_path": [str(tmp_path)],
+            },
+            "watch": {
+                "torrent_client": "watch",
+                "watch_folder": str(tmp_path),
+            },
         }
     )
     return config
@@ -227,7 +273,13 @@ def _meta(tmp_path: Path, files: Mapping[str, Path], profile: int = 0) -> Meta:
     )
 
 
-def _value(name: str, annotation: object, meta: Meta, files: Mapping[str, Path], profile: int) -> object:
+def _value(
+    name: str,
+    annotation: object,
+    meta: Meta,
+    files: Mapping[str, Path],
+    profile: int,
+) -> object:
     key = name.casefold().lstrip("_")
     config = _config(Path(meta.base_dir))
     values: dict[str, object] = {
@@ -309,14 +361,24 @@ def _value(name: str, annotation: object, meta: Meta, files: Mapping[str, Path],
     if origin is set:
         return set()
     if origin is tuple:
-        return tuple(_value(key, item, meta, files, profile) for item in args if item is not Ellipsis)
+        return tuple(
+            _value(key, item, meta, files, profile)
+            for item in args
+            if item is not Ellipsis
+        )
     if origin is not None and type(None) in args:
         concrete = next((item for item in args if item is not type(None)), str)
         return _value(key, concrete, meta, files, profile)
     return _Universal()
 
 
-async def _invoke(function: Callable[..., object], meta: Meta, files: Mapping[str, Path], profile: int, overrides: Mapping[str, object] | None = None) -> object:
+async def _invoke(
+    function: Callable[..., object],
+    meta: Meta,
+    files: Mapping[str, Path],
+    profile: int,
+    overrides: Mapping[str, object] | None = None,
+) -> object:
     overrides = overrides or {}
     target = function.__init__ if inspect.isclass(function) else function
     try:
@@ -326,11 +388,26 @@ async def _invoke(function: Callable[..., object], meta: Meta, files: Mapping[st
     positional: list[object] = []
     keywords: dict[str, object] = {}
     for parameter in inspect.signature(function).parameters.values():
-        if parameter.kind in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}:
+        if parameter.kind in {
+            inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.VAR_KEYWORD,
+        }:
             continue
-        if parameter.default is not inspect.Parameter.empty and parameter.name not in overrides:
+        if (
+            parameter.default is not inspect.Parameter.empty
+            and parameter.name not in overrides
+        ):
             continue
-        value = overrides.get(parameter.name, _value(parameter.name, hints.get(parameter.name, parameter.annotation), meta, files, profile))
+        value = overrides.get(
+            parameter.name,
+            _value(
+                parameter.name,
+                hints.get(parameter.name, parameter.annotation),
+                meta,
+                files,
+                profile,
+            ),
+        )
         if parameter.kind is inspect.Parameter.KEYWORD_ONLY:
             keywords[parameter.name] = value
         else:
@@ -341,7 +418,9 @@ async def _invoke(function: Callable[..., object], meta: Meta, files: Mapping[st
     return result
 
 
-def test_torrent_client_private_helpers_execute_with_local_doubles(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_torrent_client_private_helpers_execute_with_local_doubles(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     files = _files(tmp_path)
     modules = _modules()
     repository = Path.cwd()
@@ -349,30 +428,44 @@ def test_torrent_client_private_helpers_execute_with_local_doubles(tmp_path: Pat
     async def process(*_args: object, **_kwargs: object) -> _Process:
         return _Process()
 
-    async def no_sleep(_delay: float = 0, *_args: object, **_kwargs: object) -> None:
+    async def no_sleep(
+        _delay: float = 0, *_args: object, **_kwargs: object
+    ) -> None:
         return None
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", process)
     monkeypatch.setattr(asyncio, "create_subprocess_shell", process)
     monkeypatch.setattr(asyncio, "sleep", no_sleep)
-    monkeypatch.setattr(subprocess, "run", lambda *_args, **_kwargs: _Completed())
-    monkeypatch.setattr(subprocess, "check_output", lambda *_args, **_kwargs: b"ok")
+    monkeypatch.setattr(
+        subprocess, "run", lambda *_args, **_kwargs: _Completed()
+    )
+    monkeypatch.setattr(
+        subprocess, "check_output", lambda *_args, **_kwargs: b"ok"
+    )
     attempted: set[str] = set()
     terminations: list[str] = []
     rejections: list[str] = []
     blocked = {"cleanup", "cleanup_all", "kill_processes", "kill_all_threads"}
 
-    async def run_callable(qualified: str, function: Callable[..., object]) -> None:
+    async def run_callable(
+        qualified: str, function: Callable[..., object]
+    ) -> None:
         attempted.add(qualified)
         scenarios = [({}, {})]
-        scenarios.extend(literal_branch_scenarios(function, Meta.__dataclass_fields__, limit=96))
+        scenarios.extend(
+            literal_branch_scenarios(
+                function, Meta.__dataclass_fields__, limit=96
+            )
+        )
         for profile, (meta_updates, argument_updates) in enumerate(scenarios):
             meta = _meta(tmp_path, files, profile % 4)
             for key, value in meta_updates.items():
                 if key in Meta.__dataclass_fields__:
                     setattr(meta, key, value)
             try:
-                await _invoke(function, meta, files, profile % 4, argument_updates)
+                await _invoke(
+                    function, meta, files, profile % 4, argument_updates
+                )
             except (KeyboardInterrupt, SystemExit) as error:
                 terminations.append(f"{qualified}:{type(error).__name__}")
             except Exception as error:
@@ -382,29 +475,52 @@ def test_torrent_client_private_helpers_execute_with_local_doubles(tmp_path: Pat
 
     async def exercise() -> None:
         for module in modules:
-            for attribute, replacement in (("Torrent", _Torrent), ("Client", _Client)):
+            for attribute, replacement in (
+                ("Torrent", _Torrent),
+                ("Client", _Client),
+            ):
                 if hasattr(module, attribute):
                     monkeypatch.setattr(module, attribute, replacement)
-            for name, function in inspect.getmembers(module, inspect.isfunction):
-                if function.__module__ == module.__name__ and not name.startswith("__") and name not in blocked:
+            for name, function in inspect.getmembers(
+                module, inspect.isfunction
+            ):
+                if (
+                    function.__module__ == module.__name__
+                    and not name.startswith("__")
+                    and name not in blocked
+                ):
                     await run_callable(f"{module.__name__}.{name}", function)
-            for class_name, class_type in inspect.getmembers(module, inspect.isclass):
+            for class_name, class_type in inspect.getmembers(
+                module, inspect.isclass
+            ):
                 if class_type.__module__ != module.__name__:
                     continue
                 try:
-                    instance = await _invoke(class_type, _meta(tmp_path, files), files, 0)
+                    instance = await _invoke(
+                        class_type, _meta(tmp_path, files), files, 0
+                    )
                 except Exception as error:
-                    rejections.append(f"{module.__name__}.{class_name}.__init__:{type(error).__name__}")
+                    rejections.append(
+                        f"{module.__name__}.{class_name}.__init__:{type(error).__name__}"
+                    )
                     continue
                 for method_name, member in inspect.getmembers_static(instance):
-                    if method_name.startswith("__") or method_name in blocked or not callable(member):
+                    if (
+                        method_name.startswith("__")
+                        or method_name in blocked
+                        or not callable(member)
+                    ):
                         continue
                     try:
                         method = getattr(instance, method_name)
                     except Exception as error:
-                        rejections.append(f"{module.__name__}.{class_name}.{method_name}:{type(error).__name__}")
+                        rejections.append(
+                            f"{module.__name__}.{class_name}.{method_name}:{type(error).__name__}"
+                        )
                         continue
-                    await run_callable(f"{module.__name__}.{class_name}.{method_name}", method)
+                    await run_callable(
+                        f"{module.__name__}.{class_name}.{method_name}", method
+                    )
 
     asyncio.run(exercise())
     assert len(attempted) >= 80

@@ -43,24 +43,51 @@ def test_accepts_a_compliant_hd_movie():
 
 
 def test_accepts_sd_non_h264_codec():
-    meta = make_meta(video_codec="XviD", video_encode="XviD", resolution="480p", video_width=640, video_height=480, video_bitrate=1200)
+    meta = make_meta(
+        video_codec="XviD",
+        video_encode="XviD",
+        resolution="480p",
+        video_width=640,
+        video_height=480,
+        video_bitrate=1200,
+    )
 
     assert asyncio.run(tracker().get_additional_checks(meta))
 
 
 def test_rejects_hevc_and_blu_ray_structures():
-    assert not asyncio.run(tracker().get_additional_checks(make_meta(video_codec="HEVC", video_encode="x265")))
-    assert not asyncio.run(tracker().get_additional_checks(make_meta(is_disc="BDMV")))
+    assert not asyncio.run(
+        tracker().get_additional_checks(
+            make_meta(video_codec="HEVC", video_encode="x265")
+        )
+    )
+    assert not asyncio.run(
+        tracker().get_additional_checks(make_meta(is_disc="BDMV"))
+    )
 
 
 def test_rejects_missing_subtitles():
-    assert not asyncio.run(tracker().get_additional_checks(make_meta(subtitle_languages=[])))
+    assert not asyncio.run(
+        tracker().get_additional_checks(make_meta(subtitle_languages=[]))
+    )
 
 
 def test_accepts_hardcoded_subtitles_without_a_language_tag():
-    assert asyncio.run(tracker().get_additional_checks(make_meta(subtitle_languages=[], hardcoded_subs=True)))
+    assert asyncio.run(
+        tracker().get_additional_checks(
+            make_meta(subtitle_languages=[], hardcoded_subs=True)
+        )
+    )
 
 
 def test_rejects_prohibited_release_markers_and_archives():
-    assert not asyncio.run(tracker().get_additional_checks(make_meta(name="Example.Movie.2020.CAM")))
-    assert not asyncio.run(tracker().get_additional_checks(make_meta(filelist=["Example.Movie.mkv", "payload.exe"])))
+    assert not asyncio.run(
+        tracker().get_additional_checks(
+            make_meta(name="Example.Movie.2020.CAM")
+        )
+    )
+    assert not asyncio.run(
+        tracker().get_additional_checks(
+            make_meta(filelist=["Example.Movie.mkv", "payload.exe"])
+        )
+    )

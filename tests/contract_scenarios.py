@@ -44,12 +44,22 @@ def _literal_values(node: ast.AST) -> list[object]:
     value = _literal(node)
     if isinstance(value, tuple | list | set | frozenset):
         return list(value)
-    return [] if value is None and not (isinstance(node, ast.Constant) and node.value is None) else [value]
+    return (
+        []
+        if value is None
+        and not (isinstance(node, ast.Constant) and node.value is None)
+        else [value]
+    )
 
 
 def _unwrap(node: ast.AST) -> ast.AST:
     current = node
-    while isinstance(current, ast.Call) and isinstance(current.func, ast.Attribute) and current.func.attr in _TRANSFORM_CALLS and not current.args:
+    while (
+        isinstance(current, ast.Call)
+        and isinstance(current.func, ast.Attribute)
+        and current.func.attr in _TRANSFORM_CALLS
+        and not current.args
+    ):
         current = current.func.value
     return current
 
@@ -70,37 +80,89 @@ def _target(
             return ("parameter", node.id)
     if isinstance(node, ast.BoolOp):
         for value in node.values:
-            target = _target(value, meta_names, parameter_names, domain_fields, aliases)
+            target = _target(
+                value, meta_names, parameter_names, domain_fields, aliases
+            )
             if target is not None:
                 return target
     if isinstance(node, ast.Attribute):
-        if isinstance(node.value, ast.Name) and node.value.id in meta_names and node.attr in domain_fields:
+        if (
+            isinstance(node.value, ast.Name)
+            and node.value.id in meta_names
+            and node.attr in domain_fields
+        ):
             return ("meta", node.attr)
-        parent = _target(node.value, meta_names, parameter_names, domain_fields, aliases)
+        parent = _target(
+            node.value, meta_names, parameter_names, domain_fields, aliases
+        )
         if parent is not None:
             return (parent[0], f"{parent[1]}.{node.attr}")
     if isinstance(node, ast.Subscript):
-        parent = _target(node.value, meta_names, parameter_names, domain_fields, aliases)
+        parent = _target(
+            node.value, meta_names, parameter_names, domain_fields, aliases
+        )
         key = _literal(node.slice)
         if parent is not None and isinstance(key, str):
-            if parent[0] == "meta" and parent[1] == "" and key not in domain_fields:
+            if (
+                parent[0] == "meta"
+                and parent[1] == ""
+                and key not in domain_fields
+            ):
                 return None
             return (parent[0], f"{parent[1]}.{key}" if parent[1] else key)
     if isinstance(node, ast.Call):
-        if isinstance(node.func, ast.Name) and node.func.id in {"str", "int", "float", "bool"} and node.args:
-            return _target(node.args[0], meta_names, parameter_names, domain_fields, aliases)
-        if isinstance(node.func, ast.Attribute) and node.func.attr == "get" and node.args:
-            parent = _target(node.func.value, meta_names, parameter_names, domain_fields, aliases)
+        if (
+            isinstance(node.func, ast.Name)
+            and node.func.id in {"str", "int", "float", "bool"}
+            and node.args
+        ):
+            return _target(
+                node.args[0],
+                meta_names,
+                parameter_names,
+                domain_fields,
+                aliases,
+            )
+        if (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get"
+            and node.args
+        ):
+            parent = _target(
+                node.func.value,
+                meta_names,
+                parameter_names,
+                domain_fields,
+                aliases,
+            )
             key = _literal(node.args[0])
             if parent is not None and isinstance(key, str):
-                if parent[0] == "meta" and parent[1] == "" and key not in domain_fields:
+                if (
+                    parent[0] == "meta"
+                    and parent[1] == ""
+                    and key not in domain_fields
+                ):
                     return None
                 return (parent[0], f"{parent[1]}.{key}" if parent[1] else key)
-        if isinstance(node.func, ast.Name) and node.func.id == "getattr" and len(node.args) >= 2:
-            parent = _target(node.args[0], meta_names, parameter_names, domain_fields, aliases)
+        if (
+            isinstance(node.func, ast.Name)
+            and node.func.id == "getattr"
+            and len(node.args) >= 2
+        ):
+            parent = _target(
+                node.args[0],
+                meta_names,
+                parameter_names,
+                domain_fields,
+                aliases,
+            )
             key = _literal(node.args[1])
             if parent is not None and isinstance(key, str):
-                if parent[0] == "meta" and parent[1] == "" and key not in domain_fields:
+                if (
+                    parent[0] == "meta"
+                    and parent[1] == ""
+                    and key not in domain_fields
+                ):
                     return None
                 return (parent[0], f"{parent[1]}.{key}" if parent[1] else key)
     return None
@@ -116,15 +178,25 @@ def _aliases(
     for node in ast.walk(tree):
         target_name: str | None = None
         value: ast.AST | None = None
-        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+        ):
             target_name = node.targets[0].id
             value = node.value
-        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.value is not None:
+        elif (
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.value is not None
+        ):
             target_name = node.target.id
             value = node.value
         if target_name is None or value is None:
             continue
-        resolved = _target(value, meta_names, parameter_names, domain_fields, aliases)
+        resolved = _target(
+            value, meta_names, parameter_names, domain_fields, aliases
+        )
         if resolved is not None:
             aliases[target_name] = resolved
     return aliases
@@ -189,16 +261,34 @@ def _simple_truth(
         return [[Assignment(*target, truth)]]
 
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
-        return _condition_options(node.operand, truth=not truth, meta_names=meta_names, parameter_names=parameter_names, domain_fields=domain_fields, aliases=aliases)
+        return _condition_options(
+            node.operand,
+            truth=not truth,
+            meta_names=meta_names,
+            parameter_names=parameter_names,
+            domain_fields=domain_fields,
+            aliases=aliases,
+        )
 
     if isinstance(node, ast.BoolOp):
         children = [
-            _condition_options(value, truth=truth, meta_names=meta_names, parameter_names=parameter_names, domain_fields=domain_fields, aliases=aliases)
+            _condition_options(
+                value,
+                truth=truth,
+                meta_names=meta_names,
+                parameter_names=parameter_names,
+                domain_fields=domain_fields,
+                aliases=aliases,
+            )
             for value in node.values
         ]
-        if (truth and isinstance(node.op, ast.And)) or (not truth and isinstance(node.op, ast.Or)):
+        if (truth and isinstance(node.op, ast.And)) or (
+            not truth and isinstance(node.op, ast.Or)
+        ):
             options: list[list[Assignment]] = []
-            for combination in itertools.product(*[child or [[]] for child in children]):
+            for combination in itertools.product(
+                *[child or [[]] for child in children]
+            ):
                 merged = _merge(combination)
                 if merged is not None:
                     options.append(merged)
@@ -206,14 +296,22 @@ def _simple_truth(
         # True OR: any child true. False AND: any child false.
         return [option for child in children for option in child]
 
-    if isinstance(node, ast.Compare) and len(node.ops) == 1 and len(node.comparators) == 1:
+    if (
+        isinstance(node, ast.Compare)
+        and len(node.ops) == 1
+        and len(node.comparators) == 1
+    ):
         left, right = node.left, node.comparators[0]
         op = node.ops[0]
-        target_info = _target(left, meta_names, parameter_names, domain_fields, aliases)
+        target_info = _target(
+            left, meta_names, parameter_names, domain_fields, aliases
+        )
         literal_node = right
         reverse = False
         if target_info is None:
-            target_info = _target(right, meta_names, parameter_names, domain_fields, aliases)
+            target_info = _target(
+                right, meta_names, parameter_names, domain_fields, aliases
+            )
             literal_node = left
             reverse = True
         if target_info is not None:
@@ -230,25 +328,70 @@ def _simple_truth(
                 differs = isinstance(op, ast.NotEq | ast.IsNot)
                 if equals or differs:
                     wants_equal = truth if equals else not truth
-                    return [[Assignment(*target_info, literal if wants_equal else _alternative(literal))]]
-                if isinstance(literal, int | float) and isinstance(op, ast.Lt | ast.LtE | ast.Gt | ast.GtE):
+                    return [
+                        [
+                            Assignment(
+                                *target_info,
+                                literal
+                                if wants_equal
+                                else _alternative(literal),
+                            )
+                        ]
+                    ]
+                if isinstance(literal, int | float) and isinstance(
+                    op, ast.Lt | ast.LtE | ast.Gt | ast.GtE
+                ):
                     # Pick values on both sides of the boundary. Reverse comparison
                     # swaps which side makes the target expression true.
                     delta = 1 if isinstance(literal, int) else 1.0
                     if isinstance(op, ast.Lt | ast.LtE):
-                        candidate = literal - delta if truth ^ reverse else literal + delta
+                        candidate = (
+                            literal - delta
+                            if truth ^ reverse
+                            else literal + delta
+                        )
                     else:
-                        candidate = literal + delta if truth ^ reverse else literal - delta
+                        candidate = (
+                            literal + delta
+                            if truth ^ reverse
+                            else literal - delta
+                        )
                     return [[Assignment(*target_info, candidate)]]
 
     if isinstance(node, ast.Call):
-        if isinstance(node.func, ast.Name) and node.func.id == "isinstance" and len(node.args) >= 2:
-            target_info = _target(node.args[0], meta_names, parameter_names, domain_fields, aliases)
+        if (
+            isinstance(node.func, ast.Name)
+            and node.func.id == "isinstance"
+            and len(node.args) >= 2
+        ):
+            target_info = _target(
+                node.args[0],
+                meta_names,
+                parameter_names,
+                domain_fields,
+                aliases,
+            )
             representative = _representative_type(node.args[1])
             if target_info is not None and representative is not None:
-                return [[Assignment(*target_info, representative if truth else None)]]
-        if isinstance(node.func, ast.Attribute) and node.func.attr in {"startswith", "endswith"} and node.args:
-            target_info = _target(node.func.value, meta_names, parameter_names, domain_fields, aliases)
+                return [
+                    [
+                        Assignment(
+                            *target_info, representative if truth else None
+                        )
+                    ]
+                ]
+        if (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr in {"startswith", "endswith"}
+            and node.args
+        ):
+            target_info = _target(
+                node.func.value,
+                meta_names,
+                parameter_names,
+                domain_fields,
+                aliases,
+            )
             values = _literal_values(node.args[0])
             if target_info is not None and values:
                 value = values[0]
@@ -279,7 +422,9 @@ def _condition_options(
     )
 
 
-def _set_nested(target: dict[str, object], dotted_name: str, value: object) -> None:
+def _set_nested(
+    target: dict[str, object], dotted_name: str, value: object
+) -> None:
     parts = dotted_name.split(".")
     current = target
     for part in parts[:-1]:
@@ -295,11 +440,20 @@ def _as_scenario(assignments: Iterable[Assignment]) -> Scenario:
     meta: dict[str, object] = {}
     parameters: dict[str, object] = {}
     for assignment in assignments:
-        _set_nested(meta if assignment.kind == "meta" else parameters, assignment.name, assignment.value)
+        _set_nested(
+            meta if assignment.kind == "meta" else parameters,
+            assignment.name,
+            assignment.value,
+        )
     return meta, parameters
 
 
-def literal_branch_scenarios(function: Callable[..., object], domain_fields: Iterable[str], *, limit: int = 512) -> list[Scenario]:
+def literal_branch_scenarios(
+    function: Callable[..., object],
+    domain_fields: Iterable[str],
+    *,
+    limit: int = 512,
+) -> list[Scenario]:
     """Return deterministic scenarios that make source-level branches true/false."""
 
     target = getattr(function, "__func__", function)
@@ -309,7 +463,11 @@ def literal_branch_scenarios(function: Callable[..., object], domain_fields: Ite
     except OSError, TypeError, SyntaxError, ValueError:
         return []
     parameter_names = set(signature.parameters)
-    meta_names = {name for name in parameter_names if "meta" in name.casefold() or name in {"release", "item"}}
+    meta_names = {
+        name
+        for name in parameter_names
+        if "meta" in name.casefold() or name in {"release", "item"}
+    }
     fields = set(domain_fields)
     aliases = _aliases(tree, meta_names, parameter_names, fields)
     scenarios: list[Scenario] = []
@@ -360,7 +518,9 @@ def literal_branch_scenarios(function: Callable[..., object], domain_fields: Ite
                 ):
                     add(assignments)
         elif isinstance(node, ast.Match):
-            target_info = _target(node.subject, meta_names, parameter_names, fields, aliases)
+            target_info = _target(
+                node.subject, meta_names, parameter_names, fields, aliases
+            )
             if target_info is not None:
                 for case in node.cases:
                     if isinstance(case.pattern, ast.MatchValue):
@@ -378,16 +538,28 @@ def literal_branch_scenarios(function: Callable[..., object], domain_fields: Ite
         merged_meta: dict[str, object] = {}
         merged_params: dict[str, object] = {}
         for meta_values, parameter_values in parts:
-            if any(key in merged_meta and merged_meta[key] != value for key, value in meta_values.items()):
+            if any(
+                key in merged_meta and merged_meta[key] != value
+                for key, value in meta_values.items()
+            ):
                 return
-            if any(key in merged_params and merged_params[key] != value for key, value in parameter_values.items()):
+            if any(
+                key in merged_params and merged_params[key] != value
+                for key, value in parameter_values.items()
+            ):
                 return
             merged_meta.update(meta_values)
             merged_params.update(parameter_values)
         add(
             [
-                *(Assignment("meta", key, value) for key, value in merged_meta.items()),
-                *(Assignment("parameter", key, value) for key, value in merged_params.items()),
+                *(
+                    Assignment("meta", key, value)
+                    for key, value in merged_meta.items()
+                ),
+                *(
+                    Assignment("parameter", key, value)
+                    for key, value in merged_params.items()
+                ),
             ]
         )
 
@@ -398,7 +570,9 @@ def literal_branch_scenarios(function: Callable[..., object], domain_fields: Ite
                 return scenarios
 
     for first_index, first in enumerate(base[:24]):
-        for second_index, second in enumerate(base[first_index + 1 : 24], start=first_index + 1):
+        for second_index, second in enumerate(
+            base[first_index + 1 : 24], start=first_index + 1
+        ):
             for third in base[second_index + 1 : 24]:
                 add_merged((first, second, third))
                 if len(scenarios) >= limit:
@@ -409,7 +583,10 @@ def literal_branch_scenarios(function: Callable[..., object], domain_fields: Ite
     representatives: list[Scenario] = []
     used_targets: set[tuple[str, str]] = set()
     for scenario in base:
-        targets = {*(("meta", key) for key in scenario[0]), *(("parameter", key) for key in scenario[1])}
+        targets = {
+            *(("meta", key) for key in scenario[0]),
+            *(("parameter", key) for key in scenario[1]),
+        }
         if targets and not targets & used_targets:
             representatives.append(scenario)
             used_targets.update(targets)

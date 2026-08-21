@@ -12,7 +12,9 @@ import aiofiles
 import httpx
 
 from src.integrations.observability.console import logger
-from src.integrations.runtime_tools.download_integrity import verify_downloaded_asset
+from src.integrations.runtime_tools.download_integrity import (
+    verify_downloaded_asset,
+)
 
 
 class FfmpegBinaryManager:
@@ -24,7 +26,14 @@ class FfmpegBinaryManager:
 
     @classmethod
     def binary_path(cls, base_dir: str | Path) -> Path:
-        return Path(base_dir) / "bin" / "ffmpeg" / "windows" / "x64" / "ffmpeg.exe"
+        return (
+            Path(base_dir)
+            / "bin"
+            / "ffmpeg"
+            / "windows"
+            / "x64"
+            / "ffmpeg.exe"
+        )
 
     @classmethod
     def find_existing_binary(cls, base_dir: str | Path) -> str | None:
@@ -32,7 +41,11 @@ class FfmpegBinaryManager:
         version_marker = binary.parent / f"version_{cls.VERSION}"
         if binary.is_file() and version_marker.is_file():
             return str(binary)
-        binary_name = "ffmpeg.exe" if platform.system().lower() == "windows" else "ffmpeg"
+        binary_name = (
+            "ffmpeg.exe"
+            if platform.system().lower() == "windows"
+            else "ffmpeg"
+        )
         return shutil.which(binary_name)
 
     @classmethod
@@ -42,7 +55,9 @@ class FfmpegBinaryManager:
             return existing_binary
 
         if platform.system().lower() != "windows":
-            raise RuntimeError("FFmpeg was not found on PATH; install it with your system package manager or configure ffmpeg_path.")
+            raise RuntimeError(
+                "FFmpeg was not found on PATH; install it with your system package manager or configure ffmpeg_path."
+            )
 
         binary = cls.binary_path(base_dir)
         binary.parent.mkdir(parents=True, exist_ok=True)
@@ -50,7 +65,9 @@ class FfmpegBinaryManager:
         logger.info(f"[yellow]Downloading FFmpeg {cls.VERSION}...[/yellow]")
         try:
             async with (
-                httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client,
+                httpx.AsyncClient(
+                    timeout=60.0, follow_redirects=True
+                ) as client,
                 client.stream("GET", cls.DOWNLOAD_URL) as response,
             ):
                 response.raise_for_status()
@@ -60,16 +77,36 @@ class FfmpegBinaryManager:
 
             verify_downloaded_asset(archive, cls.ASSET_NAME)
             with zipfile.ZipFile(archive) as zip_file:
-                member = next((name for name in zip_file.namelist() if Path(name).name.lower() == "ffmpeg.exe"), None)
+                member = next(
+                    (
+                        name
+                        for name in zip_file.namelist()
+                        if Path(name).name.lower() == "ffmpeg.exe"
+                    ),
+                    None,
+                )
                 if member is None:
-                    raise RuntimeError(f"ffmpeg.exe was not found in {cls.ASSET_NAME}")
+                    raise RuntimeError(
+                        f"ffmpeg.exe was not found in {cls.ASSET_NAME}"
+                    )
                 info = zip_file.getinfo(member)
-                if stat.S_ISLNK(info.external_attr >> 16) or Path(member).is_absolute() or ".." in Path(member).parts:
-                    raise RuntimeError(f"Unsafe FFmpeg archive member: {member}")
-                with zip_file.open(info) as source, binary.open("wb") as destination:
+                if (
+                    stat.S_ISLNK(info.external_attr >> 16)
+                    or Path(member).is_absolute()
+                    or ".." in Path(member).parts
+                ):
+                    raise RuntimeError(
+                        f"Unsafe FFmpeg archive member: {member}"
+                    )
+                with (
+                    zip_file.open(info) as source,
+                    binary.open("wb") as destination,
+                ):
                     shutil.copyfileobj(source, destination)
 
-            (binary.parent / f"version_{cls.VERSION}").write_text(f"FFmpeg {cls.VERSION}\n", encoding="utf-8")
+            (binary.parent / f"version_{cls.VERSION}").write_text(
+                f"FFmpeg {cls.VERSION}\n", encoding="utf-8"
+            )
             return str(binary)
         finally:
             if archive.exists():

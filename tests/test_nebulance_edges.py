@@ -10,14 +10,20 @@ from src.integrations.trackers.nebulance import Nebulance
 
 
 def _config() -> dict:
-    return {"TRACKERS": {"NEBULANCE": {"api_key": "test-key", "search_max_pages": 3}}}
+    return {
+        "TRACKERS": {
+            "NEBULANCE": {"api_key": "test-key", "search_max_pages": 3}
+        }
+    }
 
 
 def _tracker() -> Nebulance:
     return Nebulance(_config())
 
 
-def _response(status: int, payload: object | None = None, *, text: str = "") -> httpx.Response:
+def _response(
+    status: int, payload: object | None = None, *, text: str = ""
+) -> httpx.Response:
     request = httpx.Request("GET", "https://nebulance.io/api.php")
     if payload is None:
         return httpx.Response(status, text=text, request=request)
@@ -25,13 +31,19 @@ def _response(status: int, payload: object | None = None, *, text: str = "") -> 
 
 
 @pytest.mark.asyncio
-async def test_nebulance_upload_catches_submission_error(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_nebulance_upload_catches_submission_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     tracker = _tracker()
     tracker.common.create_torrent_for_upload = AsyncMock()  # type: ignore[method-assign]
-    monkeypatch.setattr(tracker, "_read_media_dump", AsyncMock(return_value="mi"))
+    monkeypatch.setattr(
+        tracker, "_read_media_dump", AsyncMock(return_value="mi")
+    )
     monkeypatch.setattr(tracker, "_upload_files", AsyncMock(return_value={}))
     monkeypatch.setattr(tracker, "_upload_data", AsyncMock(return_value={}))
-    monkeypatch.setattr(tracker, "_post_upload", AsyncMock(side_effect=RuntimeError("offline")))
+    monkeypatch.setattr(
+        tracker, "_post_upload", AsyncMock(side_effect=RuntimeError("offline"))
+    )
     meta = Meta(debug=False, tracker_status={})
 
     assert not await tracker.upload(meta)
@@ -41,7 +53,9 @@ async def test_nebulance_upload_catches_submission_error(monkeypatch: pytest.Mon
 def test_nebulance_upload_response_json_error_and_success_ids() -> None:
     tracker = _tracker()
     status: dict = {}
-    assert not tracker._handle_upload_response(_response(200, text="not-json"), status)
+    assert not tracker._handle_upload_response(
+        _response(200, text="not-json"), status
+    )
     assert "json decode error" in status["status_message"]
 
     status = {}
@@ -59,29 +73,53 @@ async def test_nebulance_additional_check_rejections() -> None:
     tracker = _tracker()
     tracker.common.check_language_requirements = AsyncMock(return_value=True)  # type: ignore[method-assign]
 
-    assert not await tracker.get_additional_checks(Meta(category="MOVIE", tvmaze_id=0, unattended=False))
-    assert not await tracker.get_additional_checks(Meta(category="TV", valid_mi=False, is_disc=""))
-    assert not await tracker.get_additional_checks(Meta(category="TV", valid_mi=True, is_disc="DVD", unattended=False))
+    assert not await tracker.get_additional_checks(
+        Meta(category="MOVIE", tvmaze_id=0, unattended=False)
+    )
+    assert not await tracker.get_additional_checks(
+        Meta(category="TV", valid_mi=False, is_disc="")
+    )
+    assert not await tracker.get_additional_checks(
+        Meta(category="TV", valid_mi=True, is_disc="DVD", unattended=False)
+    )
 
     tracker.common.check_language_requirements = AsyncMock(return_value=False)  # type: ignore[method-assign]
-    assert not await tracker.get_additional_checks(Meta(category="TV", valid_mi=True, is_disc=""))
+    assert not await tracker.get_additional_checks(
+        Meta(category="TV", valid_mi=True, is_disc="")
+    )
 
 
 @pytest.mark.asyncio
 async def test_nebulance_tv_movie_unattended_rejected() -> None:
     tracker = _tracker()
-    meta = Meta(category="MOVIE", tvmaze_id=123, unattended=True, unattended_confirm=False)
+    meta = Meta(
+        category="MOVIE",
+        tvmaze_id=123,
+        unattended=True,
+        unattended_confirm=False,
+    )
     assert not await tracker.get_additional_checks(meta)
 
 
 def test_nebulance_search_params_include_positive_season() -> None:
-    params = _tracker()._search_params(Meta(season_int=2, tvmaze_episode_data={}, tvmaze_id=0, imdb_id=0, title="Show", resolution="1080p"))
+    params = _tracker()._search_params(
+        Meta(
+            season_int=2,
+            tvmaze_episode_data={},
+            tvmaze_id=0,
+            imdb_id=0,
+            title="Show",
+            resolution="1080p",
+        )
+    )
     assert params["season"] == 2
     assert params["series"] == "Show"
 
 
 def test_nebulance_terminal_page_error_and_error_message_guards() -> None:
-    terminal = _response(400, {"error": {"message": "Page out of range; valid pages are 0-1"}})
+    terminal = _response(
+        400, {"error": {"message": "Page out of range; valid pages are 0-1"}}
+    )
     assert Nebulance._is_terminal_page_error(terminal, 2)
 
     invalid_json = _response(400, text="broken")
@@ -114,7 +152,14 @@ class _SearchClient:
                     ]
                 },
             ),
-            _response(400, {"error": {"message": "Page out of range; valid pages are 0-0"}}),
+            _response(
+                400,
+                {
+                    "error": {
+                        "message": "Page out of range; valid pages are 0-0"
+                    }
+                },
+            ),
         ]
 
     async def __aenter__(self):
@@ -128,9 +173,20 @@ class _SearchClient:
 
 
 @pytest.mark.asyncio
-async def test_nebulance_search_stops_on_terminal_page(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("src.integrations.trackers.nebulance.httpx.AsyncClient", _SearchClient)
-    meta = Meta(season_int=1, tvmaze_episode_data={}, tvmaze_id=10, imdb_id=0, title="Show", resolution="1080p")
+async def test_nebulance_search_stops_on_terminal_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "src.integrations.trackers.nebulance.httpx.AsyncClient", _SearchClient
+    )
+    meta = Meta(
+        season_int=1,
+        tvmaze_episode_data={},
+        tvmaze_id=10,
+        imdb_id=0,
+        title="Show",
+        resolution="1080p",
+    )
     dupes = await _tracker().search_existing(meta)
     assert len(dupes) == 1
     assert dupes[0]["name"] == "Show.S01.1080p"

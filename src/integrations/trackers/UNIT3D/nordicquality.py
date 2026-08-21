@@ -24,7 +24,23 @@ class NordicQuality(UNIT3D):
     supported_categories = ("TV", "MOVIE", "MUSIC", "BOOK", "GAME")
     tracker_urls = (base_url,)
     KNOWN_MEDIA_EXTENSIONS: ClassVar[frozenset[str]] = frozenset(
-        {".avi", ".flv", ".m2ts", ".m4v", ".mkv", ".mov", ".mp4", ".mpeg", ".mpg", ".rm", ".rmvb", ".ts", ".vob", ".webm", ".wmv"}
+        {
+            ".avi",
+            ".flv",
+            ".m2ts",
+            ".m4v",
+            ".mkv",
+            ".mov",
+            ".mp4",
+            ".mpeg",
+            ".mpg",
+            ".rm",
+            ".rmvb",
+            ".ts",
+            ".vob",
+            ".webm",
+            ".wmv",
+        }
     )
     NORDIC_SUBTITLE_LANGUAGES: ClassVar[list[str]] = [
         "da",
@@ -61,7 +77,13 @@ class NordicQuality(UNIT3D):
             check_subtitle=True,
         )
 
-    async def get_category_id(self, meta: Meta, category: str = "", reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_category_id(
+        self,
+        meta: Meta,
+        category: str = "",
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         category_id = {
             "MOVIE": "1",
             "TV": "2",
@@ -80,7 +102,13 @@ class NordicQuality(UNIT3D):
             resolved_category = "AUDIOBOOK"
         return {"category_id": category_id.get(resolved_category, "0")}
 
-    async def get_type_id(self, meta: Meta, type: str = "", reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_type_id(
+        self,
+        meta: Meta,
+        type: str = "",
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         type_id = {
             "DISC": "1",
             "REMUX": "2",
@@ -107,7 +135,9 @@ class NordicQuality(UNIT3D):
         if reverse:
             return {value: key for key, value in type_id.items()}
         if type:
-            return {"type_id": type_id.get(type.upper().strip().lstrip("."), "0")}
+            return {
+                "type_id": type_id.get(type.upper().strip().lstrip("."), "0")
+            }
 
         if meta.category in {"MUSIC", "BOOK"}:
             resolved_type = meta.format.upper().strip().lstrip(".")
@@ -128,9 +158,16 @@ class NordicQuality(UNIT3D):
             else:
                 resolved_type = "OTHER"
         else:
-            resolved_type = meta.type.upper().strip().lstrip(".") if meta.type else ""
+            resolved_type = (
+                meta.type.upper().strip().lstrip(".") if meta.type else ""
+            )
 
-        return {"type_id": type_id.get(resolved_type, "15" if meta.category in {"MUSIC", "BOOK", "GAME"} else "0")}
+        return {
+            "type_id": type_id.get(
+                resolved_type,
+                "15" if meta.category in {"MUSIC", "BOOK", "GAME"} else "0",
+            )
+        }
 
     @classmethod
     def _release_name_source(cls, meta: Meta) -> str:
@@ -147,7 +184,11 @@ class NordicQuality(UNIT3D):
             source_name = Path(meta.uuid or meta.name).name
 
         extension = Path(source_name).suffix
-        return source_name[: -len(extension)] if extension.casefold() in cls.KNOWN_MEDIA_EXTENSIONS else source_name
+        return (
+            source_name[: -len(extension)]
+            if extension.casefold() in cls.KNOWN_MEDIA_EXTENSIONS
+            else source_name
+        )
 
     async def get_name(self, meta: Meta) -> dict[str, str]:
         name = self._release_name_source(meta).replace(" ", ".")
@@ -172,8 +213,17 @@ class NordicQuality(UNIT3D):
             )
         )
 
-        name = name.replace("HDR10+", "HDR10P").replace("DD+", "DDP").replace("DTS:X", "DTS-X").replace("&", "and")
-        name = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii")
+        name = (
+            name.replace("HDR10+", "HDR10P")
+            .replace("DD+", "DDP")
+            .replace("DTS:X", "DTS-X")
+            .replace("&", "and")
+        )
+        name = (
+            unicodedata.normalize("NFKD", name)
+            .encode("ascii", "ignore")
+            .decode("ascii")
+        )
         name = re.sub(r"[^A-Za-z0-9._()\-]+", ".", name)
         name = re.sub(r"\.{2,}", ".", name).strip(".")
 

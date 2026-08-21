@@ -31,12 +31,21 @@ def _coerce_int(value: Any) -> int | None:
 
 def _as_dict_list(value: Any) -> list[dict[str, Any]]:
     if isinstance(value, list):
-        return [cast(dict[str, Any], item) for item in value if isinstance(item, dict)]
+        return [
+            cast(dict[str, Any], item)
+            for item in value
+            if isinstance(item, dict)
+        ]
     return []
 
 
 def _english_alias_names(aliases: list[dict[str, Any]]) -> list[str]:
-    return [str(alias.get("name", "")).strip() for alias in aliases if alias.get("language") == "eng" and str(alias.get("name", "")).strip()]
+    return [
+        str(alias.get("name", "")).strip()
+        for alias in aliases
+        if alias.get("language") == "eng"
+        and str(alias.get("name", "")).strip()
+    ]
 
 
 def _pick_eng_alias(
@@ -66,7 +75,9 @@ def _best_effort_series_year(series_info: dict[str, Any] | None) -> str | None:
     if not series_info:
         return None
 
-    return _extract_year_from_text(series_info.get("year")) or _extract_year_from_text(series_info.get("slug"))
+    return _extract_year_from_text(
+        series_info.get("year")
+    ) or _extract_year_from_text(series_info.get("slug"))
 
 
 def _series_translation_metadata(
@@ -79,19 +90,31 @@ def _series_translation_metadata(
     translation_aliases: list[str] = []
 
     try:
-        translation = cast(dict[str, Any], client.get_series_translation(series_id, "eng"))
+        translation = cast(
+            dict[str, Any], client.get_series_translation(series_id, "eng")
+        )
         name = translation.get("name")
         if isinstance(name, str) and name.strip():
             translation_name = name.strip()
         aliases_value = translation.get("aliases")
         if isinstance(aliases_value, list):
-            translation_aliases = [str(alias).strip() for alias in aliases_value if str(alias).strip()]
+            translation_aliases = [
+                str(alias).strip()
+                for alias in aliases_value
+                if str(alias).strip()
+            ]
     except Exception as translation_error:
-        logger.debug(f"[yellow]Could not retrieve TVDB English series translation: {translation_error}[/yellow]")
+        logger.debug(
+            f"[yellow]Could not retrieve TVDB English series translation: {translation_error}[/yellow]"
+        )
 
     extended_eng_aliases = _english_alias_names(aliases)
     english_aliases = translation_aliases + extended_eng_aliases
-    fallback_title = translation_aliases[-1] if translation_aliases else _pick_eng_alias(aliases)
+    fallback_title = (
+        translation_aliases[-1]
+        if translation_aliases
+        else _pick_eng_alias(aliases)
+    )
     title = translation_name or fallback_title
     year = None
     for alias in english_aliases:
@@ -102,7 +125,11 @@ def _series_translation_metadata(
         year = _best_effort_series_year(_series_info)
 
     if title:
-        logger.debug(f"[blue]TVDB English series title: {title}" + (f" ({year})" if year else "") + "[/blue]")
+        logger.debug(
+            f"[blue]TVDB English series title: {title}"
+            + (f" ({year})" if year else "")
+            + "[/blue]"
+        )
 
     return {
         "series_title": title,
@@ -124,7 +151,9 @@ def _get_tvdb_or_warn(config: dict[str, Any] | None = None) -> TVDB | None:
     if not isinstance(tvdb_api_key, str) or not tvdb_api_key.strip():
         if not _tvdb_error_reported:
             _tvdb_error_reported = True
-            logger.info("[yellow]TVDB API key is missing in config.py under DEFAULT section. Continuing without TVDB.[/yellow]")
+            logger.info(
+                "[yellow]TVDB API key is missing in config.py under DEFAULT section. Continuing without TVDB.[/yellow]"
+            )
         return None
 
     try:
@@ -140,14 +169,18 @@ def _get_tvdb_or_warn(config: dict[str, Any] | None = None) -> TVDB | None:
     if not _tvdb_error_reported:
         _tvdb_error_reported = True
         if _tvdb_init_error:
-            logger.info(f"[yellow]TVDB login failed; continuing without TVDB. Reason: {_tvdb_init_error}[/yellow]")
+            logger.info(
+                f"[yellow]TVDB login failed; continuing without TVDB. Reason: {_tvdb_init_error}[/yellow]"
+            )
             logger.info(
                 "[yellow]This is usually a local Python CA/cert issue. "
                 "Fix options: install/update Windows roots, or set SSL_CERT_FILE to certifi's bundle "
                 '(e.g. `python -c "import certifi; print(certifi.where())"`).[/yellow]'
             )
         else:
-            logger.info("[yellow]TVDB unavailable; continuing without TVDB.[/yellow]")
+            logger.info(
+                "[yellow]TVDB unavailable; continuing without TVDB.[/yellow]"
+            )
 
     return None
 
@@ -166,7 +199,11 @@ class TvdbData:
         if client is None:
             return None, None
 
-        results = _as_dict_list(cast(Any, client).search({filename}, year=year, type="series", lang="eng"))
+        results = _as_dict_list(
+            cast(Any, client).search(
+                {filename}, year=year, type="series", lang="eng"
+            )
+        )
         await asyncio.sleep(0.1)
         try:
             if results and len(results) > 0:
@@ -185,11 +222,23 @@ class TvdbData:
                 if not best_match and search_year:
                     for result in results:
                         aliases_raw = result.get("aliases", [])
-                        aliases = aliases_raw if isinstance(aliases_raw, list) else []
+                        aliases = (
+                            aliases_raw
+                            if isinstance(aliases_raw, list)
+                            else []
+                        )
                         if aliases:
                             # Check if any alias contains the year in parentheses
                             for alias in aliases:
-                                alias_name = str(cast(dict[str, Any], alias).get("name", "")) if isinstance(alias, dict) else str(alias)
+                                alias_name = (
+                                    str(
+                                        cast(dict[str, Any], alias).get(
+                                            "name", ""
+                                        )
+                                    )
+                                    if isinstance(alias, dict)
+                                    else str(alias)
+                                )
                                 if f"({search_year})" in alias_name:
                                     best_match = result
                                     break
@@ -228,7 +277,12 @@ class TvdbData:
                 return False
 
             # If no specific episode requested, any cached payload is acceptable.
-            if season is None and episode is None and absolute_number is None and not aired_date:
+            if (
+                season is None
+                and episode is None
+                and absolute_number is None
+                and not aired_date
+            ):
                 return True
 
             aired_norm = None
@@ -247,7 +301,11 @@ class TvdbData:
                 episode_int = None
 
             try:
-                absolute_int = int(absolute_number) if absolute_number is not None else None
+                absolute_int = (
+                    int(absolute_number)
+                    if absolute_number is not None
+                    else None
+                )
             except TypeError, ValueError:
                 absolute_int = None
 
@@ -258,21 +316,35 @@ class TvdbData:
                         return True
 
             # Treat episode==0/None as "no specific episode" (season packs, etc.)
-            if episode_int in (None, 0) and absolute_int is None and not aired_norm:
+            if (
+                episode_int in (None, 0)
+                and absolute_int is None
+                and not aired_norm
+            ):
                 return True
 
             for ep in episodes:
-                if absolute_int is not None and ep.get("absoluteNumber") == absolute_int:
+                if (
+                    absolute_int is not None
+                    and ep.get("absoluteNumber") == absolute_int
+                ):
                     return True
 
-                if season_int is not None and episode_int not in (None, 0) and ep.get("seasonNumber") == season_int and ep.get("number") == episode_int:
+                if (
+                    season_int is not None
+                    and episode_int not in (None, 0)
+                    and ep.get("seasonNumber") == season_int
+                    and ep.get("number") == episode_int
+                ):
                     return True
 
             return False
 
         series_id_int = _coerce_int(series_id)
         if series_id_int is None:
-            logger.debug(f"[yellow]Invalid TVDB series ID: {series_id}[/yellow]")
+            logger.debug(
+                f"[yellow]Invalid TVDB series ID: {series_id}[/yellow]"
+            )
             return None, None
 
         cache_path = None
@@ -287,45 +359,93 @@ class TvdbData:
 
                     if isinstance(cached, dict):
                         cached_dict = cast(dict[str, Any], cached)
-                        cached_episodes = _as_dict_list(cached_dict.get("episodes", []))
-                        if not cached_episodes and not isinstance(cached_dict.get("episodes", []), list):
+                        cached_episodes = _as_dict_list(
+                            cached_dict.get("episodes", [])
+                        )
+                        if not cached_episodes and not isinstance(
+                            cached_dict.get("episodes", []), list
+                        ):
                             cached_episodes = []
                         if not _episode_is_present(cached_episodes):
-                            logger.debug(f"[yellow]Cached TVDB data for {series_id_int} does not include requested episode; refreshing from TVDB[/yellow]")
+                            logger.debug(
+                                f"[yellow]Cached TVDB data for {series_id_int} does not include requested episode; refreshing from TVDB[/yellow]"
+                            )
                         else:
-                            logger.debug(f"[cyan]Using cached TVDB episodes for {series_id_int}[/cyan]")
+                            logger.debug(
+                                f"[cyan]Using cached TVDB episodes for {series_id_int}[/cyan]"
+                            )
 
                             episodes_data = {
                                 "episodes": cached_episodes,
-                                "aliases": cached_dict.get("aliases", []) if isinstance(cached_dict.get("aliases", []), list) else [],
-                                "slug": cached_dict.get("slug") if isinstance(cached_dict.get("slug"), str) else None,
-                                "series_title": cached_dict.get("series_title") if isinstance(cached_dict.get("series_title"), str) else None,
-                                "series_year": cached_dict.get("series_year") if isinstance(cached_dict.get("series_year"), str) else None,
+                                "aliases": cached_dict.get("aliases", [])
+                                if isinstance(
+                                    cached_dict.get("aliases", []), list
+                                )
+                                else [],
+                                "slug": cached_dict.get("slug")
+                                if isinstance(cached_dict.get("slug"), str)
+                                else None,
+                                "series_title": cached_dict.get("series_title")
+                                if isinstance(
+                                    cached_dict.get("series_title"), str
+                                )
+                                else None,
+                                "series_year": cached_dict.get("series_year")
+                                if isinstance(
+                                    cached_dict.get("series_year"), str
+                                )
+                                else None,
                             }
 
-                            if not episodes_data.get("series_title") and not episodes_data.get("series_year"):
+                            if not episodes_data.get(
+                                "series_title"
+                            ) and not episodes_data.get("series_year"):
                                 client = _get_tvdb_or_warn(self.config)
                                 if client is not None:
                                     try:
-                                        series_info = cast(dict[str, Any], cast(Any, client).get_series_extended(series_id_int))
-                                        aliases_list = _as_dict_list(series_info.get("aliases", episodes_data.get("aliases")))
-                                        series_metadata = _series_translation_metadata(
-                                            client,
-                                            series_id_int,
-                                            aliases_list,
-                                            _series_info=series_info,
+                                        series_info = cast(
+                                            dict[str, Any],
+                                            cast(
+                                                Any, client
+                                            ).get_series_extended(
+                                                series_id_int
+                                            ),
+                                        )
+                                        aliases_list = _as_dict_list(
+                                            series_info.get(
+                                                "aliases",
+                                                episodes_data.get("aliases"),
+                                            )
+                                        )
+                                        series_metadata = (
+                                            _series_translation_metadata(
+                                                client,
+                                                series_id_int,
+                                                aliases_list,
+                                                _series_info=series_info,
+                                            )
                                         )
                                         episodes_data.update(series_metadata)
                                     except Exception as series_error:
-                                        logger.debug(f"[yellow]Could not refresh cached TVDB series metadata: {series_error}[/yellow]")
+                                        logger.debug(
+                                            f"[yellow]Could not refresh cached TVDB series metadata: {series_error}[/yellow]"
+                                        )
 
-                            specific_alias = episodes_data.get("series_title") if isinstance(episodes_data.get("series_title"), str) else None
+                            specific_alias = (
+                                episodes_data.get("series_title")
+                                if isinstance(
+                                    episodes_data.get("series_title"), str
+                                )
+                                else None
+                            )
                             if original_language and original_language == "en":
                                 specific_alias = None
 
                             return episodes_data, specific_alias
             except Exception as cache_error:
-                logger.debug(f"[yellow]Failed to read TVDB cache for {series_id}: {cache_error}[/yellow]")
+                logger.debug(
+                    f"[yellow]Failed to read TVDB cache for {series_id}: {cache_error}[/yellow]"
+                )
 
         try:
             client = _get_tvdb_or_warn(self.config)
@@ -341,48 +461,69 @@ class TvdbData:
 
             while page < max_pages:
                 if page > 0:
-                    logger.debug(f"[cyan]Fetching TVDB episodes page {page + 1}[/cyan]")
+                    logger.debug(
+                        f"[cyan]Fetching TVDB episodes page {page + 1}[/cyan]"
+                    )
 
                 try:
-                    episodes_response = cast(Any, client).get_series_episodes(series_id_int, season_type="default", page=page, lang="eng")
+                    episodes_response = cast(Any, client).get_series_episodes(
+                        series_id_int,
+                        season_type="default",
+                        page=page,
+                        lang="eng",
+                    )
 
                     # Handle both dict response and direct episodes list
                     if isinstance(episodes_response, dict):
-                        episodes_response_dict = cast(dict[str, Any], episodes_response)
+                        episodes_response_dict = cast(
+                            dict[str, Any], episodes_response
+                        )
                         if page == 0:
                             slug_value = episodes_response_dict.get("slug")
                             if isinstance(slug_value, str):
                                 series_slug = slug_value
-                        current_episodes = _as_dict_list(episodes_response_dict.get("episodes", []))
+                        current_episodes = _as_dict_list(
+                            episodes_response_dict.get("episodes", [])
+                        )
                     else:
                         # Fallback for direct list response
                         current_episodes = _as_dict_list(episodes_response)
 
                     if not current_episodes:
-                        logger.debug(f"[yellow]No episodes found on page {page + 1}, stopping pagination[/yellow]")
+                        logger.debug(
+                            f"[yellow]No episodes found on page {page + 1}, stopping pagination[/yellow]"
+                        )
                         break
 
                     all_episodes.extend(current_episodes)
                     pages_fetched += 1
 
-                    logger.debug(f"[cyan]Retrieved {len(current_episodes)} episodes from page {page + 1} (total: {len(all_episodes)})[/cyan]")
+                    logger.debug(
+                        f"[cyan]Retrieved {len(current_episodes)} episodes from page {page + 1} (total: {len(all_episodes)})[/cyan]"
+                    )
 
                     # If we got fewer than 500 results, we've reached the end
                     if len(current_episodes) < 500:
-                        logger.debug(f"[cyan]Page {page + 1} returned {len(current_episodes)} episodes (< 500), pagination complete[/cyan]")
+                        logger.debug(
+                            f"[cyan]Page {page + 1} returned {len(current_episodes)} episodes (< 500), pagination complete[/cyan]"
+                        )
                         break
 
                     page += 1
                     await asyncio.sleep(0.1)  # Rate limiting
 
                 except Exception as page_error:
-                    logger.debug(f"[yellow]Error fetching page {page + 1}: {page_error}[/yellow]")
+                    logger.debug(
+                        f"[yellow]Error fetching page {page + 1}: {page_error}[/yellow]"
+                    )
                     # If first page fails, re-raise; otherwise, stop pagination
                     if page == 0:
                         raise page_error
                     break
 
-            logger.debug(f"[green]Total episodes retrieved: {len(all_episodes)} across {page + 1} page(s)[/green]")
+            logger.debug(
+                f"[green]Total episodes retrieved: {len(all_episodes)} across {page + 1} page(s)[/green]"
+            )
 
             # Create the response structure
             episodes_data = {
@@ -397,7 +538,10 @@ class TvdbData:
             try:
                 if all_episodes:
                     # Get series details for aliases
-                    series_info = cast(dict[str, Any], cast(Any, client).get_series_extended(series_id_int))
+                    series_info = cast(
+                        dict[str, Any],
+                        cast(Any, client).get_series_extended(series_id_int),
+                    )
                     if "aliases" in series_info:
                         episodes_data["aliases"] = series_info["aliases"]
                     aliases_list = _as_dict_list(episodes_data["aliases"])
@@ -410,14 +554,18 @@ class TvdbData:
                         )
                     )
             except Exception as alias_error:
-                logger.debug(f"[yellow]Could not retrieve series aliases: {alias_error}[/yellow]")
+                logger.debug(
+                    f"[yellow]Could not retrieve series aliases: {alias_error}[/yellow]"
+                )
 
             # If this was a multi-page series and we have a base_dir, cache results for next time.
             if cache_path and pages_fetched > 1:
                 try:
                     # Ensure cache dir exists; on POSIX explicitly apply typical dir perms.
                     if os.name == "posix":
-                        cache_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                        cache_path.parent.mkdir(
+                            parents=True, exist_ok=True, mode=0o700
+                        )
                         with contextlib.suppress(Exception):
                             Path(cache_path.parent).chmod(0o700)
                     else:
@@ -429,11 +577,19 @@ class TvdbData:
                     if os.name == "posix":
                         with contextlib.suppress(Exception):
                             Path(cache_path).chmod(0o644)
-                    logger.debug(f"[green]Cached TVDB episodes to {cache_path}[/green]")
+                    logger.debug(
+                        f"[green]Cached TVDB episodes to {cache_path}[/green]"
+                    )
                 except Exception as cache_write_error:
-                    logger.debug(f"[yellow]Failed to write TVDB cache for {series_id}: {cache_write_error}[/yellow]")
+                    logger.debug(
+                        f"[yellow]Failed to write TVDB cache for {series_id}: {cache_write_error}[/yellow]"
+                    )
 
-            specific_alias = episodes_data.get("series_title") if isinstance(episodes_data.get("series_title"), str) else None
+            specific_alias = (
+                episodes_data.get("series_title")
+                if isinstance(episodes_data.get("series_title"), str)
+                else None
+            )
             if original_language and original_language == "en":
                 specific_alias = None
 
@@ -453,13 +609,18 @@ class TvdbData:
         if client is None:
             return None, None
 
-        def _translated_series_name(series_id_value: Any, fallback: Any) -> str | None:
+        def _translated_series_name(
+            series_id_value: Any, fallback: Any
+        ) -> str | None:
             series_id_int = _coerce_int(series_id_value)
             fallback_name = str(fallback).strip() if fallback else None
             if series_id_int is None:
                 return fallback_name
             try:
-                series_info = cast(dict[str, Any], cast(Any, client).get_series_extended(series_id_int))
+                series_info = cast(
+                    dict[str, Any],
+                    cast(Any, client).get_series_extended(series_id_int),
+                )
                 aliases = _as_dict_list(series_info.get("aliases", []))
                 series_metadata = _series_translation_metadata(
                     client,
@@ -469,7 +630,9 @@ class TvdbData:
                 )
                 return series_metadata.get("series_title") or fallback_name
             except Exception as series_error:
-                logger.debug(f"[yellow]Could not retrieve translated TVDB series name: {series_error}[/yellow]")
+                logger.debug(
+                    f"[yellow]Could not retrieve translated TVDB series name: {series_error}[/yellow]"
+                )
                 return fallback_name
 
         # Try IMDB first if available
@@ -484,9 +647,13 @@ class TvdbData:
                 else:
                     imdb_formatted = imdb
 
-                logger.debug(f"[cyan]Trying TVDB lookup with IMDB ID: {imdb_formatted}[/cyan]")
+                logger.debug(
+                    f"[cyan]Trying TVDB lookup with IMDB ID: {imdb_formatted}[/cyan]"
+                )
 
-                results = _as_dict_list(cast(Any, client).search_by_remote_id(imdb_formatted))
+                results = _as_dict_list(
+                    cast(Any, client).search_by_remote_id(imdb_formatted)
+                )
                 await asyncio.sleep(0.1)
 
                 if results and len(results) > 0:
@@ -494,34 +661,61 @@ class TvdbData:
 
                     # Look for series results first
                     for result in results:
-                        if "series" in result and isinstance(result.get("series"), dict):
+                        if "series" in result and isinstance(
+                            result.get("series"), dict
+                        ):
                             series_id = result["series"]["id"]
-                            series_name = _translated_series_name(series_id, result["series"].get("name"))
-                            logger.debug(f"[blue]TVDB series ID from IMDB: {series_id}[/blue]")
+                            series_name = _translated_series_name(
+                                series_id, result["series"].get("name")
+                            )
+                            logger.debug(
+                                f"[blue]TVDB series ID from IMDB: {series_id}[/blue]"
+                            )
                             return _coerce_int(series_id), series_name
 
                     # If tv_movie is True, check for episode with seriesId first, then movie
                     if tv_movie:
                         # Check if any result has an episode with a seriesId
                         for result in results:
-                            if "episode" in result and isinstance(result.get("episode"), dict) and result["episode"].get("seriesId"):
+                            if (
+                                "episode" in result
+                                and isinstance(result.get("episode"), dict)
+                                and result["episode"].get("seriesId")
+                            ):
                                 series_id = result["episode"]["seriesId"]
-                                series_name = _translated_series_name(series_id, result["episode"].get("seriesName"))
-                                logger.debug(f"[blue]TVDB series ID from episode entry (tv_movie): {series_id}[/blue]")
+                                series_name = _translated_series_name(
+                                    series_id,
+                                    result["episode"].get("seriesName"),
+                                )
+                                logger.debug(
+                                    f"[blue]TVDB series ID from episode entry (tv_movie): {series_id}[/blue]"
+                                )
                                 return _coerce_int(series_id), series_name
 
                         # If no episode with seriesId, accept movie results
                         for result in results:
-                            if "movie" in result and isinstance(result.get("movie"), dict):
+                            if "movie" in result and isinstance(
+                                result.get("movie"), dict
+                            ):
                                 movie_id = result["movie"]["id"]
                                 movie_name = result["movie"].get("name")
-                                logger.debug(f"[blue]TVDB movie ID from IMDB (tv_movie): {movie_id}[/blue]")
+                                logger.debug(
+                                    f"[blue]TVDB movie ID from IMDB (tv_movie): {movie_id}[/blue]"
+                                )
                                 return _coerce_int(movie_id), movie_name
 
-                    result_types = [next(iter(result.keys())) for result in results if result]
-                    logger.debug(f"[yellow]IMDB search returned results but no {'series or movie' if tv_movie else 'series'} found (got: {result_types})[/yellow]")
+                    result_types = [
+                        next(iter(result.keys()))
+                        for result in results
+                        if result
+                    ]
+                    logger.debug(
+                        f"[yellow]IMDB search returned results but no {'series or movie' if tv_movie else 'series'} found (got: {result_types})[/yellow]"
+                    )
                 else:
-                    logger.debug("[yellow]No TVDB series found for IMDB ID[/yellow]")
+                    logger.debug(
+                        "[yellow]No TVDB series found for IMDB ID[/yellow]"
+                    )
             except Exception as e:
                 logger.debug(f"[red]Error getting TVDB by IMDB ID: {e}[/red]")
 
@@ -529,9 +723,13 @@ class TvdbData:
             try:
                 tmdb_str = str(tmdb)
 
-                logger.debug(f"[cyan]Trying TVDB lookup with TMDB ID: {tmdb_str}[/cyan]")
+                logger.debug(
+                    f"[cyan]Trying TVDB lookup with TMDB ID: {tmdb_str}[/cyan]"
+                )
 
-                results = _as_dict_list(cast(Any, client).search_by_remote_id(tmdb_str))
+                results = _as_dict_list(
+                    cast(Any, client).search_by_remote_id(tmdb_str)
+                )
                 await asyncio.sleep(0.1)
 
                 if results and len(results) > 0:
@@ -539,39 +737,68 @@ class TvdbData:
 
                     # Look for series results first
                     for result in results:
-                        if "series" in result and isinstance(result.get("series"), dict):
+                        if "series" in result and isinstance(
+                            result.get("series"), dict
+                        ):
                             series_id = result["series"]["id"]
-                            series_name = _translated_series_name(series_id, result["series"].get("name"))
-                            logger.debug(f"[blue]TVDB series ID from TMDB: {series_id}[/blue]")
+                            series_name = _translated_series_name(
+                                series_id, result["series"].get("name")
+                            )
+                            logger.debug(
+                                f"[blue]TVDB series ID from TMDB: {series_id}[/blue]"
+                            )
                             return _coerce_int(series_id), series_name
 
                     # If tv_movie is True, check for episode with seriesId first, then movie
                     if tv_movie:
                         # Check if any result has an episode with a seriesId
                         for result in results:
-                            if "episode" in result and isinstance(result.get("episode"), dict) and result["episode"].get("seriesId"):
+                            if (
+                                "episode" in result
+                                and isinstance(result.get("episode"), dict)
+                                and result["episode"].get("seriesId")
+                            ):
                                 series_id = result["episode"]["seriesId"]
-                                series_name = _translated_series_name(series_id, result["episode"].get("seriesName"))
-                                logger.debug(f"[blue]TVDB series ID from episode entry (tv_movie): {series_id}[/blue]")
+                                series_name = _translated_series_name(
+                                    series_id,
+                                    result["episode"].get("seriesName"),
+                                )
+                                logger.debug(
+                                    f"[blue]TVDB series ID from episode entry (tv_movie): {series_id}[/blue]"
+                                )
                                 return _coerce_int(series_id), series_name
 
                         # If no episode with seriesId, accept movie results
                         for result in results:
-                            if "movie" in result and isinstance(result.get("movie"), dict):
+                            if "movie" in result and isinstance(
+                                result.get("movie"), dict
+                            ):
                                 movie_id = result["movie"]["id"]
                                 movie_name = result["movie"].get("name")
-                                logger.debug(f"[blue]TVDB movie ID from TMDB (tv_movie): {movie_id}[/blue]")
+                                logger.debug(
+                                    f"[blue]TVDB movie ID from TMDB (tv_movie): {movie_id}[/blue]"
+                                )
                                 return _coerce_int(movie_id), movie_name
 
-                    result_types = [next(iter(result.keys())) for result in results if result]
-                    logger.debug(f"[yellow]TMDB search returned results but no {'series or movie' if tv_movie else 'series'} found (got: {result_types})[/yellow]")
+                    result_types = [
+                        next(iter(result.keys()))
+                        for result in results
+                        if result
+                    ]
+                    logger.debug(
+                        f"[yellow]TMDB search returned results but no {'series or movie' if tv_movie else 'series'} found (got: {result_types})[/yellow]"
+                    )
                 else:
-                    logger.debug("[yellow]No TVDB series found for TMDB ID[/yellow]")
+                    logger.debug(
+                        "[yellow]No TVDB series found for TMDB ID[/yellow]"
+                    )
             except Exception as e:
                 logger.debug(f"[red]Error getting TVDB by TMDB ID: {e}[/red]")
 
         result_type_str = "series or movie" if tv_movie else "series"
-        logger.info(f"[yellow]No TVDB {result_type_str} found for any available external ID[/yellow]")
+        logger.info(
+            f"[yellow]No TVDB {result_type_str} found for any available external ID[/yellow]"
+        )
         return None, None
 
     async def get_imdb_id_from_tvdb_episode_id(
@@ -585,28 +812,44 @@ class TvdbData:
 
             episode_id_int = _coerce_int(episode_id)
             if episode_id_int is None:
-                logger.debug(f"[yellow]Invalid TVDB episode ID: {episode_id}[/yellow]")
+                logger.debug(
+                    f"[yellow]Invalid TVDB episode ID: {episode_id}[/yellow]"
+                )
                 return None
 
-            episode_data = cast(dict[str, Any], cast(Any, client).get_episode_extended(episode_id_int))
-            logger.debug(f"[yellow]Episode data retrieved for episode ID {episode_id}[/yellow]")
+            episode_data = cast(
+                dict[str, Any],
+                cast(Any, client).get_episode_extended(episode_id_int),
+            )
+            logger.debug(
+                f"[yellow]Episode data retrieved for episode ID {episode_id}[/yellow]"
+            )
 
             remote_ids = _as_dict_list(episode_data.get("remoteIds", []))
             imdb_id = None
 
             for remote_id in remote_ids:
-                if remote_id.get("type") == 2 or remote_id.get("sourceName") == "IMDB":
+                if (
+                    remote_id.get("type") == 2
+                    or remote_id.get("sourceName") == "IMDB"
+                ):
                     imdb_id = remote_id.get("id")
                     break
 
             if imdb_id:
-                logger.debug(f"[blue]TVDB episode ID: {episode_id} maps to IMDB ID: {imdb_id}[/blue]")
+                logger.debug(
+                    f"[blue]TVDB episode ID: {episode_id} maps to IMDB ID: {imdb_id}[/blue]"
+                )
             else:
-                logger.debug(f"[yellow]No IMDB ID found for TVDB episode ID: {episode_id}[/yellow]")
+                logger.debug(
+                    f"[yellow]No IMDB ID found for TVDB episode ID: {episode_id}[/yellow]"
+                )
 
             return imdb_id
         except Exception as e:
-            logger.error(f"[red]Error getting IMDB ID from TVDB episode ID: {e}[/red]")
+            logger.error(
+                f"[red]Error getting IMDB ID from TVDB episode ID: {e}[/red]"
+            )
             return None
 
     async def get_specific_episode_data(
@@ -624,7 +867,9 @@ class TvdbData:
         Any | None,
         Any | None,
     ]:
-        logger.debug("[yellow]Getting specific episode data from TVDB data[/yellow]")
+        logger.debug(
+            "[yellow]Getting specific episode data from TVDB data[/yellow]"
+        )
 
         # Handle both dict (full series data) and list (episodes only) formats
         if isinstance(data, dict):
@@ -633,7 +878,9 @@ class TvdbData:
         elif isinstance(data, list):
             episodes = _as_dict_list(data)
         else:
-            logger.info("[red]No episode data available or invalid format[/red]")
+            logger.info(
+                "[red]No episode data available or invalid format[/red]"
+            )
             return None, None, None, None, None, None, None
 
         if not episodes:
@@ -643,47 +890,104 @@ class TvdbData:
         # Convert season and episode to int for comparison
         try:
             season_int = int(season) if season is not None else None
-            episode_int = int(episode) if episode is not None and episode != 0 else None
+            episode_int = (
+                int(episode) if episode is not None and episode != 0 else None
+            )
         except (ValueError, TypeError) as e:
-            logger.info(f"[red]Invalid season or episode format: season={season}, episode={episode}, error={e}[/red]")
+            logger.info(
+                f"[red]Invalid season or episode format: season={season}, episode={episode}, error={e}[/red]"
+            )
             return None, None, None, None, None, None, None
 
         if season_int is None:
-            logger.info(f"[red]Season is None after conversion: season_int={season_int}[/red]")
+            logger.info(
+                f"[red]Season is None after conversion: season_int={season_int}[/red]"
+            )
             return None, None, None, None, None, None, None
 
-        logger.debug(f"[blue]Total episodes retrieved from TVDB: {len(episodes)}[/blue]")
-        logger.debug(f"[blue]Looking for Season: {season_int}, Episode: {episode_int}[/blue]")
+        logger.debug(
+            f"[blue]Total episodes retrieved from TVDB: {len(episodes)}[/blue]"
+        )
+        logger.debug(
+            f"[blue]Looking for Season: {season_int}, Episode: {episode_int}[/blue]"
+        )
 
         # For daily shows, match by air date if provided.
         if aired_date:
             aired_norm = aired_date.strip().replace(".", "-")
             for ep in episodes:
                 if ep.get("aired") == aired_norm:
-                    logger.debug(f"[green]Matched daily episode by air date {aired_norm}: S{ep.get('seasonNumber'):02d}E{ep.get('number'):02d} - {ep.get('name')}[/green]")
-                    return (ep.get("seasonName"), ep.get("name"), ep.get("overview"), ep.get("seasonNumber"), ep.get("number"), ep.get("year"), ep.get("id"))
+                    logger.debug(
+                        f"[green]Matched daily episode by air date {aired_norm}: S{ep.get('seasonNumber'):02d}E{ep.get('number'):02d} - {ep.get('name')}[/green]"
+                    )
+                    return (
+                        ep.get("seasonName"),
+                        ep.get("name"),
+                        ep.get("overview"),
+                        ep.get("seasonNumber"),
+                        ep.get("number"),
+                        ep.get("year"),
+                        ep.get("id"),
+                    )
 
         # If episode_int is None or 0, return first episode of the season
         if episode_int is None or episode_int == 0:
             for ep in episodes:
                 if ep.get("seasonNumber") == season_int:
-                    logger.debug(f"[green]Found first episode of season {season_int}: S{season_int:02d}E{ep.get('number'):02d} - {ep.get('name')}[/green]")
-                    return (ep.get("seasonName"), ep.get("name"), ep.get("overview"), ep.get("seasonNumber"), ep.get("number"), ep.get("year"), ep.get("id"))
+                    logger.debug(
+                        f"[green]Found first episode of season {season_int}: S{season_int:02d}E{ep.get('number'):02d} - {ep.get('name')}[/green]"
+                    )
+                    return (
+                        ep.get("seasonName"),
+                        ep.get("name"),
+                        ep.get("overview"),
+                        ep.get("seasonNumber"),
+                        ep.get("number"),
+                        ep.get("year"),
+                        ep.get("id"),
+                    )
 
         # Try to find exact season/episode match
         for ep in episodes:
-            if ep.get("seasonNumber") == season_int and ep.get("number") == episode_int:
-                logger.debug(f"[green]Found exact match: S{season_int:02d}E{episode_int:02d} - {ep.get('name')}[/green]")
-                return (ep.get("seasonName"), ep.get("name"), ep.get("overview"), ep.get("seasonNumber"), ep.get("number"), ep.get("year"), ep.get("id"))
+            if (
+                ep.get("seasonNumber") == season_int
+                and ep.get("number") == episode_int
+            ):
+                logger.debug(
+                    f"[green]Found exact match: S{season_int:02d}E{episode_int:02d} - {ep.get('name')}[/green]"
+                )
+                return (
+                    ep.get("seasonName"),
+                    ep.get("name"),
+                    ep.get("overview"),
+                    ep.get("seasonNumber"),
+                    ep.get("number"),
+                    ep.get("year"),
+                    ep.get("id"),
+                )
 
         # Try to find an episode with this absolute number directly
-        logger.info("[yellow]No exact match found, trying absolute number mapping...[/yellow]")
+        logger.info(
+            "[yellow]No exact match found, trying absolute number mapping...[/yellow]"
+        )
         for ep in episodes:
             if ep.get("absoluteNumber") == episode_int:
                 mapped_season = ep.get("seasonNumber")
                 mapped_episode = ep.get("number")
-                logger.debug(f"[green]Mapped absolute #{episode_int} -> S{mapped_season:02d}E{mapped_episode:02d} - {ep.get('name')}[/green]")
-                return (ep.get("seasonName"), ep.get("name"), ep.get("overview"), ep.get("seasonNumber"), ep.get("number"), ep.get("year"), ep.get("id"))
+                logger.debug(
+                    f"[green]Mapped absolute #{episode_int} -> S{mapped_season:02d}E{mapped_episode:02d} - {ep.get('name')}[/green]"
+                )
+                return (
+                    ep.get("seasonName"),
+                    ep.get("name"),
+                    ep.get("overview"),
+                    ep.get("seasonNumber"),
+                    ep.get("number"),
+                    ep.get("year"),
+                    ep.get("id"),
+                )
 
-        logger.info(f"[red]Could not find episode for S{season_int:02d}E{episode_int:02d} or absolute #{episode_int}[/red]")
+        logger.info(
+            f"[red]Could not find episode for S{season_int:02d}E{episode_int:02d} or absolute #{episode_int}[/red]"
+        )
         return None, None, None, None, None, None, None

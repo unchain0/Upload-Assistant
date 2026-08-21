@@ -14,7 +14,10 @@ from unidecode import unidecode
 from src.domain_models.processing import UploadError
 from src.domain_models.release import Meta
 from src.integrations.filesystem.temp_paths import release_temp_dir
-from src.integrations.observability.runtime_support import logger, prompt_in_thread
+from src.integrations.observability.runtime_support import (
+    logger,
+    prompt_in_thread,
+)
 from src.integrations.security.redaction import Redaction
 from src.integrations.trackers.common import Common
 from src.integrations.trackers.cookie_auth import CookieValidator
@@ -40,12 +43,26 @@ class ToTheGlory:
 
     def __init__(self, config: Config) -> None:
         self.config: Config = config
-        self.username = str(config["TRACKERS"][self.tracker].get("username", "")).strip()
-        self.password = str(config["TRACKERS"][self.tracker].get("password", "")).strip()
-        self.passid = str(config["TRACKERS"][self.tracker].get("login_question", "0")).strip()
-        self.passan = str(config["TRACKERS"][self.tracker].get("login_answer", "")).strip()
-        self.uid = str(config["TRACKERS"][self.tracker].get("user_id", "")).strip()
-        self.passkey = str(config["TRACKERS"][self.tracker].get("announce_url", "")).strip().split("/")[-1]
+        self.username = str(
+            config["TRACKERS"][self.tracker].get("username", "")
+        ).strip()
+        self.password = str(
+            config["TRACKERS"][self.tracker].get("password", "")
+        ).strip()
+        self.passid = str(
+            config["TRACKERS"][self.tracker].get("login_question", "0")
+        ).strip()
+        self.passan = str(
+            config["TRACKERS"][self.tracker].get("login_answer", "")
+        ).strip()
+        self.uid = str(
+            config["TRACKERS"][self.tracker].get("user_id", "")
+        ).strip()
+        self.passkey = (
+            str(config["TRACKERS"][self.tracker].get("announce_url", ""))
+            .strip()
+            .split("/")[-1]
+        )
         self.cookie_validator = CookieValidator(config)
 
     async def get_name(self, meta: Meta) -> str:
@@ -95,7 +112,15 @@ class ToTheGlory:
 
     @staticmethod
     def _tv_pack_type_id(language: str) -> int:
-        mapping = {"KR": 99, "KO": 99, "JA": 88, "JP": 88, "ZH": 90, "CN": 90, "CMN": 90}
+        mapping = {
+            "KR": 99,
+            "KO": 99,
+            "JA": 88,
+            "JP": 88,
+            "ZH": 90,
+            "CN": 90,
+            "CMN": 90,
+        }
         return mapping.get(language, 87)
 
     @classmethod
@@ -139,17 +164,23 @@ class ToTheGlory:
 
     @classmethod
     def _is_documentary(cls, meta: Meta) -> bool:
-        return "documentary" in cls._normalized_metadata_text(meta.genres) or "documentary" in cls._normalized_metadata_text(meta.keywords)
+        return "documentary" in cls._normalized_metadata_text(
+            meta.genres
+        ) or "documentary" in cls._normalized_metadata_text(meta.keywords)
 
     @classmethod
     def _is_animation(cls, meta: Meta) -> bool:
         if meta.sd != 0:
             return False
-        return "animation" in cls._normalized_metadata_text(meta.genres) or "animation" in cls._normalized_metadata_text(meta.keywords)
+        return "animation" in cls._normalized_metadata_text(
+            meta.genres
+        ) or "animation" in cls._normalized_metadata_text(meta.keywords)
 
     async def upload(self, meta: Meta) -> bool | None:
         common = Common(config=self.config)
-        await common.create_torrent_for_upload(meta, self.tracker, self.source_flag)
+        await common.create_torrent_for_upload(
+            meta, self.tracker, self.source_flag
+        )
         await self.edit_desc(meta)
         data, files, torrent_path = await self._upload_parts(meta)
         if meta.debug:
@@ -157,17 +188,36 @@ class ToTheGlory:
         response = await self._post_upload(meta, data, files)
         return await self._handle_upload_response(meta, response, torrent_path)
 
-    async def _upload_parts(self, meta: Meta) -> tuple[dict[str, Any], dict[str, tuple[str, bytes] | tuple[str, bytes, str]], str]:
+    async def _upload_parts(
+        self, meta: Meta
+    ) -> tuple[
+        dict[str, Any],
+        dict[str, tuple[str, bytes] | tuple[str, bytes, str]],
+        str,
+    ]:
         ttg_name = await self.get_name(meta)
-        description = await self._read_text(meta, f"[{self.tracker}]DESCRIPTION.txt")
-        torrent_path = str(release_temp_dir(meta.base_dir, meta.uuid) / f"[{self.tracker}].torrent")
+        description = await self._read_text(
+            meta, f"[{self.tracker}]DESCRIPTION.txt"
+        )
+        torrent_path = str(
+            release_temp_dir(meta.base_dir, meta.uuid)
+            / f"[{self.tracker}].torrent"
+        )
         torrent_bytes = await self._read_bytes(Path(torrent_path))
         media_info = await self._media_info_text(meta)
         files: dict[str, tuple[str, bytes] | tuple[str, bytes, str]] = {
-            "file": (f"{self._torrent_file_name(meta)}.torrent", torrent_bytes, "application/x-bittorrent"),
+            "file": (
+                f"{self._torrent_file_name(meta)}.torrent",
+                torrent_bytes,
+                "application/x-bittorrent",
+            ),
             "nfo": ("torrent.nfo", media_info.encode("utf-8")),
         }
-        return self._upload_data(meta, ttg_name, description), files, torrent_path
+        return (
+            self._upload_data(meta, ttg_name, description),
+            files,
+            torrent_path,
+        )
 
     async def _media_info_text(self, meta: Meta) -> str:
         filename = "BD_SUMMARY_00.txt" if meta.bdinfo else "MEDIAINFO.txt"
@@ -190,7 +240,9 @@ class ToTheGlory:
         source = meta.video if len(filelist) == 1 else meta.path
         return unidecode(Path(str(source)).name.replace(" ", "."))
 
-    def _upload_data(self, meta: Meta, name: str, description: str) -> dict[str, Any]:
+    def _upload_data(
+        self, meta: Meta, name: str, description: str
+    ) -> dict[str, Any]:
         data: dict[str, Any] = {
             "MAX_FILE_SIZE": "4000000",
             "team": "",
@@ -206,33 +258,69 @@ class ToTheGlory:
         return data
 
     def _anonymous_value(self, meta: Meta) -> str:
-        configured = bool(self.config["TRACKERS"][self.tracker].get("anon", False))
+        configured = bool(
+            self.config["TRACKERS"][self.tracker].get("anon", False)
+        )
         return "no" if meta.anon == 0 and not configured else "yes"
 
-    async def _debug_upload(self, meta: Meta, common: Common, data: dict[str, Any]) -> bool:
+    async def _debug_upload(
+        self, meta: Meta, common: Common, data: dict[str, Any]
+    ) -> bool:
         data["type"] = await self.get_type_id(meta)
         logger.debug(f"{self.base_url}/takeupload.php")
         logger.debug(Redaction.redact_private_info(data))
-        meta.tracker_status.setdefault(self.tracker, {})["status_message"] = "Debug mode enabled, not uploading."
-        await common.create_torrent_for_upload(meta, f"{self.tracker}_DEBUG", f"{self.tracker}_DEBUG", announce_url="https://fake.tracker")
+        meta.tracker_status.setdefault(self.tracker, {})["status_message"] = (
+            "Debug mode enabled, not uploading."
+        )
+        await common.create_torrent_for_upload(
+            meta,
+            f"{self.tracker}_DEBUG",
+            f"{self.tracker}_DEBUG",
+            announce_url="https://fake.tracker",
+        )
         return True
 
-    async def _post_upload(self, meta: Meta, data: dict[str, Any], files: dict[str, Any]) -> httpx.Response:
+    async def _post_upload(
+        self, meta: Meta, data: dict[str, Any], files: dict[str, Any]
+    ) -> httpx.Response:
         data["type"] = await self.get_type_id(meta)
-        cookiefile = Path(meta.base_dir) / "data" / "cookies" / f"{self.tracker}.json"
-        raw_cookies = self.cookie_validator._load_cookies_dict_secure(str(cookiefile.resolve()))  # type: ignore[reportPrivateUsage]
-        cookies = {name: str(value.get("value", "")) for name, value in raw_cookies.items()}
-        async with httpx.AsyncClient(cookies=cookies, follow_redirects=True, timeout=60.0) as client:
-            return await client.post(url=f"{self.base_url}/takeupload.php", data=data, files=files)
+        cookiefile = (
+            Path(meta.base_dir) / "data" / "cookies" / f"{self.tracker}.json"
+        )
+        raw_cookies = self.cookie_validator._load_cookies_dict_secure(
+            str(cookiefile.resolve())
+        )  # type: ignore[reportPrivateUsage]
+        cookies = {
+            name: str(value.get("value", ""))
+            for name, value in raw_cookies.items()
+        }
+        async with httpx.AsyncClient(
+            cookies=cookies, follow_redirects=True, timeout=60.0
+        ) as client:
+            return await client.post(
+                url=f"{self.base_url}/takeupload.php", data=data, files=files
+            )
 
-    async def _handle_upload_response(self, meta: Meta, response: httpx.Response, torrent_path: str) -> bool:
-        if not str(response.url).startswith(f"{self.base_url}/details.php?id="):
+    async def _handle_upload_response(
+        self, meta: Meta, response: httpx.Response, torrent_path: str
+    ) -> bool:
+        if not str(response.url).startswith(
+            f"{self.base_url}/details.php?id="
+        ):
             logger.info(f"{self.tracker}: \n\n")
-            raise UploadError(f"Upload to {self.tracker} Failed: result URL {response.url} ({response.status_code}) was not expected", "red")
+            raise UploadError(
+                f"Upload to {self.tracker} Failed: result URL {response.url} ({response.status_code}) was not expected",
+                "red",
+            )
         torrent_id = self._torrent_id_from_url(str(response.url))
         if torrent_id is None:
-            raise UploadError(f"Upload to {self.tracker} succeeded but torrent id missing from URL {response.url}", "red")
-        meta.tracker_status.setdefault(self.tracker, {})["status_message"] = str(response.url)
+            raise UploadError(
+                f"Upload to {self.tracker} succeeded but torrent id missing from URL {response.url}",
+                "red",
+            )
+        meta.tracker_status.setdefault(self.tracker, {})["status_message"] = (
+            str(response.url)
+        )
         await self.download_new_torrent(torrent_id, torrent_path)
         return True
 
@@ -244,7 +332,9 @@ class ToTheGlory:
     async def search_existing(self, meta: Meta) -> list[str]:
         cookiefile = self._cookie_path(meta, ".json")
         if not cookiefile.exists():
-            logger.info(f"{self.tracker}: [bold red]Cookie file not found: {self.tracker}.json")
+            logger.info(
+                f"{self.tracker}: [bold red]Cookie file not found: {self.tracker}.json"
+            )
             return []
         cookies = self._cookie_values(cookiefile)
         search_url = self._search_url(meta)
@@ -256,11 +346,15 @@ class ToTheGlory:
 
     @staticmethod
     def _cookie_path(meta: Meta, suffix: str) -> Path:
-        return (Path(meta.base_dir) / "data" / "cookies" / f"TOTHEGLORY{suffix}").resolve()
+        return (
+            Path(meta.base_dir) / "data" / "cookies" / f"TOTHEGLORY{suffix}"
+        ).resolve()
 
     def _cookie_values(self, cookiefile: Path) -> dict[str, str]:
         raw = self.cookie_validator._load_cookies_dict_secure(str(cookiefile))  # type: ignore[reportPrivateUsage]
-        return {name: str(value.get("value", "")) for name, value in raw.items()}
+        return {
+            name: str(value.get("value", "")) for name, value in raw.items()
+        }
 
     def _search_url(self, meta: Meta) -> str:
         imdb = f"imdb{meta.imdb}" if meta.imdb_id else ""
@@ -277,7 +371,11 @@ class ToTheGlory:
     @classmethod
     def _search_release_names(cls, html: str) -> list[str]:
         soup = BeautifulSoup(html, "html.parser")
-        return [name for link in soup.find_all("a", href=True) if (name := cls._release_name_from_link(link))]
+        return [
+            name
+            for link in soup.find_all("a", href=True)
+            if (name := cls._release_name_from_link(link))
+        ]
 
     @staticmethod
     def _release_name_from_link(link: Any) -> str:
@@ -293,10 +391,14 @@ class ToTheGlory:
             await self.login(str(cookiefile), meta)
         if await self.validate_cookies(meta, str(cookiefile)):
             return True
-        logger.error(f"{self.tracker}: [red]Failed to validate cookies. Please confirm that the site is up and your passkey is valid.")
+        logger.error(
+            f"{self.tracker}: [red]Failed to validate cookies. Please confirm that the site is up and your passkey is valid."
+        )
         return await self._maybe_recreate_session(meta, cookiefile)
 
-    async def _maybe_recreate_session(self, meta: Meta, cookiefile: Path) -> bool:
+    async def _maybe_recreate_session(
+        self, meta: Meta, cookiefile: Path
+    ) -> bool:
         if meta.unattended and not meta.unattended_confirm:
             return False
         recreate = cli_ui.ask_yes_no("Log in again and create new session?")
@@ -312,42 +414,71 @@ class ToTheGlory:
         if not path.exists():
             return False
         cookies = self._cookie_values(path)
-        async with httpx.AsyncClient(cookies=cookies, timeout=30.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(
+            cookies=cookies, timeout=30.0, follow_redirects=True
+        ) as client:
             response = await client.get(url=self.base_url)
         logger.debug(f"{self.tracker}: [cyan]Cookies:")
         logger.debug(response.url)
         return '<a href="/logout.php">Logout</a>' in response.text
 
     async def login(self, cookiefile: str, meta: Meta | None = None) -> None:
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-            response = await client.post(f"{self.base_url}/takelogin.php", data=self._login_data())
+        async with httpx.AsyncClient(
+            timeout=30.0, follow_redirects=True
+        ) as client:
+            response = await client.post(
+                f"{self.base_url}/takelogin.php", data=self._login_data()
+            )
             await asyncio.sleep(0.5)
-            response = await self._maybe_complete_two_factor(client, response, meta)
+            response = await self._maybe_complete_two_factor(
+                client, response, meta
+            )
             await self._save_login_result(client, response, cookiefile)
 
     def _login_data(self) -> dict[str, Any]:
-        return {"username": self.username, "password": self.password, "passid": self.passid, "passan": self.passan}
+        return {
+            "username": self.username,
+            "password": self.password,
+            "passid": self.passid,
+            "passan": self.passan,
+        }
 
-    async def _maybe_complete_two_factor(self, client: httpx.AsyncClient, response: httpx.Response, meta: Meta | None) -> httpx.Response:
+    async def _maybe_complete_two_factor(
+        self,
+        client: httpx.AsyncClient,
+        response: httpx.Response,
+        meta: Meta | None,
+    ) -> httpx.Response:
         if not str(response.url).endswith("2fa.php"):
             return response
         auth_token = self._required_authenticity_token(response.text)
         if self._skip_two_factor(meta):
-            logger.error(f"{self.tracker}: [red]Unattended mode: 2FA required. Skipping login.[/red]")
+            logger.error(
+                f"{self.tracker}: [red]Unattended mode: 2FA required. Skipping login.[/red]"
+            )
             return response
         return await self._submit_two_factor(client, auth_token)
 
     def _required_authenticity_token(self, html: str) -> str:
         token = self._authenticity_token(html)
         if not token:
-            raise UploadError(f"Missing authenticity token during {self.tracker} login", "red")
+            raise UploadError(
+                f"Missing authenticity token during {self.tracker} login",
+                "red",
+            )
         return token
 
     @staticmethod
     def _skip_two_factor(meta: Meta | None) -> bool:
-        return meta is not None and meta.unattended and not meta.unattended_confirm
+        return (
+            meta is not None
+            and meta.unattended
+            and not meta.unattended_confirm
+        )
 
-    async def _submit_two_factor(self, client: httpx.AsyncClient, auth_token: str) -> httpx.Response:
+    async def _submit_two_factor(
+        self, client: httpx.AsyncClient, auth_token: str
+    ) -> httpx.Response:
         data = await self._two_factor_data(auth_token)
         response = await client.post(f"{self.base_url}/take2fa.php", data=data)
         await asyncio.sleep(0.5)
@@ -355,20 +486,36 @@ class ToTheGlory:
 
     @staticmethod
     def _authenticity_token(html: str) -> str:
-        field = BeautifulSoup(html, "html.parser").find("input", {"name": "authenticity_token"})
+        field = BeautifulSoup(html, "html.parser").find(
+            "input", {"name": "authenticity_token"}
+        )
         if field is None:
             return ""
         value = field.get("value")
         return str(value) if value is not None else ""
 
     async def _two_factor_data(self, auth_token: str) -> dict[str, Any]:
-        otp = await prompt_in_thread(cli_ui.ask_string, f"{self.tracker} 2FA Code:", default="") or ""
+        otp = (
+            await prompt_in_thread(
+                cli_ui.ask_string, f"{self.tracker} 2FA Code:", default=""
+            )
+            or ""
+        )
         return {"otp": otp, "authenticity_token": auth_token, "uid": self.uid}
 
-    async def _save_login_result(self, client: httpx.AsyncClient, response: httpx.Response, cookiefile: str) -> None:
+    async def _save_login_result(
+        self,
+        client: httpx.AsyncClient,
+        response: httpx.Response,
+        cookiefile: str,
+    ) -> None:
         if str(response.url).endswith("my.php"):
-            logger.info(f"{self.tracker}: [green]Successfully logged into {self.tracker}")
-            self.cookie_validator._save_cookies_secure(client.cookies.jar, cookiefile)  # type: ignore[reportPrivateUsage]
+            logger.info(
+                f"{self.tracker}: [green]Successfully logged into {self.tracker}"
+            )
+            self.cookie_validator._save_cookies_secure(
+                client.cookies.jar, cookiefile
+            )  # type: ignore[reportPrivateUsage]
             return
         logger.info(f"{self.tracker}: [bold red]Something went wrong")
         await asyncio.sleep(1)
@@ -381,7 +528,9 @@ class ToTheGlory:
 
         parts = await self._description_preamble(meta)
         parts.extend(await self._technical_description(meta))
-        parts.append(self._formatted_base_description(base_description(meta), BBCODE()))
+        parts.append(
+            self._formatted_base_description(base_description(meta), BBCODE())
+        )
         parts.extend(self._screenshot_description(meta))
         parts.extend(self._signature_description())
         await self._write_description(meta, "".join(parts))
@@ -399,7 +548,11 @@ class ToTheGlory:
 
     @staticmethod
     def _web_source_note(meta: Meta) -> str:
-        if meta.type != "WEBDL" or not meta.service_longname or meta.description:
+        if (
+            meta.type != "WEBDL"
+            or not meta.service_longname
+            or meta.description
+        ):
             return ""
         return (
             f"[center][b][color=#ff00ff][size=3]{meta.service_longname}的无损REMUX片源，没有转码/"  # noqa: RUF001
@@ -410,13 +563,21 @@ class ToTheGlory:
     async def _technical_description(self, meta: Meta) -> list[str]:
         discs = self._disc_entries(meta)
         if discs:
-            return [text for disc in discs if (text := self._disc_description(disc))]
+            return [
+                text
+                for disc in discs
+                if (text := self._disc_description(disc))
+            ]
         media_info = await self._read_text(meta, "MEDIAINFO_CLEANPATH.txt")
         return [f"[quote=MediaInfo]{media_info}[/quote]", "\n"]
 
     @staticmethod
     def _disc_entries(meta: Meta) -> list[dict[str, Any]]:
-        return cast(list[dict[str, Any]], meta.discs) if isinstance(meta.discs, list) else []
+        return (
+            cast(list[dict[str, Any]], meta.discs)
+            if isinstance(meta.discs, list)
+            else []
+        )
 
     @staticmethod
     def _disc_description(disc: dict[str, Any]) -> str:
@@ -449,7 +610,11 @@ class ToTheGlory:
     def _screenshot_links(cls, meta: Meta) -> list[str]:
         images = meta.image_list if isinstance(meta.image_list, list) else []
         limit = cls._screen_limit(meta.screens, len(images))
-        return [link for image in images[:limit] if (link := cls._screenshot_link(image))]
+        return [
+            link
+            for image in images[:limit]
+            if (link := cls._screenshot_link(image))
+        ]
 
     @staticmethod
     def _screen_limit(value: Any, available: int) -> int:
@@ -472,7 +637,10 @@ class ToTheGlory:
         return [] if self.signature is None else ["\n\n", self.signature]
 
     async def _write_description(self, meta: Meta, description: str) -> None:
-        path = release_temp_dir(meta.base_dir, meta.uuid) / f"[{self.tracker}]DESCRIPTION.txt"
+        path = (
+            release_temp_dir(meta.base_dir, meta.uuid)
+            / f"[{self.tracker}]DESCRIPTION.txt"
+        )
         async with aiofiles.open(path, "w", encoding="utf-8") as handle:
             await handle.write(description)
 
@@ -484,5 +652,7 @@ class ToTheGlory:
             async with aiofiles.open(torrent_path, "wb") as tor:
                 await tor.write(r.content)
         else:
-            logger.info(f"{self.tracker}: [red]There was an issue downloading the new .torrent from {self.tracker}")
+            logger.info(
+                f"{self.tracker}: [red]There was an issue downloading the new .torrent from {self.tracker}"
+            )
             logger.info(r.text)

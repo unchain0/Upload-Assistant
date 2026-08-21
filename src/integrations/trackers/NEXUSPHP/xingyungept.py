@@ -58,7 +58,14 @@ class XingyungePT(NEXUSPHP):
                 "tv show",
                 "variety",
             ]
-            if any(re.search(rf"(^|,\s*){re.escape(keyword)}(\s*,|$)", genres, re.IGNORECASE) for keyword in game_show_keywords):
+            if any(
+                re.search(
+                    rf"(^|,\s*){re.escape(keyword)}(\s*,|$)",
+                    genres,
+                    re.IGNORECASE,
+                )
+                for keyword in game_show_keywords
+            ):
                 return tv_shows
             return tv_series
 
@@ -109,9 +116,19 @@ class XingyungePT(NEXUSPHP):
 
         codec = meta.video_codec.lower()
 
-        if "h265" in codec or "x265" in codec or "hevc" in codec or "265" in codec:
+        if (
+            "h265" in codec
+            or "x265" in codec
+            or "hevc" in codec
+            or "265" in codec
+        ):
             return h265
-        if "h264" in codec or "x264" in codec or "avc" in codec or "264" in codec:
+        if (
+            "h264" in codec
+            or "x264" in codec
+            or "avc" in codec
+            or "264" in codec
+        ):
             return h264
         if "vc1" in codec or "vc-1" in codec:
             return vc1
@@ -161,9 +178,17 @@ class XingyungePT(NEXUSPHP):
             return 8
         if "lpcm" in audio_codec or "pcm" in audio_codec:
             return 9
-        if "ddp" in audio_codec or "eac3" in audio_codec or "e-ac-3" in audio_codec:
+        if (
+            "ddp" in audio_codec
+            or "eac3" in audio_codec
+            or "e-ac-3" in audio_codec
+        ):
             return 11
-        if "dd" in audio_codec or "ac3" in audio_codec or "ac-3" in audio_codec:
+        if (
+            "dd" in audio_codec
+            or "ac3" in audio_codec
+            or "ac-3" in audio_codec
+        ):
             return 10
         if "ape" in audio_codec:
             return 13
@@ -243,5 +268,7 @@ class XingyungePT(NEXUSPHP):
         return ""
 
     async def get_anonymous_data(self, meta: Meta) -> dict[str, str]:
-        anonymous = not (meta.anon == 0 and not self.tracker_config.get("anon", False))
+        anonymous = not (
+            meta.anon == 0 and not self.tracker_config.get("anon", False)
+        )
         return {"anonymous": "1"} if anonymous else {}

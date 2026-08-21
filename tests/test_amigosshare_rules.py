@@ -28,7 +28,9 @@ def make_meta(**overrides):
         "base_dir": str(workspace_root),
         "uuid": "unit-test",
         "source_size": 1024 * 1024 * 1024,
-        "filelist": ["Filme.de.Exemplo.2024.1080p.WEB-DL.DDP.5.1.H.264-GRP.mkv"],
+        "filelist": [
+            "Filme.de.Exemplo.2024.1080p.WEB-DL.DDP.5.1.H.264-GRP.mkv"
+        ],
         "screens": 3,
         "is_disc": "",
         "tv_pack": False,
@@ -49,7 +51,9 @@ def make_meta(**overrides):
 
 
 def tracker() -> AmigosShare:
-    return AmigosShare({"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"AMIGOSSHARE": {}}})
+    return AmigosShare(
+        {"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"AMIGOSSHARE": {}}}
+    )
 
 
 async def run_checks(
@@ -62,14 +66,24 @@ async def run_checks(
     client = tracker()
     try:
         if guard_language_call:
-            client.common.check_language_requirements = AsyncMock(side_effect=AssertionError("language check should not run"))
+            client.common.check_language_requirements = AsyncMock(
+                side_effect=AssertionError("language check should not run")
+            )
         if guard_video_language_call:
-            client.common.check_portuguese_video_requirements = AsyncMock(side_effect=AssertionError("video language check should not run"))
+            client.common.check_portuguese_video_requirements = AsyncMock(
+                side_effect=AssertionError(
+                    "video language check should not run"
+                )
+            )
 
         if confirm_result is not None:
-            client.common.prompt_user_for_confirmation = AsyncMock(return_value=confirm_result)
+            client.common.prompt_user_for_confirmation = AsyncMock(
+                return_value=confirm_result
+            )
         else:
-            client.common.prompt_user_for_confirmation = AsyncMock(side_effect=AssertionError("confirmation should not run"))
+            client.common.prompt_user_for_confirmation = AsyncMock(
+                side_effect=AssertionError("confirmation should not run")
+            )
 
         return await client.get_additional_checks(meta)
     finally:
@@ -81,7 +95,15 @@ def test_movie_accepts_localized_ptbr_overview() -> None:
         audio_languages=["portuguese"],
         unattended=True,
         description="This is an English fallback description.",
-        tmdb_localized_data={"pt-BR": {"main": {"overview": ("Você não sabe onde estamos agora. Isso ficou muito bem e vamos continuar.")}}},
+        tmdb_localized_data={
+            "pt-BR": {
+                "main": {
+                    "overview": (
+                        "Você não sabe onde estamos agora. Isso ficou muito bem e vamos continuar."
+                    )
+                }
+            }
+        },
     )
 
     assert asyncio.run(run_checks(meta))
@@ -133,7 +155,9 @@ def test_movie_passes_with_accented_portuguese_external_subtitles():
     "subtitle_file",
     ["movie.pt-BR.forced.srt", "movie.portuguese.sdh.srt"],
 )
-def test_movie_passes_with_tagged_portuguese_external_subtitles(subtitle_file: str) -> None:
+def test_movie_passes_with_tagged_portuguese_external_subtitles(
+    subtitle_file: str,
+) -> None:
     meta = make_meta(subtitle_files=[subtitle_file])
 
     assert asyncio.run(run_checks(meta, guard_language_call=True))
@@ -158,7 +182,12 @@ def test_movie_unattended_confirmation_does_not_prompt():
 
 
 def test_book_and_game_bypass_video_language_validation():
-    book_meta = make_meta(category="BOOK", imdb_id=None, source_size=2 * 1024 * 1024, filelist=["Livro.pdf"])
+    book_meta = make_meta(
+        category="BOOK",
+        imdb_id=None,
+        source_size=2 * 1024 * 1024,
+        filelist=["Livro.pdf"],
+    )
     game_meta = make_meta(category="GAME", imdb_id=None, filelist=["Jogo.iso"])
 
     assert asyncio.run(run_checks(book_meta, guard_video_language_call=True))
@@ -166,8 +195,12 @@ def test_book_and_game_bypass_video_language_validation():
 
 
 @pytest.mark.parametrize("companion", ["release.nfo", "README.txt"])
-def test_amigosshare_rejects_standalone_crack_with_documentation(companion: str) -> None:
-    meta = make_meta(category="GAME", imdb_id=None, filelist=["Crack.exe", companion])
+def test_amigosshare_rejects_standalone_crack_with_documentation(
+    companion: str,
+) -> None:
+    meta = make_meta(
+        category="GAME", imdb_id=None, filelist=["Crack.exe", companion]
+    )
 
     assert not asyncio.run(run_checks(meta, guard_video_language_call=True))
 
@@ -193,22 +226,30 @@ def test_amigosshare_excludes_sample_files_from_tv_episode_count() -> None:
 
 
 @pytest.mark.asyncio
-async def test_amigosshare_request_search_handles_http_errors_but_propagates_parser_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_amigosshare_request_search_handles_http_errors_but_propagates_parser_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     client = tracker()
     meta = make_meta(search_requests=True)
     client.cookie_validator.load_session_cookies = AsyncMock(return_value=None)
     try:
         request = httpx.Request("GET", client.requests_url)
-        client.session.get = AsyncMock(side_effect=httpx.ConnectError("network failure", request=request))
+        client.session.get = AsyncMock(
+            side_effect=httpx.ConnectError("network failure", request=request)
+        )
         assert await client.get_requests(meta) == []
 
-        response = SimpleNamespace(text="<html></html>", raise_for_status=lambda: None)
+        response = SimpleNamespace(
+            text="<html></html>", raise_for_status=lambda: None
+        )
         client.session.get = AsyncMock(return_value=response)
 
         def fail_parse(*_args, **_kwargs):
             raise ValueError("parser failure")
 
-        monkeypatch.setattr("src.integrations.trackers.amigosshare.BeautifulSoup", fail_parse)
+        monkeypatch.setattr(
+            "src.integrations.trackers.amigosshare.BeautifulSoup", fail_parse
+        )
         with pytest.raises(ValueError, match="parser failure"):
             await client.get_requests(meta)
     finally:
@@ -217,14 +258,23 @@ async def test_amigosshare_request_search_handles_http_errors_but_propagates_par
 
 def test_book_blocks_non_portuguese_description_when_unattended():
     meta = make_meta(
-        category="BOOK", imdb_id=None, source_size=2 * 1024 * 1024, unattended=True, description="This release contains a Portuguese tracker release with title and files."
+        category="BOOK",
+        imdb_id=None,
+        source_size=2 * 1024 * 1024,
+        unattended=True,
+        description="This release contains a Portuguese tracker release with title and files.",
     )
 
     assert not asyncio.run(run_checks(meta))
 
 
 def test_book_allows_non_portuguese_description_with_confirmation():
-    meta = make_meta(category="BOOK", imdb_id=None, source_size=2 * 1024 * 1024, description="This release contains a Portuguese tracker release with title and files.")
+    meta = make_meta(
+        category="BOOK",
+        imdb_id=None,
+        source_size=2 * 1024 * 1024,
+        description="This release contains a Portuguese tracker release with title and files.",
+    )
 
     assert asyncio.run(run_checks(meta, confirm_result=True))
 
@@ -249,15 +299,27 @@ def test_book_allows_non_portuguese_description_in_confirmed_unattended_mode_wit
         "Le résumé présente une édition française avec des sous-titres.",
     ],
 )
-def test_book_does_not_treat_spanish_or_french_accents_as_portuguese(description: str):
-    meta = make_meta(category="BOOK", imdb_id=None, source_size=2 * 1024 * 1024, unattended=True, description=description)
+def test_book_does_not_treat_spanish_or_french_accents_as_portuguese(
+    description: str,
+):
+    meta = make_meta(
+        category="BOOK",
+        imdb_id=None,
+        source_size=2 * 1024 * 1024,
+        unattended=True,
+        description=description,
+    )
 
     assert not asyncio.run(run_checks(meta))
 
 
 def test_book_blocks_non_portuguese_description_in_unattended_without_confirmation():
     meta = make_meta(
-        category="BOOK", imdb_id=None, source_size=2 * 1024 * 1024, unattended=True, description="This release contains a Portuguese tracker release with title and files."
+        category="BOOK",
+        imdb_id=None,
+        source_size=2 * 1024 * 1024,
+        unattended=True,
+        description="This release contains a Portuguese tracker release with title and files.",
     )
 
     assert not asyncio.run(run_checks(meta))
@@ -270,46 +332,99 @@ def test_book_size_rejection_happens_before_other_checks():
 
 
 def test_imdb_rejection_happens_before_language_validation():
-    meta = make_meta(imdb_id=None, audio_languages=["portuguese"], subtitle_languages=["portuguese"])
+    meta = make_meta(
+        imdb_id=None,
+        audio_languages=["portuguese"],
+        subtitle_languages=["portuguese"],
+    )
 
     assert not asyncio.run(run_checks(meta, guard_language_call=True))
 
 
 def test_amigosshare_rejects_archives_except_for_games():
-    assert not asyncio.run(run_checks(make_meta(filelist=["release.rar"]), guard_language_call=True))
-    assert not asyncio.run(run_checks(make_meta(filelist=["Filme.2024.1080p.WEB-DL.H.264-GRP.mkv", "Filme.r02"]), guard_language_call=True))
-    assert asyncio.run(run_checks(make_meta(category="GAME", imdb_id=None, filelist=["Jogo.rar"]), guard_language_call=True))
+    assert not asyncio.run(
+        run_checks(
+            make_meta(filelist=["release.rar"]), guard_language_call=True
+        )
+    )
+    assert not asyncio.run(
+        run_checks(
+            make_meta(
+                filelist=["Filme.2024.1080p.WEB-DL.H.264-GRP.mkv", "Filme.r02"]
+            ),
+            guard_language_call=True,
+        )
+    )
+    assert asyncio.run(
+        run_checks(
+            make_meta(category="GAME", imdb_id=None, filelist=["Jogo.rar"]),
+            guard_language_call=True,
+        )
+    )
 
 
-@pytest.mark.parametrize("filename", ["baixado de outro tracker.url", "release.torrent", "www.outro-tracker.txt"])
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "baixado de outro tracker.url",
+        "release.torrent",
+        "www.outro-tracker.txt",
+    ],
+)
 def test_amigosshare_rejects_advertising_and_tracker_files(filename: str):
-    assert not asyncio.run(run_checks(make_meta(filelist=[filename]), guard_language_call=True))
+    assert not asyncio.run(
+        run_checks(make_meta(filelist=[filename]), guard_language_call=True)
+    )
 
 
 def test_amigosshare_rejects_prohibited_subjects_and_amateur_adult_content():
-    assert not asyncio.run(run_checks(make_meta(keywords=["zoofilia"]), guard_language_call=True))
-    assert not asyncio.run(run_checks(make_meta(name="Cena Amateur", adult_media=True), guard_language_call=True))
+    assert not asyncio.run(
+        run_checks(make_meta(keywords=["zoofilia"]), guard_language_call=True)
+    )
+    assert not asyncio.run(
+        run_checks(
+            make_meta(name="Cena Amateur", adult_media=True),
+            guard_language_call=True,
+        )
+    )
 
 
 def test_amigosshare_enforces_adult_size_and_screenshot_per_video():
-    assert not asyncio.run(run_checks(make_meta(adult_media=True, source_size=100 * 1024 * 1024 - 1), guard_language_call=True))
+    assert not asyncio.run(
+        run_checks(
+            make_meta(adult_media=True, source_size=100 * 1024 * 1024 - 1),
+            guard_language_call=True,
+        )
+    )
     files = [
         "Cena.2024.1080p.WEB-DL.H.264-GRP.mkv",
         "Cena.2.2024.1080p.WEB-DL.H.264-GRP.mkv",
     ]
-    assert not asyncio.run(run_checks(make_meta(adult_media=True, filelist=files, screens=1), guard_language_call=True))
+    assert not asyncio.run(
+        run_checks(
+            make_meta(adult_media=True, filelist=files, screens=1),
+            guard_language_call=True,
+        )
+    )
 
 
 @pytest.mark.parametrize("label", ["CD-Key", "Serial Key", "Serial Number"])
 def test_amigosshare_rejects_serial_keys_in_description(label: str):
-    meta = make_meta(description=f"Descrição em português. {label}: ABCD-EFGH-IJKL")
+    meta = make_meta(
+        description=f"Descrição em português. {label}: ABCD-EFGH-IJKL"
+    )
 
     assert not asyncio.run(run_checks(meta, guard_language_call=True))
 
 
 def test_amigosshare_rejects_standalone_game_cracks_and_unreleased_builds():
     crack = make_meta(category="GAME", imdb_id=None, filelist=["Crack.exe"])
-    beta = make_meta(category="GAME", imdb_id=None, filelist=["Jogo.iso"], release_type="beta")
+    beta = make_meta(
+        category="GAME",
+        imdb_id=None,
+        filelist=["Jogo.iso"],
+        release_type="beta",
+    )
 
     assert not asyncio.run(run_checks(crack, guard_language_call=True))
     assert not asyncio.run(run_checks(beta, guard_language_call=True))
@@ -317,8 +432,14 @@ def test_amigosshare_rejects_standalone_game_cracks_and_unreleased_builds():
 
 def test_amigosshare_rejects_invalid_video_filename_and_accepts_nogroup():
     invalid = make_meta(audio_languages=["portuguese"], filelist=["Filme.mkv"])
-    missing_group = make_meta(audio_languages=["portuguese"], filelist=["Filme.2024.1080p.WEB-DL.H.264.mkv"])
-    valid = make_meta(audio_languages=["portuguese"], filelist=["Filme.2024.1080p.BluRay.H.264-NoGroup.mkv"])
+    missing_group = make_meta(
+        audio_languages=["portuguese"],
+        filelist=["Filme.2024.1080p.WEB-DL.H.264.mkv"],
+    )
+    valid = make_meta(
+        audio_languages=["portuguese"],
+        filelist=["Filme.2024.1080p.BluRay.H.264-NoGroup.mkv"],
+    )
 
     assert not asyncio.run(run_checks(invalid, guard_language_call=True))
     assert not asyncio.run(run_checks(missing_group, guard_language_call=True))
@@ -327,8 +448,18 @@ def test_amigosshare_rejects_invalid_video_filename_and_accepts_nogroup():
 
 def test_amigosshare_allows_single_episode_only_for_ongoing_series():
     episode = "Serie.S01E01.1080p.WEB-DL.DDP.5.1.H.264-GRP.mkv"
-    ongoing = make_meta(category="TV", filelist=[episode], imdb_info={"status": "Returning Series"}, audio_languages=["portuguese"])
-    ended = make_meta(category="TV", filelist=[episode], imdb_info={"status": "Ended"}, audio_languages=["portuguese"])
+    ongoing = make_meta(
+        category="TV",
+        filelist=[episode],
+        imdb_info={"status": "Returning Series"},
+        audio_languages=["portuguese"],
+    )
+    ended = make_meta(
+        category="TV",
+        filelist=[episode],
+        imdb_info={"status": "Ended"},
+        audio_languages=["portuguese"],
+    )
 
     assert asyncio.run(run_checks(ongoing))
     assert not asyncio.run(run_checks(ended, guard_language_call=True))
@@ -339,8 +470,20 @@ def test_amigosshare_allows_season_pack_only_after_series_ends():
         "Serie.S01E01.1080p.WEB-DL.DDP.5.1.H.264-GRP.mkv",
         "Serie.S01E02.1080p.WEB-DL.DDP.5.1.H.264-GRP.mkv",
     ]
-    ended = make_meta(category="TV", tv_pack=True, filelist=files, imdb_info={"status": "Ended"}, audio_languages=["portuguese"])
-    ongoing = make_meta(category="TV", tv_pack=True, filelist=files, imdb_info={"status": "Returning Series"}, unattended=True)
+    ended = make_meta(
+        category="TV",
+        tv_pack=True,
+        filelist=files,
+        imdb_info={"status": "Ended"},
+        audio_languages=["portuguese"],
+    )
+    ongoing = make_meta(
+        category="TV",
+        tv_pack=True,
+        filelist=files,
+        imdb_info={"status": "Returning Series"},
+        unattended=True,
+    )
 
     assert asyncio.run(run_checks(ended))
     assert not asyncio.run(run_checks(ongoing, guard_language_call=True))
@@ -353,14 +496,36 @@ def test_amigosshare_rejects_multi_episode_non_pack_and_standalone_extras():
     ]
     extras = ["Serie.S01E01.Extras.1080p.WEB-DL.H.264-GRP.mkv"]
 
-    assert not asyncio.run(run_checks(make_meta(category="TV", filelist=files, imdb_info={"status": "Returning Series"}), guard_language_call=True))
-    assert not asyncio.run(run_checks(make_meta(category="TV", filelist=extras, imdb_info={"status": "Returning Series"}), guard_language_call=True))
+    assert not asyncio.run(
+        run_checks(
+            make_meta(
+                category="TV",
+                filelist=files,
+                imdb_info={"status": "Returning Series"},
+            ),
+            guard_language_call=True,
+        )
+    )
+    assert not asyncio.run(
+        run_checks(
+            make_meta(
+                category="TV",
+                filelist=extras,
+                imdb_info={"status": "Returning Series"},
+            ),
+            guard_language_call=True,
+        )
+    )
 
 
 def test_amigosshare_rejects_tv_upload_without_episode_markers():
     files = ["Serie.Special.2024.1080p.WEB-DL.H.264-GRP.mkv"]
 
-    assert not asyncio.run(run_checks(make_meta(category="TV", filelist=files), guard_language_call=True))
+    assert not asyncio.run(
+        run_checks(
+            make_meta(category="TV", filelist=files), guard_language_call=True
+        )
+    )
 
 
 def test_amigosshare_small_general_torrent_requires_confirmation():
@@ -374,7 +539,17 @@ def test_amigosshare_small_general_torrent_requires_confirmation():
 def test_amigosshare_game_name_follows_tracker_display_pattern():
     client = tracker()
     try:
-        assert client.get_game_name(SimpleNamespace(title="Dead Island: Retro Revenge", tag="-CODEX")) == "Dead Island: Retro Revenge [CODEX]"
-        assert client.get_game_name(SimpleNamespace(title="Jogo Antigo", tag="")) == "Jogo Antigo [NoGroup]"
+        assert (
+            client.get_game_name(
+                SimpleNamespace(
+                    title="Dead Island: Retro Revenge", tag="-CODEX"
+                )
+            )
+            == "Dead Island: Retro Revenge [CODEX]"
+        )
+        assert (
+            client.get_game_name(SimpleNamespace(title="Jogo Antigo", tag=""))
+            == "Jogo Antigo [NoGroup]"
+        )
     finally:
         asyncio.run(client.session.aclose())

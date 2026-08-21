@@ -15,7 +15,13 @@ import src.services.book_preparation as book_prep
 from src.domain_models.processing import ItemProcessingError
 from src.domain_models.release import Meta
 from src.integrations.external_apis.myanonamouse import MyAnonamouseManager
-from src.integrations.media.book_extractors import extract_epub_metadata, extract_isbn_from_pdf, extract_pdf_page_count, get_epubmeta_output, validate_isbn_checksum
+from src.integrations.media.book_extractors import (
+    extract_epub_metadata,
+    extract_isbn_from_pdf,
+    extract_pdf_page_count,
+    get_epubmeta_output,
+    validate_isbn_checksum,
+)
 from src.services.book_preparation import (
     _epub_content_identifiers,
     _extract_asin_identifier,
@@ -27,9 +33,13 @@ from src.services.book_preparation import (
 from src.services.preparation_helpers import detect_disc_and_category
 
 
-def test_epub_identifier_scan_rejects_extreme_compression_ratio(tmp_path: Path) -> None:
+def test_epub_identifier_scan_rejects_extreme_compression_ratio(
+    tmp_path: Path,
+) -> None:
     epub = tmp_path / "hostile.epub"
-    with zipfile.ZipFile(epub, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+    with zipfile.ZipFile(
+        epub, "w", compression=zipfile.ZIP_DEFLATED
+    ) as archive:
         archive.writestr(
             "META-INF/container.xml",
             '<?xml version="1.0"?><container><rootfiles><rootfile full-path="OEBPS/content.opf"/></rootfiles></container>',
@@ -75,20 +85,59 @@ def test_mam_title_cleanup_removes_book_extension() -> None:
     assert metadata["title"] == "Simon Sinek"
 
 
-@pytest.mark.parametrize("extension", [".azw", ".azw3", ".fb2", ".html", ".chm", ".djvu", ".doc", ".docx", ".kfx", ".lit", ".pdb", ".txt", ".rtf"])
+@pytest.mark.parametrize(
+    "extension",
+    [
+        ".azw",
+        ".azw3",
+        ".fb2",
+        ".html",
+        ".chm",
+        ".djvu",
+        ".doc",
+        ".docx",
+        ".kfx",
+        ".lit",
+        ".pdb",
+        ".txt",
+        ".rtf",
+    ],
+)
 def test_azw_files_are_detected_as_books(extension, tmp_path):
     book = tmp_path / f"example{extension}"
     book.write_bytes(b"Kindle ebook")
     meta = Meta(path=str(book))
-    prep = SimpleNamespace(disc_info_manager=SimpleNamespace(get_disc=AsyncMock(return_value=("", str(book), {}, []))))
+    prep = SimpleNamespace(
+        disc_info_manager=SimpleNamespace(
+            get_disc=AsyncMock(return_value=("", str(book), {}, []))
+        )
+    )
 
     asyncio.run(detect_disc_and_category(prep, meta))
 
     assert meta.category == "BOOK"
 
 
-@pytest.mark.parametrize("extension", [".azw", ".azw3", ".fb2", ".html", ".chm", ".djvu", ".doc", ".docx", ".kfx", ".lit", ".pdb", ".rtf"])
-def test_azw_files_are_included_when_resolving_book_directories(extension, tmp_path):
+@pytest.mark.parametrize(
+    "extension",
+    [
+        ".azw",
+        ".azw3",
+        ".fb2",
+        ".html",
+        ".chm",
+        ".djvu",
+        ".doc",
+        ".docx",
+        ".kfx",
+        ".lit",
+        ".pdb",
+        ".rtf",
+    ],
+)
+def test_azw_files_are_included_when_resolving_book_directories(
+    extension, tmp_path
+):
     book = tmp_path / f"example{extension}"
     book.write_bytes(b"Kindle ebook")
     meta = Meta()
@@ -135,11 +184,15 @@ def test_text_sidecars_are_excluded_when_a_richer_book_format_exists(tmp_path):
         "A very small tut for RealMedia.txt",
     ],
 )
-def test_standalone_plain_text_book_is_rejected(filename: str, tmp_path: Path) -> None:
+def test_standalone_plain_text_book_is_rejected(
+    filename: str, tmp_path: Path
+) -> None:
     document = tmp_path / filename
     document.write_text("plain text", encoding="utf-8")
 
-    with pytest.raises(ItemProcessingError, match="Plain-text TXT files are not supported"):
+    with pytest.raises(
+        ItemProcessingError, match="Plain-text TXT files are not supported"
+    ):
         resolve_book_filelist(Meta(), str(document))
 
 
@@ -147,7 +200,9 @@ def test_plain_text_only_book_directory_is_rejected(tmp_path: Path) -> None:
     (tmp_path / "First.txt").write_text("first", encoding="utf-8")
     (tmp_path / "Second.txt").write_text("second", encoding="utf-8")
 
-    with pytest.raises(ItemProcessingError, match="Plain-text TXT files are not supported"):
+    with pytest.raises(
+        ItemProcessingError, match="Plain-text TXT files are not supported"
+    ):
         resolve_book_filelist(Meta(), str(tmp_path))
 
 
@@ -155,7 +210,10 @@ def test_multiple_ebooks_in_one_path_are_rejected(tmp_path) -> None:
     (tmp_path / "Steve Jobs.pdf").write_bytes(b"pdf")
     (tmp_path / "Einstein.pdf").write_bytes(b"pdf")
 
-    with pytest.raises(ItemProcessingError, match="Upload each ebook file and format separately"):
+    with pytest.raises(
+        ItemProcessingError,
+        match="Upload each ebook file and format separately",
+    ):
         resolve_book_filelist(Meta(), str(tmp_path))
 
 
@@ -164,7 +222,10 @@ def test_same_ebook_in_multiple_formats_is_rejected(tmp_path) -> None:
     for extension in (".epub", ".pdf"):
         (tmp_path / f"{stem}{extension}").write_bytes(extension.encode())
 
-    with pytest.raises(ItemProcessingError, match="Upload each ebook file and format separately"):
+    with pytest.raises(
+        ItemProcessingError,
+        match="Upload each ebook file and format separately",
+    ):
         resolve_book_filelist(Meta(), str(tmp_path))
 
 
@@ -172,54 +233,91 @@ def test_mixed_ebook_and_audiobook_release_is_rejected(tmp_path) -> None:
     (tmp_path / "Everything Is F_cked.epub").write_bytes(b"ebook")
     (tmp_path / "Everything Is F_cked.mp3").write_bytes(b"audio")
 
-    with pytest.raises(ItemProcessingError, match="Upload each media type separately"):
+    with pytest.raises(
+        ItemProcessingError, match="Upload each media type separately"
+    ):
         resolve_book_filelist(Meta(), str(tmp_path))
 
 
 def test_book_identity_falls_back_to_directory_name(tmp_path) -> None:
-    release = tmp_path / "Ian Stewart - How to Cut a Cake_ And Other Mathematical Conundrums"
+    release = (
+        tmp_path
+        / "Ian Stewart - How to Cut a Cake_ And Other Mathematical Conundrums"
+    )
     release.mkdir()
 
-    assert book_identity_from_path(str(release)) == ("Ian Stewart", "How to Cut a Cake: And Other Mathematical Conundrums")
+    assert book_identity_from_path(str(release)) == (
+        "Ian Stewart",
+        "How to Cut a Cake: And Other Mathematical Conundrums",
+    )
 
 
-def test_book_identity_detects_title_before_author_and_removes_extension(tmp_path) -> None:
+def test_book_identity_detects_title_before_author_and_removes_extension(
+    tmp_path,
+) -> None:
     release = tmp_path / "Comece pelo porque - Simon Sinek.pdf"
     release.touch()
 
-    assert book_identity_from_path(str(release)) == ("Simon Sinek", "Comece pelo porque")
+    assert book_identity_from_path(str(release)) == (
+        "Simon Sinek",
+        "Comece pelo porque",
+    )
 
 
-def test_book_identity_keeps_title_before_author_for_article_title(tmp_path: Path) -> None:
+def test_book_identity_keeps_title_before_author_for_article_title(
+    tmp_path: Path,
+) -> None:
     release = tmp_path / "The Psychopath Test - Jon Ronson.m4b"
     release.touch()
 
-    assert book_identity_from_path(str(release)) == ("Jon Ronson", "The Psychopath Test")
+    assert book_identity_from_path(str(release)) == (
+        "Jon Ronson",
+        "The Psychopath Test",
+    )
 
 
-def test_book_identity_accepts_title_before_mononym_author(tmp_path: Path) -> None:
+def test_book_identity_accepts_title_before_mononym_author(
+    tmp_path: Path,
+) -> None:
     release = tmp_path / "Comece pelo porque - Seneca.epub"
     release.touch()
 
-    assert book_identity_from_path(str(release)) == ("Seneca", "Comece pelo porque")
+    assert book_identity_from_path(str(release)) == (
+        "Seneca",
+        "Comece pelo porque",
+    )
 
 
-def test_book_identity_does_not_treat_abbreviated_title_as_mononym_author(tmp_path: Path) -> None:
+def test_book_identity_does_not_treat_abbreviated_title_as_mononym_author(
+    tmp_path: Path,
+) -> None:
     release = tmp_path / "PF 2e - Malevolence.pdf"
     release.touch()
 
     assert book_identity_from_path(str(release)) == ("", "PF 2e - Malevolence")
 
 
-def test_book_identity_removes_retail_marker_from_title(tmp_path: Path) -> None:
+def test_book_identity_removes_retail_marker_from_title(
+    tmp_path: Path,
+) -> None:
     release = tmp_path / "Alli Dyer - Night Songs (retail).epub"
     release.touch()
 
-    assert book_identity_from_path(str(release)) == ("Alli Dyer", "Night Songs")
+    assert book_identity_from_path(str(release)) == (
+        "Alli Dyer",
+        "Night Songs",
+    )
 
 
-def test_book_metadata_prefers_descriptive_filename_title_over_generic_provider_title() -> None:
-    assert book_prep._prefer_descriptive_source_title("A Novel", "Alli Dyer", "Night Songs") == "Night Songs"
+def test_book_metadata_prefers_descriptive_filename_title_over_generic_provider_title() -> (
+    None
+):
+    assert (
+        book_prep._prefer_descriptive_source_title(
+            "A Novel", "Alli Dyer", "Night Songs"
+        )
+        == "Night Songs"
+    )
 
 
 @pytest.mark.parametrize(
@@ -230,24 +328,41 @@ def test_book_metadata_prefers_one_word_filename_title_over_generic_provider_tit
     filename_title: str,
     expected_title: str,
 ) -> None:
-    assert book_prep._prefer_descriptive_source_title("A Novel", "George Orwell", filename_title) == expected_title
+    assert (
+        book_prep._prefer_descriptive_source_title(
+            "A Novel", "George Orwell", filename_title
+        )
+        == expected_title
+    )
 
 
-def test_book_metadata_prefers_full_filename_author_over_surname_only_metadata() -> None:
-    assert book_prep._prefer_descriptive_source_author("Levine", "Aliza Levine") == "Aliza Levine"
+def test_book_metadata_prefers_full_filename_author_over_surname_only_metadata() -> (
+    None
+):
+    assert (
+        book_prep._prefer_descriptive_source_author("Levine", "Aliza Levine")
+        == "Aliza Levine"
+    )
 
 
 def test_book_metadata_extracts_publisher_label_from_overview() -> None:
     overview = "<p><strong>Publisher </strong>\u200f : \u200e Stationery Office Books<br>Edition: 2015</p>"
 
-    assert book_prep._publisher_from_overview(overview) == "Stationery Office Books"
+    assert (
+        book_prep._publisher_from_overview(overview)
+        == "Stationery Office Books"
+    )
 
 
 @pytest.mark.asyncio
-async def test_book_cover_download_tries_alternate_mam_extensions(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_book_cover_download_tries_alternate_mam_extensions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from PIL import Image
 
-    from src.integrations.media.screenshot_capture import download_artwork_from_meta
+    from src.integrations.media.screenshot_capture import (
+        download_artwork_from_meta,
+    )
 
     cover_bytes = io.BytesIO()
     Image.new("RGB", (32, 48), "red").save(cover_bytes, format="PNG")
@@ -270,25 +385,45 @@ async def test_book_cover_download_tries_alternate_mam_extensions(tmp_path: Path
             return None
 
         async def get(self, url: str, **_kwargs: object) -> Response:
-            return Response(200, cover_bytes.getvalue()) if url.endswith(".png") else Response(404)
+            return (
+                Response(200, cover_bytes.getvalue())
+                if url.endswith(".png")
+                else Response(404)
+            )
 
-    monkeypatch.setattr("src.integrations.media.screenshot_capture.is_public_http_url", lambda _url: True)
+    monkeypatch.setattr(
+        "src.integrations.media.screenshot_capture.is_public_http_url",
+        lambda _url: True,
+    )
     monkeypatch.setattr("httpx.AsyncClient", lambda **_kwargs: Client())
-    meta = Meta(artwork_url="https://cdn.myanonamouse.net/t/p/large/1263040.jpeg")
+    meta = Meta(
+        artwork_url="https://cdn.myanonamouse.net/t/p/large/1263040.jpeg"
+    )
     artwork_path = tmp_path / "cover.png"
 
-    assert await download_artwork_from_meta(meta, str(artwork_path), force=True)
+    assert await download_artwork_from_meta(
+        meta, str(artwork_path), force=True
+    )
     assert artwork_path.is_file()
 
 
-def test_book_identity_does_not_infer_author_from_title_like_audiobook_name(tmp_path: Path) -> None:
-    release = tmp_path / "Dark Adventure Radio Theatre - Masks of Nyarlathotep.m4b"
+def test_book_identity_does_not_infer_author_from_title_like_audiobook_name(
+    tmp_path: Path,
+) -> None:
+    release = (
+        tmp_path / "Dark Adventure Radio Theatre - Masks of Nyarlathotep.m4b"
+    )
     release.touch()
 
-    assert book_identity_from_path(str(release)) == ("", "Dark Adventure Radio Theatre - Masks of Nyarlathotep")
+    assert book_identity_from_path(str(release)) == (
+        "",
+        "Dark Adventure Radio Theatre - Masks of Nyarlathotep",
+    )
 
 
-def test_book_identity_accepts_title_before_author_without_false_conflict(tmp_path: Path) -> None:
+def test_book_identity_accepts_title_before_author_without_false_conflict(
+    tmp_path: Path,
+) -> None:
     release = tmp_path / "The Psychopath Test - Jon Ronson.m4b"
     release.touch()
     meta = Meta(author="Jon Ronson", title="The Psychopath Test")
@@ -301,20 +436,31 @@ def test_mediainfo_asin_is_not_treated_as_invalid_isbn() -> None:
     assert _extract_asin_identifier("ISBN:9781394289615") == ""
 
 
-def test_book_identity_does_not_treat_series_title_as_author_before_volume(tmp_path) -> None:
+def test_book_identity_does_not_treat_series_title_as_author_before_volume(
+    tmp_path,
+) -> None:
     release = tmp_path / "Infinite Dendrogram - Volume 17.epub"
     release.touch()
 
-    assert book_identity_from_path(str(release)) == ("", "Infinite Dendrogram - Volume 17")
+    assert book_identity_from_path(str(release)) == (
+        "",
+        "Infinite Dendrogram - Volume 17",
+    )
 
 
 @pytest.mark.parametrize("author_first", [True, False])
-def test_epub_creator_roles_select_author_regardless_of_element_order(tmp_path, author_first: bool) -> None:
+def test_epub_creator_roles_select_author_regardless_of_element_order(
+    tmp_path, author_first: bool
+) -> None:
     creators = {
         "author": '<dc:creator id="creator01">Sakon Kaidou</dc:creator>',
         "editor": '<dc:creator id="creator04">Sarah Tilson</dc:creator>',
     }
-    ordered_creators = [creators["author"], creators["editor"]] if author_first else [creators["editor"], creators["author"]]
+    ordered_creators = (
+        [creators["author"], creators["editor"]]
+        if author_first
+        else [creators["editor"], creators["author"]]
+    )
     opf = f"""<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" xmlns:dc="http://purl.org/dc/elements/1.1/" version="3.0">
   <metadata>
@@ -335,7 +481,9 @@ def test_epub_creator_roles_select_author_regardless_of_element_order(tmp_path, 
     assert extract_epub_metadata(str(epub))["author"] == "Sakon Kaidou"
 
 
-def test_epub_modification_date_is_not_used_as_release_year(tmp_path: Path) -> None:
+def test_epub_modification_date_is_not_used_as_release_year(
+    tmp_path: Path,
+) -> None:
     opf = """<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf"
          xmlns:dc="http://purl.org/dc/elements/1.1/"
@@ -356,17 +504,31 @@ def test_epub_modification_date_is_not_used_as_release_year(tmp_path: Path) -> N
     assert "year" not in extract_epub_metadata(str(epub))
 
 
-def test_book_identity_rejects_unrelated_enriched_title_for_same_author(tmp_path) -> None:
-    release = tmp_path / "Gary John Bishop - Wise as Fu_k; Simple Truths to Guide You Through the Sh_tstorms of Life"
-    meta = Meta(author="Gary John Bishop", title="Stop Doing That Sh*t: End Self-Sabotage and Demand Your Life Back")
+def test_book_identity_rejects_unrelated_enriched_title_for_same_author(
+    tmp_path,
+) -> None:
+    release = (
+        tmp_path
+        / "Gary John Bishop - Wise as Fu_k; Simple Truths to Guide You Through the Sh_tstorms of Life"
+    )
+    meta = Meta(
+        author="Gary John Bishop",
+        title="Stop Doing That Sh*t: End Self-Sabotage and Demand Your Life Back",
+    )
 
     assert book_identity_conflict(meta, str(release)) is not None
     assert book_identity_from_path(str(release))[1].startswith("Wise as Fu_k;")
 
 
 def test_book_identity_accepts_matching_enriched_title(tmp_path) -> None:
-    release = tmp_path / "Jordan B. Peterson - 12 Rules for Life_ An Antidote to Chaos"
-    meta = Meta(author="Jordan B. Peterson", title="12 Rules for Life: An Antidote to Chaos")
+    release = (
+        tmp_path
+        / "Jordan B. Peterson - 12 Rules for Life_ An Antidote to Chaos"
+    )
+    meta = Meta(
+        author="Jordan B. Peterson",
+        title="12 Rules for Life: An Antidote to Chaos",
+    )
 
     assert book_identity_conflict(meta, str(release)) is None
 
@@ -375,17 +537,25 @@ def test_book_identity_rejects_conflicting_author(tmp_path) -> None:
     release = tmp_path / "Brian Kernighan - The C Programming Language"
     meta = Meta(author="Dennis Ritchie", title="The C Programming Language")
 
-    assert book_identity_conflict(meta, str(release)) == "Book metadata author 'Dennis Ritchie' conflicts with source author 'Brian Kernighan'"
+    assert (
+        book_identity_conflict(meta, str(release))
+        == "Book metadata author 'Dennis Ritchie' conflicts with source author 'Brian Kernighan'"
+    )
 
 
 @pytest.mark.parametrize(
     ("source_author", "metadata_author"),
     [
         ("David D Friedman", "Friedman, David D."),
-        ("Cole Knaflic, Mike Cisneros, Alex Velez", "Cole Nussbaumer Knaflic, Mike Cisneros, Alex Velez"),
+        (
+            "Cole Knaflic, Mike Cisneros, Alex Velez",
+            "Cole Nussbaumer Knaflic, Mike Cisneros, Alex Velez",
+        ),
     ],
 )
-def test_book_identity_accepts_equivalent_author_variants(tmp_path, source_author: str, metadata_author: str) -> None:
+def test_book_identity_accepts_equivalent_author_variants(
+    tmp_path, source_author: str, metadata_author: str
+) -> None:
     release = tmp_path / f"{source_author} - Matching Book"
     meta = Meta(author=metadata_author, title="Matching Book")
 
@@ -403,36 +573,63 @@ def test_unattended_audiobook_requires_complete_edition_metadata() -> None:
         asin="invalid",
     )
 
-    assert missing_book_fields(meta) == ["narrator", "publisher", "isbn_or_asin"]
+    assert missing_book_fields(meta) == [
+        "narrator",
+        "publisher",
+        "isbn_or_asin",
+    ]
 
 
 @pytest.mark.asyncio
-async def test_m4b_cover_fallback_ignores_malformed_chapter_title(tmp_path, monkeypatch) -> None:
+async def test_m4b_cover_fallback_ignores_malformed_chapter_title(
+    tmp_path, monkeypatch
+) -> None:
     import mutagen
     import mutagen.mp4
 
-    from src.integrations.media.screenshot_capture import extract_embedded_cover_from_audiobook
+    from src.integrations.media.screenshot_capture import (
+        extract_embedded_cover_from_audiobook,
+    )
 
     audiobook = tmp_path / "book.m4b"
     artwork = tmp_path / "cover.jpg"
     audiobook.write_bytes(b"m4b")
-    monkeypatch.setattr(mutagen, "File", lambda _path: (_ for _ in ()).throw(ValueError("chapter 0 title: invalid UTF-8")))
+    monkeypatch.setattr(
+        mutagen,
+        "File",
+        lambda _path: (_ for _ in ()).throw(
+            ValueError("chapter 0 title: invalid UTF-8")
+        ),
+    )
     monkeypatch.setattr(mutagen.mp4, "Atoms", lambda _fileobj: object())
-    monkeypatch.setattr(mutagen.mp4, "MP4Tags", lambda _atoms, _fileobj: {"covr": [b"cover-bytes"]})
+    monkeypatch.setattr(
+        mutagen.mp4,
+        "MP4Tags",
+        lambda _atoms, _fileobj: {"covr": [b"cover-bytes"]},
+    )
 
-    result = await extract_embedded_cover_from_audiobook(Meta(filelist=[str(audiobook)]), str(artwork))
+    result = await extract_embedded_cover_from_audiobook(
+        Meta(filelist=[str(audiobook)]), str(artwork)
+    )
 
     assert result is True
     assert artwork.read_bytes() == b"cover-bytes"
 
 
 def test_scene_tv_rar_is_not_auto_detected_as_game(tmp_path):
-    release = tmp_path / "Il.Etait.Une.Fois.Dans.Le.Trouble.S07E12.FRENCH.1080p.WEB.H264-BAWLS"
+    release = (
+        tmp_path
+        / "Il.Etait.Une.Fois.Dans.Le.Trouble.S07E12.FRENCH.1080p.WEB.H264-BAWLS"
+    )
     release.mkdir()
     (release / "release.rar").write_bytes(b"archive")
     (release / "release.nfo").write_text("TV release", encoding="utf-8")
     meta = Meta(path=str(release))
-    prep = SimpleNamespace(disc_info_manager=SimpleNamespace(get_disc=AsyncMock(return_value=("", str(release), {}, []))))
+    prep = SimpleNamespace(
+        disc_info_manager=SimpleNamespace(
+            get_disc=AsyncMock(return_value=("", str(release), {}, []))
+        )
+    )
 
     asyncio.run(detect_disc_and_category(prep, meta))
 
@@ -444,7 +641,11 @@ def test_scene_game_iso_is_still_auto_detected_as_game(tmp_path):
     release.mkdir()
     (release / "tenoke-cellar.keeper.iso").write_bytes(b"disc")
     meta = Meta(path=str(release))
-    prep = SimpleNamespace(disc_info_manager=SimpleNamespace(get_disc=AsyncMock(return_value=("", str(release), {}, []))))
+    prep = SimpleNamespace(
+        disc_info_manager=SimpleNamespace(
+            get_disc=AsyncMock(return_value=("", str(release), {}, []))
+        )
+    )
 
     asyncio.run(detect_disc_and_category(prep, meta))
 
@@ -456,9 +657,15 @@ def test_scene_game_iso_takes_precedence_over_bundled_flac(tmp_path):
     release.mkdir()
     (release / "tenoke-cyberpunk.sfx.iso").write_bytes(b"disc")
     (release / "10-sam_wilson-part_of_life.flac").write_bytes(b"soundtrack")
-    (release / "tenoke-cyberpunk.sfx.nfo").write_text("TENOKE", encoding="utf-8")
+    (release / "tenoke-cyberpunk.sfx.nfo").write_text(
+        "TENOKE", encoding="utf-8"
+    )
     meta = Meta(path=str(release))
-    prep = SimpleNamespace(disc_info_manager=SimpleNamespace(get_disc=AsyncMock(return_value=("", str(release), {}, []))))
+    prep = SimpleNamespace(
+        disc_info_manager=SimpleNamespace(
+            get_disc=AsyncMock(return_value=("", str(release), {}, []))
+        )
+    )
 
     asyncio.run(detect_disc_and_category(prep, meta))
 
@@ -469,7 +676,11 @@ def test_dmg_is_auto_detected_as_game_software(tmp_path):
     installer = tmp_path / "Native_Instruments_SuperStarSaw_1.0.0_[HCiSO].dmg"
     installer.write_bytes(b"installer")
     meta = Meta(path=str(installer))
-    prep = SimpleNamespace(disc_info_manager=SimpleNamespace(get_disc=AsyncMock(return_value=("", str(installer), {}, []))))
+    prep = SimpleNamespace(
+        disc_info_manager=SimpleNamespace(
+            get_disc=AsyncMock(return_value=("", str(installer), {}, []))
+        )
+    )
 
     asyncio.run(detect_disc_and_category(prep, meta))
 
@@ -480,9 +691,15 @@ def test_pkg_takes_precedence_over_text_sidecar(tmp_path):
     release = tmp_path / "Guitar_Pro_8.1.5-31_[atb]"
     release.mkdir()
     (release / "Guitar Pro 8.1.5-31 [atb].pkg").write_bytes(b"installer")
-    (release / "Read.txt").write_text("install PKG\nUse Serial", encoding="utf-8")
+    (release / "Read.txt").write_text(
+        "install PKG\nUse Serial", encoding="utf-8"
+    )
     meta = Meta(path=str(release))
-    prep = SimpleNamespace(disc_info_manager=SimpleNamespace(get_disc=AsyncMock(return_value=("", str(release), {}, []))))
+    prep = SimpleNamespace(
+        disc_info_manager=SimpleNamespace(
+            get_disc=AsyncMock(return_value=("", str(release), {}, []))
+        )
+    )
 
     asyncio.run(detect_disc_and_category(prep, meta))
 
@@ -490,7 +707,9 @@ def test_pkg_takes_precedence_over_text_sidecar(tmp_path):
 
 
 def test_myanonamouse_uses_explicit_publication_year():
-    metadata = MyAnonamouseManager()._parse_torrent_info({"title": "80's Adventures", "publication_year": "2021"})
+    metadata = MyAnonamouseManager()._parse_torrent_info(
+        {"title": "80's Adventures", "publication_year": "2021"}
+    )
 
     assert metadata["year"] == 2021
 
@@ -508,19 +727,25 @@ def test_myanonamouse_extracts_publisher_metadata() -> None:
 
 
 def test_myanonamouse_trims_unescaped_publisher_whitespace() -> None:
-    metadata = MyAnonamouseManager()._parse_torrent_info({"title": "Example", "publisher": "&nbsp;Brilliance Audio&nbsp;"})
+    metadata = MyAnonamouseManager()._parse_torrent_info(
+        {"title": "Example", "publisher": "&nbsp;Brilliance Audio&nbsp;"}
+    )
 
     assert metadata["publisher"] == "Brilliance Audio"
 
 
 def test_myanonamouse_restores_valid_leading_zero_isbn() -> None:
-    metadata = MyAnonamouseManager()._parse_torrent_info({"title": "The Quantum Labyrinth", "isbn": 465097588})
+    metadata = MyAnonamouseManager()._parse_torrent_info(
+        {"title": "The Quantum Labyrinth", "isbn": 465097588}
+    )
 
     assert metadata["isbn"] == "0465097588"
 
 
 def test_myanonamouse_does_not_replace_metadata_with_invalid_isbn() -> None:
-    metadata = MyAnonamouseManager()._parse_torrent_info({"title": "Example", "isbn": 123})
+    metadata = MyAnonamouseManager()._parse_torrent_info(
+        {"title": "Example", "isbn": 123}
+    )
 
     assert "isbn" not in metadata
 
@@ -533,10 +758,15 @@ def test_myanonamouse_cleans_filename_title() -> None:
         }
     )
 
-    assert metadata["title"] == "The Idea Factory - Bell Labs And The Great Age Of American Innovation"
+    assert (
+        metadata["title"]
+        == "The Idea Factory - Bell Labs And The Great Age Of American Innovation"
+    )
 
 
-def test_pdf_extraction_counts_pages_and_ignores_unlabelled_isbn10(tmp_path) -> None:
+def test_pdf_extraction_counts_pages_and_ignores_unlabelled_isbn10(
+    tmp_path,
+) -> None:
     fitz = pytest.importorskip("fitz")
     pdf = tmp_path / "book.pdf"
     with fitz.open() as document:

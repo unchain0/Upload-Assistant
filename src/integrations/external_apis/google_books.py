@@ -4,7 +4,10 @@ from typing import Any
 
 import httpx
 
-from src.domain_models.book_language import is_valid_book_language, resolve_book_language
+from src.domain_models.book_language import (
+    is_valid_book_language,
+    resolve_book_language,
+)
 from src.integrations.cache.metadata_cache import cache_for, is_cache_miss
 from src.integrations.observability.runtime_support import logger
 
@@ -18,10 +21,19 @@ class GoogleBooksManager:
         if len(clean) != 10:
             return clean
         base = f"978{clean[:9]}"
-        check = (10 - sum(int(digit) * (1 if index % 2 == 0 else 3) for index, digit in enumerate(base)) % 10) % 10
+        check = (
+            10
+            - sum(
+                int(digit) * (1 if index % 2 == 0 else 3)
+                for index, digit in enumerate(base)
+            )
+            % 10
+        ) % 10
         return f"{base}{check}"
 
-    def _parse_volume_info(self, data: dict[str, Any], isbn: str) -> dict[str, Any] | None:
+    def _parse_volume_info(
+        self, data: dict[str, Any], isbn: str
+    ) -> dict[str, Any] | None:
         """
         Helper to parse raw Google Books API response data uniformly.
         """
@@ -32,8 +44,13 @@ class GoogleBooksManager:
         clean_isbn = self._canonical_isbn(isbn)
         volume = None
         for item in data["items"]:
-            identifiers = item.get("volumeInfo", {}).get("industryIdentifiers", [])
-            identifier_values = {self._canonical_isbn(str(identifier.get("identifier", ""))) for identifier in identifiers}
+            identifiers = item.get("volumeInfo", {}).get(
+                "industryIdentifiers", []
+            )
+            identifier_values = {
+                self._canonical_isbn(str(identifier.get("identifier", "")))
+                for identifier in identifiers
+            }
             if clean_isbn in identifier_values:
                 volume = item
                 break
@@ -94,12 +111,16 @@ class GoogleBooksManager:
                     if iso3:
                         metadata["book_language_iso"] = iso3
             except Exception as ex:
-                logger.debug(f"[yellow]Warning: Could not resolve language '{lang}': {ex}[/yellow]")
+                logger.debug(
+                    f"[yellow]Warning: Could not resolve language '{lang}': {ex}[/yellow]"
+                )
 
         # Genre
         categories = volume_info.get("categories")
         if categories:
-            metadata["keywords"] = metadata["genres"] = [str(cat) for cat in categories if cat]
+            metadata["keywords"] = metadata["genres"] = [
+                str(cat) for cat in categories if cat
+            ]
             # Detect comic and manga
             if any("comic" in cat.lower() for cat in categories):
                 metadata["comic"] = True
@@ -113,7 +134,9 @@ class GoogleBooksManager:
         metadata["isbn"] = isbn
         return metadata
 
-    async def search_by_isbn(self, isbn: str, base_dir: str = "", api_key: str = "") -> dict[str, Any] | None:
+    async def search_by_isbn(
+        self, isbn: str, base_dir: str = "", api_key: str = ""
+    ) -> dict[str, Any] | None:
         """
         Search Google Books API by ISBN.
         Returns a dict of metadata or None if not found/error.
@@ -126,15 +149,23 @@ class GoogleBooksManager:
         cached_data = await cache.get("google_books", "isbn_exact", clean_isbn)
         if not is_cache_miss(cached_data) and isinstance(cached_data, dict):
             if cached_data.get("not_found"):
-                logger.info(f"{google_color_str}: ISBN match not found (cached): {clean_isbn}")
+                logger.info(
+                    f"{google_color_str}: ISBN match not found (cached): {clean_isbn}"
+                )
                 return None
-            logger.info(f"{google_color_str}: ISBN match found (cached): {clean_isbn}")
+            logger.info(
+                f"{google_color_str}: ISBN match found (cached): {clean_isbn}"
+            )
             return cached_data
 
-        url = f"https://www.googleapis.com/books/v1/volumes?q=isbn:{clean_isbn}"
+        url = (
+            f"https://www.googleapis.com/books/v1/volumes?q=isbn:{clean_isbn}"
+        )
         if api_key:
             url += f"&key={api_key}"
-        logger.debug(f"[cyan]{google_color_str}: Searching API for ISBN: {clean_isbn}[/cyan]")
+        logger.debug(
+            f"[cyan]{google_color_str}: Searching API for ISBN: {clean_isbn}[/cyan]"
+        )
 
         try:
             async with httpx.AsyncClient(follow_redirects=True) as client:
@@ -145,23 +176,58 @@ class GoogleBooksManager:
                     if total_items > 0 and "items" in data:
                         metadata = self._parse_volume_info(data, isbn)
                         if metadata:
-                            await cache.set("google_books", "isbn_exact", clean_isbn, metadata)
-                            logger.info(f"{google_color_str}: ISBN match found: {clean_isbn}")
+                            await cache.set(
+                                "google_books",
+                                "isbn_exact",
+                                clean_isbn,
+                                metadata,
+                            )
+                            logger.info(
+                                f"{google_color_str}: ISBN match found: {clean_isbn}"
+                            )
                         else:
-                            logger.info(f"{google_color_str}: ISBN match not found: {clean_isbn}")
-                            await cache.set("google_books", "isbn_exact", clean_isbn, {"not_found": True}, negative=True)
+                            logger.info(
+                                f"{google_color_str}: ISBN match not found: {clean_isbn}"
+                            )
+                            await cache.set(
+                                "google_books",
+                                "isbn_exact",
+                                clean_isbn,
+                                {"not_found": True},
+                                negative=True,
+                            )
                         return metadata
-                    logger.info(f"{google_color_str}: No items found for ISBN: {clean_isbn}")
-                    await cache.set("google_books", "isbn_exact", clean_isbn, {"not_found": True}, negative=True)
+                    logger.info(
+                        f"{google_color_str}: No items found for ISBN: {clean_isbn}"
+                    )
+                    await cache.set(
+                        "google_books",
+                        "isbn_exact",
+                        clean_isbn,
+                        {"not_found": True},
+                        negative=True,
+                    )
                 else:
                     if resp.status_code == 429:
-                        logger.info(f"{google_color_str}: Rate limited (Status 429) for ISBN: {clean_isbn}")
+                        logger.info(
+                            f"{google_color_str}: Rate limited (Status 429) for ISBN: {clean_isbn}"
+                        )
                     else:
-                        logger.info(f"{google_color_str}: API returned error status code {resp.status_code} for ISBN: {clean_isbn}")
+                        logger.info(
+                            f"{google_color_str}: API returned error status code {resp.status_code} for ISBN: {clean_isbn}"
+                        )
                         if resp.status_code == 404:
-                            await cache.set("google_books", "isbn_exact", clean_isbn, {"not_found": True}, negative=True)
+                            await cache.set(
+                                "google_books",
+                                "isbn_exact",
+                                clean_isbn,
+                                {"not_found": True},
+                                negative=True,
+                            )
         except Exception as e:
-            logger.info(f"{google_color_str}: Network or query error for ISBN {clean_isbn}: {e}")
+            logger.info(
+                f"{google_color_str}: Network or query error for ISBN {clean_isbn}: {e}"
+            )
 
         return None
 

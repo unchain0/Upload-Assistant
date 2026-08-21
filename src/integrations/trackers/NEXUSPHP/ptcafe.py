@@ -58,7 +58,14 @@ class PTCafe(NEXUSPHP):
                 "tv show",
                 "variety",
             ]
-            if any(re.search(rf"(^|,\s*){re.escape(keyword)}(\s*,|$)", genres, re.IGNORECASE) for keyword in game_show_keywords):
+            if any(
+                re.search(
+                    rf"(^|,\s*){re.escape(keyword)}(\s*,|$)",
+                    genres,
+                    re.IGNORECASE,
+                )
+                for keyword in game_show_keywords
+            ):
                 return tv_shows
             return tv_series
 
@@ -254,7 +261,14 @@ class PTCafe(NEXUSPHP):
             (("vp9",), 9),
             (("divx",), 10),
         )
-        return next((value for tokens, value in mappings if any(token in codec for token in tokens)), 11)
+        return next(
+            (
+                value
+                for tokens, value in mappings
+                if any(token in codec for token in tokens)
+            ),
+            11,
+        )
 
     def get_resolution(self, meta: Meta) -> int:
         resolution = meta.resolution.lower()

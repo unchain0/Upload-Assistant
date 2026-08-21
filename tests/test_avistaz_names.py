@@ -42,7 +42,11 @@ def tracker(name):
 
 @pytest.mark.asyncio
 async def test_cinemaz_title_rules_are_normalized():
-    meta = make_meta(name="[Example] 2024 LIMITED Director's Cut Extended Cut 1080p Hybrid WEB-DL H.264-NOGRP", tag="NOGRP", webdv=True)
+    meta = make_meta(
+        name="[Example] 2024 LIMITED Director's Cut Extended Cut 1080p Hybrid WEB-DL H.264-NOGRP",
+        tag="NOGRP",
+        webdv=True,
+    )
 
     name = await tracker("CINEMAZ").get_name(meta)
 
@@ -51,7 +55,9 @@ async def test_cinemaz_title_rules_are_normalized():
 
 @pytest.mark.asyncio
 async def test_privatehd_removes_brackets_and_preserves_its_cut_terms():
-    meta = make_meta(name="[Example] 2024 Criterion Collection Theatrical Cut 1080p WEB-DL H.264-GROUP")
+    meta = make_meta(
+        name="[Example] 2024 Criterion Collection Theatrical Cut 1080p WEB-DL H.264-GROUP"
+    )
 
     name = await tracker("PRIVATEHD").get_name(meta)
 
@@ -69,7 +75,9 @@ async def test_cinemaz_keeps_hybrid_when_no_quality_marker_exists():
 
 @pytest.mark.asyncio
 async def test_cinemaz_places_hybrid_after_a_4k_quality_marker():
-    meta = make_meta(name="Example 2024 Hybrid 4K WEB-DL H.264-GROUP", webdv=True)
+    meta = make_meta(
+        name="Example 2024 Hybrid 4K WEB-DL H.264-GROUP", webdv=True
+    )
 
     name = await tracker("CINEMAZ").get_name(meta)
 
@@ -78,7 +86,11 @@ async def test_cinemaz_places_hybrid_after_a_4k_quality_marker():
 
 @pytest.mark.asyncio
 async def test_cinemaz_preserves_hybrid_in_the_title_when_repositioning_marker():
-    meta = make_meta(title="Hybrid", name="Hybrid 2007 Hybrid 1080p WEB-DL H.264-GROUP", webdv=True)
+    meta = make_meta(
+        title="Hybrid",
+        name="Hybrid 2007 Hybrid 1080p WEB-DL H.264-GROUP",
+        webdv=True,
+    )
 
     name = await tracker("CINEMAZ").get_name(meta)
 

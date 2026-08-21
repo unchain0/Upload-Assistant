@@ -14,9 +14,46 @@ from src.domain_models.release import Meta
 from src.integrations.media.media_info import MediaInfo
 from src.integrations.media.media_info_export import export_info
 
-AUDIO_EXTENSIONS = frozenset({".aac", ".ac3", ".aiff", ".alac", ".ape", ".dts", ".flac", ".m4a", ".m4b", ".mp3", ".ogg", ".opus", ".wav", ".wma", ".wv"})
-VIDEO_EXTENSIONS = frozenset({".avi", ".m4v", ".mkv", ".mov", ".mp4", ".ts", ".webm"})
-ARCHIVE_EXTENSIONS = frozenset({".7z", ".bz2", ".cbr", ".cbz", ".gz", ".rar", ".tar", ".tbz", ".tbz2", ".tgz", ".txz", ".xz", ".zip", ".zst"})
+AUDIO_EXTENSIONS = frozenset(
+    {
+        ".aac",
+        ".ac3",
+        ".aiff",
+        ".alac",
+        ".ape",
+        ".dts",
+        ".flac",
+        ".m4a",
+        ".m4b",
+        ".mp3",
+        ".ogg",
+        ".opus",
+        ".wav",
+        ".wma",
+        ".wv",
+    }
+)
+VIDEO_EXTENSIONS = frozenset(
+    {".avi", ".m4v", ".mkv", ".mov", ".mp4", ".ts", ".webm"}
+)
+ARCHIVE_EXTENSIONS = frozenset(
+    {
+        ".7z",
+        ".bz2",
+        ".cbr",
+        ".cbz",
+        ".gz",
+        ".rar",
+        ".tar",
+        ".tbz",
+        ".tbz2",
+        ".tgz",
+        ".txz",
+        ".xz",
+        ".zip",
+        ".zst",
+    }
+)
 
 
 class _MediaTrack(Protocol):
@@ -42,7 +79,10 @@ mutagen_error = cast(type[Exception], vars(mutagen)["MutagenError"])
 
 def _has_symlink_component(path: Path) -> bool:
     absolute = path.expanduser().absolute()
-    return any(component.is_symlink() for component in (*reversed(absolute.parents), absolute))
+    return any(
+        component.is_symlink()
+        for component in (*reversed(absolute.parents), absolute)
+    )
 
 
 def _source_files(root: Path) -> list[Path]:
@@ -105,7 +145,9 @@ def _detected_media_kind(path: Path) -> str | None:
         if track.track_type == "Audio":
             has_audio = True
         elif track.track_type == "General":
-            general_content_type = str(track.internet_media_type or "").casefold()
+            general_content_type = str(
+                track.internet_media_type or ""
+            ).casefold()
     if general_content_type.startswith("video/"):
         return "video"
     if has_audio or general_content_type.startswith("audio/"):
@@ -114,21 +156,38 @@ def _detected_media_kind(path: Path) -> str | None:
 
 
 def _media_files(candidates: list[Path]) -> tuple[list[Path], list[Path]]:
-    archives = [path for path in candidates if path.suffix.casefold() in ARCHIVE_EXTENSIONS or _has_archive_signature(path)]
+    archives = [
+        path
+        for path in candidates
+        if path.suffix.casefold() in ARCHIVE_EXTENSIONS
+        or _has_archive_signature(path)
+    ]
     if archives:
-        raise ValueError("Podcast uploads cannot contain compressed archive files")
+        raise ValueError(
+            "Podcast uploads cannot contain compressed archive files"
+        )
     audio: list[Path] = []
     video: list[Path] = []
     for path in candidates:
         suffix = path.suffix.casefold()
-        declared_kind = "audio" if suffix in AUDIO_EXTENSIONS else "video" if suffix in VIDEO_EXTENSIONS else None
+        declared_kind = (
+            "audio"
+            if suffix in AUDIO_EXTENSIONS
+            else "video"
+            if suffix in VIDEO_EXTENSIONS
+            else None
+        )
         if declared_kind is None:
             continue
         detected_kind = _detected_media_kind(path)
         if detected_kind is None:
-            raise ValueError(f"Podcast media content could not be identified: {path.name}")
+            raise ValueError(
+                f"Podcast media content could not be identified: {path.name}"
+            )
         if detected_kind != declared_kind:
-            raise ValueError(f"Podcast media extension does not match its actual content: {path.name}")
+            raise ValueError(
+                f"Podcast media extension does not match its actual content: {path.name}"
+            )
         (audio if declared_kind == "audio" else video).append(path.resolve())
     audio.sort(key=str)
     video.sort(key=str)
@@ -145,7 +204,11 @@ def _audio_bitrate(files: list[Path]) -> int | None:
     for path in files:
         try:
             audio = mutagen_file(str(path))
-            bitrate = int(audio.info.bitrate or 0) if audio is not None and audio.info is not None else 0
+            bitrate = (
+                int(audio.info.bitrate or 0)
+                if audio is not None and audio.info is not None
+                else 0
+            )
         except OSError, TypeError, ValueError, mutagen_error:
             bitrate = 0
         if bitrate > 0:
@@ -157,7 +220,9 @@ def _audio_bitrate(files: list[Path]) -> int | None:
     return bitrate if count / len(bitrates) >= 0.7 else None
 
 
-def _generated_title(meta: Meta, root: Path, files: list[Path], audio_bitrate: int | None) -> str:
+def _generated_title(
+    meta: Meta, root: Path, files: list[Path], audio_bitrate: int | None
+) -> str:
     fallback_title = root.stem if root.is_file() else root.name
     title = str(meta.title or fallback_title).strip()
     year = str(meta.manual_year or meta.year or "").strip()
@@ -179,12 +244,18 @@ async def gather_podcast_prep(meta: Meta) -> None:
         raise ValueError(f"Podcast path does not exist: {root}")
 
     source_files = await asyncio.to_thread(_source_files, root)
-    audio_files, video_files = await asyncio.to_thread(_media_files, source_files)
+    audio_files, video_files = await asyncio.to_thread(
+        _media_files, source_files
+    )
     if audio_files and video_files:
-        raise ValueError("Podcast torrents cannot contain mixed audio and video media")
+        raise ValueError(
+            "Podcast torrents cannot contain mixed audio and video media"
+        )
     media_files = audio_files or video_files
     if not media_files:
-        raise ValueError("Podcast upload contains no supported audio or video files")
+        raise ValueError(
+            "Podcast upload contains no supported audio or video files"
+        )
     torrent_files = sorted((path.resolve() for path in source_files), key=str)
 
     meta.category = "PODCAST"
@@ -202,7 +273,11 @@ async def gather_podcast_prep(meta: Meta) -> None:
     meta.mal = 0
     meta.type = "AUDIO" if audio_files else "VIDEO"
     meta.container = _dominant_extension(media_files).casefold()
-    meta.audio_bitrate = await asyncio.to_thread(_audio_bitrate, audio_files) if audio_files else None
+    meta.audio_bitrate = (
+        await asyncio.to_thread(_audio_bitrate, audio_files)
+        if audio_files
+        else None
+    )
     meta.resolution = ""
     meta.sd = 0
     meta.valid_mi = True
@@ -221,8 +296,13 @@ async def gather_podcast_prep(meta: Meta) -> None:
         meta.artwork_banner_path = str(banner.resolve())
 
     primary = max(media_files, key=lambda path: path.stat().st_size)
-    meta.mediainfo = await export_info(str(primary), meta.isdir, meta.uuid, meta.base_dir, is_dvd=False)
-    final_title = str(meta.podcast_title or _generated_title(meta, root, media_files, meta.audio_bitrate)).strip()
+    meta.mediainfo = await export_info(
+        str(primary), meta.isdir, meta.uuid, meta.base_dir, is_dvd=False
+    )
+    final_title = str(
+        meta.podcast_title
+        or _generated_title(meta, root, media_files, meta.audio_bitrate)
+    ).strip()
     meta.title = meta.title or (root.stem if root.is_file() else root.name)
     meta.name_notag = final_title
     meta.name = final_title

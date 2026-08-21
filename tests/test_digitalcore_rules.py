@@ -10,7 +10,9 @@ def _tracker() -> DigitalCore:
 
 
 def _tracker_with_metadata() -> DigitalCore:
-    return DigitalCore({"TRACKERS": {"DIGITALCORE": {"use_metadata_name": True}}})
+    return DigitalCore(
+        {"TRACKERS": {"DIGITALCORE": {"use_metadata_name": True}}}
+    )
 
 
 def _make_meta(**overrides: Any) -> Meta:
@@ -29,14 +31,28 @@ def _make_meta(**overrides: Any) -> Meta:
 
 
 def test_digitalcore_rejects_cam_or_ts_source_uploads() -> None:
-    assert not asyncio.run(_tracker().get_additional_checks(_make_meta(source="CAM")))
-    assert not asyncio.run(_tracker().get_additional_checks(_make_meta(source="TS")))
-    assert not asyncio.run(_tracker().get_additional_checks(_make_meta(type="CAM")))
+    assert not asyncio.run(
+        _tracker().get_additional_checks(_make_meta(source="CAM"))
+    )
+    assert not asyncio.run(
+        _tracker().get_additional_checks(_make_meta(source="TS"))
+    )
+    assert not asyncio.run(
+        _tracker().get_additional_checks(_make_meta(type="CAM"))
+    )
 
 
 def test_digitalcore_rejects_cam_or_ts_tokens_in_name_or_tag() -> None:
-    assert not asyncio.run(_tracker().get_additional_checks(_make_meta(name="Example Movie 2024 CAM")))
-    assert not asyncio.run(_tracker().get_additional_checks(_make_meta(name="Example.Movie.CAM.2024", tag="CAM")))
+    assert not asyncio.run(
+        _tracker().get_additional_checks(
+            _make_meta(name="Example Movie 2024 CAM")
+        )
+    )
+    assert not asyncio.run(
+        _tracker().get_additional_checks(
+            _make_meta(name="Example.Movie.CAM.2024", tag="CAM")
+        )
+    )
 
 
 def test_digitalcore_rejects_webp_screenshots() -> None:
@@ -67,7 +83,9 @@ def test_digitalcore_allows_jpg_png_and_gif_screenshots() -> None:
     )
 
 
-def test_digitalcore_names_scene_release_with_norar_when_metadata_names_enabled() -> None:
+def test_digitalcore_names_scene_release_with_norar_when_metadata_names_enabled() -> (
+    None
+):
     assert (
         asyncio.run(
             _tracker_with_metadata().get_name(
@@ -81,7 +99,9 @@ def test_digitalcore_names_scene_release_with_norar_when_metadata_names_enabled(
     )
 
 
-def test_digitalcore_keeps_scene_name_and_norar_when_not_using_metadata() -> None:
+def test_digitalcore_keeps_scene_name_and_norar_when_not_using_metadata() -> (
+    None
+):
     assert (
         asyncio.run(
             _tracker().get_name(

@@ -5,7 +5,10 @@ from pathlib import Path
 import pytest
 
 from src.domain_models.configuration import ConfigurationSourceKind
-from src.domain_models.errors import ConfigurationNotFoundError, ConfigurationSyntaxError
+from src.domain_models.errors import (
+    ConfigurationNotFoundError,
+    ConfigurationSyntaxError,
+)
 from src.integrations.configuration import PythonConfigurationRepository
 from src.services.configuration_service import ConfigurationService
 
@@ -15,7 +18,9 @@ def _write_config(path: Path, value: dict[str, object]) -> None:
     path.write_text(f"config = {value!r}\n", encoding="utf-8")
 
 
-def _service(tmp_path: Path, *, explicit_path: Path | None = None) -> ConfigurationService:
+def _service(
+    tmp_path: Path, *, explicit_path: Path | None = None
+) -> ConfigurationService:
     return ConfigurationService(
         PythonConfigurationRepository(),
         runtime_path=tmp_path / "state" / "data" / "config.py",
@@ -25,7 +30,9 @@ def _service(tmp_path: Path, *, explicit_path: Path | None = None) -> Configurat
     )
 
 
-def test_reconciles_empty_runtime_from_legacy_without_overwriting_runtime_values(tmp_path: Path) -> None:
+def test_reconciles_empty_runtime_from_legacy_without_overwriting_runtime_values(
+    tmp_path: Path,
+) -> None:
     runtime_path = tmp_path / "state" / "data" / "config.py"
     _write_config(
         runtime_path,
@@ -36,7 +43,9 @@ def test_reconciles_empty_runtime_from_legacy_without_overwriting_runtime_values
                 "onlyimage_api": "",
                 "runtime_preference": "keep-me",
             },
-            "TRACKERS": {"TORRENTHR": {"img_api": "get this from the forum post"}},
+            "TRACKERS": {
+                "TORRENTHR": {"img_api": "get this from the forum post"}
+            },
         },
     )
     _write_config(
@@ -48,7 +57,9 @@ def test_reconciles_empty_runtime_from_legacy_without_overwriting_runtime_values
                 "onlyimage_api": "configured-image-token",
                 "runtime_preference": "legacy-value",
             },
-            "TRACKERS": {"TORRENTHR": {"img_api": "configured-tracker-image-token"}},
+            "TRACKERS": {
+                "TORRENTHR": {"img_api": "configured-tracker-image-token"}
+            },
         },
     )
     _write_config(
@@ -60,7 +71,9 @@ def test_reconciles_empty_runtime_from_legacy_without_overwriting_runtime_values
                 "onlyimage_api": "",
                 "runtime_preference": "default-value",
             },
-            "TRACKERS": {"TORRENTHR": {"img_api": "get this from the forum post"}},
+            "TRACKERS": {
+                "TORRENTHR": {"img_api": "get this from the forum post"}
+            },
         },
     )
 
@@ -79,7 +92,10 @@ def test_reconciles_empty_runtime_from_legacy_without_overwriting_runtime_values
 
 def test_configured_runtime_is_authoritative(tmp_path: Path) -> None:
     runtime_path = tmp_path / "state" / "data" / "config.py"
-    _write_config(runtime_path, {"DEFAULT": {"tmdb_api": "runtime-key", "img_host_1": "imgbox"}})
+    _write_config(
+        runtime_path,
+        {"DEFAULT": {"tmdb_api": "runtime-key", "img_host_1": "imgbox"}},
+    )
     _write_config(
         tmp_path / "checkout" / "data" / "config.py",
         {"DEFAULT": {"tmdb_api": "legacy-key", "img_host_1": "onlyimage"}},
@@ -96,22 +112,36 @@ def test_configured_runtime_is_authoritative(tmp_path: Path) -> None:
     assert not runtime_path.with_name("config.py.pre-masa.bak").exists()
 
 
-def test_explicit_configuration_is_materialized_for_all_legacy_consumers(tmp_path: Path) -> None:
+def test_explicit_configuration_is_materialized_for_all_legacy_consumers(
+    tmp_path: Path,
+) -> None:
     explicit = tmp_path / "selected.py"
-    _write_config(explicit, {"DEFAULT": {"tmdb_api": "explicit-key", "img_host_1": "pixhost"}})
-    _write_config(tmp_path / "checkout" / "data" / "example_config.py", {"DEFAULT": {"tmdb_api": "", "img_host_1": ""}})
+    _write_config(
+        explicit,
+        {"DEFAULT": {"tmdb_api": "explicit-key", "img_host_1": "pixhost"}},
+    )
+    _write_config(
+        tmp_path / "checkout" / "data" / "example_config.py",
+        {"DEFAULT": {"tmdb_api": "", "img_host_1": ""}},
+    )
 
     loaded = _service(tmp_path, explicit_path=explicit).load()
 
     runtime_path = tmp_path / "state" / "data" / "config.py"
     assert loaded.source.kind is ConfigurationSourceKind.RUNTIME
     assert loaded.section("DEFAULT")["tmdb_api"] == "explicit-key"
-    assert runtime_path.read_text(encoding="utf-8") == explicit.read_text(encoding="utf-8")
+    assert runtime_path.read_text(encoding="utf-8") == explicit.read_text(
+        encoding="utf-8"
+    )
 
 
-def test_defaults_are_materialized_when_no_user_configuration_exists(tmp_path: Path) -> None:
+def test_defaults_are_materialized_when_no_user_configuration_exists(
+    tmp_path: Path,
+) -> None:
     defaults_path = tmp_path / "checkout" / "data" / "example_config.py"
-    _write_config(defaults_path, {"DEFAULT": {"tmdb_api": "", "img_host_1": ""}})
+    _write_config(
+        defaults_path, {"DEFAULT": {"tmdb_api": "", "img_host_1": ""}}
+    )
 
     loaded = _service(tmp_path).load()
 
@@ -119,10 +149,17 @@ def test_defaults_are_materialized_when_no_user_configuration_exists(tmp_path: P
     assert (tmp_path / "state" / "data" / "config.py").is_file()
 
 
-def test_missing_explicit_configuration_is_semantic_error(tmp_path: Path) -> None:
-    _write_config(tmp_path / "checkout" / "data" / "example_config.py", {"DEFAULT": {}})
+def test_missing_explicit_configuration_is_semantic_error(
+    tmp_path: Path,
+) -> None:
+    _write_config(
+        tmp_path / "checkout" / "data" / "example_config.py", {"DEFAULT": {}}
+    )
 
-    with pytest.raises(ConfigurationNotFoundError, match="Explicit configuration file not found"):
+    with pytest.raises(
+        ConfigurationNotFoundError,
+        match="Explicit configuration file not found",
+    ):
         _service(tmp_path, explicit_path=tmp_path / "missing.py").load()
 
 
@@ -131,10 +168,14 @@ def test_repository_rejects_executable_configuration(tmp_path: Path) -> None:
     path.write_text("config = dict(DEFAULT={})\n", encoding="utf-8")
 
     with pytest.raises(ConfigurationSyntaxError, match="literal mapping"):
-        PythonConfigurationRepository().load(path, ConfigurationSourceKind.RUNTIME)
+        PythonConfigurationRepository().load(
+            path, ConfigurationSourceKind.RUNTIME
+        )
 
 
-def test_repository_reloads_exact_file_without_module_cache(tmp_path: Path) -> None:
+def test_repository_reloads_exact_file_without_module_cache(
+    tmp_path: Path,
+) -> None:
     path = tmp_path / "config.py"
     repository = PythonConfigurationRepository()
     _write_config(path, {"DEFAULT": {"tmdb_api": "first"}})

@@ -15,25 +15,53 @@ import mutagen
 
 from src.domain_models.music import AudioTrack, MetadataSource, MusicRelease
 
-AUDIO_EXTENSIONS = {".flac", ".mp3", ".m4a", ".aac", ".ac3", ".dts", ".wav", ".aiff", ".alac", ".ogg", ".opus", ".ape", ".wv"}
+AUDIO_EXTENSIONS = {
+    ".flac",
+    ".mp3",
+    ".m4a",
+    ".aac",
+    ".ac3",
+    ".dts",
+    ".wav",
+    ".aiff",
+    ".alac",
+    ".ogg",
+    ".opus",
+    ".ape",
+    ".wv",
+}
 ARTWORK_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 LINEAGE_NAMES = ("lineage", "equipment", "transfer", "rip", "source")
-DISC_RE = re.compile(r"(?:^|[ _.-])(?:cd|disc|disk)[ _.-]?(\d{1,2})(?:$|[ _.-])", re.I)
+DISC_RE = re.compile(
+    r"(?:^|[ _.-])(?:cd|disc|disk)[ _.-]?(\d{1,2})(?:$|[ _.-])", re.I
+)
 YEAR_RE = re.compile(r"(?:^|[^0-9])((?:19|20)\d{2})(?:[^0-9]|$)")
 LEADING_YEAR_RE = re.compile(r"^\s*[\[(]?\s*((?:19|20)\d{2})\b")
-EDITION_RE = re.compile(r"(?:\[|\()([^\]\)]*(?:deluxe|remaster|anniversary|reissue|expanded|edition)[^\]\)]*)(?:\]|\))", re.I)
-EDITION_WITH_YEAR_RE = re.compile(r"(?:\[|\()\s*((?:19|20)\d{2})[\s,.-]+([^\]\)]+)(?:\]|\))", re.I)
+EDITION_RE = re.compile(
+    r"(?:\[|\()([^\]\)]*(?:deluxe|remaster|anniversary|reissue|expanded|edition)[^\]\)]*)(?:\]|\))",
+    re.I,
+)
+EDITION_WITH_YEAR_RE = re.compile(
+    r"(?:\[|\()\s*((?:19|20)\d{2})[\s,.-]+([^\]\)]+)(?:\]|\))", re.I
+)
 BRACKET_RE = re.compile(r"\[([^\]]+)\]|\{([^\}]+)\}")
 # Subsequent catalogue components must have an actual separator.  Allowing an
 # optional separator before another ``\d+`` creates many equivalent ways to
 # partition a long run of digits and can backtrack exponentially.
-CATALOGUE_RE = re.compile(r"\b(?:[A-Z]{1,8}[- ]?\d{2,}(?:[- ]\d+)*|\d{1,2}[- ]\d{3,}(?:[- ]\d+)*|\d{5,})\b", re.I)
+CATALOGUE_RE = re.compile(
+    r"\b(?:[A-Z]{1,8}[- ]?\d{2,}(?:[- ]\d+)*|\d{1,2}[- ]\d{3,}(?:[- ]\d+)*|\d{5,})\b",
+    re.I,
+)
 
 
 def _clean(value: Any) -> str:
     # Word joiners and other Unicode format controls are invisible but make
     # tracker titles compare differently.  Preserve visible artistic casing.
-    text = "".join(char for char in str(value or "").replace("\x00", " ") if unicodedata.category(char) != "Cf")
+    text = "".join(
+        char
+        for char in str(value or "").replace("\x00", " ")
+        if unicodedata.category(char) != "Cf"
+    )
     return re.sub(r"\s+", " ", text).strip()
 
 
@@ -67,7 +95,11 @@ def _split_main_artists(values: list[str]) -> list[str]:
     """
     artists: list[str] = []
     for value in values:
-        parts = re.split(r"\s+&\s+|\s+(?:feat(?:uring)?|ft)\.?\s+|\s*;\s*", value, flags=re.I)
+        parts = re.split(
+            r"\s+&\s+|\s+(?:feat(?:uring)?|ft)\.?\s+|\s*;\s*",
+            value,
+            flags=re.I,
+        )
         for part in parts:
             cleaned = _clean(part)
             if cleaned and cleaned not in artists:
@@ -122,7 +154,14 @@ class MusicReleaseAnalyzer:
             release.warnings.append(f"Release path does not exist: {supplied}")
             return release
 
-        files = [supplied] if supplied.is_file() else sorted((entry for entry in supplied.rglob("*") if entry.is_file()), key=lambda entry: str(entry).casefold())
+        files = (
+            [supplied]
+            if supplied.is_file()
+            else sorted(
+                (entry for entry in supplied.rglob("*") if entry.is_file()),
+                key=lambda entry: str(entry).casefold(),
+            )
+        )
         for file in files:
             if file.suffix.lower() in AUDIO_EXTENSIONS:
                 track = self._read_track(file, root)
@@ -155,7 +194,11 @@ class MusicReleaseAnalyzer:
         folder_disc = self._disc_from_path(path, root)
         # Release tags are frequently copied wholesale to bonus discs.  A clear
         # ``Disc 2`` folder is stronger structural evidence than a stale tag of 1.
-        disc = folder_disc if folder_disc and folder_disc != tagged_disc else tagged_disc or folder_disc
+        disc = (
+            folder_disc
+            if folder_disc and folder_disc != tagged_disc
+            else tagged_disc or folder_disc
+        )
         return AudioTrack(
             path=str(path.resolve()),
             relative_path=str(path.relative_to(root)),
@@ -175,13 +218,21 @@ class MusicReleaseAnalyzer:
             title=_first(tags, "title"),
             date=_first(tags, "date", "year", "originaldate"),
             label=_first(tags, "organization", "label", "publisher"),
-            catalogue_number=_first(tags, "catalognumber", "cataloguenumber", "catalog", "catalogue"),
+            catalogue_number=_first(
+                tags,
+                "catalognumber",
+                "cataloguenumber",
+                "catalog",
+                "catalogue",
+            ),
             genre=tags.get("genre", []),
             isrc=_first(tags, "isrc"),
             tags=tags,
         )
 
-    def _classify_auxiliary(self, release: MusicRelease, path: Path, root: Path) -> None:
+    def _classify_auxiliary(
+        self, release: MusicRelease, path: Path, root: Path
+    ) -> None:
         relative = str(path.relative_to(root))
         ext, stem = path.suffix.lower(), path.stem.lower()
         if ext == ".log":
@@ -195,8 +246,24 @@ class MusicReleaseAnalyzer:
         elif ext in {".m3u", ".m3u8"}:
             release.auxiliary.playlists.append(relative)
         elif ext in ARTWORK_EXTENSIONS:
-            (release.auxiliary.scans if any(word in stem for word in ("scan", "booklet", "back", "tray", "obi", "inlay")) else release.auxiliary.artwork).append(relative)
-        elif ext in {".txt", ".md", ".pdf"} and any(word in stem for word in LINEAGE_NAMES):
+            (
+                release.auxiliary.scans
+                if any(
+                    word in stem
+                    for word in (
+                        "scan",
+                        "booklet",
+                        "back",
+                        "tray",
+                        "obi",
+                        "inlay",
+                    )
+                )
+                else release.auxiliary.artwork
+            ).append(relative)
+        elif ext in {".txt", ".md", ".pdf"} and any(
+            word in stem for word in LINEAGE_NAMES
+        ):
             release.auxiliary.lineage.append(relative)
         else:
             release.auxiliary.other.append(relative)
@@ -211,7 +278,9 @@ class MusicReleaseAnalyzer:
                 return int(match.group(1))
         return None
 
-    def _derive_release_fields(self, release: MusicRelease, folder_name: str) -> None:
+    def _derive_release_fields(
+        self, release: MusicRelease, folder_name: str
+    ) -> None:
         if not release.tracks:
             release.warnings.append("No supported audio files found")
             return
@@ -219,39 +288,130 @@ class MusicReleaseAnalyzer:
         # audio DATE tags normally identify the particular release in hand.
         self._derive_from_directory(release, folder_name)
         self._set_artists(release)
-        self._set_consensus(release, "album", [self._clean_album_tag(track.album) for track in release.tracks], MetadataSource.FILE_TAG, 1.0)
-        tag_years = [track.date[:4] for track in release.tracks if re.fullmatch(r"(?:19|20)\d{2}.*", track.date)]
-        directory_year = release.get("year") if release.fields.get("year", None) and release.fields["year"].source == MetadataSource.DIRECTORY else ""
+        self._set_consensus(
+            release,
+            "album",
+            [self._clean_album_tag(track.album) for track in release.tracks],
+            MetadataSource.FILE_TAG,
+            1.0,
+        )
+        tag_years = [
+            track.date[:4]
+            for track in release.tracks
+            if re.fullmatch(r"(?:19|20)\d{2}.*", track.date)
+        ]
+        directory_year = (
+            release.get("year")
+            if release.fields.get("year", None)
+            and release.fields["year"].source == MetadataSource.DIRECTORY
+            else ""
+        )
         # When the path explicitly identifies an edition but does not supply a
         # leading original year (for example, ``Coda [2015 Deluxe Edition]``),
         # the tag DATE is the release/edition date, not reliable evidence for
         # the album group's initial year.  Leave ``year`` absent so the normal
         # MUSIC prompt asks for the required original year.
-        if not directory_year and not (release.get("edition") or release.get("edition_year")):
-            self._set_consensus(release, "year", tag_years, MetadataSource.FILE_TAG, 1.0)
+        if not directory_year and not (
+            release.get("edition") or release.get("edition_year")
+        ):
+            self._set_consensus(
+                release, "year", tag_years, MetadataSource.FILE_TAG, 1.0
+            )
         # A date, imprint and catalogue number identify a *release*.  Per the
         # Orpheus edition guidelines, none establishes a distinct edition by
         # itself; only explicit edition information belongs in ``edition_*``.
-        self._set_consensus(release, "release_year", tag_years, MetadataSource.FILE_TAG, 0.9)
-        self._set_consensus(release, "release_label", [track.label for track in release.tracks], MetadataSource.FILE_TAG, 0.95)
-        self._set_consensus(release, "release_catalogue_number", [track.catalogue_number for track in release.tracks], MetadataSource.FILE_TAG, 0.95)
+        self._set_consensus(
+            release, "release_year", tag_years, MetadataSource.FILE_TAG, 0.9
+        )
+        self._set_consensus(
+            release,
+            "release_label",
+            [track.label for track in release.tracks],
+            MetadataSource.FILE_TAG,
+            0.95,
+        )
+        self._set_consensus(
+            release,
+            "release_catalogue_number",
+            [track.catalogue_number for track in release.tracks],
+            MetadataSource.FILE_TAG,
+            0.95,
+        )
         # Legacy neutral aliases retain compatibility for consumers other than
         # the Orpheus adapter; tracker mapping uses the explicit release names.
-        self._set_consensus(release, "label", [track.label for track in release.tracks], MetadataSource.FILE_TAG, 0.95)
-        self._set_consensus(release, "catalogue_number", [track.catalogue_number for track in release.tracks], MetadataSource.FILE_TAG, 0.95)
-        genres = sorted({genre for track in release.tracks for genre in track.genre if genre})
+        self._set_consensus(
+            release,
+            "label",
+            [track.label for track in release.tracks],
+            MetadataSource.FILE_TAG,
+            0.95,
+        )
+        self._set_consensus(
+            release,
+            "catalogue_number",
+            [track.catalogue_number for track in release.tracks],
+            MetadataSource.FILE_TAG,
+            0.95,
+        )
+        genres = sorted(
+            {
+                genre
+                for track in release.tracks
+                for genre in track.genre
+                if genre
+            }
+        )
         release.set_field("genres", genres, MetadataSource.FILE_TAG, 0.8)
-        release.set_field("format", ", ".join(sorted(release.formats)), MetadataSource.INFERRED, 1.0)
-        release.set_field("track_count", len(release.tracks), MetadataSource.INFERRED, 1.0)
-        release.set_field("disc_count", release.disc_count, MetadataSource.INFERRED, 1.0)
-        release.set_field("has_log", bool(release.auxiliary.logs), MetadataSource.AUXILIARY, 1.0)
-        release.set_field("has_cue", bool(release.auxiliary.cues), MetadataSource.AUXILIARY, 1.0)
-        release.set_field("has_nfo", bool(release.auxiliary.nfos), MetadataSource.AUXILIARY, 1.0)
-        release.set_field("has_sfv", bool(release.auxiliary.sfvs), MetadataSource.AUXILIARY, 1.0)
-        release.set_field("has_playlist", bool(release.auxiliary.playlists), MetadataSource.AUXILIARY, 1.0)
+        release.set_field(
+            "format",
+            ", ".join(sorted(release.formats)),
+            MetadataSource.INFERRED,
+            1.0,
+        )
+        release.set_field(
+            "track_count", len(release.tracks), MetadataSource.INFERRED, 1.0
+        )
+        release.set_field(
+            "disc_count", release.disc_count, MetadataSource.INFERRED, 1.0
+        )
+        release.set_field(
+            "has_log",
+            bool(release.auxiliary.logs),
+            MetadataSource.AUXILIARY,
+            1.0,
+        )
+        release.set_field(
+            "has_cue",
+            bool(release.auxiliary.cues),
+            MetadataSource.AUXILIARY,
+            1.0,
+        )
+        release.set_field(
+            "has_nfo",
+            bool(release.auxiliary.nfos),
+            MetadataSource.AUXILIARY,
+            1.0,
+        )
+        release.set_field(
+            "has_sfv",
+            bool(release.auxiliary.sfvs),
+            MetadataSource.AUXILIARY,
+            1.0,
+        )
+        release.set_field(
+            "has_playlist",
+            bool(release.auxiliary.playlists),
+            MetadataSource.AUXILIARY,
+            1.0,
+        )
         release.set_field(
             "scene",
-            bool(release.auxiliary.nfos) and bool(re.search(r"[-_][a-z0-9]{2,}(?:_[a-z0-9]+)?$", folder_name, re.I)),
+            bool(release.auxiliary.nfos)
+            and bool(
+                re.search(
+                    r"[-_][a-z0-9]{2,}(?:_[a-z0-9]+)?$", folder_name, re.I
+                )
+            ),
             MetadataSource.INFERRED,
             0.7,
         )
@@ -293,88 +453,197 @@ class MusicReleaseAnalyzer:
                 )
                 if not match:
                     continue
-                key, value = match.group(1).casefold().replace(" ", "_"), _clean(match.group(2).strip(" |.:-"))
+                key, value = (
+                    match.group(1).casefold().replace(" ", "_"),
+                    _clean(match.group(2).strip(" |.:-")),
+                )
                 if value and value not in values.setdefault(key, []):
                     values[key].append(value)
 
         def first(*keys: str) -> str:
-            return next((value for key in keys for value in values.get(key, []) if value), "")
+            return next(
+                (
+                    value
+                    for key in keys
+                    for value in values.get(key, [])
+                    if value
+                ),
+                "",
+            )
 
-        release.set_field("artist", first("artist"), MetadataSource.AUXILIARY, 0.7)
-        release.set_field("album", first("album"), MetadataSource.AUXILIARY, 0.7)
-        release.set_field("release_label", first("label", "publisher"), MetadataSource.AUXILIARY, 0.75)
-        release.set_field("label", first("label", "publisher"), MetadataSource.AUXILIARY, 0.75)
+        release.set_field(
+            "artist", first("artist"), MetadataSource.AUXILIARY, 0.7
+        )
+        release.set_field(
+            "album", first("album"), MetadataSource.AUXILIARY, 0.7
+        )
+        release.set_field(
+            "release_label",
+            first("label", "publisher"),
+            MetadataSource.AUXILIARY,
+            0.75,
+        )
+        release.set_field(
+            "label",
+            first("label", "publisher"),
+            MetadataSource.AUXILIARY,
+            0.75,
+        )
         genre = first("genre")
         if genre:
-            release.set_field("genres", [part.strip() for part in re.split(r"[,;/]", genre) if part.strip()], MetadataSource.AUXILIARY, 0.75)
+            release.set_field(
+                "genres",
+                [
+                    part.strip()
+                    for part in re.split(r"[,;/]", genre)
+                    if part.strip()
+                ],
+                MetadataSource.AUXILIARY,
+                0.75,
+            )
         source = first("source").upper()
         if source.startswith("WEB"):
             release.set_field("media", "WEB", MetadataSource.AUXILIARY, 0.75)
         store_url = first("url", "www")
         if re.match(r"https?://", store_url, re.I):
-            release.set_field("store_url", store_url, MetadataSource.AUXILIARY, 0.75)
+            release.set_field(
+                "store_url", store_url, MetadataSource.AUXILIARY, 0.75
+            )
             release.external_ids["store_url"] = store_url
         retail_date = first("retail_date", "rel_date", "release_date")
         if re.fullmatch(r"\d{4}-\d{2}-\d{2}", retail_date):
-            release.set_field("retail_date", retail_date, MetadataSource.AUXILIARY, 0.8)
-            release.set_field("release_year", retail_date[:4], MetadataSource.AUXILIARY, 0.8)
+            release.set_field(
+                "retail_date", retail_date, MetadataSource.AUXILIARY, 0.8
+            )
+            release.set_field(
+                "release_year", retail_date[:4], MetadataSource.AUXILIARY, 0.8
+            )
         rip_date = first("rip_date")
         if re.fullmatch(r"\d{4}-\d{2}-\d{2}", rip_date):
-            release.set_field("rip_date", rip_date, MetadataSource.AUXILIARY, 0.7)
+            release.set_field(
+                "rip_date", rip_date, MetadataSource.AUXILIARY, 0.7
+            )
         quality = first("quality")
         if quality:
-            release.set_field("nfo_quality", quality, MetadataSource.AUXILIARY, 0.7)
+            release.set_field(
+                "nfo_quality", quality, MetadataSource.AUXILIARY, 0.7
+            )
             bit_depth = re.search(r"\b(16|24)\s*bit\b", quality, re.I)
-            sample_rate = re.search(r"\b(44\.1|48|88\.2|96|176\.4|192)\s*k(?:hz|hertz)\b", quality, re.I)
+            sample_rate = re.search(
+                r"\b(44\.1|48|88\.2|96|176\.4|192)\s*k(?:hz|hertz)\b",
+                quality,
+                re.I,
+            )
             if bit_depth:
-                release.set_field("nfo_bit_depth", int(bit_depth.group(1)), MetadataSource.AUXILIARY, 0.7)
+                release.set_field(
+                    "nfo_bit_depth",
+                    int(bit_depth.group(1)),
+                    MetadataSource.AUXILIARY,
+                    0.7,
+                )
             if sample_rate:
-                release.set_field("nfo_sample_rate", int(float(sample_rate.group(1)) * 1000), MetadataSource.AUXILIARY, 0.7)
+                release.set_field(
+                    "nfo_sample_rate",
+                    int(float(sample_rate.group(1)) * 1000),
+                    MetadataSource.AUXILIARY,
+                    0.7,
+                )
             declared_depth = int(bit_depth.group(1)) if bit_depth else None
-            declared_rate = int(float(sample_rate.group(1)) * 1000) if sample_rate else None
-            if declared_depth and any(track.bit_depth and track.bit_depth != declared_depth for track in release.tracks):
-                release.warnings.append("NFO bit depth conflicts with the audio stream metadata.")
-            if declared_rate and any(track.sample_rate and track.sample_rate != declared_rate for track in release.tracks):
-                release.warnings.append("NFO sample rate conflicts with the audio stream metadata.")
+            declared_rate = (
+                int(float(sample_rate.group(1)) * 1000)
+                if sample_rate
+                else None
+            )
+            if declared_depth and any(
+                track.bit_depth and track.bit_depth != declared_depth
+                for track in release.tracks
+            ):
+                release.warnings.append(
+                    "NFO bit depth conflicts with the audio stream metadata."
+                )
+            if declared_rate and any(
+                track.sample_rate and track.sample_rate != declared_rate
+                for track in release.tracks
+            ):
+                release.warnings.append(
+                    "NFO sample rate conflicts with the audio stream metadata."
+                )
 
     def _inspect_playlists(self, release: MusicRelease) -> None:
         """Check playlist membership only; no playlist content is modified."""
-        known = {Path(track.relative_path).name.casefold() for track in release.tracks}
+        known = {
+            Path(track.relative_path).name.casefold()
+            for track in release.tracks
+        }
         entries: list[str] = []
         for relative in release.auxiliary.playlists:
-            for line in self._read_sidecar(release.path / relative).splitlines():
+            for line in self._read_sidecar(
+                release.path / relative
+            ).splitlines():
                 value = line.strip()
                 if value and not value.startswith("#"):
-                    entries.append(Path(value.replace("\\", "/")).name.casefold())
+                    entries.append(
+                        Path(value.replace("\\", "/")).name.casefold()
+                    )
         if entries:
-            missing = sorted({entry for entry in entries if entry not in known})
-            release.set_field("playlist_tracks", len(entries), MetadataSource.AUXILIARY, 0.9)
-            release.set_field("playlist_missing_files", missing, MetadataSource.AUXILIARY, 0.9)
+            missing = sorted(
+                {entry for entry in entries if entry not in known}
+            )
+            release.set_field(
+                "playlist_tracks", len(entries), MetadataSource.AUXILIARY, 0.9
+            )
+            release.set_field(
+                "playlist_missing_files",
+                missing,
+                MetadataSource.AUXILIARY,
+                0.9,
+            )
             if missing:
-                release.warnings.append(f"Playlist references {len(missing)} file(s) not present in the release.")
+                release.warnings.append(
+                    f"Playlist references {len(missing)} file(s) not present in the release."
+                )
 
     def _inspect_sfvs(self, release: MusicRelease) -> None:
         """Validate SFV membership without the expensive/destructive hash pass."""
-        known = {Path(track.relative_path).name.casefold() for track in release.tracks}
+        known = {
+            Path(track.relative_path).name.casefold()
+            for track in release.tracks
+        }
         entries: list[str] = []
         for relative in release.auxiliary.sfvs:
-            for line in self._read_sidecar(release.path / relative).splitlines():
-                match = re.match(r"(.+?)\s+[A-F0-9]{8}\s*$", line.strip(), re.I)
+            for line in self._read_sidecar(
+                release.path / relative
+            ).splitlines():
+                match = re.match(
+                    r"(.+?)\s+[A-F0-9]{8}\s*$", line.strip(), re.I
+                )
                 if match:
                     entries.append(Path(match.group(1)).name.casefold())
         if entries:
-            missing = sorted({entry for entry in entries if entry not in known})
-            release.set_field("sfv_entries", len(entries), MetadataSource.AUXILIARY, 0.9)
-            release.set_field("sfv_missing_files", missing, MetadataSource.AUXILIARY, 0.9)
+            missing = sorted(
+                {entry for entry in entries if entry not in known}
+            )
+            release.set_field(
+                "sfv_entries", len(entries), MetadataSource.AUXILIARY, 0.9
+            )
+            release.set_field(
+                "sfv_missing_files", missing, MetadataSource.AUXILIARY, 0.9
+            )
             if missing:
-                release.warnings.append(f"SFV references {len(missing)} file(s) not present in the release.")
+                release.warnings.append(
+                    f"SFV references {len(missing)} file(s) not present in the release."
+                )
 
     @staticmethod
     def _set_artists(release: MusicRelease) -> None:
         per_track: list[tuple[str, ...]] = []
         for track in release.tracks:
-            values = _values(track.tags, "albumartist", "album artist") or _values(track.tags, "artist", "performer")
-            artists = _split_main_artists(values or [track.album_artist or track.artist])
+            values = _values(
+                track.tags, "albumartist", "album artist"
+            ) or _values(track.tags, "artist", "performer")
+            artists = _split_main_artists(
+                values or [track.album_artist or track.artist]
+            )
             if artists:
                 per_track.append(tuple(artists))
         if not per_track:
@@ -383,16 +652,30 @@ class MusicReleaseAnalyzer:
         shared: set[str] = {artist.casefold() for artist in per_track[0]}
         for item in per_track[1:]:
             shared.intersection_update(artist.casefold() for artist in item)
-        artists = [artist for artist in selected if artist.casefold() in shared] if shared else list(selected)
+        artists = (
+            [artist for artist in selected if artist.casefold() in shared]
+            if shared
+            else list(selected)
+        )
         confidence = 1.0 if shared else count / len(per_track)
-        release.set_field("artists", artists, MetadataSource.FILE_TAG, confidence)
-        release.set_field("artist", " & ".join(artists), MetadataSource.FILE_TAG, confidence)
+        release.set_field(
+            "artists", artists, MetadataSource.FILE_TAG, confidence
+        )
+        release.set_field(
+            "artist", " & ".join(artists), MetadataSource.FILE_TAG, confidence
+        )
         unique = sorted({" & ".join(item) for item in per_track})
         if len(unique) > 1 and not shared:
             release.conflicts["artist"] = unique
 
     @staticmethod
-    def _set_consensus(release: MusicRelease, name: str, values: list[str], source: MetadataSource, confidence: float) -> None:
+    def _set_consensus(
+        release: MusicRelease,
+        name: str,
+        values: list[str],
+        source: MetadataSource,
+        confidence: float,
+    ) -> None:
         cleaned = [_clean(value) for value in values if _clean(value)]
         if not cleaned:
             return
@@ -405,104 +688,285 @@ class MusicReleaseAnalyzer:
     @staticmethod
     def _clean_album_tag(value: str) -> str:
         """Remove obvious scene source/format suffixes from otherwise valid tags."""
-        return re.sub(r"(?:[ _.-]+)(?:WEB|CD|FLAC|MP3|AAC)$", "", _clean(value), flags=re.I).strip()
+        return re.sub(
+            r"(?:[ _.-]+)(?:WEB|CD|FLAC|MP3|AAC)$",
+            "",
+            _clean(value),
+            flags=re.I,
+        ).strip()
 
     @staticmethod
     def _derive_from_directory(release: MusicRelease, name: str) -> None:
         normalized = name.replace("_", " ")
         match = LEADING_YEAR_RE.search(normalized)
         if match:
-            release.set_field("year", match.group(1), MetadataSource.DIRECTORY, 1.0)
+            release.set_field(
+                "year", match.group(1), MetadataSource.DIRECTORY, 1.0
+            )
         if not release.get("artist") or not release.get("album"):
-            name_without_metadata = re.sub(r"\s+-\s+[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\s*$", "", normalized, flags=re.I)
+            name_without_metadata = re.sub(
+                r"\s+-\s+[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\s*$",
+                "",
+                normalized,
+                flags=re.I,
+            )
             name_without_metadata = re.sub(
                 r"\s+-\s+(?:(?:16|24)bit\s+\d+(?:\.\d+)?kHz\s+)?(?:Digital Media|WEB|CD)(?:\s+(?:FLAC|MP3|AAC|ALAC))?\s*$",
                 "",
                 name_without_metadata,
                 flags=re.I,
             )
-            name_without_metadata = re.sub(r"(?:\s*(?:\[[^\]]+\]|\{[^\}]+\}))*$", "", name_without_metadata)
-            trailing_year = re.search(r"\s+\(((?:19|20)\d{2})\)\s*$", name_without_metadata)
+            name_without_metadata = re.sub(
+                r"(?:\s*(?:\[[^\]]+\]|\{[^\}]+\}))*$",
+                "",
+                name_without_metadata,
+            )
+            trailing_year = re.search(
+                r"\s+\(((?:19|20)\d{2})\)\s*$", name_without_metadata
+            )
             if trailing_year:
-                release.set_field("year", trailing_year.group(1), MetadataSource.DIRECTORY, 0.9)
-                name_without_metadata = name_without_metadata[: trailing_year.start()].rstrip()
-            dated_recording = re.fullmatch(r"(.+?)\s+-\s+((?:19|20)\d{2})-\d{2}-\d{2}\s+-\s+(.+)", name_without_metadata)
+                release.set_field(
+                    "year",
+                    trailing_year.group(1),
+                    MetadataSource.DIRECTORY,
+                    0.9,
+                )
+                name_without_metadata = name_without_metadata[
+                    : trailing_year.start()
+                ].rstrip()
+            dated_recording = re.fullmatch(
+                r"(.+?)\s+-\s+((?:19|20)\d{2})-\d{2}-\d{2}\s+-\s+(.+)",
+                name_without_metadata,
+            )
             if dated_recording:
-                release.set_field("artist", dated_recording.group(1).strip(), MetadataSource.DIRECTORY, 0.55)
-                release.set_field("year", dated_recording.group(2), MetadataSource.DIRECTORY, 0.9)
-                release.set_field("album", dated_recording.group(3).strip(), MetadataSource.DIRECTORY, 0.55)
+                release.set_field(
+                    "artist",
+                    dated_recording.group(1).strip(),
+                    MetadataSource.DIRECTORY,
+                    0.55,
+                )
+                release.set_field(
+                    "year",
+                    dated_recording.group(2),
+                    MetadataSource.DIRECTORY,
+                    0.9,
+                )
+                release.set_field(
+                    "album",
+                    dated_recording.group(3).strip(),
+                    MetadataSource.DIRECTORY,
+                    0.55,
+                )
                 match = None
             else:
-                match = re.search(r"(?:^|\d{4}\s*-?\s*)(.+?)\s+-\s+(.+?)$", name_without_metadata)
+                match = re.search(
+                    r"(?:^|\d{4}\s*-?\s*)(.+?)\s+-\s+(.+?)$",
+                    name_without_metadata,
+                )
             if match:
-                release.set_field("artist", match.group(1).strip(), MetadataSource.DIRECTORY, 0.55)
-                release.set_field("album", match.group(2).strip(), MetadataSource.DIRECTORY, 0.55)
+                release.set_field(
+                    "artist",
+                    match.group(1).strip(),
+                    MetadataSource.DIRECTORY,
+                    0.55,
+                )
+                release.set_field(
+                    "album",
+                    match.group(2).strip(),
+                    MetadataSource.DIRECTORY,
+                    0.55,
+                )
         upper = normalized.upper()
-        for media, markers in {"WEB": ("WEB", "DIGITAL"), "CD": (" CD", "CD-", "EAC"), "Vinyl": ("VINYL", "LP"), "SACD": ("SACD",), "BD": ("BLURAY", "BLU-RAY")}.items():
+        for media, markers in {
+            "WEB": ("WEB", "DIGITAL"),
+            "CD": (" CD", "CD-", "EAC"),
+            "Vinyl": ("VINYL", "LP"),
+            "SACD": ("SACD",),
+            "BD": ("BLURAY", "BLU-RAY"),
+        }.items():
             if any(marker in upper for marker in markers):
-                release.set_field("media", media, MetadataSource.DIRECTORY, 0.45)
+                release.set_field(
+                    "media", media, MetadataSource.DIRECTORY, 0.45
+                )
                 break
         edition_with_year = EDITION_WITH_YEAR_RE.search(normalized)
-        edition_markers = ("remaster", "deluxe", "reissue", "expanded", "anniversary", "bonus tracks")
-        if edition_with_year and any(word in edition_with_year.group(2).casefold() for word in edition_markers):
-            release.set_field("edition_year", edition_with_year.group(1), MetadataSource.DIRECTORY, 0.95)
-            release.set_field("release_year", edition_with_year.group(1), MetadataSource.DIRECTORY, 0.95)
+        edition_markers = (
+            "remaster",
+            "deluxe",
+            "reissue",
+            "expanded",
+            "anniversary",
+            "bonus tracks",
+        )
+        if edition_with_year and any(
+            word in edition_with_year.group(2).casefold()
+            for word in edition_markers
+        ):
+            release.set_field(
+                "edition_year",
+                edition_with_year.group(1),
+                MetadataSource.DIRECTORY,
+                0.95,
+            )
+            release.set_field(
+                "release_year",
+                edition_with_year.group(1),
+                MetadataSource.DIRECTORY,
+                0.95,
+            )
             detail = edition_with_year.group(2).strip(" ,.-")
-            release.set_field("edition", detail, MetadataSource.DIRECTORY, 0.65)
+            release.set_field(
+                "edition", detail, MetadataSource.DIRECTORY, 0.65
+            )
         elif edition_with_year:
             detail = edition_with_year.group(2).strip(" ,.-")
-            release.set_field("release_year", edition_with_year.group(1), MetadataSource.DIRECTORY, 0.95)
+            release.set_field(
+                "release_year",
+                edition_with_year.group(1),
+                MetadataSource.DIRECTORY,
+                0.95,
+            )
             catalogue = CATALOGUE_RE.search(detail)
             if catalogue:
-                release.set_field("release_catalogue_number", catalogue.group(0), MetadataSource.DIRECTORY, 0.65)
+                release.set_field(
+                    "release_catalogue_number",
+                    catalogue.group(0),
+                    MetadataSource.DIRECTORY,
+                    0.65,
+                )
         edition = EDITION_RE.search(normalized)
         if edition and not edition_with_year:
             detail = edition.group(1).strip()
             # Regional pressings are release information.  The guide requires
             # the country name (for example, Japan), not a fabricated edition.
-            if re.search(r"\b(?:Japan|US|USA|UK|Europe|Germany|France|Canada|Australia)\b", detail, re.I):
-                release.set_field("release_title", detail, MetadataSource.DIRECTORY, 0.6)
+            if re.search(
+                r"\b(?:Japan|US|USA|UK|Europe|Germany|France|Canada|Australia)\b",
+                detail,
+                re.I,
+            ):
+                release.set_field(
+                    "release_title", detail, MetadataSource.DIRECTORY, 0.6
+                )
             else:
-                release.set_field("edition", detail, MetadataSource.DIRECTORY, 0.55)
+                release.set_field(
+                    "edition", detail, MetadataSource.DIRECTORY, 0.55
+                )
 
         # Common WEB naming places release information in adjacent brackets,
         # for example ``[2014 WEB FLAC][Label Name][886444460446]``.  A WEB
         # release date, label and catalogue number do not by themselves prove
         # an audio-distinct edition, so retain them as ``release_*`` fields.
-        brackets = [_clean(value) for match in BRACKET_RE.findall(normalized) for value in match if value]
-        source_markers = ("WEB", "DIGITAL", "CD", "VINYL", "LP", "SACD", "BLU-RAY", "BLURAY")
-        format_markers = ("FLAC", "MP3", "AAC", "ALAC", "M4A", "OGG", "OPUS", "WAV", "AIFF")
-        edition_markers_upper = tuple(marker.upper() for marker in edition_markers)
+        brackets = [
+            _clean(value)
+            for match in BRACKET_RE.findall(normalized)
+            for value in match
+            if value
+        ]
+        source_markers = (
+            "WEB",
+            "DIGITAL",
+            "CD",
+            "VINYL",
+            "LP",
+            "SACD",
+            "BLU-RAY",
+            "BLURAY",
+        )
+        format_markers = (
+            "FLAC",
+            "MP3",
+            "AAC",
+            "ALAC",
+            "M4A",
+            "OGG",
+            "OPUS",
+            "WAV",
+            "AIFF",
+        )
+        edition_markers_upper = tuple(
+            marker.upper() for marker in edition_markers
+        )
         edition_bracket_indexes: set[int] = set()
         for index, detail in enumerate(brackets):
             year_match = LEADING_YEAR_RE.search(detail)
             upper_detail = detail.upper()
-            if year_match and any(marker in upper_detail for marker in (*source_markers, *format_markers, *edition_markers_upper)):
-                if any(marker in upper_detail for marker in (*source_markers, *format_markers)):
-                    release.set_field("release_year", year_match.group(1), MetadataSource.DIRECTORY, 0.95)
+            if year_match and any(
+                marker in upper_detail
+                for marker in (
+                    *source_markers,
+                    *format_markers,
+                    *edition_markers_upper,
+                )
+            ):
+                if any(
+                    marker in upper_detail
+                    for marker in (*source_markers, *format_markers)
+                ):
+                    release.set_field(
+                        "release_year",
+                        year_match.group(1),
+                        MetadataSource.DIRECTORY,
+                        0.95,
+                    )
                 edition_bracket_indexes.add(index)
         for index, detail in enumerate(brackets):
             if index in edition_bracket_indexes:
                 continue
             if CATALOGUE_RE.fullmatch(detail):
-                release.set_field("release_catalogue_number", detail, MetadataSource.DIRECTORY, 0.65)
-                release.set_field("directory_catalogue_number", detail, MetadataSource.DIRECTORY, 0.7)
+                release.set_field(
+                    "release_catalogue_number",
+                    detail,
+                    MetadataSource.DIRECTORY,
+                    0.65,
+                )
+                release.set_field(
+                    "directory_catalogue_number",
+                    detail,
+                    MetadataSource.DIRECTORY,
+                    0.7,
+                )
                 continue
             catalogue = CATALOGUE_RE.search(detail)
             if catalogue:
-                release.set_field("release_catalogue_number", catalogue.group(0), MetadataSource.DIRECTORY, 0.65)
-                release.set_field("directory_catalogue_number", catalogue.group(0), MetadataSource.DIRECTORY, 0.7)
+                release.set_field(
+                    "release_catalogue_number",
+                    catalogue.group(0),
+                    MetadataSource.DIRECTORY,
+                    0.65,
+                )
+                release.set_field(
+                    "directory_catalogue_number",
+                    catalogue.group(0),
+                    MetadataSource.DIRECTORY,
+                    0.7,
+                )
                 # A scene-style block may combine imprint, catalogue and
                 # medium, e.g. ``{Roc-A-Fella B001219802 CD}``.
-                label = re.sub(r"\b(?:CD|WEB|DIGITAL|VINYL|LP|SACD|DVD|BD|BLU-?RAY)\b", "", CATALOGUE_RE.sub("", detail), flags=re.I)
+                label = re.sub(
+                    r"\b(?:CD|WEB|DIGITAL|VINYL|LP|SACD|DVD|BD|BLU-?RAY)\b",
+                    "",
+                    CATALOGUE_RE.sub("", detail),
+                    flags=re.I,
+                )
                 label = re.sub(r"[|,;/]+", " ", label)
                 label = re.sub(r"^[\s._-]+|[\s._-]+$", "", label)
                 if label and re.search(r"[A-Za-z]", label):
-                    release.set_field("release_label", label, MetadataSource.DIRECTORY, 0.6)
+                    release.set_field(
+                        "release_label", label, MetadataSource.DIRECTORY, 0.6
+                    )
                 continue
             upper_detail = detail.upper()
-            if not any(marker in upper_detail for marker in (*source_markers, *format_markers, *edition_markers_upper)) and re.search(r"[A-Za-z]", detail):
-                release.set_field("release_label", detail, MetadataSource.DIRECTORY, 0.6)
+            if not any(
+                marker in upper_detail
+                for marker in (
+                    *source_markers,
+                    *format_markers,
+                    *edition_markers_upper,
+                )
+            ) and re.search(r"[A-Za-z]", detail):
+                release.set_field(
+                    "release_label", detail, MetadataSource.DIRECTORY, 0.6
+                )
 
     @staticmethod
     def _infer_media_from_logs(release: MusicRelease) -> None:
@@ -515,10 +979,21 @@ class MusicReleaseAnalyzer:
                 data = (root / relative).read_bytes()[:262_144]
             except OSError:
                 continue
-            text = data.decode("utf-16", errors="ignore") if data.startswith((b"\xff\xfe", b"\xfe\xff")) or b"\x00" in data[:256] else data.decode("utf-8", errors="ignore")
-            if re.search(r"\b(?:Exact Audio Copy|X Lossless Decoder|CUERipper|whipper|CD-DA|CD-ROM)\b", text, re.I):
+            text = (
+                data.decode("utf-16", errors="ignore")
+                if data.startswith((b"\xff\xfe", b"\xfe\xff"))
+                or b"\x00" in data[:256]
+                else data.decode("utf-8", errors="ignore")
+            )
+            if re.search(
+                r"\b(?:Exact Audio Copy|X Lossless Decoder|CUERipper|whipper|CD-DA|CD-ROM)\b",
+                text,
+                re.I,
+            ):
                 release.set_field("media", "CD", MetadataSource.AUXILIARY, 0.9)
-                release.warnings.append("Source media inferred as CD from the rip log.")
+                release.warnings.append(
+                    "Source media inferred as CD from the rip log."
+                )
                 return
 
     @staticmethod
@@ -532,51 +1007,94 @@ class MusicReleaseAnalyzer:
         album_artist_credits: set[tuple[str, ...]] = set()
         track_artists: set[str] = set()
         for track in release.tracks:
-            album_artists = _split_main_artists(_values(track.tags, "albumartist", "album artist") or [track.album_artist])
+            album_artists = _split_main_artists(
+                _values(track.tags, "albumartist", "album artist")
+                or [track.album_artist]
+            )
             if album_artists:
-                album_artist_credits.add(tuple(artist.casefold() for artist in album_artists))
+                album_artist_credits.add(
+                    tuple(artist.casefold() for artist in album_artists)
+                )
             if track.artist:
                 track_artists.add(track.artist.casefold())
 
-        shared_album_artists: set[str] = set(next(iter(album_artist_credits))) if album_artist_credits else set()
+        shared_album_artists: set[str] = (
+            set(next(iter(album_artist_credits)))
+            if album_artist_credits
+            else set()
+        )
         for credit in album_artist_credits:
             shared_album_artists.intersection_update(credit)
 
-        has_explicit_various_artists = any(credit in {"various artists", "various", "va", "v.a."} for artists in album_artist_credits for credit in artists)
-        has_stable_album_artist = bool(shared_album_artists) and not has_explicit_various_artists
+        has_explicit_various_artists = any(
+            credit in {"various artists", "various", "va", "v.a."}
+            for artists in album_artist_credits
+            for credit in artists
+        )
+        has_stable_album_artist = (
+            bool(shared_album_artists) and not has_explicit_various_artists
+        )
         # Without ALBUMARTIST at all, many unrelated track artists are the
         # best remaining signal.  Do not apply this fallback when an explicit,
         # stable album artist exists.
-        inferred_from_tracks = not album_artist_credits and len(track_artists) > max(3, count // 2)
+        inferred_from_tracks = not album_artist_credits and len(
+            track_artists
+        ) > max(3, count // 2)
         explicit_compilation = "compilation" in album
         # ``OST`` and ``live`` are release-type markers only as standalone
         # words.  A substring check would classify titles such as
         # ``NOSTALGIA`` as a soundtrack or ``Olive`` as a live album.
-        if "soundtrack" in album or re.search(r"(?:^|[^\w])ost(?:$|[^\w])", album):
+        if "soundtrack" in album or re.search(
+            r"(?:^|[^\w])ost(?:$|[^\w])", album
+        ):
             value = "Soundtrack"
         elif re.search(r"\blive\b", album):
             value = "Live album"
-        elif explicit_compilation or has_explicit_various_artists or (len(album_artist_credits) > 1 and not has_stable_album_artist) or inferred_from_tracks:
+        elif (
+            explicit_compilation
+            or has_explicit_various_artists
+            or (len(album_artist_credits) > 1 and not has_stable_album_artist)
+            or inferred_from_tracks
+        ):
             value = "Compilation"
             # Orpheus uses the multiple-artist feature for actual Various
             # Artists/VA compilations.  Do not overwrite a stable album-artist
             # credit merely because its tracks have featured performers.
-            if has_explicit_various_artists or (not has_stable_album_artist and len(track_artists) > 3):
+            if has_explicit_various_artists or (
+                not has_stable_album_artist and len(track_artists) > 3
+            ):
                 # The Orpheus form explicitly requires its multiple-artist
                 # feature instead of a literal "Various Artists" credit.
                 # Keep the track-tag order and never synthesize an artist.
                 compilation_artists: list[str] = []
                 for track in release.tracks:
-                    for artist in _split_main_artists(_values(track.tags, "artist", "performer") or [track.artist]):
+                    for artist in _split_main_artists(
+                        _values(track.tags, "artist", "performer")
+                        or [track.artist]
+                    ):
                         if artist not in compilation_artists:
                             compilation_artists.append(artist)
                 if compilation_artists:
-                    release.set_field("artists", compilation_artists, MetadataSource.INFERRED, 1.0, force=True)
-                    release.set_field("artist", "Various Artists", MetadataSource.INFERRED, 1.0, force=True)
+                    release.set_field(
+                        "artists",
+                        compilation_artists,
+                        MetadataSource.INFERRED,
+                        1.0,
+                        force=True,
+                    )
+                    release.set_field(
+                        "artist",
+                        "Various Artists",
+                        MetadataSource.INFERRED,
+                        1.0,
+                        force=True,
+                    )
         elif count == 1 and (release.tracks[0].duration or 0) <= 20 * 60:
             value = "Single"
         elif count == 1:
-            release.warnings.append("A long one-track release cannot be safely classified as an official single without external metadata.")
+            release.warnings.append(
+                "A long one-track release cannot be safely classified as an official single without external metadata."
+            )
             return
         elif "ep" in album.split() or 2 <= count <= 6:
             value = "EP"

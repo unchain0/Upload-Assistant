@@ -23,12 +23,18 @@ _MAX_EPUB_MEMBER_SIZE = 2 * 1024 * 1024
 _MAX_EPUB_COMPRESSION_RATIO = 100
 
 
-def _safe_zip_member_bytes(archive: zipfile.ZipFile, name: str) -> bytes | None:
+def _safe_zip_member_bytes(
+    archive: zipfile.ZipFile, name: str
+) -> bytes | None:
     try:
         member = archive.getinfo(name)
     except KeyError:
         return None
-    if member.file_size > _MAX_EPUB_MEMBER_SIZE or member.file_size > max(member.compress_size, 1) * _MAX_EPUB_COMPRESSION_RATIO:
+    if (
+        member.file_size > _MAX_EPUB_MEMBER_SIZE
+        or member.file_size
+        > max(member.compress_size, 1) * _MAX_EPUB_COMPRESSION_RATIO
+    ):
         return None
     return archive.read(member)
 
@@ -55,9 +61,13 @@ def extract_epub_metadata(epub_path: str) -> dict[str, Any]:
             # 1. Read META-INF/container.xml to find the .opf file path
             rootfile_path: str | None = None
             try:
-                container_data = _safe_zip_member_bytes(z, "META-INF/container.xml")
+                container_data = _safe_zip_member_bytes(
+                    z, "META-INF/container.xml"
+                )
                 if container_data is None:
-                    raise ValueError("unsafe or missing EPUB container metadata")
+                    raise ValueError(
+                        "unsafe or missing EPUB container metadata"
+                    )
                 root = ET.fromstring(container_data)
                 for elem in root.iter():
                     if elem.tag.endswith("rootfile"):
@@ -65,7 +75,9 @@ def extract_epub_metadata(epub_path: str) -> dict[str, Any]:
                         if rootfile_path:
                             break
             except Exception as e:
-                logger.debug(f"[yellow]Debug: META-INF/container.xml not found or unreadable: {e}[/yellow]")
+                logger.debug(
+                    f"[yellow]Debug: META-INF/container.xml not found or unreadable: {e}[/yellow]"
+                )
 
             # Fallback: search for any .opf file in the archive
             if not rootfile_path:
@@ -75,7 +87,9 @@ def extract_epub_metadata(epub_path: str) -> dict[str, Any]:
                         break
 
             if not rootfile_path:
-                logger.debug("[yellow]Debug: No OPF metadata file found in EPUB ZIP[/yellow]")
+                logger.debug(
+                    "[yellow]Debug: No OPF metadata file found in EPUB ZIP[/yellow]"
+                )
                 return metadata
 
             # 2. Read and parse the .opf file
@@ -103,18 +117,35 @@ def extract_epub_metadata(epub_path: str) -> dict[str, Any]:
                 elif tag_local == "creator":
                     creator = (elem.text or "").strip()
                     creator_id = elem.attrib.get("id", "").strip()
-                    inline_role = next((value.strip().lower() for key, value in elem.attrib.items() if key.split("}")[-1] == "role"), "")
+                    inline_role = next(
+                        (
+                            value.strip().lower()
+                            for key, value in elem.attrib.items()
+                            if key.split("}")[-1] == "role"
+                        ),
+                        "",
+                    )
                     if creator:
                         creators.append((creator_id, creator, inline_role))
                 elif tag_local == "language":
                     language = (elem.text or "").strip()
                 elif tag_local == "date":
-                    event = str(get_attr_ignore_ns(elem, "event") or "").strip().casefold()
-                    if event not in {"modification", "modified", "dcterms:modified"}:
+                    event = (
+                        str(get_attr_ignore_ns(elem, "event") or "")
+                        .strip()
+                        .casefold()
+                    )
+                    if event not in {
+                        "modification",
+                        "modified",
+                        "dcterms:modified",
+                    }:
                         date = (elem.text or "").strip()
                 elif tag_local == "identifier":
                     val = (elem.text or "").strip()
-                    identifiers.append((elem.attrib.get("id", "").strip(), val))
+                    identifiers.append(
+                        (elem.attrib.get("id", "").strip(), val)
+                    )
                 elif tag_local == "description":
                     description = (elem.text or "").strip()
                 elif tag_local == "publisher":
@@ -122,33 +153,58 @@ def extract_epub_metadata(epub_path: str) -> dict[str, Any]:
                 elif tag_local == "meta":
                     meta_name = (elem.attrib.get("name") or "").lower()
                     property_name = (elem.attrib.get("property") or "").lower()
-                    refined_id = (elem.attrib.get("refines") or "").lstrip("#").strip()
+                    refined_id = (
+                        (elem.attrib.get("refines") or "").lstrip("#").strip()
+                    )
                     if property_name == "role" and refined_id:
-                        creator_roles[refined_id] = (elem.text or elem.attrib.get("content") or "").strip().lower()
+                        creator_roles[refined_id] = (
+                            (elem.text or elem.attrib.get("content") or "")
+                            .strip()
+                            .lower()
+                        )
                     elif meta_name == "calibre:series":
                         series = (elem.attrib.get("content") or "").strip()
                     elif meta_name == "calibre:series_index":
-                        series_index = (elem.attrib.get("content") or "").strip()
+                        series_index = (
+                            elem.attrib.get("content") or ""
+                        ).strip()
 
             if title:
                 metadata["title"] = title
             author = next(
-                (creator for creator_id, creator, inline_role in creators if inline_role == "aut" or creator_roles.get(creator_id) == "aut"),
+                (
+                    creator
+                    for creator_id, creator, inline_role in creators
+                    if inline_role == "aut"
+                    or creator_roles.get(creator_id) == "aut"
+                ),
                 creators[0][1] if creators else "",
             )
             if author:
                 metadata["author"] = author
             if language:
                 metadata["book_language_raw"] = language
-            if date and not date.startswith("0101-01-01"):  # ignore placeholder date
+            if date and not date.startswith(
+                "0101-01-01"
+            ):  # ignore placeholder date
                 match = re.search(r"\b\d{4}\b", date)
                 if match:
                     metadata["year"] = match.group(0)
             ordered_identifiers: list[str] = []
             if unique_id:
-                ordered_identifiers.extend(value for identifier_id, value in identifiers if identifier_id == unique_id)
-            ordered_identifiers.extend(value for _identifier_id, value in identifiers if value.lower().startswith(("urn:isbn:", "isbn:")))
-            ordered_identifiers.extend(value for _identifier_id, value in identifiers)
+                ordered_identifiers.extend(
+                    value
+                    for identifier_id, value in identifiers
+                    if identifier_id == unique_id
+                )
+            ordered_identifiers.extend(
+                value
+                for _identifier_id, value in identifiers
+                if value.lower().startswith(("urn:isbn:", "isbn:"))
+            )
+            ordered_identifiers.extend(
+                value for _identifier_id, value in identifiers
+            )
             for identifier_value in ordered_identifiers:
                 cleaned_id = re.sub(r"[^\dXx]", "", identifier_value).upper()
                 if validate_isbn_checksum(cleaned_id):
@@ -161,10 +217,14 @@ def extract_epub_metadata(epub_path: str) -> dict[str, Any]:
             if series:
                 metadata["book_series"] = series
             if series_index:
-                metadata["book_series_index"] = normalize_series_index(series_index)
+                metadata["book_series_index"] = normalize_series_index(
+                    series_index
+                )
 
     except Exception as e:
-        logger.debug(f"[yellow]Warning: Error parsing EPUB metadata: {e}[/yellow]")
+        logger.debug(
+            f"[yellow]Warning: Error parsing EPUB metadata: {e}[/yellow]"
+        )
 
     return metadata
 
@@ -191,22 +251,42 @@ def extract_cbr_cbz_metadata(filepath: str) -> dict[str, Any]:
         try:
             with zipfile.ZipFile(filepath, "r") as z:
                 # Find ComicInfo.xml (case-insensitive search)
-                xml_name = next((name for name in z.namelist() if name.lower().endswith("comicinfo.xml")), None)
+                xml_name = next(
+                    (
+                        name
+                        for name in z.namelist()
+                        if name.lower().endswith("comicinfo.xml")
+                    ),
+                    None,
+                )
                 if xml_name:
                     xml_data = z.read(xml_name)
         except Exception as e:
-            logger.debug(f"[yellow]Debug: Error reading CBZ zip archive: {e}[/yellow]")
+            logger.debug(
+                f"[yellow]Debug: Error reading CBZ zip archive: {e}[/yellow]"
+            )
     elif ext == ".cbr":
         if rarfile is None:
-            logger.debug("[yellow]Debug: rarfile library not available for CBR metadata extraction.[/yellow]")
+            logger.debug(
+                "[yellow]Debug: rarfile library not available for CBR metadata extraction.[/yellow]"
+            )
         else:
             try:
                 with rarfile.RarFile(filepath, "r") as r:
-                    xml_name = next((name for name in r.namelist() if name.lower().endswith("comicinfo.xml")), None)
+                    xml_name = next(
+                        (
+                            name
+                            for name in r.namelist()
+                            if name.lower().endswith("comicinfo.xml")
+                        ),
+                        None,
+                    )
                     if xml_name:
                         xml_data = r.read(xml_name)
             except Exception as e:
-                logger.debug(f"[yellow]Debug: Error reading CBR rar archive: {e}[/yellow]")
+                logger.debug(
+                    f"[yellow]Debug: Error reading CBR rar archive: {e}[/yellow]"
+                )
 
     if not xml_data:
         return metadata
@@ -273,7 +353,9 @@ def extract_cbr_cbz_metadata(filepath: str) -> dict[str, Any]:
             metadata["keywords"] = metadata["genres"] = genres_list
 
     except Exception as e:
-        logger.debug(f"[yellow]Warning: Error parsing ComicInfo.xml metadata: {e}[/yellow]")
+        logger.debug(
+            f"[yellow]Warning: Error parsing ComicInfo.xml metadata: {e}[/yellow]"
+        )
 
     return metadata
 
@@ -287,7 +369,9 @@ def extract_mobi_metadata(mobi_path: str) -> dict[str, Any]:
     try:
         import mobi
     except ImportError:
-        logger.debug("[yellow]Debug: mobi library is not installed. Skipping MOBI metadata extraction.[/yellow]")
+        logger.debug(
+            "[yellow]Debug: mobi library is not installed. Skipping MOBI metadata extraction.[/yellow]"
+        )
         return metadata
 
     tempdir = None
@@ -315,7 +399,9 @@ def extract_mobi_metadata(mobi_path: str) -> dict[str, Any]:
                     decoded = opf_data.decode("utf-8", errors="replace")
                     root = ET.fromstring(decoded.encode("utf-8"))
                 except Exception as e:
-                    logger.debug(f"[yellow]Debug: Error parsing MOBI XML data: {e}[/yellow]")
+                    logger.debug(
+                        f"[yellow]Debug: Error parsing MOBI XML data: {e}[/yellow]"
+                    )
                     root = None
 
             if root is not None:
@@ -372,7 +458,9 @@ def extract_mobi_metadata(mobi_path: str) -> dict[str, Any]:
                     metadata["publisher"] = publisher
 
     except Exception as e:
-        logger.debug(f"[yellow]Warning: Error parsing MOBI metadata: {e}[/yellow]")
+        logger.debug(
+            f"[yellow]Warning: Error parsing MOBI metadata: {e}[/yellow]"
+        )
     finally:
         if tempdir and Path(tempdir).exists():
             with contextlib.suppress(Exception):
@@ -387,13 +475,22 @@ def validate_isbn_checksum(candidate: str) -> str | None:
 
     # Check ISBN-13
     if len(cleaned) == 13 and cleaned.isdigit():
-        total = sum(int(cleaned[i]) * (1 if i % 2 == 0 else 3) for i in range(13))
+        total = sum(
+            int(cleaned[i]) * (1 if i % 2 == 0 else 3) for i in range(13)
+        )
         if total % 10 == 0:
             return cleaned
 
     # Check ISBN-10
-    if len(cleaned) == 10 and cleaned[:9].isdigit() and (cleaned[9].isdigit() or cleaned[9] == "X"):
-        total = sum((10 if cleaned[i] == "X" else int(cleaned[i])) * (10 - i) for i in range(10))
+    if (
+        len(cleaned) == 10
+        and cleaned[:9].isdigit()
+        and (cleaned[9].isdigit() or cleaned[9] == "X")
+    ):
+        total = sum(
+            (10 if cleaned[i] == "X" else int(cleaned[i])) * (10 - i)
+            for i in range(10)
+        )
         if total % 11 == 0:
             return cleaned
 
@@ -413,7 +510,9 @@ def extract_pdf_page_count(pdf_path: str) -> int | None:
         with fitz.open(pdf_path) as doc:
             return len(doc) or None
     except Exception as error:
-        logger.debug(f"[yellow]Warning: Error reading PDF page count: {error}[/yellow]")
+        logger.debug(
+            f"[yellow]Warning: Error reading PDF page count: {error}[/yellow]"
+        )
         return None
 
 
@@ -422,7 +521,9 @@ def extract_isbn_from_pdf(pdf_path: str) -> str | None:
     try:
         import fitz
     except ImportError:
-        logger.debug("[yellow]Debug: PyMuPDF (fitz) is not installed. Skipping PDF ISBN extraction.[/yellow]")
+        logger.debug(
+            "[yellow]Debug: PyMuPDF (fitz) is not installed. Skipping PDF ISBN extraction.[/yellow]"
+        )
         return None
 
     if not Path(pdf_path).is_file():
@@ -457,16 +558,24 @@ def extract_isbn_from_pdf(pdf_path: str) -> str | None:
                 if not isinstance(text, str) or not text:
                     continue
 
-                labelled = re.findall(r"\bISBN(?:-1[03])?:?\s*((?:97[89][- ]?)?\d(?:[- ]?\d){8,11}[- ]?[\dX])\b", text, re.IGNORECASE)
+                labelled = re.findall(
+                    r"\bISBN(?:-1[03])?:?\s*((?:97[89][- ]?)?\d(?:[- ]?\d){8,11}[- ]?[\dX])\b",
+                    text,
+                    re.IGNORECASE,
+                )
                 bare_isbn13 = re.findall(r"\b(97[89](?:[- ]?\d){10})\b", text)
                 candidates = list(dict.fromkeys([*labelled, *bare_isbn13]))
                 for cand in candidates:
                     validated = validate_isbn_checksum(cand)
                     if validated:
-                        logger.info(f"[cyan]Found valid ISBN {validated} on PDF page {page_num}[/cyan]")
+                        logger.info(
+                            f"[cyan]Found valid ISBN {validated} on PDF page {page_num}[/cyan]"
+                        )
                         return validated
     except Exception as e:
-        logger.debug(f"[yellow]Warning: Error extracting ISBN from PDF: {e}[/yellow]")
+        logger.debug(
+            f"[yellow]Warning: Error extracting ISBN from PDF: {e}[/yellow]"
+        )
 
     return None
 
@@ -516,9 +625,13 @@ def get_epubmeta_output(epub_path: str) -> str | None:
                 return None
             rootfile_path = None
             try:
-                container_data = _safe_zip_member_bytes(z, "META-INF/container.xml")
+                container_data = _safe_zip_member_bytes(
+                    z, "META-INF/container.xml"
+                )
                 if container_data is None:
-                    raise ValueError("unsafe or missing EPUB container metadata")
+                    raise ValueError(
+                        "unsafe or missing EPUB container metadata"
+                    )
                 root = ET.fromstring(container_data)
                 for elem in root.iter():
                     if elem.tag.split("}")[-1] == "rootfile":
@@ -526,7 +639,9 @@ def get_epubmeta_output(epub_path: str) -> str | None:
                         if rootfile_path:
                             break
             except Exception as e:
-                logger.error(f"[yellow]Warning: Error parsing EPUB metadata: {e}[/yellow]")
+                logger.error(
+                    f"[yellow]Warning: Error parsing EPUB metadata: {e}[/yellow]"
+                )
 
             if not rootfile_path:
                 for name in z.namelist():
@@ -566,7 +681,14 @@ def get_epubmeta_output(epub_path: str) -> str | None:
                         prop = get_attr_ignore_ns(child, "property") or ""
                         scheme = get_attr_ignore_ns(child, "scheme") or ""
                         text = (child.text or "").strip()
-                        refinements.append({"refId": ref_id, "refProp": prop, "refScheme": scheme, "refText": text})
+                        refinements.append(
+                            {
+                                "refId": ref_id,
+                                "refProp": prop,
+                                "refScheme": scheme,
+                                "refText": text,
+                            }
+                        )
 
             def find_refinement(ref_id, prop):
                 for r in refinements:
@@ -604,7 +726,14 @@ def get_epubmeta_output(epub_path: str) -> str | None:
                             id_type = ref["refText"]
                             if not scheme_val:
                                 scheme_val = ref["refScheme"]
-                    identifiers.append({"id": id_val, "identifier_type": id_type, "scheme": scheme_val, "text": text})
+                    identifiers.append(
+                        {
+                            "id": id_val,
+                            "identifier_type": id_type,
+                            "scheme": scheme_val,
+                            "text": text,
+                        }
+                    )
 
                 elif tag == "title":
                     id_val = get_attr_ignore_ns(child, "id")
@@ -619,7 +748,14 @@ def get_epubmeta_output(epub_path: str) -> str | None:
                         if ref_seq:
                             with contextlib.suppress(ValueError):
                                 title_seq = int(ref_seq["refText"])
-                    titles.append({"lang": lang_val, "title_type": title_type, "title_seq": title_seq, "text": text})
+                    titles.append(
+                        {
+                            "lang": lang_val,
+                            "title_type": title_type,
+                            "title_seq": title_seq,
+                            "text": text,
+                        }
+                    )
 
                 elif tag == "language":
                     languages.append(text)
@@ -642,7 +778,12 @@ def get_epubmeta_output(epub_path: str) -> str | None:
                             with contextlib.suppress(ValueError):
                                 creator_seq = int(ref_seq["refText"])
 
-                    item = {"role": role_val, "file_as": file_as_val, "creator_seq": creator_seq, "text": text}
+                    item = {
+                        "role": role_val,
+                        "file_as": file_as_val,
+                        "creator_seq": creator_seq,
+                        "text": text,
+                    }
                     if tag == "creator":
                         creators.append(item)
                     else:
@@ -676,7 +817,14 @@ def get_epubmeta_output(epub_path: str) -> str | None:
                         ref_sof = find_refinement(id_val, "source-of")
                         if ref_sof:
                             source_of = ref_sof["refText"]
-                    sources.append({"id_type": id_type, "scheme": scheme_val, "source_of": source_of, "text": text})
+                    sources.append(
+                        {
+                            "id_type": id_type,
+                            "scheme": scheme_val,
+                            "source_of": source_of,
+                            "text": text,
+                        }
+                    )
 
                 elif tag == "type" and m_type is None:
                     m_type = text
@@ -720,14 +868,22 @@ def get_epubmeta_output(epub_path: str) -> str | None:
                 if ident.get("id"):
                     lines.append(format_subline("id", ident["id"]))
                 if ident.get("identifier_type"):
-                    lines.append(format_subline("identifier-type", ident["identifier_type"]))
+                    lines.append(
+                        format_subline(
+                            "identifier-type", ident["identifier_type"]
+                        )
+                    )
                 if ident.get("scheme"):
                     lines.append(format_subline("scheme", ident["scheme"]))
                 lines.append(format_subline("text", ident["text"]))
 
             # 2. Titles
             for title in titles:
-                if title.get("lang") is None and title.get("title_type") is None and title.get("title_seq") is None:
+                if (
+                    title.get("lang") is None
+                    and title.get("title_type") is None
+                    and title.get("title_seq") is None
+                ):
                     lines.append(f"title: {title['text']}")
                 else:
                     lines.append("title")
@@ -735,43 +891,82 @@ def get_epubmeta_output(epub_path: str) -> str | None:
                     if title.get("lang"):
                         lines.append(format_subline("lang", title["lang"]))
                     if title.get("title_type"):
-                        lines.append(format_subline("title-type", title["title_type"]))
+                        lines.append(
+                            format_subline("title-type", title["title_type"])
+                        )
                     if title.get("title_seq") is not None:
-                        lines.append(format_subline("display-seq", str(title["title_seq"])))
+                        lines.append(
+                            format_subline(
+                                "display-seq", str(title["title_seq"])
+                            )
+                        )
 
             # 3. Languages
             lines.extend(f"language: {lang}" for lang in languages)
 
             # 4. Contributors
             for contributor in contributors:
-                if contributor.get("role") is None and contributor.get("file_as") is None and contributor.get("creator_seq") is None:
+                if (
+                    contributor.get("role") is None
+                    and contributor.get("file_as") is None
+                    and contributor.get("creator_seq") is None
+                ):
                     lines.append(f"contributor: {contributor['text']}")
                 else:
                     lines.append("contributor")
                     lines.append(format_subline("text", contributor["text"]))
                     if contributor.get("file_as"):
-                        lines.append(format_subline("file-as", contributor["file_as"]))
+                        lines.append(
+                            format_subline("file-as", contributor["file_as"])
+                        )
                     if contributor.get("role"):
-                        lines.append(format_subline("role", contributor["role"]))
+                        lines.append(
+                            format_subline("role", contributor["role"])
+                        )
                     if contributor.get("creator_seq") is not None:
-                        lines.append(format_subline("display-seq", str(contributor["creator_seq"])))
+                        lines.append(
+                            format_subline(
+                                "display-seq", str(contributor["creator_seq"])
+                            )
+                        )
 
             # 5. Creators
             for creator in creators:
-                if creator.get("role") is None and creator.get("file_as") is None and creator.get("creator_seq") is None:
+                if (
+                    creator.get("role") is None
+                    and creator.get("file_as") is None
+                    and creator.get("creator_seq") is None
+                ):
                     lines.append(f"creator: {creator['text']}")
                 else:
                     lines.append("creator")
                     lines.append(format_subline("text", creator["text"]))
                     if creator.get("file_as"):
-                        lines.append(format_subline("file-as", creator["file_as"]))
+                        lines.append(
+                            format_subline("file-as", creator["file_as"])
+                        )
                     if creator.get("role"):
                         lines.append(format_subline("role", creator["role"]))
                     if creator.get("creator_seq") is not None:
-                        lines.append(format_subline("display-seq", str(creator["creator_seq"])))
+                        lines.append(
+                            format_subline(
+                                "display-seq", str(creator["creator_seq"])
+                            )
+                        )
 
             # 6. Dates
-            date_event_order = ["Available", "Created", "Date", "DateAccepted", "DateCopyrighted", "DateSubmitted", "Epub", "Issued", "Modified", "Valid"]
+            date_event_order = [
+                "Available",
+                "Created",
+                "Date",
+                "DateAccepted",
+                "DateCopyrighted",
+                "DateSubmitted",
+                "Epub",
+                "Issued",
+                "Modified",
+                "Valid",
+            ]
             date_event_strings = {
                 "Available": "available",
                 "Created": "created",
@@ -787,22 +982,36 @@ def get_epubmeta_output(epub_path: str) -> str | None:
             for event_name in date_event_order:
                 if event_name in dates_map:
                     lines.append("date")
-                    lines.append(format_subline("event", date_event_strings[event_name]))
+                    lines.append(
+                        format_subline("event", date_event_strings[event_name])
+                    )
                     lines.append(format_subline("text", dates_map[event_name]))
 
             # 7. Sources
             for source in sources:
-                if source.get("id_type") is None and source.get("scheme") is None and source.get("source_of") is None:
+                if (
+                    source.get("id_type") is None
+                    and source.get("scheme") is None
+                    and source.get("source_of") is None
+                ):
                     lines.append(f"source: {source['text']}")
                 else:
                     lines.append("source")
                     lines.append(format_subline("text", source["text"]))
                     if source.get("id_type"):
-                        lines.append(format_subline("identifier-type", source["id_type"]))
+                        lines.append(
+                            format_subline(
+                                "identifier-type", source["id_type"]
+                            )
+                        )
                     if source.get("scheme"):
-                        lines.append(format_subline("scheme", source["scheme"]))
+                        lines.append(
+                            format_subline("scheme", source["scheme"])
+                        )
                     if source.get("source_of"):
-                        lines.append(format_subline("source-of", source["source_of"]))
+                        lines.append(
+                            format_subline("source-of", source["source_of"])
+                        )
 
             # 8. Type
             if m_type:
@@ -839,5 +1048,7 @@ def get_epubmeta_output(epub_path: str) -> str | None:
             return "\n".join(lines) + "\n"
 
     except Exception as e:
-        logger.debug(f"[yellow]Warning: Error parsing EPUB for epubmeta output: {e}[/yellow]")
+        logger.debug(
+            f"[yellow]Warning: Error parsing EPUB for epubmeta output: {e}[/yellow]"
+        )
         return None

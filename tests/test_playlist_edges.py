@@ -5,16 +5,26 @@ import struct
 
 import pytest
 
-from src.integrations.runtime_tools.playlist import MplsParser, load_movie_playlist, load_playlist
+from src.integrations.runtime_tools.playlist import (
+    MplsParser,
+    load_movie_playlist,
+    load_playlist,
+)
 
 
 def test_movie_playlist_header_wrapper_repr_and_nonzero_position() -> None:
-    payload = b"MPLS" + b"0200" + struct.pack(">III", 40, 80, 120) + (b"\0" * 20)
+    payload = (
+        b"MPLS" + b"0200" + struct.pack(">III", 40, 80, 120) + (b"\0" * 20)
+    )
     stream = io.BytesIO(payload)
     header = load_movie_playlist(stream)  # type: ignore[arg-type]
     assert header.type_indicator == "MPLS"
     assert header.version_number == "0200"
-    assert (header.playlist_start_address, header.playlist_mark_start_address, header.extension_data_start_address) == (40, 80, 120)
+    assert (
+        header.playlist_start_address,
+        header.playlist_mark_start_address,
+        header.extension_data_start_address,
+    ) == (40, 80, 120)
 
     parser = MplsParser(io.BytesIO(payload))  # type: ignore[arg-type]
     assert "MplsParser" not in repr(parser)
@@ -40,9 +50,24 @@ def test_playlist_zero_length_and_empty_play_item() -> None:
     assert parser.mpls.tell() == 2
 
 
-def test_playlist_with_play_item_parses_clip_times_and_seeks_to_boundary() -> None:
-    play_item_payload = struct.pack(">H", 20) + b"00001" + b"M2TS" + b"\0\0" + b"\0" + struct.pack(">I", 90_000) + struct.pack(">I", 180_000)
-    playlist_body = b"\0\0" + struct.pack(">H", 1) + struct.pack(">H", 0) + play_item_payload
+def test_playlist_with_play_item_parses_clip_times_and_seeks_to_boundary() -> (
+    None
+):
+    play_item_payload = (
+        struct.pack(">H", 20)
+        + b"00001"
+        + b"M2TS"
+        + b"\0\0"
+        + b"\0"
+        + struct.pack(">I", 90_000)
+        + struct.pack(">I", 180_000)
+    )
+    playlist_body = (
+        b"\0\0"
+        + struct.pack(">H", 1)
+        + struct.pack(">H", 0)
+        + play_item_payload
+    )
     payload = struct.pack(">I", len(playlist_body)) + playlist_body
     stream = io.BytesIO(payload)
 

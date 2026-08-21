@@ -16,36 +16,80 @@ def _prep(config: dict | None = None) -> Prep:
     prep = object.__new__(Prep)
     prep.config = config or {"DEFAULT": {"multiScreens": 2}}
     prep.takescreens_manager = SimpleNamespace()
-    prep.rehost_images_manager = SimpleNamespace(takescreens_manager=SimpleNamespace())
+    prep.rehost_images_manager = SimpleNamespace(
+        takescreens_manager=SimpleNamespace()
+    )
     return prep
 
 
 def test_check_adult_media_manual_tmdb_keywords_genres_and_false() -> None:
     prep = _prep()
     assert prep.check_adult_media(Meta(category="XXX"))
-    assert prep.check_adult_media(Meta(category="MOVIE", tmdb_adult_media=True))
+    assert prep.check_adult_media(
+        Meta(category="MOVIE", tmdb_adult_media=True)
+    )
     assert prep.check_adult_media(Meta(category="MOVIE", keywords=["adult"]))
-    assert prep.check_adult_media(Meta(category="MOVIE", combined_genres=["Erotic"]))
-    assert prep.check_adult_media(Meta(category="MOVIE", combined_genres="porn"))
-    assert not prep.check_adult_media(Meta(category="MOVIE", keywords=["family"], combined_genres=["Drama"]))
+    assert prep.check_adult_media(
+        Meta(category="MOVIE", combined_genres=["Erotic"])
+    )
+    assert prep.check_adult_media(
+        Meta(category="MOVIE", combined_genres="porn")
+    )
+    assert not prep.check_adult_media(
+        Meta(category="MOVIE", keywords=["family"], combined_genres=["Drama"])
+    )
 
 
-def test_get_cat_manual_music_xxx_tv_anime_and_movie(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_get_cat_manual_music_xxx_tv_anime_and_movie(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     prep = _prep()
 
     async def exercise() -> None:
         assert await prep.get_cat("", Meta(manual_category="tv")) == "TV"
         assert await prep.get_cat("", Meta(manual_category=7)) is None  # type: ignore[arg-type]
-        assert await prep.get_cat("", Meta(path=str(tmp_path / "track.flac"))) == "MUSIC"
+        assert (
+            await prep.get_cat("", Meta(path=str(tmp_path / "track.flac")))
+            == "MUSIC"
+        )
 
-        monkeypatch.setattr(preparation_service.prep_helpers, "is_xxx_video_release", lambda _path: True)
-        assert await prep.get_cat("", Meta(path=str(tmp_path / "release"))) == "XXX"
-        monkeypatch.setattr(preparation_service.prep_helpers, "is_xxx_video_release", lambda _path: False)
+        monkeypatch.setattr(
+            preparation_service.prep_helpers,
+            "is_xxx_video_release",
+            lambda _path: True,
+        )
+        assert (
+            await prep.get_cat("", Meta(path=str(tmp_path / "release")))
+            == "XXX"
+        )
+        monkeypatch.setattr(
+            preparation_service.prep_helpers,
+            "is_xxx_video_release",
+            lambda _path: False,
+        )
 
-        assert await prep.get_cat("", Meta(path="/media/tv/Show/episode.mkv")) == "TV"
-        assert await prep.get_cat("", Meta(path="/media/movie.mkv", uuid="Show.S01E01")) == "TV"
-        assert await prep.get_cat("", Meta(path="/media/[SubsPlease] Show - 07 (1080p).mkv")) == "TV"
-        assert await prep.get_cat("", Meta(path="/media/Movie.2026.1080p.mkv", uuid="movie")) == "MOVIE"
+        assert (
+            await prep.get_cat("", Meta(path="/media/tv/Show/episode.mkv"))
+            == "TV"
+        )
+        assert (
+            await prep.get_cat(
+                "", Meta(path="/media/movie.mkv", uuid="Show.S01E01")
+            )
+            == "TV"
+        )
+        assert (
+            await prep.get_cat(
+                "", Meta(path="/media/[SubsPlease] Show - 07 (1080p).mkv")
+            )
+            == "TV"
+        )
+        assert (
+            await prep.get_cat(
+                "", Meta(path="/media/Movie.2026.1080p.mkv", uuid="movie")
+            )
+            == "MOVIE"
+        )
 
     asyncio.run(exercise())
 
@@ -56,7 +100,9 @@ def test_stream_optimized_values() -> None:
     assert asyncio.run(prep.stream_optimized(False)) == 0
 
 
-def test_parse_scene_nfo_missing_match_code_no_match_and_failure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_parse_scene_nfo_missing_match_code_no_match_and_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     prep = _prep()
 
     async def services(*_args, **_kwargs):
@@ -73,7 +119,9 @@ def test_parse_scene_nfo_missing_match_code_no_match_and_failure(monkeypatch: py
         named.write_text("Source : Amazon Prime\n", encoding="utf-8")
         meta = Meta(scene_nfo_file=str(named))
         await prep.parse_scene_nfo(meta)
-        assert meta.service == "AMZN" and meta.service_longname == "Amazon Prime"
+        assert (
+            meta.service == "AMZN" and meta.service_longname == "Amazon Prime"
+        )
 
         coded = tmp_path / "coded.nfo"
         coded.write_text("Source: nf\n", encoding="utf-8")
@@ -87,17 +135,30 @@ def test_parse_scene_nfo_missing_match_code_no_match_and_failure(monkeypatch: py
         await prep.parse_scene_nfo(meta)
         assert not meta.service
 
-        await prep.parse_scene_nfo(Meta(scene_nfo_file=str(tmp_path / "missing.nfo")))
+        await prep.parse_scene_nfo(
+            Meta(scene_nfo_file=str(tmp_path / "missing.nfo"))
+        )
 
     asyncio.run(exercise())
 
 
-def test_gather_prep_podcast_short_circuit(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_gather_prep_podcast_short_circuit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     prep = _prep()
-    meta = Meta(base_dir=str(tmp_path), uuid="podcast", path=str(tmp_path / "podcast.mp3"), manual_category=" podcast ")
+    meta = Meta(
+        base_dir=str(tmp_path),
+        uuid="podcast",
+        path=str(tmp_path / "podcast.mp3"),
+        manual_category=" podcast ",
+    )
     events: list[str] = []
 
-    monkeypatch.setattr(preparation_service.prep_helpers, "init_meta", lambda *_args: (False, False, object(), False, {}, {}))
+    monkeypatch.setattr(
+        preparation_service.prep_helpers,
+        "init_meta",
+        lambda *_args: (False, False, object(), False, {}, {}),
+    )
 
     async def gather(target: Meta) -> None:
         events.append("gather")
@@ -107,8 +168,16 @@ def test_gather_prep_podcast_short_circuit(monkeypatch: pytest.MonkeyPatch, tmp_
         events.append("trackers")
 
     monkeypatch.setattr(preparation_service, "_gather_podcast_prep_fn", gather)
-    monkeypatch.setattr(preparation_service.prep_helpers, "calculate_source_size", lambda *_args: events.append("size"))
-    monkeypatch.setattr(preparation_service.prep_helpers, "process_trackers_and_torrent", trackers)
+    monkeypatch.setattr(
+        preparation_service.prep_helpers,
+        "calculate_source_size",
+        lambda *_args: events.append("size"),
+    )
+    monkeypatch.setattr(
+        preparation_service.prep_helpers,
+        "process_trackers_and_torrent",
+        trackers,
+    )
 
     result = asyncio.run(prep.gather_prep(meta, "cli"))
     assert result.category == "PODCAST"
@@ -116,10 +185,16 @@ def test_gather_prep_podcast_short_circuit(monkeypatch: pytest.MonkeyPatch, tmp_
     assert events == ["gather", "size", "trackers"]
 
 
-def test_gather_prep_xxx_contact_sheet_count(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_gather_prep_xxx_contact_sheet_count(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     prep = _prep()
-    prep.takescreens_manager = SimpleNamespace(xxx_contact_sheet_settings=lambda: (2, 2, 3))
-    prep.rehost_images_manager = SimpleNamespace(takescreens_manager=SimpleNamespace(prepare_book_cover=AsyncMock()))
+    prep.takescreens_manager = SimpleNamespace(
+        xxx_contact_sheet_settings=lambda: (2, 2, 3)
+    )
+    prep.rehost_images_manager = SimpleNamespace(
+        takescreens_manager=SimpleNamespace(prepare_book_cover=AsyncMock())
+    )
     meta = Meta(
         base_dir=str(tmp_path),
         uuid="xxx",
@@ -131,50 +206,114 @@ def test_gather_prep_xxx_contact_sheet_count(monkeypatch: pytest.MonkeyPatch, tm
     )
     events: list[str] = []
 
-    monkeypatch.setattr(preparation_service.prep_helpers, "init_meta", lambda *_args: (False, False, object(), False, {}, {}))
+    monkeypatch.setattr(
+        preparation_service.prep_helpers,
+        "init_meta",
+        lambda *_args: (False, False, object(), False, {}, {}),
+    )
 
     async def detect(*_args):
         return str(tmp_path / "video.mp4"), {}
 
     async def process(*_args):
-        return "video.mp4", "video.mp4", str(tmp_path / "video.mp4"), "term", "folder", {}, str(tmp_path / "video.mp4")
+        return (
+            "video.mp4",
+            "video.mp4",
+            str(tmp_path / "video.mp4"),
+            "term",
+            "folder",
+            {},
+            str(tmp_path / "video.mp4"),
+        )
 
     async def no_op(*_args, **_kwargs):
         events.append("async")
 
-    monkeypatch.setattr(preparation_service.prep_helpers, "detect_disc_and_category", detect)
-    monkeypatch.setattr(preparation_service.prep_helpers, "process_media_files", process)
-    monkeypatch.setattr(preparation_service, "sync_single_episode_from_filename", lambda _meta: None)
-    monkeypatch.setattr(preparation_service, "populate_hdr_for_early_capture", no_op)
-    monkeypatch.setattr(preparation_service.prep_helpers, "calculate_source_size", lambda *_args: events.append("size"))
-    monkeypatch.setattr(preparation_service.prep_helpers, "validate_media", no_op)
-    monkeypatch.setattr(preparation_service.prep_helpers, "process_trackers_and_torrent", no_op)
-    monkeypatch.setattr(preparation_service, "restart_early_artifact_tasks", no_op)
-    monkeypatch.setattr(preparation_service.prep_helpers, "search_metadata", no_op)
-    monkeypatch.setattr(preparation_service.prep_helpers, "finalize_metadata", no_op)
+    monkeypatch.setattr(
+        preparation_service.prep_helpers, "detect_disc_and_category", detect
+    )
+    monkeypatch.setattr(
+        preparation_service.prep_helpers, "process_media_files", process
+    )
+    monkeypatch.setattr(
+        preparation_service,
+        "sync_single_episode_from_filename",
+        lambda _meta: None,
+    )
+    monkeypatch.setattr(
+        preparation_service, "populate_hdr_for_early_capture", no_op
+    )
+    monkeypatch.setattr(
+        preparation_service.prep_helpers,
+        "calculate_source_size",
+        lambda *_args: events.append("size"),
+    )
+    monkeypatch.setattr(
+        preparation_service.prep_helpers, "validate_media", no_op
+    )
+    monkeypatch.setattr(
+        preparation_service.prep_helpers, "process_trackers_and_torrent", no_op
+    )
+    monkeypatch.setattr(
+        preparation_service, "restart_early_artifact_tasks", no_op
+    )
+    monkeypatch.setattr(
+        preparation_service.prep_helpers, "search_metadata", no_op
+    )
+    monkeypatch.setattr(
+        preparation_service.prep_helpers, "finalize_metadata", no_op
+    )
     monkeypatch.setattr(preparation_service, "prepare_artwork", no_op)
-    monkeypatch.setattr(preparation_service.languages_manager, "apply_confirmed_single_audio_language", no_op)
-    monkeypatch.setattr(preparation_service.languages_manager, "process_desc_language", no_op)
-    monkeypatch.setattr(preparation_service, "manifest_files", lambda *_args: [Path("one.png"), Path("two.png")])
+    monkeypatch.setattr(
+        preparation_service.languages_manager,
+        "apply_confirmed_single_audio_language",
+        no_op,
+    )
+    monkeypatch.setattr(
+        preparation_service.languages_manager, "process_desc_language", no_op
+    )
+    monkeypatch.setattr(
+        preparation_service,
+        "manifest_files",
+        lambda *_args: [Path("one.png"), Path("two.png")],
+    )
 
     result = asyncio.run(prep.gather_prep(meta, "cli"))
     assert result.screens == 2
     assert "size" in events
 
 
-def test_capture_early_screenshots_normal_video_and_failure(tmp_path: Path) -> None:
+def test_capture_early_screenshots_normal_video_and_failure(
+    tmp_path: Path,
+) -> None:
     prep = _prep()
     screenshots = AsyncMock()
     prep.takescreens_manager = SimpleNamespace(screenshots=screenshots)
-    meta = Meta(base_dir=str(tmp_path), uuid="video", category="MOVIE", screens=2, path=str(tmp_path / "video.mkv"))
-    asyncio.run(prep._capture_early_screenshots(meta, "video.mkv", str(tmp_path / "video.mkv"), {}))
+    meta = Meta(
+        base_dir=str(tmp_path),
+        uuid="video",
+        category="MOVIE",
+        screens=2,
+        path=str(tmp_path / "video.mkv"),
+    )
+    asyncio.run(
+        prep._capture_early_screenshots(
+            meta, "video.mkv", str(tmp_path / "video.mkv"), {}
+        )
+    )
     screenshots.assert_awaited_once()
 
     screenshots.side_effect = RuntimeError("failed")
-    asyncio.run(prep._capture_early_screenshots(meta, "video.mkv", str(tmp_path / "video.mkv"), {}))
+    asyncio.run(
+        prep._capture_early_screenshots(
+            meta, "video.mkv", str(tmp_path / "video.mkv"), {}
+        )
+    )
 
 
-def test_constructor_and_delegate_methods(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_constructor_and_delegate_methods(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     created: list[str] = []
 
     def factory(name: str):
@@ -207,8 +346,16 @@ def test_constructor_and_delegate_methods(monkeypatch: pytest.MonkeyPatch) -> No
     assert len(created) == 14
 
     meta = Meta(path="release")
-    monkeypatch.setattr(preparation_service, "_resolve_book_filelist_fn", lambda target, location: (location, [target.path], "book", "file"))
-    monkeypatch.setattr(preparation_service, "_resolve_game_filelist_fn", lambda target, location: (location, [target.path], "game", "file"))
+    monkeypatch.setattr(
+        preparation_service,
+        "_resolve_book_filelist_fn",
+        lambda target, location: (location, [target.path], "book", "file"),
+    )
+    monkeypatch.setattr(
+        preparation_service,
+        "_resolve_game_filelist_fn",
+        lambda target, location: (location, [target.path], "game", "file"),
+    )
     assert Prep._resolve_book_filelist(meta, "book-path")[2] == "book"
     assert Prep._resolve_game_filelist(meta, "game-path")[2] == "game"
 
@@ -226,10 +373,14 @@ def test_constructor_and_delegate_methods(monkeypatch: pytest.MonkeyPatch) -> No
     music.assert_awaited_once_with(meta, prep.config)
 
 
-def test_gather_prep_book_writes_metadata_and_awaits_early_task(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_gather_prep_book_writes_metadata_and_awaits_early_task(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     prep = _prep()
     cover = AsyncMock()
-    prep.rehost_images_manager = SimpleNamespace(takescreens_manager=SimpleNamespace(prepare_book_cover=cover))
+    prep.rehost_images_manager = SimpleNamespace(
+        takescreens_manager=SimpleNamespace(prepare_book_cover=cover)
+    )
     meta = Meta(
         base_dir=str(tmp_path),
         uuid="book",
@@ -238,30 +389,72 @@ def test_gather_prep_book_writes_metadata_and_awaits_early_task(monkeypatch: pyt
         keep_images=False,
         screens=1,
     )
-    monkeypatch.setattr(preparation_service.prep_helpers, "init_meta", lambda *_args: (False, False, object(), False, {}, {}))
+    monkeypatch.setattr(
+        preparation_service.prep_helpers,
+        "init_meta",
+        lambda *_args: (False, False, object(), False, {}, {}),
+    )
 
     async def detect(*_args):
         return str(tmp_path / "book.epub"), {}
 
     async def process(*_args):
-        return "book.epub", "book.epub", str(tmp_path / "book.epub"), "term", "folder", {}, str(tmp_path / "book.epub")
+        return (
+            "book.epub",
+            "book.epub",
+            str(tmp_path / "book.epub"),
+            "term",
+            "folder",
+            {},
+            str(tmp_path / "book.epub"),
+        )
 
     async def no_op(*_args, **_kwargs):
         return None
 
-    monkeypatch.setattr(preparation_service.prep_helpers, "detect_disc_and_category", detect)
-    monkeypatch.setattr(preparation_service.prep_helpers, "process_media_files", process)
-    monkeypatch.setattr(preparation_service, "sync_single_episode_from_filename", lambda _meta: None)
-    monkeypatch.setattr(preparation_service, "populate_hdr_for_early_capture", no_op)
-    monkeypatch.setattr(preparation_service.prep_helpers, "calculate_source_size", lambda *_args: None)
-    monkeypatch.setattr(preparation_service.prep_helpers, "validate_media", no_op)
-    monkeypatch.setattr(preparation_service.prep_helpers, "process_trackers_and_torrent", no_op)
-    monkeypatch.setattr(preparation_service, "restart_early_artifact_tasks", no_op)
-    monkeypatch.setattr(preparation_service.prep_helpers, "search_metadata", no_op)
-    monkeypatch.setattr(preparation_service.prep_helpers, "finalize_metadata", no_op)
+    monkeypatch.setattr(
+        preparation_service.prep_helpers, "detect_disc_and_category", detect
+    )
+    monkeypatch.setattr(
+        preparation_service.prep_helpers, "process_media_files", process
+    )
+    monkeypatch.setattr(
+        preparation_service,
+        "sync_single_episode_from_filename",
+        lambda _meta: None,
+    )
+    monkeypatch.setattr(
+        preparation_service, "populate_hdr_for_early_capture", no_op
+    )
+    monkeypatch.setattr(
+        preparation_service.prep_helpers,
+        "calculate_source_size",
+        lambda *_args: None,
+    )
+    monkeypatch.setattr(
+        preparation_service.prep_helpers, "validate_media", no_op
+    )
+    monkeypatch.setattr(
+        preparation_service.prep_helpers, "process_trackers_and_torrent", no_op
+    )
+    monkeypatch.setattr(
+        preparation_service, "restart_early_artifact_tasks", no_op
+    )
+    monkeypatch.setattr(
+        preparation_service.prep_helpers, "search_metadata", no_op
+    )
+    monkeypatch.setattr(
+        preparation_service.prep_helpers, "finalize_metadata", no_op
+    )
     monkeypatch.setattr(preparation_service, "prepare_artwork", no_op)
-    monkeypatch.setattr(preparation_service.languages_manager, "apply_confirmed_single_audio_language", no_op)
-    monkeypatch.setattr(preparation_service.languages_manager, "process_desc_language", no_op)
+    monkeypatch.setattr(
+        preparation_service.languages_manager,
+        "apply_confirmed_single_audio_language",
+        no_op,
+    )
+    monkeypatch.setattr(
+        preparation_service.languages_manager, "process_desc_language", no_op
+    )
 
     result = asyncio.run(prep.gather_prep(meta, "cli"))
     cover.assert_awaited_once()
@@ -270,20 +463,38 @@ def test_gather_prep_book_writes_metadata_and_awaits_early_task(monkeypatch: pyt
     assert result is meta
 
 
-def test_capture_early_screenshots_dvd_xxx_and_cancellation(tmp_path: Path) -> None:
+def test_capture_early_screenshots_dvd_xxx_and_cancellation(
+    tmp_path: Path,
+) -> None:
     prep = _prep()
     dvd = AsyncMock()
     xxx = AsyncMock()
-    prep.takescreens_manager = SimpleNamespace(dvd_screenshots=dvd, xxx_contact_sheets=xxx)
+    prep.takescreens_manager = SimpleNamespace(
+        dvd_screenshots=dvd, xxx_contact_sheets=xxx
+    )
 
-    dvd_meta = Meta(base_dir=str(tmp_path), uuid="dvd", category="MOVIE", is_disc="DVD", screens=2)
+    dvd_meta = Meta(
+        base_dir=str(tmp_path),
+        uuid="dvd",
+        category="MOVIE",
+        is_disc="DVD",
+        screens=2,
+    )
     asyncio.run(prep._capture_early_screenshots(dvd_meta, "dvd", "dvd", {}))
     dvd.assert_awaited_once()
 
-    xxx_meta = Meta(base_dir=str(tmp_path), uuid="xxx", category="XXX", screens=2, filelist=["one.mp4"])
+    xxx_meta = Meta(
+        base_dir=str(tmp_path),
+        uuid="xxx",
+        category="XXX",
+        screens=2,
+        filelist=["one.mp4"],
+    )
     asyncio.run(prep._capture_early_screenshots(xxx_meta, "xxx", "xxx", {}))
     xxx.assert_awaited_once()
 
     dvd.side_effect = asyncio.CancelledError
     with pytest.raises(asyncio.CancelledError):
-        asyncio.run(prep._capture_early_screenshots(dvd_meta, "dvd", "dvd", {}))
+        asyncio.run(
+            prep._capture_early_screenshots(dvd_meta, "dvd", "dvd", {})
+        )

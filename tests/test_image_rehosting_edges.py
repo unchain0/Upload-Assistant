@@ -12,7 +12,10 @@ import pytest
 
 from src.domain_models.release import Meta
 from src.integrations.image_hosts import rehosting
-from src.integrations.image_hosts.rehosting import ImageHostPolicy, RehostImagesManager
+from src.integrations.image_hosts.rehosting import (
+    ImageHostPolicy,
+    RehostImagesManager,
+)
 
 
 class _Uploader:
@@ -95,7 +98,13 @@ def _meta(tmp_path: Path, **values: object) -> Meta:
 
 
 def _dirs(meta: Meta) -> dict[str, Path]:
-    from src.integrations.filesystem.temp_paths import artwork_dir, dynamic_hdr_plots_dir, menu_screenshots_dir, screenshots_dir, spectrograms_dir
+    from src.integrations.filesystem.temp_paths import (
+        artwork_dir,
+        dynamic_hdr_plots_dir,
+        menu_screenshots_dir,
+        screenshots_dir,
+        spectrograms_dir,
+    )
 
     result = {
         "screens": screenshots_dir(meta.base_dir, meta.uuid),
@@ -117,10 +126,17 @@ def _image(path: Path, name: str = "Release-0.png") -> Path:
 
 
 def _default(**values: object) -> dict[str, Any]:
-    return {"img_host_1": "imgbb", "img_host_2": "imgbox", "screens": 2, **values}
+    return {
+        "img_host_1": "imgbb",
+        "img_host_2": "imgbox",
+        "screens": 2,
+        **values,
+    }
 
 
-def test_policy_selection_and_simple_helpers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_policy_selection_and_simple_helpers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     class PolicyTracker:
         image_host_policy = ImageHostPolicy({"imgbb.com": "imgbb"}, ("imgbb",))
 
@@ -137,38 +153,78 @@ def test_policy_selection_and_simple_helpers(tmp_path: Path, monkeypatch: pytest
     mapping = {"POLICY": PolicyTracker, "LEGACY": Legacy, "EMPTY": Empty}
     assert rehosting.has_restricted_image_hosts([" policy "], mapping)
     assert rehosting.has_restricted_image_hosts(["legacy"], mapping)
-    assert not rehosting.has_restricted_image_hosts(["empty", "missing"], mapping)
-    assert rehosting.select_common_image_host({"img_host_2": "imgbox", "img_host_1": " IMGBB "}, ["POLICY"], mapping) == "imgbb"
-    assert rehosting.select_common_image_host({"img_host_1": 1}, ["POLICY"], mapping) is None
-    assert rehosting.select_common_image_host({"img_host_1": "imgbb"}, ["POLICY", "LEGACY"], mapping) is None
+    assert not rehosting.has_restricted_image_hosts(
+        ["empty", "missing"], mapping
+    )
+    assert (
+        rehosting.select_common_image_host(
+            {"img_host_2": "imgbox", "img_host_1": " IMGBB "},
+            ["POLICY"],
+            mapping,
+        )
+        == "imgbb"
+    )
+    assert (
+        rehosting.select_common_image_host(
+            {"img_host_1": 1}, ["POLICY"], mapping
+        )
+        is None
+    )
+    assert (
+        rehosting.select_common_image_host(
+            {"img_host_1": "imgbb"}, ["POLICY", "LEGACY"], mapping
+        )
+        is None
+    )
     assert rehosting.select_common_image_host({}, ["MISSING"], mapping) is None
 
     path = tmp_path / "delete.txt"
     path.write_text("x", encoding="utf-8")
     assert rehosting._safe_remove(str(path)) and not path.exists()
     assert not rehosting._safe_remove(str(path))
-    monkeypatch.setattr(Path, "exists", lambda _path: (_ for _ in ()).throw(OSError("stat failed")))
+    monkeypatch.setattr(
+        Path,
+        "exists",
+        lambda _path: (_ for _ in ()).throw(OSError("stat failed")),
+    )
     assert not rehosting._safe_remove(str(path))
 
-    assert asyncio.run(rehosting.match_host("sub.imgbb.com", ["imgbb.com"])) == "imgbb.com"
-    assert asyncio.run(rehosting.match_host("other.invalid", ["imgbb.com"])) == "other.invalid"
+    assert (
+        asyncio.run(rehosting.match_host("sub.imgbb.com", ["imgbb.com"]))
+        == "imgbb.com"
+    )
+    assert (
+        asyncio.run(rehosting.match_host("other.invalid", ["imgbb.com"]))
+        == "other.invalid"
+    )
     assert asyncio.run(rehosting.sanitize_filename('a:b/c*?"d')) == "a_b_c___d"
-    assert rehosting._image_host("https://sub.imgbb.com/a.png", {"imgbb.com": "imgbb"}) == "imgbb"
+    assert (
+        rehosting._image_host(
+            "https://sub.imgbb.com/a.png", {"imgbb.com": "imgbb"}
+        )
+        == "imgbb"
+    )
     assert rehosting._image_host("not a url", {}) == ""
 
 
-def test_manager_wrappers_and_tracker_hooks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_manager_wrappers_and_tracker_hooks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(rehosting, "TakeScreensManager", _Screens)
     monkeypatch.setattr(rehosting, "UploadScreensManager", _Uploader)
     check = AsyncMock(return_value=([{"raw_url": "raw"}], False, True))
     additional = AsyncMock()
     handle = AsyncMock(return_value=([], True, False))
     monkeypatch.setattr(rehosting, "_check_hosts", check)
-    monkeypatch.setattr(rehosting, "_check_additional_image_collections", additional)
+    monkeypatch.setattr(
+        rehosting, "_check_additional_image_collections", additional
+    )
     monkeypatch.setattr(rehosting, "_handle_image_upload", handle)
     manager = RehostImagesManager({"DEFAULT": _default()})
     meta = _meta(tmp_path)
-    assert asyncio.run(manager.check_hosts(meta, "TEST", {"imgbb.com": "imgbb"})) == ([{"raw_url": "raw"}], False, True)
+    assert asyncio.run(
+        manager.check_hosts(meta, "TEST", {"imgbb.com": "imgbb"})
+    ) == ([{"raw_url": "raw"}], False, True)
     additional.assert_awaited_once()
     additional.reset_mock()
     asyncio.run(manager.check_hosts(meta, "covers", {}))
@@ -176,9 +232,20 @@ def test_manager_wrappers_and_tracker_hooks(tmp_path: Path, monkeypatch: pytest.
     policy = ImageHostPolicy({"imgbb.com": "imgbb"}, ("imgbb",), 2)
     asyncio.run(manager.check_policy(meta, "TEST", policy))
     assert check.await_args.kwargs["img_host_index"] == 2
-    assert asyncio.run(manager.handle_image_upload(meta, "TEST", {})) == ([], True, False)
+    assert asyncio.run(manager.handle_image_upload(meta, "TEST", {})) == (
+        [],
+        True,
+        False,
+    )
 
-    assert asyncio.run(rehosting.check_tracker_image_hosts(_meta(tmp_path, category="MUSIC"), object())) is None
+    assert (
+        asyncio.run(
+            rehosting.check_tracker_image_hosts(
+                _meta(tmp_path, category="MUSIC"), object()
+            )
+        )
+        is None
+    )
 
     class PolicyClass:
         tracker = "POLICY"
@@ -205,18 +272,52 @@ def test_manager_wrappers_and_tracker_hooks(tmp_path: Path, monkeypatch: pytest.
     AsyncClass.check_image_hosts.assert_awaited_once_with(meta)
 
 
-def test_collection_local_path_and_download(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_collection_local_path_and_download(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     meta = _meta(tmp_path)
     dirs = _dirs(meta)
     assert rehosting._collection_directory(meta, "menu_images") == dirs["menu"]
-    assert rehosting._collection_directory(meta, "spectrograms_images") == dirs["spectrograms"]
-    assert rehosting._collection_directory(meta, "dynamic_hdr_plot_images") == dirs["dynamic"]
+    assert (
+        rehosting._collection_directory(meta, "spectrograms_images")
+        == dirs["spectrograms"]
+    )
+    assert (
+        rehosting._collection_directory(meta, "dynamic_hdr_plot_images")
+        == dirs["dynamic"]
+    )
     assert rehosting._collection_directory(meta, "screenshots") is None
 
     local = _image(dirs["menu"], "menu.png")
-    assert asyncio.run(rehosting._local_image_path(meta, "menu_images", {"local_file_path": str(local)})) == local
-    assert asyncio.run(rehosting._local_image_path(meta, "menu_images", {"local_file_path": str(tmp_path / "missing"), "raw_url": "https://x/menu.png"})) == local
-    assert asyncio.run(rehosting._local_image_path(meta, "menu_images", {"raw_url": "https://x/missing.png"})) is None
+    assert (
+        asyncio.run(
+            rehosting._local_image_path(
+                meta, "menu_images", {"local_file_path": str(local)}
+            )
+        )
+        == local
+    )
+    assert (
+        asyncio.run(
+            rehosting._local_image_path(
+                meta,
+                "menu_images",
+                {
+                    "local_file_path": str(tmp_path / "missing"),
+                    "raw_url": "https://x/menu.png",
+                },
+            )
+        )
+        == local
+    )
+    assert (
+        asyncio.run(
+            rehosting._local_image_path(
+                meta, "menu_images", {"raw_url": "https://x/missing.png"}
+            )
+        )
+        is None
+    )
 
     class Response:
         content = b"downloaded"
@@ -238,22 +339,54 @@ def test_collection_local_path_and_download(tmp_path: Path, monkeypatch: pytest.
             return Response()
 
     monkeypatch.setattr(rehosting.httpx, "AsyncClient", Client)
-    downloaded = asyncio.run(rehosting._download_image_for_rehost(meta, "menu_images", "https://host.invalid/a:b.exe"))
-    assert downloaded is not None and downloaded.suffix == ".png" and downloaded.read_bytes() == b"downloaded"
+    downloaded = asyncio.run(
+        rehosting._download_image_for_rehost(
+            meta, "menu_images", "https://host.invalid/a:b.exe"
+        )
+    )
+    assert (
+        downloaded is not None
+        and downloaded.suffix == ".png"
+        and downloaded.read_bytes() == b"downloaded"
+    )
 
     class FailedClient(Client):
         async def get(self, _url: str) -> Response:
-            raise httpx.RequestError("offline", request=httpx.Request("GET", "https://host.invalid"))
+            raise httpx.RequestError(
+                "offline", request=httpx.Request("GET", "https://host.invalid")
+            )
 
     monkeypatch.setattr(rehosting.httpx, "AsyncClient", FailedClient)
-    assert asyncio.run(rehosting._download_image_for_rehost(meta, "menu_images", "https://host.invalid/a.png")) is None
+    assert (
+        asyncio.run(
+            rehosting._download_image_for_rehost(
+                meta, "menu_images", "https://host.invalid/a.png"
+            )
+        )
+        is None
+    )
 
     monkeypatch.setattr(rehosting.httpx, "AsyncClient", Client)
-    monkeypatch.setattr(Path, "write_bytes", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("write failed")))
-    assert asyncio.run(rehosting._download_image_for_rehost(meta, "menu_images", "https://host.invalid/a.jpg")) is None
+    monkeypatch.setattr(
+        Path,
+        "write_bytes",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            OSError("write failed")
+        ),
+    )
+    assert (
+        asyncio.run(
+            rehosting._download_image_for_rehost(
+                meta, "menu_images", "https://host.invalid/a.jpg"
+            )
+        )
+        is None
+    )
 
 
-def test_additional_collections_skip_missing_hosts_and_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_additional_collections_skip_missing_hosts_and_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     uploader_manager = _Uploader()
     _Uploader.reset()
     meta = _meta(tmp_path, skip_imghost_upload=True)
@@ -298,17 +431,41 @@ def test_additional_collections_skip_missing_hosts_and_success(tmp_path: Path, m
     meta.menu_images = [
         "invalid",
         {"raw_url": "https://approved.imgbb.com/already.png"},
-        {"raw_url": "https://bad.invalid/menu.png", "local_file_path": str(local_menu)},
+        {
+            "raw_url": "https://bad.invalid/menu.png",
+            "local_file_path": str(local_menu),
+        },
         {"raw_url": "https://bad.invalid/no-local.png"},
     ]
-    meta.spectrograms_images = [{"raw_url": "https://bad.invalid/spec.png", "local_file_path": str(local_spec)}]
-    meta.dynamic_hdr_plot_images = [{"raw_url": "https://bad.invalid/unavailable.png"}]
+    meta.spectrograms_images = [
+        {
+            "raw_url": "https://bad.invalid/spec.png",
+            "local_file_path": str(local_spec),
+        }
+    ]
+    meta.dynamic_hdr_plot_images = [
+        {"raw_url": "https://bad.invalid/unavailable.png"}
+    ]
     original_host = meta.imghost
     _Uploader.reset(
-        [{"img_url": "i", "raw_url": "https://imgbb.com/rehosted.png", "web_url": "w"}],
-        [{"img_url": "i", "raw_url": "https://bad.invalid/rejected.png", "web_url": "w"}],
+        [
+            {
+                "img_url": "i",
+                "raw_url": "https://imgbb.com/rehosted.png",
+                "web_url": "w",
+            }
+        ],
+        [
+            {
+                "img_url": "i",
+                "raw_url": "https://bad.invalid/rejected.png",
+                "web_url": "w",
+            }
+        ],
     )
-    monkeypatch.setattr(rehosting, "_download_image_for_rehost", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        rehosting, "_download_image_for_rehost", AsyncMock(return_value=None)
+    )
     asyncio.run(
         rehosting._check_additional_image_collections(
             meta,
@@ -322,18 +479,35 @@ def test_additional_collections_skip_missing_hosts_and_success(tmp_path: Path, m
     collection = meta.tracker_image_collections["TEST"]["menu_images"]
     assert collection[1]["raw_url"] == "https://imgbb.com/rehosted.png"
     assert collection[1]["local_file_path"] == str(local_menu)
-    assert meta.tracker_image_collections["TEST"]["spectrograms_images"][0]["raw_url"] == "https://bad.invalid/spec.png"
+    assert (
+        meta.tracker_image_collections["TEST"]["spectrograms_images"][0][
+            "raw_url"
+        ]
+        == "https://bad.invalid/spec.png"
+    )
     assert meta.imghost == original_host
 
 
-def test_check_hosts_dependencies_skip_approved_and_override(tmp_path: Path) -> None:
+def test_check_hosts_dependencies_skip_approved_and_override(
+    tmp_path: Path,
+) -> None:
     meta = _meta(tmp_path)
     with pytest.raises(ValueError, match="default_config"):
         asyncio.run(rehosting._check_hosts(meta, "TEST", {}))
     with pytest.raises(ValueError, match="takescreens_manager"):
-        asyncio.run(rehosting._check_hosts(meta, "TEST", {}, default_config=_default()))
+        asyncio.run(
+            rehosting._check_hosts(meta, "TEST", {}, default_config=_default())
+        )
     with pytest.raises(ValueError, match="uploadscreens_manager"):
-        asyncio.run(rehosting._check_hosts(meta, "TEST", {}, default_config=_default(), takescreens_manager=_Screens()))
+        asyncio.run(
+            rehosting._check_hosts(
+                meta,
+                "TEST",
+                {},
+                default_config=_default(),
+                takescreens_manager=_Screens(),
+            )
+        )
 
     meta.skip_imghost_upload = True
     assert asyncio.run(
@@ -348,7 +522,11 @@ def test_check_hosts_dependencies_skip_approved_and_override(tmp_path: Path) -> 
         )
     ) == ([], False, False)
 
-    approved = {"img_url": "i", "raw_url": "https://sub.imgbb.com/a.png", "web_url": "w"}
+    approved = {
+        "img_url": "i",
+        "raw_url": "https://sub.imgbb.com/a.png",
+        "web_url": "w",
+    }
     missing_raw = {"img_url": "i", "raw_url": "", "web_url": "w"}
     meta = _meta(tmp_path, image_list=[approved, missing_raw])
     result = asyncio.run(
@@ -378,7 +556,10 @@ def test_check_hosts_dependencies_skip_approved_and_override(tmp_path: Path) -> 
     )
     assert result == ([approved], False, False)
 
-    meta = _meta(tmp_path, tracker_image_collections={"TEST": {"screenshots": [approved]}})
+    meta = _meta(
+        tmp_path,
+        tracker_image_collections={"TEST": {"screenshots": [approved]}},
+    )
     result = asyncio.run(
         rehosting._check_hosts(
             meta,
@@ -393,13 +574,25 @@ def test_check_hosts_dependencies_skip_approved_and_override(tmp_path: Path) -> 
     assert result == ([approved], False, False)
 
 
-def test_check_hosts_cached_json_covers_and_retry_loop(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_check_hosts_cached_json_covers_and_retry_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     meta = _meta(tmp_path, release_url="https://release.invalid/1")
     state = Path(meta.base_dir) / "tmp" / meta.uuid
     state.mkdir(parents=True, exist_ok=True)
-    approved = {"img_url": "i", "raw_url": "https://imgbb.com/a.png", "web_url": "w"}
-    invalid = {"img_url": "i", "raw_url": "https://bad.invalid/a.png", "web_url": "w"}
-    (state / "reuploaded_images.json").write_text(json.dumps([invalid, approved]), encoding="utf-8")
+    approved = {
+        "img_url": "i",
+        "raw_url": "https://imgbb.com/a.png",
+        "web_url": "w",
+    }
+    invalid = {
+        "img_url": "i",
+        "raw_url": "https://bad.invalid/a.png",
+        "web_url": "w",
+    }
+    (state / "reuploaded_images.json").write_text(
+        json.dumps([invalid, approved]), encoding="utf-8"
+    )
     result = asyncio.run(
         rehosting._check_hosts(
             meta,
@@ -417,8 +610,16 @@ def test_check_hosts_cached_json_covers_and_retry_loop(tmp_path: Path, monkeypat
         json.dumps(
             [
                 approved,
-                {**approved, "raw_url": "https://imgbb.com/b.png", "release_url": "other"},
-                {**approved, "raw_url": "https://imgbb.com/c.png", "release_url": meta.release_url},
+                {
+                    **approved,
+                    "raw_url": "https://imgbb.com/b.png",
+                    "release_url": "other",
+                },
+                {
+                    **approved,
+                    "raw_url": "https://imgbb.com/c.png",
+                    "release_url": meta.release_url,
+                },
             ]
         ),
         encoding="utf-8",
@@ -434,12 +635,16 @@ def test_check_hosts_cached_json_covers_and_retry_loop(tmp_path: Path, monkeypat
             uploadscreens_manager=_Uploader(),
         )
     )
-    assert len(result[0]) == 1 and result[0][0]["release_url"] == meta.release_url
+    assert (
+        len(result[0]) == 1 and result[0][0]["release_url"] == meta.release_url
+    )
 
     (state / "reuploaded_images.json").write_text("not-json", encoding="utf-8")
     calls = 0
 
-    async def handle(*_args: object, **_kwargs: object) -> tuple[list[dict[str, str]], bool, bool]:
+    async def handle(
+        *_args: object, **_kwargs: object
+    ) -> tuple[list[dict[str, str]], bool, bool]:
         nonlocal calls
         calls += 1
         return ([], True, True) if calls == 1 else ([approved], False, True)
@@ -459,7 +664,9 @@ def test_check_hosts_cached_json_covers_and_retry_loop(tmp_path: Path, monkeypat
     assert result == ([approved], False, True) and calls == 2
 
 
-def test_check_hosts_no_config_and_all_fail(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_check_hosts_no_config_and_all_fail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     meta = _meta(tmp_path)
     result = asyncio.run(
         rehosting._check_hosts(
@@ -474,7 +681,11 @@ def test_check_hosts_no_config_and_all_fail(tmp_path: Path, monkeypatch: pytest.
     )
     assert result == ([], True, False)
 
-    monkeypatch.setattr(rehosting, "_handle_image_upload", AsyncMock(return_value=([], False, False)))
+    monkeypatch.setattr(
+        rehosting,
+        "_handle_image_upload",
+        AsyncMock(return_value=([], False, False)),
+    )
     result = asyncio.run(
         rehosting._check_hosts(
             _meta(tmp_path),
@@ -489,14 +700,28 @@ def test_check_hosts_no_config_and_all_fail(tmp_path: Path, monkeypatch: pytest.
     assert result == ([], False, False)
 
 
-def test_handle_dependencies_no_sources_and_skip_upload(tmp_path: Path) -> None:
+def test_handle_dependencies_no_sources_and_skip_upload(
+    tmp_path: Path,
+) -> None:
     meta = _meta(tmp_path)
     with pytest.raises(ValueError, match="default_config"):
         asyncio.run(rehosting._handle_image_upload(meta, "TEST", {}))
     with pytest.raises(ValueError, match="takescreens_manager"):
-        asyncio.run(rehosting._handle_image_upload(meta, "TEST", {}, default_config=_default()))
+        asyncio.run(
+            rehosting._handle_image_upload(
+                meta, "TEST", {}, default_config=_default()
+            )
+        )
     with pytest.raises(ValueError, match="uploadscreens_manager"):
-        asyncio.run(rehosting._handle_image_upload(meta, "TEST", {}, default_config=_default(), takescreens_manager=_Screens()))
+        asyncio.run(
+            rehosting._handle_image_upload(
+                meta,
+                "TEST",
+                {},
+                default_config=_default(),
+                takescreens_manager=_Screens(),
+            )
+        )
 
     _dirs(meta)
     no_config = asyncio.run(
@@ -512,7 +737,13 @@ def test_handle_dependencies_no_sources_and_skip_upload(tmp_path: Path) -> None:
     )
     assert no_config == ([], True, False)
 
-    meta = _meta(tmp_path, skip_imghost_upload=True, tracker_image_collections={"TEST": {"screenshots": [{"raw_url": "raw"}]}})
+    meta = _meta(
+        tmp_path,
+        skip_imghost_upload=True,
+        tracker_image_collections={
+            "TEST": {"screenshots": [{"raw_url": "raw"}]}
+        },
+    )
     _image(_dirs(meta)["screens"])
     result = asyncio.run(
         rehosting._handle_image_upload(
@@ -528,15 +759,27 @@ def test_handle_dependencies_no_sources_and_skip_upload(tmp_path: Path) -> None:
     assert result == ([{"raw_url": "raw"}], False, False)
 
 
-def test_handle_existing_screens_upload_write_restore_and_covers_cleanup(tmp_path: Path) -> None:
-    meta = _meta(tmp_path, imghost="original", release_url="https://release.invalid/1")
+def test_handle_existing_screens_upload_write_restore_and_covers_cleanup(
+    tmp_path: Path,
+) -> None:
+    meta = _meta(
+        tmp_path, imghost="original", release_url="https://release.invalid/1"
+    )
     dirs = _dirs(meta)
     one = _image(dirs["screens"], "Release-0.png")
     two = _image(dirs["screens"], "Release-1.png")
     _Uploader.reset(
         [
-            {"img_url": "i1", "raw_url": "https://imgbb.com/1.png", "web_url": "w1"},
-            {"img_url": "i2", "raw_url": "https://imgbb.com/2.png", "web_url": "w2"},
+            {
+                "img_url": "i1",
+                "raw_url": "https://imgbb.com/1.png",
+                "web_url": "w1",
+            },
+            {
+                "img_url": "i2",
+                "raw_url": "https://imgbb.com/2.png",
+                "web_url": "w2",
+            },
         ]
     )
     result = asyncio.run(
@@ -557,7 +800,15 @@ def test_handle_existing_screens_upload_write_restore_and_covers_cleanup(tmp_pat
     assert one.exists() and two.exists()
 
     cover = _image(dirs["artwork"], "cover_front.jpg")
-    _Uploader.reset([{"img_url": "i", "raw_url": "https://imgbb.com/cover.jpg", "web_url": "w"}])
+    _Uploader.reset(
+        [
+            {
+                "img_url": "i",
+                "raw_url": "https://imgbb.com/cover.jpg",
+                "web_url": "w",
+            }
+        ]
+    )
     result = asyncio.run(
         rehosting._handle_image_upload(
             meta,
@@ -570,14 +821,24 @@ def test_handle_existing_screens_upload_write_restore_and_covers_cleanup(tmp_pat
         )
     )
     assert result[0][0]["raw_url"].endswith("cover.jpg") and not cover.exists()
-    saved = json.loads((Path(meta.base_dir) / "tmp" / meta.uuid / "covers.json").read_text())
+    saved = json.loads(
+        (Path(meta.base_dir) / "tmp" / meta.uuid / "covers.json").read_text()
+    )
     assert saved[0]["release_url"] == meta.release_url
 
 
-def test_handle_existing_url_filename_title_fallback_and_indexed_files(tmp_path: Path) -> None:
+def test_handle_existing_url_filename_title_fallback_and_indexed_files(
+    tmp_path: Path,
+) -> None:
     meta = _meta(
         tmp_path,
-        image_list=[{"raw_url": "https://host.invalid/remote.png", "img_url": "i", "web_url": "w"}],
+        image_list=[
+            {
+                "raw_url": "https://host.invalid/remote.png",
+                "img_url": "i",
+                "web_url": "w",
+            }
+        ],
         title="Release",
         screens=3,
     )
@@ -589,9 +850,21 @@ def test_handle_existing_url_filename_title_fallback_and_indexed_files(tmp_path:
     _image(dirs["screens"], ".PLAYLIST-8.png")
     _Uploader.reset(
         [
-            {"img_url": "i1", "raw_url": "https://imgbb.com/1.png", "web_url": "w1"},
-            {"img_url": "i2", "raw_url": "https://imgbb.com/2.png", "web_url": "w2"},
-            {"img_url": "i3", "raw_url": "https://imgbb.com/3.png", "web_url": "w3"},
+            {
+                "img_url": "i1",
+                "raw_url": "https://imgbb.com/1.png",
+                "web_url": "w1",
+            },
+            {
+                "img_url": "i2",
+                "raw_url": "https://imgbb.com/2.png",
+                "web_url": "w2",
+            },
+            {
+                "img_url": "i3",
+                "raw_url": "https://imgbb.com/3.png",
+                "web_url": "w3",
+            },
         ]
     )
     result = asyncio.run(
@@ -608,22 +881,33 @@ def test_handle_existing_url_filename_title_fallback_and_indexed_files(tmp_path:
     assert len(result[0]) == 3
     uploaded_files = _Uploader.calls[-1]["files"]
     assert str(dirs["screens"] / "remote.png") in uploaded_files
-    assert all("FILE-9" not in path and "PLAYLIST-8" not in path for path in uploaded_files)
+    assert all(
+        "FILE-9" not in path and "PLAYLIST-8" not in path
+        for path in uploaded_files
+    )
 
 
-def test_handle_generation_modes_failure_invalid_host_and_no_approved(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_handle_generation_modes_failure_invalid_host_and_no_approved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(
         rehosting,
         "manifest_files",
-        lambda base_dir, folder_id, _group: sorted((Path(base_dir) / "tmp" / folder_id / "screenshots").glob("*.png")),
+        lambda base_dir, folder_id, _group: sorted(
+            (Path(base_dir) / "tmp" / folder_id / "screenshots").glob("*.png")
+        ),
     )
     for mode in ("BDMV", "DVD", "XXX", "VIDEO", "NOPATH"):
-        meta = _meta(tmp_path, image_list=[], screens=1, uuid=f"release-{mode.lower()}")
+        meta = _meta(
+            tmp_path, image_list=[], screens=1, uuid=f"release-{mode.lower()}"
+        )
         dirs = _dirs(meta)
         screens = _Screens()
         generated = dirs["screens"] / "Release-0.png"
 
-        async def make_file(*_args: object, _generated: Path = generated, **_kwargs: object) -> None:
+        async def make_file(
+            *_args: object, _generated: Path = generated, **_kwargs: object
+        ) -> None:
             _generated.write_bytes(b"image")
 
         if mode == "BDMV":
@@ -633,7 +917,11 @@ def test_handle_generation_modes_failure_invalid_host_and_no_approved(tmp_path: 
             meta.is_disc = "DVD"
             meta.discs = [{"name": "DISC", "path": str(tmp_path)}]
 
-            async def dvd(*_args: object, _directory: Path = dirs["screens"], **_kwargs: object) -> None:
+            async def dvd(
+                *_args: object,
+                _directory: Path = dirs["screens"],
+                **_kwargs: object,
+            ) -> None:
                 _image(_directory, "DISC-0.png")
 
             screens.dvd_screenshots.side_effect = dvd
@@ -646,7 +934,15 @@ def test_handle_generation_modes_failure_invalid_host_and_no_approved(tmp_path: 
             meta.video = ""
             meta.filelist = []
             meta.path = ""
-        _Uploader.reset([{"img_url": "i", "raw_url": "https://imgbb.com/a.png", "web_url": "w"}])
+        _Uploader.reset(
+            [
+                {
+                    "img_url": "i",
+                    "raw_url": "https://imgbb.com/a.png",
+                    "web_url": "w",
+                }
+            ]
+        )
         result = asyncio.run(
             rehosting._handle_image_upload(
                 meta,
@@ -685,14 +981,24 @@ def test_handle_generation_modes_failure_invalid_host_and_no_approved(tmp_path: 
     meta = _meta(tmp_path, screens=1)
     dirs = _dirs(meta)
     _image(dirs["screens"])
-    _Uploader.reset([{"img_url": "i", "raw_url": "https://bad.invalid/a.png", "web_url": "w"}])
+    _Uploader.reset(
+        [
+            {
+                "img_url": "i",
+                "raw_url": "https://bad.invalid/a.png",
+                "web_url": "w",
+            }
+        ]
+    )
     result = asyncio.run(
         rehosting._handle_image_upload(
             meta,
             "TEST",
             {"imgbb.com": "imgbb"},
             approved_image_hosts=["imgbb"],
-            default_config=_default(img_host_1="pixhost", img_host_2="imgbb", screens=1),
+            default_config=_default(
+                img_host_1="pixhost", img_host_2="imgbb", screens=1
+            ),
             takescreens_manager=_Screens(),
             uploadscreens_manager=_Uploader(),
         )
@@ -716,13 +1022,23 @@ def test_handle_generation_modes_failure_invalid_host_and_no_approved(tmp_path: 
     assert result[1] is True
 
 
-def test_handle_output_existing_invalid_json_write_failure_and_invalid_tracker_images(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_handle_output_existing_invalid_json_write_failure_and_invalid_tracker_images(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     meta = _meta(tmp_path, screens=1)
     dirs = _dirs(meta)
     _image(dirs["screens"])
     output = dirs["screens"] / "reuploaded_images.json"
     output.write_text(json.dumps({"not": "a list"}), encoding="utf-8")
-    _Uploader.reset([{"img_url": "i", "raw_url": "https://imgbb.com/a.png", "web_url": "w"}])
+    _Uploader.reset(
+        [
+            {
+                "img_url": "i",
+                "raw_url": "https://imgbb.com/a.png",
+                "web_url": "w",
+            }
+        ]
+    )
     result = asyncio.run(
         rehosting._handle_image_upload(
             meta,
@@ -738,13 +1054,23 @@ def test_handle_output_existing_invalid_json_write_failure_and_invalid_tracker_i
 
     original_open = rehosting.aiofiles.open
 
-    def fail_write(path: str | Path, mode: str = "r", *args: object, **kwargs: object):
+    def fail_write(
+        path: str | Path, mode: str = "r", *args: object, **kwargs: object
+    ):
         if "w" in mode:
             raise OSError("read only")
         return original_open(path, mode, *args, **kwargs)
 
     monkeypatch.setattr(rehosting.aiofiles, "open", fail_write)
-    _Uploader.reset([{"img_url": "i", "raw_url": "https://imgbb.com/b.png", "web_url": "w"}])
+    _Uploader.reset(
+        [
+            {
+                "img_url": "i",
+                "raw_url": "https://imgbb.com/b.png",
+                "web_url": "w",
+            }
+        ]
+    )
     result = asyncio.run(
         rehosting._handle_image_upload(
             meta,
@@ -775,11 +1101,27 @@ def test_handle_output_existing_invalid_json_write_failure_and_invalid_tracker_i
 
 
 def test_remaining_rehosting_branches(tmp_path: Path) -> None:
-    approved = {"img_url": "i", "raw_url": "https://imgbb.com/a.png", "web_url": "w"}
-    managers = {"takescreens_manager": _Screens(), "uploadscreens_manager": _Uploader()}
+    approved = {
+        "img_url": "i",
+        "raw_url": "https://imgbb.com/a.png",
+        "web_url": "w",
+    }
+    managers = {
+        "takescreens_manager": _Screens(),
+        "uploadscreens_manager": _Uploader(),
+    }
 
     # None host policy is normalized, and mapped/unmapped URLs require rehosting.
-    meta = _meta(tmp_path, image_list=[{"img_url": "i", "raw_url": "https://bad.com/a.png", "web_url": "w"}])
+    meta = _meta(
+        tmp_path,
+        image_list=[
+            {
+                "img_url": "i",
+                "raw_url": "https://bad.com/a.png",
+                "web_url": "w",
+            }
+        ],
+    )
     result = asyncio.run(
         rehosting._check_hosts(
             meta,
@@ -792,7 +1134,12 @@ def test_remaining_rehosting_branches(tmp_path: Path) -> None:
     )
     assert result == ([], True, False)
 
-    relative = _meta(tmp_path, image_list=[{"img_url": "i", "raw_url": "relative.png", "web_url": "w"}])
+    relative = _meta(
+        tmp_path,
+        image_list=[
+            {"img_url": "i", "raw_url": "relative.png", "web_url": "w"}
+        ],
+    )
     result = asyncio.run(
         rehosting._check_hosts(
             relative,
@@ -808,7 +1155,9 @@ def test_remaining_rehosting_branches(tmp_path: Path) -> None:
     # Cached malformed entries are skipped before a valid cached upload.
     state = Path(meta.base_dir) / "tmp" / meta.uuid
     state.mkdir(parents=True, exist_ok=True)
-    (state / "reuploaded_images.json").write_text(json.dumps([{"raw_url": ""}, approved]), encoding="utf-8")
+    (state / "reuploaded_images.json").write_text(
+        json.dumps([{"raw_url": ""}, approved]), encoding="utf-8"
+    )
     cached = _meta(tmp_path)
     result = asyncio.run(
         rehosting._check_hosts(
@@ -824,11 +1173,30 @@ def test_remaining_rehosting_branches(tmp_path: Path) -> None:
 
     # None approved hosts in the low-level handler is normalized before the
     # explicit skip path.
-    skipped = _meta(tmp_path, skip_imghost_upload=True, tracker_image_collections={"TEST": {"screenshots": [approved]}})
-    assert asyncio.run(rehosting._handle_image_upload(skipped, "TEST", {}, approved_image_hosts=None, default_config=_default(), **managers)) == ([approved], False, False)
+    skipped = _meta(
+        tmp_path,
+        skip_imghost_upload=True,
+        tracker_image_collections={"TEST": {"screenshots": [approved]}},
+    )
+    assert asyncio.run(
+        rehosting._handle_image_upload(
+            skipped,
+            "TEST",
+            {},
+            approved_image_hosts=None,
+            default_config=_default(),
+            **managers,
+        )
+    ) == ([approved], False, False)
 
     # HDDVD selects the largest EVO as its capture source.
-    hddvd = _meta(tmp_path, uuid="hddvd", is_disc="HDDVD", discs=[{"largest_evo": str(tmp_path / "largest.evo")}], screens=1)
+    hddvd = _meta(
+        tmp_path,
+        uuid="hddvd",
+        is_disc="HDDVD",
+        discs=[{"largest_evo": str(tmp_path / "largest.evo")}],
+        screens=1,
+    )
     dirs = _dirs(hddvd)
     _image(dirs["screens"])
     _Uploader.reset([approved])
@@ -865,10 +1233,24 @@ def test_partial_additional_collection_upload(tmp_path: Path) -> None:
     one = _image(dirs["menu"], "one.png")
     two = _image(dirs["menu"], "two.png")
     meta.menu_images = [
-        {"raw_url": "https://bad.invalid/one.png", "local_file_path": str(one)},
-        {"raw_url": "https://bad.invalid/two.png", "local_file_path": str(two)},
+        {
+            "raw_url": "https://bad.invalid/one.png",
+            "local_file_path": str(one),
+        },
+        {
+            "raw_url": "https://bad.invalid/two.png",
+            "local_file_path": str(two),
+        },
     ]
-    _Uploader.reset([{"img_url": "i", "raw_url": "https://imgbb.com/one.png", "web_url": "w"}])
+    _Uploader.reset(
+        [
+            {
+                "img_url": "i",
+                "raw_url": "https://imgbb.com/one.png",
+                "web_url": "w",
+            }
+        ]
+    )
     asyncio.run(
         rehosting._check_additional_image_collections(
             meta,

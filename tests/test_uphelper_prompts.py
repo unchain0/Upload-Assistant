@@ -10,7 +10,9 @@ from src.services.upload_decision_service import DupeEntry, UploadHelper
 
 
 @pytest.mark.asyncio
-async def test_prompt_yes_no_serializes_concurrent_prompts(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_prompt_yes_no_serializes_concurrent_prompts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     first_started = threading.Event()
     release_first = threading.Event()
     second_started = threading.Event()
@@ -23,7 +25,9 @@ async def test_prompt_yes_no_serializes_concurrent_prompts(monkeypatch: pytest.M
             second_started.set()
         return default
 
-    monkeypatch.setattr("src.services.upload_decision_service.cli_ui.ask_yes_no", ask_yes_no)
+    monkeypatch.setattr(
+        "src.services.upload_decision_service.cli_ui.ask_yes_no", ask_yes_no
+    )
     helper = UploadHelper({"DEFAULT": {}})
 
     first = asyncio.create_task(helper.prompt_yes_no("first"))
@@ -39,7 +43,9 @@ async def test_prompt_yes_no_serializes_concurrent_prompts(monkeypatch: pytest.M
 
 
 @pytest.mark.asyncio
-async def test_bdinfo_comparison_prompt_uses_rich_markup(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_bdinfo_comparison_prompt_uses_rich_markup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     question: str | None = None
 
     async def prompt_yes_no(value: str, *, default: bool = False) -> bool:
@@ -48,25 +54,40 @@ async def test_bdinfo_comparison_prompt_uses_rich_markup(monkeypatch: pytest.Mon
         question = value
         return False
 
-    monkeypatch.setattr("src.services.upload_decision_service.has_bdinfo_content", lambda _entry: True)
+    monkeypatch.setattr(
+        "src.services.upload_decision_service.has_bdinfo_content",
+        lambda _entry: True,
+    )
     helper = UploadHelper({"DEFAULT": {}})
     monkeypatch.setattr(helper, "prompt_yes_no", prompt_yes_no)
 
     await helper.ask_bdinfo_comparison({}, [{}], "AITHER")
 
-    assert question == "[bold magenta]Found BDInfo content in potential duplicates.[/bold magenta] Perform a comparison?"
+    assert (
+        question
+        == "[bold magenta]Found BDInfo content in potential duplicates.[/bold magenta] Perform a comparison?"
+    )
     assert "\033" not in question
 
 
 @pytest.mark.asyncio
-async def test_dupe_check_rejects_episode_when_existing_season_pack_is_found() -> None:
+async def test_dupe_check_rejects_episode_when_existing_season_pack_is_found() -> (
+    None
+):
     class SeasonPackTracker:
         async def get_name(self, meta: Meta) -> dict[str, str]:
             return {"name": meta.name}
 
     helper = UploadHelper({"DEFAULT": {}})
-    helper.tracker_class_map = {"DARKPEERS": lambda **_kwargs: SeasonPackTracker()}
-    meta = Meta(category="TV", name="Yowayowa Sensei S01E01", season_pack_exists=True, season_pack_name="Yowayowa Sensei S01 1080p WEB-DL")
+    helper.tracker_class_map = {
+        "DARKPEERS": lambda **_kwargs: SeasonPackTracker()
+    }
+    meta = Meta(
+        category="TV",
+        name="Yowayowa Sensei S01E01",
+        season_pack_exists=True,
+        season_pack_name="Yowayowa Sensei S01 1080p WEB-DL",
+    )
     dupes: list[DupeEntry | str] = [meta.season_pack_name]
 
     is_dupe, result_meta = await helper.dupe_check(dupes, meta, "DARKPEERS")
@@ -76,30 +97,49 @@ async def test_dupe_check_rejects_episode_when_existing_season_pack_is_found() -
 
 
 @pytest.mark.asyncio
-async def test_dupe_check_honors_skip_dupe_check_for_existing_season_pack() -> None:
+async def test_dupe_check_honors_skip_dupe_check_for_existing_season_pack() -> (
+    None
+):
     class SeasonPackTracker:
         async def get_name(self, meta: Meta) -> dict[str, str]:
             return {"name": meta.name}
 
     helper = UploadHelper({"DEFAULT": {}})
-    helper.tracker_class_map = {"DARKPEERS": lambda **_kwargs: SeasonPackTracker()}
-    meta = Meta(category="TV", name="Yowayowa Sensei S01E01", dupe=True, season_pack_exists=True, season_pack_name="Yowayowa Sensei S01 1080p WEB-DL")
+    helper.tracker_class_map = {
+        "DARKPEERS": lambda **_kwargs: SeasonPackTracker()
+    }
+    meta = Meta(
+        category="TV",
+        name="Yowayowa Sensei S01E01",
+        dupe=True,
+        season_pack_exists=True,
+        season_pack_name="Yowayowa Sensei S01 1080p WEB-DL",
+    )
 
-    is_dupe, result_meta = await helper.dupe_check([meta.season_pack_name], meta, "DARKPEERS")
+    is_dupe, result_meta = await helper.dupe_check(
+        [meta.season_pack_name], meta, "DARKPEERS"
+    )
 
     assert is_dupe is False
     assert result_meta is meta
 
 
 @pytest.mark.asyncio
-async def test_dupe_check_rejects_existing_season_pack_for_every_tracker() -> None:
+async def test_dupe_check_rejects_existing_season_pack_for_every_tracker() -> (
+    None
+):
     class SeasonPackTracker:
         async def get_name(self, meta: Meta) -> dict[str, str]:
             return {"name": meta.name}
 
     helper = UploadHelper({"DEFAULT": {}})
     helper.tracker_class_map = {"OTHER": lambda **_kwargs: SeasonPackTracker()}
-    meta = Meta(category="TV", name="Show S01E01", season_pack_exists=True, season_pack_name="Show S01")
+    meta = Meta(
+        category="TV",
+        name="Show S01E01",
+        season_pack_exists=True,
+        season_pack_name="Show S01",
+    )
 
     dupes: list[DupeEntry | str] = [meta.season_pack_name]
     is_dupe, _ = await helper.dupe_check(dupes, meta, "OTHER")
@@ -108,7 +148,9 @@ async def test_dupe_check_rejects_existing_season_pack_for_every_tracker() -> No
 
 
 @pytest.mark.asyncio
-async def test_dupe_filter_detects_season_pack_before_quality_filters() -> None:
+async def test_dupe_filter_detects_season_pack_before_quality_filters() -> (
+    None
+):
     meta = Meta(
         category="TV",
         name="Treasure & Dirt S01E06 1080p HDTV x264-DARKFLiX",
@@ -123,7 +165,10 @@ async def test_dupe_filter_detects_season_pack_before_quality_filters() -> None:
     season_pack: DupeEntry = {
         "name": "Treasure & Dirt S01 720p WEB-DL x265-GROUP",
         "size": 1,
-        "files": [f"Treasure.And.Dirt.S01E{episode:02}.mkv" for episode in range(1, 7)],
+        "files": [
+            f"Treasure.And.Dirt.S01E{episode:02}.mkv"
+            for episode in range(1, 7)
+        ],
         "file_count": 6,
         "trumpable": False,
         "link": "https://example.com/torrents/123",
@@ -137,7 +182,9 @@ async def test_dupe_filter_detects_season_pack_before_quality_filters() -> None:
         "description": None,
     }
 
-    result = await DupeChecker({"DEFAULT": {}}).filter_dupes([season_pack], meta, "OTHER")
+    result = await DupeChecker({"DEFAULT": {}}).filter_dupes(
+        [season_pack], meta, "OTHER"
+    )
 
     assert result == [season_pack]
     assert meta.season_pack_exists is True
@@ -145,7 +192,9 @@ async def test_dupe_filter_detects_season_pack_before_quality_filters() -> None:
 
 
 @pytest.mark.asyncio
-async def test_dupe_filter_does_not_block_episode_missing_from_partial_pack() -> None:
+async def test_dupe_filter_does_not_block_episode_missing_from_partial_pack() -> (
+    None
+):
     meta = Meta(
         category="TV",
         name="Treasure & Dirt S01E06 1080p HDTV x264-DARKFLiX",
@@ -159,16 +208,26 @@ async def test_dupe_filter_does_not_block_episode_missing_from_partial_pack() ->
     )
     partial_pack = {
         "name": "Treasure & Dirt S01 1080p HDTV x264-GROUP",
-        "files": [f"Treasure.And.Dirt.S01E{episode:02}.mkv" for episode in range(1, 6)],
+        "files": [
+            f"Treasure.And.Dirt.S01E{episode:02}.mkv"
+            for episode in range(1, 6)
+        ],
         "id": 124,
     }
 
-    assert await DupeChecker({"DEFAULT": {}}).filter_dupes([partial_pack], meta, "OTHER") == []
+    assert (
+        await DupeChecker({"DEFAULT": {}}).filter_dupes(
+            [partial_pack], meta, "OTHER"
+        )
+        == []
+    )
     assert meta.season_pack_exists is False
 
 
 @pytest.mark.asyncio
-async def test_dupe_filter_does_not_mark_season_pack_without_file_evidence() -> None:
+async def test_dupe_filter_does_not_mark_season_pack_without_file_evidence() -> (
+    None
+):
     meta = Meta(
         category="TV",
         name="Treasure & Dirt S01E06 1080p HDTV x264-DARKFLiX",
@@ -179,15 +238,23 @@ async def test_dupe_filter_does_not_mark_season_pack_without_file_evidence() -> 
         source="HDTV",
         type="HDTV",
     )
-    season_pack = {"name": "Treasure & Dirt S01 1080p HDTV x264-GROUP", "files": [], "id": 125}
+    season_pack = {
+        "name": "Treasure & Dirt S01 1080p HDTV x264-GROUP",
+        "files": [],
+        "id": 125,
+    }
 
-    await DupeChecker({"DEFAULT": {}}).filter_dupes([season_pack], meta, "OTHER")
+    await DupeChecker({"DEFAULT": {}}).filter_dupes(
+        [season_pack], meta, "OTHER"
+    )
 
     assert meta.season_pack_exists is False
 
 
 @pytest.mark.asyncio
-async def test_unit3d_episode_search_includes_all_season_pack_qualities(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_unit3d_episode_search_includes_all_season_pack_qualities(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     captured_params: list[tuple[str, object]] = []
 
     class Response:
@@ -206,45 +273,100 @@ async def test_unit3d_episode_search_includes_all_season_pack_qualities(monkeypa
         async def __aexit__(self, *_args: object) -> None:
             return None
 
-        async def get(self, *, url: str, headers: dict[str, str], params: list[tuple[str, object]]) -> Response:
+        async def get(
+            self,
+            *,
+            url: str,
+            headers: dict[str, str],
+            params: list[tuple[str, object]],
+        ) -> Response:
             del url, headers
             captured_params.extend(params)
             return Response()
 
-    monkeypatch.setattr("src.integrations.trackers.UNIT3D.httpx.AsyncClient", lambda **_kwargs: Client())
+    monkeypatch.setattr(
+        "src.integrations.trackers.UNIT3D.httpx.AsyncClient",
+        lambda **_kwargs: Client(),
+    )
     tracker = UNIT3D({"TRACKERS": {"TEST": {}}}, "TEST")
     tracker.search_url = "https://example.com/api/torrents/filter"
-    meta = Meta(category="TV", tmdb=325785, season="S01", episode="E03", resolution="1080p", type="HDTV", tv_pack=False)
+    meta = Meta(
+        category="TV",
+        tmdb=325785,
+        season="S01",
+        episode="E03",
+        resolution="1080p",
+        type="HDTV",
+        tv_pack=False,
+    )
 
     assert await tracker.search_existing(meta) == []
     assert ("tmdbId", "325785") in captured_params
     assert ("name", "S01") in captured_params
-    assert not any(key in {"resolutions[]", "types[]"} for key, _value in captured_params)
+    assert not any(
+        key in {"resolutions[]", "types[]"} for key, _value in captured_params
+    )
 
     captured_params.clear()
-    movie = Meta(category="MOVIE", tmdb=27073, resolution="480p", type="ENCODE")
+    movie = Meta(
+        category="MOVIE", tmdb=27073, resolution="480p", type="ENCODE"
+    )
     assert await tracker.search_existing(movie) == []
     assert ("tmdbId", "27073") in captured_params
-    assert not any(key in {"resolutions[]", "types[]"} for key, _value in captured_params)
+    assert not any(
+        key in {"resolutions[]", "types[]"} for key, _value in captured_params
+    )
 
     captured_params.clear()
-    book = Meta(category="BOOK", title="Atomic Habits: Tiny Changes, Remarkable Results")
+    book = Meta(
+        category="BOOK",
+        title="Atomic Habits: Tiny Changes, Remarkable Results",
+    )
     assert await tracker.search_existing(book) == []
     assert ("name", "Atomic Habits") in captured_params
 
-    assert UNIT3D._is_duplicate_name_error('{"data":{"name":["The name has already been taken."]}}') is True
-    assert UNIT3D._is_duplicate_name_error('{"data":{"name":["The name field already exists."]}}') is True
-    assert UNIT3D._is_duplicate_name_error('{"data":{"name":["O valor indicado para o campo name já se encontra registado."]}}') is True
-    assert UNIT3D._is_duplicate_name_error('{"data":{"torrent":["A torrent with the same info_hash has already been uploaded and has been approved."]}}') is True
+    assert (
+        UNIT3D._is_duplicate_name_error(
+            '{"data":{"name":["The name has already been taken."]}}'
+        )
+        is True
+    )
+    assert (
+        UNIT3D._is_duplicate_name_error(
+            '{"data":{"name":["The name field already exists."]}}'
+        )
+        is True
+    )
+    assert (
+        UNIT3D._is_duplicate_name_error(
+            '{"data":{"name":["O valor indicado para o campo name já se encontra registado."]}}'
+        )
+        is True
+    )
+    assert (
+        UNIT3D._is_duplicate_name_error(
+            '{"data":{"torrent":["A torrent with the same info_hash has already been uploaded and has been approved."]}}'
+        )
+        is True
+    )
 
 
 @pytest.mark.asyncio
 async def test_dupe_filter_keeps_exact_name_before_quality_filters() -> None:
     name = "Full Contact AKA Hap do Ko Fei 1992 480p BluRay Dual-Audio AAC 1.0 x264-gazer"
-    meta = Meta(category="MOVIE", name=name, uuid=name, resolution="480p", source="BluRay", type="ENCODE")
+    meta = Meta(
+        category="MOVIE",
+        name=name,
+        uuid=name,
+        resolution="480p",
+        source="BluRay",
+        type="ENCODE",
+    )
     candidate = {"name": name, "size": 1, "type": "REMUX", "res": "1080p"}
 
-    result = await DupeChecker({"DEFAULT": {}}).filter_dupes([candidate], meta, "DARKPEERS")
+    result = await DupeChecker({"DEFAULT": {}}).filter_dupes(
+        [candidate], meta, "DARKPEERS"
+    )
 
     assert len(result) == 1
     assert result[0]["name"] == name
@@ -269,7 +391,9 @@ async def test_dupe_filter_resets_season_pack_state_between_trackers() -> None:
 
 
 @pytest.mark.asyncio
-async def test_book_dupe_filter_ignores_author_segment_before_main_title() -> None:
+async def test_book_dupe_filter_ignores_author_segment_before_main_title() -> (
+    None
+):
     meta = Meta(
         category="BOOK",
         author="James Clear",
@@ -285,14 +409,18 @@ async def test_book_dupe_filter_ignores_author_segment_before_main_title() -> No
         "size": 13_883_392,
     }
 
-    result = await DupeChecker({"DEFAULT": {}}).filter_dupes([candidate], meta, "YUSCENE")
+    result = await DupeChecker({"DEFAULT": {}}).filter_dupes(
+        [candidate], meta, "YUSCENE"
+    )
 
     assert len(result) == 1
     assert result[0]["name"].startswith("James Clear - Atomic Habits:")
 
 
 @pytest.mark.asyncio
-async def test_book_dupe_filter_accepts_exact_payload_with_different_title_metadata() -> None:
+async def test_book_dupe_filter_accepts_exact_payload_with_different_title_metadata() -> (
+    None
+):
     meta = Meta(
         category="BOOK",
         author="James Clear",
@@ -309,14 +437,24 @@ async def test_book_dupe_filter_accepts_exact_payload_with_different_title_metad
         "size": 13_883_392,
     }
 
-    result = await DupeChecker({"DEFAULT": {}}).filter_dupes([candidate], meta, "YUSCENE")
+    result = await DupeChecker({"DEFAULT": {}}).filter_dupes(
+        [candidate], meta, "YUSCENE"
+    )
 
     assert len(result) == 1
 
 
 @pytest.mark.asyncio
-async def test_book_dupe_filter_does_not_match_different_book_by_same_author() -> None:
-    meta = Meta(category="BOOK", author="James Clear", title="Atomic Habits", type="PDF", filelist=["Atomic Habits.pdf"])
+async def test_book_dupe_filter_does_not_match_different_book_by_same_author() -> (
+    None
+):
+    meta = Meta(
+        category="BOOK",
+        author="James Clear",
+        title="Atomic Habits",
+        type="PDF",
+        filelist=["Atomic Habits.pdf"],
+    )
     candidate = {
         "name": "James Clear - The Clear Habit Journal 2023 ENG PDF",
         "type": "PDF",
@@ -325,14 +463,22 @@ async def test_book_dupe_filter_does_not_match_different_book_by_same_author() -
         "size": 10_000_000,
     }
 
-    result = await DupeChecker({"DEFAULT": {}}).filter_dupes([candidate], meta, "YUSCENE")
+    result = await DupeChecker({"DEFAULT": {}}).filter_dupes(
+        [candidate], meta, "YUSCENE"
+    )
 
     assert result == []
 
 
 @pytest.mark.asyncio
 async def test_book_dupe_filter_does_not_match_workbook_derivative() -> None:
-    meta = Meta(category="BOOK", author="James Clear", title="Atomic Habits", type="PDF", filelist=["Atomic Habits.pdf"])
+    meta = Meta(
+        category="BOOK",
+        author="James Clear",
+        title="Atomic Habits",
+        type="PDF",
+        filelist=["Atomic Habits.pdf"],
+    )
     candidate = {
         "name": "James Clear - WORKBOOK For Atomic Habits 2021 ENG PDF",
         "type": "PDF",
@@ -341,6 +487,8 @@ async def test_book_dupe_filter_does_not_match_workbook_derivative() -> None:
         "size": 11_000_000,
     }
 
-    result = await DupeChecker({"DEFAULT": {}}).filter_dupes([candidate], meta, "YUSCENE")
+    result = await DupeChecker({"DEFAULT": {}}).filter_dupes(
+        [candidate], meta, "YUSCENE"
+    )
 
     assert result == []

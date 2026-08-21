@@ -83,7 +83,9 @@ def _prep(manager: _FinalizeManager, *, config: dict | None = None):
         audio_manager=manager,
         scene_manager=manager,
         tmdb_manager=manager,
-        stream_optimized=AsyncMock(side_effect=lambda value: 1 if value else 0),
+        stream_optimized=AsyncMock(
+            side_effect=lambda value: 1 if value else 0
+        ),
         parse_scene_nfo=AsyncMock(),
         check_adult_media=lambda _meta: True,
     )
@@ -146,43 +148,103 @@ def _meta(tmp_path: Path, **values: object) -> Meta:
 
 
 def _patch_finalize_globals(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(helpers.video_manager, "get_container", AsyncMock(return_value="MKV"))
-    monkeypatch.setattr(helpers.video_manager, "is_3d", AsyncMock(return_value=""))
-    monkeypatch.setattr(helpers.video_manager, "get_uhd", AsyncMock(return_value="UHD"))
-    monkeypatch.setattr(helpers.video_manager, "get_hdr", AsyncMock(return_value="HDR10"))
-    monkeypatch.setattr(helpers.video_manager, "get_video_codec", AsyncMock(return_value="H.264"))
-    monkeypatch.setattr(helpers.video_manager, "get_video_encode", AsyncMock(return_value=("x264", "H.264", True, "10")))
-    monkeypatch.setattr(helpers, "get_source", AsyncMock(return_value=("Web", "ENCODE")))
-    monkeypatch.setattr(helpers, "get_distributor", AsyncMock(side_effect=lambda value: value))
-    monkeypatch.setattr(helpers, "get_region", AsyncMock(side_effect=lambda _bdinfo, value: value or "US"))
+    monkeypatch.setattr(
+        helpers.video_manager, "get_container", AsyncMock(return_value="MKV")
+    )
+    monkeypatch.setattr(
+        helpers.video_manager, "is_3d", AsyncMock(return_value="")
+    )
+    monkeypatch.setattr(
+        helpers.video_manager, "get_uhd", AsyncMock(return_value="UHD")
+    )
+    monkeypatch.setattr(
+        helpers.video_manager, "get_hdr", AsyncMock(return_value="HDR10")
+    )
+    monkeypatch.setattr(
+        helpers.video_manager,
+        "get_video_codec",
+        AsyncMock(return_value="H.264"),
+    )
+    monkeypatch.setattr(
+        helpers.video_manager,
+        "get_video_encode",
+        AsyncMock(return_value=("x264", "H.264", True, "10")),
+    )
+    monkeypatch.setattr(
+        helpers, "get_source", AsyncMock(return_value=("Web", "ENCODE"))
+    )
+    monkeypatch.setattr(
+        helpers, "get_distributor", AsyncMock(side_effect=lambda value: value)
+    )
+    monkeypatch.setattr(
+        helpers,
+        "get_region",
+        AsyncMock(side_effect=lambda _bdinfo, value: value or "US"),
+    )
 
     async def service(*_args, get_services_only: bool = False, **_kwargs):
-        return {"Amazon": "AMZN", "Crunchyroll": "CR", "HIDIVE": "HIDI"} if get_services_only else ("AMZN", "Amazon")
+        return (
+            {"Amazon": "AMZN", "Crunchyroll": "CR", "HIDIVE": "HIDI"}
+            if get_services_only
+            else ("AMZN", "Amazon")
+        )
 
     monkeypatch.setattr(helpers, "get_service", service)
-    monkeypatch.setattr(helpers, "get_edition", AsyncMock(return_value=("Director REPACK2 Cut", "", False)))
+    monkeypatch.setattr(
+        helpers,
+        "get_edition",
+        AsyncMock(return_value=("Director REPACK2 Cut", "", False)),
+    )
     monkeypatch.setattr(helpers, "get_tag", AsyncMock(return_value="-GROUP"))
-    monkeypatch.setattr(helpers, "tag_override", AsyncMock(side_effect=lambda meta: meta))
-    monkeypatch.setattr(helpers, "validate_mediainfo", lambda *_args, **_kwargs: False)
-    monkeypatch.setattr(helpers, "get_bluray_releases", AsyncMock(return_value=[{"name": "release"}]))
+    monkeypatch.setattr(
+        helpers, "tag_override", AsyncMock(side_effect=lambda meta: meta)
+    )
+    monkeypatch.setattr(
+        helpers, "validate_mediainfo", lambda *_args, **_kwargs: False
+    )
+    monkeypatch.setattr(
+        helpers,
+        "get_bluray_releases",
+        AsyncMock(return_value=[{"name": "release"}]),
+    )
 
     async def no_sleep(_delay: float) -> None:
         return None
 
     monkeypatch.setattr(helpers.asyncio, "sleep", no_sleep)
-    monkeypatch.setattr(helpers.tvmaze_manager, "search_tvmaze", AsyncMock(return_value=789))
-    monkeypatch.setattr(helpers.imdb_manager, "get_imdb_from_episode", AsyncMock(return_value={"series": {"series_id": "tt7654321"}}))
+    monkeypatch.setattr(
+        helpers.tvmaze_manager, "search_tvmaze", AsyncMock(return_value=789)
+    )
+    monkeypatch.setattr(
+        helpers.imdb_manager,
+        "get_imdb_from_episode",
+        AsyncMock(return_value={"series": {"series_id": "tt7654321"}}),
+    )
     monkeypatch.setattr(
         helpers.imdb_manager,
         "get_imdb_info_api",
-        AsyncMock(return_value={"title": "Series Title", "aka": "AKA Different Name (2024)", "year": 2024, "genres": "Drama"}),
+        AsyncMock(
+            return_value={
+                "title": "Series Title",
+                "aka": "AKA Different Name (2024)",
+                "year": 2024,
+                "genres": "Drama",
+            }
+        ),
     )
 
 
-def test_finalize_tv_comprehensive_metadata_ids_bitrates_tags_and_localization(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_finalize_tv_comprehensive_metadata_ids_bitrates_tags_and_localization(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _patch_finalize_globals(monkeypatch)
     manager = _FinalizeManager()
-    manager.tvmaze_tvdb = (789, 654, [{"name": "result"}], "Series Name (2024)")
+    manager.tvmaze_tvdb = (
+        789,
+        654,
+        [{"name": "result"}],
+        "Series Name (2024)",
+    )
     manager.tv_data_updates = {"tvdb_imdb_id": "tt9999999"}
     config = {
         "DEFAULT": {
@@ -197,15 +259,31 @@ def test_finalize_tv_comprehensive_metadata_ids_bitrates_tags_and_localization(t
     }
     prep = _prep(manager, config=config)
     tracks = [
-        {"@type": "General", "OverallBitRate": "9000000", "FrameRate": "23.976"},
-        {"@type": "Video", "BitRate": "8000000", "FrameRate": "24", "Width": "1920", "Height": "1080"},
+        {
+            "@type": "General",
+            "OverallBitRate": "9000000",
+            "FrameRate": "23.976",
+        },
+        {
+            "@type": "Video",
+            "BitRate": "8000000",
+            "FrameRate": "24",
+            "Width": "1920",
+            "Height": "1080",
+        },
         {"@type": "Audio", "BitRate": "768000"},
     ]
     meta = _meta(
         tmp_path,
         category="TV",
         title="Main Title",
-        imdb_info={"title": "AKA Completely Different (2024)", "aka": "AKA Other Name (2024)", "year": 2024, "type": "tv movie", "genres": "Drama, Action"},
+        imdb_info={
+            "title": "AKA Completely Different (2024)",
+            "aka": "AKA Other Name (2024)",
+            "year": 2024,
+            "type": "tv movie",
+            "genres": "Drama, Action",
+        },
         tv_pack=True,
         not_anime=False,
         tvdb_id=0,
@@ -223,19 +301,50 @@ def test_finalize_tv_comprehensive_metadata_ids_bitrates_tags_and_localization(t
     from src.integrations.trackers import registry
 
     class Localized:
-        tmdb_localization_requirements: ClassVar[dict[str, dict[str, str]]] = {"pt-BR": {"main": "credits,images", "season": "episodes", "episode": "credits"}}
+        tmdb_localization_requirements: ClassVar[dict[str, dict[str, str]]] = {
+            "pt-BR": {
+                "main": "credits,images",
+                "season": "episodes",
+                "episode": "credits",
+            }
+        }
 
-    monkeypatch.setitem(registry.tracker_class_map, "FAKE_LOCALIZED", Localized)
-    asyncio.run(helpers.finalize_metadata(prep, meta, meta.path, {}, {"media": {"track": tracks}}, meta.filename, meta.filename, meta.path))
+    monkeypatch.setitem(
+        registry.tracker_class_map, "FAKE_LOCALIZED", Localized
+    )
+    asyncio.run(
+        helpers.finalize_metadata(
+            prep,
+            meta,
+            meta.path,
+            {},
+            {"media": {"track": tracks}},
+            meta.filename,
+            meta.filename,
+            meta.path,
+        )
+    )
 
-    assert {"season", "pack", "tvmaze_tvdb", "tv_data", "override", "audio", "localized"} <= set(manager.calls)
+    assert {
+        "season",
+        "pack",
+        "tvmaze_tvdb",
+        "tv_data",
+        "override",
+        "audio",
+        "localized",
+    } <= set(manager.calls)
     assert meta.tv_movie is True
     assert meta.tvmaze_id == 789 and meta.tvdb_id == 654
     assert meta.imdb_id == 7654321
     assert meta.tvdb_search_results
     assert meta.container == "MKV"
     assert meta.audio == "DDP 5.1" and meta.channels == "5.1"
-    assert meta.video_bitrate == 8000 and meta.audio_bitrate == 768 and meta.frame_rate == 24.0
+    assert (
+        meta.video_bitrate == 8000
+        and meta.audio_bitrate == 768
+        and meta.frame_rate == 24.0
+    )
     assert meta.video_width == 1920 and meta.video_height == 1080
     assert meta.repack == "REPACK2" and "REPACK" not in meta.edition
     assert meta.valid_mi_settings is False
@@ -249,37 +358,117 @@ def test_finalize_tv_comprehensive_metadata_ids_bitrates_tags_and_localization(t
     assert meta.pre_release is False
 
 
-def test_finalize_tv_individual_tvmaze_tvdb_and_error_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_finalize_tv_individual_tvmaze_tvdb_and_error_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _patch_finalize_globals(monkeypatch)
     manager = _FinalizeManager()
     prep = _prep(manager)
-    meta = _meta(tmp_path, category="TV", tvmaze_id=0, tvdb_id=123, imdb_id=123, not_anime=True)
-    asyncio.run(helpers.finalize_metadata(prep, meta, meta.path, {}, {}, meta.filename, meta.filename, meta.path))
+    meta = _meta(
+        tmp_path,
+        category="TV",
+        tvmaze_id=0,
+        tvdb_id=123,
+        imdb_id=123,
+        not_anime=True,
+    )
+    asyncio.run(
+        helpers.finalize_metadata(
+            prep,
+            meta,
+            meta.path,
+            {},
+            {},
+            meta.filename,
+            meta.filename,
+            meta.path,
+        )
+    )
     assert meta.tvmaze_id == 789
 
     manager = _FinalizeManager()
     manager.tvdb_result = ([{"series": "result"}], 456)
     prep = _prep(manager)
-    meta = _meta(tmp_path, category="TV", tvmaze_id=123, tvdb_id=0, imdb_id=123, not_anime=True)
-    asyncio.run(helpers.finalize_metadata(prep, meta, meta.path, {}, {}, meta.filename, meta.filename, meta.path))
+    meta = _meta(
+        tmp_path,
+        category="TV",
+        tvmaze_id=123,
+        tvdb_id=0,
+        imdb_id=123,
+        not_anime=True,
+    )
+    asyncio.run(
+        helpers.finalize_metadata(
+            prep,
+            meta,
+            meta.path,
+            {},
+            {},
+            meta.filename,
+            meta.filename,
+            meta.path,
+        )
+    )
     assert meta.tvdb_id == 456 and meta.tvdb_search_results
 
     async def fail(**_kwargs):
         raise RuntimeError("tvdb failed")
 
     manager.search_tvdb_series = fail  # type: ignore[method-assign]
-    meta = _meta(tmp_path, category="TV", tvmaze_id=123, tvdb_id=0, imdb_id=123, not_anime=True)
-    asyncio.run(helpers.finalize_metadata(prep, meta, meta.path, {}, {}, meta.filename, meta.filename, meta.path))
+    meta = _meta(
+        tmp_path,
+        category="TV",
+        tvmaze_id=123,
+        tvdb_id=0,
+        imdb_id=123,
+        not_anime=True,
+    )
+    asyncio.run(
+        helpers.finalize_metadata(
+            prep,
+            meta,
+            meta.path,
+            {},
+            {},
+            meta.filename,
+            meta.filename,
+            meta.path,
+        )
+    )
 
-    monkeypatch.setattr(helpers.tvmaze_manager, "search_tvmaze", AsyncMock(return_value=(321, "extra")))
+    monkeypatch.setattr(
+        helpers.tvmaze_manager,
+        "search_tvmaze",
+        AsyncMock(return_value=(321, "extra")),
+    )
     manager = _FinalizeManager()
     prep = _prep(manager)
-    meta = _meta(tmp_path, category="TV", tvmaze_id=0, tvdb_id=123, imdb_id=123, not_anime=True)
-    asyncio.run(helpers.finalize_metadata(prep, meta, meta.path, {}, {}, meta.filename, meta.filename, meta.path))
+    meta = _meta(
+        tmp_path,
+        category="TV",
+        tvmaze_id=0,
+        tvdb_id=123,
+        imdb_id=123,
+        not_anime=True,
+    )
+    asyncio.run(
+        helpers.finalize_metadata(
+            prep,
+            meta,
+            meta.path,
+            {},
+            {},
+            meta.filename,
+            meta.filename,
+            meta.path,
+        )
+    )
     assert meta.tvmaze_id == 321
 
 
-def test_finalize_bluray_disc_bitrates_images_service_and_no_edition(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_finalize_bluray_disc_bitrates_images_service_and_no_edition(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _patch_finalize_globals(monkeypatch)
     manager = _FinalizeManager()
     config = {
@@ -294,7 +483,10 @@ def test_finalize_bluray_disc_bitrates_images_service_and_no_edition(tmp_path: P
         }
     }
     prep = _prep(manager, config=config)
-    bdinfo = {"video": [{"bitrate": "25,000 kbps", "fps": "23.976"}], "audio": [{"bitrate": "1,500 kbps"}]}
+    bdinfo = {
+        "video": [{"bitrate": "25,000 kbps", "fps": "23.976"}],
+        "audio": [{"bitrate": "1,500 kbps"}],
+    }
     meta = _meta(
         tmp_path,
         category="MOVIE",
@@ -309,10 +501,28 @@ def test_finalize_bluray_disc_bitrates_images_service_and_no_edition(tmp_path: P
         no_edition=True,
         type="DISC",
     )
-    asyncio.run(helpers.finalize_metadata(prep, meta, meta.path, bdinfo, {}, meta.filename, meta.filename, meta.path))
+    asyncio.run(
+        helpers.finalize_metadata(
+            prep,
+            meta,
+            meta.path,
+            bdinfo,
+            {},
+            meta.filename,
+            meta.filename,
+            meta.path,
+        )
+    )
     assert "rehost" in manager.calls
-    assert meta.video_bitrate == 25000 and meta.audio_bitrate == 1500 and meta.frame_rate == 23.976
-    assert meta.video_width == round((16 / 9) * 2160) and meta.video_height == 2160
+    assert (
+        meta.video_bitrate == 25000
+        and meta.audio_bitrate == 1500
+        and meta.frame_rate == 23.976
+    )
+    assert (
+        meta.video_width == round((16 / 9) * 2160)
+        and meta.video_height == 2160
+    )
     assert meta.region == "US" and meta.video_codec == "H.264"
     assert meta.tag == "-GROUP" and meta.edition == ""
     assert meta.service_longname == "Amazon"
@@ -329,11 +539,24 @@ def test_finalize_bluray_disc_bitrates_images_service_and_no_edition(tmp_path: P
         bdinfo={},
         no_edition=True,
     )
-    asyncio.run(helpers.finalize_metadata(prep, fallback, fallback.path, {}, {}, fallback.filename, fallback.filename, fallback.path))
+    asyncio.run(
+        helpers.finalize_metadata(
+            prep,
+            fallback,
+            fallback.path,
+            {},
+            {},
+            fallback.filename,
+            fallback.filename,
+            fallback.path,
+        )
+    )
     assert fallback.video_bitrate == 25000
 
 
-def test_finalize_subsplease_service_thresholds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_finalize_subsplease_service_thresholds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _patch_finalize_globals(monkeypatch)
     prep = _prep(_FinalizeManager())
     cases = [
@@ -344,7 +567,10 @@ def test_finalize_subsplease_service_thresholds(tmp_path: Path, monkeypatch: pyt
         ("1080p", "", "9000000", "CR"),
     ]
     for resolution, bitrate, overall, expected in cases:
-        tracks = [{"@type": "General", "OverallBitRate": overall}, {"@type": "Video", "BitRate": bitrate}]
+        tracks = [
+            {"@type": "General", "OverallBitRate": overall},
+            {"@type": "Video", "BitRate": bitrate},
+        ]
         meta = _meta(
             tmp_path,
             category="TV",
@@ -356,36 +582,107 @@ def test_finalize_subsplease_service_thresholds(tmp_path: Path, monkeypatch: pyt
             tvdb_id=1,
             mediainfo={"media": {"track": tracks}},
         )
-        asyncio.run(helpers.finalize_metadata(prep, meta, meta.path, {}, {"media": {"track": tracks}}, meta.filename, meta.filename, meta.path))
+        asyncio.run(
+            helpers.finalize_metadata(
+                prep,
+                meta,
+                meta.path,
+                {},
+                {"media": {"track": tracks}},
+                meta.filename,
+                meta.filename,
+                meta.path,
+            )
+        )
         assert meta.service == expected
         assert meta.episode_title == ""
 
 
-def test_finalize_tag_scene_error_no_tag_and_book_game_defaults(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_finalize_tag_scene_error_no_tag_and_book_game_defaults(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _patch_finalize_globals(monkeypatch)
     manager = _FinalizeManager()
     prep = _prep(manager)
-    monkeypatch.setattr(helpers, "get_tag", AsyncMock(side_effect=["-lower", RuntimeError("tag failed")]))
-    meta = _meta(tmp_path, category="MOVIE", tag=None, scene=False, service="", no_tag=True, imdb_id=0)
+    monkeypatch.setattr(
+        helpers,
+        "get_tag",
+        AsyncMock(side_effect=["-lower", RuntimeError("tag failed")]),
+    )
+    meta = _meta(
+        tmp_path,
+        category="MOVIE",
+        tag=None,
+        scene=False,
+        service="",
+        no_tag=True,
+        imdb_id=0,
+    )
     lower_video = str(tmp_path / "lowercase.release.mkv")
-    asyncio.run(helpers.finalize_metadata(prep, meta, lower_video, {}, {}, meta.filename, meta.filename, lower_video))
+    asyncio.run(
+        helpers.finalize_metadata(
+            prep,
+            meta,
+            lower_video,
+            {},
+            {},
+            meta.filename,
+            meta.filename,
+            lower_video,
+        )
+    )
     assert meta.tag == ""
     assert "scene" in manager.calls
     assert meta.imdb == "0" and meta.imdb_tt == ""
 
-    book = _meta(tmp_path, category="BOOK", title="", year=0, overview="", genres=[], type="", edition="", manual_edition="First")
+    book = _meta(
+        tmp_path,
+        category="BOOK",
+        title="",
+        year=0,
+        overview="",
+        genres=[],
+        type="",
+        edition="",
+        manual_edition="First",
+    )
     book_path = str(tmp_path / "book.cbz")
-    asyncio.run(helpers.finalize_metadata(prep, book, book_path, {}, {}, "book.cbz", "book.cbz", book_path))
-    assert book.container == "cbz" and book.type == "CBZ" and book.comic is True
-    assert book.source == "WEB" and book.edition == "First" and book.year is None
+    asyncio.run(
+        helpers.finalize_metadata(
+            prep, book, book_path, {}, {}, "book.cbz", "book.cbz", book_path
+        )
+    )
+    assert (
+        book.container == "cbz" and book.type == "CBZ" and book.comic is True
+    )
+    assert (
+        book.source == "WEB" and book.edition == "First" and book.year is None
+    )
 
-    game = _meta(tmp_path, category="GAME", title="", year=0, overview="", genres=[], type="", source="")
+    game = _meta(
+        tmp_path,
+        category="GAME",
+        title="",
+        year=0,
+        overview="",
+        genres=[],
+        type="",
+        source="",
+    )
     game_path = str(tmp_path / "game.iso")
-    asyncio.run(helpers.finalize_metadata(prep, game, game_path, {}, {}, "game.iso", "game.iso", game_path))
-    assert game.container == "iso" and game.type == "GAME" and game.year is None
+    asyncio.run(
+        helpers.finalize_metadata(
+            prep, game, game_path, {}, {}, "game.iso", "game.iso", game_path
+        )
+    )
+    assert (
+        game.container == "iso" and game.type == "GAME" and game.year is None
+    )
 
 
-def test_finalize_localization_failure_and_skipped_requirements(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_finalize_localization_failure_and_skipped_requirements(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _patch_finalize_globals(monkeypatch)
     manager = _FinalizeManager()
     prep = _prep(manager)
@@ -393,11 +690,34 @@ def test_finalize_localization_failure_and_skipped_requirements(tmp_path: Path, 
     from src.integrations.trackers import registry
 
     class Requirements:
-        tmdb_localization_requirements: ClassVar[dict[str, dict[str, str]]] = {"pt-BR": {"season": "credits", "episode": "credits", "main": "images"}}
+        tmdb_localization_requirements: ClassVar[dict[str, dict[str, str]]] = {
+            "pt-BR": {
+                "season": "credits",
+                "episode": "credits",
+                "main": "images",
+            }
+        }
 
     monkeypatch.setitem(registry.tracker_class_map, "REQ", Requirements)
-    meta = _meta(tmp_path, category="MOVIE", tmdb_id=123, trackers=["REQ"], tv_pack=False)
-    asyncio.run(helpers.finalize_metadata(prep, meta, meta.path, {}, {}, meta.filename, meta.filename, meta.path))
+    meta = _meta(
+        tmp_path,
+        category="MOVIE",
+        tmdb_id=123,
+        trackers=["REQ"],
+        tv_pack=False,
+    )
+    asyncio.run(
+        helpers.finalize_metadata(
+            prep,
+            meta,
+            meta.path,
+            {},
+            {},
+            meta.filename,
+            meta.filename,
+            meta.path,
+        )
+    )
     assert "localized" in manager.calls
 
     async def fail(*_args, **_kwargs):
@@ -405,10 +725,23 @@ def test_finalize_localization_failure_and_skipped_requirements(tmp_path: Path, 
 
     manager.get_tmdb_localized_data = fail  # type: ignore[method-assign]
     meta = _meta(tmp_path, category="MOVIE", tmdb_id=123, trackers=["REQ"])
-    asyncio.run(helpers.finalize_metadata(prep, meta, meta.path, {}, {}, meta.filename, meta.filename, meta.path))
+    asyncio.run(
+        helpers.finalize_metadata(
+            prep,
+            meta,
+            meta.path,
+            {},
+            {},
+            meta.filename,
+            meta.filename,
+            meta.path,
+        )
+    )
 
 
-def test_finalize_prefers_distinct_imdb_aka_when_primary_title_matches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_finalize_prefers_distinct_imdb_aka_when_primary_title_matches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _patch_finalize_globals(monkeypatch)
     manager = _FinalizeManager()
     prep = _prep(manager)
@@ -416,11 +749,26 @@ def test_finalize_prefers_distinct_imdb_aka_when_primary_title_matches(tmp_path:
         tmp_path,
         category="MOVIE",
         title="Main Title",
-        imdb_info={"title": "Main Title", "aka": "Remote Alias (2024)", "year": 2024},
+        imdb_info={
+            "title": "Main Title",
+            "aka": "Remote Alias (2024)",
+            "year": 2024,
+        },
         aka="",
     )
 
-    asyncio.run(helpers.finalize_metadata(prep, meta, meta.path, {}, {}, meta.filename, meta.filename, meta.path))
+    asyncio.run(
+        helpers.finalize_metadata(
+            prep,
+            meta,
+            meta.path,
+            {},
+            {},
+            meta.filename,
+            meta.filename,
+            meta.path,
+        )
+    )
 
     assert meta.title == "Main Title"
     assert meta.aka == "AKA Remote Alias"
@@ -452,7 +800,13 @@ def test_finalize_episode_imdb_aka_variants(
     monkeypatch.setattr(
         helpers.imdb_manager,
         "get_imdb_info_api",
-        AsyncMock(return_value={"title": "Series Title", "aka": remote_aka, "year": 2024}),
+        AsyncMock(
+            return_value={
+                "title": "Series Title",
+                "aka": remote_aka,
+                "year": 2024,
+            }
+        ),
     )
     meta = _meta(
         tmp_path,
@@ -465,7 +819,18 @@ def test_finalize_episode_imdb_aka_variants(
         imdb_info={},
     )
 
-    asyncio.run(helpers.finalize_metadata(prep, meta, meta.path, {}, {}, meta.filename, meta.filename, meta.path))
+    asyncio.run(
+        helpers.finalize_metadata(
+            prep,
+            meta,
+            meta.path,
+            {},
+            {},
+            meta.filename,
+            meta.filename,
+            meta.path,
+        )
+    )
 
     assert meta.imdb_id == 7654321
     assert meta.aka == expected
@@ -492,7 +857,9 @@ def test_finalize_uses_meta_bdinfo_region_fallback_scene_tag_and_no_requirements
     class NoRequirements:
         pass
 
-    monkeypatch.setitem(registry.tracker_class_map, "NO_REQUIREMENTS", NoRequirements)
+    monkeypatch.setitem(
+        registry.tracker_class_map, "NO_REQUIREMENTS", NoRequirements
+    )
     stored_bdinfo = {
         "video": [{"bitrate": "20,000 kbps", "fps": "24.000"}],
         "audio": [{"bitrate": "1,000 kbps"}],
@@ -515,7 +882,18 @@ def test_finalize_uses_meta_bdinfo_region_fallback_scene_tag_and_no_requirements
         trackers=["NO_REQUIREMENTS"],
     )
 
-    asyncio.run(helpers.finalize_metadata(prep, meta, meta.path, {}, {}, meta.filename, meta.filename, meta.path))
+    asyncio.run(
+        helpers.finalize_metadata(
+            prep,
+            meta,
+            meta.path,
+            {},
+            {},
+            meta.filename,
+            meta.filename,
+            meta.path,
+        )
+    )
 
     assert meta.video_bitrate == 20000
     assert meta.audio_bitrate == 1000

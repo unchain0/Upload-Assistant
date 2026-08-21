@@ -8,7 +8,10 @@ import pytest
 
 from src.domain_models.release import Meta
 from src.integrations.torrent import torrent_creator as creator
-from src.integrations.torrent.torrent_creator import CustomTorrent, TorrentCreator
+from src.integrations.torrent.torrent_creator import (
+    CustomTorrent,
+    TorrentCreator,
+)
 
 
 @pytest.mark.parametrize(
@@ -31,21 +34,78 @@ from src.integrations.torrent.torrent_creator import CustomTorrent, TorrentCreat
 )
 def test_calculate_piece_size_thresholds(mib: int, expected: int) -> None:
     meta = Meta(trackers=[])
-    assert TorrentCreator.calculate_piece_size(mib * 1024 * 1024, 32 * 1024, 128 * 1024 * 1024, meta) == expected
-    assert creator.calculate_piece_size(mib * 1024 * 1024, 32 * 1024, 128 * 1024 * 1024, meta) == expected
+    assert (
+        TorrentCreator.calculate_piece_size(
+            mib * 1024 * 1024, 32 * 1024, 128 * 1024 * 1024, meta
+        )
+        == expected
+    )
+    assert (
+        creator.calculate_piece_size(
+            mib * 1024 * 1024, 32 * 1024, 128 * 1024 * 1024, meta
+        )
+        == expected
+    )
 
 
 def test_piece_size_tracker_cap_custom_limits_and_invalid_override() -> None:
     huge = 200_000 * 1024 * 1024
-    assert TorrentCreator.calculate_piece_size(huge, 32 * 1024, 128 * 1024 * 1024, Meta(trackers=["HDBITS"])) == 16 * 1024 * 1024
-    assert TorrentCreator.calculate_piece_size(huge, 32 * 1024, 128 * 1024 * 1024, Meta(trackers=["PASSTHEPOPCORN"])) == 16 * 1024 * 1024
-    assert TorrentCreator.calculate_piece_size(10 * 1024 * 1024, 64 * 1024, 128 * 1024 * 1024, Meta(trackers=[])) == 64 * 1024
-    assert TorrentCreator.calculate_piece_size(10_000 * 1024 * 1024, 32 * 1024, 128 * 1024 * 1024, Meta(trackers=[]), piece_size=1) == 1024 * 1024
-    assert TorrentCreator.calculate_piece_size(huge, 32 * 1024, 128 * 1024 * 1024, Meta(trackers=[]), piece_size=1000) == 128 * 1024 * 1024
-    assert TorrentCreator.calculate_piece_size(huge, 32 * 1024, 128 * 1024 * 1024, Meta(trackers=[]), piece_size=cast(Any, "bad")) == 128 * 1024 * 1024
+    assert (
+        TorrentCreator.calculate_piece_size(
+            huge, 32 * 1024, 128 * 1024 * 1024, Meta(trackers=["HDBITS"])
+        )
+        == 16 * 1024 * 1024
+    )
+    assert (
+        TorrentCreator.calculate_piece_size(
+            huge,
+            32 * 1024,
+            128 * 1024 * 1024,
+            Meta(trackers=["PASSTHEPOPCORN"]),
+        )
+        == 16 * 1024 * 1024
+    )
+    assert (
+        TorrentCreator.calculate_piece_size(
+            10 * 1024 * 1024, 64 * 1024, 128 * 1024 * 1024, Meta(trackers=[])
+        )
+        == 64 * 1024
+    )
+    assert (
+        TorrentCreator.calculate_piece_size(
+            10_000 * 1024 * 1024,
+            32 * 1024,
+            128 * 1024 * 1024,
+            Meta(trackers=[]),
+            piece_size=1,
+        )
+        == 1024 * 1024
+    )
+    assert (
+        TorrentCreator.calculate_piece_size(
+            huge,
+            32 * 1024,
+            128 * 1024 * 1024,
+            Meta(trackers=[]),
+            piece_size=1000,
+        )
+        == 128 * 1024 * 1024
+    )
+    assert (
+        TorrentCreator.calculate_piece_size(
+            huge,
+            32 * 1024,
+            128 * 1024 * 1024,
+            Meta(trackers=[]),
+            piece_size=cast(Any, "bad"),
+        )
+        == 128 * 1024 * 1024
+    )
 
 
-def test_custom_torrent_precalculated_properties_and_validation(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_custom_torrent_precalculated_properties_and_validation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     def fake_init(self, *_args: object, **_kwargs: object) -> None:
         self._metainfo = {"info": {}}
         self._piece_size = 0
@@ -71,21 +131,27 @@ def test_custom_torrent_precalculated_properties_and_validation(monkeypatch: pyt
     torrent.validate_piece_size()
 
 
-def test_build_mkbrr_exclude_string_keeps_selected_and_patterns(tmp_path: Path) -> None:
+def test_build_mkbrr_exclude_string_keeps_selected_and_patterns(
+    tmp_path: Path,
+) -> None:
     keep = tmp_path / "keep.bin"
     keep.write_bytes(b"keep")
     (tmp_path / "remove.bin").write_bytes(b"remove")
     (tmp_path / "sample.nfo").write_bytes(b"nfo")
     (tmp_path / "subtitle.srt").write_bytes(b"sub")
 
-    excluded = TorrentCreator.build_mkbrr_exclude_string(str(tmp_path), [str(keep)])
+    excluded = TorrentCreator.build_mkbrr_exclude_string(
+        str(tmp_path), [str(keep)]
+    )
     assert "remove.bin" in excluded
     assert "keep.bin" not in excluded
     assert "sample.nfo" not in excluded
     assert "subtitle.srt" not in excluded
     assert "*.srt" in excluded
 
-    allowed = creator.build_mkbrr_exclude_string(str(tmp_path), [str(keep)], allow_subs=True)
+    allowed = creator.build_mkbrr_exclude_string(
+        str(tmp_path), [str(keep)], allow_subs=True
+    )
     assert "subtitle.srt" in allowed
     assert "*.srt" not in allowed
 
@@ -133,10 +199,14 @@ class _FakeTorrent:
         output = Path(path)
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(b"torrent")
-        self.__class__.writes.append((str(output), overwrite, dict(self.metainfo)))
+        self.__class__.writes.append(
+            (str(output), overwrite, dict(self.metainfo))
+        )
 
 
-def test_random_torrents_and_module_wrapper(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_random_torrents_and_module_wrapper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     fake = _FakeTorrent()
     _FakeTorrent.read_result = fake
     _FakeTorrent.writes = []
@@ -144,14 +214,24 @@ def test_random_torrents_and_module_wrapper(tmp_path: Path, monkeypatch: pytest.
     state = tmp_path / "tmp" / "uuid"
     state.mkdir(parents=True)
     (state / "BASE.torrent").write_bytes(b"base")
-    TorrentCreator.create_random_torrents(str(tmp_path), "uuid", "2", "Release Name.mkv")
-    creator.create_random_torrents(str(tmp_path), "uuid", 1, "Release Name.mkv")
+    TorrentCreator.create_random_torrents(
+        str(tmp_path), "uuid", "2", "Release Name.mkv"
+    )
+    creator.create_random_torrents(
+        str(tmp_path), "uuid", 1, "Release Name.mkv"
+    )
     assert len(_FakeTorrent.writes) == 3
-    assert all("entropy" in written[2]["info"] for written in _FakeTorrent.writes)
-    assert Path(_FakeTorrent.writes[0][0]).name.startswith("[RAND-1]Release.Name.mkv")
+    assert all(
+        "entropy" in written[2]["info"] for written in _FakeTorrent.writes
+    )
+    assert Path(_FakeTorrent.writes[0][0]).name.startswith(
+        "[RAND-1]Release.Name.mkv"
+    )
 
 
-def test_create_base_from_existing_multi_single_subtitles_and_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_create_base_from_existing_multi_single_subtitles_and_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     existing = tmp_path / "existing.torrent"
     existing.write_bytes(b"torrent")
     fake = _FakeTorrent()
@@ -159,10 +239,23 @@ def test_create_base_from_existing_multi_single_subtitles_and_missing(tmp_path: 
     _FakeTorrent.writes = []
     monkeypatch.setattr(creator, "Torrent", _FakeTorrent)
 
-    result = asyncio.run(TorrentCreator.create_base_from_existing_torrent(str(existing), str(tmp_path), "multi"))
+    result = asyncio.run(
+        TorrentCreator.create_base_from_existing_torrent(
+            str(existing), str(tmp_path), "multi"
+        )
+    )
     assert result and Path(result).name == "BASE_SUBS.torrent"
-    assert set(fake.metainfo["info"]) == {"name", "piece length", "pieces", "private", "source", "files"}
-    assert "announce-list" not in fake.metainfo and "extra" not in fake.metainfo
+    assert set(fake.metainfo["info"]) == {
+        "name",
+        "piece length",
+        "pieces",
+        "private",
+        "source",
+        "files",
+    }
+    assert (
+        "announce-list" not in fake.metainfo and "extra" not in fake.metainfo
+    )
     assert fake.source == "L4G" and fake.private is True
 
     fake = _FakeTorrent()
@@ -170,10 +263,21 @@ def test_create_base_from_existing_multi_single_subtitles_and_missing(tmp_path: 
     fake.metainfo["info"]["length"] = 123
     fake.files = ["video.mkv"]
     _FakeTorrent.read_result = fake
-    result = asyncio.run(creator.create_base_from_existing_torrent(str(existing), str(tmp_path), "single"))
+    result = asyncio.run(
+        creator.create_base_from_existing_torrent(
+            str(existing), str(tmp_path), "single"
+        )
+    )
     assert result and Path(result).name == "BASE.torrent"
     assert "length" in fake.metainfo["info"]
-    assert asyncio.run(TorrentCreator.create_base_from_existing_torrent(str(tmp_path / "missing"), str(tmp_path), "none")) is None
+    assert (
+        asyncio.run(
+            TorrentCreator.create_base_from_existing_torrent(
+                str(tmp_path / "missing"), str(tmp_path), "none"
+            )
+        )
+        is None
+    )
 
 
 def _expected_mkbrr(base: Path, system: str, arch: str) -> Path:
@@ -193,15 +297,31 @@ def _expected_mkbrr(base: Path, system: str, arch: str) -> Path:
     return base / "bin" / "mkbrr" / "linux" / folder / "mkbrr"
 
 
-def test_get_mkbrr_path_config_existing_platform_matrix_and_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_mkbrr_path_config_existing_platform_matrix_and_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     meta = Meta(base_dir=str(tmp_path))
-    monkeypatch.setattr(creator, "configured_binary", lambda _name: "/configured/mkbrr")
+    monkeypatch.setattr(
+        creator, "configured_binary", lambda _name: "/configured/mkbrr"
+    )
     assert TorrentCreator.get_mkbrr_path(meta) == "/configured/mkbrr"
 
     monkeypatch.setattr(creator, "configured_binary", lambda _name: None)
-    monkeypatch.setattr(creator.MkbrrBinaryManager, "find_existing_binary", staticmethod(lambda root: "/existing/mkbrr" if Path(root) == creator.CODE_DIR else None))
+    monkeypatch.setattr(
+        creator.MkbrrBinaryManager,
+        "find_existing_binary",
+        staticmethod(
+            lambda root: (
+                "/existing/mkbrr" if Path(root) == creator.CODE_DIR else None
+            )
+        ),
+    )
     assert TorrentCreator.get_mkbrr_path(meta) == "/existing/mkbrr"
-    monkeypatch.setattr(creator.MkbrrBinaryManager, "find_existing_binary", staticmethod(lambda _root: None))
+    monkeypatch.setattr(
+        creator.MkbrrBinaryManager,
+        "find_existing_binary",
+        staticmethod(lambda _root: None),
+    )
 
     for system, arch in (
         ("Windows", "AMD64"),
@@ -215,8 +335,12 @@ def test_get_mkbrr_path_config_existing_platform_matrix_and_errors(tmp_path: Pat
         expected = _expected_mkbrr(tmp_path, system.lower(), arch.lower())
         expected.parent.mkdir(parents=True, exist_ok=True)
         expected.write_bytes(b"tool")
-        monkeypatch.setattr(creator.platform, "system", lambda value=system: value)
-        monkeypatch.setattr(creator.platform, "machine", lambda value=arch: value)
+        monkeypatch.setattr(
+            creator.platform, "system", lambda value=system: value
+        )
+        monkeypatch.setattr(
+            creator.platform, "machine", lambda value=arch: value
+        )
         assert TorrentCreator.get_mkbrr_path(meta) == str(expected)
         expected.unlink()
 

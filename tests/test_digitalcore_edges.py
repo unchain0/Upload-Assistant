@@ -13,7 +13,9 @@ from src.integrations.trackers.digitalcore import DigitalCore
 from tests.test_digitalcore_rules import _make_meta, _tracker
 
 
-def _response(payload: Any, *, status: int = 200, text: str | None = None) -> httpx.Response:
+def _response(
+    payload: Any, *, status: int = 200, text: str | None = None
+) -> httpx.Response:
     request = httpx.Request("GET", "https://digitalcore.club/api/v1/torrents")
     if text is not None:
         return httpx.Response(status, request=request, text=text)
@@ -39,13 +41,21 @@ def test_digitalcore_search_payload_empty_and_matching_entry() -> None:
 
 def test_digitalcore_rejects_divx_and_rar() -> None:
     tracker = _tracker()
-    assert not asyncio.run(tracker.get_additional_checks(_make_meta(video_codec="DivX")))
-    assert not asyncio.run(tracker.get_additional_checks(_make_meta(filelist=["release.rar"])))
+    assert not asyncio.run(
+        tracker.get_additional_checks(_make_meta(video_codec="DivX"))
+    )
+    assert not asyncio.run(
+        tracker.get_additional_checks(_make_meta(filelist=["release.rar"]))
+    )
 
 
 def test_digitalcore_non_video_category_skips_video_file_rules() -> None:
     tracker = _tracker()
-    assert asyncio.run(tracker.get_additional_checks(_make_meta(category="BOOK", filelist=["release.rar"])))
+    assert asyncio.run(
+        tracker.get_additional_checks(
+            _make_meta(category="BOOK", filelist=["release.rar"])
+        )
+    )
 
 
 def test_digitalcore_firstpic_uses_hosted_artwork() -> None:
@@ -53,7 +63,10 @@ def test_digitalcore_firstpic_uses_hosted_artwork() -> None:
         category="BOOK",
         hosted_artwork=[{"raw_url": "https://example.com/cover.jpg"}],
     )
-    assert asyncio.run(_tracker().get_firstpic(meta)) == "https://example.com/cover.jpg"
+    assert (
+        asyncio.run(_tracker().get_firstpic(meta))
+        == "https://example.com/cover.jpg"
+    )
 
 
 @pytest.mark.asyncio
@@ -62,7 +75,9 @@ async def test_digitalcore_upload_release_success(
 ) -> None:
     tracker = _tracker()
     response = _response({"id": 321, "message": "ok"})
-    monkeypatch.setattr(tracker, "_submit_upload", AsyncMock(return_value=response))
+    monkeypatch.setattr(
+        tracker, "_submit_upload", AsyncMock(return_value=response)
+    )
     tracker.common.download_tracker_torrent = AsyncMock()  # type: ignore[method-assign]
     meta = _make_meta(tracker_status={})
     status: dict[str, Any] = {}
@@ -79,11 +94,17 @@ async def test_digitalcore_upload_release_http_status_error(
     tracker = _tracker()
     request = httpx.Request("POST", tracker.api_base_url)
     response = httpx.Response(422, request=request, text="invalid")
-    error = httpx.HTTPStatusError("invalid", request=request, response=response)
-    monkeypatch.setattr(tracker, "_submit_upload", AsyncMock(side_effect=error))
+    error = httpx.HTTPStatusError(
+        "invalid", request=request, response=response
+    )
+    monkeypatch.setattr(
+        tracker, "_submit_upload", AsyncMock(side_effect=error)
+    )
     status: dict[str, Any] = {}
 
-    assert not await tracker._upload_release(_make_meta(), {}, "Release", status)
+    assert not await tracker._upload_release(
+        _make_meta(), {}, "Release", status
+    )
     assert "HTTP 422" in status["status_message"]
 
 
@@ -99,7 +120,9 @@ async def test_digitalcore_upload_release_timeout(
     )
     status: dict[str, Any] = {}
 
-    assert not await tracker._upload_release(_make_meta(), {}, "Release", status)
+    assert not await tracker._upload_release(
+        _make_meta(), {}, "Release", status
+    )
     assert "timed out" in status["status_message"]
 
 
@@ -108,11 +131,17 @@ async def test_digitalcore_upload_release_request_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     tracker = _tracker()
-    error = httpx.RequestError("offline", request=httpx.Request("POST", tracker.api_base_url))
-    monkeypatch.setattr(tracker, "_submit_upload", AsyncMock(side_effect=error))
+    error = httpx.RequestError(
+        "offline", request=httpx.Request("POST", tracker.api_base_url)
+    )
+    monkeypatch.setattr(
+        tracker, "_submit_upload", AsyncMock(side_effect=error)
+    )
     status: dict[str, Any] = {}
 
-    assert not await tracker._upload_release(_make_meta(), {}, "Release", status)
+    assert not await tracker._upload_release(
+        _make_meta(), {}, "Release", status
+    )
     assert "offline" in status["status_message"]
 
 
@@ -122,7 +151,9 @@ async def test_digitalcore_submit_upload_posts_torrent(
 ) -> None:
     tracker = _tracker()
     tracker.common.create_torrent_for_upload = AsyncMock()  # type: ignore[method-assign]
-    monkeypatch.setattr(tracker, "_torrent_bytes", AsyncMock(return_value=b"torrent"))
+    monkeypatch.setattr(
+        tracker, "_torrent_bytes", AsyncMock(return_value=b"torrent")
+    )
     response = _response({"id": 1})
     post = AsyncMock(return_value=response)
     tracker.session = SimpleNamespace(
@@ -131,7 +162,9 @@ async def test_digitalcore_submit_upload_posts_torrent(
         timeout=SimpleNamespace(write=30.0),
     )  # type: ignore[assignment]
 
-    result = await tracker._submit_upload(_make_meta(), {"category": 6}, "Release")
+    result = await tracker._submit_upload(
+        _make_meta(), {"category": 6}, "Release"
+    )
 
     assert result is response
     post.assert_awaited_once()

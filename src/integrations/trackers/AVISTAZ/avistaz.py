@@ -49,10 +49,14 @@ class AvistaZ(AZTrackerBase):
 
         # This also checks the rule 'FANRES content is not allowed'
         if meta.category not in ("MOVIE", "TV"):
-            warnings.append("The only allowed content to be uploaded are Movies and TV Shows.\nAnything else, like games, music, software and porn is not allowed!")
+            warnings.append(
+                "The only allowed content to be uploaded are Movies and TV Shows.\nAnything else, like games, music, software and porn is not allowed!"
+            )
 
         if meta.anime:
-            warnings.append("Upload Anime content to our sister site AnimeTorrents.me instead. If it's on AniDB, it's an anime.")
+            warnings.append(
+                "Upload Anime content to our sister site AnimeTorrents.me instead. If it's on AniDB, it's an anime."
+            )
 
         # https://en.wikipedia.org/wiki/List_of_ISO_3166_country_codes
 
@@ -375,15 +379,21 @@ class AvistaZ(AZTrackerBase):
         ]
 
         all_countries = africa + america + asia + europe + oceania
-        cinemaz_countries = list(set(all_countries) - set(phd_countries) - set(az_allowed_countries))
+        cinemaz_countries = list(
+            set(all_countries) - set(phd_countries) - set(az_allowed_countries)
+        )
 
         origin_countries_codes = meta.origin_country
 
         if any(code in phd_countries for code in origin_countries_codes):
-            warnings.append("DO NOT upload content from major English speaking countries (USA, UK, Canada, etc). Upload this to our sister site PRIVATEHD.to instead.")
+            warnings.append(
+                "DO NOT upload content from major English speaking countries (USA, UK, Canada, etc). Upload this to our sister site PRIVATEHD.to instead."
+            )
 
         elif any(code in cinemaz_countries for code in origin_countries_codes):
-            warnings.append("DO NOT upload non-allowed Asian or Western content. Upload this content to our sister site CINEMAZ.to instead.")
+            warnings.append(
+                "DO NOT upload non-allowed Asian or Western content. Upload this content to our sister site CINEMAZ.to instead."
+            )
 
         container = str(meta.container or "").strip().lower().lstrip(".")
         allowed_containers = {"mkv", "mp4", "avi"}
@@ -391,11 +401,29 @@ class AvistaZ(AZTrackerBase):
             allowed_containers.update({"ts", "tp"})
         if not is_disc and container not in allowed_containers:
             allowed = ", ".join(sorted(allowed_containers)).upper()
-            warnings.append(f"Container not allowed for this rip type: {container or 'unknown'}. Allowed: {allowed}.")
+            warnings.append(
+                f"Container not allowed for this rip type: {container or 'unknown'}. Allowed: {allowed}."
+            )
 
-        allowed_video_codecs = {"avc", "h.264", "h.265", "x264", "x265", "hevc", "divx", "xvid"}
-        is_hdtv_mpeg2 = release_type == "hdtv" and video_codec in {"mpeg-2", "mpeg2"}
-        if not is_disc and video_codec not in allowed_video_codecs and not is_hdtv_mpeg2:
+        allowed_video_codecs = {
+            "avc",
+            "h.264",
+            "h.265",
+            "x264",
+            "x265",
+            "hevc",
+            "divx",
+            "xvid",
+        }
+        is_hdtv_mpeg2 = release_type == "hdtv" and video_codec in {
+            "mpeg-2",
+            "mpeg2",
+        }
+        if (
+            not is_disc
+            and video_codec not in allowed_video_codecs
+            and not is_hdtv_mpeg2
+        ):
             warnings.append(
                 f"Video codec not allowed in your upload: {video_codec}.\n"
                 "Allowed: H264/x264/AVC, H265/x265/HEVC, DivX/Xvid\n"
@@ -409,33 +437,69 @@ class AvistaZ(AZTrackerBase):
         resolution = int(resolution_match.group(1)) if resolution_match else 0
         video_width = int(meta.video_width or 0)
         if not is_disc and video_width and video_width < 600:
-            warnings.append(f"Video width is {video_width}px; AvistaZ requires a minimum width of 600px.")
-        if video_codec in {"divx", "xvid"} and (resolution >= 720 or video_width >= 720):
-            warnings.append("DivX/XviD is not allowed for HD video (720p and above).")
+            warnings.append(
+                f"Video width is {video_width}px; AvistaZ requires a minimum width of 600px."
+            )
+        if video_codec in {"divx", "xvid"} and (
+            resolution >= 720 or video_width >= 720
+        ):
+            warnings.append(
+                "DivX/XviD is not allowed for HD video (720p and above)."
+            )
 
         conditional_rip_types = {"webrip", "vodrip", "vhsrip"}
         if release_type in conditional_rip_types:
-            warnings.append(f"{release_type.upper()} is allowed only when the video is unavailable in a preferred AvistaZ rip type; verify this manually before uploading.")
+            warnings.append(
+                f"{release_type.upper()} is allowed only when the video is unavailable in a preferred AvistaZ rip type; verify this manually before uploading."
+            )
         if source == "brrip" and resolution >= 720:
-            warnings.append("BRRip is allowed only for SD content (below 720p).")
+            warnings.append(
+                "BRRip is allowed only for SD content (below 720p)."
+            )
 
         if is_disc:
             pass
         else:
-            allowed_keywords = ["AC3", "E-AC3", "E-AC-3", "Audio Layer III", "MP3", "Dolby Digital", "Dolby TrueHD", "DTS", "DTS-HD", "FLAC", "AAC", "HE-AAC", "Dolby"]
+            allowed_keywords = [
+                "AC3",
+                "E-AC3",
+                "E-AC-3",
+                "Audio Layer III",
+                "MP3",
+                "Dolby Digital",
+                "Dolby TrueHD",
+                "DTS",
+                "DTS-HD",
+                "FLAC",
+                "AAC",
+                "HE-AAC",
+                "Dolby",
+            ]
 
             is_untouched_opus = False
             audio_field = meta.audio
-            if isinstance(audio_field, str) and "opus" in audio_field.lower() and meta.untouched:
+            if (
+                isinstance(audio_field, str)
+                and "opus" in audio_field.lower()
+                and meta.untouched
+            ):
                 is_untouched_opus = True
 
             audio_tracks: list[dict[str, Any]] = []
             media_tracks = meta.mediainfo.get("media", {}).get("track", [])
             for track in media_tracks:
                 if track.get("@type") == "Audio":
-                    codec_info = track.get("Format_Commercial_IfAny") or track.get("Format")
+                    codec_info = track.get(
+                        "Format_Commercial_IfAny"
+                    ) or track.get("Format")
                     codec = codec_info if isinstance(codec_info, str) else ""
-                    audio_tracks.append({"codec": codec, "language": track.get("Language", ""), "bitrate": track.get("BitRate", "")})
+                    audio_tracks.append(
+                        {
+                            "codec": codec,
+                            "language": track.get("Language", ""),
+                            "bitrate": track.get("BitRate", ""),
+                        }
+                    )
 
             invalid_codecs: list[str] = []
             for track in audio_tracks:
@@ -449,7 +513,9 @@ class AvistaZ(AZTrackerBase):
                     invalid_codecs.append(codec)
                     continue
 
-                is_allowed = any(kw.lower() in codec.lower() for kw in allowed_keywords)
+                is_allowed = any(
+                    kw.lower() in codec.lower() for kw in allowed_keywords
+                )
                 if not is_allowed:
                     invalid_codecs.append(codec)
 
@@ -468,15 +534,28 @@ class AvistaZ(AZTrackerBase):
                     if not bitrate:
                         continue
                     normalized_bitrate = re.sub(r"[\s,]", "", bitrate)
-                    bitrate_match = re.fullmatch(r"(\d+(?:\.\d+)?)([kmg]?)(?:bit/s|b/s|bps)?", normalized_bitrate, flags=re.IGNORECASE)
+                    bitrate_match = re.fullmatch(
+                        r"(\d+(?:\.\d+)?)([kmg]?)(?:bit/s|b/s|bps)?",
+                        normalized_bitrate,
+                        flags=re.IGNORECASE,
+                    )
                     if not bitrate_match:
                         continue
                     bitrate_value = float(bitrate_match.group(1))
-                    bitrate_value *= {"": 1, "k": 1_000, "m": 1_000_000, "g": 1_000_000_000}[bitrate_match.group(2).lower()]
+                    bitrate_value *= {
+                        "": 1,
+                        "k": 1_000,
+                        "m": 1_000_000,
+                        "g": 1_000_000_000,
+                    }[bitrate_match.group(2).lower()]
                     if bitrate_value < 128000:
-                        low_bitrate_tracks.append(f"{track['codec']} ({bitrate})")
+                        low_bitrate_tracks.append(
+                            f"{track['codec']} ({bitrate})"
+                        )
                 if low_bitrate_tracks:
-                    warnings.append(f"Audio bitrate must be at least 128 kbit/s outside WEB-DL uploads: {', '.join(low_bitrate_tracks)}.")
+                    warnings.append(
+                        f"Audio bitrate must be at least 128 kbit/s outside WEB-DL uploads: {', '.join(low_bitrate_tracks)}."
+                    )
 
         if warnings:
             return "\n\n".join(filter(None, warnings))

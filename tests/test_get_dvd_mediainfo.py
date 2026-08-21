@@ -8,10 +8,15 @@ import pytest
 
 from src.integrations.media.disc_parser import DiscParse
 from src.integrations.media.media_info_export import find_dvd_mediainfo
-from src.integrations.runtime_tools.dvd_media_info import download_dvd_mediainfo, extract_linux
+from src.integrations.runtime_tools.dvd_media_info import (
+    download_dvd_mediainfo,
+    extract_linux,
+)
 
 
-def test_dvd_extraction_does_not_overwrite_regular_linux_cli(tmp_path: Path) -> None:
+def test_dvd_extraction_does_not_overwrite_regular_linux_cli(
+    tmp_path: Path,
+) -> None:
     linux_dir = tmp_path / "bin" / "MI" / "linux"
     dvd_dir = linux_dir / "dvd"
     dvd_dir.mkdir(parents=True)
@@ -31,7 +36,9 @@ def test_dvd_extraction_does_not_overwrite_regular_linux_cli(tmp_path: Path) -> 
     assert (dvd_dir / "libmediainfo.so.0").read_bytes() == b"dvd-library"
 
 
-def test_dvd_download_keeps_its_version_marker_separate(tmp_path: Path) -> None:
+def test_dvd_download_keeps_its_version_marker_separate(
+    tmp_path: Path,
+) -> None:
     linux_dir = tmp_path / "bin" / "MI" / "linux"
     linux_dir.mkdir(parents=True)
     (linux_dir / "mediainfo").write_bytes(b"26.05")
@@ -45,11 +52,22 @@ def test_dvd_download_keeps_its_version_marker_separate(tmp_path: Path) -> None:
                 archive.writestr("mediainfo", b"23.04")
 
     with (
-        patch("src.integrations.runtime_tools.dvd_media_info.platform.system", return_value="Linux"),
-        patch("src.integrations.runtime_tools.dvd_media_info.platform.machine", return_value="x86_64"),
-        patch("src.integrations.runtime_tools.dvd_media_info.download_file", side_effect=write_archive),
+        patch(
+            "src.integrations.runtime_tools.dvd_media_info.platform.system",
+            return_value="Linux",
+        ),
+        patch(
+            "src.integrations.runtime_tools.dvd_media_info.platform.machine",
+            return_value="x86_64",
+        ),
+        patch(
+            "src.integrations.runtime_tools.dvd_media_info.download_file",
+            side_effect=write_archive,
+        ),
     ):
-        assert download_dvd_mediainfo(str(tmp_path)) == str(linux_dir / "dvd" / "mediainfo")
+        assert download_dvd_mediainfo(str(tmp_path)) == str(
+            linux_dir / "dvd" / "mediainfo"
+        )
 
     assert (linux_dir / "mediainfo").read_bytes() == b"26.05"
     assert (linux_dir / "version_26.05").is_file()
@@ -57,7 +75,9 @@ def test_dvd_download_keeps_its_version_marker_separate(tmp_path: Path) -> None:
     assert (linux_dir / "dvd" / "version_23.04").is_file()
 
 
-def test_failed_dvd_extraction_preserves_existing_cache(tmp_path: Path) -> None:
+def test_failed_dvd_extraction_preserves_existing_cache(
+    tmp_path: Path,
+) -> None:
     dvd_dir = tmp_path / "bin" / "MI" / "linux" / "dvd"
     dvd_dir.mkdir(parents=True)
     cli_file = dvd_dir / "mediainfo"
@@ -73,9 +93,18 @@ def test_failed_dvd_extraction_preserves_existing_cache(tmp_path: Path) -> None:
                 archive.writestr("mediainfo", b"new-cli")
 
     with (
-        patch("src.integrations.runtime_tools.dvd_media_info.platform.system", return_value="Linux"),
-        patch("src.integrations.runtime_tools.dvd_media_info.platform.machine", return_value="x86_64"),
-        patch("src.integrations.runtime_tools.dvd_media_info.download_file", side_effect=write_incomplete_archive),
+        patch(
+            "src.integrations.runtime_tools.dvd_media_info.platform.system",
+            return_value="Linux",
+        ),
+        patch(
+            "src.integrations.runtime_tools.dvd_media_info.platform.machine",
+            return_value="x86_64",
+        ),
+        patch(
+            "src.integrations.runtime_tools.dvd_media_info.download_file",
+            side_effect=write_incomplete_archive,
+        ),
         pytest.raises(RuntimeError, match="library archive"),
     ):
         download_dvd_mediainfo(str(tmp_path))
@@ -85,7 +114,9 @@ def test_failed_dvd_extraction_preserves_existing_cache(tmp_path: Path) -> None:
     assert not version_file.exists()
 
 
-def test_windows_dvd_download_is_isolated_from_the_regular_cli(tmp_path: Path) -> None:
+def test_windows_dvd_download_is_isolated_from_the_regular_cli(
+    tmp_path: Path,
+) -> None:
     regular_cli = tmp_path / "bin" / "MI" / "windows" / "MediaInfo.exe"
     regular_cli.parent.mkdir(parents=True)
     regular_cli.write_bytes(b"26.05")
@@ -95,59 +126,91 @@ def test_windows_dvd_download_is_isolated_from_the_regular_cli(tmp_path: Path) -
             archive.writestr("MediaInfo.exe", b"23.04")
 
     with (
-        patch("src.integrations.runtime_tools.dvd_media_info.platform.system", return_value="Windows"),
-        patch("src.integrations.runtime_tools.dvd_media_info.platform.machine", return_value="AMD64"),
-        patch("src.integrations.runtime_tools.dvd_media_info.download_file", side_effect=write_archive),
+        patch(
+            "src.integrations.runtime_tools.dvd_media_info.platform.system",
+            return_value="Windows",
+        ),
+        patch(
+            "src.integrations.runtime_tools.dvd_media_info.platform.machine",
+            return_value="AMD64",
+        ),
+        patch(
+            "src.integrations.runtime_tools.dvd_media_info.download_file",
+            side_effect=write_archive,
+        ),
     ):
         dvd_cli = Path(download_dvd_mediainfo(str(tmp_path)))
 
     assert regular_cli.read_bytes() == b"26.05"
-    assert dvd_cli == tmp_path / "bin" / "MI" / "windows" / "dvd" / "MediaInfo.exe"
+    assert (
+        dvd_cli
+        == tmp_path / "bin" / "MI" / "windows" / "dvd" / "MediaInfo.exe"
+    )
     assert dvd_cli.read_bytes() == b"23.04"
     assert (dvd_cli.parent / "version_23.04").is_file()
 
 
-def test_windows_dvd_parser_prefers_the_isolated_legacy_cli(tmp_path: Path) -> None:
+def test_windows_dvd_parser_prefers_the_isolated_legacy_cli(
+    tmp_path: Path,
+) -> None:
     dvd_cli = tmp_path / "bin" / "MI" / "windows" / "dvd" / "MediaInfo.exe"
     dvd_cli.parent.mkdir(parents=True)
     dvd_cli.touch()
 
-    with patch("src.integrations.media.disc_parser.platform.system", return_value="Windows"):
+    with patch(
+        "src.integrations.media.disc_parser.platform.system",
+        return_value="Windows",
+    ):
         binary, _env = DiscParse({}).setup_mediainfo_for_dvd(str(tmp_path))
 
     assert binary == str(dvd_cli)
 
 
-def test_dvd_mediainfo_prefers_configured_legacy_binary(tmp_path: Path) -> None:
+def test_dvd_mediainfo_prefers_configured_legacy_binary(
+    tmp_path: Path,
+) -> None:
     executable = tmp_path / "MediaInfo-23.04.exe"
     executable.touch()
 
-    with patch("src.integrations.media.media_info_export.configured_binary", return_value=str(executable)):
+    with patch(
+        "src.integrations.media.media_info_export.configured_binary",
+        return_value=str(executable),
+    ):
         result = find_dvd_mediainfo(tmp_path)
 
     assert result == {"cli": executable, "lib": None, "lib_dir": None}
 
 
-def test_dvd_mediainfo_lookup_uses_the_supplied_base_dir(tmp_path: Path) -> None:
+def test_dvd_mediainfo_lookup_uses_the_supplied_base_dir(
+    tmp_path: Path,
+) -> None:
     cli = tmp_path / "bin" / "MI" / "windows" / "dvd" / "MediaInfo.exe"
     cli.parent.mkdir(parents=True)
     cli.touch()
 
-    with patch("src.integrations.media.media_info_export.platform.system", return_value="Windows"):
+    with patch(
+        "src.integrations.media.media_info_export.platform.system",
+        return_value="Windows",
+    ):
         config = find_dvd_mediainfo(tmp_path)
 
     assert config is not None
     assert config["cli"] == cli
 
 
-def test_linux_dvd_mediainfo_uses_the_dvd_library_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_linux_dvd_mediainfo_uses_the_dvd_library_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     dvd_dir = tmp_path / "bin" / "MI" / "linux" / "dvd"
     dvd_dir.mkdir(parents=True)
     (dvd_dir / "mediainfo").touch()
     (dvd_dir / "libmediainfo.so.0").touch()
     monkeypatch.delenv("LD_LIBRARY_PATH", raising=False)
 
-    with patch("src.integrations.media.media_info_export.platform.system", return_value="Linux"):
+    with patch(
+        "src.integrations.media.media_info_export.platform.system",
+        return_value="Linux",
+    ):
         config = find_dvd_mediainfo(tmp_path)
 
     assert config is not None

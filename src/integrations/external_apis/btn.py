@@ -20,25 +20,44 @@ class BtnIdManager:
         tvdb_id = 0
         logger.debug("Fetching BTN data...", extra={"markup": False})
         post_query_url = "https://api.broadcasthe.net/"
-        post_data = {"jsonrpc": "2.0", "id": (await BtnIdManager.generate_guid())[:8], "method": "getTorrentsSearch", "params": [btn_api, {"id": btn_id}, 50]}
+        post_data = {
+            "jsonrpc": "2.0",
+            "id": (await BtnIdManager.generate_guid())[:8],
+            "method": "getTorrentsSearch",
+            "params": [btn_api, {"id": btn_id}, 50],
+        }
         headers = {"Content-Type": "application/json"}
 
         try:
             async with httpx.AsyncClient() as client:
-                response = await client.post(post_query_url, headers=headers, json=post_data, timeout=10)
+                response = await client.post(
+                    post_query_url, headers=headers, json=post_data, timeout=10
+                )
                 response.raise_for_status()
                 try:
                     data = cast(dict[str, Any], response.json())
                 except ValueError as e:
-                    logger.info(f"[ERROR] Failed to parse BTN response as JSON: {e}", extra={"markup": False})
-                    logger.info(f"Response content: {response.text[:200]}...", extra={"markup": False})
+                    logger.info(
+                        f"[ERROR] Failed to parse BTN response as JSON: {e}",
+                        extra={"markup": False},
+                    )
+                    logger.info(
+                        f"Response content: {response.text[:200]}...",
+                        extra={"markup": False},
+                    )
                     return 0, 0
         except Exception as e:
-            logger.info(f"[ERROR] Failed to fetch BTN data: {e}", extra={"markup": False})
+            logger.info(
+                f"[ERROR] Failed to fetch BTN data: {e}",
+                extra={"markup": False},
+            )
             return 0, 0
 
         if not data:
-            logger.info("[ERROR] BTN API response is empty or invalid.", extra={"markup": False})
+            logger.info(
+                "[ERROR] BTN API response is empty or invalid.",
+                extra={"markup": False},
+            )
             return 0, 0
 
         error = data.get("error")
@@ -47,14 +66,22 @@ class BtnIdManager:
             code = error_map.get("code", "unknown")
             message = str(error_map.get("message", "Unknown BTN API error"))
             if "unauthorized ip" in message.lower():
-                logger.info(f"[red]BTN API error: Unauthorized IP address (code {code}).[/red]")
-                logger.info("[yellow]Your current public IP isn't whitelisted for your BTN API key.[/yellow]")
+                logger.info(
+                    f"[red]BTN API error: Unauthorized IP address (code {code}).[/red]"
+                )
+                logger.info(
+                    "[yellow]Your current public IP isn't whitelisted for your BTN API key.[/yellow]"
+                )
             else:
-                logger.info(f"[red]BTN API error (code {code}): {message}[/red]")
+                logger.info(
+                    f"[red]BTN API error (code {code}): {message}[/red]"
+                )
             logger.debug(data)
             return 0, 0
 
-        logger.debug(f"[green]BTN data fetched successfully for BTN ID {data.get('id')}[/green]")
+        logger.debug(
+            f"[green]BTN data fetched successfully for BTN ID {data.get('id')}[/green]"
+        )
 
         result = data.get("result")
         if isinstance(result, dict) and "torrents" in result:
@@ -85,7 +112,11 @@ class BtnIdManager:
         logger.debug("Fetching BEYONDHD data...", extra={"markup": False})
         post_query_url = f"https://beyond-hd.me/api/torrents/{bhd_api}"
 
-        post_data = {"action": "details", "torrent_id": torrent_id} if torrent_id is not None else {"action": "search", "rsskey": bhd_rss_key}
+        post_data = (
+            {"action": "details", "torrent_id": torrent_id}
+            if torrent_id is not None
+            else {"action": "search", "rsskey": bhd_rss_key}
+        )
 
         if info_hash:
             post_data["info_hash"] = info_hash
@@ -100,28 +131,48 @@ class BtnIdManager:
 
         try:
             async with httpx.AsyncClient() as client:
-                response = await client.post(post_query_url, headers=headers, json=post_data, timeout=10)
+                response = await client.post(
+                    post_query_url, headers=headers, json=post_data, timeout=10
+                )
                 response.raise_for_status()
                 try:
                     data = response.json()
                 except ValueError as e:
-                    logger.info(f"[ERROR] Failed to parse BEYONDHD response as JSON: {e}", extra={"markup": False})
-                    logger.info(f"Response content: {response.text[:200]}...", extra={"markup": False})
+                    logger.info(
+                        f"[ERROR] Failed to parse BEYONDHD response as JSON: {e}",
+                        extra={"markup": False},
+                    )
+                    logger.info(
+                        f"Response content: {response.text[:200]}...",
+                        extra={"markup": False},
+                    )
                     return 0, 0
         except (httpx.RequestError, httpx.HTTPStatusError) as e:
-            logger.info(f"[ERROR] Failed to fetch BEYONDHD data: {e}", extra={"markup": False})
+            logger.info(
+                f"[ERROR] Failed to fetch BEYONDHD data: {e}",
+                extra={"markup": False},
+            )
             return 0, 0
 
         if data.get("status_code") == 0 or data.get("success") is False:
-            error_message = data.get("status_message", "Unknown BEYONDHD API error")
-            logger.info(f"[ERROR] BEYONDHD API error: {error_message}", extra={"markup": False})
+            error_message = data.get(
+                "status_message", "Unknown BEYONDHD API error"
+            )
+            logger.info(
+                f"[ERROR] BEYONDHD API error: {error_message}",
+                extra={"markup": False},
+            )
             return 0, 0
 
         # Handle different response formats from BEYONDHD API
         first_result = None
 
         # For search results that return a list
-        if "results" in data and isinstance(data["results"], list) and data["results"]:
+        if (
+            "results" in data
+            and isinstance(data["results"], list)
+            and data["results"]
+        ):
             first_result = data["results"][0]
 
         # For single torrent details that return a dictionary in "result"
@@ -129,7 +180,10 @@ class BtnIdManager:
             first_result = data["result"]
 
         if not first_result:
-            logger.info("No valid results found in BEYONDHD API response.", extra={"markup": False})
+            logger.info(
+                "No valid results found in BEYONDHD API response.",
+                extra={"markup": False},
+            )
             return 0, 0
 
         name = str(first_result.get("name", "")).lower()
@@ -146,31 +200,58 @@ class BtnIdManager:
 
             try:
                 async with httpx.AsyncClient() as client:
-                    desc_response = await client.post(post_query_url, headers=headers, json=desc_post_data, timeout=10)
+                    desc_response = await client.post(
+                        post_query_url,
+                        headers=headers,
+                        json=desc_post_data,
+                        timeout=10,
+                    )
                     desc_response.raise_for_status()
                     desc_data = desc_response.json()
 
-                    if desc_data.get("status_code") == 1 and desc_data.get("success") is True:
+                    if (
+                        desc_data.get("status_code") == 1
+                        and desc_data.get("success") is True
+                    ):
                         description = str(desc_data.get("result", ""))
-                        logger.info("Successfully retrieved full description", extra={"markup": False})
+                        logger.info(
+                            "Successfully retrieved full description",
+                            extra={"markup": False},
+                        )
                     else:
                         description = ""
-                        error_message = desc_data.get("status_message", "Unknown BEYONDHD API error")
-                        logger.info(f"[ERROR] Failed to fetch description: {error_message}", extra={"markup": False})
+                        error_message = desc_data.get(
+                            "status_message", "Unknown BEYONDHD API error"
+                        )
+                        logger.info(
+                            f"[ERROR] Failed to fetch description: {error_message}",
+                            extra={"markup": False},
+                        )
             except (httpx.RequestError, httpx.HTTPStatusError) as e:
-                logger.info(f"[ERROR] Failed to fetch description: {e}", extra={"markup": False})
+                logger.info(
+                    f"[ERROR] Failed to fetch description: {e}",
+                    extra={"markup": False},
+                )
                 description = ""
         else:
             # Use the description from the initial response
-            description = str(description_value) if description_value is not None else ""
+            description = (
+                str(description_value) if description_value is not None else ""
+            )
 
-        imdb_id = first_result.get("imdb_id", "").replace("tt", "") if first_result.get("imdb_id") else 0
+        imdb_id = (
+            first_result.get("imdb_id", "").replace("tt", "")
+            if first_result.get("imdb_id")
+            else 0
+        )
         imdb = int(imdb_id or 0)
 
         tmdb = 0
         raw_tmdb_id = first_result.get("tmdb_id", "")
         if raw_tmdb_id and raw_tmdb_id != "0":
-            parsed_cat, parsed_tmdb_id = await BtnIdManager.parse_tmdb_id(raw_tmdb_id, meta.category)
+            parsed_cat, parsed_tmdb_id = await BtnIdManager.parse_tmdb_id(
+                raw_tmdb_id, meta.category
+            )
             if parsed_cat is not None:
                 meta.category = parsed_cat
             tmdb = parsed_tmdb_id
@@ -184,7 +265,9 @@ class BtnIdManager:
             meta.framestor = True
         elif "flux" in name:
             meta.flux = True
-        description, imagelist = bbcode.clean_bhd_description(description, meta)
+        description, imagelist = bbcode.clean_bhd_description(
+            description, meta
+        )
         if not skip_tracker_descriptions:
             meta.description = description
             meta.image_list = imagelist
@@ -195,12 +278,16 @@ class BtnIdManager:
         if (imdb and imdb != 0) or (tmdb and tmdb != 0):
             logger.info(f"[green]Found BEYONDHD IDs: IMDb={imdb}, TMDb={tmdb}")
         elif meta.debug:
-            logger.info(f"[yellow]BEYONDHD search returned no valid IDs (IMDb={imdb}, TMDb={tmdb})[/yellow]")
+            logger.info(
+                f"[yellow]BEYONDHD search returned no valid IDs (IMDb={imdb}, TMDb={tmdb})[/yellow]"
+            )
 
         return imdb, tmdb
 
     @staticmethod
-    async def parse_tmdb_id(tmdb_id: str, category: str | None) -> tuple[str | None, int]:
+    async def parse_tmdb_id(
+        tmdb_id: str, category: str | None
+    ) -> tuple[str | None, int]:
         """Parses TMDb ID, ensures correct formatting, and assigns category."""
         tmdb_id_str = tmdb_id.strip().lower()
 
@@ -245,5 +332,7 @@ async def get_bhd_torrents(
     )
 
 
-async def parse_tmdb_id(tmdb_id: str, category: str | None = None) -> tuple[str | None, int]:
+async def parse_tmdb_id(
+    tmdb_id: str, category: str | None = None
+) -> tuple[str | None, int]:
     return await BtnIdManager.parse_tmdb_id(tmdb_id, category)

@@ -44,15 +44,21 @@ class UNIT3D:
         self.config = config
         self.tracker = tracker_name
         self.common = Common(config)
-        self.tracker_config: dict[str, Any] = self.config["TRACKERS"].get(self.tracker, {})
+        self.tracker_config: dict[str, Any] = self.config["TRACKERS"].get(
+            self.tracker, {}
+        )
 
         # Normalize announce_url: must be a non-empty string after stripping
         raw_announce = self.tracker_config.get("announce_url")
-        self.announce_url = raw_announce.strip() if isinstance(raw_announce, str) else ""
+        self.announce_url = (
+            raw_announce.strip() if isinstance(raw_announce, str) else ""
+        )
 
         # Normalize api_key: must be a non-empty string after stripping
         raw_api_key = self.tracker_config.get("api_key")
-        self.api_key = raw_api_key.strip() if isinstance(raw_api_key, str) else ""
+        self.api_key = (
+            raw_api_key.strip() if isinstance(raw_api_key, str) else ""
+        )
 
     async def get_additional_checks(self, meta: Meta) -> bool:
         _meta = meta
@@ -63,9 +69,13 @@ class UNIT3D:
             return "[tracker response omitted]"
         return str(Redaction.redact_private_info(value))
 
-    async def get_search_urls(self, meta: Meta, request_params: ParamsList) -> list[tuple[str, ParamsList, bool]]:
+    async def get_search_urls(
+        self, meta: Meta, request_params: ParamsList
+    ) -> list[tuple[str, ParamsList, bool]]:
         _ = meta
-        urls: list[tuple[str, ParamsList, bool]] = [(self.search_url, request_params, False)]
+        urls: list[tuple[str, ParamsList, bool]] = [
+            (self.search_url, request_params, False)
+        ]
         if getattr(self, "pending_url", None):
             urls.append((self.pending_url, request_params, True))
         return urls
@@ -80,10 +90,16 @@ class UNIT3D:
         urls_to_check = await self.get_search_urls(meta, params)
         headers = self._search_headers()
         dupes: list[dict[str, Any]] = []
-        async with httpx.AsyncClient(timeout=10.0, follow_redirects=self.follow_search_redirects) as client:
+        async with httpx.AsyncClient(
+            timeout=10.0, follow_redirects=self.follow_search_redirects
+        ) as client:
             for url, request_params, check_pending in urls_to_check:
-                response = await self._search_response(client, url, request_params, headers, check_pending)
-                self._append_search_results(meta, response, check_pending, dupes)
+                response = await self._search_response(
+                    client, url, request_params, headers, check_pending
+                )
+                self._append_search_results(
+                    meta, response, check_pending, dupes
+                )
         return dupes
 
     async def _search_request_params(self, meta: Meta) -> ParamsList:
@@ -97,11 +113,16 @@ class UNIT3D:
 
     async def _video_search_params(self, meta: Meta) -> dict[str, str]:
         search_name = str(meta.title or meta.name)
-        params = {"name": self._video_search_name(meta, search_name), "perPage": "100"}
+        params = {
+            "name": self._video_search_name(meta, search_name),
+            "perPage": "100",
+        }
         if meta.tmdb is not None:
             params["tmdbId"] = str(meta.tmdb)
         else:
-            params["categories[]"] = (await self.get_category_id(meta))["category_id"]
+            params["categories[]"] = (await self.get_category_id(meta))[
+                "category_id"
+            ]
         return params
 
     @staticmethod
@@ -126,7 +147,10 @@ class UNIT3D:
         return main_title if len(main_title.split()) >= 2 else search_name
 
     def _search_headers(self) -> dict[str, str]:
-        return {"authorization": f"Bearer {self.api_key}", "accept": "application/json"}
+        return {
+            "authorization": f"Bearer {self.api_key}",
+            "accept": "application/json",
+        }
 
     async def _search_response(
         self,
@@ -136,8 +160,12 @@ class UNIT3D:
         headers: dict[str, str],
         check_pending: bool,
     ) -> httpx.Response:
-        logger.debug(f"{self.tracker}: Searching URL: {url} with params: {params} (pending={check_pending})")
-        response = await self._request_search_response(client, url, params, headers)
+        logger.debug(
+            f"{self.tracker}: Searching URL: {url} with params: {params} (pending={check_pending})"
+        )
+        response = await self._request_search_response(
+            client, url, params, headers
+        )
         if self._search_redirect_rejected(response):
             raise ValueError("Tracker search redirect rejected")
         response.raise_for_status()
@@ -152,15 +180,30 @@ class UNIT3D:
     ) -> httpx.Response:
         if self.max_json_response_size is None:
             return await client.get(url=url, headers=headers, params=params)
-        async with client.stream("GET", url, headers=headers, params=params) as streamed_response:
-            return await self._bounded_response(streamed_response, self.max_json_response_size)
+        async with client.stream(
+            "GET", url, headers=headers, params=params
+        ) as streamed_response:
+            return await self._bounded_response(
+                streamed_response, self.max_json_response_size
+            )
 
     def _search_redirect_rejected(self, response: httpx.Response) -> bool:
-        return 300 <= response.status_code < 400 and not self.follow_search_redirects
+        return (
+            300 <= response.status_code < 400
+            and not self.follow_search_redirects
+        )
 
-    def _append_search_results(self, meta: Meta, response: httpx.Response, check_pending: bool, dupes: list[dict[str, Any]]) -> None:
+    def _append_search_results(
+        self,
+        meta: Meta,
+        response: httpx.Response,
+        check_pending: bool,
+        dupes: list[dict[str, Any]],
+    ) -> None:
         if response.status_code != 200:
-            logger.info(f"{self.tracker}: [bold red]Failed to search torrents. HTTP Status: {response.status_code}")
+            logger.info(
+                f"{self.tracker}: [bold red]Failed to search torrents. HTTP Status: {response.status_code}"
+            )
             return
         for each in self._response_entries(response):
             result = self._search_result(meta, each, check_pending)
@@ -175,9 +218,15 @@ class UNIT3D:
         data = payload.get("data", [])
         if not isinstance(data, list):
             return []
-        return [cast(dict[str, Any], item) for item in data if isinstance(item, dict)]
+        return [
+            cast(dict[str, Any], item)
+            for item in data
+            if isinstance(item, dict)
+        ]
 
-    def _search_result(self, meta: Meta, each: dict[str, Any], check_pending: bool) -> dict[str, Any] | None:
+    def _search_result(
+        self, meta: Meta, each: dict[str, Any], check_pending: bool
+    ) -> dict[str, Any] | None:
         if check_pending and not self._pending_matches(meta, each):
             return None
         attributes = self._result_attributes(each, check_pending)
@@ -195,18 +244,27 @@ class UNIT3D:
         return entry_tmdb == meta_tmdb
 
     @staticmethod
-    def _result_attributes(each: dict[str, Any], check_pending: bool) -> dict[str, Any]:
+    def _result_attributes(
+        each: dict[str, Any], check_pending: bool
+    ) -> dict[str, Any]:
         value = each if check_pending else each.get("attributes", {})
         return cast(dict[str, Any], value) if isinstance(value, dict) else {}
 
-    def _base_search_result(self, each: dict[str, Any], attributes: dict[str, Any], check_pending: bool) -> dict[str, Any]:
+    def _base_search_result(
+        self,
+        each: dict[str, Any],
+        attributes: dict[str, Any],
+        check_pending: bool,
+    ) -> dict[str, Any]:
         return {
             "name": attributes.get("name", ""),
             "size": attributes.get("size", 0),
             "files": [],
             "file_count": self._file_count(attributes),
             "trumpable": attributes.get("trumpable", False),
-            "link": f"{self.base_url}/torrents/pending" if check_pending else attributes.get("details_link"),
+            "link": f"{self.base_url}/torrents/pending"
+            if check_pending
+            else attributes.get("details_link"),
             "download": attributes.get("download_link"),
             "id": each.get("id"),
             "type": attributes.get("type"),
@@ -224,10 +282,16 @@ class UNIT3D:
         files = attributes.get("files", [])
         if not isinstance(files, list):
             return []
-        return [str(file["name"]) for file in files if isinstance(file, dict) and "name" in file]
+        return [
+            str(file["name"])
+            for file in files
+            if isinstance(file, dict) and "name" in file
+        ]
 
     @staticmethod
-    def _apply_disc_search_fields(result: dict[str, Any], attributes: dict[str, Any]) -> None:
+    def _apply_disc_search_fields(
+        result: dict[str, Any], attributes: dict[str, Any]
+    ) -> None:
         result["bd_info"] = attributes.get("bd_info", "")
         result["description"] = attributes.get("description", "")
 
@@ -236,7 +300,9 @@ class UNIT3D:
 
     async def get_description(self, meta: Meta) -> Any:
         return {
-            "description": await DescriptionBuilder(self.tracker, self.config).general_description_generator(
+            "description": await DescriptionBuilder(
+                self.tracker, self.config
+            ).general_description_generator(
                 meta,
                 mediainfo=False,
                 nfo=False,
@@ -244,22 +310,36 @@ class UNIT3D:
         }
 
     async def get_mediainfo(self, meta: Meta) -> dict[str, str]:
-        if meta.bdinfo or (meta.category in ["GAME", "BOOK"] and not meta.audiobook):
+        if meta.bdinfo or (
+            meta.category in ["GAME", "BOOK"] and not meta.audiobook
+        ):
             mediainfo = ""
         else:
-            async with aiofiles.open(f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/MEDIAINFO_CLEANPATH.txt", encoding="utf-8") as f:
+            async with aiofiles.open(
+                f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/MEDIAINFO_CLEANPATH.txt",
+                encoding="utf-8",
+            ) as f:
                 mediainfo = await f.read()
         return {"mediainfo": mediainfo}
 
     async def get_bdinfo(self, meta: Meta) -> dict[str, str]:
         if meta.bdinfo:
-            async with aiofiles.open(f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/BD_SUMMARY_00.txt", encoding="utf-8") as f:
+            async with aiofiles.open(
+                f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/BD_SUMMARY_00.txt",
+                encoding="utf-8",
+            ) as f:
                 bdinfo = await f.read()
         else:
             bdinfo = ""
         return {"bdinfo": bdinfo}
 
-    async def get_category_id(self, meta: Meta, category: str = "", reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_category_id(
+        self,
+        meta: Meta,
+        category: str = "",
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         category_id = {
             "MOVIE": "1",
             "TV": "2",
@@ -274,9 +354,17 @@ class UNIT3D:
         resolved_id = category_id.get(meta_category, "0")
         return {"category_id": resolved_id}
 
-    async def get_type_id(self, meta: Meta, type: str = "", reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_type_id(
+        self,
+        meta: Meta,
+        type: str = "",
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         mapping = self._type_mapping()
-        mode = self._mapping_mode(mapping, reverse=reverse, mapping_only=mapping_only)
+        mode = self._mapping_mode(
+            mapping, reverse=reverse, mapping_only=mapping_only
+        )
         if mode is not None:
             return mode
         selected = type if type else str(meta.type or "")
@@ -284,15 +372,33 @@ class UNIT3D:
 
     @staticmethod
     def _type_mapping() -> dict[str, str]:
-        return {"DISC": "1", "REMUX": "2", "WEBDL": "4", "WEBRIP": "5", "HDTV": "6", "ENCODE": "3", "DVDRIP": "3"}
+        return {
+            "DISC": "1",
+            "REMUX": "2",
+            "WEBDL": "4",
+            "WEBRIP": "5",
+            "HDTV": "6",
+            "ENCODE": "3",
+            "DVDRIP": "3",
+        }
 
     @staticmethod
-    def _mapping_mode(mapping: dict[str, str], *, reverse: bool, mapping_only: bool) -> dict[str, str] | None:
+    def _mapping_mode(
+        mapping: dict[str, str], *, reverse: bool, mapping_only: bool
+    ) -> dict[str, str] | None:
         if mapping_only:
             return mapping
-        return {value: key for key, value in mapping.items()} if reverse else None
+        return (
+            {value: key for key, value in mapping.items()} if reverse else None
+        )
 
-    async def get_resolution_id(self, meta: Meta, resolution: str = "", reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_resolution_id(
+        self,
+        meta: Meta,
+        resolution: str = "",
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         resolution_id = {
             "8640p": "10",
             "4320p": "1",
@@ -317,7 +423,11 @@ class UNIT3D:
         return {"resolution_id": resolved_id}
 
     async def get_anonymous(self, meta: Meta) -> dict[str, str]:
-        anonymous = "0" if meta.anon == 0 and not self.tracker_config.get("anon", False) else "1"
+        anonymous = (
+            "0"
+            if meta.anon == 0 and not self.tracker_config.get("anon", False)
+            else "1"
+        )
         return {"anonymous": anonymous}
 
     async def get_additional_data(self, meta: Meta) -> dict[str, str]:
@@ -342,7 +452,9 @@ class UNIT3D:
         return "0"
 
     async def get_distributor_id(self, meta: Meta) -> dict[str, str]:
-        distributor_id = await self.common.unit3d_distributor_ids(meta.distributor)
+        distributor_id = await self.common.unit3d_distributor_ids(
+            meta.distributor
+        )
         if distributor_id:
             return {"distributor_id": distributor_id}
 
@@ -387,7 +499,9 @@ class UNIT3D:
             keyword = str(raw_keyword).strip()
             if not keyword:
                 continue
-            next_len = self._keyword_payload_length(current_len, values, keyword)
+            next_len = self._keyword_payload_length(
+                current_len, values, keyword
+            )
             if next_len > 255:
                 self._append_first_truncated_keyword(values, keyword)
                 break
@@ -396,12 +510,16 @@ class UNIT3D:
         return {"keywords": ", ".join(values)}
 
     @staticmethod
-    def _keyword_payload_length(current_len: int, values: list[str], keyword: str) -> int:
+    def _keyword_payload_length(
+        current_len: int, values: list[str], keyword: str
+    ) -> int:
         separator = 2 if values else 0
         return current_len + separator + len(keyword)
 
     @staticmethod
-    def _append_first_truncated_keyword(values: list[str], keyword: str) -> None:
+    def _append_first_truncated_keyword(
+        values: list[str], keyword: str
+    ) -> None:
         if not values and len(keyword) > 255:
             values.append(keyword[:255])
 
@@ -411,7 +529,13 @@ class UNIT3D:
 
     async def get_internal(self, meta: Meta) -> Any:
         internal = "0"
-        if self.tracker_config.get("internal", False) is True and meta.tag and (meta.tag[1:] in self.tracker_config.get("internal_groups", [])):
+        if (
+            self.tracker_config.get("internal", False) is True
+            and meta.tag
+            and (
+                meta.tag[1:] in self.tracker_config.get("internal_groups", [])
+            )
+        ):
             internal = "1"
 
         return {"internal": internal}
@@ -419,14 +543,18 @@ class UNIT3D:
     async def get_season_number(self, meta: Meta) -> dict[str, str]:
         data = {}
         if meta.category == "TV":
-            data = {"season_number": f"{(meta.season_int if meta.season_int is not None else '0')}"}
+            data = {
+                "season_number": f"{(meta.season_int if meta.season_int is not None else '0')}"
+            }
 
         return data
 
     async def get_episode_number(self, meta: Meta) -> dict[str, str]:
         data = {}
         if meta.category == "TV":
-            data = {"episode_number": f"{(meta.episode_int if meta.episode_int is not None else '0')}"}
+            data = {
+                "episode_number": f"{(meta.episode_int if meta.episode_int is not None else '0')}"
+            }
 
         return data
 
@@ -494,30 +622,40 @@ class UNIT3D:
 
         return merged
 
-    async def get_image_file(self, image_path: str | Path, max_size: int | None = None) -> tuple[str, bytes, str] | None:
+    async def get_image_file(
+        self, image_path: str | Path, max_size: int | None = None
+    ) -> tuple[str, bytes, str] | None:
         """Read an image unchanged and return it with a content type verified from its signature."""
         path = Path(image_path)
         image_bytes = await self._read_image_bytes(path, max_size)
         if image_bytes is None:
             return None
         if not is_valid_image_bytes(image_bytes):
-            logger.info(f"{self.tracker}: [yellow]Invalid or unsupported image: {path}[/yellow]")
+            logger.info(
+                f"{self.tracker}: [yellow]Invalid or unsupported image: {path}[/yellow]"
+            )
             return None
         image_type = self._image_type(image_bytes)
         if image_type is None:
-            logger.info(f"{self.tracker}: [yellow]Unsupported image format: {path}[/yellow]")
+            logger.info(
+                f"{self.tracker}: [yellow]Unsupported image format: {path}[/yellow]"
+            )
             return None
         extension, media_type = image_type
         return f"{path.stem}{extension}", image_bytes, media_type
 
-    async def _read_image_bytes(self, path: Path, max_size: int | None) -> bytes | None:
+    async def _read_image_bytes(
+        self, path: Path, max_size: int | None
+    ) -> bytes | None:
         try:
             if not self._image_path_allowed(path, max_size):
                 return None
             async with aiofiles.open(path, "rb") as handle:
                 return await handle.read()
         except OSError as error:
-            logger.info(f"{self.tracker}: [yellow]Failed to read image {path}: {error}[/yellow]")
+            logger.info(
+                f"{self.tracker}: [yellow]Failed to read image {path}: {error}[/yellow]"
+            )
             return None
 
     @staticmethod
@@ -547,7 +685,9 @@ class UNIT3D:
     def _is_webp(image_bytes: bytes) -> bool:
         return image_bytes.startswith(b"RIFF") and image_bytes[8:12] == b"WEBP"
 
-    async def get_additional_files(self, meta: Meta) -> dict[str, tuple[str, bytes, str]]:
+    async def get_additional_files(
+        self, meta: Meta
+    ) -> dict[str, tuple[str, bytes, str]]:
         files: dict[str, tuple[str, bytes, str]] = {}
         nfo_path = self._first_nfo_path(meta)
         if nfo_path is not None:
@@ -569,7 +709,10 @@ class UNIT3D:
         if meta.category != "GAME":
             return None
         source_dir = self._game_source_dir(meta.path)
-        candidates = [meta.scene_nfo_file, *self._filelist_values(meta.filelist)]
+        candidates = [
+            meta.scene_nfo_file,
+            *self._filelist_values(meta.filelist),
+        ]
         return self._first_resolved_nfo(candidates, source_dir)
 
     @staticmethod
@@ -578,15 +721,27 @@ class UNIT3D:
         return source_path if source_path.is_dir() else source_path.parent
 
     @classmethod
-    def _first_resolved_nfo(cls, candidates: list[Any], source_dir: Path) -> Path | None:
-        return next((path for candidate in candidates if (path := cls._resolved_nfo_candidate(candidate, source_dir)) is not None), None)
+    def _first_resolved_nfo(
+        cls, candidates: list[Any], source_dir: Path
+    ) -> Path | None:
+        return next(
+            (
+                path
+                for candidate in candidates
+                if (path := cls._resolved_nfo_candidate(candidate, source_dir))
+                is not None
+            ),
+            None,
+        )
 
     @staticmethod
     def _filelist_values(value: Any) -> list[Any]:
         return list(value) if isinstance(value, (list, tuple, set)) else []
 
     @classmethod
-    def _resolved_nfo_candidate(cls, candidate: Any, source_dir: Path) -> Path | None:
+    def _resolved_nfo_candidate(
+        cls, candidate: Any, source_dir: Path
+    ) -> Path | None:
         path = Path(str(candidate or ""))
         if path.suffix.lower() != ".nfo":
             return None
@@ -616,11 +771,22 @@ class UNIT3D:
         async with aiofiles.open(path, "rb") as handle:
             return path.name, await handle.read(), "text/plain"
 
-    async def _append_artwork_files(self, meta: Meta, files: dict[str, tuple[str, bytes, str]]) -> None:
-        await self._append_image_file(files, "torrent-cover", meta.artwork_path)
-        await self._append_image_file(files, "torrent-banner", meta.artwork_banner_path)
+    async def _append_artwork_files(
+        self, meta: Meta, files: dict[str, tuple[str, bytes, str]]
+    ) -> None:
+        await self._append_image_file(
+            files, "torrent-cover", meta.artwork_path
+        )
+        await self._append_image_file(
+            files, "torrent-banner", meta.artwork_banner_path
+        )
 
-    async def _append_image_file(self, files: dict[str, tuple[str, bytes, str]], key: str, image_path: Any) -> None:
+    async def _append_image_file(
+        self,
+        files: dict[str, tuple[str, bytes, str]],
+        key: str,
+        image_path: Any,
+    ) -> None:
         if not image_path:
             return
         image_file = await self.get_image_file(str(image_path))
@@ -628,7 +794,9 @@ class UNIT3D:
             files[key] = image_file
 
     async def get_upload_torrent_filename(self, meta: Meta) -> str:
-        return await self.common.get_torrent_filename(meta, self.tracker_config)
+        return await self.common.get_torrent_filename(
+            meta, self.tracker_config
+        )
 
     async def upload(self, meta: Meta) -> bool:
         data, files, headers = await self._upload_request_parts(meta)
@@ -642,17 +810,30 @@ class UNIT3D:
     async def _upload_request_parts(
         self,
         meta: Meta,
-    ) -> tuple[dict[str, str], dict[str, tuple[str, bytes, str]], dict[str, str]]:
+    ) -> tuple[
+        dict[str, str], dict[str, tuple[str, bytes, str]], dict[str, str]
+    ]:
         data = await self.get_data(meta)
         files = await self._upload_files(meta)
         return data, files, self._upload_headers(meta)
 
-    async def _upload_files(self, meta: Meta) -> dict[str, tuple[str, bytes, str]]:
+    async def _upload_files(
+        self, meta: Meta
+    ) -> dict[str, tuple[str, bytes, str]]:
         torrent_filename = await self.get_upload_torrent_filename(meta)
-        torrent_path = release_temp_dir(meta.base_dir, meta.uuid) / f"{torrent_filename}.torrent"
+        torrent_path = (
+            release_temp_dir(meta.base_dir, meta.uuid)
+            / f"{torrent_filename}.torrent"
+        )
         async with aiofiles.open(torrent_path, "rb") as handle:
             torrent_bytes = await handle.read()
-        files = {"torrent": ("torrent.torrent", torrent_bytes, "application/x-bittorrent")}
+        files = {
+            "torrent": (
+                "torrent.torrent",
+                torrent_bytes,
+                "application/x-bittorrent",
+            )
+        }
         files.update(await self.get_additional_files(meta))
         return files
 
@@ -666,7 +847,9 @@ class UNIT3D:
     async def _debug_upload(self, meta: Meta, data: dict[str, str]) -> bool:
         logger.info(f"{self.tracker}: Request Data:")
         logger.info(Redaction.redact_private_info(data))
-        meta.tracker_status[self.tracker]["status_message"] = f"Debug mode enabled, not uploading: {self.tracker}."
+        meta.tracker_status[self.tracker]["status_message"] = (
+            f"Debug mode enabled, not uploading: {self.tracker}."
+        )
         await self.common.create_torrent_for_upload(
             meta,
             f"{self.tracker}_DEBUG",
@@ -686,10 +869,14 @@ class UNIT3D:
         response_data: dict[str, Any] = {}
         for attempt in range(2):
             try:
-                response_data = await self._post_upload_attempt(meta, data, files, headers, timeout)
+                response_data = await self._post_upload_attempt(
+                    meta, data, files, headers, timeout
+                )
                 return str(response_data.get("data") or "")
             except Exception as error:
-                retry, timeout = await self._upload_error_decision(meta, error, attempt, timeout, response_data)
+                retry, timeout = await self._upload_error_decision(
+                    meta, error, attempt, timeout, response_data
+                )
                 if not retry:
                     return None
         return None
@@ -702,9 +889,13 @@ class UNIT3D:
         headers: dict[str, str],
         request_timeout: float,
     ) -> dict[str, Any]:
-        response = await self._upload_response(data, files, headers, request_timeout)
+        response = await self._upload_response(
+            data, files, headers, request_timeout
+        )
         if self._upload_redirect_rejected(response):
-            meta.tracker_status[self.tracker]["status_message"] = "data error: Upload redirect rejected"
+            meta.tracker_status[self.tracker]["status_message"] = (
+                "data error: Upload redirect rejected"
+            )
             raise _UploadRejectedError("Upload redirect rejected")
         response.raise_for_status()
         response_data = self._json_object(response)
@@ -719,14 +910,33 @@ class UNIT3D:
         headers: dict[str, str],
         request_timeout: float,
     ) -> httpx.Response:
-        async with httpx.AsyncClient(timeout=request_timeout, follow_redirects=self.follow_upload_redirects) as client:
+        async with httpx.AsyncClient(
+            timeout=request_timeout,
+            follow_redirects=self.follow_upload_redirects,
+        ) as client:
             if self.max_json_response_size is None:
-                return await client.post(url=self.upload_url, files=files, data=data, headers=headers)
-            async with client.stream("POST", self.upload_url, files=files, data=data, headers=headers) as streamed_response:
-                return await self._bounded_response(streamed_response, self.max_json_response_size)
+                return await client.post(
+                    url=self.upload_url,
+                    files=files,
+                    data=data,
+                    headers=headers,
+                )
+            async with client.stream(
+                "POST",
+                self.upload_url,
+                files=files,
+                data=data,
+                headers=headers,
+            ) as streamed_response:
+                return await self._bounded_response(
+                    streamed_response, self.max_json_response_size
+                )
 
     def _upload_redirect_rejected(self, response: httpx.Response) -> bool:
-        return 300 <= response.status_code < 400 and not self.follow_upload_redirects
+        return (
+            300 <= response.status_code < 400
+            and not self.follow_upload_redirects
+        )
 
     @staticmethod
     def _json_object(response: httpx.Response) -> dict[str, Any]:
@@ -735,18 +945,34 @@ class UNIT3D:
             raise ValueError("Tracker response must be a JSON object")
         return cast(dict[str, Any], raw)
 
-    def _ensure_api_success(self, meta: Meta, response_data: dict[str, Any]) -> None:
+    def _ensure_api_success(
+        self, meta: Meta, response_data: dict[str, Any]
+    ) -> None:
         if response_data.get("success"):
             return
-        error_msg = self._remote_error(response_data.get("message", "Unknown error"))
-        meta.tracker_status[self.tracker]["status_message"] = f"API error: {error_msg}"
-        logger.info(f"{self.tracker}: [yellow]Upload to {self.tracker} failed: {error_msg}[/yellow]")
+        error_msg = self._remote_error(
+            response_data.get("message", "Unknown error")
+        )
+        meta.tracker_status[self.tracker]["status_message"] = (
+            f"API error: {error_msg}"
+        )
+        logger.info(
+            f"{self.tracker}: [yellow]Upload to {self.tracker} failed: {error_msg}[/yellow]"
+        )
         raise _UploadRejectedError(f"Tracker API rejected upload: {error_msg}")
 
-    async def _record_upload_response(self, meta: Meta, response_data: dict[str, Any]) -> None:
+    async def _record_upload_response(
+        self, meta: Meta, response_data: dict[str, Any]
+    ) -> None:
         processed = await self.process_response_data(response_data)
-        meta.tracker_status[self.tracker]["status_message"] = processed if self.expose_remote_error_details else "Upload successful"
-        meta.tracker_status[self.tracker]["torrent_id"] = await self.get_torrent_id(response_data)
+        meta.tracker_status[self.tracker]["status_message"] = (
+            processed
+            if self.expose_remote_error_details
+            else "Upload successful"
+        )
+        meta.tracker_status[self.tracker][
+            "torrent_id"
+        ] = await self.get_torrent_id(response_data)
 
     async def _upload_error_decision(
         self,
@@ -759,11 +985,17 @@ class UNIT3D:
         if isinstance(error, _UploadRejectedError):
             return False, request_timeout
         if isinstance(error, httpx.HTTPStatusError):
-            return await self._http_error_decision(meta, error, attempt, request_timeout)
+            return await self._http_error_decision(
+                meta, error, attempt, request_timeout
+            )
         if isinstance(error, httpx.TimeoutException):
-            return await self._timeout_error_decision(meta, attempt, request_timeout)
+            return await self._timeout_error_decision(
+                meta, attempt, request_timeout
+            )
         if isinstance(error, httpx.RequestError):
-            return await self._request_error_decision(meta, error, attempt, request_timeout, response_data)
+            return await self._request_error_decision(
+                meta, error, attempt, request_timeout, response_data
+            )
         self._value_error_status(meta, error)
         return False, request_timeout
 
@@ -779,10 +1011,16 @@ class UNIT3D:
             self._auth_error_status(meta, error)
             return False, request_timeout
         if status_code in {401, 404, 422}:
-            return self._client_http_error_decision(meta, error, attempt, request_timeout)
-        return await self._retryable_http_error_decision(meta, error, attempt, request_timeout)
+            return self._client_http_error_decision(
+                meta, error, attempt, request_timeout
+            )
+        return await self._retryable_http_error_decision(
+            meta, error, attempt, request_timeout
+        )
 
-    def _auth_error_status(self, meta: Meta, error: httpx.HTTPStatusError) -> None:
+    def _auth_error_status(
+        self, meta: Meta, error: httpx.HTTPStatusError
+    ) -> None:
         code = error.response.status_code
         if code == 403:
             message = f"data error: Forbidden (403). This may indicate that you do not have upload permission. {self._remote_error(error.response.text)}"
@@ -800,14 +1038,18 @@ class UNIT3D:
         if self._is_duplicate_name_error(error.response.text):
             self._duplicate_upload_status(meta)
             return False, timeout
-        meta.tracker_status[self.tracker]["status_message"] = f"data error: HTTP {error.response.status_code} - {self._remote_error(error.response.text)}"
+        meta.tracker_status[self.tracker]["status_message"] = (
+            f"data error: HTTP {error.response.status_code} - {self._remote_error(error.response.text)}"
+        )
         return attempt == 0, timeout
 
     def _duplicate_upload_status(self, meta: Meta) -> None:
         status = meta.tracker_status[self.tracker]
         status["dupe"] = True
         status["upload"] = False
-        status["status_message"] = "Duplicate detected during upload: the release name or info hash already exists on the tracker."
+        status["status_message"] = (
+            "Duplicate detected during upload: the release name or info hash already exists on the tracker."
+        )
 
     async def _retryable_http_error_decision(
         self,
@@ -817,12 +1059,18 @@ class UNIT3D:
         request_timeout: float,
     ) -> tuple[bool, float]:
         if attempt == 0:
-            await self._retry_delay(f"HTTP {error.response.status_code} error", attempt, request_timeout)
+            await self._retry_delay(
+                f"HTTP {error.response.status_code} error",
+                attempt,
+                request_timeout,
+            )
             return True, request_timeout
         self._final_http_error_status(meta, error)
         return False, request_timeout
 
-    def _final_http_error_status(self, meta: Meta, error: httpx.HTTPStatusError) -> None:
+    def _final_http_error_status(
+        self, meta: Meta, error: httpx.HTTPStatusError
+    ) -> None:
         code = error.response.status_code
         if code == 520:
             message = "data error: Error (520). This is probably a cloudflare issue on the tracker side."
@@ -830,12 +1078,16 @@ class UNIT3D:
             message = f"data error: HTTP {code} - {self._remote_error(error.response.text)}"
         meta.tracker_status[self.tracker]["status_message"] = message
 
-    async def _timeout_error_decision(self, meta: Meta, attempt: int, request_timeout: float) -> tuple[bool, float]:
+    async def _timeout_error_decision(
+        self, meta: Meta, attempt: int, request_timeout: float
+    ) -> tuple[bool, float]:
         if attempt == 0:
             next_timeout = request_timeout * 1.5
             await self._retry_delay("Request timed out", attempt, next_timeout)
             return True, next_timeout
-        meta.tracker_status[self.tracker]["status_message"] = "data error: Request timed out after multiple attempts"
+        meta.tracker_status[self.tracker]["status_message"] = (
+            "data error: Request timed out after multiple attempts"
+        )
         return False, request_timeout
 
     async def _request_error_decision(
@@ -849,20 +1101,32 @@ class UNIT3D:
         if attempt == 0:
             await self._retry_delay("Request error", attempt, request_timeout)
             return True, request_timeout
-        meta.tracker_status[self.tracker]["status_message"] = f"data error: Unable to upload. Error: {error}.\nResponse: {self._remote_error(response_data)}"
+        meta.tracker_status[self.tracker]["status_message"] = (
+            f"data error: Unable to upload. Error: {error}.\nResponse: {self._remote_error(response_data)}"
+        )
         return False, request_timeout
 
-    async def _retry_delay(self, label: str, attempt: int, request_timeout: float) -> None:
+    async def _retry_delay(
+        self, label: str, attempt: int, request_timeout: float
+    ) -> None:
         retry_delay = 5
-        logger.info(f"{self.tracker}: [yellow]{label}, retrying in {retry_delay} seconds with {request_timeout}s timeout... (attempt {attempt + 1}/2)[/yellow]")
+        logger.info(
+            f"{self.tracker}: [yellow]{label}, retrying in {retry_delay} seconds with {request_timeout}s timeout... (attempt {attempt + 1}/2)[/yellow]"
+        )
         await asyncio.sleep(retry_delay)
 
     def _value_error_status(self, meta: Meta, error: Exception) -> None:
-        meta.tracker_status[self.tracker]["status_message"] = f"data error: Invalid JSON response from {self.tracker}. Error: {error}"
+        meta.tracker_status[self.tracker]["status_message"] = (
+            f"data error: Invalid JSON response from {self.tracker}. Error: {error}"
+        )
 
-    async def _download_uploaded_torrent(self, meta: Meta, headers: dict[str, str], download_url: str) -> bool:
+    async def _download_uploaded_torrent(
+        self, meta: Meta, headers: dict[str, str], download_url: str
+    ) -> bool:
         if not download_url:
-            meta.tracker_status[self.tracker]["status_message"] = "data error: Upload succeeded but the API returned no torrent download URL"
+            meta.tracker_status[self.tracker]["status_message"] = (
+                "data error: Upload succeeded but the API returned no torrent download URL"
+            )
             return False
         downloaded = await self.common.download_tracker_torrent(
             meta,
@@ -873,7 +1137,9 @@ class UNIT3D:
             max_size=self.max_torrent_download_size,
         )
         if self.download_url_hosts and downloaded is None:
-            meta.tracker_status[self.tracker]["status_message"] = "data error: Upload succeeded but the torrent download was rejected or failed"
+            meta.tracker_status[self.tracker]["status_message"] = (
+                "data error: Upload succeeded but the torrent download was rejected or failed"
+            )
             return False
         return True
 
@@ -883,20 +1149,37 @@ class UNIT3D:
         if re.search(r"\bsame[\s_-]+info[\s_-]*hash\b", normalized):
             return True
         return '"name"' in normalized and any(
-            phrase in normalized for phrase in ("already been taken", "already exists", "já se encontra registado", "ja se encontra registado")
+            phrase in normalized
+            for phrase in (
+                "already been taken",
+                "already exists",
+                "já se encontra registado",
+                "ja se encontra registado",
+            )
         )
 
     @staticmethod
-    async def _bounded_response(response: httpx.Response, max_size: int) -> httpx.Response:
+    async def _bounded_response(
+        response: httpx.Response, max_size: int
+    ) -> httpx.Response:
         content_length = response.headers.get("content-length", "")
         if content_length.isdigit() and int(content_length) > max_size:
-            raise ValueError("Tracker JSON response exceeds the configured size limit")
+            raise ValueError(
+                "Tracker JSON response exceeds the configured size limit"
+            )
         body = bytearray()
         async for chunk in response.aiter_bytes():
             body.extend(chunk)
             if len(body) > max_size:
-                raise ValueError("Tracker JSON response exceeds the configured size limit")
-        return httpx.Response(response.status_code, headers=response.headers, content=bytes(body), request=response.request)
+                raise ValueError(
+                    "Tracker JSON response exceeds the configured size limit"
+                )
+        return httpx.Response(
+            response.status_code,
+            headers=response.headers,
+            content=bytes(body),
+            request=response.request,
+        )
 
     async def get_torrent_id(self, response_data: dict[str, Any]) -> str:
         """Matches /12345.abcde and returns 12345"""
@@ -906,10 +1189,14 @@ class UNIT3D:
             if match:
                 torrent_id = match.group(1)
         except IndexError, KeyError:
-            logger.info(f"{self.tracker}: Could not parse torrent_id from response data.")
+            logger.info(
+                f"{self.tracker}: Could not parse torrent_id from response data."
+            )
         return torrent_id
 
-    async def process_response_data(self, response_data: dict[str, Any]) -> str:
+    async def process_response_data(
+        self, response_data: dict[str, Any]
+    ) -> str:
         """Returns the success message from the response data as a string."""
         if response_data.get("success") is True:
             return str(response_data.get("message", "Upload successful"))

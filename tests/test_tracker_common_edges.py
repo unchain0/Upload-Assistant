@@ -105,17 +105,27 @@ def reset_fakes() -> None:
     FakeTorrentAPI.copied = []
 
 
-def test_language_helper_edges(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_language_helper_edges(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     manager = Common(_config())
     lookup = manager._build_language_alias_lookup()
     assert "english" in lookup and "en" in lookup["english"]
     assert manager._coerce_language_values("English") == ["English"]
-    assert manager._coerce_language_values(["English", 1, "French"]) == ["English", "French"]
+    assert manager._coerce_language_values(["English", 1, "French"]) == [
+        "English",
+        "French",
+    ]
     assert manager._coerce_language_values(None) == []
     assert manager._expand_language_candidates("", lookup) == set()
-    expanded = manager._expand_language_candidates("Portuguese, Brazil", lookup)
+    expanded = manager._expand_language_candidates(
+        "Portuguese, Brazil", lookup
+    )
     assert "portuguese" in expanded
-    assert manager._expand_language_list(["English", "French"], lookup) >= {"english", "french"}
+    assert manager._expand_language_list(["English", "French"], lookup) >= {
+        "english",
+        "french",
+    }
 
     class BrokenLanguage:
         @classmethod
@@ -133,41 +143,95 @@ def test_language_helper_edges(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     assert manager._read_subtitle_text(tmp_path / "missing.srt") == ""
 
 
-def test_portuguese_video_description_attended_and_unattended(tmp_path: Path) -> None:
+def test_portuguese_video_description_attended_and_unattended(
+    tmp_path: Path,
+) -> None:
     manager = Common(_config())
     subtitle = tmp_path / "Movie.pt-BR.srt"
     subtitle.write_text("texto", encoding="utf-8")
-    assert asyncio.run(manager.has_portuguese_external_subtitle(_meta(tmp_path, subtitle_files=[str(subtitle)])))
+    assert asyncio.run(
+        manager.has_portuguese_external_subtitle(
+            _meta(tmp_path, subtitle_files=[str(subtitle)])
+        )
+    )
 
     words = tmp_path / "Movie.srt"
     words.write_text("Você não sabe onde estamos agora", encoding="utf-8")
-    assert asyncio.run(manager.has_portuguese_external_subtitle(_meta(tmp_path, subtitle_files=[str(words)])))
+    assert asyncio.run(
+        manager.has_portuguese_external_subtitle(
+            _meta(tmp_path, subtitle_files=[str(words)])
+        )
+    )
 
     manager.has_portuguese_external_subtitle = AsyncMock(return_value=False)  # type: ignore[method-assign]
     manager.check_language_requirements = AsyncMock(return_value=False)  # type: ignore[method-assign]
-    assert not asyncio.run(manager.check_portuguese_video_requirements(_meta(tmp_path, unattended=True, unattended_confirm=False), "TEST"))
-    assert asyncio.run(manager.check_portuguese_video_requirements(_meta(tmp_path, unattended=True, unattended_confirm=True), "TEST"))
+    assert not asyncio.run(
+        manager.check_portuguese_video_requirements(
+            _meta(tmp_path, unattended=True, unattended_confirm=False), "TEST"
+        )
+    )
+    assert asyncio.run(
+        manager.check_portuguese_video_requirements(
+            _meta(tmp_path, unattended=True, unattended_confirm=True), "TEST"
+        )
+    )
 
     manager.prompt_user_for_confirmation = AsyncMock(return_value=True)  # type: ignore[method-assign]
-    assert asyncio.run(manager.check_portuguese_video_requirements(_meta(tmp_path, unattended=False), "TEST"))
+    assert asyncio.run(
+        manager.check_portuguese_video_requirements(
+            _meta(tmp_path, unattended=False), "TEST"
+        )
+    )
 
-    assert not asyncio.run(manager.check_portuguese_description_requirements("English description", "TEST", _meta(tmp_path)))
-    assert asyncio.run(manager.check_portuguese_description_requirements("Descrição válida para você", "TEST", _meta(tmp_path)))
-    assert asyncio.run(manager.check_portuguese_description_requirements("English", "TEST", _meta(tmp_path, unattended=True, unattended_confirm=True)))
+    assert not asyncio.run(
+        manager.check_portuguese_description_requirements(
+            "English description", "TEST", _meta(tmp_path)
+        )
+    )
+    assert asyncio.run(
+        manager.check_portuguese_description_requirements(
+            "Descrição válida para você", "TEST", _meta(tmp_path)
+        )
+    )
+    assert asyncio.run(
+        manager.check_portuguese_description_requirements(
+            "English",
+            "TEST",
+            _meta(tmp_path, unattended=True, unattended_confirm=True),
+        )
+    )
     manager.prompt_user_for_confirmation = AsyncMock(return_value=False)  # type: ignore[method-assign]
-    assert not asyncio.run(manager.check_portuguese_description_requirements("English", "TEST", _meta(tmp_path, unattended=False)))
+    assert not asyncio.run(
+        manager.check_portuguese_description_requirements(
+            "English", "TEST", _meta(tmp_path, unattended=False)
+        )
+    )
 
 
-def test_portuguese_description_prefers_localized_ptbr_overview(tmp_path: Path) -> None:
+def test_portuguese_description_prefers_localized_ptbr_overview(
+    tmp_path: Path,
+) -> None:
     manager = Common(_config())
     meta = _meta(
         tmp_path,
         unattended=True,
         unattended_confirm=False,
-        tmdb_localized_data={"pt-BR": {"main": {"overview": ("Você não sabe onde estamos agora. Isso ficou muito bem e vamos continuar.")}}},
+        tmdb_localized_data={
+            "pt-BR": {
+                "main": {
+                    "overview": (
+                        "Você não sabe onde estamos agora. Isso ficou muito bem e vamos continuar."
+                    )
+                }
+            }
+        },
     )
 
-    assert asyncio.run(manager.check_portuguese_description_requirements("This is an English fallback description.", "AMIGOSSHARE", meta))
+    assert asyncio.run(
+        manager.check_portuguese_description_requirements(
+            "This is an English fallback description.", "AMIGOSSHARE", meta
+        )
+    )
 
 
 def test_portuguese_description_candidates_fall_back_without_localized_data(
@@ -176,7 +240,9 @@ def test_portuguese_description_candidates_fall_back_without_localized_data(
     manager = Common(_config())
     meta = _meta(tmp_path, tmdb_localized_data={})
 
-    assert manager._portuguese_description_candidates("fallback", meta) == ("fallback",)
+    assert manager._portuguese_description_candidates("fallback", meta) == (
+        "fallback",
+    )
 
 
 def test_async_filesystem_and_torrent_filename(tmp_path: Path) -> None:
@@ -194,10 +260,17 @@ def test_async_filesystem_and_torrent_filename(tmp_path: Path) -> None:
     assert asyncio.run(manager.get_torrent_filename(meta, {})) == "BASE"
     subs = tmp_path / "tmp" / meta.uuid / "BASE_SUBS.torrent"
     subs.write_bytes(b"torrent")
-    assert asyncio.run(manager.get_torrent_filename(meta, {"allow_ext_subtitles": True})) == "BASE_SUBS"
+    assert (
+        asyncio.run(
+            manager.get_torrent_filename(meta, {"allow_ext_subtitles": True})
+        )
+        == "BASE_SUBS"
+    )
 
 
-def test_create_torrent_for_upload_private_public_entropy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_create_torrent_for_upload_private_public_entropy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(common, "Torrent", FakeTorrentAPI)
     manager = Common(_config())
     meta = _meta(tmp_path, entropy=32)
@@ -208,13 +281,21 @@ def test_create_torrent_for_upload_private_public_entropy(tmp_path: Path, monkey
     value = FakeTorrentAPI.current.metainfo
     assert "junk" not in value
     assert value["announce"] == "https://tracker.example/announce"
-    assert value["info"]["private"] is True and value["info"]["source"] == "SRC"
+    assert (
+        value["info"]["private"] is True and value["info"]["source"] == "SRC"
+    )
     assert value["info"]["entropy"] == 2**32 - 1
     assert value["comment"] == ""
     assert "using Upload Assistant 1.0" in value["created by"]
     assert (tmp_path / "tmp" / meta.uuid / "[TEST].torrent").is_file()
 
-    FakeTorrentAPI.current = FakeTorrentValue({"info": {"private": True}, "announce": "old", "announce-list": [["old"]]})
+    FakeTorrentAPI.current = FakeTorrentValue(
+        {
+            "info": {"private": True},
+            "announce": "old",
+            "announce-list": [["old"]],
+        }
+    )
     meta.entropy = 64
     asyncio.run(
         manager.create_torrent_for_upload(
@@ -231,14 +312,26 @@ def test_create_torrent_for_upload_private_public_entropy(tmp_path: Path, monkey
     assert value["announce"] == "https://one"
     assert value["announce-list"] == [["https://one"], ["https://two"]]
 
-    FakeTorrentAPI.current = FakeTorrentValue({"info": {"private": True}, "announce": "old", "announce-list": [["old"]]})
+    FakeTorrentAPI.current = FakeTorrentValue(
+        {
+            "info": {"private": True},
+            "announce": "old",
+            "announce-list": [["old"]],
+        }
+    )
     meta.entropy = "bad"
-    asyncio.run(manager.create_torrent_for_upload(meta, "TEST", "PUBLIC", is_public=True, public_trackers=[]))
+    asyncio.run(
+        manager.create_torrent_for_upload(
+            meta, "TEST", "PUBLIC", is_public=True, public_trackers=[]
+        )
+    )
     value = FakeTorrentAPI.current.metainfo
     assert "announce" not in value and "announce-list" not in value
 
 
-def test_create_torrent_for_upload_announce_override_and_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_create_torrent_for_upload_announce_override_and_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(common, "Torrent", FakeTorrentAPI)
     config = _config()
     config["TRACKERS"]["TEST"]["announce_url"] = ""
@@ -246,11 +339,17 @@ def test_create_torrent_for_upload_announce_override_and_missing(tmp_path: Path,
     meta = _meta(tmp_path)
     base = tmp_path / "tmp" / meta.uuid / "BASE.torrent"
     base.write_bytes(b"base")
-    asyncio.run(manager.create_torrent_for_upload(meta, "TEST", "SRC", announce_url="https://override"))
+    asyncio.run(
+        manager.create_torrent_for_upload(
+            meta, "TEST", "SRC", announce_url="https://override"
+        )
+    )
     assert FakeTorrentAPI.current.metainfo["announce"] == "https://override"
     FakeTorrentAPI.current = FakeTorrentValue()
     asyncio.run(manager.create_torrent_for_upload(meta, "TEST", "SRC"))
-    assert FakeTorrentAPI.current.metainfo["announce"] == "https://fake.tracker"
+    assert (
+        FakeTorrentAPI.current.metainfo["announce"] == "https://fake.tracker"
+    )
 
     base.unlink()
     FakeTorrentAPI.copied.clear()
@@ -258,32 +357,66 @@ def test_create_torrent_for_upload_announce_override_and_missing(tmp_path: Path,
     assert FakeTorrentAPI.copied == []
 
 
-def test_ready_to_seed_and_torrent_hash(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ready_to_seed_and_torrent_hash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(common, "Torrent", FakeTorrentAPI)
     manager = Common(_config())
     meta = _meta(tmp_path)
     tracker_path = tmp_path / "tmp" / meta.uuid / "[TEST].torrent"
     tracker_path.write_bytes(b"torrent")
 
-    assert asyncio.run(manager.create_torrent_ready_to_seed(meta, "TEST", "SRC", [])) is None
-    result = asyncio.run(manager.create_torrent_ready_to_seed(meta, "TEST", "SRC", ["https://one", "https://two"], "id=", hash_is_id=True))
+    assert (
+        asyncio.run(
+            manager.create_torrent_ready_to_seed(meta, "TEST", "SRC", [])
+        )
+        is None
+    )
+    result = asyncio.run(
+        manager.create_torrent_ready_to_seed(
+            meta,
+            "TEST",
+            "SRC",
+            ["https://one", "https://two"],
+            "id=",
+            hash_is_id=True,
+        )
+    )
     assert result and len(result) == 40
     assert FakeTorrentAPI.current.metainfo["announce"] == "https://one"
-    assert FakeTorrentAPI.current.metainfo["announce-list"] == [["https://one", "https://two"]]
+    assert FakeTorrentAPI.current.metainfo["announce-list"] == [
+        ["https://one", "https://two"]
+    ]
     assert FakeTorrentAPI.current.metainfo["comment"].startswith("id=")
 
     FakeTorrentAPI.current = FakeTorrentValue({"info": {"name": "x"}})
-    assert asyncio.run(manager.create_torrent_ready_to_seed(meta, "TEST", "SRC", "https://tracker", "comment")) is None
+    assert (
+        asyncio.run(
+            manager.create_torrent_ready_to_seed(
+                meta, "TEST", "SRC", "https://tracker", "comment"
+            )
+        )
+        is None
+    )
     assert FakeTorrentAPI.current.metainfo["comment"] == "comment"
 
     tracker_path.unlink()
-    assert asyncio.run(manager.create_torrent_ready_to_seed(meta, "TEST", "SRC", "https://tracker")) is None
+    assert (
+        asyncio.run(
+            manager.create_torrent_ready_to_seed(
+                meta, "TEST", "SRC", "https://tracker"
+            )
+        )
+        is None
+    )
 
     info = {b"name": b"Example"}
     torrent_data = {b"info": info}
     tracker_path.write_bytes(bencodepy.encode(torrent_data))
     monkeypatch.setattr(common, "Torrent", __import__("torf").Torrent)
-    expected = hashlib.sha1(bencodepy.encode(info), usedforsecurity=False).hexdigest()
+    expected = hashlib.sha1(
+        bencodepy.encode(info), usedforsecurity=False
+    ).hexdigest()
     assert asyncio.run(manager.get_torrent_hash(meta, "TEST")) == expected
 
     tracker_path.write_bytes(bencodepy.encode([b"bad"]))
@@ -292,7 +425,9 @@ def test_ready_to_seed_and_torrent_hash(tmp_path: Path, monkeypatch: pytest.Monk
     assert asyncio.run(manager.get_torrent_hash(meta, "TEST")) == ""
 
 
-def test_save_image_links_schema_accumulation_and_write_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_save_image_links_schema_accumulation_and_write_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     manager = Common(_config())
     meta = _meta(tmp_path)
     assert asyncio.run(manager.save_image_links(meta, "disc", None)) is None
@@ -307,20 +442,42 @@ def test_save_image_links_schema_accumulation_and_write_error(tmp_path: Path, mo
     assert result
     path = Path(result)
     payload = json.loads(path.read_text(encoding="utf-8"))
-    assert payload["keys"]["disc"]["count"] == 1 and payload["total_count"] == 1
+    assert (
+        payload["keys"]["disc"]["count"] == 1 and payload["total_count"] == 1
+    )
 
-    asyncio.run(manager.save_image_links(meta, "disc", [{"raw_url": "raw2", "web_url": "web2"}]))
+    asyncio.run(
+        manager.save_image_links(
+            meta, "disc", [{"raw_url": "raw2", "web_url": "web2"}]
+        )
+    )
     payload = json.loads(path.read_text(encoding="utf-8"))
-    assert payload["keys"]["disc"]["count"] == 2 and payload["total_count"] == 2
+    assert (
+        payload["keys"]["disc"]["count"] == 2 and payload["total_count"] == 2
+    )
 
     path.write_text("not-json", encoding="utf-8")
     assert asyncio.run(manager.save_image_links(meta, "new", []))
     path.write_text(json.dumps([]), encoding="utf-8")
     assert asyncio.run(manager.save_image_links(meta, "new", []))
-    path.write_text(json.dumps({"keys": [], "total_count": "bad"}), encoding="utf-8")
+    path.write_text(
+        json.dumps({"keys": [], "total_count": "bad"}), encoding="utf-8"
+    )
     assert asyncio.run(manager.save_image_links(meta, "new", []))
-    path.write_text(json.dumps({"keys": {"new": {"count": "bad", "images": "bad"}}, "total_count": 0}), encoding="utf-8")
-    assert asyncio.run(manager.save_image_links(meta, "new", [{"raw_url": "r", "web_url": "w"}]))
+    path.write_text(
+        json.dumps(
+            {
+                "keys": {"new": {"count": "bad", "images": "bad"}},
+                "total_count": 0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert asyncio.run(
+        manager.save_image_links(
+            meta, "new", [{"raw_url": "r", "web_url": "w"}]
+        )
+    )
 
     original_open = common.aiofiles.open
 
@@ -362,7 +519,9 @@ class JsonClient:
     ) -> None:
         return None
 
-    async def get(self, url: str | None = None, **kwargs: object) -> JsonResponse:
+    async def get(
+        self, url: str | None = None, **kwargs: object
+    ) -> JsonResponse:
         type(self).calls.append((str(url), dict(kwargs)))
         value = type(self).queue.pop(0)
         if isinstance(value, BaseException):
@@ -376,9 +535,15 @@ class JsonClient:
         cls.calls = []
 
 
-def test_prompt_selection_and_confirmation_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_prompt_selection_and_confirmation_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     manager = Common(_config())
-    assert asyncio.run(manager.prompt_user_for_id_selection(_meta(tmp_path), tmdb=1, imdb=12, tvdb=3, mal=4, filename="x"))
+    assert asyncio.run(
+        manager.prompt_user_for_id_selection(
+            _meta(tmp_path), tmdb=1, imdb=12, tvdb=3, mal=4, filename="x"
+        )
+    )
 
     answers = iter(("n", "yes", "", "n"))
 
@@ -387,14 +552,33 @@ def test_prompt_selection_and_confirmation_paths(tmp_path: Path, monkeypatch: py
 
     monkeypatch.setattr(common, "prompt_in_thread", prompt)
     attended = _meta(tmp_path, unattended=False)
-    assert not asyncio.run(manager.prompt_user_for_id_selection(attended, tmdb=1, tracker_name=None))
-    assert asyncio.run(manager.prompt_user_for_id_selection(attended, imdb=12, tracker_name="TEST"))
-    assert asyncio.run(manager.prompt_user_for_confirmation("Continue", attended))
-    assert not asyncio.run(manager.prompt_user_for_confirmation("Continue", attended))
-    assert asyncio.run(manager.prompt_user_for_confirmation("Continue", _meta(tmp_path, unattended=True, unattended_confirm=True)))
+    assert not asyncio.run(
+        manager.prompt_user_for_id_selection(
+            attended, tmdb=1, tracker_name=None
+        )
+    )
+    assert asyncio.run(
+        manager.prompt_user_for_id_selection(
+            attended, imdb=12, tracker_name="TEST"
+        )
+    )
+    assert asyncio.run(
+        manager.prompt_user_for_confirmation("Continue", attended)
+    )
+    assert not asyncio.run(
+        manager.prompt_user_for_confirmation("Continue", attended)
+    )
+    assert asyncio.run(
+        manager.prompt_user_for_confirmation(
+            "Continue",
+            _meta(tmp_path, unattended=True, unattended_confirm=True),
+        )
+    )
 
 
-def test_prompt_selection_eof_translates_to_domain_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_prompt_selection_eof_translates_to_domain_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     manager = Common(_config())
 
     async def eof(*_args: object, **_kwargs: object) -> str:
@@ -402,44 +586,91 @@ def test_prompt_selection_eof_translates_to_domain_error(tmp_path: Path, monkeyp
 
     monkeypatch.setattr(common, "prompt_in_thread", eof)
     with pytest.raises(OperationAbortedError, match="cancelled"):
-        asyncio.run(manager.prompt_user_for_id_selection(_meta(tmp_path, unattended=False)))
+        asyncio.run(
+            manager.prompt_user_for_id_selection(
+                _meta(tmp_path, unattended=False)
+            )
+        )
 
 
-def test_region_distributor_mapping_and_http_shapes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_region_distributor_mapping_and_http_shapes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     manager = Common({"TRACKERS": {"TEST": {"api_key": " key "}}})
     assert asyncio.run(manager.unit3d_region_ids("AUS")) == "14"
-    assert asyncio.run(manager.unit3d_region_ids(reverse=True, region_id=14)) == "AUS"
-    assert asyncio.run(manager.unit3d_region_ids(reverse=True, region_id=9999)) == ""
+    assert (
+        asyncio.run(manager.unit3d_region_ids(reverse=True, region_id=14))
+        == "AUS"
+    )
+    assert (
+        asyncio.run(manager.unit3d_region_ids(reverse=True, region_id=9999))
+        == ""
+    )
     assert asyncio.run(manager.unit3d_distributor_ids("WARNER"))
-    assert asyncio.run(manager.unit3d_distributor_ids(reverse=True, distributor_id=99999)) == ""
+    assert (
+        asyncio.run(
+            manager.unit3d_distributor_ids(reverse=True, distributor_id=99999)
+        )
+        == ""
+    )
 
     meta = _meta(tmp_path, is_disc="BDMV", region="", distributor="")
     manager.unit3d_region_ids = AsyncMock(return_value="USA")  # type: ignore[method-assign]
     manager.unit3d_distributor_ids = AsyncMock(return_value="Warner")  # type: ignore[method-assign]
-    asyncio.run(manager._apply_region_distributor(meta, {"region_id": 1, "distributor_id": 2}))
+    asyncio.run(
+        manager._apply_region_distributor(
+            meta, {"region_id": 1, "distributor_id": 2}
+        )
+    )
     assert meta.region == "USA" and meta.distributor == "Warner"
 
     monkeypatch.setattr(common.httpx, "AsyncClient", JsonClient)
-    JsonClient.reset(JsonResponse({"data": [{"attributes": {"region_id": 1, "distributor_id": 2}}]}))
+    JsonClient.reset(
+        JsonResponse(
+            {"data": [{"attributes": {"region_id": 1, "distributor_id": 2}}]}
+        )
+    )
     meta = _meta(tmp_path, uuid="region-list", region="", distributor="")
-    asyncio.run(manager.unit3d_region_distributor(meta, "TEST", "https://tracker/", "1"))
+    asyncio.run(
+        manager.unit3d_region_distributor(
+            meta, "TEST", "https://tracker/", "1"
+        )
+    )
     assert meta.region == "USA" and meta.distributor == "Warner"
 
     JsonClient.reset(JsonResponse({"attributes": {"region_id": 1}}))
-    meta = _meta(tmp_path, uuid="region-direct", region="", distributor="Already")
-    asyncio.run(manager.unit3d_region_distributor(meta, "TEST", "https://tracker/"))
+    meta = _meta(
+        tmp_path, uuid="region-direct", region="", distributor="Already"
+    )
+    asyncio.run(
+        manager.unit3d_region_distributor(meta, "TEST", "https://tracker/")
+    )
     assert meta.region == "USA"
 
     for payload in ({"data": "404"}, ValueError("bad json")):
         JsonClient.reset(JsonResponse(payload))
-        asyncio.run(manager.unit3d_region_distributor(_meta(tmp_path, uuid=f"region-{len(JsonClient.calls)}"), "TEST", "https://tracker/"))
+        asyncio.run(
+            manager.unit3d_region_distributor(
+                _meta(tmp_path, uuid=f"region-{len(JsonClient.calls)}"),
+                "TEST",
+                "https://tracker/",
+            )
+        )
 
-    request = httpx.RequestError("offline", request=httpx.Request("GET", "https://tracker"))
+    request = httpx.RequestError(
+        "offline", request=httpx.Request("GET", "https://tracker")
+    )
     JsonClient.reset(request)
-    asyncio.run(manager.unit3d_region_distributor(_meta(tmp_path, uuid="region-error"), "TEST", "https://tracker/"))
+    asyncio.run(
+        manager.unit3d_region_distributor(
+            _meta(tmp_path, uuid="region-error"), "TEST", "https://tracker/"
+        )
+    )
 
 
-def test_unit3d_torrent_info_list_direct_prompt_description_and_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_unit3d_torrent_info_list_direct_prompt_description_and_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     config = {"TRACKERS": {"TEST": {"api_key": "key"}}}
     manager = Common(config)
     monkeypatch.setattr(common.httpx, "AsyncClient", JsonClient)
@@ -448,8 +679,12 @@ def test_unit3d_torrent_info_list_direct_prompt_description_and_errors(tmp_path:
     manager.prompt_user_for_id_selection = AsyncMock(return_value=True)  # type: ignore[method-assign]
 
     class FakeBBCode:
-        def clean_unit3d_description(self, description: str, _url: str) -> tuple[str, list[dict[str, str]]]:
-            return f"clean:{description}", [{"raw_url": "raw", "web_url": "web"}]
+        def clean_unit3d_description(
+            self, description: str, _url: str
+        ) -> tuple[str, list[dict[str, str]]]:
+            return f"clean:{description}", [
+                {"raw_url": "raw", "web_url": "web"}
+            ]
 
     monkeypatch.setattr(common, "BBCODE", FakeBBCode)
     attrs = {
@@ -464,23 +699,68 @@ def test_unit3d_torrent_info_list_direct_prompt_description_and_errors(tmp_path:
         "distributor_id": 2,
     }
     JsonClient.reset(JsonResponse({"data": [{"attributes": attrs}]}))
-    meta = _meta(tmp_path, unattended=True, is_disc="BDMV", region="", distributor="", keep_images=True)
-    result = asyncio.run(manager.unit3d_torrent_info("TEST", "https://torrent/", "https://search", meta, file_name="Example.mkv"))
+    meta = _meta(
+        tmp_path,
+        unattended=True,
+        is_disc="BDMV",
+        region="",
+        distributor="",
+        keep_images=True,
+    )
+    result = asyncio.run(
+        manager.unit3d_torrent_info(
+            "TEST",
+            "https://torrent/",
+            "https://search",
+            meta,
+            file_name="Example.mkv",
+        )
+    )
     assert result[:7] == (123, 7654321, 456, 7, "clean:desc", "MOVIE", "HASH")
     assert result[7] and meta.region == "USA" and meta.distributor == "Warner"
     assert meta.tracker_description_raw["TEST"] == "desc"
 
-    direct_attrs = {**attrs, "files": [{"name": "one.mkv"}, {"name": "two.mkv"}]}
+    direct_attrs = {
+        **attrs,
+        "files": [{"name": "one.mkv"}, {"name": "two.mkv"}],
+    }
     JsonClient.reset(JsonResponse({"attributes": direct_attrs}))
-    meta = _meta(tmp_path, uuid="direct-info", unattended=True, keep_images=False)
-    result = asyncio.run(manager.unit3d_torrent_info("TEST", "https://torrent/", "https://search", meta, id=5, skip_tracker_descriptions=True))
-    assert result[4] == "" and result[7] == [] and result[8] == ["one.mkv", "two.mkv"]
+    meta = _meta(
+        tmp_path, uuid="direct-info", unattended=True, keep_images=False
+    )
+    result = asyncio.run(
+        manager.unit3d_torrent_info(
+            "TEST",
+            "https://torrent/",
+            "https://search",
+            meta,
+            id=5,
+            skip_tracker_descriptions=True,
+        )
+    )
+    assert (
+        result[4] == ""
+        and result[7] == []
+        and result[8] == ["one.mkv", "two.mkv"]
+    )
 
-    assert asyncio.run(manager.unit3d_torrent_info("TEST", "https://torrent/", "https://search", meta)) == (None, None, None, None, None, None, None, [], None)
+    assert asyncio.run(
+        manager.unit3d_torrent_info(
+            "TEST", "https://torrent/", "https://search", meta
+        )
+    ) == (None, None, None, None, None, None, None, [], None)
 
     manager.prompt_user_for_id_selection = AsyncMock(return_value=False)  # type: ignore[method-assign]
     JsonClient.reset(JsonResponse({"data": [{"attributes": attrs}]}))
-    assert asyncio.run(manager.unit3d_torrent_info("TEST", "https://torrent/", "https://search", _meta(tmp_path, uuid="skip"), file_name="x")) == (
+    assert asyncio.run(
+        manager.unit3d_torrent_info(
+            "TEST",
+            "https://torrent/",
+            "https://search",
+            _meta(tmp_path, uuid="skip"),
+            file_name="x",
+        )
+    ) == (
         None,
         None,
         None,
@@ -495,42 +775,94 @@ def test_unit3d_torrent_info_list_direct_prompt_description_and_errors(tmp_path:
     for response in (
         JsonResponse({"data": "404"}),
         JsonResponse(ValueError("bad json")),
-        httpx.RequestError("offline", request=httpx.Request("GET", "https://tracker")),
+        httpx.RequestError(
+            "offline", request=httpx.Request("GET", "https://tracker")
+        ),
     ):
         JsonClient.reset(response)
-        result = asyncio.run(manager.unit3d_torrent_info("TEST", "https://torrent/", "https://search", _meta(tmp_path, uuid="error-info"), id=1))
+        result = asyncio.run(
+            manager.unit3d_torrent_info(
+                "TEST",
+                "https://torrent/",
+                "https://search",
+                _meta(tmp_path, uuid="error-info"),
+                id=1,
+            )
+        )
         assert result == (None, None, None, None, None, None, None, [], None)
 
     JsonClient.reset(JsonResponse({"attributes": {"tmdb_id": "not-int"}}))
-    result = asyncio.run(manager.unit3d_torrent_info("TEST", "https://torrent/", "https://search", _meta(tmp_path, uuid="invalid-info"), id=1))
+    result = asyncio.run(
+        manager.unit3d_torrent_info(
+            "TEST",
+            "https://torrent/",
+            "https://search",
+            _meta(tmp_path, uuid="invalid-info"),
+            id=1,
+        )
+    )
     assert result == (None, None, None, None, None, None, None, [], None)
 
 
-def test_unit3d_torrent_info_attended_edit_discard_keep(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_unit3d_torrent_info_attended_edit_discard_keep(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     manager = Common({"TRACKERS": {"TEST": {"api_key": "key"}}})
     monkeypatch.setattr(common.httpx, "AsyncClient", JsonClient)
 
     class FakeBBCode:
-        def clean_unit3d_description(self, description: str, _url: str) -> tuple[str, list[dict[str, str]]]:
+        def clean_unit3d_description(
+            self, description: str, _url: str
+        ) -> tuple[str, list[dict[str, str]]]:
             return description, [{"raw_url": "raw", "web_url": "web"}]
 
     monkeypatch.setattr(common, "BBCODE", FakeBBCode)
     attrs = {"description": "description", "tmdb_id": 1}
 
-    monkeypatch.setattr(common.cli_ui, "ask_string", lambda *_args, **_kwargs: "e")
+    monkeypatch.setattr(
+        common.cli_ui, "ask_string", lambda *_args, **_kwargs: "e"
+    )
     monkeypatch.setattr(common.click, "edit", lambda _value: " edited ")
     JsonClient.reset(JsonResponse({"attributes": attrs}))
-    result = asyncio.run(manager.unit3d_torrent_info("TEST", "https://torrent/", "https://search", _meta(tmp_path, unattended=False, keep_images=True), id=1))
+    result = asyncio.run(
+        manager.unit3d_torrent_info(
+            "TEST",
+            "https://torrent/",
+            "https://search",
+            _meta(tmp_path, unattended=False, keep_images=True),
+            id=1,
+        )
+    )
     assert result[4] == "edited" and result[7]
 
-    monkeypatch.setattr(common.cli_ui, "ask_string", lambda *_args, **_kwargs: "d")
+    monkeypatch.setattr(
+        common.cli_ui, "ask_string", lambda *_args, **_kwargs: "d"
+    )
     JsonClient.reset(JsonResponse({"attributes": attrs}))
-    result = asyncio.run(manager.unit3d_torrent_info("TEST", "https://torrent/", "https://search", _meta(tmp_path, uuid="discard", unattended=False), id=1))
+    result = asyncio.run(
+        manager.unit3d_torrent_info(
+            "TEST",
+            "https://torrent/",
+            "https://search",
+            _meta(tmp_path, uuid="discard", unattended=False),
+            id=1,
+        )
+    )
     assert result[4] is None and result[7] == []
 
-    monkeypatch.setattr(common.cli_ui, "ask_string", lambda *_args, **_kwargs: "")
+    monkeypatch.setattr(
+        common.cli_ui, "ask_string", lambda *_args, **_kwargs: ""
+    )
     JsonClient.reset(JsonResponse({"attributes": attrs}))
-    result = asyncio.run(manager.unit3d_torrent_info("TEST", "https://torrent/", "https://search", _meta(tmp_path, uuid="keep", unattended=False, keep_images=True), id=1))
+    result = asyncio.run(
+        manager.unit3d_torrent_info(
+            "TEST",
+            "https://torrent/",
+            "https://search",
+            _meta(tmp_path, uuid="keep", unattended=False, keep_images=True),
+            id=1,
+        )
+    )
     assert result[4] == "description"
 
 
@@ -540,19 +872,30 @@ def test_parse_cookie_file(tmp_path: Path) -> None:
         "# Netscape HTTP Cookie File\n# comment\n.example.com\tTRUE\t/\tFALSE\t0\tsession\tvalue\nshort line\n",
         encoding="utf-8",
     )
-    assert asyncio.run(Common(_config()).parse_cookie_file(str(cookie))) == {"session": "value"}
+    assert asyncio.run(Common(_config()).parse_cookie_file(str(cookie))) == {
+        "session": "value"
+    }
 
 
-def test_ptgen_success_retries_prompts_and_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ptgen_success_retries_prompts_and_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     manager = Common(_config())
     monkeypatch.setattr(common.httpx, "AsyncClient", JsonClient)
-    meta = _meta(tmp_path, imdb_id=1234567, imdb_info={"cover": "cover.jpg"}, artwork_url="fallback.jpg")
+    meta = _meta(
+        tmp_path,
+        imdb_id=1234567,
+        imdb_info={"cover": "cover.jpg"},
+        artwork_url="fallback.jpg",
+    )
     JsonClient.reset(
         JsonResponse({"error": "retry"}),
         JsonResponse({"data": [{"link": "https://douban/1"}]}),
         JsonResponse({"format": "[img]old[/img]Details"}),
     )
-    result = asyncio.run(manager.ptgen(meta, ptgen_site="https://ptgen", ptgen_retry=2))
+    result = asyncio.run(
+        manager.ptgen(meta, ptgen_site="https://ptgen", ptgen_retry=2)
+    )
     assert result == "[img]cover.jpg[/img]Details"
     assert meta.ptgen["format"]
 
@@ -560,20 +903,52 @@ def test_ptgen_success_retries_prompts_and_failure(tmp_path: Path, monkeypatch: 
         return "https://douban/manual"
 
     monkeypatch.setattr(common, "prompt_in_thread", answer)
-    meta = _meta(tmp_path, uuid="ptgen-manual", imdb_id=None, unattended=False, imdb_info={}, artwork_url="art.jpg")
+    meta = _meta(
+        tmp_path,
+        uuid="ptgen-manual",
+        imdb_id=None,
+        unattended=False,
+        imdb_info={},
+        artwork_url="art.jpg",
+    )
     JsonClient.reset(JsonResponse({"format": "Manual"}))
     assert "Manual" in asyncio.run(manager.ptgen(meta))
 
-    meta = _meta(tmp_path, uuid="ptgen-no-data", imdb_id=123, unattended=True, unattended_confirm=False, imdb_info={}, artwork_url="art.jpg")
-    JsonClient.reset(JsonResponse({"data": []}), JsonResponse({"format": "Fallback"}))
+    meta = _meta(
+        tmp_path,
+        uuid="ptgen-no-data",
+        imdb_id=123,
+        unattended=True,
+        unattended_confirm=False,
+        imdb_info={},
+        artwork_url="art.jpg",
+    )
+    JsonClient.reset(
+        JsonResponse({"data": []}), JsonResponse({"format": "Fallback"})
+    )
     assert "Fallback" in asyncio.run(manager.ptgen(meta, ptgen_retry=0))
 
-    meta = _meta(tmp_path, uuid="ptgen-fail", imdb_id=None, unattended=True, unattended_confirm=False)
-    JsonClient.reset(JsonResponse({"error": "bad"}), JsonResponse({"error": "bad"}))
+    meta = _meta(
+        tmp_path,
+        uuid="ptgen-fail",
+        imdb_id=None,
+        unattended=True,
+        unattended_confirm=False,
+    )
+    JsonClient.reset(
+        JsonResponse({"error": "bad"}), JsonResponse({"error": "bad"})
+    )
     assert asyncio.run(manager.ptgen(meta, ptgen_retry=1)) == ""
 
     JsonClient.reset(RuntimeError("unexpected"))
-    assert asyncio.run(manager.ptgen(_meta(tmp_path, uuid="ptgen-error", imdb_id=1), ptgen_retry=0)) == ""
+    assert (
+        asyncio.run(
+            manager.ptgen(
+                _meta(tmp_path, uuid="ptgen-error", imdb_id=1), ptgen_retry=0
+            )
+        )
+        == ""
+    )
 
 
 def test_mediainfo_parser_and_bbcode_all_sections() -> None:
@@ -609,9 +984,14 @@ Menu
     assert parser.format_bbcode({}) == "\n\n"
 
 
-def test_get_bdmv_mediainfo_generation_filter_fallback_and_non_disc(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_bdmv_mediainfo_generation_filter_fallback_and_non_disc(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     manager = Common(_config())
-    assert asyncio.run(manager.get_bdmv_mediainfo(_meta(tmp_path, is_disc=""))) == ""
+    assert (
+        asyncio.run(manager.get_bdmv_mediainfo(_meta(tmp_path, is_disc="")))
+        == ""
+    )
 
     playlist = tmp_path / "playlist.mpls"
     playlist.write_bytes(b"playlist")
@@ -620,32 +1000,92 @@ def test_get_bdmv_mediainfo_generation_filter_fallback_and_non_disc(tmp_path: Pa
     meta = _meta(
         tmp_path,
         is_disc="BDMV",
-        discs=[{"playlists": [{"path": str(playlist), "items": [{"file": str(largest), "size": 100}, {"file": "small", "size": 1}]}]}],
+        discs=[
+            {
+                "playlists": [
+                    {
+                        "path": str(playlist),
+                        "items": [
+                            {"file": str(largest), "size": 100},
+                            {"file": "small", "size": 1},
+                        ],
+                    }
+                ]
+            }
+        ],
     )
     mi_path = tmp_path / "tmp" / meta.uuid / "MEDIAINFO_CLEANPATH.txt"
 
     async def export(path: str, *_args: object, **_kwargs: object) -> None:
-        text = "Remove: hidden\nKeep: " + ("x" * 80 if path == str(playlist) else "short") + "\n"
+        text = (
+            "Remove: hidden\nKeep: "
+            + ("x" * 80 if path == str(playlist) else "short")
+            + "\n"
+        )
         mi_path.write_text(text, encoding="utf-8")
 
     monkeypatch.setattr(common, "export_info", export)
-    result = asyncio.run(manager.get_bdmv_mediainfo(meta, remove=["Remove:"], char_limit=30))
+    result = asyncio.run(
+        manager.get_bdmv_mediainfo(meta, remove=["Remove:"], char_limit=30)
+    )
     assert "short" in result and "Remove:" not in result
 
-    meta = _meta(tmp_path, uuid="bd-no-items", is_disc="BDMV", discs=[{"playlists": [{"path": str(playlist), "items": []}]}])
+    meta = _meta(
+        tmp_path,
+        uuid="bd-no-items",
+        is_disc="BDMV",
+        discs=[{"playlists": [{"path": str(playlist), "items": []}]}],
+    )
     mi_path = tmp_path / "tmp" / meta.uuid / "MEDIAINFO_CLEANPATH.txt"
     mi_path.write_text("x" * 50, encoding="utf-8")
-    assert len(asyncio.run(manager.get_bdmv_mediainfo(meta, char_limit=10))) == 50
+    assert (
+        len(asyncio.run(manager.get_bdmv_mediainfo(meta, char_limit=10))) == 50
+    )
 
 
-def test_language_requirements_book_video_original_and_prompts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_language_requirements_book_video_original_and_prompts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     manager = Common(_config())
-    assert asyncio.run(manager.check_language_requirements(_meta(tmp_path, category="MUSIC"), "TEST", ["English"], check_audio=True))
-    assert asyncio.run(manager.check_language_requirements(_meta(tmp_path, category="BOOK", book_language="English"), "TEST", ["English"], check_audio=True))
-    assert asyncio.run(manager.check_language_requirements(_meta(tmp_path, category="BOOK", book_language=""), "TEST", ["English"], check_audio=True))
+    assert asyncio.run(
+        manager.check_language_requirements(
+            _meta(tmp_path, category="MUSIC"),
+            "TEST",
+            ["English"],
+            check_audio=True,
+        )
+    )
+    assert asyncio.run(
+        manager.check_language_requirements(
+            _meta(tmp_path, category="BOOK", book_language="English"),
+            "TEST",
+            ["English"],
+            check_audio=True,
+        )
+    )
+    assert asyncio.run(
+        manager.check_language_requirements(
+            _meta(tmp_path, category="BOOK", book_language=""),
+            "TEST",
+            ["English"],
+            check_audio=True,
+        )
+    )
 
     manager.prompt_user_for_confirmation = AsyncMock(return_value=True)  # type: ignore[method-assign]
-    assert asyncio.run(manager.check_language_requirements(_meta(tmp_path, category="BOOK", book_language="French", unattended=False), "TEST", ["English"], check_audio=True))
+    assert asyncio.run(
+        manager.check_language_requirements(
+            _meta(
+                tmp_path,
+                category="BOOK",
+                book_language="French",
+                unattended=False,
+            ),
+            "TEST",
+            ["English"],
+            check_audio=True,
+        )
+    )
     assert not asyncio.run(
         manager.check_language_requirements(
             _meta(tmp_path, category="BOOK", book_language="French"),
@@ -657,14 +1097,30 @@ def test_language_requirements_book_video_original_and_prompts(tmp_path: Path, m
     )
 
     process = AsyncMock()
-    monkeypatch.setattr(common.languages_manager, "process_desc_language", process)
-    meta = _meta(tmp_path, language_checked=False, audio_languages=["English"], subtitle_languages=["French"])
-    assert asyncio.run(manager.check_language_requirements(meta, "TEST", ["English"], check_audio=True))
+    monkeypatch.setattr(
+        common.languages_manager, "process_desc_language", process
+    )
+    meta = _meta(
+        tmp_path,
+        language_checked=False,
+        audio_languages=["English"],
+        subtitle_languages=["French"],
+    )
+    assert asyncio.run(
+        manager.check_language_requirements(
+            meta, "TEST", ["English"], check_audio=True
+        )
+    )
     process.assert_awaited_once()
 
     assert asyncio.run(
         manager.check_language_requirements(
-            _meta(tmp_path, language_checked=True, audio_languages=["English"], subtitle_languages=["English"]),
+            _meta(
+                tmp_path,
+                language_checked=True,
+                audio_languages=["English"],
+                subtitle_languages=["English"],
+            ),
             "TEST",
             ["English"],
             check_audio=True,
@@ -674,7 +1130,12 @@ def test_language_requirements_book_video_original_and_prompts(tmp_path: Path, m
     )
     assert not asyncio.run(
         manager.check_language_requirements(
-            _meta(tmp_path, language_checked=True, audio_languages=["French"], subtitle_languages=[]),
+            _meta(
+                tmp_path,
+                language_checked=True,
+                audio_languages=["French"],
+                subtitle_languages=[],
+            ),
             "TEST",
             ["English"],
             check_audio=True,
@@ -684,7 +1145,13 @@ def test_language_requirements_book_video_original_and_prompts(tmp_path: Path, m
         )
     )
 
-    original = _meta(tmp_path, language_checked=True, original_language="French", audio_languages=["French"], subtitle_languages=["English"])
+    original = _meta(
+        tmp_path,
+        language_checked=True,
+        original_language="French",
+        audio_languages=["French"],
+        subtitle_languages=["English"],
+    )
     assert asyncio.run(
         manager.check_language_requirements(
             original,
@@ -708,7 +1175,13 @@ def test_language_requirements_book_video_original_and_prompts(tmp_path: Path, m
         )
     )
 
-    required = _meta(tmp_path, language_checked=True, original_language="French", audio_languages=["English"], debug=True)
+    required = _meta(
+        tmp_path,
+        language_checked=True,
+        original_language="French",
+        audio_languages=["English"],
+        debug=True,
+    )
     assert not asyncio.run(
         manager.check_language_requirements(
             required,
@@ -733,40 +1206,108 @@ def test_language_requirements_book_video_original_and_prompts(tmp_path: Path, m
         )
     )
 
-    assert asyncio.run(manager.check_language_requirements(_meta(tmp_path, language_checked=True), "TEST", [], check_audio=False, check_subtitle=False))
+    assert asyncio.run(
+        manager.check_language_requirements(
+            _meta(tmp_path, language_checked=True),
+            "TEST",
+            [],
+            check_audio=False,
+            check_subtitle=False,
+        )
+    )
 
-    monkeypatch.setattr(manager, "_build_language_alias_lookup", lambda: (_ for _ in ()).throw(RuntimeError("bad language")))
-    assert not asyncio.run(manager.check_language_requirements(_meta(tmp_path, language_checked=True), "TEST", ["English"], check_audio=True))
+    monkeypatch.setattr(
+        manager,
+        "_build_language_alias_lookup",
+        lambda: (_ for _ in ()).throw(RuntimeError("bad language")),
+    )
+    assert not asyncio.run(
+        manager.check_language_requirements(
+            _meta(tmp_path, language_checked=True),
+            "TEST",
+            ["English"],
+            check_audio=True,
+        )
+    )
 
 
-def test_misc_common_outputs_nzb_and_bdinfo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    manager = Common({**_config(), "USENET": {"archive_password": "secret", "skip_archive": False}})
-    meta = _meta(tmp_path, resolution="1080p", audio="AAC 2.0", video_bitrate=5000, audio_bitrate=192)
-    path = asyncio.run(manager.save_html_file(meta, "TEST", "<b>html</b>", "-page"))
+def test_misc_common_outputs_nzb_and_bdinfo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = Common(
+        {
+            **_config(),
+            "USENET": {"archive_password": "secret", "skip_archive": False},
+        }
+    )
+    meta = _meta(
+        tmp_path,
+        resolution="1080p",
+        audio="AAC 2.0",
+        video_bitrate=5000,
+        audio_bitrate=192,
+    )
+    path = asyncio.run(
+        manager.save_html_file(meta, "TEST", "<b>html</b>", "-page")
+    )
     assert Path(path).read_text(encoding="utf-8") == "<b>html</b>"
-    assert manager.get_small_description(meta) == "1080p @ 5000 kbps - AAC 2.0 @ 192 kbps"
+    assert (
+        manager.get_small_description(meta)
+        == "1080p @ 5000 kbps - AAC 2.0 @ 192 kbps"
+    )
     meta.video_bitrate = None
     meta.audio_bitrate = None
     assert "0 kbps" in manager.get_small_description(meta)
 
-    assert manager.portuguese_title_capitalization("o senhor dos anéis: a sociedade do anel") == "O Senhor dos Anéis: A Sociedade do Anel"
+    assert (
+        manager.portuguese_title_capitalization(
+            "o senhor dos anéis: a sociedade do anel"
+        )
+        == "O Senhor dos Anéis: A Sociedade do Anel"
+    )
     assert manager.portuguese_title_capitalization("---") == "---"
     assert manager.has_bdinfo("DISC INFO:\nDisc Title: X")
     assert not manager.has_bdinfo("")
     assert not manager.has_bdinfo(123)  # type: ignore[arg-type]
 
-    assert not asyncio.run(manager.check_nzb_file("TEST", _meta(tmp_path, nzb_path="")))
+    assert not asyncio.run(
+        manager.check_nzb_file("TEST", _meta(tmp_path, nzb_path=""))
+    )
     nzb = tmp_path / "release.nzb"
     nzb.write_text("nzb", encoding="utf-8")
     verify = AsyncMock(return_value=False)
     monkeypatch.setattr(common, "verify_nzb_has_password", verify)
-    assert not asyncio.run(manager.check_nzb_file("TEST", _meta(tmp_path, uuid="nzb", nzb_path=str(nzb), archive_password="".join(("sec", "ret")))))
+    assert not asyncio.run(
+        manager.check_nzb_file(
+            "TEST",
+            _meta(
+                tmp_path,
+                uuid="nzb",
+                nzb_path=str(nzb),
+                archive_password="".join(("sec", "ret")),
+            ),
+        )
+    )
     verify.return_value = True
-    assert asyncio.run(manager.check_nzb_file("TEST", _meta(tmp_path, uuid="nzb-ok", nzb_path=str(nzb), archive_password="".join(("sec", "ret")))))
+    assert asyncio.run(
+        manager.check_nzb_file(
+            "TEST",
+            _meta(
+                tmp_path,
+                uuid="nzb-ok",
+                nzb_path=str(nzb),
+                archive_password="".join(("sec", "ret")),
+            ),
+        )
+    )
 
     manager.config["USENET"]["skip_archive"] = True
     verify.reset_mock()
-    assert asyncio.run(manager.check_nzb_file("TEST", _meta(tmp_path, uuid="nzb-skip", nzb_path=str(nzb))))
+    assert asyncio.run(
+        manager.check_nzb_file(
+            "TEST", _meta(tmp_path, uuid="nzb-skip", nzb_path=str(nzb))
+        )
+    )
     verify.assert_not_awaited()
 
 
@@ -799,7 +1340,9 @@ class StreamResponse:
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
             response = httpx.Response(self.status_code, request=self.request)
-            raise httpx.HTTPStatusError("failed", request=self.request, response=response)
+            raise httpx.HTTPStatusError(
+                "failed", request=self.request, response=response
+            )
 
     async def aiter_bytes(self):
         for chunk in self.chunks:
@@ -838,13 +1381,23 @@ class StreamClient:
         cls.instances = []
 
 
-def test_download_tracker_torrent_success_redirect_hash_cross_and_limits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_download_tracker_torrent_success_redirect_hash_cross_and_limits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     manager = Common(_config())
     meta = _meta(tmp_path)
     monkeypatch.setattr(common.httpx, "AsyncClient", StreamClient)
 
-    StreamClient.reset(StreamResponse(chunks=[b"abc", b"def"], headers={"content-length": "6"}))
-    result = asyncio.run(manager.download_tracker_torrent(meta, "TEST", downurl="https://tracker.example/file"))
+    StreamClient.reset(
+        StreamResponse(
+            chunks=[b"abc", b"def"], headers={"content-length": "6"}
+        )
+    )
+    result = asyncio.run(
+        manager.download_tracker_torrent(
+            meta, "TEST", downurl="https://tracker.example/file"
+        )
+    )
     assert result and Path(result).read_bytes() == b"abcdef"
 
     StreamClient.reset(
@@ -889,7 +1442,11 @@ def test_download_tracker_torrent_success_redirect_hash_cross_and_limits(tmp_pat
     )
 
     for uuid, response, max_size in (
-        ("header-too-large", StreamResponse(chunks=[b"x"], headers={"content-length": "20"}), 5),
+        (
+            "header-too-large",
+            StreamResponse(chunks=[b"x"], headers={"content-length": "20"}),
+            5,
+        ),
         ("stream-too-large", StreamResponse(chunks=[b"123", b"456"]), 5),
     ):
         target = _meta(tmp_path, uuid=uuid)
@@ -909,10 +1466,15 @@ def test_download_tracker_torrent_success_redirect_hash_cross_and_limits(tmp_pat
         assert not (tmp_path / "tmp" / uuid / "[TEST].torrent").exists()
 
 
-def test_download_tracker_torrent_security_redirect_errors_cookie_and_no_url(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_download_tracker_torrent_security_redirect_errors_cookie_and_no_url(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     manager = Common(_config())
     monkeypatch.setattr(common.httpx, "AsyncClient", StreamClient)
-    assert asyncio.run(manager.download_tracker_torrent(_meta(tmp_path), "TEST")) is None
+    assert (
+        asyncio.run(manager.download_tracker_torrent(_meta(tmp_path), "TEST"))
+        is None
+    )
 
     invalid_urls = (
         "http://tracker.example/file",
@@ -947,7 +1509,12 @@ def test_download_tracker_torrent_security_redirect_errors_cookie_and_no_url(tmp
         is None
     )
 
-    StreamClient.reset(*[StreamResponse(redirect=True, headers={"location": "/next"}) for _ in range(6)])
+    StreamClient.reset(
+        *[
+            StreamResponse(redirect=True, headers={"location": "/next"})
+            for _ in range(6)
+        ]
+    )
     assert (
         asyncio.run(
             manager.download_tracker_torrent(
@@ -964,7 +1531,9 @@ def test_download_tracker_torrent_security_redirect_errors_cookie_and_no_url(tmp
         def __init__(self, _config: dict[str, Any]) -> None:
             pass
 
-        async def load_session_cookies(self, _meta: Meta, _tracker: str) -> dict[str, str]:
+        async def load_session_cookies(
+            self, _meta: Meta, _tracker: str
+        ) -> dict[str, str]:
             return {"session": "cookie"}
 
     import src.integrations.trackers.cookie_auth as cookie_auth
@@ -979,10 +1548,14 @@ def test_download_tracker_torrent_security_redirect_errors_cookie_and_no_url(tmp
             use_cookie_auth=True,
         )
     )
-    assert StreamClient.instances[-1].kwargs["cookies"] == {"session": "cookie"}
+    assert StreamClient.instances[-1].kwargs["cookies"] == {
+        "session": "cookie"
+    }
 
     class BrokenCookie(CookieDouble):
-        async def load_session_cookies(self, _meta: Meta, _tracker: str) -> dict[str, str]:
+        async def load_session_cookies(
+            self, _meta: Meta, _tracker: str
+        ) -> dict[str, str]:
             raise RuntimeError("cookie failed")
 
     monkeypatch.setattr(cookie_auth, "CookieValidator", BrokenCookie)
@@ -998,7 +1571,9 @@ def test_download_tracker_torrent_security_redirect_errors_cookie_and_no_url(tmp
     assert StreamClient.instances[-1].kwargs["cookies"] is None
 
 
-def test_remaining_language_helper_and_portuguese_branches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_remaining_language_helper_and_portuguese_branches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     manager = Common(_config())
     lookup = manager._build_language_alias_lookup()
     expanded = manager._expand_language_candidates("en", lookup)
@@ -1008,17 +1583,29 @@ def test_remaining_language_helper_and_portuguese_branches(tmp_path: Path, monke
 
     forced = tmp_path / "Movie.pt-BR.forced.srt"
     forced.write_text("text", encoding="utf-8")
-    assert asyncio.run(manager.has_portuguese_external_subtitle(_meta(tmp_path, subtitle_files=[str(forced)])))
+    assert asyncio.run(
+        manager.has_portuguese_external_subtitle(
+            _meta(tmp_path, subtitle_files=[str(forced)])
+        )
+    )
 
     manager.has_portuguese_external_subtitle = AsyncMock(return_value=True)  # type: ignore[method-assign]
-    assert asyncio.run(manager.check_portuguese_video_requirements(_meta(tmp_path), "TEST"))
+    assert asyncio.run(
+        manager.check_portuguese_video_requirements(_meta(tmp_path), "TEST")
+    )
     manager.has_portuguese_external_subtitle = AsyncMock(return_value=False)  # type: ignore[method-assign]
     manager.check_language_requirements = AsyncMock(return_value=True)  # type: ignore[method-assign]
-    assert asyncio.run(manager.check_portuguese_video_requirements(_meta(tmp_path, uuid="lang-true"), "TEST"))
+    assert asyncio.run(
+        manager.check_portuguese_video_requirements(
+            _meta(tmp_path, uuid="lang-true"), "TEST"
+        )
+    )
 
     original_read = Path.read_text
 
-    def always_unicode_error(_path: Path, *_args: object, **_kwargs: object) -> str:
+    def always_unicode_error(
+        _path: Path, *_args: object, **_kwargs: object
+    ) -> str:
         raise UnicodeError("decode")
 
     monkeypatch.setattr(Path, "read_text", always_unicode_error)
@@ -1026,20 +1613,43 @@ def test_remaining_language_helper_and_portuguese_branches(tmp_path: Path, monke
     monkeypatch.setattr(Path, "read_text", original_read)
 
 
-def test_region_distributor_string_ids_and_invalid_payload(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_region_distributor_string_ids_and_invalid_payload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     manager = Common({"TRACKERS": {"TEST": {"api_key": "key"}}})
-    assert asyncio.run(manager.unit3d_region_ids(reverse=True, region_id="14")) == "AUS"  # type: ignore[arg-type]
-    assert asyncio.run(manager.unit3d_region_ids(reverse=True, region_id="bad")) == ""  # type: ignore[arg-type]
+    assert (
+        asyncio.run(manager.unit3d_region_ids(reverse=True, region_id="14"))
+        == "AUS"
+    )  # type: ignore[arg-type]
+    assert (
+        asyncio.run(manager.unit3d_region_ids(reverse=True, region_id="bad"))
+        == ""
+    )  # type: ignore[arg-type]
     distributor_id = int(asyncio.run(manager.unit3d_distributor_ids("WARNER")))
-    assert asyncio.run(manager.unit3d_distributor_ids(reverse=True, distributor_id=str(distributor_id))).startswith("WARNER")  # type: ignore[arg-type]
-    assert asyncio.run(manager.unit3d_distributor_ids(reverse=True, distributor_id="bad")) == ""  # type: ignore[arg-type]
+    assert asyncio.run(
+        manager.unit3d_distributor_ids(
+            reverse=True, distributor_id=str(distributor_id)
+        )
+    ).startswith("WARNER")  # type: ignore[arg-type]
+    assert (
+        asyncio.run(
+            manager.unit3d_distributor_ids(reverse=True, distributor_id="bad")
+        )
+        == ""
+    )  # type: ignore[arg-type]
 
     monkeypatch.setattr(common.httpx, "AsyncClient", JsonClient)
     JsonClient.reset(JsonResponse([]))
-    asyncio.run(manager.unit3d_region_distributor(_meta(tmp_path), "TEST", "https://tracker/"))
+    asyncio.run(
+        manager.unit3d_region_distributor(
+            _meta(tmp_path), "TEST", "https://tracker/"
+        )
+    )
 
 
-def test_unit3d_direct_disc_region_single_filename(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_unit3d_direct_disc_region_single_filename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     manager = Common({"TRACKERS": {"TEST": {"api_key": "key"}}})
     monkeypatch.setattr(common.httpx, "AsyncClient", JsonClient)
     manager.unit3d_region_ids = AsyncMock(return_value="USA")  # type: ignore[method-assign]
@@ -1057,11 +1667,21 @@ def test_unit3d_direct_disc_region_single_filename(tmp_path: Path, monkeypatch: 
         )
     )
     meta = _meta(tmp_path, is_disc="DVD", region="", distributor="")
-    result = asyncio.run(manager.unit3d_torrent_info("TEST", "https://torrent/", "https://search", meta, id=1))
-    assert result[8] == "only.mkv" and meta.region == "USA" and meta.distributor == "Warner"
+    result = asyncio.run(
+        manager.unit3d_torrent_info(
+            "TEST", "https://torrent/", "https://search", meta, id=1
+        )
+    )
+    assert (
+        result[8] == "only.mkv"
+        and meta.region == "USA"
+        and meta.distributor == "Warner"
+    )
 
 
-def test_ptgen_attended_imdb_failure_and_second_stage_retry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ptgen_attended_imdb_failure_and_second_stage_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     manager = Common(_config())
     monkeypatch.setattr(common.httpx, "AsyncClient", JsonClient)
 
@@ -1069,7 +1689,13 @@ def test_ptgen_attended_imdb_failure_and_second_stage_retry(tmp_path: Path, monk
         return "https://douban/manual"
 
     monkeypatch.setattr(common, "prompt_in_thread", answer)
-    meta = _meta(tmp_path, imdb_id=1, unattended=False, imdb_info={}, artwork_url="cover")
+    meta = _meta(
+        tmp_path,
+        imdb_id=1,
+        unattended=False,
+        imdb_info={},
+        artwork_url="cover",
+    )
     JsonClient.reset(
         JsonResponse({"data": []}),
         JsonResponse({"error": "retry"}),
@@ -1077,25 +1703,48 @@ def test_ptgen_attended_imdb_failure_and_second_stage_retry(tmp_path: Path, monk
     )
     assert "Recovered" in asyncio.run(manager.ptgen(meta, ptgen_retry=1))
 
-    meta = _meta(tmp_path, uuid="ptgen-json-error", imdb_id=1, unattended=True, unattended_confirm=False)
-    JsonClient.reset(JsonResponse(ValueError("bad json")), JsonResponse({"data": []}), JsonResponse({"format": "Okay"}))
+    meta = _meta(
+        tmp_path,
+        uuid="ptgen-json-error",
+        imdb_id=1,
+        unattended=True,
+        unattended_confirm=False,
+    )
+    JsonClient.reset(
+        JsonResponse(ValueError("bad json")),
+        JsonResponse({"data": []}),
+        JsonResponse({"format": "Okay"}),
+    )
     assert "Okay" in asyncio.run(manager.ptgen(meta, ptgen_retry=1))
 
 
-def test_mediainfo_parser_final_section_and_bdmv_missing_export(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_mediainfo_parser_final_section_and_bdmv_missing_export(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     parser = Common.MediaInfoParser()
-    assert parser.parse_mediainfo("Audio\nFormat : AAC")["audio"] == [{"format": "AAC"}]
-    assert parser.parse_mediainfo("General\nFormat : Matroska")["general"] == {"format": "Matroska"}
+    assert parser.parse_mediainfo("Audio\nFormat : AAC")["audio"] == [
+        {"format": "AAC"}
+    ]
+    assert parser.parse_mediainfo("General\nFormat : Matroska")["general"] == {
+        "format": "Matroska"
+    }
 
     manager = Common(_config())
     playlist = tmp_path / "playlist.mpls"
     playlist.write_bytes(b"playlist")
-    meta = _meta(tmp_path, uuid="bd-missing-export", is_disc="BDMV", discs=[{"playlists": [{"path": str(playlist), "items": []}]}])
+    meta = _meta(
+        tmp_path,
+        uuid="bd-missing-export",
+        is_disc="BDMV",
+        discs=[{"playlists": [{"path": str(playlist), "items": []}]}],
+    )
     monkeypatch.setattr(common, "export_info", AsyncMock(return_value=None))
     assert asyncio.run(manager.get_bdmv_mediainfo(meta)) == ""
 
 
-def test_remaining_language_requirement_and_title_branches(tmp_path: Path) -> None:
+def test_remaining_language_requirement_and_title_branches(
+    tmp_path: Path,
+) -> None:
     manager = Common(_config())
     original_list = _meta(
         tmp_path,
@@ -1132,8 +1781,22 @@ def test_remaining_language_requirement_and_title_branches(tmp_path: Path) -> No
         )
     )
 
-    failure = _meta(tmp_path, uuid="or-failure", language_checked=True, audio_languages=["French"], subtitle_languages=[])
+    failure = _meta(
+        tmp_path,
+        uuid="or-failure",
+        language_checked=True,
+        audio_languages=["French"],
+        subtitle_languages=[],
+    )
     manager.prompt_user_for_confirmation = AsyncMock(return_value=True)  # type: ignore[method-assign]
-    assert asyncio.run(manager.check_language_requirements(failure, "TEST", ["English"], check_audio=True, prompt_on_failure=True))
+    assert asyncio.run(
+        manager.check_language_requirements(
+            failure,
+            "TEST",
+            ["English"],
+            check_audio=True,
+            prompt_on_failure=True,
+        )
+    )
 
     assert "!!!" in manager.portuguese_title_capitalization("!!! palavra")

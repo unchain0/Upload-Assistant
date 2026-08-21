@@ -16,9 +16,15 @@ from src.domain_models.release import Meta
 from src.domain_models.release_description import base_description
 from src.integrations.external_apis.tmdb import TmdbManager
 from src.integrations.media.language_adapter import languages_manager
-from src.integrations.observability.runtime_support import logger, prompt_in_thread
+from src.integrations.observability.runtime_support import (
+    logger,
+    prompt_in_thread,
+)
 from src.integrations.trackers.common import Common
-from src.integrations.trackers.cookie_auth import CookieAuthUploader, CookieValidator
+from src.integrations.trackers.cookie_auth import (
+    CookieAuthUploader,
+    CookieValidator,
+)
 from src.integrations.trackers.description_builder import DescriptionBuilder
 
 
@@ -70,10 +76,18 @@ class AmigosShare:
     supported_categories = ("TV", "MOVIE", "BOOK", "GAME")
     tracker_urls = ("amigos-share.club",)
     allows_bloated_audio = True
-    _ARCHIVE_EXTENSIONS: ClassVar[frozenset[str]] = frozenset({".7z", ".rar", ".r00", ".r01", ".zip"})
-    _VIDEO_EXTENSIONS: ClassVar[frozenset[str]] = frozenset({".avi", ".m2ts", ".mkv", ".mp4", ".mpg", ".mpeg", ".ts", ".vob"})
-    _TV_ENDED_STATUSES: ClassVar[frozenset[str]] = frozenset({"ended", "canceled", "cancelled", "finished", "completed"})
-    _TV_ONGOING_STATUSES: ClassVar[frozenset[str]] = frozenset({"returning", "continuing", "in production", "upcoming", "ongoing"})
+    _ARCHIVE_EXTENSIONS: ClassVar[frozenset[str]] = frozenset(
+        {".7z", ".rar", ".r00", ".r01", ".zip"}
+    )
+    _VIDEO_EXTENSIONS: ClassVar[frozenset[str]] = frozenset(
+        {".avi", ".m2ts", ".mkv", ".mp4", ".mpg", ".mpeg", ".ts", ".vob"}
+    )
+    _TV_ENDED_STATUSES: ClassVar[frozenset[str]] = frozenset(
+        {"ended", "canceled", "cancelled", "finished", "completed"}
+    )
+    _TV_ONGOING_STATUSES: ClassVar[frozenset[str]] = frozenset(
+        {"returning", "continuing", "in production", "upcoming", "ongoing"}
+    )
     tmdb_localization_requirements: ClassVar[dict[str, dict[str, str]]] = {
         "pt-BR": {
             "main": "credits,videos,content_ratings",
@@ -90,11 +104,20 @@ class AmigosShare:
         self.common = Common(config)
         self.cookie_validator = CookieValidator(config)
         self.cookie_auth_uploader = CookieAuthUploader(config)
-        self.layout = self.config["TRACKERS"][self.tracker].get("custom_layout", "2")
-        self.session = httpx.AsyncClient(headers={"User-Agent": f"Upload-Assistant ({platform.system()} {platform.release()})"}, timeout=60.0)
+        self.layout = self.config["TRACKERS"][self.tracker].get(
+            "custom_layout", "2"
+        )
+        self.session = httpx.AsyncClient(
+            headers={
+                "User-Agent": f"Upload-Assistant ({platform.system()} {platform.release()})"
+            },
+            timeout=60.0,
+        )
 
     async def validate_credentials(self, meta: Meta) -> bool:
-        cookie_jar = await self.cookie_validator.load_session_cookies(meta, self.tracker)
+        cookie_jar = await self.cookie_validator.load_session_cookies(
+            meta, self.tracker
+        )
         if cookie_jar is not None:
             self.session.cookies = cast(Any, cookie_jar)
             return True
@@ -104,7 +127,9 @@ class AmigosShare:
         if meta.category in ("MOVIE", "TV"):
             ptbr_data = meta.tmdb_localized_data.get("pt-BR")
             if not ptbr_data or not ptbr_data.get("main"):
-                raise RuntimeError(f"{self.tracker}: Missing TMDB localized data (pt-BR).")
+                raise RuntimeError(
+                    f"{self.tracker}: Missing TMDB localized data (pt-BR)."
+                )
 
     async def get_container(self, meta: Meta) -> str | None:
         if meta.category == "BOOK":
@@ -134,7 +159,11 @@ class AmigosShare:
             return "15"
 
         try:
-            general_track = next(t for t in meta.mediainfo["media"]["track"] if t["@type"] == "General")
+            general_track = next(
+                t
+                for t in meta.mediainfo["media"]["track"]
+                if t["@type"] == "General"
+            )
             file_extension = general_track.get("FileExtension", "").lower()
             if file_extension == "mkv":
                 return "6"
@@ -161,7 +190,14 @@ class AmigosShare:
             return self.get_game_type(meta)
 
         bd_disc_map = {"BD25": "40", "BD50": "41", "BD66": "42", "BD100": "43"}
-        standard_map = {"ENCODE": "9", "REMUX": "39", "WEBDL": "23", "WEBRIP": "38", "BDRIP": "8", "DVDRIP": "3"}
+        standard_map = {
+            "ENCODE": "9",
+            "REMUX": "39",
+            "WEBDL": "23",
+            "WEBRIP": "38",
+            "BDRIP": "8",
+            "DVDRIP": "3",
+        }
         dvd_map = {"DVD5": "45", "DVD9": "46"}
 
         if meta.type == "DISC":
@@ -196,10 +232,20 @@ class AmigosShare:
         if meta.anime:
             type_ = "116" if meta.category == "MOVIE" else "118"
 
-            original_language = meta.original_language.lower() if meta.original_language else ""
-            anime_language = self.anime_language_map.get(original_language, "6")
+            original_language = (
+                meta.original_language.lower()
+                if meta.original_language
+                else ""
+            )
+            anime_language = self.anime_language_map.get(
+                original_language, "6"
+            )
 
-            lang = "8" if await self.get_audio(meta) in ("2", "3", "4") else self.language_map.get(original_language, "11")
+            lang = (
+                "8"
+                if await self.get_audio(meta) in ("2", "3", "4")
+                else self.language_map.get(original_language, "11")
+            )
 
             return {"type": type_, "idioma": anime_language, "lang": lang}
 
@@ -216,11 +262,19 @@ class AmigosShare:
 
         has_pt_subs = (await self.get_subtitle(meta)) == "Embutida"
 
-        meta_audio_languages = meta.audio_languages if meta.audio_languages else []
+        meta_audio_languages = (
+            meta.audio_languages if meta.audio_languages else []
+        )
         audio_languages = {lang.lower() for lang in meta_audio_languages}
-        has_pt_audio = any(lang in portuguese_languages for lang in audio_languages)
+        has_pt_audio = any(
+            lang in portuguese_languages for lang in audio_languages
+        )
 
-        original_lang = "" if not meta.original_language else meta.original_language.lower()
+        original_lang = (
+            ""
+            if not meta.original_language
+            else meta.original_language.lower()
+        )
         is_original_pt = original_lang in portuguese_languages
 
         if has_pt_audio:
@@ -236,7 +290,9 @@ class AmigosShare:
     async def get_subtitle(self, meta: Meta) -> str:
         portuguese_languages = {"portuguese", "português", "pt"}
 
-        meta_subtitle_languages = meta.subtitle_languages if meta.subtitle_languages else []
+        meta_subtitle_languages = (
+            meta.subtitle_languages if meta.subtitle_languages else []
+        )
         found_languages = {lang.lower() for lang in meta_subtitle_languages}
 
         if any(lang in portuguese_languages for lang in found_languages):
@@ -245,7 +301,9 @@ class AmigosShare:
 
     async def get_resolution(self, meta: Meta) -> dict[str, str]:
         width = str(meta.video_width) if meta.video_width is not None else ""
-        height = str(meta.video_height) if meta.video_height is not None else ""
+        height = (
+            str(meta.video_height) if meta.video_height is not None else ""
+        )
         return {"width": width, "height": height}
 
     async def get_video_codec(self, meta: Meta) -> str:
@@ -334,20 +392,46 @@ class AmigosShare:
         name = meta.title
         base_name = name
         original_name_title = (
-            meta.tmdb_localized_data.get("pt-BR", {}).get("main", {}).get("original_name")
-            or meta.tmdb_localized_data.get("pt-BR", {}).get("main", {}).get("original_title")
+            meta.tmdb_localized_data.get("pt-BR", {})
+            .get("main", {})
+            .get("original_name")
+            or meta.tmdb_localized_data.get("pt-BR", {})
+            .get("main", {})
+            .get("original_title")
             or ""
         )
 
         if meta.category == "TV":
-            tv_title_ptbr = meta.tmdb_localized_data.get("pt-BR", {}).get("main", {}).get("name")
-            if tv_title_ptbr and tv_title_ptbr.lower() != name.lower() and (not original_name_title or tv_title_ptbr.lower() != original_name_title.lower()):
+            tv_title_ptbr = (
+                meta.tmdb_localized_data.get("pt-BR", {})
+                .get("main", {})
+                .get("name")
+            )
+            if (
+                tv_title_ptbr
+                and tv_title_ptbr.lower() != name.lower()
+                and (
+                    not original_name_title
+                    or tv_title_ptbr.lower() != original_name_title.lower()
+                )
+            ):
                 base_name = f"{tv_title_ptbr} ({name})"
 
             return f"{base_name} - {meta.season}{meta.episode}"
 
-        movie_title_ptbr = meta.tmdb_localized_data.get("pt-BR", {}).get("main", {}).get("title")
-        if movie_title_ptbr and movie_title_ptbr.lower() != name.lower() and (not original_name_title or movie_title_ptbr.lower() != original_name_title.lower()):
+        movie_title_ptbr = (
+            meta.tmdb_localized_data.get("pt-BR", {})
+            .get("main", {})
+            .get("title")
+        )
+        if (
+            movie_title_ptbr
+            and movie_title_ptbr.lower() != name.lower()
+            and (
+                not original_name_title
+                or movie_title_ptbr.lower() != original_name_title.lower()
+            )
+        ):
             base_name = f"{movie_title_ptbr} ({name})"
 
         return f"{base_name}"
@@ -361,7 +445,9 @@ class AmigosShare:
 
         # Fallback to poster URL if remote
         poster_url = meta.artwork_url
-        if isinstance(poster_url, str) and poster_url.startswith(("http://", "https://")):
+        if isinstance(poster_url, str) and poster_url.startswith(
+            ("http://", "https://")
+        ):
             return poster_url
 
         return ""
@@ -388,7 +474,9 @@ class AmigosShare:
 
         # Book details using DescriptionBuilder
         builder = DescriptionBuilder(self.tracker, self.config)
-        book_section = builder._build_book_desc_section(meta, header_size=3, table=False)
+        book_section = builder._build_book_desc_section(
+            meta, header_size=3, table=False
+        )
         if book_section:
             description_parts.append(book_section)
             description_parts.append("")
@@ -408,14 +496,20 @@ class AmigosShare:
             description_parts.append(desc)
             description_parts.append("")
 
-        custom_description_header = self.config["DEFAULT"].get("custom_description_header", "")
+        custom_description_header = self.config["DEFAULT"].get(
+            "custom_description_header", ""
+        )
         if custom_description_header:
             description_parts.append(custom_description_header + "\n")
 
-        description_parts.append(f"\n[center][url=https://github.com/wastaken7/Upload-Assistant]Compartilhado com {meta.ua_name} {meta.current_version} (fork)[/url][/center]")
+        description_parts.append(
+            f"\n[center][url=https://github.com/wastaken7/Upload-Assistant]Compartilhado com {meta.ua_name} {meta.current_version} (fork)[/url][/center]"
+        )
 
         final_desc_path = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{self.tracker}]DESCRIPTION.txt"
-        async with aiofiles.open(final_desc_path, "w", encoding="utf-8") as descfile:
+        async with aiofiles.open(
+            final_desc_path, "w", encoding="utf-8"
+        ) as descfile:
             final_description = "\n".join(filter(None, description_parts))
             await descfile.write(final_description)
 
@@ -434,7 +528,9 @@ class AmigosShare:
         if not user_layout:
             return "[center]Error: The description layout could not be loaded.[/center]"
 
-        layout_image = {k: v for k, v in user_layout.items() if k.startswith("BARRINHA_")}
+        layout_image = {
+            k: v for k, v in user_layout.items() if k.startswith("BARRINHA_")
+        }
         description_parts = ["[center]"]
 
         async def append_section(key: str, content: str | None) -> None:
@@ -443,27 +539,53 @@ class AmigosShare:
                 description_parts.append(f"\n{content}\n")
 
         # Title
-        description_parts.extend([await self.format_image(layout_image.get(f"BARRINHA_CUSTOM_T_{i}")) for i in range(1, 4)])
-        description_parts.append(f"\n{await self.format_image(layout_image.get('BARRINHA_APRESENTA'))}\n")
-        description_parts.append(f"\n[size=3]{await self.get_name(meta)}[/size]\n")
+        description_parts.extend(
+            [
+                await self.format_image(
+                    layout_image.get(f"BARRINHA_CUSTOM_T_{i}")
+                )
+                for i in range(1, 4)
+            ]
+        )
+        description_parts.append(
+            f"\n{await self.format_image(layout_image.get('BARRINHA_APRESENTA'))}\n"
+        )
+        description_parts.append(
+            f"\n[size=3]{await self.get_name(meta)}[/size]\n"
+        )
 
         # Poster
         localized_tmdb = dict(meta.tmdb_localized_data.get("pt-BR", {}))
         season_tmdb = dict(localized_tmdb.get("season", {})) or {}
         main_tmdb = dict(localized_tmdb.get("main", {})) or {}
         episode_tmdb = dict(localized_tmdb.get("episode", {})) or {}
-        poster_path = season_tmdb.get("poster_path") or main_tmdb.get("poster_path") or meta.tmdb_poster_path
-        poster = f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else ""
+        poster_path = (
+            season_tmdb.get("poster_path")
+            or main_tmdb.get("poster_path")
+            or meta.tmdb_poster_path
+        )
+        poster = (
+            f"https://image.tmdb.org/t/p/w500{poster_path}"
+            if poster_path
+            else ""
+        )
         await append_section("BARRINHA_CAPA", await self.format_image(poster))
 
         # Overview
-        overview: str = season_tmdb.get("overview", "") or main_tmdb.get("overview", "")
+        overview: str = season_tmdb.get("overview", "") or main_tmdb.get(
+            "overview", ""
+        )
         if not overview:
             if meta.unattended and not meta.unattended_confirm:
-                logger.info(f"{self.tracker}: [yellow]No TMDb overview was found in unattended mode. Skipping upload to {self.tracker}.[/yellow]")
+                logger.info(
+                    f"{self.tracker}: [yellow]No TMDb overview was found in unattended mode. Skipping upload to {self.tracker}.[/yellow]"
+                )
                 meta.skipping = f"{self.tracker}"
                 return ""
-            user_input_raw = await prompt_in_thread(cli_ui.ask_string, f"{self.tracker}: No TMDb overview was found. Enter one manually.")
+            user_input_raw = await prompt_in_thread(
+                cli_ui.ask_string,
+                f"{self.tracker}: No TMDb overview was found. Enter one manually.",
+            )
             user_input = (user_input_raw or "").strip()
             overview = user_input or "Sinopse não encontrada."
         await append_section("BARRINHA_SINOPSE", overview)
@@ -476,62 +598,124 @@ class AmigosShare:
 
             if episode_name and episode_overview and still_path:
                 still_url = f"https://image.tmdb.org/t/p/w300{still_path}"
-                description_parts.append(f"\n[size=4][b]Episódio:[/b] {episode_name}[/size]\n")
-                description_parts.append(f"\n{await self.format_image(still_url)}\n\n{episode_overview}\n")
+                description_parts.append(
+                    f"\n[size=4][b]Episódio:[/b] {episode_name}[/size]\n"
+                )
+                description_parts.append(
+                    f"\n{await self.format_image(still_url)}\n\n{episode_overview}\n"
+                )
 
         # Technical Sheet
         if main_tmdb:
-            runtime = episode_tmdb.get("runtime") or main_tmdb.get("runtime") or meta.runtime
+            runtime = (
+                episode_tmdb.get("runtime")
+                or main_tmdb.get("runtime")
+                or meta.runtime
+            )
             formatted_runtime = None
             if runtime:
                 h, m = divmod(runtime, 60)
-                formatted_runtime = f"{h} hora{'s' if h > 1 else ''} e {m:02d} minutos" if h > 0 else f"{m:02d} minutos"
+                formatted_runtime = (
+                    f"{h} hora{'s' if h > 1 else ''} e {m:02d} minutos"
+                    if h > 0
+                    else f"{m:02d} minutos"
+                )
 
-            release_date = episode_tmdb.get("air_date") or season_tmdb.get("air_date") if meta.category != "MOVIE" else main_tmdb.get("release_date")
+            release_date = (
+                episode_tmdb.get("air_date") or season_tmdb.get("air_date")
+                if meta.category != "MOVIE"
+                else main_tmdb.get("release_date")
+            )
 
             sheet_items = [
                 f"Duração: {formatted_runtime}" if formatted_runtime else None,
-                f"País de Origem: {', '.join(c['name'] for c in main_tmdb.get('production_countries', []))}" if main_tmdb.get("production_countries") else None,
-                f"Gêneros: {', '.join(g['name'] for g in main_tmdb.get('genres', []))}" if main_tmdb.get("genres") else None,
-                f"Data de Lançamento: {await self.format_date(release_date)}" if release_date else None,
-                f"Site: [url={main_tmdb.get('homepage')}]Clique aqui[/url]" if main_tmdb.get("homepage") else None,
+                f"País de Origem: {', '.join(c['name'] for c in main_tmdb.get('production_countries', []))}"
+                if main_tmdb.get("production_countries")
+                else None,
+                f"Gêneros: {', '.join(g['name'] for g in main_tmdb.get('genres', []))}"
+                if main_tmdb.get("genres")
+                else None,
+                f"Data de Lançamento: {await self.format_date(release_date)}"
+                if release_date
+                else None,
+                f"Site: [url={main_tmdb.get('homepage')}]Clique aqui[/url]"
+                if main_tmdb.get("homepage")
+                else None,
             ]
-            await append_section("BARRINHA_FICHA_TECNICA", "\n".join(filter(None, sheet_items)))
+            await append_section(
+                "BARRINHA_FICHA_TECNICA", "\n".join(filter(None, sheet_items))
+            )
 
         # Production Companies
         if main_tmdb and main_tmdb.get("production_companies"):
             prod_parts = ["[size=4][b]Produtoras[/b][/size]"]
             for p in main_tmdb.get("production_companies", []):
                 logo_path = p.get("logo_path")
-                logo = await self.format_image(f"https://image.tmdb.org/t/p/w45{logo_path}") if logo_path else ""
+                logo = (
+                    await self.format_image(
+                        f"https://image.tmdb.org/t/p/w45{logo_path}"
+                    )
+                    if logo_path
+                    else ""
+                )
 
-                prod_parts.append(f"{logo}[size=2] - [b]{p.get('name', '')}[/b][/size]" if logo else f"[size=2][b]{p.get('name', '')}[/b][/size]")
+                prod_parts.append(
+                    f"{logo}[size=2] - [b]{p.get('name', '')}[/b][/size]"
+                    if logo
+                    else f"[size=2][b]{p.get('name', '')}[/b][/size]"
+                )
             description_parts.append("\n" + "\n".join(prod_parts) + "\n")
 
         # Cast
         if meta.category == "MOVIE":
             main_credits = cast(dict[str, Any], main_tmdb.get("credits") or {})
-            cast_data = cast(list[dict[str, Any]], main_credits.get("cast", []))
+            cast_data = cast(
+                list[dict[str, Any]], main_credits.get("cast", [])
+            )
         elif meta.tv_pack:
-            season_credits = cast(dict[str, Any], season_tmdb.get("credits") or {})
-            cast_data = cast(list[dict[str, Any]], season_credits.get("cast", []))
+            season_credits = cast(
+                dict[str, Any], season_tmdb.get("credits") or {}
+            )
+            cast_data = cast(
+                list[dict[str, Any]], season_credits.get("cast", [])
+            )
         else:
-            episode_credits = cast(dict[str, Any], episode_tmdb.get("credits") or {})
-            cast_data = cast(list[dict[str, Any]], episode_credits.get("cast", []))
-        await append_section("BARRINHA_ELENCO", await self.build_cast_bbcode(cast_data))
+            episode_credits = cast(
+                dict[str, Any], episode_tmdb.get("credits") or {}
+            )
+            cast_data = cast(
+                list[dict[str, Any]], episode_credits.get("cast", [])
+            )
+        await append_section(
+            "BARRINHA_ELENCO", await self.build_cast_bbcode(cast_data)
+        )
 
         # Seasons
         if meta.category == "TV" and main_tmdb and main_tmdb.get("seasons"):
             seasons_content: list[str] = []
             for seasons in main_tmdb.get("seasons", []):
-                season_name = seasons.get("name", f"Temporada {seasons.get('season_number')}").strip()
-                poster_temp = await self.format_image(f"https://image.tmdb.org/t/p/w185{seasons.get('poster_path')}") if seasons.get("poster_path") else ""
-                overview_temp = f"\n\nSinopse:\n{seasons.get('overview')}" if seasons.get("overview") else ""
+                season_name = seasons.get(
+                    "name", f"Temporada {seasons.get('season_number')}"
+                ).strip()
+                poster_temp = (
+                    await self.format_image(
+                        f"https://image.tmdb.org/t/p/w185{seasons.get('poster_path')}"
+                    )
+                    if seasons.get("poster_path")
+                    else ""
+                )
+                overview_temp = (
+                    f"\n\nSinopse:\n{seasons.get('overview')}"
+                    if seasons.get("overview")
+                    else ""
+                )
 
                 inner_content_parts: list[str] = []
                 air_date = seasons.get("air_date")
                 if air_date:
-                    inner_content_parts.append(f"Data: {await self.format_date(air_date)}")
+                    inner_content_parts.append(
+                        f"Data: {await self.format_date(air_date)}"
+                    )
 
                 episode_count = seasons.get("episode_count")
                 if episode_count is not None:
@@ -541,25 +725,58 @@ class AmigosShare:
                 inner_content_parts.append(overview_temp)
 
                 inner_content = "\n".join(inner_content_parts)
-                seasons_content.append(f"\n[spoiler={season_name}]{inner_content}[/spoiler]\n")
-            await append_section("BARRINHA_EPISODIOS", "".join(seasons_content))
+                seasons_content.append(
+                    f"\n[spoiler={season_name}]{inner_content}[/spoiler]\n"
+                )
+            await append_section(
+                "BARRINHA_EPISODIOS", "".join(seasons_content)
+            )
 
         # Ratings
-        ratings_list = cast(list[dict[str, Any]], user_layout.get("Ratings", []))
+        ratings_list = cast(
+            list[dict[str, Any]], user_layout.get("Ratings", [])
+        )
         if not ratings_list and (imdb_rating := meta.imdb_info.get("rating")):
-            ratings_list.append({"Source": "Internet Movie Database", "Value": f"{imdb_rating}/10"})
-        if main_tmdb and (tmdb_rating := main_tmdb.get("vote_average")) and not any(r.get("Source") == "TMDb" for r in ratings_list):
-            ratings_list.append({"Source": "TMDb", "Value": f"{tmdb_rating:.1f}/10"})
+            ratings_list.append(
+                {
+                    "Source": "Internet Movie Database",
+                    "Value": f"{imdb_rating}/10",
+                }
+            )
+        if (
+            main_tmdb
+            and (tmdb_rating := main_tmdb.get("vote_average"))
+            and not any(r.get("Source") == "TMDb" for r in ratings_list)
+        ):
+            ratings_list.append(
+                {"Source": "TMDb", "Value": f"{tmdb_rating:.1f}/10"}
+            )
 
-        criticas_key = "BARRINHA_INFORMACOES" if meta.category == "MOVIE" and "BARRINHA_INFORMACOES" in layout_image else "BARRINHA_CRITICAS"
-        await append_section(criticas_key, await self.build_ratings_bbcode(meta, ratings_list))
+        criticas_key = (
+            "BARRINHA_INFORMACOES"
+            if meta.category == "MOVIE"
+            and "BARRINHA_INFORMACOES" in layout_image
+            else "BARRINHA_CRITICAS"
+        )
+        await append_section(
+            criticas_key, await self.build_ratings_bbcode(meta, ratings_list)
+        )
 
         # MediaInfo/BDinfo
         if fileinfo_dump:
-            description_parts.append(f"\n[spoiler=Informações do Arquivo]\n[left][font=Courier New]{fileinfo_dump}[/font][/left][/spoiler]\n")
+            description_parts.append(
+                f"\n[spoiler=Informações do Arquivo]\n[left][font=Courier New]{fileinfo_dump}[/font][/left][/spoiler]\n"
+            )
 
         # Custom Bar
-        description_parts.extend([await self.format_image(layout_image.get(f"BARRINHA_CUSTOM_B_{i}")) for i in range(1, 4)])
+        description_parts.extend(
+            [
+                await self.format_image(
+                    layout_image.get(f"BARRINHA_CUSTOM_B_{i}")
+                )
+                for i in range(1, 4)
+            ]
+        )
         description_parts.append("[/center]")
 
         desc = base_description(meta).strip()
@@ -575,58 +792,102 @@ class AmigosShare:
             desc = re.sub(r"(\[img=\d+)]", "[img]", desc, flags=re.IGNORECASE)
             description_parts.append(desc)
 
-        custom_description_header = self.config["DEFAULT"].get("custom_description_header", "")
+        custom_description_header = self.config["DEFAULT"].get(
+            "custom_description_header", ""
+        )
         if custom_description_header:
             description_parts.append(custom_description_header + "\n")
 
-        description_parts.append(f"[center][url=https://github.com/wastaken7/Upload-Assistant]Compartilhado com {meta.ua_name} {meta.current_version} (fork)[/url][/center]")
+        description_parts.append(
+            f"[center][url=https://github.com/wastaken7/Upload-Assistant]Compartilhado com {meta.ua_name} {meta.current_version} (fork)[/url][/center]"
+        )
 
         final_desc_path = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{self.tracker}]DESCRIPTION.txt"
-        async with aiofiles.open(final_desc_path, "w", encoding="utf-8") as descfile:
+        async with aiofiles.open(
+            final_desc_path, "w", encoding="utf-8"
+        ) as descfile:
             final_description = "\n".join(filter(None, description_parts))
             await descfile.write(final_description)
 
         return final_description
 
     async def get_trailer(self, meta: Meta) -> str:
-        video_results = meta.tmdb_localized_data.get("pt-BR", {}).get("main", {}).get("videos", {}).get("results", [])
-        youtube_code = video_results[-1].get("key", "") if video_results else ""
-        return f"http://www.youtube.com/watch?v={youtube_code}" if youtube_code else meta.youtube or ""
+        video_results = (
+            meta.tmdb_localized_data.get("pt-BR", {})
+            .get("main", {})
+            .get("videos", {})
+            .get("results", [])
+        )
+        youtube_code = (
+            video_results[-1].get("key", "") if video_results else ""
+        )
+        return (
+            f"http://www.youtube.com/watch?v={youtube_code}"
+            if youtube_code
+            else meta.youtube or ""
+        )
 
     async def get_tags(self, meta: Meta) -> str:
         tags = ", ".join(
-            g.get("name", "") for g in meta.tmdb_localized_data.get("pt-BR", {}).get("main", {}).get("genres", []) if isinstance(g.get("name"), str) and g.get("name").strip()
+            g.get("name", "")
+            for g in meta.tmdb_localized_data.get("pt-BR", {})
+            .get("main", {})
+            .get("genres", [])
+            if isinstance(g.get("name"), str) and g.get("name").strip()
         )
 
         if not tags:
-            if not meta.genre and meta.unattended and not meta.unattended_confirm:
-                logger.info(f"{self.tracker}: [yellow]No genres were found in unattended mode. Skipping upload to {self.tracker}.[/yellow]")
+            if (
+                not meta.genre
+                and meta.unattended
+                and not meta.unattended_confirm
+            ):
+                logger.info(
+                    f"{self.tracker}: [yellow]No genres were found in unattended mode. Skipping upload to {self.tracker}.[/yellow]"
+                )
                 meta.skipping = f"{self.tracker}"
                 return ""
-            tags_raw = meta.genre or await prompt_in_thread(cli_ui.ask_string, f"Enter genres in the {self.tracker} format: ")
+            tags_raw = meta.genre or await prompt_in_thread(
+                cli_ui.ask_string,
+                f"Enter genres in the {self.tracker} format: ",
+            )
             tags = (tags_raw or "").strip()
 
         return tags
 
-    async def _fetch_file_info(self, torrent_id: str, torrent_link: str, size: str) -> dict[str, str]:
+    async def _fetch_file_info(
+        self, torrent_id: str, torrent_link: str, size: str
+    ) -> dict[str, str]:
         """
         Helper function to fetch file info for a single release in parallel.
         """
-        file_page_url = f"{self.base_url}/torrents-arquivos.php?id={torrent_id}"
+        file_page_url = (
+            f"{self.base_url}/torrents-arquivos.php?id={torrent_id}"
+        )
         filename = "N/A"
 
         try:
-            file_page_response = await self.session.get(file_page_url, timeout=15)
+            file_page_response = await self.session.get(
+                file_page_url, timeout=15
+            )
             file_page_response.raise_for_status()
-            file_page_soup = BeautifulSoup(file_page_response.text, "html.parser")
+            file_page_soup = BeautifulSoup(
+                file_page_response.text, "html.parser"
+            )
             file_li_tag = file_page_soup.find("li", class_="list-group-item")
 
             if file_li_tag and file_li_tag.contents:
                 first_content = file_li_tag.contents[0]
-                filename = first_content.strip() if isinstance(first_content, str) else first_content.get_text(strip=True)
+                filename = (
+                    first_content.strip()
+                    if isinstance(first_content, str)
+                    else first_content.get_text(strip=True)
+                )
 
         except Exception as e:
-            logger.info(f"{self.tracker}: [bold red]Failed to retrieve the filename for torrent ID {torrent_id}: {e}[/bold red]")
+            logger.info(
+                f"{self.tracker}: [bold red]Failed to retrieve the filename for torrent ID {torrent_id}: {e}[/bold red]"
+            )
 
         return {"name": filename, "size": size, "link": torrent_link}
 
@@ -716,12 +977,16 @@ class AmigosShare:
             "russian": "2",
         }
         languages = meta.languages
-        lang_list = list(languages.keys()) if isinstance(languages, dict) else []
+        lang_list = (
+            list(languages.keys()) if isinstance(languages, dict) else []
+        )
         if not lang_list:
             return "6"  # Outros
 
         lang_lower = [ln.lower() for ln in lang_list]
-        has_pt = any("portuguese" in ln or "português" in ln for ln in lang_lower)
+        has_pt = any(
+            "portuguese" in ln or "português" in ln for ln in lang_lower
+        )
 
         if has_pt and len(lang_list) > 1:
             return "7"  # Multilinguagem
@@ -738,17 +1003,25 @@ class AmigosShare:
         builder = DescriptionBuilder(self.tracker, self.config)
         desc_parts: list[str] = []
 
-        game_section = builder._build_game_desc_section(meta, header_size=5, table=False)
+        game_section = builder._build_game_desc_section(
+            meta, header_size=5, table=False
+        )
         if game_section:
             desc_parts.append(game_section)
 
         desc_parts.append(await builder.get_user_description(meta))
-        desc_parts.append(f"[center][url=https://github.com/wastaken7/Upload-Assistant]Compartilhado com {meta.ua_name} {meta.current_version} (fork)[/url][/center]")
+        desc_parts.append(
+            f"[center][url=https://github.com/wastaken7/Upload-Assistant]Compartilhado com {meta.ua_name} {meta.current_version} (fork)[/url][/center]"
+        )
 
-        final_description = "\n\n".join(part for part in desc_parts if part.strip())
+        final_description = "\n\n".join(
+            part for part in desc_parts if part.strip()
+        )
 
         final_desc_path = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{self.tracker}]DESCRIPTION.txt"
-        async with aiofiles.open(final_desc_path, "w", encoding="utf-8") as descfile:
+        async with aiofiles.open(
+            final_desc_path, "w", encoding="utf-8"
+        ) as descfile:
             await descfile.write(final_description)
 
         return final_description
@@ -756,7 +1029,9 @@ class AmigosShare:
     async def _confirm_rule_exception(self, message: str, meta: Meta) -> bool:
         if getattr(meta, "unattended", False):
             return bool(getattr(meta, "unattended_confirm", False))
-        return await self.common.prompt_user_for_confirmation(f"{self.tracker}: {message}")
+        return await self.common.prompt_user_for_confirmation(
+            f"{self.tracker}: {message}"
+        )
 
     @staticmethod
     def _metadata_values(meta: Meta, field: str) -> list[str]:
@@ -769,48 +1044,92 @@ class AmigosShare:
 
     @classmethod
     def _has_prohibited_subject(cls, meta: Meta) -> bool:
-        values = [str(getattr(meta, field, "") or "") for field in ("name", "title")]
+        values = [
+            str(getattr(meta, field, "") or "") for field in ("name", "title")
+        ]
         values.extend(cls._metadata_values(meta, "genres"))
         values.extend(cls._metadata_values(meta, "keywords"))
         context = " ".join(values).casefold()
-        return bool(re.search(r"(?<![a-z])(?:pedofilia|pedophilia|zoofilia|zoophilia)(?![a-z])", context))
+        return bool(
+            re.search(
+                r"(?<![a-z])(?:pedofilia|pedophilia|zoofilia|zoophilia)(?![a-z])",
+                context,
+            )
+        )
 
     @staticmethod
     def _has_serial_or_key(description: str) -> bool:
-        return bool(re.search(r"(?i)\b(?:serial(?:[ ._-]+(?:key|number))?|cd[ ._-]?key|product[ ._-]?key|license[ ._-]?key)\s*[:=]", description))
+        return bool(
+            re.search(
+                r"(?i)\b(?:serial(?:[ ._-]+(?:key|number))?|cd[ ._-]?key|product[ ._-]?key|license[ ._-]?key)\s*[:=]",
+                description,
+            )
+        )
 
     @classmethod
     def _is_archive_file(cls, path: Path) -> bool:
         name = path.name.casefold()
-        return path.suffix.casefold() in cls._ARCHIVE_EXTENSIONS or bool(re.search(r"(?:\.r\d{2,}|\.7z\.\d+)$", name))
+        return path.suffix.casefold() in cls._ARCHIVE_EXTENSIONS or bool(
+            re.search(r"(?:\.r\d{2,}|\.7z\.\d+)$", name)
+        )
 
     @staticmethod
     def _is_advertising_file(path: Path) -> bool:
         name = path.name.casefold()
-        return path.suffix.casefold() in {".torrent", ".url"} or any(marker in name for marker in ("downloaded from", "torrent downloaded", "www."))
+        return path.suffix.casefold() in {".torrent", ".url"} or any(
+            marker in name
+            for marker in ("downloaded from", "torrent downloaded", "www.")
+        )
 
     @staticmethod
     def _has_valid_video_filename(path: Path) -> bool:
         name = path.stem
-        resolution = re.search(r"(?<![A-Za-z0-9])(?:2160|1080|720|576|480|360|240)[pi]?(?![A-Za-z0-9])", name, re.IGNORECASE)
-        source = re.search(r"(?<![A-Za-z0-9])(?:UHD[ ._-]?BluRay|BluRay|BDRip|BRRip|WEB[ ._-]?DL|WEBRip|DVDRip|DVD|HDTV)(?![A-Za-z0-9])", name, re.IGNORECASE)
-        codec = re.search(r"(?<![A-Za-z0-9])(?:H[ .]?26[45]|x26[45]|HEVC|AVC|MPEG[ ._-]?2|XviD|DivX)(?![A-Za-z0-9])", name, re.IGNORECASE)
-        release = re.search(r"^-[A-Za-z0-9][A-Za-z0-9._-]*$", name[codec.end() :]) if codec else None
+        resolution = re.search(
+            r"(?<![A-Za-z0-9])(?:2160|1080|720|576|480|360|240)[pi]?(?![A-Za-z0-9])",
+            name,
+            re.IGNORECASE,
+        )
+        source = re.search(
+            r"(?<![A-Za-z0-9])(?:UHD[ ._-]?BluRay|BluRay|BDRip|BRRip|WEB[ ._-]?DL|WEBRip|DVDRip|DVD|HDTV)(?![A-Za-z0-9])",
+            name,
+            re.IGNORECASE,
+        )
+        codec = re.search(
+            r"(?<![A-Za-z0-9])(?:H[ .]?26[45]|x26[45]|HEVC|AVC|MPEG[ ._-]?2|XviD|DivX)(?![A-Za-z0-9])",
+            name,
+            re.IGNORECASE,
+        )
+        release = (
+            re.search(r"^-[A-Za-z0-9][A-Za-z0-9._-]*$", name[codec.end() :])
+            if codec
+            else None
+        )
         return bool(resolution and source and codec and release)
 
     @staticmethod
     def _is_unreleased_game_build(meta: Meta) -> bool:
-        release_fields = " ".join(str(getattr(meta, field, "") or "") for field in ("type", "release_type", "license_type"))
+        release_fields = " ".join(
+            str(getattr(meta, field, "") or "")
+            for field in ("type", "release_type", "license_type")
+        )
         name = str(getattr(meta, "name", "") or "")
         return bool(
-            re.search(r"(?i)(?<![A-Za-z0-9])(?:demo|beta|freeware|open[ ._-]?source)(?![A-Za-z0-9])", release_fields)
-            or re.search(r"(?i)(?:\(|\[)(?:demo|beta|freeware|open[ ._-]?source)(?:\)|\])", name)
+            re.search(
+                r"(?i)(?<![A-Za-z0-9])(?:demo|beta|freeware|open[ ._-]?source)(?![A-Za-z0-9])",
+                release_fields,
+            )
+            or re.search(
+                r"(?i)(?:\(|\[)(?:demo|beta|freeware|open[ ._-]?source)(?:\)|\])",
+                name,
+            )
         )
 
     async def get_additional_checks(self, meta: Meta) -> bool:
         category = str(getattr(meta, "category", "") or "").upper()
         if category not in self.supported_categories:
-            logger.info(f"{self.tracker}: [bold red]This category is not supported by the upload rules.[/bold red]")
+            logger.info(
+                f"{self.tracker}: [bold red]This category is not supported by the upload rules.[/bold red]"
+            )
             return False
 
         try:
@@ -819,76 +1138,152 @@ class AmigosShare:
             source_size = 0
 
         if category == "BOOK" and source_size <= 1024 * 1024:
-            logger.info(f"{self.tracker}: [bold red]BOOK uploads must be larger than 1 MB.[/bold red]")
+            logger.info(
+                f"{self.tracker}: [bold red]BOOK uploads must be larger than 1 MB.[/bold red]"
+            )
             return False
 
         if (
             0 < source_size < 20 * 1024 * 1024
             and category != "BOOK"
-            and not await self._confirm_rule_exception("Torrents below 20 MB require staff approval. Do you want to continue?", meta)
+            and not await self._confirm_rule_exception(
+                "Torrents below 20 MB require staff approval. Do you want to continue?",
+                meta,
+            )
         ):
             return False
 
         if self._has_prohibited_subject(meta):
-            logger.info(f"{self.tracker}: [bold red]Content involving pedophilia or zoophilia is prohibited.[/bold red]")
+            logger.info(
+                f"{self.tracker}: [bold red]Content involving pedophilia or zoophilia is prohibited.[/bold red]"
+            )
             return False
 
-        adult_media = bool(getattr(meta, "adult_media", False) or getattr(meta, "tmdb_adult_media", False) or getattr(meta, "nsfw", False))
-        release_name = " ".join(str(getattr(meta, field, "") or "") for field in ("name", "title"))
-        if adult_media and re.search(r"(?i)(?<![A-Za-z0-9])amateur(?![A-Za-z0-9])", release_name):
-            logger.info(f"{self.tracker}: [bold red]Amateur adult content is not allowed.[/bold red]")
+        adult_media = bool(
+            getattr(meta, "adult_media", False)
+            or getattr(meta, "tmdb_adult_media", False)
+            or getattr(meta, "nsfw", False)
+        )
+        release_name = " ".join(
+            str(getattr(meta, field, "") or "") for field in ("name", "title")
+        )
+        if adult_media and re.search(
+            r"(?i)(?<![A-Za-z0-9])amateur(?![A-Za-z0-9])", release_name
+        ):
+            logger.info(
+                f"{self.tracker}: [bold red]Amateur adult content is not allowed.[/bold red]"
+            )
             return False
         if adult_media and source_size < 100 * 1024 * 1024:
-            logger.info(f"{self.tracker}: [bold red]Adult videos must be at least 100 MB.[/bold red]")
+            logger.info(
+                f"{self.tracker}: [bold red]Adult videos must be at least 100 MB.[/bold red]"
+            )
             return False
 
         raw_filelist = getattr(meta, "filelist", None) or []
         if not isinstance(raw_filelist, (list, tuple, set)):
-            logger.info(f"{self.tracker}: [bold red]Invalid file list.[/bold red]")
+            logger.info(
+                f"{self.tracker}: [bold red]Invalid file list.[/bold red]"
+            )
             return False
         paths = [Path(str(item)) for item in raw_filelist if str(item).strip()]
 
-        if category != "GAME" and any(self._is_archive_file(path) for path in paths):
-            logger.info(f"{self.tracker}: [bold red]Archives are allowed only for games.[/bold red]")
+        if category != "GAME" and any(
+            self._is_archive_file(path) for path in paths
+        ):
+            logger.info(
+                f"{self.tracker}: [bold red]Archives are allowed only for games.[/bold red]"
+            )
             return False
         if any(self._is_advertising_file(path) for path in paths):
-            logger.info(f"{self.tracker}: [bold red]Website references, advertisements, and nested .torrent files are not allowed.[/bold red]")
+            logger.info(
+                f"{self.tracker}: [bold red]Website references, advertisements, and nested .torrent files are not allowed.[/bold red]"
+            )
             return False
 
         if category == "GAME":
             if self._is_unreleased_game_build(meta):
-                logger.info(f"{self.tracker}: [bold red]Demos, betas, freeware, and open-source software are not allowed as torrents.[/bold red]")
+                logger.info(
+                    f"{self.tracker}: [bold red]Demos, betas, freeware, and open-source software are not allowed as torrents.[/bold red]"
+                )
                 return False
-            standalone_markers = ("crack", "keygen", "patch", "update", "traducao", "tradução")
-            payload_paths = [path for path in paths if path.suffix.casefold() != ".nfo" and path.name.casefold() not in {"readme", "readme.txt", "readme.md"}]
-            if payload_paths and all(any(marker in path.stem.casefold() for marker in standalone_markers) for path in payload_paths):
-                logger.info(f"{self.tracker}: [bold red]Cracks, keygens, patches, and updates cannot be uploaded separately.[/bold red]")
+            standalone_markers = (
+                "crack",
+                "keygen",
+                "patch",
+                "update",
+                "traducao",
+                "tradução",
+            )
+            payload_paths = [
+                path
+                for path in paths
+                if path.suffix.casefold() != ".nfo"
+                and path.name.casefold()
+                not in {"readme", "readme.txt", "readme.md"}
+            ]
+            if payload_paths and all(
+                any(
+                    marker in path.stem.casefold()
+                    for marker in standalone_markers
+                )
+                for path in payload_paths
+            ):
+                logger.info(
+                    f"{self.tracker}: [bold red]Cracks, keygens, patches, and updates cannot be uploaded separately.[/bold red]"
+                )
                 return False
 
         description = base_description(meta)
         if self._has_serial_or_key(description):
-            logger.info(f"{self.tracker}: [bold red]The description cannot contain serials, CD keys, or license keys.[/bold red]")
+            logger.info(
+                f"{self.tracker}: [bold red]The description cannot contain serials, CD keys, or license keys.[/bold red]"
+            )
             return False
-        if not await self.common.check_portuguese_description_requirements(description, self.tracker, meta):
-            logger.info(f"{self.tracker}: [bold red]The description was not identified as Portuguese. Skipping upload.[/bold red]")
+        if not await self.common.check_portuguese_description_requirements(
+            description, self.tracker, meta
+        ):
+            logger.info(
+                f"{self.tracker}: [bold red]The description was not identified as Portuguese. Skipping upload.[/bold red]"
+            )
             return False
 
         if category in ("BOOK", "GAME"):
             return True
 
-        if not getattr(meta, "imdb_id", None) and not getattr(meta, "anime", False):
-            logger.info(f"{self.tracker}: [bold red]IMDb metadata is required. Skipping upload.[/bold red]")
+        if not getattr(meta, "imdb_id", None) and not getattr(
+            meta, "anime", False
+        ):
+            logger.info(
+                f"{self.tracker}: [bold red]IMDb metadata is required. Skipping upload.[/bold red]"
+            )
             return False
 
         if category in ("MOVIE", "TV"):
-            video_paths = [path for path in paths if path.suffix.casefold() in self._VIDEO_EXTENSIONS and "sample" not in path.stem.casefold()]
+            video_paths = [
+                path
+                for path in paths
+                if path.suffix.casefold() in self._VIDEO_EXTENSIONS
+                and "sample" not in path.stem.casefold()
+            ]
             if not getattr(meta, "is_disc", None):
                 if not video_paths:
-                    logger.info(f"{self.tracker}: [bold red]No recognized video file was found.[/bold red]")
+                    logger.info(
+                        f"{self.tracker}: [bold red]No recognized video file was found.[/bold red]"
+                    )
                     return False
-                invalid_name = next((path.name for path in video_paths if not self._has_valid_video_filename(path)), "")
+                invalid_name = next(
+                    (
+                        path.name
+                        for path in video_paths
+                        if not self._has_valid_video_filename(path)
+                    ),
+                    "",
+                )
                 if invalid_name:
-                    logger.info(f"{self.tracker}: [bold red]Video filename does not follow the ASC technical standard: {invalid_name}.[/bold red]")
+                    logger.info(
+                        f"{self.tracker}: [bold red]Video filename does not follow the ASC technical standard: {invalid_name}.[/bold red]"
+                    )
                     return False
 
             try:
@@ -897,59 +1292,97 @@ class AmigosShare:
                 screenshot_count = 0
             required_screens = max(1, len(video_paths)) if adult_media else 1
             if screenshot_count < required_screens:
-                logger.info(f"{self.tracker}: [bold red]Real screenshots from the uploaded content are required.[/bold red]")
+                logger.info(
+                    f"{self.tracker}: [bold red]Real screenshots from the uploaded content are required.[/bold red]"
+                )
                 return False
 
             if category == "TV":
                 episode_count = self.common.count_tv_episodes(video_paths)
                 tv_pack = bool(getattr(meta, "tv_pack", False))
                 if not getattr(meta, "is_disc", None) and episode_count == 0:
-                    logger.info(f"{self.tracker}: [bold red]No valid TV episode marker was found in the uploaded files.[/bold red]")
+                    logger.info(
+                        f"{self.tracker}: [bold red]No valid TV episode marker was found in the uploaded files.[/bold red]"
+                    )
                     return False
-                status = self.common.is_tv_series_ended(meta, self._TV_ENDED_STATUSES, self._TV_ONGOING_STATUSES)
+                status = self.common.is_tv_series_ended(
+                    meta, self._TV_ENDED_STATUSES, self._TV_ONGOING_STATUSES
+                )
                 if (
                     tv_pack
                     and status is not True
-                    and not await self._confirm_rule_exception("Packs are allowed only after the season or series has ended. Do you want to continue?", meta)
+                    and not await self._confirm_rule_exception(
+                        "Packs are allowed only after the season or series has ended. Do you want to continue?",
+                        meta,
+                    )
                 ):
                     return False
                 if not tv_pack and episode_count > 1:
-                    logger.info(f"{self.tracker}: [bold red]Episodes from ongoing series must be uploaded individually.[/bold red]")
+                    logger.info(
+                        f"{self.tracker}: [bold red]Episodes from ongoing series must be uploaded individually.[/bold red]"
+                    )
                     return False
                 if not tv_pack and episode_count and status is True:
-                    logger.info(f"{self.tracker}: [bold red]Completed series accept only complete season packs.[/bold red]")
+                    logger.info(
+                        f"{self.tracker}: [bold red]Completed series accept only complete season packs.[/bold red]"
+                    )
                     return False
                 if (
                     not tv_pack
                     and episode_count
                     and status is None
-                    and not await self._confirm_rule_exception("The season status could not be confirmed. Do you want to continue?", meta)
+                    and not await self._confirm_rule_exception(
+                        "The season status could not be confirmed. Do you want to continue?",
+                        meta,
+                    )
                 ):
                     return False
-                if not tv_pack and any(re.search(r"(?i)(?:extra|bonus|bônus)", path.stem) for path in video_paths):
-                    logger.info(f"{self.tracker}: [bold red]Extras must accompany the complete season or series.[/bold red]")
+                if not tv_pack and any(
+                    re.search(r"(?i)(?:extra|bonus|bônus)", path.stem)
+                    for path in video_paths
+                ):
+                    logger.info(
+                        f"{self.tracker}: [bold red]Extras must accompany the complete season or series.[/bold red]"
+                    )
                     return False
 
-            if getattr(meta, "is_disc", None) and "dvd" in str(getattr(meta, "is_disc", "")).casefold():
-                source_context = " ".join(str(getattr(meta, field, "") or "") for field in ("name", "source", "type"))
-                if re.search(r"(?i)(?<![A-Za-z0-9])(?:R5|CAM|HDCAM|TC|TS|DVDSCR)(?![A-Za-z0-9])", source_context):
-                    logger.info(f"{self.tracker}: [bold red]Authored DVD-R releases or DVD-R conversions from inferior sources are not allowed.[/bold red]")
+            if (
+                getattr(meta, "is_disc", None)
+                and "dvd" in str(getattr(meta, "is_disc", "")).casefold()
+            ):
+                source_context = " ".join(
+                    str(getattr(meta, field, "") or "")
+                    for field in ("name", "source", "type")
+                )
+                if re.search(
+                    r"(?i)(?<![A-Za-z0-9])(?:R5|CAM|HDCAM|TC|TS|DVDSCR)(?![A-Za-z0-9])",
+                    source_context,
+                ):
+                    logger.info(
+                        f"{self.tracker}: [bold red]Authored DVD-R releases or DVD-R conversions from inferior sources are not allowed.[/bold red]"
+                    )
                     return False
 
-            return await self.common.check_portuguese_video_requirements(meta, self.tracker)
+            return await self.common.check_portuguese_video_requirements(
+                meta, self.tracker
+            )
 
         return True
 
     async def search_existing(self, meta: Meta) -> list[dict[str, str]]:
         found_items: list[dict[str, str]] = []
-        cookie_jar = await self.cookie_validator.load_session_cookies(meta, self.tracker)
+        cookie_jar = await self.cookie_validator.load_session_cookies(
+            meta, self.tracker
+        )
         if cookie_jar is not None:
             self.session.cookies = cast(Any, cookie_jar)
 
         if meta.category == "BOOK":
             search_name = f"{meta.author} {meta.title}".strip()
             search_query = search_name.replace(" ", "+")
-            search_url = f"{self.base_url}/torrents-search.php?search={search_query}"
+            search_url = (
+                f"{self.base_url}/torrents-search.php?search={search_query}"
+            )
 
         elif meta.category == "GAME":
             search_name = meta.title
@@ -960,12 +1393,19 @@ class AmigosShare:
             await self.load_localized_data(meta)
             search_name = await self.get_name(meta)
             search_query = search_name.replace(" ", "+")
-            search_url = f"{self.base_url}/torrents-search.php?search={search_query}"
+            search_url = (
+                f"{self.base_url}/torrents-search.php?search={search_query}"
+            )
 
         elif meta.category in ("MOVIE", "TV"):
-            imdb = meta.imdb_info.get("imdbID") or f"tt{str(meta.imdb_id).zfill(7)}"
+            imdb = (
+                meta.imdb_info.get("imdbID")
+                or f"tt{str(meta.imdb_id).zfill(7)}"
+            )
             if meta.category == "MOVIE":
-                search_url = f"{self.base_url}/busca-filmes.php?search=&imdb={imdb}"
+                search_url = (
+                    f"{self.base_url}/busca-filmes.php?search=&imdb={imdb}"
+                )
 
             else:
                 search_url = f"{self.base_url}/busca-series.php?search={meta.season}{meta.episode}&imdb={imdb}"
@@ -974,8 +1414,14 @@ class AmigosShare:
             return found_items
 
         response = await self.session.get(search_url, timeout=30)
-        if "Esqueceu sua senha" in response.text or "login.php" in str(response.url) or "login.php" in response.text:
-            await self.cookie_validator.handle_validation_failure(meta, self.tracker, response.text)
+        if (
+            "Esqueceu sua senha" in response.text
+            or "login.php" in str(response.url)
+            or "login.php" in response.text
+        ):
+            await self.cookie_validator.handle_validation_failure(
+                meta, self.tracker, response.text
+            )
             meta.skipping = f"{self.tracker}"
             return found_items
         response.raise_for_status()
@@ -993,23 +1439,64 @@ class AmigosShare:
                 return bool(href and "torrents-details.php?id=" in href)
 
             details_link_tag = release.find("a", href=_has_details_link)
-            torrent_link_value = details_link_tag.get("href") if details_link_tag else None
-            torrent_link = torrent_link_value if isinstance(torrent_link_value, str) else ""
+            torrent_link_value = (
+                details_link_tag.get("href") if details_link_tag else None
+            )
+            torrent_link = (
+                torrent_link_value
+                if isinstance(torrent_link_value, str)
+                else ""
+            )
 
             def _has_size_text(text: str | None) -> bool:
-                return bool(text and ("GB" in text.upper() or "MB" in text.upper()))
+                return bool(
+                    text and ("GB" in text.upper() or "MB" in text.upper())
+                )
 
-            size_tag = release.find("span", text=_has_size_text, class_="badge-info")
+            size_tag = release.find(
+                "span", text=_has_size_text, class_="badge-info"
+            )
             size = size_tag.get_text(strip=True).strip() if size_tag else ""
 
             badges = release.find_all("span", class_="badge")
             disc_types = ["BD25", "BD50", "BD66", "BD100", "DVD5", "DVD9"]
-            is_disc = any(badge.text.strip().upper() in disc_types for badge in badges)
+            is_disc = any(
+                badge.text.strip().upper() in disc_types for badge in badges
+            )
 
             if is_disc:
-                name, year, resolution, disk_type, video_codec, audio_codec = meta.title, "N/A", "N/A", "N/A", "N/A", "N/A"
-                video_codec_terms = ["MPEG-4", "AV1", "AVC", "H264", "H265", "HEVC", "MPEG-1", "MPEG-2", "VC-1", "VP6", "VP9"]
-                audio_codec_terms = ["DTS", "AC3", "DDP", "E-AC-3", "TRUEHD", "ATMOS", "LPCM", "AAC", "FLAC"]
+                name, year, resolution, disk_type, video_codec, audio_codec = (
+                    meta.title,
+                    "N/A",
+                    "N/A",
+                    "N/A",
+                    "N/A",
+                    "N/A",
+                )
+                video_codec_terms = [
+                    "MPEG-4",
+                    "AV1",
+                    "AVC",
+                    "H264",
+                    "H265",
+                    "HEVC",
+                    "MPEG-1",
+                    "MPEG-2",
+                    "VC-1",
+                    "VP6",
+                    "VP9",
+                ]
+                audio_codec_terms = [
+                    "DTS",
+                    "AC3",
+                    "DDP",
+                    "E-AC-3",
+                    "TRUEHD",
+                    "ATMOS",
+                    "LPCM",
+                    "AAC",
+                    "FLAC",
+                ]
 
                 for badge in badges:
                     badge_text = badge.text.strip()
@@ -1017,11 +1504,23 @@ class AmigosShare:
 
                     if badge_text.isdigit() and len(badge_text) == 4:
                         year = badge_text
-                    elif badge_text_upper in ["4K", "2160P", "1080P", "720P", "480P"]:
-                        resolution = "2160p" if badge_text_upper == "4K" else badge_text
-                    elif any(term in badge_text_upper for term in video_codec_terms):
+                    elif badge_text_upper in [
+                        "4K",
+                        "2160P",
+                        "1080P",
+                        "720P",
+                        "480P",
+                    ]:
+                        resolution = (
+                            "2160p" if badge_text_upper == "4K" else badge_text
+                        )
+                    elif any(
+                        term in badge_text_upper for term in video_codec_terms
+                    ):
                         video_codec = badge_text
-                    elif any(term in badge_text_upper for term in audio_codec_terms):
+                    elif any(
+                        term in badge_text_upper for term in audio_codec_terms
+                    ):
                         audio_codec = badge_text
                     elif any(term in badge_text_upper for term in disc_types):
                         disk_type = badge_text
@@ -1041,7 +1540,9 @@ class AmigosShare:
 
                 if meta.category == "GAME":
                     title_tag = release.select_one(".tooltips p a")
-                    game_title = title_tag.get_text(strip=True) if title_tag else "N/A"
+                    game_title = (
+                        title_tag.get_text(strip=True) if title_tag else "N/A"
+                    )
                     found_items.append(
                         {
                             "name": game_title,
@@ -1051,7 +1552,13 @@ class AmigosShare:
                     )
                 else:
                     torrent_id = href_value.split("id=")[-1]
-                    name_search_tasks.append(asyncio.create_task(self._fetch_file_info(torrent_id, torrent_link, size)))
+                    name_search_tasks.append(
+                        asyncio.create_task(
+                            self._fetch_file_info(
+                                torrent_id, torrent_link, size
+                            )
+                        )
+                    )
 
         if name_search_tasks:
             parallel_results = await asyncio.gather(*name_search_tasks)
@@ -1079,7 +1586,11 @@ class AmigosShare:
 
         def _try_format(fmt: str) -> str | None:
             try:
-                return datetime.strptime(date_str, fmt).replace(tzinfo=UTC).strftime("%d/%m/%Y")
+                return (
+                    datetime.strptime(date_str, fmt)
+                    .replace(tzinfo=UTC)
+                    .strftime("%d/%m/%Y")
+                )
             except ValueError, TypeError:
                 return None
 
@@ -1098,7 +1609,12 @@ class AmigosShare:
         if not meta.is_disc:
             filelist = cast(list[str], meta.filelist or [])
             video_file = filelist[0] if filelist else (meta.path or "")
-            return DescriptionBuilder.format_short_mediainfo_json(meta.mediainfo, video_file) or None
+            return (
+                DescriptionBuilder.format_short_mediainfo_json(
+                    meta.mediainfo, video_file
+                )
+                or None
+            )
 
         return None
 
@@ -1108,45 +1624,66 @@ class AmigosShare:
 
         async def _fetch(payload: dict[str, Any]) -> dict[str, Any]:
             layout_dict: dict[str, Any] = {}
-            cache_path = Path(cache_dir) / f"ASC_layout_cache_{self.layout}.json"
+            cache_path = (
+                Path(cache_dir) / f"ASC_layout_cache_{self.layout}.json"
+            )
 
             if Path(cache_path).exists():
                 try:
-                    async with aiofiles.open(cache_path, encoding="utf-8") as f:
+                    async with aiofiles.open(
+                        cache_path, encoding="utf-8"
+                    ) as f:
                         cache = await f.read()
                         return json.loads(cache)
                 except OSError, json.JSONDecodeError:
-                    logger.info(f"{self.tracker}: [yellow]Failed to read cached layout data.[/yellow]")
+                    logger.info(
+                        f"{self.tracker}: [yellow]Failed to read cached layout data.[/yellow]"
+                    )
 
             try:
-                response = await self.session.post(url, data=payload, timeout=20)
+                response = await self.session.post(
+                    url, data=payload, timeout=20
+                )
                 response.raise_for_status()
                 response_json = cast(dict[str, Any], response.json())
                 layout_dict = response_json.get("ASC", {})
 
                 if layout_dict:
                     try:
-                        async with aiofiles.open(cache_path, "w", encoding="utf-8") as f:
+                        async with aiofiles.open(
+                            cache_path, "w", encoding="utf-8"
+                        ) as f:
                             await f.write(json.dumps(layout_dict))
                     except Exception as e:
-                        logger.error(f"{self.tracker}: [red]Failed to cache layout data: {e}[/red]")
+                        logger.error(
+                            f"{self.tracker}: [red]Failed to cache layout data: {e}[/red]"
+                        )
 
                 return layout_dict
             except Exception:
                 return {}
 
         # Primary attempt
-        primary_payload: dict[str, Any] = {"imdb": meta.imdb_info.get("imdbID") or f"tt{str(meta.imdb_id).zfill(7)}", "layout": self.layout}
+        primary_payload: dict[str, Any] = {
+            "imdb": meta.imdb_info.get("imdbID")
+            or f"tt{str(meta.imdb_id).zfill(7)}",
+            "layout": self.layout,
+        }
         layout_data = await _fetch(primary_payload)
 
         if layout_data:
             return layout_data
 
         # Fallback attempt
-        fallback_payload: dict[str, Any] = {"imdb": "tt0013442", "layout": self.layout}
+        fallback_payload: dict[str, Any] = {
+            "imdb": "tt0013442",
+            "layout": self.layout,
+        }
         return await _fetch(fallback_payload)
 
-    async def build_ratings_bbcode(self, meta: Meta, ratings_list: list[dict[str, Any]]) -> str:
+    async def build_ratings_bbcode(
+        self, meta: Meta, ratings_list: list[dict[str, Any]]
+    ) -> str:
         if not ratings_list:
             return ""
 
@@ -1171,7 +1708,9 @@ class AmigosShare:
                     f"\n[url={meta.imdb_info.get('imdb_url', '') or f'https://www.imdb.com/title/{f"tt{str(meta.imdb_id).zfill(7)}"}'}]{img_tag}[/url]\n[b]{value}[/b]\n"
                 )
             elif source == "TMDb" and meta.tmdb:
-                parts.append(f"[url=https://www.themoviedb.org/{meta.category.lower()}/{meta.tmdb}]{img_tag}[/url]\n[b]{value}[/b]\n")
+                parts.append(
+                    f"[url=https://www.themoviedb.org/{meta.category.lower()}/{meta.tmdb}]{img_tag}[/url]\n[b]{value}[/b]\n"
+                )
             else:
                 parts.append(f"{img_tag}\n[b]{value}[/b]\n")
         return "\n".join(parts)
@@ -1183,17 +1722,28 @@ class AmigosShare:
         parts: list[str] = []
         for person in cast_list[:10]:
             profile_path = person.get("profile_path")
-            profile_url = f"https://image.tmdb.org/t/p/w45{profile_path}" if profile_path else "https://i.imgur.com/eCCCtFA.png"
+            profile_url = (
+                f"https://image.tmdb.org/t/p/w45{profile_path}"
+                if profile_path
+                else "https://i.imgur.com/eCCCtFA.png"
+            )
             tmdb_url = f"https://www.themoviedb.org/person/{person.get('id')}?language=pt-BR"
             img_tag = await self.format_image(profile_url)
             character_info = f"({person.get('name', '')}) como {person.get('character', '')}"
-            parts.append(f"[url={tmdb_url}]{img_tag}[/url]\n[size=2][b]{character_info}[/b][/size]\n")
+            parts.append(
+                f"[url={tmdb_url}]{img_tag}[/url]\n[size=2][b]{character_info}[/b][/size]\n"
+            )
         return "".join(parts)
 
     async def get_requests(self, meta: Meta) -> bool | list[dict[str, str]]:
-        if not self.config["DEFAULT"].get("search_requests", False) and not meta.search_requests:
+        if (
+            not self.config["DEFAULT"].get("search_requests", False)
+            and not meta.search_requests
+        ):
             return False
-        cookie_jar = await self.cookie_validator.load_session_cookies(meta, self.tracker)
+        cookie_jar = await self.cookie_validator.load_session_cookies(
+            meta, self.tracker
+        )
         if cookie_jar is not None:
             self.session.cookies = cast(Any, cookie_jar)
         try:
@@ -1212,7 +1762,9 @@ class AmigosShare:
                     category = 119
 
             query = meta.title
-            search_url = f"{self.requests_url}?search={query}&category={category}"
+            search_url = (
+                f"{self.requests_url}?search={query}&category={category}"
+            )
 
             response = await self.session.get(search_url)
             response.raise_for_status()
@@ -1229,7 +1781,9 @@ class AmigosShare:
                     continue
 
                 info_cell = all_tds[1]
-                link_element = info_cell.select_one('a[href*="pedidos.php?action=ver"]')
+                link_element = info_cell.select_one(
+                    'a[href*="pedidos.php?action=ver"]'
+                )
                 if not link_element:
                     continue
 
@@ -1252,21 +1806,27 @@ class AmigosShare:
                 message = f"\n{self.tracker}: [bold yellow]Your upload may fill the following request(s):[/bold yellow]\n\n"
                 for r in results:
                     message += f"[bold green]Name:[/bold green] {r['Name']}\n"
-                    message += f"[bold green]Reward:[/bold green] {r['Reward']}\n"
+                    message += (
+                        f"[bold green]Reward:[/bold green] {r['Reward']}\n"
+                    )
                     message += f"[bold green]Link:[/bold green] {self.base_url}/{r['Link']}\n\n"
                 logger.info(message)
 
             return results
 
         except httpx.HTTPError as e:
-            logger.info(f"{self.tracker}: [bold red]An error occurred while searching requests on {self.tracker}: {e}[/bold red]")
+            logger.info(
+                f"{self.tracker}: [bold red]An error occurred while searching requests on {self.tracker}: {e}[/bold red]"
+            )
             import traceback
 
             logger.info(traceback.format_exc())
             return []
 
     async def get_data(self, meta: Meta) -> dict[str, Any]:
-        await self.load_localized_data(meta)  #  keep this line FIRST to ensure localized data is loaded before proceeding
+        await self.load_localized_data(
+            meta
+        )  #  keep this line FIRST to ensure localized data is loaded before proceeding
         description = await self.build_description(meta)
         upload_type = await self.get_type(meta)
 
@@ -1279,9 +1839,13 @@ class AmigosShare:
 
         if meta.category == "BOOK":
             if not meta.language_checked:
-                await languages_manager.process_desc_language(meta, tracker=self.tracker)
+                await languages_manager.process_desc_language(
+                    meta, tracker=self.tracker
+                )
 
-            book_lang = (meta.book_language_iso or meta.book_language or "").lower()
+            book_lang = (
+                meta.book_language_iso or meta.book_language or ""
+            ).lower()
             lang_code_map = {
                 "chi": "9",
                 "de": "3",
@@ -1347,7 +1911,9 @@ class AmigosShare:
             return data
 
         if not meta.language_checked:
-            await languages_manager.process_desc_language(meta, tracker=self.tracker)
+            await languages_manager.process_desc_language(
+                meta, tracker=self.tracker
+            )
         resolution = await self.get_resolution(meta)
 
         data.update(
@@ -1359,8 +1925,13 @@ class AmigosShare:
                 "codecvideo": await self.get_video_codec(meta),
                 "extencao": await self.get_container(meta),
                 "genre": await self.get_tags(meta),
-                "imdb": meta.imdb_info.get("imdbID") or f"tt{str(meta.imdb_id).zfill(7)}",
-                "lang": "1" if not meta.original_language else self.language_map.get(meta.original_language.lower(), "11"),
+                "imdb": meta.imdb_info.get("imdbID")
+                or f"tt{str(meta.imdb_id).zfill(7)}",
+                "lang": "1"
+                if not meta.original_language
+                else self.language_map.get(
+                    meta.original_language.lower(), "11"
+                ),
                 "largura": resolution["width"],
                 "layout": self.layout,
                 "legenda": await self.get_subtitle(meta),
@@ -1392,9 +1963,13 @@ class AmigosShare:
         if getattr(meta, "skipping", None) == self.tracker:
             return False
         if meta.category == "BOOK" and meta.source_size <= 1024 * 1024:
-            logger.info(f"{self.tracker}: [bold red]BOOK uploads must be larger than 1 MB.[/bold red]")
+            logger.info(
+                f"{self.tracker}: [bold red]BOOK uploads must be larger than 1 MB.[/bold red]"
+            )
             return False
-        cookie_jar = await self.cookie_validator.load_session_cookies(meta, self.tracker)
+        cookie_jar = await self.cookie_validator.load_session_cookies(
+            meta, self.tracker
+        )
         if cookie_jar is not None:
             self.session.cookies = cast(Any, cookie_jar)
         data = await self.get_data(meta)
@@ -1425,7 +2000,10 @@ class AmigosShare:
 
         # Internal
         if meta.tag and (
-            self.config["TRACKERS"][self.tracker].get("internal", False) is True and meta.tag[1:] in self.config["TRACKERS"][self.tracker].get("internal_groups", [])
+            self.config["TRACKERS"][self.tracker].get("internal", False)
+            is True
+            and meta.tag[1:]
+            in self.config["TRACKERS"][self.tracker].get("internal_groups", [])
         ):
             await self.set_internal_flag(meta)
 
@@ -1433,18 +2011,28 @@ class AmigosShare:
 
     async def auto_approval(self, meta: Meta) -> None:
         if meta.debug:
-            logger.debug(f"{self.tracker}: Debug mode, skipping automatic approval.")
+            logger.debug(
+                f"{self.tracker}: Debug mode, skipping automatic approval."
+            )
         else:
             torrent_id = meta.tracker_status[self.tracker]["torrent_id"]
             try:
-                approval_url = f"{self.base_url}/uploader_app.php?id={torrent_id}"
-                approval_response = await self.session.get(approval_url, timeout=30)
+                approval_url = (
+                    f"{self.base_url}/uploader_app.php?id={torrent_id}"
+                )
+                approval_response = await self.session.get(
+                    approval_url, timeout=30
+                )
                 approval_response.raise_for_status()
             except Exception as e:
-                logger.info(f"{self.tracker}: [bold red]Error during automatic approval attempt: {e}[/bold red]")
+                logger.info(
+                    f"{self.tracker}: [bold red]Error during automatic approval attempt: {e}[/bold red]"
+                )
 
     async def get_approval(self, meta: Meta) -> bool:
-        if not self.config["TRACKERS"][self.tracker].get("uploader_status", False):
+        if not self.config["TRACKERS"][self.tracker].get(
+            "uploader_status", False
+        ):
             return False
 
         if meta.modq:
@@ -1455,14 +2043,24 @@ class AmigosShare:
 
     async def set_internal_flag(self, meta: Meta) -> None:
         if meta.debug:
-            logger.debug(f"{self.tracker}: [bold yellow]Debug mode, skipping setting internal flag.[/bold yellow]")
+            logger.debug(
+                f"{self.tracker}: [bold yellow]Debug mode, skipping setting internal flag.[/bold yellow]"
+            )
         else:
-            data: dict[str, str] = {"id": meta.tracker_status[self.tracker]["torrent_id"], "internal": "yes"}
+            data: dict[str, str] = {
+                "id": meta.tracker_status[self.tracker]["torrent_id"],
+                "internal": "yes",
+            }
 
             try:
-                response = await self.session.post(f"{self.base_url}/torrents-edit.php?action=doedit", data=data)
+                response = await self.session.post(
+                    f"{self.base_url}/torrents-edit.php?action=doedit",
+                    data=data,
+                )
                 response.raise_for_status()
 
             except Exception as e:
-                logger.info(f"{self.tracker}: [bold red]Error setting internal flag: {e}[/bold red]")
+                logger.info(
+                    f"{self.tracker}: [bold red]Error setting internal flag: {e}[/bold red]"
+                )
                 return

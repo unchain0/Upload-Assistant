@@ -17,7 +17,9 @@ from src.integrations.external_apis.radarr import RadarrManager
 from src.integrations.external_apis.sonarr import SonarrManager
 from src.integrations.external_apis.tmdb import TmdbManager
 from src.integrations.external_apis.tvdb import TvdbData
-from src.integrations.filesystem.screenshot_manifest import files as manifest_files
+from src.integrations.filesystem.screenshot_manifest import (
+    files as manifest_files,
+)
 from src.integrations.image_hosts.rehosting import RehostImagesManager
 from src.integrations.media.artwork import prepare_artwork
 from src.integrations.media.audio import AudioManager
@@ -27,25 +29,49 @@ from src.integrations.media.scene_detection import SceneManager
 from src.integrations.media.screenshot_capture import TakeScreensManager
 from src.integrations.observability.runtime_support import logger
 from src.integrations.security.redaction import PathAwareEncoder
-from src.services.argument_override_service import ApplyOverrides, ArgumentParserFactory
-from src.services.book_preparation import gather_book_prep as _gather_book_prep_fn
-from src.services.book_preparation import resolve_book_filelist as _resolve_book_filelist_fn
+from src.services.argument_override_service import (
+    ApplyOverrides,
+    ArgumentParserFactory,
+)
+from src.services.book_preparation import (
+    gather_book_prep as _gather_book_prep_fn,
+)
+from src.services.book_preparation import (
+    resolve_book_filelist as _resolve_book_filelist_fn,
+)
 from src.services.early_artifact_service import restart_early_artifact_tasks
-from src.services.episode_service import SeasonEpisodeManager, sync_single_episode_from_filename
-from src.services.game_preparation import gather_game_prep as _gather_game_prep_fn
-from src.services.game_preparation import resolve_game_filelist as _resolve_game_filelist_fn
+from src.services.episode_service import (
+    SeasonEpisodeManager,
+    sync_single_episode_from_filename,
+)
+from src.services.game_preparation import (
+    gather_game_prep as _gather_game_prep_fn,
+)
+from src.services.game_preparation import (
+    resolve_game_filelist as _resolve_game_filelist_fn,
+)
 from src.services.metadata_service import MetadataSearchingManager
-from src.services.music_preparation import enrich_music_from_discogs as _enrich_music_from_discogs_fn
-from src.services.music_preparation import enrich_music_from_orpheus as _enrich_music_from_orpheus_fn
-from src.services.music_preparation import gather_music_prep as _gather_music_prep_fn
-from src.services.podcast_preparation import gather_podcast_prep as _gather_podcast_prep_fn
+from src.services.music_preparation import (
+    enrich_music_from_discogs as _enrich_music_from_discogs_fn,
+)
+from src.services.music_preparation import (
+    enrich_music_from_orpheus as _enrich_music_from_orpheus_fn,
+)
+from src.services.music_preparation import (
+    gather_music_prep as _gather_music_prep_fn,
+)
+from src.services.podcast_preparation import (
+    gather_podcast_prep as _gather_podcast_prep_fn,
+)
 from src.services.release_naming_service import NameManager
 from src.services.tracker_metadata_service import TrackerDataManager
 
 console: Any = None
 
 
-async def populate_hdr_for_early_capture(meta: Meta, mi: dict[str, Any] | None, bdinfo: dict[str, Any] | None) -> None:
+async def populate_hdr_for_early_capture(
+    meta: Meta, mi: dict[str, Any] | None, bdinfo: dict[str, Any] | None
+) -> None:
     """Populate HDR before category detection starts asynchronous screenshot capture."""
     if meta.hdr or not (mi or bdinfo):
         return
@@ -129,18 +155,36 @@ class Prep:
         set_run_disabled(bool(getattr(meta, "no_metadata_cache", False)))
 
         # 1. Init metadata settings
-        use_sonarr, use_radarr, client, skip_tracker_descriptions, hash_ids, tracker_ids = prep_helpers.init_meta(self, meta, mode)
+        (
+            use_sonarr,
+            use_radarr,
+            client,
+            skip_tracker_descriptions,
+            hash_ids,
+            tracker_ids,
+        ) = prep_helpers.init_meta(self, meta, mode)
 
-        if meta.category == "PODCAST" or (isinstance(meta.manual_category, str) and meta.manual_category.strip().upper() == "PODCAST"):
+        if meta.category == "PODCAST" or (
+            isinstance(meta.manual_category, str)
+            and meta.manual_category.strip().upper() == "PODCAST"
+        ):
             meta.category = "PODCAST"
             await _gather_podcast_prep_fn(meta)
-            prep_helpers.calculate_source_size(self, meta, str(meta.path or ""))
-            await prep_helpers.process_trackers_and_torrent(self, meta, client, hash_ids, tracker_ids, "", "")
-            logger.debug(f"Podcast metadata processed in {time.time() - meta_start_time:.2f} seconds")
+            prep_helpers.calculate_source_size(
+                self, meta, str(meta.path or "")
+            )
+            await prep_helpers.process_trackers_and_torrent(
+                self, meta, client, hash_ids, tracker_ids, "", ""
+            )
+            logger.debug(
+                f"Podcast metadata processed in {time.time() - meta_start_time:.2f} seconds"
+            )
             return meta
 
         # 2. Disc and Category Detection
-        videoloc, bdinfo = await prep_helpers.detect_disc_and_category(self, meta)
+        videoloc, bdinfo = await prep_helpers.detect_disc_and_category(
+            self, meta
+        )
 
         # Music has its own release-oriented metadata pipeline.  It must not flow
         # through video/media-info, TMDB, screenshots or episode handling. It
@@ -149,21 +193,41 @@ class Prep:
         # stage exports and validates without rehashing the music release.
         if meta.category == "MUSIC":
             await self._gather_music_prep(meta)
-            prep_helpers.calculate_source_size(self, meta, str(meta.path or ""))
-            await prep_helpers.process_trackers_and_torrent(self, meta, client, hash_ids, tracker_ids, "", "")
+            prep_helpers.calculate_source_size(
+                self, meta, str(meta.path or "")
+            )
+            await prep_helpers.process_trackers_and_torrent(
+                self, meta, client, hash_ids, tracker_ids, "", ""
+            )
             await _enrich_music_from_orpheus_fn(meta, self.config)
             await _enrich_music_from_discogs_fn(meta, self.config)
             await prepare_artwork(meta)
-            logger.debug(f"Music metadata processed in {time.time() - meta_start_time:.2f} seconds")
+            logger.debug(
+                f"Music metadata processed in {time.time() - meta_start_time:.2f} seconds"
+            )
             return meta
 
         # 3. File information and basic media processing
-        filename, untouched_filename, videopath, search_term, search_file_folder, mi, video = await prep_helpers.process_media_files(self, meta, videoloc, bdinfo)
+        (
+            filename,
+            untouched_filename,
+            videopath,
+            search_term,
+            search_file_folder,
+            mi,
+            video,
+        ) = await prep_helpers.process_media_files(
+            self, meta, videoloc, bdinfo
+        )
         sync_single_episode_from_filename(meta)
 
         if meta.category == "XXX" and meta.screens > 0:
             _rows, _columns, max_videos = (
-                self.takescreens_manager.xxx_contact_sheet_settings() if hasattr(self.takescreens_manager, "xxx_contact_sheet_settings") else (12, 5, 6)
+                self.takescreens_manager.xxx_contact_sheet_settings()
+                if hasattr(
+                    self.takescreens_manager, "xxx_contact_sheet_settings"
+                )
+                else (12, 5, 6)
             )
             meta.screens = min(len(meta.filelist or []), max_videos)
 
@@ -180,9 +244,15 @@ class Prep:
         # be discarded solely because that lookup has not completed yet.
         early_screenshots_task: asyncio.Task[None] | None = None
         if not meta.keep_images:
-            early_screenshots_task = asyncio.create_task(self._capture_early_screenshots(meta.copy(), filename, videopath, bdinfo))
+            early_screenshots_task = asyncio.create_task(
+                self._capture_early_screenshots(
+                    meta.copy(), filename, videopath, bdinfo
+                )
+            )
         else:
-            logger.debug("[cyan]Deferring screenshot capture until description images have been checked.[/cyan]")
+            logger.debug(
+                "[cyan]Deferring screenshot capture until description images have been checked.[/cyan]"
+            )
 
         # 4. Calculate source size
         prep_helpers.calculate_source_size(self, meta, videopath)
@@ -191,7 +261,15 @@ class Prep:
         await prep_helpers.validate_media(self, meta)
 
         # 6. Tracker and Existing Torrent Info
-        await prep_helpers.process_trackers_and_torrent(self, meta, client, hash_ids, tracker_ids, search_term, search_file_folder)
+        await prep_helpers.process_trackers_and_torrent(
+            self,
+            meta,
+            client,
+            hash_ids,
+            tracker_ids,
+            search_term,
+            search_file_folder,
+        )
 
         # These tasks only create local artifacts. Posting and tracker upload
         # decisions remain in the upload stage after duplicate checks.
@@ -199,11 +277,32 @@ class Prep:
 
         # 7. Sonarr, Radarr and Metadata Searches
         await prep_helpers.search_metadata(
-            self, meta, filename, untouched_filename, videopath, search_term, search_file_folder, use_sonarr, use_radarr, skip_tracker_descriptions, client, bdinfo, mi
+            self,
+            meta,
+            filename,
+            untouched_filename,
+            videopath,
+            search_term,
+            search_file_folder,
+            use_sonarr,
+            use_radarr,
+            skip_tracker_descriptions,
+            client,
+            bdinfo,
+            mi,
         )
 
         # 8. Set Final Metadata and tags
-        await prep_helpers.finalize_metadata(self, meta, videopath, bdinfo, mi, filename, untouched_filename, video)
+        await prep_helpers.finalize_metadata(
+            self,
+            meta,
+            videopath,
+            bdinfo,
+            mi,
+            filename,
+            untouched_filename,
+            video,
+        )
 
         await prepare_artwork(meta)
         await languages_manager.apply_confirmed_single_audio_language(meta)
@@ -215,25 +314,42 @@ class Prep:
         if early_screenshots_task is not None:
             await early_screenshots_task
         if meta.category == "XXX":
-            meta.screens = len(manifest_files(meta.base_dir, meta.uuid, "main"))
+            meta.screens = len(
+                manifest_files(meta.base_dir, meta.uuid, "main")
+            )
 
         if meta.category == "BOOK":
-            await self.rehost_images_manager.takescreens_manager.prepare_book_cover(videopath, meta.uuid, meta.base_dir, meta)
+            await self.rehost_images_manager.takescreens_manager.prepare_book_cover(
+                videopath, meta.uuid, meta.base_dir, meta
+            )
             await prepare_artwork(meta)
-            meta_path = Path(f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/meta.json")
+            meta_path = Path(
+                f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/meta.json"
+            )
             meta_path.parent.mkdir(parents=True, exist_ok=True)
-            async with aiofiles.open(meta_path, "w", encoding="utf-8") as meta_file:
-                await meta_file.write(json.dumps(meta.to_dict(), indent=4, cls=PathAwareEncoder))
+            async with aiofiles.open(
+                meta_path, "w", encoding="utf-8"
+            ) as meta_file:
+                await meta_file.write(
+                    json.dumps(meta.to_dict(), indent=4, cls=PathAwareEncoder)
+                )
 
-        logger.debug(f"Metadata processed in {time.time() - meta_start_time:.2f} seconds")
+        logger.debug(
+            f"Metadata processed in {time.time() - meta_start_time:.2f} seconds"
+        )
 
         return meta
 
-    async def _capture_early_screenshots(self, meta: Meta, filename: str, videopath: str, bdinfo: dict[str, Any]) -> None:
+    async def _capture_early_screenshots(
+        self, meta: Meta, filename: str, videopath: str, bdinfo: dict[str, Any]
+    ) -> None:
         """Generate local screenshots while metadata and tracker IDs are fetched."""
         if meta.keep_images:
             return
-        if meta.category in ("MUSIC", "PODCAST", "GAME", "BOOK") or meta.screens <= 0:
+        if (
+            meta.category in ("MUSIC", "PODCAST", "GAME", "BOOK")
+            or meta.screens <= 0
+        ):
             return
 
         try:
@@ -254,46 +370,58 @@ class Prep:
                 # Capture every additional playlist/disc before description generation.
                 # review. Description generation must only render hosted
                 # images, never create new local media artifacts.
-                multi_screens = int(self.config.get("DEFAULT", {}).get("multiScreens", 2))
+                multi_screens = int(
+                    self.config.get("DEFAULT", {}).get("multiScreens", 2)
+                )
                 if multi_screens > 0:
                     discs = list(meta.discs or [])
                     if len(discs) == 1:
                         disc = discs[0]
-                        playlist_keys = [key for key in disc if key.startswith("bdinfo")]
-                        for index, key in enumerate(playlist_keys[1:], start=1):
+                        playlist_keys = [
+                            key for key in disc if key.startswith("bdinfo")
+                        ]
+                        for index, key in enumerate(
+                            playlist_keys[1:], start=1
+                        ):
                             playlist_bdinfo = disc.get(key)
                             if isinstance(playlist_bdinfo, dict):
-                                await self.takescreens_manager.disc_screenshots(
-                                    meta,
-                                    f"PLAYLIST_{index}",
-                                    playlist_bdinfo,
-                                    meta.uuid,
-                                    meta.base_dir,
-                                    meta.vapoursynth,
-                                    [],
-                                    meta.ffdebug,
-                                    multi_screens,
-                                    True,
-                                    False,
-                                    f"PLAYLIST_{index}",
+                                await (
+                                    self.takescreens_manager.disc_screenshots(
+                                        meta,
+                                        f"PLAYLIST_{index}",
+                                        playlist_bdinfo,
+                                        meta.uuid,
+                                        meta.base_dir,
+                                        meta.vapoursynth,
+                                        [],
+                                        meta.ffdebug,
+                                        multi_screens,
+                                        True,
+                                        False,
+                                        f"PLAYLIST_{index}",
+                                    )
                                 )
                     else:
                         for index, disc in enumerate(discs[1:], start=1):
                             disc_bdinfo = disc.get("bdinfo")
-                            if disc.get("type") == "BDMV" and isinstance(disc_bdinfo, dict):
-                                await self.takescreens_manager.disc_screenshots(
-                                    meta,
-                                    f"FILE_{index}",
-                                    disc_bdinfo,
-                                    meta.uuid,
-                                    meta.base_dir,
-                                    meta.vapoursynth,
-                                    [],
-                                    meta.ffdebug,
-                                    multi_screens,
-                                    True,
-                                    False,
-                                    f"FILE_{index}",
+                            if disc.get("type") == "BDMV" and isinstance(
+                                disc_bdinfo, dict
+                            ):
+                                await (
+                                    self.takescreens_manager.disc_screenshots(
+                                        meta,
+                                        f"FILE_{index}",
+                                        disc_bdinfo,
+                                        meta.uuid,
+                                        meta.base_dir,
+                                        meta.vapoursynth,
+                                        [],
+                                        meta.ffdebug,
+                                        multi_screens,
+                                        True,
+                                        False,
+                                        f"FILE_{index}",
+                                    )
                                 )
             elif meta.is_disc == "DVD":
                 await self.takescreens_manager.dvd_screenshots(
@@ -304,7 +432,9 @@ class Prep:
                     cleanup_after_capture=False,
                 )
             elif meta.category == "XXX":
-                await self.takescreens_manager.xxx_contact_sheets(meta.filelist or [], meta.uuid, meta.base_dir, meta)
+                await self.takescreens_manager.xxx_contact_sheets(
+                    meta.filelist or [], meta.uuid, meta.base_dir, meta
+                )
             elif videopath:
                 await self.takescreens_manager.screenshots(
                     videopath,
@@ -320,7 +450,9 @@ class Prep:
         except asyncio.CancelledError:
             raise
         except Exception as error:
-            logger.warning(f"[yellow]Early screenshot generation failed; upload stage will retry: {error}[/yellow]")
+            logger.warning(
+                f"[yellow]Early screenshot generation failed; upload stage will retry: {error}[/yellow]"
+            )
 
     def check_adult_media(self, meta: Meta) -> bool:
         if meta.category == "XXX":
@@ -329,22 +461,57 @@ class Prep:
         if meta.tmdb_adult_media:
             return True
         keywords_str = ", ".join(meta.keywords)
-        combined_genres_str = ", ".join(meta.combined_genres) if isinstance(meta.combined_genres, list) else str(meta.combined_genres)
-        searchable = ", ".join(part for part in (keywords_str, combined_genres_str) if part)
-        return any(re.search(rf"(^|,\s*){re.escape(keyword)}(\s*,|$)", searchable, re.IGNORECASE) for keyword in adult_keywords)
+        combined_genres_str = (
+            ", ".join(meta.combined_genres)
+            if isinstance(meta.combined_genres, list)
+            else str(meta.combined_genres)
+        )
+        searchable = ", ".join(
+            part for part in (keywords_str, combined_genres_str) if part
+        )
+        return any(
+            re.search(
+                rf"(^|,\s*){re.escape(keyword)}(\s*,|$)",
+                searchable,
+                re.IGNORECASE,
+            )
+            for keyword in adult_keywords
+        )
 
     async def get_cat(self, _video: str, meta: Meta) -> str | None:
         if meta.manual_category:
             manual_category = meta.manual_category
-            return manual_category.upper() if isinstance(manual_category, str) else None
+            return (
+                manual_category.upper()
+                if isinstance(manual_category, str)
+                else None
+            )
 
-        music_extensions = {".flac", ".mp3", ".m4a", ".aac", ".ac3", ".dts", ".wav", ".aiff", ".alac", ".ogg", ".opus", ".ape", ".wv"}
+        music_extensions = {
+            ".flac",
+            ".mp3",
+            ".m4a",
+            ".aac",
+            ".ac3",
+            ".dts",
+            ".wav",
+            ".aiff",
+            ".alac",
+            ".ogg",
+            ".opus",
+            ".ape",
+            ".wv",
+        }
         candidate = Path(meta.path or "")
         if candidate.suffix.lower() in music_extensions:
             return "MUSIC"
 
-        if not meta.is_disc and await asyncio.to_thread(prep_helpers.is_xxx_video_release, candidate):
-            logger.debug("[cyan]Matched XXX platform marker in release name[/cyan]")
+        if not meta.is_disc and await asyncio.to_thread(
+            prep_helpers.is_xxx_video_release, candidate
+        ):
+            logger.debug(
+                "[cyan]Matched XXX platform marker in release name[/cyan]"
+            )
             return "XXX"
 
         path_patterns = [
@@ -365,22 +532,32 @@ class Prep:
 
         path = meta.path or ""
         uuid = meta.uuid
-        logger.debug(f"[cyan]Checking category for path: {path} and uuid: {uuid}[/cyan]")
+        logger.debug(
+            f"[cyan]Checking category for path: {path} and uuid: {uuid}[/cyan]"
+        )
 
         for pattern in path_patterns:
             if re.search(pattern, path):
-                logger.debug(f"[cyan]Matched TV pattern in path: {pattern}[/cyan]")
+                logger.debug(
+                    f"[cyan]Matched TV pattern in path: {pattern}[/cyan]"
+                )
                 return "TV"
 
         for pattern in filename_patterns:
             if re.search(pattern, uuid) or re.search(pattern, Path(path).name):
-                logger.debug(f"[cyan]Matched TV pattern in filename: {pattern}[/cyan]")
+                logger.debug(
+                    f"[cyan]Matched TV pattern in filename: {pattern}[/cyan]"
+                )
                 return "TV"
 
         if "subsplease" in path.lower() or "subsplease" in uuid.lower():
             anime_pattern = r"(?:\s-\s)?(\d{1,3})\s*\((?:\d+p|480p|480i|576i|576p|720p|1080i|1080p|2160p)\)"
-            if re.search(anime_pattern, path.lower()) or re.search(anime_pattern, uuid.lower()):
-                logger.debug(f"[cyan]Matched Anime pattern for SubsPlease: {anime_pattern}[/cyan]")
+            if re.search(anime_pattern, path.lower()) or re.search(
+                anime_pattern, uuid.lower()
+            ):
+                logger.debug(
+                    f"[cyan]Matched Anime pattern for SubsPlease: {anime_pattern}[/cyan]"
+                )
                 return "TV"
 
         return "MOVIE"
@@ -393,29 +570,44 @@ class Prep:
             nfo_file = meta.scene_nfo_file
 
             if not nfo_file:
-                logger.debug("[yellow]No NFO file found for scene release[/yellow]")
+                logger.debug(
+                    "[yellow]No NFO file found for scene release[/yellow]"
+                )
                 return
 
             logger.debug(f"[cyan]Parsing NFO file: {nfo_file}[/cyan]")
 
-            async with aiofiles.open(nfo_file, encoding="utf-8", errors="ignore") as f:
+            async with aiofiles.open(
+                nfo_file, encoding="utf-8", errors="ignore"
+            ) as f:
                 nfo_content = await f.read()
 
             # Parse Source field
-            source_match = re.search(r"^Source\s*:\s*(.+?)$", nfo_content, re.MULTILINE | re.IGNORECASE)
+            source_match = re.search(
+                r"^Source\s*:\s*(.+?)$",
+                nfo_content,
+                re.MULTILINE | re.IGNORECASE,
+            )
             if source_match:
                 nfo_source = source_match.group(1).strip()
                 logger.debug(f"[cyan]Found source in NFO: {nfo_source}[/cyan]")
 
                 # Check if source matches any service
-                services = cast(dict[str, str], await get_service(get_services_only=True))
+                services = cast(
+                    dict[str, str], await get_service(get_services_only=True)
+                )
 
                 # Exact match
                 for service_name, service_code in services.items():
-                    if nfo_source.upper() == service_name.upper() or nfo_source.upper() == service_code.upper():
+                    if (
+                        nfo_source.upper() == service_name.upper()
+                        or nfo_source.upper() == service_code.upper()
+                    ):
                         meta.service = service_code
                         meta.service_longname = service_name
-                        logger.debug(f"[green]Matched service: {service_code} ({service_name})[/green]")
+                        logger.debug(
+                            f"[green]Matched service: {service_code} ({service_name})[/green]"
+                        )
                         break
 
         except Exception as e:

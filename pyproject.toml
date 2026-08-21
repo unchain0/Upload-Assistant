@@ -97,7 +97,7 @@ pretty_print = true
 output = "build/coverage/coverage.xml"
 
 [tool.ruff]
-line-length = 176
+line-length = 79
 target-version = "py314"
 exclude = [
   ".git",

@@ -206,9 +206,13 @@ class YUSCENE(UNIT3D):
         if meta.unattended:
             confirmed = bool(meta.unattended_confirm)
             if not confirmed:
-                logger.info(f"{self.tracker}: [bold red]{message} Skipping upload.[/bold red]")
+                logger.info(
+                    f"{self.tracker}: [bold red]{message} Skipping upload.[/bold red]"
+                )
             return confirmed
-        return await self.common.prompt_user_for_confirmation("Do you want to continue anyway?", meta)
+        return await self.common.prompt_user_for_confirmation(
+            "Do you want to continue anyway?", meta
+        )
 
     @staticmethod
     def _contains_archive_file(files: list[Any]) -> str:
@@ -226,7 +230,10 @@ class YUSCENE(UNIT3D):
             path = Path(filename)
             if path.suffix.lower() in YUSCENE._EXTRA_FILE_EXTENSIONS:
                 return path.name
-            if "sample" in path.name and path.suffix.lower() in YUSCENE._VIDEO_EXTENSIONS:
+            if (
+                "sample" in path.name
+                and path.suffix.lower() in YUSCENE._VIDEO_EXTENSIONS
+            ):
                 return path.name
         return ""
 
@@ -234,19 +241,29 @@ class YUSCENE(UNIT3D):
     def _contains_other_tracker_mention(cls, value: str) -> str:
         lowered = str(value or "").lower()
         url_pattern = re.compile(r"(?:https?:)?//[^\s]+")
-        forbidden = cls._first_forbidden_tracker_url(url_pattern.findall(lowered))
+        forbidden = cls._first_forbidden_tracker_url(
+            url_pattern.findall(lowered)
+        )
         return forbidden or cls._tracker_keyword(url_pattern.sub(" ", lowered))
 
     @classmethod
     def _first_forbidden_tracker_url(cls, urls: list[str]) -> str:
         return next(
-            (host for raw_url in urls if (host := cls._forbidden_tracker_host(raw_url))),
+            (
+                host
+                for raw_url in urls
+                if (host := cls._forbidden_tracker_host(raw_url))
+            ),
             "",
         )
 
     @classmethod
     def _tracker_keyword(cls, value: str) -> str:
-        pattern = re.compile(r"(?<![a-z0-9])(?:" + "|".join(map(re.escape, cls._TRACKER_KEYWORDS)) + r")(?![a-z0-9])")
+        pattern = re.compile(
+            r"(?<![a-z0-9])(?:"
+            + "|".join(map(re.escape, cls._TRACKER_KEYWORDS))
+            + r")(?![a-z0-9])"
+        )
         match = pattern.search(value)
         return match.group(0) if match else ""
 
@@ -255,9 +272,19 @@ class YUSCENE(UNIT3D):
         authority_match = re.match(r"(?:https?:)?//([^/?#\s]+)", raw_url)
         if authority_match is None:
             return ""
-        host = authority_match.group(1).rsplit("@", 1)[-1].partition(":")[0].lower().rstrip(".")
+        host = (
+            authority_match.group(1)
+            .rsplit("@", 1)[-1]
+            .partition(":")[0]
+            .lower()
+            .rstrip(".")
+        )
         return next(
-            (forbidden for forbidden in cls._TRACKER_DOMAINS if host == forbidden or host.endswith(f".{forbidden}")),
+            (
+                forbidden
+                for forbidden in cls._TRACKER_DOMAINS
+                if host == forbidden or host.endswith(f".{forbidden}")
+            ),
             "",
         )
 
@@ -275,7 +302,10 @@ class YUSCENE(UNIT3D):
 
     def _has_english_book_metadata(self, meta: Meta) -> bool:
         author, title, description = self._book_metadata_values(meta)
-        counts = tuple(self._english_word_count(value) for value in (author, title, description))
+        counts = tuple(
+            self._english_word_count(value)
+            for value in (author, title, description)
+        )
         return counts[0] >= 1 and counts[1] >= 1 and counts[2] >= 8
 
     @staticmethod
@@ -293,7 +323,9 @@ class YUSCENE(UNIT3D):
             meta.description,
             meta.description_file_content,
         )
-        return " ".join(str(value).strip() for value in values if str(value or "").strip())
+        return " ".join(
+            str(value).strip() for value in values if str(value or "").strip()
+        )
 
     async def _translate_book_metadata_to_english(self, meta: Meta) -> bool:
         api_key = self._translation_api_key()
@@ -306,37 +338,51 @@ class YUSCENE(UNIT3D):
         self._apply_book_translation(meta, source_values, translated)
         if not self._has_english_book_metadata(meta):
             return False
-        logger.info(f"{self.tracker}: [green]Translated BOOK author, title, and description to English for tracker compliance.[/green]")
+        logger.info(
+            f"{self.tracker}: [green]Translated BOOK author, title, and description to English for tracker compliance.[/green]"
+        )
         return True
 
     def _translation_api_key(self) -> str:
         default = self.config.get("DEFAULT", {})
-        mapping = cast(dict[str, Any], default) if isinstance(default, dict) else {}
+        mapping = (
+            cast(dict[str, Any], default) if isinstance(default, dict) else {}
+        )
         return str(mapping.get("google_translate_api_key", "")).strip()
 
     @classmethod
-    def _translation_source_values(cls, meta: Meta) -> tuple[str, str, str] | None:
+    def _translation_source_values(
+        cls, meta: Meta
+    ) -> tuple[str, str, str] | None:
         author, title, overview = cls._book_metadata_values(meta)
         overview = re.sub(r"<[^>]+>", " ", overview).strip()
         if not all((author, title, overview)):
             return None
         return author, title, overview
 
-    async def _translated_book_values(self, api_key: str, source_values: tuple[str, str, str]) -> tuple[str, str, str] | None:
+    async def _translated_book_values(
+        self, api_key: str, source_values: tuple[str, str, str]
+    ) -> tuple[str, str, str] | None:
         try:
             payload = await self._translation_payload(api_key, source_values)
             translated = self._translation_values(payload)
         except httpx.HTTPError:
-            logger.info(f"{self.tracker}: [bold red]English book metadata translation HTTP request failed.[/bold red]")
+            logger.info(
+                f"{self.tracker}: [bold red]English book metadata translation HTTP request failed.[/bold red]"
+            )
             return None
         except (TypeError, ValueError) as error:
-            logger.info(f"{self.tracker}: [bold red]English book metadata translation failed: {error}[/bold red]")
+            logger.info(
+                f"{self.tracker}: [bold red]English book metadata translation failed: {error}[/bold red]"
+            )
             return None
         if len(translated) != 3 or not all(translated):
             return None
         return translated[0], translated[1], translated[2]
 
-    async def _translation_payload(self, api_key: str, source_values: tuple[str, str, str]) -> Any:
+    async def _translation_payload(
+        self, api_key: str, source_values: tuple[str, str, str]
+    ) -> Any:
         async with httpx.AsyncClient(follow_redirects=True) as client:
             response = await client.post(
                 "https://translation.googleapis.com/language/translate/v2",
@@ -353,7 +399,10 @@ class YUSCENE(UNIT3D):
 
     @classmethod
     def _translation_values(cls, payload: Any) -> list[str]:
-        return [cls._translated_text(item) for item in cls._translation_entries(payload)]
+        return [
+            cls._translated_text(item)
+            for item in cls._translation_entries(payload)
+        ]
 
     @classmethod
     def _translation_entries(cls, payload: Any) -> list[dict[str, Any]]:
@@ -373,7 +422,11 @@ class YUSCENE(UNIT3D):
         if not isinstance(value, list):
             return []
         values = cast(list[Any], value)
-        return [cast(dict[str, Any], item) for item in values if isinstance(item, dict)]
+        return [
+            cast(dict[str, Any], item)
+            for item in values
+            if isinstance(item, dict)
+        ]
 
     @staticmethod
     def _translated_text(item: dict[str, Any]) -> str:
@@ -392,7 +445,9 @@ class YUSCENE(UNIT3D):
         meta.book_overview = meta.overview = overview
         release_name = str(meta.name or "")
         if release_name:
-            meta.name = release_name.replace(original_author, author, 1).replace(original_title, title, 1)
+            meta.name = release_name.replace(
+                original_author, author, 1
+            ).replace(original_title, title, 1)
 
     async def get_additional_checks(self, meta: Meta) -> bool:
         context = self._additional_check_context(meta)
@@ -402,9 +457,13 @@ class YUSCENE(UNIT3D):
         if not await self._preflight_policies(meta, category):
             return False
         release_name = (await self.get_name(meta))["name"]
-        return await self._run_release_policies(meta, category, filelist, release_name)
+        return await self._run_release_policies(
+            meta, category, filelist, release_name
+        )
 
-    def _additional_check_context(self, meta: Meta) -> tuple[str, list[Any]] | None:
+    def _additional_check_context(
+        self, meta: Meta
+    ) -> tuple[str, list[Any]] | None:
         filelist = self._validated_filelist(meta)
         if filelist is None:
             return None
@@ -424,7 +483,9 @@ class YUSCENE(UNIT3D):
     ) -> bool:
         policies = (
             lambda: self._title_policy(meta, category, release_name),
-            lambda: self._tracker_reference_policy(meta, category, release_name),
+            lambda: self._tracker_reference_policy(
+                meta, category, release_name
+            ),
             lambda: self._folder_policy(meta, category, filelist),
             lambda: self._mediainfo_policy(meta, category),
             lambda: self._tv_pack_policy(meta, category),
@@ -441,25 +502,37 @@ class YUSCENE(UNIT3D):
     def _validated_filelist(self, meta: Meta) -> list[Any] | None:
         raw = [] if meta.filelist is None else meta.filelist
         if not isinstance(raw, (list, tuple, set)):
-            logger.info(f"{self.tracker}: [bold red]File list metadata is invalid.[/bold red]")
+            logger.info(
+                f"{self.tracker}: [bold red]File list metadata is invalid.[/bold red]"
+            )
             return None
         return [item for item in raw if self._is_path_like_file(item)]
 
     async def _adult_policy(self, meta: Meta) -> bool:
         if not self._is_adult_release(meta):
             return True
-        return await self._confirm_or_skip("Adult content is not allowed.", meta)
+        return await self._confirm_or_skip(
+            "Adult content is not allowed.", meta
+        )
 
     @classmethod
     def _is_adult_release(cls, meta: Meta) -> bool:
         if meta.adult_media:
             return True
-        return bool(cls._genre_tokens(meta).intersection(cls._adult_keywords()))
+        return bool(
+            cls._genre_tokens(meta).intersection(cls._adult_keywords())
+        )
 
     @classmethod
     def _genre_tokens(cls, meta: Meta) -> set[str]:
-        values = cls._genre_values(meta.keywords) + cls._genre_values(meta.combined_genres)
-        return {re.sub(r"\s+", " ", value.casefold()).strip() for value in values if value.strip()}
+        values = cls._genre_values(meta.keywords) + cls._genre_values(
+            meta.combined_genres
+        )
+        return {
+            re.sub(r"\s+", " ", value.casefold()).strip()
+            for value in values
+            if value.strip()
+        }
 
     @staticmethod
     def _genre_values(value: Any) -> list[str]:
@@ -496,15 +569,21 @@ class YUSCENE(UNIT3D):
         )
         return False
 
-    async def _title_policy(self, meta: Meta, category: str, release_name: str) -> bool:
-        if category not in {"MOVIE", "TV"} or not self._has_banned_title_chars(release_name):
+    async def _title_policy(
+        self, meta: Meta, category: str, release_name: str
+    ) -> bool:
+        if category not in {"MOVIE", "TV"} or not self._has_banned_title_chars(
+            release_name
+        ):
             return True
         return await self._confirm_or_skip(
             "The tracker-formatted release name contains unsupported characters or extra spaces.",
             meta,
         )
 
-    async def _tracker_reference_policy(self, meta: Meta, category: str, release_name: str) -> bool:
+    async def _tracker_reference_policy(
+        self, meta: Meta, category: str, release_name: str
+    ) -> bool:
         if category not in {"MOVIE", "TV", "BOOK"}:
             return True
         if not self._contains_other_tracker_mention(release_name):
@@ -514,8 +593,14 @@ class YUSCENE(UNIT3D):
             meta,
         )
 
-    async def _folder_policy(self, meta: Meta, category: str, filelist: list[Any]) -> bool:
-        invalid = category in {"MOVIE", "TV"} and meta.keep_folder and len(filelist) <= 1
+    async def _folder_policy(
+        self, meta: Meta, category: str, filelist: list[Any]
+    ) -> bool:
+        invalid = (
+            category in {"MOVIE", "TV"}
+            and meta.keep_folder
+            and len(filelist) <= 1
+        )
         if not invalid:
             return True
         return await self._confirm_or_skip(
@@ -524,7 +609,11 @@ class YUSCENE(UNIT3D):
         )
 
     async def _mediainfo_policy(self, meta: Meta, category: str) -> bool:
-        invalid = category in {"MOVIE", "TV"} and not meta.is_disc and not meta.mediainfo
+        invalid = (
+            category in {"MOVIE", "TV"}
+            and not meta.is_disc
+            and not meta.mediainfo
+        )
         if not invalid:
             return True
         return await self._confirm_or_skip(
@@ -535,7 +624,9 @@ class YUSCENE(UNIT3D):
     async def _tv_pack_policy(self, meta: Meta, category: str) -> bool:
         if category != "TV" or not meta.tv_pack:
             return True
-        ended = self.common.is_tv_series_ended(meta, self._TV_ENDED_STATUSES, self._TV_ONGOING_STATUSES)
+        ended = self.common.is_tv_series_ended(
+            meta, self._TV_ENDED_STATUSES, self._TV_ONGOING_STATUSES
+        )
         if ended is True:
             return True
         message = self._tv_pack_status_message(ended)
@@ -545,10 +636,15 @@ class YUSCENE(UNIT3D):
     def _tv_pack_status_message(ended: bool | None) -> str:
         if ended is None:
             return "Unable to confirm TV series status. TV packs are allowed only for ended series at YUSCENE."
-        return "TV collections are only allowed for ended series on this tracker."
+        return (
+            "TV collections are only allowed for ended series on this tracker."
+        )
 
     async def _screenshot_policy(self, meta: Meta, category: str) -> bool:
-        if category not in {"MOVIE", "TV"} or self._screenshot_count(meta.screens) >= 3:
+        if (
+            category not in {"MOVIE", "TV"}
+            or self._screenshot_count(meta.screens) >= 3
+        ):
             return True
         return await self._confirm_or_skip(
             "YUSCENE requires at least 3 screenshots for Movie/TV uploads.",
@@ -562,15 +658,21 @@ class YUSCENE(UNIT3D):
         except TypeError, ValueError, OverflowError:
             return 0
 
-    async def _extra_file_policy(self, meta: Meta, category: str, filelist: list[Any]) -> bool:
+    async def _extra_file_policy(
+        self, meta: Meta, category: str, filelist: list[Any]
+    ) -> bool:
         if category not in {"MOVIE", "TV"}:
             return True
         extra = self._contains_video_extras(filelist)
         if not extra:
             return True
-        return await self._confirm_or_skip(f"Extra file '{extra}' is not allowed for this tracker.", meta)
+        return await self._confirm_or_skip(
+            f"Extra file '{extra}' is not allowed for this tracker.", meta
+        )
 
-    async def _archive_policy(self, meta: Meta, category: str, filelist: list[Any]) -> bool:
+    async def _archive_policy(
+        self, meta: Meta, category: str, filelist: list[Any]
+    ) -> bool:
         if category == "GAME":
             return True
         archive = self._contains_archive_file(filelist)
@@ -586,12 +688,18 @@ class YUSCENE(UNIT3D):
             return True
         valid = (await self.get_type_id(meta)).get("type_id") != "0"
         if not valid:
-            logger.info(f"{self.tracker}: [bold red]No valid tracker type is available for this GAME package format. Skipping upload.[/bold red]")
+            logger.info(
+                f"{self.tracker}: [bold red]No valid tracker type is available for this GAME package format. Skipping upload.[/bold red]"
+            )
         return valid
 
-    async def _boxset_policy(self, meta: Meta, category: str, release_name: str) -> bool:
+    async def _boxset_policy(
+        self, meta: Meta, category: str, release_name: str
+    ) -> bool:
         keywords = ("boxset", "box set", "complete", "collection")
-        if category != "MOVIE" or not any(word in release_name.lower() for word in keywords):
+        if category != "MOVIE" or not any(
+            word in release_name.lower() for word in keywords
+        ):
             return True
         return await self._confirm_or_skip(
             "Movie boxset-style naming is not accepted. Upload each movie separately.",
@@ -642,14 +750,18 @@ class YUSCENE(UNIT3D):
         mapping_only: bool = False,
     ) -> dict[str, str]:
         mapping = self._type_map()
-        mapping_result = self._mapping_mode_result(mapping, mapping_only, reverse)
+        mapping_result = self._mapping_mode_result(
+            mapping, mapping_only, reverse
+        )
         if mapping_result is not None:
             return mapping_result
         resolved = self._resolved_type(meta, type)
         return {"type_id": self._resolved_type_id(meta, mapping, resolved)}
 
     @staticmethod
-    def _mapping_mode_result(mapping: dict[str, str], mapping_only: bool, reverse: bool) -> dict[str, str] | None:
+    def _mapping_mode_result(
+        mapping: dict[str, str], mapping_only: bool, reverse: bool
+    ) -> dict[str, str] | None:
         if mapping_only:
             return mapping
         if reverse:
@@ -657,7 +769,9 @@ class YUSCENE(UNIT3D):
         return None
 
     @staticmethod
-    def _resolved_type_id(meta: Meta, mapping: dict[str, str], resolved: str) -> str:
+    def _resolved_type_id(
+        meta: Meta, mapping: dict[str, str], resolved: str
+    ) -> str:
         value = mapping.get(resolved, "0")
         if meta.category == "BOOK" and value == "0":
             return "21"
@@ -698,7 +812,9 @@ class YUSCENE(UNIT3D):
         return value.upper().strip().lstrip(".")
 
     @classmethod
-    def _special_resolved_type(cls, meta: Meta, override_text: str) -> str | None:
+    def _special_resolved_type(
+        cls, meta: Meta, override_text: str
+    ) -> str | None:
         if override_text:
             return None
         if meta.category == "MUSIC":

@@ -17,12 +17,23 @@ from src.services.game_preparation import (
 
 
 def test_game_title_fallback_removes_locale_build_date_and_extension() -> None:
-    assert clean_game_title("dungeon_antiqua_2_enUS_20260717_.pkg") == "Dungeon Antiqua 2"
+    assert (
+        clean_game_title("dungeon_antiqua_2_enUS_20260717_.pkg")
+        == "Dungeon Antiqua 2"
+    )
 
 
 def test_game_title_fallback_removes_version_and_scene_group() -> None:
-    assert clean_game_title("Native_Instruments_SuperStarSaw_1.0.0_[HCiSO].dmg") == "Native Instruments SuperStarSaw"
-    assert extract_release_group("Native_Instruments_SuperStarSaw_1.0.0_[HCiSO].dmg") == "HCiSO"
+    assert (
+        clean_game_title("Native_Instruments_SuperStarSaw_1.0.0_[HCiSO].dmg")
+        == "Native Instruments SuperStarSaw"
+    )
+    assert (
+        extract_release_group(
+            "Native_Instruments_SuperStarSaw_1.0.0_[HCiSO].dmg"
+        )
+        == "HCiSO"
+    )
 
 
 def test_game_title_fallback_preserves_hyphenated_title() -> None:
@@ -37,16 +48,40 @@ def test_game_title_and_version_support_compact_letter_suffix() -> None:
 
 
 def test_dmg_platform_is_detected_as_mac() -> None:
-    assert asyncio.run(detect_platform_from_files(["Native_Instruments_SuperStarSaw.dmg"])) == "MAC"
+    assert (
+        asyncio.run(
+            detect_platform_from_files(["Native_Instruments_SuperStarSaw.dmg"])
+        )
+        == "MAC"
+    )
 
 
 def test_generic_pkg_platform_is_detected_as_mac() -> None:
-    assert asyncio.run(detect_platform_from_files(["dungeon_antiqua_2_enUS_20260717_.pkg"])) == "MAC"
+    assert (
+        asyncio.run(
+            detect_platform_from_files(
+                ["dungeon_antiqua_2_enUS_20260717_.pkg"]
+            )
+        )
+        == "MAC"
+    )
 
 
 def test_windows_installer_platform_is_detected_as_pc() -> None:
-    assert asyncio.run(detect_platform_from_files(["RAM Saver Professional 26.7.1 Incl Keygen.exe"])) == "PC"
-    assert asyncio.run(detect_platform_from_files(["RAM Saver Professional 26.7.1.msi"])) == "PC"
+    assert (
+        asyncio.run(
+            detect_platform_from_files(
+                ["RAM Saver Professional 26.7.1 Incl Keygen.exe"]
+            )
+        )
+        == "PC"
+    )
+    assert (
+        asyncio.run(
+            detect_platform_from_files(["RAM Saver Professional 26.7.1.msi"])
+        )
+        == "PC"
+    )
 
 
 def test_game_filelist_places_selected_installer_first(tmp_path) -> None:
@@ -64,14 +99,27 @@ def test_game_filelist_places_selected_installer_first(tmp_path) -> None:
 
 
 def test_pkg_platform_preserves_explicit_playstation_evidence() -> None:
-    assert asyncio.run(detect_platform_from_files(["UP0001-NPUB12345_00-GAME.pkg"])) == "PS3"
-    assert asyncio.run(detect_platform_from_files(["Game-CUSA12345.pkg"])) == "PS4"
-    assert asyncio.run(detect_platform_from_files(["Game-PPSA12345.pkg"])) == "PS5"
+    assert (
+        asyncio.run(
+            detect_platform_from_files(["UP0001-NPUB12345_00-GAME.pkg"])
+        )
+        == "PS3"
+    )
+    assert (
+        asyncio.run(detect_platform_from_files(["Game-CUSA12345.pkg"]))
+        == "PS4"
+    )
+    assert (
+        asyncio.run(detect_platform_from_files(["Game-PPSA12345.pkg"]))
+        == "PS5"
+    )
 
 
 @pytest.mark.asyncio
 async def test_software_game_prep_uses_raw_filename_metadata(tmp_path) -> None:
-    release_path = tmp_path / "Native_Instruments_SuperStarSaw_1.0.0_[HCiSO].dmg"
+    release_path = (
+        tmp_path / "Native_Instruments_SuperStarSaw_1.0.0_[HCiSO].dmg"
+    )
     meta = Meta(
         path=str(release_path),
         filename="Native Instruments SuperStarSaw 1 0 0 [HCiSO] dmg",
@@ -80,12 +128,20 @@ async def test_software_game_prep_uses_raw_filename_metadata(tmp_path) -> None:
         unattended=True,
     )
 
-    with patch("src.services.game_preparation.IGDBAPI.search_game", new=AsyncMock(return_value=[])) as search:
+    with patch(
+        "src.services.game_preparation.IGDBAPI.search_game",
+        new=AsyncMock(return_value=[]),
+    ) as search:
         await gather_game_prep(
             meta,
             str(release_path),
             str(tmp_path),
-            {"DEFAULT": {"twitch_client_id": "client", "twitch_client_secret": "secret"}},
+            {
+                "DEFAULT": {
+                    "twitch_client_id": "client",
+                    "twitch_client_secret": "secret",
+                }
+            },
         )
 
     search.assert_awaited_once_with("Native Instruments SuperStarSaw")
@@ -96,16 +152,28 @@ async def test_software_game_prep_uses_raw_filename_metadata(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_game_prep_extracts_compact_letter_version_from_dmg(tmp_path) -> None:
+async def test_game_prep_extracts_compact_letter_version_from_dmg(
+    tmp_path,
+) -> None:
     release_path = tmp_path / "Factory.Town.2.Paradise.v133f.MacOS.dmg"
-    meta = Meta(path=str(release_path), filelist=[str(release_path)], unattended=True)
+    meta = Meta(
+        path=str(release_path), filelist=[str(release_path)], unattended=True
+    )
 
-    with patch("src.services.game_preparation.IGDBAPI.search_game", new=AsyncMock(return_value=[])) as search:
+    with patch(
+        "src.services.game_preparation.IGDBAPI.search_game",
+        new=AsyncMock(return_value=[]),
+    ) as search:
         await gather_game_prep(
             meta,
             str(release_path),
             str(tmp_path),
-            {"DEFAULT": {"twitch_client_id": "client", "twitch_client_secret": "secret"}},
+            {
+                "DEFAULT": {
+                    "twitch_client_id": "client",
+                    "twitch_client_secret": "secret",
+                }
+            },
         )
 
     search.assert_awaited_once_with("Factory Town 2 Paradise")
@@ -115,20 +183,38 @@ async def test_game_prep_extracts_compact_letter_version_from_dmg(tmp_path) -> N
 
 
 @pytest.mark.asyncio
-async def test_game_prep_replaces_prepopulated_inferred_title_with_igdb_name(tmp_path) -> None:
+async def test_game_prep_replaces_prepopulated_inferred_title_with_igdb_name(
+    tmp_path,
+) -> None:
     release_path = tmp_path / "Inferred.Release.Name-TENOKE"
-    meta = Meta(path=str(release_path), title="Inferred Release Name", filelist=[str(release_path)], unattended=True)
+    meta = Meta(
+        path=str(release_path),
+        title="Inferred Release Name",
+        filelist=[str(release_path)],
+        unattended=True,
+    )
     result = {"id": 1, "name": "Canonical IGDB Title"}
 
     with (
-        patch("src.services.game_preparation.IGDBAPI.search_game", new=AsyncMock(return_value=[result])),
-        patch("src.services.game_preparation.IGDBAPI.cache_game_details", new=AsyncMock()),
+        patch(
+            "src.services.game_preparation.IGDBAPI.search_game",
+            new=AsyncMock(return_value=[result]),
+        ),
+        patch(
+            "src.services.game_preparation.IGDBAPI.cache_game_details",
+            new=AsyncMock(),
+        ),
     ):
         await gather_game_prep(
             meta,
             str(release_path),
             str(tmp_path),
-            {"DEFAULT": {"twitch_client_id": "client", "twitch_client_secret": "secret"}},
+            {
+                "DEFAULT": {
+                    "twitch_client_id": "client",
+                    "twitch_client_secret": "secret",
+                }
+            },
         )
 
     assert meta.title == "Canonical IGDB Title"
@@ -142,14 +228,24 @@ async def test_guitar_pro_pkg_is_prepared_as_mac_software(tmp_path) -> None:
     package.write_bytes(b"installer")
     notes = release / "Read.txt"
     notes.write_text("install PKG\nUse Serial", encoding="utf-8")
-    meta = Meta(path=str(release), filelist=[str(package), str(notes)], unattended=True)
+    meta = Meta(
+        path=str(release), filelist=[str(package), str(notes)], unattended=True
+    )
 
-    with patch("src.services.game_preparation.IGDBAPI.search_game", new=AsyncMock(return_value=[])):
+    with patch(
+        "src.services.game_preparation.IGDBAPI.search_game",
+        new=AsyncMock(return_value=[]),
+    ):
         await gather_game_prep(
             meta,
             str(package),
             str(tmp_path),
-            {"DEFAULT": {"twitch_client_id": "client", "twitch_client_secret": "secret"}},
+            {
+                "DEFAULT": {
+                    "twitch_client_id": "client",
+                    "twitch_client_secret": "secret",
+                }
+            },
         )
 
     assert meta.category == "GAME"
@@ -160,7 +256,13 @@ async def test_guitar_pro_pkg_is_prepared_as_mac_software(tmp_path) -> None:
     assert meta.platform == "MAC"
     assert meta.software_notes == "install PKG\nUse Serial"
     assert required_game_fields(meta) == ["title", "platform"]
-    assert missing_game_fields(meta) == ["developer", "publisher", "cover", "languages", "overview"]
+    assert missing_game_fields(meta) == [
+        "developer",
+        "publisher",
+        "cover",
+        "languages",
+        "overview",
+    ]
 
 
 @pytest.mark.asyncio
@@ -171,14 +273,26 @@ async def test_windows_installer_is_prepared_as_pc_software(tmp_path) -> None:
     installer.write_bytes(b"installer")
     notes = release / "How to Install.txt"
     notes.write_text("Install the application.\n", encoding="utf-8")
-    meta = Meta(path=str(release), filelist=[str(installer), str(notes)], unattended=True)
+    meta = Meta(
+        path=str(release),
+        filelist=[str(installer), str(notes)],
+        unattended=True,
+    )
 
-    with patch("src.services.game_preparation.IGDBAPI.search_game", new=AsyncMock(return_value=[])) as search:
+    with patch(
+        "src.services.game_preparation.IGDBAPI.search_game",
+        new=AsyncMock(return_value=[]),
+    ) as search:
         await gather_game_prep(
             meta,
             str(installer),
             str(tmp_path),
-            {"DEFAULT": {"twitch_client_id": "client", "twitch_client_secret": "secret"}},
+            {
+                "DEFAULT": {
+                    "twitch_client_id": "client",
+                    "twitch_client_secret": "secret",
+                }
+            },
         )
 
     search.assert_awaited_once_with("RAM Saver Professional")
@@ -191,7 +305,9 @@ async def test_windows_installer_is_prepared_as_pc_software(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_scene_game_uses_local_nfo_and_extracts_installation_steps(tmp_path) -> None:
+async def test_scene_game_uses_local_nfo_and_extracts_installation_steps(
+    tmp_path,
+) -> None:
     release = tmp_path / "Cellar.Keeper-TENOKE"
     release.mkdir()
     iso = release / "tenoke-cellar.keeper.iso"
@@ -201,9 +317,17 @@ async def test_scene_game_uses_local_nfo_and_extracts_installation_steps(tmp_pat
         "TENOKE\n│ 1. Extract and burn or mount the .iso │\n│ 2. Run SETUP.exe and install the game │\n│ 3. Copy crack to install dir │\n│ 4. Play │\n",
         encoding="utf-8",
     )
-    meta = Meta(path=str(release), filelist=[str(iso), str(nfo)], platform="PC", manual_platform="PC", unattended=True)
+    meta = Meta(
+        path=str(release),
+        filelist=[str(iso), str(nfo)],
+        platform="PC",
+        manual_platform="PC",
+        unattended=True,
+    )
 
     await gather_game_prep(meta, str(iso), str(tmp_path), {"DEFAULT": {}})
 
     assert meta.scene_nfo_file == str(nfo)
-    assert meta.software_notes == ("1. Extract and burn or mount the .iso\n2. Run SETUP.exe and install the game\n3. Copy crack to install dir\n4. Play")
+    assert meta.software_notes == (
+        "1. Extract and burn or mount the .iso\n2. Run SETUP.exe and install the game\n3. Copy crack to install dir\n4. Play"
+    )

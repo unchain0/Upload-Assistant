@@ -10,7 +10,12 @@ import aiofiles
 import httpx
 
 from src.integrations.observability.console import logger
-from src.integrations.runtime_tools.download_integrity import MAX_EXTRACTED_BYTES, download_verified_asset, promote_files_with_rollback, safe_extract_tar
+from src.integrations.runtime_tools.download_integrity import (
+    MAX_EXTRACTED_BYTES,
+    download_verified_asset,
+    promote_files_with_rollback,
+    safe_extract_tar,
+)
 from src.integrations.runtime_tools.runtime_tool_paths import tool_install_dir
 
 
@@ -18,10 +23,14 @@ class SevenZipBinaryManager:
     """Download 7-Zip binaries for the host architecture."""
 
     @staticmethod
-    async def ensure_7z_binary(base_dir: str | Path, version: str = "26.01") -> str:
+    async def ensure_7z_binary(
+        base_dir: str | Path, version: str = "26.01"
+    ) -> str:
         system = platform.system().lower()
         machine = platform.machine().lower()
-        logger.debug(f"[blue]7-Zip: Detected system: {system}, architecture: {machine}[/blue]")
+        logger.debug(
+            f"[blue]7-Zip: Detected system: {system}, architecture: {machine}[/blue]"
+        )
 
         platform_map: dict[str, dict[str, dict[str, str]]] = {
             "windows": {
@@ -31,18 +40,48 @@ class SevenZipBinaryManager:
                 "arm64": {"file": "7zr.exe", "folder": "windows/arm64"},
             },
             "darwin": {
-                "arm64": {"file": "7z2601-mac.tar.xz", "folder": "macos/arm64"},
-                "x86_64": {"file": "7z2601-mac.tar.xz", "folder": "macos/x86_64"},
-                "amd64": {"file": "7z2601-mac.tar.xz", "folder": "macos/x86_64"},
+                "arm64": {
+                    "file": "7z2601-mac.tar.xz",
+                    "folder": "macos/arm64",
+                },
+                "x86_64": {
+                    "file": "7z2601-mac.tar.xz",
+                    "folder": "macos/x86_64",
+                },
+                "amd64": {
+                    "file": "7z2601-mac.tar.xz",
+                    "folder": "macos/x86_64",
+                },
             },
             "linux": {
-                "x86_64": {"file": "7z2601-linux-x64.tar.xz", "folder": "linux/amd64"},
-                "amd64": {"file": "7z2601-linux-x64.tar.xz", "folder": "linux/amd64"},
-                "arm64": {"file": "7z2601-linux-arm64.tar.xz", "folder": "linux/arm64"},
-                "aarch64": {"file": "7z2601-linux-arm64.tar.xz", "folder": "linux/arm64"},
-                "arm": {"file": "7z2601-linux-arm.tar.xz", "folder": "linux/arm"},
-                "armv7l": {"file": "7z2601-linux-arm.tar.xz", "folder": "linux/arm"},
-                "armv6l": {"file": "7z2601-linux-arm.tar.xz", "folder": "linux/arm"},
+                "x86_64": {
+                    "file": "7z2601-linux-x64.tar.xz",
+                    "folder": "linux/amd64",
+                },
+                "amd64": {
+                    "file": "7z2601-linux-x64.tar.xz",
+                    "folder": "linux/amd64",
+                },
+                "arm64": {
+                    "file": "7z2601-linux-arm64.tar.xz",
+                    "folder": "linux/arm64",
+                },
+                "aarch64": {
+                    "file": "7z2601-linux-arm64.tar.xz",
+                    "folder": "linux/arm64",
+                },
+                "arm": {
+                    "file": "7z2601-linux-arm.tar.xz",
+                    "folder": "linux/arm",
+                },
+                "armv7l": {
+                    "file": "7z2601-linux-arm.tar.xz",
+                    "folder": "linux/arm",
+                },
+                "armv6l": {
+                    "file": "7z2601-linux-arm.tar.xz",
+                    "folder": "linux/arm",
+                },
             },
         }
 
@@ -60,15 +99,30 @@ class SevenZipBinaryManager:
         version_path = bin_dir / version
 
         binary_exists = binary_path.exists() and binary_path.is_file()
-        binary_executable = system == "windows" or os.access(binary_path, os.X_OK)
+        binary_executable = system == "windows" or os.access(
+            binary_path, os.X_OK
+        )
         binary_valid = binary_exists and binary_executable
-        version_markers = [candidate for candidate in bin_dir.iterdir() if candidate.is_file() and candidate != binary_path and not candidate.name.startswith("temp_")]
+        version_markers = [
+            candidate
+            for candidate in bin_dir.iterdir()
+            if candidate.is_file()
+            and candidate != binary_path
+            and not candidate.name.startswith("temp_")
+        ]
 
-        if version_path.exists() and version_path.is_file() and binary_valid and version_markers == [version_path]:
+        if (
+            version_path.exists()
+            and version_path.is_file()
+            and binary_valid
+            and version_markers == [version_path]
+        ):
             logger.debug("[blue]7-Zip binary is up to date[/blue]")
             return str(binary_path)
 
-        logger.info("[yellow]Binary '7z' not found. Attempting to download automatically...[/yellow]")
+        logger.info(
+            "[yellow]Binary '7z' not found. Attempting to download automatically...[/yellow]"
+        )
 
         download_url = f"https://github.com/ip7z/7zip/releases/download/{version}/{file_pattern}"
         logger.debug(f"[blue]7-Zip Download URL: {download_url}[/blue]")
@@ -78,11 +132,21 @@ class SevenZipBinaryManager:
         shutil.rmtree(staging, ignore_errors=True)
         staging.mkdir()
         try:
-            async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
-                integrity_key = f"{version}/{file_pattern}" if file_pattern.endswith(".exe") else file_pattern
-                await download_verified_asset(client, download_url, temp_file, integrity_key)
+            async with httpx.AsyncClient(
+                timeout=60.0, follow_redirects=True
+            ) as client:
+                integrity_key = (
+                    f"{version}/{file_pattern}"
+                    if file_pattern.endswith(".exe")
+                    else file_pattern
+                )
+                await download_verified_asset(
+                    client, download_url, temp_file, integrity_key
+                )
 
-            logger.debug(f"[green]Downloaded 7-Zip package: {file_pattern}[/green]")
+            logger.debug(
+                f"[green]Downloaded 7-Zip package: {file_pattern}[/green]"
+            )
             if file_pattern.endswith(".exe"):
                 # Windows 7zr.exe is a raw executable
                 staged_binary = staging / binary_name
@@ -90,19 +154,37 @@ class SevenZipBinaryManager:
             else:
                 # Linux/macOS are tar.xz archives
                 with tarfile.open(temp_file, "r:xz") as tar_ref:
-                    safe_extract_tar(tar_ref, staging, max_bytes=MAX_EXTRACTED_BYTES)
-                candidates = [candidate for candidate in staging.rglob(binary_name) if candidate.is_file()]
+                    safe_extract_tar(
+                        tar_ref, staging, max_bytes=MAX_EXTRACTED_BYTES
+                    )
+                candidates = [
+                    candidate
+                    for candidate in staging.rglob(binary_name)
+                    if candidate.is_file()
+                ]
                 if len(candidates) != 1:
-                    raise RuntimeError(f"Downloaded archive must contain exactly one {binary_name} executable")
+                    raise RuntimeError(
+                        f"Downloaded archive must contain exactly one {binary_name} executable"
+                    )
                 staged_binary = candidates[0]
 
             if system != "windows":
-                staged_binary.chmod(staged_binary.stat().st_mode | stat.S_IEXEC)
+                staged_binary.chmod(
+                    staged_binary.stat().st_mode | stat.S_IEXEC
+                )
 
             staged_version = staging / version
-            async with aiofiles.open(staged_version, "w", encoding="utf-8") as version_file:
-                await version_file.write(f"7-Zip version {version} installed successfully.")
-            stale_markers = [candidate for candidate in version_markers if candidate != version_path]
+            async with aiofiles.open(
+                staged_version, "w", encoding="utf-8"
+            ) as version_file:
+                await version_file.write(
+                    f"7-Zip version {version} installed successfully."
+                )
+            stale_markers = [
+                candidate
+                for candidate in version_markers
+                if candidate != version_path
+            ]
             promote_files_with_rollback(
                 [(staged_binary, binary_path), (staged_version, version_path)],
                 bin_dir / ".7z-backup",

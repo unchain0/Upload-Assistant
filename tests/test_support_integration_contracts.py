@@ -14,7 +14,13 @@ import inspect
 import os
 import pkgutil
 import subprocess
-from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
+from collections.abc import (
+    AsyncIterator,
+    Callable,
+    Iterator,
+    Mapping,
+    Sequence,
+)
 from pathlib import Path
 from types import ModuleType, TracebackType
 from typing import Any, ClassVar, Self, get_args, get_origin, get_type_hints
@@ -44,7 +50,10 @@ class _Response:
     text = "ok"
     content = b"ok"
     url = "https://example.invalid/resource"
-    headers: ClassVar[dict[str, str]] = {"content-type": "application/json", "content-length": "2"}
+    headers: ClassVar[dict[str, str]] = {
+        "content-type": "application/json",
+        "content-length": "2",
+    }
 
     def json(self) -> dict[str, Any]:
         return {
@@ -156,7 +165,9 @@ class _Process:
         self.stdout = _Stream()
         self.stderr = _Stream()
 
-    async def communicate(self, _input: bytes | None = None) -> tuple[bytes, bytes]:
+    async def communicate(
+        self, _input: bytes | None = None
+    ) -> tuple[bytes, bytes]:
         return b"ok", b""
 
     async def wait(self) -> int:
@@ -232,14 +243,26 @@ def _fixture_tree(tmp_path: Path) -> dict[str, Path]:
     description = release / "DESCRIPTION.txt"
     description.write_text("Example description", encoding="utf-8")
     nzb = release / "Example.Release.nzb"
-    nzb.write_text('<?xml version="1.0"?><nzb xmlns="http://www.newzbin.com/DTD/2003/nzb"><head/></nzb>', encoding="utf-8")
+    nzb.write_text(
+        '<?xml version="1.0"?><nzb xmlns="http://www.newzbin.com/DTD/2003/nzb"><head/></nzb>',
+        encoding="utf-8",
+    )
     torrent = release / "BASE.torrent"
     torrent.write_bytes(b"d4:infod4:name4:teste")
     temp = tmp_path / "tmp" / "support"
     temp.mkdir(parents=True)
     for source in (image, description, nzb, torrent):
         (temp / source.name).write_bytes(source.read_bytes())
-    return {"root": tmp_path, "release": release, "media": media, "image": image, "description": description, "nzb": nzb, "torrent": torrent, "temp": temp}
+    return {
+        "root": tmp_path,
+        "release": release,
+        "media": media,
+        "image": image,
+        "description": description,
+        "nzb": nzb,
+        "torrent": torrent,
+        "temp": temp,
+    }
 
 
 def _meta(tmp_path: Path, files: Mapping[str, Path], profile: int) -> Meta:
@@ -269,7 +292,13 @@ def _meta(tmp_path: Path, files: Mapping[str, Path], profile: int) -> Meta:
         video_codec="H.264",
         audio="DDP 5.1",
         channels="5.1",
-        image_list=[{"img_url": "https://img.invalid/a.png", "raw_url": "https://img.invalid/a.png", "web_url": "https://img.invalid/a"}],
+        image_list=[
+            {
+                "img_url": "https://img.invalid/a.png",
+                "raw_url": "https://img.invalid/a.png",
+                "web_url": "https://img.invalid/a",
+            }
+        ],
         screens=1,
         tracker_status={},
         trackers=["AITHER"],
@@ -277,7 +306,9 @@ def _meta(tmp_path: Path, files: Mapping[str, Path], profile: int) -> Meta:
         torrent_path=str(files["torrent"]),
         unattended=True,
         debug=profile == 2,
-        mediainfo={"media": {"track": [{"@type": "General", "Format": "Matroska"}]}},
+        mediainfo={
+            "media": {"track": [{"@type": "General", "Format": "Matroska"}]}
+        },
         bdinfo={},
         discs=[],
         manual=False,
@@ -288,11 +319,22 @@ def _modules() -> list[ModuleType]:
     modules: list[ModuleType] = []
     for package_name in _PACKAGE_NAMES:
         package = importlib.import_module(package_name)
-        modules.extend(importlib.import_module(info.name) for info in pkgutil.iter_modules(package.__path__, f"{package.__name__}."))
+        modules.extend(
+            importlib.import_module(info.name)
+            for info in pkgutil.iter_modules(
+                package.__path__, f"{package.__name__}."
+            )
+        )
     return modules
 
 
-def _value(name: str, annotation: object, meta: Meta, files: Mapping[str, Path], profile: int) -> object:
+def _value(
+    name: str,
+    annotation: object,
+    meta: Meta,
+    files: Mapping[str, Path],
+    profile: int,
+) -> object:
     normalized = name.casefold().lstrip("_")
     config = copy.deepcopy(example_config)
     values: dict[str, object] = {
@@ -372,7 +414,11 @@ def _value(name: str, annotation: object, meta: Meta, files: Mapping[str, Path],
     if origin is set:
         return set()
     if origin is tuple:
-        return tuple(_value(normalized, item, meta, files, profile) for item in args if item is not Ellipsis)
+        return tuple(
+            _value(normalized, item, meta, files, profile)
+            for item in args
+            if item is not Ellipsis
+        )
     if origin is not None and type(None) in args:
         concrete = next((item for item in args if item is not type(None)), str)
         return _value(normalized, concrete, meta, files, profile)
@@ -395,11 +441,26 @@ async def _invoke(
     except NameError, TypeError:
         hints = {}
     for parameter in inspect.signature(function).parameters.values():
-        if parameter.kind in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}:
+        if parameter.kind in {
+            inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.VAR_KEYWORD,
+        }:
             continue
-        if parameter.default is not inspect.Parameter.empty and parameter.name not in overrides:
+        if (
+            parameter.default is not inspect.Parameter.empty
+            and parameter.name not in overrides
+        ):
             continue
-        value = overrides.get(parameter.name, _value(parameter.name, hints.get(parameter.name, parameter.annotation), meta, files, profile))
+        value = overrides.get(
+            parameter.name,
+            _value(
+                parameter.name,
+                hints.get(parameter.name, parameter.annotation),
+                meta,
+                files,
+                profile,
+            ),
+        )
         if parameter.kind is inspect.Parameter.KEYWORD_ONLY:
             keywords[parameter.name] = value
         else:
@@ -410,7 +471,9 @@ async def _invoke(
     return result
 
 
-def test_support_integration_catalog_uses_local_boundary_doubles(tmp_path: Path, monkeypatch: Any) -> None:
+def test_support_integration_catalog_uses_local_boundary_doubles(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
     files = _fixture_tree(tmp_path)
     modules = _modules()
     repository_cwd = Path.cwd()
@@ -418,7 +481,9 @@ def test_support_integration_catalog_uses_local_boundary_doubles(tmp_path: Path,
     async def fake_process(*_args: object, **_kwargs: object) -> _Process:
         return _Process()
 
-    async def no_sleep(_delay: float = 0, *_args: object, **_kwargs: object) -> None:
+    async def no_sleep(
+        _delay: float = 0, *_args: object, **_kwargs: object
+    ) -> None:
         return None
 
     monkeypatch.setattr(httpx, "AsyncClient", _AsyncClient)
@@ -428,8 +493,12 @@ def test_support_integration_catalog_uses_local_boundary_doubles(tmp_path: Path,
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_process)
     monkeypatch.setattr(asyncio, "create_subprocess_shell", fake_process)
     monkeypatch.setattr(asyncio, "sleep", no_sleep)
-    monkeypatch.setattr(subprocess, "run", lambda *_args, **_kwargs: _Completed())
-    monkeypatch.setattr(subprocess, "check_output", lambda *_args, **_kwargs: b"ok")
+    monkeypatch.setattr(
+        subprocess, "run", lambda *_args, **_kwargs: _Completed()
+    )
+    monkeypatch.setattr(
+        subprocess, "check_output", lambda *_args, **_kwargs: b"ok"
+    )
     monkeypatch.setattr("builtins.input", lambda *_args, **_kwargs: "1")
 
     attempted: set[str] = set()
@@ -451,77 +520,148 @@ def test_support_integration_catalog_uses_local_boundary_doubles(tmp_path: Path,
 
     async def exercise() -> None:
         for module in modules:
-            for attribute, replacement in (("AsyncClient", _AsyncClient), ("Session", _Session)):
+            for attribute, replacement in (
+                ("AsyncClient", _AsyncClient),
+                ("Session", _Session),
+            ):
                 if hasattr(module, attribute):
                     monkeypatch.setattr(module, attribute, replacement)
-            for name, function in inspect.getmembers(module, inspect.isfunction):
-                if function.__module__ != module.__name__ or name.startswith("__") or name in destructive_names:
+            for name, function in inspect.getmembers(
+                module, inspect.isfunction
+            ):
+                if (
+                    function.__module__ != module.__name__
+                    or name.startswith("__")
+                    or name in destructive_names
+                ):
                     continue
                 qualified = f"{module.__name__}.{name}"
                 attempted.add(qualified)
                 for profile in range(3):
                     try:
-                        await _invoke(function, _meta(tmp_path, files, profile), files, profile)
+                        await _invoke(
+                            function,
+                            _meta(tmp_path, files, profile),
+                            files,
+                            profile,
+                        )
                     except (KeyboardInterrupt, SystemExit) as error:
-                        terminations.append(f"{qualified}:{type(error).__name__}")
+                        terminations.append(
+                            f"{qualified}:{type(error).__name__}"
+                        )
                     except Exception as error:
-                        expected_rejections.append(f"{qualified}:{type(error).__name__}")
+                        expected_rejections.append(
+                            f"{qualified}:{type(error).__name__}"
+                        )
                     finally:
                         os.chdir(repository_cwd)
-                for meta_updates, argument_overrides in literal_branch_scenarios(function, Meta.__dataclass_fields__, limit=192):
+                for (
+                    meta_updates,
+                    argument_overrides,
+                ) in literal_branch_scenarios(
+                    function, Meta.__dataclass_fields__, limit=192
+                ):
                     scenario_meta = _meta(tmp_path, files, 0)
                     for key, value in meta_updates.items():
                         if key in Meta.__dataclass_fields__:
                             setattr(scenario_meta, key, value)
                     try:
-                        await _invoke(function, scenario_meta, files, 0, argument_overrides)
+                        await _invoke(
+                            function,
+                            scenario_meta,
+                            files,
+                            0,
+                            argument_overrides,
+                        )
                     except (KeyboardInterrupt, SystemExit) as error:
-                        terminations.append(f"{qualified}:{type(error).__name__}")
+                        terminations.append(
+                            f"{qualified}:{type(error).__name__}"
+                        )
                     except Exception as error:
-                        expected_rejections.append(f"{qualified}:{type(error).__name__}")
+                        expected_rejections.append(
+                            f"{qualified}:{type(error).__name__}"
+                        )
                     finally:
                         os.chdir(repository_cwd)
 
-            for class_name, class_type in inspect.getmembers(module, inspect.isclass):
+            for class_name, class_type in inspect.getmembers(
+                module, inspect.isclass
+            ):
                 if class_type.__module__ != module.__name__:
                     continue
                 try:
-                    instance = await _invoke(class_type, _meta(tmp_path, files, 0), files, 0)
+                    instance = await _invoke(
+                        class_type, _meta(tmp_path, files, 0), files, 0
+                    )
                 except Exception as error:
-                    expected_rejections.append(f"{module.__name__}.{class_name}.__init__:{type(error).__name__}")
+                    expected_rejections.append(
+                        f"{module.__name__}.{class_name}.__init__:{type(error).__name__}"
+                    )
                     continue
-                for method_name, static_member in inspect.getmembers_static(instance):
-                    if method_name.startswith("__") or method_name in destructive_names or not callable(static_member):
+                for method_name, static_member in inspect.getmembers_static(
+                    instance
+                ):
+                    if (
+                        method_name.startswith("__")
+                        or method_name in destructive_names
+                        or not callable(static_member)
+                    ):
                         continue
                     qualified = f"{module.__name__}.{class_name}.{method_name}"
                     try:
                         method = getattr(instance, method_name)
                     except Exception as error:
-                        expected_rejections.append(f"{qualified}:{type(error).__name__}")
+                        expected_rejections.append(
+                            f"{qualified}:{type(error).__name__}"
+                        )
                         continue
                     attempted.add(qualified)
                     if os.environ.get("UA_CONTRACT_TRACE"):
                         print(qualified, flush=True)
                     for profile in range(2):
                         try:
-                            await _invoke(method, _meta(tmp_path, files, profile), files, profile)
+                            await _invoke(
+                                method,
+                                _meta(tmp_path, files, profile),
+                                files,
+                                profile,
+                            )
                         except (KeyboardInterrupt, SystemExit) as error:
-                            terminations.append(f"{qualified}:{type(error).__name__}")
+                            terminations.append(
+                                f"{qualified}:{type(error).__name__}"
+                            )
                         except Exception as error:
-                            expected_rejections.append(f"{qualified}:{type(error).__name__}")
+                            expected_rejections.append(
+                                f"{qualified}:{type(error).__name__}"
+                            )
                         finally:
                             os.chdir(repository_cwd)
-                    for meta_updates, argument_overrides in literal_branch_scenarios(method, Meta.__dataclass_fields__, limit=192):
+                    for (
+                        meta_updates,
+                        argument_overrides,
+                    ) in literal_branch_scenarios(
+                        method, Meta.__dataclass_fields__, limit=192
+                    ):
                         scenario_meta = _meta(tmp_path, files, 0)
                         for key, value in meta_updates.items():
                             if key in Meta.__dataclass_fields__:
                                 setattr(scenario_meta, key, value)
                         try:
-                            await _invoke(method, scenario_meta, files, 0, argument_overrides)
+                            await _invoke(
+                                method,
+                                scenario_meta,
+                                files,
+                                0,
+                                argument_overrides,
+                            )
                         except (KeyboardInterrupt, SystemExit) as error:
-                            terminations.append(f"{qualified}:{type(error).__name__}")
+                            terminations.append(
+                                f"{qualified}:{type(error).__name__}"
+                            )
                         except Exception as error:
-                            expected_rejections.append(f"{qualified}:{type(error).__name__}")
+                            expected_rejections.append(
+                                f"{qualified}:{type(error).__name__}"
+                            )
                         finally:
                             os.chdir(repository_cwd)
 

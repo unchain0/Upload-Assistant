@@ -35,13 +35,30 @@ class InfinityHD(UNIT3D):
         self.config: Config = config
         self.common = Common(config)
 
-    async def get_category_id(self, meta: Meta, category: str | None = None, reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_category_id(
+        self,
+        meta: Meta,
+        category: str | None = None,
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         mapping = self._category_mapping()
         anime_id = self._anime_category_id(meta)
         if anime_id:
             return {"category_id": anime_id}
-        value = self._resolve_mapping(mapping, category, meta.category, reverse=reverse, mapping_only=mapping_only, default="0")
-        return value if mapping_only or reverse else {"category_id": value["value"]}
+        value = self._resolve_mapping(
+            mapping,
+            category,
+            meta.category,
+            reverse=reverse,
+            mapping_only=mapping_only,
+            default="0",
+        )
+        return (
+            value
+            if mapping_only or reverse
+            else {"category_id": value["value"]}
+        )
 
     @staticmethod
     def _category_mapping() -> dict[str, str]:
@@ -70,10 +87,33 @@ class InfinityHD(UNIT3D):
         selected = requested if requested is not None else fallback
         return {"value": mapping.get(selected, default)}
 
-    async def get_resolution_id(self, meta: Meta, resolution: str | None = None, reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
-        mapping = {"4320p": "1", "2160p": "2", "1440p": "3", "1080p": "3", "1080i": "4"}
-        value = self._resolve_mapping(mapping, resolution, meta.resolution, reverse=reverse, mapping_only=mapping_only, default="10")
-        return value if mapping_only or reverse else {"resolution_id": value["value"]}
+    async def get_resolution_id(
+        self,
+        meta: Meta,
+        resolution: str | None = None,
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
+        mapping = {
+            "4320p": "1",
+            "2160p": "2",
+            "1440p": "3",
+            "1080p": "3",
+            "1080i": "4",
+        }
+        value = self._resolve_mapping(
+            mapping,
+            resolution,
+            meta.resolution,
+            reverse=reverse,
+            mapping_only=mapping_only,
+            default="10",
+        )
+        return (
+            value
+            if mapping_only or reverse
+            else {"resolution_id": value["value"]}
+        )
 
     def _get_language_code(self, track_or_string: Any) -> str:
         """Extract and normalize language to ISO alpha-2 code."""
@@ -81,7 +121,11 @@ class InfinityHD(UNIT3D):
         if not language:
             return ""
         normalized = self._normalize_language_key(language)
-        return normalized if len(normalized) == 2 else self._lookup_language_code(normalized)
+        return (
+            normalized
+            if len(normalized) == 2
+            else self._lookup_language_code(normalized)
+        )
 
     @staticmethod
     def _language_value(track_or_string: Any) -> str:
@@ -100,7 +144,11 @@ class InfinityHD(UNIT3D):
     @staticmethod
     def _lookup_language_code(language: str) -> str:
         try:
-            lang_obj = pycountry.languages.get(name=language.title()) or pycountry.languages.get(alpha_2=language) or pycountry.languages.get(alpha_3=language)
+            lang_obj = (
+                pycountry.languages.get(name=language.title())
+                or pycountry.languages.get(alpha_2=language)
+                or pycountry.languages.get(alpha_3=language)
+            )
             return lang_obj.alpha_2.lower() if lang_obj else language
         except AttributeError, KeyError, LookupError:
             return language
@@ -109,11 +157,18 @@ class InfinityHD(UNIT3D):
         original_languages = self._original_language_codes(meta)
         if not original_languages:
             return False
-        return any(self._track_matches_original(track, original_languages) for track in self._mediainfo_tracks(meta))
+        return any(
+            self._track_matches_original(track, original_languages)
+            for track in self._mediainfo_tracks(meta)
+        )
 
     @classmethod
     def _original_language_codes(cls, meta: Meta) -> set[str]:
-        return {value.casefold() for value in cls._original_language_values(meta) if cls._nonempty_string(value)}
+        return {
+            value.casefold()
+            for value in cls._original_language_values(meta)
+            if cls._nonempty_string(value)
+        }
 
     @staticmethod
     def _original_language_values(meta: Meta) -> list[str]:
@@ -136,7 +191,9 @@ class InfinityHD(UNIT3D):
         tracks = media.get("track", [])
         return tracks if isinstance(tracks, list) else []
 
-    def _track_matches_original(self, track: Any, original_languages: set[str]) -> bool:
+    def _track_matches_original(
+        self, track: Any, original_languages: set[str]
+    ) -> bool:
         if not isinstance(track, dict) or track.get("@type") != "Audio":
             return False
         if "commentary" in str(track.get("Title", "")).casefold():
@@ -146,11 +203,22 @@ class InfinityHD(UNIT3D):
 
     async def get_name(self, meta: Meta) -> dict[str, str]:
         if not meta.language_checked:
-            await languages_manager.process_desc_language(meta, tracker=self.tracker)
+            await languages_manager.process_desc_language(
+                meta, tracker=self.tracker
+            )
         audio_languages = self._string_list(meta.audio_languages)
         name = meta.name
-        if audio_languages and not await languages_manager.has_english_language(audio_languages):
-            name = name.replace(meta.resolution, f"{audio_languages[0].upper()} {meta.resolution}", 1)
+        if (
+            audio_languages
+            and not await languages_manager.has_english_language(
+                audio_languages
+            )
+        ):
+            name = name.replace(
+                meta.resolution,
+                f"{audio_languages[0].upper()} {meta.resolution}",
+                1,
+            )
         return {"name": name}
 
     @staticmethod
@@ -160,33 +228,57 @@ class InfinityHD(UNIT3D):
     async def get_additional_checks(self, meta: Meta) -> bool:
         if not self._basic_policy_passes(meta):
             return False
-        if meta.is_disc != "BDMV" and not await self._language_policy_passes(meta):
+        if meta.is_disc != "BDMV" and not await self._language_policy_passes(
+            meta
+        ):
             return False
-        return await self.common.check_and_confirm_adult_media_upload(meta, self.tracker)
+        return await self.common.check_and_confirm_adult_media_upload(
+            meta, self.tracker
+        )
 
     def _basic_policy_passes(self, meta: Meta) -> bool:
-        if meta.resolution not in {"4320p", "2160p", "1440p", "1080p", "1080i"}:
-            self._log_policy_failure(meta, f"Uploads must be at least 1080 resolution for {self.tracker}.")
+        if meta.resolution not in {
+            "4320p",
+            "2160p",
+            "1440p",
+            "1080p",
+            "1080i",
+        }:
+            self._log_policy_failure(
+                meta,
+                f"Uploads must be at least 1080 resolution for {self.tracker}.",
+            )
             return False
         if not meta.valid_mi_settings:
-            self._log_policy_failure(meta, "No encoding settings in mediainfo, skipping upload.")
+            self._log_policy_failure(
+                meta, "No encoding settings in mediainfo, skipping upload."
+            )
             return False
         return True
 
     async def _language_policy_passes(self, meta: Meta) -> bool:
         if not meta.language_checked:
-            await languages_manager.process_desc_language(meta, tracker=self.tracker)
+            await languages_manager.process_desc_language(
+                meta, tracker=self.tracker
+            )
         if await self._has_allowed_language(meta):
             return True
-        self._log_policy_failure(meta, "requires at least one English audio or subtitle track or an original language audio track.")
+        self._log_policy_failure(
+            meta,
+            "requires at least one English audio or subtitle track or an original language audio track.",
+        )
         return False
 
     async def _has_allowed_language(self, meta: Meta) -> bool:
         if self.original_language_check(meta):
             return True
-        if await languages_manager.has_english_language(self._string_list(meta.audio_languages) or ""):
+        if await languages_manager.has_english_language(
+            self._string_list(meta.audio_languages) or ""
+        ):
             return True
-        return await languages_manager.has_english_language(self._string_list(meta.subtitle_languages) or "")
+        return await languages_manager.has_english_language(
+            self._string_list(meta.subtitle_languages) or ""
+        )
 
     def _log_policy_failure(self, meta: Meta, message: str) -> None:
         if not meta.unattended or meta.debug:

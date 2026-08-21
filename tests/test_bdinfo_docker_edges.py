@@ -18,7 +18,9 @@ def _tar(path: Path, *members: tuple[str, bytes]) -> None:
             archive.addfile(info, io.BytesIO(payload))
 
 
-def test_download_file_and_secure_extract(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_download_file_and_secure_extract(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     calls: list[tuple[str, Path]] = []
 
     def download(url: str, destination: Path) -> None:
@@ -38,7 +40,9 @@ def test_download_file_and_secure_extract(tmp_path: Path, monkeypatch: pytest.Mo
     assert (output / "bundle" / "bdinfo").read_bytes() == b"binary"
 
 
-def test_docker_platform_architecture_and_cache_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_docker_platform_architecture_and_cache_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(bdinfo_docker.platform, "system", lambda: "Darwin")
     with pytest.raises(Exception, match="only for Linux"):
         bdinfo_docker.download_bdinfo_for_docker(tmp_path)
@@ -48,21 +52,31 @@ def test_docker_platform_architecture_and_cache_paths(tmp_path: Path, monkeypatc
     with pytest.raises(Exception, match="Unsupported architecture"):
         bdinfo_docker.download_bdinfo_for_docker(tmp_path)
 
-    for machine, folder in (("amd64", "linux/amd64"), ("aarch64", "linux/arm64"), ("armv7l", "linux/arm")):
+    for machine, folder in (
+        ("amd64", "linux/amd64"),
+        ("aarch64", "linux/arm64"),
+        ("armv7l", "linux/arm"),
+    ):
         root = tmp_path / machine
         binary = root / "bin" / "bdinfo" / folder / "bdinfo"
         binary.parent.mkdir(parents=True)
         binary.write_bytes(b"cached")
         binary.chmod(0o755)
         (binary.parent / "v0.3.1").write_text("cached", encoding="utf-8")
-        monkeypatch.setattr(bdinfo_docker.platform, "machine", lambda value=machine: value)
+        monkeypatch.setattr(
+            bdinfo_docker.platform, "machine", lambda value=machine: value
+        )
         assert bdinfo_docker.download_bdinfo_for_docker(root) == str(binary)
 
 
-def test_docker_install_stale_cleanup_duplicate_and_download_cleanup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_docker_install_stale_cleanup_duplicate_and_download_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(bdinfo_docker.platform, "system", lambda: "Linux")
     monkeypatch.setattr(bdinfo_docker.platform, "machine", lambda: "x86_64")
-    monkeypatch.setattr(bdinfo_docker, "verify_downloaded_asset", lambda *_args: None)
+    monkeypatch.setattr(
+        bdinfo_docker, "verify_downloaded_asset", lambda *_args: None
+    )
 
     def download(_url: str, destination: Path) -> None:
         _tar(destination, ("bundle/bdinfo", b"new"))
@@ -87,7 +101,14 @@ def test_docker_install_stale_cleanup_duplicate_and_download_cleanup(tmp_path: P
     monkeypatch.setattr(bdinfo_docker, "download_file", duplicate)
     with pytest.raises(Exception, match="exactly one"):
         bdinfo_docker.download_bdinfo_for_docker(duplicate_root)
-    assert not (duplicate_root / "bin" / "bdinfo" / "linux" / "amd64" / ".bdinfo-staging").exists()
+    assert not (
+        duplicate_root
+        / "bin"
+        / "bdinfo"
+        / "linux"
+        / "amd64"
+        / ".bdinfo-staging"
+    ).exists()
 
     failed_root = tmp_path / "failed"
 
@@ -98,11 +119,21 @@ def test_docker_install_stale_cleanup_duplicate_and_download_cleanup(tmp_path: P
     monkeypatch.setattr(bdinfo_docker, "download_file", fail_download)
     with pytest.raises(RuntimeError, match="download failed"):
         bdinfo_docker.download_bdinfo_for_docker(failed_root)
-    assert not any((failed_root / "bin" / "bdinfo" / "linux" / "amd64").glob("temp_*"))
+    assert not any(
+        (failed_root / "bin" / "bdinfo" / "linux" / "amd64").glob("temp_*")
+    )
 
 
-def test_docker_main_success_and_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(bdinfo_docker, "download_bdinfo_for_docker", lambda: "/bin/bdinfo")
+def test_docker_main_success_and_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        bdinfo_docker, "download_bdinfo_for_docker", lambda: "/bin/bdinfo"
+    )
     assert bdinfo_docker.main() == 0
-    monkeypatch.setattr(bdinfo_docker, "download_bdinfo_for_docker", lambda: (_ for _ in ()).throw(RuntimeError("failed")))
+    monkeypatch.setattr(
+        bdinfo_docker,
+        "download_bdinfo_for_docker",
+        lambda: (_ for _ in ()).throw(RuntimeError("failed")),
+    )
     assert bdinfo_docker.main() == 1

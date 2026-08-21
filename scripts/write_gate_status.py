@@ -55,11 +55,19 @@ def _passed_gates(artifacts: Path) -> list[str]:
     gates_dir = artifacts / "gates"
     if not gates_dir.is_dir():
         return []
-    return sorted(path.name.removesuffix(".pass") for path in gates_dir.glob("*.pass"))
+    return sorted(
+        path.name.removesuffix(".pass") for path in gates_dir.glob("*.pass")
+    )
 
 
-def _merge_allowed(missing: list[str], coverage: dict[str, Any] | None) -> bool:
-    return bool(not missing and coverage is not None and coverage["percent_covered"] == 100.0)
+def _merge_allowed(
+    missing: list[str], coverage: dict[str, Any] | None
+) -> bool:
+    return bool(
+        not missing
+        and coverage is not None
+        and coverage["percent_covered"] == 100.0
+    )
 
 
 def build_status(artifacts: Path) -> dict[str, Any]:
@@ -73,8 +81,15 @@ def build_status(artifacts: Path) -> dict[str, Any]:
         "branch": _git("branch", "--show-current"),
         "head": _git("rev-parse", "HEAD"),
         "base_candidate": "development",
-        "working_tree": {"changed_entries": len(status_lines), "clean": not status_lines},
-        "gates": {"expected": list(EXPECTED_GATES), "passed": passed, "missing_or_failed": missing},
+        "working_tree": {
+            "changed_entries": len(status_lines),
+            "clean": not status_lines,
+        },
+        "gates": {
+            "expected": list(EXPECTED_GATES),
+            "passed": passed,
+            "missing_or_failed": missing,
+        },
         "architecture": architecture,
         "coverage": coverage,
         "merge_allowed": _merge_allowed(missing, coverage),
@@ -107,7 +122,9 @@ def _markdown(status: dict[str, Any]) -> str:
         _coverage_line(status["coverage"]),
         f"- Merge allowed: **{'yes' if status['merge_allowed'] else 'no'}**",
         *_gate_lines("Passed gates", status["gates"]["passed"]),
-        *_gate_lines("Missing or failed gates", status["gates"]["missing_or_failed"]),
+        *_gate_lines(
+            "Missing or failed gates", status["gates"]["missing_or_failed"]
+        ),
         "",
     ]
     return "\n".join(lines)
@@ -119,8 +136,12 @@ def main() -> int:
     args = parser.parse_args()
     status = build_status(args.artifacts)
     args.artifacts.mkdir(parents=True, exist_ok=True)
-    (args.artifacts / "gate-status.json").write_text(json.dumps(status, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    (args.artifacts / "gate-status.md").write_text(_markdown(status), encoding="utf-8")
+    (args.artifacts / "gate-status.json").write_text(
+        json.dumps(status, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    (args.artifacts / "gate-status.md").write_text(
+        _markdown(status), encoding="utf-8"
+    )
     print(json.dumps(status, sort_keys=True))
     return 0 if status["merge_allowed"] else 1
 

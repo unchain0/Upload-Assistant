@@ -17,7 +17,9 @@ def configure_binary_paths(default_config: Mapping[str, Any]) -> None:
     _active_config = {"DEFAULT": dict(default_config)}
 
 
-def configured_binary(key: str, config: Mapping[str, Any] | None = None) -> str | None:
+def configured_binary(
+    key: str, config: Mapping[str, Any] | None = None
+) -> str | None:
     """Return an explicitly configured executable, if any.
 
     A configured path is an override, not a hint: fail clearly when it no
@@ -41,7 +43,9 @@ def configured_binary(key: str, config: Mapping[str, Any] | None = None) -> str 
 
     path = Path(path_text).expanduser()
     if not path.is_file():
-        raise FileNotFoundError(f"Configured {key} does not exist or is not a file: {path}")
+        raise FileNotFoundError(
+            f"Configured {key} does not exist or is not a file: {path}"
+        )
     if os.name != "nt" and not os.access(path, os.X_OK):
         raise FileNotFoundError(f"Configured {key} is not executable: {path}")
     return str(path) if path_text.startswith("~") else path_text

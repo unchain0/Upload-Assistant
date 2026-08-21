@@ -16,7 +16,9 @@ def _tracker() -> OnlyEncodes:
 
 def test_onlyencodes_rejects_adult_media_when_confirmation_fails() -> None:
     tracker = _tracker()
-    tracker.common.check_and_confirm_adult_media_upload = AsyncMock(return_value=False)  # type: ignore[method-assign]
+    tracker.common.check_and_confirm_adult_media_upload = AsyncMock(
+        return_value=False
+    )  # type: ignore[method-assign]
 
     assert not asyncio.run(tracker.get_additional_checks(Meta()))
 
@@ -70,9 +72,15 @@ def test_onlyencodes_tv_dvdrip_rewrites_source_and_audio() -> None:
     assert "AAC 2.0 H264" in name
 
 
-def test_onlyencodes_marks_foreign_language(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_onlyencodes_marks_foreign_language(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     tracker = _tracker()
-    monkeypatch.setattr(onlyencodes_module.languages_manager, "has_english_language", AsyncMock(return_value=False))
+    monkeypatch.setattr(
+        onlyencodes_module.languages_manager,
+        "has_english_language",
+        AsyncMock(return_value=False),
+    )
     meta = Meta(
         name="Movie 1080p WEB-DL H264-GROUP",
         title="Movie",
@@ -100,4 +108,6 @@ def test_onlyencodes_type_mapping_for_dvdrip_and_modern_codecs() -> None:
         ("WEBRIP", "AVC", "15"),
     )
     for release_type, codec, expected in cases:
-        assert asyncio.run(tracker.get_type_id(Meta(type=release_type, video_codec=codec))) == {"type_id": expected}
+        assert asyncio.run(
+            tracker.get_type_id(Meta(type=release_type, video_codec=codec))
+        ) == {"type_id": expected}

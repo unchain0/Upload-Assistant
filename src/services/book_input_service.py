@@ -6,7 +6,11 @@ import base64
 import contextlib
 import re
 
-from src.domain_models.book_language import extract_first_author, is_valid_book_language, resolve_book_language
+from src.domain_models.book_language import (
+    extract_first_author,
+    is_valid_book_language,
+    resolve_book_language,
+)
 from src.domain_models.release import Meta
 
 
@@ -162,25 +166,39 @@ def sanitize_book_author(meta: Meta) -> None:
     if manual_translator:
         # Also replace underscores in manual translator names in case they entered underscores
         manual_translator_str = manual_translator
-        names_to_remove = [n.replace("_", " ").strip() for n in manual_translator_str.split(",") if n.strip()]
+        names_to_remove = [
+            n.replace("_", " ").strip()
+            for n in manual_translator_str.split(",")
+            if n.strip()
+        ]
         for name in names_to_remove:
             pattern = r"\b" + re.escape(name) + r"\b"
-            normalized_author = re.sub(pattern, "", normalized_author, flags=re.IGNORECASE)
+            normalized_author = re.sub(
+                pattern, "", normalized_author, flags=re.IGNORECASE
+            )
 
         # Clean up delimiters and extra whitespace left behind
         normalized_author = re.sub(r"\s*[,;/&]+\s*$", "", normalized_author)
         normalized_author = re.sub(r"^\s*[,;/&]+\s*", "", normalized_author)
-        normalized_author = re.sub(r"\b(?:and|e)\b\s*$", "", normalized_author, flags=re.IGNORECASE)
-        normalized_author = re.sub(r"^\s*\b(?:and|e)\b\s*", "", normalized_author, flags=re.IGNORECASE)
+        normalized_author = re.sub(
+            r"\b(?:and|e)\b\s*$", "", normalized_author, flags=re.IGNORECASE
+        )
+        normalized_author = re.sub(
+            r"^\s*\b(?:and|e)\b\s*", "", normalized_author, flags=re.IGNORECASE
+        )
         normalized_author = re.sub(r"\s*-\s*$", "", normalized_author)
         normalized_author = re.sub(r"^\s*-\s*", "", normalized_author)
         normalized_author = re.sub(r"\s+", " ", normalized_author).strip()
-        normalized_author = re.sub(r"\(\s*\)|\[\s*\]", "", normalized_author).strip()
+        normalized_author = re.sub(
+            r"\(\s*\)|\[\s*\]", "", normalized_author
+        ).strip()
 
     if has_underscores:
         normalized_author = normalized_author.replace(" ", "_")
 
-    cleaned_author, translator = clean_translator_from_author(normalized_author)
+    cleaned_author, translator = clean_translator_from_author(
+        normalized_author
+    )
     meta.author = extract_first_author(cleaned_author)
     if translator and not meta.book_translator:
         meta.book_translator = translator
@@ -222,10 +240,16 @@ def clean_translator_from_author(author: str) -> tuple[str, str]:
         r"([A-Z][A-Za-zÀ-ÿ]+(?:\s+[A-Z][A-Za-zÀ-ÿ]+)*)"
     )
 
-    translators = [match.group(1).strip() for match in re.finditer(pattern1, normalized, flags=re.IGNORECASE)]
+    translators = [
+        match.group(1).strip()
+        for match in re.finditer(pattern1, normalized, flags=re.IGNORECASE)
+    ]
 
     # Find all matches for pattern2 to extract translator name(s)
-    translators.extend(match.group(1).strip() for match in re.finditer(pattern2, normalized, flags=re.IGNORECASE))
+    translators.extend(
+        match.group(1).strip()
+        for match in re.finditer(pattern2, normalized, flags=re.IGNORECASE)
+    )
 
     # Apply pattern 1
     normalized, count1 = re.subn(pattern1, "", normalized, flags=re.IGNORECASE)
@@ -235,7 +259,9 @@ def clean_translator_from_author(author: str) -> tuple[str, str]:
 
     # If neither pattern matched but a bare keyword is present, fallback to word-based stripping
     if count1 == 0 and count2 == 0:
-        match = re.search(r"\b" + pattern_keywords + r"\b", normalized, re.IGNORECASE)
+        match = re.search(
+            r"\b" + pattern_keywords + r"\b", normalized, re.IGNORECASE
+        )
         if match:
             before_keyword = normalized[: match.start()].strip()
             before_keyword = before_keyword.rstrip(" _-,;([/")
@@ -252,8 +278,12 @@ def clean_translator_from_author(author: str) -> tuple[str, str]:
     # Clean up delimiters and extra whitespace left behind (anchored to start/end of the string)
     normalized = re.sub(r"\s*[,;/&]+\s*$", "", normalized)
     normalized = re.sub(r"^\s*[,;/&]+\s*", "", normalized)
-    normalized = re.sub(r"\b(?:and|e)\b\s*$", "", normalized, flags=re.IGNORECASE)
-    normalized = re.sub(r"^\s*\b(?:and|e)\b\s*", "", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(
+        r"\b(?:and|e)\b\s*$", "", normalized, flags=re.IGNORECASE
+    )
+    normalized = re.sub(
+        r"^\s*\b(?:and|e)\b\s*", "", normalized, flags=re.IGNORECASE
+    )
     normalized = re.sub(r"\s*-\s*$", "", normalized)
     normalized = re.sub(r"^\s*-\s*", "", normalized)
     normalized = re.sub(r"\s+", " ", normalized).strip()
@@ -270,8 +300,12 @@ def clean_translator_from_author(author: str) -> tuple[str, str]:
         t_clean = t.strip()
         t_clean = re.sub(r"\s*[,;/&]+\s*$", "", t_clean)
         t_clean = re.sub(r"^\s*[,;/&]+\s*", "", t_clean)
-        t_clean = re.sub(r"\b(?:and|e)\b\s*$", "", t_clean, flags=re.IGNORECASE)
-        t_clean = re.sub(r"^\s*\b(?:and|e)\b\s*", "", t_clean, flags=re.IGNORECASE)
+        t_clean = re.sub(
+            r"\b(?:and|e)\b\s*$", "", t_clean, flags=re.IGNORECASE
+        )
+        t_clean = re.sub(
+            r"^\s*\b(?:and|e)\b\s*", "", t_clean, flags=re.IGNORECASE
+        )
         t_clean = re.sub(r"\s*-\s*$", "", t_clean)
         t_clean = re.sub(r"^\s*-\s*", "", t_clean)
         t_clean = re.sub(r"\s+", " ", t_clean).strip()

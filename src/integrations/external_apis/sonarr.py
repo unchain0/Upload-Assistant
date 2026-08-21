@@ -20,7 +20,9 @@ class SonarrManager:
         filename: str | None = None,
         title: str | None = None,
     ) -> ShowInfo | None:
-        if not any(key.startswith("sonarr_api_key") for key in self.default_config):
+        if not any(
+            key.startswith("sonarr_api_key") for key in self.default_config
+        ):
             logger.info("[red]No Sonarr API keys are configured.[/red]")
             return None
 
@@ -43,14 +45,19 @@ class SonarrManager:
 
             # Get instance-specific configuration
             base_url_value = self.default_config.get(url_name)
-            if not isinstance(base_url_value, str) or not base_url_value.strip():
+            if (
+                not isinstance(base_url_value, str)
+                or not base_url_value.strip()
+            ):
                 instance_index += 1
                 continue
 
             api_key = api_key_value.strip()
             base_url = base_url_value.strip().rstrip("/")
 
-            logger.debug(f"[blue]Trying Sonarr instance {instance_index if instance_index > 0 else 'default'}[/blue]")
+            logger.debug(
+                f"[blue]Trying Sonarr instance {instance_index if instance_index > 0 else 'default'}[/blue]"
+            )
 
             # Build the appropriate URL
             if tvdb_id:
@@ -61,26 +68,43 @@ class SonarrManager:
                 instance_index += 1
                 continue
 
-            headers = {"X-Api-Key": api_key, "Content-Type": "application/json"}
+            headers = {
+                "X-Api-Key": api_key,
+                "Content-Type": "application/json",
+            }
 
             logger.debug(f"[green]TVDB ID {tvdb_id}[/green]")
             logger.debug(f"[blue]Sonarr URL:[/blue] {url}")
 
             try:
                 async with httpx.AsyncClient() as client:
-                    response = await client.get(url, headers=headers, timeout=10.0)
+                    response = await client.get(
+                        url, headers=headers, timeout=10.0
+                    )
 
                     if response.status_code == 200:
                         data = response.json()
 
-                        logger.debug(f"[blue]Sonarr Response Status:[/blue] {response.status_code}")
-                        logger.debug(f"[blue]Sonarr Response Data:[/blue] {data}")
+                        logger.debug(
+                            f"[blue]Sonarr Response Status:[/blue] {response.status_code}"
+                        )
+                        logger.debug(
+                            f"[blue]Sonarr Response Data:[/blue] {data}"
+                        )
 
                         # Check if we got valid data by trying to extract show info
-                        show_data: ShowInfo = await self.extract_show_data(data)
+                        show_data: ShowInfo = await self.extract_show_data(
+                            data
+                        )
 
-                        if show_data and (show_data.get("tvdb_id") or show_data.get("imdb_id") or show_data.get("tmdb_id")):
-                            logger.info(f"[green]Found valid show data from Sonarr instance {instance_index if instance_index > 0 else 'default'}[/green]")
+                        if show_data and (
+                            show_data.get("tvdb_id")
+                            or show_data.get("imdb_id")
+                            or show_data.get("tmdb_id")
+                        ):
+                            logger.info(
+                                f"[green]Found valid show data from Sonarr instance {instance_index if instance_index > 0 else 'default'}[/green]"
+                            )
                             return show_data
                     else:
                         logger.info(
@@ -88,33 +112,56 @@ class SonarrManager:
                         )
 
             except httpx.TimeoutException:
-                logger.info(f"[red]Timeout when fetching from Sonarr instance {instance_index if instance_index > 0 else 'default'}[/red]")
+                logger.info(
+                    f"[red]Timeout when fetching from Sonarr instance {instance_index if instance_index > 0 else 'default'}[/red]"
+                )
             except httpx.RequestError as e:
-                logger.error(f"[red]Error fetching from Sonarr instance {instance_index if instance_index > 0 else 'default'}: {e}[/red]")
+                logger.error(
+                    f"[red]Error fetching from Sonarr instance {instance_index if instance_index > 0 else 'default'}: {e}[/red]"
+                )
             except Exception as e:
-                logger.error(f"[red]Unexpected error with Sonarr instance {instance_index if instance_index > 0 else 'default'}: {e}[/red]")
+                logger.error(
+                    f"[red]Unexpected error with Sonarr instance {instance_index if instance_index > 0 else 'default'}: {e}[/red]"
+                )
 
             # Move to the next instance
             instance_index += 1
 
         # If we got here, no instances provided valid data
-        logger.info("[yellow]No Sonarr instance returned valid show data.[/yellow]")
+        logger.info(
+            "[yellow]No Sonarr instance returned valid show data.[/yellow]"
+        )
         return None
 
     async def extract_show_data(self, sonarr_data: Any) -> ShowInfo:
         if not sonarr_data:
-            return {"tvdb_id": None, "imdb_id": None, "tvmaze_id": None, "tmdb_id": None, "genres": [], "title": "", "year": None, "release_group": None}
+            return {
+                "tvdb_id": None,
+                "imdb_id": None,
+                "tvmaze_id": None,
+                "tmdb_id": None,
+                "genres": [],
+                "title": "",
+                "year": None,
+                "release_group": None,
+            }
 
         # Handle response from /api/v3/parse endpoint
         if isinstance(sonarr_data, dict) and "series" in sonarr_data:
             sonarr_dict = cast(Mapping[str, Any], sonarr_data)
             series = cast(Mapping[str, Any], sonarr_dict["series"])
-            parsed_info = cast(Mapping[str, Any], sonarr_dict.get("parsedEpisodeInfo", {}))
+            parsed_info = cast(
+                Mapping[str, Any], sonarr_dict.get("parsedEpisodeInfo", {})
+            )
             release_group = parsed_info.get("releaseGroup")
 
             return {
                 "tvdb_id": series.get("tvdbId", None),
-                "imdb_id": int(str(series.get("imdbId", "tt0")).replace("tt", "")) if series.get("imdbId") else None,
+                "imdb_id": int(
+                    str(series.get("imdbId", "tt0")).replace("tt", "")
+                )
+                if series.get("imdbId")
+                else None,
                 "tvmaze_id": series.get("tvMazeId", None),
                 "tmdb_id": series.get("tmdbId", None),
                 "genres": series.get("genres", []),
@@ -130,14 +177,29 @@ class SonarrManager:
 
                 return {
                     "tvdb_id": series.get("tvdbId", None),
-                    "imdb_id": int(str(series.get("imdbId", "tt0")).replace("tt", "")) if series.get("imdbId") else None,
+                    "imdb_id": int(
+                        str(series.get("imdbId", "tt0")).replace("tt", "")
+                    )
+                    if series.get("imdbId")
+                    else None,
                     "tvmaze_id": series.get("tvMazeId", None),
                     "tmdb_id": series.get("tmdbId", None),
                     "genres": series.get("genres", []),
                     "title": series.get("title", ""),
                     "year": series.get("year", None),
-                    "release_group": series.get("releaseGroup") if series.get("releaseGroup") else None,
+                    "release_group": series.get("releaseGroup")
+                    if series.get("releaseGroup")
+                    else None,
                 }
 
         # Return empty data if the format doesn't match any expected structure
-        return {"tvdb_id": None, "imdb_id": None, "tvmaze_id": None, "tmdb_id": None, "genres": [], "title": "", "year": None, "release_group": None}
+        return {
+            "tvdb_id": None,
+            "imdb_id": None,
+            "tvmaze_id": None,
+            "tmdb_id": None,
+            "genres": [],
+            "title": "",
+            "year": None,
+            "release_group": None,
+        }

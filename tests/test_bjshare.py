@@ -8,7 +8,9 @@ from src.integrations.trackers.bjshare import BJShare
 
 class FakeResponse:
     url = "https://bj-share.info/series.php?id=1"
-    text = '<a href="logout.php?auth=abcdef"></a><div class="main_column"></div>'
+    text = (
+        '<a href="logout.php?auth=abcdef"></a><div class="main_column"></div>'
+    )
 
     def raise_for_status(self):
         pass
@@ -43,7 +45,10 @@ def test_get_database_identifier_returns_imdb_id():
         "html.parser",
     )
 
-    assert BJShare.get_database_identifier(object.__new__(BJShare), soup) == "tt999999999"
+    assert (
+        BJShare.get_database_identifier(object.__new__(BJShare), soup)
+        == "tt999999999"
+    )
 
 
 def test_get_database_identifier_returns_tmdb_id():
@@ -54,7 +59,10 @@ def test_get_database_identifier_returns_tmdb_id():
         "html.parser",
     )
 
-    assert BJShare.get_database_identifier(object.__new__(BJShare), soup) == "tv/999999999"
+    assert (
+        BJShare.get_database_identifier(object.__new__(BJShare), soup)
+        == "tv/999999999"
+    )
 
 
 def test_search_existing_queries_both_media_identifiers_before_title_fallback():
@@ -63,11 +71,19 @@ def test_search_existing_queries_both_media_identifiers_before_title_fallback():
     tracker.cookie_validator = FakeCookieValidator()
     tracker.base_url = "https://bj-share.info"
     tracker.tracker = "BJSHARE"
-    meta = SimpleNamespace(category="TV", title="Example", imdb_info={"imdbID": "tt1234567"}, tmdb_id="76543")
+    meta = SimpleNamespace(
+        category="TV",
+        title="Example",
+        imdb_info={"imdbID": "tt1234567"},
+        tmdb_id="76543",
+    )
 
     asyncio.run(tracker.search_existing(meta))
 
-    assert tracker.session.calls == [{"searchstr": "tt1234567"}, {"searchstr": "tv/76543"}]
+    assert tracker.session.calls == [
+        {"searchstr": "tt1234567"},
+        {"searchstr": "tv/76543"},
+    ]
 
 
 def test_search_existing_queries_title_once_without_media_identifiers():
@@ -76,7 +92,9 @@ def test_search_existing_queries_title_once_without_media_identifiers():
     tracker.cookie_validator = FakeCookieValidator()
     tracker.base_url = "https://bj-share.info"
     tracker.tracker = "BJSHARE"
-    meta = SimpleNamespace(category="TV", title="Example", imdb_info={}, tmdb_id="")
+    meta = SimpleNamespace(
+        category="TV", title="Example", imdb_info={}, tmdb_id=""
+    )
 
     asyncio.run(tracker.search_existing(meta))
 
@@ -95,7 +113,10 @@ def test_get_database_overview_extracts_synopsis():
     soup = BeautifulSoup(html, "html.parser")
     tracker = object.__new__(BJShare)
     overview = tracker.get_database_overview(soup)
-    assert overview == "Em busca de uma vida melhor, Lu Xiao Fan deixa o interior..."
+    assert (
+        overview
+        == "Em busca de uma vida melhor, Lu Xiao Fan deixa o interior..."
+    )
 
 
 def test_get_overview_returns_database_overview_when_already_has_the_info():

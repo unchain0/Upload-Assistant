@@ -14,7 +14,9 @@ from src.integrations.trackers import hdspace as hdspace_module
 from src.integrations.trackers.hdspace import HDSpace
 
 
-def _config(*, search_requests: bool = False, anon: bool = False) -> dict[str, Any]:
+def _config(
+    *, search_requests: bool = False, anon: bool = False
+) -> dict[str, Any]:
     return {
         "DEFAULT": {"search_requests": search_requests},
         "TRACKERS": {"HDSPACE": {"anon": anon}},
@@ -54,21 +56,30 @@ def _meta(**values: object) -> Meta:
     return Meta(state)
 
 
-def _response(text: str, *, url: str = "https://hd-space.org/index.php", status: int = 200) -> httpx.Response:
+def _response(
+    text: str,
+    *,
+    url: str = "https://hd-space.org/index.php",
+    status: int = 200,
+) -> httpx.Response:
     return httpx.Response(status, request=httpx.Request("GET", url), text=text)
 
 
 @pytest.mark.asyncio
 async def test_hdspace_load_cookies_and_empty_payload_rejection() -> None:
     tracker = _tracker()
-    tracker.cookie_validator.load_session_cookies = AsyncMock(return_value=httpx.Cookies({"sid": "value"}))  # type: ignore[method-assign]
+    tracker.cookie_validator.load_session_cookies = AsyncMock(
+        return_value=httpx.Cookies({"sid": "value"})
+    )  # type: ignore[method-assign]
     assert await tracker.validate_credentials(_meta())
     assert tracker.session.cookies.get("sid") == "value"
     assert not await tracker.get_additional_checks(_meta(filelist=[]))
 
 
 @pytest.mark.asyncio
-async def test_hdspace_description_error_is_nonfatal(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_hdspace_description_error_is_nonfatal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     class BrokenBuilder:
         def __init__(self, *_args: object, **_kwargs: object) -> None:
             raise RuntimeError("broken")
@@ -82,7 +93,9 @@ async def test_hdspace_search_login_failure() -> None:
     tracker = _tracker()
     tracker.cookie_validator.handle_validation_failure = AsyncMock()  # type: ignore[method-assign]
     meta = _meta()
-    response = _response("Recover password", url="https://hd-space.org/index.php?page=login")
+    response = _response(
+        "Recover password", url="https://hd-space.org/index.php?page=login"
+    )
     assert await tracker._search_login_failure(meta, response)
     assert meta.skipping == "HDSPACE"
     tracker.cookie_validator.handle_validation_failure.assert_awaited_once()
@@ -90,7 +103,9 @@ async def test_hdspace_search_login_failure() -> None:
 
 def test_hdspace_parse_search_page_and_row_helpers() -> None:
     tracker = _tracker()
-    assert tracker._parse_search_page("Show/Hide Categories<html></html>", 0) == ([], False)
+    assert tracker._parse_search_page(
+        "Show/Hide Categories<html></html>", 0
+    ) == ([], False)
 
     html = """
     Show/Hide Categories
@@ -107,7 +122,13 @@ def test_hdspace_parse_search_page_and_row_helpers() -> None:
     parsed = tracker._parse_search_page(html, 0)
     assert parsed is not None
     entries, has_next = parsed
-    assert entries == [{"name": "Fallback Title", "size": "1.5 GB", "link": "https://hd-space.org/index.php?page=torrent-details&id=7"}]
+    assert entries == [
+        {
+            "name": "Fallback Title",
+            "size": "1.5 GB",
+            "link": "https://hd-space.org/index.php?page=torrent-details&id=7",
+        }
+    ]
     assert has_next
 
 
@@ -117,13 +138,18 @@ def test_hdspace_has_next_page_numeric_fallback() -> None:
 
 
 def test_hdspace_documentary_category() -> None:
-    assert asyncio.run(_tracker().get_category_id(_meta(genres=["Documentary"]))) == 25
+    assert (
+        asyncio.run(_tracker().get_category_id(_meta(genres=["Documentary"])))
+        == 25
+    )
 
 
 @pytest.mark.asyncio
 async def test_hdspace_get_requests_success_and_error() -> None:
     tracker = _tracker(search_requests=True)
-    tracker.cookie_validator.load_session_cookies = AsyncMock(return_value=httpx.Cookies())  # type: ignore[method-assign]
+    tracker.cookie_validator.load_session_cookies = AsyncMock(
+        return_value=httpx.Cookies()
+    )  # type: ignore[method-assign]
     html = """
     <form action='index.php?page=takedelreq'>
       <table class='lista'>
@@ -135,14 +161,18 @@ async def test_hdspace_get_requests_success_and_error() -> None:
     """
     tracker.session.get = AsyncMock(return_value=_response(html))  # type: ignore[method-assign]
     result = await tracker.get_requests(_meta())
-    assert result == [{"Name": "Request One", "Link": "index.php?page=req&id=1"}]
+    assert result == [
+        {"Name": "Request One", "Link": "index.php?page=req&id=1"}
+    ]
 
     tracker.session.get = AsyncMock(side_effect=RuntimeError("boom"))  # type: ignore[method-assign]
     assert await tracker.get_requests(_meta()) == []
 
 
 def test_hdspace_log_request_entries() -> None:
-    _tracker()._log_request_entries([{"Name": "Request", "Link": "index.php?page=req&id=1"}])
+    _tracker()._log_request_entries(
+        [{"Name": "Request", "Link": "index.php?page=req&id=1"}]
+    )
 
 
 @pytest.mark.asyncio
@@ -151,22 +181,45 @@ async def test_hdspace_existing_nfo(tmp_path: Path) -> None:
     root = tmp_path / "tmp" / "release"
     root.mkdir(parents=True)
     (root / "release.nfo").write_bytes(b"nfo")
-    assert await tracker.get_nfo(_meta(base_dir=str(tmp_path), uuid="release")) == {"nfo": ("release.nfo", b"nfo", "application/octet-stream")}
+    assert await tracker.get_nfo(
+        _meta(base_dir=str(tmp_path), uuid="release")
+    ) == {"nfo": ("release.nfo", b"nfo", "application/octet-stream")}
 
 
 @pytest.mark.asyncio
-async def test_hdspace_search_pages_login_and_pagination(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_hdspace_search_pages_login_and_pagination(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     tracker = _tracker()
-    monkeypatch.setattr(tracker, "_search_page_response", AsyncMock(return_value=_response("login")))
-    monkeypatch.setattr(tracker, "_search_login_failure", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        tracker,
+        "_search_page_response",
+        AsyncMock(return_value=_response("login")),
+    )
+    monkeypatch.setattr(
+        tracker, "_search_login_failure", AsyncMock(return_value=True)
+    )
     assert await tracker._search_pages(_meta(), "123") == []
 
     tracker = _tracker()
     responses = iter((_response("page-one"), _response("page-two")))
-    monkeypatch.setattr(tracker, "_search_page_response", AsyncMock(side_effect=lambda *_args: next(responses)))
-    monkeypatch.setattr(tracker, "_search_login_failure", AsyncMock(return_value=False))
-    parsed = iter((([{"name": "One", "size": None, "link": "link1"}], True), ([{"name": "Two", "size": None, "link": "link2"}], False)))
-    monkeypatch.setattr(tracker, "_parse_search_page", lambda *_args: next(parsed))
+    monkeypatch.setattr(
+        tracker,
+        "_search_page_response",
+        AsyncMock(side_effect=lambda *_args: next(responses)),
+    )
+    monkeypatch.setattr(
+        tracker, "_search_login_failure", AsyncMock(return_value=False)
+    )
+    parsed = iter(
+        (
+            ([{"name": "One", "size": None, "link": "link1"}], True),
+            ([{"name": "Two", "size": None, "link": "link2"}], False),
+        )
+    )
+    monkeypatch.setattr(
+        tracker, "_parse_search_page", lambda *_args: next(parsed)
+    )
     assert await tracker._search_pages(_meta(), "123") == [
         {"name": "One", "size": None, "link": "link1"},
         {"name": "Two", "size": None, "link": "link2"},
@@ -174,12 +227,18 @@ async def test_hdspace_search_pages_login_and_pagination(monkeypatch: pytest.Mon
 
 
 def test_hdspace_search_row_missing_link_and_direct_name() -> None:
-    soup = BeautifulSoup("<tr><td class='lista'><a href=''>Direct Name</a></td></tr>", "html.parser")
+    soup = BeautifulSoup(
+        "<tr><td class='lista'><a href=''>Direct Name</a></td></tr>",
+        "html.parser",
+    )
     row = soup.find("tr")
     assert row is not None
     assert HDSpace._search_row(row) is None
 
-    soup = BeautifulSoup("<a href='index.php?page=torrent-details&id=1'>Direct Name</a>", "html.parser")
+    soup = BeautifulSoup(
+        "<a href='index.php?page=torrent-details&id=1'>Direct Name</a>",
+        "html.parser",
+    )
     tag = soup.find("a")
     assert tag is not None
     assert HDSpace._search_name(tag) == "Direct Name"
@@ -190,9 +249,16 @@ async def test_hdspace_requests_disabled() -> None:
     assert await _tracker().get_requests(_meta(search_requests=False)) is False
 
 
-def test_hdspace_search_row_rejects_empty_resolved_link(monkeypatch: pytest.MonkeyPatch) -> None:
-    soup = BeautifulSoup("<tr><td class='lista'><a href='index.php?page=torrent-details&id=1'>Direct Name</a></td></tr>", "html.parser")
+def test_hdspace_search_row_rejects_empty_resolved_link(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    soup = BeautifulSoup(
+        "<tr><td class='lista'><a href='index.php?page=torrent-details&id=1'>Direct Name</a></td></tr>",
+        "html.parser",
+    )
     row = soup.find("tr")
     assert row is not None
-    monkeypatch.setattr(HDSpace, "_search_link", classmethod(lambda _cls, _tag: ""))
+    monkeypatch.setattr(
+        HDSpace, "_search_link", classmethod(lambda _cls, _tag: "")
+    )
     assert HDSpace._search_row(row) is None

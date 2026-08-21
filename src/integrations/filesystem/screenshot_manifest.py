@@ -30,13 +30,17 @@ def _path(base_dir: str | Path, release_id: str) -> Path:
 
 def _load(base_dir: str | Path, release_id: str) -> dict[str, Any]:
     try:
-        value = json.loads(_path(base_dir, release_id).read_text(encoding="utf-8"))
+        value = json.loads(
+            _path(base_dir, release_id).read_text(encoding="utf-8")
+        )
     except OSError, json.JSONDecodeError:
         value = {}
     return value if isinstance(value, dict) else {}
 
 
-def _save(base_dir: str | Path, release_id: str, value: dict[str, Any]) -> None:
+def _save(
+    base_dir: str | Path, release_id: str, value: dict[str, Any]
+) -> None:
     output = _path(base_dir, release_id)
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_suffix(".tmp")
@@ -44,7 +48,12 @@ def _save(base_dir: str | Path, release_id: str, value: dict[str, Any]) -> None:
     temporary.replace(output)
 
 
-def register(base_dir: str | Path, release_id: str, paths: Iterable[str | Path], group: str) -> list[Path]:
+def register(
+    base_dir: str | Path,
+    release_id: str,
+    paths: Iterable[str | Path],
+    group: str,
+) -> list[Path]:
     """Publish capture files under UUID names and return their new paths."""
     with _lock(base_dir, release_id):
         manifest = _load(base_dir, release_id)
@@ -69,7 +78,9 @@ def register(base_dir: str | Path, release_id: str, paths: Iterable[str | Path],
         return result
 
 
-def files(base_dir: str | Path, release_id: str, group: str | None = None) -> list[Path]:
+def files(
+    base_dir: str | Path, release_id: str, group: str | None = None
+) -> list[Path]:
     """Return active UUID screenshots, optionally limited to a capture group."""
     directory = screenshots_dir(base_dir, release_id)
     entries = _load(base_dir, release_id).get("screenshots", {})
@@ -77,7 +88,9 @@ def files(base_dir: str | Path, release_id: str, group: str | None = None) -> li
         return []
     result = []
     for screenshot_id, value in entries.items():
-        if not isinstance(value, dict) or (group is not None and value.get("group") != group):
+        if not isinstance(value, dict) or (
+            group is not None and value.get("group") != group
+        ):
             continue
         path = directory / str(value.get("file", f"{screenshot_id}.png"))
         if path.is_file():

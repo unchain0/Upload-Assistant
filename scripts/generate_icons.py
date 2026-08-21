@@ -13,7 +13,9 @@ def draw_logo(size: int = 512, svg_path: Path = SOURCE_SVG) -> Image.Image:
 
     if not svg_path.is_file():
         raise FileNotFoundError(f"Logo source not found: {svg_path}")
-    rendered_svg = svg_to_bytes(svg_path=str(svg_path), width=size, height=size)
+    rendered_svg = svg_to_bytes(
+        svg_path=str(svg_path), width=size, height=size
+    )
     return Image.open(BytesIO(rendered_svg)).convert("RGBA")
 
 
@@ -27,7 +29,11 @@ def main() -> None:
 
     logo = draw_logo(512)
     logo.save(docs_assets / "logo.png", "PNG")
-    logo.save(scripts_dir / "logo.ico", format="ICO", sizes=[(size, size) for size in (16, 32, 48, 64, 128, 256)])
+    logo.save(
+        scripts_dir / "logo.ico",
+        format="ICO",
+        sizes=[(size, size) for size in (16, 32, 48, 64, 128, 256)],
+    )
     print("Regenerated docs/assets/logo.png and scripts/logo.ico")
 
 

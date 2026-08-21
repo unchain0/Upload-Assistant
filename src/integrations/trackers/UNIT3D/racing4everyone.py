@@ -31,10 +31,20 @@ class Racing4Everyone(UNIT3D):
         self.config: Config = config
         self.common = Common(config)
 
-    async def get_category_id(self, meta: Meta, category: str | None = None, reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_category_id(
+        self,
+        meta: Meta,
+        category: str | None = None,
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         _ = (category, reverse, mapping_only)
         category_id = "24"
-        genre_ids = [genre_id.strip() for genre_id in str(meta.genre_ids).split(",")] if meta and meta.genre_ids else []
+        genre_ids = (
+            [genre_id.strip() for genre_id in str(meta.genre_ids).split(",")]
+            if meta and meta.genre_ids
+            else []
+        )
         is_docu = "99" in genre_ids
 
         if meta.category == "MOVIE":
@@ -48,7 +58,13 @@ class Racing4Everyone(UNIT3D):
 
         return {"category_id": category_id}
 
-    async def get_type_id(self, meta: Meta, type: str | None = None, reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_type_id(
+        self,
+        meta: Meta,
+        type: str | None = None,
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         type_id = {
             "DISC": "1",
             "REMUX": "2",
@@ -62,7 +78,9 @@ class Racing4Everyone(UNIT3D):
             return type_id
         if reverse:
             return {v: k for k, v in type_id.items()}
-        type_value = type if type is not None and type != "" else str(meta.type)
+        type_value = (
+            type if type is not None and type != "" else str(meta.type)
+        )
         return {"type_id": type_id.get(type_value, "0")}
 
     async def get_personal_release(self, meta: Meta) -> dict[str, str]:
@@ -89,7 +107,13 @@ class Racing4Everyone(UNIT3D):
         _ = meta
         return {}
 
-    async def get_resolution_id(self, meta: Meta, resolution: str | None = None, reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_resolution_id(
+        self,
+        meta: Meta,
+        resolution: str | None = None,
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         resolution_id = {
             "8640p": "2160p",
             "4320p": "2160p",
@@ -107,14 +131,20 @@ class Racing4Everyone(UNIT3D):
             return resolution_id
         if reverse:
             return {v: k for k, v in resolution_id.items()}
-        resolution_value = resolution if resolution is not None and resolution != "" else str(meta.resolution)
+        resolution_value = (
+            resolution
+            if resolution is not None and resolution != ""
+            else str(meta.resolution)
+        )
         return {"resolution_id": resolution_id.get(resolution_value, "SD")}
 
     async def search_existing(self, meta: Meta) -> list[dict[str, Any]]:
         dupes: list[dict[str, Any]] = []
         url = self.search_url
         params: dict[str, Any] = {
-            "api_token": str(self.config["TRACKERS"][self.tracker]["api_key"]).strip(),
+            "api_token": str(
+                self.config["TRACKERS"][self.tracker]["api_key"]
+            ).strip(),
             "tmdb": meta.tmdb,
             "categories[]": (await self.get_category_id(meta))["category_id"],
             "types[]": (await self.get_type_id(meta))["type_id"],
@@ -132,6 +162,15 @@ class Racing4Everyone(UNIT3D):
             for each in items:
                 attributes = cast(dict[str, Any], each.get("attributes", {}))
                 result_name = str(attributes.get("name", ""))
-                dupes.append({"name": result_name, "files": result_name, "size": 0, "link": "", "file_count": 0, "download": ""})
+                dupes.append(
+                    {
+                        "name": result_name,
+                        "files": result_name,
+                        "size": 0,
+                        "link": "",
+                        "file_count": 0,
+                        "download": "",
+                    }
+                )
 
         return dupes

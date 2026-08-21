@@ -9,7 +9,13 @@ import inspect
 import os
 import pkgutil
 import subprocess
-from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
+from collections.abc import (
+    AsyncIterator,
+    Callable,
+    Iterator,
+    Mapping,
+    Sequence,
+)
 from pathlib import Path
 from types import ModuleType
 from typing import Any, ClassVar, Self, get_args, get_origin, get_type_hints
@@ -28,7 +34,10 @@ class _Response:
     status_code = 200
     text = "ok"
     content = b"media"
-    headers: ClassVar[dict[str, str]] = {"content-type": "application/octet-stream", "content-length": "5"}
+    headers: ClassVar[dict[str, str]] = {
+        "content-type": "application/octet-stream",
+        "content-length": "5",
+    }
 
     def json(self) -> dict[str, Any]:
         return {"success": True, "data": {}, "results": [], "id": 1}
@@ -100,7 +109,9 @@ class _Process:
         self.stdout = _Stream()
         self.stderr = _Stream()
 
-    async def communicate(self, _input: bytes | None = None) -> tuple[bytes, bytes]:
+    async def communicate(
+        self, _input: bytes | None = None
+    ) -> tuple[bytes, bytes]:
         return b"ok", b""
 
     async def wait(self) -> int:
@@ -148,7 +159,9 @@ class _MediaInfo:
     tracks: ClassVar[list[_Track]] = [_Track()]
 
     @classmethod
-    def parse(cls, *_args: object, output: str | None = None, **_kwargs: object) -> Any:
+    def parse(
+        cls, *_args: object, output: str | None = None, **_kwargs: object
+    ) -> Any:
         if output:
             return "General\nFormat : Matroska"
         return cls()
@@ -207,7 +220,10 @@ def _modules() -> list[ModuleType]:
         try:
             modules.append(importlib.import_module(info.name))
         except ModuleNotFoundError as error:
-            if info.name.endswith(".vapoursynth") and error.name in {"awsmfunc", "vapoursynth"}:
+            if info.name.endswith(".vapoursynth") and error.name in {
+                "awsmfunc",
+                "vapoursynth",
+            }:
                 continue
             raise
     return modules
@@ -232,7 +248,15 @@ def _files(tmp_path: Path) -> dict[str, Path]:
     video_ts = root / "VIDEO_TS"
     video_ts.mkdir()
     (video_ts / "VTS_01_1.VOB").write_bytes(b"dvd")
-    return {"root": root, "video": video, "audio": audio, "image": image, "nfo": nfo, "bdmv": bdmv, "video_ts": video_ts}
+    return {
+        "root": root,
+        "video": video,
+        "audio": audio,
+        "image": image,
+        "nfo": nfo,
+        "bdmv": bdmv,
+        "video_ts": video_ts,
+    }
 
 
 def _meta(tmp_path: Path, files: Mapping[str, Path], profile: int = 0) -> Meta:
@@ -256,8 +280,20 @@ def _meta(tmp_path: Path, files: Mapping[str, Path], profile: int = 0) -> Meta:
         season_int=1,
         episode_int=2,
         is_disc=discs[profile % len(discs)],
-        bdinfo={"title": "Example", "playlist": "00001.MPLS", "video": [], "audio": [], "subtitles": []},
-        discs=[{"path": str(files["root"]), "main_set": ["01"], "largest_evo": str(files["video"])}],
+        bdinfo={
+            "title": "Example",
+            "playlist": "00001.MPLS",
+            "video": [],
+            "audio": [],
+            "subtitles": [],
+        },
+        discs=[
+            {
+                "path": str(files["root"]),
+                "main_set": ["01"],
+                "largest_evo": str(files["video"]),
+            }
+        ],
         mediainfo={"media": {"track": [_Track().to_data()]}},
         screens=2,
         image_list=[],
@@ -285,7 +321,13 @@ def _config() -> dict[str, Any]:
     return config
 
 
-def _value(name: str, annotation: object, meta: Meta, files: Mapping[str, Path], profile: int) -> object:
+def _value(
+    name: str,
+    annotation: object,
+    meta: Meta,
+    files: Mapping[str, Path],
+    profile: int,
+) -> object:
     key = name.casefold().lstrip("_")
     values: dict[str, object] = {
         "meta": meta,
@@ -372,14 +414,24 @@ def _value(name: str, annotation: object, meta: Meta, files: Mapping[str, Path],
     if origin is set:
         return set()
     if origin is tuple:
-        return tuple(_value(key, item, meta, files, profile) for item in args if item is not Ellipsis)
+        return tuple(
+            _value(key, item, meta, files, profile)
+            for item in args
+            if item is not Ellipsis
+        )
     if origin is not None and type(None) in args:
         concrete = next((item for item in args if item is not type(None)), str)
         return _value(key, concrete, meta, files, profile)
     return _Universal()
 
 
-async def _invoke(function: Callable[..., object], meta: Meta, files: Mapping[str, Path], profile: int, overrides: Mapping[str, object] | None = None) -> object:
+async def _invoke(
+    function: Callable[..., object],
+    meta: Meta,
+    files: Mapping[str, Path],
+    profile: int,
+    overrides: Mapping[str, object] | None = None,
+) -> object:
     overrides = overrides or {}
     target = function.__init__ if inspect.isclass(function) else function
     try:
@@ -389,11 +441,26 @@ async def _invoke(function: Callable[..., object], meta: Meta, files: Mapping[st
     positional: list[object] = []
     keywords: dict[str, object] = {}
     for parameter in inspect.signature(function).parameters.values():
-        if parameter.kind in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}:
+        if parameter.kind in {
+            inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.VAR_KEYWORD,
+        }:
             continue
-        if parameter.default is not inspect.Parameter.empty and parameter.name not in overrides:
+        if (
+            parameter.default is not inspect.Parameter.empty
+            and parameter.name not in overrides
+        ):
             continue
-        value = overrides.get(parameter.name, _value(parameter.name, hints.get(parameter.name, parameter.annotation), meta, files, profile))
+        value = overrides.get(
+            parameter.name,
+            _value(
+                parameter.name,
+                hints.get(parameter.name, parameter.annotation),
+                meta,
+                files,
+                profile,
+            ),
+        )
         if parameter.kind is inspect.Parameter.KEYWORD_ONLY:
             keywords[parameter.name] = value
         else:
@@ -404,7 +471,9 @@ async def _invoke(function: Callable[..., object], meta: Meta, files: Mapping[st
     return result
 
 
-def test_media_private_helpers_execute_with_boundary_doubles(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_media_private_helpers_execute_with_boundary_doubles(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     files = _files(tmp_path)
     modules = _modules()
     repository = Path.cwd()
@@ -412,32 +481,46 @@ def test_media_private_helpers_execute_with_boundary_doubles(tmp_path: Path, mon
     async def process(*_args: object, **_kwargs: object) -> _Process:
         return _Process()
 
-    async def no_sleep(_delay: float = 0, *_args: object, **_kwargs: object) -> None:
+    async def no_sleep(
+        _delay: float = 0, *_args: object, **_kwargs: object
+    ) -> None:
         return None
 
     monkeypatch.setattr(httpx, "AsyncClient", _AsyncClient)
     monkeypatch.setattr(asyncio, "create_subprocess_exec", process)
     monkeypatch.setattr(asyncio, "create_subprocess_shell", process)
     monkeypatch.setattr(asyncio, "sleep", no_sleep)
-    monkeypatch.setattr(subprocess, "run", lambda *_args, **_kwargs: _Completed())
-    monkeypatch.setattr(subprocess, "check_output", lambda *_args, **_kwargs: b"ok")
+    monkeypatch.setattr(
+        subprocess, "run", lambda *_args, **_kwargs: _Completed()
+    )
+    monkeypatch.setattr(
+        subprocess, "check_output", lambda *_args, **_kwargs: b"ok"
+    )
 
     attempted: set[str] = set()
     terminations: list[str] = []
     rejections: list[str] = []
     blocked = {"cleanup", "cleanup_all", "kill_processes"}
 
-    async def run_callable(qualified: str, function: Callable[..., object]) -> None:
+    async def run_callable(
+        qualified: str, function: Callable[..., object]
+    ) -> None:
         attempted.add(qualified)
         scenarios = [({}, {})]
-        scenarios.extend(literal_branch_scenarios(function, Meta.__dataclass_fields__, limit=96))
+        scenarios.extend(
+            literal_branch_scenarios(
+                function, Meta.__dataclass_fields__, limit=96
+            )
+        )
         for profile, (meta_updates, argument_updates) in enumerate(scenarios):
             meta = _meta(tmp_path, files, profile % 6)
             for key, value in meta_updates.items():
                 if key in Meta.__dataclass_fields__:
                     setattr(meta, key, value)
             try:
-                await _invoke(function, meta, files, profile % 6, argument_updates)
+                await _invoke(
+                    function, meta, files, profile % 6, argument_updates
+                )
             except (KeyboardInterrupt, SystemExit) as error:
                 terminations.append(f"{qualified}:{type(error).__name__}")
             except Exception as error:
@@ -455,29 +538,52 @@ def test_media_private_helpers_execute_with_boundary_doubles(tmp_path: Path, mon
                     monkeypatch.setattr(module, attribute, replacement)
             if hasattr(module, "create_subprocess_exec"):
                 monkeypatch.setattr(module, "create_subprocess_exec", process)
-            for name, function in inspect.getmembers(module, inspect.isfunction):
-                if function.__module__ == module.__name__ and not name.startswith("__") and name not in blocked:
+            for name, function in inspect.getmembers(
+                module, inspect.isfunction
+            ):
+                if (
+                    function.__module__ == module.__name__
+                    and not name.startswith("__")
+                    and name not in blocked
+                ):
                     await run_callable(f"{module.__name__}.{name}", function)
-            for class_name, class_type in inspect.getmembers(module, inspect.isclass):
+            for class_name, class_type in inspect.getmembers(
+                module, inspect.isclass
+            ):
                 if class_type.__module__ != module.__name__:
                     continue
                 try:
-                    instance = await _invoke(class_type, _meta(tmp_path, files), files, 0)
+                    instance = await _invoke(
+                        class_type, _meta(tmp_path, files), files, 0
+                    )
                 except Exception as error:
-                    rejections.append(f"{module.__name__}.{class_name}.__init__:{type(error).__name__}")
+                    rejections.append(
+                        f"{module.__name__}.{class_name}.__init__:{type(error).__name__}"
+                    )
                     continue
                 for method_name, member in inspect.getmembers_static(instance):
-                    if method_name.startswith("__") or method_name in blocked or not callable(member):
+                    if (
+                        method_name.startswith("__")
+                        or method_name in blocked
+                        or not callable(member)
+                    ):
                         continue
                     try:
                         method = getattr(instance, method_name)
                     except Exception as error:
-                        rejections.append(f"{module.__name__}.{class_name}.{method_name}:{type(error).__name__}")
+                        rejections.append(
+                            f"{module.__name__}.{class_name}.{method_name}:{type(error).__name__}"
+                        )
                         continue
-                    await run_callable(f"{module.__name__}.{class_name}.{method_name}", method)
+                    await run_callable(
+                        f"{module.__name__}.{class_name}.{method_name}", method
+                    )
 
     asyncio.run(exercise())
     assert attempted
-    assert all(any(name.startswith(f"{module.__name__}.") for name in attempted) for module in modules)
+    assert all(
+        any(name.startswith(f"{module.__name__}.") for name in attempted)
+        for module in modules
+    )
     assert terminations == []
     assert all(":" in rejection for rejection in rejections)

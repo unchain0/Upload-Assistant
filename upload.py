@@ -24,30 +24,69 @@ import aiofiles
 import cli_ui  # pyright: ignore[reportMissingImports]
 import requests
 from rich.markup import escape
-from torf import Torrent as _Torrent  # pyright: ignore[reportMissingImports,reportUnknownVariableType]
+from torf import (
+    Torrent as _Torrent,  # pyright: ignore[reportMissingImports,reportUnknownVariableType]
+)
 
 from src.bootstrap import build_configuration_service
-from src.delivery.cli.arguments import Args, partition_existing_paths, read_paths_from_stdin
+from src.delivery.cli.arguments import (
+    Args,
+    partition_existing_paths,
+    read_paths_from_stdin,
+)
 from src.domain_models import application_version
-from src.domain_models.book_language import is_valid_book_language, resolve_book_language
-from src.domain_models.errors import ConfigurationError, NoWorkAvailableError, OperationAbortedError
+from src.domain_models.book_language import (
+    is_valid_book_language,
+    resolve_book_language,
+)
+from src.domain_models.errors import (
+    ConfigurationError,
+    NoWorkAvailableError,
+    OperationAbortedError,
+)
 from src.domain_models.processing import ItemProcessingError
-from src.domain_models.tracker_image_policy import configured_screenshot_minimum, screenshot_requirement_error
+from src.domain_models.tracker_image_policy import (
+    configured_screenshot_minimum,
+    screenshot_requirement_error,
+)
 from src.integrations.filesystem.cleanup import cleanup_manager
 from src.integrations.filesystem.paths import CODE_DIR, STATE_DIR
-from src.integrations.filesystem.temp_paths import artwork_dir, ensure_temp_root, music_release_snapshot_path, screenshots_dir
+from src.integrations.filesystem.temp_paths import (
+    artwork_dir,
+    ensure_temp_root,
+    music_release_snapshot_path,
+    screenshots_dir,
+)
 from src.integrations.image_hosts.fallback import configured_image_hosts
 from src.integrations.image_hosts.rehosting import check_tracker_image_hosts
 from src.integrations.image_hosts.uploader import UploadScreensManager
-from src.integrations.media.artwork import is_public_http_url, is_valid_cover_image
+from src.integrations.media.artwork import (
+    is_public_http_url,
+    is_valid_cover_image,
+)
 from src.integrations.media.audio_spectrogram import process_audio_spectrograms
 from src.integrations.media.disc_menus import process_disc_menus
-from src.integrations.media.dynamic_hdr_plot import dynamic_hdr_plot_enabled, process_dynamic_hdr_plots
+from src.integrations.media.dynamic_hdr_plot import (
+    dynamic_hdr_plot_enabled,
+    process_dynamic_hdr_plots,
+)
 from src.integrations.media.media_info import ensure_mediainfo_binary
-from src.integrations.media.screenshot_capture import TakeScreensManager, download_artwork_from_meta
-from src.integrations.observability.console import configure_console, current_release_log_path, logger  # pyright: ignore[reportUnknownVariableType]
-from src.integrations.observability.console import rich_handler as _rich_handler
-from src.integrations.runtime_tools.configured_binaries import configure_binary_paths, configured_binary
+from src.integrations.media.screenshot_capture import (
+    TakeScreensManager,
+    download_artwork_from_meta,
+)
+from src.integrations.observability.console import (
+    configure_console,
+    current_release_log_path,
+    logger,
+)  # pyright: ignore[reportUnknownVariableType]
+from src.integrations.observability.console import (
+    rich_handler as _rich_handler,
+)
+from src.integrations.runtime_tools.configured_binaries import (
+    configure_binary_paths,
+    configured_binary,
+)
 from src.integrations.runtime_tools.ffmpeg import FfmpegBinaryManager
 from src.integrations.runtime_tools.mkbrr import MkbrrBinaryManager
 from src.integrations.security.redaction import PathAwareEncoder, Redaction
@@ -58,13 +97,25 @@ from src.integrations.trackers.alpharatio import AlphaRatio
 from src.integrations.trackers.common import Common
 from src.integrations.trackers.description_builder import gen_desc
 from src.integrations.trackers.passthepopcorn import PassThePopcorn
-from src.integrations.trackers.registry import TrackerSetup, api_trackers, http_trackers, other_api_trackers, tracker_class_map
+from src.integrations.trackers.registry import (
+    TrackerSetup,
+    api_trackers,
+    http_trackers,
+    other_api_trackers,
+    tracker_class_map,
+)
 from src.services.book_input_service import detect_newspaper
 from src.services.book_preparation import missing_book_fields
 from src.services.comparison_service import ComparisonManager
 from src.services.duplicate_check_service import DupeChecker
-from src.services.early_artifact_service import cancel_and_drain_early_artifact_tasks, get_early_artifact_tasks, start_early_artifact_tasks
-from src.services.early_artifact_service import is_usenet_only as _is_usenet_only
+from src.services.early_artifact_service import (
+    cancel_and_drain_early_artifact_tasks,
+    get_early_artifact_tasks,
+    start_early_artifact_tasks,
+)
+from src.services.early_artifact_service import (
+    is_usenet_only as _is_usenet_only,
+)
 from src.services.episode_service import sync_single_episode_from_filename
 from src.services.queue_service import QueueManager
 from src.services.release_naming_service import NameManager
@@ -111,7 +162,9 @@ def _handle_shutdown_signal(signum: int, _frame: Any) -> None:
         logger.info("[red]Forced exit[/red]")
         raise SystemExit(1)
     _shutdown_requested = True
-    logger.info(f"\n[yellow]Received {signal_name}, shutting down gracefully...[/yellow]")
+    logger.info(
+        f"\n[yellow]Received {signal_name}, shutting down gracefully...[/yellow]"
+    )
     raise KeyboardInterrupt
 
 
@@ -155,18 +208,32 @@ if Path(_defaults_data_dir).is_dir():
                 except OSError as exc:
                     _restore_errors.append(f"{Path(rel_dir) / fname}: {exc}")
     if _restored_count:
-        logger.info(f"Restored {_restored_count} built-in file(s) into data/ from defaults.", extra={"markup": False})
+        logger.info(
+            f"Restored {_restored_count} built-in file(s) into data/ from defaults.",
+            extra={"markup": False},
+        )
     if _restore_errors:
-        logger.warning(f"[red]Warning: failed to restore {len(_restore_errors)} file(s) into data/:[/red]")
+        logger.warning(
+            f"[red]Warning: failed to restore {len(_restore_errors)} file(s) into data/:[/red]"
+        )
         for _err in _restore_errors[:5]:
             logger.info(f"[red]  {_err}[/red]")
         if len(_restore_errors) > 5:
-            logger.info(f"[red]  ... and {len(_restore_errors) - 5} more[/red]")
-        logger.info("[yellow]Hint: ensure the mounted data/ directory is writable by the container user.[/yellow]")
-        logger.info("[yellow]  e.g. on the host: chown -R 1000:1000 /path/to/data[/yellow]")
+            logger.info(
+                f"[red]  ... and {len(_restore_errors) - 5} more[/red]"
+            )
+        logger.info(
+            "[yellow]Hint: ensure the mounted data/ directory is writable by the container user.[/yellow]"
+        )
+        logger.info(
+            "[yellow]  e.g. on the host: chown -R 1000:1000 /path/to/data[/yellow]"
+        )
 
 from src.domain_models.release import Meta
-from src.services.book_input_service import sanitize_book_author, sanitize_book_language
+from src.services.book_input_service import (
+    sanitize_book_author,
+    sanitize_book_language,
+)
 from src.services.preparation_service import Prep
 
 # Enable ANSI colors on Windows
@@ -188,20 +255,44 @@ _GREEN = "\033[92m" if _use_colors else ""
 _RESET = "\033[0m" if _use_colors else ""
 
 
-def _print_config_error(error_type: str, message: str, lineno: int | None = None, text: str | None = None, offset: int | None = None, suggestion: str | None = None) -> None:
+def _print_config_error(
+    error_type: str,
+    message: str,
+    lineno: int | None = None,
+    text: str | None = None,
+    offset: int | None = None,
+    suggestion: str | None = None,
+) -> None:
     """Print a formatted config error message."""
-    logger.info(f"{_RED}{error_type} in config.py:{_RESET}", extra={"markup": False})
+    logger.info(
+        f"{_RED}{error_type} in config.py:{_RESET}", extra={"markup": False}
+    )
     if lineno:
-        logger.info(f"{_RED}  Line {lineno}: {message}{_RESET}", extra={"markup": False})
+        logger.info(
+            f"{_RED}  Line {lineno}: {message}{_RESET}",
+            extra={"markup": False},
+        )
         if text:
-            logger.info(f"{_YELLOW}    {text.rstrip()}{_RESET}", extra={"markup": False})
+            logger.info(
+                f"{_YELLOW}    {text.rstrip()}{_RESET}",
+                extra={"markup": False},
+            )
             if offset:
-                logger.info(f"{_YELLOW}    {' ' * (offset - 1)}^{_RESET}", extra={"markup": False})
+                logger.info(
+                    f"{_YELLOW}    {' ' * (offset - 1)}^{_RESET}",
+                    extra={"markup": False},
+                )
     else:
         logger.info(f"{_RED}  {message}{_RESET}", extra={"markup": False})
     if suggestion:
-        logger.info(f"{_GREEN}  Suggestion: {suggestion}{_RESET}", extra={"markup": False})
-    logger.info(f"\n{_RED}Reference: https://github.com/wastaken7/Upload-Assistant/blob/master/data/example_config.py{_RESET}", extra={"markup": False})
+        logger.info(
+            f"{_GREEN}  Suggestion: {suggestion}{_RESET}",
+            extra={"markup": False},
+        )
+    logger.info(
+        f"\n{_RED}Reference: https://github.com/wastaken7/Upload-Assistant/blob/master/data/example_config.py{_RESET}",
+        extra={"markup": False},
+    )
 
 
 config: dict[str, Any]
@@ -311,11 +402,18 @@ async def merge_meta(meta: Meta, saved_meta: dict[str, Any]) -> dict[str, Any]:
         clean_key = key.strip().strip("'").strip('"')
         if clean_key == "tracker_ids":
             current_tracker_ids = meta.tracker_ids
-            sanitized_saved_meta[clean_key] = current_tracker_ids if current_tracker_ids else value
+            sanitized_saved_meta[clean_key] = (
+                current_tracker_ids if current_tracker_ids else value
+            )
         elif clean_key in overwrite_list:
-            if clean_key in meta and getattr(meta, clean_key, None) is not None:
+            if (
+                clean_key in meta
+                and getattr(meta, clean_key, None) is not None
+            ):
                 sanitized_saved_meta[clean_key] = meta[clean_key]
-                logger.debug(f"Overriding {clean_key} with meta value: {meta[clean_key]}")
+                logger.debug(
+                    f"Overriding {clean_key} with meta value: {meta[clean_key]}"
+                )
             else:
                 sanitized_saved_meta[clean_key] = value
         else:
@@ -346,18 +444,30 @@ def update_oeimg_to_onlyimage() -> None:
     with Path(config_path).open(encoding="utf-8") as f:
         content = f.read()
 
-    new_content = re.sub(r"(['\"]img_host_\d+['\"]\s*:\s*)['\"]oeimg['\"]", r"\1'onlyimage'", content)
-    new_content = re.sub(r"(['\"])(oeimg_api)(['\"]\s*:)", r"\1onlyimage_api\3", new_content)
+    new_content = re.sub(
+        r"(['\"]img_host_\d+['\"]\s*:\s*)['\"]oeimg['\"]",
+        r"\1'onlyimage'",
+        content,
+    )
+    new_content = re.sub(
+        r"(['\"])(oeimg_api)(['\"]\s*:)", r"\1onlyimage_api\3", new_content
+    )
 
     if new_content != content:
         with Path(config_path).open("w", encoding="utf-8") as f:
             f.write(new_content)
-        logger.info("[green]Updated 'oeimg' to 'onlyimage' and 'oeimg_api' to 'onlyimage_api' in config.py[/green]")
+        logger.info(
+            "[green]Updated 'oeimg' to 'onlyimage' and 'oeimg_api' to 'onlyimage_api' in config.py[/green]"
+        )
     else:
-        logger.info("[yellow]No 'oeimg' or 'oeimg_api' found to update in config.py[/yellow]")
+        logger.info(
+            "[yellow]No 'oeimg' or 'oeimg_api' found to update in config.py[/yellow]"
+        )
 
 
-async def validate_tracker_logins(meta: Meta, trackers: list[str] | str | None = None) -> None:
+async def validate_tracker_logins(
+    meta: Meta, trackers: list[str] | str | None = None
+) -> None:
     if "tracker_status" not in meta:
         meta.tracker_status = {}
 
@@ -365,7 +475,11 @@ async def validate_tracker_logins(meta: Meta, trackers: list[str] | str | None =
         return
 
     # Filter trackers that are in both the list and tracker_class_map
-    valid_trackers = [tracker for tracker in trackers if tracker in tracker_class_map and tracker in http_trackers]
+    valid_trackers = [
+        tracker
+        for tracker in trackers
+        if tracker in tracker_class_map and tracker in http_trackers
+    ]
     # RETROFLIX/PASSTHEPOPCORN are not HTTP trackers but need validation
     if "RETROFLIX" in trackers:
         valid_trackers.append("RETROFLIX")
@@ -374,7 +488,9 @@ async def validate_tracker_logins(meta: Meta, trackers: list[str] | str | None =
 
     if valid_trackers:
 
-        async def validate_single_tracker(tracker_name: str) -> tuple[str, bool]:
+        async def validate_single_tracker(
+            tracker_name: str,
+        ) -> tuple[str, bool]:
             """Validate credentials for a single tracker."""
             try:
                 status_dict = meta.tracker_status
@@ -382,7 +498,9 @@ async def validate_tracker_logins(meta: Meta, trackers: list[str] | str | None =
                     status_dict[tracker_name] = {}
 
                 tracker_class = tracker_class_map[tracker_name](config=config)
-                logger.debug(f"[cyan]Validating {tracker_name} credentials...[/cyan]")
+                logger.debug(
+                    f"[cyan]Validating {tracker_name} credentials...[/cyan]"
+                )
                 if tracker_name == "RETROFLIX":
                     login = await tracker_class.api_test(meta)
                 elif tracker_name == "PASSTHEPOPCORN":
@@ -396,12 +514,16 @@ async def validate_tracker_logins(meta: Meta, trackers: list[str] | str | None =
                 return tracker_name, login
             except Exception as e:
                 status_dict = meta.tracker_status
-                logger.error(f"[red]Error validating {tracker_name}: {e}[/red]")
+                logger.error(
+                    f"[red]Error validating {tracker_name}: {e}[/red]"
+                )
                 status_dict[tracker_name]["skipped"] = True
                 return tracker_name, False
 
         # Run all tracker validations concurrently
-        await asyncio.gather(*[validate_single_tracker(tracker) for tracker in valid_trackers])
+        await asyncio.gather(
+            *[validate_single_tracker(tracker) for tracker in valid_trackers]
+        )
 
 
 async def _prompt_book_meta(meta: Meta) -> None:
@@ -412,7 +534,10 @@ async def _prompt_book_meta(meta: Meta) -> None:
     uploads reflect the new values.
     """
     book_missing = missing_book_fields(meta)
-    has_artwork = bool(is_valid_cover_image(meta.artwork_path) or _is_http_url(meta.artwork_url))
+    has_artwork = bool(
+        is_valid_cover_image(meta.artwork_path)
+        or _is_http_url(meta.artwork_url)
+    )
     if not has_artwork:
         book_missing.append("artwork")
 
@@ -428,14 +553,29 @@ async def _prompt_book_meta(meta: Meta) -> None:
         )
         return
 
-    logger.info("\n[bold yellow]The following fields are required:[/bold yellow]")
+    logger.info(
+        "\n[bold yellow]The following fields are required:[/bold yellow]"
+    )
     name_needs_rebuild = False
     try:
         for field in book_missing:
-            prompt_label = "language" if field == "book_language" else ("cover artwork (path to image file or URL)" if field == "artwork" else field)
+            prompt_label = (
+                "language"
+                if field == "book_language"
+                else (
+                    "cover artwork (path to image file or URL)"
+                    if field == "artwork"
+                    else field
+                )
+            )
             if field == "book_language":
                 while True:
-                    value = (CLI_UI.ask_string("Enter language (leave blank to skip): ") or "").strip()
+                    value = (
+                        CLI_UI.ask_string(
+                            "Enter language (leave blank to skip): "
+                        )
+                        or ""
+                    ).strip()
                     if not value:
                         break
 
@@ -445,11 +585,20 @@ async def _prompt_book_meta(meta: Meta) -> None:
                         meta.book_language_iso = iso
                         name_needs_rebuild = True
                         break
-                    logger.info("[red]Invalid language. Please try again.[/red]")
+                    logger.info(
+                        "[red]Invalid language. Please try again.[/red]"
+                    )
             elif field == "isbn_or_asin":
-                value = (CLI_UI.ask_string("Enter ISBN or ASIN (leave blank to skip): ") or "").strip()
+                value = (
+                    CLI_UI.ask_string(
+                        "Enter ISBN or ASIN (leave blank to skip): "
+                    )
+                    or ""
+                ).strip()
                 if value:
-                    from src.integrations.media.book_extractors import validate_isbn_checksum
+                    from src.integrations.media.book_extractors import (
+                        validate_isbn_checksum,
+                    )
 
                     validated_isbn = validate_isbn_checksum(value)
                     if validated_isbn:
@@ -457,23 +606,41 @@ async def _prompt_book_meta(meta: Meta) -> None:
                     elif re.fullmatch(r"[A-Z0-9]{10}", value.upper()):
                         meta.asin = value.upper()
                     else:
-                        logger.info("[red]Invalid ISBN or ASIN. Skipping identifier.[/red]")
+                        logger.info(
+                            "[red]Invalid ISBN or ASIN. Skipping identifier.[/red]"
+                        )
             elif field == "year":
                 while True:
-                    value = (CLI_UI.ask_string("Enter year (leave blank to skip): ") or "").strip()
+                    value = (
+                        CLI_UI.ask_string("Enter year (leave blank to skip): ")
+                        or ""
+                    ).strip()
                     if not value:
                         break
-                    if value.isdigit() and len(value) == 4 and 1000 <= int(value) <= 3000:
+                    if (
+                        value.isdigit()
+                        and len(value) == 4
+                        and 1000 <= int(value) <= 3000
+                    ):
                         meta.year = int(value)
                         meta.search_year = value
                         name_needs_rebuild = True
                         break
-                    logger.info("[red]Invalid year (must be a 4-digit number between 1000 and 3000). Please try again.[/red]")
+                    logger.info(
+                        "[red]Invalid year (must be a 4-digit number between 1000 and 3000). Please try again.[/red]"
+                    )
             elif field == "artwork":
                 while True:
-                    value = (CLI_UI.ask_string("Enter path to cover artwork image (or public image URL) for BOOK: ") or "").strip()
+                    value = (
+                        CLI_UI.ask_string(
+                            "Enter path to cover artwork image (or public image URL) for BOOK: "
+                        )
+                        or ""
+                    ).strip()
                     if not value:
-                        logger.info("[red]Artwork is required for BOOK uploads. Please enter a valid file path or image URL.[/red]")
+                        logger.info(
+                            "[red]Artwork is required for BOOK uploads. Please enter a valid file path or image URL.[/red]"
+                        )
                         continue
                     if _is_http_url(value):
                         meta.artwork_url = value
@@ -482,14 +649,23 @@ async def _prompt_book_meta(meta: Meta) -> None:
                     if path_obj.is_file():
                         meta.artwork_path = str(path_obj.resolve())
                         break
-                    logger.info("[red]Invalid artwork path or URL. The file does not exist or URL is invalid. Please try again.[/red]")
+                    logger.info(
+                        "[red]Invalid artwork path or URL. The file does not exist or URL is invalid. Please try again.[/red]"
+                    )
             else:
-                value = (CLI_UI.ask_string(f"Enter {prompt_label} (leave blank to skip): ") or "").strip()
+                value = (
+                    CLI_UI.ask_string(
+                        f"Enter {prompt_label} (leave blank to skip): "
+                    )
+                    or ""
+                ).strip()
                 if value:
                     meta[field] = value
                     name_needs_rebuild = True
     except EOFError:
-        logger.info("[yellow]Input cancelled — continuing with missing book fields.[/yellow]")
+        logger.info(
+            "[yellow]Input cancelled — continuing with missing book fields.[/yellow]"
+        )
         name_needs_rebuild = False
 
     sanitize_book_language(meta)
@@ -498,7 +674,12 @@ async def _prompt_book_meta(meta: Meta) -> None:
     # Rebuild the torrent name so the confirmation screen and upload reflect the new values
     if name_needs_rebuild:
         detect_newspaper(meta)
-        meta.name_notag, meta.name, meta.clean_name, meta.potential_missing = await name_manager.get_name(meta)
+        (
+            meta.name_notag,
+            meta.name,
+            meta.clean_name,
+            meta.potential_missing,
+        ) = await name_manager.get_name(meta)
 
 
 async def _prompt_game_meta(meta: Meta) -> None:
@@ -522,26 +703,56 @@ async def _prompt_game_meta(meta: Meta) -> None:
         )
         return
     else:
-        logger.info("\n[bold yellow]The following fields are required:[/bold yellow]")
+        logger.info(
+            "\n[bold yellow]The following fields are required:[/bold yellow]"
+        )
         name_needs_rebuild = False
         try:
             for field in game_missing:
                 if field == "year":
                     while True:
-                        value = (CLI_UI.ask_string("Enter year (leave blank to skip): ") or "").strip()
+                        value = (
+                            CLI_UI.ask_string(
+                                "Enter year (leave blank to skip): "
+                            )
+                            or ""
+                        ).strip()
                         if not value:
                             break
-                        if value.isdigit() and len(value) == 4 and 1000 <= int(value) <= 3000:
+                        if (
+                            value.isdigit()
+                            and len(value) == 4
+                            and 1000 <= int(value) <= 3000
+                        ):
                             meta.year = int(value)
                             meta.search_year = value
                             name_needs_rebuild = True
                             break
-                        logger.info("[red]Invalid year (must be a 4-digit number between 1000 and 3000). Please try again.[/red]")
+                        logger.info(
+                            "[red]Invalid year (must be a 4-digit number between 1000 and 3000). Please try again.[/red]"
+                        )
                 elif field == "platform":
                     try:
                         value = CLI_UI.ask_choice(
                             "Select target platform: (can be manually set with -plat / --platform)",
-                            choices=["pc", "mac", "linux", "ps5", "ps4", "ps3", "ps2", "xbox", "x360", "xone", "xsx", "switch", "3ds", "nds", "wiiu", "wii"],
+                            choices=[
+                                "pc",
+                                "mac",
+                                "linux",
+                                "ps5",
+                                "ps4",
+                                "ps3",
+                                "ps2",
+                                "xbox",
+                                "x360",
+                                "xone",
+                                "xsx",
+                                "switch",
+                                "3ds",
+                                "nds",
+                                "wiiu",
+                                "wii",
+                            ],
                             sort=False,
                         )
                     except EOFError:
@@ -551,37 +762,67 @@ async def _prompt_game_meta(meta: Meta) -> None:
                         meta[field] = value
                         name_needs_rebuild = True
                 elif field == "game_version":
-                    value = (CLI_UI.ask_string("Enter game version (e.g., 1.15) (leave blank to skip): ") or "").strip()
+                    value = (
+                        CLI_UI.ask_string(
+                            "Enter game version (e.g., 1.15) (leave blank to skip): "
+                        )
+                        or ""
+                    ).strip()
                     if value:
-                        from src.services.game_preparation import normalize_version
+                        from src.services.game_preparation import (
+                            normalize_version,
+                        )
 
                         meta[field] = normalize_version(value)
                         name_needs_rebuild = True
 
                 elif field == "game_subcategory":
-                    subcategory_choices = ["full_game (Full Game)", "full_game_dlc (Full Game + DLC)", "dlc (DLC only)", "update (Update only)"]
+                    subcategory_choices = [
+                        "full_game (Full Game)",
+                        "full_game_dlc (Full Game + DLC)",
+                        "dlc (DLC only)",
+                        "update (Update only)",
+                    ]
                     subcategory_values = {
                         "full_game (Full Game)": "full_game",
                         "full_game_dlc (Full Game + DLC)": "full_game_dlc",
                         "dlc (DLC only)": "dlc",
                         "update (Update only)": "update",
                     }
-                    choice = CLI_UI.ask_choice("Select game subcategory (can be manually set with -gsc / --game-subcategory):", choices=subcategory_choices, sort=False)
-                    meta.game_subcategory = subcategory_values.get(choice, "full_game")
+                    choice = CLI_UI.ask_choice(
+                        "Select game subcategory (can be manually set with -gsc / --game-subcategory):",
+                        choices=subcategory_choices,
+                        sort=False,
+                    )
+                    meta.game_subcategory = subcategory_values.get(
+                        choice, "full_game"
+                    )
                     name_needs_rebuild = True
 
                 else:
-                    value = (CLI_UI.ask_string(f"Enter {field} (leave blank to skip): ") or "").strip()
+                    value = (
+                        CLI_UI.ask_string(
+                            f"Enter {field} (leave blank to skip): "
+                        )
+                        or ""
+                    ).strip()
                     if value:
                         meta[field] = value
                         name_needs_rebuild = True
         except EOFError:
-            logger.info("[yellow]Input cancelled — continuing with missing game fields.[/yellow]")
+            logger.info(
+                "[yellow]Input cancelled — continuing with missing game fields.[/yellow]"
+            )
             name_needs_rebuild = False
 
         # Rebuild the torrent name so the confirmation screen and upload reflect the new values
         if name_needs_rebuild:
-            meta.name_notag, meta.name, meta.clean_name, meta.potential_missing = await name_manager.get_name(meta)
+            (
+                meta.name_notag,
+                meta.name,
+                meta.clean_name,
+                meta.potential_missing,
+            ) = await name_manager.get_name(meta)
 
     # BJSHARE-specific game metadata prompts
     trackers = [t.upper() for t in meta.trackers]
@@ -595,7 +836,14 @@ async def _prompt_game_meta(meta: Meta) -> None:
         is_console = platform not in pc_platforms
 
         if is_console:
-            needs_game_system = platform in {"PS1", "PS2", "PSP", "WII", "WIIU", "X360"}
+            needs_game_system = platform in {
+                "PS1",
+                "PS2",
+                "PSP",
+                "WII",
+                "WIIU",
+                "X360",
+            }
             needs_game_region = platform in {
                 "3DS",
                 "NDS",
@@ -649,11 +897,23 @@ async def _prompt_game_meta(meta: Meta) -> None:
                         pass
 
     except EOFError:
-        logger.info("[yellow]Input cancelled — continuing with current game fields.[/yellow]")
+        logger.info(
+            "[yellow]Input cancelled — continuing with current game fields.[/yellow]"
+        )
 
 
 MUSIC_REQUIRED_FIELDS = ("artist", "album", "year", "media", "release_type")
-MUSIC_MEDIA_CHOICES = ("CD", "WEB", "Vinyl", "DVD", "BD", "Soundboard", "SACD", "DAT", "Cassette")
+MUSIC_MEDIA_CHOICES = (
+    "CD",
+    "WEB",
+    "Vinyl",
+    "DVD",
+    "BD",
+    "Soundboard",
+    "SACD",
+    "DAT",
+    "Cassette",
+)
 MUSIC_RELEASE_TYPE_CHOICES = (
     "Album",
     "Soundtrack",
@@ -677,23 +937,51 @@ MUSIC_RELEASE_TYPE_CHOICES = (
 
 def _music_field(meta: Meta, field: str) -> Any:
     """Read a normalized release field, falling back to the shared Meta view."""
-    release = meta.music_release if isinstance(meta.music_release, dict) else {}
-    fields = release.get("fields", {}) if isinstance(release.get("fields", {}), dict) else {}
-    entry = fields.get(field, {}) if isinstance(fields.get(field, {}), dict) else {}
+    release = (
+        meta.music_release if isinstance(meta.music_release, dict) else {}
+    )
+    fields = (
+        release.get("fields", {})
+        if isinstance(release.get("fields", {}), dict)
+        else {}
+    )
+    entry = (
+        fields.get(field, {})
+        if isinstance(fields.get(field, {}), dict)
+        else {}
+    )
     value = entry.get("value")
     if value not in (None, ""):
         return value
-    return {"artist": meta.artist, "album": meta.title, "year": meta.year, "media": meta.source, "cover_url": meta.artwork_url}.get(field, "")
+    return {
+        "artist": meta.artist,
+        "album": meta.title,
+        "year": meta.year,
+        "media": meta.source,
+        "cover_url": meta.artwork_url,
+    }.get(field, "")
 
 
 def _music_field_source(meta: Meta, field: str) -> str:
-    release = meta.music_release if isinstance(meta.music_release, dict) else {}
-    fields = release.get("fields", {}) if isinstance(release.get("fields", {}), dict) else {}
-    entry = fields.get(field, {}) if isinstance(fields.get(field, {}), dict) else {}
+    release = (
+        meta.music_release if isinstance(meta.music_release, dict) else {}
+    )
+    fields = (
+        release.get("fields", {})
+        if isinstance(release.get("fields", {}), dict)
+        else {}
+    )
+    entry = (
+        fields.get(field, {})
+        if isinstance(fields.get(field, {}), dict)
+        else {}
+    )
     return str(entry.get("source", ""))
 
 
-def _set_music_field(meta: Meta, field: str, value: str | int, *, source: str = "user") -> None:
+def _set_music_field(
+    meta: Meta, field: str, value: str | int, *, source: str = "user"
+) -> None:
     """Keep prompted values and their provenance available to tracker adapters."""
     if not isinstance(meta.music_release, dict):
         meta.music_release = {"fields": {}}
@@ -704,8 +992,16 @@ def _set_music_field(meta: Meta, field: str, value: str | int, *, source: str = 
     fields[field] = {"value": value, "source": source, "confidence": 1.0}
     if field == "artist":
         meta.artist = str(value)
-        artists = [part.strip() for part in re.split(r"\s+&\s+", str(value)) if part.strip()]
-        fields["artists"] = {"value": artists or [str(value)], "source": source, "confidence": 1.0}
+        artists = [
+            part.strip()
+            for part in re.split(r"\s+&\s+", str(value))
+            if part.strip()
+        ]
+        fields["artists"] = {
+            "value": artists or [str(value)],
+            "source": source,
+            "confidence": 1.0,
+        }
     elif field == "album":
         meta.title = str(value)
     elif field == "year":
@@ -736,11 +1032,15 @@ def _download_music_cover(url: str) -> bytes | None:
     current_url = url
     for _ in range(MUSIC_COVER_MAX_REDIRECTS + 1):
         if not _is_public_music_cover_url(current_url):
-            logger.warning("[yellow]MUSIC: refused artwork download from a non-public URL.[/yellow]")
+            logger.warning(
+                "[yellow]MUSIC: refused artwork download from a non-public URL.[/yellow]"
+            )
             return None
         response: requests.Response | None = None
         try:
-            response = requests.get(current_url, timeout=30, allow_redirects=False, stream=True)
+            response = requests.get(
+                current_url, timeout=30, allow_redirects=False, stream=True
+            )
             if response.is_redirect:
                 location = response.headers.get("Location", "")
                 if not location:
@@ -748,28 +1048,46 @@ def _download_music_cover(url: str) -> bytes | None:
                 current_url = urljoin(current_url, location)
                 continue
             response.raise_for_status()
-            content_type = response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+            content_type = (
+                response.headers.get("Content-Type", "")
+                .split(";", 1)[0]
+                .strip()
+                .lower()
+            )
             if not content_type.startswith("image/"):
-                logger.warning(f"[yellow]MUSIC: artwork URL returned unsupported content type {content_type or 'unknown'}.[/yellow]")
+                logger.warning(
+                    f"[yellow]MUSIC: artwork URL returned unsupported content type {content_type or 'unknown'}.[/yellow]"
+                )
                 return None
             content_length = response.headers.get("Content-Length")
-            if content_length and (not content_length.isdigit() or int(content_length) > MUSIC_COVER_MAX_BYTES):
-                logger.warning("[yellow]MUSIC: artwork download exceeds the 10 MiB limit.[/yellow]")
+            if content_length and (
+                not content_length.isdigit()
+                or int(content_length) > MUSIC_COVER_MAX_BYTES
+            ):
+                logger.warning(
+                    "[yellow]MUSIC: artwork download exceeds the 10 MiB limit.[/yellow]"
+                )
                 return None
             content = bytearray()
             for chunk in response.iter_content(chunk_size=64 * 1024):
                 content.extend(chunk)
                 if len(content) > MUSIC_COVER_MAX_BYTES:
-                    logger.warning("[yellow]MUSIC: artwork download exceeds the 10 MiB limit.[/yellow]")
+                    logger.warning(
+                        "[yellow]MUSIC: artwork download exceeds the 10 MiB limit.[/yellow]"
+                    )
                     return None
             return bytes(content)
         except requests.RequestException as error:
-            logger.warning(f"[yellow]MUSIC: could not download artwork for image hosting: {error}[/yellow]")
+            logger.warning(
+                f"[yellow]MUSIC: could not download artwork for image hosting: {error}[/yellow]"
+            )
             return None
         finally:
             if response is not None:
                 response.close()
-    logger.warning("[yellow]MUSIC: artwork URL exceeded the redirect limit.[/yellow]")
+    logger.warning(
+        "[yellow]MUSIC: artwork URL exceeded the redirect limit.[/yellow]"
+    )
     return None
 
 
@@ -777,7 +1095,9 @@ async def _write_music_snapshot(meta: Meta) -> None:
     path = music_release_snapshot_path(meta.base_dir, str(meta.uuid))
     path.parent.mkdir(parents=True, exist_ok=True)
     async with aiofiles.open(path, "w", encoding="utf-8") as file:
-        await file.write(json.dumps(meta.music_release, indent=2, cls=PathAwareEncoder))
+        await file.write(
+            json.dumps(meta.music_release, indent=2, cls=PathAwareEncoder)
+        )
 
 
 def _music_cover_allowed_hosts(trackers: Iterable[Any]) -> list[str] | None:
@@ -790,37 +1110,61 @@ def _music_cover_allowed_hosts(trackers: Iterable[Any]) -> list[str] | None:
         tracker_hosts = getattr(tracker_class, "approved_image_hosts", None)
         if tracker_hosts:
             hosts = {str(host) for host in tracker_hosts}
-            approved_hosts = hosts if approved_hosts is None else approved_hosts & hosts
+            approved_hosts = (
+                hosts if approved_hosts is None else approved_hosts & hosts
+            )
     return sorted(approved_hosts) if approved_hosts is not None else None
 
 
-async def _host_music_cover(meta: Meta, uploadscreens_manager: UploadScreensManager, allowed_hosts: list[str] | None = None) -> None:
+async def _host_music_cover(
+    meta: Meta,
+    uploadscreens_manager: UploadScreensManager,
+    allowed_hosts: list[str] | None = None,
+) -> None:
     """Host MUSIC artwork and publish it through the shared artwork API."""
     if meta.debug:
         logger.info("[yellow]MUSIC debug: image-host upload skipped.[/yellow]")
         return
     if meta.skip_imghost_upload:
-        logger.info("[yellow]MUSIC: image-host upload is disabled; provide a hosted artwork URL.[/yellow]")
+        logger.info(
+            "[yellow]MUSIC: image-host upload is disabled; provide a hosted artwork URL.[/yellow]"
+        )
         return
 
     cache_path = Path(meta.base_dir) / "tmp" / str(meta.uuid) / "covers.json"
     try:
         if cache_path.is_file():
-            cached = json.loads(await asyncio.to_thread(cache_path.read_text, encoding="utf-8"))
-            cached_cover = cached[0] if isinstance(cached, list) and cached else {}
-            cached_url = cached_cover.get("raw_url", "") if isinstance(cached_cover, dict) else ""
+            cached = json.loads(
+                await asyncio.to_thread(cache_path.read_text, encoding="utf-8")
+            )
+            cached_cover = (
+                cached[0] if isinstance(cached, list) and cached else {}
+            )
+            cached_url = (
+                cached_cover.get("raw_url", "")
+                if isinstance(cached_cover, dict)
+                else ""
+            )
             if _is_http_url(cached_url):
                 meta.artwork_url = str(cached_url)
                 meta.hosted_artwork = cached
-                _set_music_field(meta, "cover_url", meta.artwork_url, source="external")
+                _set_music_field(
+                    meta, "cover_url", meta.artwork_url, source="external"
+                )
                 return
     except (OSError, ValueError, TypeError) as error:
-        logger.debug(f"[yellow]MUSIC: ignored unusable artwork cache: {error}[/yellow]")
+        logger.debug(
+            f"[yellow]MUSIC: ignored unusable artwork cache: {error}[/yellow]"
+        )
 
     artwork_path = Path(str(meta.artwork_path or ""))
     if not artwork_path.is_file() and _is_http_url(meta.artwork_url):
-        artwork_path = artwork_dir(meta.base_dir, str(meta.uuid)) / "music_cover.jpg"
-        content = await asyncio.to_thread(_download_music_cover, meta.artwork_url)
+        artwork_path = (
+            artwork_dir(meta.base_dir, str(meta.uuid)) / "music_cover.jpg"
+        )
+        content = await asyncio.to_thread(
+            _download_music_cover, meta.artwork_url
+        )
         if content is None:
             return
 
@@ -829,19 +1173,36 @@ async def _host_music_cover(meta: Meta, uploadscreens_manager: UploadScreensMana
             await asyncio.to_thread(artwork_path.write_bytes, content)
             meta.artwork_path = str(artwork_path)
         except OSError as error:
-            logger.warning(f"[yellow]MUSIC: could not save downloaded artwork for image hosting: {error}[/yellow]")
+            logger.warning(
+                f"[yellow]MUSIC: could not save downloaded artwork for image hosting: {error}[/yellow]"
+            )
             return
     if not is_valid_cover_image(artwork_path):
-        logger.warning("[yellow]MUSIC: local artwork is not a valid supported image.[/yellow]")
+        logger.warning(
+            "[yellow]MUSIC: local artwork is not a valid supported image.[/yellow]"
+        )
         return
 
     try:
-        uploaded, _ = await uploadscreens_manager.upload_screens(meta, 1, 1, 0, 1, [str(artwork_path)], {}, allowed_hosts=allowed_hosts)
+        uploaded, _ = await uploadscreens_manager.upload_screens(
+            meta,
+            1,
+            1,
+            0,
+            1,
+            [str(artwork_path)],
+            {},
+            allowed_hosts=allowed_hosts,
+        )
     except Exception as error:
-        logger.warning(f"[yellow]MUSIC: artwork host upload failed: {error}[/yellow]")
+        logger.warning(
+            f"[yellow]MUSIC: artwork host upload failed: {error}[/yellow]"
+        )
         return
     if not uploaded or not _is_http_url(uploaded[0].get("raw_url")):
-        logger.warning("[yellow]MUSIC: image host did not return a usable artwork URL.[/yellow]")
+        logger.warning(
+            "[yellow]MUSIC: image host did not return a usable artwork URL.[/yellow]"
+        )
         return
 
     meta.artwork_url = str(uploaded[0]["raw_url"])
@@ -870,7 +1231,9 @@ async def _ensure_valid_book_artwork(meta: Meta) -> bool:
 async def _prepare_book_artwork(meta: Meta) -> None:
     while not await _ensure_valid_book_artwork(meta):
         if meta.unattended:
-            logger.info("[yellow]BOOK upload: no valid cover could be obtained. Trackers requiring a cover will be skipped.[/yellow]")
+            logger.info(
+                "[yellow]BOOK upload: no valid cover could be obtained. Trackers requiring a cover will be skipped.[/yellow]"
+            )
             return
         meta.artwork_path = ""
         meta.artwork_url = ""
@@ -883,18 +1246,47 @@ async def _prompt_music_meta(meta: Meta) -> None:
     missing = [
         field
         for field in required
-        if (field == "cover_url" and not _is_http_url(_music_field(meta, field))) or (field != "cover_url" and not str(_music_field(meta, field) or "").strip())
+        if (
+            field == "cover_url"
+            and not _is_http_url(_music_field(meta, field))
+        )
+        or (
+            field != "cover_url"
+            and not str(_music_field(meta, field) or "").strip()
+        )
     ]
-    has_artwork = bool(is_valid_cover_image(meta.artwork_path) or (_is_http_url(meta.artwork_url) or _is_http_url(_music_field(meta, "cover_url"))))
+    has_artwork = bool(
+        is_valid_cover_image(meta.artwork_path)
+        or (
+            _is_http_url(meta.artwork_url)
+            or _is_http_url(_music_field(meta, "cover_url"))
+        )
+    )
     if not has_artwork and "artwork" not in missing:
         missing.append("artwork")
 
-    conflicts = meta.music_release.get("conflicts", {}) if isinstance(meta.music_release, dict) else {}
+    conflicts = (
+        meta.music_release.get("conflicts", {})
+        if isinstance(meta.music_release, dict)
+        else {}
+    )
     contextual: list[str] = []
-    if isinstance(conflicts, dict) and conflicts.get("year") and "year" not in missing:
+    if (
+        isinstance(conflicts, dict)
+        and conflicts.get("year")
+        and "year" not in missing
+    ):
         contextual.append("year")
-    if (isinstance(conflicts, dict) and conflicts.get("edition_year") and "edition_year" not in missing) or (
-        _music_field(meta, "edition") and (not _music_field(meta, "edition_year") or _music_field_source(meta, "edition_year") == "file_tag")
+    if (
+        isinstance(conflicts, dict)
+        and conflicts.get("edition_year")
+        and "edition_year" not in missing
+    ) or (
+        _music_field(meta, "edition")
+        and (
+            not _music_field(meta, "edition_year")
+            or _music_field_source(meta, "edition_year") == "file_tag"
+        )
     ):
         contextual.append("edition_year")
     if isinstance(conflicts, dict) and conflicts.get("artist"):
@@ -903,47 +1295,86 @@ async def _prompt_music_meta(meta: Meta) -> None:
     if not fields_to_prompt:
         return
     if meta.unattended:
-        logger.info(f"[yellow]MUSIC metadata requires confirmation for: {', '.join(fields_to_prompt)}. Trackers that require confirmed values may skip this upload.[/yellow]")
+        logger.info(
+            f"[yellow]MUSIC metadata requires confirmation for: {', '.join(fields_to_prompt)}. Trackers that require confirmed values may skip this upload.[/yellow]"
+        )
         return
 
-    logger.info("\n[bold yellow]MUSIC metadata required or requiring confirmation:[/bold yellow]")
+    logger.info(
+        "\n[bold yellow]MUSIC metadata required or requiring confirmation:[/bold yellow]"
+    )
     changed = False
-    labels = {"artist": "main artist(s), separated by &", "album": "album title", "year": "original release year", "edition_year": "edition/remaster year"}
+    labels = {
+        "artist": "main artist(s), separated by &",
+        "album": "album title",
+        "year": "original release year",
+        "edition_year": "edition/remaster year",
+    }
     try:
         for field in fields_to_prompt:
             if field in labels:
                 if field in {"year", "edition_year"}:
                     while True:
                         current = str(_music_field(meta, field) or "")
-                        prompt = f"Enter {labels[field]}" + (f" (current: {current})" if current else "") + " (leave blank to keep/skip): "
+                        prompt = (
+                            f"Enter {labels[field]}"
+                            + (f" (current: {current})" if current else "")
+                            + " (leave blank to keep/skip): "
+                        )
                         value = (CLI_UI.ask_string(prompt) or "").strip()
                         if not value:
                             break
-                        if value.isdigit() and len(value) == 4 and 1000 <= int(value) <= 3000:
+                        if (
+                            value.isdigit()
+                            and len(value) == 4
+                            and 1000 <= int(value) <= 3000
+                        ):
                             _set_music_field(meta, field, int(value))
                             changed = True
                             break
-                        logger.info("[red]Invalid year (must be a 4-digit number between 1000 and 3000).[/red]")
+                        logger.info(
+                            "[red]Invalid year (must be a 4-digit number between 1000 and 3000).[/red]"
+                        )
                 else:
-                    value = (CLI_UI.ask_string(f"Enter {labels[field]} (leave blank to skip): ") or "").strip()
+                    value = (
+                        CLI_UI.ask_string(
+                            f"Enter {labels[field]} (leave blank to skip): "
+                        )
+                        or ""
+                    ).strip()
                     if value:
                         _set_music_field(meta, field, value)
                         changed = True
             elif field == "media":
-                value = CLI_UI.ask_choice("Select source media:", choices=list(MUSIC_MEDIA_CHOICES), sort=False)
+                value = CLI_UI.ask_choice(
+                    "Select source media:",
+                    choices=list(MUSIC_MEDIA_CHOICES),
+                    sort=False,
+                )
                 if value:
                     _set_music_field(meta, field, value)
                     changed = True
             elif field == "release_type":
-                value = CLI_UI.ask_choice("Select release type:", choices=list(MUSIC_RELEASE_TYPE_CHOICES), sort=False)
+                value = CLI_UI.ask_choice(
+                    "Select release type:",
+                    choices=list(MUSIC_RELEASE_TYPE_CHOICES),
+                    sort=False,
+                )
                 if value:
                     _set_music_field(meta, field, value)
                     changed = True
             elif field in ("artwork", "cover_url"):
                 while True:
-                    value = (CLI_UI.ask_string("Enter path to cover artwork image (or public image URL) for MUSIC: ") or "").strip()
+                    value = (
+                        CLI_UI.ask_string(
+                            "Enter path to cover artwork image (or public image URL) for MUSIC: "
+                        )
+                        or ""
+                    ).strip()
                     if not value:
-                        logger.info("[red]Artwork is required for MUSIC uploads. Please enter a valid file path or image URL.[/red]")
+                        logger.info(
+                            "[red]Artwork is required for MUSIC uploads. Please enter a valid file path or image URL.[/red]"
+                        )
                         continue
                     if _is_http_url(value):
                         _set_music_field(meta, "cover_url", value)
@@ -953,12 +1384,18 @@ async def _prompt_music_meta(meta: Meta) -> None:
                     path_obj = Path(value).expanduser()
                     if is_valid_cover_image(path_obj):
                         meta.artwork_path = str(path_obj.resolve())
-                        _set_music_field(meta, "cover_url", meta.artwork_path, source="user")
+                        _set_music_field(
+                            meta, "cover_url", meta.artwork_path, source="user"
+                        )
                         changed = True
                         break
-                    logger.info("[red]Invalid artwork path or URL. The file does not exist or URL is invalid. Please try again.[/red]")
+                    logger.info(
+                        "[red]Invalid artwork path or URL. The file does not exist or URL is invalid. Please try again.[/red]"
+                    )
     except EOFError:
-        logger.info("[yellow]Input cancelled — continuing with missing music fields.[/yellow]")
+        logger.info(
+            "[yellow]Input cancelled — continuing with missing music fields.[/yellow]"
+        )
         return
 
     if changed:
@@ -966,7 +1403,12 @@ async def _prompt_music_meta(meta: Meta) -> None:
         year = f" [{meta.year}]" if meta.year else ""
         media = str(_music_field(meta, "media") or "")
         meta.name_notag = f"{meta.artist} - {meta.title}{year} [{media} {meta.format}]".strip()
-        meta.name_notag, meta.name, meta.clean_name, meta.potential_missing = await name_manager.get_name(meta)
+        (
+            meta.name_notag,
+            meta.name,
+            meta.clean_name,
+            meta.potential_missing,
+        ) = await name_manager.get_name(meta)
 
 
 async def _process_optional_image_artifacts(
@@ -980,34 +1422,65 @@ async def _process_optional_image_artifacts(
     consume the availability state reserved for the release screenshots.
     """
     if meta.is_disc:
-        menus_data_file = Path(meta.base_dir) / "tmp" / meta.uuid / "menu_images.json"
+        menus_data_file = (
+            Path(meta.base_dir) / "tmp" / meta.uuid / "menu_images.json"
+        )
         default = config.get("DEFAULT", {})
-        default_map = cast(dict[str, Any], default) if isinstance(default, dict) else {}
-        wants_menus = bool(meta.path_to_menu_screenshots or default_map.get("auto_dvd_menus", False))
-        if wants_menus and not menus_data_file.exists() and not meta.menu_images:
+        default_map = (
+            cast(dict[str, Any], default) if isinstance(default, dict) else {}
+        )
+        wants_menus = bool(
+            meta.path_to_menu_screenshots
+            or default_map.get("auto_dvd_menus", False)
+        )
+        if (
+            wants_menus
+            and not menus_data_file.exists()
+            and not meta.menu_images
+        ):
             try:
                 await process_disc_menus(meta, config)
             except Exception as error:
-                logger.warning(f"[yellow]Optional disc-menu processing failed; continuing with the release screenshots: {error}[/yellow]")
+                logger.warning(
+                    f"[yellow]Optional disc-menu processing failed; continuing with the release screenshots: {error}[/yellow]"
+                )
 
-    should_process_spectrogram = meta.category not in {"BOOK", "GAME"} or bool(meta.audiobook)
+    should_process_spectrogram = meta.category not in {"BOOK", "GAME"} or bool(
+        meta.audiobook
+    )
     default = config.get("DEFAULT", {})
-    default_map = cast(dict[str, Any], default) if isinstance(default, dict) else {}
-    wants_spectrogram = bool(meta.audio_spectrogram or meta.audio_spectrogram_tracks or default_map.get("add_audio_spectrogram", False))
+    default_map = (
+        cast(dict[str, Any], default) if isinstance(default, dict) else {}
+    )
+    wants_spectrogram = bool(
+        meta.audio_spectrogram
+        or meta.audio_spectrogram_tracks
+        or default_map.get("add_audio_spectrogram", False)
+    )
     if should_process_spectrogram and wants_spectrogram:
         if meta.debug:
-            logger.info("[yellow]Debug mode: audio spectrogram hosting skipped.[/yellow]")
+            logger.info(
+                "[yellow]Debug mode: audio spectrogram hosting skipped.[/yellow]"
+            )
         else:
             try:
-                await process_audio_spectrograms(meta, config, uploadscreens_manager)
+                await process_audio_spectrograms(
+                    meta, config, uploadscreens_manager
+                )
             except Exception as error:
-                logger.warning(f"[yellow]Optional audio spectrogram processing failed; continuing with the release screenshots: {error}[/yellow]")
+                logger.warning(
+                    f"[yellow]Optional audio spectrogram processing failed; continuing with the release screenshots: {error}[/yellow]"
+                )
 
     if dynamic_hdr_plot_enabled(meta, config):
         try:
-            await process_dynamic_hdr_plots(meta, config, uploadscreens_manager)
+            await process_dynamic_hdr_plots(
+                meta, config, uploadscreens_manager
+            )
         except Exception as error:
-            logger.warning(f"[yellow]Optional dynamic HDR plot processing failed; continuing with the release screenshots: {error}[/yellow]")
+            logger.warning(
+                f"[yellow]Optional dynamic HDR plot processing failed; continuing with the release screenshots: {error}[/yellow]"
+            )
 
 
 async def _validate_screenshots_then_process_optional(
@@ -1016,7 +1489,9 @@ async def _validate_screenshots_then_process_optional(
     uploadscreens_manager: UploadScreensManager,
 ) -> None:
     """Validate mandatory screenshots before any optional image artifact."""
-    local_screens, required_screens = available_screens(meta, configured_screenshot_minimum(config))
+    local_screens, required_screens = available_screens(
+        meta, configured_screenshot_minimum(config)
+    )
     if meta.debug and meta.category in {"MOVIE", "TV"}:
         if local_screens < required_screens:
             raise ItemProcessingError(
@@ -1024,15 +1499,23 @@ async def _validate_screenshots_then_process_optional(
                 meta.path,
             )
     else:
-        screenshot_error = screenshot_requirement_error(meta, config, local_available=local_screens)
+        screenshot_error = screenshot_requirement_error(
+            meta, config, local_available=local_screens
+        )
         if screenshot_error:
             raise ItemProcessingError(screenshot_error, meta.path)
 
-    await _process_optional_image_artifacts(meta, config, uploadscreens_manager)
+    await _process_optional_image_artifacts(
+        meta, config, uploadscreens_manager
+    )
 
 
-def available_screens(meta: Meta, min_successful_uploads: int) -> tuple[int, int]:
-    screenshot_files = list(screenshots_dir(meta.base_dir, meta.uuid).glob("*.png"))
+def available_screens(
+    meta: Meta, min_successful_uploads: int
+) -> tuple[int, int]:
+    screenshot_files = list(
+        screenshots_dir(meta.base_dir, meta.uuid).glob("*.png")
+    )
     actual_screens = len(screenshot_files)
     return actual_screens, min_successful_uploads
 
@@ -1048,15 +1531,32 @@ def _movie_tv_identity_error(meta: Meta) -> str | None:
     if not meta.unattended:
         return None
 
-    imdb_info_id = meta.imdb_info.get("imdbID") if isinstance(meta.imdb_info, dict) else None
-    numeric_ids = (meta.tmdb, meta.tmdb_id, meta.tvdb_id, meta.tvmaze_id, meta.mal_id)
+    imdb_info_id = (
+        meta.imdb_info.get("imdbID")
+        if isinstance(meta.imdb_info, dict)
+        else None
+    )
+    numeric_ids = (
+        meta.tmdb,
+        meta.tmdb_id,
+        meta.tvdb_id,
+        meta.tvmaze_id,
+        meta.mal_id,
+    )
     imdb_ids = (meta.imdb, meta.imdb_id, imdb_info_id)
-    has_numeric_id = any(re.fullmatch(r"[1-9]\d*", str(value or "").strip()) for value in numeric_ids)
+    has_numeric_id = any(
+        re.fullmatch(r"[1-9]\d*", str(value or "").strip())
+        for value in numeric_ids
+    )
 
     def is_valid_imdb_id(value: object) -> bool:
         if isinstance(value, bool):
             return False
-        candidate = f"{value:07d}" if isinstance(value, int) else str(value or "").strip()
+        candidate = (
+            f"{value:07d}"
+            if isinstance(value, int)
+            else str(value or "").strip()
+        )
         match = re.fullmatch(
             r"(?:https?://(?:www\.)?imdb\.com/title/)?(?:tt)?(\d{7,10})(?:/)?(?:[?#].*)?",
             candidate,
@@ -1068,7 +1568,14 @@ def _movie_tv_identity_error(meta: Meta) -> str | None:
     if not has_numeric_id and not has_imdb_id:
         return f"Unattended {meta.category} metadata has no valid TMDb, IMDb, TVDB, TVmaze, or MAL identifier. Refusing to process the upload."
 
-    if meta.category == "TV" and meta.anime and not meta.tv_pack and meta.episode_int and meta.tvdb_id and not meta.tvdb_episode_id:
+    if (
+        meta.category == "TV"
+        and meta.anime
+        and not meta.tv_pack
+        and meta.episode_int
+        and meta.tvdb_id
+        and not meta.tvdb_episode_id
+    ):
         return "Unattended anime episode could not be mapped to a TVDB episode. Refusing to process the upload."
 
     return None
@@ -1080,14 +1587,19 @@ def _failed_tracker_names(tracker_status: Mapping[str, Any]) -> list[str]:
         for tracker, status in tracker_status.items()
         if isinstance(status, Mapping)
         and status.get("dupe") is not True
-        and (status.get("upload") is True or status.get("upload_success") is False)
+        and (
+            status.get("upload") is True
+            or status.get("upload_success") is False
+        )
         and status.get("upload_success") is not True
     ]
 
 
 def _sync_single_episode(meta: Meta) -> None:
     if sync_single_episode_from_filename(meta):
-        logger.warning(f"[yellow]Updated single-episode metadata to {meta.season}{meta.episode} to match the video filename.[/yellow]")
+        logger.warning(
+            f"[yellow]Updated single-episode metadata to {meta.season}{meta.episode} to match the video filename.[/yellow]"
+        )
 
 
 def xxx_min_successful_uploads(meta: Meta, min_successful_uploads: int) -> int:
@@ -1103,9 +1615,15 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
     """Process the metadata for each queued path."""
     try:
         default_config = config.get("DEFAULT", {})
-        has_oeimg_config = any(default_config.get(key) == "oeimg" for key in default_config if key.startswith("img_host_"))
+        has_oeimg_config = any(
+            default_config.get(key) == "oeimg"
+            for key in default_config
+            if key.startswith("img_host_")
+        )
         if has_oeimg_config:
-            logger.info("[yellow]oeimg is now onlyimage; updating the active configuration.[/yellow]")
+            logger.info(
+                "[yellow]oeimg is now onlyimage; updating the active configuration.[/yellow]"
+            )
             update_oeimg_to_onlyimage()
             for key, value in list(default_config.items()):
                 if key.startswith("img_host_") and value == "oeimg":
@@ -1120,7 +1638,9 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
         elif configured_hosts:
             meta.imghost = configured_hosts[0]
         else:
-            logger.error("[bold red]No image host is configured. Set DEFAULT.img_host_1 (and its credential when required) before uploading.[/bold red]")
+            logger.error(
+                "[bold red]No image host is configured. Set DEFAULT.img_host_1 (and its credential when required) before uploading.[/bold red]"
+            )
             return False
     except Exception as error:
         logger.error(f"[red]Error resolving image hosts: {error}[/red]")
@@ -1160,12 +1680,18 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
         try:
             async with aiofiles.open(covers_file, encoding="utf-8") as f:
                 content = await f.read()
-                loaded_covers: list[dict[str, Any]] | None = json.loads(content)
+                loaded_covers: list[dict[str, Any]] | None = json.loads(
+                    content
+                )
                 if isinstance(loaded_covers, list):
                     meta.hosted_artwork = loaded_covers
-                    logger.debug(f"[green]Loaded {len(loaded_covers)} hosted artwork records from covers.json")
+                    logger.debug(
+                        f"[green]Loaded {len(loaded_covers)} hosted artwork records from covers.json"
+                    )
         except Exception as e:
-            logger.debug(f"[red]Error loading covers.json into meta.hosted_artwork: {e}")
+            logger.debug(
+                f"[red]Error loading covers.json into meta.hosted_artwork: {e}"
+            )
 
     parser: Any = Args(config)
     helper: Any = UploadHelper(config)
@@ -1175,11 +1701,17 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
         raw_trackers_list = raw_trackers
         trackers = [t.strip().upper() for t in raw_trackers_list if t.strip()]
     else:
-        trackers = [t.strip().upper() for t in raw_trackers.split(",") if t.strip()] if raw_trackers != "" else []
+        trackers = (
+            [t.strip().upper() for t in raw_trackers.split(",") if t.strip()]
+            if raw_trackers != ""
+            else []
+        )
     meta.trackers = trackers
 
     if isinstance(meta.trackers_remove, str) and meta.trackers_remove:
-        remove_list = [t.strip().upper() for t in meta.trackers_remove.split(",")]
+        remove_list = [
+            t.strip().upper() for t in meta.trackers_remove.split(",")
+        ]
         for tracker in remove_list:
             if tracker in meta.trackers:
                 meta.trackers.remove(tracker)
@@ -1190,11 +1722,22 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
     # same check as a defensive guard for tracker lists changed after this point.
     TrackerSetup(config=config).filter_unsupported_trackers(meta)
 
-    meta.name_notag, meta.name, meta.clean_name, meta.potential_missing = await name_manager.get_name(meta)
+    (
+        meta.name_notag,
+        meta.name,
+        meta.clean_name,
+        meta.potential_missing,
+    ) = await name_manager.get_name(meta)
 
     logger.debug(f"Trackers list before editing: {meta.trackers}")
-    async with aiofiles.open(f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/meta.json", "w", encoding="utf-8") as f:
-        await f.write(json.dumps(meta.to_dict(), indent=4, cls=PathAwareEncoder))
+    async with aiofiles.open(
+        f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/meta.json",
+        "w",
+        encoding="utf-8",
+    ) as f:
+        await f.write(
+            json.dumps(meta.to_dict(), indent=4, cls=PathAwareEncoder)
+        )
 
     # For BOOK category, certain trackers (e.g. CAPYBARABR) require title, author, year and language.
     # Prompt here - on the shared meta - so the data flows into every tracker's upload
@@ -1222,7 +1765,9 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
         raise KeyboardInterrupt from None
     while confirm is False:
         try:
-            editargs_str = CLI_UI.ask_string("Input args that need correction e.g. (--tag NTb --category tv --tmdb 12345)")
+            editargs_str = CLI_UI.ask_string(
+                "Input args that need correction e.g. (--tag NTb --category tv --tmdb 12345)"
+            )
         except EOFError:
             logger.info("\n[red]Exiting on user request (Ctrl+C)[/red]")
             await cleanup_manager.cleanup()
@@ -1233,7 +1778,9 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
             break
 
         if not editargs_str or not editargs_str.strip():
-            logger.info("[yellow]No input provided. Please enter arguments, type `continue` to continue or press Ctrl+C to exit.[/yellow]")
+            logger.info(
+                "[yellow]No input provided. Please enter arguments, type `continue` to continue or press Ctrl+C to exit.[/yellow]"
+            )
             continue
 
         try:
@@ -1245,13 +1792,22 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
         # Tracks multiple edits
         editargs_tracking = editargs_tracking + editargs
         # Carry original args over, let parse handle duplicates
-        original_args = meta.item_args if meta.item_args is not None else list(sys.argv[1:])
-        meta, _help, _before_args = cast(tuple[Meta, Any, Any], parser.parse(list(original_args) + list(editargs_tracking), meta))
+        original_args = (
+            meta.item_args
+            if meta.item_args is not None
+            else list(sys.argv[1:])
+        )
+        meta, _help, _before_args = cast(
+            tuple[Meta, Any, Any],
+            parser.parse(list(original_args) + list(editargs_tracking), meta),
+        )
         if not meta.trackers:
             meta.trackers = previous_trackers
         if isinstance(meta.trackers, str):
             if "," in meta.trackers:
-                meta.trackers = [t.strip().upper() for t in meta.trackers.split(",")]
+                meta.trackers = [
+                    t.strip().upper() for t in meta.trackers.split(",")
+                ]
             else:
                 meta.trackers = [meta.trackers.strip().upper()]
         else:
@@ -1261,9 +1817,20 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
         _sync_single_episode(meta)
         meta = await prep.gather_prep(meta=meta, mode="cli")
         TrackerSetup(config=config).filter_unsupported_trackers(meta)
-        meta.name_notag, meta.name, meta.clean_name, meta.potential_missing = await name_manager.get_name(meta)
-        async with aiofiles.open(f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/meta.json", "w", encoding="utf-8") as f:
-            await f.write(json.dumps(meta.to_dict(), indent=4, cls=PathAwareEncoder))
+        (
+            meta.name_notag,
+            meta.name,
+            meta.clean_name,
+            meta.potential_missing,
+        ) = await name_manager.get_name(meta)
+        async with aiofiles.open(
+            f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/meta.json",
+            "w",
+            encoding="utf-8",
+        ) as f:
+            await f.write(
+                json.dumps(meta.to_dict(), indent=4, cls=PathAwareEncoder)
+            )
         try:
             confirm = await helper.get_confirmation(meta)
         except EOFError:
@@ -1273,21 +1840,35 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
             raise KeyboardInterrupt from None
 
         current_trackers = (
-            cast(list[str], meta.trackers) if isinstance(meta.trackers, list) else ([meta.trackers.strip()] if isinstance(meta.trackers, str) and meta.trackers.strip() else [])
+            cast(list[str], meta.trackers)
+            if isinstance(meta.trackers, list)
+            else (
+                [meta.trackers.strip()]
+                if isinstance(meta.trackers, str) and meta.trackers.strip()
+                else []
+            )
         )
         removed: list[str] = []
         if meta.remove_trackers:
-            remove_trackers_list = [t for t in meta.remove_trackers if t] if isinstance(meta.remove_trackers, list) else [str(meta.remove_trackers)]
+            remove_trackers_list = (
+                [t for t in meta.remove_trackers if t]
+                if isinstance(meta.remove_trackers, list)
+                else [str(meta.remove_trackers)]
+            )
             for tracker in remove_trackers_list:
                 if tracker in current_trackers:
                     current_trackers.remove(tracker)
                     removed.append(tracker)
                 else:
                     if meta.debug:
-                        logger.debug(f"[DEBUG] Would have removed {tracker} found in client")
+                        logger.debug(
+                            f"[DEBUG] Would have removed {tracker} found in client"
+                        )
         meta.trackers = current_trackers
         if removed:
-            logger.info(f"[yellow]Removing trackers already in your client: {', '.join(removed)}[/yellow]")
+            logger.info(
+                f"[yellow]Removing trackers already in your client: {', '.join(removed)}[/yellow]"
+            )
     if not meta.trackers:
         logger.info("[red]No trackers remain after removal.[/red]")
         successful_trackers = 0
@@ -1336,20 +1917,32 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
         ]:
             if tracker in trackers:
                 status_dict = meta.tracker_status.setdefault(tracker, {})
-                status_dict["skip_upload"] = meta.unattended_audio_skip or meta.unattended_subtitle_skip
+                status_dict["skip_upload"] = (
+                    meta.unattended_audio_skip or meta.unattended_subtitle_skip
+                )
 
         await asyncio.sleep(0.2)
-        async with aiofiles.open(f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/meta.json", "w", encoding="utf-8") as f:
-            await f.write(json.dumps(meta.to_dict(), indent=4, cls=PathAwareEncoder))
+        async with aiofiles.open(
+            f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/meta.json",
+            "w",
+            encoding="utf-8",
+        ) as f:
+            await f.write(
+                json.dumps(meta.to_dict(), indent=4, cls=PathAwareEncoder)
+            )
             await asyncio.sleep(0.2)
 
         try:
             await validate_tracker_logins(meta, trackers)
             await asyncio.sleep(0.2)
         except Exception as e:
-            logger.warning(f"[yellow]Warning: Tracker validation encountered an error: {e}[/yellow]")
+            logger.warning(
+                f"[yellow]Warning: Tracker validation encountered an error: {e}[/yellow]"
+            )
 
-        successful_trackers = await TrackerStatusManager(config=config).process_all_trackers(meta)
+        successful_trackers = await TrackerStatusManager(
+            config=config
+        ).process_all_trackers(meta)
 
         if meta.trackers_pass is not None:
             meta.skip_uploading = meta.trackers_pass
@@ -1364,7 +1957,9 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
     skip_uploading_int = skip_uploading if skip_uploading else 0
 
     if successful_trackers < skip_uploading_int and not meta.debug:
-        logger.info(f"[red]Not enough successful trackers ({successful_trackers}/{skip_uploading_int}). No uploads being processed.[/red]")
+        logger.info(
+            f"[red]Not enough successful trackers ({successful_trackers}/{skip_uploading_int}). No uploads being processed.[/red]"
+        )
         return True
 
     meta.we_are_uploading = True
@@ -1372,16 +1967,24 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
     if meta.site_check:
         tracker_status = cast(dict[str, dict[str, Any]], meta.tracker_status)
         for tracker in meta.trackers:
-            upload_status = tracker_status.get(tracker, {}).get("upload", False)
+            upload_status = tracker_status.get(tracker, {}).get(
+                "upload", False
+            )
             if not upload_status:
-                if tracker == "AITHER" and meta.aither_trumpable and len(meta.aither_trumpable) > 0:
+                if (
+                    tracker == "AITHER"
+                    and meta.aither_trumpable
+                    and len(meta.aither_trumpable) > 0
+                ):
                     pass
                 else:
                     continue
             if tracker not in tracker_status:
                 continue
 
-            log_path = f"{base_dir}{'/' + 'tmp' + '/'}{tracker}_search_results.json"
+            log_path = (
+                f"{base_dir}{'/' + 'tmp' + '/'}{tracker}_search_results.json"
+            )
             if not await common.path_exists(log_path):
                 await common.makedirs(str(Path(log_path).parent))
 
@@ -1390,8 +1993,14 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
                 try:
                     async with aiofiles.open(log_path, encoding="utf-8") as f:
                         content = await f.read()
-                        loaded: Any = json.loads(content) if content.strip() else []
-                        search_data = [e for e in loaded if isinstance(e, dict)] if isinstance(loaded, list) else []
+                        loaded: Any = (
+                            json.loads(content) if content.strip() else []
+                        )
+                        search_data = (
+                            [e for e in loaded if isinstance(e, dict)]
+                            if isinstance(loaded, list)
+                            else []
+                        )
                 except Exception:
                     search_data = []
 
@@ -1418,7 +2027,9 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
 
     # Prep normally starts these while metadata and screenshots are being
     # generated. Keep this fallback for paths which bypass normal prep.
-    early_artifact_tasks = get_early_artifact_tasks(meta.uuid) or start_early_artifact_tasks(meta, client, config)
+    early_artifact_tasks = get_early_artifact_tasks(
+        meta.uuid
+    ) or start_early_artifact_tasks(meta, client, config)
     early_base_torrent_task, early_usenet_prepare_task = early_artifact_tasks
 
     filename: str = meta.title
@@ -1435,19 +2046,35 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
     meta.frame_overlay = config["DEFAULT"].get("frame_overlay", False)
     tracker_status_map = cast(dict[str, dict[str, Any]], meta.tracker_status)
     for tracker in ["AVISTAZ", "CINEMAZ", "PRIVATEHD"]:
-        upload_status = tracker_status_map.get(tracker, {}).get("upload", False)
-        if tracker in meta.trackers and meta.frame_overlay and upload_status is True:
+        upload_status = tracker_status_map.get(tracker, {}).get(
+            "upload", False
+        )
+        if (
+            tracker in meta.trackers
+            and meta.frame_overlay
+            and upload_status is True
+        ):
             meta.frame_overlay = False
-            logger.info("[yellow]AVISTAZ, CINEMAZ, and PRIVATEHD do not allow frame overlays. Frame overlay will be disabled for this upload.[/yellow]")
+            logger.info(
+                "[yellow]AVISTAZ, CINEMAZ, and PRIVATEHD do not allow frame overlays. Frame overlay will be disabled for this upload.[/yellow]"
+            )
 
     bdmv_mi_created = False
     for tracker in ["ANTHELION", "DIGITALCORE", "HAWKEUNO", "LOCADORA"]:
-        upload_status = tracker_status_map.get(tracker, {}).get("upload", False)
-        if tracker in trackers and upload_status is True and not bdmv_mi_created:
+        upload_status = tracker_status_map.get(tracker, {}).get(
+            "upload", False
+        )
+        if (
+            tracker in trackers
+            and upload_status is True
+            and not bdmv_mi_created
+        ):
             await common.get_bdmv_mediainfo(meta)
             bdmv_mi_created = True
 
-    progress_task = asyncio.create_task(print_progress("[yellow]Still processing, please wait...", interval=10))
+    progress_task = asyncio.create_task(
+        print_progress("[yellow]Still processing, please wait...", interval=10)
+    )
     try:
         if not meta.manual_frames:
             meta.manual_frames = ""
@@ -1460,43 +2087,77 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
             image_data_file = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/image_data.json"
             if Path(image_data_file).exists() and not meta.image_list:
                 try:
-                    async with aiofiles.open(image_data_file, encoding="utf-8") as img_file:
+                    async with aiofiles.open(
+                        image_data_file, encoding="utf-8"
+                    ) as img_file:
                         content = await img_file.read()
-                        image_data = cast(dict[str, Any], json.loads(content)) if content.strip() else {}
+                        image_data = (
+                            cast(dict[str, Any], json.loads(content))
+                            if content.strip()
+                            else {}
+                        )
 
                         if "image_list" in image_data and not meta.image_list:
                             meta.image_list = image_data["image_list"]
-                            logger.debug(f"[cyan]Loaded {len(image_data['image_list'])} previously saved image links")
+                            logger.debug(
+                                f"[cyan]Loaded {len(image_data['image_list'])} previously saved image links"
+                            )
 
-                        if "image_sizes" in image_data and not meta.image_sizes:
+                        if (
+                            "image_sizes" in image_data
+                            and not meta.image_sizes
+                        ):
                             meta.image_sizes = image_data["image_sizes"]
-                            logger.debug("[cyan]Loaded previously saved image sizes")
+                            logger.debug(
+                                "[cyan]Loaded previously saved image sizes"
+                            )
 
                         if "tonemapped" in image_data and not meta.tonemapped:
                             meta.tonemapped = image_data["tonemapped"]
-                            logger.debug("[cyan]Loaded previously saved tonemapped status[/cyan]")
+                            logger.debug(
+                                "[cyan]Loaded previously saved tonemapped status[/cyan]"
+                            )
 
                 except Exception as e:
-                    logger.info(f"[yellow]Could not load saved image data: {e!s}")
+                    logger.info(
+                        f"[yellow]Could not load saved image data: {e!s}"
+                    )
 
             if meta.is_disc:
                 menus_data_file = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/menu_images.json"
                 if Path(menus_data_file).exists():
                     try:
-                        async with aiofiles.open(menus_data_file, encoding="utf-8") as menus_file:
+                        async with aiofiles.open(
+                            menus_data_file, encoding="utf-8"
+                        ) as menus_file:
                             content = await menus_file.read()
-                            menu_image_file = cast(dict[str, Any], json.loads(content)) if content.strip() else {}
+                            menu_image_file = (
+                                cast(dict[str, Any], json.loads(content))
+                                if content.strip()
+                                else {}
+                            )
 
-                            if "menu_images" in menu_image_file and not meta.menu_images:
-                                meta.menu_images = menu_image_file["menu_images"]
-                                logger.debug(f"[cyan]Loaded {len(menu_image_file['menu_images'])} previously saved disc menus")
+                            if (
+                                "menu_images" in menu_image_file
+                                and not meta.menu_images
+                            ):
+                                meta.menu_images = menu_image_file[
+                                    "menu_images"
+                                ]
+                                logger.debug(
+                                    f"[cyan]Loaded {len(menu_image_file['menu_images'])} previously saved disc menus"
+                                )
 
                     except Exception as e:
-                        logger.info(f"[yellow]Could not load saved menu image data: {e!s}")
+                        logger.info(
+                            f"[yellow]Could not load saved menu image data: {e!s}"
+                        )
             # Take Screenshots
             try:
                 if meta.category in ("MUSIC", "PODCAST"):
-                    logger.debug(f"[cyan]{meta.category}: skipping video screenshots and MediaInfo-dependent image processing.[/cyan]")
+                    logger.debug(
+                        f"[cyan]{meta.category}: skipping video screenshots and MediaInfo-dependent image processing.[/cyan]"
+                    )
                 elif meta.is_disc == "BDMV":
                     use_vs = meta.vapoursynth
                     try:
@@ -1518,14 +2179,18 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
                         await cleanup_manager.cleanup()
                         gc.collect()
                         cleanup_manager.reset_terminal()
-                        raise Exception("Error during screenshot capture") from e
+                        raise Exception(
+                            "Error during screenshot capture"
+                        ) from e
                     except Exception as e:
                         await cleanup_screenshot_temp_files(meta)
                         await asyncio.sleep(0.1)
                         await cleanup_manager.cleanup()
                         gc.collect()
                         cleanup_manager.reset_terminal()
-                        raise Exception(f"Error during screenshot capture: {e}") from e
+                        raise Exception(
+                            f"Error during screenshot capture: {e}"
+                        ) from e
 
                 elif meta.is_disc == "DVD":
                     try:
@@ -1542,18 +2207,24 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
                         await cleanup_manager.cleanup()
                         gc.collect()
                         cleanup_manager.reset_terminal()
-                        raise Exception("Error during screenshot capture") from e
+                        raise Exception(
+                            "Error during screenshot capture"
+                        ) from e
                     except Exception as e:
                         await cleanup_screenshot_temp_files(meta)
                         await asyncio.sleep(0.1)
                         await cleanup_manager.cleanup()
                         gc.collect()
                         cleanup_manager.reset_terminal()
-                        raise Exception(f"Error during screenshot capture: {e}") from e
+                        raise Exception(
+                            f"Error during screenshot capture: {e}"
+                        ) from e
 
                 elif meta.category not in ("MUSIC", "PODCAST"):
                     try:
-                        logger.debug(f"videopath: {videopath}, filename: {filename}, meta: {meta.uuid}, base_dir: {base_dir}, manual_frames: {manual_frames}")
+                        logger.debug(
+                            f"videopath: {videopath}, filename: {filename}, meta: {meta.uuid}, base_dir: {base_dir}, manual_frames: {manual_frames}"
+                        )
 
                         await takescreens_manager.screenshots(
                             videopath,
@@ -1570,7 +2241,9 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
                         await cleanup_manager.cleanup()
                         gc.collect()
                         cleanup_manager.reset_terminal()
-                        raise Exception("Error during screenshot capture") from e
+                        raise Exception(
+                            "Error during screenshot capture"
+                        ) from e
                     except Exception as e:
                         logger.info(traceback.format_exc())
                         await cleanup_screenshot_temp_files(meta)
@@ -1579,8 +2252,12 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
                         gc.collect()
                         cleanup_manager.reset_terminal()
                         if "workers" in str(e):
-                            logger.info("[red]max workers issue, see https://github.com/wastaken7/Upload-Assistant/blob/development/docs/ffmpeg-max-workers-issues.md[/red]")
-                        raise Exception(f"Error during screenshot capture: {e}") from e
+                            logger.info(
+                                "[red]max workers issue, see https://github.com/wastaken7/Upload-Assistant/blob/development/docs/ffmpeg-max-workers-issues.md[/red]"
+                            )
+                        raise Exception(
+                            f"Error during screenshot capture: {e}"
+                        ) from e
 
             except asyncio.CancelledError as e:
                 await cleanup_screenshot_temp_files(meta)
@@ -1604,14 +2281,24 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
             if "image_list" not in meta:
                 meta.image_list = []
             if meta.category == "MUSIC":
-                allowed_hosts = _music_cover_allowed_hosts(cast(list[Any], meta.trackers))
+                allowed_hosts = _music_cover_allowed_hosts(
+                    cast(list[Any], meta.trackers)
+                )
                 if allowed_hosts == []:
-                    logger.warning("[yellow]MUSIC: no image host is approved by all selected trackers.[/yellow]")
+                    logger.warning(
+                        "[yellow]MUSIC: no image host is approved by all selected trackers.[/yellow]"
+                    )
                     return False
-                await _host_music_cover(meta, uploadscreens_manager, allowed_hosts)
+                await _host_music_cover(
+                    meta, uploadscreens_manager, allowed_hosts
+                )
             manual_frames_str = meta.manual_frames
             if isinstance(manual_frames_str, str):
-                manual_frames_list = [f.strip() for f in manual_frames_str.split(",") if f.strip()]
+                manual_frames_list = [
+                    f.strip()
+                    for f in manual_frames_str.split(",")
+                    if f.strip()
+                ]
                 manual_frames_count = len(manual_frames_list)
                 logger.debug(f"Manual frames entered: {manual_frames_count}")
             else:
@@ -1619,7 +2306,11 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
             if manual_frames_count > 0:
                 meta.screens = manual_frames_count
             cutoff = meta.cutoff
-            configured_minimum = configured_screenshot_minimum(config) if meta.category in {"MOVIE", "TV"} else 0
+            configured_minimum = (
+                configured_screenshot_minimum(config)
+                if meta.category in {"MOVIE", "TV"}
+                else 0
+            )
             if (
                 not meta.debug
                 and len(meta.image_list) < max(cutoff, configured_minimum)
@@ -1639,75 +2330,140 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
                     "TVCHAOSUK",
                 }
 
-                relevant_trackers = [t for t in cast(list[Any], meta.trackers) if isinstance(t, str) and t in trackers_with_image_host_requirements and t in tracker_class_map]
+                relevant_trackers = [
+                    t
+                    for t in cast(list[Any], meta.trackers)
+                    if isinstance(t, str)
+                    and t in trackers_with_image_host_requirements
+                    and t in tracker_class_map
+                ]
 
                 # Prefer a configured host accepted by all relevant trackers.  If that is
                 # not possible, keep processing the compatible trackers and skip only
                 # those for which the user has no acceptable configured host.
                 allowed_hosts: list[str] | None = None
-                if relevant_trackers and config.get("DEFAULT", {}).get("smart_image_host_selection", True) and not meta.imghost_from_cli:
+                if (
+                    relevant_trackers
+                    and config.get("DEFAULT", {}).get(
+                        "smart_image_host_selection", True
+                    )
+                    and not meta.imghost_from_cli
+                ):
                     try:
-                        tracker_instances = {tracker_name: tracker_class_map[tracker_name](config=config) for tracker_name in relevant_trackers}
+                        tracker_instances = {
+                            tracker_name: tracker_class_map[tracker_name](
+                                config=config
+                            )
+                            for tracker_name in relevant_trackers
+                        }
 
-                        logger.debug(f"[cyan]Image host debug: meta.imghost={meta.imghost} img_host_1={config['DEFAULT'].get('img_host_1')}[/cyan]")
-                        logger.debug(f"[cyan]Image host debug: relevant_trackers={relevant_trackers}[/cyan]")
+                        logger.debug(
+                            f"[cyan]Image host debug: meta.imghost={meta.imghost} img_host_1={config['DEFAULT'].get('img_host_1')}[/cyan]"
+                        )
+                        logger.debug(
+                            f"[cyan]Image host debug: relevant_trackers={relevant_trackers}[/cyan]"
+                        )
 
                         default_cfg_obj = config.get("DEFAULT", {})
-                        default_cfg: dict[str, Any] = cast(dict[str, Any], default_cfg_obj) if isinstance(default_cfg_obj, dict) else {}
+                        default_cfg: dict[str, Any] = (
+                            cast(dict[str, Any], default_cfg_obj)
+                            if isinstance(default_cfg_obj, dict)
+                            else {}
+                        )
                         configured_constraint_hosts: list[str] = []
                         for host_index in range(1, 10):
                             host_key = f"img_host_{host_index}"
                             if host_key in default_cfg:
                                 host = default_cfg.get(host_key)
-                                if host and host not in configured_constraint_hosts:
-                                    configured_constraint_hosts.append(str(host))
+                                if (
+                                    host
+                                    and host not in configured_constraint_hosts
+                                ):
+                                    configured_constraint_hosts.append(
+                                        str(host)
+                                    )
 
-                        logger.debug(f"[cyan]Image host debug: configured_hosts={configured_constraint_hosts}[/cyan]")
+                        logger.debug(
+                            f"[cyan]Image host debug: configured_hosts={configured_constraint_hosts}[/cyan]"
+                        )
 
                         approved_sets: list[set[str]] = []
                         all_known = True
                         for tracker_name in relevant_trackers:
                             tracker_instance = tracker_instances[tracker_name]
-                            approved_hosts = getattr(tracker_instance, "approved_image_hosts", None)
+                            approved_hosts = getattr(
+                                tracker_instance, "approved_image_hosts", None
+                            )
                             if not approved_hosts:
                                 all_known = False
                                 break
                             if isinstance(approved_hosts, (list, set, tuple)):
-                                approved_hosts_list = [str(host) for host in cast(Iterable[Any], approved_hosts)]
+                                approved_hosts_list = [
+                                    str(host)
+                                    for host in cast(
+                                        Iterable[Any], approved_hosts
+                                    )
+                                ]
                                 approved_host_set = set(approved_hosts_list)
                                 # GreatPosterWall can import any public URL with its tracker API,
                                 # then serves it from its approved KShare host.  Its configured
                                 # image hosts are therefore valid sources, not final destinations.
-                                if getattr(tracker_instance, "can_rehost_unapproved_images", False) and getattr(tracker_instance, "api_key", ""):
-                                    approved_host_set.update(configured_constraint_hosts)
+                                if getattr(
+                                    tracker_instance,
+                                    "can_rehost_unapproved_images",
+                                    False,
+                                ) and getattr(tracker_instance, "api_key", ""):
+                                    approved_host_set.update(
+                                        configured_constraint_hosts
+                                    )
                                 approved_sets.append(approved_host_set)
                             else:
                                 all_known = False
                                 break
 
-                            logger.debug(f"[cyan]Image host debug: {tracker_name}.approved_image_hosts={approved_hosts_list}[/cyan]")
+                            logger.debug(
+                                f"[cyan]Image host debug: {tracker_name}.approved_image_hosts={approved_hosts_list}[/cyan]"
+                            )
 
-                        if all_known and approved_sets and configured_constraint_hosts:
+                        if (
+                            all_known
+                            and approved_sets
+                            and configured_constraint_hosts
+                        ):
                             common_hosts: set[str] = set()
                             for host_set in approved_sets:
                                 if not common_hosts:
                                     common_hosts = set(host_set)
                                 else:
                                     common_hosts &= host_set
-                            common_configured_hosts = [h for h in configured_constraint_hosts if h in common_hosts]
+                            common_configured_hosts = [
+                                h
+                                for h in configured_constraint_hosts
+                                if h in common_hosts
+                            ]
 
-                            logger.debug(f"[cyan]Image host debug: common_hosts={sorted(common_hosts)}[/cyan]")
-                            logger.debug(f"[cyan]Image host debug: common_configured_hosts={common_configured_hosts}[/cyan]")
+                            logger.debug(
+                                f"[cyan]Image host debug: common_hosts={sorted(common_hosts)}[/cyan]"
+                            )
+                            logger.debug(
+                                f"[cyan]Image host debug: common_configured_hosts={common_configured_hosts}[/cyan]"
+                            )
 
                             # A shared configured host is ideal: upload the common image
                             # list once and use it for every compatible tracker.
                             if common_configured_hosts:
                                 allowed_hosts = common_configured_hosts
                             else:
-                                configured_host_set = set(configured_constraint_hosts)
+                                configured_host_set = set(
+                                    configured_constraint_hosts
+                                )
                                 incompatible_trackers = [
                                     tracker_name
-                                    for tracker_name, approved_hosts in zip(relevant_trackers, approved_sets, strict=True)
+                                    for tracker_name, approved_hosts in zip(
+                                        relevant_trackers,
+                                        approved_sets,
+                                        strict=True,
+                                    )
                                     if not approved_hosts & configured_host_set
                                 ]
 
@@ -1717,12 +2473,28 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
                                         f"{', '.join(incompatible_trackers)}. Configured hosts: {', '.join(configured_hosts)}.[/yellow]"
                                     )
                                     for tracker_name in incompatible_trackers:
-                                        status = meta.tracker_status.setdefault(tracker_name, {})
+                                        status = (
+                                            meta.tracker_status.setdefault(
+                                                tracker_name, {}
+                                            )
+                                        )
                                         status["upload"] = False
                                         status["skipped"] = True
-                                        status["status_message"] = "No compatible configured image host"
-                                    meta.trackers = [tracker_name for tracker_name in meta.trackers if tracker_name not in incompatible_trackers]
-                                    relevant_trackers = [tracker_name for tracker_name in relevant_trackers if tracker_name not in incompatible_trackers]
+                                        status["status_message"] = (
+                                            "No compatible configured image host"
+                                        )
+                                    meta.trackers = [
+                                        tracker_name
+                                        for tracker_name in meta.trackers
+                                        if tracker_name
+                                        not in incompatible_trackers
+                                    ]
+                                    relevant_trackers = [
+                                        tracker_name
+                                        for tracker_name in relevant_trackers
+                                        if tracker_name
+                                        not in incompatible_trackers
+                                    ]
 
                                 if relevant_trackers:
                                     logger.info(
@@ -1732,13 +2504,24 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
 
                             # Prefer the user-selected host if it's valid for all relevant trackers; otherwise
                             # fall back to the first common configured host by config priority (img_host_1..img_host_9).
-                            current_img_host = str(meta.imghost or config["DEFAULT"].get("img_host_1") or "")
+                            current_img_host = str(
+                                meta.imghost
+                                or config["DEFAULT"].get("img_host_1")
+                                or ""
+                            )
                             preferred_host: str | None = None
 
-                            if common_configured_hosts and current_img_host not in common_configured_hosts:
+                            if (
+                                common_configured_hosts
+                                and current_img_host
+                                not in common_configured_hosts
+                            ):
                                 preferred_host = common_configured_hosts[0]
 
-                            if preferred_host and preferred_host != meta.imghost:
+                            if (
+                                preferred_host
+                                and preferred_host != meta.imghost
+                            ):
                                 logger.debug(
                                     f"[cyan]Image host debug: current host '{current_img_host}' is not common to all trackers; "
                                     f"switching meta.imghost from '{meta.imghost}' to '{preferred_host}'.[/cyan]"
@@ -1750,24 +2533,40 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
                             )
 
                     except Exception as e:
-                        logger.debug(f"[yellow]Could not determine a common approved image host: {e}[/yellow]")
+                        logger.debug(
+                            f"[yellow]Could not determine a common approved image host: {e}[/yellow]"
+                        )
 
                 if meta.debug:
-                    image_list_for_debug = cast(list[Any], meta.image_list or [])
+                    image_list_for_debug = cast(
+                        list[Any], meta.image_list or []
+                    )
                     logger.debug(
                         f"[cyan]Image host debug: pre-upload_screens meta.imghost={meta.imghost} image_list={len(image_list_for_debug)} cutoff={meta.cutoff} screens={meta.screens}[/cyan]"
                     )
                 return_dict: dict[str, Any] = {}
                 try:
                     default_cfg_obj = config.get("DEFAULT", {})
-                    default_cfg = cast(dict[str, Any], default_cfg_obj) if isinstance(default_cfg_obj, dict) else {}
-                    min_successful_uploads = configured_screenshot_minimum(config)
-                    actual_screens, required_minimum = available_screens(meta, min_successful_uploads)
+                    default_cfg = (
+                        cast(dict[str, Any], default_cfg_obj)
+                        if isinstance(default_cfg_obj, dict)
+                        else {}
+                    )
+                    min_successful_uploads = configured_screenshot_minimum(
+                        config
+                    )
+                    actual_screens, required_minimum = available_screens(
+                        meta, min_successful_uploads
+                    )
                     if meta.category == "BOOK":
                         meta.screens = actual_screens
-                        min_successful_uploads = min(required_minimum, actual_screens)
+                        min_successful_uploads = min(
+                            required_minimum, actual_screens
+                        )
                     elif meta.category == "XXX":
-                        min_successful_uploads = xxx_min_successful_uploads(meta, min_successful_uploads)
+                        min_successful_uploads = xxx_min_successful_uploads(
+                            meta, min_successful_uploads
+                        )
 
                     host_order: list[str] = []
                     for host_index in range(1, 10):
@@ -1775,11 +2574,23 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
                         host = default_cfg.get(host_key)
                         if host and host not in host_order:
                             host_str = str(host)
-                            if allowed_hosts is None or host_str in allowed_hosts:
+                            if (
+                                allowed_hosts is None
+                                or host_str in allowed_hosts
+                            ):
                                 host_order.append(host_str)
 
-                    current_img_host = str(meta.imghost or default_cfg.get("img_host_1") or "")
-                    if current_img_host and current_img_host not in host_order and (allowed_hosts is None or current_img_host in allowed_hosts):
+                    current_img_host = str(
+                        meta.imghost or default_cfg.get("img_host_1") or ""
+                    )
+                    if (
+                        current_img_host
+                        and current_img_host not in host_order
+                        and (
+                            allowed_hosts is None
+                            or current_img_host in allowed_hosts
+                        )
+                    ):
                         host_order.insert(0, current_img_host)
 
                     if not host_order and allowed_hosts:
@@ -1805,10 +2616,14 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
                         allowed_hosts=allowed_hosts,
                     )
                     image_list_count = len(meta.image_list or [])
-                    logger.debug(f"[cyan]Image host debug: post-upload_screens image_list={image_list_count}[/cyan]")
+                    logger.debug(
+                        f"[cyan]Image host debug: post-upload_screens image_list={image_list_count}[/cyan]"
+                    )
 
                     if image_list_count < min_successful_uploads:
-                        requirements_error = screenshot_requirement_error(meta, config)
+                        requirements_error = screenshot_requirement_error(
+                            meta, config
+                        )
                         if requirements_error:
                             raise Exception(requirements_error)
                         logger.info(
@@ -1818,7 +2633,9 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
 
                     # Now that image_list exists, populate tracker-specific keys (and only reupload if required)
                     for tracker_name in relevant_trackers:
-                        tracker_instance = tracker_class_map[tracker_name](config=config)
+                        tracker_instance = tracker_class_map[tracker_name](
+                            config=config
+                        )
                         if meta.debug:
                             key = f"{tracker_name}_images_key"
                             logger.debug(
@@ -1831,7 +2648,9 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
                                 f"[cyan]Image host debug: post-upload after  {tracker_name}.check_image_hosts() image_list={len(meta.image_list or [])} {key}={len(getattr(meta, key, []) or [])}[/cyan]"
                             )
                 except asyncio.CancelledError:
-                    logger.info("\n[red]Upload process interrupted! Cancelling tasks...[/red]")
+                    logger.info(
+                        "\n[red]Upload process interrupted! Cancelling tasks...[/red]"
+                    )
                     return False
                 except Exception as e:
                     raise e
@@ -1844,7 +2663,9 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
                 meta.image_list = []
 
             # Mandatory screenshots are validated before optional artifacts.
-            await _validate_screenshots_then_process_optional(meta, config, uploadscreens_manager)
+            await _validate_screenshots_then_process_optional(
+                meta, config, uploadscreens_manager
+            )
 
             # Host book cover if it's a BOOK and save to covers.json
             if meta.category == "BOOK" and not meta.debug:
@@ -1854,68 +2675,125 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
                     if Path(artwork_url).exists():
                         artwork_path = artwork_url
                     else:
-                        poster_jpg_path = str(artwork_dir(meta.base_dir, meta.uuid) / "poster.jpg")
+                        poster_jpg_path = str(
+                            artwork_dir(meta.base_dir, meta.uuid)
+                            / "poster.jpg"
+                        )
                         try:
                             import urllib.parse
                             import urllib.request
 
                             parsed_url = urllib.parse.urlparse(artwork_url)
                             if parsed_url.scheme in ("http", "https"):
-                                Path(poster_jpg_path).parent.mkdir(parents=True, exist_ok=True)
-                                await asyncio.to_thread(urllib.request.urlretrieve, artwork_url, poster_jpg_path)
+                                Path(poster_jpg_path).parent.mkdir(
+                                    parents=True, exist_ok=True
+                                )
+                                await asyncio.to_thread(
+                                    urllib.request.urlretrieve,
+                                    artwork_url,
+                                    poster_jpg_path,
+                                )
                                 artwork_path = poster_jpg_path
                                 meta.artwork_path = artwork_path
                         except Exception as e:
-                            logger.error(f"[red]Error downloading artwork from {artwork_url}: {e}[/red]")
+                            logger.error(
+                                f"[red]Error downloading artwork from {artwork_url}: {e}[/red]"
+                            )
 
                 if artwork_path and Path(artwork_path).exists():
                     covers_file = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/covers.json"
                     use_cached_cover = False
                     if Path(covers_file).exists():
                         try:
-                            async with aiofiles.open(covers_file, encoding="utf-8") as f:
+                            async with aiofiles.open(
+                                covers_file, encoding="utf-8"
+                            ) as f:
                                 content = await f.read()
                                 loaded_covers = json.loads(content)
-                                if isinstance(loaded_covers, list) and len(loaded_covers) > 0 and loaded_covers[0].get("raw_url"):
+                                if (
+                                    isinstance(loaded_covers, list)
+                                    and len(loaded_covers) > 0
+                                    and loaded_covers[0].get("raw_url")
+                                ):
                                     use_cached_cover = True
                                     meta.hosted_artwork = loaded_covers
                                     raw_url = loaded_covers[0]["raw_url"]
                                     meta.artwork_url = raw_url
                                     meta.rehosted_artwork_url = raw_url
-                                    logger.debug(f"[green]Using cached cover from covers.json: {raw_url}")
+                                    logger.debug(
+                                        f"[green]Using cached cover from covers.json: {raw_url}"
+                                    )
                         except Exception as e:
-                            logger.debug(f"[red]Error reading covers.json cache: {e}")
+                            logger.debug(
+                                f"[red]Error reading covers.json cache: {e}"
+                            )
 
                     if not use_cached_cover:
                         try:
-                            uploaded_cover, _ = await uploadscreens_manager.upload_screens(meta, 1, 1, 0, 1, [artwork_path], {})
+                            (
+                                uploaded_cover,
+                                _,
+                            ) = await uploadscreens_manager.upload_screens(
+                                meta, 1, 1, 0, 1, [artwork_path], {}
+                            )
                             if uploaded_cover and len(uploaded_cover) > 0:
-                                Path(covers_file).parent.mkdir(parents=True, exist_ok=True)
-                                async with aiofiles.open(covers_file, "w", encoding="utf-8") as f:
-                                    await f.write(json.dumps(uploaded_cover, indent=4))
+                                Path(covers_file).parent.mkdir(
+                                    parents=True, exist_ok=True
+                                )
+                                async with aiofiles.open(
+                                    covers_file, "w", encoding="utf-8"
+                                ) as f:
+                                    await f.write(
+                                        json.dumps(uploaded_cover, indent=4)
+                                    )
                                 meta.hosted_artwork = uploaded_cover
-                                raw_url = uploaded_cover[0].get("raw_url", uploaded_cover[0].get("img_url", ""))
+                                raw_url = uploaded_cover[0].get(
+                                    "raw_url",
+                                    uploaded_cover[0].get("img_url", ""),
+                                )
                                 if raw_url:
                                     meta.artwork_url = raw_url
                                     meta.rehosted_artwork_url = raw_url
-                                logger.debug(f"[green]Successfully uploaded book cover and saved to covers.json: {raw_url}")
+                                logger.debug(
+                                    f"[green]Successfully uploaded book cover and saved to covers.json: {raw_url}"
+                                )
                             else:
-                                logger.error("[red]Failed to upload book cover: upload_screens returned empty result")
+                                logger.error(
+                                    "[red]Failed to upload book cover: upload_screens returned empty result"
+                                )
                         except Exception as e:
-                            logger.error(f"[red]Error uploading book cover: {e}[/red]")
+                            logger.error(
+                                f"[red]Error uploading book cover: {e}[/red]"
+                            )
 
-            async with aiofiles.open(f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/meta.json", "w", encoding="utf-8") as f:
-                await f.write(json.dumps(meta.to_dict(), indent=4, cls=PathAwareEncoder))
+            async with aiofiles.open(
+                f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/meta.json",
+                "w",
+                encoding="utf-8",
+            ) as f:
+                await f.write(
+                    json.dumps(meta.to_dict(), indent=4, cls=PathAwareEncoder)
+                )
 
             if "image_list" in meta and meta.image_list:
                 try:
                     image_list = cast(list[Any], meta.image_list or [])
-                    image_data = {"image_list": image_list, "image_sizes": meta.image_sizes, "tonemapped": meta.tonemapped}
+                    image_data = {
+                        "image_list": image_list,
+                        "image_sizes": meta.image_sizes,
+                        "tonemapped": meta.tonemapped,
+                    }
 
-                    async with aiofiles.open(f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/image_data.json", "w", encoding="utf-8") as img_file:
+                    async with aiofiles.open(
+                        f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/image_data.json",
+                        "w",
+                        encoding="utf-8",
+                    ) as img_file:
                         await img_file.write(json.dumps(image_data, indent=4))
 
-                    logger.debug(f"[cyan]Saved {len(image_list)} images to image_data.json")
+                    logger.debug(
+                        f"[cyan]Saved {len(image_list)} images to image_data.json"
+                    )
                 except Exception as e:
                     logger.info(f"[yellow]Failed to save image data: {e!s}")
     finally:
@@ -1924,36 +2802,63 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
             await progress_task
 
     has_local_subs = bool(meta.subtitle_files)
-    torrent_path = str(Path(f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/BASE.torrent").resolve())
-    subs_torrent_path = str(Path(f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/BASE_SUBS.torrent").resolve())
+    torrent_path = str(
+        Path(
+            f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/BASE.torrent"
+        ).resolve()
+    )
+    subs_torrent_path = str(
+        Path(
+            f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/BASE_SUBS.torrent"
+        ).resolve()
+    )
 
     try:
-        await asyncio.gather(early_base_torrent_task, early_usenet_prepare_task)
+        await asyncio.gather(
+            early_base_torrent_task, early_usenet_prepare_task
+        )
     finally:
         await cancel_and_drain_early_artifact_tasks(meta.uuid)
 
     if meta.force_recheck:
         waiter = Wait(config)
-        await waiter.select_and_recheck_best_torrent(meta, cast(str, meta.path), check_interval=5)
+        await waiter.select_and_recheck_best_torrent(
+            meta, cast(str, meta.path), check_interval=5
+        )
 
     # 1. Reuse existing torrent from client if possible
     reuse_torrent = meta.reuse_torrent_path
     base_reuse_torrent = meta.base_reuse_torrent_path
-    trackers_list = [t.strip().upper() for t in meta.trackers.split(",")] if isinstance(meta.trackers, str) else [t.strip().upper() for t in meta.trackers]
+    trackers_list = (
+        [t.strip().upper() for t in meta.trackers.split(",")]
+        if isinstance(meta.trackers, str)
+        else [t.strip().upper() for t in meta.trackers]
+    )
 
     is_usenet_only = _is_usenet_only(meta)
     if not is_usenet_only:
-        if meta.rehash is False and not Path(torrent_path).exists() and not meta.base_torrent_created and not meta.we_checked_them_all:
+        if (
+            meta.rehash is False
+            and not Path(torrent_path).exists()
+            and not meta.base_torrent_created
+            and not meta.we_checked_them_all
+        ):
             if not reuse_torrent or not Path(reuse_torrent).exists():
                 reuse_torrent = await client.find_existing_torrent(meta)
             if reuse_torrent is not None:
-                await TORRENT_CREATOR.create_base_from_existing_torrent(reuse_torrent, meta.base_dir, meta.uuid)
+                await TORRENT_CREATOR.create_base_from_existing_torrent(
+                    reuse_torrent, meta.base_dir, meta.uuid
+                )
 
         # 2. Re-create base torrents if rehash is True
         if meta.rehash is True and meta.nohash is False:
-            await TORRENT_CREATOR.create_torrent(meta, Path(cast(str, meta.path)), "BASE")
+            await TORRENT_CREATOR.create_torrent(
+                meta, Path(cast(str, meta.path)), "BASE"
+            )
             if has_local_subs:
-                await TORRENT_CREATOR.create_torrent(meta, Path(cast(str, meta.path)), "BASE_SUBS")
+                await TORRENT_CREATOR.create_torrent(
+                    meta, Path(cast(str, meta.path)), "BASE_SUBS"
+                )
 
         # 3. Otherwise generate if missing
         else:
@@ -1961,38 +2866,71 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
                 not Path(torrent_path).exists()
                 and base_reuse_torrent
                 and Path(base_reuse_torrent).exists()
-                and (not has_local_subs or client._torrent_has_no_subtitles(base_reuse_torrent))
+                and (
+                    not has_local_subs
+                    or client._torrent_has_no_subtitles(base_reuse_torrent)
+                )
             ):
-                await TORRENT_CREATOR.create_base_from_existing_torrent(base_reuse_torrent, meta.base_dir, meta.uuid)
+                await TORRENT_CREATOR.create_base_from_existing_torrent(
+                    base_reuse_torrent, meta.base_dir, meta.uuid
+                )
             if not Path(torrent_path).exists() and meta.nohash is False:
-                await TORRENT_CREATOR.create_torrent(meta, Path(cast(str, meta.path)), "BASE")
-            if has_local_subs and not Path(subs_torrent_path).exists() and meta.nohash is False:
-                await TORRENT_CREATOR.create_torrent(meta, Path(cast(str, meta.path)), "BASE_SUBS")
+                await TORRENT_CREATOR.create_torrent(
+                    meta, Path(cast(str, meta.path)), "BASE"
+                )
+            if (
+                has_local_subs
+                and not Path(subs_torrent_path).exists()
+                and meta.nohash is False
+            ):
+                await TORRENT_CREATOR.create_torrent(
+                    meta, Path(cast(str, meta.path)), "BASE_SUBS"
+                )
 
     if meta.nohash:
         meta.client = "none"
 
     if Path(torrent_path).exists():
         raw_trackers = meta.trackers
-        trackers_list = [raw_trackers] if isinstance(raw_trackers, str) else [t for t in raw_trackers if t.strip()]
+        trackers_list = (
+            [raw_trackers]
+            if isinstance(raw_trackers, str)
+            else [t for t in raw_trackers if t.strip()]
+        )
         trackers_normalized = [t.strip().upper() for t in trackers_list]
 
-        base_piece_mb: int | None = cast(int | None, meta.base_torrent_piece_mb)
-        if base_piece_mb is None and any(t in {"HDBITS", "PASSTHEPOPCORN"} for t in trackers_normalized):
+        base_piece_mb: int | None = cast(
+            int | None, meta.base_torrent_piece_mb
+        )
+        if base_piece_mb is None and any(
+            t in {"HDBITS", "PASSTHEPOPCORN"} for t in trackers_normalized
+        ):
             try:
-                torrent = await asyncio.to_thread(TORF_Torrent.read, torrent_path)
+                torrent = await asyncio.to_thread(
+                    TORF_Torrent.read, torrent_path
+                )
                 base_piece_mb = torrent.piece_size // (1024 * 1024)
                 if base_piece_mb is not None:
                     meta.base_torrent_piece_mb = base_piece_mb
             except Exception as e:
-                logger.debug(f"[yellow]Unable to cache BASE.torrent piece size: {e}")
+                logger.debug(
+                    f"[yellow]Unable to cache BASE.torrent piece size: {e}"
+                )
                 base_piece_mb = None
 
     if meta.randomized >= 1 and not meta.mkbrr and not is_usenet_only:
-        TORRENT_CREATOR.create_random_torrents(meta.base_dir, meta.uuid, meta.randomized, cast(str, meta.path))
+        TORRENT_CREATOR.create_random_torrents(
+            meta.base_dir, meta.uuid, meta.randomized, cast(str, meta.path)
+        )
 
-    async with aiofiles.open(f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/meta.json", "w", encoding="utf-8") as f:
-        await f.write(json.dumps(meta.to_dict(), indent=4, cls=PathAwareEncoder))
+    async with aiofiles.open(
+        f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/meta.json",
+        "w",
+        encoding="utf-8",
+    ) as f:
+        await f.write(
+            json.dumps(meta.to_dict(), indent=4, cls=PathAwareEncoder)
+        )
     return True
 
 
@@ -2005,9 +2943,14 @@ async def cleanup_screenshot_temp_files(meta: Meta) -> None:
                 file_path = screenshot_path / file
                 if file_path.is_file() and file.endswith((".png", ".jpg")):
                     file_path.unlink()
-                    logger.debug(f"[yellow]Removed temporary screenshot file: {file_path}[/yellow]")
+                    logger.debug(
+                        f"[yellow]Removed temporary screenshot file: {file_path}[/yellow]"
+                    )
         except Exception as e:
-            logger.error(f"[red]Error cleaning up temporary screenshot files: {e}[/red]", extra={"highlighter": None})
+            logger.error(
+                f"[red]Error cleaning up temporary screenshot files: {e}[/red]",
+                extra={"highlighter": None},
+            )
 
 
 async def save_processed_file(log_file: str, file_path: str) -> None:
@@ -2038,7 +2981,9 @@ async def save_processed_file(log_file: str, file_path: str) -> None:
                 extra={"highlighter": None},
             )
 
-    processed_files = [entry for entry in processed_files if entry != file_path]
+    processed_files = [
+        entry for entry in processed_files if entry != file_path
+    ]
     processed_files.append(file_path)
 
     async with aiofiles.open(log_path, "w", encoding="utf-8") as f:
@@ -2051,12 +2996,16 @@ def get_local_version(version_file: str | Path) -> str:
     try:
         content = path.read_text(encoding="utf-8")
     except OSError as error:
-        logger.debug(f"Version metadata file unavailable at {path}: {error}. Using packaged version {application_version.__version__}.")
+        logger.debug(
+            f"Version metadata file unavailable at {path}: {error}. Using packaged version {application_version.__version__}."
+        )
         return application_version.__version__
     match = re.search(r'__version__\s*=\s*"([^"]+)"', content)
     if match:
         return match.group(1)
-    logger.debug(f"Version metadata missing from {path}; using packaged version {application_version.__version__}.")
+    logger.debug(
+        f"Version metadata missing from {path}; using packaged version {application_version.__version__}."
+    )
     return application_version.__version__
 
 
@@ -2071,10 +3020,14 @@ def get_remote_version(url: str) -> tuple[str | None, str | None]:
                 return match.group(1), content
             logger.info("[red]Version not found in remote file.")
             return None, None
-        logger.error(f"[red]Failed to fetch remote version file. Status code: {response.status_code}")
+        logger.error(
+            f"[red]Failed to fetch remote version file. Status code: {response.status_code}"
+        )
         return None, None
     except requests.RequestException as e:
-        logger.info(f"[red]An error occurred while fetching the remote version file: {e}")
+        logger.info(
+            f"[red]An error occurred while fetching the remote version file: {e}"
+        )
         return None, None
 
 
@@ -2082,30 +3035,53 @@ def _update_notification_cache_path() -> Path:
     return STATE_DIR / "update_notification.json"
 
 
-def _read_update_notification_cache(cache_hours: float) -> tuple[str, str] | None:
+def _read_update_notification_cache(
+    cache_hours: float,
+) -> tuple[str, str] | None:
     """Return a still-valid remote version response from the runtime cache."""
     try:
-        cached = json.loads(_update_notification_cache_path().read_text(encoding="utf-8"))
+        cached = json.loads(
+            _update_notification_cache_path().read_text(encoding="utf-8")
+        )
         checked_at = cached["checked_at"]
         remote_version = cached["remote_version"]
         remote_content = cached["remote_content"]
-        if not isinstance(checked_at, (int, float)) or not isinstance(remote_version, str) or not isinstance(remote_content, str):
+        if (
+            not isinstance(checked_at, (int, float))
+            or not isinstance(remote_version, str)
+            or not isinstance(remote_content, str)
+        ):
             return None
         if time.time() - checked_at >= cache_hours * 3600:
             return None
         return remote_version, remote_content
-    except FileNotFoundError, OSError, TypeError, ValueError, KeyError, json.JSONDecodeError:
+    except (
+        FileNotFoundError,
+        OSError,
+        TypeError,
+        ValueError,
+        KeyError,
+        json.JSONDecodeError,
+    ):
         return None
 
 
-def _write_update_notification_cache(remote_version: str, remote_content: str) -> None:
+def _write_update_notification_cache(
+    remote_version: str, remote_content: str
+) -> None:
     """Persist a successful remote version response for later runs."""
     try:
         STATE_DIR.mkdir(parents=True, exist_ok=True)
         cache_path = _update_notification_cache_path()
         temporary_path = cache_path.with_suffix(".tmp")
         temporary_path.write_text(
-            json.dumps({"checked_at": time.time(), "remote_version": remote_version, "remote_content": remote_content}),
+            json.dumps(
+                {
+                    "checked_at": time.time(),
+                    "remote_version": remote_version,
+                    "remote_content": remote_content,
+                }
+            ),
             encoding="utf-8",
         )
         temporary_path.replace(cache_path)
@@ -2123,10 +3099,16 @@ def extract_changelog(content: str, to_version: str) -> str | None:
             target = node.targets[0]
             if not isinstance(target, ast.Name) or target.id != "__version__":
                 continue
-            if not isinstance(node.value, ast.Constant) or node.value.value not in (to_version, to_version.lstrip("v")):
+            if not isinstance(
+                node.value, ast.Constant
+            ) or node.value.value not in (to_version, to_version.lstrip("v")):
                 continue
             notes_node = module.body[index + 1]
-            if isinstance(notes_node, ast.Expr) and isinstance(notes_node.value, ast.Constant) and isinstance(notes_node.value.value, str):
+            if (
+                isinstance(notes_node, ast.Expr)
+                and isinstance(notes_node.value, ast.Constant)
+                and isinstance(notes_node.value.value, str)
+            ):
                 changelog = notes_node.value.value.strip()
                 return re.sub(r"^# ", "", changelog, flags=re.MULTILINE)
     except SyntaxError:
@@ -2159,7 +3141,9 @@ async def update_notification() -> str:
     try:
         cache_hours = max(0.0, float(cache_hours))
     except TypeError, ValueError:
-        logger.warning("[yellow]Invalid update_notification_cache_hours; using 4 hours.[/yellow]")
+        logger.warning(
+            "[yellow]Invalid update_notification_cache_hours; using 4 hours.[/yellow]"
+        )
         cache_hours = 4.0
 
     local_version = get_local_version(version_file)
@@ -2169,7 +3153,9 @@ async def update_notification() -> str:
     if not notice:
         return local_version
 
-    cached_response = _read_update_notification_cache(cache_hours) if cache_hours else None
+    cached_response = (
+        _read_update_notification_cache(cache_hours) if cache_hours else None
+    )
     if cached_response:
         remote_version, remote_content = cached_response
     else:
@@ -2179,16 +3165,24 @@ async def update_notification() -> str:
     if not remote_version:
         return local_version
 
-    if _parse_version_tuple(remote_version) > _parse_version_tuple(local_version):
-        logger.info(f"[red][NOTICE] [green]Update available: [/green][yellow]{remote_version}")
-        logger.info(f"[red][NOTICE] [green]Current version: [/green][yellow]{local_version}")
+    if _parse_version_tuple(remote_version) > _parse_version_tuple(
+        local_version
+    ):
+        logger.info(
+            f"[red][NOTICE] [green]Update available: [/green][yellow]{remote_version}"
+        )
+        logger.info(
+            f"[red][NOTICE] [green]Current version: [/green][yellow]{local_version}"
+        )
         if verbose and remote_content:
             changelog = extract_changelog(remote_content, remote_version)
             if changelog:
                 await asyncio.sleep(1)
                 logger.info(f"{changelog}")
             else:
-                logger.info("[yellow]Changelog not found between versions.[/yellow]")
+                logger.info(
+                    "[yellow]Changelog not found between versions.[/yellow]"
+                )
 
     return local_version
 
@@ -2200,11 +3194,15 @@ async def do_the_thing(base_dir: str) -> None:  # pyright: ignore[reportGeneralT
         reloaded = cast(dict[str, Any], _CONFIGURATION_SERVICE.load_mutable())
         config.clear()
         config.update(reloaded)
-        default_runtime_config = cast(dict[str, Any], config.get("DEFAULT", {}))
+        default_runtime_config = cast(
+            dict[str, Any], config.get("DEFAULT", {})
+        )
         configure_console(default_runtime_config)
         configure_binary_paths(default_runtime_config)
     except ConfigurationError as exc:
-        logger.warning(f"[yellow]Warning: could not reload config from disk: {exc}[/yellow]")
+        logger.warning(
+            f"[yellow]Warning: could not reload config from disk: {exc}[/yellow]"
+        )
 
     await asyncio.sleep(0.1)  # Ensure it's not racing
 
@@ -2214,7 +3212,9 @@ async def do_the_thing(base_dir: str) -> None:  # pyright: ignore[reportGeneralT
         """Ensure tmp subdirectories are created with secure permissions (0o700)"""
         if not Path(subdir_path).exists():
             if os.name != "nt":
-                Path(subdir_path).mkdir(parents=True, mode=0o700, exist_ok=True)
+                Path(subdir_path).mkdir(
+                    parents=True, mode=0o700, exist_ok=True
+                )
             else:
                 Path(subdir_path).mkdir(parents=True, exist_ok=True)
         else:
@@ -2223,15 +3223,21 @@ async def do_the_thing(base_dir: str) -> None:  # pyright: ignore[reportGeneralT
 
     meta = Meta()
     try:
-        remaining_args, pasted_paths = read_paths_from_stdin(sys.argv[1:], sys.stdin)
+        remaining_args, pasted_paths = read_paths_from_stdin(
+            sys.argv[1:], sys.stdin
+        )
     except ValueError as exc:
         logger.error(f"[red]Error: {exc}.[/red]")
         raise SystemExit(2) from exc
 
     if pasted_paths:
-        resolved_pasted_paths, missing_paths = partition_existing_paths(pasted_paths)
+        resolved_pasted_paths, missing_paths = partition_existing_paths(
+            pasted_paths
+        )
         if missing_paths:
-            logger.warning("[yellow]Skipping pasted paths that do not exist:[/yellow]")
+            logger.warning(
+                "[yellow]Skipping pasted paths that do not exist:[/yellow]"
+            )
             for missing_path in missing_paths:
                 logger.warning(f"[yellow]  - {missing_path}[/yellow]")
         if not resolved_pasted_paths:
@@ -2256,17 +3262,24 @@ async def do_the_thing(base_dir: str) -> None:  # pyright: ignore[reportGeneralT
     meta.ua_signature = signature
     meta.base_dir = base_dir
 
-    cleanup_only = any(arg in ("--cleanup", "-cleanup") for arg in sys.argv) and len(sys.argv) <= 2
+    cleanup_only = (
+        any(arg in ("--cleanup", "-cleanup") for arg in sys.argv)
+        and len(sys.argv) <= 2
+    )
     sanitize_meta = config["DEFAULT"].get("sanitize_meta", True)
 
     try:
         # If cleanup is the only operation, use a dummy path to satisfy the parser
         if cleanup_only:
             args_list = [*sys.argv[1:], "dummy_path"]
-            meta, _help, _before_args = cast(tuple[Meta, Any, Any], parser.parse(args_list, meta))
+            meta, _help, _before_args = cast(
+                tuple[Meta, Any, Any], parser.parse(args_list, meta)
+            )
             meta.path = None  # Clear the dummy path after parsing
         else:
-            meta, _help, _before_args = cast(tuple[Meta, Any, Any], parser.parse(sys.argv[1:], meta))
+            meta, _help, _before_args = cast(
+                tuple[Meta, Any, Any], parser.parse(sys.argv[1:], meta)
+            )
         meta.paths_from_stdin = bool(pasted_paths)
 
         # Dynamically set logging level to DEBUG if debug argument is passed or enabled in config
@@ -2275,22 +3288,39 @@ async def do_the_thing(base_dir: str) -> None:  # pyright: ignore[reportGeneralT
             logger.setLevel(logging.DEBUG)
             # Update RichHandler settings for debug mode
 
-            RICH_HANDLER._log_render.show_time = bool(config["DEFAULT"].get("console_debug_show_time", True))
-            RICH_HANDLER._log_render.show_level = bool(config["DEFAULT"].get("console_debug_show_level", True))
-            RICH_HANDLER._log_render.show_path = bool(config["DEFAULT"].get("console_debug_show_path", True))
-            RICH_HANDLER.markup = bool(config["DEFAULT"].get("console_debug_markup", True))
+            RICH_HANDLER._log_render.show_time = bool(
+                config["DEFAULT"].get("console_debug_show_time", True)
+            )
+            RICH_HANDLER._log_render.show_level = bool(
+                config["DEFAULT"].get("console_debug_show_level", True)
+            )
+            RICH_HANDLER._log_render.show_path = bool(
+                config["DEFAULT"].get("console_debug_show_path", True)
+            )
+            RICH_HANDLER.markup = bool(
+                config["DEFAULT"].get("console_debug_markup", True)
+            )
 
         # Validate config structure and types (after args parsed so we have trackers list)
-        from src.services.configuration_validation_service import group_warnings, validate_config
+        from src.services.configuration_validation_service import (
+            group_warnings,
+            validate_config,
+        )
 
         # Get active trackers from meta (parsed from command line) or fall back to config default
         active_trackers: list[str] | None = None
         if meta.trackers:
             if isinstance(meta.trackers, str):
-                active_trackers = [t.strip().upper() for t in meta.trackers.split(",") if t.strip()]
+                active_trackers = [
+                    t.strip().upper()
+                    for t in meta.trackers.split(",")
+                    if t.strip()
+                ]
             elif isinstance(meta.trackers, list):
                 trackers_list = meta.trackers
-                active_trackers = [t.strip().upper() for t in trackers_list if (t).strip()]
+                active_trackers = [
+                    t.strip().upper() for t in trackers_list if (t).strip()
+                ]
 
         # Get active imghost from meta (parsed from command line)
         active_imghost: str | None = None
@@ -2299,21 +3329,33 @@ async def do_the_thing(base_dir: str) -> None:  # pyright: ignore[reportGeneralT
             if imghost_val:
                 active_imghost = imghost_val
 
-        is_valid, config_errors, config_warnings = validate_config(config, active_trackers, active_imghost)
+        is_valid, config_errors, config_warnings = validate_config(
+            config, active_trackers, active_imghost
+        )
 
         if not is_valid:
-            logger.info("[bold red]Configuration validation failed:[/bold red]")
+            logger.info(
+                "[bold red]Configuration validation failed:[/bold red]"
+            )
             for error in config_errors:
                 logger.info(f"[red]  ✗ {error}[/red]")
-            logger.info("[red]\nPlease fix the above errors in your config.py[/red]")
-            logger.info("[yellow]Reference: https://github.com/wastaken7/Upload-Assistant/blob/development/data/example_config.py[/yellow]")
+            logger.info(
+                "[red]\nPlease fix the above errors in your config.py[/red]"
+            )
+            logger.info(
+                "[yellow]Reference: https://github.com/wastaken7/Upload-Assistant/blob/development/data/example_config.py[/yellow]"
+            )
             raise SystemExit(1)
 
         if config_warnings:
-            suppress_warnings = config.get("DEFAULT", {}).get("suppress_warnings", False)
+            suppress_warnings = config.get("DEFAULT", {}).get(
+                "suppress_warnings", False
+            )
             if not suppress_warnings:
                 grouped = group_warnings(config_warnings)
-                logger.info(f"[yellow]Config validation passed with {len(grouped)} warning(s):[/yellow]")
+                logger.info(
+                    f"[yellow]Config validation passed with {len(grouped)} warning(s):[/yellow]"
+                )
                 for warning_str in grouped:
                     logger.info(f"[yellow]  ⚠ {warning_str}[/yellow]")
                 logger.info("")  # Blank line after warnings
@@ -2321,7 +3363,9 @@ async def do_the_thing(base_dir: str) -> None:  # pyright: ignore[reportGeneralT
         if meta.cleanup:
             if Path(f"{base_dir}{'/' + 'tmp'}").exists():
                 shutil.rmtree(f"{base_dir}{'/' + 'tmp'}")
-                logger.info("[yellow]Successfully emptied tmp directory[/yellow]")
+                logger.info(
+                    "[yellow]Successfully emptied tmp directory[/yellow]"
+                )
                 logger.info("")
             if not meta.path or cleanup_only:
                 exit(0)
@@ -2330,7 +3374,9 @@ async def do_the_thing(base_dir: str) -> None:  # pyright: ignore[reportGeneralT
             exit(0)
 
         if not configured_binary("ffmpeg_path", config):
-            os.environ["UA_FFMPEG_PATH"] = await FfmpegBinaryManager.ensure_ffmpeg_binary(STATE_DIR)
+            os.environ[
+                "UA_FFMPEG_PATH"
+            ] = await FfmpegBinaryManager.ensure_ffmpeg_binary(STATE_DIR)
         await ensure_mediainfo_binary(config, state_dir=STATE_DIR)
 
         path = meta.path
@@ -2343,18 +3389,29 @@ async def do_the_thing(base_dir: str) -> None:  # pyright: ignore[reportGeneralT
             try:
                 meta.mkbrr = config["DEFAULT"].get("mkbrr", False)
             except ValueError:
-                logger.debug("[yellow]Invalid mkbrr config value, defaulting to False[/yellow]")
+                logger.debug(
+                    "[yellow]Invalid mkbrr config value, defaulting to False[/yellow]"
+                )
                 meta.mkbrr = False
         if meta.mkbrr and not is_binary:
-            logger.info("[bold red]mkbrr binary is not available. Please ensure it is installed correctly.[/bold red]")
+            logger.info(
+                "[bold red]mkbrr binary is not available. Please ensure it is installed correctly.[/bold red]"
+            )
             logger.info("[bold red]Reverting to Torf[/bold red]")
             logger.info("")
             meta.mkbrr = False
 
-        queue, log_file = await QueueManager.handle_queue(path, meta, paths, base_dir)
+        queue, log_file = await QueueManager.handle_queue(
+            path, meta, paths, base_dir
+        )
         queue_list = cast(list[Any], queue)
         queue_size = len(queue_list)
-        is_batch = queue_size > 1 or bool(meta.queue) or bool(meta.site_upload_queue) or bool(meta.args_line_queue)
+        is_batch = (
+            queue_size > 1
+            or bool(meta.queue)
+            or bool(meta.site_upload_queue)
+            or bool(meta.args_line_queue)
+        )
 
         processed_files_count = 0
         skipped_files_count = 0
@@ -2365,7 +3422,11 @@ async def do_the_thing(base_dir: str) -> None:  # pyright: ignore[reportGeneralT
 
         def queue_item_identifier(queue_item: Any) -> str:
             if isinstance(queue_item, Mapping):
-                return str(queue_item.get("line") or queue_item.get("path") or queue_item)
+                return str(
+                    queue_item.get("line")
+                    or queue_item.get("path")
+                    or queue_item
+                )
             return str(queue_item)
 
         for item_index, queue_item in enumerate(queue_list):
@@ -2382,39 +3443,59 @@ async def do_the_thing(base_dir: str) -> None:  # pyright: ignore[reportGeneralT
                 if meta.site_upload_queue:
                     # Extract path and metadata from site upload queue item
                     queue_item_mapping = cast(Mapping[str, Any], queue_item)
-                    path = await QueueManager.process_site_upload_item(queue_item_mapping, meta)
+                    path = await QueueManager.process_site_upload_item(
+                        queue_item_mapping, meta
+                    )
                     current_item_path = path
                     meta.item_args = [path]
-                elif meta.args_line_queue and isinstance(queue_item, dict) and "args" in queue_item:
+                elif (
+                    meta.args_line_queue
+                    and isinstance(queue_item, dict)
+                    and "args" in queue_item
+                ):
                     # Extract path and arguments from custom args queue item
                     queue_item_mapping = cast(Mapping[str, Any], queue_item)
                     args_list = cast(list[str], queue_item_mapping["args"])
                     # We parse the arguments for this specific item using the parser, updating the cloned meta dict.
-                    meta, parser_obj, _before_args = cast(tuple[Meta, Any, Any], parser.parse(args_list, meta))
+                    meta, parser_obj, _before_args = cast(
+                        tuple[Meta, Any, Any], parser.parse(args_list, meta)
+                    )
 
                     # Preserve global defaults from base_meta if they were not explicitly overridden in args_list
                     dest_to_options: dict[str, list[str]] = {}
                     if parser_obj and hasattr(parser_obj, "_actions"):
                         for action in parser_obj._actions:
                             if action.dest and action.option_strings:
-                                dest_to_options[action.dest] = action.option_strings
+                                dest_to_options[action.dest] = (
+                                    action.option_strings
+                                )
 
                     for key, val in cast(dict[str, Any], base_meta).items():
                         if val not in (None, False, []):
                             option_strings = dest_to_options.get(key, [])
-                            if option_strings and not any(arg == opt or arg.startswith(opt + "=") for opt in option_strings for arg in args_list):
+                            if option_strings and not any(
+                                arg == opt or arg.startswith(opt + "=")
+                                for opt in option_strings
+                                for arg in args_list
+                            ):
                                 meta[key] = val
 
                     # QueueManager already resolved the first positional
                     # argument into the queue item.  Use that authoritative
                     # value for the preview and processing target instead of
                     # relying on a partially parsed Meta copy.
-                    path = str(queue_item_mapping.get("path") or meta.path or "")
+                    path = str(
+                        queue_item_mapping.get("path") or meta.path or ""
+                    )
                     current_item_path = path
                     meta.item_args = args_list
                 else:
                     # Regular queue processing
-                    path = queue_item if isinstance(queue_item, str) else str(queue_item)
+                    path = (
+                        queue_item
+                        if isinstance(queue_item, str)
+                        else str(queue_item)
+                    )
                     current_item_path = path
                     if meta.queue:
                         meta.item_args = [path]
@@ -2425,42 +3506,66 @@ async def do_the_thing(base_dir: str) -> None:  # pyright: ignore[reportGeneralT
                 meta.uuid = ""
 
                 if not path:
-                    raise ValueError("The 'path' variable is not defined or is empty.")
+                    raise ValueError(
+                        "The 'path' variable is not defined or is empty."
+                    )
 
                 tmp_path = Path(base_dir) / "tmp" / Path(path).name
 
                 # Ensure tmp subdirectory exists with secure permissions
                 ensure_secure_tmp_subdir(tmp_path)
-                current_release_log_path.set(str(Path(tmp_path) / f"upload_{int(time.time())}.log"))
+                current_release_log_path.set(
+                    str(Path(tmp_path) / f"upload_{int(time.time())}.log")
+                )
 
                 if meta.delete_tmp and Path(tmp_path).exists():
                     try:
                         shutil.rmtree(tmp_path)
                         if os.name != "nt":
-                            Path(tmp_path).mkdir(parents=True, mode=0o700, exist_ok=True)
+                            Path(tmp_path).mkdir(
+                                parents=True, mode=0o700, exist_ok=True
+                            )
                         else:
                             Path(tmp_path).mkdir(parents=True, exist_ok=True)
-                        logger.debug(f"[yellow]Successfully cleaned temp directory for {Path(path).name}[/yellow]")
+                        logger.debug(
+                            f"[yellow]Successfully cleaned temp directory for {Path(path).name}[/yellow]"
+                        )
                         logger.debug("")
                     except Exception as e:
-                        logger.info(f"[bold red]Failed to delete temp directory: {e!s}")
+                        logger.info(
+                            f"[bold red]Failed to delete temp directory: {e!s}"
+                        )
 
-                meta_file = Path(base_dir) / "tmp" / Path(path).name / "meta.json"
+                meta_file = (
+                    Path(base_dir) / "tmp" / Path(path).name / "meta.json"
+                )
 
                 keep_meta = config["DEFAULT"].get("keep_meta", False)
 
-                if (not keep_meta or meta.delete_meta) and Path(meta_file).exists():
+                if (not keep_meta or meta.delete_meta) and Path(
+                    meta_file
+                ).exists():
                     try:
                         meta_file.unlink()
-                        logger.debug(f"[bold yellow]Found and deleted existing metadata file: {meta_file}")
+                        logger.debug(
+                            f"[bold yellow]Found and deleted existing metadata file: {meta_file}"
+                        )
                     except Exception as e:
-                        logger.info(f"[bold red]Failed to delete metadata file {meta_file}: {e!s}")
+                        logger.info(
+                            f"[bold red]Failed to delete metadata file {meta_file}: {e!s}"
+                        )
 
                 if keep_meta and Path(meta_file).exists():
                     async with aiofiles.open(meta_file, encoding="utf-8") as f:
                         content = await f.read()
-                        saved_meta = cast(dict[str, Any], json.loads(content)) if content.strip() else {}
-                        logger.info("[yellow]Existing metadata file found, it holds cached values")
+                        saved_meta = (
+                            cast(dict[str, Any], json.loads(content))
+                            if content.strip()
+                            else {}
+                        )
+                        logger.info(
+                            "[yellow]Existing metadata file found, it holds cached values"
+                        )
                         await merge_meta(meta, saved_meta)
 
             except KeyboardInterrupt:
@@ -2478,19 +3583,37 @@ async def do_the_thing(base_dir: str) -> None:  # pyright: ignore[reportGeneralT
 
             if item_error:
                 if is_batch and not _shutdown_requested:
-                    outcome = "skipped" if isinstance(item_abort, ItemProcessingError) else "failed"
+                    outcome = (
+                        "skipped"
+                        if isinstance(item_abort, ItemProcessingError)
+                        else "failed"
+                    )
                     if outcome == "failed":
                         failed_items.append((current_item_path, item_error))
-                    item_outcomes[item_index] = (current_item_path, outcome, item_error)
+                    item_outcomes[item_index] = (
+                        current_item_path,
+                        outcome,
+                        item_error,
+                    )
                     processed_files_count += 1
                     skipped_files_count += 1
-                    logger.info(f"[yellow]Skipping {current_item_path}: {item_error}[/yellow]")
-                    logger.info(f"[cyan]Processed {processed_files_count}/{total_files} files with {skipped_files_count} skipped uploading.\n\n")
-                    if log_file and (not meta.debug or "debug" in Path(log_file).name):
+                    logger.info(
+                        f"[yellow]Skipping {current_item_path}: {item_error}[/yellow]"
+                    )
+                    logger.info(
+                        f"[cyan]Processed {processed_files_count}/{total_files} files with {skipped_files_count} skipped uploading.\n\n"
+                    )
+                    if log_file and (
+                        not meta.debug or "debug" in Path(log_file).name
+                    ):
                         if meta.site_upload_queue:
-                            await QueueManager.save_processed_path(log_file, current_item_path)
+                            await QueueManager.save_processed_path(
+                                log_file, current_item_path
+                            )
                         else:
-                            await save_processed_file(log_file, current_item_path)
+                            await save_processed_file(
+                                log_file, current_item_path
+                            )
                 else:
                     if item_abort is not None:
                         raise item_abort
@@ -2528,19 +3651,37 @@ async def do_the_thing(base_dir: str) -> None:  # pyright: ignore[reportGeneralT
                 await cancel_and_drain_early_artifact_tasks(meta.uuid)
             if item_error:
                 if is_batch and not _shutdown_requested:
-                    outcome = "skipped" if isinstance(item_abort, ItemProcessingError) else "failed"
+                    outcome = (
+                        "skipped"
+                        if isinstance(item_abort, ItemProcessingError)
+                        else "failed"
+                    )
                     if outcome == "failed":
                         failed_items.append((current_item_path, item_error))
-                    item_outcomes[item_index] = (current_item_path, outcome, item_error)
+                    item_outcomes[item_index] = (
+                        current_item_path,
+                        outcome,
+                        item_error,
+                    )
                     processed_files_count += 1
                     skipped_files_count += 1
-                    logger.info(f"[yellow]Skipping {current_item_path}: {item_error}[/yellow]")
-                    logger.info(f"[cyan]Processed {processed_files_count}/{total_files} files with {skipped_files_count} skipped uploading.\n\n")
-                    if log_file and (not meta.debug or "debug" in Path(log_file).name):
+                    logger.info(
+                        f"[yellow]Skipping {current_item_path}: {item_error}[/yellow]"
+                    )
+                    logger.info(
+                        f"[cyan]Processed {processed_files_count}/{total_files} files with {skipped_files_count} skipped uploading.\n\n"
+                    )
+                    if log_file and (
+                        not meta.debug or "debug" in Path(log_file).name
+                    ):
                         if meta.site_upload_queue:
-                            await QueueManager.save_processed_path(log_file, current_item_path)
+                            await QueueManager.save_processed_path(
+                                log_file, current_item_path
+                            )
                         else:
-                            await save_processed_file(log_file, current_item_path)
+                            await save_processed_file(
+                                log_file, current_item_path
+                            )
                     await cleanup_manager.cleanup()
                     gc.collect()
                     cleanup_manager.reset_terminal()
@@ -2553,15 +3694,27 @@ async def do_the_thing(base_dir: str) -> None:  # pyright: ignore[reportGeneralT
             if not meta_success:
                 if is_batch:
                     failed_items.append((current_item_path, item_error))
-                    item_outcomes[item_index] = (current_item_path, "failed", item_error)
+                    item_outcomes[item_index] = (
+                        current_item_path,
+                        "failed",
+                        item_error,
+                    )
                     processed_files_count += 1
                     skipped_files_count += 1
-                    logger.info(f"[cyan]Processed {processed_files_count}/{total_files} files with {skipped_files_count} skipped uploading.\n\n")
-                    if log_file and (not meta.debug or "debug" in Path(log_file).name):
+                    logger.info(
+                        f"[cyan]Processed {processed_files_count}/{total_files} files with {skipped_files_count} skipped uploading.\n\n"
+                    )
+                    if log_file and (
+                        not meta.debug or "debug" in Path(log_file).name
+                    ):
                         if meta.site_upload_queue:
-                            await QueueManager.save_processed_path(log_file, current_item_path)
+                            await QueueManager.save_processed_path(
+                                log_file, current_item_path
+                            )
                         else:
-                            await save_processed_file(log_file, current_item_path)
+                            await save_processed_file(
+                                log_file, current_item_path
+                            )
                 await cleanup_manager.cleanup()
                 gc.collect()
                 cleanup_manager.reset_terminal()
@@ -2572,12 +3725,34 @@ async def do_the_thing(base_dir: str) -> None:  # pyright: ignore[reportGeneralT
                 if config["DEFAULT"].get("cross_seeding", True):
                     await process_cross_seeds(meta)
                 if not meta.site_check:
-                    logger.info("[yellow]No eligible uploads remain after tracker checks.[/yellow]")
+                    logger.info(
+                        "[yellow]No eligible uploads remain after tracker checks.[/yellow]"
+                    )
                     if is_batch:
-                        tracker_statuses = [status for status in meta.tracker_status.values() if isinstance(status, Mapping)]
-                        skip_reasons = list(dict.fromkeys(str(status.get("skip_reason")) for status in tracker_statuses if status.get("skip_reason")))
-                        duplicate_trackers = [tracker for tracker, status in meta.tracker_status.items() if isinstance(status, Mapping) and status.get("dupe") is True]
-                        skipped_trackers = [tracker for tracker, status in meta.tracker_status.items() if isinstance(status, Mapping) and status.get("skipped") is True]
+                        tracker_statuses = [
+                            status
+                            for status in meta.tracker_status.values()
+                            if isinstance(status, Mapping)
+                        ]
+                        skip_reasons = list(
+                            dict.fromkeys(
+                                str(status.get("skip_reason"))
+                                for status in tracker_statuses
+                                if status.get("skip_reason")
+                            )
+                        )
+                        duplicate_trackers = [
+                            tracker
+                            for tracker, status in meta.tracker_status.items()
+                            if isinstance(status, Mapping)
+                            and status.get("dupe") is True
+                        ]
+                        skipped_trackers = [
+                            tracker
+                            for tracker, status in meta.tracker_status.items()
+                            if isinstance(status, Mapping)
+                            and status.get("skipped") is True
+                        ]
                         if skip_reasons:
                             skip_detail = "; ".join(skip_reasons)
                         elif duplicate_trackers:
@@ -2586,26 +3761,50 @@ async def do_the_thing(base_dir: str) -> None:  # pyright: ignore[reportGeneralT
                             skip_detail = f"No eligible trackers after checks ({', '.join(skipped_trackers)})"
                         else:
                             skip_detail = "No eligible trackers after checks"
-                        item_outcomes[item_index] = (current_item_path, "skipped", skip_detail)
+                        item_outcomes[item_index] = (
+                            current_item_path,
+                            "skipped",
+                            skip_detail,
+                        )
                         processed_files_count += 1
                         skipped_files_count += 1
-                        logger.info(f"[cyan]Processed {processed_files_count}/{total_files} files with {skipped_files_count} skipped uploading.\n\n")
-                        if log_file and (not meta.debug or "debug" in Path(log_file).name):
+                        logger.info(
+                            f"[cyan]Processed {processed_files_count}/{total_files} files with {skipped_files_count} skipped uploading.\n\n"
+                        )
+                        if log_file and (
+                            not meta.debug or "debug" in Path(log_file).name
+                        ):
                             if meta.site_upload_queue:
-                                await QueueManager.save_processed_path(log_file, current_item_path)
+                                await QueueManager.save_processed_path(
+                                    log_file, current_item_path
+                                )
                             else:
-                                await save_processed_file(log_file, current_item_path)
+                                await save_processed_file(
+                                    log_file, current_item_path
+                                )
 
             else:
                 meta = meta
                 if meta.were_trumping:
-                    trump_trackers = [t for t in cast(list[Any], meta.trackers) if isinstance(t, str)]
-                    logger.info("[yellow]Checking for existing trump reports.....")
-                    tracker_status = cast(dict[str, dict[str, Any]], meta.tracker_status or {})
+                    trump_trackers = [
+                        t
+                        for t in cast(list[Any], meta.trackers)
+                        if isinstance(t, str)
+                    ]
+                    logger.info(
+                        "[yellow]Checking for existing trump reports....."
+                    )
+                    tracker_status = cast(
+                        dict[str, dict[str, Any]], meta.tracker_status or {}
+                    )
                     trumping_trackers: list[str] = []
                     for tracker in trump_trackers:
-                        is_trumping = await tracker_setup.process_trumpables(meta, tracker=tracker)
-                        skip_upload_trackers = set(meta.skip_upload_trackers or [])
+                        is_trumping = await tracker_setup.process_trumpables(
+                            meta, tracker=tracker
+                        )
+                        skip_upload_trackers = set(
+                            meta.skip_upload_trackers or []
+                        )
 
                         # Apply any per-tracker skip decisions made during trumpable processing
 
@@ -2615,11 +3814,22 @@ async def do_the_thing(base_dir: str) -> None:  # pyright: ignore[reportGeneralT
                                 per_tracker["upload"] = False
                                 per_tracker["skipped"] = True
 
-                            meta.trackers = [t for t in meta.trackers if t not in skip_upload_trackers]
-                            logger.debug(f"[yellow]Skipping trackers due to trump report selection: {', '.join(sorted(skip_upload_trackers))}[/yellow]")
+                            meta.trackers = [
+                                t
+                                for t in meta.trackers
+                                if t not in skip_upload_trackers
+                            ]
+                            logger.debug(
+                                f"[yellow]Skipping trackers due to trump report selection: {', '.join(sorted(skip_upload_trackers))}[/yellow]"
+                            )
                             if not meta.trackers:
-                                logger.info("[bold red]No trackers left to upload after trump checking.[/bold red]")
-                        if is_trumping and not skip_upload_trackers.__contains__(tracker):
+                                logger.info(
+                                    "[bold red]No trackers left to upload after trump checking.[/bold red]"
+                                )
+                        if (
+                            is_trumping
+                            and not skip_upload_trackers.__contains__(tracker)
+                        ):
                             trumping_trackers.append(tracker)
 
                     meta.trumping_trackers = trumping_trackers
@@ -2627,11 +3837,15 @@ async def do_the_thing(base_dir: str) -> None:  # pyright: ignore[reportGeneralT
                 # allowing the skip uploading feature to only apply when double dupe checking is enabled
                 successful_trackers = 10
                 if meta.dupe_again:
-                    logger.info("[yellow]Performing double dupe check on trackers that passed initial upload checks.....[/yellow]")
+                    logger.info(
+                        "[yellow]Performing double dupe check on trackers that passed initial upload checks.....[/yellow]"
+                    )
                     raw_trackers_list = meta.trackers
                     trackers_list: list[str]
                     if isinstance(raw_trackers_list, list):
-                        trackers_list = [t for t in raw_trackers_list if isinstance(t, str)]
+                        trackers_list = [
+                            t for t in raw_trackers_list if isinstance(t, str)
+                        ]
                     else:
                         trackers_list = []
                         meta.trackers = trackers_list
@@ -2640,23 +3854,37 @@ async def do_the_thing(base_dir: str) -> None:  # pyright: ignore[reportGeneralT
                     for tracker in list(trackers_list):
                         tracker_status = tracker_status_map.get(tracker, {})
                         if tracker_status.get("upload") is not True:
-                            logger.debug(f"[yellow]{tracker} was previously marked to skip upload. Skipping double dupe check.[/yellow]")
+                            logger.debug(
+                                f"[yellow]{tracker} was previously marked to skip upload. Skipping double dupe check.[/yellow]"
+                            )
                             trackers_list.remove(tracker)
                             tracker_status_map.pop(tracker, None)
                             continue
 
                     if trackers_list:
-                        successful_trackers = await TrackerStatusManager(config=config).process_all_trackers(meta)
+                        successful_trackers = await TrackerStatusManager(
+                            config=config
+                        ).process_all_trackers(meta)
                     else:
                         successful_trackers = 0
 
                 skip_uploading = meta.skip_uploading
-                skip_uploading_int = int(skip_uploading) if isinstance(skip_uploading, (int, str)) else 0
+                skip_uploading_int = (
+                    int(skip_uploading)
+                    if isinstance(skip_uploading, (int, str))
+                    else 0
+                )
 
                 if successful_trackers < skip_uploading_int and not meta.debug:
-                    logger.info(f"[red]Not enough successful trackers ({successful_trackers}/{skip_uploading_int}). No uploads being processed.[/red]")
+                    logger.info(
+                        f"[red]Not enough successful trackers ({successful_trackers}/{skip_uploading_int}). No uploads being processed.[/red]"
+                    )
                     if is_batch:
-                        item_outcomes[item_index] = (current_item_path, "skipped", "Not enough eligible trackers")
+                        item_outcomes[item_index] = (
+                            current_item_path,
+                            "skipped",
+                            "Not enough eligible trackers",
+                        )
                 else:
                     trackers_upper = [(t).upper() for t in meta.trackers]
                     # Partition trackers into torrent trackers and Usenet indexers
@@ -2667,31 +3895,62 @@ async def do_the_thing(base_dir: str) -> None:  # pyright: ignore[reportGeneralT
                         if t_upper == "USENET":
                             continue
                         tracker_class = tracker_class_map.get(t_upper)
-                        if tracker_class and getattr(tracker_class, "is_usenet", False):
+                        if tracker_class and getattr(
+                            tracker_class, "is_usenet", False
+                        ):
                             usenet_trackers.append(tracker)
                             continue
                         torrent_trackers.append(tracker)
 
-                    explicit_usenet_post = "USENET" in trackers_upper or meta.usenet
-                    eligible_usenet_trackers = [tracker for tracker in usenet_trackers if cast(Mapping[str, Any], meta.tracker_status.get(tracker, {})).get("upload", False)]
-                    need_usenet_post = explicit_usenet_post or len(eligible_usenet_trackers) > 0
+                    explicit_usenet_post = (
+                        "USENET" in trackers_upper or meta.usenet
+                    )
+                    eligible_usenet_trackers = [
+                        tracker
+                        for tracker in usenet_trackers
+                        if cast(
+                            Mapping[str, Any],
+                            meta.tracker_status.get(tracker, {}),
+                        ).get("upload", False)
+                    ]
+                    need_usenet_post = (
+                        explicit_usenet_post
+                        or len(eligible_usenet_trackers) > 0
+                    )
 
-                    async def upload_usenet_flow(meta: Meta, usenet_trackers: list[str], need_usenet_post: bool, has_usenet_trackers: bool) -> None:
+                    async def upload_usenet_flow(
+                        meta: Meta,
+                        usenet_trackers: list[str],
+                        need_usenet_post: bool,
+                        has_usenet_trackers: bool,
+                    ) -> None:
                         if need_usenet_post:
-                            from src.integrations.usenet.creator import prepare_and_upload_usenet
+                            from src.integrations.usenet.creator import (
+                                prepare_and_upload_usenet,
+                            )
 
                             try:
-                                nzb_path = await prepare_and_upload_usenet(meta, config)
+                                nzb_path = await prepare_and_upload_usenet(
+                                    meta, config
+                                )
                                 if nzb_path:
                                     meta.nzb_path = nzb_path
-                                    logger.info("[bold green]Usenet upload completed successfully!")
+                                    logger.info(
+                                        "[bold green]Usenet upload completed successfully!"
+                                    )
                                     if usenet_trackers:
                                         meta_usenet = meta.copy()
-                                        meta_usenet["trackers"] = usenet_trackers
+                                        meta_usenet["trackers"] = (
+                                            usenet_trackers
+                                        )
                                         # Meta.copy() is deep; keep results on the queue item's
                                         # status map so its final summary can see this flow.
-                                        meta_usenet.tracker_status = meta.tracker_status
-                                        logger.info(f"[yellow]Processing uploads to Usenet indexers: {', '.join(usenet_trackers)}.....")
+                                        meta_usenet.tracker_status = (
+                                            meta.tracker_status
+                                        )
+                                        logger.info(
+                                            f"[yellow]Processing uploads to Usenet indexers: {', '.join(usenet_trackers)}....."
+                                        )
                                         await process_trackers(
                                             meta_usenet,
                                             config,
@@ -2704,25 +3963,46 @@ async def do_the_thing(base_dir: str) -> None:  # pyright: ignore[reportGeneralT
                                             argument_parser_factory=Args,
                                         )
                                 else:
-                                    logger.info("[bold red]Usenet upload failed.[/bold red]")
+                                    logger.info(
+                                        "[bold red]Usenet upload failed.[/bold red]"
+                                    )
                                     status_map = meta.tracker_status
                                     for t in usenet_trackers:
-                                        status_map.setdefault(t, {}).update(status_message="data error: Usenet upload failed, NZB missing", upload=True, upload_success=False)
+                                        status_map.setdefault(t, {}).update(
+                                            status_message="data error: Usenet upload failed, NZB missing",
+                                            upload=True,
+                                            upload_success=False,
+                                        )
                             except Exception as e:
-                                logger.info(f"[bold red]Error in Usenet upload pipeline: {e}[/bold red]")
+                                logger.info(
+                                    f"[bold red]Error in Usenet upload pipeline: {e}[/bold red]"
+                                )
                                 import traceback
 
                                 logger.info(traceback.format_exc())
                                 status_map = meta.tracker_status
                                 for t in usenet_trackers:
-                                    tracker_status = status_map.setdefault(t, {})
-                                    if tracker_status.get("upload_success") is True:
+                                    tracker_status = status_map.setdefault(
+                                        t, {}
+                                    )
+                                    if (
+                                        tracker_status.get("upload_success")
+                                        is True
+                                    ):
                                         continue
-                                    tracker_status.update(status_message=f"data error: Usenet upload failed: {e}", upload=True, upload_success=False)
+                                    tracker_status.update(
+                                        status_message=f"data error: Usenet upload failed: {e}",
+                                        upload=True,
+                                        upload_success=False,
+                                    )
                         elif has_usenet_trackers:
-                            logger.info("[yellow]Skipping NNTP Usenet post because no Usenet indexers passed the upload checks.[/yellow]")
+                            logger.info(
+                                "[yellow]Skipping NNTP Usenet post because no Usenet indexers passed the upload checks.[/yellow]"
+                            )
 
-                    async def upload_torrent_flow(meta: Meta, torrent_trackers: list[str]) -> None:
+                    async def upload_torrent_flow(
+                        meta: Meta, torrent_trackers: list[str]
+                    ) -> None:
                         if torrent_trackers:
                             meta_torrent = meta.copy()
                             meta_torrent["trackers"] = torrent_trackers
@@ -2740,41 +4020,81 @@ async def do_the_thing(base_dir: str) -> None:  # pyright: ignore[reportGeneralT
                                 argument_parser_factory=Args,
                             )
 
-                    upload_order = meta.upload_order or config["DEFAULT"].get("upload_order", "concurrent")
-                    upload_order = upload_order.strip().lower() if isinstance(upload_order, str) else "concurrent"
+                    upload_order = meta.upload_order or config["DEFAULT"].get(
+                        "upload_order", "concurrent"
+                    )
+                    upload_order = (
+                        upload_order.strip().lower()
+                        if isinstance(upload_order, str)
+                        else "concurrent"
+                    )
 
                     if upload_order == "usenet":
-                        await upload_usenet_flow(meta, eligible_usenet_trackers, need_usenet_post, bool(usenet_trackers))
+                        await upload_usenet_flow(
+                            meta,
+                            eligible_usenet_trackers,
+                            need_usenet_post,
+                            bool(usenet_trackers),
+                        )
                         await upload_torrent_flow(meta, torrent_trackers)
                     elif upload_order == "tracker":
                         await upload_torrent_flow(meta, torrent_trackers)
 
                         if need_usenet_post and torrent_trackers:
-                            logger.info("\n[yellow]Torrent uploads completed. Checking bandwidth before starting Usenet upload...[/yellow]")
-                            from src.integrations.torrent_clients.bandwidth import Wait
+                            logger.info(
+                                "\n[yellow]Torrent uploads completed. Checking bandwidth before starting Usenet upload...[/yellow]"
+                            )
+                            from src.integrations.torrent_clients.bandwidth import (
+                                Wait,
+                            )
 
                             try:
                                 waiter = Wait(config)
-                                bw_thresh = meta.qbit_bandwidth_threshold or config["DEFAULT"].get("qbit_bandwidth_threshold", 0)
-                                bw_time = meta.qbit_bandwidth_time or config["DEFAULT"].get("qbit_bandwidth_time", 0)
+                                bw_thresh = (
+                                    meta.qbit_bandwidth_threshold
+                                    or config["DEFAULT"].get(
+                                        "qbit_bandwidth_threshold", 0
+                                    )
+                                )
+                                bw_time = meta.qbit_bandwidth_time or config[
+                                    "DEFAULT"
+                                ].get("qbit_bandwidth_time", 0)
                                 try:
                                     bw_thresh = int(bw_thresh)
                                     bw_time = int(bw_time)
                                 except (ValueError, TypeError) as e:
-                                    logger.info(f"[red]Invalid bandwidth settings: {e}, skipping bandwidth wait before Usenet upload.[/red]")
+                                    logger.info(
+                                        f"[red]Invalid bandwidth settings: {e}, skipping bandwidth wait before Usenet upload.[/red]"
+                                    )
                                     bw_thresh = 0
                                     bw_time = 0
                                 if bw_thresh > 0 and bw_time > 0:
-                                    await waiter.wait_for_bandwidth(bw_thresh, bw_time)
+                                    await waiter.wait_for_bandwidth(
+                                        bw_thresh, bw_time
+                                    )
                                 else:
-                                    logger.info("[yellow]Bandwidth control threshold or time is 0 or not configured. Skipping bandwidth check.[/yellow]")
+                                    logger.info(
+                                        "[yellow]Bandwidth control threshold or time is 0 or not configured. Skipping bandwidth check.[/yellow]"
+                                    )
                             except Exception as e:
-                                logger.info(f"[red]Error initializing bandwidth check: {e}, skipping bandwidth wait before Usenet upload.[/red]")
+                                logger.info(
+                                    f"[red]Error initializing bandwidth check: {e}, skipping bandwidth wait before Usenet upload.[/red]"
+                                )
 
-                        await upload_usenet_flow(meta, eligible_usenet_trackers, need_usenet_post, bool(usenet_trackers))
+                        await upload_usenet_flow(
+                            meta,
+                            eligible_usenet_trackers,
+                            need_usenet_post,
+                            bool(usenet_trackers),
+                        )
                     else:
                         await asyncio.gather(
-                            upload_usenet_flow(meta, eligible_usenet_trackers, need_usenet_post, bool(usenet_trackers)),
+                            upload_usenet_flow(
+                                meta,
+                                eligible_usenet_trackers,
+                                need_usenet_post,
+                                bool(usenet_trackers),
+                            ),
                             upload_torrent_flow(meta, torrent_trackers),
                         )
                     if config["DEFAULT"].get("cross_seeding", True):
@@ -2782,86 +4102,203 @@ async def do_the_thing(base_dir: str) -> None:  # pyright: ignore[reportGeneralT
 
                     if is_batch:
                         processed_files_count += 1
-                        tracker_statuses = [status for status in meta.tracker_status.values() if isinstance(status, Mapping)]
-                        upload_succeeded = any(status.get("upload_success") is True for status in tracker_statuses)
-                        failed_trackers = _failed_tracker_names(meta.tracker_status)
-                        duplicate_trackers = [tracker for tracker, status in meta.tracker_status.items() if isinstance(status, Mapping) and status.get("dupe") is True]
-                        if not upload_succeeded and duplicate_trackers and not failed_trackers and not meta.debug:
+                        tracker_statuses = [
+                            status
+                            for status in meta.tracker_status.values()
+                            if isinstance(status, Mapping)
+                        ]
+                        upload_succeeded = any(
+                            status.get("upload_success") is True
+                            for status in tracker_statuses
+                        )
+                        failed_trackers = _failed_tracker_names(
+                            meta.tracker_status
+                        )
+                        duplicate_trackers = [
+                            tracker
+                            for tracker, status in meta.tracker_status.items()
+                            if isinstance(status, Mapping)
+                            and status.get("dupe") is True
+                        ]
+                        if (
+                            not upload_succeeded
+                            and duplicate_trackers
+                            and not failed_trackers
+                            and not meta.debug
+                        ):
                             skipped_files_count += 1
                             duplicate_reason = f"Release already exists on trackers ({', '.join(duplicate_trackers)})"
-                            item_outcomes[item_index] = (current_item_path, "skipped", duplicate_reason)
-                            logger.info(f"[yellow]Processed {processed_files_count}/{total_files} files; release already exists on {', '.join(duplicate_trackers)}.[/yellow]")
+                            item_outcomes[item_index] = (
+                                current_item_path,
+                                "skipped",
+                                duplicate_reason,
+                            )
+                            logger.info(
+                                f"[yellow]Processed {processed_files_count}/{total_files} files; release already exists on {', '.join(duplicate_trackers)}.[/yellow]"
+                            )
                         elif not upload_succeeded and not meta.debug:
                             skipped_files_count += 1
                             failure_reason = f"No tracker upload succeeded ({', '.join(failed_trackers) or 'no eligible trackers'})"
-                            failed_items.append((current_item_path, failure_reason))
-                            item_outcomes[item_index] = (current_item_path, "failed", failure_reason)
-                            logger.info(f"[yellow]Processed {processed_files_count}/{total_files} files; no tracker upload succeeded.[/yellow]")
+                            failed_items.append(
+                                (current_item_path, failure_reason)
+                            )
+                            item_outcomes[item_index] = (
+                                current_item_path,
+                                "failed",
+                                failure_reason,
+                            )
+                            logger.info(
+                                f"[yellow]Processed {processed_files_count}/{total_files} files; no tracker upload succeeded.[/yellow]"
+                            )
                         elif failed_trackers and not meta.debug:
                             failed_tracker_names = ", ".join(failed_trackers)
-                            partial_items.append((current_item_path, failed_tracker_names))
-                            item_outcomes[item_index] = (current_item_path, "partial", failed_tracker_names)
-                            logger.info(f"[yellow]Upload completed partially; failed trackers: {', '.join(failed_trackers)}.[/yellow]")
+                            partial_items.append(
+                                (current_item_path, failed_tracker_names)
+                            )
+                            item_outcomes[item_index] = (
+                                current_item_path,
+                                "partial",
+                                failed_tracker_names,
+                            )
+                            logger.info(
+                                f"[yellow]Upload completed partially; failed trackers: {', '.join(failed_trackers)}.[/yellow]"
+                            )
                         elif meta.debug:
-                            item_outcomes[item_index] = (current_item_path, "checked", "Debug checks completed")
-                            logger.info(f"[cyan]Processed {processed_files_count}/{total_files} files in debug mode; no tracker upload was attempted.[/cyan]")
+                            item_outcomes[item_index] = (
+                                current_item_path,
+                                "checked",
+                                "Debug checks completed",
+                            )
+                            logger.info(
+                                f"[cyan]Processed {processed_files_count}/{total_files} files in debug mode; no tracker upload was attempted.[/cyan]"
+                            )
                         else:
-                            item_outcomes[item_index] = (current_item_path, "successful", "")
-                            fully_successful_count = sum(outcome == "successful" for _, outcome, _ in item_outcomes.values())
+                            item_outcomes[item_index] = (
+                                current_item_path,
+                                "successful",
+                                "",
+                            )
+                            fully_successful_count = sum(
+                                outcome == "successful"
+                                for _, outcome, _ in item_outcomes.values()
+                            )
                             if "limit_queue" in meta and meta.limit_queue > 0:
-                                logger.info(f"[cyan]Successfully uploaded {fully_successful_count} of {meta.limit_queue} in limit with {total_files} files.")
+                                logger.info(
+                                    f"[cyan]Successfully uploaded {fully_successful_count} of {meta.limit_queue} in limit with {total_files} files."
+                                )
                             else:
-                                logger.info(f"[cyan]Successfully uploaded {fully_successful_count}/{total_files} files.")
-                        if log_file and (not meta.debug or "debug" in Path(log_file).name):
+                                logger.info(
+                                    f"[cyan]Successfully uploaded {fully_successful_count}/{total_files} files."
+                                )
+                        if log_file and (
+                            not meta.debug or "debug" in Path(log_file).name
+                        ):
                             if meta.site_upload_queue:
-                                await QueueManager.save_processed_path(log_file, current_item_path)
+                                await QueueManager.save_processed_path(
+                                    log_file, current_item_path
+                                )
                             else:
-                                await save_processed_file(log_file, current_item_path)
+                                await save_processed_file(
+                                    log_file, current_item_path
+                                )
 
             finish_time = time.time()
-            logger.debug(f"Uploads processed in {finish_time - start_time:.4f} seconds")
+            logger.debug(
+                f"Uploads processed in {finish_time - start_time:.4f} seconds"
+            )
 
             for tracker in meta.trumping_trackers:
-                logger.info(f"[yellow]Submitting trumpable report to {tracker}.....")
+                logger.info(
+                    f"[yellow]Submitting trumpable report to {tracker}....."
+                )
                 await tracker_setup.make_trumpable_report(meta, tracker)
 
-            find_requests = config["DEFAULT"].get("search_requests", False) if meta.search_requests is None else meta.search_requests
-            if find_requests and meta.trackers not in ([], None, "") and not (meta.site_check and not meta.is_disc):
-                logger.info("[green]Searching for requests on supported trackers.....")
+            find_requests = (
+                config["DEFAULT"].get("search_requests", False)
+                if meta.search_requests is None
+                else meta.search_requests
+            )
+            if (
+                find_requests
+                and meta.trackers not in ([], None, "")
+                and not (meta.site_check and not meta.is_disc)
+            ):
+                logger.info(
+                    "[green]Searching for requests on supported trackers....."
+                )
                 if meta.site_check:
-                    trackers = meta.requested_trackers if meta.requested_trackers is not None else []
-                    logger.debug(f"[cyan]Using requested trackers for site check: {trackers}[/cyan]")
+                    trackers = (
+                        meta.requested_trackers
+                        if meta.requested_trackers is not None
+                        else []
+                    )
+                    logger.debug(
+                        f"[cyan]Using requested trackers for site check: {trackers}[/cyan]"
+                    )
                 else:
-                    trackers = [t for t in cast(list[Any], meta.trackers) if isinstance(t, str)]
-                    logger.debug(f"[cyan]Using trackers for request search: {trackers}[/cyan]")
+                    trackers = [
+                        t
+                        for t in cast(list[Any], meta.trackers)
+                        if isinstance(t, str)
+                    ]
+                    logger.debug(
+                        f"[cyan]Using trackers for request search: {trackers}[/cyan]"
+                    )
                 await tracker_setup.tracker_request(meta, trackers)
 
             if meta.site_check and "queue" in meta and meta.queue is not None:
                 processed_files_count += 1
                 skipped_files_count += 1
-                logger.info(f"[cyan]Processed {processed_files_count}/{total_files} files.")
-                if log_file and (not meta.debug or "debug" in Path(log_file).name):
+                logger.info(
+                    f"[cyan]Processed {processed_files_count}/{total_files} files."
+                )
+                if log_file and (
+                    not meta.debug or "debug" in Path(log_file).name
+                ):
                     if meta.site_upload_queue:
-                        await QueueManager.save_processed_path(log_file, current_item_path)
+                        await QueueManager.save_processed_path(
+                            log_file, current_item_path
+                        )
                     else:
                         await save_processed_file(log_file, current_item_path)
 
             if is_batch and item_index not in item_outcomes:
-                item_outcomes[item_index] = (current_item_path, "checked" if meta.site_check else "successful", "Site check completed" if meta.site_check else "")
+                item_outcomes[item_index] = (
+                    current_item_path,
+                    "checked" if meta.site_check else "successful",
+                    "Site check completed" if meta.site_check else "",
+                )
 
-            successful_outcomes = sum(outcome == "successful" for _path, outcome, _detail in item_outcomes.values())
-            if "limit_queue" in meta and meta.limit_queue > 0 and successful_outcomes >= meta.limit_queue:
+            successful_outcomes = sum(
+                outcome == "successful"
+                for _path, outcome, _detail in item_outcomes.values()
+            )
+            if (
+                "limit_queue" in meta
+                and meta.limit_queue > 0
+                and successful_outcomes >= meta.limit_queue
+            ):
                 for remaining_index in range(item_index + 1, queue_size):
-                    remaining_path = queue_item_identifier(queue_list[remaining_index])
+                    remaining_path = queue_item_identifier(
+                        queue_list[remaining_index]
+                    )
                     reason = f"Queue limit of {meta.limit_queue} successful upload(s) reached"
-                    item_outcomes[remaining_index] = (remaining_path, "skipped", reason)
+                    item_outcomes[remaining_index] = (
+                        remaining_path,
+                        "skipped",
+                        reason,
+                    )
                     failed_items.append((remaining_path, reason))
                 if sanitize_meta:
                     try:
-                        await asyncio.sleep(0.2)  # We can't race the status prints
+                        await asyncio.sleep(
+                            0.2
+                        )  # We can't race the status prints
                         meta = await Redaction.clean_meta_for_export(meta)
                     except Exception as e:
-                        logger.error(f"[red]Error cleaning meta for export: {e}")
+                        logger.error(
+                            f"[red]Error cleaning meta for export: {e}"
+                        )
                 await cleanup_manager.cleanup()
                 gc.collect()
                 cleanup_manager.reset_terminal()
@@ -2879,27 +4316,61 @@ async def do_the_thing(base_dir: str) -> None:  # pyright: ignore[reportGeneralT
 
         if is_batch:
             total_count = queue_size
-            success_count = sum(outcome == "successful" for _path, outcome, _detail in item_outcomes.values())
-            checked_count = sum(outcome == "checked" for _path, outcome, _detail in item_outcomes.values())
-            partial_count = sum(outcome == "partial" for _path, outcome, _detail in item_outcomes.values())
-            skipped_count = sum(outcome == "skipped" for _path, outcome, _detail in item_outcomes.values())
-            failed_only_count = sum(outcome == "failed" for _path, outcome, _detail in item_outcomes.values())
-            failed_count = sum(outcome in {"failed", "skipped"} for _path, outcome, _detail in item_outcomes.values())
+            success_count = sum(
+                outcome == "successful"
+                for _path, outcome, _detail in item_outcomes.values()
+            )
+            checked_count = sum(
+                outcome == "checked"
+                for _path, outcome, _detail in item_outcomes.values()
+            )
+            partial_count = sum(
+                outcome == "partial"
+                for _path, outcome, _detail in item_outcomes.values()
+            )
+            skipped_count = sum(
+                outcome == "skipped"
+                for _path, outcome, _detail in item_outcomes.values()
+            )
+            failed_only_count = sum(
+                outcome == "failed"
+                for _path, outcome, _detail in item_outcomes.values()
+            )
+            failed_count = sum(
+                outcome in {"failed", "skipped"}
+                for _path, outcome, _detail in item_outcomes.values()
+            )
             logger.info(
                 f"[bold green]Batch summary: total queued {total_count}, fully successful {success_count}, "
                 f"partial {partial_count}, skipped/failed {failed_count}, site checks completed {checked_count}, "
                 f"skipped {skipped_count}, failed {failed_only_count}[/bold green]"
             )
             if partial_items:
-                logger.info("[bold yellow]Items with partial uploads:[/bold yellow]")
+                logger.info(
+                    "[bold yellow]Items with partial uploads:[/bold yellow]"
+                )
                 for partial_path, failed_trackers in partial_items:
-                    logger.info(f"- {partial_path}: failed on {failed_trackers}")
-            skipped_items = [(path, detail) for _index, (path, outcome, detail) in sorted(item_outcomes.items()) if outcome == "skipped"]
+                    logger.info(
+                        f"- {partial_path}: failed on {failed_trackers}"
+                    )
+            skipped_items = [
+                (path, detail)
+                for _index, (path, outcome, detail) in sorted(
+                    item_outcomes.items()
+                )
+                if outcome == "skipped"
+            ]
             if skipped_items:
                 logger.info("[bold yellow]Skipped items:[/bold yellow]")
                 for skipped_path, skipped_reason in skipped_items:
                     logger.info(f"- {skipped_path}: {skipped_reason}")
-            failed_summary_items = [(path, detail) for _index, (path, outcome, detail) in sorted(item_outcomes.items()) if outcome == "failed"]
+            failed_summary_items = [
+                (path, detail)
+                for _index, (path, outcome, detail) in sorted(
+                    item_outcomes.items()
+                )
+                if outcome == "failed"
+            ]
             if failed_summary_items:
                 logger.info("[bold red]Failed items:[/bold red]")
                 for failed_path, failed_reason in failed_summary_items:
@@ -2926,27 +4397,47 @@ async def do_the_thing(base_dir: str) -> None:  # pyright: ignore[reportGeneralT
 
 async def process_cross_seeds(meta: Meta) -> None:
     if meta.debug or meta.site_check:
-        logger.debug("[cyan]Skipping cross-seed processing in debug/site-check mode[/cyan]")
+        logger.debug(
+            "[cyan]Skipping cross-seed processing in debug/site-check mode[/cyan]"
+        )
         return
 
-    all_trackers: set[str] = set(api_trackers) | set(http_trackers) | set(other_api_trackers)
+    all_trackers: set[str] = (
+        set(api_trackers) | set(http_trackers) | set(other_api_trackers)
+    )
 
     # Get list of trackers to exclude (already in client)
     remove_list: list[str] = []
     if meta.remove_trackers:
         if isinstance(meta.remove_trackers, str):
-            remove_list = [t.strip().upper() for t in meta.remove_trackers.split(",")]
+            remove_list = [
+                t.strip().upper() for t in meta.remove_trackers.split(",")
+            ]
         elif isinstance(meta.remove_trackers, list):
-            remove_list = [t.strip().upper() for t in meta.remove_trackers if isinstance(t, str)]
+            remove_list = [
+                t.strip().upper()
+                for t in meta.remove_trackers
+                if isinstance(t, str)
+            ]
 
     # Check for trackers that haven't been dupe-checked yet
-    dupe_checked_trackers = [t for t in meta.dupe_checked_trackers if isinstance(t, str)]
+    dupe_checked_trackers = [
+        t for t in meta.dupe_checked_trackers if isinstance(t, str)
+    ]
 
     # Validate tracker configs and build list of valid unchecked trackers
     valid_unchecked_trackers: list[str] = []
-    trackers_to_check = sorted(all_trackers) if config["DEFAULT"].get("cross_seed_check_everything", False) else []
+    trackers_to_check = (
+        sorted(all_trackers)
+        if config["DEFAULT"].get("cross_seed_check_everything", False)
+        else []
+    )
     for tracker in trackers_to_check:
-        if tracker in dupe_checked_trackers or meta.get(f"{tracker}_cross_seed", None) is not None or tracker in remove_list:
+        if (
+            tracker in dupe_checked_trackers
+            or meta.get(f"{tracker}_cross_seed", None) is not None
+            or tracker in remove_list
+        ):
             continue
 
         tracker_config = config.get("TRACKERS", {}).get(tracker, {})
@@ -2965,23 +4456,39 @@ async def process_cross_seeds(meta: Meta) -> None:
             continue
 
         # Skip trackers with placeholder announce URLs
-        placeholder_patterns = ["<PASSKEY>", "customannounceurl", "get from upload page", "Custom_Announce_URL", "PASS_KEY", "insertyourpasskeyhere"]
+        placeholder_patterns = [
+            "<PASSKEY>",
+            "customannounceurl",
+            "get from upload page",
+            "Custom_Announce_URL",
+            "PASS_KEY",
+            "insertyourpasskeyhere",
+        ]
         announce_url_lower = announce_url.lower()
-        if any(pattern.lower() in announce_url_lower for pattern in placeholder_patterns):
-            logger.debug(f"[yellow]Tracker {tracker} has placeholder announce_url, skipping[/yellow]")
+        if any(
+            pattern.lower() in announce_url_lower
+            for pattern in placeholder_patterns
+        ):
+            logger.debug(
+                f"[yellow]Tracker {tracker} has placeholder announce_url, skipping[/yellow]"
+            )
             continue
 
         valid_unchecked_trackers.append(tracker)
 
     # Search for cross-seeds on unchecked trackers
     if valid_unchecked_trackers:
-        logger.info(f"[cyan]Checking for cross-seeds on unchecked trackers: {valid_unchecked_trackers}[/cyan]")
+        logger.info(
+            f"[cyan]Checking for cross-seeds on unchecked trackers: {valid_unchecked_trackers}[/cyan]"
+        )
 
         try:
             await validate_tracker_logins(meta, valid_unchecked_trackers)
             await asyncio.sleep(0.2)
         except Exception as e:
-            logger.warning(f"[yellow]Warning: Tracker validation encountered an error: {e}[/yellow]")
+            logger.warning(
+                f"[yellow]Warning: Tracker validation encountered an error: {e}[/yellow]"
+            )
 
         # Store original unattended value
         original_unattended = meta.unattended
@@ -2999,10 +4506,16 @@ async def process_cross_seeds(meta: Meta) -> None:
                     if hasattr(tracker_class, "get_additional_checks"):
                         import inspect
 
-                        if inspect.iscoroutinefunction(tracker_class.get_additional_checks):
-                            should_continue = await tracker_class.get_additional_checks(meta)
+                        if inspect.iscoroutinefunction(
+                            tracker_class.get_additional_checks
+                        ):
+                            should_continue = (
+                                await tracker_class.get_additional_checks(meta)
+                            )
                         else:
-                            should_continue = tracker_class.get_additional_checks(meta)
+                            should_continue = (
+                                tracker_class.get_additional_checks(meta)
+                            )
                         if not should_continue:
                             meta.skipping = tracker
                             return
@@ -3012,8 +4525,12 @@ async def process_cross_seeds(meta: Meta) -> None:
                     if hasattr(ptp, "get_additional_checks"):
                         import inspect
 
-                        if inspect.iscoroutinefunction(ptp.get_additional_checks):
-                            should_continue = await ptp.get_additional_checks(meta)
+                        if inspect.iscoroutinefunction(
+                            ptp.get_additional_checks
+                        ):
+                            should_continue = await ptp.get_additional_checks(
+                                meta
+                            )
                         else:
                             should_continue = ptp.get_additional_checks(meta)
                         if not should_continue:
@@ -3028,33 +4545,53 @@ async def process_cross_seeds(meta: Meta) -> None:
                     dupes = await ptp.search_existing(group_id, meta)
 
                 if dupes:
-                    dupes = await dupe_checker.filter_dupes(dupes, meta, tracker)
-                    _is_dupe, updated_meta = await helper.dupe_check(cast(list[Any], dupes), meta, tracker)
+                    dupes = await dupe_checker.filter_dupes(
+                        dupes, meta, tracker
+                    )
+                    _is_dupe, updated_meta = await helper.dupe_check(
+                        cast(list[Any], dupes), meta, tracker
+                    )
                     # Persist any updates from dupe_check (defensive in case it returns a copy)
                     if updated_meta is not meta:
                         meta.update(updated_meta)
 
             except Exception as e:
-                logger.warning(f"[yellow]Warning: Failed to check duplicates for cross-seed on {tracker}: {e}[/yellow]")
+                logger.warning(
+                    f"[yellow]Warning: Failed to check duplicates for cross-seed on {tracker}: {e}[/yellow]"
+                )
 
         # Run all dupe checks concurrently
-        await asyncio.gather(*[check_tracker_for_dupes(tracker) for tracker in valid_unchecked_trackers], return_exceptions=True)
+        await asyncio.gather(
+            *[
+                check_tracker_for_dupes(tracker)
+                for tracker in valid_unchecked_trackers
+            ],
+            return_exceptions=True,
+        )
 
         # Restore original unattended value
         meta.unattended = original_unattended
 
     # Filter to only trackers with cross-seed data
-    valid_trackers = sorted(tracker for tracker in all_trackers if meta.get(f"{tracker}_cross_seed", None) is not None)
+    valid_trackers = sorted(
+        tracker
+        for tracker in all_trackers
+        if meta.get(f"{tracker}_cross_seed", None) is not None
+    )
 
     if not valid_trackers:
         logger.debug("[yellow]No trackers found with cross-seed data[/yellow]")
         return
 
-    logger.info(f"[cyan]Valid trackers for cross-seed check: {valid_trackers}[/cyan]")
+    logger.info(
+        f"[cyan]Valid trackers for cross-seed check: {valid_trackers}[/cyan]"
+    )
 
     common = Common(config)
     try:
-        concurrency_limit = int(config.get("DEFAULT", {}).get("cross_seed_concurrency", 8))
+        concurrency_limit = int(
+            config.get("DEFAULT", {}).get("cross_seed_concurrency", 8)
+        )
     except TypeError, ValueError:
         concurrency_limit = 8
     semaphore = asyncio.Semaphore(max(1, concurrency_limit))
@@ -3063,7 +4600,9 @@ async def process_cross_seeds(meta: Meta) -> None:
         cross_seed_key = f"{tracker}_cross_seed"
         cross_seed_value = getattr(meta, cross_seed_key, False)
 
-        logger.debug(f"[cyan]Debug: {tracker} - cross_seed: {Redaction.redact_private_info(cross_seed_value)}")
+        logger.debug(
+            f"[cyan]Debug: {tracker} - cross_seed: {Redaction.redact_private_info(cross_seed_value)}"
+        )
 
         if not cross_seed_value:
             return
@@ -3071,17 +4610,23 @@ async def process_cross_seeds(meta: Meta) -> None:
         logger.debug(f"[green]Found cross-seed for {tracker}!")
 
         download_url = ""
-        if isinstance(cross_seed_value, str) and cross_seed_value.startswith("http"):
+        if isinstance(cross_seed_value, str) and cross_seed_value.startswith(
+            "http"
+        ):
             download_url = cross_seed_value
         else:
-            logger.debug(f"[yellow]Invalid cross-seed URL for {tracker}, skipping[/yellow]")
+            logger.debug(
+                f"[yellow]Invalid cross-seed URL for {tracker}, skipping[/yellow]"
+            )
             return
 
         headers = None
         if tracker == "RETROFLIX":
             headers = {
                 "accept": "application/json",
-                "Authorization": config["TRACKERS"][tracker]["api_key"].strip(),
+                "Authorization": config["TRACKERS"][tracker][
+                    "api_key"
+                ].strip(),
             }
 
         if tracker == "ALPHARATIO" and download_url:
@@ -3090,7 +4635,9 @@ async def process_cross_seeds(meta: Meta) -> None:
                 auth_key = await ar.get_auth_key(meta)
 
                 # Extract torrent_pass from announce_url
-                announce_url = config["TRACKERS"]["ALPHARATIO"].get("announce_url", "")
+                announce_url = config["TRACKERS"]["ALPHARATIO"].get(
+                    "announce_url", ""
+                )
                 # Pattern: http://tracker.alpharatio.cc:2710/PASSKEY/announce
                 match = re.search(r":\d+/([^/]+)/announce", announce_url)
                 torrent_pass = match.group(1) if match else None
@@ -3099,9 +4646,13 @@ async def process_cross_seeds(meta: Meta) -> None:
                     # Append auth_key and torrent_pass to download_url
                     separator = "&" if "?" in download_url else "?"
                     download_url += f"{separator}authkey={auth_key}&torrent_pass={torrent_pass}"
-                    logger.debug("[cyan]Added ALPHARATIO auth_key and torrent_pass to download URL[/cyan]")
+                    logger.debug(
+                        "[cyan]Added ALPHARATIO auth_key and torrent_pass to download URL[/cyan]"
+                    )
             except Exception as e:
-                logger.debug(f"[yellow]Error getting ALPHARATIO auth credentials: {e}[/yellow]")
+                logger.debug(
+                    f"[yellow]Error getting ALPHARATIO auth credentials: {e}[/yellow]"
+                )
 
         async with semaphore:
             await common.download_tracker_torrent(
@@ -3116,12 +4667,19 @@ async def process_cross_seeds(meta: Meta) -> None:
             )
             await client.add_to_client(meta, tracker, cross=True)
 
-    tasks = [(tracker, asyncio.create_task(handle_cross_seed(tracker))) for tracker in valid_trackers]
+    tasks = [
+        (tracker, asyncio.create_task(handle_cross_seed(tracker)))
+        for tracker in valid_trackers
+    ]
 
-    results = await asyncio.gather(*(task for _, task in tasks), return_exceptions=True)
+    results = await asyncio.gather(
+        *(task for _, task in tasks), return_exceptions=True
+    )
     for (tracker, _), result in zip(tasks, results, strict=False):
         if isinstance(result, Exception):
-            logger.info(f"[red]Cross-seed handling failed for {tracker}: {result}[/red]")
+            logger.info(
+                f"[red]Cross-seed handling failed for {tracker}: {result}[/red]"
+            )
 
 
 async def get_mkbrr_path(base_dir: str | None = None) -> str | None:
@@ -3131,7 +4689,9 @@ async def get_mkbrr_path(base_dir: str | None = None) -> str | None:
         if bundled_mkbrr := MkbrrBinaryManager.find_existing_binary(CODE_DIR):
             return bundled_mkbrr
         resolved_base_dir = base_dir or str(STATE_DIR)
-        mkbrr_path = await MkbrrBinaryManager.ensure_mkbrr_binary(resolved_base_dir, version="v1.24.0")
+        mkbrr_path = await MkbrrBinaryManager.ensure_mkbrr_binary(
+            resolved_base_dir, version="v1.24.0"
+        )
         return mkbrr_path if mkbrr_path else None
     except Exception as e:
         logger.error(f"[red]Error setting up mkbrr binary: {e}[/red]")
@@ -3141,7 +4701,9 @@ async def get_mkbrr_path(base_dir: str | None = None) -> str | None:
 def check_python_version() -> None:
     pyver = platform.python_version_tuple()
     if int(pyver[0]) != 3 or int(pyver[1]) < 9:
-        logger.info("[bold red]Python version is too low. Please use Python 3.9 or higher.")
+        logger.info(
+            "[bold red]Python version is too low. Please use Python 3.9 or higher."
+        )
         sys.exit(1)
 
 
@@ -3180,7 +4742,11 @@ if __name__ == "__main__":
     except (KeyboardInterrupt, SystemExit) as exc:
         if not _shutdown_requested:
             logger.info("\n[yellow]Shutting down...[/yellow]")
-        exit_code = (exc.code if isinstance(exc.code, int) else 1) if isinstance(exc, SystemExit) else 130
+        exit_code = (
+            (exc.code if isinstance(exc.code, int) else 1)
+            if isinstance(exc, SystemExit)
+            else 130
+        )
     except BaseException as e:
         if not _shutdown_requested:
             logger.info(f"[bold red]Critical error: {e}[/bold red]")
@@ -3191,9 +4757,13 @@ if __name__ == "__main__":
             async def _cleanup_with_timeout() -> None:
                 """Bound shutdown cleanup so the CLI cannot hang indefinitely."""
                 try:
-                    await asyncio.wait_for(cleanup_manager.cleanup(), timeout=10.0)
+                    await asyncio.wait_for(
+                        cleanup_manager.cleanup(), timeout=10.0
+                    )
                 except TimeoutError, asyncio.CancelledError:
-                    logger.info("[yellow]Cleanup timed out or was cancelled, forcing exit...[/yellow]")
+                    logger.info(
+                        "[yellow]Cleanup timed out or was cancelled, forcing exit...[/yellow]"
+                    )
 
             asyncio.run(_cleanup_with_timeout())
 

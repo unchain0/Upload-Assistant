@@ -12,7 +12,10 @@ from src.integrations.external_apis.tmdb import TmdbManager
 from src.integrations.filesystem.temp_paths import release_temp_dir
 from src.integrations.observability.runtime_support import logger
 from src.integrations.trackers.common import Common
-from src.integrations.trackers.cookie_auth import CookieAuthUploader, CookieValidator
+from src.integrations.trackers.cookie_auth import (
+    CookieAuthUploader,
+    CookieValidator,
+)
 from src.integrations.trackers.description_builder import DescriptionBuilder
 
 Config = dict[str, Any]
@@ -41,19 +44,30 @@ class NEXUSPHP:
         self.cookie_validator = CookieValidator(config)
         self.tmdb_manager = TmdbManager(config)
         self.tracker = tracker_name
-        self.tracker_config: dict[str, Any] = self.config["TRACKERS"].get(self.tracker, {})
+        self.tracker_config: dict[str, Any] = self.config["TRACKERS"].get(
+            self.tracker, {}
+        )
 
         # Normalize announce_url: must be a non-empty string after stripping
         raw_announce = self.tracker_config.get("announce_url")
-        self.announce_url = raw_announce.strip() if isinstance(raw_announce, str) else ""
+        self.announce_url = (
+            raw_announce.strip() if isinstance(raw_announce, str) else ""
+        )
 
-        self.session = httpx.AsyncClient(headers={"User-Agent": f"Upload-Assistant ({platform.system()} {platform.release()})"}, timeout=60.0)
+        self.session = httpx.AsyncClient(
+            headers={
+                "User-Agent": f"Upload-Assistant ({platform.system()} {platform.release()})"
+            },
+            timeout=60.0,
+        )
 
     async def load_localized_data(self, meta: Meta) -> None:
         data = meta.tmdb_localized_data
         zh_cn_data = data.get("zh-cn")
         if not zh_cn_data or not zh_cn_data.get("main"):
-            raise RuntimeError(f"{self.tracker}: Missing TMDB localized data (zh-cn).")
+            raise RuntimeError(
+                f"{self.tracker}: Missing TMDB localized data (zh-cn)."
+            )
 
         self.tmdb_data = zh_cn_data.get("main") or {}
         return
@@ -71,17 +85,24 @@ class NEXUSPHP:
     def _search_is_configured(self, meta: Meta) -> bool:
         if self.announce_url:
             return True
-        logger.info(f"{self.tracker}: [red]Announce URL is not set for {self.tracker}[/red]", extra={"markup": True})
+        logger.info(
+            f"{self.tracker}: [red]Announce URL is not set for {self.tracker}[/red]",
+            extra={"markup": True},
+        )
         meta.skipping = self.tracker
         return False
 
     async def _load_search_cookies(self, meta: Meta) -> None:
-        cookies = await self.cookie_validator.load_session_cookies(meta, self.tracker)
+        cookies = await self.cookie_validator.load_session_cookies(
+            meta, self.tracker
+        )
         if cookies:
             self.session.cookies.update(cookies)
 
     async def _search_response(self, meta: Meta) -> httpx.Response:
-        return await self.session.get(f"{self.base_url}/torrents.php", params=self._search_params(meta))
+        return await self.session.get(
+            f"{self.base_url}/torrents.php", params=self._search_params(meta)
+        )
 
     def _search_params(self, meta: Meta) -> dict[str, str]:
         return {
@@ -107,17 +128,30 @@ class NEXUSPHP:
     def _tv_search_name(meta: Meta) -> str:
         if meta.tv_pack:
             return f"{meta.title} {meta.season}".strip()
-        season_episode = f"{meta.season}{meta.episode}" if meta.season or meta.episode else ""
+        season_episode = (
+            f"{meta.season}{meta.episode}"
+            if meta.season or meta.episode
+            else ""
+        )
         return f"{meta.title} {season_episode}".strip()
 
-    async def _search_requires_login(self, meta: Meta, response: httpx.Response) -> bool:
-        if "login.php" not in str(response.url) and "login.php" not in response.text:
+    async def _search_requires_login(
+        self, meta: Meta, response: httpx.Response
+    ) -> bool:
+        if (
+            "login.php" not in str(response.url)
+            and "login.php" not in response.text
+        ):
             return False
-        await self.cookie_validator.handle_validation_failure(meta, self.tracker, response.text)
+        await self.cookie_validator.handle_validation_failure(
+            meta, self.tracker, response.text
+        )
         meta.skipping = self.tracker
         return True
 
-    async def _parse_search_results(self, meta: Meta, html: str) -> list[dict[str, str]]:
+    async def _parse_search_results(
+        self, meta: Meta, html: str
+    ) -> list[dict[str, str]]:
         rows = self._search_rows(html)
         results: list[dict[str, str]] = []
         for row in rows:
@@ -128,7 +162,9 @@ class NEXUSPHP:
 
     @staticmethod
     def _search_rows(html: str) -> list[Any]:
-        table = BeautifulSoup(html, "html.parser").find("table", class_="torrents")
+        table = BeautifulSoup(html, "html.parser").find(
+            "table", class_="torrents"
+        )
         if table is None:
             return []
         return table.find_all("tr", recursive=False)[1:]
@@ -140,7 +176,10 @@ class NEXUSPHP:
         torrent_id = self._torrent_id_from_link(link)
         if not torrent_id:
             return None
-        entry = {"name": self._torrent_name(link), "link": f"{self.base_url}/details.php?id={torrent_id}"}
+        entry = {
+            "name": self._torrent_name(link),
+            "link": f"{self.base_url}/details.php?id={torrent_id}",
+        }
         if meta.is_disc == "BDMV":
             bdinfo = await self.get_dupe_bdinfo(torrent_id)
             if bdinfo:
@@ -152,7 +191,9 @@ class NEXUSPHP:
         name_table = row.find("table", class_="torrentname")
         if name_table is None:
             return None
-        return name_table.find("a", href=lambda value: bool(value and "details.php?id=" in value))
+        return name_table.find(
+            "a", href=lambda value: bool(value and "details.php?id=" in value)
+        )
 
     @staticmethod
     def _torrent_id_from_link(link: Any) -> str:
@@ -186,11 +227,16 @@ class NEXUSPHP:
             return ""
 
         except Exception as e:
-            logger.info(f"{self.tracker}: Error getting BDInfo for torrent {torrent_id}: {e}", extra={"markup": False})
+            logger.info(
+                f"{self.tracker}: Error getting BDInfo for torrent {torrent_id}: {e}",
+                extra={"markup": False},
+            )
             return ""
 
     async def validate_credentials(self, meta: Meta) -> bool:
-        cookies = await self.cookie_validator.load_session_cookies(meta, self.tracker)
+        cookies = await self.cookie_validator.load_session_cookies(
+            meta, self.tracker
+        )
         if cookies:
             self.session.cookies.update(cookies)
             return True
@@ -214,7 +260,12 @@ class NEXUSPHP:
     def _append_poster(lines: list[str], data: dict[str, Any]) -> None:
         poster_path = data.get("poster_path")
         if poster_path:
-            lines.extend((f"[img]https://image.tmdb.org/t/p/w500{poster_path}[/img]", ""))
+            lines.extend(
+                (
+                    f"[img]https://image.tmdb.org/t/p/w500{poster_path}[/img]",
+                    "",
+                )
+            )
 
     @classmethod
     def _localized_title(cls, meta: Meta, data: dict[str, Any]) -> str:
@@ -228,33 +279,59 @@ class NEXUSPHP:
         season_info = cls._season_info(raw_seasons, season)
         season_name = str(season_info.get("name", ""))
         default_name = f"第 {season} 季"
-        addition = default_name if not season_name or season_name == default_name else season_name
+        addition = (
+            default_name
+            if not season_name or season_name == default_name
+            else season_name
+        )
         return name if addition in name else f"{name} {addition}".strip()
 
     @staticmethod
     def _season_info(raw_seasons: Any, season: Any) -> dict[str, Any]:
         seasons = raw_seasons if isinstance(raw_seasons, list) else []
-        return next((cast(dict[str, Any], item) for item in seasons if isinstance(item, dict) and item.get("season_number") == season), {})
+        return next(
+            (
+                cast(dict[str, Any], item)
+                for item in seasons
+                if isinstance(item, dict)
+                and item.get("season_number") == season
+            ),
+            {},
+        )
 
     @classmethod
-    def _append_identity(cls, lines: list[str], meta: Meta, data: dict[str, Any], name: str) -> None:
+    def _append_identity(
+        cls, lines: list[str], meta: Meta, data: dict[str, Any], name: str
+    ) -> None:
         lines.append(f"◎片　　名　{name}")
         cls._append_original_name(lines, data, name)
         release_date = cls._release_date(data)
-        cls._append_year_country_genre_language(lines, meta, data, release_date)
+        cls._append_year_country_genre_language(
+            lines, meta, data, release_date
+        )
 
     @staticmethod
-    def _append_original_name(lines: list[str], data: dict[str, Any], name: str) -> None:
+    def _append_original_name(
+        lines: list[str], data: dict[str, Any], name: str
+    ) -> None:
         original_name = str(data.get("original_name", ""))
         if original_name and original_name != name:
             lines.append(f"◎译　　名　{original_name}")
 
     @staticmethod
     def _release_date(data: dict[str, Any]) -> str:
-        return str(data.get("first_air_date") or data.get("release_date") or "")
+        return str(
+            data.get("first_air_date") or data.get("release_date") or ""
+        )
 
     @classmethod
-    def _append_year_country_genre_language(cls, lines: list[str], meta: Meta, data: dict[str, Any], release_date: str) -> None:
+    def _append_year_country_genre_language(
+        cls,
+        lines: list[str],
+        meta: Meta,
+        data: dict[str, Any],
+        release_date: str,
+    ) -> None:
         cls._append_year(lines, meta, release_date)
         countries = cls._named_values(data.get("production_countries"))
         cls._append_localized_lists(lines, countries, data)
@@ -267,13 +344,23 @@ class NEXUSPHP:
             lines.append(f"◎年　　代　{year}")
 
     @classmethod
-    def _append_localized_lists(cls, lines: list[str], countries: list[str], data: dict[str, Any]) -> None:
+    def _append_localized_lists(
+        cls, lines: list[str], countries: list[str], data: dict[str, Any]
+    ) -> None:
         cls._append_joined(lines, "◎产　　地　", countries)
-        cls._append_joined(lines, "◎类　　别　", cls._named_values(data.get("genres")))
-        cls._append_joined(lines, "◎语　　言　", cls._named_values(data.get("spoken_languages")))
+        cls._append_joined(
+            lines, "◎类　　别　", cls._named_values(data.get("genres"))
+        )
+        cls._append_joined(
+            lines,
+            "◎语　　言　",
+            cls._named_values(data.get("spoken_languages")),
+        )
 
     @staticmethod
-    def _append_release_date(lines: list[str], release_date: str, countries: list[str]) -> None:
+    def _append_release_date(
+        lines: list[str], release_date: str, countries: list[str]
+    ) -> None:
         if not release_date:
             return
         country = countries[0] if countries else ""
@@ -283,33 +370,49 @@ class NEXUSPHP:
     @staticmethod
     def _named_values(value: Any) -> list[str]:
         values = value if isinstance(value, list) else []
-        return [str(item.get("name")) for item in values if isinstance(item, dict) and item.get("name")]
+        return [
+            str(item.get("name"))
+            for item in values
+            if isinstance(item, dict) and item.get("name")
+        ]
 
     @staticmethod
-    def _append_joined(lines: list[str], label: str, values: list[str]) -> None:
+    def _append_joined(
+        lines: list[str], label: str, values: list[str]
+    ) -> None:
         if values:
             lines.append(f"{label}{' / '.join(values)}")
 
     @classmethod
     def _append_ratings(cls, lines: list[str], meta: Meta) -> None:
         imdb = meta.imdb_info if isinstance(meta.imdb_info, dict) else {}
-        cls._append_rating(lines, "◎IMDb评分  ", imdb.get("rating"), imdb.get("votes"))
+        cls._append_rating(
+            lines, "◎IMDb评分  ", imdb.get("rating"), imdb.get("votes")
+        )
         imdb_url = imdb.get("imdb_url")
         if imdb_url:
             lines.append(f"◎IMDb链接  {imdb_url}/")
-        cls._append_rating(lines, "◎豆瓣评分　", meta.douban_rating, meta.douban_votes)
+        cls._append_rating(
+            lines, "◎豆瓣评分　", meta.douban_rating, meta.douban_votes
+        )
         if meta.douban_id:
-            lines.append(f"◎豆瓣链接　https://movie.douban.com/subject/{meta.douban_id}/")
+            lines.append(
+                f"◎豆瓣链接　https://movie.douban.com/subject/{meta.douban_id}/"
+            )
 
     @staticmethod
-    def _append_rating(lines: list[str], label: str, rating: Any, votes: Any) -> None:
+    def _append_rating(
+        lines: list[str], label: str, rating: Any, votes: Any
+    ) -> None:
         if not rating:
             return
         votes_text = f" ({votes} 人评价)" if votes else ""
         lines.append(f"{label}{rating}/10{votes_text}")
 
     @classmethod
-    def _append_runtime(cls, lines: list[str], meta: Meta, data: dict[str, Any]) -> None:
+    def _append_runtime(
+        cls, lines: list[str], meta: Meta, data: dict[str, Any]
+    ) -> None:
         if meta.category == "TV":
             cls._append_tv_runtime(lines, meta, data)
             return
@@ -318,9 +421,13 @@ class NEXUSPHP:
             lines.append(f"◎片　　长　{runtime}分钟")
 
     @classmethod
-    def _append_tv_runtime(cls, lines: list[str], meta: Meta, data: dict[str, Any]) -> None:
+    def _append_tv_runtime(
+        cls, lines: list[str], meta: Meta, data: dict[str, Any]
+    ) -> None:
         if meta.season:
-            season_info = cls._season_info(data.get("seasons", []), meta.season)
+            season_info = cls._season_info(
+                data.get("seasons", []), meta.season
+            )
             episode_count = season_info.get("episode_count")
             if episode_count:
                 lines.append(f"◎集　　数　{episode_count}")
@@ -336,22 +443,38 @@ class NEXUSPHP:
         if values and values[0]:
             return values[0]
         last_episode = data.get("last_episode_to_air")
-        return last_episode.get("runtime") if isinstance(last_episode, dict) else None
+        return (
+            last_episode.get("runtime")
+            if isinstance(last_episode, dict)
+            else None
+        )
 
     @classmethod
     def _append_people(cls, lines: list[str], data: dict[str, Any]) -> None:
         credits = data.get("credits", {})
         credits = credits if isinstance(credits, dict) else {}
-        crew = credits.get("crew", []) if isinstance(credits.get("crew", []), list) else []
+        crew = (
+            credits.get("crew", [])
+            if isinstance(credits.get("crew", []), list)
+            else []
+        )
         directors = cls._crew_names(crew, {"Director"})
-        writers = list(dict.fromkeys(cls._crew_names(crew, {"Writer", "Screenplay", "Author"})))
+        writers = list(
+            dict.fromkeys(
+                cls._crew_names(crew, {"Writer", "Screenplay", "Author"})
+            )
+        )
         cls._append_joined(lines, "◎导　　演　", directors)
         cls._append_joined(lines, "◎编　　剧　", writers)
         cls._append_cast(lines, credits.get("cast", []))
 
     @staticmethod
     def _crew_names(crew: list[Any], jobs: set[str]) -> list[str]:
-        return [NEXUSPHP._person_name(item) for item in crew if isinstance(item, dict) and item.get("job") in jobs]
+        return [
+            NEXUSPHP._person_name(item)
+            for item in crew
+            if isinstance(item, dict) and item.get("job") in jobs
+        ]
 
     @staticmethod
     def _person_name(person: dict[str, Any]) -> str:
@@ -365,7 +488,11 @@ class NEXUSPHP:
     @staticmethod
     def _cast_people(raw_cast: Any) -> list[dict[str, Any]]:
         values = raw_cast if isinstance(raw_cast, list) else []
-        return [cast(dict[str, Any], item) for item in values[:25] if isinstance(item, dict)]
+        return [
+            cast(dict[str, Any], item)
+            for item in values[:25]
+            if isinstance(item, dict)
+        ]
 
     @staticmethod
     def _cast_prefix(index: int) -> str:
@@ -443,7 +570,11 @@ class NEXUSPHP:
         return 0
 
     async def get_technical_info(self, meta: Meta) -> dict[str, str]:
-        filename = "BD_SUMMARY_00.txt" if meta.is_disc == "BDMV" else "MEDIAINFO_CLEANPATH.txt"
+        filename = (
+            "BD_SUMMARY_00.txt"
+            if meta.is_disc == "BDMV"
+            else "MEDIAINFO_CLEANPATH.txt"
+        )
         path = release_temp_dir(meta.base_dir, meta.uuid) / filename
         async with aiofiles.open(path, encoding="utf-8") as handle:
             return {"technical_info": await handle.read()}
@@ -472,7 +603,9 @@ class NEXUSPHP:
         return {"tags[4][]": checkboxes} if checkboxes else {}
 
     async def get_anonymous_data(self, meta: Meta) -> dict[str, str]:
-        anonymous = not (meta.anon == 0 and not self.tracker_config.get("anon", False))
+        anonymous = not (
+            meta.anon == 0 and not self.tracker_config.get("anon", False)
+        )
         return {"uplver": "yes"} if anonymous else {}
 
     async def get_imdb_data(self, meta: Meta) -> dict[str, str]:
@@ -526,7 +659,9 @@ class NEXUSPHP:
         return data
 
     async def upload(self, meta: Meta) -> bool:
-        cookies = await self.cookie_validator.load_session_cookies(meta, self.tracker)
+        cookies = await self.cookie_validator.load_session_cookies(
+            meta, self.tracker
+        )
         self.session.cookies.clear()
         if cookies is not None:
             self.session.cookies.update(cookies)

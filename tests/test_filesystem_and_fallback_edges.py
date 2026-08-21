@@ -14,10 +14,15 @@ import src.integrations.filesystem.paths as paths
 import src.integrations.filesystem.screenshot_manifest as manifest
 import src.integrations.filesystem.temp_paths as temp_paths
 import src.integrations.runtime_tools.runtime_tool_paths as tool_paths
-from src.integrations.image_hosts.fallback import configured_image_hosts, image_host_fallback_plan
+from src.integrations.image_hosts.fallback import (
+    configured_image_hosts,
+    image_host_fallback_plan,
+)
 
 
-def test_runtime_data_directory_platform_and_migration_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_runtime_data_directory_platform_and_migration_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     override = tmp_path / "override"
     monkeypatch.setenv("UA_DATA_DIR", f"  {override}  ")
     assert paths._default_data_dir() == override
@@ -25,7 +30,9 @@ def test_runtime_data_directory_platform_and_migration_paths(tmp_path: Path, mon
     monkeypatch.delenv("UA_DATA_DIR")
     real_os = paths.os
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
-    monkeypatch.setattr(paths, "os", SimpleNamespace(name="nt", environ=real_os.environ))
+    monkeypatch.setattr(
+        paths, "os", SimpleNamespace(name="nt", environ=real_os.environ)
+    )
     assert paths._default_data_dir() == tmp_path / "local" / "Upload-Assistant"
 
     monkeypatch.setattr(paths, "os", real_os)
@@ -43,9 +50,13 @@ def test_runtime_data_directory_platform_and_migration_paths(tmp_path: Path, mon
     assert state.is_dir() and (state / "data").is_dir()
 
 
-def test_temp_path_security_permissions_and_typed_directories(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_temp_path_security_permissions_and_typed_directories(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     trusted_mode = stat.S_IFDIR | stat.S_ISVTX | stat.S_IWOTH | stat.S_IXOTH
-    trusted_root = SimpleNamespace(stat=lambda: SimpleNamespace(st_uid=0, st_mode=trusted_mode))
+    trusted_root = SimpleNamespace(
+        stat=lambda: SimpleNamespace(st_uid=0, st_mode=trusted_mode)
+    )
     assert temp_paths._is_trusted_shared_root(trusted_root)  # type: ignore[arg-type]
 
     root = temp_paths.ensure_temp_root(tmp_path)
@@ -58,18 +69,35 @@ def test_temp_path_security_permissions_and_typed_directories(tmp_path: Path, mo
     release = temp_paths.release_temp_dir(tmp_path, "release")
     assert release.is_dir() and stat.S_IMODE(release.stat().st_mode) == 0o700
     with monkeypatch.context() as context:
-        context.setattr(temp_paths.os, "geteuid", lambda: release.stat().st_uid + 1)
+        context.setattr(
+            temp_paths.os, "geteuid", lambda: release.stat().st_uid + 1
+        )
         with pytest.raises(PermissionError, match="owned by another user"):
             temp_paths.release_temp_dir(tmp_path, "foreign-owner")
-    assert temp_paths.music_release_snapshot_path(tmp_path, "release").name == "music_release.json"
+    assert (
+        temp_paths.music_release_snapshot_path(tmp_path, "release").name
+        == "music_release.json"
+    )
     monkeypatch.setattr(temp_paths, "STATE_DIR", tmp_path / "fallback-state")
-    assert "music-release-pending" in str(temp_paths.music_release_snapshot_path(None, ""))
+    assert "music-release-pending" in str(
+        temp_paths.music_release_snapshot_path(None, "")
+    )
 
-    assert temp_paths.screenshots_dir(tmp_path, "release").name == "screenshots"
+    assert (
+        temp_paths.screenshots_dir(tmp_path, "release").name == "screenshots"
+    )
     assert temp_paths.artwork_dir(tmp_path, "release").name == "artwork"
-    assert temp_paths.menu_screenshots_dir(tmp_path, "release").name == "menu_screenshots"
-    assert temp_paths.spectrograms_dir(tmp_path, "release").name == "spectrograms"
-    assert temp_paths.dynamic_hdr_plots_dir(tmp_path, "release").name == "dynamic_hdr_plots"
+    assert (
+        temp_paths.menu_screenshots_dir(tmp_path, "release").name
+        == "menu_screenshots"
+    )
+    assert (
+        temp_paths.spectrograms_dir(tmp_path, "release").name == "spectrograms"
+    )
+    assert (
+        temp_paths.dynamic_hdr_plots_dir(tmp_path, "release").name
+        == "dynamic_hdr_plots"
+    )
 
     linked_base = tmp_path / "linked-base"
     linked_base.mkdir()
@@ -81,22 +109,34 @@ def test_temp_path_security_permissions_and_typed_directories(tmp_path: Path, mo
 
     release_link = tmp_path / "release-link-base"
     (release_link / "tmp").mkdir(parents=True)
-    (release_link / "tmp" / "release").symlink_to(target, target_is_directory=True)
+    (release_link / "tmp" / "release").symlink_to(
+        target, target_is_directory=True
+    )
     with pytest.raises(RuntimeError, match="symbolic link"):
         temp_paths.release_temp_dir(release_link, "release")
 
     class ChmodFailurePath(type(root)):
         pass
 
-    monkeypatch.setattr(temp_paths.Path, "chmod", lambda _self, _mode: (_ for _ in ()).throw(PermissionError("denied")))
-    monkeypatch.setattr(temp_paths, "_is_trusted_shared_root", lambda _path: True)
+    monkeypatch.setattr(
+        temp_paths.Path,
+        "chmod",
+        lambda _self, _mode: (_ for _ in ()).throw(PermissionError("denied")),
+    )
+    monkeypatch.setattr(
+        temp_paths, "_is_trusted_shared_root", lambda _path: True
+    )
     assert temp_paths.ensure_temp_root(tmp_path / "trusted").is_dir()
-    monkeypatch.setattr(temp_paths, "_is_trusted_shared_root", lambda _path: False)
+    monkeypatch.setattr(
+        temp_paths, "_is_trusted_shared_root", lambda _path: False
+    )
     with pytest.raises(PermissionError):
         temp_paths.ensure_temp_root(tmp_path / "untrusted")
 
 
-def test_private_runtime_tool_paths_and_trusted_executables(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_private_runtime_tool_paths_and_trusted_executables(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     private = tmp_path / "private"
     private.mkdir(mode=0o700)
     assert tool_paths._is_private_writable_directory(private)
@@ -109,7 +149,16 @@ def test_private_runtime_tool_paths_and_trusted_executables(tmp_path: Path, monk
     assert not tool_paths._is_private_writable_directory(link)
 
     with monkeypatch.context() as context:
-        context.setattr(tool_paths, "os", SimpleNamespace(name="nt", access=lambda _path, _mode: True, W_OK=os.W_OK, X_OK=os.X_OK))
+        context.setattr(
+            tool_paths,
+            "os",
+            SimpleNamespace(
+                name="nt",
+                access=lambda _path, _mode: True,
+                W_OK=os.W_OK,
+                X_OK=os.X_OK,
+            ),
+        )
         assert tool_paths._is_private_writable_directory(private)
 
     tool_paths._private_root = None
@@ -120,7 +169,9 @@ def test_private_runtime_tool_paths_and_trusted_executables(tmp_path: Path, monk
     install = tool_paths.tool_install_dir(tmp_path, "ffmpeg", "current")
     assert install == tmp_path / "bin" / "ffmpeg" / "current"
 
-    monkeypatch.setattr(tool_paths, "_is_private_writable_directory", lambda _path: False)
+    monkeypatch.setattr(
+        tool_paths, "_is_private_writable_directory", lambda _path: False
+    )
     fallback = tool_paths.tool_install_dir(tmp_path, "mkv", "current")
     assert fallback == tool_paths._private_tool_root() / "mkv" / "current"
 
@@ -138,11 +189,19 @@ def test_private_runtime_tool_paths_and_trusted_executables(tmp_path: Path, monk
     assert not tool_paths.trusted_executable(executable)
 
     with monkeypatch.context() as context:
-        context.setattr(tool_paths, "os", SimpleNamespace(name="nt", access=lambda _path, _mode: True, X_OK=os.X_OK))
+        context.setattr(
+            tool_paths,
+            "os",
+            SimpleNamespace(
+                name="nt", access=lambda _path, _mode: True, X_OK=os.X_OK
+            ),
+        )
         assert tool_paths.trusted_executable(executable)
 
 
-def test_image_fallback_plan_is_sorted_deduplicated_filtered_and_noncyclic() -> None:
+def test_image_fallback_plan_is_sorted_deduplicated_filtered_and_noncyclic() -> (
+    None
+):
     config = {
         "img_host_10": " Zippy ",
         "img_host_2": "imgbox",
@@ -153,17 +212,30 @@ def test_image_fallback_plan_is_sorted_deduplicated_filtered_and_noncyclic() -> 
         3: "ignored",
     }
     assert configured_image_hosts(config) == ("imgbb", "imgbox", "zippy")
-    assert image_host_fallback_plan(config, preferred_host="Zippy") == ("zippy", "imgbb", "imgbox")
+    assert image_host_fallback_plan(config, preferred_host="Zippy") == (
+        "zippy",
+        "imgbb",
+        "imgbox",
+    )
     assert image_host_fallback_plan(
         config,
         preferred_host="new-host",
         allowed_hosts=["imgbox", "new-host", ""],
         unavailable_hosts=["IMGBB", "new-host", ""],
     ) == ("imgbox",)
-    assert image_host_fallback_plan(config, preferred_host=None, unavailable_hosts=configured_image_hosts(config)) == ()
+    assert (
+        image_host_fallback_plan(
+            config,
+            preferred_host=None,
+            unavailable_hosts=configured_image_hosts(config),
+        )
+        == ()
+    )
 
 
-def test_screenshot_manifest_complete_lifecycle_and_malformed_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_screenshot_manifest_complete_lifecycle_and_malformed_data(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     release_id = "release"
     directory = temp_paths.screenshots_dir(tmp_path, release_id)
     first = directory / "capture.PNG"
@@ -183,7 +255,9 @@ def test_screenshot_manifest_complete_lifecycle_and_malformed_data(tmp_path: Pat
     monkeypatch.setattr(manifest.uuid, "uuid4", lambda: next(generated))
     collision = directory / "same.png"
     collision.write_bytes(b"existing")
-    registered = manifest.register(tmp_path, release_id, [missing, first, no_suffix], "main")
+    registered = manifest.register(
+        tmp_path, release_id, [missing, first, no_suffix], "main"
+    )
     assert [path.name for path in registered] == ["second.png", "third.png"]
     assert collision.read_bytes() == b"existing"
 
@@ -191,7 +265,9 @@ def test_screenshot_manifest_complete_lifecycle_and_malformed_data(tmp_path: Pat
     assert [path.name for path in listed] == ["second.png", "third.png"]
     assert manifest.files(tmp_path, release_id, "other") == []
     assert manifest.group_for(tmp_path, release_id, listed[0]) == "main"
-    assert manifest.group_for(tmp_path, release_id, Path("unknown.png")) == "main"
+    assert (
+        manifest.group_for(tmp_path, release_id, Path("unknown.png")) == "main"
+    )
 
     manifest.forget_file(tmp_path, release_id, listed[0])
     assert listed[0] not in manifest.files(tmp_path, release_id)
@@ -209,7 +285,17 @@ def test_screenshot_manifest_complete_lifecycle_and_malformed_data(tmp_path: Pat
     manifest.clear_group(tmp_path, release_id, "main")
     manifest.forget_file(tmp_path, release_id, Path("none.png"))
 
-    manifest_path.write_text(json.dumps({"screenshots": {"bad": "not-a-dict", "missing": {"group": "other"}}}), encoding="utf-8")
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "screenshots": {
+                    "bad": "not-a-dict",
+                    "missing": {"group": "other"},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
     assert manifest.files(tmp_path, release_id, "main") == []
     manifest.clear_group(tmp_path, release_id, "main")
     assert manifest.group_for(tmp_path, release_id, Path("none.png")) == "main"
@@ -217,6 +303,14 @@ def test_screenshot_manifest_complete_lifecycle_and_malformed_data(tmp_path: Pat
     manifest_path.write_text(json.dumps({"screenshots": []}), encoding="utf-8")
     source = directory / "new.jpg"
     source.write_bytes(b"new")
-    monkeypatch.setattr(manifest.uuid, "uuid4", lambda: SimpleNamespace(hex="published"))
-    assert manifest.register(tmp_path, release_id, [source], "disc")[0].name == "published.jpg"
-    assert manifest.group_for(tmp_path, release_id, Path("published.jpg")) == "disc"
+    monkeypatch.setattr(
+        manifest.uuid, "uuid4", lambda: SimpleNamespace(hex="published")
+    )
+    assert (
+        manifest.register(tmp_path, release_id, [source], "disc")[0].name
+        == "published.jpg"
+    )
+    assert (
+        manifest.group_for(tmp_path, release_id, Path("published.jpg"))
+        == "disc"
+    )

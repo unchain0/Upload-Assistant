@@ -112,12 +112,22 @@ class MusicRelease:
             MetadataSource.INFERRED: 0,
         }[source]
 
-    def set_field(self, name: str, value: Any, source: MetadataSource, confidence: float, *, force: bool = False) -> None:
+    def set_field(
+        self,
+        name: str,
+        value: Any,
+        source: MetadataSource,
+        confidence: float,
+        *,
+        force: bool = False,
+    ) -> None:
         if self._empty_field_value(value):
             return
         existing = self.fields.get(name)
         if self._should_replace_field(existing, confidence, force):
-            self.fields[name] = MetadataValue(value=value, source=source, confidence=confidence)
+            self.fields[name] = MetadataValue(
+                value=value, source=source, confidence=confidence
+            )
             return
         self._record_same_tier_conflict(name, value, source, existing)
 
@@ -126,7 +136,9 @@ class MusicRelease:
         return value in (None, "", [], {})
 
     @staticmethod
-    def _should_replace_field(existing: MetadataValue | None, confidence: float, force: bool) -> bool:
+    def _should_replace_field(
+        existing: MetadataValue | None, confidence: float, force: bool
+    ) -> bool:
         return force or existing is None or confidence > existing.confidence
 
     def _record_same_tier_conflict(
@@ -159,11 +171,18 @@ class MusicRelease:
 
     @property
     def disc_count(self) -> int:
-        return max((track.disc_number or 1 for track in self.tracks), default=1)
+        return max(
+            (track.disc_number or 1 for track in self.tracks), default=1
+        )
 
     @property
-    def technical_variants(self) -> set[tuple[str, int | None, int | None, int | None, str | None]]:
-        return {(t.format, t.bit_depth, t.sample_rate, t.channels, t.bitrate_mode) for t in self.tracks}
+    def technical_variants(
+        self,
+    ) -> set[tuple[str, int | None, int | None, int | None, str | None]]:
+        return {
+            (t.format, t.bit_depth, t.sample_rate, t.channels, t.bitrate_mode)
+            for t in self.tracks
+        }
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -176,7 +195,9 @@ class MusicRelease:
         release.fields = cls._fields_from_dict(data.get("fields", {}))
         release.conflicts = cls._conflicts_from_dict(data.get("conflicts", {}))
         release.warnings = cls._warnings_from_dict(data.get("warnings", []))
-        release.external_ids = cls._external_ids_from_dict(data.get("external_ids", {}))
+        release.external_ids = cls._external_ids_from_dict(
+            data.get("external_ids", {})
+        )
         return release
 
     @staticmethod
@@ -194,7 +215,11 @@ class MusicRelease:
     @staticmethod
     def _auxiliary_from_dict(value: object) -> AuxiliaryFiles:
         auxiliary = _keyword_mapping(value)
-        return AuxiliaryFiles(**auxiliary) if auxiliary is not None else AuxiliaryFiles()
+        return (
+            AuxiliaryFiles(**auxiliary)
+            if auxiliary is not None
+            else AuxiliaryFiles()
+        )
 
     @staticmethod
     def _fields_from_dict(value: object) -> dict[str, MetadataValue]:
@@ -214,10 +239,20 @@ class MusicRelease:
         if values is None:
             return None
         source_value = values.get("source", MetadataSource.INFERRED)
-        source = MetadataSource(source_value) if isinstance(source_value, str) else MetadataSource.INFERRED
+        source = (
+            MetadataSource(source_value)
+            if isinstance(source_value, str)
+            else MetadataSource.INFERRED
+        )
         confidence_value = values.get("confidence", 0)
-        confidence = float(confidence_value) if isinstance(confidence_value, str | int | float) else 0.0
-        return MetadataValue(value=values.get("value"), source=source, confidence=confidence)
+        confidence = (
+            float(confidence_value)
+            if isinstance(confidence_value, str | int | float)
+            else 0.0
+        )
+        return MetadataValue(
+            value=values.get("value"), source=source, confidence=confidence
+        )
 
     @staticmethod
     def _conflicts_from_dict(value: object) -> dict[str, list[str]]:
@@ -241,7 +276,9 @@ class MusicRelease:
         values = _object_mapping(value)
         if values is None:
             return {}
-        return {str(key): str(external_id) for key, external_id in values.items()}
+        return {
+            str(key): str(external_id) for key, external_id in values.items()
+        }
 
     @property
     def path(self) -> Path:

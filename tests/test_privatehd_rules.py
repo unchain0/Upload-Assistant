@@ -16,7 +16,14 @@ def make_meta(**overrides):
         "resolution": "1080p",
         "bit_depth": "8",
         "video_bitrate": 5000,
-        "mediainfo": {"media": {"track": [{"@type": "Video", "BitRate": "5000000"}, {"@type": "Audio", "Format": "AAC", "Language": "en"}]}},
+        "mediainfo": {
+            "media": {
+                "track": [
+                    {"@type": "Video", "BitRate": "5000000"},
+                    {"@type": "Audio", "Format": "AAC", "Language": "en"},
+                ]
+            }
+        },
         "original_language": "en",
         "origin_country": ["US"],
         "year": 2020,
@@ -42,7 +49,16 @@ def test_hdtv_transport_stream_is_allowed():
 
 
 def test_eac3_audio_is_allowed_when_format_commercial_name_is_missing():
-    meta = make_meta(mediainfo={"media": {"track": [{"@type": "Video", "BitRate": "5000000"}, {"@type": "Audio", "Format": "E-AC-3", "Language": "en"}]}})
+    meta = make_meta(
+        mediainfo={
+            "media": {
+                "track": [
+                    {"@type": "Video", "BitRate": "5000000"},
+                    {"@type": "Audio", "Format": "E-AC-3", "Language": "en"},
+                ]
+            }
+        }
+    )
 
     warnings = tracker().rules(meta)
 
@@ -57,7 +73,14 @@ def test_crf_above_twenty_is_reported():
         video_bitrate=6000,
         mediainfo={
             "media": {
-                "track": [{"@type": "Video", "BitRate": "6000000", "Encoded_Library_Settings": "cabac=1 / crf=21.5"}, {"@type": "Audio", "Format": "AAC", "Language": "en"}]
+                "track": [
+                    {
+                        "@type": "Video",
+                        "BitRate": "6000000",
+                        "Encoded_Library_Settings": "cabac=1 / crf=21.5",
+                    },
+                    {"@type": "Audio", "Format": "AAC", "Language": "en"},
+                ]
             }
         },
     )
@@ -103,7 +126,11 @@ def test_truehd_atmos_requires_compatibility_track():
                 "media": {
                     "track": [
                         {"@type": "Video", "BitRate": "5000000"},
-                        {"@type": "Audio", "Format_Commercial_IfAny": "Dolby TrueHD Atmos", "Language": "en"},
+                        {
+                            "@type": "Audio",
+                            "Format_Commercial_IfAny": "Dolby TrueHD Atmos",
+                            "Language": "en",
+                        },
                     ]
                 }
             },
@@ -137,4 +164,7 @@ def test_sub_720p_and_bloated_audio_are_rejected():
 
 
 def test_unknown_rip_type_display_name_is_empty():
-    assert tracker().get_rip_type(make_meta(type="UNKNOWN"), display_name=True) == ""
+    assert (
+        tracker().get_rip_type(make_meta(type="UNKNOWN"), display_name=True)
+        == ""
+    )

@@ -25,20 +25,30 @@ def test_tmdb_manager_accepts_read_access_token_and_uses_bearer_auth() -> None:
     with patch.object(tmdb.httpx, "AsyncClient") as client_class:
         tmdb._tmdb_client()
 
-    assert client_class.call_args.kwargs["headers"]["Authorization"] == f"Bearer {token}"
+    assert (
+        client_class.call_args.kwargs["headers"]["Authorization"]
+        == f"Bearer {token}"
+    )
     assert client_class.call_args.kwargs["params"] == {}
 
 
 def test_tmdb_manager_accepts_explicit_access_token_setting() -> None:
     token = "eyJ" + "y" * 100
-    tmdb.TmdbManager({"DEFAULT": {"tmdb_api": "", "tmdb_access_token": f" {token} "}})
+    tmdb.TmdbManager(
+        {"DEFAULT": {"tmdb_api": "", "tmdb_access_token": f" {token} "}}
+    )
 
     with patch.object(tmdb.httpx, "AsyncClient") as client_class:
         tmdb._tmdb_client()
 
-    assert client_class.call_args.kwargs["headers"]["Authorization"] == f"Bearer {token}"
+    assert (
+        client_class.call_args.kwargs["headers"]["Authorization"]
+        == f"Bearer {token}"
+    )
 
 
-def test_tmdb_manager_raises_semantic_error_when_active_config_has_no_credential() -> None:
+def test_tmdb_manager_raises_semantic_error_when_active_config_has_no_credential() -> (
+    None
+):
     with pytest.raises(TmdbCredentialMissingError):
         tmdb.TmdbManager({"DEFAULT": {"tmdb_api": "   "}})

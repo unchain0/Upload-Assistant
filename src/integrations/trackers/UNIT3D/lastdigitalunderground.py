@@ -36,9 +36,17 @@ class LastDigitalUnderground(UNIT3D):
         self.config: Config = config
         self.common = Common(config)
 
-    async def get_category_id(self, meta: Meta, category: str | None = None, reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_category_id(
+        self,
+        meta: Meta,
+        category: str | None = None,
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         mapping = self._category_mapping()
-        mode = self._mapping_mode(mapping, reverse=reverse, mapping_only=mapping_only)
+        mode = self._mapping_mode(
+            mapping, reverse=reverse, mapping_only=mapping_only
+        )
         if mode is not None:
             return mode
         genres = self._genre_text(meta)
@@ -47,20 +55,38 @@ class LastDigitalUnderground(UNIT3D):
         if meta.category == "TV":
             return {"category_id": await self._tv_category(meta, genres)}
         resolved = self._resolved_base_category(meta, category, mapping)
-        return {"category_id": await self._non_video_category(meta, genres, resolved)}
+        return {
+            "category_id": await self._non_video_category(
+                meta, genres, resolved
+            )
+        }
 
     @staticmethod
     def _category_mapping() -> dict[str, str]:
-        return {"MOVIE": "1", "TV": "2", "Anime": "8", "FANRES": "12", "MUSIC": "3", "EBOOK": "7", "AUDIOBOOK": "34"}
+        return {
+            "MOVIE": "1",
+            "TV": "2",
+            "Anime": "8",
+            "FANRES": "12",
+            "MUSIC": "3",
+            "EBOOK": "7",
+            "AUDIOBOOK": "34",
+        }
 
     @staticmethod
-    def _mapping_mode(mapping: dict[str, str], *, reverse: bool, mapping_only: bool) -> dict[str, str] | None:
+    def _mapping_mode(
+        mapping: dict[str, str], *, reverse: bool, mapping_only: bool
+    ) -> dict[str, str] | None:
         if mapping_only:
             return mapping
-        return {value: key for key, value in mapping.items()} if reverse else None
+        return (
+            {value: key for key, value in mapping.items()} if reverse else None
+        )
 
     @staticmethod
-    def _resolved_base_category(meta: Meta, category: str | None, mapping: dict[str, str]) -> str:
+    def _resolved_base_category(
+        meta: Meta, category: str | None, mapping: dict[str, str]
+    ) -> str:
         resolved = category if category is not None else meta.category
         if resolved == "BOOK":
             resolved = "AUDIOBOOK" if meta.audiobook else "EBOOK"
@@ -75,18 +101,27 @@ class LastDigitalUnderground(UNIT3D):
     def _string_list(value: Any) -> list[str]:
         return [str(item) for item in value] if isinstance(value, list) else []
 
-    async def _non_video_category(self, meta: Meta, genres: str, base: str) -> str:
+    async def _non_video_category(
+        self, meta: Meta, genres: str, base: str
+    ) -> str:
         if "hentai" in genres:
             return "10"
         if self._contains_adult_keyword(genres):
-            has_english_subs = await languages_manager.has_english_language(meta.subtitle_languages or [])
+            has_english_subs = await languages_manager.has_english_language(
+                meta.subtitle_languages or []
+            )
             return "6" if has_english_subs else "45"
         return base
 
     @staticmethod
     def _contains_adult_keyword(genres: str) -> bool:
         terms = ("xxx", "erotic", "porn", "adult", "orgy")
-        return any(re.search(rf"(^|,\s*){re.escape(term)}(\s*,|$)", genres, re.IGNORECASE) for term in terms)
+        return any(
+            re.search(
+                rf"(^|,\s*){re.escape(term)}(\s*,|$)", genres, re.IGNORECASE
+            )
+            for term in terms
+        )
 
     async def _movie_category(self, meta: Meta, genres: str) -> str:
         static = self._movie_static_category(meta, genres)
@@ -125,18 +160,33 @@ class LastDigitalUnderground(UNIT3D):
 
     @classmethod
     def _is_silent(cls, meta: Meta) -> bool:
-        return bool(meta.silent) or any("silent film" in mix.casefold() for mix in cls._sound_mixes(meta))
+        return bool(meta.silent) or any(
+            "silent film" in mix.casefold() for mix in cls._sound_mixes(meta)
+        )
 
     @staticmethod
     def _sound_mixes(meta: Meta) -> list[str]:
         if not isinstance(meta.imdb_info, dict):
             return []
         values = meta.imdb_info.get("sound_mixes", [])
-        return [str(item) for item in values if isinstance(item, str)] if isinstance(values, list) else []
+        return (
+            [str(item) for item in values if isinstance(item, str)]
+            if isinstance(values, list)
+            else []
+        )
 
     @staticmethod
     def _is_holiday(genres: str) -> bool:
-        return any(term in genres for term in ("holiday", "easter", "christmas", "halloween", "thanksgiving"))
+        return any(
+            term in genres
+            for term in (
+                "holiday",
+                "easter",
+                "christmas",
+                "halloween",
+                "thanksgiving",
+            )
+        )
 
     @staticmethod
     def _is_standup(genres: str) -> bool:
@@ -175,16 +225,30 @@ class LastDigitalUnderground(UNIT3D):
 
     @staticmethod
     async def _has_english_audio_or_subs(meta: Meta) -> bool:
-        if await languages_manager.has_english_language(meta.audio_languages or []):
+        if await languages_manager.has_english_language(
+            meta.audio_languages or []
+        ):
             return True
-        return await languages_manager.has_english_language(meta.subtitle_languages or [])
+        return await languages_manager.has_english_language(
+            meta.subtitle_languages or []
+        )
 
-    async def get_type_id(self, meta: Meta, type: str | None = None, reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_type_id(
+        self,
+        meta: Meta,
+        type: str | None = None,
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         mapping = self._type_mapping()
-        mode = self._mapping_mode(mapping, reverse=reverse, mapping_only=mapping_only)
+        mode = self._mapping_mode(
+            mapping, reverse=reverse, mapping_only=mapping_only
+        )
         if mode is not None:
             return mode
-        resolved = self._normalized_type(type if type is not None else meta.type)
+        resolved = self._normalized_type(
+            type if type is not None else meta.type
+        )
         value = self._base_type_id(meta, resolved, mapping)
         return {"type_id": "16" if self._is_fanedit(meta) else value}
 
@@ -220,7 +284,9 @@ class LastDigitalUnderground(UNIT3D):
         return str(value or "").upper().lstrip(".")
 
     @staticmethod
-    def _base_type_id(meta: Meta, resolved: str, mapping: dict[str, str]) -> str:
+    def _base_type_id(
+        meta: Meta, resolved: str, mapping: dict[str, str]
+    ) -> str:
         if meta.category == "BOOK" and resolved not in mapping:
             return "14"
         return mapping.get(resolved, "0")
@@ -244,19 +310,25 @@ class LastDigitalUnderground(UNIT3D):
         return str(meta.original_language or "").casefold() != "en"
 
     async def _audio_language(self, meta: Meta) -> tuple[str, bool]:
-        language = self._first_nonempty(self._string_list(meta.audio_languages))
+        language = self._first_nonempty(
+            self._string_list(meta.audio_languages)
+        )
         if not language:
             return "", False
         iso = self._alpha3(language, "audio")
         if not iso:
             return "", False
-        non_english = not await languages_manager.has_english_language(language)
+        non_english = not await languages_manager.has_english_language(
+            language
+        )
         return iso, non_english
 
     def _subtitle_label(self, meta: Meta) -> str:
         if meta.no_subs:
             return "NoSubs"
-        language = self._first_nonempty(self._string_list(meta.subtitle_languages))
+        language = self._first_nonempty(
+            self._string_list(meta.subtitle_languages)
+        )
         iso = self._alpha3(language, "subtitle") if language else ""
         return f"Subs {iso}" if iso else ""
 
@@ -268,7 +340,9 @@ class LastDigitalUnderground(UNIT3D):
         try:
             return langcodes.find(language).to_alpha3().upper()
         except (LookupError, AttributeError, ValueError) as error:
-            logger.info(f"{self.tracker}: [bold red]Error extracting {kind} language: {escape(str(error))}[/bold red]")
+            logger.info(
+                f"{self.tracker}: [bold red]Error extracting {kind} language: {escape(str(error))}[/bold red]"
+            )
             return ""
 
     @classmethod
@@ -282,25 +356,35 @@ class LastDigitalUnderground(UNIT3D):
         audio_iso: str,
         subtitle_label: str,
     ) -> str:
-        silent_name = cls._silent_subtitle_name(name, category_id, subtitle_label)
+        silent_name = cls._silent_subtitle_name(
+            name, category_id, subtitle_label
+        )
         if silent_name is not None:
             return silent_name
-        if not cls._needs_language_decoration(non_english_original, non_english_audio):
+        if not cls._needs_language_decoration(
+            non_english_original, non_english_audio
+        ):
             return name
         return cls._append_language_parts(name, audio_iso, subtitle_label)
 
     @staticmethod
-    def _silent_subtitle_name(name: str, category_id: str, subtitle_label: str) -> str | None:
+    def _silent_subtitle_name(
+        name: str, category_id: str, subtitle_label: str
+    ) -> str | None:
         if category_id != "18" or not subtitle_label:
             return None
         return f"{name} [{subtitle_label}]"
 
     @staticmethod
-    def _needs_language_decoration(non_english_original: bool, non_english_audio: bool) -> bool:
+    def _needs_language_decoration(
+        non_english_original: bool, non_english_audio: bool
+    ) -> bool:
         return non_english_original or non_english_audio
 
     @classmethod
-    def _append_language_parts(cls, name: str, audio_iso: str, subtitle_label: str) -> str:
+    def _append_language_parts(
+        cls, name: str, audio_iso: str, subtitle_label: str
+    ) -> str:
         parts = cls._language_parts(audio_iso, subtitle_label)
         return f"{name} {' '.join(parts)}" if parts else name
 

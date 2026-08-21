@@ -33,7 +33,9 @@ class ReelFlix(UNIT3D):
         self.common = Common(config)
 
     async def get_additional_checks(self, meta: Meta) -> bool:
-        return await self.common.check_and_confirm_adult_media_upload(meta, self.tracker)
+        return await self.common.check_and_confirm_adult_media_upload(
+            meta, self.tracker
+        )
 
     async def get_name(self, meta: Meta) -> dict[str, str]:
         rf_name = meta.name
@@ -41,14 +43,24 @@ class ReelFlix(UNIT3D):
         tag_lower = tag_value.lower()
         invalid_tags = ["nogrp", "nogroup", "unknown", "-unk-"]
 
-        if tag_value == "" or any(invalid_tag in tag_lower for invalid_tag in invalid_tags):
+        if tag_value == "" or any(
+            invalid_tag in tag_lower for invalid_tag in invalid_tags
+        ):
             for invalid_tag in invalid_tags:
-                rf_name = re.sub(f"-{invalid_tag}", "", rf_name, flags=re.IGNORECASE)
+                rf_name = re.sub(
+                    f"-{invalid_tag}", "", rf_name, flags=re.IGNORECASE
+                )
             rf_name = f"{rf_name}-NoGroup"
 
         return {"name": rf_name}
 
-    async def get_type_id(self, meta: Meta, type: str | None = None, reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_type_id(
+        self,
+        meta: Meta,
+        type: str | None = None,
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         type_id = {
             "DISC": "43",
             "REMUX": "40",
@@ -65,7 +77,13 @@ class ReelFlix(UNIT3D):
         type_value = type if type is not None else str(meta.type)
         return {"type_id": type_id.get(type_value, "0")}
 
-    async def get_resolution_id(self, meta: Meta, resolution: str | None = None, reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_resolution_id(
+        self,
+        meta: Meta,
+        resolution: str | None = None,
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         resolution_id = {
             # '8640p':'10',
             "4320p": "1",
@@ -83,5 +101,7 @@ class ReelFlix(UNIT3D):
             return resolution_id
         if reverse:
             return {v: k for k, v in resolution_id.items()}
-        resolution_value = resolution if resolution is not None else meta.resolution
+        resolution_value = (
+            resolution if resolution is not None else meta.resolution
+        )
         return {"resolution_id": resolution_id.get(resolution_value, "10")}

@@ -9,7 +9,10 @@ from src.domain_models.release import Meta
 from src.integrations.filesystem.screenshot_manifest import register
 from src.integrations.image_hosts.uploader import _upload_screens
 from src.integrations.media.screenshot_capture import screenshots
-from src.services.preparation_service import Prep, populate_hdr_for_early_capture
+from src.services.preparation_service import (
+    Prep,
+    populate_hdr_for_early_capture,
+)
 
 
 class _TakeScreens:
@@ -19,7 +22,9 @@ class _TakeScreens:
     async def screenshots(self, *_args: object, **_kwargs: object) -> None:
         self.calls.append((_args, _kwargs))
 
-    async def disc_screenshots(self, *_args: object, **_kwargs: object) -> None:
+    async def disc_screenshots(
+        self, *_args: object, **_kwargs: object
+    ) -> None:
         self.calls.append((_args, _kwargs))
 
 
@@ -35,7 +40,11 @@ def test_early_screenshots_wait_for_description_images() -> None:
     prep, screenshot_spy = _prep_with_screenshot_spy()
     meta = Meta(category="MOVIE", keep_images=True, screens=6)
 
-    asyncio.run(prep._capture_early_screenshots(meta, "Release", "C:/media/Release.mkv", {}))
+    asyncio.run(
+        prep._capture_early_screenshots(
+            meta, "Release", "C:/media/Release.mkv", {}
+        )
+    )
 
     assert screenshot_spy.calls == []
 
@@ -44,13 +53,19 @@ def test_early_screenshots_remain_enabled_without_description_images() -> None:
     prep, screenshot_spy = _prep_with_screenshot_spy()
     meta = Meta(category="MOVIE", keep_images=False, screens=6)
 
-    asyncio.run(prep._capture_early_screenshots(meta, "Release", "C:/media/Release.mkv", {}))
+    asyncio.run(
+        prep._capture_early_screenshots(
+            meta, "Release", "C:/media/Release.mkv", {}
+        )
+    )
 
     assert len(screenshot_spy.calls) == 1
     assert screenshot_spy.calls[0][1]["capture_group"] == "main"
 
 
-def test_early_capture_populates_hdr_before_category_detection(monkeypatch) -> None:
+def test_early_capture_populates_hdr_before_category_detection(
+    monkeypatch,
+) -> None:
     meta = Meta(category="")
 
     async def hdr_stub(mi, bdinfo):
@@ -58,9 +73,14 @@ def test_early_capture_populates_hdr_before_category_detection(monkeypatch) -> N
         assert bdinfo == {}
         return "HDR"
 
-    monkeypatch.setattr("src.services.preparation_service.prep_helpers.video_manager.get_hdr", hdr_stub)
+    monkeypatch.setattr(
+        "src.services.preparation_service.prep_helpers.video_manager.get_hdr",
+        hdr_stub,
+    )
 
-    asyncio.run(populate_hdr_for_early_capture(meta, {"media": {"track": []}}, {}))
+    asyncio.run(
+        populate_hdr_for_early_capture(meta, {"media": {"track": []}}, {})
+    )
 
     assert meta.hdr == "HDR"
 
@@ -73,7 +93,9 @@ def test_early_capture_skips_hdr_probe_without_video_metadata() -> None:
     assert meta.hdr == ""
 
 
-def test_registered_main_screenshots_are_reused_when_title_changes(tmp_path: Path) -> None:
+def test_registered_main_screenshots_are_reused_when_title_changes(
+    tmp_path: Path,
+) -> None:
     release_id = "release"
     screenshot_dir = tmp_path / "tmp" / release_id / "screenshots"
     screenshot_dir.mkdir(parents=True)
@@ -83,15 +105,35 @@ def test_registered_main_screenshots_are_reused_when_title_changes(tmp_path: Pat
         image.write_bytes(b"image")
         original_paths.append(image)
     registered = register(tmp_path, release_id, original_paths, "main")
-    meta = Meta(category="MOVIE", base_dir=str(tmp_path), uuid=release_id, screens=6, imghost="imgbb")
+    meta = Meta(
+        category="MOVIE",
+        base_dir=str(tmp_path),
+        uuid=release_id,
+        screens=6,
+        imghost="imgbb",
+    )
 
-    with patch("src.integrations.media.screenshot_capture.get_image_host", new=AsyncMock(return_value="imgbb")):
-        result = asyncio.run(screenshots("unused.mkv", "Punctuated, Title", release_id, str(tmp_path), meta, manual_frames=[100, 200]))
+    with patch(
+        "src.integrations.media.screenshot_capture.get_image_host",
+        new=AsyncMock(return_value="imgbb"),
+    ):
+        result = asyncio.run(
+            screenshots(
+                "unused.mkv",
+                "Punctuated, Title",
+                release_id,
+                str(tmp_path),
+                meta,
+                manual_frames=[100, 200],
+            )
+        )
 
     assert set(result or []) == {str(path) for path in registered}
 
 
-def test_partial_registered_group_captures_only_missing_screenshots(tmp_path: Path) -> None:
+def test_partial_registered_group_captures_only_missing_screenshots(
+    tmp_path: Path,
+) -> None:
     release_id = "release"
     release_dir = tmp_path / "tmp" / release_id
     screenshot_dir = release_dir / "screenshots"
@@ -106,7 +148,13 @@ def test_partial_registered_group_captures_only_missing_screenshots(tmp_path: Pa
         image.write_bytes(b"image")
         existing.append(image)
     register(tmp_path, release_id, existing, "main")
-    meta = Meta(category="MOVIE", base_dir=str(tmp_path), uuid=release_id, screens=3, imghost="imgbb")
+    meta = Meta(
+        category="MOVIE",
+        base_dir=str(tmp_path),
+        uuid=release_id,
+        screens=3,
+        imghost="imgbb",
+    )
     capture_calls: list[object] = []
 
     async def capture_stub(args: tuple[object, ...]):
@@ -116,17 +164,34 @@ def test_partial_registered_group_captures_only_missing_screenshots(tmp_path: Pa
         return args[0], str(output)
 
     with (
-        patch("src.integrations.media.screenshot_capture.get_image_host", new=AsyncMock(return_value="imgbb")),
-        patch("src.integrations.media.screenshot_capture.capture_screenshot", new=capture_stub),
+        patch(
+            "src.integrations.media.screenshot_capture.get_image_host",
+            new=AsyncMock(return_value="imgbb"),
+        ),
+        patch(
+            "src.integrations.media.screenshot_capture.capture_screenshot",
+            new=capture_stub,
+        ),
     ):
-        result = asyncio.run(screenshots("unused.mkv", "Punctuated, Title", release_id, str(tmp_path), meta, manual_frames=[100, 200, 300]))
+        result = asyncio.run(
+            screenshots(
+                "unused.mkv",
+                "Punctuated, Title",
+                release_id,
+                str(tmp_path),
+                meta,
+                manual_frames=[100, 200, 300],
+            )
+        )
 
     assert len(capture_calls) == 1
     assert len(result or []) == 3
 
 
 @pytest.mark.asyncio
-async def test_successful_screenshot_capture_preserves_unrelated_child(tmp_path: Path) -> None:
+async def test_successful_screenshot_capture_preserves_unrelated_child(
+    tmp_path: Path,
+) -> None:
     release_id = "release"
     release_dir = tmp_path / "tmp" / release_id
     release_dir.mkdir(parents=True)
@@ -134,27 +199,51 @@ async def test_successful_screenshot_capture_preserves_unrelated_child(tmp_path:
         '{"media": {"track": [{"Duration": "100"}, {"Duration": "100", "Width": "1920", "Height": "1080", "PixelAspectRatio": "1", "DisplayAspectRatio": "1.777", "FrameRate": "24"}]}}',
         encoding="utf-8",
     )
-    meta = Meta(category="MOVIE", base_dir=str(tmp_path), uuid=release_id, screens=1, imghost="imgbb")
+    meta = Meta(
+        category="MOVIE",
+        base_dir=str(tmp_path),
+        uuid=release_id,
+        screens=1,
+        imghost="imgbb",
+    )
 
     async def capture_stub(args: tuple[object, ...]):
         output = Path(str(args[3]))
         output.write_bytes(b"image" * 20000)
         return args[0], str(output)
 
-    unrelated = await asyncio.create_subprocess_exec(sys.executable, "-c", "import time; time.sleep(60)")
+    unrelated = await asyncio.create_subprocess_exec(
+        sys.executable, "-c", "import time; time.sleep(60)"
+    )
     try:
         with (
-            patch("src.integrations.media.screenshot_capture.get_image_host", new=AsyncMock(return_value="imgbb")),
-            patch("src.integrations.media.screenshot_capture.capture_screenshot", new=capture_stub),
+            patch(
+                "src.integrations.media.screenshot_capture.get_image_host",
+                new=AsyncMock(return_value="imgbb"),
+            ),
+            patch(
+                "src.integrations.media.screenshot_capture.capture_screenshot",
+                new=capture_stub,
+            ),
         ):
-            result = await screenshots("unused.mkv", "Release", release_id, str(tmp_path), meta, manual_frames=[100], cleanup_after_capture=False)
+            result = await screenshots(
+                "unused.mkv",
+                "Release",
+                release_id,
+                str(tmp_path),
+                meta,
+                manual_frames=[100],
+                cleanup_after_capture=False,
+            )
 
         assert len(result or []) == 1
         for _ in range(100):
             if unrelated.returncode is not None:
                 break
             await asyncio.sleep(0.01)
-        assert unrelated.returncode is None, "successful screenshot capture terminated an unrelated child process"
+        assert unrelated.returncode is None, (
+            "successful screenshot capture terminated an unrelated child process"
+        )
     finally:
         if unrelated.returncode is None:
             unrelated.terminate()
@@ -165,7 +254,9 @@ async def test_successful_screenshot_capture_preserves_unrelated_child(tmp_path:
             await unrelated.wait()
 
 
-def test_upload_uses_only_registered_main_screenshots(tmp_path: Path, monkeypatch) -> None:
+def test_upload_uses_only_registered_main_screenshots(
+    tmp_path: Path, monkeypatch
+) -> None:
     release_id = "release"
     screenshot_dir = tmp_path / "tmp" / release_id / "screenshots"
     screenshot_dir.mkdir(parents=True)
@@ -175,17 +266,29 @@ def test_upload_uses_only_registered_main_screenshots(tmp_path: Path, monkeypatc
     file_source.write_bytes(b"file")
     main_screen = register(tmp_path, release_id, [main_source], "main")[0]
     register(tmp_path, release_id, [file_source], "FILE_1")
-    meta = Meta(base_dir=str(tmp_path), uuid=release_id, imghost="imgbb", image_list=[])
+    meta = Meta(
+        base_dir=str(tmp_path), uuid=release_id, imghost="imgbb", image_list=[]
+    )
     calls: list[str] = []
 
     async def upload_stub(args: list[object]) -> dict[str, str]:
         calls.append(str(args[0]))
-        return {"status": "success", "img_url": "https://images.example/main.png", "raw_url": "https://images.example/main.png", "web_url": "https://images.example/main.png"}
+        return {
+            "status": "success",
+            "img_url": "https://images.example/main.png",
+            "raw_url": "https://images.example/main.png",
+            "web_url": "https://images.example/main.png",
+        }
 
     config = {"DEFAULT": {"img_host_1": "imgbb"}, "TRACKERS": {}}
     monkeypatch.chdir(screenshot_dir)
-    with patch("src.integrations.image_hosts.uploader.upload_image_task", new=upload_stub):
-        _, uploaded_count = asyncio.run(_upload_screens(config, meta, 1, 1, 0, 1, [], {}))
+    with patch(
+        "src.integrations.image_hosts.uploader.upload_image_task",
+        new=upload_stub,
+    ):
+        _, uploaded_count = asyncio.run(
+            _upload_screens(config, meta, 1, 1, 0, 1, [], {})
+        )
 
     assert uploaded_count == 1
     assert calls == [main_screen.name]
@@ -225,7 +328,9 @@ def test_early_bdmv_capture_includes_extra_discs() -> None:
 
 
 @pytest.mark.asyncio
-async def test_screenshot_cancellation_propagates_without_system_exit(tmp_path: Path) -> None:
+async def test_screenshot_cancellation_propagates_without_system_exit(
+    tmp_path: Path,
+) -> None:
     release_id = "release-cancelled"
     release_dir = tmp_path / "tmp" / release_id
     release_dir.mkdir(parents=True)
@@ -233,17 +338,31 @@ async def test_screenshot_cancellation_propagates_without_system_exit(tmp_path: 
         '{"media": {"track": [{"Duration": "100"}, {"Duration": "100", "Width": "1920", "Height": "1080", "PixelAspectRatio": "1", "DisplayAspectRatio": "1.777", "FrameRate": "24"}]}}',
         encoding="utf-8",
     )
-    meta = Meta(category="MOVIE", base_dir=str(tmp_path), uuid=release_id, screens=1, imghost="imgbb")
+    meta = Meta(
+        category="MOVIE",
+        base_dir=str(tmp_path),
+        uuid=release_id,
+        screens=1,
+        imghost="imgbb",
+    )
     started = asyncio.Event()
 
-    async def capture_stub(_args: tuple[object, ...]) -> tuple[int, str | None]:
+    async def capture_stub(
+        _args: tuple[object, ...],
+    ) -> tuple[int, str | None]:
         started.set()
         await asyncio.Event().wait()
         raise AssertionError("unreachable")
 
     with (
-        patch("src.integrations.media.screenshot_capture.get_image_host", new=AsyncMock(return_value="imgbb")),
-        patch("src.integrations.media.screenshot_capture.capture_screenshot", new=capture_stub),
+        patch(
+            "src.integrations.media.screenshot_capture.get_image_host",
+            new=AsyncMock(return_value="imgbb"),
+        ),
+        patch(
+            "src.integrations.media.screenshot_capture.capture_screenshot",
+            new=capture_stub,
+        ),
     ):
         task = asyncio.create_task(
             screenshots(

@@ -17,14 +17,20 @@ class IGDBAPI:
         self.client_id = client_id
         self.client_secret = client_secret
         self.base_dir = base_dir
-        self.token_file = Path(base_dir) / "tmp" / "igdb_cache" / "igdb_token.json" if base_dir else ""
+        self.token_file = (
+            Path(base_dir) / "tmp" / "igdb_cache" / "igdb_token.json"
+            if base_dir
+            else ""
+        )
         self.access_token = None
 
     async def get_access_token(self) -> str | None:
         # Try loading cached token
         if self.token_file and Path(self.token_file).exists():
             with contextlib.suppress(Exception):
-                async with aiofiles.open(self.token_file, encoding="utf-8") as f:
+                async with aiofiles.open(
+                    self.token_file, encoding="utf-8"
+                ) as f:
                     content = await f.read()
                     cached = json.loads(content)
                 if cached.get("expires_at", 0) > time.time() + 300:
@@ -33,7 +39,11 @@ class IGDBAPI:
 
         # Request new token
         url = "https://id.twitch.tv/oauth2/token"
-        params = {"client_id": self.client_id, "client_secret": self.client_secret, "grant_type": "client_credentials"}
+        params = {
+            "client_id": self.client_id,
+            "client_secret": self.client_secret,
+            "grant_type": "client_credentials",
+        }
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.post(url, params=params)
@@ -44,11 +54,24 @@ class IGDBAPI:
                     expires_at = time.time() + expires_in
 
                     if self.token_file:
-                        Path(self.token_file).parent.mkdir(parents=True, exist_ok=True)
-                        async with aiofiles.open(self.token_file, "w", encoding="utf-8") as f:
-                            await f.write(json.dumps({"access_token": self.access_token, "expires_at": expires_at}))
+                        Path(self.token_file).parent.mkdir(
+                            parents=True, exist_ok=True
+                        )
+                        async with aiofiles.open(
+                            self.token_file, "w", encoding="utf-8"
+                        ) as f:
+                            await f.write(
+                                json.dumps(
+                                    {
+                                        "access_token": self.access_token,
+                                        "expires_at": expires_at,
+                                    }
+                                )
+                            )
                     return self.access_token
-                logger.info(f"[red]IGDB: Failed to authenticate with Twitch API. Status: {resp.status_code}[/red]")
+                logger.info(
+                    f"[red]IGDB: Failed to authenticate with Twitch API. Status: {resp.status_code}[/red]"
+                )
         except Exception as e:
             logger.info(f"[red]IGDB: Twitch OAuth error: {e}[/red]")
         return None
@@ -61,7 +84,9 @@ class IGDBAPI:
         cache = cache_for(self.base_dir)
         cached_data = await cache.get("igdb", "search", clean_title)
         if not is_cache_miss(cached_data) and isinstance(cached_data, list):
-            logger.info(f"[cyan]IGDB: Using cached search results for '{title}'[/cyan]")
+            logger.info(
+                f"[cyan]IGDB: Using cached search results for '{title}'[/cyan]"
+            )
             return cached_data
 
         token = await self.get_access_token()
@@ -69,7 +94,12 @@ class IGDBAPI:
             return None
 
         url = "https://api.igdb.com/v4/games"
-        headers = {"Client-ID": self.client_id, "Authorization": f"Bearer {token}", "Accept": "application/json", "Content-Type": "text/plain"}
+        headers = {
+            "Client-ID": self.client_id,
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "Content-Type": "text/plain",
+        }
 
         # Apicalypse query
         query = f'search "{title}"; fields name, summary, storyline, first_release_date, rating, rating_count, cover.url, screenshots.url, genres.name, platforms.name, involved_companies.company.name, involved_companies.developer, involved_companies.publisher, websites.url, websites.type, external_games.url, external_games.external_game_source, external_games.uid, language_supports.language.name, language_supports.language_support_type.name; limit 5;'
@@ -80,9 +110,17 @@ class IGDBAPI:
                 if resp.status_code == 200:
                     data = resp.json()
                     if data is not None:
-                        await cache.set("igdb", "search", clean_title, data, negative=not bool(data))
+                        await cache.set(
+                            "igdb",
+                            "search",
+                            clean_title,
+                            data,
+                            negative=not bool(data),
+                        )
                     return data
-                logger.info(f"[red]IGDB: API request failed. Status: {resp.status_code}, Body: {resp.text}[/red]")
+                logger.info(
+                    f"[red]IGDB: API request failed. Status: {resp.status_code}, Body: {resp.text}[/red]"
+                )
         except Exception as e:
             logger.info(f"[red]IGDB: Search error: {e}[/red]")
         return None
@@ -97,7 +135,9 @@ class IGDBAPI:
         cache = cache_for(self.base_dir)
         cached_data = await cache.get("igdb", "game", igdb_id_str)
         if not is_cache_miss(cached_data) and isinstance(cached_data, dict):
-            logger.info(f"[cyan]IGDB: Using cached game details for ID '{igdb_id_str}'[/cyan]")
+            logger.info(
+                f"[cyan]IGDB: Using cached game details for ID '{igdb_id_str}'[/cyan]"
+            )
             return cached_data
 
         token = await self.get_access_token()
@@ -105,7 +145,12 @@ class IGDBAPI:
             return None
 
         url = "https://api.igdb.com/v4/games"
-        headers = {"Client-ID": self.client_id, "Authorization": f"Bearer {token}", "Accept": "application/json", "Content-Type": "text/plain"}
+        headers = {
+            "Client-ID": self.client_id,
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "Content-Type": "text/plain",
+        }
 
         # Apicalypse query by ID
         query = f"where id = {igdb_id_str}; fields name, summary, storyline, first_release_date, rating, rating_count, cover.url, screenshots.url, genres.name, platforms.name, involved_companies.company.name, involved_companies.developer, involved_companies.publisher, websites.url, websites.type, external_games.url, external_games.external_game_source, external_games.uid, language_supports.language.name, language_supports.language_support_type.name;"
@@ -118,16 +163,24 @@ class IGDBAPI:
                     if isinstance(data, list) and len(data) > 0:
                         game_data = data[0]
                         if game_data is not None:
-                            await cache.set("igdb", "game", igdb_id_str, game_data)
+                            await cache.set(
+                                "igdb", "game", igdb_id_str, game_data
+                            )
                         return game_data
-                    logger.info(f"[red]IGDB: No game found with ID {igdb_id_str}[/red]")
+                    logger.info(
+                        f"[red]IGDB: No game found with ID {igdb_id_str}[/red]"
+                    )
                 else:
-                    logger.info(f"[red]IGDB: API request failed. Status: {resp.status_code}, Body: {resp.text}[/red]")
+                    logger.info(
+                        f"[red]IGDB: API request failed. Status: {resp.status_code}, Body: {resp.text}[/red]"
+                    )
         except Exception as e:
             logger.info(f"[red]IGDB: Fetch error: {e}[/red]")
         return None
 
-    async def fetch_game_by_steam_id(self, steam_id: str) -> dict[str, Any] | None:
+    async def fetch_game_by_steam_id(
+        self, steam_id: str
+    ) -> dict[str, Any] | None:
 
         steam_id_str = steam_id.strip()
         if not steam_id_str.isdigit():
@@ -137,7 +190,9 @@ class IGDBAPI:
         cache = cache_for(self.base_dir)
         cached_data = await cache.get("igdb", "steam", steam_id_str)
         if not is_cache_miss(cached_data) and isinstance(cached_data, dict):
-            logger.info(f"[cyan]IGDB: Using cached game details for Steam ID: {steam_id_str}[/cyan]")
+            logger.info(
+                f"[cyan]IGDB: Using cached game details for Steam ID: {steam_id_str}[/cyan]"
+            )
             return cached_data
 
         token = await self.get_access_token()
@@ -145,7 +200,12 @@ class IGDBAPI:
             return None
 
         url = "https://api.igdb.com/v4/games"
-        headers = {"Client-ID": self.client_id, "Authorization": f"Bearer {token}", "Accept": "application/json", "Content-Type": "text/plain"}
+        headers = {
+            "Client-ID": self.client_id,
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "Content-Type": "text/plain",
+        }
 
         # Query games where external_games.external_game_source = 1 (Steam) and external_games.uid = steam_id_str
         query = f'where external_games.external_game_source = 1 & external_games.uid = "{steam_id_str}"; fields name, summary, storyline, first_release_date, rating, rating_count, cover.url, screenshots.url, genres.name, platforms.name, involved_companies.company.name, involved_companies.developer, involved_companies.publisher, websites.url, websites.type, external_games.url, external_games.external_game_source, external_games.uid, language_supports.language.name, language_supports.language_support_type.name;'
@@ -158,11 +218,17 @@ class IGDBAPI:
                     if isinstance(data, list) and len(data) > 0:
                         game_data = data[0]
                         if game_data is not None:
-                            await cache.set("igdb", "steam", steam_id_str, game_data)
+                            await cache.set(
+                                "igdb", "steam", steam_id_str, game_data
+                            )
                         return game_data
-                    logger.info(f"[red]IGDB: No game found with Steam ID {steam_id_str}[/red]")
+                    logger.info(
+                        f"[red]IGDB: No game found with Steam ID {steam_id_str}[/red]"
+                    )
                 else:
-                    logger.info(f"[red]IGDB: API request failed. Status: {resp.status_code}, Body: {resp.text}[/red]")
+                    logger.info(
+                        f"[red]IGDB: API request failed. Status: {resp.status_code}, Body: {resp.text}[/red]"
+                    )
         except Exception as e:
             logger.info(f"[red]IGDB: Steam Fetch error: {e}[/red]")
         return None

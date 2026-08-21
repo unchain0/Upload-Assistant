@@ -129,7 +129,11 @@ class Blutopia(UNIT3D):
             allowed = ["mkv"]
             if type_name == "HDTV":
                 allowed.append("ts")
-            if type_name in ["WEBDL", "HDTV"] and "DV" in meta.hdr and "HDR" not in meta.hdr:
+            if (
+                type_name in ["WEBDL", "HDTV"]
+                and "DV" in meta.hdr
+                and "HDR" not in meta.hdr
+            ):
                 allowed.append("mp4")
 
             if container not in allowed:
@@ -138,18 +142,44 @@ class Blutopia(UNIT3D):
                 )
                 return False
 
-        if meta.type in ["ENCODE", "REMUX"] and "HDR" in meta.hdr and "DV" in meta.hdr and (not meta.unattended or (meta.unattended and meta.unattended_confirm)):
-            logger.info(f"{self.tracker}: [bold red]Releases using a Dolby Vision layer from a different source have specific description requirements.[/bold red]")
-            logger.info(f"{self.tracker}: [bold red]See rule 12.5. You must have a correct pre-formatted description if this release has a derived layer[/bold red]")
-            if not cli_ui.ask_yes_no("Do you want to upload anyway?", default=False):
+        if (
+            meta.type in ["ENCODE", "REMUX"]
+            and "HDR" in meta.hdr
+            and "DV" in meta.hdr
+            and (
+                not meta.unattended
+                or (meta.unattended and meta.unattended_confirm)
+            )
+        ):
+            logger.info(
+                f"{self.tracker}: [bold red]Releases using a Dolby Vision layer from a different source have specific description requirements.[/bold red]"
+            )
+            logger.info(
+                f"{self.tracker}: [bold red]See rule 12.5. You must have a correct pre-formatted description if this release has a derived layer[/bold red]"
+            )
+            if not cli_ui.ask_yes_no(
+                "Do you want to upload anyway?", default=False
+            ):
                 return False
-            if cli_ui.ask_yes_no("Is this a derived layer release?", default=False):
+            if cli_ui.ask_yes_no(
+                "Is this a derived layer release?", default=False
+            ):
                 meta.tracker_status[self.tracker]["other"] = True
 
-        if meta.type not in ["WEBDL"] and not meta.is_disc and meta.tag in ["AOC", "CMRG", "EVO", "TERMiNAL", "ViSION"]:
-            if not meta.unattended or (meta.unattended and meta.unattended_confirm):
-                logger.info(f"{self.tracker}: [bold red]Group {meta.tag} is only allowed for raw type content[/bold red]")
-                if cli_ui.ask_yes_no("Do you want to upload anyway?", default=False):
+        if (
+            meta.type not in ["WEBDL"]
+            and not meta.is_disc
+            and meta.tag in ["AOC", "CMRG", "EVO", "TERMiNAL", "ViSION"]
+        ):
+            if not meta.unattended or (
+                meta.unattended and meta.unattended_confirm
+            ):
+                logger.info(
+                    f"{self.tracker}: [bold red]Group {meta.tag} is only allowed for raw type content[/bold red]"
+                )
+                if cli_ui.ask_yes_no(
+                    "Do you want to upload anyway?", default=False
+                ):
                     pass
                 else:
                     return False
@@ -157,7 +187,9 @@ class Blutopia(UNIT3D):
                 return False
 
         if not meta.valid_mi_settings:
-            logger.info(f"{self.tracker}: [bold red]No encoding settings in mediainfo, skipping {self.tracker} upload.[/bold red]")
+            logger.info(
+                f"{self.tracker}: [bold red]No encoding settings in mediainfo, skipping {self.tracker} upload.[/bold red]"
+            )
             return False
 
         return should_continue
@@ -165,7 +197,11 @@ class Blutopia(UNIT3D):
     async def get_name(self, meta: Meta) -> dict[str, str]:
         blu_name = meta.name
         if meta.category == "TV" and meta.episode_title != "":
-            blu_name = blu_name.replace(f"{meta.episode_title} {meta.resolution}", f"{meta.resolution}", 1)
+            blu_name = blu_name.replace(
+                f"{meta.episode_title} {meta.resolution}",
+                f"{meta.resolution}",
+                1,
+            )
         imdb_name = meta.imdb_info.get("title", "")
         imdb_year = str(meta.imdb_info.get("year", ""))
         imdb_aka = meta.imdb_info.get("aka", "")
@@ -177,17 +213,33 @@ class Blutopia(UNIT3D):
                 blu_name = blu_name.replace(f"{aka} ", "", 1)
             blu_name = blu_name.replace(f"{meta.title}", imdb_name, 1)
 
-            if imdb_aka and imdb_aka.strip() and imdb_aka != imdb_name and not meta.no_aka:
-                blu_name = blu_name.replace(f"{imdb_name}", f"{imdb_name} AKA {imdb_aka}", 1)
+            if (
+                imdb_aka
+                and imdb_aka.strip()
+                and imdb_aka != imdb_name
+                and not meta.no_aka
+            ):
+                blu_name = blu_name.replace(
+                    f"{imdb_name}", f"{imdb_name} AKA {imdb_aka}", 1
+                )
 
-        if meta.category != "TV" and imdb_year and imdb_year.strip() and year and year.strip() and imdb_year != year:
+        if (
+            meta.category != "TV"
+            and imdb_year
+            and imdb_year.strip()
+            and year
+            and year.strip()
+            and imdb_year != year
+        ):
             blu_name = blu_name.replace(f"{year}", imdb_year, 1)
 
         if webdv:
             blu_name = blu_name.replace("HYBRID ", "", 1)
 
         if meta.tracker_status.get(self.tracker, {}).get("other", False):
-            blu_name = blu_name.replace(f"{meta.resolution}", f"{meta.resolution} DVP5/DVP8", 1)
+            blu_name = blu_name.replace(
+                f"{meta.resolution}", f"{meta.resolution} DVP5/DVP8", 1
+            )
 
         return {"name": blu_name}
 
@@ -235,7 +287,14 @@ class Blutopia(UNIT3D):
         reverse: bool = False,
         mapping_only: bool = False,
     ) -> dict[str, str]:
-        type_id = {"DISC": "1", "REMUX": "3", "WEBDL": "4", "WEBRIP": "5", "HDTV": "6", "ENCODE": "12"}
+        type_id = {
+            "DISC": "1",
+            "REMUX": "3",
+            "WEBDL": "4",
+            "WEBRIP": "5",
+            "HDTV": "6",
+            "ENCODE": "12",
+        }
 
         if mapping_only:
             return type_id
@@ -254,7 +313,19 @@ class Blutopia(UNIT3D):
         reverse: bool = False,
         mapping_only: bool = False,
     ) -> dict[str, str]:
-        resolution_id = {"8640p": "10", "4320p": "11", "2160p": "1", "1440p": "2", "1080p": "2", "1080i": "3", "720p": "5", "576p": "6", "576i": "7", "480p": "8", "480i": "9"}
+        resolution_id = {
+            "8640p": "10",
+            "4320p": "11",
+            "2160p": "1",
+            "1440p": "2",
+            "1080p": "2",
+            "1080i": "3",
+            "720p": "5",
+            "576p": "6",
+            "576i": "7",
+            "480p": "8",
+            "480i": "9",
+        }
         if mapping_only:
             return resolution_id
         if reverse:

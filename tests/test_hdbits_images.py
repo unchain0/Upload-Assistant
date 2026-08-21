@@ -29,12 +29,26 @@ class _Client:
         return _Response()
 
 
-def test_hdbits_rehosts_screenshots_from_typed_directory(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("src.integrations.trackers.hdbits.httpx.AsyncClient", lambda **_kwargs: _Client())
+def test_hdbits_rehosts_screenshots_from_typed_directory(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "src.integrations.trackers.hdbits.httpx.AsyncClient",
+        lambda **_kwargs: _Client(),
+    )
     screenshot = screenshots_dir(tmp_path, "release") / "screen.png"
     screenshot.write_bytes(b"png")
-    tracker = HDBits({"TRACKERS": {"HDBITS": {"username": "user", "passkey": "pass"}}})
-    meta = Meta(base_dir=str(tmp_path), uuid="release", name="Example", category="MOVIE")
+    tracker = HDBits(
+        {"TRACKERS": {"HDBITS": {"username": "user", "passkey": "pass"}}}
+    )
+    meta = Meta(
+        base_dir=str(tmp_path),
+        uuid="release",
+        name="Example",
+        category="MOVIE",
+    )
 
     assert asyncio.run(tracker.hdbimg_upload(meta)) == _Response.text
-    assert _Client.files == {"images_files[0]": ("screen.png", b"png", "image/png")}
+    assert _Client.files == {
+        "images_files[0]": ("screen.png", b"png", "image/png")
+    }

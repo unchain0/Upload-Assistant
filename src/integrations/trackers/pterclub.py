@@ -13,11 +13,17 @@ from unidecode import unidecode
 
 from src.domain_models.processing import LoginError, UploadError
 from src.domain_models.release import Meta
-from src.integrations.filesystem.temp_paths import release_temp_dir, screenshots_dir
+from src.integrations.filesystem.temp_paths import (
+    release_temp_dir,
+    screenshots_dir,
+)
 from src.integrations.observability.runtime_support import logger
 from src.integrations.security.redaction import Redaction
 from src.integrations.trackers.common import Common
-from src.integrations.trackers.cookie_auth import CookieValidator, find_cookie_file
+from src.integrations.trackers.cookie_auth import (
+    CookieValidator,
+    find_cookie_file,
+)
 
 Config = dict[str, Any]
 
@@ -41,11 +47,21 @@ class PTerClub:
 
     def __init__(self, config: Config) -> None:
         self.config: Config = config
-        self.passkey = str(config["TRACKERS"][self.tracker].get("passkey", "")).strip()
-        self.username = str(config["TRACKERS"][self.tracker].get("username", "")).strip()
-        self.password = str(config["TRACKERS"][self.tracker].get("password", "")).strip()
-        self.rehost_images = bool(config["TRACKERS"][self.tracker].get("img_rehost", False))
-        self.ptgen_api = str(config["TRACKERS"][self.tracker].get("ptgen_api", "")).strip()
+        self.passkey = str(
+            config["TRACKERS"][self.tracker].get("passkey", "")
+        ).strip()
+        self.username = str(
+            config["TRACKERS"][self.tracker].get("username", "")
+        ).strip()
+        self.password = str(
+            config["TRACKERS"][self.tracker].get("password", "")
+        ).strip()
+        self.rehost_images = bool(
+            config["TRACKERS"][self.tracker].get("img_rehost", False)
+        )
+        self.ptgen_api = str(
+            config["TRACKERS"][self.tracker].get("ptgen_api", "")
+        ).strip()
         self.cookie_validator = CookieValidator(config)
         self.common = Common(config=config)
 
@@ -58,32 +74,51 @@ class PTerClub:
     async def validate_credentials(self, meta: Meta) -> bool:
         vcookie = await self.validate_cookies(meta)
         if vcookie is not True:
-            logger.error(f"{self.tracker}: [red]Failed to validate cookies. Please confirm that the site is up and your passkey is valid.")
+            logger.error(
+                f"{self.tracker}: [red]Failed to validate cookies. Please confirm that the site is up and your passkey is valid."
+            )
             return False
         return True
 
     async def validate_cookies(self, meta: Meta) -> bool:
-        cookiefile = Path(find_cookie_file(meta.base_dir, self.tracker, self.config))
+        cookiefile = Path(
+            find_cookie_file(meta.base_dir, self.tracker, self.config)
+        )
         if not cookiefile.exists():
-            logger.info(f"{self.tracker}: [bold red]Missing Cookie File. (data/cookies/PTERCLUB.txt)")
+            logger.info(
+                f"{self.tracker}: [bold red]Missing Cookie File. (data/cookies/PTERCLUB.txt)"
+            )
             return False
         cookies = await self.common.parse_cookie_file(str(cookiefile))
-        async with httpx.AsyncClient(cookies=cookies, timeout=30.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(
+            cookies=cookies, timeout=30.0, follow_redirects=True
+        ) as client:
             response = await client.get(url=self.base_url)
-        return '<a href="#" data-url="logout.php" id="logout-confirm">' in response.text
+        return (
+            '<a href="#" data-url="logout.php" id="logout-confirm">'
+            in response.text
+        )
 
     async def search_existing(self, meta: Meta) -> list[str] | bool:
-        cookiefile = Path(find_cookie_file(meta.base_dir, self.tracker, self.config))
+        cookiefile = Path(
+            find_cookie_file(meta.base_dir, self.tracker, self.config)
+        )
         if not cookiefile.exists():
-            logger.info(f"{self.tracker}: [bold red]Missing Cookie File. (data/cookies/PTERCLUB.txt)")
+            logger.info(
+                f"{self.tracker}: [bold red]Missing Cookie File. (data/cookies/PTERCLUB.txt)"
+            )
             return False
         cookies = await self.common.parse_cookie_file(str(cookiefile))
         response = await self._search_response(meta, cookies)
         return self._search_release_names(response.text)
 
-    async def _search_response(self, meta: Meta, cookies: dict[str, str]) -> httpx.Response:
+    async def _search_response(
+        self, meta: Meta, cookies: dict[str, str]
+    ) -> httpx.Response:
         search_url = self._search_url(meta)
-        async with httpx.AsyncClient(cookies=cookies, timeout=10.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(
+            cookies=cookies, timeout=10.0, follow_redirects=True
+        ) as client:
             response = await client.get(search_url)
             response.raise_for_status()
             return response
@@ -97,7 +132,9 @@ class PTerClub:
     def _search_release_names(html: str) -> list[str]:
         soup = BeautifulSoup(html, "lxml")
         rows = soup.select("table.torrents > tr:has(table.torrentname)")
-        return [name for row in rows if (name := PTerClub._row_release_name(row))]
+        return [
+            name for row in rows if (name := PTerClub._row_release_name(row))
+        ]
 
     @staticmethod
     def _row_release_name(row: Any) -> str:
@@ -108,7 +145,11 @@ class PTerClub:
 
     async def get_type_category_id(self, meta: Meta) -> str:
         special = self._special_category(meta)
-        return special if special is not None else self._base_category(meta.category)
+        return (
+            special
+            if special is not None
+            else self._base_category(meta.category)
+        )
 
     @staticmethod
     def _base_category(category: str) -> str:
@@ -155,7 +196,11 @@ class PTerClub:
         }
         ptgen = meta.ptgen
         regions_value = ptgen.get("region", [])
-        regions = cast(list[str], regions_value) if isinstance(regions_value, list) else []
+        regions = (
+            cast(list[str], regions_value)
+            if isinstance(regions_value, list)
+            else []
+        )
         for area in area_map:
             if area in regions:
                 return area_map[area]
@@ -193,12 +238,19 @@ class PTerClub:
         from src.domain_models.release_description import base_description
         from src.integrations.trackers.bbcode_formatting import BBCODE
 
-        parts = await self._description_parts(meta, base_description(meta), BBCODE())
-        path = release_temp_dir(meta.base_dir, meta.uuid) / f"[{self.tracker}]DESCRIPTION.txt"
+        parts = await self._description_parts(
+            meta, base_description(meta), BBCODE()
+        )
+        path = (
+            release_temp_dir(meta.base_dir, meta.uuid)
+            / f"[{self.tracker}]DESCRIPTION.txt"
+        )
         async with aiofiles.open(path, "w", encoding="utf-8") as handle:
             await handle.write("".join(parts))
 
-    async def _description_parts(self, meta: Meta, base: str, bbcode: Any) -> list[str]:
+    async def _description_parts(
+        self, meta: Meta, base: str, bbcode: Any
+    ) -> list[str]:
         parts = await self._description_preamble(meta)
         parts.extend(await self._technical_description(meta))
         parts.append(self._format_description(base, bbcode))
@@ -216,13 +268,21 @@ class PTerClub:
     async def _technical_description(self, meta: Meta) -> list[str]:
         discs = self._disc_entries(meta)
         if discs:
-            return [block for disc in discs if (block := self._disc_block(disc))]
-        media_info = await self._read_temp_text(meta, "MEDIAINFO_CLEANPATH.txt")
+            return [
+                block for disc in discs if (block := self._disc_block(disc))
+            ]
+        media_info = await self._read_temp_text(
+            meta, "MEDIAINFO_CLEANPATH.txt"
+        )
         return [f"[hide=mediainfo]{media_info}[/hide]", "\n"]
 
     @staticmethod
     def _disc_entries(meta: Meta) -> list[dict[str, Any]]:
-        return cast(list[dict[str, Any]], meta.discs) if isinstance(meta.discs, list) else []
+        return (
+            cast(list[dict[str, Any]], meta.discs)
+            if isinstance(meta.discs, list)
+            else []
+        )
 
     @staticmethod
     def _disc_block(disc: dict[str, Any]) -> str:
@@ -247,15 +307,25 @@ class PTerClub:
 
     async def _description_screenshots(self, meta: Meta) -> list[str]:
         images = await self._description_image_list(meta)
-        links = [link for image in images[: self._screen_limit(meta.screens)] if (link := self._image_link(image))]
+        links = [
+            link
+            for image in images[: self._screen_limit(meta.screens)]
+            if (link := self._image_link(image))
+        ]
         return [] if not links else ["[center]", *links, "[/center]"]
 
-    async def _description_image_list(self, meta: Meta) -> list[dict[str, str]]:
+    async def _description_image_list(
+        self, meta: Meta
+    ) -> list[dict[str, str]]:
         if self.rehost_images:
             logger.info(f"{self.tracker}: [green]Rehosting Images...")
             return await self.pterimg_upload(meta)
         values = meta.image_list if isinstance(meta.image_list, list) else []
-        return [cast(dict[str, str], item) for item in values if isinstance(item, dict)]
+        return [
+            cast(dict[str, str], item)
+            for item in values
+            if isinstance(item, dict)
+        ]
 
     @staticmethod
     def _screen_limit(value: Any) -> int:
@@ -279,7 +349,9 @@ class PTerClub:
         if saved:
             return saved
         if not cookiefile.exists():
-            logger.info(f"{self.tracker}: [yellow]Pterimg Cookies not found. Creating new session.")
+            logger.info(
+                f"{self.tracker}: [yellow]Pterimg Cookies not found. Creating new session."
+            )
         return await self._pterimg_login(cookiefile, cookies)
 
     def _pterimg_cookie_file(self, meta: Meta) -> Path:
@@ -296,43 +368,81 @@ class PTerClub:
     async def _saved_auth_token(self, cookies: dict[str, str]) -> str:
         if not cookies:
             return ""
-        async with httpx.AsyncClient(cookies=cookies, timeout=30.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(
+            cookies=cookies, timeout=30.0, follow_redirects=True
+        ) as client:
             response = await client.get("https://s3.pterclub.com")
         if not await self.validate_login(response):
             return ""
         return self._extract_auth_token(response.text, r'auth_token.*?"(\w+)"')
 
-    async def _pterimg_login(self, cookiefile: Path, cookies: dict[str, str]) -> str:
-        data: dict[str, Any] = {"login-subject": self.username, "password": self.password, "keep-login": 1}
-        async with httpx.AsyncClient(cookies=cookies, timeout=30.0, follow_redirects=True) as client:
+    async def _pterimg_login(
+        self, cookiefile: Path, cookies: dict[str, str]
+    ) -> str:
+        data: dict[str, Any] = {
+            "login-subject": self.username,
+            "password": self.password,
+            "keep-login": 1,
+        }
+        async with httpx.AsyncClient(
+            cookies=cookies, timeout=30.0, follow_redirects=True
+        ) as client:
             response = await client.get("https://s3.pterclub.com")
-            data["auth_token"] = self._extract_auth_token(response.text, r'auth_token.*?"(\w+)"')
-            login_response = await client.post(url="https://s3.pterclub.com/login", data=data)
+            data["auth_token"] = self._extract_auth_token(
+                response.text, r'auth_token.*?"(\w+)"'
+            )
+            login_response = await client.post(
+                url="https://s3.pterclub.com/login", data=data
+            )
             if not login_response.is_success:
                 raise LoginError("Failed to login to Pterimg.")
-            auth_token = self._extract_auth_token(login_response.text, r'auth_token = *?"(\w+)"')
-            self.cookie_validator._save_cookies_secure(client.cookies.jar, str(cookiefile))  # pyright: ignore[reportPrivateUsage]
+            auth_token = self._extract_auth_token(
+                login_response.text, r'auth_token = *?"(\w+)"'
+            )
+            self.cookie_validator._save_cookies_secure(
+                client.cookies.jar, str(cookiefile)
+            )  # pyright: ignore[reportPrivateUsage]
             return auth_token
 
     async def validate_login(self, response: httpx.Response) -> bool:
-        return response.text.find("""<a href="https://s3.pterclub.com/logout/?""") != -1
+        return (
+            response.text.find("""<a href="https://s3.pterclub.com/logout/?""")
+            != -1
+        )
 
     async def pterimg_upload(self, meta: Meta) -> list[dict[str, str]]:
         images = self._screenshot_paths(meta)
-        data: dict[str, Any] = {"type": "file", "action": "upload", "nsfw": 0, "auth_token": await self.get_auth_token(meta)}
-        cookiefile = Path(find_cookie_file(meta.base_dir, "Pterimg", self.config))
+        data: dict[str, Any] = {
+            "type": "file",
+            "action": "upload",
+            "nsfw": 0,
+            "auth_token": await self.get_auth_token(meta),
+        }
+        cookiefile = Path(
+            find_cookie_file(meta.base_dir, "Pterimg", self.config)
+        )
         if not cookiefile.exists():
             return []
         cookies = self._saved_cookie_values(cookiefile)
-        async with httpx.AsyncClient(cookies=cookies, timeout=60.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(
+            cookies=cookies, timeout=60.0, follow_redirects=True
+        ) as client:
             return await self._upload_pterimg_images(client, images, data)
 
     @staticmethod
     def _screenshot_paths(meta: Meta) -> list[str]:
         pattern = f"{glob.escape(meta.filename)}-*.png"
-        return [str(path) for path in screenshots_dir(meta.base_dir, meta.uuid).glob(pattern)]
+        return [
+            str(path)
+            for path in screenshots_dir(meta.base_dir, meta.uuid).glob(pattern)
+        ]
 
-    async def _upload_pterimg_images(self, client: httpx.AsyncClient, images: list[str], data: dict[str, Any]) -> list[dict[str, str]]:
+    async def _upload_pterimg_images(
+        self,
+        client: httpx.AsyncClient,
+        images: list[str],
+        data: dict[str, Any],
+    ) -> list[dict[str, str]]:
         uploaded: list[dict[str, str]] = []
         for image_path in images:
             result = await self._upload_pterimg_image(client, image_path, data)
@@ -340,7 +450,9 @@ class PTerClub:
                 uploaded.append(result)
         return uploaded
 
-    async def _upload_pterimg_image(self, client: httpx.AsyncClient, image_path: str, data: dict[str, Any]) -> dict[str, str] | None:
+    async def _upload_pterimg_image(
+        self, client: httpx.AsyncClient, image_path: str, data: dict[str, Any]
+    ) -> dict[str, str] | None:
         file_bytes = await self._read_image_bytes(image_path)
         response = await client.post(
             "https://s3.pterclub.com/json",
@@ -352,7 +464,9 @@ class PTerClub:
         if not response.is_success:
             if message in {"重复上传", "Duplicated upload"}:
                 return None
-            raise RuntimeError(f"HTTP {response.status_code}, reason: {message}")
+            raise RuntimeError(
+                f"HTTP {response.status_code}, reason: {message}"
+            )
         return self._pterimg_image_result(payload)
 
     @staticmethod
@@ -366,12 +480,22 @@ class PTerClub:
             payload = response.json()
         except json.decoder.JSONDecodeError:
             return None
-        return cast(dict[str, Any], payload) if isinstance(payload, dict) else None
+        return (
+            cast(dict[str, Any], payload)
+            if isinstance(payload, dict)
+            else None
+        )
 
     @classmethod
-    def _pterimg_message(cls, response: httpx.Response, payload: dict[str, Any] | None) -> str:
+    def _pterimg_message(
+        cls, response: httpx.Response, payload: dict[str, Any] | None
+    ) -> str:
         payload_message = cls._pterimg_payload_message(payload)
-        return payload_message if payload_message else cls._response_fallback_message(response)
+        return (
+            payload_message
+            if payload_message
+            else cls._response_fallback_message(response)
+        )
 
     @staticmethod
     def _pterimg_payload_message(payload: dict[str, Any] | None) -> str:
@@ -389,9 +513,13 @@ class PTerClub:
         return reason if reason else (response.text or "").strip()
 
     @staticmethod
-    def _pterimg_image_result(payload: dict[str, Any] | None) -> dict[str, str]:
+    def _pterimg_image_result(
+        payload: dict[str, Any] | None,
+    ) -> dict[str, str]:
         if payload is None:
-            raise ValueError("Unexpected response payload while uploading to Pterimg.")
+            raise ValueError(
+                "Unexpected response payload while uploading to Pterimg."
+            )
         image = payload.get("image")
         if not isinstance(image, dict):
             raise ValueError("Missing image data in Pterimg response.")
@@ -429,7 +557,10 @@ class PTerClub:
 
     @classmethod
     def _mediainfo_has_chinese_subtitles(cls, meta: Meta) -> bool:
-        return any(track.get("@type") == "Text" and track.get("Language") == "zh" for track in cls._media_tracks(meta))
+        return any(
+            track.get("@type") == "Text" and track.get("Language") == "zh"
+            for track in cls._media_tracks(meta)
+        )
 
     @classmethod
     def _media_tracks(cls, meta: Meta) -> list[dict[str, Any]]:
@@ -447,10 +578,16 @@ class PTerClub:
     def _mapping_tracks(value: Any) -> list[dict[str, Any]]:
         if not isinstance(value, list):
             return []
-        return [cast(dict[str, Any], item) for item in value if isinstance(item, dict)]
+        return [
+            cast(dict[str, Any], item)
+            for item in value
+            if isinstance(item, dict)
+        ]
 
     async def upload(self, meta: Meta) -> bool:
-        await self.common.create_torrent_for_upload(meta, self.tracker, self.source_flag)
+        await self.common.create_torrent_for_upload(
+            meta, self.tracker, self.source_flag
+        )
         await self._ensure_description(meta)
         data, files, torrent_path = await self._upload_parts(meta)
         if meta.debug:
@@ -458,16 +595,32 @@ class PTerClub:
         return await self._submit_upload(meta, data, files, torrent_path)
 
     async def _ensure_description(self, meta: Meta) -> None:
-        path = release_temp_dir(meta.base_dir, meta.uuid) / f"[{self.tracker}]DESCRIPTION.txt"
+        path = (
+            release_temp_dir(meta.base_dir, meta.uuid)
+            / f"[{self.tracker}]DESCRIPTION.txt"
+        )
         if not path.exists():
             await self.edit_desc(meta)
 
-    async def _upload_parts(self, meta: Meta) -> tuple[dict[str, Any], dict[str, tuple[str, bytes, str]], Path]:
-        description = await self._read_temp_text(meta, f"[{self.tracker}]DESCRIPTION.txt")
-        torrent_path = release_temp_dir(meta.base_dir, meta.uuid) / f"[{self.tracker}].torrent"
+    async def _upload_parts(
+        self, meta: Meta
+    ) -> tuple[dict[str, Any], dict[str, tuple[str, bytes, str]], Path]:
+        description = await self._read_temp_text(
+            meta, f"[{self.tracker}]DESCRIPTION.txt"
+        )
+        torrent_path = (
+            release_temp_dir(meta.base_dir, meta.uuid)
+            / f"[{self.tracker}].torrent"
+        )
         torrent_bytes = await self._read_binary(torrent_path)
         file_name = self._torrent_file_name(meta)
-        files = {"file": (f"{file_name}.torrent", torrent_bytes, "application/x-bittorent")}
+        files = {
+            "file": (
+                f"{file_name}.torrent",
+                torrent_bytes,
+                "application/x-bittorent",
+            )
+        }
         data = await self._upload_data(meta, description)
         return data, files, torrent_path
 
@@ -482,7 +635,9 @@ class PTerClub:
         source = meta.video if len(filelist) == 1 else meta.path
         return unidecode(Path(str(source)).name.replace(" ", "."))
 
-    async def _upload_data(self, meta: Meta, description: str) -> dict[str, Any]:
+    async def _upload_data(
+        self, meta: Meta, description: str
+    ) -> dict[str, Any]:
         data: dict[str, Any] = {
             "name": await self.get_name(meta),
             "small_descr": self._small_description(meta),
@@ -526,14 +681,23 @@ class PTerClub:
         return value.replace("/ |", "|")
 
     def _anonymous(self, meta: Meta) -> str:
-        configured = bool(self.config["TRACKERS"][self.tracker].get("anon", False))
+        configured = bool(
+            self.config["TRACKERS"][self.tracker].get("anon", False)
+        )
         return "no" if meta.anon == 0 and not configured else "yes"
 
     async def _debug_upload(self, meta: Meta, data: dict[str, Any]) -> bool:
         logger.debug(f"{self.base_url}/takeupload.php")
         logger.debug(Redaction.redact_private_info(data))
-        meta.tracker_status[self.tracker]["status_message"] = "Debug mode enabled, not uploading."
-        await self.common.create_torrent_for_upload(meta, f"{self.tracker}_DEBUG", f"{self.tracker}_DEBUG", announce_url="https://fake.tracker")
+        meta.tracker_status[self.tracker]["status_message"] = (
+            "Debug mode enabled, not uploading."
+        )
+        await self.common.create_torrent_for_upload(
+            meta,
+            f"{self.tracker}_DEBUG",
+            f"{self.tracker}_DEBUG",
+            announce_url="https://fake.tracker",
+        )
         return True
 
     async def _submit_upload(
@@ -543,19 +707,32 @@ class PTerClub:
         files: dict[str, tuple[str, bytes, str]],
         torrent_path: Path,
     ) -> bool:
-        cookiefile = Path(find_cookie_file(meta.base_dir, self.tracker, self.config))
+        cookiefile = Path(
+            find_cookie_file(meta.base_dir, self.tracker, self.config)
+        )
         if not cookiefile.exists():
             return False
         cookies = await self.common.parse_cookie_file(str(cookiefile))
-        async with httpx.AsyncClient(cookies=cookies, timeout=30.0, follow_redirects=True) as client:
-            response = await client.post(url=f"{self.base_url}/takeupload.php", data=data, files=files)
+        async with httpx.AsyncClient(
+            cookies=cookies, timeout=30.0, follow_redirects=True
+        ) as client:
+            response = await client.post(
+                url=f"{self.base_url}/takeupload.php", data=data, files=files
+            )
         return await self._handle_upload_response(meta, response, torrent_path)
 
-    async def _handle_upload_response(self, meta: Meta, response: httpx.Response, torrent_path: Path) -> bool:
-        if not str(response.url).startswith(f"{self.base_url}/details.php?id="):
+    async def _handle_upload_response(
+        self, meta: Meta, response: httpx.Response, torrent_path: Path
+    ) -> bool:
+        if not str(response.url).startswith(
+            f"{self.base_url}/details.php?id="
+        ):
             logger.info(meta.tracker_status.get(self.tracker, {}))
             logger.info(f"{self.tracker}: \n\n")
-            raise UploadError(f"Upload to Pter Failed: result URL {response.url} ({response.status_code}) was not expected", "red")
+            raise UploadError(
+                f"Upload to Pter Failed: result URL {response.url} ({response.status_code}) was not expected",
+                "red",
+            )
         torrent_id = self._torrent_id(str(response.url))
         await self.download_new_torrent(torrent_id, str(torrent_path))
         status = meta.tracker_status[self.tracker]
@@ -567,16 +744,25 @@ class PTerClub:
     def _torrent_id(url: str) -> str:
         match = re.search(r"(?:^|[?&])id=(\d+)", urlparse(url).query)
         if match is None:
-            raise UploadError("Upload succeeded but torrent id was not present in the redirect URL.", "red")
+            raise UploadError(
+                "Upload succeeded but torrent id was not present in the redirect URL.",
+                "red",
+            )
         return match.group(1)
 
     async def download_new_torrent(self, id: str, torrent_path: str) -> None:
-        download_url = f"{self.base_url}/download.php?id={id}&passkey={self.passkey}"
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+        download_url = (
+            f"{self.base_url}/download.php?id={id}&passkey={self.passkey}"
+        )
+        async with httpx.AsyncClient(
+            timeout=30.0, follow_redirects=True
+        ) as client:
             r = await client.get(url=download_url)
         if r.status_code == 200:
             async with aiofiles.open(torrent_path, "wb") as tor:
                 await tor.write(r.content)
         else:
-            logger.info(f"{self.tracker}: [red]There was an issue downloading the new .torrent from pter")
+            logger.info(
+                f"{self.tracker}: [red]There was an issue downloading the new .torrent from pter"
+            )
             logger.info(r.text)

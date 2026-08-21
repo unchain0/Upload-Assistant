@@ -9,7 +9,10 @@ import src.services.preparation_service as prep_module
 import upload
 from src.domain_models.release import Meta
 from src.integrations.trackers.UNIT3D.darkpeers import DarkPeers
-from src.services.episode_service import SeasonEpisodeManager, sync_single_episode_from_filename
+from src.services.episode_service import (
+    SeasonEpisodeManager,
+    sync_single_episode_from_filename,
+)
 from src.services.release_naming_service import NameManager
 
 REPACK_FILE = "I.Became.a.Legend.After.My.10.Year-Long.Last.Stand.S01E05.After.Ten.Years.I.Was.Told.to.Get.Lost.REPACK.1080p.CR.WEB-DL.DDP2.0.H.264-Kitsune.mkv"
@@ -42,8 +45,17 @@ def test_sync_single_episode_uses_the_only_video_filename():
     )
 
     changed = sync_single_episode_from_filename(meta)
-    meta.name_notag, meta.name, meta.clean_name, meta.potential_missing = asyncio.run(NameManager({}).get_name(meta))
-    episode_settings = asyncio.run(DarkPeers({"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}}).get_episode_number(meta))
+    meta.name_notag, meta.name, meta.clean_name, meta.potential_missing = (
+        asyncio.run(NameManager({}).get_name(meta))
+    )
+    episode_settings = asyncio.run(
+        DarkPeers(
+            {
+                "DEFAULT": {"tmdb_api": "test-key"},
+                "TRACKERS": {"DARKPEERS": {}},
+            }
+        ).get_episode_number(meta)
+    )
 
     assert changed is True
     assert meta.season == "S01"
@@ -87,7 +99,9 @@ def test_sync_single_episode_ignores_multi_episode_filenames():
 
 def test_sync_single_episode_accepts_supported_video_containers():
     for extension in ("avi", "m2ts", "m4v", "mpeg", "mpg", "vob"):
-        meta = _stale_meta(filename=f"Example.Show.S01E05.1080p.WEB-DL.{extension}")
+        meta = _stale_meta(
+            filename=f"Example.Show.S01E05.1080p.WEB-DL.{extension}"
+        )
 
         assert sync_single_episode_from_filename(meta) is True
         assert meta.episode == "E05"
@@ -104,11 +118,24 @@ def test_sync_single_episode_ignores_malformed_filelist_entries():
     assert sync_single_episode_from_filename(meta) is False
 
 
-def test_sync_single_episode_rejects_untrusted_filename_shapes(monkeypatch: pytest.MonkeyPatch):
-    for filename in (f"{'A' * 1100}.S01E05.mkv", "Show.éS01E05é.mkv", "Show.\uff11S01E05\uff12.mkv"):
-        assert sync_single_episode_from_filename(_stale_meta(filename=filename)) is False
+def test_sync_single_episode_rejects_untrusted_filename_shapes(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    for filename in (
+        f"{'A' * 1100}.S01E05.mkv",
+        "Show.éS01E05é.mkv",
+        "Show.\uff11S01E05\uff12.mkv",
+    ):
+        assert (
+            sync_single_episode_from_filename(_stale_meta(filename=filename))
+            is False
+        )
 
-    monkeypatch.setattr(season_episode, "_guessit_data", Mock(side_effect=ValueError("invalid filename")))
+    monkeypatch.setattr(
+        season_episode,
+        "_guessit_data",
+        Mock(side_effect=ValueError("invalid filename")),
+    )
     assert sync_single_episode_from_filename(_stale_meta()) is False
 
 
@@ -140,7 +167,9 @@ def test_sync_single_episode_clears_stale_episode_metadata() -> None:
 
 
 @pytest.mark.asyncio
-async def test_daily_mapping_clears_metadata_for_previous_episode(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_daily_mapping_clears_metadata_for_previous_episode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     meta = _stale_meta(
         filename="Daily.Show.2026.08.11.S01E05.1080p.WEB-DL.mkv",
         tmdb_id=123,
@@ -149,7 +178,11 @@ async def test_daily_mapping_clears_metadata_for_previous_episode(monkeypatch: p
         tmdb_episode_data={"name": "Old Episode Five"},
     )
     manager = SeasonEpisodeManager({"DEFAULT": {"tmdb_api": "test-key"}})
-    monkeypatch.setattr(manager.tmdb_manager, "daily_to_tmdb_season_episode", AsyncMock(return_value=(12, 34)))
+    monkeypatch.setattr(
+        manager.tmdb_manager,
+        "daily_to_tmdb_season_episode",
+        AsyncMock(return_value=(12, 34)),
+    )
 
     await manager.get_season_episode(meta.filelist[0], meta)
 
@@ -162,7 +195,9 @@ async def test_daily_mapping_clears_metadata_for_previous_episode(monkeypatch: p
 
 
 @pytest.mark.asyncio
-async def test_process_meta_syncs_before_metadata_gather(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_process_meta_syncs_before_metadata_gather(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     events: list[str] = []
 
     class FakePrep:
@@ -183,15 +218,27 @@ async def test_process_meta_syncs_before_metadata_gather(tmp_path: Path, monkeyp
 
     monkeypatch.setattr(upload, "Prep", FakePrep)
     monkeypatch.setattr(upload, "_sync_single_episode", record_sync)
-    monkeypatch.setattr(upload, "cancel_and_drain_early_artifact_tasks", AsyncMock(return_value=None))
-    meta = Meta(base_dir=str(tmp_path), uuid="single-episode", imghost="imgbb", unattended=True, trackers=["DARKPEERS"])
+    monkeypatch.setattr(
+        upload,
+        "cancel_and_drain_early_artifact_tasks",
+        AsyncMock(return_value=None),
+    )
+    meta = Meta(
+        base_dir=str(tmp_path),
+        uuid="single-episode",
+        imghost="imgbb",
+        unattended=True,
+        trackers=["DARKPEERS"],
+    )
 
     assert await upload.process_meta(meta, str(tmp_path)) is False
     assert events == ["sync", "gather"]
 
 
 @pytest.mark.asyncio
-async def test_gather_prep_syncs_discovered_file_before_metadata_search(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_gather_prep_syncs_discovered_file_before_metadata_search(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     filename = "Example.Show.S01E05.1080p.WEB-DL.mkv"
     observed: list[tuple[str, int, str | None]] = []
     meta = _stale_meta(
@@ -208,25 +255,75 @@ async def test_gather_prep_syncs_discovered_file_before_metadata_search(tmp_path
     prep.config = {"DEFAULT": {}}
     prep.publish_preview = None
 
-    monkeypatch.setattr(prep_module.prep_helpers, "init_meta", Mock(return_value=(False, False, None, False, {}, {})))
-    monkeypatch.setattr(prep_module.prep_helpers, "detect_disc_and_category", AsyncMock(return_value=(filename, {})))
+    monkeypatch.setattr(
+        prep_module.prep_helpers,
+        "init_meta",
+        Mock(return_value=(False, False, None, False, {}, {})),
+    )
+    monkeypatch.setattr(
+        prep_module.prep_helpers,
+        "detect_disc_and_category",
+        AsyncMock(return_value=(filename, {})),
+    )
 
-    async def discover_media(_prep: object, discovered_meta: Meta, _videoloc: str, _bdinfo: object) -> tuple[object, ...]:
+    async def discover_media(
+        _prep: object, discovered_meta: Meta, _videoloc: str, _bdinfo: object
+    ) -> tuple[object, ...]:
         discovered_meta.filelist = [filename]
         return filename, filename, filename, "", "", {}, {}
 
-    async def observe_search(_prep: object, searched_meta: Meta, *_args: object) -> None:
-        observed.append((searched_meta.episode, searched_meta.episode_int, searched_meta.auto_episode_title))
+    async def observe_search(
+        _prep: object, searched_meta: Meta, *_args: object
+    ) -> None:
+        observed.append(
+            (
+                searched_meta.episode,
+                searched_meta.episode_int,
+                searched_meta.auto_episode_title,
+            )
+        )
 
-    monkeypatch.setattr(prep_module.prep_helpers, "process_media_files", discover_media)
-    monkeypatch.setattr(prep_module.prep_helpers, "calculate_source_size", Mock(return_value=None))
-    monkeypatch.setattr(prep_module.prep_helpers, "validate_media", AsyncMock(return_value=None))
-    monkeypatch.setattr(prep_module.prep_helpers, "process_trackers_and_torrent", AsyncMock(return_value=None))
-    monkeypatch.setattr(prep_module, "restart_early_artifact_tasks", AsyncMock(return_value=None))
-    monkeypatch.setattr(prep_module.prep_helpers, "search_metadata", observe_search)
-    monkeypatch.setattr(prep_module.prep_helpers, "finalize_metadata", AsyncMock(return_value=None))
-    monkeypatch.setattr(prep_module.languages_manager, "apply_confirmed_single_audio_language", AsyncMock(return_value=None))
-    monkeypatch.setattr(prep_module.languages_manager, "process_desc_language", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        prep_module.prep_helpers, "process_media_files", discover_media
+    )
+    monkeypatch.setattr(
+        prep_module.prep_helpers,
+        "calculate_source_size",
+        Mock(return_value=None),
+    )
+    monkeypatch.setattr(
+        prep_module.prep_helpers,
+        "validate_media",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        prep_module.prep_helpers,
+        "process_trackers_and_torrent",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        prep_module,
+        "restart_early_artifact_tasks",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        prep_module.prep_helpers, "search_metadata", observe_search
+    )
+    monkeypatch.setattr(
+        prep_module.prep_helpers,
+        "finalize_metadata",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        prep_module.languages_manager,
+        "apply_confirmed_single_audio_language",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        prep_module.languages_manager,
+        "process_desc_language",
+        AsyncMock(return_value=None),
+    )
 
     result = await prep.gather_prep(meta, "cli")
 

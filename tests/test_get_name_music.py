@@ -17,11 +17,15 @@ def test_default_music_name_uses_lst_naming_convention():
                 "release_year": {"value": "2012"},
                 "media": {"value": "WEB"},
             },
-            "tracks": [{"codec": "FLAC", "bit_depth": 16, "sample_rate": 44100}],
+            "tracks": [
+                {"codec": "FLAC", "bit_depth": 16, "sample_rate": 44100}
+            ],
         },
     )
 
-    name_notag, name, clean_name, potential_missing = asyncio.run(NameManager({}).get_name(meta))
+    name_notag, name, clean_name, potential_missing = asyncio.run(
+        NameManager({}).get_name(meta)
+    )
 
     assert name_notag == "Taylor Swift - Red 2012 WEB FLAC 16-bit 44.1 kHz"
     assert name == "Taylor Swift - Red 2012 WEB FLAC 16-bit 44.1 kHz-FiVE0"
@@ -37,7 +41,9 @@ def test_default_music_name_omits_pcm_fields_for_lossy_codec():
         year=2026,
         source="web",
         type="AAC",
-        music_release={"tracks": [{"codec": "AAC", "bit_depth": 24, "sample_rate": 96000}]},
+        music_release={
+            "tracks": [{"codec": "AAC", "bit_depth": 24, "sample_rate": 96000}]
+        },
     )
 
     name_notag, *_ = asyncio.run(NameManager({}).get_name(meta))

@@ -9,7 +9,9 @@ _guessit_module = importlib.import_module("guessit")
 _guessit_fn: GuessitFn = _guessit_module.guessit
 
 
-def guessit_fn(value: str, options: dict[str, Any] | None = None) -> dict[str, Any]:
+def guessit_fn(
+    value: str, options: dict[str, Any] | None = None
+) -> dict[str, Any]:
     return _guessit_fn(value, options)
 
 
@@ -21,7 +23,9 @@ def _region_from_label(label: str, regions: dict[str, str]) -> str:
 async def get_region(bdinfo: dict[str, Any], region: str | None = None) -> str:
     if region is not None:
         return region.upper()
-    label = (bdinfo.get("label") or bdinfo.get("title") or bdinfo.get("path") or "").replace(".", " ")
+    label = (
+        bdinfo.get("label") or bdinfo.get("title") or bdinfo.get("path") or ""
+    ).replace(".", " ")
     regions = {
         "AFG": "AFG",
         "AIA": "AIA",
@@ -2001,16 +2005,29 @@ async def get_distributor(distributor_in: str | None) -> str:
     return distributor_out
 
 
-def _normalized_service_video_name(video: str, tag: str | None, audio: str | None, guess_title: str | None) -> str:
-    video_name = re.sub(r"[.()]", " ", video.replace(tag or "", "").replace(guess_title or "", ""))
+def _normalized_service_video_name(
+    video: str, tag: str | None, audio: str | None, guess_title: str | None
+) -> str:
+    video_name = re.sub(
+        r"[.()]",
+        " ",
+        video.replace(tag or "", "").replace(guess_title or "", ""),
+    )
     if audio and "DTS-HD MA" in audio:
         return video_name.replace("DTS-HD.MA.", "").replace("DTS-HD MA ", "")
     return video_name
 
 
-def _resolved_service_code(video_name: str, title_guess_title: str, service: str, services: dict[str, str]) -> str:
+def _resolved_service_code(
+    video_name: str,
+    title_guess_title: str,
+    service: str,
+    services: dict[str, str],
+) -> str:
     for key, value in services.items():
-        if (f" {key} " in video_name and key not in title_guess_title) or key == service:
+        if (
+            f" {key} " in video_name and key not in title_guess_title
+        ) or key == service:
             service = value
     return service
 
@@ -2022,7 +2039,11 @@ def _service_longname(service: str, services: dict[str, str]) -> str:
 
 
 async def get_service(
-    video: str | None = None, tag: str | None = None, audio: str | None = None, guess_title: str | None = None, get_services_only: bool = False
+    video: str | None = None,
+    tag: str | None = None,
+    audio: str | None = None,
+    guess_title: str | None = None,
+    get_services_only: bool = False,
 ) -> dict[str, str] | tuple[str, str]:
     services = {
         "9Now": "9NOW",
@@ -2407,5 +2428,10 @@ async def get_service(
     guessed_service = str(guess_data.get("streaming_service", ""))
     video_name = _normalized_service_video_name(video, tag, audio, guess_title)
     title_guess = guessit_fn(video, {"excludes": ["country", "language"]})
-    service = _resolved_service_code(video_name, str(title_guess.get("title", "")), guessed_service, services)
+    service = _resolved_service_code(
+        video_name,
+        str(title_guess.get("title", "")),
+        guessed_service,
+        services,
+    )
     return service, _service_longname(service, services)

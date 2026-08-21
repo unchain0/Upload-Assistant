@@ -13,7 +13,13 @@ from src.integrations.trackers import tvchaosuk
 class TmdbDouble:
     def __init__(self, config: dict) -> None:
         self.config = config
-        self.get_episode_details = AsyncMock(return_value={"air_date": "2026-01-02", "name": "Episode", "overview": "Overview"})
+        self.get_episode_details = AsyncMock(
+            return_value={
+                "air_date": "2026-01-02",
+                "name": "Episode",
+                "overview": "Overview",
+            }
+        )
         self.get_season_details = AsyncMock(
             return_value={
                 "air_date": "2026-01-01",
@@ -66,7 +72,9 @@ def _meta(tmp_path: Path, **values: object) -> Meta:
     return Meta(state)
 
 
-def test_tvchaosuk_uses_shared_tmdb_adapter_for_episode(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_tvchaosuk_uses_shared_tmdb_adapter_for_episode(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     monkeypatch.setattr(tvchaosuk, "TmdbManager", TmdbDouble)
     tracker = tvchaosuk.TVChaosUK(_config())
     meta = _meta(tmp_path)
@@ -77,10 +85,14 @@ def test_tvchaosuk_uses_shared_tmdb_adapter_for_episode(monkeypatch: pytest.Monk
     assert meta.episode_airdate == "2026-01-02"
     assert meta.episode_name == "Episode"
     assert meta.episode_overview == "Overview"
-    tracker.tmdb_manager.get_episode_details.assert_awaited_once_with(123, 1, 2)
+    tracker.tmdb_manager.get_episode_details.assert_awaited_once_with(
+        123, 1, 2
+    )
 
 
-def test_tvchaosuk_uses_shared_tmdb_adapter_for_season(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_tvchaosuk_uses_shared_tmdb_adapter_for_season(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     monkeypatch.setattr(tvchaosuk, "TmdbManager", TmdbDouble)
     tracker = tvchaosuk.TVChaosUK(_config())
     meta = _meta(tmp_path, tv_pack=True)
@@ -89,7 +101,14 @@ def test_tvchaosuk_uses_shared_tmdb_adapter_for_season(monkeypatch: pytest.Monke
 
     assert meta.season_air_first_date == "2026-01-01"
     assert meta.season_name == "Season One"
-    assert meta.episodes == [{"code": "S01E02", "title": "Episode", "airdate": "2026-01-02", "overview": "Overview"}]
+    assert meta.episodes == [
+        {
+            "code": "S01E02",
+            "title": "Episode",
+            "airdate": "2026-01-02",
+            "overview": "Overview",
+        }
+    ]
     tracker.tmdb_manager.get_season_details.assert_awaited_once_with(123, 1)
 
 

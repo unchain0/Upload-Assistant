@@ -40,7 +40,9 @@ def _diagnostic_message(item: Mapping[str, object], message: str) -> str:
     return f"[{rule}] {message}" if isinstance(rule, str) and rule else message
 
 
-def _reviewdog_range(raw_range: Mapping[str, object]) -> dict[str, object] | None:
+def _reviewdog_range(
+    raw_range: Mapping[str, object],
+) -> dict[str, object] | None:
     start_value = raw_range.get("start")
     if not isinstance(start_value, dict):
         return None
@@ -57,11 +59,17 @@ def _severity(item: Mapping[str, object]) -> str:
     return _SEVERITY.get(key, "WARNING")
 
 
-def _diagnostic_fields(item: Mapping[str, object]) -> tuple[str, str, dict[str, object]] | None:
+def _diagnostic_fields(
+    item: Mapping[str, object],
+) -> tuple[str, str, dict[str, object]] | None:
     file_value = item.get("file")
     message = item.get("message")
     raw_range = item.get("range")
-    if isinstance(file_value, str) and isinstance(message, str) and isinstance(raw_range, dict):
+    if (
+        isinstance(file_value, str)
+        and isinstance(message, str)
+        and isinstance(raw_range, dict)
+    ):
         return file_value, message, raw_range
     return None
 
@@ -79,7 +87,10 @@ def _convert_item(raw_item: object) -> dict[str, object] | None:
         return None
     return {
         "message": _diagnostic_message(item, message),
-        "location": {"path": _relative_path(file_value), "range": reviewdog_range},
+        "location": {
+            "path": _relative_path(file_value),
+            "range": reviewdog_range,
+        },
         "severity": _severity(item),
     }
 
@@ -88,7 +99,10 @@ def convert(payload: Mapping[str, object]) -> list[dict[str, object]]:
     raw_diagnostics = payload.get("generalDiagnostics", [])
     if not isinstance(raw_diagnostics, list):
         return []
-    converted = (_convert_item(raw_item) for raw_item in cast(list[object], raw_diagnostics))
+    converted = (
+        _convert_item(raw_item)
+        for raw_item in cast(list[object], raw_diagnostics)
+    )
     return [item for item in converted if item is not None]
 
 
@@ -98,7 +112,9 @@ def main() -> int:
         raise TypeError("Pyright output must be a JSON object")
     payload = cast(dict[str, object], raw_payload)
     for diagnostic in convert(payload):
-        print(json.dumps(diagnostic, ensure_ascii=False, separators=(",", ":")))
+        print(
+            json.dumps(diagnostic, ensure_ascii=False, separators=(",", ":"))
+        )
     return 0
 
 

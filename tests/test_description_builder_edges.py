@@ -12,7 +12,11 @@ import pytest
 
 from src.domain_models.release import Meta
 from src.integrations.trackers import description_builder
-from src.integrations.trackers.description_builder import DescriptionBuilder, gen_desc, html_to_bbcode
+from src.integrations.trackers.description_builder import (
+    DescriptionBuilder,
+    gen_desc,
+    html_to_bbcode,
+)
 
 
 class _Response:
@@ -52,10 +56,17 @@ class _Client:
         cls.urls = []
 
 
-def _config(tracker: str = "TEST", *, defaults: dict[str, object] | None = None, tracker_values: object = None) -> dict[str, Any]:
+def _config(
+    tracker: str = "TEST",
+    *,
+    defaults: dict[str, object] | None = None,
+    tracker_values: object = None,
+) -> dict[str, Any]:
     return {
         "DEFAULT": dict(defaults or {}),
-        "TRACKERS": {tracker: {} if tracker_values is None else tracker_values},
+        "TRACKERS": {
+            tracker: {} if tracker_values is None else tracker_values
+        },
     }
 
 
@@ -65,7 +76,10 @@ def _builder(
     defaults: dict[str, object] | None = None,
     tracker_values: object = None,
 ) -> DescriptionBuilder:
-    return DescriptionBuilder(tracker, _config(tracker, defaults=defaults, tracker_values=tracker_values))
+    return DescriptionBuilder(
+        tracker,
+        _config(tracker, defaults=defaults, tracker_values=tracker_values),
+    )
 
 
 def _meta(tmp_path: Path, **values: object) -> Meta:
@@ -142,7 +156,9 @@ def test_html_to_bbcode_empty_and_all_tags() -> None:
     assert "<" not in converted
 
 
-def test_gen_desc_template_missing_nfo_and_default_description(tmp_path: Path) -> None:
+def test_gen_desc_template_missing_nfo_and_default_description(
+    tmp_path: Path,
+) -> None:
     template = tmp_path / "data" / "templates" / "release.txt"
     template.parent.mkdir(parents=True)
     template.write_text("Title: {{ title }}\r\n", encoding="utf-8")
@@ -175,7 +191,10 @@ def test_gen_desc_scene_bhd_source_and_latin1_nfo(tmp_path: Path) -> None:
     scene.write_text("scene nfo", encoding="utf-8")
     meta = _meta(tmp_path, nfo=True, auto_nfo=True)
     result = asyncio.run(gen_desc(meta, object(), object()))  # type: ignore[arg-type]
-    assert "Scene NFO" in result.description and result.description_nfo_content == "scene nfo"
+    assert (
+        "Scene NFO" in result.description
+        and result.description_nfo_content == "scene nfo"
+    )
 
     scene.unlink()
     bhd = state / "framestor.nfo"
@@ -197,7 +216,9 @@ def test_gen_desc_scene_bhd_source_and_latin1_nfo(tmp_path: Path) -> None:
     assert "latin-ÿ" in result.description
 
 
-def test_gen_desc_link_file_precedence_not_found_and_error(tmp_path: Path) -> None:
+def test_gen_desc_link_file_precedence_not_found_and_error(
+    tmp_path: Path,
+) -> None:
     description_file = tmp_path / "description.txt"
     description_file.write_text(" file text \r\n", encoding="utf-8")
     _Client.reset(_Response(" linked text \r\n"))
@@ -216,9 +237,19 @@ def test_gen_desc_link_file_precedence_not_found_and_error(tmp_path: Path) -> No
     meta = _meta(tmp_path, description_link="https://paste.invalid/item")
     assert asyncio.run(gen_desc(meta, object(), object())).description == ""  # type: ignore[arg-type]
 
-    _Client.reset(httpx.RequestError("offline", request=httpx.Request("GET", "https://paste.invalid")))
+    _Client.reset(
+        httpx.RequestError(
+            "offline", request=httpx.Request("GET", "https://paste.invalid")
+        )
+    )
     with pytest.raises(httpx.RequestError):
-        asyncio.run(gen_desc(_meta(tmp_path, description_link="https://paste.invalid/item"), object(), object()))  # type: ignore[arg-type]
+        asyncio.run(
+            gen_desc(
+                _meta(tmp_path, description_link="https://paste.invalid/item"),
+                object(),
+                object(),
+            )
+        )  # type: ignore[arg-type]
 
 
 def test_constructor_and_config_helpers_cover_shapes() -> None:
@@ -228,7 +259,11 @@ def test_constructor_and_config_helpers_cover_shapes() -> None:
         DescriptionBuilder("TEST", {"DEFAULT": {}, "TRACKERS": {"OTHER": {}}})
 
     builder = _builder(
-        defaults={"fallback_bool": "yes", "fallback_int": "bad", "fallback_str": None},
+        defaults={
+            "fallback_bool": "yes",
+            "fallback_int": "bad",
+            "fallback_str": None,
+        },
         tracker_values={
             "true": " on ",
             "false": "0",
@@ -265,7 +300,9 @@ def test_constructor_and_config_helpers_cover_shapes() -> None:
     assert malformed._get_tag_override("x", meta) is None
 
 
-def test_headers_logo_tv_info_and_error_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_headers_logo_tv_info_and_error_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     builder = _builder(
         "BJSHARE",
         defaults={
@@ -285,11 +322,18 @@ def test_headers_logo_tv_info_and_error_paths(tmp_path: Path, monkeypatch: pytes
     )
     assert asyncio.run(builder.get_custom_header(meta)) == "Header"
     assert asyncio.run(builder.get_tonemapped_header(meta)) == "Tone"
-    assert asyncio.run(builder.get_logo_section(meta)) == ("https://image.tmdb.org/t/p/w300//logo.png", "300")
+    assert asyncio.run(builder.get_logo_section(meta)) == (
+        "https://image.tmdb.org/t/p/w300//logo.png",
+        "300",
+    )
     assert asyncio.run(builder.get_tv_info(meta)) == ("Episode", "Overview")
 
     generic = _builder(
-        defaults={"add_logo": True, "logo_size": "450", "episode_overview": True},
+        defaults={
+            "add_logo": True,
+            "logo_size": "450",
+            "episode_overview": True,
+        },
     )
     meta = _meta(
         tmp_path,
@@ -314,21 +358,39 @@ def test_headers_logo_tv_info_and_error_paths(tmp_path: Path, monkeypatch: pytes
     assert asyncio.run(no_logo.get_logo_section(meta)) == ("", "")
     assert asyncio.run(no_logo.get_tv_info(_meta(tmp_path))) == ("", "")
 
-    for method_name in ("get_custom_header", "get_tonemapped_header", "get_logo_section", "get_tv_info"):
+    for method_name in (
+        "get_custom_header",
+        "get_tonemapped_header",
+        "get_logo_section",
+        "get_tv_info",
+    ):
         method = getattr(generic, method_name)
         monkeypatch.setattr(
-            generic, "_get_str_config" if "header" in method_name else "_get_bool_config", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("broken"))
+            generic,
+            "_get_str_config"
+            if "header" in method_name
+            else "_get_bool_config",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                RuntimeError("broken")
+            ),
         )
         result = asyncio.run(method(meta))
         assert result in ("", ("", ""))
         monkeypatch.undo()
 
 
-def test_mediainfo_section_cache_full_short_and_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_mediainfo_section_cache_full_short_and_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     builder = _builder(defaults={"full_mediainfo": True})
     meta = _meta(tmp_path, is_disc="BDMV")
     assert asyncio.run(builder.get_mediainfo_section(meta)) == ""
-    assert asyncio.run(builder.get_mediainfo_section(_meta(tmp_path, category="BOOK"))) == ""
+    assert (
+        asyncio.run(
+            builder.get_mediainfo_section(_meta(tmp_path, category="BOOK"))
+        )
+        == ""
+    )
 
     state = tmp_path / "tmp" / "description"
     full = state / "MEDIAINFO_CLEANPATH.txt"
@@ -375,7 +437,12 @@ def test_mediainfo_section_cache_full_short_and_errors(tmp_path: Path, monkeypat
                     "Language": "pt-BR",
                     "Title": "Commentary",
                 },
-                {"@type": "Text", "Language": "bad_tag_!", "Format": "SRT", "Title": "Forced"},
+                {
+                    "@type": "Text",
+                    "Language": "bad_tag_!",
+                    "Format": "SRT",
+                    "Title": "Forced",
+                },
                 "ignored",
             ]
         }
@@ -386,26 +453,42 @@ def test_mediainfo_section_cache_full_short_and_errors(tmp_path: Path, monkeypat
     assert "bad_tag_!" in result
     assert short.is_file()
 
-    assert builder.format_short_mediainfo_json({"media": {"track": "bad"}}) == ""
-    assert builder.format_short_mediainfo_json({"media": {"track": [{"@type": "Video"}]}}) == ""
+    assert (
+        builder.format_short_mediainfo_json({"media": {"track": "bad"}}) == ""
+    )
+    assert (
+        builder.format_short_mediainfo_json(
+            {"media": {"track": [{"@type": "Video"}]}}
+        )
+        == ""
+    )
     invalid = {
         "media": {
             "track": [
                 {"@type": "General", "FileSize": "bad", "Duration": "bad"},
                 {"@type": "Video", "BitRate": "bad"},
-                {"@type": "Audio", "SamplingRate": "bad", "BitRate": "bad", "Channels": "2"},
+                {
+                    "@type": "Audio",
+                    "SamplingRate": "bad",
+                    "BitRate": "bad",
+                    "Channels": "2",
+                },
             ]
         }
     }
     rendered = builder.format_short_mediainfo_json(invalid, "fallback.mkv")
     assert "fallback" in rendered
 
-    monkeypatch.setattr(builder.common, "makedirs", AsyncMock(side_effect=OSError("read only")))
+    monkeypatch.setattr(
+        builder.common, "makedirs", AsyncMock(side_effect=OSError("read only"))
+    )
     meta = _meta(tmp_path, uuid="description-error", mediainfo=report)
     assert asyncio.run(builder.get_mediainfo_section(meta))
 
 
-def test_bdinfo_headers_user_signature_bluray_and_plot_sections(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_bdinfo_headers_user_signature_bluray_and_plot_sections(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     defaults = {
         "screenshot_header": "Screens",
         "disc_menu_header": "Menus",
@@ -420,7 +503,11 @@ def test_bdinfo_headers_user_signature_bluray_and_plot_sections(tmp_path: Path, 
         "screens_per_row": 2,
     }
     builder = _builder(defaults=defaults)
-    image = {"web_url": "https://web", "raw_url": "https://raw", "img_url": "https://thumb"}
+    image = {
+        "web_url": "https://web",
+        "raw_url": "https://raw",
+        "img_url": "https://thumb",
+    }
     meta = _meta(
         tmp_path,
         is_disc="BDMV",
@@ -441,17 +528,32 @@ def test_bdinfo_headers_user_signature_bluray_and_plot_sections(tmp_path: Path, 
         },
     )
     assert asyncio.run(builder.get_bdinfo_section(meta)) == "Disc 1"
-    assert asyncio.run(builder.get_bdinfo_section(_meta(tmp_path, is_disc="BDMV", discs=["bad"]))) == ""
+    assert (
+        asyncio.run(
+            builder.get_bdinfo_section(
+                _meta(tmp_path, is_disc="BDMV", discs=["bad"])
+            )
+        )
+        == ""
+    )
     assert asyncio.run(builder.screenshot_header(meta)) == "Screens"
     assert asyncio.run(builder.menu_screenshot_header(meta)) == "Menus"
-    assert asyncio.run(builder.get_user_description(meta)) == "File Description"
+    assert (
+        asyncio.run(builder.get_user_description(meta)) == "File Description"
+    )
     meta.description_file_content = ""
-    assert asyncio.run(builder.get_user_description(meta)) == "Link Description"
+    assert (
+        asyncio.run(builder.get_user_description(meta)) == "Link Description"
+    )
     assert asyncio.run(builder.get_custom_signature(meta)) == "Signature"
     release_url, covers = asyncio.run(builder.get_bluray_section(meta))
     assert release_url == meta.release_url and "https://raw" in covers
-    assert "Spectrograms" in asyncio.run(builder.get_audio_spectrogram_section(meta))
-    assert "HDR Plots" in asyncio.run(builder.get_dynamic_hdr_plot_section(meta))
+    assert "Spectrograms" in asyncio.run(
+        builder.get_audio_spectrogram_section(meta)
+    )
+    assert "HDR Plots" in asyncio.run(
+        builder.get_dynamic_hdr_plot_section(meta)
+    )
 
     covers_file = tmp_path / "tmp" / meta.uuid / "covers.json"
     covers_file.write_text(json.dumps([image]), encoding="utf-8")
@@ -462,18 +564,41 @@ def test_bdinfo_headers_user_signature_bluray_and_plot_sections(tmp_path: Path, 
 
     for tracker in ("TORRENTLEECH", "HDTORRENTS"):
         special = _builder(tracker, defaults=defaults)
-        assert asyncio.run(special.get_bluray_section(_meta(tmp_path, is_disc="DVD", hosted_artwork=[image], release_url="x")))[1]
+        assert asyncio.run(
+            special.get_bluray_section(
+                _meta(
+                    tmp_path,
+                    is_disc="DVD",
+                    hosted_artwork=[image],
+                    release_url="x",
+                )
+            )
+        )[1]
 
-    assert asyncio.run(builder.get_audio_spectrogram_section(_meta(tmp_path))) == ""
-    assert asyncio.run(builder.get_dynamic_hdr_plot_section(_meta(tmp_path))) == ""
+    assert (
+        asyncio.run(builder.get_audio_spectrogram_section(_meta(tmp_path)))
+        == ""
+    )
+    assert (
+        asyncio.run(builder.get_dynamic_hdr_plot_section(_meta(tmp_path)))
+        == ""
+    )
 
-    monkeypatch.setattr(builder, "_get_bool_config", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("bad")))
+    monkeypatch.setattr(
+        builder,
+        "_get_bool_config",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("bad")),
+    )
     assert asyncio.run(builder.get_audio_spectrogram_section(meta)) == ""
     assert asyncio.run(builder.get_bluray_section(meta)) == ("", "")
 
 
 def _general_meta(tmp_path: Path, **values: object) -> Meta:
-    image = {"web_url": "https://web", "raw_url": "https://raw", "img_url": "https://thumb"}
+    image = {
+        "web_url": "https://web",
+        "raw_url": "https://raw",
+        "img_url": "https://thumb",
+    }
     base = _meta(
         tmp_path,
         image_list=[image],
@@ -503,29 +628,87 @@ def _general_meta(tmp_path: Path, **values: object) -> Meta:
     return base
 
 
-def _stub_general_sections(builder: DescriptionBuilder, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(builder, "get_custom_header", AsyncMock(return_value="Custom Header"))
-    monkeypatch.setattr(builder, "get_logo_section", AsyncMock(return_value=("https://logo", "300")))
-    monkeypatch.setattr(builder, "get_mediainfo_section", AsyncMock(return_value="MEDIAINFO"))
-    monkeypatch.setattr(builder, "get_bdinfo_section", AsyncMock(return_value="BDINFO"))
-    monkeypatch.setattr(builder, "get_bluray_section", AsyncMock(return_value=("https://bluray", "COVERS")))
-    monkeypatch.setattr(builder, "get_tv_info", AsyncMock(return_value=("Episode Title", "Episode Overview")))
-    monkeypatch.setattr(builder, "_build_book_desc_section", lambda _meta: "BOOK SECTION")
-    monkeypatch.setattr(builder, "_build_game_desc_section", lambda _meta: "GAME SECTION")
-    monkeypatch.setattr(builder, "_build_music_desc_section", lambda _meta: "MUSIC SECTION")
-    monkeypatch.setattr(builder, "get_user_description", AsyncMock(return_value="USER DESCRIPTION"))
-    monkeypatch.setattr(builder, "menu_section", AsyncMock(return_value="MENU SECTION"))
-    monkeypatch.setattr(builder, "get_tonemapped_header", AsyncMock(return_value="TONEMAPPED"))
-    monkeypatch.setattr(builder, "_handle_discs_and_screenshots", AsyncMock(return_value="SCREENSHOTS"))
-    monkeypatch.setattr(builder, "get_audio_spectrogram_section", AsyncMock(return_value="SPECTROGRAMS"))
-    monkeypatch.setattr(builder, "get_dynamic_hdr_plot_section", AsyncMock(return_value="HDR PLOTS"))
-    monkeypatch.setattr(builder, "get_custom_signature", AsyncMock(return_value="CUSTOM SIGNATURE"))
-    monkeypatch.setattr(builder, "tracker_specific_formats", lambda _tracker, text: text)
+def _stub_general_sections(
+    builder: DescriptionBuilder, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        builder, "get_custom_header", AsyncMock(return_value="Custom Header")
+    )
+    monkeypatch.setattr(
+        builder,
+        "get_logo_section",
+        AsyncMock(return_value=("https://logo", "300")),
+    )
+    monkeypatch.setattr(
+        builder, "get_mediainfo_section", AsyncMock(return_value="MEDIAINFO")
+    )
+    monkeypatch.setattr(
+        builder, "get_bdinfo_section", AsyncMock(return_value="BDINFO")
+    )
+    monkeypatch.setattr(
+        builder,
+        "get_bluray_section",
+        AsyncMock(return_value=("https://bluray", "COVERS")),
+    )
+    monkeypatch.setattr(
+        builder,
+        "get_tv_info",
+        AsyncMock(return_value=("Episode Title", "Episode Overview")),
+    )
+    monkeypatch.setattr(
+        builder, "_build_book_desc_section", lambda _meta: "BOOK SECTION"
+    )
+    monkeypatch.setattr(
+        builder, "_build_game_desc_section", lambda _meta: "GAME SECTION"
+    )
+    monkeypatch.setattr(
+        builder, "_build_music_desc_section", lambda _meta: "MUSIC SECTION"
+    )
+    monkeypatch.setattr(
+        builder,
+        "get_user_description",
+        AsyncMock(return_value="USER DESCRIPTION"),
+    )
+    monkeypatch.setattr(
+        builder, "menu_section", AsyncMock(return_value="MENU SECTION")
+    )
+    monkeypatch.setattr(
+        builder, "get_tonemapped_header", AsyncMock(return_value="TONEMAPPED")
+    )
+    monkeypatch.setattr(
+        builder,
+        "_handle_discs_and_screenshots",
+        AsyncMock(return_value="SCREENSHOTS"),
+    )
+    monkeypatch.setattr(
+        builder,
+        "get_audio_spectrogram_section",
+        AsyncMock(return_value="SPECTROGRAMS"),
+    )
+    monkeypatch.setattr(
+        builder,
+        "get_dynamic_hdr_plot_section",
+        AsyncMock(return_value="HDR PLOTS"),
+    )
+    monkeypatch.setattr(
+        builder,
+        "get_custom_signature",
+        AsyncMock(return_value="CUSTOM SIGNATURE"),
+    )
+    monkeypatch.setattr(
+        builder, "tracker_specific_formats", lambda _tracker, text: text
+    )
 
 
-def test_general_description_all_media_tracker_formats_and_signatures(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_general_description_all_media_tracker_formats_and_signatures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     language = AsyncMock()
-    monkeypatch.setattr(description_builder.languages_manager, "process_desc_language", language)
+    monkeypatch.setattr(
+        description_builder.languages_manager,
+        "process_desc_language",
+        language,
+    )
     cases = [
         ("BJSHARE", "TV", "DVD"),
         ("DIGITALCORE", "MOVIE", "BDMV"),
@@ -551,12 +734,20 @@ def test_general_description_all_media_tracker_formats_and_signatures(tmp_path: 
         assert "https://logo" in result
         assert "https://bluray" in result and "Episode Overview" in result
         assert "SCREENSHOTS" in result and "CUSTOM SIGNATURE" in result
-        assert (tmp_path / "tmp" / meta.uuid / f"[{tracker}]DESCRIPTION.txt").is_file()
+        assert (
+            tmp_path / "tmp" / meta.uuid / f"[{tracker}]DESCRIPTION.txt"
+        ).is_file()
     assert language.await_count == len(cases)
 
 
-def test_general_description_special_descriptions_nfo_and_user_dedup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(description_builder.languages_manager, "process_desc_language", AsyncMock())
+def test_general_description_special_descriptions_nfo_and_user_dedup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        description_builder.languages_manager,
+        "process_desc_language",
+        AsyncMock(),
+    )
 
     builder = _builder("AITHER")
     _stub_general_sections(builder, monkeypatch)
@@ -568,7 +759,11 @@ def test_general_description_special_descriptions_nfo_and_user_dedup(tmp_path: P
         description_nfo_content=f"NFO {nfo_url}",
     )
     (tmp_path / "tmp" / meta.uuid).mkdir(parents=True)
-    result = asyncio.run(builder.general_description_generator(meta, signature="EXPLICIT SIGNATURE"))
+    result = asyncio.run(
+        builder.general_description_generator(
+            meta, signature="EXPLICIT SIGNATURE"
+        )
+    )
     assert "beyondhd.co" in result and "EXPLICIT SIGNATURE" in result
 
     builder = _builder("AITHER")
@@ -583,18 +778,28 @@ def test_general_description_special_descriptions_nfo_and_user_dedup(tmp_path: P
     (tmp_path / "tmp" / meta.uuid).mkdir(parents=True)
     assert "Kept" in asyncio.run(builder.general_description_generator(meta))
 
-    for tracker, expected in (("DIGITALCORE", "[nfo]"), ("TORRENTLEECH", "background-color"), ("TEST", "[pre]")):
+    for tracker, expected in (
+        ("DIGITALCORE", "[nfo]"),
+        ("TORRENTLEECH", "background-color"),
+        ("TEST", "[pre]"),
+    ):
         builder = _builder(tracker)
         _stub_general_sections(builder, monkeypatch)
-        meta = _general_meta(tmp_path, uuid=f"nfo-{tracker}", description_nfo_content="NFO")
+        meta = _general_meta(
+            tmp_path, uuid=f"nfo-{tracker}", description_nfo_content="NFO"
+        )
         (tmp_path / "tmp" / meta.uuid).mkdir(parents=True)
-        assert expected in asyncio.run(builder.general_description_generator(meta, description=False))
+        assert expected in asyncio.run(
+            builder.general_description_generator(meta, description=False)
+        )
 
     builder = _builder("MTEAM")
     _stub_general_sections(builder, monkeypatch)
     meta = _general_meta(tmp_path, uuid="mteam", description=None)
     (tmp_path / "tmp" / meta.uuid).mkdir(parents=True)
-    assert "MTEAM Description" in asyncio.run(builder.general_description_generator(meta))
+    assert "MTEAM Description" in asyncio.run(
+        builder.general_description_generator(meta)
+    )
 
     builder = _builder("RAILGUNPT")
     _stub_general_sections(builder, monkeypatch)
@@ -610,15 +815,23 @@ def test_general_description_special_descriptions_nfo_and_user_dedup(tmp_path: P
     (tmp_path / "tmp" / meta.uuid).mkdir(parents=True)
     result = asyncio.run(builder.general_description_generator(meta))
     assert result.count("SAME") == 1
-    result = asyncio.run(builder.general_description_generator(meta, description=False))
+    result = asyncio.run(
+        builder.general_description_generator(meta, description=False)
+    )
     assert "SAME" in result
 
 
-def test_general_description_sorted_no_images_language_error_and_section_controls(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_general_description_sorted_no_images_language_error_and_section_controls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     builder = _builder(defaults={"multiScreens": "bad"})
     _stub_general_sections(builder, monkeypatch)
     language = AsyncMock(side_effect=RuntimeError("language failed"))
-    monkeypatch.setattr(description_builder.languages_manager, "process_desc_language", language)
+    monkeypatch.setattr(
+        description_builder.languages_manager,
+        "process_desc_language",
+        language,
+    )
     meta = _general_meta(
         tmp_path,
         uuid="controls",
@@ -657,7 +870,9 @@ def test_general_description_sorted_no_images_language_error_and_section_control
     language.assert_awaited_once()
 
 
-def test_saved_pack_image_links_filters_hosts_invalid_urls_counts_and_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_saved_pack_image_links_filters_hosts_invalid_urls_counts_and_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     builder = _builder()
     state = tmp_path / "tmp" / "pack"
     state.mkdir(parents=True)
@@ -674,13 +889,18 @@ def test_saved_pack_image_links_filters_hosts_invalid_urls_counts_and_errors(tmp
                     {"raw_url": "not a url"},
                 ],
             },
-            "two": {"count": 1, "images": [{"raw_url": "https://bad.invalid/4.png"}]},
+            "two": {
+                "count": 1,
+                "images": [{"raw_url": "https://bad.invalid/4.png"}],
+            },
         },
         "total_count": 6,
     }
     pack_file.write_text(json.dumps(data), encoding="utf-8")
     meta = _general_meta(tmp_path, uuid="pack")
-    result = asyncio.run(builder._check_saved_pack_image_links(meta, ["imgbb.com"]))
+    result = asyncio.run(
+        builder._check_saved_pack_image_links(meta, ["imgbb.com"])
+    )
     assert result["total_count"] == 3
     assert "two" not in result["keys"]
 
@@ -695,20 +915,47 @@ def test_saved_pack_image_links_filters_hosts_invalid_urls_counts_and_errors(tmp
         return original_urlparse(value)
 
     monkeypatch.setattr(description_builder.urllib.parse, "urlparse", fail_url)
-    result = asyncio.run(builder._check_saved_pack_image_links(meta, ["imgbb.com"]))
+    result = asyncio.run(
+        builder._check_saved_pack_image_links(meta, ["imgbb.com"])
+    )
     assert result["total_count"] == 3
-    monkeypatch.setattr(description_builder.urllib.parse, "urlparse", original_urlparse)
+    monkeypatch.setattr(
+        description_builder.urllib.parse, "urlparse", original_urlparse
+    )
 
-    pack_file.write_text(json.dumps({"keys": {"one": {"count": 1, "images": [{"raw_url": "https://imgbb.com/1"}]}}}), encoding="utf-8")
-    assert asyncio.run(builder._check_saved_pack_image_links(meta, ["imgbb.com"])) == {}
+    pack_file.write_text(
+        json.dumps(
+            {
+                "keys": {
+                    "one": {
+                        "count": 1,
+                        "images": [{"raw_url": "https://imgbb.com/1"}],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert (
+        asyncio.run(builder._check_saved_pack_image_links(meta, ["imgbb.com"]))
+        == {}
+    )
     pack_file.write_text("not-json", encoding="utf-8")
-    assert asyncio.run(builder._check_saved_pack_image_links(meta, ["imgbb.com"])) == {}
+    assert (
+        asyncio.run(builder._check_saved_pack_image_links(meta, ["imgbb.com"]))
+        == {}
+    )
     pack_file.unlink()
     builder.common.path_exists = AsyncMock(return_value=False)  # type: ignore[method-assign]
-    assert asyncio.run(builder._check_saved_pack_image_links(meta, ["imgbb.com"])) == {}
+    assert (
+        asyncio.run(builder._check_saved_pack_image_links(meta, ["imgbb.com"]))
+        == {}
+    )
 
 
-def test_book_section_table_list_ptbr_audiobook_and_empty(tmp_path: Path) -> None:
+def test_book_section_table_list_ptbr_audiobook_and_empty(
+    tmp_path: Path,
+) -> None:
     all_fields = _meta(
         tmp_path,
         category="BOOK",
@@ -734,11 +981,15 @@ def test_book_section_table_list_ptbr_audiobook_and_empty(tmp_path: Path) -> Non
     )
     builder = _builder()
     table = builder._build_book_desc_section(all_fields, underline=True)
-    assert "[table]" in table and "EPUB Metadata" in table and "128 kbps" in table
+    assert (
+        "[table]" in table and "EPUB Metadata" in table and "128 kbps" in table
+    )
     assert "[b]Overview[/b]" in table
 
     for tracker in ("TORRENTLEECH", "IMMORTALSEED", "IPTORRENTS", "SPEEDAPP"):
-        section = _builder(tracker)._build_book_desc_section(all_fields, bullet="*")
+        section = _builder(tracker)._build_book_desc_section(
+            all_fields, bullet="*"
+        )
         assert "[table]" not in section and "[b]Author:[/b]" in section
 
     for tracker in ("BJSHARE", "BRASILTRACKER", "AMIGOSSHARE"):
@@ -747,12 +998,23 @@ def test_book_section_table_list_ptbr_audiobook_and_empty(tmp_path: Path) -> Non
 
     empty = _meta(tmp_path, category="BOOK", year=None)
     assert builder._build_book_desc_section(empty) == ""
-    overview_only = _meta(tmp_path, category="BOOK", overview="Overview", year=None)
-    assert "Overview" in builder._build_book_desc_section(overview_only, table=False, underline=True)
+    overview_only = _meta(
+        tmp_path, category="BOOK", overview="Overview", year=None
+    )
+    assert "Overview" in builder._build_book_desc_section(
+        overview_only, table=False, underline=True
+    )
 
 
-def test_game_section_table_simple_software_requirements_languages_and_empty(tmp_path: Path) -> None:
-    files = [tmp_path / "setup.exe", tmp_path / "package.pkg", tmp_path / "image.dmg", tmp_path / "ignore.txt"]
+def test_game_section_table_simple_software_requirements_languages_and_empty(
+    tmp_path: Path,
+) -> None:
+    files = [
+        tmp_path / "setup.exe",
+        tmp_path / "package.pkg",
+        tmp_path / "image.dmg",
+        tmp_path / "ignore.txt",
+    ]
     for path in files:
         path.write_bytes(b"x")
     meta = _meta(
@@ -776,10 +1038,15 @@ def test_game_section_table_simple_software_requirements_languages_and_empty(tmp
     )
     section = _builder()._build_game_desc_section(meta)
     assert "[table]" in section and "DMG, EXE, PKG" in section
-    assert "Installation and Usage" in section and "System Requirements" in section
+    assert (
+        "Installation and Usage" in section
+        and "System Requirements" in section
+    )
     assert "Officially Supported Languages" in section
 
-    simple = _builder("TORRENTLEECH")._build_game_desc_section(meta, table=False)
+    simple = _builder("TORRENTLEECH")._build_game_desc_section(
+        meta, table=False
+    )
     assert "[table]" not in simple and "Minimum" in simple
 
     ptbr = _builder("BRASILTRACKER")._build_game_desc_section(meta)
@@ -791,7 +1058,9 @@ def test_game_section_table_simple_software_requirements_languages_and_empty(tmp
     assert _builder()._build_game_desc_section(empty_game) == ""
 
 
-def test_music_section_invalid_shapes_links_tracks_and_non_table(tmp_path: Path) -> None:
+def test_music_section_invalid_shapes_links_tracks_and_non_table(
+    tmp_path: Path,
+) -> None:
     uuid = "12345678-1234-1234-1234-123456789abc"
     fields = {
         "artists": {"value": ["Artist", "Guest"]},
@@ -850,7 +1119,11 @@ def test_music_section_invalid_shapes_links_tracks_and_non_table(tmp_path: Path)
         title="Fallback Album",
         year=2020,
         source="WEB",
-        music_release={"fields": fields, "tracks": tracks, "external_ids": external_ids},
+        music_release={
+            "fields": fields,
+            "tracks": tracks,
+            "external_ids": external_ids,
+        },
     )
     table = _builder()._build_music_desc_section(meta)
     assert "[table]" in table and "musicbrainz.org/release" in table
@@ -870,7 +1143,12 @@ def test_music_section_invalid_shapes_links_tracks_and_non_table(tmp_path: Path)
     ):
         invalid = _meta(tmp_path, category="MUSIC", music_release=release)
         assert _builder()._build_music_desc_section(invalid) == ""
-    assert _builder()._build_music_desc_section(_meta(tmp_path, category="MOVIE", music_release={})) == ""
+    assert (
+        _builder()._build_music_desc_section(
+            _meta(tmp_path, category="MOVIE", music_release={})
+        )
+        == ""
+    )
 
 
 def _image(value: str = "1") -> dict[str, str]:
@@ -881,7 +1159,9 @@ def _image(value: str = "1") -> dict[str, str]:
     }
 
 
-def _handle_builder(_tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> DescriptionBuilder:
+def _handle_builder(
+    _tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> DescriptionBuilder:
     builder = _builder(
         defaults={
             "charLimit": 10000,
@@ -894,22 +1174,43 @@ def _handle_builder(_tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Descrip
     builder.screenshot_header = AsyncMock(return_value="Screen Header")  # type: ignore[method-assign]
     builder._check_saved_pack_image_links = AsyncMock(return_value={})  # type: ignore[method-assign]
     builder.common.save_image_links = AsyncMock()  # type: ignore[method-assign]
-    builder.uploadscreens_manager.upload_screens = AsyncMock(return_value=([_image("uploaded")], 1))  # type: ignore[method-assign]
-    builder.takescreens_manager.sanitize_filename = AsyncMock(side_effect=lambda value: str(value).replace(" ", "_"))  # type: ignore[method-assign]
+    builder.uploadscreens_manager.upload_screens = AsyncMock(
+        return_value=([_image("uploaded")], 1)
+    )  # type: ignore[method-assign]
+    builder.takescreens_manager.sanitize_filename = AsyncMock(
+        side_effect=lambda value: str(value).replace(" ", "_")
+    )  # type: ignore[method-assign]
     builder.takescreens_manager.screenshots = AsyncMock()  # type: ignore[method-assign]
-    builder.parser.parse_mediainfo = lambda _value: {"General": {"Format": "Matroska"}}  # type: ignore[method-assign]
+    builder.parser.parse_mediainfo = lambda _value: {
+        "General": {"Format": "Matroska"}
+    }  # type: ignore[method-assign]
     builder.parser.format_bbcode = lambda _value: "FORMATTED MEDIAINFO"  # type: ignore[method-assign]
     monkeypatch.setattr(description_builder.asyncio, "sleep", AsyncMock())
     return builder
 
 
-def test_handle_no_images_game_single_file_and_comparison(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_handle_no_images_game_single_file_and_comparison(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     builder = _handle_builder(tmp_path, monkeypatch)
-    assert asyncio.run(builder._handle_discs_and_screenshots(_general_meta(tmp_path), [], [], 0)) == ""
+    assert (
+        asyncio.run(
+            builder._handle_discs_and_screenshots(
+                _general_meta(tmp_path), [], [], 0
+            )
+        )
+        == ""
+    )
 
-    game = _general_meta(tmp_path, uuid="handle-game", category="GAME", screens=None)
+    game = _general_meta(
+        tmp_path, uuid="handle-game", category="GAME", screens=None
+    )
     (tmp_path / "tmp" / game.uuid).mkdir(parents=True)
-    result = asyncio.run(builder._handle_discs_and_screenshots(game, [], [_image("1"), _image("2")], 0))
+    result = asyncio.run(
+        builder._handle_discs_and_screenshots(
+            game, [], [_image("1"), _image("2")], 0
+        )
+    )
     assert "Screen Header" in result and result.count("https://raw") == 2
 
     movie = _general_meta(
@@ -919,33 +1220,53 @@ def test_handle_no_images_game_single_file_and_comparison(tmp_path: Path, monkey
         filelist=[str(tmp_path / "single.mkv")],
         comparison=True,
         comparison_groups={
-            "0": {"name": "Source", "urls": [_image("source-1"), _image("source-2")]},
-            "1": {"name": "Encode", "urls": [_image("encode-1"), _image("encode-2")]},
+            "0": {
+                "name": "Source",
+                "urls": [_image("source-1"), _image("source-2")],
+            },
+            "1": {
+                "name": "Encode",
+                "urls": [_image("encode-1"), _image("encode-2")],
+            },
         },
         screens=1,
     )
     (tmp_path / "tmp" / movie.uuid).mkdir(parents=True)
-    result = asyncio.run(builder._handle_discs_and_screenshots(movie, [], [_image("main")], 0))
+    result = asyncio.run(
+        builder._handle_discs_and_screenshots(movie, [], [_image("main")], 0)
+    )
     assert "[comparison=Source, Encode]" in result and "source-1" in result
 
     movie.comparison_groups = [
         {"name": "One", "urls": [_image("one")]},
         {"name": "Two", "urls": [_image("two")]},
     ]
-    result = asyncio.run(builder._handle_discs_and_screenshots(movie, [], [_image("main")], 0))
+    result = asyncio.run(
+        builder._handle_discs_and_screenshots(movie, [], [_image("main")], 0)
+    )
     assert "[comparison=One, Two]" in result
 
 
-def test_handle_single_dvd_and_bdmv_saved_uploaded_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_handle_single_dvd_and_bdmv_saved_uploaded_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     builder = _handle_builder(tmp_path, monkeypatch)
     dvd = _general_meta(
         tmp_path,
         uuid="single-dvd",
-        discs=[{"type": "DVD", "vob": "/disc/VTS_01_1.VOB", "vob_mi": "DVD MEDIAINFO"}],
+        discs=[
+            {
+                "type": "DVD",
+                "vob": "/disc/VTS_01_1.VOB",
+                "vob_mi": "DVD MEDIAINFO",
+            }
+        ],
         screens=1,
     )
     (tmp_path / "tmp" / dvd.uuid).mkdir(parents=True)
-    result = asyncio.run(builder._handle_discs_and_screenshots(dvd, [], [_image()], 0))
+    result = asyncio.run(
+        builder._handle_discs_and_screenshots(dvd, [], [_image()], 0)
+    )
     assert "VTS_01_1.VOB" in result and "DVD MEDIAINFO" in result
 
     bdmv = _general_meta(
@@ -963,9 +1284,21 @@ def test_handle_single_dvd_and_bdmv_saved_uploaded_missing(tmp_path: Path, monke
     )
     (tmp_path / "tmp" / bdmv.uuid).mkdir(parents=True)
     builder._check_saved_pack_image_links = AsyncMock(  # type: ignore[method-assign]
-        return_value={"keys": {"new_images_playlist_1": {"images": [_image("saved")], "count": 1}}, "total_count": 1}
+        return_value={
+            "keys": {
+                "new_images_playlist_1": {
+                    "images": [_image("saved")],
+                    "count": 1,
+                }
+            },
+            "total_count": 1,
+        }
     )
-    result = asyncio.run(builder._handle_discs_and_screenshots(bdmv, ["imgbb.com"], [_image()], 2))
+    result = asyncio.run(
+        builder._handle_discs_and_screenshots(
+            bdmv, ["imgbb.com"], [_image()], 2
+        )
+    )
     assert "Director Summary" in result and "saved" in result
 
     upload = _general_meta(
@@ -983,8 +1316,16 @@ def test_handle_single_dvd_and_bdmv_saved_uploaded_missing(tmp_path: Path, monke
     )
     (tmp_path / "tmp" / upload.uuid).mkdir(parents=True)
     builder._check_saved_pack_image_links = AsyncMock(return_value={})  # type: ignore[method-assign]
-    monkeypatch.setattr(description_builder, "manifest_files", lambda *_args: [Path("PLAYLIST_1-0.png")])
-    result = asyncio.run(builder._handle_discs_and_screenshots(upload, ["imgbb.com"], [_image()], 2))
+    monkeypatch.setattr(
+        description_builder,
+        "manifest_files",
+        lambda *_args: [Path("PLAYLIST_1-0.png")],
+    )
+    result = asyncio.run(
+        builder._handle_discs_and_screenshots(
+            upload, ["imgbb.com"], [_image()], 2
+        )
+    )
     assert "Extended Summary" in result and "uploaded" in result
     builder.common.save_image_links.assert_awaited()
 
@@ -1003,12 +1344,18 @@ def test_handle_single_dvd_and_bdmv_saved_uploaded_missing(tmp_path: Path, monke
         skip_imghost_upload=True,
     )
     (tmp_path / "tmp" / missing.uuid).mkdir(parents=True)
-    monkeypatch.setattr(description_builder, "manifest_files", lambda *_args: [])
-    result = asyncio.run(builder._handle_discs_and_screenshots(missing, [], [_image()], 2))
+    monkeypatch.setattr(
+        description_builder, "manifest_files", lambda *_args: []
+    )
+    result = asyncio.run(
+        builder._handle_discs_and_screenshots(missing, [], [_image()], 2)
+    )
     assert "Missing Summary" in result
 
 
-def test_handle_multiple_discs_saved_and_uploaded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_handle_multiple_discs_saved_and_uploaded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     builder = _handle_builder(tmp_path, monkeypatch)
     discs = [
         {"type": "BDMV", "name": "Main Disc", "summary": "Main Summary"},
@@ -1025,27 +1372,63 @@ def test_handle_multiple_discs_saved_and_uploaded(tmp_path: Path, monkeypatch: p
     meta = _general_meta(tmp_path, uuid="multi-discs", discs=discs, screens=1)
     (tmp_path / "tmp" / meta.uuid).mkdir(parents=True)
     builder._check_saved_pack_image_links = AsyncMock(  # type: ignore[method-assign]
-        return_value={"keys": {"new_images_disc_1": {"images": [_image("dvd-saved")], "count": 1}}, "total_count": 3}
+        return_value={
+            "keys": {
+                "new_images_disc_1": {
+                    "images": [_image("dvd-saved")],
+                    "count": 1,
+                }
+            },
+            "total_count": 3,
+        }
     )
-    monkeypatch.setattr(description_builder, "manifest_files", lambda *_args: [Path("disc.png")])
-    result = asyncio.run(builder._handle_discs_and_screenshots(meta, ["imgbb.com"], [_image("main")], 2))
-    assert "Main Disc" in result and "Bonus DVD" in result and "Second Summary" in result
+    monkeypatch.setattr(
+        description_builder,
+        "manifest_files",
+        lambda *_args: [Path("disc.png")],
+    )
+    result = asyncio.run(
+        builder._handle_discs_and_screenshots(
+            meta, ["imgbb.com"], [_image("main")], 2
+        )
+    )
+    assert (
+        "Main Disc" in result
+        and "Bonus DVD" in result
+        and "Second Summary" in result
+    )
     assert "dvd-saved" in result and "uploaded" in result
 
-    no_multi = _general_meta(tmp_path, uuid="multi-discs-zero", discs=discs, screens=1)
+    no_multi = _general_meta(
+        tmp_path, uuid="multi-discs-zero", discs=discs, screens=1
+    )
     (tmp_path / "tmp" / no_multi.uuid).mkdir(parents=True)
-    result = asyncio.run(builder._handle_discs_and_screenshots(no_multi, [], [_image()], 0))
+    result = asyncio.run(
+        builder._handle_discs_and_screenshots(no_multi, [], [_image()], 0)
+    )
     assert "Main Disc" in result
 
 
-def test_handle_multiple_files_generation_saved_upload_limits_and_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_handle_multiple_files_generation_saved_upload_limits_and_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     files = [tmp_path / f"Episode.[{index}].mkv" for index in range(4)]
     for path in files:
         path.write_bytes(b"video")
     builder = _handle_builder(tmp_path, monkeypatch)
-    builder.tracker_config.update({"fileLimit": 1, "processLimit": 3, "charLimit": 10000})
+    builder.tracker_config.update(
+        {"fileLimit": 1, "processLimit": 3, "charLimit": 10000}
+    )
     builder._check_saved_pack_image_links = AsyncMock(  # type: ignore[method-assign]
-        return_value={"keys": {"new_images_file_1": {"images": [_image("saved-file")], "count": 1}}, "total_count": 3}
+        return_value={
+            "keys": {
+                "new_images_file_1": {
+                    "images": [_image("saved-file")],
+                    "count": 1,
+                }
+            },
+            "total_count": 3,
+        }
     )
     calls: dict[str, int] = {}
 
@@ -1056,25 +1439,53 @@ def test_handle_multiple_files_generation_saved_upload_limits_and_errors(tmp_pat
         return [Path(f"{group}-0.png")]
 
     monkeypatch.setattr(description_builder, "manifest_files", manifests)
-    monkeypatch.setattr(description_builder.MediaInfo, "parse", lambda *_args, **_kwargs: "MEDIAINFO")
-    meta = _general_meta(tmp_path, uuid="multi-files", filelist=[str(path) for path in files], screens=1)
+    monkeypatch.setattr(
+        description_builder.MediaInfo,
+        "parse",
+        lambda *_args, **_kwargs: "MEDIAINFO",
+    )
+    meta = _general_meta(
+        tmp_path,
+        uuid="multi-files",
+        filelist=[str(path) for path in files],
+        screens=1,
+    )
     (tmp_path / "tmp" / meta.uuid).mkdir(parents=True)
-    result = asyncio.run(builder._handle_discs_and_screenshots(meta, ["imgbb.com"], [_image("main")], 2))
+    result = asyncio.run(
+        builder._handle_discs_and_screenshots(
+            meta, ["imgbb.com"], [_image("main")], 2
+        )
+    )
     assert "saved-file" in result and "uploaded" in result
     assert "FORMATTED MEDIAINFO" in result and "Other files" in result
     builder.takescreens_manager.screenshots.assert_awaited()
 
-    builder.takescreens_manager.screenshots = AsyncMock(side_effect=RuntimeError("capture failed"))  # type: ignore[method-assign]
-    monkeypatch.setattr(description_builder, "manifest_files", lambda *_args: [])
-    error_meta = _general_meta(tmp_path, uuid="multi-files-error", filelist=[str(path) for path in files[:2]], screens=1)
+    builder.takescreens_manager.screenshots = AsyncMock(
+        side_effect=RuntimeError("capture failed")
+    )  # type: ignore[method-assign]
+    monkeypatch.setattr(
+        description_builder, "manifest_files", lambda *_args: []
+    )
+    error_meta = _general_meta(
+        tmp_path,
+        uuid="multi-files-error",
+        filelist=[str(path) for path in files[:2]],
+        screens=1,
+    )
     (tmp_path / "tmp" / error_meta.uuid).mkdir(parents=True)
-    result = asyncio.run(builder._handle_discs_and_screenshots(error_meta, [], [_image()], 2))
+    result = asyncio.run(
+        builder._handle_discs_and_screenshots(error_meta, [], [_image()], 2)
+    )
     assert "Episode.0" in result
 
 
-def test_handle_header_error_rows_and_debug_char_count(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_handle_header_error_rows_and_debug_char_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     builder = _handle_builder(tmp_path, monkeypatch)
-    builder.screenshot_header = AsyncMock(side_effect=RuntimeError("header failed"))  # type: ignore[method-assign]
+    builder.screenshot_header = AsyncMock(
+        side_effect=RuntimeError("header failed")
+    )  # type: ignore[method-assign]
     meta = _general_meta(
         tmp_path,
         uuid="header-error",
@@ -1085,9 +1496,19 @@ def test_handle_header_error_rows_and_debug_char_count(tmp_path: Path, monkeypat
     (tmp_path / "one.mkv").write_bytes(b"x")
     (tmp_path / "two.mkv").write_bytes(b"x")
     (tmp_path / "tmp" / meta.uuid).mkdir(parents=True)
-    monkeypatch.setattr(description_builder, "manifest_files", lambda *_args: [Path("screen.png")])
-    monkeypatch.setattr(description_builder.MediaInfo, "parse", lambda *_args, **_kwargs: "MI")
-    result = asyncio.run(builder._handle_discs_and_screenshots(meta, [], [_image("1"), _image("2")], 2))
+    monkeypatch.setattr(
+        description_builder,
+        "manifest_files",
+        lambda *_args: [Path("screen.png")],
+    )
+    monkeypatch.setattr(
+        description_builder.MediaInfo, "parse", lambda *_args, **_kwargs: "MI"
+    )
+    result = asyncio.run(
+        builder._handle_discs_and_screenshots(
+            meta, [], [_image("1"), _image("2")], 2
+        )
+    )
     assert "https://raw/1" in result
 
 
@@ -1128,10 +1549,14 @@ def test_tracker_specific_formats_all_trackers_and_image_regexes() -> None:
     hds = _builder("HDSPACE").tracker_specific_formats("HDSPACE", source)
     assert "not-imgbox.invalid" in hds and "imgbox.com" in hds
     assert "\n" in hds
-    assert "[" not in _builder("IMMORTALSEED").tracker_specific_formats("IMMORTALSEED", source)
+    assert "[" not in _builder("IMMORTALSEED").tracker_specific_formats(
+        "IMMORTALSEED", source
+    )
 
 
-def test_screenshot_format_rows_screens_per_row_and_menu(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_screenshot_format_rows_screens_per_row_and_menu(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     urls = ("https://web", "https://raw", "https://thumb")
     nexus = (
         "1PTBA",
@@ -1147,19 +1572,50 @@ def test_screenshot_format_rows_screens_per_row_and_menu(tmp_path: Path, monkeyp
         "NEXUSPHP",
     )
     for tracker in nexus:
-        assert _builder(tracker).format_screenshot(*urls) == "[img]https://raw[/img]"
+        assert (
+            _builder(tracker).format_screenshot(*urls)
+            == "[img]https://raw[/img]"
+        )
     assert "height=137" in _builder("HDTORRENTS").format_screenshot(*urls)
-    assert "max-width: 350px" in _builder("TORRENTLEECH").format_screenshot(*urls)
-    assert 'target="_blank"' in _builder("FUNFILE").format_screenshot(*urls, thumb_size=200)
-    assert _builder("GREATPOSTERWALL").format_screenshot(*urls).startswith("[img]")
-    assert _builder("HDSPACE").format_screenshot("https://other", "raw", "thumb").endswith("\n")
-    assert _builder("IPTORRENTS").format_screenshot("https://imgbox.com/a", "raw", "thumb").endswith(" ")
+    assert "max-width: 350px" in _builder("TORRENTLEECH").format_screenshot(
+        *urls
+    )
+    assert 'target="_blank"' in _builder("FUNFILE").format_screenshot(
+        *urls, thumb_size=200
+    )
+    assert (
+        _builder("GREATPOSTERWALL")
+        .format_screenshot(*urls)
+        .startswith("[img]")
+    )
+    assert (
+        _builder("HDSPACE")
+        .format_screenshot("https://other", "raw", "thumb")
+        .endswith("\n")
+    )
+    assert (
+        _builder("IPTORRENTS")
+        .format_screenshot("https://imgbox.com/a", "raw", "thumb")
+        .endswith(" ")
+    )
     assert "[img=350]" in _builder().format_screenshot("web", "raw", "")
 
     assert asyncio.run(_builder("TORRENTLEECH").get_screens_per_row()) == 2
-    assert asyncio.run(_builder("HAWKEUNO", tracker_values={"screens_per_row": 4, "thumbnail_size": 400}).get_screens_per_row()) == 2
+    assert (
+        asyncio.run(
+            _builder(
+                "HAWKEUNO",
+                tracker_values={"screens_per_row": 4, "thumbnail_size": 400},
+            ).get_screens_per_row()
+        )
+        == 2
+    )
     broken = _builder()
-    monkeypatch.setattr(broken, "_get_int_config", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("bad")))
+    monkeypatch.setattr(
+        broken,
+        "_get_int_config",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("bad")),
+    )
     assert asyncio.run(broken.get_screens_per_row()) == 2
 
     parts: list[str] = []
@@ -1167,9 +1623,16 @@ def test_screenshot_format_rows_screens_per_row_and_menu(tmp_path: Path, monkeyp
     assert _builder()._append_screenshot_row_separator(parts, 0, 2) == ""
     assert _builder()._append_screenshot_row_separator(parts, 1, 2) == "\n"
     parts = []
-    assert _builder("TORRENTLEECH")._append_screenshot_row_separator(parts, 1, 2) == "<br><br>"
+    assert (
+        _builder("TORRENTLEECH")._append_screenshot_row_separator(parts, 1, 2)
+        == "<br><br>"
+    )
 
-    images = [_image("1"), {"web_url": "", "raw_url": "raw", "img_url": "thumb"}, _image("3")]
+    images = [
+        _image("1"),
+        {"web_url": "", "raw_url": "raw", "img_url": "thumb"},
+        _image("3"),
+    ]
     meta = _general_meta(
         tmp_path,
         is_disc="DVD",
@@ -1179,28 +1642,58 @@ def test_screenshot_format_rows_screens_per_row_and_menu(tmp_path: Path, monkeyp
     builder.menu_screenshot_header = AsyncMock(return_value="Menus")  # type: ignore[method-assign]
     builder.get_screens_per_row = AsyncMock(return_value=2)  # type: ignore[method-assign]
     section = asyncio.run(builder.menu_section(meta))
-    assert "Menus" in section and "https://raw/1" in section and "https://raw/3" in section
-    assert asyncio.run(builder.menu_section(_general_meta(tmp_path, is_disc=""))) == ""
+    assert (
+        "Menus" in section
+        and "https://raw/1" in section
+        and "https://raw/3" in section
+    )
+    assert (
+        asyncio.run(builder.menu_section(_general_meta(tmp_path, is_disc="")))
+        == ""
+    )
     builder.menu_screenshot_header = AsyncMock(side_effect=RuntimeError("bad"))  # type: ignore[method-assign]
     assert asyncio.run(builder.menu_section(meta)) == ""
 
 
-def test_remaining_small_description_helpers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    builder = _builder(defaults={"screenshot_header": "Screens", "disc_menu_header": "Menus", "custom_signature": "Sig"})
+def test_remaining_small_description_helpers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    builder = _builder(
+        defaults={
+            "screenshot_header": "Screens",
+            "disc_menu_header": "Menus",
+            "custom_signature": "Sig",
+        }
+    )
     meta = _general_meta(tmp_path)
-    monkeypatch.setattr(builder, "_get_str_config", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("bad")))
+    monkeypatch.setattr(
+        builder,
+        "_get_str_config",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("bad")),
+    )
     assert asyncio.run(builder.screenshot_header(meta)) == ""
     assert asyncio.run(builder.menu_screenshot_header(meta)) == ""
     assert asyncio.run(builder.get_user_description(meta)) == ""
     assert asyncio.run(builder.get_custom_signature(meta)) == ""
 
-    tagged = _builder(tracker_values={"tag_overrides": {"-GROUP": {"header": "Tagged"}}})
+    tagged = _builder(
+        tracker_values={"tag_overrides": {"-GROUP": {"header": "Tagged"}}}
+    )
     assert tagged._get_tag_override("header", None) is None
     assert tagged._get_tag_override("missing", Meta(tag="-GROUP")) is None
 
     spectrogram = _builder(defaults={"add_audio_spectrogram": True})
-    spectrogram._get_str_config = lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("bad"))  # type: ignore[method-assign]
-    assert asyncio.run(spectrogram.get_audio_spectrogram_section(_general_meta(tmp_path, audio_spectrogram=True))) == ""
+    spectrogram._get_str_config = lambda *_args, **_kwargs: (
+        _ for _ in ()
+    ).throw(RuntimeError("bad"))  # type: ignore[method-assign]
+    assert (
+        asyncio.run(
+            spectrogram.get_audio_spectrogram_section(
+                _general_meta(tmp_path, audio_spectrogram=True)
+            )
+        )
+        == ""
+    )
 
     # Cached short MediaInfo read errors are isolated and regenerated.
     state = tmp_path / "tmp" / "mi-read-error"
@@ -1216,15 +1709,27 @@ def test_remaining_small_description_helpers(tmp_path: Path, monkeypatch: pytest
         return original_read(path, *_args, **_kwargs)
 
     monkeypatch.setattr(Path, "read_text", fail_read)
-    report = {"media": {"track": [{"@type": "General", "CompleteName": "Movie.mkv"}]}}
-    assert asyncio.run(media_builder.get_mediainfo_section(_general_meta(tmp_path, uuid="mi-read-error", mediainfo=report)))
+    report = {
+        "media": {"track": [{"@type": "General", "CompleteName": "Movie.mkv"}]}
+    }
+    assert asyncio.run(
+        media_builder.get_mediainfo_section(
+            _general_meta(tmp_path, uuid="mi-read-error", mediainfo=report)
+        )
+    )
 
 
-def test_final_uncovered_description_branches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_final_uncovered_description_branches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # File-only description is the first written source.
     source = tmp_path / "only-description.txt"
     source.write_text("file-only", encoding="utf-8")
-    result = asyncio.run(gen_desc(_meta(tmp_path, description_file=str(source)), object(), object()))  # type: ignore[arg-type]
+    result = asyncio.run(
+        gen_desc(
+            _meta(tmp_path, description_file=str(source)), object(), object()
+        )
+    )  # type: ignore[arg-type]
     assert result.description == "file-only"
 
     builder = _builder()
@@ -1233,8 +1738,17 @@ def test_final_uncovered_description_branches(tmp_path: Path, monkeypatch: pytes
     assert builder._get_tag_override("anything", Meta(tag="-GROUP")) is None
 
     # Nonempty but non-renderable MediaInfo reaches the final empty result.
-    media = _general_meta(tmp_path, uuid="empty-render", mediainfo={"media": {"track": []}})
-    assert asyncio.run(_builder(defaults={"full_mediainfo": False}).get_mediainfo_section(media)) == ""
+    media = _general_meta(
+        tmp_path, uuid="empty-render", mediainfo={"media": {"track": []}}
+    )
+    assert (
+        asyncio.run(
+            _builder(defaults={"full_mediainfo": False}).get_mediainfo_section(
+                media
+            )
+        )
+        == ""
+    )
 
     # Menu/user-description exception guards.
     menu_builder = _builder(defaults={"disc_menu_header": "Menus"})
@@ -1243,7 +1757,11 @@ def test_final_uncovered_description_branches(tmp_path: Path, monkeypatch: pytes
         is_disc="DVD",
         tracker_image_collections={"TEST": {"menu_images": [_image("menu")]}},
     )
-    monkeypatch.setattr(menu_builder, "_get_str_config", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("menu")))
+    monkeypatch.setattr(
+        menu_builder,
+        "_get_str_config",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("menu")),
+    )
     assert asyncio.run(menu_builder.menu_screenshot_header(menu_meta)) == ""
 
     user_meta = _general_meta(tmp_path)
@@ -1251,16 +1769,40 @@ def test_final_uncovered_description_branches(tmp_path: Path, monkeypatch: pytes
     assert asyncio.run(_builder().get_user_description(user_meta)) == ""
 
     # Explicitly disabled optional sections.
-    assert asyncio.run(_builder().get_audio_spectrogram_section(_general_meta(tmp_path, audio_spectrogram=False, audio_spectrogram_tracks=None))) == ""
-    assert asyncio.run(_builder().get_dynamic_hdr_plot_section(_general_meta(tmp_path, dynamic_hdr_plot=False))) == ""
+    assert (
+        asyncio.run(
+            _builder().get_audio_spectrogram_section(
+                _general_meta(
+                    tmp_path,
+                    audio_spectrogram=False,
+                    audio_spectrogram_tracks=None,
+                )
+            )
+        )
+        == ""
+    )
+    assert (
+        asyncio.run(
+            _builder().get_dynamic_hdr_plot_section(
+                _general_meta(tmp_path, dynamic_hdr_plot=False)
+            )
+        )
+        == ""
+    )
 
     # Header-size -1 is a supported table style for book details.
     book = _general_meta(tmp_path, category="BOOK", author="Author", year=2024)
-    assert "[b]Technical Details[/b]" in _builder()._build_book_desc_section(book, header_size=-1)
+    assert "[b]Technical Details[/b]" in _builder()._build_book_desc_section(
+        book, header_size=-1
+    )
 
     # The collection boundary may return no screenshots; generator normalizes it.
     generator = _builder()
-    monkeypatch.setattr(description_builder, "get_tracker_image_collection", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        description_builder,
+        "get_tracker_image_collection",
+        lambda *_args, **_kwargs: None,
+    )
     generated = asyncio.run(
         generator.general_description_generator(
             _general_meta(tmp_path, image_list=[]),
@@ -1295,7 +1837,9 @@ def test_final_uncovered_description_branches(tmp_path: Path, monkeypatch: pytes
     assert hds.endswith("\n")
 
 
-def test_final_disc_and_capture_description_branches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_final_disc_and_capture_description_branches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     builder = _handle_builder(tmp_path, monkeypatch)
 
     first_dvd = {
@@ -1307,13 +1851,33 @@ def test_final_disc_and_capture_description_branches(tmp_path: Path, monkeypatch
         "ifo_mi": "MAIN IFO",
     }
     saved_bd = {"type": "BDMV", "name": "Bonus BD", "summary": "BONUS SUMMARY"}
-    saved_meta = _general_meta(tmp_path, uuid="first-dvd-saved-bd", discs=[first_dvd, saved_bd], screens=1)
+    saved_meta = _general_meta(
+        tmp_path,
+        uuid="first-dvd-saved-bd",
+        discs=[first_dvd, saved_bd],
+        screens=1,
+    )
     (tmp_path / "tmp" / saved_meta.uuid).mkdir(parents=True)
     builder._check_saved_pack_image_links = AsyncMock(  # type: ignore[method-assign]
-        return_value={"keys": {"new_images_disc_1": {"images": [_image("saved-bd")], "count": 1}}}
+        return_value={
+            "keys": {
+                "new_images_disc_1": {
+                    "images": [_image("saved-bd")],
+                    "count": 1,
+                }
+            }
+        }
     )
-    result = asyncio.run(builder._handle_discs_and_screenshots(saved_meta, [], [_image("main")], 2))
-    assert "Main DVD" in result and "MAIN VOB" in result and "BONUS SUMMARY" in result
+    result = asyncio.run(
+        builder._handle_discs_and_screenshots(
+            saved_meta, [], [_image("main")], 2
+        )
+    )
+    assert (
+        "Main DVD" in result
+        and "MAIN VOB" in result
+        and "BONUS SUMMARY" in result
+    )
 
     second_dvd = {
         "type": "DVD",
@@ -1326,15 +1890,28 @@ def test_final_disc_and_capture_description_branches(tmp_path: Path, monkeypatch
     missing_meta = _general_meta(
         tmp_path,
         uuid="second-dvd-missing",
-        discs=[{"type": "BDMV", "name": "Main BD", "summary": "MAIN SUMMARY"}, second_dvd],
+        discs=[
+            {"type": "BDMV", "name": "Main BD", "summary": "MAIN SUMMARY"},
+            second_dvd,
+        ],
         screens=1,
         skip_imghost_upload=True,
     )
     (tmp_path / "tmp" / missing_meta.uuid).mkdir(parents=True)
     builder._check_saved_pack_image_links = AsyncMock(return_value={})  # type: ignore[method-assign]
-    monkeypatch.setattr(description_builder, "manifest_files", lambda *_args: [])
-    result = asyncio.run(builder._handle_discs_and_screenshots(missing_meta, [], [_image("main")], 2))
-    assert "Second DVD" in result and "SECOND VOB" in result and "SECOND IFO" in result
+    monkeypatch.setattr(
+        description_builder, "manifest_files", lambda *_args: []
+    )
+    result = asyncio.run(
+        builder._handle_discs_and_screenshots(
+            missing_meta, [], [_image("main")], 2
+        )
+    )
+    assert (
+        "Second DVD" in result
+        and "SECOND VOB" in result
+        and "SECOND IFO" in result
+    )
 
     files = [tmp_path / f"capture-{index}.mkv" for index in range(3)]
     for path in files:
@@ -1347,9 +1924,19 @@ def test_final_disc_and_capture_description_branches(tmp_path: Path, monkeypatch
         debug=True,
     )
     (tmp_path / "tmp" / capture_meta.uuid).mkdir(parents=True)
-    builder.takescreens_manager.screenshots = AsyncMock(side_effect=RuntimeError("capture failed"))  # type: ignore[method-assign]
-    monkeypatch.setattr(description_builder, "manifest_files", lambda *_args: [])
-    monkeypatch.setattr(description_builder.MediaInfo, "parse", lambda *_args, **_kwargs: "MI")
-    result = asyncio.run(builder._handle_discs_and_screenshots(capture_meta, [], [_image("main")], 2))
+    builder.takescreens_manager.screenshots = AsyncMock(
+        side_effect=RuntimeError("capture failed")
+    )  # type: ignore[method-assign]
+    monkeypatch.setattr(
+        description_builder, "manifest_files", lambda *_args: []
+    )
+    monkeypatch.setattr(
+        description_builder.MediaInfo, "parse", lambda *_args, **_kwargs: "MI"
+    )
+    result = asyncio.run(
+        builder._handle_discs_and_screenshots(
+            capture_meta, [], [_image("main")], 2
+        )
+    )
     assert isinstance(result, str)
     builder.takescreens_manager.screenshots.assert_awaited()

@@ -4,10 +4,17 @@ from src.domain_models.release import Meta
 from src.integrations.trackers.USENET.curupira import Curupira
 
 
-def test_dynamic_hdr_plots_are_preserved_in_curupira_screenshot_limit() -> None:
+def test_dynamic_hdr_plots_are_preserved_in_curupira_screenshot_limit() -> (
+    None
+):
     meta = Meta(
-        image_list=[{"raw_url": f"https://images.example/screenshot-{index}.png"} for index in range(6)],
-        dynamic_hdr_plot_images=[{"raw_url": "https://images.example/dynamic-hdr.png"}],
+        image_list=[
+            {"raw_url": f"https://images.example/screenshot-{index}.png"}
+            for index in range(6)
+        ],
+        dynamic_hdr_plot_images=[
+            {"raw_url": "https://images.example/dynamic-hdr.png"}
+        ],
     )
     tracker = Curupira({"TRACKERS": {"CURUPIRA": {}}})
 

@@ -5,6 +5,7 @@ import multiprocessing
 import os
 import platform
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -20,7 +21,11 @@ from src.integrations.observability.runtime_support import logger
 termios = import_module("termios") if os.name == "posix" else None
 
 # Detect Android environment
-IS_ANDROID = "android" in platform.platform().lower() or Path("/system/build.prop").exists() or "ANDROID_ROOT" in os.environ
+IS_ANDROID = (
+    "android" in platform.platform().lower()
+    or Path("/system/build.prop").exists()
+    or "ANDROID_ROOT" in os.environ
+)
 
 running_subprocesses: set[subprocess.Popen[Any]] = set()
 thread_executor: ThreadPoolExecutor | None = None
@@ -37,7 +42,9 @@ class CleanupManager:
         global thread_executor
         if thread_executor:
             # console.print("[yellow]Shutting down thread pool executor...[/yellow]")
-            thread_executor.shutdown(wait=True)  # Ensure threads terminate before proceeding
+            thread_executor.shutdown(
+                wait=True
+            )  # Ensure threads terminate before proceeding
             thread_executor = None  # Remove reference
 
         # 🔹 Step 1: Stop the monitoring thread safely
@@ -60,16 +67,22 @@ class CleanupManager:
                 try:
                     proc.terminate()  # Send SIGTERM first
                     try:
-                        await asyncio.wait_for(asyncio.to_thread(proc.wait), timeout=3)  # Wait for process to exit
+                        await asyncio.wait_for(
+                            asyncio.to_thread(proc.wait), timeout=3
+                        )  # Wait for process to exit
                     except TimeoutError:
-                        if not IS_ANDROID:  # Only try force kill on non-Android
+                        if (
+                            not IS_ANDROID
+                        ):  # Only try force kill on non-Android
                             # console.print(f"[red]Subprocess {proc.pid} did not exit in time, force killing.[/red]")
                             with contextlib.suppress(PermissionError, OSError):
                                 proc.kill()  # Force kill if it doesn't exit
                 except PermissionError, OSError:
                     # Android doesn't allow process termination in many cases
                     if not IS_ANDROID:
-                        logger.info(f"[yellow]Cannot terminate process {proc.pid}: Permission denied[/yellow]")
+                        logger.info(
+                            f"[yellow]Cannot terminate process {proc.pid}: Permission denied[/yellow]"
+                        )
 
             # 🔹 Close process streams safely
             for stream in (proc.stdout, proc.stderr, proc.stdin):
@@ -83,7 +96,11 @@ class CleanupManager:
 
         # 🔹 Step 5: Cancel all running asyncio tasks **gracefully**
         try:
-            tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+            tasks = [
+                t
+                for t in asyncio.all_tasks()
+                if t is not asyncio.current_task()
+            ]
             # console.print(f"[yellow]Cancelling {len(tasks)} remaining tasks...[/yellow]")
 
             for task in tasks:
@@ -96,7 +113,9 @@ class CleanupManager:
             # Stage 2: Gather tasks with exception handling
             if tasks:  # Only gather if there are tasks
                 try:
-                    results = await asyncio.gather(*tasks, return_exceptions=True)
+                    results = await asyncio.gather(
+                        *tasks, return_exceptions=True
+                    )
                 except RuntimeError:
                     # Event loop is no longer running, skip gather
                     results = []
@@ -107,7 +126,9 @@ class CleanupManager:
             results = []
 
         for result in results:
-            if isinstance(result, Exception) and not isinstance(result, asyncio.CancelledError):
+            if isinstance(result, Exception) and not isinstance(
+                result, asyncio.CancelledError
+            ):
                 logger.error(f"[red]Error during cleanup: {result}[/red]")
 
         # 🔹 Step 6: Kill all remaining threads and orphaned processes
@@ -126,7 +147,9 @@ class CleanupManager:
                 # Only try to clean up processes we directly spawned
                 for proc in list(running_subprocesses):
                     if proc.returncode is None:
-                        with contextlib.suppress(PermissionError, psutil.AccessDenied, OSError):
+                        with contextlib.suppress(
+                            PermissionError, psutil.AccessDenied, OSError
+                        ):
                             proc.terminate()
                 # Silently handle Android permission issues
         else:
@@ -137,7 +160,11 @@ class CleanupManager:
 
                 for child in children:
                     # console.print(f"[yellow]Terminating process {child.pid}...[/yellow]")
-                    with contextlib.suppress(psutil.NoSuchProcess, psutil.AccessDenied, PermissionError):
+                    with contextlib.suppress(
+                        psutil.NoSuchProcess,
+                        psutil.AccessDenied,
+                        PermissionError,
+                    ):
                         child.terminate()
 
                 # Wait for a short time for processes to terminate
@@ -146,14 +173,20 @@ class CleanupManager:
                         _, still_alive = psutil.wait_procs(children, timeout=3)
                         for child in still_alive:
                             # console.print(f"[red]Force killing stubborn process: {child.pid}[/red]")
-                            with contextlib.suppress(psutil.NoSuchProcess, psutil.AccessDenied, PermissionError):
+                            with contextlib.suppress(
+                                psutil.NoSuchProcess,
+                                psutil.AccessDenied,
+                                PermissionError,
+                            ):
                                 child.kill()
                     except psutil.AccessDenied, PermissionError:
                         # Handle systems where we can't wait for processes
                         pass
             except (PermissionError, psutil.AccessDenied, OSError) as e:
                 if not IS_ANDROID:
-                    logger.info(f"[yellow]Limited process access: {e}[/yellow]")
+                    logger.info(
+                        f"[yellow]Limited process access: {e}[/yellow]"
+                    )
             except Exception as e:
                 logger.error(f"[red]Error during process cleanup: {e}[/red]")
 
@@ -167,7 +200,10 @@ class CleanupManager:
         # 🔹 Remove references to completed threads
         try:
             for thread in threading.enumerate():
-                if thread != threading.current_thread() and not thread.is_alive():
+                if (
+                    thread != threading.current_thread()
+                    and not thread.is_alive()
+                ):
                     delete_fn = getattr(thread, "_delete", None)
                     if callable(delete_fn):
                         with contextlib.suppress(Exception):
@@ -184,64 +220,103 @@ class CleanupManager:
         # console.print("[green]Thread cleanup completed.[/green]")
 
     def reset_terminal(self) -> None:
-        """Reset the terminal while allowing the script to continue running (Linux/macOS only)."""
+        """Reset the terminal without affecting unrelated processes."""
         if os.name != "posix" or IS_ANDROID:
-            return  # Skip terminal reset on Windows and Android
-
+            return
         try:
-            if not sys.stderr.closed:
-                sys.stderr.flush()
+            _flush_stderr()
+            _reset_stdin_terminal()
+            _restore_stdout()
+            _flush_stderr()
+        except Exception as error:
+            _report_terminal_reset_error(error)
 
-            if hasattr(sys.stdin, "isatty") and sys.stdin.isatty() and not sys.stdin.closed:
-                try:
-                    subprocess.run(["stty", "sane"], check=False)  # noqa: S607
-                    if erase_key is not None:
-                        subprocess.run(["stty", "erase", erase_key], check=False)  # noqa: S603, S607
-                    if termios is not None and hasattr(termios, "tcflush"):
-                        tciflush = getattr(termios, "TCIOFLUSH", None)
-                        if tciflush is not None:
-                            termios.tcflush(sys.stdin.fileno(), tciflush)
-                    subprocess.run(["stty", "-ixon"], check=False)  # noqa: S607
-                except OSError:
-                    pass
 
-            if not sys.stdout.closed:
-                try:
-                    sys.stdout.write("\033[0m")
-                    sys.stdout.flush()
-                    sys.stdout.write("\033[?25h")
-                    sys.stdout.flush()
-                except OSError, ValueError:
-                    pass
+def _stdin_is_usable_tty() -> bool:
+    return bool(
+        hasattr(sys.stdin, "isatty")
+        and sys.stdin.isatty()
+        and not sys.stdin.closed
+    )
 
-            # Kill background jobs
-            with contextlib.suppress(Exception):
-                if IS_MACOS:
-                    subprocess.run(["sh", "-c", "jobs -p | xargs kill 2>/dev/null"], check=False)  # noqa: S607
-                else:
-                    subprocess.run(["sh", "-c", "jobs -p | xargs -r kill 2>/dev/null"], check=False)  # noqa: S607
 
-            if not sys.stderr.closed:
-                sys.stderr.flush()
+def _apply_stty_settings(stty: str) -> None:
+    subprocess.run([stty, "sane"], check=False)  # noqa: S603
+    if erase_key is not None:
+        subprocess.run(  # noqa: S603
+            [stty, "erase", erase_key], check=False
+        )
+    subprocess.run([stty, "-ixon"], check=False)  # noqa: S603
 
-        except Exception as e:
-            with contextlib.suppress(Exception):
-                if not sys.stderr.closed:
-                    sys.stderr.write(f"Error during terminal reset: {e}\n")
-                    sys.stderr.flush()
+
+def _flush_terminal_input() -> None:
+    if termios is None or not hasattr(termios, "tcflush"):
+        return
+    tciflush = getattr(termios, "TCIOFLUSH", None)
+    if tciflush is None:
+        return
+    termios.tcflush(sys.stdin.fileno(), tciflush)
+
+
+def _reset_stdin_terminal() -> None:
+    if not _stdin_is_usable_tty():
+        return
+    try:
+        stty = shutil.which("stty")
+        if stty is not None:
+            _apply_stty_settings(stty)
+        _flush_terminal_input()
+    except OSError:
+        return
+
+
+def _restore_stdout() -> None:
+    if sys.stdout.closed:
+        return
+    try:
+        sys.stdout.write("\033[0m")
+        sys.stdout.flush()
+        sys.stdout.write("\033[?25h")
+        sys.stdout.flush()
+    except OSError, ValueError:
+        return
+
+
+def _flush_stderr() -> None:
+    if not sys.stderr.closed:
+        sys.stderr.flush()
+
+
+def _report_terminal_reset_error(error: Exception) -> None:
+    with contextlib.suppress(Exception):
+        if sys.stderr.closed:
+            return
+        sys.stderr.write(f"Error during terminal reset: {error}\n")
+        sys.stderr.flush()
+
+
+def _stty_output(stty: str) -> str | None:
+    try:
+        return subprocess.check_output([stty, "-a"]).decode()  # noqa: S603
+    except OSError:
+        return None
+
+
+def _erase_key_from_output(output: str | None) -> str | None:
+    if not output:
+        return None
+    match = re.search(r" erase = (\S+);", output)
+    return match.group(1) if match else None
 
 
 def _read_erase_key() -> str | None:
     """Read the terminal erase key when a controlling TTY is available."""
-
-    if not hasattr(sys.stdin, "isatty") or not sys.stdin.isatty() or sys.stdin.closed:
+    if not _stdin_is_usable_tty():
         return None
-    try:
-        output = subprocess.check_output(["stty", "-a"]).decode()  # noqa: S607
-    except OSError:
+    stty = shutil.which("stty")
+    if stty is None:
         return None
-    match = re.search(r" erase = (\S+);", output)
-    return match.group(1) if match else None
+    return _erase_key_from_output(_stty_output(stty))
 
 
 erase_key = _read_erase_key()

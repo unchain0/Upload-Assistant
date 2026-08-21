@@ -105,25 +105,44 @@ class Redaction:
                 except TypeError, ValueError:
                     continue
                 val = val[:start] + redacted_str + val[end:]
-            val = re.sub("(?<=/)[a-zA-Z0-9]{10,}(?=/announce)", "[REDACTED]", val)
+            val = re.sub(
+                "(?<=/)[a-zA-Z0-9]{10,}(?=/announce)", "[REDACTED]", val
+            )
             val = re.sub("(?<=/proxy/)[^/]+(?=/api)", "[REDACTED]", val)
-            val = re.sub("([?&](passkey|key|token|api_key|auth|info_hash|torrent_pass)=)[^&]+", "\\1[REDACTED]", val, flags=re.I)
+            val = re.sub(
+                "([?&](passkey|key|token|api_key|auth|info_hash|torrent_pass)=)[^&]+",
+                "\\1[REDACTED]",
+                val,
+                flags=re.I,
+            )
             val = re.sub("\\b[a-fA-F0-9]{32,}\\b", "[REDACTED]", val)
         return val
 
     @staticmethod
-    def redact_private_info(data: Any, sensitive_keys: set[str] | None = None) -> Any:
+    def redact_private_info(
+        data: Any, sensitive_keys: set[str] | None = None
+    ) -> Any:
         """Recursively redact sensitive info in dicts/lists/strings containing JSON."""
         keys = sensitive_keys or SENSITIVE_KEYS
         if isinstance(data, dict):
             typed_data = cast(dict[str, Any], data)
-            return {k: "[REDACTED]" if any(s.lower() in k.lower() for s in keys) else Redaction.redact_private_info(v, keys) for k, v in typed_data.items()}
+            return {
+                k: "[REDACTED]"
+                if any(s.lower() in k.lower() for s in keys)
+                else Redaction.redact_private_info(v, keys)
+                for k, v in typed_data.items()
+            }
         if isinstance(data, list):
-            return [Redaction.redact_private_info(item, keys) for item in cast(list[Any], data)]
+            return [
+                Redaction.redact_private_info(item, keys)
+                for item in cast(list[Any], data)
+            ]
         if isinstance(data, str):
             try:
                 parsed_json = json.loads(data)
-                redacted_json = Redaction.redact_private_info(parsed_json, keys)
+                redacted_json = Redaction.redact_private_info(
+                    parsed_json, keys
+                )
                 return json.dumps(redacted_json)
             except json.JSONDecodeError, TypeError:
                 return Redaction.redact_value(data, keys)
@@ -147,7 +166,9 @@ class Redaction:
         export_data = meta.to_dict()
         export_data.pop("archive_password", None)
         async with aiofiles.open(output_path, "w", encoding="utf-8") as handle:
-            await handle.write(json.dumps(export_data, indent=4, cls=PathAwareEncoder))
+            await handle.write(
+                json.dumps(export_data, indent=4, cls=PathAwareEncoder)
+            )
         return meta
 
 
@@ -159,7 +180,9 @@ def redact_value(val: Any) -> Any:
     return Redaction.redact_value(val)
 
 
-def redact_private_info(data: Any, sensitive_keys: set[str] | None = None) -> Any:
+def redact_private_info(
+    data: Any, sensitive_keys: set[str] | None = None
+) -> Any:
     return Redaction.redact_private_info(data, sensitive_keys)
 
 

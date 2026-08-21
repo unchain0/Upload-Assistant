@@ -10,10 +10,16 @@ from typing import Any, overload
 
 from src.domain_models.errors import MediaInfoError
 from src.integrations.filesystem.paths import CODE_DIR, STATE_DIR
-from src.integrations.runtime_tools.configured_binaries import configured_binary
-from src.integrations.runtime_tools.media_info_binary import MediaInfoBinaryManager
+from src.integrations.runtime_tools.configured_binaries import (
+    configured_binary,
+)
+from src.integrations.runtime_tools.media_info_binary import (
+    MediaInfoBinaryManager,
+)
 
-_REPORT_BY_LINE = re.compile(r"(?<![^\r\n])[ \t]*ReportBy[ \t]*:[^\r\n]*(?:\r\n?|\n)?", re.IGNORECASE)
+_REPORT_BY_LINE = re.compile(
+    r"(?<![^\r\n])[ \t]*ReportBy[ \t]*:[^\r\n]*(?:\r\n?|\n)?", re.IGNORECASE
+)
 
 
 def strip_report_by_line(report: str) -> str:
@@ -35,7 +41,9 @@ def resolve_mediainfo_binary(
     return shutil.which("mediainfo")
 
 
-async def ensure_mediainfo_binary(config: Mapping[str, Any] | None = None, *, state_dir: Path | None = None) -> str:
+async def ensure_mediainfo_binary(
+    config: Mapping[str, Any] | None = None, *, state_dir: Path | None = None
+) -> str:
     runtime_state = state_dir or STATE_DIR
     if existing := resolve_mediainfo_binary(config, state_dir=runtime_state):
         return existing
@@ -45,11 +53,19 @@ async def ensure_mediainfo_binary(config: Mapping[str, Any] | None = None, *, st
 def _binary() -> str:
     binary = resolve_mediainfo_binary()
     if binary is None:
-        raise RuntimeError("MediaInfo CLI is not installed; run Upload Assistant so it can download bin/MI first")
+        raise RuntimeError(
+            "MediaInfo CLI is not installed; run Upload Assistant so it can download bin/MI first"
+        )
     return binary
 
 
-def run_mediainfo(path: str | Path, *, output: str | None = None, full: bool = True, inform: str | None = None) -> str:
+def run_mediainfo(
+    path: str | Path,
+    *,
+    output: str | None = None,
+    full: bool = True,
+    inform: str | None = None,
+) -> str:
     command = [_binary()]
     if full:
         command.append("--Full")
@@ -69,10 +85,16 @@ def run_mediainfo(path: str | Path, *, output: str | None = None, full: bool = T
             timeout=900,
         )
     except subprocess.TimeoutExpired as exc:
-        raise MediaInfoError("MediaInfo timed out after 15 minutes", command=command) from exc
+        raise MediaInfoError(
+            "MediaInfo timed out after 15 minutes", command=command
+        ) from exc
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip()
-        summary = re.sub(r"\s+", " ", detail)[:300] if detail else "no diagnostic output"
+        summary = (
+            re.sub(r"\s+", " ", detail)[:300]
+            if detail
+            else "no diagnostic output"
+        )
         raise MediaInfoError(
             f"MediaInfo failed with exit code {result.returncode}: {summary}",
             command=command,
@@ -83,7 +105,12 @@ def run_mediainfo(path: str | Path, *, output: str | None = None, full: bool = T
 
 
 def _snake_case(name: str) -> str:
-    return re.sub(r"(?<!^)(?=[A-Z])", "_", name).replace("@", "").strip("_").lower()
+    return (
+        re.sub(r"(?<!^)(?=[A-Z])", "_", name)
+        .replace("@", "")
+        .strip("_")
+        .lower()
+    )
 
 
 class MediaInfoTrack:
@@ -113,7 +140,11 @@ class MediaInfoTrack:
 class MediaInfoResult:
     def __init__(self, report: dict[str, Any]) -> None:
         tracks = report.get("media", {}).get("track", [])
-        self.tracks = [MediaInfoTrack(track) for track in tracks if isinstance(track, dict)]
+        self.tracks = [
+            MediaInfoTrack(track)
+            for track in tracks
+            if isinstance(track, dict)
+        ]
 
 
 class MediaInfo:
@@ -163,5 +194,9 @@ class MediaInfo:
     ) -> MediaInfoResult | str:
         inform = (mediainfo_options or {}).get("inform")
         if output is not None or inform:
-            return run_mediainfo(filename, output=output, full=full, inform=inform)
-        return MediaInfoResult(json.loads(run_mediainfo(filename, output="JSON", full=full)))
+            return run_mediainfo(
+                filename, output=output, full=full, inform=inform
+            )
+        return MediaInfoResult(
+            json.loads(run_mediainfo(filename, output="JSON", full=full))
+        )

@@ -11,12 +11,16 @@ def test_get_hdr_returns_empty_when_mediainfo_has_no_video_track() -> None:
 
 
 def test_resolution_honors_compatible_576p_release_label() -> None:
-    resolution = asyncio.run(mi_resolution("1280x540p", {"screen_size": "576p"}, 1280, "p"))
+    resolution = asyncio.run(
+        mi_resolution("1280x540p", {"screen_size": "576p"}, 1280, "p")
+    )
 
     assert resolution == "576p"
 
 
 def test_resolution_rejects_incompatible_release_label() -> None:
-    resolution = asyncio.run(mi_resolution("1280x720p", {"screen_size": "576p"}, 1280, "p"))
+    resolution = asyncio.run(
+        mi_resolution("1280x720p", {"screen_size": "576p"}, 1280, "p")
+    )
 
     assert resolution == "720p"

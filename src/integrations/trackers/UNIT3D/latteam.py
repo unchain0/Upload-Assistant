@@ -31,9 +31,17 @@ class LatTeam(UNIT3D):
         self.config: Config = config
         self.common = Common(config)
 
-    async def get_category_id(self, meta: Meta, category: str | None = None, reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_category_id(
+        self,
+        meta: Meta,
+        category: str | None = None,
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         mapping = self._category_mapping()
-        mode = self._mapping_mode(mapping, reverse=reverse, mapping_only=mapping_only)
+        mode = self._mapping_mode(
+            mapping, reverse=reverse, mapping_only=mapping_only
+        )
         if mode is not None:
             return mode
         resolved = self._resolved_category(meta, category)
@@ -44,7 +52,14 @@ class LatTeam(UNIT3D):
 
     @staticmethod
     def _category_mapping() -> dict[str, str]:
-        return {"MOVIE": "1", "TV": "2", "EBOOK": "18", "AUDIOBOOK": "11", "MAGAZINE": "29", "COMIC": "30"}
+        return {
+            "MOVIE": "1",
+            "TV": "2",
+            "EBOOK": "18",
+            "AUDIOBOOK": "11",
+            "MAGAZINE": "29",
+            "COMIC": "30",
+        }
 
     @classmethod
     def _resolved_category(cls, meta: Meta, requested: str | None) -> str:
@@ -81,7 +96,10 @@ class LatTeam(UNIT3D):
     def _is_soap(cls, meta: Meta) -> bool:
         keywords = {str(value).lower() for value in meta.keywords}
         overview = str(meta.overview or "").lower()
-        return any(word in keywords or word in overview for word in cls._soap_keywords())
+        return any(
+            word in keywords or word in overview
+            for word in cls._soap_keywords()
+        )
 
     @classmethod
     def _is_asian_drama(cls, meta: Meta) -> bool:
@@ -151,9 +169,17 @@ class LatTeam(UNIT3D):
             "YE",
         }
 
-    async def get_type_id(self, meta: Meta, type: str | None = None, reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_type_id(
+        self,
+        meta: Meta,
+        type: str | None = None,
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         mapping = self._type_mapping()
-        mode = self._mapping_mode(mapping, reverse=reverse, mapping_only=mapping_only)
+        mode = self._mapping_mode(
+            mapping, reverse=reverse, mapping_only=mapping_only
+        )
         if mode is not None:
             return mode
         resolved = self._resolved_type(type if type else meta.type)
@@ -201,7 +227,11 @@ class LatTeam(UNIT3D):
         return resolved
 
     async def get_name(self, meta: Meta) -> dict[str, str]:
-        name = self._book_name(meta) if meta.category == "BOOK" else self._video_name(meta)
+        name = (
+            self._book_name(meta)
+            if meta.category == "BOOK"
+            else self._video_name(meta)
+        )
         return {"name": re.sub(r"\s{2,}", " ", name).strip()}
 
     @classmethod
@@ -246,12 +276,19 @@ class LatTeam(UNIT3D):
         edition = str(meta.manual_edition or meta.edition or "").strip()
         if not edition:
             return
-        extra.append(edition if cls._has_edition_marker(edition) else f"{edition} Edition")
+        extra.append(
+            edition
+            if cls._has_edition_marker(edition)
+            else f"{edition} Edition"
+        )
 
     @staticmethod
     def _has_edition_marker(value: str) -> bool:
         lowered = value.lower()
-        return any(marker in lowered for marker in ("edición", "edicion", "edition", "ed.", "ed"))
+        return any(
+            marker in lowered
+            for marker in ("edición", "edicion", "edition", "ed.", "ed")
+        )
 
     @classmethod
     def _append_narration_info(cls, extra: list[str], meta: Meta) -> None:
@@ -268,7 +305,9 @@ class LatTeam(UNIT3D):
             return "Narración en Castellano"
         if cls._contains_marker(lowered, ("latin", "latino")):
             return "Narración en Latino"
-        if cls._contains_marker(lowered, ("portuguese", "português", "portugues")):
+        if cls._contains_marker(
+            lowered, ("portuguese", "português", "portugues")
+        ):
             return "Narración en Portugués"
         return f"Narración en {language.title()}" if lowered else ""
 
@@ -278,12 +317,21 @@ class LatTeam(UNIT3D):
 
     @staticmethod
     def _formatted_extra(extra: list[str]) -> str:
-        return "" if not extra else " " + " ".join(f"({value})" for value in extra)
+        return (
+            ""
+            if not extra
+            else " " + " ".join(f"({value})" for value in extra)
+        )
 
     @classmethod
     def _video_name(cls, meta: Meta) -> str:
         aka = str(meta.aka or "")
-        name = str(meta.name or "").replace("Dual-Audio", "").replace("Dubbed", "").replace(aka, "")
+        name = (
+            str(meta.name or "")
+            .replace("Dual-Audio", "")
+            .replace("Dubbed", "")
+            .replace(aka, "")
+        )
         if meta.type == "DISC":
             return name
         name = cls._localized_title(name, meta, aka)
@@ -335,7 +383,11 @@ class LatTeam(UNIT3D):
     def _mapping_tracks(value: Any) -> list[dict[str, Any]]:
         if not isinstance(value, list):
             return []
-        return [cast(dict[str, Any], track) for track in value if isinstance(track, dict)]
+        return [
+            cast(dict[str, Any], track)
+            for track in value
+            if isinstance(track, dict)
+        ]
 
     @classmethod
     def _spanish_audio_kind(cls, track: dict[str, Any]) -> str:
@@ -372,11 +424,17 @@ class LatTeam(UNIT3D):
             "es-pr",
             "es-uy",
         }
-        return language in codes or (language == "es" and any(marker in title for marker in ("latino", "latin america")))
+        return language in codes or (
+            language == "es"
+            and any(marker in title for marker in ("latino", "latin america"))
+        )
 
     @staticmethod
     def _is_castilian_audio(language: str, title: str) -> bool:
-        return (language == "es" and "castellano" in title) or language in {"es", "es-es"}
+        return (language == "es" and "castellano" in title) or language in {
+            "es",
+            "es-es",
+        }
 
     @staticmethod
     def _insert_marker(name: str, tag: str | None, marker: str) -> str:
@@ -389,7 +447,13 @@ class LatTeam(UNIT3D):
         if meta.category == "BOOK":
             return True
         spanish_languages = ["spanish", "spanish (latin america)"]
-        return await self.common.check_language_requirements(meta, self.tracker, languages_to_check=spanish_languages, check_audio=True, check_subtitle=True)
+        return await self.common.check_language_requirements(
+            meta,
+            self.tracker,
+            languages_to_check=spanish_languages,
+            check_audio=True,
+            check_subtitle=True,
+        )
 
     async def get_additional_data(self, meta: Meta) -> dict[str, Any]:
         data: dict[str, Any] = {

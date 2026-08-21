@@ -16,13 +16,19 @@ def _is_private_writable_directory(path: Path) -> bool:
         return os.access(path, os.W_OK | os.X_OK)
     attributes = path.stat()
     shared_write = stat.S_IWGRP | stat.S_IWOTH
-    return attributes.st_uid == os.geteuid() and not attributes.st_mode & shared_write and os.access(path, os.W_OK | os.X_OK)
+    return (
+        attributes.st_uid == os.geteuid()
+        and not attributes.st_mode & shared_write
+        and os.access(path, os.W_OK | os.X_OK)
+    )
 
 
 def _private_tool_root() -> Path:
     global _private_root
     if _private_root is None:
-        _private_root = Path(tempfile.mkdtemp(prefix="upload-assistant-tools-"))
+        _private_root = Path(
+            tempfile.mkdtemp(prefix="upload-assistant-tools-")
+        )
         _private_root.chmod(0o700)
     return _private_root
 
@@ -41,7 +47,9 @@ def tool_install_dir(base_dir: str | Path, tool: str, folder: str) -> Path:
 
 
 def trusted_executable(path: Path) -> bool:
-    if not path.is_file() or (os.name != "nt" and not os.access(path, os.X_OK)):
+    if not path.is_file() or (
+        os.name != "nt" and not os.access(path, os.X_OK)
+    ):
         return False
     if os.name == "nt":
         return True

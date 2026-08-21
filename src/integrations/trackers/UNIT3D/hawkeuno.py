@@ -8,7 +8,10 @@ from rich.markup import escape
 
 from src.domain_models.release import Meta
 from src.integrations.filesystem.temp_paths import release_temp_dir
-from src.integrations.image_hosts.rehosting import ImageHostPolicy, RehostImagesManager
+from src.integrations.image_hosts.rehosting import (
+    ImageHostPolicy,
+    RehostImagesManager,
+)
 from src.integrations.media.language_adapter import languages_manager
 from src.integrations.observability.runtime_support import logger
 from src.integrations.security.redaction import Redaction
@@ -108,41 +111,62 @@ class HawkeUno(UNIT3D):
         self.config = config
         self.common = Common(config)
         self.rehost_images_manager = RehostImagesManager(config)
-        self.announce_url = str(self.config.get("TRACKERS", {}).get(self.tracker, {}).get("announce_url", "")).strip()
+        self.announce_url = str(
+            self.config.get("TRACKERS", {})
+            .get(self.tracker, {})
+            .get("announce_url", "")
+        ).strip()
 
     async def get_additional_checks(self, meta: Meta) -> bool:
         if meta.type == "WEBRIP":
-            logger.info(f"{self.tracker}: [bold red]WEB-RIP is not allowed, skipping upload.[/bold red]")
+            logger.info(
+                f"{self.tracker}: [bold red]WEB-RIP is not allowed, skipping upload.[/bold red]"
+            )
             return False
         if not await self._language_policy_passes(meta):
             return False
         if not meta.valid_mi_settings:
-            logger.info(f"{self.tracker}: [bold red]No encoding settings in mediainfo, skipping upload.[/bold red]")
+            logger.info(
+                f"{self.tracker}: [bold red]No encoding settings in mediainfo, skipping upload.[/bold red]"
+            )
             return False
         return self._codec_quality_policy_passes(meta)
 
     async def _language_policy_passes(self, meta: Meta) -> bool:
         if not meta.language_checked:
-            await languages_manager.process_desc_language(meta, tracker=self.tracker)
+            await languages_manager.process_desc_language(
+                meta, tracker=self.tracker
+            )
         if meta.audio_languages:
             return True
-        logger.info(f"{self.tracker}: [bold red]No audio languages found, skipping upload.[/bold red]")
+        logger.info(
+            f"{self.tracker}: [bold red]No audio languages found, skipping upload.[/bold red]"
+        )
         return False
 
     def _codec_quality_policy_passes(self, meta: Meta) -> bool:
         if not self._needs_hevc_quality_check(meta):
             return True
-        return all(self._video_quality_policy_passes(meta, track) for track in self._video_tracks(meta))
+        return all(
+            self._video_quality_policy_passes(meta, track)
+            for track in self._video_tracks(meta)
+        )
 
     @staticmethod
     def _needs_hevc_quality_check(meta: Meta) -> bool:
         if meta.is_disc or meta.type not in {"ENCODE", "DVDRIP", "HDTV"}:
             return False
-        return "x265" in str(meta.video_encode) or "HEVC" in str(meta.video_codec)
+        return "x265" in str(meta.video_encode) or "HEVC" in str(
+            meta.video_codec
+        )
 
     @classmethod
     def _video_tracks(cls, meta: Meta) -> list[dict[str, Any]]:
-        return [track for track in cls._media_tracks(meta) if track.get("@type") == "Video"]
+        return [
+            track
+            for track in cls._media_tracks(meta)
+            if track.get("@type") == "Video"
+        ]
 
     @classmethod
     def _media_tracks(cls, meta: Meta) -> list[dict[str, Any]]:
@@ -159,7 +183,9 @@ class HawkeUno(UNIT3D):
         media = meta.mediainfo.get("media", {})
         return media if isinstance(media, dict) else {}
 
-    def _video_quality_policy_passes(self, meta: Meta, track: dict[str, Any]) -> bool:
+    def _video_quality_policy_passes(
+        self, meta: Meta, track: dict[str, Any]
+    ) -> bool:
         settings = track.get("Encoded_Library_Settings", {})
         if not settings:
             return True
@@ -181,13 +207,17 @@ class HawkeUno(UNIT3D):
         return False
 
     def _bitrate_policy_passes(self, meta: Meta, value: Any) -> bool:
-        logger.debug(f"{self.tracker}: No CRF value found in encoding settings.")
+        logger.debug(
+            f"{self.tracker}: No CRF value found in encoding settings."
+        )
         if "Animation" in self._genre_values(meta):
             return True
         bitrate = self._bitrate_kbps(value)
         if bitrate is None or bitrate >= 3000:
             return True
-        self._log_attended(meta, f"Video bitrate too low: {bitrate:.0f} kbps for HawkeUno")
+        self._log_attended(
+            meta, f"Video bitrate too low: {bitrate:.0f} kbps for HawkeUno"
+        )
         return False
 
     @staticmethod
@@ -209,14 +239,20 @@ class HawkeUno(UNIT3D):
             logger.info(f"{self.tracker}: {message}")
 
     async def get_description(self, meta: Meta) -> None:
-        desc = await DescriptionBuilder(self.tracker, self.config).general_description_generator(
+        desc = await DescriptionBuilder(
+            self.tracker, self.config
+        ).general_description_generator(
             meta,
             mediainfo=False,
             nfo=False,
             approved_image_hosts=self.approved_image_hosts,
             signature=f"[right][url=https://github.com/wastaken7/Upload-Assistant][size=8]{meta.ua_signature}[/size][/url][/right]",
         )
-        async with aiofiles.open(f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{self.tracker}]DESCRIPTION.txt", "w", encoding="utf-8") as f:
+        async with aiofiles.open(
+            f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{self.tracker}]DESCRIPTION.txt",
+            "w",
+            encoding="utf-8",
+        ) as f:
             await f.write(desc)
 
     async def get_internal(self, meta: Meta) -> int:
@@ -226,7 +262,13 @@ class HawkeUno(UNIT3D):
         groups = self.tracker_config.get("internal_groups", [])
         return int(enabled and meta.tag[1:] in groups)
 
-    async def get_resolution_id(self, meta: Meta, resolution: str = "", reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_resolution_id(
+        self,
+        meta: Meta,
+        resolution: str = "",
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         mapping = {
             "Other": "10",
             "4320p": "1",
@@ -241,11 +283,41 @@ class HawkeUno(UNIT3D):
             "480p": "8",
             "480i": "9",
         }
-        return self._mapping_response(mapping, resolution, meta.resolution, reverse=reverse, mapping_only=mapping_only, default="10", key="resolution_id")
+        return self._mapping_response(
+            mapping,
+            resolution,
+            meta.resolution,
+            reverse=reverse,
+            mapping_only=mapping_only,
+            default="10",
+            key="resolution_id",
+        )
 
-    async def get_type_id(self, meta: Meta, type: str = "", reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
-        mapping = {"DISC": "1", "REMUX": "2", "WEBDL": "3", "WEBRIP": "15", "HDTV": "15", "ENCODE": "15", "DVDRIP": "15"}
-        return self._mapping_response(mapping, type, meta.type, reverse=reverse, mapping_only=mapping_only, default="0", key="type_id")
+    async def get_type_id(
+        self,
+        meta: Meta,
+        type: str = "",
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
+        mapping = {
+            "DISC": "1",
+            "REMUX": "2",
+            "WEBDL": "3",
+            "WEBRIP": "15",
+            "HDTV": "15",
+            "ENCODE": "15",
+            "DVDRIP": "15",
+        }
+        return self._mapping_response(
+            mapping,
+            type,
+            meta.type,
+            reverse=reverse,
+            mapping_only=mapping_only,
+            default="0",
+            key="type_id",
+        )
 
     @classmethod
     def _mapping_response(
@@ -259,16 +331,26 @@ class HawkeUno(UNIT3D):
         default: str,
         key: str,
     ) -> dict[str, str]:
-        mode = cls._mapping_mode(mapping, reverse=reverse, mapping_only=mapping_only)
+        mode = cls._mapping_mode(
+            mapping, reverse=reverse, mapping_only=mapping_only
+        )
         if mode is not None:
             return mode
-        return {key: mapping.get(cls._selected_value(requested, fallback), default)}
+        return {
+            key: mapping.get(cls._selected_value(requested, fallback), default)
+        }
 
     @staticmethod
-    def _mapping_mode(mapping: dict[str, str], *, reverse: bool, mapping_only: bool) -> dict[str, str] | None:
+    def _mapping_mode(
+        mapping: dict[str, str], *, reverse: bool, mapping_only: bool
+    ) -> dict[str, str] | None:
         if mapping_only:
             return mapping
-        return {value: name for name, value in mapping.items()} if reverse else None
+        return (
+            {value: name for name, value in mapping.items()}
+            if reverse
+            else None
+        )
 
     @staticmethod
     def _selected_value(requested: str, fallback: str | None) -> str:
@@ -287,7 +369,9 @@ class HawkeUno(UNIT3D):
             "category_id": 1 if meta.category == "MOVIE" else 2,
             "type_id": (await self.get_type_id(meta))["type_id"],
             "tmdb": meta.tmdb,
-            "anonymous": int(bool(meta.anon) or self.tracker_config.get("anon", False)),
+            "anonymous": int(
+                bool(meta.anon) or self.tracker_config.get("anon", False)
+            ),
             "imdb": meta.imdb_id,
             "edition": meta.edition,
         }
@@ -324,15 +408,28 @@ class HawkeUno(UNIT3D):
 
     async def get_files(self, meta: Meta) -> dict[str, tuple[str, bytes, str]]:
         files: dict[str, tuple[str, bytes, str]] = {}
-        await self.common.create_torrent_for_upload(meta, self.tracker, self.source_flag, announce_url=self.announce_url)
+        await self.common.create_torrent_for_upload(
+            meta,
+            self.tracker,
+            self.source_flag,
+            announce_url=self.announce_url,
+        )
         root = release_temp_dir(meta.base_dir, meta.uuid)
         torrent_path = root / f"[{self.tracker}].torrent"
         async with aiofiles.open(torrent_path, "rb") as f:
-            files["torrent"] = (f"{meta.clean_name}.torrent", await f.read(), "application/x-bittorrent")
+            files["torrent"] = (
+                f"{meta.clean_name}.torrent",
+                await f.read(),
+                "application/x-bittorrent",
+            )
 
         desc_path = root / f"[{self.tracker}]DESCRIPTION.txt"
         async with aiofiles.open(desc_path, "rb") as f:
-            files["description"] = ("description.txt", await f.read(), "text/plain")
+            files["description"] = (
+                "description.txt",
+                await f.read(),
+                "text/plain",
+            )
 
         if meta.is_disc == "BDMV":
             bdinfo_path = root / "BD_SUMMARY_00.txt"
@@ -341,7 +438,11 @@ class HawkeUno(UNIT3D):
         else:
             mediainfo_path = root / "MEDIAINFO_CLEANPATH.txt"
             async with aiofiles.open(mediainfo_path, "rb") as f:
-                files["mediainfo"] = ("mediainfo.txt", await f.read(), "text/plain")
+                files["mediainfo"] = (
+                    "mediainfo.txt",
+                    await f.read(),
+                    "text/plain",
+                )
 
         return files
 
@@ -354,51 +455,80 @@ class HawkeUno(UNIT3D):
             response = await self._submit_upload(meta, data)
             return self._handle_upload_response(status, response)
         except httpx.HTTPStatusError as error:
-            message = f"HTTP {error.response.status_code} - {error.response.text}"
+            message = (
+                f"HTTP {error.response.status_code} - {error.response.text}"
+            )
             return self._record_upload_error(status, message, "Upload error")
         except (httpx.RequestError, ValueError, KeyError) as error:
-            return self._record_upload_error(status, str(error), "Upload connection/parsing error")
+            return self._record_upload_error(
+                status, str(error), "Upload connection/parsing error"
+            )
         except Exception as error:
             status["status_message"] = f"data error: {error}"
-            logger.info(f"{self.tracker}: [bold red]Upload unexpected error: {escape(str(error))}[/bold red]")
+            logger.info(
+                f"{self.tracker}: [bold red]Upload unexpected error: {escape(str(error))}[/bold red]"
+            )
             raise
 
-    async def _debug_upload_with_status(self, meta: Meta, data: dict[str, Any], status: dict[str, Any]) -> bool:
+    async def _debug_upload_with_status(
+        self, meta: Meta, data: dict[str, Any], status: dict[str, Any]
+    ) -> bool:
         logger.debug(f"{self.tracker}: [cyan]Request Data:")
         logger.debug(Redaction.redact_private_info(data))
         status["status_message"] = "Debug mode enabled, not uploading."
-        await self.common.create_torrent_for_upload(meta, f"{self.tracker}_DEBUG", f"{self.tracker}_DEBUG", announce_url="https://fake.tracker")
+        await self.common.create_torrent_for_upload(
+            meta,
+            f"{self.tracker}_DEBUG",
+            f"{self.tracker}_DEBUG",
+            announce_url="https://fake.tracker",
+        )
         return True
 
-    async def _submit_upload(self, meta: Meta, data: dict[str, Any]) -> httpx.Response:
+    async def _submit_upload(
+        self, meta: Meta, data: dict[str, Any]
+    ) -> httpx.Response:
         files = await self.get_files(meta)
         api_token = str(self.tracker_config.get("api_key", ""))
         url = f"{self.upload_url}?api_token={api_token}"
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(
+            timeout=30.0, follow_redirects=True
+        ) as client:
             response = await client.post(url=url, data=data, files=files)
             response.raise_for_status()
             return response
 
-    def _handle_upload_response(self, status: dict[str, Any], response: httpx.Response) -> bool:
+    def _handle_upload_response(
+        self, status: dict[str, Any], response: httpx.Response
+    ) -> bool:
         payload = response.json()
         if payload.get("success") is not True:
             message = str(payload.get("message", "Unknown error"))
             status["status_message"] = f"data error: API error: {message}"
-            logger.info(f"{self.tracker}: [yellow]Upload to {self.tracker} failed: {message}[/yellow]")
+            logger.info(
+                f"{self.tracker}: [yellow]Upload to {self.tracker} failed: {message}[/yellow]"
+            )
             return False
         response_data = payload.get("data", {})
-        status["status_message"] = self._success_status_message(payload, response_data)
+        status["status_message"] = self._success_status_message(
+            payload, response_data
+        )
         return True
 
     @staticmethod
-    def _success_status_message(payload: dict[str, Any], response_data: Any) -> str:
+    def _success_status_message(
+        payload: dict[str, Any], response_data: Any
+    ) -> str:
         data = response_data if isinstance(response_data, dict) else {}
         moderation = data.get("moderation_status", "")
         warnings = data.get("warnings", [])
         name_issues = data.get("name_issues", [])
         return f"{payload.get('message')}\nModeration Status: {moderation}\nWarnings: {warnings}\nName Issues: {name_issues}"
 
-    def _record_upload_error(self, status: dict[str, Any], message: str, label: str) -> bool:
+    def _record_upload_error(
+        self, status: dict[str, Any], message: str, label: str
+    ) -> bool:
         status["status_message"] = f"data error: {message}"
-        logger.info(f"{self.tracker}: [bold red]{label}: {escape(message)}[/bold red]")
+        logger.info(
+            f"{self.tracker}: [bold red]{label}: {escape(message)}[/bold red]"
+        )
         return False

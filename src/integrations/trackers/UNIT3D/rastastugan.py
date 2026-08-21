@@ -43,10 +43,29 @@ class Rastastugan(UNIT3D):
         self.common = Common(config)
 
     async def get_additional_checks(self, meta: Meta) -> bool:
-        nordic_languages = ["danish", "swedish", "norwegian", "icelandic", "finnish", "english"]
-        return await self.common.check_language_requirements(meta, self.tracker, languages_to_check=nordic_languages, check_audio=True, check_subtitle=True)
+        nordic_languages = [
+            "danish",
+            "swedish",
+            "norwegian",
+            "icelandic",
+            "finnish",
+            "english",
+        ]
+        return await self.common.check_language_requirements(
+            meta,
+            self.tracker,
+            languages_to_check=nordic_languages,
+            check_audio=True,
+            check_subtitle=True,
+        )
 
-    async def get_category_id(self, meta: Meta, category: str = "", reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_category_id(
+        self,
+        meta: Meta,
+        category: str = "",
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         category_id = {
             "MOVIE": "1",
             "TV": "2",
@@ -67,7 +86,13 @@ class Rastastugan(UNIT3D):
         resolved_id = category_id.get(meta_category, "0")
         return {"category_id": resolved_id}
 
-    async def get_type_id(self, meta: Meta, type: str = "", reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_type_id(
+        self,
+        meta: Meta,
+        type: str = "",
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         type_id = {
             # Video
             "DISC": "1",

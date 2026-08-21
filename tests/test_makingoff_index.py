@@ -18,7 +18,9 @@ def test_index_parser_keeps_only_the_exact_imdb_match():
     </div>
     """
 
-    assert MakingOff._parse_index_results(html, "tt0042539") == {"Até o Último Homem (1951)": "https://www.makingoff.org/topicos/73517/"}
+    assert MakingOff._parse_index_results(html, "tt0042539") == {
+        "Até o Último Homem (1951)": "https://www.makingoff.org/topicos/73517/"
+    }
 
 
 def test_exact_imdb_result_uses_post_resolution_and_skips_year_filter():
@@ -67,4 +69,10 @@ def test_exact_imdb_result_uses_post_resolution_and_skips_year_filter():
 
     duplicates = asyncio.run(tracker.search_existing(meta))
 
-    assert duplicates == [{"name": f"[url={topic_url}]Known[/url]", "size": "1080", "link": topic_url}]
+    assert duplicates == [
+        {
+            "name": f"[url={topic_url}]Known[/url]",
+            "size": "1080",
+            "link": topic_url,
+        }
+    ]

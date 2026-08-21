@@ -16,10 +16,18 @@ tvc_module = importlib.import_module("src.integrations.trackers.tvchaosuk")
 
 
 def _config(**tracker_values: object) -> dict[str, Any]:
-    tracker: dict[str, Any] = {"api_key": "key", "anon": False, "image_count": 2, "announce_url": "https://tracker.invalid/announce"}
+    tracker: dict[str, Any] = {
+        "api_key": "key",
+        "anon": False,
+        "image_count": 2,
+        "announce_url": "https://tracker.invalid/announce",
+    }
     tracker.update(tracker_values)
     return {
-        "DEFAULT": {"tmdb_api": "0123456789abcdef0123456789abcdef", "logo_size": "250"},
+        "DEFAULT": {
+            "tmdb_api": "0123456789abcdef0123456789abcdef",
+            "logo_size": "250",
+        },
         "TRACKERS": {"TVCHAOSUK": tracker},
         "IMAGES": {
             "imdb_75": "https://img.invalid/imdb.png",
@@ -114,7 +122,13 @@ def _meta(tmp_path: Path | None = None, **values: object) -> Meta:
     return Meta(state)
 
 
-def _response(payload: Any = None, *, status: int = 200, text: str | None = None, url: str = "https://tvchaosuk.com/api/torrents/upload") -> httpx.Response:
+def _response(
+    payload: Any = None,
+    *,
+    status: int = 200,
+    text: str | None = None,
+    url: str = "https://tvchaosuk.com/api/torrents/upload",
+) -> httpx.Response:
     request = httpx.Request("POST", url)
     if text is not None:
         return httpx.Response(status, request=request, text=text)
@@ -126,7 +140,14 @@ def test_tvchaos_disc_info_all_variants() -> None:
     text = tracker._build_disc_info(
         [
             {"type": "BDMV", "name": "DISC", "summary": "BDINFO"},
-            {"type": "DVD", "name": "DVD1", "vob": "/x/VTS_01.VOB", "vob_mi": "VOBMI", "ifo": "/x/VTS_01.IFO", "ifo_mi": "IFOMI"},
+            {
+                "type": "DVD",
+                "name": "DVD1",
+                "vob": "/x/VTS_01.VOB",
+                "vob_mi": "VOBMI",
+                "ifo": "/x/VTS_01.IFO",
+                "ifo_mi": "IFOMI",
+            },
         ]
     )
     assert "BDINFO" in text
@@ -141,7 +162,12 @@ def test_tvchaos_episode_list_all_fields() -> None:
     tracker = _tracker()
     text = tracker._build_episode_list(
         [
-            {"code": "S01E01", "title": "Pilot", "airdate": "2010-01-02", "overview": "Plot"},
+            {
+                "code": "S01E01",
+                "title": "Pilot",
+                "airdate": "2010-01-02",
+                "overview": "Plot",
+            },
             {"code": "S01E02", "title": "", "airdate": "", "overview": ""},
         ]
     )
@@ -152,23 +178,52 @@ def test_tvchaos_episode_list_all_fields() -> None:
 
 def test_tvchaos_category_and_country_fallbacks() -> None:
     tracker = _tracker()
-    assert asyncio.run(tracker.get_cat_id([])) == tracker.tv_type_map["holding bin"]
-    assert asyncio.run(tracker.get_cat_id(["Unknown"])) == tracker.tv_type_map["holding bin"]
-    assert asyncio.run(tracker.append_country_code(_meta(origin_country_code=["IE"]), "Show")) == "Show [IRL]"
+    assert (
+        asyncio.run(tracker.get_cat_id([]))
+        == tracker.tv_type_map["holding bin"]
+    )
+    assert (
+        asyncio.run(tracker.get_cat_id(["Unknown"]))
+        == tracker.tv_type_map["holding bin"]
+    )
+    assert (
+        asyncio.run(
+            tracker.append_country_code(
+                _meta(origin_country_code=["IE"]), "Show"
+            )
+        )
+        == "Show [IRL]"
+    )
 
 
 @pytest.mark.asyncio
-async def test_tvchaos_write_description_file_oserror(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+async def test_tvchaos_write_description_file_oserror(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     tracker = _tracker()
-    monkeypatch.setattr(Path, "open", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("broken")))
+    monkeypatch.setattr(
+        Path,
+        "open",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("broken")),
+    )
     await tracker._write_description_file(str(tmp_path / "desc.txt"), "text")
 
 
-def test_tvchaos_tracker_screenshots_tuple_and_invalid(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_tvchaos_tracker_screenshots_tuple_and_invalid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     tracker = _tracker()
-    monkeypatch.setattr(tvc_module, "get_tracker_image_collection", lambda *_args: ({"web_url": "w", "img_url": "i"},))
-    assert tracker._tracker_screenshots(_meta()) == [{"web_url": "w", "img_url": "i"}]
-    monkeypatch.setattr(tvc_module, "get_tracker_image_collection", lambda *_args: "bad")
+    monkeypatch.setattr(
+        tvc_module,
+        "get_tracker_image_collection",
+        lambda *_args: ({"web_url": "w", "img_url": "i"},),
+    )
+    assert tracker._tracker_screenshots(_meta()) == [
+        {"web_url": "w", "img_url": "i"}
+    ]
+    monkeypatch.setattr(
+        tvc_module, "get_tracker_image_collection", lambda *_args: "bad"
+    )
     assert tracker._tracker_screenshots(_meta()) == []
 
 
@@ -182,7 +237,10 @@ async def test_tvchaos_upload_category_foreign_audio() -> None:
     tracker = _tracker()
     mi = {"media": {"track": [{"@type": "Audio", "Language": "fr"}]}}
     item = _meta(original_language="")
-    assert await tracker._upload_category(item, mi) == tracker.tv_type_map["foreign"]
+    assert (
+        await tracker._upload_category(item, mi)
+        == tracker.tv_type_map["foreign"]
+    )
 
 
 def test_tvchaos_release_type_brrip() -> None:
@@ -192,50 +250,85 @@ def test_tvchaos_release_type_brrip() -> None:
 
 def test_tvchaos_localized_upload_name() -> None:
     item = _meta(title="Title", original_title="Original")
-    name = TVChaosUK._localized_upload_name(item, TVChaosUK.tv_type_map["foreign"], "Title [1080p]")
+    name = TVChaosUK._localized_upload_name(
+        item, TVChaosUK.tv_type_map["foreign"], "Title [1080p]"
+    )
     assert name == "Title (Original) [1080p]"
 
 
-def test_tvchaos_confirm_upload_name_second_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_tvchaos_confirm_upload_name_second_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     answers = iter((False, True))
-    monkeypatch.setattr(tvc_module.cli_ui, "ask_yes_no", lambda *_args, **_kwargs: next(answers))
-    monkeypatch.setattr(tvc_module.cli_ui, "ask_string", lambda *_args, **_kwargs: "Renamed")
+    monkeypatch.setattr(
+        tvc_module.cli_ui,
+        "ask_yes_no",
+        lambda *_args, **_kwargs: next(answers),
+    )
+    monkeypatch.setattr(
+        tvc_module.cli_ui, "ask_string", lambda *_args, **_kwargs: "Renamed"
+    )
     assert TVChaosUK._confirm_upload_name(_meta(unattended=False), "Original")
 
 
 def test_tvchaos_tracker_config_guard() -> None:
-    tracker = TVChaosUK({"TRACKERS": "bad", "DEFAULT": {"tmdb_api": "0123456789abcdef0123456789abcdef"}})
+    tracker = TVChaosUK(
+        {
+            "TRACKERS": "bad",
+            "DEFAULT": {"tmdb_api": "0123456789abcdef0123456789abcdef"},
+        }
+    )
     assert tracker._tracker_config() == {}
 
 
 @pytest.mark.asyncio
-async def test_tvchaos_upload_non_debug_delegates_submit(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_tvchaos_upload_non_debug_delegates_submit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     tracker = _tracker()
     tracker.common.create_torrent_for_upload = AsyncMock()  # type: ignore[method-assign]
     monkeypatch.setattr(tracker, "get_tmdb_data", AsyncMock(return_value={}))
-    monkeypatch.setattr(tracker, "_load_mediainfo_json", AsyncMock(return_value={}))
-    monkeypatch.setattr(tracker, "_upload_category", AsyncMock(return_value="11"))
-    monkeypatch.setattr(tracker, "_technical_dumps", AsyncMock(return_value=("MI", "")))
+    monkeypatch.setattr(
+        tracker, "_load_mediainfo_json", AsyncMock(return_value={})
+    )
+    monkeypatch.setattr(
+        tracker, "_upload_category", AsyncMock(return_value="11")
+    )
+    monkeypatch.setattr(
+        tracker, "_technical_dumps", AsyncMock(return_value=("MI", ""))
+    )
     monkeypatch.setattr(tracker, "edit_desc", AsyncMock(return_value="DESC"))
-    monkeypatch.setattr(tracker, "_upload_name", AsyncMock(return_value="NAME"))
+    monkeypatch.setattr(
+        tracker, "_upload_name", AsyncMock(return_value="NAME")
+    )
     monkeypatch.setattr(tracker, "_confirm_upload_name", lambda *_args: True)
-    monkeypatch.setattr(tracker, "_upload_data", lambda *_args: {"name": "NAME"})
-    monkeypatch.setattr(tracker, "_submit_upload", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        tracker, "_upload_data", lambda *_args: {"name": "NAME"}
+    )
+    monkeypatch.setattr(
+        tracker, "_submit_upload", AsyncMock(return_value=True)
+    )
     assert await tracker.upload(_meta())
     tracker._submit_upload.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_tvchaos_submit_upload_transport_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_tvchaos_submit_upload_transport_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     tracker = _tracker()
     item = _meta()
     cases = (
         httpx.TimeoutException("timeout"),
-        httpx.RequestError("offline", request=httpx.Request("POST", tracker.upload_url)),
+        httpx.RequestError(
+            "offline", request=httpx.Request("POST", tracker.upload_url)
+        ),
         RuntimeError("unexpected"),
     )
     for error in cases:
-        monkeypatch.setattr(tracker, "_upload_response", AsyncMock(side_effect=error))
+        monkeypatch.setattr(
+            tracker, "_upload_response", AsyncMock(side_effect=error)
+        )
         item.tracker_status["TVCHAOSUK"] = {}
         assert not await tracker._submit_upload(item, {})
         assert item.tracker_status["TVCHAOSUK"]["status_message"]
@@ -245,7 +338,9 @@ async def test_tvchaos_submit_upload_transport_errors(monkeypatch: pytest.Monkey
 async def test_tvchaos_handle_upload_response_http_and_success() -> None:
     tracker = _tracker()
     item = _meta()
-    assert not await tracker._handle_upload_response(item, _response({}, status=403))
+    assert not await tracker._handle_upload_response(
+        item, _response({}, status=403)
+    )
     assert "Forbidden" in item.tracker_status["TVCHAOSUK"]["status_message"]
 
     tracker.common.create_torrent_ready_to_seed = AsyncMock()  # type: ignore[method-assign]
@@ -257,8 +352,12 @@ async def test_tvchaos_handle_upload_response_http_and_success() -> None:
 
 
 def test_tvchaos_http_error_message_redirect() -> None:
-    assert "Redirect (302)" in TVChaosUK._http_error_message(_response({}, status=302))
-    assert "HTTP 500" in TVChaosUK._http_error_message(_response({}, status=500))
+    assert "Redirect (302)" in TVChaosUK._http_error_message(
+        _response({}, status=302)
+    )
+    assert "HTTP 500" in TVChaosUK._http_error_message(
+        _response({}, status=500)
+    )
 
 
 def test_tvchaos_upload_json_and_id_errors() -> None:
@@ -272,9 +371,26 @@ def test_tvchaos_upload_json_and_id_errors() -> None:
 
 def test_tvchaos_origin_country_fallbacks_and_network_normalization() -> None:
     tracker = _tracker()
-    assert tracker._origin_country_codes(_meta(origin_country=[], production_countries=[{"iso_3166_1": "GB"}])) == ["GB"]
-    assert tracker._origin_country_codes(_meta(origin_country=[], production_countries=[], production_companies=[{"origin_country": "IE"}])) == ["IE"]
-    assert tracker._origin_country_codes(_meta(origin_country=[], production_countries=[], production_companies=[])) == []
+    assert tracker._origin_country_codes(
+        _meta(origin_country=[], production_countries=[{"iso_3166_1": "GB"}])
+    ) == ["GB"]
+    assert tracker._origin_country_codes(
+        _meta(
+            origin_country=[],
+            production_countries=[],
+            production_companies=[{"origin_country": "IE"}],
+        )
+    ) == ["IE"]
+    assert (
+        tracker._origin_country_codes(
+            _meta(
+                origin_country=[],
+                production_countries=[],
+                production_companies=[],
+            )
+        )
+        == []
+    )
     item = _meta(networks=[{"name": "BBC"}])
     tracker._normalize_network(item)
     assert item.networks == "BBC"
@@ -283,7 +399,11 @@ def test_tvchaos_origin_country_fallbacks_and_network_normalization() -> None:
 @pytest.mark.asyncio
 async def test_tvchaos_cached_tmdb_episode_and_season() -> None:
     tracker = _tracker()
-    episode = {"air_date": "2010-01-02", "name": "Episode", "overview": "Overview"}
+    episode = {
+        "air_date": "2010-01-02",
+        "name": "Episode",
+        "overview": "Overview",
+    }
     item = _meta(tmdb_episode_data=episode)
     assert await tracker._episode_info(item) == episode
 
@@ -296,7 +416,9 @@ async def test_tvchaos_cached_tmdb_episode_and_season() -> None:
 async def test_tvchaos_additional_checks_forbidden() -> None:
     tracker = _tracker()
     assert not await tracker.get_additional_checks(_meta(resolution="2160p"))
-    assert await tracker.get_additional_checks(_meta(resolution="1080p", video_codec="HEVC"))
+    assert await tracker.get_additional_checks(
+        _meta(resolution="1080p", video_codec="HEVC")
+    )
 
 
 def test_tvchaos_finalize_description_empty_and_links_empty() -> None:
@@ -312,7 +434,13 @@ def test_tvchaos_finalize_description_empty_and_links_empty() -> None:
 def test_tvchaos_subtitle_sdh_flag() -> None:
     tracker = _tracker()
     item = _meta()
-    mi = {"media": {"track": [{"@type": "Text", "Language": "eng", "Title": "English SDH"}]}}
+    mi = {
+        "media": {
+            "track": [
+                {"@type": "Text", "Language": "eng", "Title": "English SDH"}
+            ]
+        }
+    }
     tracker.get_subs_info(item, mi)
     assert item.eng_subs == 1
     assert item.sdh_subs == 1
@@ -321,16 +449,36 @@ def test_tvchaos_subtitle_sdh_flag() -> None:
 
 def test_tvchaos_normalized_audio_language_empty_and_english() -> None:
     assert TVChaosUK._normalized_audio_language({}) == ""
-    assert TVChaosUK._normalized_audio_language({"Language/String": "en-US"}) == "English"
+    assert (
+        TVChaosUK._normalized_audio_language({"Language/String": "en-US"})
+        == "English"
+    )
 
 
 def test_tvchaos_remaining_description_and_origin_branches() -> None:
     tracker = _tracker()
-    assert tracker._build_fallback_desc(_meta(category="OTHER", overview="")) == ""
-    assert tracker._add_screenshots(_meta(screens=1), [{"web_url": "w", "img_url": "i"}]) == ""
+    assert (
+        tracker._build_fallback_desc(_meta(category="OTHER", overview=""))
+        == ""
+    )
+    assert (
+        tracker._add_screenshots(
+            _meta(screens=1), [{"web_url": "w", "img_url": "i"}]
+        )
+        == ""
+    )
     assert tracker._localized_upload_name(_meta(), "11", "Name") == "Name"
-    assert tracker._localized_upload_name(_meta(title="Same", original_title="Same"), tracker.tv_type_map["foreign"], "Same") == "Same"
-    assert tracker._origin_country_codes(_meta(origin_country=["IE"])) == ["IE"]
+    assert (
+        tracker._localized_upload_name(
+            _meta(title="Same", original_title="Same"),
+            tracker.tv_type_map["foreign"],
+            "Same",
+        )
+        == "Same"
+    )
+    assert tracker._origin_country_codes(_meta(origin_country=["IE"])) == [
+        "IE"
+    ]
 
 
 @pytest.mark.asyncio
@@ -342,19 +490,33 @@ async def test_tvchaos_read_file_and_valid_mediainfo(tmp_path: Path) -> None:
 
     root = tmp_path / "tmp" / "release"
     root.mkdir(parents=True)
-    (root / "MediaInfo.json").write_text('{"media":{"track":[]}}', encoding="utf-8")
-    assert await tracker._load_mediainfo_json(_meta(tmp_path)) == {"media": {"track": []}}
+    (root / "MediaInfo.json").write_text(
+        '{"media":{"track":[]}}', encoding="utf-8"
+    )
+    assert await tracker._load_mediainfo_json(_meta(tmp_path)) == {
+        "media": {"track": []}
+    }
 
 
 @pytest.mark.asyncio
-async def test_tvchaos_upload_stops_when_name_not_confirmed(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_tvchaos_upload_stops_when_name_not_confirmed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     tracker = _tracker()
     tracker.common.create_torrent_for_upload = AsyncMock()  # type: ignore[method-assign]
     monkeypatch.setattr(tracker, "get_tmdb_data", AsyncMock(return_value={}))
-    monkeypatch.setattr(tracker, "_load_mediainfo_json", AsyncMock(return_value={}))
-    monkeypatch.setattr(tracker, "_upload_category", AsyncMock(return_value="11"))
-    monkeypatch.setattr(tracker, "_technical_dumps", AsyncMock(return_value=("MI", "")))
+    monkeypatch.setattr(
+        tracker, "_load_mediainfo_json", AsyncMock(return_value={})
+    )
+    monkeypatch.setattr(
+        tracker, "_upload_category", AsyncMock(return_value="11")
+    )
+    monkeypatch.setattr(
+        tracker, "_technical_dumps", AsyncMock(return_value=("MI", ""))
+    )
     monkeypatch.setattr(tracker, "edit_desc", AsyncMock(return_value="DESC"))
-    monkeypatch.setattr(tracker, "_upload_name", AsyncMock(return_value="NAME"))
+    monkeypatch.setattr(
+        tracker, "_upload_name", AsyncMock(return_value="NAME")
+    )
     monkeypatch.setattr(tracker, "_confirm_upload_name", lambda *_args: False)
     assert await tracker.upload(_meta()) is None

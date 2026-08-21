@@ -43,17 +43,24 @@ def extract_upload_error(html: str) -> str:
     # next sibling or in the nearest small container.
     for element in soup.select("[class*='error']"):
         element_message = clean(element.get_text(" ", strip=True))
-        if element_message and element_message.lower() not in {"error", "erro"}:
+        if element_message and element_message.lower() not in {
+            "error",
+            "erro",
+        }:
             return element_message
         for parent in [element, *element.parents]:
             message = clean(parent.get_text(" ", strip=True))
             if len(message) > len(element_message) and len(message) < 500:
-                message = re.sub(r"^(?:erro|error)\b", "", message, flags=re.IGNORECASE)
+                message = re.sub(
+                    r"^(?:erro|error)\b", "", message, flags=re.IGNORECASE
+                )
                 if message := clean(message):
                     return message
 
     for heading in soup.select("h1, h2, h3, h4"):
-        if not re.search(r"error|failed", heading.get_text(" ", strip=True), re.IGNORECASE):
+        if not re.search(
+            r"error|failed", heading.get_text(" ", strip=True), re.IGNORECASE
+        ):
             continue
         sibling = heading.find_next_sibling(["p", "div"])
         message = clean(sibling.get_text(" ", strip=True)) if sibling else ""
@@ -61,21 +68,36 @@ def extract_upload_error(html: str) -> str:
             return message
 
     # A few trackers only return their upload-blocking notice.
-    for heading in soup.select("h1.dnu_header, h2.dnu_header, h3.dnu_header, #dnu_header"):
+    for heading in soup.select(
+        "h1.dnu_header, h2.dnu_header, h3.dnu_header, #dnu_header"
+    ):
         message = clean(heading.get_text(" ", strip=True))
-        if re.search(r"proib|permitid|not allowed|forbidden", message, re.IGNORECASE):
+        if re.search(
+            r"proib|permitid|not allowed|forbidden", message, re.IGNORECASE
+        ):
             return message
 
     # Some legacy pages render the complete error as one text node.
-    for text_parent in soup.select("td, div, p, h1, h2, h3, h4, b, span, font"):
+    for text_parent in soup.select(
+        "td, div, p, h1, h2, h3, h4, b, span, font"
+    ):
         raw_message = clean(text_parent.get_text(" ", strip=True))
-        if not re.match(r"^(?:error\s*:|upload failed!)", raw_message, re.IGNORECASE):
+        if not re.match(
+            r"^(?:error\s*:|upload failed!)", raw_message, re.IGNORECASE
+        ):
             continue
         for parent in [text_parent, *text_parent.parents]:
             message = clean(parent.get_text(" ", strip=True))
-            if len(message) > 500 or not re.match(r"^(?:error\s*:|upload failed!)", message, re.IGNORECASE):
+            if len(message) > 500 or not re.match(
+                r"^(?:error\s*:|upload failed!)", message, re.IGNORECASE
+            ):
                 continue
-            message = re.sub(r"^(?:error\s*:|upload failed!?)\s*", "", message, flags=re.IGNORECASE)
+            message = re.sub(
+                r"^(?:error\s*:|upload failed!?)\s*",
+                "",
+                message,
+                flags=re.IGNORECASE,
+            )
             message = re.sub(r"\s+Back$", "", message, flags=re.IGNORECASE)
             if message := clean(message):
                 return message
@@ -83,7 +105,9 @@ def extract_upload_error(html: str) -> str:
     return ""
 
 
-def get_tracker_domain(tracker: str, config: dict[str, Any] | None = None) -> str:
+def get_tracker_domain(
+    tracker: str, config: dict[str, Any] | None = None
+) -> str:
     """Extract or map a tracker name to its primary domain name."""
     try:
         from src.integrations.trackers.registry import tracker_class_map
@@ -99,7 +123,9 @@ def get_tracker_domain(tracker: str, config: dict[str, Any] | None = None) -> st
                     domain = domain[4:]
                 return domain
     except Exception as e:
-        logger.error(f"[yellow]Warning: Error getting tracker domain: {e}[/yellow]")
+        logger.error(
+            f"[yellow]Warning: Error getting tracker domain: {e}[/yellow]"
+        )
 
     if config:
         tracker_cfg = config.get("TRACKERS", {}).get(tracker, {})
@@ -116,7 +142,9 @@ def get_tracker_domain(tracker: str, config: dict[str, Any] | None = None) -> st
                         domain = domain[4:]
                     return domain
             except Exception as e:
-                logger.error(f"[yellow]Warning: Error getting tracker domain: {e}[/yellow]")
+                logger.error(
+                    f"[yellow]Warning: Error getting tracker domain: {e}[/yellow]"
+                )
 
     # Fallback/Hardcoded domains
     fallback_domains = {
@@ -152,7 +180,9 @@ def get_tracker_domain(tracker: str, config: dict[str, Any] | None = None) -> st
     return t_lower
 
 
-def find_cookie_file(base_dir: str, tracker: str, config: dict[str, Any] | None = None) -> str:
+def find_cookie_file(
+    base_dir: str, tracker: str, config: dict[str, Any] | None = None
+) -> str:
     """
     Find the cookie file for a tracker.
     First checks if the tracker's config has a custom 'cookie_file' path.
@@ -166,8 +196,15 @@ def find_cookie_file(base_dir: str, tracker: str, config: dict[str, Any] | None 
         cookies_dir.mkdir(parents=True, exist_ok=True)
 
     # 1. Check if tracker config has 'cookie_file' or 'cookies'
-    tracker_config = cast(dict[str, Any], config.get("TRACKERS", {}).get(tracker, {})) if config else {}
-    custom_cookie_file = tracker_config.get("cookie_file", "").strip() or tracker_config.get("cookies", "").strip()
+    tracker_config = (
+        cast(dict[str, Any], config.get("TRACKERS", {}).get(tracker, {}))
+        if config
+        else {}
+    )
+    custom_cookie_file = (
+        tracker_config.get("cookie_file", "").strip()
+        or tracker_config.get("cookies", "").strip()
+    )
     if custom_cookie_file:
         custom_path = Path(custom_cookie_file)
         if custom_path.is_absolute():
@@ -183,11 +220,21 @@ def find_cookie_file(base_dir: str, tracker: str, config: dict[str, Any] | None 
         files: list[Path] = sorted(cookies_dir.glob("*"), key=lambda p: p.name)
 
         # Check for exact name match (with any extension)
-        matching_files.extend(file_path for file_path in files if file_path.is_file() and file_path.stem.lower() == tracker.lower())
+        matching_files.extend(
+            file_path
+            for file_path in files
+            if file_path.is_file()
+            and file_path.stem.lower() == tracker.lower()
+        )
 
         # Check for partial name match (e.g. "my_avistaz_cookies.txt")
         if not matching_files:
-            matching_files.extend(file_path for file_path in files if file_path.is_file() and tracker.lower() in file_path.name.lower())
+            matching_files.extend(
+                file_path
+                for file_path in files
+                if file_path.is_file()
+                and tracker.lower() in file_path.name.lower()
+            )
 
         # 3. Try to find by content/domain match
         if not matching_files:
@@ -199,17 +246,23 @@ def find_cookie_file(base_dir: str, tracker: str, config: dict[str, Any] | None 
                     # Only search text/json files
                     if file_path.suffix.lower() in [".txt", ".json"]:
                         try:
-                            with file_path.open("r", encoding="utf-8", errors="ignore") as f:
+                            with file_path.open(
+                                "r", encoding="utf-8", errors="ignore"
+                            ) as f:
                                 head = f.read(10240)
                                 if domain in head.lower():
                                     matching_files.append(file_path)
                         except Exception as e:
-                            logger.error(f"[yellow]Warning: Error reading cookie file: {e}[/yellow]")
+                            logger.error(
+                                f"[yellow]Warning: Error reading cookie file: {e}[/yellow]"
+                            )
 
     if matching_files:
         if len(matching_files) > 1:
             file_names = ", ".join(f.name for f in matching_files)
-            logger.warning(f"[yellow]{tracker}: Found multiple cookie files ({file_names}). Using the first one by default: {matching_files[0].name}[/yellow]")
+            logger.warning(
+                f"[yellow]{tracker}: Found multiple cookie files ({file_names}). Using the first one by default: {matching_files[0].name}[/yellow]"
+            )
         return str(matching_files[0].resolve())
 
     # 4. Fallback to default
@@ -228,7 +281,9 @@ class CookieValidator:
         self.config = config
         self.common = Common(config)
 
-    async def load_session_cookies(self, meta: Meta, tracker: str) -> http.cookiejar.MozillaCookieJar | None:
+    async def load_session_cookies(
+        self, meta: Meta, tracker: str
+    ) -> http.cookiejar.MozillaCookieJar | None:
         cookie_file = find_cookie_file(meta.base_dir, tracker, self.config)
         cookie_jar = http.cookiejar.MozillaCookieJar(cookie_file)
 
@@ -236,19 +291,27 @@ class CookieValidator:
             cookie_jar.load(ignore_discard=True, ignore_expires=True)
         except http.cookiejar.LoadError as e:
             logger.info(f"{tracker}: Failed to load the cookie file: {e}")
-            logger.info(f"{tracker}: Please ensure the cookie file is in the correct format (Netscape).")
+            logger.info(
+                f"{tracker}: Please ensure the cookie file is in the correct format (Netscape)."
+            )
             return None
         except FileNotFoundError:
             # Attempt automatic login for ALPHARATIO tracker
             if tracker == "ALPHARATIO":
-                logger.info(f"{tracker}: [yellow]Cookie file not found. Attempting automatic login...[/yellow]")
+                logger.info(
+                    f"{tracker}: [yellow]Cookie file not found. Attempting automatic login...[/yellow]"
+                )
                 if await self.ar_login(meta, tracker, cookie_file):
                     # Try loading the newly created cookie file
                     try:
-                        cookie_jar.load(ignore_discard=True, ignore_expires=True)
+                        cookie_jar.load(
+                            ignore_discard=True, ignore_expires=True
+                        )
                         return cookie_jar
                     except Exception as e:
-                        logger.info(f"{tracker}: Failed to load cookies after login: {e}")
+                        logger.info(
+                            f"{tracker}: Failed to load cookies after login: {e}"
+                        )
                         return None
                 else:
                     logger.info(f"{tracker}: Automatic login failed.")
@@ -263,10 +326,14 @@ class CookieValidator:
 
         return cookie_jar
 
-    async def save_session_cookies(self, tracker: str, cookie_jar: http.cookiejar.MozillaCookieJar | None) -> None:
+    async def save_session_cookies(
+        self, tracker: str, cookie_jar: http.cookiejar.MozillaCookieJar | None
+    ) -> None:
         """Save updated cookies after a successful validation."""
         if not cookie_jar:
-            logger.info(f"{tracker}: Cookie jar not initialized, cannot save cookies.")
+            logger.info(
+                f"{tracker}: Cookie jar not initialized, cannot save cookies."
+            )
             return
 
         try:
@@ -291,22 +358,30 @@ class CookieValidator:
 
         return None
 
-    async def ar_login(self, meta: Meta, tracker: str, cookie_file: str) -> bool:
+    async def ar_login(
+        self, meta: Meta, tracker: str, cookie_file: str
+    ) -> bool:
         """Perform automatic login to ALPHARATIO and save cookies in Netscape format."""
         username = self.config["TRACKERS"][tracker].get("username", "").strip()
         password = self.config["TRACKERS"][tracker].get("password", "").strip()
 
         if not username or not password:
-            logger.info(f"{tracker}: Username or password not configured in config.")
+            logger.info(
+                f"{tracker}: Username or password not configured in config."
+            )
             return False
 
         base_url = "https://alpharatio.cc"
         login_url = f"{base_url}/login.php"
 
-        headers = {"User-Agent": f"{meta.ua_name} {(meta.current_version if meta.current_version is not None else 'github.com/wastaken7/Upload-Assistant')}"}
+        headers = {
+            "User-Agent": f"{meta.ua_name} {(meta.current_version if meta.current_version is not None else 'github.com/wastaken7/Upload-Assistant')}"
+        }
 
         try:
-            async with httpx.AsyncClient(headers=headers, timeout=30.0, follow_redirects=True) as client:
+            async with httpx.AsyncClient(
+                headers=headers, timeout=30.0, follow_redirects=True
+            ) as client:
                 # Perform login
                 login_data: dict[str, str] = {
                     "username": username,
@@ -318,20 +393,34 @@ class CookieValidator:
                 response = await client.post(login_url, data=login_data)
 
                 if response.status_code != 200:
-                    logger.info(f"{tracker}: Login failed with status code {response.status_code}")
+                    logger.info(
+                        f"{tracker}: Login failed with status code {response.status_code}"
+                    )
                     return False
 
                 # Check for login success by looking for error indicators
-                if "login.php?act=recover" in response.text or "Forgot your password" in response.text:
-                    logger.info(f"{tracker}: [red]Login failed. Please check your username and password.[/red]")
+                if (
+                    "login.php?act=recover" in response.text
+                    or "Forgot your password" in response.text
+                ):
+                    logger.info(
+                        f"{tracker}: [red]Login failed. Please check your username and password.[/red]"
+                    )
                     if meta.debug:
-                        failure_path = await self.common.save_html_file(meta, tracker, response.text, "Failed_Login")
-                        logger.debug(f"{tracker}: Login response saved to [yellow]{failure_path}[/yellow] for debugging.")
+                        failure_path = await self.common.save_html_file(
+                            meta, tracker, response.text, "Failed_Login"
+                        )
+                        logger.debug(
+                            f"{tracker}: Login response saved to [yellow]{failure_path}[/yellow] for debugging."
+                        )
                     return False
 
                 # Validate we're logged in by checking the torrents page
                 test_response = await client.get(f"{base_url}/torrents.php")
-                if test_response.status_code == 200 and "login.php?act=recover" not in test_response.text:
+                if (
+                    test_response.status_code == 200
+                    and "login.php?act=recover" not in test_response.text
+                ):
                     logger.info(f"{tracker}: [green]Login successful![/green]")
 
                     # Extract auth key from the response page
@@ -343,7 +432,9 @@ class CookieValidator:
                         auth_match = re.search(r"auth=([^&]+)", href)
                         if auth_match:
                             auth_key = auth_match.group(1)
-                            logger.info(f"{tracker}: [green]Auth key extracted successfully[/green]")
+                            logger.info(
+                                f"{tracker}: [green]Auth key extracted successfully[/green]"
+                            )
 
                     # Save cookies in Netscape format
                     Path(cookie_file).parent.mkdir(parents=True, exist_ok=True)
@@ -355,19 +446,29 @@ class CookieValidator:
                         for cookie in client.cookies.jar:
                             if cookie.name == cookie_name:
                                 rest = getattr(cookie, "_rest", {})
-                                rest_map = cast(dict[str, Any], rest) if isinstance(rest, dict) else {}
+                                rest_map = (
+                                    cast(dict[str, Any], rest)
+                                    if isinstance(rest, dict)
+                                    else {}
+                                )
                                 ck = http.cookiejar.Cookie(
                                     version=0,
                                     name=cookie.name,
                                     value=cookie.value,
                                     port=None,
                                     port_specified=False,
-                                    domain=cookie.domain if cookie.domain else ".alpharatio.cc",
+                                    domain=cookie.domain
+                                    if cookie.domain
+                                    else ".alpharatio.cc",
                                     domain_specified=True,
-                                    domain_initial_dot=(cookie.domain or ".alpharatio.cc").startswith("."),
+                                    domain_initial_dot=(
+                                        cookie.domain or ".alpharatio.cc"
+                                    ).startswith("."),
                                     path=cookie.path if cookie.path else "/",
                                     path_specified=True,
-                                    secure=bool(rest_map.get("secure")) if rest_map else True,
+                                    secure=bool(rest_map.get("secure"))
+                                    if rest_map
+                                    else True,
                                     expires=None,
                                     discard=False,
                                     comment=None,
@@ -379,14 +480,20 @@ class CookieValidator:
                                 break
 
                     cookie_jar.save(ignore_discard=True, ignore_expires=True)
-                    logger.info(f"{tracker}: [green]Cookies saved to {cookie_file}[/green]")
+                    logger.info(
+                        f"{tracker}: [green]Cookies saved to {cookie_file}[/green]"
+                    )
 
                     # Save auth key to a separate file if found
                     if auth_key:
                         auth_file = cookie_file.replace(".txt", "_auth.txt")
-                        async with aiofiles.open(auth_file, "w", encoding="utf-8") as f:
+                        async with aiofiles.open(
+                            auth_file, "w", encoding="utf-8"
+                        ) as f:
                             await f.write(auth_key)
-                        logger.info(f"{tracker}: [green]Auth key saved to {auth_file}[/green]")
+                        logger.info(
+                            f"{tracker}: [green]Auth key saved to {auth_file}[/green]"
+                        )
 
                     return True
 
@@ -394,10 +501,14 @@ class CookieValidator:
                 return False
 
         except httpx.TimeoutException:
-            logger.info(f"{tracker}: Connection timed out. The site may be down or unreachable.")
+            logger.info(
+                f"{tracker}: Connection timed out. The site may be down or unreachable."
+            )
             return False
         except httpx.ConnectError:
-            logger.info(f"{tracker}: Failed to connect. The site may be down or your connection is blocked.")
+            logger.info(
+                f"{tracker}: Failed to connect. The site may be down or your connection is blocked."
+            )
             return False
         except Exception as e:
             logger.info(f"{tracker}: Login error: {e}")
@@ -422,10 +533,14 @@ class CookieValidator:
         if not cookie_jar:
             return False
 
-        headers = {"User-Agent": f"{meta.ua_name} {(meta.current_version if meta.current_version is not None else 'github.com/wastaken7/Upload-Assistant')}"}
+        headers = {
+            "User-Agent": f"{meta.ua_name} {(meta.current_version if meta.current_version is not None else 'github.com/wastaken7/Upload-Assistant')}"
+        }
 
         try:
-            async with httpx.AsyncClient(headers=headers, timeout=20.0, cookies=cookie_jar) as session:
+            async with httpx.AsyncClient(
+                headers=headers, timeout=20.0, cookies=cookie_jar
+            ) as session:
                 response = await session.get(test_url)
                 text = response.text
                 # if meta.debug:
@@ -453,10 +568,14 @@ class CookieValidator:
                 if token_pattern:
                     match = re.search(token_pattern, text)
                     if not match:
-                        await self.handle_validation_failure(meta, tracker, text)
+                        await self.handle_validation_failure(
+                            meta, tracker, text
+                        )
                         return False
                     # Dynamically set a class attribute to store the token
-                    from src.integrations.trackers.registry import tracker_class_map
+                    from src.integrations.trackers.registry import (
+                        tracker_class_map,
+                    )
 
                     cls = tracker_class_map.get(tracker.upper())
                     if cls:
@@ -467,22 +586,40 @@ class CookieValidator:
                 return True
 
         except httpx.ConnectTimeout:
-            logger.info(f"{tracker}: Connection timeout. Server took too long to respond.")
+            logger.info(
+                f"{tracker}: Connection timeout. Server took too long to respond."
+            )
         except httpx.ReadTimeout:
-            logger.info(f"{tracker}: Read timeout. Data transfer stopped prematurely.")
+            logger.info(
+                f"{tracker}: Read timeout. Data transfer stopped prematurely."
+            )
         except httpx.ConnectError:
-            logger.info(f"{tracker}: Connection failed. Check URL, port, and network status.")
+            logger.info(
+                f"{tracker}: Connection failed. Check URL, port, and network status."
+            )
         except httpx.ProxyError:
-            logger.info(f"{tracker}: Proxy error. Failed to connect via proxy.")
+            logger.info(
+                f"{tracker}: Proxy error. Failed to connect via proxy."
+            )
         except httpx.DecodingError:
-            logger.info(f"{tracker}: Decoding failed. Response content is not valid (e.g., unexpected encoding).")
+            logger.info(
+                f"{tracker}: Decoding failed. Response content is not valid (e.g., unexpected encoding)."
+            )
         except httpx.TooManyRedirects:
-            logger.info(f"{tracker}: Too many redirects. Request exceeded the maximum redirect limit.")
+            logger.info(
+                f"{tracker}: Too many redirects. Request exceeded the maximum redirect limit."
+            )
         except httpx.HTTPStatusError as e:
             status_code = str(e.response.status_code)
-            reason = e.response.reason_phrase if e.response.reason_phrase else "Unknown Reason"
+            reason = (
+                e.response.reason_phrase
+                if e.response.reason_phrase
+                else "Unknown Reason"
+            )
             url = e.request.url
-            logger.info(f"{tracker}: HTTP status error {status_code}: {reason} for {url}")
+            logger.info(
+                f"{tracker}: HTTP status error {status_code}: {reason} for {url}"
+            )
         except httpx.RequestError as e:
             logger.info(f"{tracker}: General request error: {e}")
         except Exception as e:
@@ -490,11 +627,15 @@ class CookieValidator:
 
         return False
 
-    async def handle_validation_failure(self, meta: Meta, tracker: str, text: str) -> None:
+    async def handle_validation_failure(
+        self, meta: Meta, tracker: str, text: str
+    ) -> None:
         logger.info(
             f"{tracker}: Validation failed. The cookie appears to be expired or invalid.\n{tracker}: Please log in through your usual browser and export the cookies again."
         )
-        failure_path = await self.common.save_html_file(meta, tracker, text, "Failed_Login")
+        failure_path = await self.common.save_html_file(
+            meta, tracker, text, "Failed_Login"
+        )
         logger.info(
             f"The web page has been saved to [yellow]{failure_path}[/yellow] for analysis.\n"
             "[red]Do not share this file publicly[/red], as it may contain confidential information such as passkeys, IP address, e-mail, etc.\n"
@@ -503,7 +644,9 @@ class CookieValidator:
 
         return
 
-    async def find_html_token(self, tracker: str, token_pattern: str, response: str) -> str | None:
+    async def find_html_token(
+        self, tracker: str, token_pattern: str, response: str
+    ) -> str | None:
         """Find the auth token in a web page using a regular expression pattern."""
         auth_match = re.search(token_pattern, response)
         if not auth_match:
@@ -514,13 +657,21 @@ class CookieValidator:
             return None
         return str(auth_match.group(1))
 
-    def _save_cookies_secure(self, session_cookies: Any, cookiefile: str) -> None:
+    def _save_cookies_secure(
+        self, session_cookies: Any, cookiefile: str
+    ) -> None:
         """Securely save session cookies using JSON instead of pickle"""
         try:
             # Convert RequestsCookieJar to dictionary for JSON serialization
             cookie_dict = {}
             for cookie in session_cookies:
-                cookie_dict[cookie.name] = {"value": cookie.value, "domain": cookie.domain, "path": cookie.path, "secure": cookie.secure, "expires": cookie.expires}
+                cookie_dict[cookie.name] = {
+                    "value": cookie.value,
+                    "domain": cookie.domain,
+                    "path": cookie.path,
+                    "secure": cookie.secure,
+                    "expires": cookie.expires,
+                }
 
             with Path(cookiefile).open("w", encoding="utf-8") as f:
                 json.dump(cookie_dict, f, indent=2)
@@ -535,7 +686,9 @@ class CookieValidator:
             logger.error(f"[red]Error encoding cookies to JSON: {e}[/red]")
             raise
 
-    def _load_cookies_secure(self, session: Any, cookiefile: str, _tracker: str) -> None:
+    def _load_cookies_secure(
+        self, session: Any, cookiefile: str, _tracker: str
+    ) -> None:
         """Securely load session cookies from JSON instead of pickle"""
 
         # Load cookies from JSON file only. Legacy pickle migration is intentionally not automatic
@@ -551,13 +704,21 @@ class CookieValidator:
                 if domain is None:
                     domain = ""  # Use empty string instead of None
 
-                session.cookies.set(name=name, value=cookie_data["value"], domain=domain, path=cookie_data.get("path", "/"), secure=cookie_data.get("secure", False))
+                session.cookies.set(
+                    name=name,
+                    value=cookie_data["value"],
+                    domain=domain,
+                    path=cookie_data.get("path", "/"),
+                    secure=cookie_data.get("secure", False),
+                )
 
         except OSError as e:
             logger.error(f"[red]Error reading cookie file: {e}[/red]")
             raise
         except json.JSONDecodeError as e:
-            logger.error(f"[red]Error decoding JSON from cookie file: {e}[/red]")
+            logger.error(
+                f"[red]Error decoding JSON from cookie file: {e}[/red]"
+            )
             raise
 
     def _load_cookies_dict_secure(self, cookiefile: str) -> dict[str, Any]:
@@ -570,7 +731,9 @@ class CookieValidator:
             logger.error(f"[red]Error reading cookie file: {e}[/red]")
             raise
         except json.JSONDecodeError as e:
-            logger.error(f"[red]Error decoding JSON from cookie file: {e}[/red]")
+            logger.error(
+                f"[red]Error decoding JSON from cookie file: {e}[/red]"
+            )
             raise
 
 
@@ -615,7 +778,12 @@ class CookieAuthUploader:
         A failed upload will save the response HTML for analysis and also create a torrent entry with the announce URL,
         as the upload may have partially succeeded.
         """
-        values: list[str | list[str] | None] = [success_status_code, error_text, success_text, success_list]
+        values: list[str | list[str] | None] = [
+            success_status_code,
+            error_text,
+            success_text,
+            success_list,
+        ]
         count = sum(bool(v) for v in values)
 
         if count == 0 or count > 1:
@@ -639,24 +807,47 @@ class CookieAuthUploader:
         if additional_files:
             files.update(additional_files)
 
-        headers = {"User-Agent": f"{meta.ua_name} {(meta.current_version if meta.current_version is not None else 'github.com/wastaken7/Upload-Assistant')}"}
+        headers = {
+            "User-Agent": f"{meta.ua_name} {(meta.current_version if meta.current_version is not None else 'github.com/wastaken7/Upload-Assistant')}"
+        }
 
         if meta.debug:
             self.upload_debug(tracker, data)
-            meta.tracker_status[tracker]["status_message"] = "Debug mode enabled, not uploading"
-            await self.common.create_torrent_for_upload(meta, f"{tracker}" + "_DEBUG", f"{tracker}" + "_DEBUG", announce_url="https://fake.tracker")
+            meta.tracker_status[tracker]["status_message"] = (
+                "Debug mode enabled, not uploading"
+            )
+            await self.common.create_torrent_for_upload(
+                meta,
+                f"{tracker}" + "_DEBUG",
+                f"{tracker}" + "_DEBUG",
+                announce_url="https://fake.tracker",
+            )
             return True
 
         success = False
         try:
-            async with httpx.AsyncClient(headers=headers, timeout=30.0, cookies=upload_cookies, follow_redirects=True) as session:
-                response = await session.post(upload_url, data=data, files=files)
+            async with httpx.AsyncClient(
+                headers=headers,
+                timeout=30.0,
+                cookies=upload_cookies,
+                follow_redirects=True,
+            ) as session:
+                response = await session.post(
+                    upload_url, data=data, files=files
+                )
 
-                if (success_text and success_text in response.text) or (success_list and any(item in response.text for item in success_list)):
+                if (success_text and success_text in response.text) or (
+                    success_list
+                    and any(item in response.text for item in success_list)
+                ):
                     success = True
 
                 elif success_status_code:
-                    valid_codes = {int(code.strip()) for code in success_status_code.split(",") if code.strip().isdigit()}
+                    valid_codes = {
+                        int(code.strip())
+                        for code in success_status_code.split(",")
+                        if code.strip().isdigit()
+                    }
 
                     if response.status_code in valid_codes:
                         success = True
@@ -688,34 +879,65 @@ class CookieAuthUploader:
                 return False
 
         except httpx.ConnectTimeout:
-            meta.tracker_status[tracker]["status_message"] = "Connection timed out"
+            meta.tracker_status[tracker]["status_message"] = (
+                "Connection timed out"
+            )
         except httpx.ReadTimeout:
             meta.tracker_status[tracker]["status_message"] = "Read timed out"
         except httpx.ConnectError:
-            meta.tracker_status[tracker]["status_message"] = "Failed to connect to the server"
+            meta.tracker_status[tracker]["status_message"] = (
+                "Failed to connect to the server"
+            )
         except httpx.ProxyError:
-            meta.tracker_status[tracker]["status_message"] = "Proxy connection failed"
+            meta.tracker_status[tracker]["status_message"] = (
+                "Proxy connection failed"
+            )
         except httpx.DecodingError:
-            meta.tracker_status[tracker]["status_message"] = "Response decoding failed"
+            meta.tracker_status[tracker]["status_message"] = (
+                "Response decoding failed"
+            )
         except httpx.TooManyRedirects:
-            meta.tracker_status[tracker]["status_message"] = "Too many redirects"
+            meta.tracker_status[tracker]["status_message"] = (
+                "Too many redirects"
+            )
         except httpx.HTTPStatusError as e:
-            meta.tracker_status[tracker]["status_message"] = f"HTTP error {e.response.status_code}: {e}"
+            meta.tracker_status[tracker]["status_message"] = (
+                f"HTTP error {e.response.status_code}: {e}"
+            )
         except httpx.RequestError as e:
-            meta.tracker_status[tracker]["status_message"] = f"Request error: {e}"
+            meta.tracker_status[tracker]["status_message"] = (
+                f"Request error: {e}"
+            )
         except Exception as e:
-            meta.tracker_status[tracker]["status_message"] = f"Unexpected upload error: {e}"
+            meta.tracker_status[tracker]["status_message"] = (
+                f"Unexpected upload error: {e}"
+            )
 
-        await self.common.create_torrent_ready_to_seed(meta, tracker, source_flag, user_announce_url, torrent_url)
+        await self.common.create_torrent_ready_to_seed(
+            meta, tracker, source_flag, user_announce_url, torrent_url
+        )
         return False
 
     def upload_debug(self, tracker: str, data: Any) -> None:
         try:
             if isinstance(data, dict):
                 data_dict = cast(dict[str, Any], data)
-                sensitive_keywords = ["password", "passkey", "auth", "csrf", "token"]
+                sensitive_keywords = [
+                    "password",
+                    "passkey",
+                    "auth",
+                    "csrf",
+                    "token",
+                ]
 
-                clean_dict = {k: ("[REDACTED]" if any(kw in k.lower() for kw in sensitive_keywords) else v) for k, v in data_dict.items()}
+                clean_dict = {
+                    k: (
+                        "[REDACTED]"
+                        if any(kw in k.lower() for kw in sensitive_keywords)
+                        else v
+                    )
+                    for k, v in data_dict.items()
+                }
                 logger.info(f"{tracker}: Form Data: {clean_dict}")
             else:
                 logger.info(f"{tracker}: Form Data: {data}")
@@ -733,12 +955,18 @@ class CookieAuthUploader:
         default_announce: str,
     ) -> dict[str, tuple[str, bytes, str]]:
         """Load the torrent file into memory."""
-        await self.common.create_torrent_for_upload(meta, tracker, source_flag, announce_url=default_announce)
+        await self.common.create_torrent_for_upload(
+            meta, tracker, source_flag, announce_url=default_announce
+        )
         torrent_path = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{tracker}].torrent"
         async with aiofiles.open(torrent_path, "rb") as f:
             file_bytes = await f.read()
 
-        name = torrent_name if torrent_name else f"{tracker}.{meta.infohash}.placeholder"
+        name = (
+            torrent_name
+            if torrent_name
+            else f"{tracker}.{meta.infohash}.placeholder"
+        )
 
         return {
             torrent_field_name: (
@@ -773,12 +1001,21 @@ class CookieAuthUploader:
                     torrent_id = text_match.group(1)
                     meta.tracker_status[tracker]["torrent_id"] = torrent_id
 
-        torrent_hash = await self.common.create_torrent_ready_to_seed(meta, tracker, source_flag, user_announce_url, torrent_url + torrent_id, hash_is_id=hash_is_id)
+        torrent_hash = await self.common.create_torrent_ready_to_seed(
+            meta,
+            tracker,
+            source_flag,
+            user_announce_url,
+            torrent_url + torrent_id,
+            hash_is_id=hash_is_id,
+        )
 
         if hash_is_id and torrent_hash is not None:
             meta.tracker_status[tracker]["torrent_id"] = torrent_hash
 
-        meta.tracker_status[tracker]["status_message"] = "Torrent uploaded successfully."
+        meta.tracker_status[tracker]["status_message"] = (
+            "Torrent uploaded successfully."
+        )
 
         return True
 
@@ -792,22 +1029,34 @@ class CookieAuthUploader:
         response: httpx.Response,
         success_list: list[str] | None = None,
     ) -> bool:
-        message = ["data error: The upload appears to have failed. It may have uploaded, go check."]
+        message = [
+            "data error: The upload appears to have failed. It may have uploaded, go check."
+        ]
         if success_text:
-            message.append(f"Could not find the success text '{success_text}' in the response.")
+            message.append(
+                f"Could not find the success text '{success_text}' in the response."
+            )
         elif success_list:
-            message.append(f"Could not find any of the success strings in {success_list} in the response.")
+            message.append(
+                f"Could not find any of the success strings in {success_list} in the response."
+            )
         elif error_text:
-            message.append(f"Found the error text '{error_text}' in the response.")
+            message.append(
+                f"Found the error text '{error_text}' in the response."
+            )
         elif success_status_code:
-            message.append(f"Expected status code '{success_status_code}', got '{response.status_code}'.")
+            message.append(
+                f"Expected status code '{success_status_code}', got '{response.status_code}'."
+            )
         else:
             message.append("Unknown upload error.")
 
         if error_message := extract_upload_error(response.text):
             message.append(f"Tracker error: {error_message}")
 
-        failure_path = await self.common.save_html_file(meta, tracker, response.text, "Failed_Upload")
+        failure_path = await self.common.save_html_file(
+            meta, tracker, response.text, "Failed_Upload"
+        )
         message.append(
             f"The web page has been saved to [yellow]{failure_path}[/yellow] for analysis.\n"
             "[red]Do not share this file publicly[/red], as it may contain confidential information such as passkeys, IP address, e-mail, etc.\n"

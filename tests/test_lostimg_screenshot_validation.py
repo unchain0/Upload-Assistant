@@ -1,6 +1,10 @@
 import pytest
 
-from src.integrations.media.screenshot_capture import LOSTIMG_MAX_SIZE, LOSTIMG_MIN_SIZE, is_valid_lostimg_image_size
+from src.integrations.media.screenshot_capture import (
+    LOSTIMG_MAX_SIZE,
+    LOSTIMG_MIN_SIZE,
+    is_valid_lostimg_image_size,
+)
 
 
 @pytest.mark.parametrize(

@@ -29,7 +29,9 @@ async def test_hawkeuno_image_host_policy_does_not_require_legacy_method():
 
     await check_tracker_image_hosts(meta, tracker)
 
-    tracker.rehost_images_manager.check_policy.assert_awaited_once_with(meta, "HAWKEUNO", tracker.image_host_policy)
+    tracker.rehost_images_manager.check_policy.assert_awaited_once_with(
+        meta, "HAWKEUNO", tracker.image_host_policy
+    )
 
 
 async def _noop():

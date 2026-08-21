@@ -16,7 +16,9 @@ def should_embed_links(default_config: Mapping[str, Any]) -> bool:
     return bool(default_config.get("embed_dupe_links", True))
 
 
-def format_terminal_link(text: str, url: str, default_config: Mapping[str, Any]) -> str:
+def format_terminal_link(
+    text: str, url: str, default_config: Mapping[str, Any]
+) -> str:
     """Format a terminal link according to the configured output style."""
     if should_embed_links(default_config):
         try:

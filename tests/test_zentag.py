@@ -16,7 +16,9 @@ pytest: Any = cast(Any, _pytest)
 
 
 @pytest.mark.asyncio
-async def test_tampered_cached_zentag_is_replaced_with_verified_binary(tmp_path: Path, monkeypatch: Any) -> None:
+async def test_tampered_cached_zentag_is_replaced_with_verified_binary(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
     asset = "zentag_0.3.0_linux_amd64.tar.gz"
     payload = b"verified-zentag"
     archive_buffer = io.BytesIO()
@@ -30,7 +32,9 @@ async def test_tampered_cached_zentag_is_replaced_with_verified_binary(tmp_path:
     target.mkdir(parents=True)
     binary = target / "zentag"
     binary.write_bytes(b"tampered")
-    (target / zentag.ZentagBinaryManager.VERSION).write_text(zentag.ZentagBinaryManager.VERSION, encoding="utf-8")
+    (target / zentag.ZentagBinaryManager.VERSION).write_text(
+        zentag.ZentagBinaryManager.VERSION, encoding="utf-8"
+    )
 
     class Response:
         content = archive_payload
@@ -66,16 +70,30 @@ async def test_tampered_cached_zentag_is_replaced_with_verified_binary(tmp_path:
 
     monkeypatch.setattr(get_zentag.platform, "system", lambda: "Linux")
     monkeypatch.setattr(get_zentag.platform, "machine", lambda: "x86_64")
-    monkeypatch.setattr(zentag.ZentagBinaryManager, "CHECKSUMS", {asset: hashlib.sha256(archive_payload).hexdigest()})
-    monkeypatch.setattr(zentag.ZentagBinaryManager, "BINARY_CHECKSUMS", {asset: hashlib.sha256(payload).hexdigest()})
-    monkeypatch.setattr(get_zentag, "HTTPX", type("HTTPXStub", (), {"AsyncClient": Client}))
+    monkeypatch.setattr(
+        zentag.ZentagBinaryManager,
+        "CHECKSUMS",
+        {asset: hashlib.sha256(archive_payload).hexdigest()},
+    )
+    monkeypatch.setattr(
+        zentag.ZentagBinaryManager,
+        "BINARY_CHECKSUMS",
+        {asset: hashlib.sha256(payload).hexdigest()},
+    )
+    monkeypatch.setattr(
+        get_zentag, "HTTPX", type("HTTPXStub", (), {"AsyncClient": Client})
+    )
 
-    assert await zentag.ZentagBinaryManager.ensure_binary(tmp_path) == str(binary)
+    assert await zentag.ZentagBinaryManager.ensure_binary(tmp_path) == str(
+        binary
+    )
     assert binary.read_bytes() == payload
 
 
 @pytest.mark.asyncio
-async def test_noninteractive_zentag_process_does_not_inherit_terminal_stdin(monkeypatch: Any) -> None:
+async def test_noninteractive_zentag_process_does_not_inherit_terminal_stdin(
+    monkeypatch: Any,
+) -> None:
     captured: dict[str, Any] = {}
 
     class Process:
@@ -90,12 +108,18 @@ async def test_noninteractive_zentag_process_does_not_inherit_terminal_stdin(mon
 
     monkeypatch.setattr(zentag.asyncio, "create_subprocess_exec", fake_create)
 
-    assert await zentag._run_process(["zentag", "ebook", "book.pdf"]) == (0, "ok", "")
+    assert await zentag._run_process(["zentag", "ebook", "book.pdf"]) == (
+        0,
+        "ok",
+        "",
+    )
     assert captured["stdin"] == zentag.asyncio.subprocess.PIPE
 
 
 @pytest.mark.asyncio
-async def test_cancelled_zentag_process_is_killed_and_reaped(monkeypatch: Any) -> None:
+async def test_cancelled_zentag_process_is_killed_and_reaped(
+    monkeypatch: Any,
+) -> None:
     process_started = asyncio.Event()
 
     class Process:
@@ -134,7 +158,9 @@ async def test_cancelled_zentag_process_is_killed_and_reaped(monkeypatch: Any) -
 
 
 @pytest.mark.asyncio
-async def test_cancelled_zentag_transform_is_killed_and_reaped(monkeypatch: Any) -> None:
+async def test_cancelled_zentag_transform_is_killed_and_reaped(
+    monkeypatch: Any,
+) -> None:
     read_started = asyncio.Event()
 
     class Stdin:
@@ -184,10 +210,16 @@ async def test_cancelled_zentag_transform_is_killed_and_reaped(monkeypatch: Any)
 
 
 @pytest.mark.asyncio
-async def test_unattended_zenith_m4b_is_transformed_and_validated(tmp_path: Path, monkeypatch: Any) -> None:
+async def test_unattended_zenith_m4b_is_transformed_and_validated(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
     source = tmp_path / "Book [B07ZHYPJK1].m4b"
     source.write_bytes(b"m4b")
-    output = tmp_path / "zentag-output" / "Author - Book (2020) JPN {Narrator} [WEB] M4B AAC 64kbps"
+    output = (
+        tmp_path
+        / "zentag-output"
+        / "Author - Book (2020) JPN {Narrator} [WEB] M4B AAC 64kbps"
+    )
     calls: list[list[str]] = []
 
     async def fake_binary(_base_dir: str) -> str:
@@ -196,18 +228,26 @@ async def test_unattended_zenith_m4b_is_transformed_and_validated(tmp_path: Path
     async def fake_transform(command: list[str]) -> tuple[int, str, str]:
         calls.append(command)
         output.mkdir(parents=True)
-        return 0, f"Proceed? [y/N]: Wrote {zentag.json.dumps(str(output))}\n", ""
+        return (
+            0,
+            f"Proceed? [y/N]: Wrote {zentag.json.dumps(str(output))}\n",
+            "",
+        )
 
     async def fake_process(command: list[str]) -> tuple[int, str, str]:
         calls.append(command)
         return 0, "[]", ""
 
-    monkeypatch.setattr(zentag.ZentagBinaryManager, "ensure_binary", staticmethod(fake_binary))
+    monkeypatch.setattr(
+        zentag.ZentagBinaryManager, "ensure_binary", staticmethod(fake_binary)
+    )
     monkeypatch.setattr(zentag, "_run_transform", fake_transform)
     monkeypatch.setattr(zentag, "_run_process", fake_process)
     meta = Meta(path=str(source), trackers=["ZENITH"], unattended=True)
 
-    prepared = await zentag.prepare_zenith_audiobook(meta, str(tmp_path), {"DEFAULT": {"auto_zentag": True}})
+    prepared = await zentag.prepare_zenith_audiobook(
+        meta, str(tmp_path), {"DEFAULT": {"auto_zentag": True}}
+    )
 
     assert prepared == str(output.resolve())
     assert "--asin" in calls[0]
@@ -216,11 +256,20 @@ async def test_unattended_zenith_m4b_is_transformed_and_validated(tmp_path: Path
 
 
 @pytest.mark.asyncio
-async def test_unattended_zenith_ebook_is_organized_inside_directory(tmp_path: Path, monkeypatch: Any) -> None:
+async def test_unattended_zenith_ebook_is_organized_inside_directory(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
     source = tmp_path / "Rich Dad Guide.pdf"
     source.write_bytes(b"pdf")
-    output = tmp_path / "zentag-output" / "Robert T. Kiyosaki - Rich Dad's Guide [ENG PDF]"
-    output_file = output / "Robert T. Kiyosaki - Rich Dad's Guide (2012) [ENG PDF 1612680208].pdf"
+    output = (
+        tmp_path
+        / "zentag-output"
+        / "Robert T. Kiyosaki - Rich Dad's Guide [ENG PDF]"
+    )
+    output_file = (
+        output
+        / "Robert T. Kiyosaki - Rich Dad's Guide (2012) [ENG PDF 1612680208].pdf"
+    )
     calls: list[list[str]] = []
 
     async def fake_binary(_base_dir: str) -> str:
@@ -234,7 +283,9 @@ async def test_unattended_zenith_ebook_is_organized_inside_directory(tmp_path: P
         output_file.write_bytes(b"pdf")
         return 0, f"Wrote {output_file}\n", ""
 
-    monkeypatch.setattr(zentag.ZentagBinaryManager, "ensure_binary", staticmethod(fake_binary))
+    monkeypatch.setattr(
+        zentag.ZentagBinaryManager, "ensure_binary", staticmethod(fake_binary)
+    )
     monkeypatch.setattr(zentag, "_run_process", fake_process)
     meta = Meta(
         path=str(source),
@@ -249,7 +300,9 @@ async def test_unattended_zenith_ebook_is_organized_inside_directory(tmp_path: P
         book_language_iso="eng",
     )
 
-    assert await zentag.prepare_zenith_ebook(meta, str(tmp_path), {"DEFAULT": {"auto_zentag": True}}) == str(output)
+    assert await zentag.prepare_zenith_ebook(
+        meta, str(tmp_path), {"DEFAULT": {"auto_zentag": True}}
+    ) == str(output)
     assert calls[0][3:5] == ["ebook", str(source)]
     assert calls[0][calls[0].index("--isbn") + 1] == "1612680208"
     assert calls[0][calls[0].index("--language") + 1] == "eng"
@@ -257,7 +310,9 @@ async def test_unattended_zenith_ebook_is_organized_inside_directory(tmp_path: P
 
 
 @pytest.mark.asyncio
-async def test_zenith_ebook_with_compliance_violations_is_rejected(tmp_path: Path, monkeypatch: Any) -> None:
+async def test_zenith_ebook_with_compliance_violations_is_rejected(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
     source = tmp_path / "Book.pdf"
     source.write_bytes(b"pdf")
     output = tmp_path / "zentag-output" / "Author - Book [ENG PDF]"
@@ -273,7 +328,9 @@ async def test_zenith_ebook_with_compliance_violations_is_rejected(tmp_path: Pat
         output_file.write_bytes(b"pdf")
         return 0, f"Wrote {output_file}\n", ""
 
-    monkeypatch.setattr(zentag.ZentagBinaryManager, "ensure_binary", staticmethod(fake_binary))
+    monkeypatch.setattr(
+        zentag.ZentagBinaryManager, "ensure_binary", staticmethod(fake_binary)
+    )
     monkeypatch.setattr(zentag, "_run_process", fake_process)
     meta = Meta(
         path=str(source),
@@ -288,11 +345,18 @@ async def test_zenith_ebook_with_compliance_violations_is_rejected(tmp_path: Pat
         book_language_iso="eng",
     )
 
-    assert await zentag.prepare_zenith_ebook(meta, str(tmp_path), {"DEFAULT": {"auto_zentag": True}}) is None
+    assert (
+        await zentag.prepare_zenith_ebook(
+            meta, str(tmp_path), {"DEFAULT": {"auto_zentag": True}}
+        )
+        is None
+    )
 
 
 @pytest.mark.asyncio
-async def test_failed_zentag_validation_keeps_original_for_other_trackers(tmp_path: Path, monkeypatch: Any) -> None:
+async def test_failed_zentag_validation_keeps_original_for_other_trackers(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
     source = tmp_path / "Book [B07ZHYPJK1].m4b"
     source.write_bytes(b"m4b")
     output = tmp_path / "zentag-output" / "Book"
@@ -307,16 +371,27 @@ async def test_failed_zentag_validation_keeps_original_for_other_trackers(tmp_pa
     async def fake_process(_command: list[str]) -> tuple[int, str, str]:
         return 1, '[{"rule":"naming"}]', "violations found"
 
-    monkeypatch.setattr(zentag.ZentagBinaryManager, "ensure_binary", staticmethod(fake_binary))
+    monkeypatch.setattr(
+        zentag.ZentagBinaryManager, "ensure_binary", staticmethod(fake_binary)
+    )
     monkeypatch.setattr(zentag, "_run_transform", fake_transform)
     monkeypatch.setattr(zentag, "_run_process", fake_process)
-    meta = Meta(path=str(source), trackers=["ZENITH", "YUSCENE"], unattended=True)
+    meta = Meta(
+        path=str(source), trackers=["ZENITH", "YUSCENE"], unattended=True
+    )
 
-    assert await zentag.prepare_zenith_audiobook(meta, str(tmp_path), {"DEFAULT": {"auto_zentag": True}}) is None
+    assert (
+        await zentag.prepare_zenith_audiobook(
+            meta, str(tmp_path), {"DEFAULT": {"auto_zentag": True}}
+        )
+        is None
+    )
 
 
 @pytest.mark.asyncio
-async def test_debug_runs_zentag_without_uploading(tmp_path: Path, monkeypatch: Any) -> None:
+async def test_debug_runs_zentag_without_uploading(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
     source = tmp_path / "Book.m4b"
     source.write_bytes(b"m4b")
     output = tmp_path / "zentag-output" / "Author - Book"
@@ -331,12 +406,18 @@ async def test_debug_runs_zentag_without_uploading(tmp_path: Path, monkeypatch: 
     async def fake_process(_command: list[str]) -> tuple[int, str, str]:
         return 0, "[]", ""
 
-    monkeypatch.setattr(zentag.ZentagBinaryManager, "ensure_binary", staticmethod(fake_binary))
+    monkeypatch.setattr(
+        zentag.ZentagBinaryManager, "ensure_binary", staticmethod(fake_binary)
+    )
     monkeypatch.setattr(zentag, "_run_transform", fake_transform)
     monkeypatch.setattr(zentag, "_run_process", fake_process)
-    meta = Meta(path=str(source), trackers=["ZENITH"], unattended=True, debug=True)
+    meta = Meta(
+        path=str(source), trackers=["ZENITH"], unattended=True, debug=True
+    )
 
-    assert await zentag.prepare_zenith_audiobook(meta, str(tmp_path), {"DEFAULT": {}}) == str(output.resolve())
+    assert await zentag.prepare_zenith_audiobook(
+        meta, str(tmp_path), {"DEFAULT": {}}
+    ) == str(output.resolve())
 
 
 def test_zentag_paths_includes_ebook_meta_path(tmp_path: Path) -> None:
@@ -347,16 +428,22 @@ def test_zentag_paths_includes_ebook_meta_path(tmp_path: Path) -> None:
     bin_path.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
     bin_path.chmod(0o755)
 
-    _, config_path = zentag._zentag_paths(source, str(tmp_path), {"ebook_meta_path": str(bin_path)})
+    _, config_path = zentag._zentag_paths(
+        source, str(tmp_path), {"ebook_meta_path": str(bin_path)}
+    )
     config_text = config_path.read_text()
-    assert f"ebook_meta_path: {zentag.json.dumps(str(bin_path))}" in config_text
+    assert (
+        f"ebook_meta_path: {zentag.json.dumps(str(bin_path))}" in config_text
+    )
 
 
 def test_zentag_paths_omits_empty_ebook_meta_path(tmp_path: Path) -> None:
     source = tmp_path / "book.pdf"
     source.write_bytes(b"pdf")
 
-    _, config_path = zentag._zentag_paths(source, str(tmp_path), {"ebook_meta_path": "   "})
+    _, config_path = zentag._zentag_paths(
+        source, str(tmp_path), {"ebook_meta_path": "   "}
+    )
     assert "ebook_meta_path:" not in config_path.read_text()
 
 
@@ -365,11 +452,19 @@ def test_zentag_paths_rejects_missing_ebook_meta_path(tmp_path: Path) -> None:
     source.write_bytes(b"pdf")
 
     with pytest.raises(RuntimeError, match="does not exist"):
-        zentag._zentag_paths(source, str(tmp_path), {"ebook_meta_path": str(tmp_path / "missing-ebook-meta")})
+        zentag._zentag_paths(
+            source,
+            str(tmp_path),
+            {"ebook_meta_path": str(tmp_path / "missing-ebook-meta")},
+        )
 
 
-@pytest.mark.skipif(os.name == "nt", reason="Executable-bit check is unreliable on Windows")
-def test_zentag_paths_rejects_non_executable_ebook_meta_path(tmp_path: Path) -> None:
+@pytest.mark.skipif(
+    os.name == "nt", reason="Executable-bit check is unreliable on Windows"
+)
+def test_zentag_paths_rejects_non_executable_ebook_meta_path(
+    tmp_path: Path,
+) -> None:
     source = tmp_path / "book.pdf"
     source.write_bytes(b"pdf")
     bad_bin = tmp_path / "not-executable"
@@ -377,4 +472,6 @@ def test_zentag_paths_rejects_non_executable_ebook_meta_path(tmp_path: Path) -> 
     bad_bin.chmod(0o644)
 
     with pytest.raises(RuntimeError, match="not executable"):
-        zentag._zentag_paths(source, str(tmp_path), {"ebook_meta_path": str(bad_bin)})
+        zentag._zentag_paths(
+            source, str(tmp_path), {"ebook_meta_path": str(bad_bin)}
+        )

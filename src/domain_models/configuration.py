@@ -9,8 +9,12 @@ from types import MappingProxyType
 from typing import TypeGuard
 
 type ConfigScalar = str | int | float | bool | None
-type ConfigValue = ConfigScalar | tuple[ConfigValue, ...] | Mapping[str, ConfigValue]
-type MutableConfigValue = ConfigScalar | list[MutableConfigValue] | dict[str, MutableConfigValue]
+type ConfigValue = (
+    ConfigScalar | tuple[ConfigValue, ...] | Mapping[str, ConfigValue]
+)
+type MutableConfigValue = (
+    ConfigScalar | list[MutableConfigValue] | dict[str, MutableConfigValue]
+)
 type MutableConfiguration = dict[str, MutableConfigValue]
 type ConfigPath = tuple[str, ...]
 
@@ -48,7 +52,9 @@ class ApplicationConfiguration:
         sections: dict[str, Mapping[str, ConfigValue]] = {}
         for section_name, section_value in data.items():
             if not isinstance(section_value, Mapping):
-                raise TypeError(f"Configuration section {section_name!r} must be a mapping")
+                raise TypeError(
+                    f"Configuration section {section_name!r} must be a mapping"
+                )
             sections[str(section_name)] = _freeze_mapping(section_value)
         return cls(sections=MappingProxyType(sections), source=source)
 
@@ -60,7 +66,10 @@ class ApplicationConfiguration:
     def mutable_copy(self) -> MutableConfiguration:
         """Create a mutable copy for integration adapters and legacy consumers."""
 
-        return {section: _thaw_mapping(values) for section, values in self.sections.items()}
+        return {
+            section: _thaw_mapping(values)
+            for section, values in self.sections.items()
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,15 +96,21 @@ def _freeze_value(value: object) -> ConfigValue:
 
 
 def _is_configuration_sequence(value: object) -> TypeGuard[Sequence[object]]:
-    return isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray))
+    return isinstance(value, Sequence) and not isinstance(
+        value, (str, bytes, bytearray)
+    )
 
 
 def _is_configuration_scalar(value: object) -> TypeGuard[ConfigScalar]:
     return isinstance(value, str | int | float | bool) or value is None
 
 
-def _freeze_mapping(values: Mapping[object, object]) -> Mapping[str, ConfigValue]:
-    return MappingProxyType({str(key): _freeze_value(value) for key, value in values.items()})
+def _freeze_mapping(
+    values: Mapping[object, object],
+) -> Mapping[str, ConfigValue]:
+    return MappingProxyType(
+        {str(key): _freeze_value(value) for key, value in values.items()}
+    )
 
 
 def _thaw_value(value: ConfigValue) -> MutableConfigValue:
@@ -106,5 +121,7 @@ def _thaw_value(value: ConfigValue) -> MutableConfigValue:
     return value
 
 
-def _thaw_mapping(values: Mapping[str, ConfigValue]) -> dict[str, MutableConfigValue]:
+def _thaw_mapping(
+    values: Mapping[str, ConfigValue],
+) -> dict[str, MutableConfigValue]:
     return {key: _thaw_value(value) for key, value in values.items()}

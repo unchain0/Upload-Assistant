@@ -18,7 +18,9 @@ from radon.visitors import Class as RadonClass
 
 try:
     from scripts.check_masa_architecture import LAYERS, scan
-except ModuleNotFoundError:  # Direct script execution places scripts/ on sys.path.
+except (
+    ModuleNotFoundError
+):  # Direct script execution places scripts/ on sys.path.
     from check_masa_architecture import LAYERS, scan
 
 
@@ -49,7 +51,11 @@ def _layer(path: Path, source_root: Path) -> str:
 
 
 def _radon_function_complexities(source: str) -> list[int]:
-    return [int(block.complexity) for block in cc_visit(source, no_assert=True) if not isinstance(block, RadonClass)]
+    return [
+        int(block.complexity)
+        for block in cc_visit(source, no_assert=True)
+        if not isinstance(block, RadonClass)
+    ]
 
 
 def _empty_layer_values() -> dict[str, Any]:
@@ -73,7 +79,11 @@ def _modules_for_node(node: ast.AST) -> tuple[str, ...]:
 
 def _src_import_targets(tree: ast.AST) -> Iterable[str]:
     for node in ast.walk(tree):
-        yield from (module for module in _modules_for_node(node) if module.startswith("src."))
+        yield from (
+            module
+            for module in _modules_for_node(node)
+            if module.startswith("src.")
+        )
 
 
 def _target_layer(module: str) -> str:
@@ -81,16 +91,27 @@ def _target_layer(module: str) -> str:
     return parts[1] if len(parts) > 1 and parts[1] in LAYERS else "root"
 
 
-def _update_layer_values(values: dict[str, Any], source: str, tree: ast.AST) -> None:
+def _update_layer_values(
+    values: dict[str, Any], source: str, tree: ast.AST
+) -> None:
     values["modules"] += 1
     values["physical_lines"] += len(source.splitlines())
-    values["statements"] += sum(isinstance(node, ast.stmt) for node in ast.walk(tree))
-    values["functions"] += sum(isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) for node in ast.walk(tree))
-    values["classes"] += sum(isinstance(node, ast.ClassDef) for node in ast.walk(tree))
+    values["statements"] += sum(
+        isinstance(node, ast.stmt) for node in ast.walk(tree)
+    )
+    values["functions"] += sum(
+        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        for node in ast.walk(tree)
+    )
+    values["classes"] += sum(
+        isinstance(node, ast.ClassDef) for node in ast.walk(tree)
+    )
     values["complexities"].extend(_radon_function_complexities(source))
 
 
-def _collect_project_data(source_root: Path) -> tuple[dict[str, dict[str, Any]], dict[str, Counter[str]]]:
+def _collect_project_data(
+    source_root: Path,
+) -> tuple[dict[str, dict[str, Any]], dict[str, Counter[str]]]:
     raw: dict[str, dict[str, Any]] = defaultdict(_empty_layer_values)
     matrix: dict[str, Counter[str]] = defaultdict(Counter)
     for path in sorted(source_root.rglob("*.py")):
@@ -98,7 +119,9 @@ def _collect_project_data(source_root: Path) -> tuple[dict[str, dict[str, Any]],
         source = path.read_text(encoding="utf-8")
         tree = ast.parse(source, filename=str(path))
         _update_layer_values(raw[owner], source, tree)
-        matrix[owner].update(_target_layer(module) for module in _src_import_targets(tree))
+        matrix[owner].update(
+            _target_layer(module) for module in _src_import_targets(tree)
+        )
     return raw, matrix
 
 
@@ -110,17 +133,26 @@ def _finalize_layer(values: dict[str, Any]) -> LayerMetrics:
         statements=int(values["statements"]),
         functions=int(values["functions"]),
         classes=int(values["classes"]),
-        average_function_complexity=round(fmean(complexities), 2) if complexities else 0.0,
+        average_function_complexity=round(fmean(complexities), 2)
+        if complexities
+        else 0.0,
         maximum_function_complexity=max(complexities, default=0),
         rank_a_functions=sum(value <= 5 for value in complexities),
         rank_b_or_worse_functions=sum(value > 5 for value in complexities),
     )
 
 
-def _project_metrics(source_root: Path) -> tuple[dict[str, LayerMetrics], dict[str, dict[str, int]]]:
+def _project_metrics(
+    source_root: Path,
+) -> tuple[dict[str, LayerMetrics], dict[str, dict[str, int]]]:
     raw, matrix = _collect_project_data(source_root)
-    layers = {name: _finalize_layer(values) for name, values in sorted(raw.items())}
-    dependency_matrix = {owner: dict(sorted(targets.items())) for owner, targets in sorted(matrix.items())}
+    layers = {
+        name: _finalize_layer(values) for name, values in sorted(raw.items())
+    }
+    dependency_matrix = {
+        owner: dict(sorted(targets.items()))
+        for owner, targets in sorted(matrix.items())
+    }
     return layers, dependency_matrix
 
 
@@ -132,7 +164,11 @@ def _test_metrics(tests_root: Path) -> dict[str, int]:
 
 def _count_tests(path: Path) -> int:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    return sum(isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_") for node in ast.walk(tree))
+    return sum(
+        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name.startswith("test_")
+        for node in ast.walk(tree)
+    )
 
 
 def _coverage_metrics(path: Path | None) -> CoverageMetrics | None:
@@ -140,9 +176,16 @@ def _coverage_metrics(path: Path | None) -> CoverageMetrics | None:
         return None
     payload = json.loads(path.read_text(encoding="utf-8"))
     totals = payload.get("totals", {})
-    required = ("num_statements", "covered_lines", "missing_lines", "percent_covered")
+    required = (
+        "num_statements",
+        "covered_lines",
+        "missing_lines",
+        "percent_covered",
+    )
     if not all(key in totals for key in required):
-        raise ValueError(f"Coverage JSON at {path} does not contain expected totals")
+        raise ValueError(
+            f"Coverage JSON at {path} does not contain expected totals"
+        )
     return CoverageMetrics(
         statements=int(totals["num_statements"]),
         covered_lines=int(totals["covered_lines"]),
@@ -152,9 +195,15 @@ def _coverage_metrics(path: Path | None) -> CoverageMetrics | None:
 
 
 def _complexity_summary(layers: dict[str, LayerMetrics]) -> dict[str, Any]:
-    maxima = [metrics.maximum_function_complexity for metrics in layers.values() if metrics.maximum_function_complexity]
+    maxima = [
+        metrics.maximum_function_complexity
+        for metrics in layers.values()
+        if metrics.maximum_function_complexity
+    ]
     maximum = max(maxima, default=0)
-    rank_b_or_worse = sum(metrics.rank_b_or_worse_functions for metrics in layers.values())
+    rank_b_or_worse = sum(
+        metrics.rank_b_or_worse_functions for metrics in layers.values()
+    )
     return {
         "metric": "Radon cyclomatic complexity",
         "maximum_allowed": 5,
@@ -169,10 +218,15 @@ def _complexity_summary(layers: dict[str, LayerMetrics]) -> dict[str, Any]:
 def _architecture_summary(source_root: Path) -> dict[str, Any]:
     violations = scan(source_root)
     by_edge = Counter(f"{item.owner}->{item.target}" for item in violations)
-    return {"violation_count": len(violations), "violations_by_edge": dict(sorted(by_edge.items()))}
+    return {
+        "violation_count": len(violations),
+        "violations_by_edge": dict(sorted(by_edge.items())),
+    }
 
 
-def build_report(source_root: Path, tests_root: Path, coverage_json: Path | None) -> dict[str, Any]:
+def build_report(
+    source_root: Path, tests_root: Path, coverage_json: Path | None
+) -> dict[str, Any]:
     layers, matrix = _project_metrics(source_root)
     coverage = _coverage_metrics(coverage_json)
     return {
@@ -189,7 +243,9 @@ def build_report(source_root: Path, tests_root: Path, coverage_json: Path | None
 
 def _quality_gate_lines(report: dict[str, Any]) -> list[str]:
     coverage = report["coverage"]
-    coverage_value = f"{coverage['percent_covered']:.2f}%" if coverage else "not measured"
+    coverage_value = (
+        f"{coverage['percent_covered']:.2f}%" if coverage else "not measured"
+    )
     return [
         "# Project quality report",
         "",
@@ -215,7 +271,9 @@ def _layer_lines(report: dict[str, Any]) -> list[str]:
         "| Layer | Modules | Lines | AST statements | Functions | Classes | Avg Radon CC | Max Radon CC | Rank A | Rank B+ |",
         "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
-    lines.extend(_layer_row(name, metrics) for name, metrics in report["layers"].items())
+    lines.extend(
+        _layer_row(name, metrics) for name, metrics in report["layers"].items()
+    )
     return lines
 
 
@@ -229,7 +287,9 @@ def _layer_row(name: str, metrics: dict[str, Any]) -> str:
 
 def _dependency_lines(report: dict[str, Any]) -> list[str]:
     matrix = report["dependency_matrix"]
-    targets = sorted({target for values in matrix.values() for target in values})
+    targets = sorted(
+        {target for values in matrix.values() for target in values}
+    )
     lines = [
         "",
         "## Dependency matrix",
@@ -239,16 +299,33 @@ def _dependency_lines(report: dict[str, Any]) -> list[str]:
         "| From / To | " + " | ".join(targets) + " |",
         "|---|" + "---:|" * len(targets),
     ]
-    lines.extend(_dependency_row(owner, values, targets) for owner, values in matrix.items())
+    lines.extend(
+        _dependency_row(owner, values, targets)
+        for owner, values in matrix.items()
+    )
     return [*lines, ""]
 
 
-def _dependency_row(owner: str, values: dict[str, int], targets: list[str]) -> str:
-    return "| " + owner + " | " + " | ".join(str(values.get(target, 0)) for target in targets) + " |"
+def _dependency_row(
+    owner: str, values: dict[str, int], targets: list[str]
+) -> str:
+    return (
+        "| "
+        + owner
+        + " | "
+        + " | ".join(str(values.get(target, 0)) for target in targets)
+        + " |"
+    )
 
 
 def _markdown(report: dict[str, Any]) -> str:
-    return "\n".join([*_quality_gate_lines(report), *_layer_lines(report), *_dependency_lines(report)])
+    return "\n".join(
+        [
+            *_quality_gate_lines(report),
+            *_layer_lines(report),
+            *_dependency_lines(report),
+        ]
+    )
 
 
 def main() -> int:
@@ -256,14 +333,25 @@ def main() -> int:
     parser.add_argument("--source-root", type=Path, default=Path("src"))
     parser.add_argument("--tests-root", type=Path, default=Path("tests"))
     parser.add_argument("--coverage-json", type=Path)
-    parser.add_argument("--json", dest="json_path", type=Path, default=Path("artifacts/quality-report.json"))
-    parser.add_argument("--markdown", type=Path, default=Path("artifacts/quality-report.md"))
+    parser.add_argument(
+        "--json",
+        dest="json_path",
+        type=Path,
+        default=Path("artifacts/quality-report.json"),
+    )
+    parser.add_argument(
+        "--markdown", type=Path, default=Path("artifacts/quality-report.md")
+    )
     args = parser.parse_args()
 
-    report = build_report(args.source_root, args.tests_root, args.coverage_json)
+    report = build_report(
+        args.source_root, args.tests_root, args.coverage_json
+    )
     args.json_path.parent.mkdir(parents=True, exist_ok=True)
     args.markdown.parent.mkdir(parents=True, exist_ok=True)
-    args.json_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    args.json_path.write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     args.markdown.write_text(_markdown(report), encoding="utf-8")
     print(args.markdown)
     return 0

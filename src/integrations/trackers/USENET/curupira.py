@@ -15,7 +15,10 @@ from src.integrations.filesystem.temp_paths import release_temp_dir
 from src.integrations.observability.runtime_support import logger
 from src.integrations.security.redaction import Redaction
 from src.integrations.trackers.common import Common
-from src.integrations.trackers.USENET.search_helpers import build_newznab_search_query, parse_newznab_dupes
+from src.integrations.trackers.USENET.search_helpers import (
+    build_newznab_search_query,
+    parse_newznab_dupes,
+)
 
 Config = dict[str, Any]
 
@@ -122,7 +125,12 @@ class Curupira:
     def __init__(self, config: Config) -> None:
         self.config = config
         self.common = Common(config)
-        self.api_key = self.config.get("TRACKERS", {}).get(self.tracker, {}).get("api_key", "").strip()
+        self.api_key = (
+            self.config.get("TRACKERS", {})
+            .get(self.tracker, {})
+            .get("api_key", "")
+            .strip()
+        )
 
     async def get_search_name(self, meta: Meta) -> str:
         return await self.get_name(meta)
@@ -130,7 +138,9 @@ class Curupira:
     def get_search_query(self, meta: Meta) -> str:
         return build_newznab_search_query(meta)
 
-    def _parse_dupes_from_response(self, response_text: str) -> list[dict[str, Any]]:
+    def _parse_dupes_from_response(
+        self, response_text: str
+    ) -> list[dict[str, Any]]:
         return parse_newznab_dupes(response_text)
 
     async def search_existing(self, meta: Meta) -> list[Any]:
@@ -142,9 +152,14 @@ class Curupira:
 
     async def _cached_upload_name(self, meta: Meta) -> str:
         release_name = await self.get_name(meta)
-        cache_file = release_temp_dir(meta.base_dir, meta.uuid) / f"{self.tracker}_upload_ok"
+        cache_file = (
+            release_temp_dir(meta.base_dir, meta.uuid)
+            / f"{self.tracker}_upload_ok"
+        )
         if release_name and cache_file.exists():
-            logger.info(f"{self.tracker}: [yellow]Found local upload cache.[/yellow]")
+            logger.info(
+                f"{self.tracker}: [yellow]Found local upload cache.[/yellow]"
+            )
             return release_name
         return ""
 
@@ -163,7 +178,11 @@ class Curupira:
         elif category == "MOVIE":
             params = self._movie_search_params(meta)
         else:
-            params = {"t": "search", "cat": self.get_category_id(meta), "q": self.get_search_query(meta)}
+            params = {
+                "t": "search",
+                "cat": self.get_category_id(meta),
+                "q": self.get_search_query(meta),
+            }
         if not params.get("q"):
             params["q"] = self.get_search_query(meta)
         return params
@@ -201,12 +220,16 @@ class Curupira:
         text = str(value or "")
         return text.isdigit() and int(text) > 0
 
-    async def _search_queries(self, params_list: list[dict[str, str]]) -> list[dict[str, Any]]:
+    async def _search_queries(
+        self, params_list: list[dict[str, str]]
+    ) -> list[dict[str, Any]]:
         dupes: list[dict[str, Any]] = []
         seen: set[str] = set()
         async with httpx.AsyncClient(timeout=10.0) as client:
             for query_params in params_list:
-                await self._append_query_results(client, query_params, dupes, seen)
+                await self._append_query_results(
+                    client, query_params, dupes, seen
+                )
         return dupes
 
     async def _append_query_results(
@@ -221,28 +244,44 @@ class Curupira:
             return
         self._extend_unique_dupes(response.text, dupes, seen)
 
-    async def _safe_search_response(self, client: httpx.AsyncClient, query_params: dict[str, str]) -> httpx.Response | None:
+    async def _safe_search_response(
+        self, client: httpx.AsyncClient, query_params: dict[str, str]
+    ) -> httpx.Response | None:
         try:
             response = await client.get(
                 f"{self.base_url}/api",
-                params={"apikey": str(self.api_key), "limit": "100", **query_params},
+                params={
+                    "apikey": str(self.api_key),
+                    "limit": "100",
+                    **query_params,
+                },
             )
         except httpx.TimeoutException:
-            logger.info(f"{self.tracker}: [yellow]Duplicate search timed out.[/yellow]")
+            logger.info(
+                f"{self.tracker}: [yellow]Duplicate search timed out.[/yellow]"
+            )
             return None
         except httpx.RequestError as error:
-            logger.info(f"{self.tracker}: [yellow]Duplicate search request failed: {error}[/yellow]")
+            logger.info(
+                f"{self.tracker}: [yellow]Duplicate search request failed: {error}[/yellow]"
+            )
             return None
         if self._search_response_usable(response):
             return response
-        logger.info(f"{self.tracker}: [yellow]Duplicate search failed with HTTP {response.status_code}.[/yellow]")
+        logger.info(
+            f"{self.tracker}: [yellow]Duplicate search failed with HTTP {response.status_code}.[/yellow]"
+        )
         return None
 
-    def _extend_unique_dupes(self, response_text: str, dupes: list[dict[str, Any]], seen: set[str]) -> None:
+    def _extend_unique_dupes(
+        self, response_text: str, dupes: list[dict[str, Any]], seen: set[str]
+    ) -> None:
         try:
             parsed = self._parse_dupes_from_response(response_text)
         except ElementTree.ParseError:
-            logger.info(f"{self.tracker}: [yellow]Failed to parse duplicate search response.[/yellow]")
+            logger.info(
+                f"{self.tracker}: [yellow]Failed to parse duplicate search response.[/yellow]"
+            )
             return
         for dupe in parsed:
             self._append_unique_dupe(dupe, dupes, seen)
@@ -252,7 +291,9 @@ class Curupira:
         return response.status_code == 200 and bool(response.text.strip())
 
     @staticmethod
-    def _append_unique_dupe(dupe: dict[str, Any], dupes: list[dict[str, Any]], seen: set[str]) -> None:
+    def _append_unique_dupe(
+        dupe: dict[str, Any], dupes: list[dict[str, Any]], seen: set[str]
+    ) -> None:
         key = str(dupe.get("link") or dupe.get("name") or "")
         if key in seen:
             return
@@ -277,18 +318,24 @@ class Curupira:
 
     @staticmethod
     def _movie_category_id(meta: Meta) -> str:
-        return Curupira._resolution_category(meta.resolution, uhd="2045", hd="2040", sd="2030")
+        return Curupira._resolution_category(
+            meta.resolution, uhd="2045", hd="2040", sd="2030"
+        )
 
     @staticmethod
     def _tv_category_id(meta: Meta) -> str:
-        return Curupira._resolution_category(meta.resolution, uhd="5045", hd="5040", sd="5030")
+        return Curupira._resolution_category(
+            meta.resolution, uhd="5045", hd="5040", sd="5030"
+        )
 
     @staticmethod
     def _book_category_id(meta: Meta) -> str:
         return "3030" if meta.audiobook else "7020"
 
     @staticmethod
-    def _resolution_category(resolution: str | None, *, uhd: str, hd: str, sd: str) -> str:
+    def _resolution_category(
+        resolution: str | None, *, uhd: str, hd: str, sd: str
+    ) -> str:
         value = str(resolution or "").casefold()
         if value in {"2160p", "4320p", "8640p"}:
             return uhd
@@ -339,7 +386,9 @@ class Curupira:
         return "WEBRip" if meta.type == "WEBRIP" else "WEB-DL"
 
     async def _prepare_files(self, meta: Meta) -> dict[str, Any] | None:
-        if not meta.nzb_path or not await self.common.check_nzb_file(self.tracker, meta):
+        if not meta.nzb_path or not await self.common.check_nzb_file(
+            self.tracker, meta
+        ):
             return None
         files = {"nzb_file": await self._nzb_file_tuple(meta.nzb_path)}
         nfo = await self._optional_nfo(meta)
@@ -360,60 +409,110 @@ class Curupira:
         if nfo_path is None or not nfo_path.exists():
             return None
         async with aiofiles.open(nfo_path, "rb") as handle:
-            return nfo_path.name, await handle.read(), "application/octet-stream"
+            return (
+                nfo_path.name,
+                await handle.read(),
+                "application/octet-stream",
+            )
 
     async def get_media_info(self, meta: Meta) -> str:
         path = self._media_info_path(meta)
         if not path.exists():
-            logger.info(f"[bold red]Arquivo de info não encontrado: {path}[/bold red]")
+            logger.info(
+                f"[bold red]Arquivo de info não encontrado: {path}[/bold red]"
+            )
             return ""
         try:
             async with aiofiles.open(path, encoding="utf-8") as handle:
                 return await handle.read()
         except Exception as error:
-            logger.info(f"{self.tracker}: [bold red]Erro ao ler o arquivo de info em {path}: {error}[/bold red]")
+            logger.info(
+                f"{self.tracker}: [bold red]Erro ao ler o arquivo de info em {path}: {error}[/bold red]"
+            )
             return ""
 
     @staticmethod
     def _media_info_path(meta: Meta) -> Path:
         root = release_temp_dir(meta.base_dir, meta.uuid)
-        return root / ("BD_SUMMARY_00.txt" if meta.is_disc == "BDMV" else "MEDIAINFO_CLEANPATH.txt")
+        return root / (
+            "BD_SUMMARY_00.txt"
+            if meta.is_disc == "BDMV"
+            else "MEDIAINFO_CLEANPATH.txt"
+        )
 
     def get_cover(self, meta: Meta) -> str:
         hosted = self._first_https_artwork(meta.hosted_artwork)
         if hosted:
             return hosted
         artwork_url = meta.artwork_url
-        return artwork_url if isinstance(artwork_url, str) and artwork_url.startswith("https://") else ""
+        return (
+            artwork_url
+            if isinstance(artwork_url, str)
+            and artwork_url.startswith("https://")
+            else ""
+        )
 
     @classmethod
     def _first_https_artwork(cls, value: Any) -> str:
         entries = value if isinstance(value, list) else []
-        return next((url for entry in entries if (url := cls._https_artwork_url(entry))), "")
+        return next(
+            (
+                url
+                for entry in entries
+                if (url := cls._https_artwork_url(entry))
+            ),
+            "",
+        )
 
     @staticmethod
     def _https_artwork_url(entry: Any) -> str:
         if not isinstance(entry, dict):
             return ""
         raw_url = entry.get("raw_url")
-        return raw_url if isinstance(raw_url, str) and raw_url.startswith("https://") else ""
+        return (
+            raw_url
+            if isinstance(raw_url, str) and raw_url.startswith("https://")
+            else ""
+        )
 
     async def get_screens(self, meta: Meta) -> list[str]:
-        menu = self._image_dicts(get_tracker_image_collection(meta, self.tracker, "menu_images"))
-        screenshots = self._image_dicts(get_tracker_image_collection(meta, self.tracker, "screenshots"))
-        spectrograms = self._image_dicts(get_tracker_image_collection(meta, self.tracker, "spectrograms_images"))
-        dynamic_hdr = self._valid_raw_images(get_tracker_image_collection(meta, self.tracker, "dynamic_hdr_plot_images"))
+        menu = self._image_dicts(
+            get_tracker_image_collection(meta, self.tracker, "menu_images")
+        )
+        screenshots = self._image_dicts(
+            get_tracker_image_collection(meta, self.tracker, "screenshots")
+        )
+        spectrograms = self._image_dicts(
+            get_tracker_image_collection(
+                meta, self.tracker, "spectrograms_images"
+            )
+        )
+        dynamic_hdr = self._valid_raw_images(
+            get_tracker_image_collection(
+                meta, self.tracker, "dynamic_hdr_plot_images"
+            )
+        )
         reserved = max(0, 6 - len(dynamic_hdr))
         combined = (menu + screenshots + spectrograms)[:reserved] + dynamic_hdr
         return self._raw_urls(combined)[:6]
 
     @staticmethod
     def _image_dicts(value: Any) -> list[dict[str, Any]]:
-        return [cast(dict[str, Any], item) for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+        return (
+            [
+                cast(dict[str, Any], item)
+                for item in value
+                if isinstance(item, dict)
+            ]
+            if isinstance(value, list)
+            else []
+        )
 
     @classmethod
     def _valid_raw_images(cls, value: Any) -> list[dict[str, Any]]:
-        return [image for image in cls._image_dicts(value) if cls._raw_url(image)]
+        return [
+            image for image in cls._image_dicts(value) if cls._raw_url(image)
+        ]
 
     @staticmethod
     def _raw_url(image: dict[str, Any]) -> str:
@@ -426,14 +525,19 @@ class Curupira:
 
     async def _prepare_data(self, meta: Meta) -> dict[str, Any]:
         screenshots = await self.get_screens(meta)
-        data: dict[str, Any] = {"name": await self.get_name(meta), "category_id": self.get_category_id(meta)}
+        data: dict[str, Any] = {
+            "name": await self.get_name(meta),
+            "category_id": self.get_category_id(meta),
+        }
         await self._apply_optional_media_data(data, meta)
         self._apply_disc_languages(data, meta)
         self._apply_external_ids(data, meta)
         self._apply_upload_flags(data, meta, screenshots)
         return data
 
-    async def _apply_optional_media_data(self, data: dict[str, Any], meta: Meta) -> None:
+    async def _apply_optional_media_data(
+        self, data: dict[str, Any], meta: Meta
+    ) -> None:
         self._apply_cover_data(data, meta)
         await self._apply_mediainfo_data(data, meta)
         self._apply_quality_data(data, meta)
@@ -446,7 +550,9 @@ class Curupira:
         if cover:
             data["custom_cover_url"] = cover
 
-    async def _apply_mediainfo_data(self, data: dict[str, Any], meta: Meta) -> None:
+    async def _apply_mediainfo_data(
+        self, data: dict[str, Any], meta: Meta
+    ) -> None:
         if meta.category in {"MOVIE", "TV"} or meta.audiobook:
             data["mediainfo_text"] = await self.get_media_info(meta)
 
@@ -465,7 +571,9 @@ class Curupira:
         if not meta.is_disc:
             return
         audio = self._iso_language_codes(meta.audio_languages)
-        subtitles = self._iso_language_codes(self._language_values(meta.subtitle_languages))
+        subtitles = self._iso_language_codes(
+            self._language_values(meta.subtitle_languages)
+        )
         if audio:
             data["audio_langs"] = json.dumps(audio)
         if subtitles:
@@ -478,7 +586,11 @@ class Curupira:
         return [value] if isinstance(value, str) and value else []
 
     def _iso_language_codes(self, values: Any) -> list[str]:
-        return [code for value in self._language_values(values) if (code := self.get_iso_639_1(value))]
+        return [
+            code
+            for value in self._language_values(values)
+            if (code := self.get_iso_639_1(value))
+        ]
 
     def _apply_external_ids(self, data: dict[str, Any], meta: Meta) -> None:
         if self._positive_numeric(meta.tmdb_id):
@@ -489,24 +601,34 @@ class Curupira:
         if self._positive_numeric(meta.mal_id):
             data["mal_id"] = str(meta.mal_id)
 
-    def _apply_upload_flags(self, data: dict[str, Any], meta: Meta, screenshots: list[str]) -> None:
+    def _apply_upload_flags(
+        self, data: dict[str, Any], meta: Meta, screenshots: list[str]
+    ) -> None:
         if self._anonymous(meta):
             data["anonymous"] = "true"
         if screenshots:
             data["screenshot_urls"] = json.dumps(screenshots[:6])
 
     def _anonymous(self, meta: Meta) -> bool:
-        configured = bool(self.config.get("TRACKERS", {}).get(self.tracker, {}).get("anon", False))
+        configured = bool(
+            self.config.get("TRACKERS", {})
+            .get(self.tracker, {})
+            .get("anon", False)
+        )
         return meta.anon != 0 or configured
 
     async def upload(self, meta: Meta) -> bool | None:
         status = meta.tracker_status.setdefault(self.tracker, {})
         if not await self.common.check_nzb_file(self.tracker, meta):
-            status["status_message"] = "data error: NZB file missing or password missing in header"
+            status["status_message"] = (
+                "data error: NZB file missing or password missing in header"
+            )
             return False
         files = await self._prepare_files(meta)
         if not files:
-            logger.error(f"{self.tracker}: [red]Error: NZB file not found for {self.tracker}.[/red]")
+            logger.error(
+                f"{self.tracker}: [red]Error: NZB file not found for {self.tracker}.[/red]"
+            )
             status["status_message"] = "data error: NZB file not found"
             return False
         data = await self._prepare_data(meta)
@@ -516,48 +638,84 @@ class Curupira:
             return True
         return await self._upload_release(meta, status, data, files)
 
-    def _log_debug_upload(self, meta: Meta, data: dict[str, Any], files: dict[str, Any]) -> None:
+    def _log_debug_upload(
+        self, meta: Meta, data: dict[str, Any], files: dict[str, Any]
+    ) -> None:
         logger.debug(f"{self.tracker}: [cyan]Upload (DEBUG MODE):[/cyan]")
         logger.debug(f"{self.tracker}: URL: {self.upload_url}")
-        logger.debug(f"{self.tracker}: Category ID: {self.get_category_id(meta)}")
+        logger.debug(
+            f"{self.tracker}: Category ID: {self.get_category_id(meta)}"
+        )
         logger.debug(f"{self.tracker}: Fields:")
         logger.debug(Redaction.redact_private_info(data))
         logger.debug(f"{self.tracker}: Files:")
         logger.debug({key: value[0] for key, value in files.items()})
 
-    async def _upload_release(self, meta: Meta, status: dict[str, Any], data: dict[str, Any], files: dict[str, Any]) -> bool:
+    async def _upload_release(
+        self,
+        meta: Meta,
+        status: dict[str, Any],
+        data: dict[str, Any],
+        files: dict[str, Any],
+    ) -> bool:
         try:
             response = await self._post_upload(meta, data, files)
             return await self._handle_upload_response(meta, status, response)
         except httpx.TimeoutException:
-            status["status_message"] = "data error: Request timed out after 60 seconds"
+            status["status_message"] = (
+                "data error: Request timed out after 60 seconds"
+            )
             return False
         except httpx.RequestError as error:
-            status["status_message"] = f"data error: Unable to upload. Error: {error}"
+            status["status_message"] = (
+                f"data error: Unable to upload. Error: {error}"
+            )
             return False
         except Exception as error:
-            status["status_message"] = f"data error: Unexpected error. Error: {error}"
+            status["status_message"] = (
+                f"data error: Unexpected error. Error: {error}"
+            )
             return False
 
-    async def _post_upload(self, meta: Meta, data: dict[str, Any], files: dict[str, Any]) -> httpx.Response:
-        version = meta.current_version if meta.current_version is not None else "github.com/wastaken7/Upload-Assistant"
+    async def _post_upload(
+        self, meta: Meta, data: dict[str, Any], files: dict[str, Any]
+    ) -> httpx.Response:
+        version = (
+            meta.current_version
+            if meta.current_version is not None
+            else "github.com/wastaken7/Upload-Assistant"
+        )
         headers = {"User-Agent": f"Upload-Assistant {version}"}
         async with httpx.AsyncClient(timeout=60.0) as client:
-            return await client.post(self.upload_url, files=files, data=data, params={"apikey": self.api_key}, headers=headers)
+            return await client.post(
+                self.upload_url,
+                files=files,
+                data=data,
+                params={"apikey": self.api_key},
+                headers=headers,
+            )
 
-    async def _handle_upload_response(self, meta: Meta, status: dict[str, Any], response: httpx.Response) -> bool:
+    async def _handle_upload_response(
+        self, meta: Meta, status: dict[str, Any], response: httpx.Response
+    ) -> bool:
         if response.status_code not in {200, 201}:
-            status["status_message"] = f"data error: HTTP {response.status_code} - {response.text}"
+            status["status_message"] = (
+                f"data error: HTTP {response.status_code} - {response.text}"
+            )
             return False
         payload = response.json()
         status["status_message"] = "Upload successful"
         await self._write_upload_cache(meta)
-        release_id = payload.get("public_id") if isinstance(payload, dict) else None
+        release_id = (
+            payload.get("public_id") if isinstance(payload, dict) else None
+        )
         if release_id:
             status["torrent_id"] = str(release_id)
         return True
 
     async def _write_upload_cache(self, meta: Meta) -> None:
         cache_dir = release_temp_dir(meta.base_dir, meta.uuid)
-        async with aiofiles.open(cache_dir / f"{self.tracker}_upload_ok", "w", encoding="utf-8") as handle:
+        async with aiofiles.open(
+            cache_dir / f"{self.tracker}_upload_ok", "w", encoding="utf-8"
+        ) as handle:
             await handle.write("ok")

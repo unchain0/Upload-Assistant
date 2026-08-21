@@ -27,7 +27,9 @@ def _tracker() -> TorrentHR:
     ],
 )
 def test_torrenthr_category_mappings(meta: Meta, expected: str) -> None:
-    assert asyncio.run(_tracker().get_category_id(meta)) == {"category_id": expected}
+    assert asyncio.run(_tracker().get_category_id(meta)) == {
+        "category_id": expected
+    }
 
 
 def test_torrenthr_is_registered() -> None:

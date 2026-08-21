@@ -8,7 +8,9 @@ from src.integrations.trackers.UNIT3D import UNIT3D
 Config = dict[str, Any]
 
 
-class Unit3dTemplate(UNIT3D):  # EDIT 'Unit3dTemplate' AS ABBREVIATED TRACKER NAME
+class Unit3dTemplate(
+    UNIT3D
+):  # EDIT 'Unit3dTemplate' AS ABBREVIATED TRACKER NAME
     # Use scripts/UNIT3D-ID-Report/UNIT3D-id-report.user.js to discover tracker IDs before implementing mappings.
     tracker = "Abbreviated Tracker Name"
     base_url = "https://domain.tld"
@@ -21,7 +23,9 @@ class Unit3dTemplate(UNIT3D):  # EDIT 'Unit3dTemplate' AS ABBREVIATED TRACKER NA
     supported_categories = ("TV", "MOVIE")
 
     def __init__(self, config: Config) -> None:
-        super().__init__(config, tracker_name="Unit3dTemplate")  # EDIT 'Unit3dTemplate' AS ABBREVIATED TRACKER NAME
+        super().__init__(
+            config, tracker_name="Unit3dTemplate"
+        )  # EDIT 'Unit3dTemplate' AS ABBREVIATED TRACKER NAME
         self.config = config
         self.common = Common(config)
 
@@ -52,12 +56,29 @@ class Unit3dTemplate(UNIT3D):  # EDIT 'Unit3dTemplate' AS ABBREVIATED TRACKER NA
         reverse: bool = False,
         mapping_only: bool = False,
     ) -> dict[str, str]:
-        type_id = {"DISC": "1", "REMUX": "2", "WEBDL": "4", "WEBRIP": "5", "HDTV": "6", "ENCODE": "3", "DVDRIP": "3"}
+        type_id = {
+            "DISC": "1",
+            "REMUX": "2",
+            "WEBDL": "4",
+            "WEBRIP": "5",
+            "HDTV": "6",
+            "ENCODE": "3",
+            "DVDRIP": "3",
+        }
         if mapping_only:
             return type_id
         if reverse:
-            return {"1": "DISC", "2": "REMUX", "3": "ENCODE", "4": "WEBDL", "5": "WEBRIP", "6": "HDTV"}
-        type_value = type if type is not None and type != "" else meta.type or ""
+            return {
+                "1": "DISC",
+                "2": "REMUX",
+                "3": "ENCODE",
+                "4": "WEBDL",
+                "5": "WEBRIP",
+                "6": "HDTV",
+            }
+        type_value = (
+            type if type is not None and type != "" else meta.type or ""
+        )
         return {"type_id": type_id.get(type_value, "0")}
 
     # If default UNIT3D resolutions, remove this function
@@ -96,7 +117,11 @@ class Unit3dTemplate(UNIT3D):  # EDIT 'Unit3dTemplate' AS ABBREVIATED TRACKER NA
                 "9": "480i",
                 "10": "8640p",
             }
-        resolution_value = resolution if resolution is not None and resolution != "" else meta.resolution or ""
+        resolution_value = (
+            resolution
+            if resolution is not None and resolution != ""
+            else meta.resolution or ""
+        )
         return {"resolution_id": resolution_id.get(resolution_value, "10")}
 
     # If there are tracker specific checks to be done before upload, add them here

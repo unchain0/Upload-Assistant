@@ -53,7 +53,9 @@ def merge_tracker_status(
     return merged
 
 
-def missing_book_fields_for_tracker(meta: Meta, tracker_class: Any) -> list[str]:
+def missing_book_fields_for_tracker(
+    meta: Meta, tracker_class: Any
+) -> list[str]:
     from src.services.book_preparation import missing_book_fields
 
     missing = missing_book_fields(meta)
@@ -109,9 +111,16 @@ class TrackerStatusManager:
         reason = self._unsafe_release_reason(meta)
         if reason is None:
             return False
-        processed = {tracker: self._blocked_status(reason) for tracker in self._tracker_names(meta.trackers)}
-        meta.tracker_status = merge_tracker_status(processed, meta.tracker_status)
-        logger.info(f"[bold red]{reason} All tracker uploads were skipped.[/bold red]")
+        processed = {
+            tracker: self._blocked_status(reason)
+            for tracker in self._tracker_names(meta.trackers)
+        }
+        meta.tracker_status = merge_tracker_status(
+            processed, meta.tracker_status
+        )
+        logger.info(
+            f"[bold red]{reason} All tracker uploads were skipped.[/bold red]"
+        )
         return True
 
     @staticmethod
@@ -119,7 +128,11 @@ class TrackerStatusManager:
         invalid_group = invalid_release_group_tag(meta)
         if invalid_group:
             return f"Release group {invalid_group!r} matches season/episode syntax. Correct or clear the release group before uploading."
-        return TrackerStatusManager._unsafe_path_reason(meta) if blocks_automatic_upload(meta) else None
+        return (
+            TrackerStatusManager._unsafe_path_reason(meta)
+            if blocks_automatic_upload(meta)
+            else None
+        )
 
     @staticmethod
     def _unsafe_path_reason(meta: Meta) -> str:
@@ -157,7 +170,9 @@ class TrackerStatusManager:
     def _ensure_status_entries(meta: Meta) -> None:
         for tracker in TrackerStatusManager._tracker_names(meta.trackers):
             meta.tracker_status.setdefault(tracker, {})
-        meta.initial_dupes = meta.initial_dupes if isinstance(meta.initial_dupes, dict) else {}
+        meta.initial_dupes = (
+            meta.initial_dupes if isinstance(meta.initial_dupes, dict) else {}
+        )
 
     async def _populate_douban_if_needed(self, meta: Meta) -> None:
         douban_trackers = {
@@ -191,7 +206,11 @@ class TrackerStatusManager:
 
     @classmethod
     def _needs_imdb_prompt(cls, meta: Meta) -> bool:
-        return not bool(meta.unattended) and int(meta.imdb_id or 0) == 0 and "PASSTHEPOPCORN" in cls._tracker_names(meta.trackers)
+        return (
+            not bool(meta.unattended)
+            and int(meta.imdb_id or 0) == 0
+            and "PASSTHEPOPCORN" in cls._tracker_names(meta.trackers)
+        )
 
     @staticmethod
     async def _prompt_imdb_id() -> str:
@@ -214,24 +233,37 @@ class TrackerStatusManager:
         numeric = int(imdb_id[2:])
         meta.imdb_id = numeric
         meta.imdb = imdb_id[2:].zfill(7)
-        meta.imdb_info = await imdb_manager.get_imdb_info_api(numeric, manual_language=meta.manual_language)
+        meta.imdb_info = await imdb_manager.get_imdb_info_api(
+            numeric, manual_language=meta.manual_language
+        )
 
     @staticmethod
     async def _abort_tracker_selection() -> Never:
         logger.info("\n[red]Exiting on user request (Ctrl+C)[/red]")
         await cleanup_manager.cleanup()
         cleanup_manager.reset_terminal()
-        raise OperationAbortedError("Tracker selection was cancelled by the user.")
+        raise OperationAbortedError(
+            "Tracker selection was cancelled by the user."
+        )
 
-    async def _process_trackers(self, meta: Meta, runtime: _TrackerRuntime) -> list[_TrackerResult]:
+    async def _process_trackers(
+        self, meta: Meta, runtime: _TrackerRuntime
+    ) -> list[_TrackerResult]:
         trackers = self._tracker_names(meta.trackers)
         searchable = [name for name in trackers if name in tracker_class_map]
         if searchable:
-            logger.info("[yellow]Searching for existing torrents on selected trackers...")
-        tasks = [self._process_single_tracker(name, meta, runtime) for name in trackers]
+            logger.info(
+                "[yellow]Searching for existing torrents on selected trackers..."
+            )
+        tasks = [
+            self._process_single_tracker(name, meta, runtime)
+            for name in trackers
+        ]
         return list(await asyncio.gather(*tasks))
 
-    async def _process_single_tracker(self, tracker_name: str, shared_meta: Meta, runtime: _TrackerRuntime) -> _TrackerResult:
+    async def _process_single_tracker(
+        self, tracker_name: str, shared_meta: Meta, runtime: _TrackerRuntime
+    ) -> _TrackerResult:
         local_meta = copy.deepcopy(shared_meta)
         self._remove_dupe_suffix(local_meta)
         status = self._initial_status()
@@ -242,7 +274,9 @@ class TrackerStatusManager:
         if tracker_class is None:
             status["upload"] = True
             return _TrackerResult(tracker_name, status, None, None)
-        await self._prepare_tracker_meta(tracker_name, local_meta, tracker_class, status)
+        await self._prepare_tracker_meta(
+            tracker_name, local_meta, tracker_class, status
+        )
         if not status["skipped"] and not status["banned"]:
             await self._evaluate_tracker(
                 tracker_name,
@@ -253,8 +287,12 @@ class TrackerStatusManager:
                 runtime,
             )
         self._ensure_skip_reason(tracker_name, local_meta, status)
-        display_name = await self._display_name(local_meta, tracker_class, status)
-        return _TrackerResult(tracker_name, status, display_name, tracker_class)
+        display_name = await self._display_name(
+            local_meta, tracker_class, status
+        )
+        return _TrackerResult(
+            tracker_name, status, display_name, tracker_class
+        )
 
     @staticmethod
     def _remove_dupe_suffix(meta: Meta) -> None:
@@ -273,7 +311,11 @@ class TrackerStatusManager:
 
     def _tracker_instance(self, tracker_name: str) -> Any | None:
         tracker_type = tracker_class_map.get(tracker_name)
-        return tracker_type(config=self.config) if tracker_type is not None else None
+        return (
+            tracker_type(config=self.config)
+            if tracker_type is not None
+            else None
+        )
 
     async def _prepare_tracker_meta(
         self,
@@ -286,24 +328,38 @@ class TrackerStatusManager:
         self._apply_ptp_identity_requirement(tracker_name, meta, status)
         if status["skipped"]:
             return
-        status["banned"] = bool(await TrackerSetup(config=self.config).check_banned_group(tracker_class.tracker, tracker_class.banned_groups, meta))
+        status["banned"] = bool(
+            await TrackerSetup(config=self.config).check_banned_group(
+                tracker_class.tracker, tracker_class.banned_groups, meta
+            )
+        )
         self._apply_preexisting_skip(tracker_name, meta, status)
-        self._apply_missing_field_skip(tracker_name, meta, tracker_class, status)
+        self._apply_missing_field_skip(
+            tracker_name, meta, tracker_class, status
+        )
 
     def _defer_zenith_validation(self, tracker_name: str, meta: Meta) -> None:
         if tracker_name != "ZENITH":
             return
-        if should_prepare_zenith_audiobook(meta, self.config) or should_prepare_zenith_ebook(meta, self.config):
+        if should_prepare_zenith_audiobook(
+            meta, self.config
+        ) or should_prepare_zenith_ebook(meta, self.config):
             meta.defer_zentag_validation = True
 
     @staticmethod
-    def _apply_ptp_identity_requirement(tracker_name: str, meta: Meta, status: dict[str, Any]) -> None:
+    def _apply_ptp_identity_requirement(
+        tracker_name: str, meta: Meta, status: dict[str, Any]
+    ) -> None:
         if tracker_name != "PASSTHEPOPCORN" or int(meta.imdb_id or 0) != 0:
             return
-        TrackerStatusManager._mark_skipped(status, "IMDb ID is required for PassThePopcorn duplicate checks.")
+        TrackerStatusManager._mark_skipped(
+            status, "IMDb ID is required for PassThePopcorn duplicate checks."
+        )
 
     @staticmethod
-    def _apply_preexisting_skip(tracker_name: str, meta: Meta, status: dict[str, Any]) -> None:
+    def _apply_preexisting_skip(
+        tracker_name: str, meta: Meta, status: dict[str, Any]
+    ) -> None:
         tracker_status = meta.tracker_status.get(tracker_name, {})
         if not isinstance(tracker_status, Mapping):
             return
@@ -311,7 +367,11 @@ class TrackerStatusManager:
         if not tracker_status_map.get("skip_upload"):
             return
         reason = str(
-            tracker_status_map.get("skip_reason") or tracker_status_map.get("status_message") or ("A previous tracker eligibility check requested this upload be skipped.")
+            tracker_status_map.get("skip_reason")
+            or tracker_status_map.get("status_message")
+            or (
+                "A previous tracker eligibility check requested this upload be skipped."
+            )
         )
         TrackerStatusManager._mark_skipped(status, reason)
 
@@ -325,7 +385,9 @@ class TrackerStatusManager:
         reason = self._missing_field_reason(meta, tracker_class)
         if not reason:
             return
-        logger.info(f"[yellow]{tracker_name}: Skipping upload because {reason}[/yellow]")
+        logger.info(
+            f"[yellow]{tracker_name}: Skipping upload because {reason}[/yellow]"
+        )
         self._mark_skipped(status, reason)
 
     @classmethod
@@ -341,7 +403,11 @@ class TrackerStatusManager:
     @staticmethod
     def _missing_book_field_reason(meta: Meta, tracker_class: Any) -> str:
         fields = missing_book_fields_for_tracker(meta, tracker_class)
-        return f"Required BOOK fields missing: {', '.join(fields)}" if fields else ""
+        return (
+            f"Required BOOK fields missing: {', '.join(fields)}"
+            if fields
+            else ""
+        )
 
     @staticmethod
     def _missing_game_field_reason(meta: Meta) -> str:
@@ -360,13 +426,19 @@ class TrackerStatusManager:
         shared_meta: Meta,
         runtime: _TrackerRuntime,
     ) -> None:
-        if await self._claim_blocks_upload(tracker_name, local_meta, status, runtime.setup):
+        if await self._claim_blocks_upload(
+            tracker_name, local_meta, status, runtime.setup
+        ):
             return
-        if not await self._additional_checks_allow(tracker_name, local_meta, tracker_class, status):
+        if not await self._additional_checks_allow(
+            tracker_name, local_meta, tracker_class, status
+        ):
             return
         if not self._cjk_metadata_allows(tracker_name, local_meta, status):
             return
-        await self._store_prepared_meta(shared_meta, tracker_name, local_meta, runtime.lock)
+        await self._store_prepared_meta(
+            shared_meta, tracker_name, local_meta, runtime.lock
+        )
         dupes = await self._search_tracker_dupes(
             tracker_name,
             local_meta,
@@ -375,11 +447,15 @@ class TrackerStatusManager:
             shared_meta,
             runtime,
         )
-        await self._store_initial_dupes(shared_meta, tracker_name, dupes, runtime.lock)
+        await self._store_initial_dupes(
+            shared_meta, tracker_name, dupes, runtime.lock
+        )
         if status["skipped"]:
             return
         self._warn_amigos_anonymous(tracker_name, local_meta)
-        await self._evaluate_dupes(tracker_name, local_meta, dupes, status, shared_meta, runtime)
+        await self._evaluate_dupes(
+            tracker_name, local_meta, dupes, status, shared_meta, runtime
+        )
 
     @staticmethod
     async def _claim_blocks_upload(
@@ -390,7 +466,9 @@ class TrackerStatusManager:
     ) -> bool:
         claimed = bool(await setup.get_torrent_claims(meta, tracker_name))
         if claimed:
-            TrackerStatusManager._mark_skipped(status, "An existing tracker claim blocks this upload.")
+            TrackerStatusManager._mark_skipped(
+                status, "An existing tracker claim blocks this upload."
+            )
         return claimed
 
     async def _additional_checks_allow(
@@ -403,7 +481,11 @@ class TrackerStatusManager:
         method = getattr(tracker_class, "get_additional_checks", None)
         if method is None:
             return True
-        result = await method(meta) if inspect.iscoroutinefunction(method) else method(meta)
+        result = (
+            await method(meta)
+            if inspect.iscoroutinefunction(method)
+            else method(meta)
+        )
         if result:
             return True
         reason = self._tracker_skip_reason(
@@ -415,7 +497,9 @@ class TrackerStatusManager:
         meta.skipping = tracker_name
         return False
 
-    def _cjk_metadata_allows(self, tracker_name: str, meta: Meta, status: dict[str, Any]) -> bool:
+    def _cjk_metadata_allows(
+        self, tracker_name: str, meta: Meta, status: dict[str, Any]
+    ) -> bool:
         fields = book_metadata_cjk_fields(meta)
         if not fields or self._can_prepare_zenith(tracker_name, meta):
             return True
@@ -426,10 +510,15 @@ class TrackerStatusManager:
         return False
 
     def _can_prepare_zenith(self, tracker_name: str, meta: Meta) -> bool:
-        return tracker_name == "ZENITH" and (should_prepare_zenith_audiobook(meta, self.config) or should_prepare_zenith_ebook(meta, self.config))
+        return tracker_name == "ZENITH" and (
+            should_prepare_zenith_audiobook(meta, self.config)
+            or should_prepare_zenith_ebook(meta, self.config)
+        )
 
     @staticmethod
-    async def _store_prepared_meta(meta: Meta, tracker_name: str, local_meta: Meta, lock: asyncio.Lock) -> None:
+    async def _store_prepared_meta(
+        meta: Meta, tracker_name: str, local_meta: Meta, lock: asyncio.Lock
+    ) -> None:
         async with lock:
             prepared = meta.setdefault("tracker_prepared_meta", {})
             if not isinstance(prepared, dict):
@@ -448,8 +537,12 @@ class TrackerStatusManager:
         runtime: _TrackerRuntime,
     ) -> list[Any]:
         if tracker_name == "PASSTHEPOPCORN":
-            return await self._search_ptp_dupes(tracker_name, meta, status, shared_meta, runtime)
-        return await self._search_regular_dupes(tracker_name, meta, tracker_class, status, shared_meta, runtime)
+            return await self._search_ptp_dupes(
+                tracker_name, meta, status, shared_meta, runtime
+            )
+        return await self._search_regular_dupes(
+            tracker_name, meta, tracker_class, status, shared_meta, runtime
+        )
 
     async def _search_regular_dupes(
         self,
@@ -462,7 +555,9 @@ class TrackerStatusManager:
     ) -> list[Any]:
         try:
             dupes = cast(list[Any], await tracker_class.search_existing(meta))
-            await self._mark_dupe_checked(shared_meta, tracker_name, runtime.lock)
+            await self._mark_dupe_checked(
+                shared_meta, tracker_name, runtime.lock
+            )
             tracker_status = meta.tracker_status.get(tracker_name, {})
             status["other"] = self._tracker_other_status(tracker_status)
             return dupes
@@ -493,7 +588,9 @@ class TrackerStatusManager:
         runtime: _TrackerRuntime,
     ) -> list[Any]:
         ptp: Any = PassThePopcorn(config=self.config)
-        if not await self._ptp_additional_checks(ptp, tracker_name, meta, status):
+        if not await self._ptp_additional_checks(
+            ptp, tracker_name, meta, status
+        ):
             return []
         try:
             group_id = await ptp.get_group_by_imdb(meta.imdb)
@@ -501,7 +598,9 @@ class TrackerStatusManager:
                 shared_meta.ptp_groupid = group_id
             return cast(
                 list[Any],
-                await ptp.search_existing(group_id or "", cast(dict[str, Any], meta)),
+                await ptp.search_existing(
+                    group_id or "", cast(dict[str, Any], meta)
+                ),
             )
         except Exception as error:
             return await self._handle_search_failure(
@@ -514,11 +613,17 @@ class TrackerStatusManager:
                 mark_checked=False,
             )
 
-    async def _ptp_additional_checks(self, ptp: Any, tracker_name: str, meta: Meta, status: dict[str, Any]) -> bool:
+    async def _ptp_additional_checks(
+        self, ptp: Any, tracker_name: str, meta: Meta, status: dict[str, Any]
+    ) -> bool:
         method = getattr(ptp, "get_additional_checks", None)
         if method is None:
             return True
-        result = await method(meta) if inspect.iscoroutinefunction(method) else method(meta)
+        result = (
+            await method(meta)
+            if inspect.iscoroutinefunction(method)
+            else method(meta)
+        )
         if result:
             return True
         reason = self._tracker_skip_reason(
@@ -541,22 +646,32 @@ class TrackerStatusManager:
         *,
         mark_checked: bool,
     ) -> list[Any]:
-        logger.info(f"[bold red]Error searching for duplicates on {tracker_name}: {error}[/bold red]")
+        logger.info(
+            f"[bold red]Error searching for duplicates on {tracker_name}: {error}[/bold red]"
+        )
         if meta.unattended:
             reason = f"Duplicate search failed: {error}"
             self._mark_skipped(status, reason)
             meta.skipping = tracker_name
             return []
-        proceed = await self._confirm_failed_dupe_search(runtime.helper, tracker_name)
+        proceed = await self._confirm_failed_dupe_search(
+            runtime.helper, tracker_name
+        )
         if proceed and mark_checked:
-            await self._mark_dupe_checked(shared_meta, tracker_name, runtime.lock)
+            await self._mark_dupe_checked(
+                shared_meta, tracker_name, runtime.lock
+            )
         if not proceed:
-            self._mark_skipped(status, "Duplicate search failed and upload was not confirmed.")
+            self._mark_skipped(
+                status, "Duplicate search failed and upload was not confirmed."
+            )
             meta.skipping = tracker_name
         return []
 
     @staticmethod
-    async def _confirm_failed_dupe_search(helper: Any, tracker_name: str) -> bool:
+    async def _confirm_failed_dupe_search(
+        helper: Any, tracker_name: str
+    ) -> bool:
         try:
             return bool(
                 await helper.prompt_yes_no(
@@ -568,14 +683,18 @@ class TrackerStatusManager:
             await TrackerStatusManager._abort_tracker_selection()
 
     @staticmethod
-    async def _mark_dupe_checked(meta: Meta, tracker_name: str, lock: asyncio.Lock) -> None:
+    async def _mark_dupe_checked(
+        meta: Meta, tracker_name: str, lock: asyncio.Lock
+    ) -> None:
         async with lock:
             checked = meta.setdefault("dupe_checked_trackers", [])
             if tracker_name not in checked:
                 checked.append(tracker_name)
 
     @staticmethod
-    async def _store_initial_dupes(meta: Meta, tracker_name: str, dupes: list[Any], lock: asyncio.Lock) -> None:
+    async def _store_initial_dupes(
+        meta: Meta, tracker_name: str, dupes: list[Any], lock: asyncio.Lock
+    ) -> None:
         async with lock:
             meta.initial_dupes[tracker_name] = copy.deepcopy(dupes)
 
@@ -583,7 +702,9 @@ class TrackerStatusManager:
     def _warn_amigos_anonymous(tracker_name: str, meta: Meta) -> None:
         if tracker_name != "AMIGOSSHARE" or not bool(meta.anon):
             return
-        logger.info("PORTUGAS: [yellow]Aviso: Você solicitou um upload anônimo, mas o AMIGOSSHARE não suporta essa opção.[/yellow][red] O envio não será anônimo.[/red]")
+        logger.info(
+            "PORTUGAS: [yellow]Aviso: Você solicitou um upload anônimo, mas o AMIGOSSHARE não suporta essa opção.[/yellow][red] O envio não será anônimo.[/red]"
+        )
         logger.warning(
             "EN: [yellow]Warning: You requested an anonymous upload, but AMIGOSSHARE does not support this option.[/yellow][red] The upload will not be anonymous.[/red]"
         )
@@ -609,13 +730,19 @@ class TrackerStatusManager:
             return
         filtered = cast(
             list[Any],
-            await runtime.dupe_checker.filter_dupes(dupes, local_meta, tracker_name),
+            await runtime.dupe_checker.filter_dupes(
+                dupes, local_meta, tracker_name
+            ),
         )
-        is_dupe, local_meta = await runtime.helper.dupe_check(filtered, local_meta, tracker_name)
+        is_dupe, local_meta = await runtime.helper.dupe_check(
+            filtered, local_meta, tracker_name
+        )
         status["dupe"] = bool(is_dupe)
         if is_dupe:
             status.setdefault("skip_reason", "A duplicate release was found.")
-        await self._copy_dupe_side_effects(tracker_name, local_meta, shared_meta, runtime.lock)
+        await self._copy_dupe_side_effects(
+            tracker_name, local_meta, shared_meta, runtime.lock
+        )
 
     @staticmethod
     async def _copy_dupe_side_effects(
@@ -624,29 +751,43 @@ class TrackerStatusManager:
         shared_meta: Meta,
         lock: asyncio.Lock,
     ) -> None:
-        values = TrackerStatusManager._dupe_side_effect_values(tracker_name, local_meta)
+        values = TrackerStatusManager._dupe_side_effect_values(
+            tracker_name, local_meta
+        )
         async with lock:
             for key, value in values.items():
                 if value:
                     shared_meta[key] = copy.deepcopy(value)
 
     @staticmethod
-    def _dupe_side_effect_values(tracker_name: str, meta: Meta) -> dict[str, Any]:
+    def _dupe_side_effect_values(
+        tracker_name: str, meta: Meta
+    ) -> dict[str, Any]:
         values: dict[str, Any] = {
-            f"{tracker_name}_matched_episode_ids": meta.get(f"{tracker_name}_matched_episode_ids", []),
+            f"{tracker_name}_matched_episode_ids": meta.get(
+                f"{tracker_name}_matched_episode_ids", []
+            ),
             "trumpable_id": meta.get("trumpable_id"),
-            f"{tracker_name}_cross_seed": meta.get(f"{tracker_name}_cross_seed"),
+            f"{tracker_name}_cross_seed": meta.get(
+                f"{tracker_name}_cross_seed"
+            ),
         }
         if tracker_name in {"AITHER", "LST"}:
             values.update(
                 were_trumping=meta.get("were_trumping", False),
                 trump_reason=meta.get("trump_reason"),
-                **{f"{tracker_name}_trumpable_id": meta.get(f"{tracker_name}_trumpable_id")},
+                **{
+                    f"{tracker_name}_trumpable_id": meta.get(
+                        f"{tracker_name}_trumpable_id"
+                    )
+                },
             )
         return values
 
     @classmethod
-    async def _display_name(cls, meta: Meta, tracker_class: Any, status: dict[str, Any]) -> str | None:
+    async def _display_name(
+        cls, meta: Meta, tracker_class: Any, status: dict[str, Any]
+    ) -> str | None:
         if cls._display_name_blocked(status):
             return None
         try:
@@ -657,7 +798,9 @@ class TrackerStatusManager:
 
     @staticmethod
     def _display_name_blocked(status: Mapping[str, Any]) -> bool:
-        return any(bool(status.get(key)) for key in ("banned", "skipped", "dupe"))
+        return any(
+            bool(status.get(key)) for key in ("banned", "skipped", "dupe")
+        )
 
     @staticmethod
     def _display_name_value(value: Any) -> str | None:
@@ -668,7 +811,9 @@ class TrackerStatusManager:
         return value if isinstance(value, str) else None
 
     @classmethod
-    def _ensure_skip_reason(cls, tracker_name: str, meta: Meta, status: dict[str, Any]) -> None:
+    def _ensure_skip_reason(
+        cls, tracker_name: str, meta: Meta, status: dict[str, Any]
+    ) -> None:
         if not status.get("skipped"):
             return
         reason = str(
@@ -680,10 +825,14 @@ class TrackerStatusManager:
             )
         )
         status["skip_reason"] = reason
-        logger.info(f"{tracker_name}: [yellow]{reason} Skipping upload.[/yellow]")
+        logger.info(
+            f"{tracker_name}: [yellow]{reason} Skipping upload.[/yellow]"
+        )
 
     @staticmethod
-    def _tracker_skip_reason(tracker_name: str, meta: Meta, fallback: str) -> str:
+    def _tracker_skip_reason(
+        tracker_name: str, meta: Meta, fallback: str
+    ) -> str:
         value = meta.tracker_status.get(tracker_name, {})
         if not isinstance(value, Mapping):
             return fallback
@@ -697,14 +846,18 @@ class TrackerStatusManager:
         status["upload"] = False
         status["skip_reason"] = reason
 
-    def _apply_completed_episode_rule(self, meta: Meta, results: Sequence[_TrackerResult]) -> None:
+    def _apply_completed_episode_rule(
+        self, meta: Meta, results: Sequence[_TrackerResult]
+    ) -> None:
         if not Common.is_completed_tv_episode(meta):
             return
         changed = False
         for result in results:
             changed = self._block_completed_episode_result(result) or changed
         if changed:
-            logger.info("[bold red]Individual episodes from completed TV series are not eligible for upload. Upload the complete season pack instead.[/bold red]")
+            logger.info(
+                "[bold red]Individual episodes from completed TV series are not eligible for upload. Upload the complete season pack instead.[/bold red]"
+            )
 
     @staticmethod
     def _block_completed_episode_result(result: _TrackerResult) -> bool:
@@ -727,10 +880,15 @@ class TrackerStatusManager:
         changed = False
         for name, status, display_name, tracker_class in results:
             result = _TrackerResult(name, status, display_name, tracker_class)
-            changed = TrackerStatusManager._block_completed_episode_result(result) or changed
+            changed = (
+                TrackerStatusManager._block_completed_episode_result(result)
+                or changed
+            )
         return changed
 
-    async def _select_uploads(self, meta: Meta, results: list[_TrackerResult], helper: Any) -> int:
+    async def _select_uploads(
+        self, meta: Meta, results: list[_TrackerResult], helper: Any
+    ) -> int:
         passed, dupes, skipped = self._classify_results(results)
         self._log_result_groups(dupes, skipped)
         if meta.unattended:
@@ -738,21 +896,34 @@ class TrackerStatusManager:
         return await self._select_attended_uploads(meta, passed, helper)
 
     @classmethod
-    def _classify_results(cls, results: Sequence[_TrackerResult]) -> tuple[list[_TrackerResult], list[str], list[str]]:
+    def _classify_results(
+        cls, results: Sequence[_TrackerResult]
+    ) -> tuple[list[_TrackerResult], list[str], list[str]]:
         eligibility = cls._eligibility_by_tracker(results)
-        passed = [result for result in results if eligibility[result.name].eligible]
+        passed = [
+            result for result in results if eligibility[result.name].eligible
+        ]
         dupes = cls._result_names_with_flag(results, "dupe")
         skipped = cls._result_names_with_flag(results, "skipped")
         return passed, dupes, skipped
 
     @classmethod
-    def _eligibility_by_tracker(cls, results: Sequence[_TrackerResult]) -> dict[str, Any]:
+    def _eligibility_by_tracker(
+        cls, results: Sequence[_TrackerResult]
+    ) -> dict[str, Any]:
         states = [cls._state_from_result(result) for result in results]
-        return {item.tracker: item for item in evaluate_tracker_upload_eligibility(states)}
+        return {
+            item.tracker: item
+            for item in evaluate_tracker_upload_eligibility(states)
+        }
 
     @staticmethod
-    def _result_names_with_flag(results: Sequence[_TrackerResult], flag: str) -> list[str]:
-        return [result.name for result in results if bool(result.status.get(flag))]
+    def _result_names_with_flag(
+        results: Sequence[_TrackerResult], flag: str
+    ) -> list[str]:
+        return [
+            result.name for result in results if bool(result.status.get(flag))
+        ]
 
     @staticmethod
     def _state_from_result(result: _TrackerResult) -> TrackerUploadState:
@@ -772,9 +943,13 @@ class TrackerStatusManager:
     @staticmethod
     def _log_result_groups(dupes: list[str], skipped: list[str]) -> None:
         if skipped:
-            logger.info(f"[red]Skipped due to specific tracker conditions: [bold yellow]{', '.join(skipped)}[/bold yellow].")
+            logger.info(
+                f"[red]Skipped due to specific tracker conditions: [bold yellow]{', '.join(skipped)}[/bold yellow]."
+            )
         if dupes:
-            logger.info(f"[red]Found potential dupes on: [bold yellow]{', '.join(dupes)}[/bold yellow].\n")
+            logger.info(
+                f"[red]Found potential dupes on: [bold yellow]{', '.join(dupes)}[/bold yellow].\n"
+            )
 
     @staticmethod
     def _enable_unattended_uploads(passed: Sequence[_TrackerResult]) -> int:
@@ -783,10 +958,14 @@ class TrackerStatusManager:
             result.status["upload"] = True
             names.append(result.name)
         if names:
-            logger.info(f"[bold]{', '.join(names)}[/bold]: [bold green]no potential dupes found.[/bold green]")
+            logger.info(
+                f"[bold]{', '.join(names)}[/bold]: [bold green]no potential dupes found.[/bold green]"
+            )
         return len(names)
 
-    async def _select_attended_uploads(self, meta: Meta, passed: list[_TrackerResult], helper: Any) -> int:
+    async def _select_attended_uploads(
+        self, meta: Meta, passed: list[_TrackerResult], helper: Any
+    ) -> int:
         manual, prompt = self._partition_attended_results(passed)
         self._enable_result_uploads(manual)
         if meta.debug:
@@ -801,7 +980,9 @@ class TrackerStatusManager:
     ) -> tuple[list[_TrackerResult], list[_TrackerResult]]:
         manual_names = {"MANUAL", "USENET"}
         manual = [result for result in passed if result.name in manual_names]
-        prompt = [result for result in passed if result.name not in manual_names]
+        prompt = [
+            result for result in passed if result.name not in manual_names
+        ]
         return manual, prompt
 
     @staticmethod
@@ -809,7 +990,9 @@ class TrackerStatusManager:
         for result in results:
             result.status["upload"] = True
 
-    async def _prompt_attended_uploads(self, prompt: list[_TrackerResult], helper: Any) -> int:
+    async def _prompt_attended_uploads(
+        self, prompt: list[_TrackerResult], helper: Any
+    ) -> int:
         if not prompt:
             return 0
         self._log_prompt_candidates(prompt)
@@ -819,7 +1002,9 @@ class TrackerStatusManager:
         self._enable_result_uploads(prompt)
         return len(prompt)
 
-    async def _prompt_upload_decision(self, prompt: Sequence[_TrackerResult], helper: Any) -> bool:
+    async def _prompt_upload_decision(
+        self, prompt: Sequence[_TrackerResult], helper: Any
+    ) -> bool:
         try:
             question = "Upload?" if len(prompt) == 1 else "Upload to all?"
             return bool(await helper.prompt_yes_no(question, default=False))
@@ -830,23 +1015,31 @@ class TrackerStatusManager:
     def _log_prompt_candidates(prompt: Sequence[_TrackerResult]) -> None:
         names = [result.name for result in prompt]
         label = names[0] if len(names) == 1 else ", ".join(names)
-        logger.info(f"[bold]{label}:[/bold] [green]no potential dupes found.[/green]")
+        logger.info(
+            f"[bold]{label}:[/bold] [green]no potential dupes found.[/green]"
+        )
 
     @staticmethod
     async def _abort_tracker_processing() -> Never:
         logger.info("\n[red]Exiting on user request (Ctrl+C)[/red]")
         await cleanup_manager.cleanup()
         cleanup_manager.reset_terminal()
-        raise OperationAbortedError("Tracker processing was cancelled by the user.")
+        raise OperationAbortedError(
+            "Tracker processing was cancelled by the user."
+        )
 
     @staticmethod
-    def _log_debug_summary(meta: Meta, results: Sequence[_TrackerResult], successful: int) -> None:
+    def _log_debug_summary(
+        meta: Meta, results: Sequence[_TrackerResult], successful: int
+    ) -> None:
         if not meta.debug:
             return
         logger.debug("\n[bold]Tracker Processing Summary:[/bold]")
         for result in results:
             TrackerStatusManager._log_debug_result(result)
-        logger.debug(f"\n[bold]Trackers Passed all Checks:[/bold] {successful}")
+        logger.debug(
+            f"\n[bold]Trackers Passed all Checks:[/bold] {successful}"
+        )
         logger.debug("", extra={"markup": False})
         logger.debug("[bold red]DEBUG MODE does not upload to sites")
 
@@ -876,9 +1069,7 @@ class TrackerStatusManager:
         upload: bool,
         reason: str,
     ) -> str:
-        line = (
-            f"Tracker: {tracker} | Banned: {cls._yes_no(banned)} | Skipped: {cls._yes_no(skipped)} | Dupe: {cls._yes_no(dupe)} | [yellow]Upload:[/yellow] {cls._yes_no(upload)}"
-        )
+        line = f"Tracker: {tracker} | Banned: {cls._yes_no(banned)} | Skipped: {cls._yes_no(skipped)} | Dupe: {cls._yes_no(dupe)} | [yellow]Upload:[/yellow] {cls._yes_no(upload)}"
         return cls._append_debug_reason(line, reason)
 
     @staticmethod

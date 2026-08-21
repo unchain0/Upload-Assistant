@@ -14,7 +14,10 @@ from src.domain_models.configuration import (
     MutableConfiguration,
     MutableConfigValue,
 )
-from src.engines.configuration_selection import configuration_has_user_settings, is_user_setting
+from src.engines.configuration_selection import (
+    configuration_has_user_settings,
+    is_user_setting,
+)
 
 
 def reconcile_runtime_configuration(
@@ -36,7 +39,9 @@ def reconcile_runtime_configuration(
 
     configuration = ApplicationConfiguration.from_mapping(
         effective,
-        ConfigurationSource(path=runtime_path, kind=ConfigurationSourceKind.RUNTIME),
+        ConfigurationSource(
+            path=runtime_path, kind=ConfigurationSourceKind.RUNTIME
+        ),
     )
     return ConfigurationMigration(
         configuration=configuration,
@@ -57,8 +62,25 @@ def _empty_setting_string(value: str) -> bool:
     normalized = value.strip().casefold()
     if not normalized:
         return True
-    placeholders = {"api key", "api_key", "key here", "password", "token", "token here"}
-    prefixes = ("<", "change me", "changeme", "example", "get it from", "get this from", "insert ", "replace ", "your ")
+    placeholders = {
+        "api key",
+        "api_key",
+        "key here",
+        "password",
+        "token",
+        "token here",
+    }
+    prefixes = (
+        "<",
+        "change me",
+        "changeme",
+        "example",
+        "get it from",
+        "get this from",
+        "insert ",
+        "replace ",
+        "your ",
+    )
     return normalized in placeholders or normalized.startswith(prefixes)
 
 
@@ -76,12 +98,16 @@ def _fill_empty_user_settings(
         current_path = (*path, str(key))
         if isinstance(source_value, Mapping):
             child = _target_child_mapping(target, key)
-            _fill_empty_user_settings(child, source_value, current_path, migrated)
+            _fill_empty_user_settings(
+                child, source_value, current_path, migrated
+            )
             continue
         _fill_user_setting(target, key, source_value, current_path, migrated)
 
 
-def _target_child_mapping(target: MutableConfiguration, key: str) -> MutableConfiguration:
+def _target_child_mapping(
+    target: MutableConfiguration, key: str
+) -> MutableConfiguration:
     value = target.get(key)
     if isinstance(value, dict):
         return value
@@ -118,8 +144,12 @@ def _add_missing_defaults(
             added.append(current_path)
             continue
         target_value = target[key]
-        if isinstance(target_value, dict) and isinstance(default_value, Mapping):
-            _add_missing_defaults(target_value, default_value, current_path, added)
+        if isinstance(target_value, dict) and isinstance(
+            default_value, Mapping
+        ):
+            _add_missing_defaults(
+                target_value, default_value, current_path, added
+            )
 
 
 def _clone(value: ConfigValue) -> MutableConfigValue:

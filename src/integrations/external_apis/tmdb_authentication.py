@@ -15,10 +15,17 @@ class TmdbAuthentication:
     query: Mapping[str, str]
 
 
-def build_tmdb_authentication(credential: TmdbCredential) -> TmdbAuthentication:
+def build_tmdb_authentication(
+    credential: TmdbCredential,
+) -> TmdbAuthentication:
     if credential.mode is TmdbCredentialMode.V4_READ_ACCESS_TOKEN:
         return TmdbAuthentication(
-            headers=MappingProxyType({"Authorization": f"Bearer {credential.value}", "Accept": "application/json"}),
+            headers=MappingProxyType(
+                {
+                    "Authorization": f"Bearer {credential.value}",
+                    "Accept": "application/json",
+                }
+            ),
             query=MappingProxyType({}),
         )
     return TmdbAuthentication(

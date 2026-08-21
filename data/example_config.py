@@ -36,7 +36,11 @@ config: dict[str, Any] = {
         "metadata_cache_services": {
             # Movies and TV Shows. "localized_ttl_hours" controls data in other
             # languages, such as a Portuguese overview and title.
-            "tmdb": {"enabled": True, "ttl_hours": 168, "localized_ttl_hours": 168},
+            "tmdb": {
+                "enabled": True,
+                "ttl_hours": 168,
+                "localized_ttl_hours": 168,
+            },
             # Movie and series information identified by tt1234567.
             "imdb": {"enabled": True, "ttl_hours": 72},
             # Episode guides and show names.

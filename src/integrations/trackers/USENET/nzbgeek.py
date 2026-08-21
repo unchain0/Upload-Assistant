@@ -49,7 +49,9 @@ class NZBGeek:
     def get_search_query(self, meta: Meta) -> str:
         return build_newznab_search_query(meta)
 
-    def _parse_dupes_from_response(self, response_text: str) -> list[dict[str, Any]]:
+    def _parse_dupes_from_response(
+        self, response_text: str
+    ) -> list[dict[str, Any]]:
         return parse_newznab_dupes(response_text)
 
     async def search_existing(self, meta: Meta) -> list[Any]:
@@ -57,23 +59,42 @@ class NZBGeek:
         if cached:
             return cached
         if self.daily_api_hit_limit <= 0:
-            logger.info(f"{self.tracker}: [yellow]Duplicate search via API is disabled because daily_api_hit_limit is 0.[/yellow]")
+            logger.info(
+                f"{self.tracker}: [yellow]Duplicate search via API is disabled because daily_api_hit_limit is 0.[/yellow]"
+            )
             return []
-        allowed, used_hits = await reserve_daily_api_hit(meta.base_dir, self.tracker, self.daily_api_hit_limit)
+        allowed, used_hits = await reserve_daily_api_hit(
+            meta.base_dir, self.tracker, self.daily_api_hit_limit
+        )
         if not allowed:
-            logger.info(f"{self.tracker}: [yellow]Duplicate search skipped because the 24-hour API hit limit ({self.daily_api_hit_limit}) has been reached.[/yellow]")
+            logger.info(
+                f"{self.tracker}: [yellow]Duplicate search skipped because the 24-hour API hit limit ({self.daily_api_hit_limit}) has been reached.[/yellow]"
+            )
             return []
         response = await self._search_response(self._search_params(meta))
-        logger.debug(f"{self.tracker}: Duplicate search used API hit {used_hits}/{self.daily_api_hit_limit} in the last 24 hours.")
+        logger.debug(
+            f"{self.tracker}: Duplicate search used API hit {used_hits}/{self.daily_api_hit_limit} in the last 24 hours."
+        )
         response.raise_for_status()
-        return self._parse_dupes_from_response(response.text) if response.text.strip() else []
+        return (
+            self._parse_dupes_from_response(response.text)
+            if response.text.strip()
+            else []
+        )
 
     async def _cached_upload_match(self, meta: Meta) -> list[str]:
         release_name = await self.get_name(meta)
-        cache_file = Path(meta.base_dir) / "tmp" / meta.uuid / f"{self.tracker}_upload_ok"
+        cache_file = (
+            Path(meta.base_dir)
+            / "tmp"
+            / meta.uuid
+            / f"{self.tracker}_upload_ok"
+        )
         if not release_name or not cache_file.exists():
             return []
-        logger.info(f"{self.tracker}: [yellow]Found local upload cache.[/yellow]")
+        logger.info(
+            f"{self.tracker}: [yellow]Found local upload cache.[/yellow]"
+        )
         return [release_name]
 
     def _search_params(self, meta: Meta) -> dict[str, str]:
@@ -107,7 +128,12 @@ class NZBGeek:
         return {"t": "movie", "q": self.get_search_query(meta)}
 
     async def _search_response(self, params: dict[str, str]) -> httpx.Response:
-        request_params = {"apikey": self.api_key, "limit": "100", "extended": "1", **params}
+        request_params = {
+            "apikey": self.api_key,
+            "limit": "100",
+            "extended": "1",
+            **params,
+        }
         async with httpx.AsyncClient(timeout=10.0) as client:
             return await client.get(self.search_url, params=request_params)
 
@@ -142,7 +168,9 @@ class NZBGeek:
         platform = meta.platform.upper()
         if "SWITCH" in platform or "NSW" in platform:
             return "1035"
-        if any(token in platform for token in ("PLAYSTATION", "PS", "XBOX", "WII")):
+        if any(
+            token in platform for token in ("PLAYSTATION", "PS", "XBOX", "WII")
+        ):
             return "1000"
         return "4050"
 
@@ -160,7 +188,9 @@ class NZBGeek:
         return "7030" if "COMIC" in str(meta.type or "").upper() else "7020"
 
     @classmethod
-    def _quality_category(cls, meta: Meta, *, uhd: str, hd: str, sd: str) -> str:
+    def _quality_category(
+        cls, meta: Meta, *, uhd: str, hd: str, sd: str
+    ) -> str:
         quality = cls._quality_band(meta.resolution)
         return {"uhd": uhd, "hd": hd}.get(quality, sd)
 
@@ -179,7 +209,14 @@ class NZBGeek:
 
     async def _get_nfo_file(self, meta: Meta) -> tuple[str, bytes, str] | None:
         candidates = self._nfo_candidates(meta)
-        candidate = next(((path, filename) for path, filename in candidates if path.exists() and path.is_file()), None)
+        candidate = next(
+            (
+                (path, filename)
+                for path, filename in candidates
+                if path.exists() and path.is_file()
+            ),
+            None,
+        )
         if candidate is None:
             return None
         path, filename = candidate
@@ -192,13 +229,21 @@ class NZBGeek:
         existing_nfos = [(path, path.name) for path in nfo_dir.glob("*.nfo")]
         if meta.scene:
             return [*existing_nfos, *existing_nfos]
-        preferred = (nfo_dir / "BD_SUMMARY_00.txt", "BDInfo.nfo") if meta.is_disc == "BDMV" else (nfo_dir / "MEDIAINFO_CLEANPATH.txt", "MediaInfo.nfo")
+        preferred = (
+            (nfo_dir / "BD_SUMMARY_00.txt", "BDInfo.nfo")
+            if meta.is_disc == "BDMV"
+            else (nfo_dir / "MEDIAINFO_CLEANPATH.txt", "MediaInfo.nfo")
+        )
         return [preferred, *existing_nfos]
 
     @staticmethod
     def _successful_response(response_text: str, includes_nfo: bool) -> bool:
         try:
-            attributes = json.loads(response_text).get("response", {}).get("@attributes", {})
+            attributes = (
+                json.loads(response_text)
+                .get("response", {})
+                .get("@attributes", {})
+            )
         except json.JSONDecodeError:
             return False
         if attributes.get("API") != "OK" or attributes.get("REGISTER") != "OK":
@@ -208,13 +253,17 @@ class NZBGeek:
     async def upload(self, meta: Meta) -> bool:
         status = meta.tracker_status.setdefault(self.tracker, {})
         if not await self._valid_upload_source(meta):
-            status["status_message"] = "data error: NZB file missing or password missing in header"
+            status["status_message"] = (
+                "data error: NZB file missing or password missing in header"
+            )
             return False
         files, nfo_file = await self._submission_files(meta)
         if meta.debug:
             status["status_message"] = "Debug mode enabled, skipping upload."
             return True
-        return await self._upload_with_error_handling(meta, files, nfo_file, status)
+        return await self._upload_with_error_handling(
+            meta, files, nfo_file, status
+        )
 
     async def _upload_with_error_handling(
         self,
@@ -225,13 +274,21 @@ class NZBGeek:
     ) -> bool:
         try:
             response = await self._submit(meta, files)
-            return await self._process_upload_response(meta, response, nfo_file, status)
+            return await self._process_upload_response(
+                meta, response, nfo_file, status
+            )
         except httpx.TimeoutException:
-            status["status_message"] = "data error: Request timed out after 60 seconds"
+            status["status_message"] = (
+                "data error: Request timed out after 60 seconds"
+            )
         except httpx.RequestError as error:
-            status["status_message"] = f"data error: Unable to upload. Error: {error}"
+            status["status_message"] = (
+                f"data error: Unable to upload. Error: {error}"
+            )
         except Exception as error:
-            status["status_message"] = f"data error: Unexpected error. Error: {error}"
+            status["status_message"] = (
+                f"data error: Unexpected error. Error: {error}"
+            )
         return False
 
     async def _process_upload_response(
@@ -243,41 +300,67 @@ class NZBGeek:
     ) -> bool:
         if not self._response_status_ok(response, status):
             return False
-        if not self._successful_response(response.text, includes_nfo=nfo_file is not None):
-            status["status_message"] = "data error: NZBGeek did not confirm the NZB submission."
+        if not self._successful_response(
+            response.text, includes_nfo=nfo_file is not None
+        ):
+            status["status_message"] = (
+                "data error: NZBGeek did not confirm the NZB submission."
+            )
             return False
         await self._record_success(meta, status)
         return True
 
     async def _valid_upload_source(self, meta: Meta) -> bool:
-        return bool(meta.nzb_path) and await self.common.check_nzb_file(self.tracker, meta)
+        return bool(meta.nzb_path) and await self.common.check_nzb_file(
+            self.tracker, meta
+        )
 
-    async def _submission_files(self, meta: Meta) -> tuple[dict[str, tuple[str, bytes, str]], tuple[str, bytes, str] | None]:
+    async def _submission_files(
+        self, meta: Meta
+    ) -> tuple[
+        dict[str, tuple[str, bytes, str]], tuple[str, bytes, str] | None
+    ]:
         nzb_path = str(meta.nzb_path)
         async with aiofiles.open(nzb_path, "rb") as handle:
             nzb_content = await handle.read()
-        files: dict[str, tuple[str, bytes, str]] = {"nzb": (Path(nzb_path).name, nzb_content, "application/x-nzb")}
+        files: dict[str, tuple[str, bytes, str]] = {
+            "nzb": (Path(nzb_path).name, nzb_content, "application/x-nzb")
+        }
         nfo_file = await self._get_nfo_file(meta)
         if nfo_file is not None:
             files["nfo"] = nfo_file
         return files, nfo_file
 
-    async def _submit(self, meta: Meta, files: dict[str, tuple[str, bytes, str]]) -> httpx.Response:
+    async def _submit(
+        self, meta: Meta, files: dict[str, tuple[str, bytes, str]]
+    ) -> httpx.Response:
         params = {"apikey": self.api_key, "cat": self.get_category_id(meta)}
-        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
-            return await client.post(self.submit_url, params=params, files=files)
+        async with httpx.AsyncClient(
+            timeout=60.0, follow_redirects=True
+        ) as client:
+            return await client.post(
+                self.submit_url, params=params, files=files
+            )
 
     @staticmethod
-    def _response_status_ok(response: httpx.Response, status: dict[str, Any]) -> bool:
+    def _response_status_ok(
+        response: httpx.Response, status: dict[str, Any]
+    ) -> bool:
         if response.status_code in {200, 201}:
             return True
-        status["status_message"] = f"data error: HTTP {response.status_code} - {response.text}"
+        status["status_message"] = (
+            f"data error: HTTP {response.status_code} - {response.text}"
+        )
         return False
 
-    async def _record_success(self, meta: Meta, status: dict[str, Any]) -> None:
+    async def _record_success(
+        self, meta: Meta, status: dict[str, Any]
+    ) -> None:
         status["status_message"] = "Upload successful"
         status["torrent_id"] = meta.basename_no_ext
         cache_dir = Path(meta.base_dir) / "tmp" / meta.uuid
         cache_dir.mkdir(parents=True, exist_ok=True)
-        async with aiofiles.open(cache_dir / f"{self.tracker}_upload_ok", "w", encoding="utf-8") as handle:
+        async with aiofiles.open(
+            cache_dir / f"{self.tracker}_upload_ok", "w", encoding="utf-8"
+        ) as handle:
             await handle.write("ok")

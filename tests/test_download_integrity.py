@@ -17,9 +17,18 @@ from src.integrations.runtime_tools.download_integrity import (
 
 
 class _Response:
-    def __init__(self, chunks: list[bytes], content_length: int | None = None, delay: float = 0) -> None:
+    def __init__(
+        self,
+        chunks: list[bytes],
+        content_length: int | None = None,
+        delay: float = 0,
+    ) -> None:
         self.chunks = chunks
-        self.headers = {} if content_length is None else {"content-length": str(content_length)}
+        self.headers = (
+            {}
+            if content_length is None
+            else {"content-length": str(content_length)}
+        )
         self.delay = delay
 
     async def __aenter__(self):  # type: ignore[no-untyped-def]
@@ -52,22 +61,40 @@ class _Client:
         return None
 
 
-def test_bounded_download_rejects_oversized_content_length(tmp_path: Path) -> None:
+def test_bounded_download_rejects_oversized_content_length(
+    tmp_path: Path,
+) -> None:
     destination = tmp_path / "asset"
     response = _Response([b"small"], content_length=11)
 
     with pytest.raises(RuntimeError, match="10-byte limit"):
-        asyncio.run(download_bounded_asset(_Client(response), "https://example.invalid/asset", destination, max_bytes=10))
+        asyncio.run(
+            download_bounded_asset(
+                _Client(response),
+                "https://example.invalid/asset",
+                destination,
+                max_bytes=10,
+            )
+        )
 
     assert not destination.exists()
 
 
-def test_bounded_download_rejects_stream_that_exceeds_limit(tmp_path: Path) -> None:
+def test_bounded_download_rejects_stream_that_exceeds_limit(
+    tmp_path: Path,
+) -> None:
     destination = tmp_path / "asset"
     response = _Response([b"12345", b"678901"])
 
     with pytest.raises(RuntimeError, match="10-byte limit"):
-        asyncio.run(download_bounded_asset(_Client(response), "https://example.invalid/asset", destination, max_bytes=10))
+        asyncio.run(
+            download_bounded_asset(
+                _Client(response),
+                "https://example.invalid/asset",
+                destination,
+                max_bytes=10,
+            )
+        )
 
     assert not destination.exists()
 
@@ -77,29 +104,47 @@ def test_bounded_download_enforces_total_timeout(tmp_path: Path) -> None:
     response = _Response([b"slow"], delay=0.05)
 
     with pytest.raises(TimeoutError):
-        asyncio.run(download_bounded_asset(_Client(response), "https://example.invalid/asset", destination, timeout_seconds=0.01))
+        asyncio.run(
+            download_bounded_asset(
+                _Client(response),
+                "https://example.invalid/asset",
+                destination,
+                timeout_seconds=0.01,
+            )
+        )
 
     assert not destination.exists()
 
 
-def test_sync_bootstrap_uses_interruptible_total_timeout(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_sync_bootstrap_uses_interruptible_total_timeout(
+    tmp_path: Path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
     destination = tmp_path / "asset"
     response = _Response([b"slow"], delay=0.05)
-    monkeypatch.setattr(httpx, "AsyncClient", lambda **_kwargs: _Client(response))
+    monkeypatch.setattr(
+        httpx, "AsyncClient", lambda **_kwargs: _Client(response)
+    )
 
     with pytest.raises(TimeoutError):
-        download_bounded_asset_sync("https://example.invalid/asset", destination, timeout_seconds=0.01)
+        download_bounded_asset_sync(
+            "https://example.invalid/asset", destination, timeout_seconds=0.01
+        )
 
     assert not destination.exists()
 
 
-def test_safe_extract_zip_rejects_cumulative_expanded_size(tmp_path: Path) -> None:
+def test_safe_extract_zip_rejects_cumulative_expanded_size(
+    tmp_path: Path,
+) -> None:
     archive_path = tmp_path / "asset.zip"
     with zipfile.ZipFile(archive_path, "w") as archive:
         archive.writestr("one", b"123456")
         archive.writestr("two", b"123456")
 
-    with zipfile.ZipFile(archive_path) as archive, pytest.raises(RuntimeError, match="expanded-size limit"):
+    with (
+        zipfile.ZipFile(archive_path) as archive,
+        pytest.raises(RuntimeError, match="expanded-size limit"),
+    ):
         safe_extract_zip(archive, tmp_path / "output", max_bytes=10)
 
 
@@ -111,11 +156,16 @@ def test_safe_extract_tar_rejects_links(tmp_path: Path) -> None:
         member.linkname = "target"
         archive.addfile(member, io.BytesIO())
 
-    with tarfile.open(archive_path) as archive, pytest.raises(RuntimeError, match="Unsupported archive member"):
+    with (
+        tarfile.open(archive_path) as archive,
+        pytest.raises(RuntimeError, match="Unsupported archive member"),
+    ):
         safe_extract_tar(archive, tmp_path / "output")
 
 
-def test_incomplete_rollback_preserves_recovery_backup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_incomplete_rollback_preserves_recovery_backup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     staging = tmp_path / "staging"
     staging.mkdir()
     source = staging / "tool"
@@ -144,12 +194,16 @@ def test_incomplete_rollback_preserves_recovery_backup(tmp_path: Path, monkeypat
     assert (backup_dir / target.name).read_bytes() == b"working"
 
 
-def test_duplicate_targets_do_not_create_recovery_backup(tmp_path: Path) -> None:
+def test_duplicate_targets_do_not_create_recovery_backup(
+    tmp_path: Path,
+) -> None:
     source = tmp_path / "staged"
     target = tmp_path / "tool"
     backup_dir = tmp_path / ".tool-backup"
 
     with pytest.raises(ValueError, match="unique filenames"):
-        promote_files_with_rollback([(source, target)], backup_dir, remove_targets=[target])
+        promote_files_with_rollback(
+            [(source, target)], backup_dir, remove_targets=[target]
+        )
 
     assert not backup_dir.exists()

@@ -29,8 +29,12 @@ class Samaritano(UNIT3D):
     supported_categories = ("TV", "MOVIE", "BOOK", "GAME")
     tracker_urls = ("https://samaritano.cc",)
     allows_bloated_audio = True
-    _TV_ENDED_STATUSES: frozenset[str] = frozenset({"ended", "canceled", "cancelled", "finished", "completed"})
-    _TV_ONGOING_STATUSES: frozenset[str] = frozenset({"returning", "continuing", "in production", "upcoming", "ongoing"})
+    _TV_ENDED_STATUSES: frozenset[str] = frozenset(
+        {"ended", "canceled", "cancelled", "finished", "completed"}
+    )
+    _TV_ONGOING_STATUSES: frozenset[str] = frozenset(
+        {"returning", "continuing", "in production", "upcoming", "ongoing"}
+    )
     _VIDEO_EXTENSIONS: tuple[str, ...] = (
         ".mkv",
         ".mp4",
@@ -52,9 +56,19 @@ class Samaritano(UNIT3D):
 
     @staticmethod
     def _video_file_count(filelist: list[Any]) -> int:
-        return sum(1 for item in filelist if Path(str(item)).suffix.lower() in Samaritano._VIDEO_EXTENSIONS)
+        return sum(
+            1
+            for item in filelist
+            if Path(str(item)).suffix.lower() in Samaritano._VIDEO_EXTENSIONS
+        )
 
-    async def get_resolution_id(self, meta: Meta, resolution: str = "", reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_resolution_id(
+        self,
+        meta: Meta,
+        resolution: str = "",
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         resolution_id = {
             "4320p": "1",
             "2160p": "2",
@@ -79,7 +93,13 @@ class Samaritano(UNIT3D):
         cbr.tracker = self.tracker
         return await cbr.get_name(meta)
 
-    async def get_category_id(self, meta: Meta, category: str | None = None, reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_category_id(
+        self,
+        meta: Meta,
+        category: str | None = None,
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         cat_map = {
             "MOVIE": "1",
             "TV": "2",
@@ -99,7 +119,11 @@ class Samaritano(UNIT3D):
         if reverse:
             return {v: k for k, v in cat_map.items()}
 
-        resolved_category = category if category is not None and category != "" else meta.category
+        resolved_category = (
+            category
+            if category is not None and category != ""
+            else meta.category
+        )
         if meta.anime is True and resolved_category == "TV":
             resolved_category = "ANIME"
 
@@ -116,8 +140,16 @@ class Samaritano(UNIT3D):
         category_id = cat_map.get(resolved_category, "0")
         return {"category_id": category_id}
 
-    async def get_type_id(self, meta: Meta, type: str | None = None, reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
-        nin_term = (bytes([110, 105, 110, 116, 101, 110, 100, 111]).decode()).upper()
+    async def get_type_id(
+        self,
+        meta: Meta,
+        type: str | None = None,
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
+        nin_term = (
+            bytes([110, 105, 110, 116, 101, 110, 100, 111]).decode()
+        ).upper()
         type_id = {
             "DISC": "1",
             "REMUX": "2",
@@ -154,21 +186,53 @@ class Samaritano(UNIT3D):
             resolved_type = resolved_type.upper().strip().lstrip(".")
 
         if meta.software:
-            return {"type_id": type_id["PC"] if str(meta.platform or "").upper() in {"PC", "WINDOWS"} else type_id["OUTRO"]}
+            return {
+                "type_id": type_id["PC"]
+                if str(meta.platform or "").upper() in {"PC", "WINDOWS"}
+                else type_id["OUTRO"]
+            }
 
-        if resolved_type == "GAME" or (meta.category == "GAME" and resolved_type not in type_id):
+        if resolved_type == "GAME" or (
+            meta.category == "GAME" and resolved_type not in type_id
+        ):
             platform = meta.platform.lower()
             nin_term = bytes([110, 105, 110, 116, 101, 110, 100, 111]).decode()
 
-            if any(word in platform for word in ["playstation", "ps5", "ps4", "ps3", "ps2", "ps1", "psp", "vita"]):
+            if any(
+                word in platform
+                for word in [
+                    "playstation",
+                    "ps5",
+                    "ps4",
+                    "ps3",
+                    "ps2",
+                    "ps1",
+                    "psp",
+                    "vita",
+                ]
+            ):
                 val = "52"
             elif "xbox" in platform:
                 val = "53"
-            elif any(word in platform for word in [f"{nin_term}", "switch", "wii", "3ds", "nds", "ds"]):
+            elif any(
+                word in platform
+                for word in [
+                    f"{nin_term}",
+                    "switch",
+                    "wii",
+                    "3ds",
+                    "nds",
+                    "ds",
+                ]
+            ):
                 val = "54"
-            elif any(word in platform for word in ["android", "ios", "mobile"]):
+            elif any(
+                word in platform for word in ["android", "ios", "mobile"]
+            ):
                 val = "55"
-            elif any(word in platform for word in ["emulador", "rom", "emulator"]):
+            elif any(
+                word in platform for word in ["emulador", "rom", "emulator"]
+            ):
                 val = "51"
             else:
                 val = "50"  # PC
@@ -189,44 +253,73 @@ class Samaritano(UNIT3D):
     async def get_additional_checks(self, meta: Meta) -> bool:
         raw_filelist = [] if meta.filelist is None else meta.filelist
         if not isinstance(raw_filelist, (list, tuple, set)):
-            logger.info(f"{self.tracker}: [bold red]File list metadata is invalid.[/bold red]")
+            logger.info(
+                f"{self.tracker}: [bold red]File list metadata is invalid.[/bold red]"
+            )
             return False
 
         if meta.category == "BOOK":
             return True
 
         if meta.category == "MOVIE":
-            filelist = [item for item in raw_filelist if str(item).strip() != ""]
+            filelist = [
+                item for item in raw_filelist if str(item).strip() != ""
+            ]
             if self._video_file_count(filelist) > 1:
-                logger.info(f"{self.tracker}: [bold red]Movie uploads must contain only one video file.[/bold red]")
+                logger.info(
+                    f"{self.tracker}: [bold red]Movie uploads must contain only one video file.[/bold red]"
+                )
                 return False
-            return await self.common.check_portuguese_video_requirements(meta, self.tracker)
+            return await self.common.check_portuguese_video_requirements(
+                meta, self.tracker
+            )
 
         if meta.category == "TV":
-            filelist = [item for item in raw_filelist if str(item).strip() != ""]
+            filelist = [
+                item for item in raw_filelist if str(item).strip() != ""
+            ]
             seasons = self.common.extract_tv_seasons(filelist)
             episode_count = self.common.count_tv_episodes(filelist)
 
             if len(seasons) > 1:
-                logger.info(f"{self.tracker}: [bold red]TV uploads must contain only one season.[/bold red]")
+                logger.info(
+                    f"{self.tracker}: [bold red]TV uploads must contain only one season.[/bold red]"
+                )
                 return False
 
             if meta.tv_pack:
-                if self.common.is_tv_series_ended(meta, self._TV_ENDED_STATUSES, self._TV_ONGOING_STATUSES) is not True:
-                    logger.info(f"{self.tracker}: [bold red]TV season packs are allowed only for ended series.[/bold red]")
+                if (
+                    self.common.is_tv_series_ended(
+                        meta,
+                        self._TV_ENDED_STATUSES,
+                        self._TV_ONGOING_STATUSES,
+                    )
+                    is not True
+                ):
+                    logger.info(
+                        f"{self.tracker}: [bold red]TV season packs are allowed only for ended series.[/bold red]"
+                    )
                     return False
-                return await self.common.check_portuguese_video_requirements(meta, self.tracker)
+                return await self.common.check_portuguese_video_requirements(
+                    meta, self.tracker
+                )
 
             if not meta.tv_pack and episode_count > 1:
-                logger.info(f"{self.tracker}: [bold red]Non-pack TV uploads must contain only one episode.[/bold red]")
+                logger.info(
+                    f"{self.tracker}: [bold red]Non-pack TV uploads must contain only one episode.[/bold red]"
+                )
                 return False
 
-        return await self.common.check_portuguese_video_requirements(meta, self.tracker)
+        return await self.common.check_portuguese_video_requirements(
+            meta, self.tracker
+        )
 
     async def get_description(self, meta: Meta) -> dict[str, str]:
         signature = f"[right][url=https://github.com/wastaken7/Upload-Assistant][size=4]Compartilhado com {meta.ua_name} {meta.current_version} (fork)[/size][/url][/right]"
         return {
-            "description": await DescriptionBuilder(self.tracker, self.config).general_description_generator(
+            "description": await DescriptionBuilder(
+                self.tracker, self.config
+            ).general_description_generator(
                 meta,
                 mediainfo=False,
                 nfo=False,

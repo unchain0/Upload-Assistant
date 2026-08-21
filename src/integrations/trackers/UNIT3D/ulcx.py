@@ -98,7 +98,9 @@ class ULCX(UNIT3D):
             return False
         return self._container_policy_passes(meta)
 
-    def _release_and_media_policy_passes(self, meta: Meta, terms: set[str]) -> bool:
+    def _release_and_media_policy_passes(
+        self, meta: Meta, terms: set[str]
+    ) -> bool:
         if not self._release_policy_passes(meta, terms):
             return False
         return self._media_policy_passes(meta)
@@ -110,7 +112,10 @@ class ULCX(UNIT3D):
 
     @classmethod
     def _content_terms(cls, meta: Meta) -> set[str]:
-        values = [*cls._string_list(meta.keywords), *cls._string_list(meta.genres)]
+        values = [
+            *cls._string_list(meta.keywords),
+            *cls._string_list(meta.genres),
+        ]
         return {value.casefold() for value in values if value.strip()}
 
     @staticmethod
@@ -121,13 +126,19 @@ class ULCX(UNIT3D):
 
     def _content_policy_passes(self, meta: Meta, terms: set[str]) -> bool:
         if self._has_forbidden_content_term(terms):
-            logger.info(f"{self.tracker}: [bold red]Concerts, live performances, and music videos are forbidden.[/bold red]")
+            logger.info(
+                f"{self.tracker}: [bold red]Concerts, live performances, and music videos are forbidden.[/bold red]"
+            )
             return False
         if self._is_adult_content(meta):
-            logger.info(f"{self.tracker}: [bold red]Adult / pornographic content is forbidden.[/bold red]")
+            logger.info(
+                f"{self.tracker}: [bold red]Adult / pornographic content is forbidden.[/bold red]"
+            )
             return False
         if meta.pre_release:
-            logger.info(f"{self.tracker}: [bold red]Camera recordings and pre-release content are forbidden.[/bold red]")
+            logger.info(
+                f"{self.tracker}: [bold red]Camera recordings and pre-release content are forbidden.[/bold red]"
+            )
             return False
         return True
 
@@ -142,10 +153,14 @@ class ULCX(UNIT3D):
 
     def _disc_structure_policy_passes(self, meta: Meta) -> bool:
         if meta.is_disc == "BDMV" and meta.discs_missing_certificate:
-            logger.info(f"{self.tracker}: [bold red]Disc source(s) missing BD certificate, skipping upload.[/bold red]")
+            logger.info(
+                f"{self.tracker}: [bold red]Disc source(s) missing BD certificate, skipping upload.[/bold red]"
+            )
             return False
         if self._dvd_missing_video_ts(meta):
-            logger.info(f"{self.tracker}: [bold red]DVD full-disc must contain a VIDEO_TS folder.[/bold red]")
+            logger.info(
+                f"{self.tracker}: [bold red]DVD full-disc must contain a VIDEO_TS folder.[/bold red]"
+            )
             return False
         return True
 
@@ -153,7 +168,9 @@ class ULCX(UNIT3D):
     def _dvd_missing_video_ts(meta: Meta) -> bool:
         if meta.is_disc != "DVD" or not meta.filelist:
             return False
-        return not any("VIDEO_TS" in str(path).upper() for path in meta.filelist)
+        return not any(
+            "VIDEO_TS" in str(path).upper() for path in meta.filelist
+        )
 
     def _container_policy_passes(self, meta: Meta) -> bool:
         if meta.is_disc or not meta.container:
@@ -163,18 +180,24 @@ class ULCX(UNIT3D):
             return self._hdtv_container_policy_passes(container)
         if container == "mkv":
             return True
-        logger.info(f"{self.tracker}: [bold red]All non-disc files must be .mkv (found '.{container}').[/bold red]")
+        logger.info(
+            f"{self.tracker}: [bold red]All non-disc files must be .mkv (found '.{container}').[/bold red]"
+        )
         return False
 
     def _hdtv_container_policy_passes(self, container: str) -> bool:
         if container in {"mkv", "ts"}:
             return True
-        logger.info(f"{self.tracker}: [bold red]HDTV uploads must be .mkv or .ts.[/bold red]")
+        logger.info(
+            f"{self.tracker}: [bold red]HDTV uploads must be .mkv or .ts.[/bold red]"
+        )
         return False
 
     def _release_policy_passes(self, meta: Meta, terms: set[str]) -> bool:
         if self._banned_encode_group(meta):
-            logger.info(f"{self.tracker}: [bold red]Encodes from {meta.tag} are not allowed.[/bold red]")
+            logger.info(
+                f"{self.tracker}: [bold red]Encodes from {meta.tag} are not allowed.[/bold red]"
+            )
             return False
         if self._is_dvdrip(meta):
             self._log_attended(meta, "DVDRIPs are not allowed.")
@@ -200,7 +223,9 @@ class ULCX(UNIT3D):
         height = int(meta.video_height or 0)
         if height <= 0 or height >= 720:
             return True
-        logger.info(f"{self.tracker}: [bold red]Encodes must be at least 720p resolution. Standard definition encodes are forbidden.[/bold red]")
+        logger.info(
+            f"{self.tracker}: [bold red]Encodes must be at least 720p resolution. Standard definition encodes are forbidden.[/bold red]"
+        )
         return False
 
     def _encode_codec_policy_passes(self, meta: Meta, terms: set[str]) -> bool:
@@ -221,7 +246,9 @@ class ULCX(UNIT3D):
             return "AV1 codec is permitted ONLY for animated content. Live-action AV1 encodes are forbidden."
         return ""
 
-    def _invalid_hevc_codec(self, meta: Meta, codec: str, is_animation: bool) -> bool:
+    def _invalid_hevc_codec(
+        self, meta: Meta, codec: str, is_animation: bool
+    ) -> bool:
         if codec != "HEVC":
             return False
         return self._invalid_live_action_hevc(meta, is_animation)
@@ -251,11 +278,19 @@ class ULCX(UNIT3D):
 
     @classmethod
     def _audio_tracks(cls, meta: Meta) -> list[dict[str, Any]]:
-        return [track for track in cls._media_tracks(meta) if track.get("@type") == "Audio"]
+        return [
+            track
+            for track in cls._media_tracks(meta)
+            if track.get("@type") == "Audio"
+        ]
 
     @classmethod
     def _subtitle_tracks(cls, meta: Meta) -> list[dict[str, Any]]:
-        return [track for track in cls._media_tracks(meta) if track.get("@type") in {"Text", "Subtitle"}]
+        return [
+            track
+            for track in cls._media_tracks(meta)
+            if track.get("@type") in {"Text", "Subtitle"}
+        ]
 
     @classmethod
     def _media_tracks(cls, meta: Meta) -> list[dict[str, Any]]:
@@ -275,7 +310,9 @@ class ULCX(UNIT3D):
             return []
         return [track for track in value if isinstance(track, dict)]
 
-    def _audio_policy_reason(self, meta: Meta, tracks: list[dict[str, Any]]) -> str:
+    def _audio_policy_reason(
+        self, meta: Meta, tracks: list[dict[str, Any]]
+    ) -> str:
         checks = (
             self._non_disc_lpcm_reason,
             self._non_disc_flac_reason,
@@ -283,23 +320,49 @@ class ULCX(UNIT3D):
             self._encode_audio_reason,
             self._truehd_compatibility_reason,
         )
-        return next((reason for check in checks if (reason := check(meta, tracks))), "")
+        return next(
+            (reason for check in checks if (reason := check(meta, tracks))), ""
+        )
 
-    def _non_disc_lpcm_reason(self, meta: Meta, tracks: list[dict[str, Any]]) -> str:
+    def _non_disc_lpcm_reason(
+        self, meta: Meta, tracks: list[dict[str, Any]]
+    ) -> str:
         if meta.is_disc:
             return ""
-        return "LPCM audio tracks are not allowed on non-disc uploads." if any(self._format(track) in {"PCM", "LPCM"} for track in tracks) else ""
+        return (
+            "LPCM audio tracks are not allowed on non-disc uploads."
+            if any(self._format(track) in {"PCM", "LPCM"} for track in tracks)
+            else ""
+        )
 
-    def _non_disc_flac_reason(self, meta: Meta, tracks: list[dict[str, Any]]) -> str:
+    def _non_disc_flac_reason(
+        self, meta: Meta, tracks: list[dict[str, Any]]
+    ) -> str:
         if meta.is_disc:
             return ""
-        invalid = any(self._format(track) == "FLAC" and self._channels(track) > 2 for track in tracks)
-        return "FLAC audio is allowed ONLY for Mono or Stereo (1 or 2 channels) content." if invalid else ""
+        invalid = any(
+            self._format(track) == "FLAC" and self._channels(track) > 2
+            for track in tracks
+        )
+        return (
+            "FLAC audio is allowed ONLY for Mono or Stereo (1 or 2 channels) content."
+            if invalid
+            else ""
+        )
 
-    def _remux_audio_reason(self, meta: Meta, tracks: list[dict[str, Any]]) -> str:
+    def _remux_audio_reason(
+        self, meta: Meta, tracks: list[dict[str, Any]]
+    ) -> str:
         if meta.type != "REMUX":
             return ""
-        return next((reason for track in tracks if (reason := self._remux_track_reason(track))), "")
+        return next(
+            (
+                reason
+                for track in tracks
+                if (reason := self._remux_track_reason(track))
+            ),
+            "",
+        )
 
     def _remux_track_reason(self, track: dict[str, Any]) -> str:
         if not self._is_lossless(track):
@@ -330,13 +393,21 @@ class ULCX(UNIT3D):
             return ""
         return f"Remux multi-channel lossless track cannot be {fmt} (must be DTS-HD MA or TrueHD)."
 
-    def _encode_audio_reason(self, meta: Meta, tracks: list[dict[str, Any]]) -> str:
+    def _encode_audio_reason(
+        self, meta: Meta, tracks: list[dict[str, Any]]
+    ) -> str:
         if meta.type != "ENCODE":
             return ""
         if not self._is_1080p_or_lower(meta):
             return ""
-        invalid = any(self._invalid_encode_audio_track(track) for track in tracks)
-        return "Lossless multi-channel audio is not permitted on 1080p or lower encodes." if invalid else ""
+        invalid = any(
+            self._invalid_encode_audio_track(track) for track in tracks
+        )
+        return (
+            "Lossless multi-channel audio is not permitted on 1080p or lower encodes."
+            if invalid
+            else ""
+        )
 
     def _invalid_encode_audio_track(self, track: dict[str, Any]) -> bool:
         if not self._is_lossless(track):
@@ -350,14 +421,22 @@ class ULCX(UNIT3D):
         height = int(meta.video_height or 0)
         return 0 < height <= 1080
 
-    def _truehd_compatibility_reason(self, meta: Meta, tracks: list[dict[str, Any]]) -> str:
+    def _truehd_compatibility_reason(
+        self, meta: Meta, tracks: list[dict[str, Any]]
+    ) -> str:
         if meta.is_disc:
             return ""
         if not self._has_audio_format(tracks, {"TRUEHD"}):
             return ""
-        return "" if self._has_audio_format(tracks, {"AC-3", "AC3"}) else "TrueHD audio tracks must include an AC3 compatibility track."
+        return (
+            ""
+            if self._has_audio_format(tracks, {"AC-3", "AC3"})
+            else "TrueHD audio tracks must include an AC3 compatibility track."
+        )
 
-    def _has_audio_format(self, tracks: list[dict[str, Any]], formats: set[str]) -> bool:
+    def _has_audio_format(
+        self, tracks: list[dict[str, Any]], formats: set[str]
+    ) -> bool:
         return any(self._format(track) in formats for track in tracks)
 
     @staticmethod
@@ -366,7 +445,12 @@ class ULCX(UNIT3D):
 
     @staticmethod
     def _channels(track: dict[str, Any]) -> int:
-        value = track.get("Channels_Original") or track.get("Channels") or track.get("Channel(s)") or 0
+        value = (
+            track.get("Channels_Original")
+            or track.get("Channels")
+            or track.get("Channel(s)")
+            or 0
+        )
         match = re.search(r"\d+", str(value))
         return int(match.group(0)) if match else 0
 
@@ -378,19 +462,25 @@ class ULCX(UNIT3D):
             return True
         return fmt.startswith("DTS") and "MA" in profile
 
-    def _subtitle_policy_passes(self, meta: Meta, tracks: list[dict[str, Any]]) -> bool:
+    def _subtitle_policy_passes(
+        self, meta: Meta, tracks: list[dict[str, Any]]
+    ) -> bool:
         if not self._default_subtitles_forbidden(meta):
             return True
         if not any(self._is_default_subtitle(track) for track in tracks):
             return True
-        logger.info(f"{self.tracker}: [bold red]Subtitles should not be marked default on English content.[/bold red]")
+        logger.info(
+            f"{self.tracker}: [bold red]Subtitles should not be marked default on English content.[/bold red]"
+        )
         return False
 
     @staticmethod
     def _default_subtitles_forbidden(meta: Meta) -> bool:
         if not meta.personalrelease or meta.is_disc:
             return False
-        language = str(meta.original_language or meta.language or "").casefold()
+        language = str(
+            meta.original_language or meta.language or ""
+        ).casefold()
         return language in {"en", "eng", "english"}
 
     @staticmethod
@@ -411,17 +501,23 @@ class ULCX(UNIT3D):
     def _mediainfo_settings_policy_passes(self, meta: Meta) -> bool:
         if meta.valid_mi_settings:
             return True
-        logger.info(f"{self.tracker}: [bold red]No encoding settings in mediainfo, skipping upload.[/bold red]")
+        logger.info(
+            f"{self.tracker}: [bold red]No encoding settings in mediainfo, skipping upload.[/bold red]"
+        )
         return False
 
     def _personal_release_policy_passes(self, meta: Meta) -> bool:
         if not meta.personalrelease:
             return True
         if meta.has_multiple_default_audio_tracks:
-            logger.info(f"{self.tracker}: [bold red]Multiple default audio tracks detected, skipping upload.[/bold red]")
+            logger.info(
+                f"{self.tracker}: [bold red]Multiple default audio tracks detected, skipping upload.[/bold red]"
+            )
             return False
         if meta.has_multiple_default_subtitle_tracks:
-            logger.info(f"{self.tracker}: [bold red]Multiple default subtitle tracks detected, skipping upload.[/bold red]")
+            logger.info(
+                f"{self.tracker}: [bold red]Multiple default subtitle tracks detected, skipping upload.[/bold red]"
+            )
             return False
         return True
 
@@ -429,11 +525,17 @@ class ULCX(UNIT3D):
         if meta.type != "REMUX":
             return
         if self._is_hybrid_release(meta):
-            logger.info(f"{self.tracker}: [yellow]WEB DV/HDR10+ Hybrid Remuxes require a grade check as per rule 3.4.1.[/yellow]")
+            logger.info(
+                f"{self.tracker}: [yellow]WEB DV/HDR10+ Hybrid Remuxes require a grade check as per rule 3.4.1.[/yellow]"
+            )
 
     @staticmethod
     def _is_hybrid_release(meta: Meta) -> bool:
-        return "hybrid" in str(meta.edition or "").casefold() or "hybrid" in str(meta.name or "").casefold() or bool(meta.webdv)
+        return (
+            "hybrid" in str(meta.edition or "").casefold()
+            or "hybrid" in str(meta.name or "").casefold()
+            or bool(meta.webdv)
+        )
 
     def _log_attended(self, meta: Meta, message: str) -> None:
         if not meta.unattended:
@@ -445,7 +547,9 @@ class ULCX(UNIT3D):
         }
 
     async def get_description(self, meta: Meta) -> dict[str, str]:
-        desc = await DescriptionBuilder(self.tracker, self.config).general_description_generator(
+        desc = await DescriptionBuilder(
+            self.tracker, self.config
+        ).general_description_generator(
             meta,
             mediainfo=False,
             nfo=False,
@@ -461,7 +565,11 @@ class ULCX(UNIT3D):
                 return f"[center][spoiler=Screenshots]{center_block}[/spoiler][/center]"
 
             desc = re.sub(pattern, wrap_in_spoiler, desc, flags=re.DOTALL)
-            async with aiofiles.open(f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{self.tracker}]DESCRIPTION.txt", "w", encoding="utf-8") as f:
+            async with aiofiles.open(
+                f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{self.tracker}]DESCRIPTION.txt",
+                "w",
+                encoding="utf-8",
+            ) as f:
                 await f.write(desc)
 
         return {"description": desc}
@@ -478,20 +586,26 @@ class ULCX(UNIT3D):
         return meta.imdb_info if isinstance(meta.imdb_info, dict) else {}
 
     @classmethod
-    def _apply_imdb_identity(cls, name: str, meta: Meta, imdb: dict[str, Any]) -> str:
+    def _apply_imdb_identity(
+        cls, name: str, meta: Meta, imdb: dict[str, Any]
+    ) -> str:
         imdb_name = str(imdb.get("title", "")).strip()
         if not imdb_name:
             return name
         name = cls._strip_aka(name, meta.aka)
         name = name.replace(str(meta.title), imdb_name, 1)
-        return cls._insert_imdb_aka(name, imdb_name, str(imdb.get("aka", "")).strip(), meta)
+        return cls._insert_imdb_aka(
+            name, imdb_name, str(imdb.get("aka", "")).strip(), meta
+        )
 
     @staticmethod
     def _strip_aka(name: str, aka: str) -> str:
         return name.replace(f"{aka} ", "", 1) if aka else name
 
     @staticmethod
-    def _insert_imdb_aka(name: str, imdb_name: str, imdb_aka: str, meta: Meta) -> str:
+    def _insert_imdb_aka(
+        name: str, imdb_name: str, imdb_aka: str, meta: Meta
+    ) -> str:
         if not imdb_aka or imdb_aka == imdb_name or meta.no_aka or meta.anime:
             return name
         return name.replace(imdb_name, f"{imdb_name} AKA {imdb_aka}", 1)
@@ -505,7 +619,9 @@ class ULCX(UNIT3D):
         return name.replace("Hybrid ", "", 1)
 
     @classmethod
-    def _apply_imdb_year(cls, name: str, meta: Meta, imdb: dict[str, Any]) -> str:
+    def _apply_imdb_year(
+        cls, name: str, meta: Meta, imdb: dict[str, Any]
+    ) -> str:
         if meta.category == "TV":
             return name
         years = cls._replacement_years(meta, imdb)
@@ -515,7 +631,9 @@ class ULCX(UNIT3D):
         return name.replace(local_year, imdb_year, 1)
 
     @staticmethod
-    def _replacement_years(meta: Meta, imdb: dict[str, Any]) -> tuple[str, str] | None:
+    def _replacement_years(
+        meta: Meta, imdb: dict[str, Any]
+    ) -> tuple[str, str] | None:
         imdb_year = str(imdb.get("year", "")).strip()
         local_year = "" if meta.year is None else str(meta.year)
         if not imdb_year or not local_year:

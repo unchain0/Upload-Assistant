@@ -34,7 +34,9 @@ class BitHDTV:
 
     async def upload(self, meta: Meta) -> bool:
         common = Common(config=self.config)
-        await common.create_torrent_for_upload(meta, self.tracker, self.source_flag)
+        await common.create_torrent_for_upload(
+            meta, self.tracker, self.source_flag
+        )
         await self.edit_desc(meta)
         cat_id = await self.get_cat_id(meta)
         sub_cat_id = ""
@@ -52,23 +54,36 @@ class BitHDTV:
 
         if meta.bdinfo:
             mi_dump = None
-            async with aiofiles.open(f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/BD_SUMMARY_00.txt", encoding="utf-8") as bd_file:
+            async with aiofiles.open(
+                f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/BD_SUMMARY_00.txt",
+                encoding="utf-8",
+            ) as bd_file:
                 bd_dump = await bd_file.read()
         else:
-            async with aiofiles.open(f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/MEDIAINFO_CLEANPATH.txt", encoding="utf-8") as mi_file:
+            async with aiofiles.open(
+                f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/MEDIAINFO_CLEANPATH.txt",
+                encoding="utf-8",
+            ) as mi_file:
                 mi_dump = await mi_file.read()
             bd_dump = None
-        async with aiofiles.open(f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{self.tracker}]DESCRIPTION.txt", encoding="utf-8") as desc_file:
+        async with aiofiles.open(
+            f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{self.tracker}]DESCRIPTION.txt",
+            encoding="utf-8",
+        ) as desc_file:
             desc = await desc_file.read()
 
         media_info = ""
         if meta.is_disc != "BDMV":
             filelist = cast(list[str], meta.filelist or [])
             video = filelist[0] if filelist else (meta.path or "")
-            media_info = DescriptionBuilder.format_short_mediainfo_json(meta.mediainfo, video)
+            media_info = DescriptionBuilder.format_short_mediainfo_json(
+                meta.mediainfo, video
+            )
 
         data: dict[str, Any] = {
-            "api_key": str(self.config["TRACKERS"][self.tracker]["api_key"]).strip(),
+            "api_key": str(
+                self.config["TRACKERS"][self.tracker]["api_key"]
+            ).strip(),
             "name": await self.get_name(meta),
             "mediainfo": mi_dump if bd_dump is None else bd_dump,
             "cat": cat_id,
@@ -77,43 +92,82 @@ class BitHDTV:
             # 'anon': anon,
             # admins asked to remove short description.
             "sdescr": " ",
-            "descr": media_info if bd_dump is None else "Disc so Check Mediainfo dump ",
+            "descr": media_info
+            if bd_dump is None
+            else "Disc so Check Mediainfo dump ",
             "screen": desc,
-            "url": f"https://www.tvmaze.com/shows/{meta.tvmaze_id}" if meta.category == "TV" else str(meta.imdb_info.get("imdb_url", "")),
+            "url": f"https://www.tvmaze.com/shows/{meta.tvmaze_id}"
+            if meta.category == "TV"
+            else str(meta.imdb_info.get("imdb_url", "")),
             "format": "json",
         }
 
         torrent_path = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{self.tracker}].torrent"
         async with aiofiles.open(torrent_path, "rb") as open_torrent:
             torrent_bytes = await open_torrent.read()
-        files = {"file": (Path(torrent_path).name, torrent_bytes, "application/x-bittorrent")}
+        files = {
+            "file": (
+                Path(torrent_path).name,
+                torrent_bytes,
+                "application/x-bittorrent",
+            )
+        }
 
         if meta.debug is False:
-            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-                response = await client.post(url=self.upload_url, data=data, files=files)
+            async with httpx.AsyncClient(
+                timeout=30.0, follow_redirects=True
+            ) as client:
+                response = await client.post(
+                    url=self.upload_url, data=data, files=files
+                )
             parsed: Any | None = None
             if response:
                 try:
                     parsed = response.json()
-                    meta.tracker_status[self.tracker]["status_message"] = parsed
+                    meta.tracker_status[self.tracker]["status_message"] = (
+                        parsed
+                    )
                 except Exception:
-                    logger.info(f"{self.tracker}: [cyan]It may have uploaded, go check")
+                    logger.info(
+                        f"{self.tracker}: [cyan]It may have uploaded, go check"
+                    )
                     logger.info(Redaction.redact_private_info(data))
                     traceback.print_exc()
 
-            parsed_data: dict[str, Any] | None = cast(dict[str, Any] | None, parsed) if isinstance(parsed, dict) else None
-            data_block: dict[str, Any] | None = parsed_data.get("data") if parsed_data else None
+            parsed_data: dict[str, Any] | None = (
+                cast(dict[str, Any] | None, parsed)
+                if isinstance(parsed, dict)
+                else None
+            )
+            data_block: dict[str, Any] | None = (
+                parsed_data.get("data") if parsed_data else None
+            )
             if isinstance(data_block, dict) and "view" in data_block:
-                my_announce_url = self.config["TRACKERS"][self.tracker].get("my_announce_url")
+                my_announce_url = self.config["TRACKERS"][self.tracker].get(
+                    "my_announce_url"
+                )
                 if my_announce_url:
-                    await common.create_torrent_ready_to_seed(meta, self.tracker, self.source_flag, my_announce_url, str(data_block["view"]))
+                    await common.create_torrent_ready_to_seed(
+                        meta,
+                        self.tracker,
+                        self.source_flag,
+                        my_announce_url,
+                        str(data_block["view"]),
+                    )
                     return True
             return False
 
         logger.info(f"{self.tracker}: Request Data:")
         logger.info(Redaction.redact_private_info(data))
-        meta.tracker_status[self.tracker]["status_message"] = "Debug mode enabled, not uploading."
-        await common.create_torrent_for_upload(meta, f"{self.tracker}" + "_DEBUG", f"{self.tracker}" + "_DEBUG", announce_url="https://fake.tracker")
+        meta.tracker_status[self.tracker]["status_message"] = (
+            "Debug mode enabled, not uploading."
+        )
+        await common.create_torrent_for_upload(
+            meta,
+            f"{self.tracker}" + "_DEBUG",
+            f"{self.tracker}" + "_DEBUG",
+            announce_url="https://fake.tracker",
+        )
         return True
 
     async def get_cat_id(self, meta: Meta) -> str:
@@ -177,7 +231,9 @@ class BitHDTV:
         }.get(type, "0")
 
     async def get_res_id(self, resolution: str) -> str:
-        return {"2160p": "4", "1080p": "3", "1080i": "2", "720p": "1"}.get(resolution, "10")
+        return {"2160p": "4", "1080p": "3", "1080i": "2", "720p": "1"}.get(
+            resolution, "10"
+        )
 
     async def edit_desc(self, meta: Meta) -> None:
         base = base_description(meta)
@@ -188,7 +244,11 @@ class BitHDTV:
                 web_url = images[each]["web_url"]
                 img_url = images[each]["img_url"]
                 parts.append(f"[url={web_url}][img]{img_url}[/img][/url] ")
-        async with aiofiles.open(f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{self.tracker}]DESCRIPTION.txt", "w", encoding="utf-8") as desc:
+        async with aiofiles.open(
+            f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{self.tracker}]DESCRIPTION.txt",
+            "w",
+            encoding="utf-8",
+        ) as desc:
             await desc.write("".join(parts))
         return
 
@@ -197,4 +257,9 @@ class BitHDTV:
         return []
 
     async def get_name(self, meta: Meta) -> str:
-        return meta.name.replace(" ", ".").replace(":.", ".").replace(":", ".").replace("DD+", "DDP")
+        return (
+            meta.name.replace(" ", ".")
+            .replace(":.", ".")
+            .replace(":", ".")
+            .replace("DD+", "DDP")
+        )

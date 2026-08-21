@@ -32,7 +32,9 @@ def _language_from_name(normalized: str) -> tuple[str, str]:
         return normalized.title(), ""
 
 
-def _language_result(language: langcodes.Language, normalized: str) -> tuple[str, str]:
+def _language_result(
+    language: langcodes.Language, normalized: str
+) -> tuple[str, str]:
     display_name = language.display_name
     to_alpha3 = language.to_alpha3
     return display_name("en") or normalized.title(), to_alpha3() or ""
@@ -45,7 +47,15 @@ def is_valid_book_language(full_name: str, iso_code: str) -> bool:
         return False
     normalized_name = full_name.strip().lower()
     normalized_iso = iso_code.strip().lower()
-    if normalized_name in {"", "unknown", "unknown language", "undetermined", "und", "none", "null"}:
+    if normalized_name in {
+        "",
+        "unknown",
+        "unknown language",
+        "undetermined",
+        "und",
+        "none",
+        "null",
+    }:
         return False
     return normalized_iso not in {"", "und", "zxx"}
 
@@ -66,6 +76,8 @@ def _underscore_delimited_author(author: str) -> bool:
 
 
 def _first_author_part(author: str) -> str:
-    split_pattern = r"\s*(?:,|;|&|/|\+|\band\b|\be\b|\by\b|\bwith\b|\s+-\s+)\s*"
+    split_pattern = (
+        r"\s*(?:,|;|&|/|\+|\band\b|\be\b|\by\b|\bwith\b|\s+-\s+)\s*"
+    )
     parts = re.split(split_pattern, author, flags=re.IGNORECASE)
     return parts[0].strip() if parts else ""

@@ -30,7 +30,13 @@ class TheLeachZone(UNIT3D):
         self.config: Config = config
         self.common = Common(config)
 
-    async def get_category_id(self, meta: Meta, category: str | None = None, reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_category_id(
+        self,
+        meta: Meta,
+        category: str | None = None,
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         _ = (category, reverse, mapping_only)
         category_value = str(meta.category)
         category_id = {
@@ -39,7 +45,13 @@ class TheLeachZone(UNIT3D):
         }.get(category_value, "0")
         return {"category_id": category_id}
 
-    async def get_type_id(self, meta: Meta, type: str | None = None, reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_type_id(
+        self,
+        meta: Meta,
+        type: str | None = None,
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         _ = (type, reverse, mapping_only)
         type_value = str(meta.type)
         type_id = {

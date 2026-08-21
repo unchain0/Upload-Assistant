@@ -17,12 +17,18 @@ from src.integrations.observability.runtime_support import logger
 
 
 class VideoManager:
-    async def get_uhd(self, type: str, guess: Any, resolution: str, path: str) -> str:
+    async def get_uhd(
+        self, type: str, guess: Any, resolution: str, path: str
+    ) -> str:
         guess_dict = cast(dict[str, Any], guess)
         source = str(guess_dict.get("Source", ""))
         other = str(guess_dict.get("Other", ""))
         uhd = ""
-        if (source == "Blu-ray" and other == "Ultra HD") or source == "Ultra HD Blu-ray" or "UHD" in path:
+        if (
+            (source == "Blu-ray" and other == "Ultra HD")
+            or source == "Ultra HD Blu-ray"
+            or "UHD" in path
+        ):
             uhd = "UHD"
         elif type in ("DISC", "REMUX", "ENCODE", "WEBRIP"):
             uhd = ""
@@ -48,41 +54,85 @@ class VideoManager:
         else:
             mi_dict = cast(dict[str, Any], mi)
             tracks = mi_dict.get("media", {}).get("track", [])
-            video_track = next((track for track in tracks if isinstance(track, dict) and str(track.get("@type", "")).casefold() == "video"), None)
+            video_track = next(
+                (
+                    track
+                    for track in tracks
+                    if isinstance(track, dict)
+                    and str(track.get("@type", "")).casefold() == "video"
+                ),
+                None,
+            )
             if video_track is None:
                 return ""
             with contextlib.suppress(Exception):
                 hdr_mi = video_track["colour_primaries"]
                 if hdr_mi in ("BT.2020", "REC.2020"):
                     hdr = ""
-                    hdr_fields = [video_track.get("HDR_Format_Compatibility", ""), video_track.get("HDR_Format_String", ""), video_track.get("HDR_Format", "")]
-                    hdr_format_string = next((v for v in hdr_fields if isinstance(v, str) and v.strip()), "")
+                    hdr_fields = [
+                        video_track.get("HDR_Format_Compatibility", ""),
+                        video_track.get("HDR_Format_String", ""),
+                        video_track.get("HDR_Format", ""),
+                    ]
+                    hdr_format_string = next(
+                        (
+                            v
+                            for v in hdr_fields
+                            if isinstance(v, str) and v.strip()
+                        ),
+                        "",
+                    )
                     if "HDR10+" in hdr_format_string:
                         hdr = "HDR10+"
-                    elif "HDR10" in hdr_format_string or "SMPTE ST 2094 App 4" in hdr_format_string:
+                    elif (
+                        "HDR10" in hdr_format_string
+                        or "SMPTE ST 2094 App 4" in hdr_format_string
+                    ):
                         hdr = "HDR"
                     if hdr_format_string and "HLG" in hdr_format_string:
                         hdr = f"{hdr} HLG"
-                    if hdr_format_string == "" and "PQ" in (video_track.get("transfer_characteristics"), video_track.get("transfer_characteristics_Original", None)):
+                    if hdr_format_string == "" and "PQ" in (
+                        video_track.get("transfer_characteristics"),
+                        video_track.get(
+                            "transfer_characteristics_Original", None
+                        ),
+                    ):
                         hdr = "PQ10"
-                    transfer_characteristics = video_track.get("transfer_characteristics_Original") or ""
+                    transfer_characteristics = (
+                        video_track.get("transfer_characteristics_Original")
+                        or ""
+                    )
                     if "HLG" in transfer_characteristics:
                         hdr = "HLG"
-                    if hdr != "HLG" and "BT.2020 (10-bit)" in transfer_characteristics:
+                    if (
+                        hdr != "HLG"
+                        and "BT.2020 (10-bit)" in transfer_characteristics
+                    ):
                         hdr = "WCG"
 
             with contextlib.suppress(Exception):
-                if "Dolby Vision" in video_track.get("HDR_Format", "") or "Dolby Vision" in video_track.get("HDR_Format_String", ""):
+                if "Dolby Vision" in video_track.get(
+                    "HDR_Format", ""
+                ) or "Dolby Vision" in video_track.get(
+                    "HDR_Format_String", ""
+                ):
                     dv = "DV"
 
         return f"{dv} {hdr}".strip()
 
     async def get_video_codec(self, bdinfo: Any) -> str:
-        codecs = {"MPEG-2 Video": "MPEG-2", "MPEG-4 AVC Video": "AVC", "MPEG-H HEVC Video": "HEVC", "VC-1 Video": "VC-1"}
+        codecs = {
+            "MPEG-2 Video": "MPEG-2",
+            "MPEG-4 AVC Video": "AVC",
+            "MPEG-H HEVC Video": "HEVC",
+            "VC-1 Video": "VC-1",
+        }
         bdinfo_dict = cast(dict[str, Any], bdinfo)
         return codecs.get(bdinfo_dict["video"][0]["codec"], "")
 
-    async def get_video_encode(self, mi: Any, type: str, bdinfo: Any) -> tuple[str, str, bool, str]:
+    async def get_video_encode(
+        self, mi: Any, type: str, bdinfo: Any
+    ) -> tuple[str, str, bool, str]:
         video_encode = ""
         codec = ""
         bit_depth = "0"
@@ -90,11 +140,17 @@ class VideoManager:
         try:
             mi_dict = cast(dict[str, Any], mi)
             format = mi_dict["media"]["track"][1]["Format"]
-            format_profile = mi_dict["media"]["track"][1].get("Format_Profile", format)
-            if mi_dict["media"]["track"][1].get("Encoded_Library_Settings", None):
+            format_profile = mi_dict["media"]["track"][1].get(
+                "Format_Profile", format
+            )
+            if mi_dict["media"]["track"][1].get(
+                "Encoded_Library_Settings", None
+            ):
                 has_encode_settings = True
             bit_depth = mi_dict["media"]["track"][1].get("BitDepth", "0")
-            encoded_library_name = mi_dict["media"]["track"][1].get("Encoded_Library_Name", None)
+            encoded_library_name = mi_dict["media"]["track"][1].get(
+                "Encoded_Library_Name", None
+            )
         except Exception:
             bdinfo_dict = cast(dict[str, Any], bdinfo)
             format = bdinfo_dict["video"][0]["codec"]
@@ -102,7 +158,11 @@ class VideoManager:
             encoded_library_name = None
         if format in ("AV1", "VP9", "VC-1"):
             codec = format
-        elif type in ("ENCODE", "WEBRIP", "DVDRIP"):  # ENCODE or WEBRIP or DVDRIP
+        elif type in (
+            "ENCODE",
+            "WEBRIP",
+            "DVDRIP",
+        ):  # ENCODE or WEBRIP or DVDRIP
             if format == "AVC":
                 codec = "x264"
             elif format == "HEVC":
@@ -125,18 +185,26 @@ class VideoManager:
         video_codec = format
         if video_codec == "MPEG Video":
             mi_dict = cast(dict[str, Any], mi)
-            video_codec = f"MPEG-{mi_dict['media']['track'][1].get('Format_Version')}"
+            video_codec = (
+                f"MPEG-{mi_dict['media']['track'][1].get('Format_Version')}"
+            )
         return video_encode, video_codec, has_encode_settings, bit_depth
 
-    async def get_video(self, videoloc: str, mode: str, sorted_filelist: bool = False) -> tuple[str, list[str]]:
+    async def get_video(
+        self, videoloc: str, mode: str, sorted_filelist: bool = False
+    ) -> tuple[str, list[str]]:
         filelist: list[str] = []
         videoloc = str(Path(videoloc).resolve())
-        logger.debug(f"[blue]Video location: [yellow]{videoloc}[/yellow][/blue]")
+        logger.debug(
+            f"[blue]Video location: [yellow]{videoloc}[/yellow][/blue]"
+        )
         video = ""
         if Path(videoloc).is_dir():
             logger.debug("[blue]Scanning directory for video files...[/blue]")
             try:
-                entries = [p.name for p in Path(videoloc).iterdir() if p.is_file()]
+                entries = [
+                    p.name for p in Path(videoloc).iterdir() if p.is_file()
+                ]
             except Exception:
                 entries = []
 
@@ -155,28 +223,53 @@ class VideoManager:
 
             filelist = sorted(filelist)
             if filelist:
-                logger.debug(f"[blue]Found {len(filelist)} video files in directory.[/blue]")
+                logger.debug(
+                    f"[blue]Found {len(filelist)} video files in directory.[/blue]"
+                )
             for file in filelist:
                 if any(tag in file for tag in ["{tmdb-", "{imdb-", "{tvdb-"]):
-                    logger.info(f"[bold red]This looks like some *arr renamed file which is not allowed: [yellow]{file}")
+                    logger.info(
+                        f"[bold red]This looks like some *arr renamed file which is not allowed: [yellow]{file}"
+                    )
                     try:
-                        if cli_ui.ask_yes_no("Do you want to upload with this file?", default=False):
+                        if cli_ui.ask_yes_no(
+                            "Do you want to upload with this file?",
+                            default=False,
+                        ):
                             pass
                         else:
                             logger.info("[red]Exiting on user request[/red]")
                             await cleanup_manager.cleanup()
                             cleanup_manager.reset_terminal()
-                            raise ItemProcessingError("ARR renamed file rejected by user input.", videoloc)
+                            raise ItemProcessingError(
+                                "ARR renamed file rejected by user input.",
+                                videoloc,
+                            )
                     except EOFError:
-                        logger.info("\n[red]Exiting on user request (Ctrl+C)[/red]")
+                        logger.info(
+                            "\n[red]Exiting on user request (Ctrl+C)[/red]"
+                        )
                         await cleanup_manager.cleanup()
                         cleanup_manager.reset_terminal()
-                        raise ItemProcessingError("User cancelled filename check prompt.", videoloc) from None
+                        raise ItemProcessingError(
+                            "User cancelled filename check prompt.", videoloc
+                        ) from None
             try:
-                video = sorted(filelist, key=os.path.getsize, reverse=True)[0] if sorted_filelist else sorted(filelist)[0]
+                video = (
+                    sorted(filelist, key=os.path.getsize, reverse=True)[0]
+                    if sorted_filelist
+                    else sorted(filelist)[0]
+                )
             except IndexError:
-                archive_only = any(re.search(r"\.(?:rar|r\d{2,3})$", entry, re.I) for entry in entries)
-                reason = "Video exists only inside an archive; archive-only video uploads are unsupported" if archive_only else "No Video files found"
+                archive_only = any(
+                    re.search(r"\.(?:rar|r\d{2,3})$", entry, re.I)
+                    for entry in entries
+                )
+                reason = (
+                    "Video exists only inside an archive; archive-only video uploads are unsupported"
+                    if archive_only
+                    else "No Video files found"
+                )
                 logger.info(f"[bold red]{reason}")
                 if mode == "cli":
                     raise ItemProcessingError(reason, videoloc) from None
@@ -185,30 +278,51 @@ class VideoManager:
             video = videoloc
             filelist.append(videoloc)
             if any(tag in videoloc for tag in ["{tmdb-", "{imdb-", "{tvdb-"]):
-                logger.info(f"[bold red]This looks like some *arr renamed file which is not allowed: [yellow]{videoloc}")
+                logger.info(
+                    f"[bold red]This looks like some *arr renamed file which is not allowed: [yellow]{videoloc}"
+                )
                 try:
-                    if cli_ui.ask_yes_no("Do you want to upload with this file?", default=False):
+                    if cli_ui.ask_yes_no(
+                        "Do you want to upload with this file?", default=False
+                    ):
                         pass
                     else:
                         logger.info("[red]Exiting on user request[/red]")
                         await cleanup_manager.cleanup()
                         cleanup_manager.reset_terminal()
-                        raise ItemProcessingError("ARR renamed file rejected by user input.", videoloc)
+                        raise ItemProcessingError(
+                            "ARR renamed file rejected by user input.",
+                            videoloc,
+                        )
                 except EOFError:
-                    logger.info("\n[red]Exiting on user request (Ctrl+C)[/red]")
+                    logger.info(
+                        "\n[red]Exiting on user request (Ctrl+C)[/red]"
+                    )
                     await cleanup_manager.cleanup()
                     cleanup_manager.reset_terminal()
-                    raise ItemProcessingError("User cancelled filename check prompt.", videoloc) from None
-        filelist = sorted(filelist, key=os.path.getsize, reverse=True) if sorted_filelist else sorted(filelist)
+                    raise ItemProcessingError(
+                        "User cancelled filename check prompt.", videoloc
+                    ) from None
+        filelist = (
+            sorted(filelist, key=os.path.getsize, reverse=True)
+            if sorted_filelist
+            else sorted(filelist)
+        )
         return video, filelist
 
-    async def get_resolution(self, guess: Any, folder_id: str, base_dir: str, meta: Meta) -> tuple[str, bool]:
+    async def get_resolution(
+        self, guess: Any, folder_id: str, base_dir: str, meta: Meta
+    ) -> tuple[str, bool]:
         hfr = False
         mi: dict[str, Any] = {}
         dvd_mi_text = ""
         if meta.is_disc == "DVD":
             meta_discs = meta.discs
-            if meta_discs and isinstance(meta_discs, list) and isinstance(meta_discs[0], dict):
+            if (
+                meta_discs
+                and isinstance(meta_discs, list)
+                and isinstance(meta_discs[0], dict)
+            ):
                 disc = cast(dict[str, Any], meta_discs[0])
                 disc_mi = disc.get("ifo_mi_json", {})
                 if isinstance(disc_mi, dict):
@@ -220,13 +334,28 @@ class VideoManager:
                             mi = loaded
                     except Exception:
                         mi = {}
-                dvd_mi_text = str(disc.get("vob_mi", "") or disc.get("ifo_mi", ""))
+                dvd_mi_text = str(
+                    disc.get("vob_mi", "") or disc.get("ifo_mi", "")
+                )
         else:
-            async with aiofiles.open(f"{base_dir}{'/' + 'tmp' + '/'}{folder_id}/MediaInfo.json", encoding="utf-8") as f:
+            async with aiofiles.open(
+                f"{base_dir}{'/' + 'tmp' + '/'}{folder_id}/MediaInfo.json",
+                encoding="utf-8",
+            ) as f:
                 mi = cast(dict[str, Any], json.loads(await f.read()))
 
-        tracks = mi.get("media", {}).get("track", []) if isinstance(mi, dict) else []
-        video_track = tracks[1] if isinstance(tracks, list) and len(tracks) > 1 and isinstance(tracks[1], dict) else {}
+        tracks = (
+            mi.get("media", {}).get("track", [])
+            if isinstance(mi, dict)
+            else []
+        )
+        video_track = (
+            tracks[1]
+            if isinstance(tracks, list)
+            and len(tracks) > 1
+            and isinstance(tracks[1], dict)
+            else {}
+        )
 
         try:
             width = int(float(video_track.get("Width", 0)))
@@ -236,8 +365,12 @@ class VideoManager:
             height = 0
 
         if (width == 0 or height == 0) and dvd_mi_text:
-            width_match = re.search(r"Width\s*:\s*(\d+)", dvd_mi_text, re.IGNORECASE)
-            height_match = re.search(r"Height\s*:\s*(\d+)", dvd_mi_text, re.IGNORECASE)
+            width_match = re.search(
+                r"Width\s*:\s*(\d+)", dvd_mi_text, re.IGNORECASE
+            )
+            height_match = re.search(
+                r"Height\s*:\s*(\d+)", dvd_mi_text, re.IGNORECASE
+            )
             if width_match and height_match:
                 width = int(width_match.group(1))
                 height = int(height_match.group(1))
@@ -248,7 +381,9 @@ class VideoManager:
         if not framerate or framerate == "0":
             framerate = video_track.get("FrameRate_Num")
         if (not framerate or framerate == "0") and dvd_mi_text:
-            frame_match = re.search(r"Frame rate\s*:\s*([\d.]+)", dvd_mi_text, re.IGNORECASE)
+            frame_match = re.search(
+                r"Frame rate\s*:\s*([\d.]+)", dvd_mi_text, re.IGNORECASE
+            )
             if frame_match:
                 framerate = frame_match.group(1)
         if framerate:
@@ -262,7 +397,9 @@ class VideoManager:
 
         scan = str(video_track.get("ScanType", ""))
         if not scan and dvd_mi_text:
-            scan_match = re.search(r"Scan type\s*:\s*([^\r\n]+)", dvd_mi_text, re.IGNORECASE)
+            scan_match = re.search(
+                r"Scan type\s*:\s*([^\r\n]+)", dvd_mi_text, re.IGNORECASE
+            )
             if scan_match:
                 scan = scan_match.group(1).strip()
         if scan == "Progressive":
@@ -270,7 +407,9 @@ class VideoManager:
         elif scan == "Interlaced":
             scan = "i"
         else:
-            match = re.search(r"\b(1080i|576i|480i)\b", folder_id, re.IGNORECASE)
+            match = re.search(
+                r"\b(1080i|576i|480i)\b", folder_id, re.IGNORECASE
+            )
             scan = "i" if match else "p"
         width_list = [3840, 2560, 1920, 1280, 1024, 854, 720, 15360, 7680, 0]
         height_list = [2160, 1440, 1080, 720, 576, 540, 480, 8640, 4320, 0]
@@ -293,14 +432,19 @@ class VideoManager:
                 break
         return res
 
-    async def get_type(self, video: str, _scene: bool, is_disc: str, meta: Meta) -> str:
+    async def get_type(
+        self, video: str, _scene: bool, is_disc: str, meta: Meta
+    ) -> str:
         if meta.manual_type:
             type = meta.manual_type
         else:
             filename = Path(video).name.lower()
             if "remux" in filename:
                 type = "REMUX"
-            elif any(word in filename for word in [" web ", ".web.", "web-dl", "webdl"]):
+            elif any(
+                word in filename
+                for word in [" web ", ".web.", "web-dl", "webdl"]
+            ):
                 type = "WEBDL"
             elif "webrip" in filename:
                 type = "WEBRIP"
@@ -325,23 +469,38 @@ class VideoManager:
         return ""
 
     async def is_sd(self, resolution: str) -> int:
-        return 1 if resolution in ("480i", "480p", "576i", "576p", "540p") else 0
+        return (
+            1 if resolution in ("480i", "480p", "576i", "576p", "540p") else 0
+        )
 
     async def get_video_duration(self, meta: Meta) -> int | None:
         if meta.category in ("BOOK", "GAME"):
             return None
-        if meta.is_disc != "BDMV" and meta.mediainfo.get("media", {}).get("track"):
-            general_track = next((track for track in meta.mediainfo["media"]["track"] if track.get("@type") == "General"), None)
+        if meta.is_disc != "BDMV" and meta.mediainfo.get("media", {}).get(
+            "track"
+        ):
+            general_track = next(
+                (
+                    track
+                    for track in meta.mediainfo["media"]["track"]
+                    if track.get("@type") == "General"
+                ),
+                None,
+            )
 
             if general_track and general_track.get("Duration"):
                 try:
                     media_duration_seconds = float(general_track["Duration"])
                     return int(media_duration_seconds // 60)
                 except ValueError:
-                    logger.debug(f"[red]Invalid duration value: {general_track['Duration']}[/red]")
+                    logger.debug(
+                        f"[red]Invalid duration value: {general_track['Duration']}[/red]"
+                    )
                     return None
             else:
-                logger.debug("[red]No valid duration found in MediaInfo General track[/red]")
+                logger.debug(
+                    "[red]No valid duration found in MediaInfo General track[/red]"
+                )
                 return None
         else:
             length = meta.bdinfo.get("length", "")
@@ -350,7 +509,9 @@ class VideoManager:
                     hours, minutes, _seconds = length.split(":")
                     return int(hours) * 60 + int(minutes)
                 except ValueError:
-                    logger.debug(f"[red]Invalid duration value: {length}[/red]")
+                    logger.debug(
+                        f"[red]Invalid duration value: {length}[/red]"
+                    )
                     return None
             else:
                 logger.debug("[red]No valid duration found in BDInfo[/red]")

@@ -12,17 +12,43 @@ import pytest
 from src.integrations.runtime_tools import dynamic_hdr_tools as tools
 
 
-def test_asset_name_all_platforms_and_unsupported(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_asset_name_all_platforms_and_unsupported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     cases = [
-        ("Windows", "AMD64", "dovi_tool-2.3.3-x86_64-pc-windows-msvc.zip", ".exe"),
-        ("Windows", "arm64", "dovi_tool-2.3.3-aarch64-pc-windows-msvc.zip", ".exe"),
+        (
+            "Windows",
+            "AMD64",
+            "dovi_tool-2.3.3-x86_64-pc-windows-msvc.zip",
+            ".exe",
+        ),
+        (
+            "Windows",
+            "arm64",
+            "dovi_tool-2.3.3-aarch64-pc-windows-msvc.zip",
+            ".exe",
+        ),
         ("Darwin", "x86_64", "dovi_tool-2.3.3-universal-macOS.zip", ""),
-        ("Linux", "aarch64", "dovi_tool-2.3.3-aarch64-unknown-linux-musl.tar.gz", ""),
-        ("Linux", "amd64", "dovi_tool-2.3.3-x86_64-unknown-linux-musl.tar.gz", ""),
+        (
+            "Linux",
+            "aarch64",
+            "dovi_tool-2.3.3-aarch64-unknown-linux-musl.tar.gz",
+            "",
+        ),
+        (
+            "Linux",
+            "amd64",
+            "dovi_tool-2.3.3-x86_64-unknown-linux-musl.tar.gz",
+            "",
+        ),
     ]
     for system, machine, expected, extension in cases:
-        monkeypatch.setattr(tools.platform, "system", lambda value=system: value)
-        monkeypatch.setattr(tools.platform, "machine", lambda value=machine: value)
+        monkeypatch.setattr(
+            tools.platform, "system", lambda value=system: value
+        )
+        monkeypatch.setattr(
+            tools.platform, "machine", lambda value=machine: value
+        )
         assert tools._asset_name("dovi") == (expected, extension)
 
     monkeypatch.setattr(tools.platform, "system", lambda: "Linux")
@@ -35,7 +61,9 @@ def test_asset_name_all_platforms_and_unsupported(monkeypatch: pytest.MonkeyPatc
         tools._asset_name("dovi")
 
 
-def test_checksum_missing_mismatch_and_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_checksum_missing_mismatch_and_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     asset = tmp_path / "asset"
     asset.write_bytes(b"tool")
     with pytest.raises(RuntimeError, match="Missing checksum"):
@@ -43,7 +71,9 @@ def test_checksum_missing_mismatch_and_success(tmp_path: Path, monkeypatch: pyte
     monkeypatch.setitem(tools.ASSET_SHA256, "asset", "0" * 64)
     with pytest.raises(RuntimeError, match="Checksum mismatch"):
         tools._verify_checksum_file("asset", asset)
-    monkeypatch.setitem(tools.ASSET_SHA256, "asset", hashlib.sha256(b"tool").hexdigest())
+    monkeypatch.setitem(
+        tools.ASSET_SHA256, "asset", hashlib.sha256(b"tool").hexdigest()
+    )
     tools._verify_checksum_file("asset", asset)
 
 
@@ -65,9 +95,16 @@ def test_safe_extract_zip_and_tar(tmp_path: Path) -> None:
     assert (tar_out / "bundle" / "dovi_tool").read_bytes() == b"tool"
 
 
-def test_get_tool_installed_cached_download_success_and_cleanup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(tools.shutil, "which", lambda _command: "/usr/bin/dovi_tool")
-    assert asyncio.run(tools.get_tool(str(tmp_path), "dovi")) == "/usr/bin/dovi_tool"
+def test_get_tool_installed_cached_download_success_and_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        tools.shutil, "which", lambda _command: "/usr/bin/dovi_tool"
+    )
+    assert (
+        asyncio.run(tools.get_tool(str(tmp_path), "dovi"))
+        == "/usr/bin/dovi_tool"
+    )
 
     monkeypatch.setattr(tools.shutil, "which", lambda _command: None)
     target = tmp_path / "target"
@@ -106,7 +143,9 @@ def test_get_tool_installed_cached_download_success_and_cleanup(tmp_path: Path, 
     assert not (target / ".download").exists()
 
 
-def test_get_tool_windows_missing_candidate_and_download_error_cleanup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_tool_windows_missing_candidate_and_download_error_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     target = tmp_path / "target"
     target.mkdir()
     monkeypatch.setattr(tools.shutil, "which", lambda _command: None)

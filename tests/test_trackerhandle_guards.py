@@ -27,7 +27,9 @@ class FakeTracker:
     async def upload(self, meta: Meta) -> bool:
         type(self).upload_calls += 1
         if type(self).fail_with_modqueue:
-            meta.tracker_status[self.tracker]["status_message"] = "data error: HTTP 404 - Modqueue limit reached."
+            meta.tracker_status[self.tracker]["status_message"] = (
+                "data error: HTTP 404 - Modqueue limit reached."
+            )
             return False
         return True
 
@@ -36,7 +38,9 @@ class FakeDarkPeers(FakeTracker):
     tracker = "DARKPEERS"
 
     async def search_existing(self, _meta: Meta) -> list[dict[str, object]]:
-        return [{"name": "Show S01E01 1080p WEB-DL H.264-Kitsune", "id": 117400}]
+        return [
+            {"name": "Show S01E01 1080p WEB-DL H.264-Kitsune", "id": 117400}
+        ]
 
 
 def _image(number: int) -> dict[str, str]:
@@ -71,20 +75,30 @@ def tracker_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
     FakeTracker.upload_calls = 0
     FakeTracker.fail_with_modqueue = False
     FakeTracker.requires_book_cover = True
-    monkeypatch.setattr(trackerhandle.TrackerSetup, "trackers_enabled", lambda _self, _meta: ["TEST"])
+    monkeypatch.setattr(
+        trackerhandle.TrackerSetup,
+        "trackers_enabled",
+        lambda _self, _meta: ["TEST"],
+    )
 
     async def keep_images(_meta: Meta, _tracker: Any) -> None:
         return None
 
-    monkeypatch.setattr(trackerhandle, "check_tracker_image_hosts", keep_images)
+    monkeypatch.setattr(
+        trackerhandle, "check_tracker_image_hosts", keep_images
+    )
 
 
 @pytest.mark.asyncio
-async def test_tracker_specific_rehost_cannot_bypass_configured_minimum() -> None:
+async def test_tracker_specific_rehost_cannot_bypass_configured_minimum() -> (
+    None
+):
     meta = _meta()
     meta.tracker_image_collections["TEST"] = {"screenshots": [_image(1)]}
 
-    await trackerhandle.process_trackers(meta, _config(), FakeClient(), ["TEST"], {"TEST": FakeTracker}, [], [])
+    await trackerhandle.process_trackers(
+        meta, _config(), FakeClient(), ["TEST"], {"TEST": FakeTracker}, [], []
+    )
 
     assert FakeTracker.upload_calls == 0
     assert meta.tracker_status["TEST"]["skipped"] is True
@@ -95,7 +109,9 @@ async def test_tracker_upload_runs_when_configured_minimum_is_met() -> None:
     meta = _meta()
     client = FakeClient()
 
-    await trackerhandle.process_trackers(meta, _config(), client, ["TEST"], {"TEST": FakeTracker}, [], [])
+    await trackerhandle.process_trackers(
+        meta, _config(), client, ["TEST"], {"TEST": FakeTracker}, [], []
+    )
 
     assert FakeTracker.upload_calls == 1
     assert meta.tracker_status["TEST"]["upload_success"] is True
@@ -103,7 +119,9 @@ async def test_tracker_upload_runs_when_configured_minimum_is_met() -> None:
 
 
 @pytest.mark.asyncio
-async def test_debug_runs_tracker_payload_without_rehosting_or_client_injection(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_debug_runs_tracker_payload_without_rehosting_or_client_injection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     meta = _meta(images=0)
     meta.debug = True
     client = FakeClient()
@@ -113,9 +131,13 @@ async def test_debug_runs_tracker_payload_without_rehosting_or_client_injection(
         nonlocal rehost_calls
         rehost_calls += 1
 
-    monkeypatch.setattr(trackerhandle, "check_tracker_image_hosts", count_rehost)
+    monkeypatch.setattr(
+        trackerhandle, "check_tracker_image_hosts", count_rehost
+    )
 
-    await trackerhandle.process_trackers(meta, _config(), client, ["TEST"], {"TEST": FakeTracker}, [], [])
+    await trackerhandle.process_trackers(
+        meta, _config(), client, ["TEST"], {"TEST": FakeTracker}, [], []
+    )
 
     assert FakeTracker.upload_calls == 1
     assert meta.tracker_status["TEST"]["upload_success"] is True
@@ -128,7 +150,9 @@ async def test_process_trackers_handles_missing_default_config() -> None:
     meta = _meta(images=0)
     meta.debug = True
 
-    await trackerhandle.process_trackers(meta, {}, FakeClient(), ["TEST"], {"TEST": FakeTracker}, [], [])
+    await trackerhandle.process_trackers(
+        meta, {}, FakeClient(), ["TEST"], {"TEST": FakeTracker}, [], []
+    )
 
     assert FakeTracker.upload_calls == 1
     assert meta.tracker_status["TEST"]["upload_success"] is True
@@ -140,7 +164,9 @@ async def test_book_without_cover_is_blocked_by_default() -> None:
     meta.category = "BOOK"
     meta.artwork_path = ""
 
-    await trackerhandle.process_trackers(meta, _config(), FakeClient(), ["TEST"], {"TEST": FakeTracker}, [], [])
+    await trackerhandle.process_trackers(
+        meta, _config(), FakeClient(), ["TEST"], {"TEST": FakeTracker}, [], []
+    )
 
     assert FakeTracker.upload_calls == 0
     assert "valid cover image" in meta.tracker_status["TEST"]["status_message"]
@@ -153,13 +179,17 @@ async def test_tracker_can_allow_book_without_cover() -> None:
     meta.category = "BOOK"
     meta.artwork_path = ""
 
-    await trackerhandle.process_trackers(meta, _config(), FakeClient(), ["TEST"], {"TEST": FakeTracker}, [], [])
+    await trackerhandle.process_trackers(
+        meta, _config(), FakeClient(), ["TEST"], {"TEST": FakeTracker}, [], []
+    )
 
     assert FakeTracker.upload_calls == 1
 
 
 @pytest.mark.asyncio
-async def test_prepared_zenith_book_can_keep_cjk_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_prepared_zenith_book_can_keep_cjk_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     class FakeZenith(FakeTracker):
         tracker = "ZENITH"
         requires_book_cover = False
@@ -180,15 +210,33 @@ async def test_prepared_zenith_book_can_keep_cjk_metadata(monkeypatch: pytest.Mo
         }
     )
 
-    async def prepared_meta(_shared_meta: Meta, _tracker: str, _config: dict[str, Any]) -> Meta:
+    async def prepared_meta(
+        _shared_meta: Meta, _tracker: str, _config: dict[str, Any]
+    ) -> Meta:
         prepared = source.copy()
-        prepared.update({"zentag_prepared": True, "tracker_status": source.tracker_status})
+        prepared.update(
+            {"zentag_prepared": True, "tracker_status": source.tracker_status}
+        )
         return prepared
 
-    monkeypatch.setattr("src.services.tracker_upload_service.prepare_tracker_meta", prepared_meta)
-    monkeypatch.setattr("src.services.tracker_upload_service.TrackerSetup.trackers_enabled", lambda _self, _meta: ["ZENITH"])
+    monkeypatch.setattr(
+        "src.services.tracker_upload_service.prepare_tracker_meta",
+        prepared_meta,
+    )
+    monkeypatch.setattr(
+        "src.services.tracker_upload_service.TrackerSetup.trackers_enabled",
+        lambda _self, _meta: ["ZENITH"],
+    )
 
-    await trackerhandle.process_trackers(source, _config(), FakeClient(), ["ZENITH"], {"ZENITH": FakeZenith}, [], [])
+    await trackerhandle.process_trackers(
+        source,
+        _config(),
+        FakeClient(),
+        ["ZENITH"],
+        {"ZENITH": FakeZenith},
+        [],
+        [],
+    )
 
     assert source.tracker_status["ZENITH"]["upload_success"] is True
 
@@ -199,26 +247,53 @@ async def test_modqueue_limit_disables_tracker_for_remainder_of_run() -> None:
     FakeTracker.fail_with_modqueue = True
 
     first_meta = _meta()
-    await trackerhandle.process_trackers(first_meta, config, FakeClient(), ["TEST"], {"TEST": FakeTracker}, [], [])
+    await trackerhandle.process_trackers(
+        first_meta,
+        config,
+        FakeClient(),
+        ["TEST"],
+        {"TEST": FakeTracker},
+        [],
+        [],
+    )
 
     second_meta = _meta()
-    await trackerhandle.process_trackers(second_meta, config, FakeClient(), ["TEST"], {"TEST": FakeTracker}, [], [])
+    await trackerhandle.process_trackers(
+        second_meta,
+        config,
+        FakeClient(),
+        ["TEST"],
+        {"TEST": FakeTracker},
+        [],
+        [],
+    )
 
     assert FakeTracker.upload_calls == 1
     assert second_meta.tracker_status["TEST"]["skipped"] is True
-    assert "remainder of this run" in second_meta.tracker_status["TEST"]["status_message"]
+    assert (
+        "remainder of this run"
+        in second_meta.tracker_status["TEST"]["status_message"]
+    )
 
 
 @pytest.mark.asyncio
-async def test_bandwidth_recheck_allows_repack_replacing_new_original(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_bandwidth_recheck_allows_repack_replacing_new_original(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     class ImmediateWait:
         def __init__(self, _config: dict[str, Any]) -> None:
             pass
 
-        async def wait_for_bandwidth(self, _threshold: int, _seconds: int) -> bool:
+        async def wait_for_bandwidth(
+            self, _threshold: int, _seconds: int
+        ) -> bool:
             return True
 
-    monkeypatch.setattr(trackerhandle.TrackerSetup, "trackers_enabled", lambda _self, _meta: ["DARKPEERS"])
+    monkeypatch.setattr(
+        trackerhandle.TrackerSetup,
+        "trackers_enabled",
+        lambda _self, _meta: ["DARKPEERS"],
+    )
     monkeypatch.setattr(trackerhandle, "Wait", ImmediateWait)
     meta = _meta()
     meta.update(
@@ -245,6 +320,14 @@ async def test_bandwidth_recheck_allows_repack_replacing_new_original(monkeypatc
     config["DEFAULT"]["tmdb_api"] = "test-key"
     config["TRACKERS"] = {"DARKPEERS": {}}
 
-    await trackerhandle.process_trackers(meta, config, FakeClient(), ["DARKPEERS"], {"DARKPEERS": FakeDarkPeers}, [], [])
+    await trackerhandle.process_trackers(
+        meta,
+        config,
+        FakeClient(),
+        ["DARKPEERS"],
+        {"DARKPEERS": FakeDarkPeers},
+        [],
+        [],
+    )
 
     assert FakeDarkPeers.upload_calls == 1

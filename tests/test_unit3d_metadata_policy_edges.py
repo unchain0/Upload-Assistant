@@ -22,9 +22,19 @@ from src.integrations.trackers.UNIT3D.utopia import Utopia
 
 def _config() -> dict:
     config = copy.deepcopy(example_config)
-    config.setdefault("DEFAULT", {})["tmdb_api"] = "0123456789abcdef0123456789abcdef"
+    config.setdefault("DEFAULT", {})["tmdb_api"] = (
+        "0123456789abcdef0123456789abcdef"
+    )
     trackers = config.setdefault("TRACKERS", {})
-    for tracker in ("HOMIEHELPDESK", "PEERGARDEN", "RASTASTUGAN", "SAMARITANO", "ITATORRENTS", "RETROMOVIESCLUB", "UTOPIA"):
+    for tracker in (
+        "HOMIEHELPDESK",
+        "PEERGARDEN",
+        "RASTASTUGAN",
+        "SAMARITANO",
+        "ITATORRENTS",
+        "RETROMOVIESCLUB",
+        "UTOPIA",
+    ):
         values = trackers.setdefault(tracker, {})
         values.setdefault("api_key", "test-key")
         values.setdefault("announce_url", "https://tracker.invalid/announce")
@@ -37,15 +47,22 @@ def test_homiehelpdesk_book_category_variants_and_unknown_book_type() -> None:
     for attribute, expected in cases:
         meta = Meta(category="BOOK")
         setattr(meta, attribute, True)
-        assert asyncio.run(tracker.get_category_id(meta)) == {"category_id": expected}
+        assert asyncio.run(tracker.get_category_id(meta)) == {
+            "category_id": expected
+        }
 
-    assert asyncio.run(tracker.get_type_id(Meta(category="BOOK", type="UNKNOWN"))) == {"type_id": "23"}
+    assert asyncio.run(
+        tracker.get_type_id(Meta(category="BOOK", type="UNKNOWN"))
+    ) == {"type_id": "23"}
 
 
 def test_peergarden_game_platform_type_variants() -> None:
     tracker = PeerGarden(_config())
     cases = (
-        (Meta(category="GAME", type="GAME", console_game=True, platform=""), "32"),
+        (
+            Meta(category="GAME", type="GAME", console_game=True, platform=""),
+            "32",
+        ),
         (Meta(category="GAME", type="GAME", platform="Android"), "24"),
         (Meta(category="GAME", type="GAME", platform="iOS"), "25"),
         (Meta(category="GAME", type="GAME", platform="MacOS"), "12"),
@@ -57,17 +74,36 @@ def test_peergarden_game_platform_type_variants() -> None:
 
 def test_rastastugan_game_platform_type_variants() -> None:
     tracker = Rastastugan(_config())
-    cases = (("MacOS", "9"), ("Linux", "18"), ("Windows PC", "10"), ("", "11"), ("Unknown", "19"))
+    cases = (
+        ("MacOS", "9"),
+        ("Linux", "18"),
+        ("Windows PC", "10"),
+        ("", "11"),
+        ("Unknown", "19"),
+    )
     for platform, expected in cases:
-        meta = Meta(category="GAME", type="GAME", platform=platform, console_game=platform == "")
+        meta = Meta(
+            category="GAME",
+            type="GAME",
+            platform=platform,
+            console_game=platform == "",
+        )
         assert asyncio.run(tracker.get_type_id(meta)) == {"type_id": expected}
 
 
 def test_samaritano_book_and_game_variants() -> None:
     tracker = Samaritano(_config())
-    assert asyncio.run(tracker.get_category_id(Meta(category="BOOK", comic=True))) == {"category_id": "7"}
+    assert asyncio.run(
+        tracker.get_category_id(Meta(category="BOOK", comic=True))
+    ) == {"category_id": "7"}
 
-    cases = (("PlayStation 5", "52"), ("Xbox", "53"), ("Nintendo Switch", "54"), ("Android", "55"), ("Emulator ROM", "51"))
+    cases = (
+        ("PlayStation 5", "52"),
+        ("Xbox", "53"),
+        ("Nintendo Switch", "54"),
+        ("Android", "55"),
+        ("Emulator ROM", "51"),
+    )
     for platform, expected in cases:
         meta = Meta(category="GAME", type="GAME", platform=platform)
         assert asyncio.run(tracker.get_type_id(meta)) == {"type_id": expected}
@@ -87,7 +123,9 @@ def test_retromoviesclub_dynamic_type_variants() -> None:
         assert asyncio.run(tracker.get_type_id(meta)) == {"type_id": expected}
 
 
-def test_itatorrents_hybrid_and_manual_date_naming(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_itatorrents_hybrid_and_manual_date_naming(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     tracker = ItaTorrents(_config())
     monkeypatch.setattr(tracker, "get_dubs", AsyncMock(return_value="ITA"))
     meta = Meta(
@@ -119,13 +157,32 @@ def test_itatorrents_language_requirement_rejection() -> None:
     assert not asyncio.run(tracker.get_additional_checks(Meta()))
 
 
-def test_utopia_description_transforms_and_restores_packed_images(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_utopia_description_transforms_and_restores_packed_images(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     tracker = Utopia(_config())
-    original = [{"raw_url": "https://full.invalid/one", "img_url": "https://medium.invalid/one"}]
-    packed = [{"raw_url": "https://full.invalid/two", "img_url": "https://medium.invalid/two"}]
+    original = [
+        {
+            "raw_url": "https://full.invalid/one",
+            "img_url": "https://medium.invalid/one",
+        }
+    ]
+    packed = [
+        {
+            "raw_url": "https://full.invalid/two",
+            "img_url": "https://medium.invalid/two",
+        }
+    ]
     meta = Meta(image_list=original.copy())
     meta["new_images_pack"] = packed.copy()
-    monkeypatch.setattr(meta, "to_dict", lambda: {**Meta.to_dict(meta), "new_images_pack": meta["new_images_pack"]})
+    monkeypatch.setattr(
+        meta,
+        "to_dict",
+        lambda: {
+            **Meta.to_dict(meta),
+            "new_images_pack": meta["new_images_pack"],
+        },
+    )
 
     seen: dict[str, object] = {}
 
@@ -133,7 +190,9 @@ def test_utopia_description_transforms_and_restores_packed_images(monkeypatch: p
         def __init__(self, *_args, **_kwargs) -> None:
             pass
 
-        async def general_description_generator(self, current: Meta, **_kwargs) -> str:
+        async def general_description_generator(
+            self, current: Meta, **_kwargs
+        ) -> str:
             seen["image_list"] = current.image_list.copy()
             seen["packed"] = list(current["new_images_pack"])
             return "description"
@@ -170,53 +229,96 @@ def test_utopia_name_strips_dual_audio_marker() -> None:
 def test_homiehelpdesk_additional_checks_and_music_identifiers() -> None:
     tracker = HomieHelpDesk(_config())
     assert not asyncio.run(tracker.get_additional_checks(Meta(type="DVDRIP")))
-    assert not asyncio.run(tracker.get_additional_checks(Meta(category="MUSIC", music_release={})))
-    assert asyncio.run(tracker.get_additional_checks(Meta(category="MOVIE", type="WEBDL")))
+    assert not asyncio.run(
+        tracker.get_additional_checks(Meta(category="MUSIC", music_release={}))
+    )
+    assert asyncio.run(
+        tracker.get_additional_checks(Meta(category="MOVIE", type="WEBDL"))
+    )
 
     mbid = "12345678-1234-1234-1234-123456789abc"
-    mb_meta = Meta(music_release={"external_ids": {"musicbrainz_release": mbid}})
-    assert tracker._music_upload_data(mb_meta) == {"music_exists_on_musicbrainz": "1", "musicbrainz": mbid}
+    mb_meta = Meta(
+        music_release={"external_ids": {"musicbrainz_release": mbid}}
+    )
+    assert tracker._music_upload_data(mb_meta) == {
+        "music_exists_on_musicbrainz": "1",
+        "musicbrainz": mbid,
+    }
 
     discogs_url = "https://www.discogs.com/release/12345-example"
-    discogs_meta = Meta(music_discogs_enabled=True, music_release={"external_ids": {"discogs_release_url": discogs_url}})
-    assert tracker._music_upload_data(discogs_meta) == {"music_exists_on_discogs": "1", "discogs": discogs_url}
+    discogs_meta = Meta(
+        music_discogs_enabled=True,
+        music_release={"external_ids": {"discogs_release_url": discogs_url}},
+    )
+    assert tracker._music_upload_data(discogs_meta) == {
+        "music_exists_on_discogs": "1",
+        "discogs": discogs_url,
+    }
 
 
 def test_peergarden_rejects_software_uploads() -> None:
-    assert not asyncio.run(PeerGarden(_config()).get_additional_checks(Meta(software=True)))
+    assert not asyncio.run(
+        PeerGarden(_config()).get_additional_checks(Meta(software=True))
+    )
 
 
 def test_rastastugan_language_and_book_fallbacks() -> None:
     tracker = Rastastugan(_config())
     tracker.common.check_language_requirements = AsyncMock(return_value=True)  # type: ignore[method-assign]
     assert asyncio.run(tracker.get_additional_checks(Meta()))
-    assert asyncio.run(tracker.get_type_id(Meta(category="BOOK", type="UNKNOWN"))) == {"type_id": "19"}
-    assert asyncio.run(tracker.get_type_id(Meta(category="GAME", type="MAC", platform="Unknown"))) == {"type_id": "9"}
+    assert asyncio.run(
+        tracker.get_type_id(Meta(category="BOOK", type="UNKNOWN"))
+    ) == {"type_id": "19"}
+    assert asyncio.run(
+        tracker.get_type_id(
+            Meta(category="GAME", type="MAC", platform="Unknown")
+        )
+    ) == {"type_id": "9"}
 
 
 def test_samaritano_invalid_filelist_and_book_are_deterministic() -> None:
     tracker = Samaritano(_config())
     assert not asyncio.run(tracker.get_additional_checks(Meta(filelist="bad")))
-    assert asyncio.run(tracker.get_additional_checks(Meta(category="BOOK", filelist=[])))
+    assert asyncio.run(
+        tracker.get_additional_checks(Meta(category="BOOK", filelist=[]))
+    )
 
 
 def test_samaritano_movie_validation_paths() -> None:
     tracker = Samaritano(_config())
-    assert not asyncio.run(tracker.get_additional_checks(Meta(category="MOVIE", filelist=["a.mkv", "b.mkv"])))
+    assert not asyncio.run(
+        tracker.get_additional_checks(
+            Meta(category="MOVIE", filelist=["a.mkv", "b.mkv"])
+        )
+    )
 
-    tracker.common.check_portuguese_video_requirements = AsyncMock(return_value=True)  # type: ignore[method-assign]
-    assert asyncio.run(tracker.get_additional_checks(Meta(category="MOVIE", filelist=["a.mkv"])))
+    tracker.common.check_portuguese_video_requirements = AsyncMock(
+        return_value=True
+    )  # type: ignore[method-assign]
+    assert asyncio.run(
+        tracker.get_additional_checks(
+            Meta(category="MOVIE", filelist=["a.mkv"])
+        )
+    )
 
 
 def test_samaritano_tv_pack_validation_paths() -> None:
     tracker = Samaritano(_config())
     tracker.common.extract_tv_seasons = lambda _files: {1, 2}  # type: ignore[method-assign]
     tracker.common.count_tv_episodes = lambda _files: 2  # type: ignore[method-assign]
-    assert not asyncio.run(tracker.get_additional_checks(Meta(category="TV", tv_pack=True, filelist=["a.mkv"])))
+    assert not asyncio.run(
+        tracker.get_additional_checks(
+            Meta(category="TV", tv_pack=True, filelist=["a.mkv"])
+        )
+    )
 
     tracker.common.extract_tv_seasons = lambda _files: {1}  # type: ignore[method-assign]
     tracker.common.is_tv_series_ended = lambda *_args, **_kwargs: False  # type: ignore[method-assign]
-    assert not asyncio.run(tracker.get_additional_checks(Meta(category="TV", tv_pack=True, filelist=["a.mkv"])))
+    assert not asyncio.run(
+        tracker.get_additional_checks(
+            Meta(category="TV", tv_pack=True, filelist=["a.mkv"])
+        )
+    )
 
 
 def test_samaritano_tv_pack_success_and_episode_rejection() -> None:
@@ -224,11 +326,21 @@ def test_samaritano_tv_pack_success_and_episode_rejection() -> None:
     tracker.common.extract_tv_seasons = lambda _files: {1}  # type: ignore[method-assign]
     tracker.common.count_tv_episodes = lambda _files: 1  # type: ignore[method-assign]
     tracker.common.is_tv_series_ended = lambda *_args, **_kwargs: True  # type: ignore[method-assign]
-    tracker.common.check_portuguese_video_requirements = AsyncMock(return_value=True)  # type: ignore[method-assign]
-    assert asyncio.run(tracker.get_additional_checks(Meta(category="TV", tv_pack=True, filelist=["a.mkv"])))
+    tracker.common.check_portuguese_video_requirements = AsyncMock(
+        return_value=True
+    )  # type: ignore[method-assign]
+    assert asyncio.run(
+        tracker.get_additional_checks(
+            Meta(category="TV", tv_pack=True, filelist=["a.mkv"])
+        )
+    )
 
     tracker.common.count_tv_episodes = lambda _files: 2  # type: ignore[method-assign]
-    assert not asyncio.run(tracker.get_additional_checks(Meta(category="TV", tv_pack=False, filelist=["a.mkv"])))
+    assert not asyncio.run(
+        tracker.get_additional_checks(
+            Meta(category="TV", tv_pack=False, filelist=["a.mkv"])
+        )
+    )
 
 
 def test_itatorrents_language_requirement_success() -> None:
@@ -248,77 +360,160 @@ def test_retromoviesclub_remaining_type_and_policy_paths() -> None:
     for meta, expected in cases:
         assert asyncio.run(tracker.get_type_id(meta)) == {"type_id": expected}
 
-    assert not asyncio.run(tracker.get_additional_checks(Meta(category="TV", year=1990)))
-    assert not asyncio.run(tracker.get_additional_checks(Meta(category="MOVIE", year=2001)))
-    assert asyncio.run(tracker.get_additional_checks(Meta(category="MOVIE", year=2000)))
-    assert asyncio.run(tracker.get_name(Meta(name="Title AKA 1990", aka="AKA"))) == {"name": "Title 1990"}
+    assert not asyncio.run(
+        tracker.get_additional_checks(Meta(category="TV", year=1990))
+    )
+    assert not asyncio.run(
+        tracker.get_additional_checks(Meta(category="MOVIE", year=2001))
+    )
+    assert asyncio.run(
+        tracker.get_additional_checks(Meta(category="MOVIE", year=2000))
+    )
+    assert asyncio.run(
+        tracker.get_name(Meta(name="Title AKA 1990", aka="AKA"))
+    ) == {"name": "Title 1990"}
 
 
 def test_utopia_encode_hdtv_and_other_category_naming() -> None:
     tracker = Utopia(_config())
-    encode = Meta(category="MOVIE", type="ENCODE", title="Encode", year=2025, video_encode="x265", video_codec="HEVC", resolution="1080p")
+    encode = Meta(
+        category="MOVIE",
+        type="ENCODE",
+        title="Encode",
+        year=2025,
+        video_encode="x265",
+        video_codec="HEVC",
+        resolution="1080p",
+    )
     assert "x265" in asyncio.run(tracker.get_name(encode))["name"]
 
-    hdtv = Meta(category="TV", type="HDTV", title="Show", season="S01", episode="E01", year=2025, video_encode="x264", resolution="1080p")
+    hdtv = Meta(
+        category="TV",
+        type="HDTV",
+        title="Show",
+        season="S01",
+        episode="E01",
+        year=2025,
+        video_encode="x264",
+        resolution="1080p",
+    )
     assert "x264" in asyncio.run(tracker.get_name(hdtv))["name"]
 
-    other = Meta(category="MUSIC", type="WEB", name="Existing Name", tag="-GROUP")
-    assert asyncio.run(tracker.get_name(other))["name"] == "Existing Name-GROUP"
+    other = Meta(
+        category="MUSIC", type="WEB", name="Existing Name", tag="-GROUP"
+    )
+    assert (
+        asyncio.run(tracker.get_name(other))["name"] == "Existing Name-GROUP"
+    )
 
 
 def test_peergarden_accepts_non_software_uploads() -> None:
-    assert asyncio.run(PeerGarden(_config()).get_additional_checks(Meta(software=False)))
+    assert asyncio.run(
+        PeerGarden(_config()).get_additional_checks(Meta(software=False))
+    )
 
 
 def test_samaritano_software_name_category_type_and_default_policy() -> None:
     tracker = Samaritano(_config())
-    software = Meta(category="GAME", software=True, platform="Windows", name="Tool")
+    software = Meta(
+        category="GAME", software=True, platform="Windows", name="Tool"
+    )
     assert asyncio.run(tracker.get_name(software)) == {"name": "Tool"}
-    assert asyncio.run(tracker.get_category_id(software)) == {"category_id": "9"}
+    assert asyncio.run(tracker.get_category_id(software)) == {
+        "category_id": "9"
+    }
     assert asyncio.run(tracker.get_type_id(software)) == {"type_id": "50"}
 
-    tracker.common.check_portuguese_video_requirements = AsyncMock(return_value=True)  # type: ignore[method-assign]
-    assert asyncio.run(tracker.get_additional_checks(Meta(category="GAME", filelist=[])))
+    tracker.common.check_portuguese_video_requirements = AsyncMock(
+        return_value=True
+    )  # type: ignore[method-assign]
+    assert asyncio.run(
+        tracker.get_additional_checks(Meta(category="GAME", filelist=[]))
+    )
 
 
 def test_retromoviesclub_dvd_disc_type() -> None:
     tracker = RetroMoviesClub(_config())
-    assert asyncio.run(tracker.get_type_id(Meta(category="MOVIE", is_disc="DVD", source="DVD"))) == {"type_id": "3"}
+    assert asyncio.run(
+        tracker.get_type_id(
+            Meta(category="MOVIE", is_disc="DVD", source="DVD")
+        )
+    ) == {"type_id": "3"}
 
 
 def test_homiehelpdesk_default_book_category() -> None:
     tracker = HomieHelpDesk(_config())
-    assert asyncio.run(tracker.get_category_id(Meta(category="BOOK"))) == {"category_id": "7"}
+    assert asyncio.run(tracker.get_category_id(Meta(category="BOOK"))) == {
+        "category_id": "7"
+    }
 
 
-def test_peergarden_anime_book_fallback_and_payload_filter(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_peergarden_anime_book_fallback_and_payload_filter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     tracker = PeerGarden(_config())
-    assert asyncio.run(tracker.get_category_id(Meta(category="TV", anime=True))) == {"category_id": "11"}
-    assert asyncio.run(tracker.get_type_id(Meta(category="BOOK", type="UNKNOWN"))) == {"type_id": "15"}
-    monkeypatch.setattr(UNIT3D, "get_data", AsyncMock(return_value={"free": 1, "featured": 1, "doubleup": 1, "sticky": 1, "keep": 2}))
+    assert asyncio.run(
+        tracker.get_category_id(Meta(category="TV", anime=True))
+    ) == {"category_id": "11"}
+    assert asyncio.run(
+        tracker.get_type_id(Meta(category="BOOK", type="UNKNOWN"))
+    ) == {"type_id": "15"}
+    monkeypatch.setattr(
+        UNIT3D,
+        "get_data",
+        AsyncMock(
+            return_value={
+                "free": 1,
+                "featured": 1,
+                "doubleup": 1,
+                "sticky": 1,
+                "keep": 2,
+            }
+        ),
+    )
     assert asyncio.run(tracker.get_data(Meta())) == {"keep": 2}
 
 
-def test_samaritano_remaining_category_type_and_description(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_samaritano_remaining_category_type_and_description(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     tracker = Samaritano(_config())
-    assert asyncio.run(tracker.get_category_id(Meta(category="TV", anime=True))) == {"category_id": "3"}
-    assert asyncio.run(tracker.get_category_id(Meta(category="BOOK", audiobook=True))) == {"category_id": "8"}
-    assert asyncio.run(tracker.get_category_id(Meta(category="BOOK"))) == {"category_id": "6"}
-    assert asyncio.run(tracker.get_category_id(Meta(category="GAME", software=True))) == {"category_id": "9"}
-    assert asyncio.run(tracker.get_type_id(Meta(category="BOOK", type="UNKNOWN"))) == {"type_id": "68"}
+    assert asyncio.run(
+        tracker.get_category_id(Meta(category="TV", anime=True))
+    ) == {"category_id": "3"}
+    assert asyncio.run(
+        tracker.get_category_id(Meta(category="BOOK", audiobook=True))
+    ) == {"category_id": "8"}
+    assert asyncio.run(tracker.get_category_id(Meta(category="BOOK"))) == {
+        "category_id": "6"
+    }
+    assert asyncio.run(
+        tracker.get_category_id(Meta(category="GAME", software=True))
+    ) == {"category_id": "9"}
+    assert asyncio.run(
+        tracker.get_type_id(Meta(category="BOOK", type="UNKNOWN"))
+    ) == {"type_id": "68"}
 
     class Builder:
         def __init__(self, *_args, **_kwargs) -> None:
             pass
 
-        async def general_description_generator(self, *_args, **_kwargs) -> str:
+        async def general_description_generator(
+            self, *_args, **_kwargs
+        ) -> str:
             return "description"
 
     monkeypatch.setattr(samaritano_module, "DescriptionBuilder", Builder)
     meta = Meta(ua_name="UA", current_version="1")
-    assert asyncio.run(tracker.get_description(meta)) == {"description": "description"}
+    assert asyncio.run(tracker.get_description(meta)) == {
+        "description": "description"
+    }
 
 
 def test_samaritano_unknown_game_defaults_to_pc_type() -> None:
     tracker = Samaritano(_config())
-    assert asyncio.run(tracker.get_type_id(Meta(category="GAME", type="GAME", platform="Unknown"))) == {"type_id": "50"}
+    assert asyncio.run(
+        tracker.get_type_id(
+            Meta(category="GAME", type="GAME", platform="Unknown")
+        )
+    ) == {"type_id": "50"}

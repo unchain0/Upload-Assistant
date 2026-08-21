@@ -33,12 +33,31 @@ class Portugas(UNIT3D):
         self.config: Config = config
         self.common = Common(config)
 
-    async def get_type_id(self, meta: Meta, type: str | None = None, reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_type_id(
+        self,
+        meta: Meta,
+        type: str | None = None,
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         _ = (type, reverse, mapping_only)
-        type_id = {"DISC": "1", "REMUX": "2", "WEBDL": "4", "WEBRIP": "39", "HDTV": "6", "ENCODE": "3"}.get(str(meta.type), "0")
+        type_id = {
+            "DISC": "1",
+            "REMUX": "2",
+            "WEBDL": "4",
+            "WEBRIP": "39",
+            "HDTV": "6",
+            "ENCODE": "3",
+        }.get(str(meta.type), "0")
         return {"type_id": type_id}
 
-    async def get_resolution_id(self, meta: Meta, resolution: str | None = None, reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_resolution_id(
+        self,
+        meta: Meta,
+        resolution: str | None = None,
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         _ = (resolution, reverse, mapping_only)
         resolution_id = {
             "4320p": "1",
@@ -67,7 +86,10 @@ class Portugas(UNIT3D):
         if not tag_value:
             return True
         lowered = tag_value.casefold()
-        return any(value in lowered for value in ("nogrp", "nogroup", "unknown", "-unk-"))
+        return any(
+            value in lowered
+            for value in ("nogrp", "nogroup", "unknown", "-unk-")
+        )
 
     @staticmethod
     def _strip_invalid_group_tags(name: str) -> str:
@@ -85,38 +107,62 @@ class Portugas(UNIT3D):
     def get_subtitles(self, meta: Meta) -> int:
         found = self._bdmv_has_portuguese_subtitle(meta)
         if not found:
-            found = self._mediainfo_has_portuguese(meta, "Text") or self._mediainfo_has_portuguese(meta, "Subtitle")
+            found = self._mediainfo_has_portuguese(
+                meta, "Text"
+            ) or self._mediainfo_has_portuguese(meta, "Subtitle")
         return int(found)
 
     @staticmethod
     def _bdmv_has_portuguese_audio(meta: Meta) -> bool:
         if meta.is_disc != "BDMV":
             return False
-        tracks = meta.bdinfo.get("audio", []) if isinstance(meta.bdinfo, dict) else []
-        return any(Portugas._audio_track_is_portuguese(track) for track in tracks if isinstance(track, dict))
+        tracks = (
+            meta.bdinfo.get("audio", [])
+            if isinstance(meta.bdinfo, dict)
+            else []
+        )
+        return any(
+            Portugas._audio_track_is_portuguese(track)
+            for track in tracks
+            if isinstance(track, dict)
+        )
 
     @staticmethod
     def _audio_track_is_portuguese(track: dict[str, Any]) -> bool:
-        return str(track.get("language", "")).strip().casefold() == "portuguese"
+        return (
+            str(track.get("language", "")).strip().casefold() == "portuguese"
+        )
 
     @staticmethod
     def _bdmv_has_portuguese_subtitle(meta: Meta) -> bool:
         if meta.is_disc != "BDMV":
             return False
-        tracks = meta.bdinfo.get("subtitles", []) if isinstance(meta.bdinfo, dict) else []
-        return any(isinstance(track, str) and track.strip().casefold() == "portuguese" for track in tracks)
+        tracks = (
+            meta.bdinfo.get("subtitles", [])
+            if isinstance(meta.bdinfo, dict)
+            else []
+        )
+        return any(
+            isinstance(track, str) and track.strip().casefold() == "portuguese"
+            for track in tracks
+        )
 
     @classmethod
     def _mediainfo_has_portuguese(cls, meta: Meta, section_name: str) -> bool:
         text = cls._read_mediainfo_text(meta)
         if not text:
             return False
-        return any(cls._section_is_portuguese(section) for section in cls._mediainfo_sections(text, section_name))
+        return any(
+            cls._section_is_portuguese(section)
+            for section in cls._mediainfo_sections(text, section_name)
+        )
 
     @classmethod
     def _read_mediainfo_text(cls, meta: Meta) -> str:
         base_dir, uuid = cls._temp_identity(meta)
-        return cls._read_text_file(Path(base_dir) / "tmp" / uuid / "MEDIAINFO.txt")
+        return cls._read_text_file(
+            Path(base_dir) / "tmp" / uuid / "MEDIAINFO.txt"
+        )
 
     @staticmethod
     def _temp_identity(meta: Meta) -> tuple[str, str]:
@@ -133,7 +179,10 @@ class Portugas(UNIT3D):
         except FileNotFoundError:
             return ""
         except Exception as error:
-            logger.info(f"ERRO: Falha ao processar MediaInfo para verificar Português: {error}", extra={"markup": False})
+            logger.info(
+                f"ERRO: Falha ao processar MediaInfo para verificar Português: {error}",
+                extra={"markup": False},
+            )
             return ""
 
     @staticmethod
@@ -143,7 +192,9 @@ class Portugas(UNIT3D):
 
     @staticmethod
     def _section_is_portuguese(section: str) -> bool:
-        language_match = re.search(r"Language\s*:\s*(.+)", section, re.IGNORECASE)
+        language_match = re.search(
+            r"Language\s*:\s*(.+)", section, re.IGNORECASE
+        )
         title_match = re.search(r"Title\s*:\s*(.+)", section, re.IGNORECASE)
         language = language_match.group(1).strip() if language_match else ""
         title = title_match.group(1).strip() if title_match else ""

@@ -69,7 +69,9 @@ class _Completed:
 class _Process:
     returncode = 0
 
-    async def communicate(self, _input: bytes | None = None) -> tuple[bytes, bytes]:
+    async def communicate(
+        self, _input: bytes | None = None
+    ) -> tuple[bytes, bytes]:
         return b"tool 1.0.0", b""
 
     async def wait(self) -> int:
@@ -97,15 +99,35 @@ def _archives(tmp_path: Path) -> dict[str, Path]:
         info.mode = 0o755
         archive.addfile(info, io.BytesIO(b"tool"))
     checksum = tmp_path / "sha256.sum"
-    checksum.write_text("f9f90a3e4fb6d7fae061e82b10f44aa6e868e8276a19f3fc0b4ef607df5b2bc0  tool\n", encoding="utf-8")
-    return {"executable": executable, "zip": zip_path, "tar": tar_path, "checksum": checksum}
+    checksum.write_text(
+        "f9f90a3e4fb6d7fae061e82b10f44aa6e868e8276a19f3fc0b4ef607df5b2bc0  tool\n",
+        encoding="utf-8",
+    )
+    return {
+        "executable": executable,
+        "zip": zip_path,
+        "tar": tar_path,
+        "checksum": checksum,
+    }
 
 
 def _modules() -> list[ModuleType]:
-    return [importlib.import_module(info.name) for info in pkgutil.iter_modules(runtime_tools_package.__path__, f"{runtime_tools_package.__name__}.")]
+    return [
+        importlib.import_module(info.name)
+        for info in pkgutil.iter_modules(
+            runtime_tools_package.__path__,
+            f"{runtime_tools_package.__name__}.",
+        )
+    ]
 
 
-def _value(name: str, annotation: object, tmp_path: Path, files: Mapping[str, Path], profile: int) -> object:
+def _value(
+    name: str,
+    annotation: object,
+    tmp_path: Path,
+    files: Mapping[str, Path],
+    profile: int,
+) -> object:
     normalized = name.casefold().lstrip("_")
     destination = tmp_path / f"destination-{profile}"
     destination.mkdir(exist_ok=True)
@@ -192,11 +214,26 @@ async def _invoke(
     except NameError, TypeError:
         hints = {}
     for parameter in inspect.signature(function).parameters.values():
-        if parameter.kind in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}:
+        if parameter.kind in {
+            inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.VAR_KEYWORD,
+        }:
             continue
-        if parameter.default is not inspect.Parameter.empty and parameter.name not in overrides:
+        if (
+            parameter.default is not inspect.Parameter.empty
+            and parameter.name not in overrides
+        ):
             continue
-        value = overrides.get(parameter.name, _value(parameter.name, hints.get(parameter.name, parameter.annotation), tmp_path, files, profile))
+        value = overrides.get(
+            parameter.name,
+            _value(
+                parameter.name,
+                hints.get(parameter.name, parameter.annotation),
+                tmp_path,
+                files,
+                profile,
+            ),
+        )
         if parameter.kind is inspect.Parameter.KEYWORD_ONLY:
             keywords[parameter.name] = value
         else:
@@ -207,30 +244,42 @@ async def _invoke(
     return result
 
 
-def test_runtime_tool_catalog_uses_verified_local_boundaries(tmp_path: Path, monkeypatch: Any) -> None:
+def test_runtime_tool_catalog_uses_verified_local_boundaries(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
     files = _archives(tmp_path)
 
-    def sync_download(_url: str, destination: str | Path, *_args: object, **_kwargs: object) -> Path:
+    def sync_download(
+        _url: str, destination: str | Path, *_args: object, **_kwargs: object
+    ) -> Path:
         target = Path(destination)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(b"tool")
         return target
 
-    async def async_download(_url: str, destination: str | Path, *_args: object, **_kwargs: object) -> Path:
+    async def async_download(
+        _url: str, destination: str | Path, *_args: object, **_kwargs: object
+    ) -> Path:
         return sync_download(_url, destination)
 
     async def fake_process(*_args: object, **_kwargs: object) -> _Process:
         return _Process()
 
-    async def no_sleep(_delay: float = 0, *_args: object, **_kwargs: object) -> None:
+    async def no_sleep(
+        _delay: float = 0, *_args: object, **_kwargs: object
+    ) -> None:
         return None
 
     monkeypatch.setattr(requests, "get", lambda *_args, **_kwargs: _Response())
     monkeypatch.setattr(httpx, "AsyncClient", _AsyncClient)
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_process)
     monkeypatch.setattr(asyncio, "sleep", no_sleep)
-    monkeypatch.setattr(subprocess, "run", lambda *_args, **_kwargs: _Completed())
-    monkeypatch.setattr(subprocess, "check_output", lambda *_args, **_kwargs: b"tool 1.0.0")
+    monkeypatch.setattr(
+        subprocess, "run", lambda *_args, **_kwargs: _Completed()
+    )
+    monkeypatch.setattr(
+        subprocess, "check_output", lambda *_args, **_kwargs: b"tool 1.0.0"
+    )
     monkeypatch.setattr(platform, "system", lambda: "Linux")
     monkeypatch.setattr(platform, "machine", lambda: "x86_64")
 
@@ -248,10 +297,22 @@ def test_runtime_tool_catalog_uses_verified_local_boundaries(tmp_path: Path, mon
                 "download_bounded_asset_sync",
             ):
                 if hasattr(module, attribute):
-                    replacement = async_download if inspect.iscoroutinefunction(getattr(module, attribute)) else sync_download
+                    replacement = (
+                        async_download
+                        if inspect.iscoroutinefunction(
+                            getattr(module, attribute)
+                        )
+                        else sync_download
+                    )
                     monkeypatch.setattr(module, attribute, replacement)
-            for name, function in inspect.getmembers(module, inspect.isfunction):
-                if function.__module__ != module.__name__ or name.startswith("__") or name.endswith("_sync"):
+            for name, function in inspect.getmembers(
+                module, inspect.isfunction
+            ):
+                if (
+                    function.__module__ != module.__name__
+                    or name.startswith("__")
+                    or name.endswith("_sync")
+                ):
                     continue
                 qualified = f"{module.__name__}.{name}"
                 attempted.add(qualified)
@@ -259,19 +320,29 @@ def test_runtime_tool_catalog_uses_verified_local_boundaries(tmp_path: Path, mon
                     try:
                         await _invoke(function, tmp_path, files, profile)
                     except (KeyboardInterrupt, SystemExit) as error:
-                        terminations.append(f"{qualified}:{type(error).__name__}")
+                        terminations.append(
+                            f"{qualified}:{type(error).__name__}"
+                        )
                     except Exception as error:
-                        expected_rejections.append(f"{qualified}:{type(error).__name__}")
+                        expected_rejections.append(
+                            f"{qualified}:{type(error).__name__}"
+                        )
 
-            for class_name, class_type in inspect.getmembers(module, inspect.isclass):
+            for class_name, class_type in inspect.getmembers(
+                module, inspect.isclass
+            ):
                 if class_type.__module__ != module.__name__:
                     continue
                 try:
                     instance = await _invoke(class_type, tmp_path, files, 0)
                 except Exception as error:
-                    expected_rejections.append(f"{module.__name__}.{class_name}.__init__:{type(error).__name__}")
+                    expected_rejections.append(
+                        f"{module.__name__}.{class_name}.__init__:{type(error).__name__}"
+                    )
                     continue
-                for method_name, method in inspect.getmembers(instance, callable):
+                for method_name, method in inspect.getmembers(
+                    instance, callable
+                ):
                     if method_name.startswith("__"):
                         continue
                     qualified = f"{module.__name__}.{class_name}.{method_name}"
@@ -280,49 +351,86 @@ def test_runtime_tool_catalog_uses_verified_local_boundaries(tmp_path: Path, mon
                         try:
                             await _invoke(method, tmp_path, files, profile)
                         except (KeyboardInterrupt, SystemExit) as error:
-                            terminations.append(f"{qualified}:{type(error).__name__}")
+                            terminations.append(
+                                f"{qualified}:{type(error).__name__}"
+                            )
                         except Exception as error:
-                            expected_rejections.append(f"{qualified}:{type(error).__name__}")
+                            expected_rejections.append(
+                                f"{qualified}:{type(error).__name__}"
+                            )
 
-                for _meta_updates, argument_overrides in literal_branch_scenarios(function, (), limit=192):
+                for (
+                    _meta_updates,
+                    argument_overrides,
+                ) in literal_branch_scenarios(function, (), limit=192):
                     try:
-                        await _invoke(function, tmp_path, files, 0, argument_overrides)
+                        await _invoke(
+                            function, tmp_path, files, 0, argument_overrides
+                        )
                     except (KeyboardInterrupt, SystemExit) as error:
-                        terminations.append(f"{qualified}:{type(error).__name__}")
+                        terminations.append(
+                            f"{qualified}:{type(error).__name__}"
+                        )
                     except Exception as error:
-                        expected_rejections.append(f"{qualified}:{type(error).__name__}")
+                        expected_rejections.append(
+                            f"{qualified}:{type(error).__name__}"
+                        )
 
-            for class_name, class_type in inspect.getmembers(module, inspect.isclass):
+            for class_name, class_type in inspect.getmembers(
+                module, inspect.isclass
+            ):
                 if class_type.__module__ != module.__name__:
                     continue
                 try:
                     instance = await _invoke(class_type, tmp_path, files, 0)
                 except Exception as error:
-                    expected_rejections.append(f"{module.__name__}.{class_name}.__init__:{type(error).__name__}")
+                    expected_rejections.append(
+                        f"{module.__name__}.{class_name}.__init__:{type(error).__name__}"
+                    )
                     continue
-                for method_name, method in inspect.getmembers(instance, callable):
+                for method_name, method in inspect.getmembers(
+                    instance, callable
+                ):
                     if method_name.startswith("__"):
                         continue
                     qualified = f"{module.__name__}.{class_name}.{method_name}"
-                    for _meta_updates, argument_overrides in literal_branch_scenarios(method, (), limit=192):
+                    for (
+                        _meta_updates,
+                        argument_overrides,
+                    ) in literal_branch_scenarios(method, (), limit=192):
                         try:
-                            await _invoke(method, tmp_path, files, 0, argument_overrides)
+                            await _invoke(
+                                method, tmp_path, files, 0, argument_overrides
+                            )
                         except (KeyboardInterrupt, SystemExit) as error:
-                            terminations.append(f"{qualified}:{type(error).__name__}")
+                            terminations.append(
+                                f"{qualified}:{type(error).__name__}"
+                            )
                         except Exception as error:
-                            expected_rejections.append(f"{qualified}:{type(error).__name__}")
+                            expected_rejections.append(
+                                f"{qualified}:{type(error).__name__}"
+                            )
 
     asyncio.run(exercise())
 
     # Sync wrappers intentionally own an event loop and must be exercised from
     # normal synchronous test context, not from inside ``exercise``.
-    integrity = importlib.import_module("src.integrations.runtime_tools.download_integrity")
-    for name in ("download_bounded_asset_sync", "download_verified_asset_sync"):
+    integrity = importlib.import_module(
+        "src.integrations.runtime_tools.download_integrity"
+    )
+    for name in (
+        "download_bounded_asset_sync",
+        "download_verified_asset_sync",
+    ):
         function = getattr(integrity, name)
         attempted.add(f"{integrity.__name__}.{name}")
         try:
             if name == "download_bounded_asset_sync":
-                function("https://downloads.example/tool", tmp_path / f"{name}.bin", max_bytes=1024)
+                function(
+                    "https://downloads.example/tool",
+                    tmp_path / f"{name}.bin",
+                    max_bytes=1024,
+                )
             else:
                 function(
                     "https://downloads.example/tool",
@@ -331,7 +439,9 @@ def test_runtime_tool_catalog_uses_verified_local_boundaries(tmp_path: Path, mon
                     max_bytes=1024,
                 )
         except Exception as error:
-            expected_rejections.append(f"{integrity.__name__}.{name}:{type(error).__name__}")
+            expected_rejections.append(
+                f"{integrity.__name__}.{name}:{type(error).__name__}"
+            )
 
     assert len(attempted) >= 50
     assert terminations == []

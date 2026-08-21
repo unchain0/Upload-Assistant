@@ -1,6 +1,12 @@
 """Unit tests for the tracker-neutral music domain model."""
 
-from src.domain_models.music import AudioTrack, AuxiliaryFiles, MetadataSource, MetadataValue, MusicRelease
+from src.domain_models.music import (
+    AudioTrack,
+    AuxiliaryFiles,
+    MetadataSource,
+    MetadataValue,
+    MusicRelease,
+)
 
 
 def test_music_release_from_dict_round_trips_serialized_release():
@@ -18,7 +24,11 @@ def test_music_release_from_dict_round_trips_serialized_release():
             )
         ],
         auxiliary=AuxiliaryFiles(logs=["rip.log"], artwork=["cover.jpg"]),
-        fields={"album": MetadataValue("Example Album", MetadataSource.FILE_TAG, 1.0)},
+        fields={
+            "album": MetadataValue(
+                "Example Album", MetadataSource.FILE_TAG, 1.0
+            )
+        },
         conflicts={"album": ["Example Album", "Other Album"]},
         warnings=["Example warning"],
         external_ids={"musicbrainz_release": "release-id"},
@@ -58,7 +68,11 @@ def test_music_release_from_dict_skips_or_normalizes_malformed_nested_values():
             "auxiliary": {1: "invalid-key"},
             "fields": {
                 "ignored": [],
-                42: {"value": "kept", "source": object(), "confidence": object()},
+                42: {
+                    "value": "kept",
+                    "source": object(),
+                    "confidence": object(),
+                },
             },
             "conflicts": {
                 "ignored": "not-a-list",
@@ -71,7 +85,9 @@ def test_music_release_from_dict_skips_or_normalizes_malformed_nested_values():
 
     assert restored.tracks == []
     assert restored.auxiliary == AuxiliaryFiles()
-    assert restored.fields == {"42": MetadataValue("kept", MetadataSource.INFERRED, 0.0)}
+    assert restored.fields == {
+        "42": MetadataValue("kept", MetadataSource.INFERRED, 0.0)
+    }
     assert restored.conflicts == {"7": ["1", "two"]}
     assert restored.warnings == ["1", "warning"]
     assert restored.external_ids == {"7": "99"}

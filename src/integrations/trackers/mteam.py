@@ -31,16 +31,28 @@ class MTeam:
     api_base_url = "https://api.m-team.cc/api"
     banned_groups = ("FGT",)
     requests_url = f"{api_base_url}/seek/search"
-    tracker_urls = ("tracker.m-team.cc", "tra1.m-team.cc", "tracker.m-team.io", "tra1.m-team.io", "tra99.manfuz.co")
+    tracker_urls = (
+        "tracker.m-team.cc",
+        "tra1.m-team.cc",
+        "tracker.m-team.io",
+        "tra1.m-team.io",
+        "tra99.manfuz.co",
+    )
     supported_categories = ("TV", "MOVIE")
 
     def __init__(self, config: Config):
         self.config = config
         self.common = Common(config)
         self.tmdb_manager = TmdbManager(config)
-        raw_url = str(self.config["TRACKERS"][self.tracker].get("base_url", "kp.m-team.cc")).strip()
+        raw_url = str(
+            self.config["TRACKERS"][self.tracker].get(
+                "base_url", "kp.m-team.cc"
+            )
+        ).strip()
         parsed_raw = urlparse(raw_url)
-        clean_netloc = parsed_raw.netloc if parsed_raw.netloc else parsed_raw.path
+        clean_netloc = (
+            parsed_raw.netloc if parsed_raw.netloc else parsed_raw.path
+        )
         self.base_url = urlunparse(("https", clean_netloc, "", "", "", ""))
         self.torrent_url = f"{self.base_url}/detail/"
         self.api_key = self.config["TRACKERS"][self.tracker].get("api_key")
@@ -54,23 +66,40 @@ class MTeam:
 
     async def get_requests(self, meta: Meta) -> list[dict[str, str]]:
         try:
-            response = await self.session.post(self.requests_url, json=self._request_payload(meta), timeout=15)
+            response = await self.session.post(
+                self.requests_url, json=self._request_payload(meta), timeout=15
+            )
             response.raise_for_status()
-            requests = self._request_entries(response.json(), self.get_category_id(meta))
+            requests = self._request_entries(
+                response.json(), self.get_category_id(meta)
+            )
             self._log_request_entries(requests)
             return requests
         except Exception as error:
-            logger.info(f"{self.tracker}: [bold red]Error searching for requests with title {meta.title}: {error}[/bold red]")
+            logger.info(
+                f"{self.tracker}: [bold red]Error searching for requests with title {meta.title}: {error}[/bold red]"
+            )
             return []
 
     @staticmethod
     def _request_payload(meta: Meta) -> dict[str, int | bool | str]:
-        return {"pageNumber": 1, "pageSize": 10, "keyword": meta.title, "take": False}
+        return {
+            "pageNumber": 1,
+            "pageSize": 10,
+            "keyword": meta.title,
+            "take": False,
+        }
 
     @classmethod
-    def _request_entries(cls, payload: Any, category: int) -> list[dict[str, str]]:
+    def _request_entries(
+        cls, payload: Any, category: int
+    ) -> list[dict[str, str]]:
         items = cls._nested_data_list(payload)
-        return [entry for item in items if (entry := cls._request_entry(item, category)) is not None]
+        return [
+            entry
+            for item in items
+            if (entry := cls._request_entry(item, category)) is not None
+        ]
 
     @staticmethod
     def _nested_data_list(payload: Any) -> list[Any]:
@@ -95,7 +124,9 @@ class MTeam:
     def _log_request_entries(self, requests: list[dict[str, str]]) -> None:
         if not requests:
             return
-        lines = [f"\n{self.tracker}: [bold yellow]Your upload may fulfill the following request(s), check it out:[/bold yellow]\n"]
+        lines = [
+            f"\n{self.tracker}: [bold yellow]Your upload may fulfill the following request(s), check it out:[/bold yellow]\n"
+        ]
         for request in requests:
             lines.extend(self._request_log_lines(request))
         logger.info("\n".join(lines))
@@ -125,11 +156,22 @@ class MTeam:
 
     @staticmethod
     def _bdmv_mediainfo_path(root: Path) -> Path | None:
-        return next((path for path in root.iterdir() if path.name.endswith("_FULL.txt")), None)
+        return next(
+            (
+                path
+                for path in root.iterdir()
+                if path.name.endswith("_FULL.txt")
+            ),
+            None,
+        )
 
     def bbcode_to_markdown(self, text: str) -> str:
-        specific_img_pattern = r"\[url=[^\]]*\]\[img(?:=[^\]]*)?\](.*?)\[/img\]\[/url\]"
-        text = re.sub(specific_img_pattern, r"![](\1)", text, flags=re.IGNORECASE)
+        specific_img_pattern = (
+            r"\[url=[^\]]*\]\[img(?:=[^\]]*)?\](.*?)\[/img\]\[/url\]"
+        )
+        text = re.sub(
+            specific_img_pattern, r"![](\1)", text, flags=re.IGNORECASE
+        )
 
         patterns = [
             (r"\[b\](.*?)\[/b\]", r"**\1**"),
@@ -142,7 +184,9 @@ class MTeam:
         ]
 
         for pattern, replacement in patterns:
-            text = re.sub(pattern, replacement, text, flags=re.IGNORECASE | re.DOTALL)
+            text = re.sub(
+                pattern, replacement, text, flags=re.IGNORECASE | re.DOTALL
+            )
 
         return text
 
@@ -165,7 +209,9 @@ class MTeam:
         }
 
         try:
-            response = await self.session.post(api_url, headers=headers, params=params, timeout=15)
+            response = await self.session.post(
+                api_url, headers=headers, params=params, timeout=15
+            )
             response.raise_for_status()
             return response.json()
 
@@ -178,7 +224,9 @@ class MTeam:
         douban = self._douban_payload(db_info)
         if douban is not None:
             return self._douban_description(douban)
-        logger.info(f"{self.tracker}: Douban information is unavailable, using an alternative English version for the description.")
+        logger.info(
+            f"{self.tracker}: Douban information is unavailable, using an alternative English version for the description."
+        )
         return self._fallback_description(meta)
 
     @staticmethod
@@ -233,7 +281,11 @@ class MTeam:
     @classmethod
     def _people_names(cls, value: Any) -> str:
         people = value if isinstance(value, list) else []
-        return " / ".join(str(person.get("name", "")) for person in people if isinstance(person, dict))
+        return " / ".join(
+            str(person.get("name", ""))
+            for person in people
+            if isinstance(person, dict)
+        )
 
     @classmethod
     def _fallback_description(cls, meta: Meta) -> str:
@@ -246,7 +298,9 @@ class MTeam:
         return meta.imdb_info if isinstance(meta.imdb_info, dict) else {}
 
     @classmethod
-    def _fallback_description_values(cls, meta: Meta, imdb: dict[str, Any]) -> dict[str, str]:
+    def _fallback_description_values(
+        cls, meta: Meta, imdb: dict[str, Any]
+    ) -> dict[str, str]:
         return {
             "poster": cls._fallback_poster(meta, imdb),
             "title": cls._display_value(meta.title),
@@ -264,7 +318,9 @@ class MTeam:
     @staticmethod
     def _cast_values(meta: Meta) -> list[str]:
         values = meta.cast if meta.cast else meta.tmdb_cast
-        return [str(item) for item in values] if isinstance(values, list) else []
+        return (
+            [str(item) for item in values] if isinstance(values, list) else []
+        )
 
     @staticmethod
     def _fallback_description_lines(values: dict[str, str]) -> list[str]:
@@ -307,10 +363,16 @@ class MTeam:
         description = description.strip()
         description = description.replace("[*] ", "• ").replace("[*]", "• ")
         description = self.bbcode_to_markdown(description)
-        description = description.replace("[center]", "").replace("[/center]", "")
+        description = description.replace("[center]", "").replace(
+            "[/center]", ""
+        )
         description = bbcode.remove_extra_lines(description)
 
-        async with aiofiles.open(f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{self.tracker}]DESCRIPTION.txt", "w", encoding="utf-8") as description_file:
+        async with aiofiles.open(
+            f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{self.tracker}]DESCRIPTION.txt",
+            "w",
+            encoding="utf-8",
+        ) as description_file:
             await description_file.write(description)
 
         return description
@@ -341,7 +403,9 @@ class MTeam:
 
     async def get_additional_checks(self, meta: Meta) -> bool:
         if not meta.imdb_tt:
-            logger.info(f"{self.tracker}: [bold yellow]IMDb ID not found in metadata, skipping upload.[/bold yellow]")
+            logger.info(
+                f"{self.tracker}: [bold yellow]IMDb ID not found in metadata, skipping upload.[/bold yellow]"
+            )
             return False
         if not await self._upscale_policy_passes(meta):
             return False
@@ -352,17 +416,24 @@ class MTeam:
     async def _upscale_policy_passes(self, meta: Meta) -> bool:
         if not self._is_unmarked_upscale(meta):
             return True
-        logger.info(f"{self.tracker}: Uploading upscaled files created by converting low-bitrate videos to high-bitrate versions might be prohibited.")
+        logger.info(
+            f"{self.tracker}: Uploading upscaled files created by converting low-bitrate videos to high-bitrate versions might be prohibited."
+        )
         return await self._confirm_policy(meta)
 
     @staticmethod
     def _is_unmarked_upscale(meta: Meta) -> bool:
-        return "upscale" in str(meta.uuid).casefold() and "upscale" not in str(meta.title).casefold()
+        return (
+            "upscale" in str(meta.uuid).casefold()
+            and "upscale" not in str(meta.title).casefold()
+        )
 
     def _screenshot_policy_passes(self, meta: Meta) -> bool:
         if self._screen_count(meta.screens) >= 3:
             return True
-        logger.info(f"{self.tracker}: [bold yellow]At least 3 screenshots are required for video uploads. Skipping upload.[/bold yellow]")
+        logger.info(
+            f"{self.tracker}: [bold yellow]At least 3 screenshots are required for video uploads. Skipping upload.[/bold yellow]"
+        )
         return False
 
     @staticmethod
@@ -383,18 +454,42 @@ class MTeam:
     @classmethod
     def _contains_lgbt_content(cls, meta: Meta) -> bool:
         keywords = cls._string_list(meta.keywords)
-        genres = [item.strip() for item in f"{', '.join(keywords)} {meta.combined_genres}".split(",") if item.strip()]
-        lgbt = {"lgbt", "queer", "lgbtq", "lgbtqia", "transgender", "trans", "gay", "lesbian", "bisexual", "pansexual", "non-binary", "homoerotic"}
+        genres = [
+            item.strip()
+            for item in f"{', '.join(keywords)} {meta.combined_genres}".split(
+                ","
+            )
+            if item.strip()
+        ]
+        lgbt = {
+            "lgbt",
+            "queer",
+            "lgbtq",
+            "lgbtqia",
+            "transgender",
+            "trans",
+            "gay",
+            "lesbian",
+            "bisexual",
+            "pansexual",
+            "non-binary",
+            "homoerotic",
+        }
         return any(item in lgbt for item in genres)
 
     async def _confirm_policy(self, meta: Meta) -> bool:
         if meta.unattended and not meta.unattended_confirm:
             return False
-        return await self.common.prompt_user_for_confirmation(f"{self.tracker}: Do you want to continue with the upload? (y/n): ", meta)
+        return await self.common.prompt_user_for_confirmation(
+            f"{self.tracker}: Do you want to continue with the upload? (y/n): ",
+            meta,
+        )
 
     async def search_existing(self, meta: Meta) -> list[dict[str, Any]]:
         if not meta.imdb_tt:
-            logger.info(f"{self.tracker}: [bold yellow]Cannot perform search on {self.tracker}: IMDb ID not found in metadata.[/bold yellow]")
+            logger.info(
+                f"{self.tracker}: [bold yellow]Cannot perform search on {self.tracker}: IMDb ID not found in metadata.[/bold yellow]"
+            )
             return []
         response = await self.session.post(
             f"{self.api_base_url}/torrent/search",
@@ -421,7 +516,9 @@ class MTeam:
         message = payload.get("message") if isinstance(payload, dict) else None
         raise RuntimeError(f"MTEAM API Error: {message}")
 
-    async def _search_entries(self, meta: Meta, payload: Any) -> list[dict[str, Any]]:
+    async def _search_entries(
+        self, meta: Meta, payload: Any
+    ) -> list[dict[str, Any]]:
         entries: list[dict[str, Any]] = []
         for torrent in self._nested_data_list(payload):
             entry = await self._search_entry(meta, torrent)
@@ -429,7 +526,9 @@ class MTeam:
                 entries.append(entry)
         return entries
 
-    async def _search_entry(self, meta: Meta, torrent: Any) -> dict[str, Any] | None:
+    async def _search_entry(
+        self, meta: Meta, torrent: Any
+    ) -> dict[str, Any] | None:
         if not isinstance(torrent, dict) or not torrent.get("id"):
             return None
         torrent_id = int(torrent["id"])
@@ -471,7 +570,9 @@ class MTeam:
             return mapping[resolution]
         if meta.sd:
             return 5
-        logger.info(f"{self.tracker}: Unknown or unsupported resolution '{resolution}', defaulting to 1080p.")
+        logger.info(
+            f"{self.tracker}: Unknown or unsupported resolution '{resolution}', defaulting to 1080p."
+        )
         return 1
 
     def get_videocodec(self, meta: Meta) -> int:
@@ -496,7 +597,9 @@ class MTeam:
         codec = str(meta.video_codec).casefold()
         if codec in mapping:
             return mapping[codec]
-        logger.info(f"{self.tracker}: Unknown or unsupported video codec '{codec}', defaulting to x264.")
+        logger.info(
+            f"{self.tracker}: Unknown or unsupported video codec '{codec}', defaulting to x264."
+        )
         return 1
 
     def get_audiocodec(self, meta: Meta) -> int:
@@ -504,7 +607,9 @@ class MTeam:
         result = self._known_audio_codec(codec)
         if result is not None:
             return result
-        logger.info(f"{self.tracker}: Unknown or unsupported audio codec '{codec}', defaulting to AC3.")
+        logger.info(
+            f"{self.tracker}: Unknown or unsupported audio codec '{codec}', defaulting to AC3."
+        )
         return 8
 
     @staticmethod
@@ -518,7 +623,14 @@ class MTeam:
             (("dts",), 3),
             (("truehd",), 9),
         )
-        return next((value for tokens, value in mappings if all(token in codec for token in tokens)), None)
+        return next(
+            (
+                value
+                for tokens, value in mappings
+                if all(token in codec for token in tokens)
+            ),
+            None,
+        )
 
     async def fetch_data(self, meta: Meta) -> dict[str, Any]:
         """
@@ -544,7 +656,10 @@ class MTeam:
             # "dmmCode": "",
             # "cids": "",
             # "aids": "",
-            "anonymous": bool(meta.anon or self.config["TRACKERS"][self.tracker].get("anon", False)),
+            "anonymous": bool(
+                meta.anon
+                or self.config["TRACKERS"][self.tracker].get("anon", False)
+            ),
             # "labels": 0,
             # "tags": "",
             # "file": "",
@@ -561,33 +676,58 @@ class MTeam:
             return await self._debug_upload(meta, data, status)
         return await self._upload_release(meta, data, status)
 
-    async def _debug_upload(self, meta: Meta, data: dict[str, Any], status: dict[str, Any]) -> bool:
+    async def _debug_upload(
+        self, meta: Meta, data: dict[str, Any], status: dict[str, Any]
+    ) -> bool:
         logger.info(f"{self.tracker}: [cyan]{self.tracker} Request Data:")
         logger.info(Redaction.redact_private_info(data))
         status["status_message"] = "Debug mode enabled, not uploading"
-        await self.common.create_torrent_for_upload(meta, f"{self.tracker}_DEBUG", f"{self.tracker}_DEBUG", announce_url="https://fake.tracker")
+        await self.common.create_torrent_for_upload(
+            meta,
+            f"{self.tracker}_DEBUG",
+            f"{self.tracker}_DEBUG",
+            announce_url="https://fake.tracker",
+        )
         return True
 
-    async def _upload_release(self, meta: Meta, data: dict[str, Any], status: dict[str, Any]) -> bool:
+    async def _upload_release(
+        self, meta: Meta, data: dict[str, Any], status: dict[str, Any]
+    ) -> bool:
         try:
             response = await self._submit_upload(meta, data)
             return await self._handle_upload_response(meta, status, response)
         except httpx.HTTPStatusError as error:
-            status["status_message"] = f"data error: HTTP {error.response.status_code} - {error.response.text}"
+            status["status_message"] = (
+                f"data error: HTTP {error.response.status_code} - {error.response.text}"
+            )
             return False
         except httpx.TimeoutException:
-            status["status_message"] = f"data error: Request timed out after {self.session.timeout.write} seconds"
+            status["status_message"] = (
+                f"data error: Request timed out after {self.session.timeout.write} seconds"
+            )
             return False
         except httpx.RequestError as error:
             status["status_message"] = self._request_error_message(error)
             return False
         except Exception as error:
-            status["status_message"] = f"data error: It may have uploaded, go check. Error: {error}.\nResponse: No response received"
+            status["status_message"] = (
+                f"data error: It may have uploaded, go check. Error: {error}.\nResponse: No response received"
+            )
             return False
 
-    async def _submit_upload(self, meta: Meta, data: dict[str, Any]) -> httpx.Response:
-        await self.common.create_torrent_for_upload(meta, self.tracker, "[kp.m-team.cc] M-Team - TP")
-        files = {"file": ("upload.torrent", await self._torrent_bytes(meta), "application/x-bittorrent")}
+    async def _submit_upload(
+        self, meta: Meta, data: dict[str, Any]
+    ) -> httpx.Response:
+        await self.common.create_torrent_for_upload(
+            meta, self.tracker, "[kp.m-team.cc] M-Team - TP"
+        )
+        files = {
+            "file": (
+                "upload.torrent",
+                await self._torrent_bytes(meta),
+                "application/x-bittorrent",
+            )
+        }
         response = await self.session.post(
             f"{self.api_base_url}/torrent/createOredit",
             data=data,
@@ -599,15 +739,24 @@ class MTeam:
         return response
 
     async def _torrent_bytes(self, meta: Meta) -> bytes:
-        path = release_temp_dir(meta.base_dir, meta.uuid) / f"[{self.tracker}].torrent"
+        path = (
+            release_temp_dir(meta.base_dir, meta.uuid)
+            / f"[{self.tracker}].torrent"
+        )
         async with aiofiles.open(path, "rb") as handle:
             return await handle.read()
 
-    async def _handle_upload_response(self, meta: Meta, status: dict[str, Any], response: httpx.Response) -> bool:
+    async def _handle_upload_response(
+        self, meta: Meta, status: dict[str, Any], response: httpx.Response
+    ) -> bool:
         payload = response.json()
-        data = cast(dict[str, Any], payload) if isinstance(payload, dict) else {}
+        data = (
+            cast(dict[str, Any], payload) if isinstance(payload, dict) else {}
+        )
         if data.get("message") != "SUCCESS":
-            status["status_message"] = f"data error: {data.get('message', 'Unknown API error.')}"
+            status["status_message"] = (
+                f"data error: {data.get('message', 'Unknown API error.')}"
+            )
             return False
         torrent_id = self._upload_torrent_id(data)
         if torrent_id is None:
@@ -624,20 +773,37 @@ class MTeam:
             return None
         return int(data["id"])
 
-    async def _download_uploaded_torrent(self, meta: Meta, status: dict[str, Any], torrent_id: int) -> bool:
-        response = await self.session.post(f"{self.api_base_url}/torrent/genDlToken?id={torrent_id}")
+    async def _download_uploaded_torrent(
+        self, meta: Meta, status: dict[str, Any], torrent_id: int
+    ) -> bool:
+        response = await self.session.post(
+            f"{self.api_base_url}/torrent/genDlToken?id={torrent_id}"
+        )
         payload = response.json()
-        download_url = payload.get("data") if isinstance(payload, dict) else None
+        download_url = (
+            payload.get("data") if isinstance(payload, dict) else None
+        )
         if not download_url:
-            logger.info(f"{self.tracker}: Failed to get download URL from API response.")
-            status["status_message"] = "Failed to get download URL from API response"
+            logger.info(
+                f"{self.tracker}: Failed to get download URL from API response."
+            )
+            status["status_message"] = (
+                "Failed to get download URL from API response"
+            )
             return False
-        await self.common.download_tracker_torrent(meta, self.tracker, headers=dict(self.session.headers), downurl=str(download_url))
+        await self.common.download_tracker_torrent(
+            meta,
+            self.tracker,
+            headers=dict(self.session.headers),
+            downurl=str(download_url),
+        )
         return True
 
     @staticmethod
     def _request_error_message(error: httpx.RequestError) -> str:
-        response_text = getattr(getattr(error, "response", None), "text", "No response received")
+        response_text = getattr(
+            getattr(error, "response", None), "text", "No response received"
+        )
         return f"data error: Unable to upload. Error: {error}.\nResponse: {response_text}"
 
     async def get_name(self, meta: Meta) -> str:
@@ -676,12 +842,21 @@ class MTeam:
         def replacement(match: re.Match[str]) -> str:
             return f"{match.group(1).upper()}{match.group(2) or ''}{match.group(3) or ''}"
 
-        return re.sub(r"\b(hdr|hlg)(10)?(\+)?\b", replacement, name, flags=re.IGNORECASE)
+        return re.sub(
+            r"\b(hdr|hlg)(10)?(\+)?\b", replacement, name, flags=re.IGNORECASE
+        )
 
     @staticmethod
     def _normalize_dolby_audio(name: str) -> str:
-        name = re.sub(r"\b(eac[-_]?3|dd\+)(?![a-zA-Z0-9])", "DDP", name, flags=re.IGNORECASE)
-        return re.sub(r"\bac[-_]?3(?![a-zA-Z0-9])", "DD", name, flags=re.IGNORECASE)
+        name = re.sub(
+            r"\b(eac[-_]?3|dd\+)(?![a-zA-Z0-9])",
+            "DDP",
+            name,
+            flags=re.IGNORECASE,
+        )
+        return re.sub(
+            r"\bac[-_]?3(?![a-zA-Z0-9])", "DD", name, flags=re.IGNORECASE
+        )
 
     @staticmethod
     def _normalize_dtsx(name: str) -> str:
@@ -694,4 +869,6 @@ class MTeam:
     @staticmethod
     def _normalize_hfr(name: str) -> str:
         name = re.sub(r"\b(50|60|120)fps\b", "HFR", name, flags=re.IGNORECASE)
-        return re.sub(r"\bHFR\b([-.\s_]+HFR)+", "HFR", name, flags=re.IGNORECASE)
+        return re.sub(
+            r"\bHFR\b([-.\s_]+HFR)+", "HFR", name, flags=re.IGNORECASE
+        )

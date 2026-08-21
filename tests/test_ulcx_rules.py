@@ -26,11 +26,26 @@ def make_ulcx_meta(**kwargs) -> Meta:
         "audio_languages": ["English"],
         "unattended": True,
         "valid_mi_settings": True,
-        "image_list": ["http://img1.png", "http://img2.png", "http://img3.png"],
+        "image_list": [
+            "http://img1.png",
+            "http://img2.png",
+            "http://img3.png",
+        ],
         "keywords": [],
         "genres": [],
         "filelist": ["Test.Movie.1080p.WEB-DL.H.264.mkv"],
-        "mediainfo": {"media": {"track": [{"@type": "Audio", "Format": "AAC", "Channels": "2", "Language": "en"}]}},
+        "mediainfo": {
+            "media": {
+                "track": [
+                    {
+                        "@type": "Audio",
+                        "Format": "AAC",
+                        "Channels": "2",
+                        "Language": "en",
+                    }
+                ]
+            }
+        },
     }
     default_kwargs.update(kwargs)
     meta = Meta()
@@ -96,7 +111,9 @@ async def test_ulcx_file_and_folder_structure():
     assert await tracker.get_additional_checks(meta_hdtv_ts) is True
 
     # DVD disc missing VIDEO_TS
-    meta_dvd = make_ulcx_meta(is_disc="DVD", filelist=["other_folder/file.vob"])
+    meta_dvd = make_ulcx_meta(
+        is_disc="DVD", filelist=["other_folder/file.vob"]
+    )
     assert await tracker.get_additional_checks(meta_dvd) is False
 
 
@@ -112,23 +129,42 @@ async def test_ulcx_encode_rules():
     tracker = make_ulcx()
 
     # SD encode (height < 720) rejected
-    meta_sd = make_ulcx_meta(type="ENCODE", resolution="480p", video_height=480)
+    meta_sd = make_ulcx_meta(
+        type="ENCODE", resolution="480p", video_height=480
+    )
     assert await tracker.get_additional_checks(meta_sd) is False
 
     # Live-action HEVC encode from 1080p source rejected
-    meta_hevc_hd = make_ulcx_meta(type="ENCODE", video_codec="HEVC", resolution="1080p", video_height=1080, anime=False)
+    meta_hevc_hd = make_ulcx_meta(
+        type="ENCODE",
+        video_codec="HEVC",
+        resolution="1080p",
+        video_height=1080,
+        anime=False,
+    )
     assert await tracker.get_additional_checks(meta_hevc_hd) is False
 
     # Live-action HEVC encode from 2160p source allowed
-    meta_hevc_uhd = make_ulcx_meta(type="ENCODE", video_codec="HEVC", resolution="2160p", video_height=2160, uhd="UHD", anime=False)
+    meta_hevc_uhd = make_ulcx_meta(
+        type="ENCODE",
+        video_codec="HEVC",
+        resolution="2160p",
+        video_height=2160,
+        uhd="UHD",
+        anime=False,
+    )
     assert await tracker.get_additional_checks(meta_hevc_uhd) is True
 
     # Live-action AV1 encode rejected
-    meta_av1_live = make_ulcx_meta(type="ENCODE", video_codec="AV1", anime=False)
+    meta_av1_live = make_ulcx_meta(
+        type="ENCODE", video_codec="AV1", anime=False
+    )
     assert await tracker.get_additional_checks(meta_av1_live) is False
 
     # Animated AV1 encode allowed
-    meta_av1_anime = make_ulcx_meta(type="ENCODE", video_codec="AV1", anime=True)
+    meta_av1_anime = make_ulcx_meta(
+        type="ENCODE", video_codec="AV1", anime=True
+    )
     assert await tracker.get_additional_checks(meta_av1_anime) is True
 
 
@@ -166,7 +202,12 @@ async def test_ulcx_audio_subtitle_mediainfo_rules():
         mediainfo={
             "media": {
                 "track": [
-                    {"@type": "Audio", "Format": "DTS", "Format_Profile": "MA / Core", "Channels": "2"},
+                    {
+                        "@type": "Audio",
+                        "Format": "DTS",
+                        "Format_Profile": "MA / Core",
+                        "Channels": "2",
+                    },
                 ]
             }
         },
@@ -199,7 +240,9 @@ async def test_ulcx_audio_subtitle_mediainfo_rules():
             }
         },
     )
-    assert await tracker.get_additional_checks(meta_default_sub_english) is False
+    assert (
+        await tracker.get_additional_checks(meta_default_sub_english) is False
+    )
 
     # Default subtitles on non-personal English releases are permitted by the SHOULD rule
     meta_default_sub_non_personal = make_ulcx_meta(
@@ -214,13 +257,20 @@ async def test_ulcx_audio_subtitle_mediainfo_rules():
             }
         },
     )
-    assert await tracker.get_additional_checks(meta_default_sub_non_personal) is True
+    assert (
+        await tracker.get_additional_checks(meta_default_sub_non_personal)
+        is True
+    )
 
 
 @pytest.mark.asyncio
 async def test_ulcx_language_policy_failure(monkeypatch):
     tracker = make_ulcx()
-    monkeypatch.setattr(tracker.common, "check_language_requirements", AsyncMock(return_value=False))
+    monkeypatch.setattr(
+        tracker.common,
+        "check_language_requirements",
+        AsyncMock(return_value=False),
+    )
     assert await tracker.get_additional_checks(make_ulcx_meta()) is False
 
 
@@ -233,27 +283,53 @@ async def test_ulcx_banned_encode_group_rejected():
 
 def test_ulcx_remux_audio_helpers_cover_mono_multi_and_encode_lossless():
     tracker = make_ulcx()
-    assert "lossless mono" in tracker._remux_track_reason({"Format": "PCM", "Channels": "1"})
-    assert "multi-channel" in tracker._remux_track_reason({"Format": "FLAC", "Channels": "6"})
-    assert tracker._invalid_encode_audio_track({"Format": "FLAC", "Channels": "6"}) is True
+    assert "lossless mono" in tracker._remux_track_reason(
+        {"Format": "PCM", "Channels": "1"}
+    )
+    assert "multi-channel" in tracker._remux_track_reason(
+        {"Format": "FLAC", "Channels": "6"}
+    )
+    assert (
+        tracker._invalid_encode_audio_track(
+            {"Format": "FLAC", "Channels": "6"}
+        )
+        is True
+    )
     assert tracker._is_lossless({"Format": "TrueHD"}) is True
 
 
 def test_ulcx_personal_subtitle_policy_without_default_is_allowed():
     tracker = make_ulcx()
-    meta = make_ulcx_meta(personalrelease=True, original_language="en", language="en")
-    assert tracker._subtitle_policy_passes(meta, [{"@type": "Text", "Default": "No"}]) is True
+    meta = make_ulcx_meta(
+        personalrelease=True, original_language="en", language="en"
+    )
+    assert (
+        tracker._subtitle_policy_passes(
+            meta, [{"@type": "Text", "Default": "No"}]
+        )
+        is True
+    )
 
 
 @pytest.mark.asyncio
 async def test_ulcx_hybrid_remux_reaches_success():
     tracker = make_ulcx()
-    meta = make_ulcx_meta(type="REMUX", edition="Hybrid", mediainfo={"media": {"track": [{"@type": "Audio", "Format": "AAC", "Channels": "2"}]}})
+    meta = make_ulcx_meta(
+        type="REMUX",
+        edition="Hybrid",
+        mediainfo={
+            "media": {
+                "track": [{"@type": "Audio", "Format": "AAC", "Channels": "2"}]
+            }
+        },
+    )
     assert await tracker.get_additional_checks(meta) is True
 
 
 @pytest.mark.asyncio
-async def test_ulcx_adult_description_keeps_non_image_center_block(tmp_path, monkeypatch):
+async def test_ulcx_adult_description_keeps_non_image_center_block(
+    tmp_path, monkeypatch
+):
     class Builder:
         def __init__(self, *_args, **_kwargs):
             pass
@@ -261,10 +337,14 @@ async def test_ulcx_adult_description_keeps_non_image_center_block(tmp_path, mon
         async def general_description_generator(self, *_args, **_kwargs):
             return "[center]plain text[/center][center][img]https://img.invalid/a.png[/img][/center]"
 
-    monkeypatch.setattr("src.integrations.trackers.UNIT3D.ulcx.DescriptionBuilder", Builder)
+    monkeypatch.setattr(
+        "src.integrations.trackers.UNIT3D.ulcx.DescriptionBuilder", Builder
+    )
     root = tmp_path / "tmp" / "ulcx-desc"
     root.mkdir(parents=True)
-    meta = make_ulcx_meta(base_dir=str(tmp_path), uuid="ulcx-desc", adult_media=True)
+    meta = make_ulcx_meta(
+        base_dir=str(tmp_path), uuid="ulcx-desc", adult_media=True
+    )
     result = await make_ulcx().get_description(meta)
     assert "[center]plain text[/center]" in result["description"]
     assert "[spoiler=Screenshots]" in result["description"]
@@ -284,4 +364,6 @@ async def test_ulcx_name_uses_imdb_identity_aka_and_year():
         edition="",
         webdv=False,
     )
-    assert await tracker.get_name(meta) == {"name": "Canonical AKA Alternate 2021 1080p WEB-DL"}
+    assert await tracker.get_name(meta) == {
+        "name": "Canonical AKA Alternate 2021 1080p WEB-DL"
+    }

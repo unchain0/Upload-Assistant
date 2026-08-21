@@ -10,8 +10,12 @@ def parse_tmdb_id(id_str: str, category: str | None) -> tuple[str, int]:
     normalized_category = category or ""
     parsed_id = id_str.lower().strip()
     if parsed_id.startswith(("http://", "https://")):
-        normalized_category, parsed_id = _tmdb_url_identity(parsed_id, normalized_category)
-    normalized_category, parsed_id = _tmdb_prefixed_identity(parsed_id, normalized_category)
+        normalized_category, parsed_id = _tmdb_url_identity(
+            parsed_id, normalized_category
+        )
+    normalized_category, parsed_id = _tmdb_prefixed_identity(
+        parsed_id, normalized_category
+    )
     return normalized_category, _numeric_tmdb_id(parsed_id)
 
 
@@ -36,7 +40,9 @@ def _identity_from_parts(parts: list[str], category: str) -> tuple[str, str]:
     return category, ""
 
 
-def _typed_tmdb_identity(type_part: str, id_part: str) -> tuple[str, str] | None:
+def _typed_tmdb_identity(
+    type_part: str, id_part: str
+) -> tuple[str, str] | None:
     if type_part not in {"tv", "movie"} or not id_part.isdigit():
         return None
     category = "TV" if type_part == "tv" else "MOVIE"

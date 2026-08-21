@@ -14,7 +14,9 @@ from src.integrations.packaging.manual_package import ManualPackageManager
 class _Response:
     status_code = 200
     content = b"cover"
-    payload: ClassVar[dict[str, Any]] = {"files": [{"url": "https://files.invalid/package.tar"}]}
+    payload: ClassVar[dict[str, Any]] = {
+        "files": [{"url": "https://files.invalid/package.tar"}]
+    }
 
     def json(self) -> dict[str, Any]:
         return type(self).payload
@@ -100,7 +102,9 @@ def test_constructor_validates_configuration_shapes() -> None:
         ManualPackageManager({"DEFAULT": {}, "TRACKERS": "bad"})  # type: ignore[dict-item]
 
 
-def test_filebrowser_package_removes_extra_torrents_and_copies_base(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_filebrowser_package_removes_extra_torrents_and_copies_base(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(manual_package, "Torrent", _Torrent)
     _Torrent.copied = []
     state = tmp_path / "tmp" / "manual"
@@ -110,7 +114,9 @@ def test_filebrowser_package_removes_extra_torrents_and_copies_base(tmp_path: Pa
     manager = ManualPackageManager(
         {
             "DEFAULT": {},
-            "TRACKERS": {"MANUAL": {"filebrowser": "https://files.invalid/root/"}},
+            "TRACKERS": {
+                "MANUAL": {"filebrowser": "https://files.invalid/root/"}
+            },
         }
     )
     meta = _meta(tmp_path)
@@ -122,14 +128,23 @@ def test_filebrowser_package_removes_extra_torrents_and_copies_base(tmp_path: Pa
     assert (state / "[RAND]keep.torrent").exists()
     assert _Torrent.copied and _Torrent.copied[0][1] is True
     generic = (state / "GENERIC_INFO.txt").read_text(encoding="utf-8")
-    assert "TMDB" in generic and "IMDb" in generic and "TVDB" in generic and "TVMaze" in generic
+    assert (
+        "TMDB" in generic
+        and "IMDb" in generic
+        and "TVDB" in generic
+        and "TVMaze" in generic
+    )
     assert "Image Webpage" in generic and "Thumbnail Image" in generic
 
 
-def test_remote_upload_package_and_existing_rehosted_artwork(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_remote_upload_package_and_existing_rehosted_artwork(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(manual_package.httpx, "AsyncClient", _Client)
     manager = ManualPackageManager({"DEFAULT": {}, "TRACKERS": {"MANUAL": {}}})
-    meta = _meta(tmp_path, rehosted_artwork_url="https://images.invalid/existing.jpg")
+    meta = _meta(
+        tmp_path, rehosted_artwork_url="https://images.invalid/existing.jpg"
+    )
     poster = tmp_path / "tmp" / "manual" / "artwork" / "POSTER.png"
     poster.parent.mkdir(parents=True, exist_ok=True)
     poster.write_bytes(b"poster")
@@ -137,38 +152,73 @@ def test_remote_upload_package_and_existing_rehosted_artwork(tmp_path: Path, mon
     result = asyncio.run(manager.package(meta))
 
     assert result == "https://files.invalid/package.tar"
-    generic = (tmp_path / "tmp" / "manual" / "GENERIC_INFO.txt").read_text(encoding="utf-8")
+    generic = (tmp_path / "tmp" / "manual" / "GENERIC_INFO.txt").read_text(
+        encoding="utf-8"
+    )
     assert "TMDB Cover: https://images.invalid/existing.jpg" in generic
 
 
-def test_artwork_fetch_failure_is_logged_but_package_continues(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_artwork_fetch_failure_is_logged_but_package_continues(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     response = _Response()
     response.status_code = 500
     _Client.get_response = response
     monkeypatch.setattr(manual_package.httpx, "AsyncClient", _Client)
-    manager = ManualPackageManager({"DEFAULT": {}, "TRACKERS": {"MANUAL": {"filebrowser": "https://files.invalid"}}})
+    manager = ManualPackageManager(
+        {
+            "DEFAULT": {},
+            "TRACKERS": {"MANUAL": {"filebrowser": "https://files.invalid"}},
+        }
+    )
     meta = _meta(tmp_path, artwork_url="https://images.invalid/missing.jpg")
 
-    assert asyncio.run(manager.package(meta)) == "https://files.invalid/tmp/manual"
+    assert (
+        asyncio.run(manager.package(meta))
+        == "https://files.invalid/tmp/manual"
+    )
 
 
-def test_package_returns_false_on_archive_or_upload_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_package_returns_false_on_archive_or_upload_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     manager = ManualPackageManager({"DEFAULT": {}, "TRACKERS": {"MANUAL": {}}})
-    monkeypatch.setattr(manual_package.shutil, "make_archive", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("archive failed")))
+    monkeypatch.setattr(
+        manual_package.shutil,
+        "make_archive",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            OSError("archive failed")
+        ),
+    )
     assert asyncio.run(manager.package(_meta(tmp_path))) is False
 
 
-def test_artwork_fetch_success_rehosts_and_persists_metadata(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_artwork_fetch_success_rehosts_and_persists_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     response = _Response()
     response.status_code = 200
     response.content = b"poster"
     _Client.get_response = response
     monkeypatch.setattr(manual_package.httpx, "AsyncClient", _Client)
-    manager = ManualPackageManager({"DEFAULT": {}, "TRACKERS": {"MANUAL": {"filebrowser": "https://files.invalid"}}})
+    manager = ManualPackageManager(
+        {
+            "DEFAULT": {},
+            "TRACKERS": {"MANUAL": {"filebrowser": "https://files.invalid"}},
+        }
+    )
 
     class Uploader:
         async def upload_screens(self, *_args: object, **_kwargs: object):
-            return ([{"raw_url": "https://images.invalid/rehosted.jpg", "img_url": "https://images.invalid/thumb.jpg"}], 1)
+            return (
+                [
+                    {
+                        "raw_url": "https://images.invalid/rehosted.jpg",
+                        "img_url": "https://images.invalid/thumb.jpg",
+                    }
+                ],
+                1,
+            )
 
     manager.uploadscreens_manager = Uploader()  # type: ignore[assignment]
     meta = _meta(
@@ -178,7 +228,12 @@ def test_artwork_fetch_success_rehosts_and_persists_metadata(tmp_path: Path, mon
         skip_imghost_upload=False,
     )
 
-    assert asyncio.run(manager.package(meta)) == "https://files.invalid/tmp/manual"
+    assert (
+        asyncio.run(manager.package(meta))
+        == "https://files.invalid/tmp/manual"
+    )
     assert meta.rehosted_artwork_url == "https://images.invalid/rehosted.jpg"
-    assert (tmp_path / "tmp" / "manual" / "artwork" / "POSTER.png").read_bytes() == b"poster"
+    assert (
+        tmp_path / "tmp" / "manual" / "artwork" / "POSTER.png"
+    ).read_bytes() == b"poster"
     assert (tmp_path / "tmp" / "manual" / "meta.json").is_file()

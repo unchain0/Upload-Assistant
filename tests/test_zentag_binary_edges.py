@@ -40,19 +40,33 @@ def _tar_bytes(name: str, payload: bytes) -> bytes:
     return output.getvalue()
 
 
-def _platform(monkeypatch: pytest.MonkeyPatch, system: str, machine: str, target: Path) -> None:
+def _platform(
+    monkeypatch: pytest.MonkeyPatch, system: str, machine: str, target: Path
+) -> None:
     monkeypatch.setattr(zentag.platform, "system", lambda: system)
     monkeypatch.setattr(zentag.platform, "machine", lambda: machine)
     monkeypatch.setattr(zentag, "tool_install_dir", lambda *_args: target)
     monkeypatch.setattr(zentag.HTTPX, "AsyncClient", _Client)
 
 
-def _configure_asset(monkeypatch: pytest.MonkeyPatch, asset: str, archive: bytes, binary: bytes) -> None:
-    monkeypatch.setitem(zentag.ZentagBinaryManager.CHECKSUMS, asset, hashlib.sha256(archive).hexdigest())
-    monkeypatch.setitem(zentag.ZentagBinaryManager.BINARY_CHECKSUMS, asset, hashlib.sha256(binary).hexdigest())
+def _configure_asset(
+    monkeypatch: pytest.MonkeyPatch, asset: str, archive: bytes, binary: bytes
+) -> None:
+    monkeypatch.setitem(
+        zentag.ZentagBinaryManager.CHECKSUMS,
+        asset,
+        hashlib.sha256(archive).hexdigest(),
+    )
+    monkeypatch.setitem(
+        zentag.ZentagBinaryManager.BINARY_CHECKSUMS,
+        asset,
+        hashlib.sha256(binary).hexdigest(),
+    )
 
 
-def test_unsupported_and_cached_binary(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_unsupported_and_cached_binary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     target = tmp_path / "target"
     target.mkdir()
     _platform(monkeypatch, "FreeBSD", "riscv64", target)
@@ -65,11 +79,19 @@ def test_unsupported_and_cached_binary(tmp_path: Path, monkeypatch: pytest.Monke
     binary.write_bytes(b"cached")
     marker = target / "v0.3.0"
     marker.write_text("v0.3.0", encoding="utf-8")
-    monkeypatch.setitem(zentag.ZentagBinaryManager.BINARY_CHECKSUMS, asset, hashlib.sha256(b"cached").hexdigest())
-    assert asyncio.run(zentag.ZentagBinaryManager.ensure_binary(tmp_path)) == str(binary)
+    monkeypatch.setitem(
+        zentag.ZentagBinaryManager.BINARY_CHECKSUMS,
+        asset,
+        hashlib.sha256(b"cached").hexdigest(),
+    )
+    assert asyncio.run(
+        zentag.ZentagBinaryManager.ensure_binary(tmp_path)
+    ) == str(binary)
 
 
-def test_windows_zip_and_linux_tar_install_with_stale_marker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_windows_zip_and_linux_tar_install_with_stale_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     windows = tmp_path / "windows"
     windows.mkdir()
     _platform(monkeypatch, "Windows", "AMD64", windows)
@@ -83,9 +105,14 @@ def test_windows_zip_and_linux_tar_install_with_stale_marker(tmp_path: Path, mon
 
     monkeypatch.setattr(zentag, "download_bounded_asset", download)
     result = asyncio.run(zentag.ZentagBinaryManager.ensure_binary(tmp_path))
-    assert Path(result).name == "zentag.exe" and Path(result).read_bytes() == payload
+    assert (
+        Path(result).name == "zentag.exe"
+        and Path(result).read_bytes() == payload
+    )
     assert (windows / "v0.3.0").read_text(encoding="utf-8") == "v0.3.0"
-    assert not any(path.name.endswith(".download") for path in windows.iterdir())
+    assert not any(
+        path.name.endswith(".download") for path in windows.iterdir()
+    )
 
     linux = tmp_path / "linux"
     linux.mkdir()
@@ -102,11 +129,16 @@ def test_windows_zip_and_linux_tar_install_with_stale_marker(tmp_path: Path, mon
 
     monkeypatch.setattr(zentag, "download_bounded_asset", linux_download)
     result = asyncio.run(zentag.ZentagBinaryManager.ensure_binary(tmp_path))
-    assert Path(result).read_bytes() == payload and Path(result).stat().st_mode & 0o100
+    assert (
+        Path(result).read_bytes() == payload
+        and Path(result).stat().st_mode & 0o100
+    )
     assert not stale.exists()
 
 
-def test_archive_checksum_missing_member_and_size_limits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_archive_checksum_missing_member_and_size_limits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     target = tmp_path / "target"
     target.mkdir()
     _platform(monkeypatch, "Windows", "x86_64", target)
@@ -121,7 +153,9 @@ def test_archive_checksum_missing_member_and_size_limits(tmp_path: Path, monkeyp
     monkeypatch.setitem(zentag.ZentagBinaryManager.CHECKSUMS, asset, "")
     with pytest.raises(RuntimeError, match="checksum verification failed"):
         asyncio.run(zentag.ZentagBinaryManager.ensure_binary(tmp_path))
-    assert not any(path.name.endswith(".download") for path in target.iterdir())
+    assert not any(
+        path.name.endswith(".download") for path in target.iterdir()
+    )
 
     missing_archive = _zip_bytes("README", b"readme")
     _configure_asset(monkeypatch, asset, missing_archive, b"payload")
@@ -145,7 +179,9 @@ def test_archive_checksum_missing_member_and_size_limits(tmp_path: Path, monkeyp
         asyncio.run(zentag.ZentagBinaryManager.ensure_binary(tmp_path))
 
 
-def test_tar_missing_member_declared_and_stream_size_and_binary_checksum(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_tar_missing_member_declared_and_stream_size_and_binary_checksum(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     target = tmp_path / "target"
     target.mkdir()
     _platform(monkeypatch, "Linux", "x86_64", target)
@@ -175,11 +211,15 @@ def test_tar_missing_member_declared_and_stream_size_and_binary_checksum(tmp_pat
 
     monkeypatch.setattr(zentag, "MAX_ASSET_BYTES", 1024)
     _configure_asset(monkeypatch, asset, large_archive, b"different")
-    with pytest.raises(RuntimeError, match="binary checksum verification failed"):
+    with pytest.raises(
+        RuntimeError, match="binary checksum verification failed"
+    ):
         asyncio.run(zentag.ZentagBinaryManager.ensure_binary(tmp_path))
 
 
-def test_tar_stream_can_exceed_declared_member_size(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_tar_stream_can_exceed_declared_member_size(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from types import SimpleNamespace
 
     target = tmp_path / "target"
@@ -187,8 +227,16 @@ def test_tar_stream_can_exceed_declared_member_size(tmp_path: Path, monkeypatch:
     _platform(monkeypatch, "Linux", "x86_64", target)
     asset = "zentag_0.3.0_linux_amd64.tar.gz"
     archive_payload = b"archive"
-    monkeypatch.setitem(zentag.ZentagBinaryManager.CHECKSUMS, asset, hashlib.sha256(archive_payload).hexdigest())
-    monkeypatch.setitem(zentag.ZentagBinaryManager.BINARY_CHECKSUMS, asset, hashlib.sha256(b"large").hexdigest())
+    monkeypatch.setitem(
+        zentag.ZentagBinaryManager.CHECKSUMS,
+        asset,
+        hashlib.sha256(archive_payload).hexdigest(),
+    )
+    monkeypatch.setitem(
+        zentag.ZentagBinaryManager.BINARY_CHECKSUMS,
+        asset,
+        hashlib.sha256(b"large").hexdigest(),
+    )
     monkeypatch.setattr(zentag, "MAX_ASSET_BYTES", 4)
 
     async def download(_client, _url: str, destination: Path) -> None:
@@ -210,6 +258,8 @@ def test_tar_stream_can_exceed_declared_member_size(tmp_path: Path, monkeypatch:
             return io.BytesIO(b"large")
 
     monkeypatch.setattr(zentag, "download_bounded_asset", download)
-    monkeypatch.setattr(zentag.tarfile, "open", lambda *_args, **_kwargs: Archive())
+    monkeypatch.setattr(
+        zentag.tarfile, "open", lambda *_args, **_kwargs: Archive()
+    )
     with pytest.raises(RuntimeError, match="exceeds the 4-byte"):
         asyncio.run(zentag.ZentagBinaryManager.ensure_binary(tmp_path))

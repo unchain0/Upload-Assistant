@@ -10,8 +10,13 @@ from typing import ClassVar
 import pytest
 
 import src.integrations.observability.console as console_module
-from src.integrations.observability.runtime_support import suppress_cli_progress
-from src.integrations.observability.terminal_link_formatting import format_terminal_link, should_embed_links
+from src.integrations.observability.runtime_support import (
+    suppress_cli_progress,
+)
+from src.integrations.observability.terminal_link_formatting import (
+    format_terminal_link,
+    should_embed_links,
+)
 
 
 class _Progress:
@@ -37,24 +42,36 @@ def test_terminal_link_modes_escape_markup_and_invalid_urls() -> None:
     assert should_embed_links({"embed_dupe_links": False}) is False
     assert should_embed_links({}) is True
 
-    linked = format_terminal_link("[Release]", "https://example.invalid/a path?q=one two#fragment value", {"embed_links": True})
+    linked = format_terminal_link(
+        "[Release]",
+        "https://example.invalid/a path?q=one two#fragment value",
+        {"embed_links": True},
+    )
     assert linked.startswith("[link=https://example.invalid/a%20path")
     assert "[Release]" in linked
     assert "%20" in linked
-    plain = format_terminal_link("ignored", "https://example.invalid/[release]", {"embed_links": False})
+    plain = format_terminal_link(
+        "ignored", "https://example.invalid/[release]", {"embed_links": False}
+    )
     assert plain == r"https://example.invalid/\[release]"
-    malformed = format_terminal_link("bad", "http://[invalid", {"embed_links": True})
+    malformed = format_terminal_link(
+        "bad", "http://[invalid", {"embed_links": True}
+    )
     assert malformed.startswith("[link=http://%5Binvalid]")
 
 
-def test_progress_display_shares_live_instance_and_honors_disabled_context(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_progress_display_shares_live_instance_and_honors_disabled_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _Progress.instances = []
     monkeypatch.setattr(console_module, "Progress", _Progress)
     console_module._shared_progress = None
     console_module._shared_progress_users = 0
 
     foreign_console = object()
-    with console_module.progress_display("first", console=foreign_console) as first:
+    with console_module.progress_display(
+        "first", console=foreign_console
+    ) as first:
         assert first.kwargs["console"] is console_module.console
         with console_module.progress_display("second") as second:
             assert first is second
@@ -67,11 +84,16 @@ def test_progress_display_shares_live_instance_and_honors_disabled_context(monke
         assert disabled.kwargs["disable"] is True
     assert disabled.started == 1 and disabled.stopped == 1
 
-    with suppress_cli_progress(), console_module.progress_display() as suppressed:
+    with (
+        suppress_cli_progress(),
+        console_module.progress_display() as suppressed,
+    ):
         assert suppressed.kwargs["disable"] is True
 
 
-def test_console_configuration_buffering_and_loop_lock(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_console_configuration_buffering_and_loop_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     console_module.configure_console(
         {
             "console_show_time": True,
@@ -87,19 +109,28 @@ def test_console_configuration_buffering_and_loop_lock(monkeypatch: pytest.Monke
     assert console_module._write_log_enabled is True
 
     handler = console_module.LogBufferHandler()
-    record = logging.LogRecord("test", logging.INFO, __file__, 1, "message", (), None)
+    record = logging.LogRecord(
+        "test", logging.INFO, __file__, 1, "message", (), None
+    )
     handler.emit(record)
     assert handler.buffer == [record]
 
     handled: list[str] = []
-    monkeypatch.setattr(console_module.rich_handler, "handle", lambda item: handled.append(item.getMessage()))
+    monkeypatch.setattr(
+        console_module.rich_handler,
+        "handle",
+        lambda item: handled.append(item.getMessage()),
+    )
 
     async def exercise() -> None:
         first = console_module._get_log_buffer_lock()
         assert first is console_module._get_log_buffer_lock()
         async with console_module.buffer_console_logs():
             console_module.logger.info("buffered")
-        assert await console_module.prompt_in_thread(lambda value: value + 1, 41) == 42
+        assert (
+            await console_module.prompt_in_thread(lambda value: value + 1, 41)
+            == 42
+        )
 
     asyncio.run(exercise())
     assert "buffered" in handled
@@ -119,9 +150,19 @@ async def _get_lock_once() -> None:
     console_module._get_log_buffer_lock()
 
 
-def test_log_formatter_and_dynamic_file_handler(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_log_formatter_and_dynamic_file_handler(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     formatter = console_module.LogFileFormatter(fmt="%(message)s")
-    record = logging.LogRecord("test", logging.INFO, __file__, 1, "\x1b[31m[bold]message[/bold]\x1b[0m", (), None)
+    record = logging.LogRecord(
+        "test",
+        logging.INFO,
+        __file__,
+        1,
+        "\x1b[31m[bold]message[/bold]\x1b[0m",
+        (),
+        None,
+    )
     assert formatter.format(record) == "message"
 
     handler = console_module.DynamicFileHandler(formatter)
@@ -140,21 +181,37 @@ def test_log_formatter_and_dynamic_file_handler(tmp_path: Path, monkeypatch: pyt
     assert log_path.read_text(encoding="utf-8") == "message\n"
 
     errors: list[logging.LogRecord] = []
-    monkeypatch.setattr(handler, "format", lambda _record: (_ for _ in ()).throw(RuntimeError("format failure")))
-    monkeypatch.setattr(handler, "handleError", lambda item: errors.append(item))
+    monkeypatch.setattr(
+        handler,
+        "format",
+        lambda _record: (_ for _ in ()).throw(RuntimeError("format failure")),
+    )
+    monkeypatch.setattr(
+        handler, "handleError", lambda item: errors.append(item)
+    )
     token = console_module.current_release_log_path.set(str(log_path))
     handler.emit(record)
     console_module.current_release_log_path.reset(token)
     assert errors == [record]
 
 
-def test_logging_console_adapter_forwards_to_standard_logger(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_logging_console_adapter_forwards_to_standard_logger(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from src.integrations.observability import runtime_support
 
     info: list[str] = []
     errors: list[str] = []
-    monkeypatch.setattr(runtime_support.logger, "info", lambda message, **_kwargs: info.append(message))
-    monkeypatch.setattr(runtime_support.logger, "error", lambda message, **_kwargs: errors.append(message))
+    monkeypatch.setattr(
+        runtime_support.logger,
+        "info",
+        lambda message, **_kwargs: info.append(message),
+    )
+    monkeypatch.setattr(
+        runtime_support.logger,
+        "error",
+        lambda message, **_kwargs: errors.append(message),
+    )
     adapter = runtime_support._LoggingConsole()
     adapter.print("one", 2)
     try:

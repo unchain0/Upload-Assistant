@@ -56,7 +56,9 @@ def _meta(tmp_path: Path | None = None, **values: object) -> Meta:
         "adult_media": False,
         "tmdb_adult_media": False,
         "imdb_info": {"imdbID": "tt123", "rating": "7.0", "directors": []},
-        "tmdb_localized_data": {"pt-BR": {"main": {"original_language": "en"}, "episode": {}}},
+        "tmdb_localized_data": {
+            "pt-BR": {"main": {"original_language": "en"}, "episode": {}}
+        },
         "tmdb_directors": [],
         "genres": ["Drama"],
         "keywords": [],
@@ -67,7 +69,14 @@ def _meta(tmp_path: Path | None = None, **values: object) -> Meta:
         "original_language": "en",
         "resolution": "1080p",
         "is_disc": "",
-        "mediainfo": {"media": {"track": [{"@type": "General"}, {"@type": "Video", "Width": "1920", "Height": "1080"}]}},
+        "mediainfo": {
+            "media": {
+                "track": [
+                    {"@type": "General"},
+                    {"@type": "Video", "Width": "1920", "Height": "1080"},
+                ]
+            }
+        },
         "video_encode": "x264",
         "video_codec": "AVC",
         "audio": "DD+ 5.1",
@@ -114,43 +123,83 @@ def _meta(tmp_path: Path | None = None, **values: object) -> Meta:
     return Meta(state)
 
 
-def _response(*, status: int = 200, text: str = "", url: str = "https://brasiltracker.org/torrents.php") -> httpx.Response:
+def _response(
+    *,
+    status: int = 200,
+    text: str = "",
+    url: str = "https://brasiltracker.org/torrents.php",
+) -> httpx.Response:
     return httpx.Response(status, request=httpx.Request("GET", url), text=text)
 
 
 @pytest.mark.asyncio
-async def test_brasiltracker_validate_credentials_success(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_brasiltracker_validate_credentials_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     tracker = _tracker()
     cookies = httpx.Cookies({"sid": "x"})
-    monkeypatch.setattr(tracker.cookie_validator, "load_session_cookies", AsyncMock(return_value=cookies))
+    monkeypatch.setattr(
+        tracker.cookie_validator,
+        "load_session_cookies",
+        AsyncMock(return_value=cookies),
+    )
     assert await tracker.validate_credentials(_meta())
     assert tracker.session.cookies is not None
 
 
 @pytest.mark.asyncio
-async def test_brasiltracker_game_installation_policy_failure_and_success(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_brasiltracker_game_installation_policy_failure_and_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     tracker = _tracker()
-    monkeypatch.setattr(bt_module.DescriptionBuilder, "get_user_description", AsyncMock(return_value=False))
-    assert not await tracker.get_additional_checks(_meta(category="GAME", platform="PC"))
-    monkeypatch.setattr(bt_module.DescriptionBuilder, "get_user_description", AsyncMock(return_value=True))
-    assert await tracker._game_installation_policy(_meta(category="GAME", platform="PC"))
+    monkeypatch.setattr(
+        bt_module.DescriptionBuilder,
+        "get_user_description",
+        AsyncMock(return_value=False),
+    )
+    assert not await tracker.get_additional_checks(
+        _meta(category="GAME", platform="PC")
+    )
+    monkeypatch.setattr(
+        bt_module.DescriptionBuilder,
+        "get_user_description",
+        AsyncMock(return_value=True),
+    )
+    assert await tracker._game_installation_policy(
+        _meta(category="GAME", platform="PC")
+    )
 
 
 def test_brasiltracker_game_language_and_genre_branches() -> None:
     tracker = _tracker()
-    assert tracker.get_game_language(_meta(languages={"Portuguese": {}, "English": {}})) == "Multilinguagem"
-    assert tracker.get_game_language(_meta(languages={"French": {}, "English": {}})) == "Francês"
+    assert (
+        tracker.get_game_language(
+            _meta(languages={"Portuguese": {}, "English": {}})
+        )
+        == "Multilinguagem"
+    )
+    assert (
+        tracker.get_game_language(
+            _meta(languages={"French": {}, "English": {}})
+        )
+        == "Francês"
+    )
     assert tracker.get_game_genre(_meta(genres=["Action RPG"])) == "Ação"
 
 
 def test_brasiltracker_game_os_and_format_direct() -> None:
     tracker = _tracker()
     assert tracker.get_game_os(_meta(platform="MAC")) == "Mac"
-    assert tracker.get_game_format(_meta(platform="MOBILE", container="zip")) == "APK"
+    assert (
+        tracker.get_game_format(_meta(platform="MOBILE", container="zip"))
+        == "APK"
+    )
 
 
 @pytest.mark.asyncio
-async def test_brasiltracker_get_languages_success_and_invalid(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_brasiltracker_get_languages_success_and_invalid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     tracker = _tracker()
     tracker.main_tmdb_data = {"original_language": "en"}
     assert await tracker.get_languages(_meta())
@@ -160,32 +209,57 @@ async def test_brasiltracker_get_languages_success_and_invalid(monkeypatch: pyte
         def display_name(_lang: str) -> str:
             raise bt_module.LanguageTagError("bad")
 
-    monkeypatch.setattr(bt_module.langcodes.Language, "make", lambda _code: BrokenLanguage())
+    monkeypatch.setattr(
+        bt_module.langcodes.Language, "make", lambda _code: BrokenLanguage()
+    )
     assert await tracker.get_languages(_meta()) == "en"
 
 
 @pytest.mark.asyncio
 async def test_brasiltracker_get_audio_portuguese() -> None:
     tracker = _tracker()
-    assert await tracker.get_audio(_meta(audio_languages=["Portuguese", "English"], original_language="en")) == "Dual Audio"
+    assert (
+        await tracker.get_audio(
+            _meta(
+                audio_languages=["Portuguese", "English"],
+                original_language="en",
+            )
+        )
+        == "Dual Audio"
+    )
 
 
 @pytest.mark.asyncio
 async def test_brasiltracker_get_resolution_invalid_bdmv() -> None:
-    assert await _tracker().get_resolution(_meta(is_disc="BDMV", resolution="invalid")) == ("", "")
+    assert await _tracker().get_resolution(
+        _meta(is_disc="BDMV", resolution="invalid")
+    ) == ("", "")
 
 
 @pytest.mark.asyncio
 async def test_brasiltracker_video_codec_fallback() -> None:
     tracker = _tracker()
-    assert await tracker.get_video_codec(_meta(video_encode="", video_codec="VC-1")) == "VC-1"
-    assert await tracker.get_video_codec(_meta(video_encode="", video_codec="")) == "Outro"
+    assert (
+        await tracker.get_video_codec(
+            _meta(video_encode="", video_codec="VC-1")
+        )
+        == "VC-1"
+    )
+    assert (
+        await tracker.get_video_codec(_meta(video_encode="", video_codec=""))
+        == "Outro"
+    )
 
 
 @pytest.mark.asyncio
 async def test_brasiltracker_display_name_with_brazilian_title() -> None:
-    localized = {"pt-BR": {"main": {"original_title": "Movie", "title": "Filme"}}}
-    assert await _tracker().get_name(_meta(tmdb_localized_data=localized)) == "Filme [Movie]"
+    localized = {
+        "pt-BR": {"main": {"original_title": "Movie", "title": "Filme"}}
+    }
+    assert (
+        await _tracker().get_name(_meta(tmdb_localized_data=localized))
+        == "Filme [Movie]"
+    )
 
 
 def test_brasiltracker_genre_tag_helper_returns_mapped() -> None:
@@ -202,19 +276,32 @@ async def test_brasiltracker_prompt_genre_unattended() -> None:
 
 
 @pytest.mark.asyncio
-async def test_brasiltracker_search_existing_collects_group_dupes(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_brasiltracker_search_existing_collects_group_dupes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     tracker = _tracker()
-    page = BeautifulSoup('<table id="torrent_table"><tr><td><a href="torrents.php?id=1">Group</a></td></tr></table>', "html.parser")
+    page = BeautifulSoup(
+        '<table id="torrent_table"><tr><td><a href="torrents.php?id=1">Group</a></td></tr></table>',
+        "html.parser",
+    )
     monkeypatch.setattr(tracker, "_search_page", AsyncMock(return_value=page))
-    monkeypatch.setattr(tracker, "_group_dupes", AsyncMock(return_value=[{"name": "Dupe"}]))
+    monkeypatch.setattr(
+        tracker, "_group_dupes", AsyncMock(return_value=[{"name": "Dupe"}])
+    )
     assert await tracker.search_existing(_meta()) == [{"name": "Dupe"}]
 
 
 @pytest.mark.asyncio
-async def test_brasiltracker_search_page_login_token_failure_and_success(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_brasiltracker_search_page_login_token_failure_and_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     tracker = _tracker()
     cookies = httpx.Cookies({"sid": "x"})
-    monkeypatch.setattr(tracker.cookie_validator, "load_session_cookies", AsyncMock(return_value=cookies))
+    monkeypatch.setattr(
+        tracker.cookie_validator,
+        "load_session_cookies",
+        AsyncMock(return_value=cookies),
+    )
     tracker.cookie_validator.handle_validation_failure = AsyncMock()  # type: ignore[method-assign]
 
     tracker.session.get = AsyncMock(return_value=_response(text="login.php"))  # type: ignore[method-assign]
@@ -256,7 +343,9 @@ async def test_brasiltracker_group_dupes_and_torrent_entry() -> None:
     <div id='files_7'><div class='filelist_path'>/Folder.Name/</div><table class='filelist_table'><tr class='colhead_dark'><td>Header</td></tr><tr><td>track.mp3</td></tr></table></div>
     """
     tracker.session.get = AsyncMock(return_value=_response(text=html))  # type: ignore[method-assign]
-    result = await tracker._group_dupes(_meta(category="BOOK", audiobook=True), "torrents.php?id=1")
+    result = await tracker._group_dupes(
+        _meta(category="BOOK", audiobook=True), "torrents.php?id=1"
+    )
     assert result[0]["name"] == "track.mp3"
     assert result[0]["type"] == "audiobook"
 
@@ -264,13 +353,17 @@ async def test_brasiltracker_group_dupes_and_torrent_entry() -> None:
 def test_brasiltracker_torrent_row_and_file_helper_guards() -> None:
     tracker = _tracker()
     page = BeautifulSoup("<html></html>", "html.parser")
-    row = BeautifulSoup("<tr id='torrent1'><td>None</td></tr>", "html.parser").find("tr")
+    row = BeautifulSoup(
+        "<tr id='torrent1'><td>None</td></tr>", "html.parser"
+    ).find("tr")
     assert row is not None
     assert tracker._torrent_row_entry(_meta(), page, row) is None
     assert tracker._row_description(row) == ""
     assert tracker._file_names(page) == []
 
-    header = BeautifulSoup("<tr class='colhead_dark'><td>Header</td></tr>", "html.parser").find("tr")
+    header = BeautifulSoup(
+        "<tr class='colhead_dark'><td>Header</td></tr>", "html.parser"
+    ).find("tr")
     assert header is not None
     assert tracker._file_row_name(header) == ""
     assert tracker._folder_name(page) == ""
@@ -278,10 +371,20 @@ def test_brasiltracker_torrent_row_and_file_helper_guards() -> None:
 
 def test_brasiltracker_torrent_entry_name_folder_and_fallback() -> None:
     tracker = _tracker()
-    file_div = BeautifulSoup("<div><div class='filelist_path'>/Folder/</div></div>", "html.parser").find("div")
+    file_div = BeautifulSoup(
+        "<div><div class='filelist_path'>/Folder/</div></div>", "html.parser"
+    ).find("div")
     assert file_div is not None
-    assert tracker._torrent_entry_name(_meta(category="GAME"), "Description", [], file_div) == "Folder"
-    assert tracker._torrent_entry_name(_meta(), "Description", [], file_div) == "Description"
+    assert (
+        tracker._torrent_entry_name(
+            _meta(category="GAME"), "Description", [], file_div
+        )
+        == "Folder"
+    )
+    assert (
+        tracker._torrent_entry_name(_meta(), "Description", [], file_div)
+        == "Description"
+    )
 
 
 def test_brasiltracker_base_dupe_entry_without_size() -> None:
@@ -292,17 +395,25 @@ def test_brasiltracker_base_dupe_entry_without_size() -> None:
 
 
 def test_brasiltracker_book_dupe_audio() -> None:
-    assert _tracker()._book_dupe_type("Release", ["chapter.mp3"]) == "audiobook"
+    assert (
+        _tracker()._book_dupe_type("Release", ["chapter.mp3"]) == "audiobook"
+    )
 
 
 @pytest.mark.asyncio
-async def test_brasiltracker_media_info_missing_and_read_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_brasiltracker_media_info_missing_and_read_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     tracker = _tracker()
     assert await tracker.get_media_info(_meta(tmp_path)) == ""
     path = tmp_path / "tmp" / "release" / "MEDIAINFO_CLEANPATH.txt"
     path.parent.mkdir(parents=True)
     path.write_text("info", encoding="utf-8")
-    monkeypatch.setattr(bt_module.aiofiles, "open", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("broken")))
+    monkeypatch.setattr(
+        bt_module.aiofiles,
+        "open",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("broken")),
+    )
     assert await tracker.get_media_info(_meta(tmp_path)) == ""
 
 
@@ -316,10 +427,30 @@ async def test_brasiltracker_edition_empty_and_unknown() -> None:
 @pytest.mark.asyncio
 async def test_brasiltracker_bitrate_disc_sizes_and_invalid_bdinfo() -> None:
     tracker = _tracker()
-    assert await tracker.get_bitrate(_meta(type="DISC", is_disc="BDMV", disctype="BD100")) == "BD100"
-    assert await tracker.get_bitrate(_meta(type="DISC", is_disc="BDMV", bdinfo={"size": 60})) == "BD66"
-    assert await tracker.get_bitrate(_meta(type="DISC", is_disc="BDMV", bdinfo={"size": 40})) == "BD50"
-    assert await tracker.get_bitrate(_meta(type="DISC", is_disc="BDMV", bdinfo={"size": 70})) == "BD100"
+    assert (
+        await tracker.get_bitrate(
+            _meta(type="DISC", is_disc="BDMV", disctype="BD100")
+        )
+        == "BD100"
+    )
+    assert (
+        await tracker.get_bitrate(
+            _meta(type="DISC", is_disc="BDMV", bdinfo={"size": 60})
+        )
+        == "BD66"
+    )
+    assert (
+        await tracker.get_bitrate(
+            _meta(type="DISC", is_disc="BDMV", bdinfo={"size": 40})
+        )
+        == "BD50"
+    )
+    assert (
+        await tracker.get_bitrate(
+            _meta(type="DISC", is_disc="BDMV", bdinfo={"size": 70})
+        )
+        == "BD100"
+    )
     assert tracker._bdinfo_size({"size": "bad"}) == 0
 
 
@@ -332,35 +463,72 @@ async def test_brasiltracker_credits_unique() -> None:
 def test_brasiltracker_magazine_month_and_internal() -> None:
     tracker = _tracker(internal=True, internal_groups=["GROUP"])
     data: dict[str, Any] = {}
-    tracker._apply_magazine_fields(data, _meta(category="BOOK", magazine=True, title="Magazine January", basename_no_ext="Magazine"))
+    tracker._apply_magazine_fields(
+        data,
+        _meta(
+            category="BOOK",
+            magazine=True,
+            title="Magazine January",
+            basename_no_ext="Magazine",
+        ),
+    )
     assert data["mes_resvista"] == "Janeiro"
     tracker._apply_internal_flag(data, _meta(tag="-GROUP"))
     assert data["internal"] == 1
 
 
 def test_brasiltracker_tracker_config_guard() -> None:
-    tracker = BrasilTracker({"TRACKERS": "bad", "DEFAULT": {"tmdb_api": "0123456789abcdef0123456789abcdef"}})
+    tracker = BrasilTracker(
+        {
+            "TRACKERS": "bad",
+            "DEFAULT": {"tmdb_api": "0123456789abcdef0123456789abcdef"},
+        }
+    )
     assert tracker._tracker_config() == {}
 
 
 def test_brasiltracker_audiobook_bitrate_close_and_far() -> None:
     tracker = _tracker()
-    assert tracker.get_audiobook_bitrate(_meta(container="mp3", audiobook_bitrate=130)) == "128"
-    assert tracker.get_audiobook_bitrate(_meta(container="mp3", audiobook_bitrate=500)) == "Outro"
+    assert (
+        tracker.get_audiobook_bitrate(
+            _meta(container="mp3", audiobook_bitrate=130)
+        )
+        == "128"
+    )
+    assert (
+        tracker.get_audiobook_bitrate(
+            _meta(container="mp3", audiobook_bitrate=500)
+        )
+        == "Outro"
+    )
 
 
 @pytest.mark.asyncio
-async def test_brasiltracker_book_cover_hosted_and_japanese_audiobook() -> None:
+async def test_brasiltracker_book_cover_hosted_and_japanese_audiobook() -> (
+    None
+):
     tracker = _tracker()
     item = _meta(hosted_artwork=[{"raw_url": "https://img/cover.jpg"}])
     assert await tracker.get_book_cover(item) == "https://img/cover.jpg"
-    assert await tracker.get_book_language(_meta(audiobook=True, book_language_iso="ja")) == "Outro"
+    assert (
+        await tracker.get_book_language(
+            _meta(audiobook=True, book_language_iso="ja")
+        )
+        == "Outro"
+    )
 
 
-def test_brasiltracker_book_pages_guards_pdf_cbz_and_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_brasiltracker_book_pages_guards_pdf_cbz_and_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     tracker = _tracker()
     assert tracker.get_book_pages(_meta(audiobook=True)) == ""
-    assert tracker.get_book_pages(_meta(tmp_path, filelist=[str(tmp_path / "missing.pdf")])) == ""
+    assert (
+        tracker.get_book_pages(
+            _meta(tmp_path, filelist=[str(tmp_path / "missing.pdf")])
+        )
+        == ""
+    )
 
     pdf = tmp_path / "book.pdf"
     pdf.write_bytes(b"pdf")
@@ -382,15 +550,25 @@ def test_brasiltracker_book_pages_guards_pdf_cbz_and_error(tmp_path: Path, monke
 
 
 @pytest.mark.asyncio
-async def test_brasiltracker_upload_skip_cookie_success_and_post_data_skip(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_brasiltracker_upload_skip_cookie_success_and_post_data_skip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     tracker = _tracker()
     assert not await tracker.upload(_meta(skipping="BRASILTRACKER"))
 
-    monkeypatch.setattr(tracker.cookie_validator, "load_session_cookies", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        tracker.cookie_validator,
+        "load_session_cookies",
+        AsyncMock(return_value=None),
+    )
     assert not await tracker.upload(_meta())
 
     cookies = httpx.Cookies({"sid": "x"})
-    monkeypatch.setattr(tracker.cookie_validator, "load_session_cookies", AsyncMock(return_value=cookies))
+    monkeypatch.setattr(
+        tracker.cookie_validator,
+        "load_session_cookies",
+        AsyncMock(return_value=cookies),
+    )
 
     async def data_and_skip(meta: Meta) -> dict[str, Any]:
         meta.skipping = "BRASILTRACKER"
@@ -399,8 +577,14 @@ async def test_brasiltracker_upload_skip_cookie_success_and_post_data_skip(monke
     monkeypatch.setattr(tracker, "get_data", data_and_skip)
     assert not await tracker.upload(_meta())
 
-    monkeypatch.setattr(tracker, "get_data", AsyncMock(return_value={"name": "Release"}))
-    monkeypatch.setattr(tracker.cookie_auth_uploader, "handle_upload", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        tracker, "get_data", AsyncMock(return_value={"name": "Release"})
+    )
+    monkeypatch.setattr(
+        tracker.cookie_auth_uploader,
+        "handle_upload",
+        AsyncMock(return_value=True),
+    )
     item = _meta()
     assert await tracker.upload(item)
     tracker.cookie_auth_uploader.handle_upload.assert_awaited_once()
@@ -409,7 +593,10 @@ async def test_brasiltracker_upload_skip_cookie_success_and_post_data_skip(monke
 def test_brasiltracker_torrent_row_missing_file_div() -> None:
     tracker = _tracker()
     page = BeautifulSoup("<html></html>", "html.parser")
-    row = BeautifulSoup("<tr id='torrent9'><td><a onclick='gtoggle(9)'>Release</a></td><td>1 GB</td></tr>", "html.parser").find("tr")
+    row = BeautifulSoup(
+        "<tr id='torrent9'><td><a onclick='gtoggle(9)'>Release</a></td><td>1 GB</td></tr>",
+        "html.parser",
+    ).find("tr")
     assert row is not None
     assert tracker._torrent_row_entry(_meta(), page, row) is None
 
@@ -418,7 +605,9 @@ def test_brasiltracker_book_file_path_empty() -> None:
     assert BrasilTracker._book_file_path(_meta(filelist=[], path="")) is None
 
 
-def test_brasiltracker_cbr_page_count(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_brasiltracker_cbr_page_count(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     path = tmp_path / "comic.cbr"
     path.write_bytes(b"rar")
 

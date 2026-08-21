@@ -16,17 +16,25 @@ from src.domain_models.processing import *  # noqa: F403
 from src.domain_models.release import Meta
 from src.integrations.external_apis.tmdb import TmdbManager
 from src.integrations.filesystem.tags import get_tag
-from src.integrations.observability.runtime_support import console, logger, prompt_in_thread
+from src.integrations.observability.runtime_support import (
+    console,
+    logger,
+    prompt_in_thread,
+)
 
 guessit_module: Any = cast(Any, guessit)
 GuessitFn = Callable[[str, dict[str, Any] | None], dict[str, Any]]
 
 
-def guessit_fn(value: str, options: dict[str, Any] | None = None) -> dict[str, Any]:
+def guessit_fn(
+    value: str, options: dict[str, Any] | None = None
+) -> dict[str, Any]:
     return cast(dict[str, Any], guessit_module.guessit(value, options))
 
 
-def _guessit_data(value: str, options: dict[str, Any] | None = None) -> dict[str, Any]:
+def _guessit_data(
+    value: str, options: dict[str, Any] | None = None
+) -> dict[str, Any]:
     return guessit_fn(value, options)
 
 
@@ -70,14 +78,33 @@ def _clear_episode_metadata(meta: Meta) -> None:
 
 
 def sync_single_episode_from_filename(meta: Meta) -> bool:
-    if meta.category != "TV" or bool(meta.is_disc) or meta.tv_pack or meta.manual_date or meta.manual_season is not None or meta.manual_episode is not None:
+    if (
+        meta.category != "TV"
+        or bool(meta.is_disc)
+        or meta.tv_pack
+        or meta.manual_date
+        or meta.manual_season is not None
+        or meta.manual_episode is not None
+    ):
         return False
 
     filelist = meta.filelist if isinstance(meta.filelist, list) else []
     video_files = [
         Path(path)
         for path in filelist
-        if isinstance(path, (str, Path)) and Path(path).suffix.lower() in {".avi", ".m2ts", ".m4v", ".mkv", ".mp4", ".mpeg", ".mpg", ".ts", ".vob"}
+        if isinstance(path, (str, Path))
+        and Path(path).suffix.lower()
+        in {
+            ".avi",
+            ".m2ts",
+            ".m4v",
+            ".mkv",
+            ".mp4",
+            ".mpeg",
+            ".mpg",
+            ".ts",
+            ".vob",
+        }
     ]
     if len(video_files) != 1:
         return False
@@ -93,7 +120,9 @@ def sync_single_episode_from_filename(meta: Meta) -> bool:
     if isinstance(guessed_episodes, list):
         return False
 
-    matches = re.findall(r"(?i)(?<![^\W_])S([0-9]{1,3})E([0-9]{1,4})(?![^\W_])", filename)
+    matches = re.findall(
+        r"(?i)(?<![^\W_])S([0-9]{1,3})E([0-9]{1,4})(?![^\W_])", filename
+    )
     if len(matches) != 1:
         return False
 
@@ -128,19 +157,37 @@ class SeasonEpisodeManager:
             anilist_episodes = 0
             if not meta.anime:
                 try:
-                    daily_match = re.search(r"\d{4}[-\.]\d{2}[-\.]\d{2}", video)
-                    if (meta.manual_date or daily_match) and not meta.manual_season:
+                    daily_match = re.search(
+                        r"\d{4}[-\.]\d{2}[-\.]\d{2}", video
+                    )
+                    if (
+                        meta.manual_date or daily_match
+                    ) and not meta.manual_season:
                         # Handle daily episodes
                         # The user either provided the --daily argument or a date was found in the filename
 
-                        if meta.manual_date is None and daily_match is not None:
-                            meta.manual_date = daily_match.group().replace(".", "-")
+                        if (
+                            meta.manual_date is None
+                            and daily_match is not None
+                        ):
+                            meta.manual_date = daily_match.group().replace(
+                                ".", "-"
+                            )
                         is_daily = True
                         guess_data = _guessit_data(video)
-                        guess_date_raw = meta.manual_date or guess_data.get("date")
-                        guess_date = str(guess_date_raw) if guess_date_raw else ""
+                        guess_date_raw = meta.manual_date or guess_data.get(
+                            "date"
+                        )
+                        guess_date = (
+                            str(guess_date_raw) if guess_date_raw else ""
+                        )
                         tmdb_id_value = _safe_int(meta.tmdb_id, 0)
-                        season_int, episode_int = await self.tmdb_manager.daily_to_tmdb_season_episode(tmdb_id_value, guess_date)
+                        (
+                            season_int,
+                            episode_int,
+                        ) = await self.tmdb_manager.daily_to_tmdb_season_episode(
+                            tmdb_id_value, guess_date
+                        )
 
                         season = f"S{str(season_int).zfill(2)}"
                         episode = f"E{str(episode_int).zfill(2)}"
@@ -150,7 +197,9 @@ class SeasonEpisodeManager:
 
                     else:
                         try:
-                            guess_year = str(_guessit_data(video).get("year") or "")
+                            guess_year = str(
+                                _guessit_data(video).get("year") or ""
+                            )
                         except Exception:
                             guess_year = ""
                         try:
@@ -190,10 +239,18 @@ class SeasonEpisodeManager:
                                 for item in episodes_list:
                                     ep = str(item).zfill(2)
                                     episode += f"E{ep}"
-                                episode_int = _safe_int(episodes_list[0], 0) if episodes_list else 0
+                                episode_int = (
+                                    _safe_int(episodes_list[0], 0)
+                                    if episodes_list
+                                    else 0
+                                )
                             else:
                                 episode_int = _safe_int(episodes, 0)
-                                episode = "E" + str(episode_int).zfill(2) if episodes is not None else ""
+                                episode = (
+                                    "E" + str(episode_int).zfill(2)
+                                    if episodes is not None
+                                    else ""
+                                )
                         else:
                             episode = ""
                             episode_int = 0
@@ -208,7 +265,14 @@ class SeasonEpisodeManager:
                 # if the mal id is set, then we've already run get_romaji in tmdb.py
                 if meta.mal_id == 0 and meta.category == "TV":
                     parsed = _anitopy_parse(Path(video).name)
-                    romaji, mal_id, eng_title, season_year, anilist_episodes, meta.demographic = await self.tmdb_manager.get_romaji(
+                    (
+                        romaji,
+                        mal_id,
+                        eng_title,
+                        season_year,
+                        anilist_episodes,
+                        meta.demographic,
+                    ) = await self.tmdb_manager.get_romaji(
                         str(parsed.get("anime_title", "")),
                         _safe_int(meta.mal_id, 0),
                         meta,
@@ -219,8 +283,19 @@ class SeasonEpisodeManager:
                     anilist_episodes = _safe_int(anilist_episodes, 0)
                     if meta.tmdb_id == 0:
                         year = str(parsed.get("anime_year") or season_year)
-                        guess_title = _guessit_data(str(parsed.get("anime_title", "")), {"excludes": ["country", "language"]}).get("title", "")
-                        tmdb_id_value, category_value = await self.tmdb_manager.get_tmdb_id(str(guess_title), year, meta.category, meta.filename)
+                        guess_title = _guessit_data(
+                            str(parsed.get("anime_title", "")),
+                            {"excludes": ["country", "language"]},
+                        ).get("title", "")
+                        (
+                            tmdb_id_value,
+                            category_value,
+                        ) = await self.tmdb_manager.get_tmdb_id(
+                            str(guess_title),
+                            year,
+                            meta.category,
+                            meta.filename,
+                        )
                         meta.tmdb_id = tmdb_id_value
                         meta.category = category_value
                     # meta = await tmdb_other_meta(meta)
@@ -232,13 +307,28 @@ class SeasonEpisodeManager:
                     if len(filelist) == 1:
                         try:
                             guess_data = _guessit_data(video)
-                            episodes = parsed.get("episode_number", guess_data.get("episode", "1"))
-                            if not isinstance(episodes, list) and not str(episodes).isnumeric():
+                            episodes = parsed.get(
+                                "episode_number",
+                                guess_data.get("episode", "1"),
+                            )
+                            if (
+                                not isinstance(episodes, list)
+                                and not str(episodes).isnumeric()
+                            ):
                                 episodes = guess_data.get("episode")
                             if isinstance(episodes, list):
                                 episodes_list = episodes
-                                episode_int = _safe_int(episodes_list[0], 1) if episodes_list else 1
-                                episode = "".join([f"E{str(_safe_int(item, 0)).zfill(2)}" for item in episodes_list])
+                                episode_int = (
+                                    _safe_int(episodes_list[0], 1)
+                                    if episodes_list
+                                    else 1
+                                )
+                                episode = "".join(
+                                    [
+                                        f"E{str(_safe_int(item, 0)).zfill(2)}"
+                                        for item in episodes_list
+                                    ]
+                                )
                             else:
                                 episode_int = _safe_int(episodes, 1)
                                 episode = f"E{str(episode_int).zfill(2)}"
@@ -258,11 +348,15 @@ class SeasonEpisodeManager:
                                 ]
 
                                 for pattern in episode_patterns:
-                                    match = re.search(pattern, meta.uuid, re.IGNORECASE)
+                                    match = re.search(
+                                        pattern, meta.uuid, re.IGNORECASE
+                                    )
                                     if match:
                                         try:
                                             episode_int = int(match.group(1))
-                                            episode = f"E{str(episode_int).zfill(2)}"
+                                            episode = (
+                                                f"E{str(episode_int).zfill(2)}"
+                                            )
                                             break
                                         except ValueError, IndexError:
                                             continue
@@ -283,7 +377,9 @@ class SeasonEpisodeManager:
                             season_int = _safe_int(meta.season_int, 1)
                         else:
                             guess_data = _guessit_data(video)
-                            season_value = parsed.get("anime_season", guess_data.get("season", "1"))
+                            season_value = parsed.get(
+                                "anime_season", guess_data.get("season", "1")
+                            )
                             season_int = _safe_int(season_value, 1)
                         season = f"S{season_int:02d}"
                     except Exception:
@@ -295,43 +391,110 @@ class SeasonEpisodeManager:
                                     "absolute": str(episode_int),
                                 }
                                 url = "https://thexem.info/map/single"
-                                async with httpx.AsyncClient(timeout=30.0) as client:
-                                    response = (await client.post(url, params=params)).json()
+                                async with httpx.AsyncClient(
+                                    timeout=30.0
+                                ) as client:
+                                    response = (
+                                        await client.post(url, params=params)
+                                    ).json()
                                 if response["result"] == "failure":
                                     raise XEMNotFoundError  # noqa: F405
-                                logger.debug(f"[cyan]TheXEM Absolute -> Standard[/cyan]\n{response}")
-                                season_int = int(response["data"]["scene"]["season"])  # Convert to integer
+                                logger.debug(
+                                    f"[cyan]TheXEM Absolute -> Standard[/cyan]\n{response}"
+                                )
+                                season_int = int(
+                                    response["data"]["scene"]["season"]
+                                )  # Convert to integer
                                 season = f"S{str(season_int).zfill(2)}"
                                 if len(filelist) == 1:
-                                    episode_int = int(response["data"]["scene"]["episode"])  # Convert to integer
+                                    episode_int = int(
+                                        response["data"]["scene"]["episode"]
+                                    )  # Convert to integer
                                     episode = f"E{str(episode_int).zfill(2)}"
                             else:
                                 season_int = 1  # Default to 1 if error occurs
                                 season = "S01"
                                 names_url = f"https://thexem.info/map/names?origin=tvdb&id={meta.tvdb_id!s}"
-                                async with httpx.AsyncClient(timeout=30.0) as client:
-                                    names_response = (await client.get(names_url)).json()
-                                logger.debug(f"[cyan]Matching Season Number from TheXEM\n{names_response}")
+                                async with httpx.AsyncClient(
+                                    timeout=30.0
+                                ) as client:
+                                    names_response = (
+                                        await client.get(names_url)
+                                    ).json()
+                                logger.debug(
+                                    f"[cyan]Matching Season Number from TheXEM\n{names_response}"
+                                )
                                 difference: float = 0.0
                                 if names_response["result"] == "success":
-                                    for season_num, values in names_response["data"].items():
+                                    for season_num, values in names_response[
+                                        "data"
+                                    ].items():
                                         for lang, names in values.items():
                                             if lang == "jp":
                                                 for name in names:
-                                                    romaji_check = re.sub(r"[^0-9a-zA-Z\[\\]]+", "", romaji.lower().replace(" ", ""))
-                                                    name_check = re.sub(r"[^0-9a-zA-Z\[\\]]+", "", name.lower().replace(" ", ""))
-                                                    diff = SequenceMatcher(None, romaji_check, name_check).ratio()
-                                                    if romaji_check in name_check and diff >= difference:
-                                                        season_int = int(season_num) if season_num != "all" else 1  # Convert to integer
+                                                    romaji_check = re.sub(
+                                                        r"[^0-9a-zA-Z\[\\]]+",
+                                                        "",
+                                                        romaji.lower().replace(
+                                                            " ", ""
+                                                        ),
+                                                    )
+                                                    name_check = re.sub(
+                                                        r"[^0-9a-zA-Z\[\\]]+",
+                                                        "",
+                                                        name.lower().replace(
+                                                            " ", ""
+                                                        ),
+                                                    )
+                                                    diff = SequenceMatcher(
+                                                        None,
+                                                        romaji_check,
+                                                        name_check,
+                                                    ).ratio()
+                                                    if (
+                                                        romaji_check
+                                                        in name_check
+                                                        and diff >= difference
+                                                    ):
+                                                        season_int = (
+                                                            int(season_num)
+                                                            if season_num
+                                                            != "all"
+                                                            else 1
+                                                        )  # Convert to integer
                                                         season = f"S{str(season_int).zfill(2)}"
                                                         difference = diff
                                             if lang == "us":
                                                 for name in names:
-                                                    eng_check = re.sub(r"[^0-9a-zA-Z\[\\]]+", "", eng_title.lower().replace(" ", ""))
-                                                    name_check = re.sub(r"[^0-9a-zA-Z\[\\]]+", "", name.lower().replace(" ", ""))
-                                                    diff = SequenceMatcher(None, eng_check, name_check).ratio()
-                                                    if eng_check in name_check and diff >= difference:
-                                                        season_int = int(season_num) if season_num != "all" else 1  # Convert to integer
+                                                    eng_check = re.sub(
+                                                        r"[^0-9a-zA-Z\[\\]]+",
+                                                        "",
+                                                        eng_title.lower().replace(
+                                                            " ", ""
+                                                        ),
+                                                    )
+                                                    name_check = re.sub(
+                                                        r"[^0-9a-zA-Z\[\\]]+",
+                                                        "",
+                                                        name.lower().replace(
+                                                            " ", ""
+                                                        ),
+                                                    )
+                                                    diff = SequenceMatcher(
+                                                        None,
+                                                        eng_check,
+                                                        name_check,
+                                                    ).ratio()
+                                                    if (
+                                                        eng_check in name_check
+                                                        and diff >= difference
+                                                    ):
+                                                        season_int = (
+                                                            int(season_num)
+                                                            if season_num
+                                                            != "all"
+                                                            else 1
+                                                        )  # Convert to integer
                                                         season = f"S{str(season_int).zfill(2)}"
                                                         difference = diff
                                 else:
@@ -340,17 +503,27 @@ class SeasonEpisodeManager:
                             if meta.debug:
                                 console.print_exception()
                             try:
-                                season_int = int(_guessit_data(video).get("season", "1"))
+                                season_int = int(
+                                    _guessit_data(video).get("season", "1")
+                                )
                                 season = f"S{season_int:02d}"
                             except Exception:
                                 season_int = 1  # Default to 1 if error occurs
                                 season = "S01"
-                            logger.info(f"[bold yellow]{meta.title} does not exist on thexem, guessing {season}")
-                            logger.info(f"[bold yellow]If [green]{season}[/green] is incorrect, use --season to correct")
+                            logger.info(
+                                f"[bold yellow]{meta.title} does not exist on thexem, guessing {season}"
+                            )
+                            logger.info(
+                                f"[bold yellow]If [green]{season}[/green] is incorrect, use --season to correct"
+                            )
                             await asyncio.sleep(3)
                 else:
-                    logger.info("[bold red]Error determining if TV show is anime or not[/bold red]")
-                    logger.info("[bold yellow]Set manual season and episode[/bold yellow]")
+                    logger.info(
+                        "[bold red]Error determining if TV show is anime or not[/bold red]"
+                    )
+                    logger.info(
+                        "[bold yellow]Set manual season and episode[/bold yellow]"
+                    )
                     season_int = 1
                     season = "S01"
                     episode_int = 1
@@ -359,14 +532,20 @@ class SeasonEpisodeManager:
             if meta.manual_season is None:
                 meta.season = season
             else:
-                manual_season_str = str(meta.manual_season).lower().replace("s", "")
-                meta.daily_episode_title = ""  # Clear daily episode title if manual season is set
+                manual_season_str = (
+                    str(meta.manual_season).lower().replace("s", "")
+                )
+                meta.daily_episode_title = (
+                    ""  # Clear daily episode title if manual season is set
+                )
                 season_int = _safe_int(manual_season_str, 1)
                 meta.season = f"S{manual_season_str.zfill(2)}"
             if meta.manual_episode is None:
                 meta.episode = episode
             else:
-                manual_episode_str = str(meta.manual_episode).lower().replace("e", "")
+                manual_episode_str = (
+                    str(meta.manual_episode).lower().replace("e", "")
+                )
                 episode_int = _safe_int(manual_episode_str, 0)
                 meta.episode = f"E{manual_episode_str.zfill(2)}"
                 meta.tv_pack = False
@@ -391,25 +570,38 @@ class SeasonEpisodeManager:
         return meta
 
     async def check_season_pack_completeness(self, meta: Meta) -> None:
-        completeness = cast(Mapping[str, Any], await self.check_season_pack_detail(meta))
+        completeness = cast(
+            Mapping[str, Any], await self.check_season_pack_detail(meta)
+        )
         if not completeness["complete"]:
             just_go = False
             unattended = meta.unattended
             unattended_confirm = meta.unattended_confirm
             try:
-                missing_list = [f"S{s:02d}E{e:02d}" for s, e in completeness["missing_episodes"]]
+                missing_list = [
+                    f"S{s:02d}E{e:02d}"
+                    for s, e in completeness["missing_episodes"]
+                ]
             except ValueError:
-                logger.error("[red]Error determining missing episodes, you should double check the pack manually.")
+                logger.error(
+                    "[red]Error determining missing episodes, you should double check the pack manually."
+                )
                 missing_list = ["Unknown"]
             if "Unknown" not in missing_list:
                 logger.warning("[red]Warning: Season pack appears incomplete!")
-                logger.info(f"[yellow]Missing episodes: {', '.join(missing_list)}")
+                logger.info(
+                    f"[yellow]Missing episodes: {', '.join(missing_list)}"
+                )
             else:
-                logger.warning("[red]Warning: Season pack appears incomplete (missing episodes could not be determined).")
+                logger.warning(
+                    "[red]Warning: Season pack appears incomplete (missing episodes could not be determined)."
+                )
 
             # In unattended mode with no confirmation prompts, ensure we always log that we're proceeding.
             if unattended and not unattended_confirm:
-                logger.info("[yellow]Unattended mode: continuing despite incomplete season pack (no confirmation).")
+                logger.info(
+                    "[yellow]Unattended mode: continuing despite incomplete season pack (no confirmation)."
+                )
 
             if "Unknown" not in missing_list:
                 # Show first 15 files from filelist
@@ -424,49 +616,76 @@ class SeasonEpisodeManager:
                 files_shown = min(batch_size, len(filelist))
 
                 # Loop to handle showing more files in batches
-                while files_shown < len(filelist) and (not unattended or unattended_confirm):
+                while files_shown < len(filelist) and (
+                    not unattended or unattended_confirm
+                ):
                     remaining_files = len(filelist) - files_shown
-                    logger.info(f"[yellow]... and {remaining_files} more files")
+                    logger.info(
+                        f"[yellow]... and {remaining_files} more files"
+                    )
 
                     if remaining_files > batch_size:
                         response = await prompt_in_thread(
-                            cli_ui.ask_string, f"Show (n)ext {batch_size} files, (a)ll remaining files, (c)ontinue with incomplete pack, or (q)uit? (n/a/c/Q): "
+                            cli_ui.ask_string,
+                            f"Show (n)ext {batch_size} files, (a)ll remaining files, (c)ontinue with incomplete pack, or (q)uit? (n/a/c/Q): ",
                         )
                     else:
                         response = await prompt_in_thread(
-                            cli_ui.ask_string, f"Show (a)ll remaining {remaining_files} files, (c)ontinue with incomplete pack, or (q)uit? (a/c/Q): "
+                            cli_ui.ask_string,
+                            f"Show (a)ll remaining {remaining_files} files, (c)ontinue with incomplete pack, or (q)uit? (a/c/Q): ",
                         )
 
-                    if (response or "").lower() == "n" and remaining_files > batch_size:
+                    if (
+                        response or ""
+                    ).lower() == "n" and remaining_files > batch_size:
                         # Show next batch of files
-                        next_batch = filelist[files_shown : files_shown + batch_size]
+                        next_batch = filelist[
+                            files_shown : files_shown + batch_size
+                        ]
                         for i, file in enumerate(next_batch):
-                            logger.info(f"[cyan]  {files_shown + i + 1:2d}. {Path(file).name}")
+                            logger.info(
+                                f"[cyan]  {files_shown + i + 1:2d}. {Path(file).name}"
+                            )
                         files_shown += len(next_batch)
                     elif (response or "").lower() == "a":
                         # Show all remaining files
                         remaining_batch = filelist[files_shown:]
                         for i, file in enumerate(remaining_batch):
-                            logger.info(f"[cyan]  {files_shown + i + 1:2d}. {Path(file).name}")
+                            logger.info(
+                                f"[cyan]  {files_shown + i + 1:2d}. {Path(file).name}"
+                            )
                         files_shown = len(filelist)
                     elif (response or "").lower() == "c":
                         just_go = True
                         break  # Continue with incomplete pack
                     else:  # 'q' or any other input
-                        logger.info("[red]Aborting torrent creation due to incomplete season pack")
-                        raise OperationAbortedError("Torrent creation cancelled because the season pack is incomplete.") from None
+                        logger.info(
+                            "[red]Aborting torrent creation due to incomplete season pack"
+                        )
+                        raise OperationAbortedError(
+                            "Torrent creation cancelled because the season pack is incomplete."
+                        ) from None
 
                 # Final confirmation if not in unattended mode
                 if (not unattended or unattended_confirm) and not just_go:
-                    response = await prompt_in_thread(cli_ui.ask_string, "Continue with incomplete season pack? (y/N): ")
+                    response = await prompt_in_thread(
+                        cli_ui.ask_string,
+                        "Continue with incomplete season pack? (y/N): ",
+                    )
                     if (response or "").lower() != "y":
-                        logger.info("[red]Aborting torrent creation due to incomplete season pack")
-                        raise OperationAbortedError("Torrent creation cancelled because the season pack is incomplete.") from None
+                        logger.info(
+                            "[red]Aborting torrent creation due to incomplete season pack"
+                        )
+                        raise OperationAbortedError(
+                            "Torrent creation cancelled because the season pack is incomplete."
+                        ) from None
         else:
             logger.debug("[green]Season pack completeness verified")
 
         if not completeness["consistent_tags"]:
-            logger.warning("[yellow]Warning: Multiple group tags detected in season pack!")
+            logger.warning(
+                "[yellow]Warning: Multiple group tags detected in season pack!"
+            )
             for tag, files in completeness["tags_found"].items():
                 logger.info(f"[cyan]Tag: {tag} found in files:")
                 for file in files:
@@ -474,15 +693,29 @@ class SeasonEpisodeManager:
 
     async def check_season_pack_detail(self, meta: Meta) -> dict[str, Any]:
         if not meta.tv_pack:
-            return {"complete": True, "missing_episodes": [], "found_episodes": [], "consistent_tags": True, "tags_found": {}}
+            return {
+                "complete": True,
+                "missing_episodes": [],
+                "found_episodes": [],
+                "consistent_tags": True,
+                "tags_found": {},
+            }
 
         files = cast(list[str], meta.filelist)
         if not files:
-            return {"complete": True, "missing_episodes": [], "found_episodes": [], "consistent_tags": True, "tags_found": {}}
+            return {
+                "complete": True,
+                "missing_episodes": [],
+                "found_episodes": [],
+                "consistent_tags": True,
+                "tags_found": {},
+            }
 
         found_episodes: list[tuple[int, int]] = []
         season_numbers: set[int] = set()
-        tags_found: dict[str, list[str]] = {}  # tag -> list of files with that tag
+        tags_found: dict[
+            str, list[str]
+        ] = {}  # tag -> list of files with that tag
 
         # Pattern for standard TV shows: S01E01, S01E01E02
         episode_pattern = r"[Ss](\d{1,2})[Ee](\d{1,3})(?:[Ee](\d{1,3}))?"
@@ -529,7 +762,9 @@ class SeasonEpisodeManager:
                     found_episodes.append((season_num, episode2_num))
 
             if not matches:
-                episode_only_matches = re.findall(episode_only_pattern, filename)
+                episode_only_matches = re.findall(
+                    episode_only_pattern, filename
+                )
                 for match in episode_only_matches:
                     episode1_num = int(match[0])
                     episode2_optional = int(match[1]) if match[1] else None
@@ -552,7 +787,13 @@ class SeasonEpisodeManager:
         if not found_episodes:
             logger.info("[red]No episodes found in the season pack files.")
             # return true to not annoy the user with bad regex
-            return {"complete": True, "missing_episodes": [], "found_episodes": [], "consistent_tags": True, "tags_found": tags_found}
+            return {
+                "complete": True,
+                "missing_episodes": [],
+                "found_episodes": [],
+                "consistent_tags": True,
+                "tags_found": tags_found,
+            }
 
         # Remove duplicates and sort
         found_episodes = sorted(set(found_episodes))
@@ -567,7 +808,13 @@ class SeasonEpisodeManager:
             max_ep = max(season_episodes)
 
             # Check for missing episodes in the range
-            missing_episodes.extend([(season, ep_num) for ep_num in range(min_ep, max_ep + 1) if ep_num not in season_episodes])
+            missing_episodes.extend(
+                [
+                    (season, ep_num)
+                    for ep_num in range(min_ep, max_ep + 1)
+                    if ep_num not in season_episodes
+                ]
+            )
 
         is_complete = len(missing_episodes) == 0
 
@@ -592,6 +839,8 @@ class SeasonEpisodeManager:
         if tags_found:
             logger.debug(f"[cyan]Group tags found: {list(tags_found.keys())}")
             if not consistent_tags:
-                logger.debug("[yellow]Warning: Multiple group tags detected in season pack")
+                logger.debug(
+                    "[yellow]Warning: Multiple group tags detected in season pack"
+                )
 
         return result

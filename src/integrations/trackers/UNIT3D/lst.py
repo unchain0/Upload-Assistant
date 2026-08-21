@@ -41,17 +41,33 @@ class LST(UNIT3D):
 
         should_continue = True
         if not meta.valid_mi_settings:
-            logger.info(f"{self.tracker}: [bold red]No encoding settings in mediainfo, skipping {self.tracker} upload.[/bold red]")
+            logger.info(
+                f"{self.tracker}: [bold red]No encoding settings in mediainfo, skipping {self.tracker} upload.[/bold red]"
+            )
             return False
 
-        if meta.is_disc not in ["BDMV", "DVD"] and not await self.common.check_language_requirements(
-            meta, self.tracker, languages_to_check=["english"], check_audio=True, check_subtitle=True, original_language=True
+        if meta.is_disc not in [
+            "BDMV",
+            "DVD",
+        ] and not await self.common.check_language_requirements(
+            meta,
+            self.tracker,
+            languages_to_check=["english"],
+            check_audio=True,
+            check_subtitle=True,
+            original_language=True,
         ):
             return False
 
         return should_continue
 
-    async def get_category_id(self, meta: Meta, category: str | None = None, reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_category_id(
+        self,
+        meta: Meta,
+        category: str | None = None,
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         category_id = {
             "MOVIE": "1",
             "TV": "2",
@@ -64,10 +80,20 @@ class LST(UNIT3D):
         if reverse:
             return {v: k for k, v in category_id.items()}
 
-        resolved_category = category if category is not None and category != "" else meta.category
+        resolved_category = (
+            category
+            if category is not None and category != ""
+            else meta.category
+        )
         return {"category_id": category_id.get(resolved_category, "0")}
 
-    async def get_type_id(self, meta: Meta, type: str | None = None, reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_type_id(
+        self,
+        meta: Meta,
+        type: str | None = None,
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         type_id = {
             "DISC": "1",
             "REMUX": "2",
@@ -118,7 +144,12 @@ class LST(UNIT3D):
             data["edition_id"] = edition_id
 
         if meta.category == "BOOK":
-            openlibrary_id = meta.openlibrary or meta.openlibrary_id or meta.openlibrary_book_id or ""
+            openlibrary_id = (
+                meta.openlibrary
+                or meta.openlibrary_id
+                or meta.openlibrary_book_id
+                or ""
+            )
             isbn = meta.isbn or ""
 
             data["book_exists_on_openlibrary"] = "1"
@@ -127,17 +158,40 @@ class LST(UNIT3D):
             data["extra_openlibrary_ids"] = meta.extra_openlibrary_ids or ""
 
         if meta.category == "MUSIC" and meta.music_discogs_enabled:
-            release = meta.music_release if isinstance(meta.music_release, dict) else {}
-            external_ids: dict[str, Any] = release.get("external_ids", {}) if isinstance(release.get("external_ids"), dict) else {}
-            release_reference = external_ids.get("discogs_release") or meta.music_discogs_release_id or meta.music_discogs_id
-            master_reference = external_ids.get("discogs_master") or meta.music_discogs_master_id
-            release_id = DiscogsEnricher.parse_reference(str(release_reference or ""), "release")
-            master_id = DiscogsEnricher.parse_reference(str(master_reference or ""), "master")
+            release = (
+                meta.music_release
+                if isinstance(meta.music_release, dict)
+                else {}
+            )
+            external_ids: dict[str, Any] = (
+                release.get("external_ids", {})
+                if isinstance(release.get("external_ids"), dict)
+                else {}
+            )
+            release_reference = (
+                external_ids.get("discogs_release")
+                or meta.music_discogs_release_id
+                or meta.music_discogs_id
+            )
+            master_reference = (
+                external_ids.get("discogs_master")
+                or meta.music_discogs_master_id
+            )
+            release_id = DiscogsEnricher.parse_reference(
+                str(release_reference or ""), "release"
+            )
+            master_id = DiscogsEnricher.parse_reference(
+                str(master_reference or ""), "master"
+            )
 
             data.update(
                 {
-                    "discogs": release_id[1] if release_id and release_id[0] == "release" else "",
-                    "discogs_master_id": master_id[1] if master_id and master_id[0] == "master" else "",
+                    "discogs": release_id[1]
+                    if release_id and release_id[0] == "release"
+                    else "",
+                    "discogs_master_id": master_id[1]
+                    if master_id and master_id[0] == "master"
+                    else "",
                     "extra_discogs_master_ids": "",
                     "extra_discogs_ids": "",
                 }
@@ -182,11 +236,19 @@ class LST(UNIT3D):
 
         if name_type == "DVDRIP":
             if meta.category == "MOVIE":
-                lst_name = lst_name.replace(f"{meta.source}{meta.video_encode}", f"{resolution}", 1)
-                lst_name = lst_name.replace(meta.audio, f"{meta.audio}{video_encode}", 1)
+                lst_name = lst_name.replace(
+                    f"{meta.source}{meta.video_encode}", f"{resolution}", 1
+                )
+                lst_name = lst_name.replace(
+                    meta.audio, f"{meta.audio}{video_encode}", 1
+                )
             else:
-                lst_name = lst_name.replace(str(meta.source), f"{resolution}", 1)
-                lst_name = lst_name.replace(meta.video_codec, f"{meta.audio} {meta.video_codec}", 1)
+                lst_name = lst_name.replace(
+                    str(meta.source), f"{resolution}", 1
+                )
+                lst_name = lst_name.replace(
+                    meta.video_codec, f"{meta.audio} {meta.video_codec}", 1
+                )
 
         if meta.trump_reason == "exact_match":
             lst_name = lst_name + " - TRUMP"
@@ -196,21 +258,29 @@ class LST(UNIT3D):
     @staticmethod
     def _with_tag(parts: list[str], tag: str | None) -> str:
         """Join a LST title and append the release-group tag once."""
-        name = " ".join(part.strip() for part in parts if str(part or "").strip())
+        name = " ".join(
+            part.strip() for part in parts if str(part or "").strip()
+        )
         name = " ".join(name.split())
         normalized_tag = str(tag or "").strip().lstrip("-").strip()
         return f"{name}-{normalized_tag}" if normalized_tag else name
 
     @staticmethod
     def _append_trump(name: str, meta: Meta) -> str:
-        return f"{name} - TRUMP" if meta.trump_reason == "exact_match" else name
+        return (
+            f"{name} - TRUMP" if meta.trump_reason == "exact_match" else name
+        )
 
     @staticmethod
-    def _release_field(release: dict[str, Any], name: str, default: Any = "") -> Any:
+    def _release_field(
+        release: dict[str, Any], name: str, default: Any = ""
+    ) -> Any:
         """Read a JSON-serialized MusicRelease field without its provenance."""
         fields = release.get("fields", {})
         value = fields.get(name, {}) if isinstance(fields, dict) else {}
-        return value.get("value", default) if isinstance(value, dict) else default
+        return (
+            value.get("value", default) if isinstance(value, dict) else default
+        )
 
     @staticmethod
     def _codec(value: Any) -> str:
@@ -249,41 +319,81 @@ class LST(UNIT3D):
     @classmethod
     def _music_name(cls, meta: Meta) -> str:
         """Format music using LST's Discogs-based naming convention."""
-        release = meta.music_release if isinstance(meta.music_release, dict) else {}
+        release = (
+            meta.music_release if isinstance(meta.music_release, dict) else {}
+        )
         artist = cls._release_field(release, "artist", meta.artist)
         title = cls._release_field(release, "album", meta.title)
-        year = cls._release_field(release, "release_year", cls._release_field(release, "year", meta.year))
+        year = cls._release_field(
+            release,
+            "release_year",
+            cls._release_field(release, "year", meta.year),
+        )
         source = cls._source(cls._release_field(release, "media", meta.source))
-        tracks = release.get("tracks", []) if isinstance(release.get("tracks"), list) else []
-        first_track = tracks[0] if tracks and isinstance(tracks[0], dict) else {}
-        codec = cls._codec(first_track.get("codec") or first_track.get("format") or meta.format or meta.type)
+        tracks = (
+            release.get("tracks", [])
+            if isinstance(release.get("tracks"), list)
+            else []
+        )
+        first_track = (
+            tracks[0] if tracks and isinstance(tracks[0], dict) else {}
+        )
+        codec = cls._codec(
+            first_track.get("codec")
+            or first_track.get("format")
+            or meta.format
+            or meta.type
+        )
         parts = [str(artist), "-", str(title), str(year), source, codec]
 
         # LST omits technical PCM fields for lossy codecs.
         if codec in {"FLAC", "ALAC"}:
-            depth = first_track.get("bit_depth") or cls._release_field(release, "nfo_bit_depth")
-            rate = first_track.get("sample_rate") or cls._release_field(release, "nfo_sample_rate")
+            depth = first_track.get("bit_depth") or cls._release_field(
+                release, "nfo_bit_depth"
+            )
+            rate = first_track.get("sample_rate") or cls._release_field(
+                release, "nfo_sample_rate"
+            )
             if depth:
                 parts.append(f"{depth}-bit")
             if rate:
                 match = re.search(r"\d+(?:[.,]\d+)?", str(rate))
                 if match:
                     value = float(match.group().replace(",", "."))
-                    parts.append(f"{value / 1000:g} kHz" if value >= 1000 else f"{value:g} kHz")
+                    parts.append(
+                        f"{value / 1000:g} kHz"
+                        if value >= 1000
+                        else f"{value:g} kHz"
+                    )
         return cls._with_tag(parts, meta.tag)
 
     @classmethod
     def _book_name(cls, meta: Meta) -> str:
         """Format LST audiobooks and eBooks according to their category rules."""
-        author, title, year = str(meta.author or meta.publisher or ""), str(meta.title or ""), str(meta.year or "")
+        author, title, year = (
+            str(meta.author or meta.publisher or ""),
+            str(meta.title or ""),
+            str(meta.year or ""),
+        )
         if meta.audiobook:
             codec = cls._codec(meta.type)
             source = cls._source(meta.source)
             parts = [author, "-", title, year, source, codec]
             if codec in {"FLAC", "ALAC"}:
-                audio = next((track for track in meta.mediainfo.get("media", {}).get("track", []) if track.get("@type") == "Audio"), {})
+                audio = next(
+                    (
+                        track
+                        for track in meta.mediainfo.get("media", {}).get(
+                            "track", []
+                        )
+                        if track.get("@type") == "Audio"
+                    ),
+                    {},
+                )
                 depth = audio.get("BitDepth") or audio.get("BitDepth_String")
-                rate = audio.get("SamplingRate") or audio.get("SamplingRate_String")
+                rate = audio.get("SamplingRate") or audio.get(
+                    "SamplingRate_String"
+                )
                 if depth:
                     match = re.search(r"\d+", str(depth))
                     if match:
@@ -292,11 +402,24 @@ class LST(UNIT3D):
                     match = re.search(r"\d+(?:[.,]\d+)?", str(rate))
                     if match:
                         value = float(match.group().replace(",", "."))
-                        parts.append(f"{value / 1000:g} kHz" if value >= 1000 else f"{value:g} kHz")
+                        parts.append(
+                            f"{value / 1000:g} kHz"
+                            if value >= 1000
+                            else f"{value:g} kHz"
+                        )
             return cls._with_tag(parts, meta.tag)
 
         edition = str(meta.manual_edition or meta.edition or "")
         format_name = cls._codec(meta.type)
-        scan_type = "OCR" if meta.ocr else "SCAN" if cls._source(meta.source).upper() == "SCAN" else ""
+        scan_type = (
+            "OCR"
+            if meta.ocr
+            else "SCAN"
+            if cls._source(meta.source).upper() == "SCAN"
+            else ""
+        )
         isbn = re.sub(r"[^0-9Xx]", "", str(meta.isbn or ""))
-        return cls._with_tag([author, "-", title, edition, year, format_name, scan_type, isbn], meta.tag)
+        return cls._with_tag(
+            [author, "-", title, edition, year, format_name, scan_type, isbn],
+            meta.tag,
+        )

@@ -11,7 +11,11 @@ import pytest
 
 from src import bootstrap
 from src.domain_models import application_version
-from src.domain_models.book_language import extract_first_author, is_valid_book_language, resolve_book_language
+from src.domain_models.book_language import (
+    extract_first_author,
+    is_valid_book_language,
+    resolve_book_language,
+)
 from src.domain_models.configuration import (
     ApplicationConfiguration,
     ConfigurationMigration,
@@ -20,10 +24,28 @@ from src.domain_models.configuration import (
 )
 from src.domain_models.errors import TmdbCredentialMissingError
 from src.domain_models.external_api import TmdbCredential, TmdbCredentialMode
-from src.domain_models.image_upload import HostedImage, ImageUploadFailure, ImageUploadFailureKind, ImageUploadOutcome
+from src.domain_models.image_upload import (
+    HostedImage,
+    ImageUploadFailure,
+    ImageUploadFailureKind,
+    ImageUploadOutcome,
+)
 from src.domain_models.media_identifiers import parse_tmdb_id
-from src.domain_models.music import AudioTrack, AuxiliaryFiles, MetadataSource, MusicRelease
-from src.domain_models.processing import ItemProcessingError, LoginError, ManualDateError, NoAudioMediaError, UploadError, WeirdSystemError, XEMNotFoundError
+from src.domain_models.music import (
+    AudioTrack,
+    AuxiliaryFiles,
+    MetadataSource,
+    MusicRelease,
+)
+from src.domain_models.processing import (
+    ItemProcessingError,
+    LoginError,
+    ManualDateError,
+    NoAudioMediaError,
+    UploadError,
+    WeirdSystemError,
+    XEMNotFoundError,
+)
 from src.domain_models.release import Meta
 from src.domain_models.tracker_image_policy import (
     configured_screenshot_minimum,
@@ -33,16 +55,40 @@ from src.domain_models.tracker_image_policy import (
     set_tracker_image_collection,
     valid_screenshot_count,
 )
-from src.engines.configuration_reconciliation import reconcile_runtime_configuration
-from src.engines.configuration_selection import configuration_has_user_settings, is_user_setting, select_configuration
-from src.engines.music_validation import MusicValidator, OrpheusMusicValidator, ValidationLevel
+from src.engines.configuration_reconciliation import (
+    reconcile_runtime_configuration,
+)
+from src.engines.configuration_selection import (
+    configuration_has_user_settings,
+    is_user_setting,
+    select_configuration,
+)
+from src.engines.music_validation import (
+    MusicValidator,
+    OrpheusMusicValidator,
+    ValidationLevel,
+)
 from src.engines.region_mapping import get_distributor, get_region, get_service
-from src.engines.tracker_description_policy import DescriptionCandidate, TrackerDescriptionMode, add_candidate, resolve_description_mode, score_release_name
-from src.engines.upload_safety_policy import blocks_automatic_upload, book_metadata_cjk_fields, content_paths_with_spaces
+from src.engines.tracker_description_policy import (
+    DescriptionCandidate,
+    TrackerDescriptionMode,
+    add_candidate,
+    resolve_description_mode,
+    score_release_name,
+)
+from src.engines.upload_safety_policy import (
+    blocks_automatic_upload,
+    book_metadata_cjk_fields,
+    content_paths_with_spaces,
+)
 
 
-def _configuration(data: dict[str, object], kind: ConfigurationSourceKind, path: str) -> ApplicationConfiguration:
-    return ApplicationConfiguration.from_mapping(data, ConfigurationSource(path=path, kind=kind))
+def _configuration(
+    data: dict[str, object], kind: ConfigurationSourceKind, path: str
+) -> ApplicationConfiguration:
+    return ApplicationConfiguration.from_mapping(
+        data, ConfigurationSource(path=path, kind=kind)
+    )
 
 
 def test_application_version_metadata_is_named() -> None:
@@ -50,7 +96,9 @@ def test_application_version_metadata_is_named() -> None:
     assert "Full Changelog" in application_version.CHANGELOG
 
 
-def test_configuration_domain_rejects_invalid_shapes_and_thaws_nested_values() -> None:
+def test_configuration_domain_rejects_invalid_shapes_and_thaws_nested_values() -> (
+    None
+):
     source = ConfigurationSource("config.py", ConfigurationSourceKind.RUNTIME)
     configuration = ApplicationConfiguration.from_mapping(
         {"DEFAULT": {"hosts": ["imgbb", {"nested": (1, True, None)}]}},
@@ -58,43 +106,96 @@ def test_configuration_domain_rejects_invalid_shapes_and_thaws_nested_values() -
     )
     assert configuration.section("MISSING") == {}
     mutable = configuration.mutable_copy()
-    assert mutable == {"DEFAULT": {"hosts": ["imgbb", {"nested": [1, True, None]}]}}
+    assert mutable == {
+        "DEFAULT": {"hosts": ["imgbb", {"nested": [1, True, None]}]}
+    }
     mutable["DEFAULT"]["hosts"] = []
     assert configuration.section("DEFAULT")["hosts"] != []
 
     with pytest.raises(TypeError, match="must be a mapping"):
         ApplicationConfiguration.from_mapping({"DEFAULT": 1}, source)
     with pytest.raises(TypeError, match="Unsupported configuration value"):
-        ApplicationConfiguration.from_mapping({"DEFAULT": {"bad": object()}}, source)
+        ApplicationConfiguration.from_mapping(
+            {"DEFAULT": {"bad": object()}}, source
+        )
 
     assert not ConfigurationMigration(configuration).changed
-    assert ConfigurationMigration(configuration, migrated_paths=(("DEFAULT", "tmdb_api"),)).changed
+    assert ConfigurationMigration(
+        configuration, migrated_paths=(("DEFAULT", "tmdb_api"),)
+    ).changed
 
 
 def test_configuration_selection_covers_every_source_priority() -> None:
     defaults = _configuration(
-        {"DEFAULT": {"tmdb_api": "", "img_host_1": "", "default_trackers": [], "nested": {"secret": ""}}},
+        {
+            "DEFAULT": {
+                "tmdb_api": "",
+                "img_host_1": "",
+                "default_trackers": [],
+                "nested": {"secret": ""},
+            }
+        },
         ConfigurationSourceKind.DEFAULT,
         "default.py",
     )
-    runtime_empty = _configuration({"DEFAULT": {"tmdb_api": "", "img_host_1": ""}}, ConfigurationSourceKind.RUNTIME, "runtime.py")
-    runtime = _configuration({"DEFAULT": {"tmdb_api": " runtime-key ", "img_host_1": "imgbb"}}, ConfigurationSourceKind.RUNTIME, "runtime.py")
-    legacy = _configuration({"DEFAULT": {"tmdb_api": "legacy-key"}}, ConfigurationSourceKind.LEGACY, "legacy.py")
-    explicit = _configuration({"DEFAULT": {"tmdb_api": "explicit-key"}}, ConfigurationSourceKind.EXPLICIT, "explicit.py")
+    runtime_empty = _configuration(
+        {"DEFAULT": {"tmdb_api": "", "img_host_1": ""}},
+        ConfigurationSourceKind.RUNTIME,
+        "runtime.py",
+    )
+    runtime = _configuration(
+        {"DEFAULT": {"tmdb_api": " runtime-key ", "img_host_1": "imgbb"}},
+        ConfigurationSourceKind.RUNTIME,
+        "runtime.py",
+    )
+    legacy = _configuration(
+        {"DEFAULT": {"tmdb_api": "legacy-key"}},
+        ConfigurationSourceKind.LEGACY,
+        "legacy.py",
+    )
+    explicit = _configuration(
+        {"DEFAULT": {"tmdb_api": "explicit-key"}},
+        ConfigurationSourceKind.EXPLICIT,
+        "explicit.py",
+    )
 
-    assert select_configuration([defaults, legacy, runtime, explicit], defaults) is explicit
-    assert select_configuration([defaults, legacy, runtime], defaults) is runtime
-    assert select_configuration([defaults, legacy, runtime_empty], defaults) is legacy
-    assert select_configuration([defaults, runtime_empty], defaults) is runtime_empty
+    assert (
+        select_configuration([defaults, legacy, runtime, explicit], defaults)
+        is explicit
+    )
+    assert (
+        select_configuration([defaults, legacy, runtime], defaults) is runtime
+    )
+    assert (
+        select_configuration([defaults, legacy, runtime_empty], defaults)
+        is legacy
+    )
+    assert (
+        select_configuration([defaults, runtime_empty], defaults)
+        is runtime_empty
+    )
     assert select_configuration([defaults, legacy], defaults) is legacy
-    legacy_empty = _configuration({"DEFAULT": {"tmdb_api": ""}}, ConfigurationSourceKind.LEGACY, "legacy-empty.py")
-    assert select_configuration([defaults, legacy_empty], defaults) is legacy_empty
+    legacy_empty = _configuration(
+        {"DEFAULT": {"tmdb_api": ""}},
+        ConfigurationSourceKind.LEGACY,
+        "legacy-empty.py",
+    )
+    assert (
+        select_configuration([defaults, legacy_empty], defaults)
+        is legacy_empty
+    )
     assert select_configuration([defaults], defaults) is defaults
-    tuple_credential = _configuration({"DEFAULT": {"api_key": ("one", "two")}}, ConfigurationSourceKind.RUNTIME, "tuple.py")
+    tuple_credential = _configuration(
+        {"DEFAULT": {"api_key": ("one", "two")}},
+        ConfigurationSourceKind.RUNTIME,
+        "tuple.py",
+    )
     assert configuration_has_user_settings(tuple_credential, defaults)
     import src.engines.configuration_selection as configuration_selection
 
-    assert configuration_selection._normalized(MappingProxyType({"key": " value "})) == (("key", "value"),)
+    assert configuration_selection._normalized(
+        MappingProxyType({"key": " value "})
+    ) == (("key", "value"),)
     assert configuration_has_user_settings(runtime, defaults)
     assert not configuration_has_user_settings(runtime_empty, defaults)
 
@@ -108,7 +209,9 @@ def test_configuration_selection_covers_every_source_priority() -> None:
     assert not is_user_setting(("DEFAULT", "screens"), 4)
 
 
-def test_configuration_reconciliation_preserves_runtime_and_fills_nested_values() -> None:
+def test_configuration_reconciliation_preserves_runtime_and_fills_nested_values() -> (
+    None
+):
     defaults = _configuration(
         {
             "DEFAULT": {
@@ -124,7 +227,16 @@ def test_configuration_reconciliation_preserves_runtime_and_fills_nested_values(
         "default.py",
     )
     runtime = _configuration(
-        {"DEFAULT": {"tmdb_api": "your key", "img_host_1": "", "api_key": None, "cookie": [], "numeric": 1, "nested": "invalid-runtime-shape"}},
+        {
+            "DEFAULT": {
+                "tmdb_api": "your key",
+                "img_host_1": "",
+                "api_key": None,
+                "cookie": [],
+                "numeric": 1,
+                "nested": "invalid-runtime-shape",
+            }
+        },
         ConfigurationSourceKind.RUNTIME,
         "runtime.py",
     )
@@ -143,13 +255,19 @@ def test_configuration_reconciliation_preserves_runtime_and_fills_nested_values(
         "legacy.py",
     )
 
-    migration = reconcile_runtime_configuration(runtime, legacy, defaults, runtime_path="materialized.py")
+    migration = reconcile_runtime_configuration(
+        runtime, legacy, defaults, runtime_path="materialized.py"
+    )
     result = migration.configuration.mutable_copy()
     assert migration.changed
     assert migration.configuration.source.path == "materialized.py"
     assert result["DEFAULT"]["tmdb_api"] == "legacy-key"
     assert result["DEFAULT"]["img_host_1"] == "onlyimage"
-    assert result["DEFAULT"]["nested"] == {"secret": ["legacy"], "new_key": "default", "existing": "default"}
+    assert result["DEFAULT"]["nested"] == {
+        "secret": ["legacy"],
+        "new_key": "default",
+        "existing": "default",
+    }
     assert result["DEFAULT"]["screens"] == 6
     assert result["DEFAULT"]["new_list"] == ["default"]
     assert result["DEFAULT"]["whole_mapping"] == {"items": ["default"]}
@@ -168,14 +286,24 @@ def test_tmdb_and_image_upload_domain_outcomes() -> None:
         TmdbCredential.parse(None)
     with pytest.raises(TmdbCredentialMissingError, match="empty"):
         TmdbCredential.parse("  ")
-    assert TmdbCredential.parse(" key ") == TmdbCredential("key", TmdbCredentialMode.V3_API_KEY)
+    assert TmdbCredential.parse(" key ") == TmdbCredential(
+        "key", TmdbCredentialMode.V3_API_KEY
+    )
     token = "eyJheader.payload.signature"
-    assert TmdbCredential.parse(token).mode is TmdbCredentialMode.V4_READ_ACCESS_TOKEN
-    assert TmdbCredential.parse("x" * 65).mode is TmdbCredentialMode.V4_READ_ACCESS_TOKEN
+    assert (
+        TmdbCredential.parse(token).mode
+        is TmdbCredentialMode.V4_READ_ACCESS_TOKEN
+    )
+    assert (
+        TmdbCredential.parse("x" * 65).mode
+        is TmdbCredentialMode.V4_READ_ACCESS_TOKEN
+    )
 
     image = HostedImage("thumb", "raw", "page", "local")
     assert ImageUploadOutcome(image=image).succeeded
-    failure = ImageUploadFailure("imgbb", ImageUploadFailureKind.HOST_UNAVAILABLE, "offline")
+    failure = ImageUploadFailure(
+        "imgbb", ImageUploadFailureKind.HOST_UNAVAILABLE, "offline"
+    )
     assert not ImageUploadOutcome(failure=failure).succeeded
 
 
@@ -189,8 +317,14 @@ def test_book_language_edge_cases(monkeypatch: pytest.MonkeyPatch) -> None:
         def to_alpha3(self) -> str:
             return ""
 
-    monkeypatch.setattr(book_language.langcodes, "get", lambda _value: SameLanguage())
-    monkeypatch.setattr(book_language.langcodes, "find", lambda _value: (_ for _ in ()).throw(LookupError("unknown")))
+    monkeypatch.setattr(
+        book_language.langcodes, "get", lambda _value: SameLanguage()
+    )
+    monkeypatch.setattr(
+        book_language.langcodes,
+        "find",
+        lambda _value: (_ for _ in ()).throw(LookupError("unknown")),
+    )
     assert resolve_book_language("same") == ("Same", "")
     assert not is_valid_book_language("unknown", "eng")
     assert not is_valid_book_language("English", "und")
@@ -199,7 +333,9 @@ def test_book_language_edge_cases(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_identifier_parsing_rejects_untrusted_urls_and_bad_ids() -> None:
     assert parse_tmdb_id("https://evil.invalid/movie/123", None) == ("", 0)
-    assert parse_tmdb_id("https://www.themoviedb.org/movie/not-a-number", "TV") == ("TV", 0)
+    assert parse_tmdb_id(
+        "https://www.themoviedb.org/movie/not-a-number", "TV"
+    ) == ("TV", 0)
     assert parse_tmdb_id("movie/321/slug", None) == ("MOVIE", 321)
     assert parse_tmdb_id("tv/456", None) == ("TV", 456)
     assert parse_tmdb_id(" 789 ", "MOVIE") == ("MOVIE", 789)
@@ -210,7 +346,12 @@ def test_processing_errors_have_semantic_defaults_and_paths() -> None:
     assert str(LoginError("custom")) == "custom"
     assert str(UploadError()) == "An error occurred while uploading"
     assert str(UploadError("custom")) == "custom"
-    for error_type in (XEMNotFoundError, WeirdSystemError, ManualDateError, NoAudioMediaError):
+    for error_type in (
+        XEMNotFoundError,
+        WeirdSystemError,
+        ManualDateError,
+        NoAudioMediaError,
+    ):
         assert isinstance(error_type("message"), Exception)
     error = ItemProcessingError("failed", "/release")
     assert str(error) == "failed"
@@ -267,7 +408,9 @@ def test_meta_mapping_compatibility_and_tracker_ids() -> None:
     assert list(meta.items()) and list(meta.keys()) and list(meta.values())
 
 
-def test_tracker_image_collection_and_requirements_cover_invalid_inputs() -> None:
+def test_tracker_image_collection_and_requirements_cover_invalid_inputs() -> (
+    None
+):
     meta = Meta(category="MOVIE", image_list="invalid")  # type: ignore[arg-type]
     assert valid_screenshot_count(meta) == 0
     meta.image_list = [
@@ -278,14 +421,36 @@ def test_tracker_image_collection_and_requirements_cover_invalid_inputs() -> Non
     ]  # type: ignore[list-item]
     assert valid_screenshot_count(meta) == 2
     assert configured_screenshot_minimum({"DEFAULT": "invalid"}) == 0
-    assert configured_screenshot_minimum({"DEFAULT": {"min_successful_image_uploads": "bad"}}) == 3
-    assert configured_screenshot_minimum({"DEFAULT": {"min_successful_image_uploads": -5}}) == 0
-    assert "for BHD" in (screenshot_requirement_error(meta, {"DEFAULT": {"min_successful_image_uploads": 3}}, "BHD") or "")
-    assert screenshot_requirement_error(Meta(category="BOOK"), {"DEFAULT": {}}) is None
+    assert (
+        configured_screenshot_minimum(
+            {"DEFAULT": {"min_successful_image_uploads": "bad"}}
+        )
+        == 3
+    )
+    assert (
+        configured_screenshot_minimum(
+            {"DEFAULT": {"min_successful_image_uploads": -5}}
+        )
+        == 0
+    )
+    assert "for BHD" in (
+        screenshot_requirement_error(
+            meta, {"DEFAULT": {"min_successful_image_uploads": 3}}, "BHD"
+        )
+        or ""
+    )
+    assert (
+        screenshot_requirement_error(Meta(category="BOOK"), {"DEFAULT": {}})
+        is None
+    )
 
-    set_tracker_image_collection(meta, "BHD", "screenshots", [{"raw_url": "https://bhd.invalid/a"}])
+    set_tracker_image_collection(
+        meta, "BHD", "screenshots", [{"raw_url": "https://bhd.invalid/a"}]
+    )
     assert has_tracker_image_collection(meta, "BHD", "screenshots")
-    assert get_tracker_image_collection(meta, "BHD", "screenshots")[0]["raw_url"].startswith("https://")
+    assert get_tracker_image_collection(meta, "BHD", "screenshots")[0][
+        "raw_url"
+    ].startswith("https://")
     meta.menu_images = "invalid"  # type: ignore[assignment]
     assert get_tracker_image_collection(meta, "OTHER", "menu_images") == []
 
@@ -308,29 +473,70 @@ def _track(path: str, **values: Any) -> AudioTrack:
 
 
 def test_music_validators_cover_errors_warnings_and_orpheus_rules() -> None:
-    assert MusicValidator().validate(MusicRelease("/music"))[0].code == "no_audio"
+    assert (
+        MusicValidator().validate(MusicRelease("/music"))[0].code == "no_audio"
+    )
 
     release = MusicRelease(
         "/music",
         tracks=[
             _track("one.flac", title="", track_number=None),
-            _track("two.mp3", format="MP3", codec="MP3", track_number=3, bitrate=400_000, bitrate_mode="CBR"),
+            _track(
+                "two.mp3",
+                format="MP3",
+                codec="MP3",
+                track_number=3,
+                bitrate=400_000,
+                bitrate_mode="CBR",
+            ),
         ],
         conflicts={"album": ["A", "B"], "artist": ["A", "B"]},
     )
     release.set_field("artist", "Artist", MetadataSource.FILE_TAG, 1.0)
     issues = MusicValidator().validate(release)
     codes = {issue.code for issue in issues}
-    assert {"missing_album", "mixed_formats", "inconsistent_album", "inconsistent_artist", "untagged_track", "non_contiguous_tracks"} <= codes
+    assert {
+        "missing_album",
+        "mixed_formats",
+        "inconsistent_album",
+        "inconsistent_artist",
+        "untagged_track",
+        "non_contiguous_tracks",
+    } <= codes
 
     physical = MusicRelease(
         "/music",
         tracks=[
-            _track("bad.wav", format="WAV", codec="PCM", bit_depth=32, sample_rate=12_345),
-            _track("flac-in-wav.wav", bit_depth=32, sample_rate=12_345, track_number=2),
-            _track("high-rate.flac", bit_depth=16, sample_rate=96_000, track_number=3),
-            _track("aac-in-mp3.mp3", format="AAC", codec="AAC", track_number=4),
-            _track("bad.mp3", format="MP3", codec="MP3", bitrate=400_000, bitrate_mode="CBR", track_number=5),
+            _track(
+                "bad.wav",
+                format="WAV",
+                codec="PCM",
+                bit_depth=32,
+                sample_rate=12_345,
+            ),
+            _track(
+                "flac-in-wav.wav",
+                bit_depth=32,
+                sample_rate=12_345,
+                track_number=2,
+            ),
+            _track(
+                "high-rate.flac",
+                bit_depth=16,
+                sample_rate=96_000,
+                track_number=3,
+            ),
+            _track(
+                "aac-in-mp3.mp3", format="AAC", codec="AAC", track_number=4
+            ),
+            _track(
+                "bad.mp3",
+                format="MP3",
+                codec="MP3",
+                bitrate=400_000,
+                bitrate_mode="CBR",
+                track_number=5,
+            ),
         ],
         auxiliary=AuxiliaryFiles(),
     )
@@ -353,9 +559,20 @@ def test_music_validators_cover_errors_warnings_and_orpheus_rules() -> None:
     } <= codes
 
     lossless_physical = MusicRelease("/music", tracks=[_track("album.flac")])
-    for field_name, field_value in (("artist", "Artist"), ("album", "Album"), ("year", 2025), ("media", "CD"), ("release_type", "Single")):
-        lossless_physical.set_field(field_name, field_value, MetadataSource.USER, 1.0)
-    assert "missing_log" in {issue.code for issue in OrpheusMusicValidator().validate(lossless_physical)}
+    for field_name, field_value in (
+        ("artist", "Artist"),
+        ("album", "Album"),
+        ("year", 2025),
+        ("media", "CD"),
+        ("release_type", "Single"),
+    ):
+        lossless_physical.set_field(
+            field_name, field_value, MetadataSource.USER, 1.0
+        )
+    assert "missing_log" in {
+        issue.code
+        for issue in OrpheusMusicValidator().validate(lossless_physical)
+    }
 
     single = MusicRelease("/music", tracks=[_track("single.flac")])
     single.set_field("artist", "Artist", MetadataSource.USER, 1.0)
@@ -363,8 +580,15 @@ def test_music_validators_cover_errors_warnings_and_orpheus_rules() -> None:
     single.set_field("year", 2025, MetadataSource.USER, 1.0)
     single.set_field("release_type", "Album", MetadataSource.USER, 1.0)
     single_issues = OrpheusMusicValidator().validate(single)
-    assert {"missing_media", "single_track", "possible_unsplit", "unknown_media"} <= {issue.code for issue in single_issues}
-    assert any(issue.level is ValidationLevel.WARNING for issue in single_issues)
+    assert {
+        "missing_media",
+        "single_track",
+        "possible_unsplit",
+        "unknown_media",
+    } <= {issue.code for issue in single_issues}
+    assert any(
+        issue.level is ValidationLevel.WARNING for issue in single_issues
+    )
 
 
 def test_music_validator_accepts_valid_edge_variants() -> None:
@@ -373,7 +597,9 @@ def test_music_validator_accepts_valid_edge_variants() -> None:
         tracks=[_track("titled.flac", track_number=None, title="Named Track")],
         conflicts={"artist": ["Artist A", "Artist B"]},
     )
-    various.set_field("artist", "Various Artists", MetadataSource.FILE_TAG, 1.0)
+    various.set_field(
+        "artist", "Various Artists", MetadataSource.FILE_TAG, 1.0
+    )
     various.set_field("album", "Compilation", MetadataSource.FILE_TAG, 1.0)
     codes = {issue.code for issue in MusicValidator().validate(various)}
     assert "inconsistent_artist" not in codes
@@ -381,12 +607,24 @@ def test_music_validator_accepts_valid_edge_variants() -> None:
 
     legal_mp3 = MusicRelease(
         "/music",
-        tracks=[_track("legal.mp3", format="MP3", codec="MP3", bitrate=320_000, bitrate_mode="CBR")],
+        tracks=[
+            _track(
+                "legal.mp3",
+                format="MP3",
+                codec="MP3",
+                bitrate=320_000,
+                bitrate_mode="CBR",
+            )
+        ],
     )
-    assert OrpheusMusicValidator._mp3_bitrate_issue(legal_mp3.tracks[0]) is None
+    assert (
+        OrpheusMusicValidator._mp3_bitrate_issue(legal_mp3.tracks[0]) is None
+    )
 
 
-def test_region_distributor_and_service_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_region_distributor_and_service_resolution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import src.engines.region_mapping as region_mapping
 
     assert awaitable_result(get_region({"label": "MOVIE USA DISC"})) == "USA"
@@ -407,8 +645,17 @@ def test_region_distributor_and_service_resolution(monkeypatch: pytest.MonkeyPat
             {"title": "Example"},
         ]
     )
-    monkeypatch.setattr(region_mapping, "guessit_fn", lambda *_args, **_kwargs: next(calls))
-    assert awaitable_result(get_service("Example.Amazon.Prime.DTS-HD.MA-GRP", "-GRP", "DTS-HD MA", "Example")) == ("AMZN", "Amazon")
+    monkeypatch.setattr(
+        region_mapping, "guessit_fn", lambda *_args, **_kwargs: next(calls)
+    )
+    assert awaitable_result(
+        get_service(
+            "Example.Amazon.Prime.DTS-HD.MA-GRP",
+            "-GRP",
+            "DTS-HD MA",
+            "Example",
+        )
+    ) == ("AMZN", "Amazon")
 
 
 def awaitable_result(value: Any) -> Any:
@@ -428,10 +675,23 @@ def test_description_policy_covers_invalid_modes_scoring_and_audit() -> None:
     assert score_release_name("anything", "other", explicit_id=True) == 100
     assert score_release_name(None, "name") == 0
     assert score_release_name("", "name") == 0
-    assert 0 < score_release_name("Movie 2025 1080p", "Movie.2025.1080p-GRP") <= 100
+    assert (
+        0
+        < score_release_name("Movie 2025 1080p", "Movie.2025.1080p-GRP")
+        <= 100
+    )
 
     meta = Meta(description_candidates=[])
-    candidate = DescriptionCandidate("BHD", "12", "https://tracker.invalid/12", "Movie", "raw", "clean", 2, 90)
+    candidate = DescriptionCandidate(
+        "BHD",
+        "12",
+        "https://tracker.invalid/12",
+        "Movie",
+        "raw",
+        "clean",
+        2,
+        90,
+    )
     add_candidate(meta, candidate, selected=False)
     add_candidate(meta, candidate, selected=True)
     assert len(meta.description_candidates) == 2
@@ -441,26 +701,59 @@ def test_description_policy_covers_invalid_modes_scoring_and_audit() -> None:
 
 
 def test_upload_safety_handles_relative_absolute_and_windows_paths() -> None:
-    relative = Meta(path="Release Folder", filelist=["disc one/file.mkv", "disc one/file.mkv", "", None])
-    assert content_paths_with_spaces(relative) == ["Release Folder", "disc one"]
+    relative = Meta(
+        path="Release Folder",
+        filelist=["disc one/file.mkv", "disc one/file.mkv", "", None],
+    )
+    assert content_paths_with_spaces(relative) == [
+        "Release Folder",
+        "disc one",
+    ]
     assert blocks_automatic_upload(relative)
     relative.allow_spaces = True
     assert not blocks_automatic_upload(relative)
 
-    posix = Meta(path="/media/root", filelist=["/media/root/Season 01/Episode.mkv", "/other/Other File.mkv"])
+    posix = Meta(
+        path="/media/root",
+        filelist=[
+            "/media/root/Season 01/Episode.mkv",
+            "/other/Other File.mkv",
+        ],
+    )
     assert content_paths_with_spaces(posix) == ["Season 01", "Other File.mkv"]
-    windows = Meta(path=r"C:\Media\Root", filelist=[r"C:\Media\Root\Season 01\Episode.mkv"])
+    windows = Meta(
+        path=r"C:\Media\Root",
+        filelist=[r"C:\Media\Root\Season 01\Episode.mkv"],
+    )
     assert content_paths_with_spaces(windows) == ["Season 01"]
     assert content_paths_with_spaces(Meta(path="", filelist="invalid")) == []
-    assert content_paths_with_spaces(Meta(path="", filelist=["/absolute/Space Name.mkv"])) == ["Space Name.mkv"]
+    assert content_paths_with_spaces(
+        Meta(path="", filelist=["/absolute/Space Name.mkv"])
+    ) == ["Space Name.mkv"]
 
     assert book_metadata_cjk_fields(Meta(category="MOVIE")) == []
-    book = Meta(category="BOOK", name="日本語", author="Author", title="中文", book_overview="説明")
-    assert book_metadata_cjk_fields(book) == ["release name", "title", "description"]
+    book = Meta(
+        category="BOOK",
+        name="日本語",
+        author="Author",
+        title="中文",
+        book_overview="説明",
+    )
+    assert book_metadata_cjk_fields(book) == [
+        "release name",
+        "title",
+        "description",
+    ]
 
 
-def test_bootstrap_load_runtime_configuration_uses_prepared_migration(monkeypatch: pytest.MonkeyPatch) -> None:
-    configuration = _configuration({"DEFAULT": {}}, ConfigurationSourceKind.RUNTIME, "runtime.py")
+def test_bootstrap_load_runtime_configuration_uses_prepared_migration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configuration = _configuration(
+        {"DEFAULT": {}}, ConfigurationSourceKind.RUNTIME, "runtime.py"
+    )
     migration = ConfigurationMigration(configuration)
-    monkeypatch.setattr(bootstrap, "prepare_runtime_configuration", lambda: migration)
+    monkeypatch.setattr(
+        bootstrap, "prepare_runtime_configuration", lambda: migration
+    )
     assert bootstrap.load_runtime_configuration() is configuration

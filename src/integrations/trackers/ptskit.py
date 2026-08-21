@@ -7,7 +7,10 @@ from bs4 import BeautifulSoup
 
 from src.domain_models.release import Meta
 from src.integrations.trackers.common import Common
-from src.integrations.trackers.cookie_auth import CookieAuthUploader, CookieValidator
+from src.integrations.trackers.cookie_auth import (
+    CookieAuthUploader,
+    CookieValidator,
+)
 from src.integrations.trackers.description_builder import DescriptionBuilder
 
 Config = dict[str, Any]
@@ -35,11 +38,20 @@ class Ptskit:
         self.common = Common(config)
         self.cookie_validator = CookieValidator(config)
         self.cookie_auth_uploader = CookieAuthUploader(config)
-        self.announce = str(self.config["TRACKERS"][self.tracker]["announce_url"])
-        self.session = httpx.AsyncClient(headers={"User-Agent": f"Upload-Assistant/2.3 ({platform.system()} {platform.release()})"}, timeout=60.0)
+        self.announce = str(
+            self.config["TRACKERS"][self.tracker]["announce_url"]
+        )
+        self.session = httpx.AsyncClient(
+            headers={
+                "User-Agent": f"Upload-Assistant/2.3 ({platform.system()} {platform.release()})"
+            },
+            timeout=60.0,
+        )
 
     async def validate_credentials(self, meta: Meta) -> bool:
-        cookies = await self.cookie_validator.load_session_cookies(meta, self.tracker)
+        cookies = await self.cookie_validator.load_session_cookies(
+            meta, self.tracker
+        )
         self.session.cookies = cast(Any, cookies)
         return cookies is not None
 
@@ -62,16 +74,30 @@ class Ptskit:
         )
 
     async def get_additional_checks(self, meta: Meta) -> bool:
-        return await self.common.check_language_requirements(meta, self.tracker, languages_to_check=["mandarin", "chinese"], check_audio=True, check_subtitle=True)
+        return await self.common.check_language_requirements(
+            meta,
+            self.tracker,
+            languages_to_check=["mandarin", "chinese"],
+            check_audio=True,
+            check_subtitle=True,
+        )
 
     async def search_existing(self, meta: Meta) -> list[str] | None:
         search_url = f"{self.base_url}/torrents.php"
-        params: dict[str, Any] = {"incldead": 1, "search": str(meta.imdb_info.get("imdbID", "")), "search_area": 4}
+        params: dict[str, Any] = {
+            "incldead": 1,
+            "search": str(meta.imdb_info.get("imdbID", "")),
+            "search_area": 4,
+        }
         found_items: list[str] = []
 
-        response = await self.session.get(search_url, params=params, cookies=self.session.cookies)
+        response = await self.session.get(
+            search_url, params=params, cookies=self.session.cookies
+        )
         if "login.php" in str(response.url) or "login.php" in response.text:
-            await self.cookie_validator.handle_validation_failure(meta, self.tracker, response.text)
+            await self.cookie_validator.handle_validation_failure(
+                meta, self.tracker, response.text
+            )
             meta.skipping = f"{self.tracker}"
             return found_items
         response.raise_for_status()
@@ -81,7 +107,9 @@ class Ptskit:
         torrents_table = soup.find("table", class_="torrents")
 
         if torrents_table:
-            torrent_name_tables = torrents_table.find_all("table", class_="torrentname")
+            torrent_name_tables = torrents_table.find_all(
+                "table", class_="torrentname"
+            )
 
             for torrent_table in torrent_name_tables:
                 name_tag = torrent_table.find("b")
@@ -102,7 +130,9 @@ class Ptskit:
         return data
 
     async def upload(self, meta: Meta) -> bool:
-        cookies = await self.cookie_validator.load_session_cookies(meta, self.tracker)
+        cookies = await self.cookie_validator.load_session_cookies(
+            meta, self.tracker
+        )
         self.session.cookies = cast(Any, cookies)
         data = await self.get_data(meta)
 

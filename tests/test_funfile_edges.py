@@ -65,23 +65,42 @@ def _meta(**values: object) -> Meta:
 
 
 @pytest.mark.asyncio
-async def test_funfile_validate_credentials_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_funfile_validate_credentials_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     tracker = _tracker()
     cookie_file = tmp_path / "funfile.txt"
     cookie_file.write_text("cookie", encoding="utf-8")
-    monkeypatch.setattr(cookie_auth_module, "find_cookie_file", lambda *_args, **_kwargs: str(cookie_file))
-    tracker.cookie_validator.load_session_cookies = AsyncMock(return_value=httpx.Cookies())  # type: ignore[method-assign]
+    monkeypatch.setattr(
+        cookie_auth_module,
+        "find_cookie_file",
+        lambda *_args, **_kwargs: str(cookie_file),
+    )
+    tracker.cookie_validator.load_session_cookies = AsyncMock(
+        return_value=httpx.Cookies()
+    )  # type: ignore[method-assign]
     assert await tracker.validate_credentials(_meta(base_dir=str(tmp_path)))
 
 
 @pytest.mark.asyncio
-async def test_funfile_login_success_and_cookie_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_funfile_login_success_and_cookie_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     tracker = _tracker()
     cookie_file = tmp_path / "cookies.txt"
-    monkeypatch.setattr(cookie_auth_module, "find_cookie_file", lambda *_args, **_kwargs: str(cookie_file))
-    response = httpx.Response(302, request=httpx.Request("POST", "https://www.funfile.org/takelogin.php"))
+    monkeypatch.setattr(
+        cookie_auth_module,
+        "find_cookie_file",
+        lambda *_args, **_kwargs: str(cookie_file),
+    )
+    response = httpx.Response(
+        302,
+        request=httpx.Request("POST", "https://www.funfile.org/takelogin.php"),
+    )
     tracker.session.post = AsyncMock(return_value=response)  # type: ignore[method-assign]
-    tracker.session.cookies.set("sid", "value", domain=".funfile.org", path="/")
+    tracker.session.cookies.set(
+        "sid", "value", domain=".funfile.org", path="/"
+    )
     await tracker.login(_meta(base_dir=str(tmp_path)))
     text = cookie_file.read_text(encoding="utf-8")
     assert "Netscape HTTP Cookie File" in text
@@ -89,11 +108,24 @@ async def test_funfile_login_success_and_cookie_file(tmp_path: Path, monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_funfile_login_failure_returns_without_cookie_write(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_funfile_login_failure_returns_without_cookie_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     tracker = _tracker()
     cookie_file = tmp_path / "cookies.txt"
-    monkeypatch.setattr(cookie_auth_module, "find_cookie_file", lambda *_args, **_kwargs: str(cookie_file))
-    tracker.session.post = AsyncMock(return_value=httpx.Response(403, request=httpx.Request("POST", "https://www.funfile.org/takelogin.php")))  # type: ignore[method-assign]
+    monkeypatch.setattr(
+        cookie_auth_module,
+        "find_cookie_file",
+        lambda *_args, **_kwargs: str(cookie_file),
+    )
+    tracker.session.post = AsyncMock(
+        return_value=httpx.Response(
+            403,
+            request=httpx.Request(
+                "POST", "https://www.funfile.org/takelogin.php"
+            ),
+        )
+    )  # type: ignore[method-assign]
     await tracker.login(_meta(base_dir=str(tmp_path)))
     assert not cookie_file.exists()
 
@@ -101,14 +133,24 @@ async def test_funfile_login_failure_returns_without_cookie_write(tmp_path: Path
 @pytest.mark.asyncio
 async def test_funfile_search_existing_success_and_login_failure() -> None:
     tracker = _tracker()
-    tracker.cookie_validator.load_session_cookies = AsyncMock(return_value=httpx.Cookies())  # type: ignore[method-assign]
-    success = httpx.Response(200, request=httpx.Request("GET", "https://www.funfile.org/suggest.php"), text=" One \n\nTwo\n")
+    tracker.cookie_validator.load_session_cookies = AsyncMock(
+        return_value=httpx.Cookies()
+    )  # type: ignore[method-assign]
+    success = httpx.Response(
+        200,
+        request=httpx.Request("GET", "https://www.funfile.org/suggest.php"),
+        text=" One \n\nTwo\n",
+    )
     tracker.session.get = AsyncMock(return_value=success)  # type: ignore[method-assign]
     assert await tracker.search_existing(_meta()) == ["One", "Two"]
 
     tracker.login = AsyncMock()  # type: ignore[method-assign]
     tracker.cookie_validator.handle_validation_failure = AsyncMock()  # type: ignore[method-assign]
-    login_response = httpx.Response(200, request=httpx.Request("GET", "https://www.funfile.org/login.php"), text="login")
+    login_response = httpx.Response(
+        200,
+        request=httpx.Request("GET", "https://www.funfile.org/login.php"),
+        text="login",
+    )
     tracker.session.get = AsyncMock(return_value=login_response)  # type: ignore[method-assign]
     meta = _meta()
     assert await tracker.search_existing(meta) == []
@@ -122,10 +164,14 @@ async def test_funfile_get_requests_error_cookie_none_and_success() -> None:
     assert await tracker.get_requests(_meta()) == []
 
     tracker = _tracker(check_requests=True)
-    tracker.cookie_validator.load_session_cookies = AsyncMock(return_value=None)  # type: ignore[method-assign]
+    tracker.cookie_validator.load_session_cookies = AsyncMock(
+        return_value=None
+    )  # type: ignore[method-assign]
     assert await tracker._fetch_requests(_meta()) == []
 
-    tracker.cookie_validator.load_session_cookies = AsyncMock(return_value=httpx.Cookies())  # type: ignore[method-assign]
+    tracker.cookie_validator.load_session_cookies = AsyncMock(
+        return_value=httpx.Cookies()
+    )  # type: ignore[method-assign]
     tracker._request_search_text = AsyncMock(return_value="<html></html>")  # type: ignore[method-assign]
     assert await tracker._fetch_requests(_meta()) == []
 
@@ -139,7 +185,9 @@ def test_funfile_request_row_and_logging() -> None:
     </tr></table></td>
     """
     results = tracker._parse_requests(html)
-    assert results == [{"Name": "Request One", "Link": "/requests/1", "Reward": "10 GB"}]
+    assert results == [
+        {"Name": "Request One", "Link": "/requests/1", "Reward": "10 GB"}
+    ]
     tracker._log_requests(results)
     tracker._log_requests([])
 
@@ -151,7 +199,12 @@ def test_funfile_type_helpers_remaining_branches() -> None:
     tracker.video_encode = "h.264"
     assert tracker.movie_type(_meta()) == "DVDR"
     assert tracker.tv_type(_meta(category="TV")) == "DVDR"
-    assert tracker.anime_type(_meta(anime=True, tvmaze_episode_data={"season_number": 0})) == "TVSpecial"
+    assert (
+        tracker.anime_type(
+            _meta(anime=True, tvmaze_episode_data={"season_number": 0})
+        )
+        == "TVSpecial"
+    )
     assert tracker.anime_v_codec(_meta()) == "h264"
 
     tracker.video_source = "web"
@@ -163,9 +216,16 @@ def test_funfile_type_helpers_remaining_branches() -> None:
 
 
 def test_funfile_display_aspect_and_media_track_guards() -> None:
-    assert FunFile._display_aspect_ratio({"DisplayAspectRatio": "bad"}) == "16_9"
-    assert FunFile._display_aspect_ratio({"DisplayAspectRatio": "1.33"}) == "4_3"
-    assert FunFile._media_tracks(_meta(mediainfo={"media": {"track": "bad"}})) == []
+    assert (
+        FunFile._display_aspect_ratio({"DisplayAspectRatio": "bad"}) == "16_9"
+    )
+    assert (
+        FunFile._display_aspect_ratio({"DisplayAspectRatio": "1.33"}) == "4_3"
+    )
+    assert (
+        FunFile._media_tracks(_meta(mediainfo={"media": {"track": "bad"}}))
+        == []
+    )
 
 
 class _PosterClient:
@@ -176,13 +236,25 @@ class _PosterClient:
         return None
 
     async def get(self, _url: str) -> httpx.Response:
-        return httpx.Response(200, content=b"poster", request=httpx.Request("GET", "https://example.com/poster.jpg"))
+        return httpx.Response(
+            200,
+            content=b"poster",
+            request=httpx.Request("GET", "https://example.com/poster.jpg"),
+        )
 
 
 @pytest.mark.asyncio
-async def test_funfile_get_poster_success(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(funfile_module.httpx, "AsyncClient", lambda *_args, **_kwargs: _PosterClient())
-    poster = await _tracker().get_poster(_meta(artwork_url="https://example.com/poster.jpg", name="Movie"))
+async def test_funfile_get_poster_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        funfile_module.httpx,
+        "AsyncClient",
+        lambda *_args, **_kwargs: _PosterClient(),
+    )
+    poster = await _tracker().get_poster(
+        _meta(artwork_url="https://example.com/poster.jpg", name="Movie")
+    )
     assert poster == ("Movie.jpg", b"poster", "image/jpeg")
 
 
@@ -199,11 +271,21 @@ def test_funfile_get_nfo_success(tmp_path: Path) -> None:
 async def test_funfile_upload_success(monkeypatch: pytest.MonkeyPatch) -> None:
     tracker = _tracker()
     cookies = httpx.Cookies()
-    tracker.cookie_validator.load_session_cookies = AsyncMock(return_value=cookies)  # type: ignore[method-assign]
+    tracker.cookie_validator.load_session_cookies = AsyncMock(
+        return_value=cookies
+    )  # type: ignore[method-assign]
     tracker.get_data = AsyncMock(return_value={"type": "19"})  # type: ignore[method-assign]
     tracker.get_name = AsyncMock(return_value="Release")  # type: ignore[method-assign]
-    tracker.get_poster = AsyncMock(return_value=("poster.jpg", b"poster", "image/jpeg"))  # type: ignore[method-assign]
-    monkeypatch.setattr(tracker, "get_nfo", lambda _meta: {"nfo": ("release.nfo", b"nfo", "application/octet-stream")})
+    tracker.get_poster = AsyncMock(
+        return_value=("poster.jpg", b"poster", "image/jpeg")
+    )  # type: ignore[method-assign]
+    monkeypatch.setattr(
+        tracker,
+        "get_nfo",
+        lambda _meta: {
+            "nfo": ("release.nfo", b"nfo", "application/octet-stream")
+        },
+    )
     tracker.cookie_auth_uploader.handle_upload = AsyncMock(return_value=True)  # type: ignore[method-assign]
     assert await tracker.upload(_meta())
     call = tracker.cookie_auth_uploader.handle_upload.await_args.kwargs
@@ -214,14 +296,29 @@ async def test_funfile_upload_success(monkeypatch: pytest.MonkeyPatch) -> None:
 async def test_funfile_authenticated_search_retry_succeeds() -> None:
     tracker = _tracker()
     tracker.login = AsyncMock()  # type: ignore[method-assign]
-    login_response = httpx.Response(200, request=httpx.Request("GET", "https://www.funfile.org/login.php"), text="login")
-    success = httpx.Response(200, request=httpx.Request("GET", "https://www.funfile.org/suggest.php"), text="Release")
+    login_response = httpx.Response(
+        200,
+        request=httpx.Request("GET", "https://www.funfile.org/login.php"),
+        text="login",
+    )
+    success = httpx.Response(
+        200,
+        request=httpx.Request("GET", "https://www.funfile.org/suggest.php"),
+        text="Release",
+    )
     tracker.session.get = AsyncMock(return_value=success)  # type: ignore[method-assign]
-    assert await tracker._authenticated_search_response(_meta(), "https://www.funfile.org/suggest.php", login_response) is success
+    assert (
+        await tracker._authenticated_search_response(
+            _meta(), "https://www.funfile.org/suggest.php", login_response
+        )
+        is success
+    )
 
 
 def test_funfile_request_row_without_name_returns_none() -> None:
-    soup = funfile_module.BeautifulSoup("<tr><td class='row3'>missing</td></tr>", "html.parser")
+    soup = funfile_module.BeautifulSoup(
+        "<tr><td class='row3'>missing</td></tr>", "html.parser"
+    )
     row = soup.find("tr")
     assert row is not None
     assert FunFile._request_row(row) is None
@@ -234,7 +331,12 @@ def test_funfile_remaining_type_fallbacks() -> None:
     tracker.video_encode = "x265"
     assert tracker.movie_type(_meta()) == "x265"
     tracker.video_source = "dvd"
-    assert tracker.anime_type(_meta(anime=True, tvmaze_episode_data={"season_number": 1})) == "DVDSpecial"
+    assert (
+        tracker.anime_type(
+            _meta(anime=True, tvmaze_episode_data={"season_number": 1})
+        )
+        == "DVDSpecial"
+    )
     tracker.video_source = "bluray"
     tracker.video_codec = "h264"
     tracker.video_encode = "x265"

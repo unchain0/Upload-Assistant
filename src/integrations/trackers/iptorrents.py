@@ -10,7 +10,10 @@ from bs4 import BeautifulSoup
 from src.domain_models.release import Meta
 from src.integrations.filesystem.temp_paths import release_temp_dir
 from src.integrations.observability.runtime_support import logger
-from src.integrations.trackers.cookie_auth import CookieAuthUploader, CookieValidator
+from src.integrations.trackers.cookie_auth import (
+    CookieAuthUploader,
+    CookieValidator,
+)
 from src.integrations.trackers.description_builder import DescriptionBuilder
 
 Config = dict[str, Any]
@@ -105,16 +108,27 @@ class IPTorrents:
     )
     torrent_url = "https://iptorrents.com/torrent.php?id="
     supported_categories = ("TV", "MOVIE", "BOOK", "GAME", "MUSIC")
-    tracker_urls = ("ssl.empirehost.me", "routing.bgp.technology", "127.0.0.1.stackoverflow.tech")
+    tracker_urls = (
+        "ssl.empirehost.me",
+        "routing.bgp.technology",
+        "127.0.0.1.stackoverflow.tech",
+    )
 
     def __init__(self, config: Config):
         self.config = config
         self.cookie_validator = CookieValidator(config)
         self.cookie_auth_uploader = CookieAuthUploader(config)
-        self.session = httpx.AsyncClient(headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:144.0) Gecko/20100101 Firefox/144.0"}, timeout=30)
+        self.session = httpx.AsyncClient(
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:144.0) Gecko/20100101 Firefox/144.0"
+            },
+            timeout=30,
+        )
 
     async def validate_credentials(self, meta: Meta) -> bool:
-        cookie_jar = await self.cookie_validator.load_session_cookies(meta, self.tracker)
+        cookie_jar = await self.cookie_validator.load_session_cookies(
+            meta, self.tracker
+        )
         if not cookie_jar:
             return False
         self.session.cookies = cookie_jar
@@ -135,7 +149,9 @@ class IPTorrents:
             return []
         category_id, query = search
         await self._load_search_cookies(meta)
-        response = await self.session.get(self._search_url(category_id, query), follow_redirects=True)
+        response = await self.session.get(
+            self._search_url(category_id, query), follow_redirects=True
+        )
         if await self._search_requires_login(meta, response):
             return []
         response.raise_for_status()
@@ -177,14 +193,23 @@ class IPTorrents:
         return f"{cls.base_url}/t?{category_id}=&q={query}"
 
     async def _load_search_cookies(self, meta: Meta) -> None:
-        cookie_jar = await self.cookie_validator.load_session_cookies(meta, self.tracker)
+        cookie_jar = await self.cookie_validator.load_session_cookies(
+            meta, self.tracker
+        )
         if cookie_jar:
             self.session.cookies = cookie_jar
 
-    async def _search_requires_login(self, meta: Meta, response: httpx.Response) -> bool:
-        if "login" not in str(response.url).casefold() and "login.php" not in response.text.casefold():
+    async def _search_requires_login(
+        self, meta: Meta, response: httpx.Response
+    ) -> bool:
+        if (
+            "login" not in str(response.url).casefold()
+            and "login.php" not in response.text.casefold()
+        ):
             return False
-        await self.cookie_validator.handle_validation_failure(meta, self.tracker, response.text)
+        await self.cookie_validator.handle_validation_failure(
+            meta, self.tracker, response.text
+        )
         meta.skipping = self.tracker
         return True
 
@@ -196,20 +221,41 @@ class IPTorrents:
         return keywords
 
     @staticmethod
-    def _append_disc_forbidden_keywords(keywords: list[str], meta: Meta) -> None:
+    def _append_disc_forbidden_keywords(
+        keywords: list[str], meta: Meta
+    ) -> None:
         if str(meta.is_disc or "").strip().casefold() != "bdmv":
             return
-        keywords.extend(["remux", "x264", "x265", "x 264", "x 265", "webrip", "av1", "h 264", "h 265", "h264", "h265", " web "])
+        keywords.extend(
+            [
+                "remux",
+                "x264",
+                "x265",
+                "x 264",
+                "x 265",
+                "webrip",
+                "av1",
+                "h 264",
+                "h 265",
+                "h264",
+                "h265",
+                " web ",
+            ]
+        )
         if "1080" in str(meta.resolution):
             keywords.append("hevc")
 
     @staticmethod
-    def _append_type_forbidden_keywords(keywords: list[str], meta: Meta) -> None:
+    def _append_type_forbidden_keywords(
+        keywords: list[str], meta: Meta
+    ) -> None:
         if str(meta.type or "").strip().casefold() == "webdl":
             keywords.extend(["webrip", "bluray", "blu-ray"])
 
     @classmethod
-    def _parse_search_results(cls, html: str, forbidden_keywords: list[str]) -> list[dict[str, str]]:
+    def _parse_search_results(
+        cls, html: str, forbidden_keywords: list[str]
+    ) -> list[dict[str, str]]:
         soup = BeautifulSoup(html, "html.parser")
         table = soup.find("table", id="torrents")
         if table is None:
@@ -217,10 +263,16 @@ class IPTorrents:
         body = table.find("tbody")
         if body is None:
             return []
-        return [entry for row in body.find_all("tr") if (entry := cls._search_row(row, forbidden_keywords)) is not None]
+        return [
+            entry
+            for row in body.find_all("tr")
+            if (entry := cls._search_row(row, forbidden_keywords)) is not None
+        ]
 
     @classmethod
-    def _search_row(cls, row: Any, forbidden_keywords: list[str]) -> dict[str, str] | None:
+    def _search_row(
+        cls, row: Any, forbidden_keywords: list[str]
+    ) -> dict[str, str] | None:
         cells = row.find_all("td")
         if len(cells) <= 5:
             return None
@@ -238,13 +290,17 @@ class IPTorrents:
         }
 
     @staticmethod
-    def _has_forbidden_keyword(name: str, forbidden_keywords: list[str]) -> bool:
+    def _has_forbidden_keyword(
+        name: str, forbidden_keywords: list[str]
+    ) -> bool:
         lowered = name.casefold()
         return any(keyword in lowered for keyword in forbidden_keywords)
 
     @staticmethod
     def _size_text(value: str) -> str:
-        match = re.search(r"\d+(?:[.,]\d+)?\s*(?:KB|MB|GB|TB)", value, re.IGNORECASE)
+        match = re.search(
+            r"\d+(?:[.,]\d+)?\s*(?:KB|MB|GB|TB)", value, re.IGNORECASE
+        )
         return match.group(0) if match else ""
 
     def get_category_id(self, meta: Meta) -> int:
@@ -322,14 +378,20 @@ class IPTorrents:
 
     @staticmethod
     def _bluray_movie_category(meta: Meta, source: str) -> int | None:
-        return 48 if source == "bluray" and meta.resolution in {"1080p", "720p"} else None
+        return (
+            48
+            if source == "bluray" and meta.resolution in {"1080p", "720p"}
+            else None
+        )
 
     @staticmethod
     def _movie_release_type_category(meta: Meta) -> int | None:
         return {"BDRIP": 90, "XVID": 7}.get(str(meta.type))
 
     @staticmethod
-    def _movie_resolution_source_category(meta: Meta, source: str) -> int | None:
+    def _movie_resolution_source_category(
+        meta: Meta, source: str
+    ) -> int | None:
         if meta.resolution == "480p":
             return 77
         return 96 if source.upper() in {"CAM", "TS", "TC"} else None
@@ -366,7 +428,11 @@ class IPTorrents:
     def _tv_pack_category(meta: Meta) -> int | None:
         if not meta.tv_pack:
             return None
-        return 83 if meta.original_language and meta.original_language != "en" else 65
+        return (
+            83
+            if meta.original_language and meta.original_language != "en"
+            else 65
+        )
 
     @staticmethod
     def _tv_release_category(meta: Meta) -> int:
@@ -388,7 +454,14 @@ class IPTorrents:
             71: {"PS1", "PS2", "PS3", "PS4", "PS5", "PSP", "PSVITA"},
             44: {"XBOX", "X360", "XONE", "XSX"},
         }
-        return next((category for category, platforms in groups.items() if platform in platforms), 43)
+        return next(
+            (
+                category
+                for category, platforms in groups.items()
+                if platform in platforms
+            ),
+            43,
+        )
 
     @classmethod
     def _book_category(cls, meta: Meta) -> int:
@@ -466,7 +539,9 @@ class IPTorrents:
         return result
 
     async def get_is_freeleech(self, meta: Meta) -> bool:
-        torrent_path = release_temp_dir(meta.base_dir, meta.uuid) / "BASE.torrent"
+        torrent_path = (
+            release_temp_dir(meta.base_dir, meta.uuid) / "BASE.torrent"
+        )
         if not torrent_path.exists():
             return False
         try:
@@ -474,7 +549,9 @@ class IPTorrents:
                 torrent_data = await handle.read()
             return self._torrent_size_bytes(torrent_data) / (1024**3) >= 8
         except Exception as error:
-            logger.info(f"{self.tracker}: [bold red]Error reading torrent file for size check on {self.tracker}: {error}[/bold red]")
+            logger.info(
+                f"{self.tracker}: [bold red]Error reading torrent file for size check on {self.tracker}: {error}[/bold red]"
+            )
             return False
 
     @staticmethod
@@ -483,7 +560,11 @@ class IPTorrents:
         info = metainfo.get(b"info", {})
         files = info.get(b"files")
         if isinstance(files, list):
-            return sum(int(file_info.get(b"length", 0)) for file_info in files if isinstance(file_info, dict))
+            return sum(
+                int(file_info.get(b"length", 0))
+                for file_info in files
+                if isinstance(file_info, dict)
+            )
         return int(info.get(b"length", 0))
 
     async def get_data(self, meta: Meta) -> dict[str, str | int]:
@@ -502,11 +583,15 @@ class IPTorrents:
         return data
 
     def _anonymous_upload(self, meta: Meta) -> bool:
-        tracker_anon = bool(self.config["TRACKERS"][self.tracker].get("anon", False))
+        tracker_anon = bool(
+            self.config["TRACKERS"][self.tracker].get("anon", False)
+        )
         return meta.anon != 0 or tracker_anon
 
     async def upload(self, meta: Meta) -> bool:
-        cookies = await self.cookie_validator.load_session_cookies(meta, self.tracker)
+        cookies = await self.cookie_validator.load_session_cookies(
+            meta, self.tracker
+        )
         self.session.cookies.clear()
         if cookies is not None:
             self.session.cookies.update(cookies)
@@ -533,7 +618,12 @@ class IPTorrents:
         return upload
 
     def _should_force_data(self, meta: Meta) -> bool:
-        return bool(self.config["TRACKERS"][self.tracker].get("force_data", False)) and not meta.debug
+        return (
+            bool(
+                self.config["TRACKERS"][self.tracker].get("force_data", False)
+            )
+            and not meta.debug
+        )
 
     async def edit_post_upload(self, meta: Meta):
         torrent_id = meta.tracker_status[self.tracker]["torrent_id"]
@@ -549,4 +639,6 @@ class IPTorrents:
 
         response = await self.session.post(edit_url, data=data)
         if response.status_code != 302:
-            meta.tracker_status[self.tracker]["status_message"] += " Failed to edit torrent."
+            meta.tracker_status[self.tracker]["status_message"] += (
+                " Failed to edit torrent."
+            )

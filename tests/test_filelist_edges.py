@@ -91,7 +91,9 @@ class Response:
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
             response = httpx.Response(self.status_code, request=self.request)
-            raise httpx.HTTPStatusError("failed", request=self.request, response=response)
+            raise httpx.HTTPStatusError(
+                "failed", request=self.request, response=response
+            )
 
 
 class Client:
@@ -152,12 +154,30 @@ def reset_client(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_init_category_and_name_matrix(tmp_path: Path) -> None:
     tracker = FileList(_config(tmp_path, fltools="bad", uploader_name=""))
     assert tracker.fltools == {} and tracker.uploader_name is None
-    assert tracker._is_true(True) and tracker._is_true(" yes ") and not tracker._is_true("no")
+    assert (
+        tracker._is_true(True)
+        and tracker._is_true(" yes ")
+        and not tracker._is_true("no")
+    )
 
     tracker.get_ro_tracks = AsyncMock(return_value=(False, False))  # type: ignore[method-assign]
     cases = [
-        (_meta(tmp_path, category="MOVIE", is_disc="BDMV", resolution="2160p"), 26),
-        (_meta(tmp_path, uuid="remux", category="MOVIE", type="REMUX", resolution="1080p"), 20),
+        (
+            _meta(
+                tmp_path, category="MOVIE", is_disc="BDMV", resolution="2160p"
+            ),
+            26,
+        ),
+        (
+            _meta(
+                tmp_path,
+                uuid="remux",
+                category="MOVIE",
+                type="REMUX",
+                resolution="1080p",
+            ),
+            20,
+        ),
         (_meta(tmp_path, uuid="uhd", category="MOVIE", resolution="2160p"), 6),
         (_meta(tmp_path, uuid="sd", category="MOVIE", sd=1), 1),
         (_meta(tmp_path, uuid="tv4k", category="TV", resolution="2160p"), 27),
@@ -170,8 +190,22 @@ def test_init_category_and_name_matrix(tmp_path: Path) -> None:
         assert asyncio.run(tracker.get_category_id(meta)) == expected
 
     tracker.get_ro_tracks = AsyncMock(return_value=(False, True))  # type: ignore[method-assign]
-    assert asyncio.run(tracker.get_category_id(_meta(tmp_path, uuid="ro", category="MOVIE"))) == 19
-    assert asyncio.run(tracker.get_category_id(_meta(tmp_path, uuid="dvd-ro", is_disc="DVD"))) == 3
+    assert (
+        asyncio.run(
+            tracker.get_category_id(
+                _meta(tmp_path, uuid="ro", category="MOVIE")
+            )
+        )
+        == 19
+    )
+    assert (
+        asyncio.run(
+            tracker.get_category_id(
+                _meta(tmp_path, uuid="dvd-ro", is_disc="DVD")
+            )
+        )
+        == 3
+    )
 
     meta = _meta(
         tmp_path,
@@ -189,12 +223,17 @@ def test_init_category_and_name_matrix(tmp_path: Path) -> None:
     assert "Dual-Audio" not in name and "Atmos" not in name
 
 
-def test_cookie_loading_all_formats(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cookie_loading_all_formats(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     tracker = FileList(_config(tmp_path))
     assert tracker._load_cookie_dict(str(tmp_path / "missing.json")) == {}
 
     netscape = tmp_path / "cookies.txt"
-    netscape.write_text("# comment\n.example.com TRUE / FALSE 0 session value\nshort\n", encoding="utf-8")
+    netscape.write_text(
+        "# comment\n.example.com TRUE / FALSE 0 session value\nshort\n",
+        encoding="utf-8",
+    )
     assert tracker._load_cookie_dict(str(netscape)) == {"session": "value"}
 
     pickled = tmp_path / "cookies.pkl"
@@ -218,7 +257,9 @@ def test_cookie_loading_all_formats(tmp_path: Path, monkeypatch: pytest.MonkeyPa
         "_load_cookies_dict_secure",
         lambda _path: (_ for _ in ()).throw(ValueError("secure failed")),
     )
-    secure.write_text(json.dumps({"session": {"value": "nested"}}), encoding="utf-8")
+    secure.write_text(
+        json.dumps({"session": {"value": "nested"}}), encoding="utf-8"
+    )
     assert tracker._load_cookie_dict(str(secure)) == {"session": "nested"}
     secure.write_text(json.dumps({"session": "flat"}), encoding="utf-8")
     assert tracker._load_cookie_dict(str(secure)) == {"session": "flat"}
@@ -238,16 +279,24 @@ def test_cookie_loading_all_formats(tmp_path: Path, monkeypatch: pytest.MonkeyPa
 
 def _prepare_upload_files(meta: Meta) -> None:
     target = Path(meta.base_dir) / "tmp" / meta.uuid
-    (target / "[FILELIST]DESCRIPTION.txt").write_text("description", encoding="utf-8")
-    (target / "MEDIAINFO_CLEANPATH.txt").write_text("mediainfo", encoding="utf-8")
+    (target / "[FILELIST]DESCRIPTION.txt").write_text(
+        "description", encoding="utf-8"
+    )
+    (target / "MEDIAINFO_CLEANPATH.txt").write_text(
+        "mediainfo", encoding="utf-8"
+    )
     (target / "BD_SUMMARY_00.txt").write_text("bdinfo", encoding="utf-8")
     (target / "[FILELIST].torrent").write_bytes(b"torrent")
 
 
-def test_upload_debug_success_attended_rename_and_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_upload_debug_success_attended_rename_and_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     tracker = FileList(_config(tmp_path))
     common_double = SimpleCommon()
-    monkeypatch.setattr(filelist_module, "Common", lambda **_kwargs: common_double)
+    monkeypatch.setattr(
+        filelist_module, "Common", lambda **_kwargs: common_double
+    )
     tracker.edit_desc = AsyncMock()  # type: ignore[method-assign]
     tracker.get_name = AsyncMock(return_value="Release.Name")  # type: ignore[method-assign]
     tracker.get_category_id = AsyncMock(return_value=4)  # type: ignore[method-assign]
@@ -260,19 +309,33 @@ def test_upload_debug_success_attended_rename_and_failure(tmp_path: Path, monkey
 
     answers = iter((False, "Manual.Name"))
 
-    async def prompt(function: object, *_args: object, **_kwargs: object) -> object:
+    async def prompt(
+        function: object, *_args: object, **_kwargs: object
+    ) -> object:
         del function
         return next(answers)
 
     monkeypatch.setattr(filelist_module, "prompt_in_thread", prompt)
     import src.integrations.trackers.cookie_auth as cookie_auth
 
-    monkeypatch.setattr(cookie_auth, "find_cookie_file", lambda *_args, **_kwargs: str(tmp_path / "cookies.json"))
+    monkeypatch.setattr(
+        cookie_auth,
+        "find_cookie_file",
+        lambda *_args, **_kwargs: str(tmp_path / "cookies.json"),
+    )
     tracker._load_cookie_dict = Mock(return_value={})  # type: ignore[method-assign]
     tracker.download_new_torrent = AsyncMock()  # type: ignore[method-assign]
-    meta = _meta(tmp_path, uuid="upload-success", unattended=False, anime=True, tag="-SubsPlease")
+    meta = _meta(
+        tmp_path,
+        uuid="upload-success",
+        unattended=False,
+        anime=True,
+        tag="-SubsPlease",
+    )
     _prepare_upload_files(meta)
-    Client.reset(Response(url="https://filelist.io/details.php?id=123&uploaded=1"))
+    Client.reset(
+        Response(url="https://filelist.io/details.php?id=123&uploaded=1")
+    )
     assert asyncio.run(tracker.upload(meta))
     tracker.download_new_torrent.assert_awaited_once()
 
@@ -283,7 +346,9 @@ def test_upload_debug_success_attended_rename_and_failure(tmp_path: Path, monkey
 
     meta = _meta(tmp_path, uuid="upload-fail")
     _prepare_upload_files(meta)
-    Client.reset(Response(status=200, text="failed", url="https://filelist.io/error"))
+    Client.reset(
+        Response(status=200, text="failed", url="https://filelist.io/error")
+    )
     with pytest.raises(filelist_module.UploadError):
         asyncio.run(tracker.upload(meta))
 
@@ -292,30 +357,48 @@ class SimpleCommon:
     def __init__(self) -> None:
         self.create_calls: list[tuple[Meta, str, str]] = []
 
-    async def create_torrent_for_upload(self, meta: Meta, tracker: str, source: str, **_kwargs: object) -> None:
+    async def create_torrent_for_upload(
+        self, meta: Meta, tracker: str, source: str, **_kwargs: object
+    ) -> None:
         self.create_calls.append((meta, tracker, source))
 
 
-def test_search_existing_imdb_title_and_html_filter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_search_existing_imdb_title_and_html_filter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     tracker = FileList(_config(tmp_path))
     import src.integrations.trackers.cookie_auth as cookie_auth
 
-    monkeypatch.setattr(cookie_auth, "find_cookie_file", lambda *_args, **_kwargs: str(tmp_path / "cookies.json"))
+    monkeypatch.setattr(
+        cookie_auth,
+        "find_cookie_file",
+        lambda *_args, **_kwargs: str(tmp_path / "cookies.json"),
+    )
     tracker._load_cookie_dict = Mock(return_value={})  # type: ignore[method-assign]
     tracker.get_category_id = AsyncMock(return_value=4)  # type: ignore[method-assign]
     html = '<a href="details.php?id=1" title="One">One</a><a href="details.php?id=2&x=1" title="Skip">Skip</a><a href="browse.php">Other</a>'
     Client.reset(Response(text=html))
     assert asyncio.run(tracker.search_existing(_meta(tmp_path))) == ["One"]
     Client.reset(Response(text=html))
-    assert asyncio.run(tracker.search_existing(_meta(tmp_path, uuid="title-search", imdb_id=None, title="Title"))) == ["One"]
+    assert asyncio.run(
+        tracker.search_existing(
+            _meta(tmp_path, uuid="title-search", imdb_id=None, title="Title")
+        )
+    ) == ["One"]
 
 
-def test_validate_credentials_cookies_login_and_download(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_validate_credentials_cookies_login_and_download(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     tracker = FileList(_config(tmp_path))
     cookiefile = tmp_path / "cookies.json"
     import src.integrations.trackers.cookie_auth as cookie_auth
 
-    monkeypatch.setattr(cookie_auth, "find_cookie_file", lambda *_args, **_kwargs: str(cookiefile))
+    monkeypatch.setattr(
+        cookie_auth,
+        "find_cookie_file",
+        lambda *_args, **_kwargs: str(cookiefile),
+    )
     tracker.login = AsyncMock()  # type: ignore[method-assign]
     tracker.validate_cookies = AsyncMock(return_value=True)  # type: ignore[method-assign]
     assert asyncio.run(tracker.validate_credentials(_meta(tmp_path)))
@@ -323,7 +406,11 @@ def test_validate_credentials_cookies_login_and_download(tmp_path: Path, monkeyp
 
     cookiefile.write_text("{}", encoding="utf-8")
     tracker.validate_cookies = AsyncMock(return_value=False)  # type: ignore[method-assign]
-    assert not asyncio.run(tracker.validate_credentials(_meta(tmp_path, unattended=True, unattended_confirm=False)))
+    assert not asyncio.run(
+        tracker.validate_credentials(
+            _meta(tmp_path, unattended=True, unattended_confirm=False)
+        )
+    )
 
     async def yes(*_args: object, **_kwargs: object) -> bool:
         return True
@@ -331,22 +418,34 @@ def test_validate_credentials_cookies_login_and_download(tmp_path: Path, monkeyp
     monkeypatch.setattr(filelist_module, "prompt_in_thread", yes)
     tracker.validate_cookies = AsyncMock(side_effect=[False, True])  # type: ignore[method-assign]
     tracker.login.reset_mock()
-    assert asyncio.run(tracker.validate_credentials(_meta(tmp_path, uuid="relogin", unattended=False)))
+    assert asyncio.run(
+        tracker.validate_credentials(
+            _meta(tmp_path, uuid="relogin", unattended=False)
+        )
+    )
     tracker.login.assert_awaited_once()
 
     tracker = FileList(_config(tmp_path))
     tracker._load_cookie_dict = Mock(return_value={})  # type: ignore[method-assign]
-    assert not asyncio.run(tracker.validate_cookies(_meta(tmp_path), str(cookiefile)))
+    assert not asyncio.run(
+        tracker.validate_cookies(_meta(tmp_path), str(cookiefile))
+    )
     tracker._load_cookie_dict = Mock(return_value={"session": "x"})  # type: ignore[method-assign]
     Client.reset(Response(text="Logout", url="https://filelist.io/index.php"))
-    assert asyncio.run(tracker.validate_cookies(_meta(tmp_path), str(cookiefile)))
+    assert asyncio.run(
+        tracker.validate_cookies(_meta(tmp_path), str(cookiefile))
+    )
     Client.reset(Response(text="Login", url="https://filelist.io/index.php"))
-    assert not asyncio.run(tracker.validate_cookies(_meta(tmp_path), str(cookiefile)))
+    assert not asyncio.run(
+        tracker.validate_cookies(_meta(tmp_path), str(cookiefile))
+    )
 
     save = Mock()
     monkeypatch.setattr(tracker.cookie_validator, "_save_cookies_secure", save)
     login_html = '<input name="validator" value="token">'
-    Client.reset(Response(text=login_html), Response(), Response(text="Logout"))
+    Client.reset(
+        Response(text=login_html), Response(), Response(text="Logout")
+    )
     asyncio.run(tracker.login(str(cookiefile)))
     save.assert_called_once()
 
@@ -365,15 +464,23 @@ def test_validate_credentials_cookies_login_and_download(tmp_path: Path, monkeyp
     asyncio.run(tracker.download_new_torrent({}, "1", str(torrent_path)))
 
 
-def test_edit_desc_web_and_bluray_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_edit_desc_web_and_bluray_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     tracker = FileList(_config(tmp_path))
     meta = _meta(tmp_path)
     target = tmp_path / "tmp" / meta.uuid
-    (target / "MEDIAINFO_CLEANPATH.txt").write_text("mediainfo", encoding="utf-8")
+    (target / "MEDIAINFO_CLEANPATH.txt").write_text(
+        "mediainfo", encoding="utf-8"
+    )
     screen_dir = filelist_module.screenshots_dir(meta.base_dir, meta.uuid)
     screen_dir.mkdir(parents=True, exist_ok=True)
     (screen_dir / f"{meta.filename}-01.png").write_bytes(b"png")
-    monkeypatch.setattr(filelist_module, "base_description", lambda _meta: "[spoiler=x]body[/spoiler][code]code[/code]")
+    monkeypatch.setattr(
+        filelist_module,
+        "base_description",
+        lambda _meta: "[spoiler=x]body[/spoiler][code]code[/code]",
+    )
     Client.reset(Response(text="WEB DESC\r\nLINE"))
     asyncio.run(tracker.edit_desc(meta))
     desc = (target / "[FILELIST]DESCRIPTION.txt").read_text(encoding="utf-8")
@@ -398,7 +505,11 @@ def test_edit_desc_web_and_bluray_paths(tmp_path: Path, monkeypatch: pytest.Monk
     target = tmp_path / "tmp" / meta.uuid
     (target / "BD_SUMMARY_EXT.txt").write_text("", encoding="utf-8")
     asyncio.run(tracker.edit_desc(meta))
-    assert (target / "[FILELIST]DESCRIPTION.txt").read_text(encoding="utf-8").endswith("SIGNATURE")
+    assert (
+        (target / "[FILELIST]DESCRIPTION.txt")
+        .read_text(encoding="utf-8")
+        .endswith("SIGNATURE")
+    )
 
 
 def test_ro_tracks_file_and_bdinfo(tmp_path: Path) -> None:
@@ -416,7 +527,9 @@ def test_ro_tracks_file_and_bdinfo(tmp_path: Path) -> None:
         },
     )
     assert asyncio.run(tracker.get_ro_tracks(meta)) == (True, True)
-    assert asyncio.run(tracker.get_ro_tracks(_meta(tmp_path, uuid="bad-mi", mediainfo="bad"))) == (False, False)
+    assert asyncio.run(
+        tracker.get_ro_tracks(_meta(tmp_path, uuid="bad-mi", mediainfo="bad"))
+    ) == (False, False)
 
     meta = _meta(
         tmp_path,
@@ -428,17 +541,25 @@ def test_ro_tracks_file_and_bdinfo(tmp_path: Path) -> None:
         },
     )
     assert asyncio.run(tracker.get_ro_tracks(meta)) == (True, True)
-    assert asyncio.run(tracker.get_ro_tracks(_meta(tmp_path, uuid="bd-bad", is_disc="BDMV", bdinfo="bad"))) == (False, False)
+    assert asyncio.run(
+        tracker.get_ro_tracks(
+            _meta(tmp_path, uuid="bd-bad", is_disc="BDMV", bdinfo="bad")
+        )
+    ) == (False, False)
 
 
-def test_filelist_final_uncovered_branches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_filelist_final_uncovered_branches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     tracker = FileList(_config(tmp_path))
     broken_pickle = tmp_path / "broken.pkl"
     broken_pickle.write_bytes(b"not-pickle")
     assert tracker._load_cookie_dict(str(broken_pickle)) == {}
 
     common_double = SimpleCommon()
-    monkeypatch.setattr(filelist_module, "Common", lambda **_kwargs: common_double)
+    monkeypatch.setattr(
+        filelist_module, "Common", lambda **_kwargs: common_double
+    )
     tracker.edit_desc = AsyncMock()  # type: ignore[method-assign]
     tracker.get_name = AsyncMock(return_value="Release.Name")  # type: ignore[method-assign]
     tracker.get_category_id = AsyncMock(return_value=20)  # type: ignore[method-assign]
@@ -450,6 +571,10 @@ def test_filelist_final_uncovered_branches(tmp_path: Path, monkeypatch: pytest.M
     save = Mock()
     monkeypatch.setattr(tracker.cookie_validator, "_save_cookies_secure", save)
     login_html = '<input name="validator" value="token">'
-    Client.reset(Response(text=login_html), Response(), Response(text="Login", url="https://filelist.io/login.php"))
+    Client.reset(
+        Response(text=login_html),
+        Response(),
+        Response(text="Login", url="https://filelist.io/login.php"),
+    )
     asyncio.run(tracker.login(str(tmp_path / "cookies.json")))
     save.assert_not_called()

@@ -85,21 +85,27 @@ class Utopia(UNIT3D):
 
         Expected format: [url=FULL_IMAGE][img]MEDIUM_IMAGE[/img][/url]
         """
-        from src.integrations.trackers.description_builder import DescriptionBuilder
+        from src.integrations.trackers.description_builder import (
+            DescriptionBuilder,
+        )
 
         # Save original values and transform
         original_image_list = meta.image_list
         transformed_image_list: list[dict[str, Any]] = [
             {
                 "web_url": img.get("raw_url", ""),  # Link goes to full image
-                "raw_url": img.get("img_url", ""),  # Display shows medium image
+                "raw_url": img.get(
+                    "img_url", ""
+                ),  # Display shows medium image
                 "img_url": img.get("img_url", ""),
             }
             for img in original_image_list
         ]
 
         # Also transform any new_images_* keys for packed content
-        new_images_keys = [k for k in meta.to_dict() if k.startswith("new_images_")]
+        new_images_keys = [
+            k for k in meta.to_dict() if k.startswith("new_images_")
+        ]
         original_new_images: dict[str, Any] = {}
         for key in new_images_keys:
             original_new_images[key] = meta[key]
@@ -158,12 +164,26 @@ class Utopia(UNIT3D):
         service = meta.service
         audio_raw = meta.audio
         # Only include audio for Atmos or lossless codecs
-        lossless_indicators = ["Atmos", "TrueHD", "DTS-HD MA", "DTS:X", "LPCM", "FLAC", "PCM"]
+        lossless_indicators = [
+            "Atmos",
+            "TrueHD",
+            "DTS-HD MA",
+            "DTS:X",
+            "LPCM",
+            "FLAC",
+            "PCM",
+        ]
         if any(indicator in audio_raw for indicator in lossless_indicators):
-            audio = audio_raw.replace("Dual-Audio", "").replace("Dubbed", "").strip()
+            audio = (
+                audio_raw.replace("Dual-Audio", "")
+                .replace("Dubbed", "")
+                .strip()
+            )
             audio = " ".join(audio.split())
         else:
-            audio = ""  # Don't include lossy audio (AAC, DD, DD+, etc.) in name
+            audio = (
+                ""  # Don't include lossy audio (AAC, DD, DD+, etc.) in name
+            )
         video_codec = meta.video_codec
         video_encode = meta.video_encode
         tag = meta.tag

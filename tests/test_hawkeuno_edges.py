@@ -77,17 +77,24 @@ def test_hawkeuno_hevc_crf_passes_policy() -> None:
 
 
 def test_hawkeuno_media_tracks_reject_non_list_payload() -> None:
-    assert HawkeUno._media_tracks(_meta(mediainfo={"media": {"track": "bad"}})) == []
+    assert (
+        HawkeUno._media_tracks(_meta(mediainfo={"media": {"track": "bad"}}))
+        == []
+    )
 
 
 def test_hawkeuno_animation_skips_bitrate_floor() -> None:
     tracker = _tracker()
-    assert tracker._bitrate_policy_passes(_meta(genre=["Animation"]), "1000000")
+    assert tracker._bitrate_policy_passes(
+        _meta(genre=["Animation"]), "1000000"
+    )
 
 
 def test_hawkeuno_low_bitrate_is_rejected() -> None:
     tracker = _tracker()
-    assert not tracker._bitrate_policy_passes(_meta(genre=["Drama"]), "2000000")
+    assert not tracker._bitrate_policy_passes(
+        _meta(genre=["Drama"]), "2000000"
+    )
 
 
 @pytest.mark.asyncio
@@ -104,7 +111,11 @@ async def test_hawkeuno_upload_http_status_error() -> None:
     tracker.get_data = AsyncMock(return_value={})  # type: ignore[method-assign]
     request = httpx.Request("POST", tracker.upload_url)
     response = httpx.Response(422, request=request, text="bad payload")
-    tracker._submit_upload = AsyncMock(side_effect=httpx.HTTPStatusError("bad", request=request, response=response))  # type: ignore[method-assign]
+    tracker._submit_upload = AsyncMock(
+        side_effect=httpx.HTTPStatusError(
+            "bad", request=request, response=response
+        )
+    )  # type: ignore[method-assign]
     meta = _meta()
     assert not await tracker.upload(meta)
     assert "HTTP 422" in meta.tracker_status["HAWKEUNO"]["status_message"]
@@ -114,7 +125,9 @@ async def test_hawkeuno_upload_http_status_error() -> None:
 async def test_hawkeuno_upload_request_error() -> None:
     tracker = _tracker()
     tracker.get_data = AsyncMock(return_value={})  # type: ignore[method-assign]
-    error = httpx.RequestError("offline", request=httpx.Request("POST", tracker.upload_url))
+    error = httpx.RequestError(
+        "offline", request=httpx.Request("POST", tracker.upload_url)
+    )
     tracker._submit_upload = AsyncMock(side_effect=error)  # type: ignore[method-assign]
     meta = _meta()
     assert not await tracker.upload(meta)

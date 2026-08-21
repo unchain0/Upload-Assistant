@@ -34,7 +34,11 @@ class _FakeResponse:
 
 
 class _FakeHttpClient:
-    def __init__(self, payload: object, requests: list[tuple[tuple[object, ...], dict[str, object]]]) -> None:
+    def __init__(
+        self,
+        payload: object,
+        requests: list[tuple[tuple[object, ...], dict[str, object]]],
+    ) -> None:
         """Create a fake HTTP client returning payload."""
         self._response = _FakeResponse(payload)
         self._requests = requests
@@ -63,7 +67,14 @@ def _run_upload(
 ) -> dict[str, str]:
     """Run one mocked Zipline upload with the supplied response payload."""
     request_log = requests if requests is not None else []
-    config = config_defaults if config_defaults is not None else {"zipline_url": "https://zip.example/api/upload", "zipline_api_key": "key"}
+    config = (
+        config_defaults
+        if config_defaults is not None
+        else {
+            "zipline_url": "https://zip.example/api/upload",
+            "zipline_api_key": "key",
+        }
+    )
 
     async def exercise() -> dict[str, str]:
         """Execute the upload coroutine under test."""
@@ -77,15 +88,23 @@ def _run_upload(
         )
 
     with (
-        patch("src.integrations.image_hosts.uploader.aiofiles.open", return_value=_FakeFile()),
-        patch("src.integrations.image_hosts.uploader.httpx.AsyncClient", return_value=_FakeHttpClient(payload, request_log)),
+        patch(
+            "src.integrations.image_hosts.uploader.aiofiles.open",
+            return_value=_FakeFile(),
+        ),
+        patch(
+            "src.integrations.image_hosts.uploader.httpx.AsyncClient",
+            return_value=_FakeHttpClient(payload, request_log),
+        ),
     ):
         return asyncio.run(exercise())
 
 
 def test_zipline_upload_accepts_object_file_response(tmp_path: Path) -> None:
     """Accept Zipline's object-based file response and derive all URLs."""
-    result = _run_upload(tmp_path, {"files": [{"url": "https://zip.example/u/image.png"}]})
+    result = _run_upload(
+        tmp_path, {"files": [{"url": "https://zip.example/u/image.png"}]}
+    )
 
     assert result == {
         "status": "success",
@@ -96,9 +115,13 @@ def test_zipline_upload_accepts_object_file_response(tmp_path: Path) -> None:
     }
 
 
-def test_zipline_upload_preserves_legacy_string_response(tmp_path: Path) -> None:
+def test_zipline_upload_preserves_legacy_string_response(
+    tmp_path: Path,
+) -> None:
     """Preserve support for Zipline's legacy string file response."""
-    result = _run_upload(tmp_path, {"files": ["https://zip.example/u/image.png"]})
+    result = _run_upload(
+        tmp_path, {"files": ["https://zip.example/u/image.png"]}
+    )
 
     assert result["status"] == "success"
     assert result["img_url"] == "https://zip.example/u/image.png"
@@ -106,14 +129,22 @@ def test_zipline_upload_preserves_legacy_string_response(tmp_path: Path) -> None
     assert result["web_url"] == "https://zip.example/u/image.png"
 
 
-def test_zipline_upload_rejects_non_list_files_response(tmp_path: Path) -> None:
+def test_zipline_upload_rejects_non_list_files_response(
+    tmp_path: Path,
+) -> None:
     """Reject malformed Zipline responses whose files value is not a list."""
     result = _run_upload(tmp_path, {"files": "not-a-list"})
 
-    assert result == {"status": "failed", "reason": "No valid URL returned from Zipline", "retryable": False}
+    assert result == {
+        "status": "failed",
+        "reason": "No valid URL returned from Zipline",
+        "retryable": False,
+    }
 
 
-def test_midnightscene_uses_its_fixed_endpoint_and_token(tmp_path: Path) -> None:
+def test_midnightscene_uses_its_fixed_endpoint_and_token(
+    tmp_path: Path,
+) -> None:
     """Upload to MidnightScene without requiring a generic Zipline URL."""
     requests: list[tuple[tuple[object, ...], dict[str, object]]] = []
     result = _run_upload(
@@ -130,7 +161,10 @@ def test_midnightscene_uses_its_fixed_endpoint_and_token(tmp_path: Path) -> None
             ("https://img.midnightscene.cc/api/upload",),
             {
                 "files": {"file": ("image.png", b"image")},
-                "headers": {"Authorization": "midnightscene-token", "Accept": "application/json"},
+                "headers": {
+                    "Authorization": "midnightscene-token",
+                    "Accept": "application/json",
+                },
                 "timeout": 60,
             },
         )

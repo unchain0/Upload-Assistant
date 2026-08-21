@@ -19,7 +19,13 @@ def test_lemonhd_methods():
     assert tracker.tracker == "LEMONHD"
     assert tracker.base_url == "https://lemonhd.net"
 
-    meta_movie = Meta(category="MOVIE", type="ENCODE", resolution="1080p", video_codec="H.264", audio="DTS")
+    meta_movie = Meta(
+        category="MOVIE",
+        type="ENCODE",
+        resolution="1080p",
+        video_codec="H.264",
+        audio="DTS",
+    )
     assert tracker.get_category(meta_movie) == 401
     assert tracker.get_type(meta_movie) == 2
     assert tracker.get_codec(meta_movie) == 1
@@ -27,8 +33,19 @@ def test_lemonhd_methods():
     assert tracker.get_audio_codec(meta_movie) == 5
 
     assert tracker.get_type(Meta(category="TV", type="HDTV")) == 5
-    assert tracker.get_douban_url(Meta(douban_id=12345)) == "https://movie.douban.com/subject/12345/"
-    assert tracker.get_imdb_url(Meta(imdb_id="tt1234567", imdb_info={"imdb_url": "https://imdb.com/title/tt1234567"})) == ""
+    assert (
+        tracker.get_douban_url(Meta(douban_id=12345))
+        == "https://movie.douban.com/subject/12345/"
+    )
+    assert (
+        tracker.get_imdb_url(
+            Meta(
+                imdb_id="tt1234567",
+                imdb_info={"imdb_url": "https://imdb.com/title/tt1234567"},
+            )
+        )
+        == ""
+    )
 
     meta_tv = Meta(category="TV", genres=["Documentary"])
     assert tracker.get_category(meta_tv) == 405
@@ -36,14 +53,24 @@ def test_lemonhd_methods():
 
 def test_lemonhd_data_getters_return_single_field_dictionaries():
     tracker = LemonHD(dummy_config)
-    meta = Meta(category="MOVIE", type="ENCODE", resolution="1080p", video_codec="H.264", audio="DTS")
+    meta = Meta(
+        category="MOVIE",
+        type="ENCODE",
+        resolution="1080p",
+        video_codec="H.264",
+        audio="DTS",
+    )
 
     assert asyncio.run(tracker.get_name(meta)) == {"name": meta.name}
     assert asyncio.run(tracker.get_category_data(meta)) == {"type": 401}
     assert asyncio.run(tracker.get_type_data(meta)) == {"medium_sel[4]": 2}
     assert asyncio.run(tracker.get_codec_data(meta)) == {"codec_sel[4]": 1}
-    assert asyncio.run(tracker.get_resolution_data(meta)) == {"standard_sel[4]": 2}
-    assert asyncio.run(tracker.get_audio_codec_data(meta)) == {"audiocodec_sel[4]": 5}
+    assert asyncio.run(tracker.get_resolution_data(meta)) == {
+        "standard_sel[4]": 2
+    }
+    assert asyncio.run(tracker.get_audio_codec_data(meta)) == {
+        "audiocodec_sel[4]": 5
+    }
     assert asyncio.run(tracker.get_group_tag_data(meta)) == {"team_sel[4]": 5}
     assert asyncio.run(tracker.get_checkboxes_data(meta)) == {}
     assert asyncio.run(tracker.get_anonymous_data(meta)) == {}
@@ -58,7 +85,14 @@ def test_oneptba_methods():
     assert tracker.tracker == "1PTBA"
     assert tracker.base_url == "https://1ptba.com"
 
-    meta_movie = Meta(category="MOVIE", type="ENCODE", resolution="2160p", video_codec="HEVC", audio="FLAC", hdr="HDR10")
+    meta_movie = Meta(
+        category="MOVIE",
+        type="ENCODE",
+        resolution="2160p",
+        video_codec="HEVC",
+        audio="FLAC",
+        hdr="HDR10",
+    )
     assert tracker.get_category(meta_movie) == 401
     assert tracker.get_type(meta_movie) == 7
     assert tracker.get_codec(meta_movie) == 18
@@ -76,7 +110,14 @@ def test_xingyungept_methods():
     assert tracker.tracker == "XINGYUNGEPT"
     assert tracker.base_url == "https://pt.xingyungept.org"
 
-    meta_tv = Meta(category="TV", type="WEB-DL", resolution="1080p", video_codec="H.264", audio="AAC", tv_pack=True)
+    meta_tv = Meta(
+        category="TV",
+        type="WEB-DL",
+        resolution="1080p",
+        video_codec="H.264",
+        audio="AAC",
+        tv_pack=True,
+    )
     assert tracker.get_category(meta_tv) == 402
     assert tracker.get_type(meta_tv) == 4
     assert tracker.get_codec(meta_tv) == 1
@@ -84,8 +125,19 @@ def test_xingyungept_methods():
     assert tracker.get_audio_codec(meta_tv) == 14
     assert "11" in tracker.get_checkboxes(meta_tv)
     assert tracker.get_type(Meta(category="TV", type="HDTV")) == 5
-    assert tracker.get_douban_url(Meta(douban_id=12345)) == "https://movie.douban.com/subject/12345/"
-    assert tracker.get_imdb_url(Meta(imdb_id="tt1234567", imdb_info={"imdb_url": "https://imdb.com/title/tt1234567"})) == ""
+    assert (
+        tracker.get_douban_url(Meta(douban_id=12345))
+        == "https://movie.douban.com/subject/12345/"
+    )
+    assert (
+        tracker.get_imdb_url(
+            Meta(
+                imdb_id="tt1234567",
+                imdb_info={"imdb_url": "https://imdb.com/title/tt1234567"},
+            )
+        )
+        == ""
+    )
 
 
 def test_ptzone_methods():
@@ -93,15 +145,32 @@ def test_ptzone_methods():
     assert tracker.tracker == "PTZONE"
     assert tracker.base_url == "https://ptzone.xyz"
 
-    meta_movie = Meta(category="MOVIE", is_disc="BDMV", resolution="2160p", video_codec="HEVC", audio="TrueHD")
+    meta_movie = Meta(
+        category="MOVIE",
+        is_disc="BDMV",
+        resolution="2160p",
+        video_codec="HEVC",
+        audio="TrueHD",
+    )
     assert tracker.get_category(meta_movie) == 401
     assert tracker.get_type(meta_movie) == 10
     assert tracker.get_codec(meta_movie) == 6
     assert tracker.get_resolution(meta_movie) == 6
     assert tracker.get_audio_codec(meta_movie) == 14
     assert tracker.get_type(Meta(category="TV", type="HDTV")) == 5
-    assert tracker.get_douban_url(Meta(douban_id=12345)) == "https://movie.douban.com/subject/12345/"
-    assert tracker.get_imdb_url(Meta(imdb_id="tt1234567", imdb_info={"imdb_url": "https://imdb.com/title/tt1234567"})) == ""
+    assert (
+        tracker.get_douban_url(Meta(douban_id=12345))
+        == "https://movie.douban.com/subject/12345/"
+    )
+    assert (
+        tracker.get_imdb_url(
+            Meta(
+                imdb_id="tt1234567",
+                imdb_info={"imdb_url": "https://imdb.com/title/tt1234567"},
+            )
+        )
+        == ""
+    )
 
 
 def test_nexusphp_category_documentary_and_tv_show_branches():
@@ -123,11 +192,18 @@ def test_nexusphp_category_documentary_and_tv_show_branches():
 
 
 def test_nexusphp_remaining_codec_and_disc_mapping_branches():
-    assert LemonHD(dummy_config).get_audio_codec(Meta(audio="TrueHD Atmos")) == 1
+    assert (
+        LemonHD(dummy_config).get_audio_codec(Meta(audio="TrueHD Atmos")) == 1
+    )
     assert LongPT(dummy_config).get_audio_codec(Meta(audio="DDP 5.1")) == 10
-    assert XingyungePT(dummy_config).get_audio_codec(Meta(audio="TrueHD Atmos")) == 12
+    assert (
+        XingyungePT(dummy_config).get_audio_codec(Meta(audio="TrueHD Atmos"))
+        == 12
+    )
 
-    diy_uhd = Meta(category="MOVIE", is_disc="BDMV", resolution="2160p", diy_disc=True)
+    diy_uhd = Meta(
+        category="MOVIE", is_disc="BDMV", resolution="2160p", diy_disc=True
+    )
     oneptba = OnePTBA(dummy_config)
     assert oneptba.get_type(diy_uhd) == 17
     assert oneptba.get_region(diy_uhd) == 17
@@ -147,23 +223,68 @@ def test_nexusphp_remaining_small_mapping_branches():
 
 def test_lajidui_documentary_show_region_and_checkbox_branches():
     tracker = Lajidui(dummy_config)
-    assert tracker.get_category(Meta(category="TV", genres=["Documentary"])) == 404
-    assert tracker.get_category(Meta(category="TV", genres=["game show"])) == 403
-    for country, expected in (("US", 1), ("CN", 7), ("TW", 2), ("HK", 8), ("JP", 10), ("KR", 11), ("IN", 3), ("TH", 6)):
+    assert (
+        tracker.get_category(Meta(category="TV", genres=["Documentary"]))
+        == 404
+    )
+    assert (
+        tracker.get_category(Meta(category="TV", genres=["game show"])) == 403
+    )
+    for country, expected in (
+        ("US", 1),
+        ("CN", 7),
+        ("TW", 2),
+        ("HK", 8),
+        ("JP", 10),
+        ("KR", 11),
+        ("IN", 3),
+        ("TH", 6),
+    ):
         assert tracker.get_region(Meta(origin_country=[country])) == expected
-    checkboxes = tracker.get_checkboxes(Meta(audio_languages=["Chinese", "English"], subtitle_languages=["Chinese", "English"]))
+    checkboxes = tracker.get_checkboxes(
+        Meta(
+            audio_languages=["Chinese", "English"],
+            subtitle_languages=["Chinese", "English"],
+        )
+    )
     assert "15" in checkboxes
     assert "16" in checkboxes
 
 
 def test_ptcafe_documentary_show_region_type_and_url_branches():
     tracker = PTCafe(dummy_config)
-    assert tracker.get_category(Meta(category="TV", genres=["Documentary"])) == 404
-    assert tracker.get_category(Meta(category="TV", genres=["game show"])) == 403
-    for country, expected in (("US", 3), ("CN", 1), ("TW", 2), ("HK", 2), ("JP", 4), ("KR", 5), ("IN", 6), ("TH", 7)):
+    assert (
+        tracker.get_category(Meta(category="TV", genres=["Documentary"]))
+        == 404
+    )
+    assert (
+        tracker.get_category(Meta(category="TV", genres=["game show"])) == 403
+    )
+    for country, expected in (
+        ("US", 3),
+        ("CN", 1),
+        ("TW", 2),
+        ("HK", 2),
+        ("JP", 4),
+        ("KR", 5),
+        ("IN", 6),
+        ("TH", 7),
+    ):
         assert tracker.get_region(Meta(origin_country=[country])) == expected
-    assert tracker.get_type(Meta(is_disc="BDMV", resolution="2160p", diy_disc=True, type="DISC")) == 2
-    assert tracker.get_type(Meta(is_disc="", resolution="2160p", diy_disc=False, type="REMUX")) == 3
+    assert (
+        tracker.get_type(
+            Meta(
+                is_disc="BDMV", resolution="2160p", diy_disc=True, type="DISC"
+            )
+        )
+        == 2
+    )
+    assert (
+        tracker.get_type(
+            Meta(is_disc="", resolution="2160p", diy_disc=False, type="REMUX")
+        )
+        == 3
+    )
     assert tracker.get_douban_url(Meta()) == ""
     assert tracker.get_imdb_url(Meta()) == ""
 

@@ -122,29 +122,58 @@ class OldToonsWorld(UNIT3D):
 
     @staticmethod
     def _split_genre_string(value: Any) -> list[str]:
-        return [text for item in str(value or "").split(",") if (text := item.strip())]
+        return [
+            text
+            for item in str(value or "").split(",")
+            if (text := item.strip())
+        ]
 
     def _genre_policy_passes(self, meta: Meta, genres: list[str]) -> bool:
         if any(genre in genres for genre in ("Animation", "Family")):
             return True
-        return self._confirm_policy_override(meta, "Genre does not match Animation or Family for OldToonsWorld.")
+        return self._confirm_policy_override(
+            meta, "Genre does not match Animation or Family for OldToonsWorld."
+        )
 
     def _adult_policy_passes(self, meta: Meta, genres: list[str]) -> bool:
-        keywords = ("xxx", "erotic", "porn", "adult", "orgy", "hentai", "adult animation", "softcore")
+        keywords = (
+            "xxx",
+            "erotic",
+            "porn",
+            "adult",
+            "orgy",
+            "hentai",
+            "adult animation",
+            "softcore",
+        )
         if not self._contains_metadata_keyword(meta, genres, keywords):
             return True
-        return self._confirm_policy_override(meta, "Adult animation not allowed at OldToonsWorld.")
+        return self._confirm_policy_override(
+            meta, "Adult animation not allowed at OldToonsWorld."
+        )
 
     def _reality_policy_passes(self, meta: Meta, genres: list[str]) -> bool:
-        keywords = ("reality", "game show", "game-show", "reality tv", "reality television")
+        keywords = (
+            "reality",
+            "game show",
+            "game-show",
+            "reality tv",
+            "reality television",
+        )
         if not self._contains_metadata_keyword(meta, genres, keywords):
             return True
-        return self._confirm_policy_override(meta, "Reality / Game Show content not allowed at OldToonsWorld.")
+        return self._confirm_policy_override(
+            meta, "Reality / Game Show content not allowed at OldToonsWorld."
+        )
 
     @classmethod
-    def _contains_metadata_keyword(cls, meta: Meta, genres: list[str], keywords: tuple[str, ...]) -> bool:
+    def _contains_metadata_keyword(
+        cls, meta: Meta, genres: list[str], keywords: tuple[str, ...]
+    ) -> bool:
         values = [*cls._string_values(meta.keywords), *genres]
-        normalized = {value.casefold().strip() for value in values if value.strip()}
+        normalized = {
+            value.casefold().strip() for value in values if value.strip()
+        }
         return any(keyword.casefold() in normalized for keyword in keywords)
 
     @staticmethod
@@ -158,7 +187,10 @@ class OldToonsWorld(UNIT3D):
     def _group_policy_passes(self, meta: Meta) -> bool:
         if not self._restricted_group_requires_override(meta):
             return True
-        return self._confirm_policy_override(meta, f"Group {meta.tag} is only allowed for raw type content at OldToonsWorld")
+        return self._confirm_policy_override(
+            meta,
+            f"Group {meta.tag} is only allowed for raw type content at OldToonsWorld",
+        )
 
     @staticmethod
     def _restricted_group_requires_override(meta: Meta) -> bool:
@@ -170,17 +202,29 @@ class OldToonsWorld(UNIT3D):
         if meta.unattended and not meta.unattended_confirm:
             return False
         logger.info(f"{self.tracker}: [bold red]{message}[/bold red]")
-        return bool(cli_ui.ask_yes_no("Do you want to upload anyway?", default=False))
+        return bool(
+            cli_ui.ask_yes_no("Do you want to upload anyway?", default=False)
+        )
 
-    async def get_type_id(self, meta: Meta, type: str | None = None, reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_type_id(
+        self,
+        meta: Meta,
+        type: str | None = None,
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         mapping = self._type_mapping()
-        mode_result = self._mapping_mode_result(mapping, reverse=reverse, mapping_only=mapping_only)
+        mode_result = self._mapping_mode_result(
+            mapping, reverse=reverse, mapping_only=mapping_only
+        )
         if mode_result is not None:
             return mode_result
         return {"type_id": self._resolved_type_id(meta, type, mapping)}
 
     @staticmethod
-    def _mapping_mode_result(mapping: dict[str, str], *, reverse: bool, mapping_only: bool) -> dict[str, str] | None:
+    def _mapping_mode_result(
+        mapping: dict[str, str], *, reverse: bool, mapping_only: bool
+    ) -> dict[str, str] | None:
         if mapping_only:
             return mapping
         if reverse:
@@ -188,7 +232,9 @@ class OldToonsWorld(UNIT3D):
         return None
 
     @classmethod
-    def _resolved_type_id(cls, meta: Meta, requested_type: str | None, mapping: dict[str, str]) -> str:
+    def _resolved_type_id(
+        cls, meta: Meta, requested_type: str | None, mapping: dict[str, str]
+    ) -> str:
         disc_type = cls._disc_type_id(meta)
         if disc_type:
             return disc_type
@@ -197,7 +243,15 @@ class OldToonsWorld(UNIT3D):
 
     @staticmethod
     def _type_mapping() -> dict[str, str]:
-        return {"DISC": "1", "REMUX": "2", "WEBDL": "4", "WEBRIP": "5", "HDTV": "6", "ENCODE": "3", "DVDRIP": "8"}
+        return {
+            "DISC": "1",
+            "REMUX": "2",
+            "WEBDL": "4",
+            "WEBRIP": "5",
+            "HDTV": "6",
+            "ENCODE": "3",
+            "DVDRIP": "8",
+        }
 
     @staticmethod
     def _disc_type_id(meta: Meta) -> str:
@@ -226,7 +280,11 @@ class OldToonsWorld(UNIT3D):
     def _uses_dvd_name_details(meta: Meta) -> bool:
         if meta.is_disc == "DVD":
             return True
-        return str(meta.type) == "REMUX" and str(meta.source) in {"PAL DVD", "NTSC DVD", "DVD"}
+        return str(meta.type) == "REMUX" and str(meta.source) in {
+            "PAL DVD",
+            "NTSC DVD",
+            "DVD",
+        }
 
     @classmethod
     def _apply_tv_year(cls, name: str, meta: Meta) -> str:
@@ -244,7 +302,9 @@ class OldToonsWorld(UNIT3D):
             return tmdb_year
         candidates = [
             cls._numeric_year(cls._mapping_value(meta.imdb_info, "year")),
-            cls._numeric_year(cls._mapping_value(meta.tvdb_episode_data, "series_year")),
+            cls._numeric_year(
+                cls._mapping_value(meta.tvdb_episode_data, "series_year")
+            ),
         ]
         years = [int(value) for value in candidates if value]
         return str(min(years)) if years else ""

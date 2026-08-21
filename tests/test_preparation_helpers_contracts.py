@@ -11,7 +11,13 @@ import pytest
 
 import src.services.preparation_helpers as helpers
 from src.domain_models.release import Meta
-from tests.test_service_contracts import _config, _ManagerPort, _meta, _PreparationPort, _VideoPort
+from tests.test_service_contracts import (
+    _config,
+    _ManagerPort,
+    _meta,
+    _PreparationPort,
+    _VideoPort,
+)
 
 
 def _bdinfo() -> dict[str, Any]:
@@ -29,12 +35,16 @@ def _bdinfo() -> dict[str, Any]:
                 "bitrate": "20000 kbps",
             }
         ],
-        "audio": [{"codec": "E-AC-3", "channels": "5.1", "bitrate": "640 kbps"}],
+        "audio": [
+            {"codec": "E-AC-3", "channels": "5.1", "bitrate": "640 kbps"}
+        ],
         "subtitles": ["English"],
     }
 
 
-def _configure_boundaries(monkeypatch: pytest.MonkeyPatch, config: dict[str, Any], root: Path) -> None:
+def _configure_boundaries(
+    monkeypatch: pytest.MonkeyPatch, config: dict[str, Any], root: Path
+) -> None:
     manager = _ManagerPort(config, root)
     monkeypatch.setattr(helpers, "video_manager", _VideoPort(config, root))
     monkeypatch.setattr(helpers, "imdb_manager", manager)
@@ -44,7 +54,13 @@ def _configure_boundaries(monkeypatch: pytest.MonkeyPatch, config: dict[str, Any
         return {
             "media": {
                 "track": [
-                    {"@type": "General", "Format": "Matroska", "Duration": "7200", "UniqueID": "1", "OverallBitRate": "12000000"},
+                    {
+                        "@type": "General",
+                        "Format": "Matroska",
+                        "Duration": "7200",
+                        "UniqueID": "1",
+                        "OverallBitRate": "12000000",
+                    },
                     {
                         "@type": "Video",
                         "Format": "AVC",
@@ -54,7 +70,13 @@ def _configure_boundaries(monkeypatch: pytest.MonkeyPatch, config: dict[str, Any
                         "BitRate": "12000000",
                         "Encoded_Library_Settings": "cabac=1",
                     },
-                    {"@type": "Audio", "Format": "E-AC-3", "Channels": "6", "BitRate": "640000", "Language": "en"},
+                    {
+                        "@type": "Audio",
+                        "Format": "E-AC-3",
+                        "Channels": "6",
+                        "BitRate": "640000",
+                        "Language": "en",
+                    },
                 ]
             }
         }
@@ -65,15 +87,21 @@ def _configure_boundaries(monkeypatch: pytest.MonkeyPatch, config: dict[str, Any
     async def distributor(_value: object = None) -> str:
         return "CRITERION"
 
-    async def service(*_args: object, **kwargs: object) -> tuple[str, str] | dict[str, str]:
+    async def service(
+        *_args: object, **kwargs: object
+    ) -> tuple[str, str] | dict[str, str]:
         if kwargs.get("get_services_only"):
             return {"Amazon": "AMZN", "Netflix": "NF"}
         return "AMZN", "Amazon"
 
-    async def source(release_type: str, *_args: object, **_kwargs: object) -> tuple[str, str]:
+    async def source(
+        release_type: str, *_args: object, **_kwargs: object
+    ) -> tuple[str, str]:
         return "WEB", release_type or "WEBDL"
 
-    async def edition(*_args: object, **_kwargs: object) -> tuple[str, str, bool]:
+    async def edition(
+        *_args: object, **_kwargs: object
+    ) -> tuple[str, str, bool]:
         return "", "", False
 
     async def tag(_video: str, meta: Meta, **_kwargs: object) -> str:
@@ -98,7 +126,9 @@ def _configure_boundaries(monkeypatch: pytest.MonkeyPatch, config: dict[str, Any
     monkeypatch.setattr(helpers, "tag_override", tag_override)
     monkeypatch.setattr(helpers, "get_bluray_releases", releases)
     monkeypatch.setattr(helpers, "get_conformance_error", no_conformance)
-    monkeypatch.setattr(helpers, "validate_mediainfo", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        helpers, "validate_mediainfo", lambda *_args, **_kwargs: True
+    )
 
 
 @pytest.mark.parametrize(
@@ -156,10 +186,19 @@ def test_preparation_helpers_complete_representative_release_paths(
     meta.year = 2024
     bdinfo = _bdinfo() if disc_type == "BDMV" else {}
     if disc_type:
-        meta.discs = [{"name": "DISC", "type": disc_type, "bdinfo": copy.deepcopy(bdinfo)}]
+        meta.discs = [
+            {
+                "name": "DISC",
+                "type": disc_type,
+                "bdinfo": copy.deepcopy(bdinfo),
+            }
+        ]
 
     async def exercise() -> None:
-        video_location, detected_bdinfo = await helpers.detect_disc_and_category(prep, meta)
+        (
+            video_location,
+            detected_bdinfo,
+        ) = await helpers.detect_disc_and_category(prep, meta)
         if not video_location:
             video_location = str(meta.path or "")
         effective_bdinfo = bdinfo or detected_bdinfo
@@ -171,7 +210,9 @@ def test_preparation_helpers_complete_representative_release_paths(
             search_file_folder,
             mediainfo,
             video,
-        ) = await helpers.process_media_files(prep, meta, video_location, effective_bdinfo)
+        ) = await helpers.process_media_files(
+            prep, meta, video_location, effective_bdinfo
+        )
         if not video_path:
             video_path = str(meta.path or "")
         if not filename:

@@ -58,7 +58,13 @@ class ItaTorrents(UNIT3D):
 
         return type_name
 
-    async def get_type_id(self, meta: Meta, type: str | None = None, reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_type_id(
+        self,
+        meta: Meta,
+        type: str | None = None,
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         type_id_map = {
             "DISC": "1",
             "REMUX": "2",
@@ -93,9 +99,13 @@ class ItaTorrents(UNIT3D):
         edition = self._edition_name(meta.edition)
         dubs = await self.get_dubs(meta)
         if type_name in {"DISC", "REMUX"}:
-            name = self._disc_name(meta, type_name, year, season, episode, edition, dubs)
+            name = self._disc_name(
+                meta, type_name, year, season, episode, edition, dubs
+            )
         else:
-            name = self._encoded_name(meta, type_name, year, season, episode, edition, dubs)
+            name = self._encoded_name(
+                meta, type_name, year, season, episode, edition, dubs
+            )
         return {"name": self._clean_name(name, meta.tag or "")}
 
     @classmethod
@@ -128,10 +138,20 @@ class ItaTorrents(UNIT3D):
 
     @staticmethod
     def _edition_name(edition: str) -> str:
-        return re.sub(r"\bHybrid\b", "", edition or "", flags=re.IGNORECASE).strip()
+        return re.sub(
+            r"\bHybrid\b", "", edition or "", flags=re.IGNORECASE
+        ).strip()
 
     @staticmethod
-    def _disc_name(meta: Meta, type_name: str, year: str, season: str, episode: str, edition: str, dubs: str) -> str:
+    def _disc_name(
+        meta: Meta,
+        type_name: str,
+        year: str,
+        season: str,
+        episode: str,
+        edition: str,
+        dubs: str,
+    ) -> str:
         remux = "REMUX" if type_name == "REMUX" else ""
         resolution = "" if meta.resolution == "OTHER" else meta.resolution
         return (
@@ -140,22 +160,43 @@ class ItaTorrents(UNIT3D):
         )
 
     @staticmethod
-    def _encoded_name(meta: Meta, type_name: str, year: str, season: str, episode: str, edition: str, dubs: str) -> str:
+    def _encoded_name(
+        meta: Meta,
+        type_name: str,
+        year: str,
+        season: str,
+        episode: str,
+        edition: str,
+        dubs: str,
+    ) -> str:
         normalized_type = ItaTorrents._display_type(type_name)
         resolution = "" if meta.resolution == "OTHER" else meta.resolution
         return f"{meta.title} {year} {season}{episode} {meta.repack} {resolution} {edition} {meta.three_d} {normalized_type} {dubs} {meta.audio} {meta.hdr} {meta.video_codec}"
 
     @staticmethod
     def _display_type(type_name: str) -> str:
-        return type_name.replace("WEBDL", "WEB-DL").replace("WEBRIP", "WEBRip").replace("DVDRIP", "DVDRip").replace("ENCODE", "BluRay")
+        return (
+            type_name.replace("WEBDL", "WEB-DL")
+            .replace("WEBRIP", "WEBRip")
+            .replace("DVDRIP", "DVDRip")
+            .replace("ENCODE", "BluRay")
+        )
 
     @staticmethod
     def _clean_name(name: str, tag: str) -> str:
-        return re.sub(r"\s{2,}", " ", f"{name}{tag}".replace("Dubbed", "").replace("Dual-Audio", "").strip())
+        return re.sub(
+            r"\s{2,}",
+            " ",
+            f"{name}{tag}".replace("Dubbed", "")
+            .replace("Dual-Audio", "")
+            .strip(),
+        )
 
     async def get_dubs(self, meta: Meta) -> str:
         if not meta.language_checked:
-            await languages_manager.process_desc_language(meta, tracker=self.tracker)
+            await languages_manager.process_desc_language(
+                meta, tracker=self.tracker
+            )
         dubs = ""
         audio_languages_value = meta.audio_languages
         audio_languages: set[str] = set()
@@ -171,7 +212,14 @@ class ItaTorrents(UNIT3D):
         # "Non sono ammessi film e serie tv che non comprendono il doppiaggio in italiano."
         # Translates to "Films and TV series that do not include Italian dubbing are not permitted."
         italian_languages = ["italian", "italiano"]
-        if not await self.common.check_language_requirements(meta, self.tracker, languages_to_check=italian_languages, check_audio=True):
-            logger.info(f"{self.tracker}: Upload Rules: https://itatorrents.xyz/wikis/5")
+        if not await self.common.check_language_requirements(
+            meta,
+            self.tracker,
+            languages_to_check=italian_languages,
+            check_audio=True,
+        ):
+            logger.info(
+                f"{self.tracker}: Upload Rules: https://itatorrents.xyz/wikis/5"
+            )
             return False
         return True

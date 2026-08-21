@@ -1,7 +1,11 @@
-from src.integrations.media.disc_menus import discard_previous_menu_capture_files
+from src.integrations.media.disc_menus import (
+    discard_previous_menu_capture_files,
+)
 
 
-def test_discard_previous_menu_capture_files_only_removes_the_current_vob_batch(tmp_path) -> None:
+def test_discard_previous_menu_capture_files_only_removes_the_current_vob_batch(
+    tmp_path,
+) -> None:
     current_first = tmp_path / "DVD-VIDEO_TS-001.png"
     current_second = tmp_path / "DVD-VIDEO_TS-002.png"
     other_vob = tmp_path / "DVD-VTS_01_0-001.png"

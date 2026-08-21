@@ -18,7 +18,9 @@ guessit_module: Any = cast(Any, guessit)
 GuessitFn = Callable[[str, dict[str, Any] | None], dict[str, Any]]
 
 
-def guessit_fn(value: str, options: dict[str, Any] | None = None) -> dict[str, Any]:
+def guessit_fn(
+    value: str, options: dict[str, Any] | None = None
+) -> dict[str, Any]:
     return cast(dict[str, Any], guessit_module.guessit(value, options))
 
 
@@ -35,15 +37,28 @@ class NameManager:
         self.common = Common(config=config)
 
     async def get_name(self, meta: Meta) -> tuple[str, str, str, list[str]]:
-        active_trackers: list[str] = [tracker for tracker in TRACKER_DISC_REQUIREMENTS if tracker in meta.trackers]
+        active_trackers: list[str] = [
+            tracker
+            for tracker in TRACKER_DISC_REQUIREMENTS
+            if tracker in meta.trackers
+        ]
         if active_trackers:
-            region, distributor, trackers_to_remove = await self.missing_disc_info(meta, active_trackers)
+            (
+                region,
+                distributor,
+                trackers_to_remove,
+            ) = await self.missing_disc_info(meta, active_trackers)
             configured_trackers = meta.trackers
             for tracker in trackers_to_remove:
-                if isinstance(configured_trackers, list) and tracker in configured_trackers:
+                if (
+                    isinstance(configured_trackers, list)
+                    and tracker in configured_trackers
+                ):
                     if meta.unattended:
                         logger.info("")
-                        logger.info(f"[yellow]Removing tracker {tracker} due to missing distributor/region info.[/yellow]")
+                        logger.info(
+                            f"[yellow]Removing tracker {tracker} due to missing distributor/region info.[/yellow]"
+                        )
                     configured_trackers.remove(tracker)
             if distributor and "SKIPPED" not in distributor:
                 meta.distributor = distributor
@@ -95,7 +110,11 @@ class NameManager:
             edition = re.sub(r"(?i)\bhybrid\b", "", edition).strip()
 
         if meta.category == "TV":
-            year = str(meta.year) if (meta.year is not None and meta.search_year != "") else ""
+            year = (
+                str(meta.year)
+                if (meta.year is not None and meta.search_year != "")
+                else ""
+            )
             if meta.manual_date:
                 # Ignore season and year for --daily flagged shows, just use manual date stored in episode_name
                 season = ""
@@ -119,7 +138,12 @@ class NameManager:
         if meta.manual_name is not None:
             name = str(meta.manual_name).strip()
         elif meta.category == "XXX":
-            release_name = str(meta.scene_name or meta.basename_no_ext or meta.uuid or meta.title)
+            release_name = str(
+                meta.scene_name
+                or meta.basename_no_ext
+                or meta.uuid
+                or meta.title
+            )
             name = release_name.replace(".", " ")
         elif meta.category == "MOVIE":  # MOVIE SPECIFIC
             if type == "DISC":  # Disk
@@ -132,10 +156,17 @@ class NameManager:
                 elif meta.is_disc == "HDDVD":
                     name = f"{title} {alt_title} {year} {edition} {repack} {resolution} {source} {video_codec} {audio}"
                     potential_missing = ["edition", "region", "distributor"]
-            elif type == "REMUX" and source in ("BluRay", "HDDVD"):  # BluRay/HDDVD Remux
+            elif type == "REMUX" and source in (
+                "BluRay",
+                "HDDVD",
+            ):  # BluRay/HDDVD Remux
                 name = f"{title} {alt_title} {year} {three_d} {edition} {hybrid} {repack} {resolution} {uhd} {source} REMUX {hdr} {video_codec} {audio}"
                 potential_missing = ["edition", "description"]
-            elif type == "REMUX" and source in ("PAL DVD", "NTSC DVD", "DVD"):  # DVD Remux
+            elif type == "REMUX" and source in (
+                "PAL DVD",
+                "NTSC DVD",
+                "DVD",
+            ):  # DVD Remux
                 name = f"{title} {alt_title} {year} {edition} {repack} {source} REMUX  {audio}"
                 potential_missing = ["edition", "description"]
             elif type == "ENCODE":  # Encode
@@ -156,9 +187,7 @@ class NameManager:
         elif meta.category == "TV":  # TV SPECIFIC
             if type == "DISC":  # Disk
                 if meta.is_disc == "BDMV":
-                    name = (
-                        f"{title} {year} {alt_title} {season}{episode} {three_d} {edition} {hybrid} {repack} {resolution} {region} {uhd} {source} {hdr} {video_codec} {audio}"
-                    )
+                    name = f"{title} {year} {alt_title} {season}{episode} {three_d} {edition} {hybrid} {repack} {resolution} {region} {uhd} {source} {hdr} {video_codec} {audio}"
                     potential_missing = ["edition", "region", "distributor"]
                 if meta.is_disc == "DVD":
                     name = f"{title} {year} {alt_title} {season}{episode}{three_d} {repack} {edition} {region} {source} {dvd_size} {audio}"
@@ -166,10 +195,17 @@ class NameManager:
                 elif meta.is_disc == "HDDVD":
                     name = f"{title} {alt_title} {year} {edition} {repack} {resolution} {source} {video_codec} {audio}"
                     potential_missing = ["edition", "region", "distributor"]
-            elif type == "REMUX" and source in ("BluRay", "HDDVD"):  # BluRay Remux
+            elif type == "REMUX" and source in (
+                "BluRay",
+                "HDDVD",
+            ):  # BluRay Remux
                 name = f"{title} {year} {alt_title} {season}{episode} {episode_title} {part} {three_d} {edition} {hybrid} {repack} {resolution} {uhd} {source} REMUX {hdr} {video_codec} {audio}"  # SOURCE
                 potential_missing = ["edition", "description"]
-            elif type == "REMUX" and source in ("PAL DVD", "NTSC DVD", "DVD"):  # DVD Remux
+            elif type == "REMUX" and source in (
+                "PAL DVD",
+                "NTSC DVD",
+                "DVD",
+            ):  # DVD Remux
                 name = f"{title} {year} {alt_title} {season}{episode} {episode_title} {part} {edition} {repack} {source} REMUX {audio}"  # SOURCE
                 potential_missing = ["edition", "description"]
             elif type == "ENCODE":  # Encode
@@ -203,17 +239,31 @@ class NameManager:
         try:
             name = " ".join(name.split())
         except Exception:
-            logger.info("[bold red]Unable to generate name. Please re-run and correct any of the following args if needed.")
+            logger.info(
+                "[bold red]Unable to generate name. Please re-run and correct any of the following args if needed."
+            )
             logger.info(f"--category [yellow]{meta.category}")
             logger.info(f"--type [yellow]{meta.type}")
             logger.info(f"--source [yellow]{meta.source}")
-            logger.info("[bold green]If you specified type, try also specifying source")
+            logger.info(
+                "[bold green]If you specified type, try also specifying source"
+            )
 
-            raise OperationAbortedError("Release naming was cancelled because required metadata is unavailable.") from None
+            raise OperationAbortedError(
+                "Release naming was cancelled because required metadata is unavailable."
+            ) from None
         name_notag = name
 
-        tag_already_present = meta.category == "XXX" and bool(tag) and name_notag.casefold().endswith(tag.casefold())
-        name = name_notag if meta.manual_name is not None or tag_already_present else name_notag + tag
+        tag_already_present = (
+            meta.category == "XXX"
+            and bool(tag)
+            and name_notag.casefold().endswith(tag.casefold())
+        )
+        name = (
+            name_notag
+            if meta.manual_name is not None or tag_already_present
+            else name_notag + tag
+        )
 
         clean_name = await self.clean_filename(name)
         return name_notag, name, clean_name, potential_missing
@@ -232,7 +282,11 @@ class NameManager:
 
         # Edition/Issue logic
         edition = str(meta.manual_edition or meta.edition or "").strip()
-        if edition and not any(x in edition.lower() for x in ["edition", "ed.", "ed"]) and not audiobook:
+        if (
+            edition
+            and not any(x in edition.lower() for x in ["edition", "ed.", "ed"])
+            and not audiobook
+        ):
             edition = f"{edition} Edition"
 
         volume = str(meta.manual_season or meta.season or "").strip()
@@ -242,7 +296,11 @@ class NameManager:
         book_language = meta.book_language.strip()
         book_language_iso = meta.book_language_iso.strip()
         lang_display = book_language or book_language_iso
-        lang_display = "" if lang_display.lower() in ("english", "eng", "en") else lang_display.upper().replace("I", "i")
+        lang_display = (
+            ""
+            if lang_display.lower() in ("english", "eng", "en")
+            else lang_display.upper().replace("I", "i")
+        )
 
         # Source logic: RETAiL, SCAN, HYBRiD
         source = meta.source or "".strip().upper()
@@ -279,47 +337,124 @@ class NameManager:
             ebook_type = ebook_type.upper()
 
         author_or_publisher = author or publisher
-        title_without_author = self._strip_prefix_author_or_publisher(title, author_or_publisher)
+        title_without_author = self._strip_prefix_author_or_publisher(
+            title, author_or_publisher
+        )
 
         # Construct final string parts based on subtype
         parts = []
 
         if audiobook:
             if author_or_publisher:
-                parts.extend([author_or_publisher, "-", title_without_author, edition, year, lang_display, "AUDIOBOOK"])
+                parts.extend(
+                    [
+                        author_or_publisher,
+                        "-",
+                        title_without_author,
+                        edition,
+                        year,
+                        lang_display,
+                        "AUDIOBOOK",
+                    ]
+                )
             else:
-                parts.extend([title_without_author, edition, year, lang_display, "AUDIOBOOK"])
+                parts.extend(
+                    [
+                        title_without_author,
+                        edition,
+                        year,
+                        lang_display,
+                        "AUDIOBOOK",
+                    ]
+                )
         elif comic:
             vol_str = f"Vol {volume}" if volume else ""
             no_str = f"No {issue}" if issue else ""
-            parts.extend([title, vol_str, no_str, year, lang_display, source, ebook_type, "COMiC", "eBOOK"])
+            parts.extend(
+                [
+                    title,
+                    vol_str,
+                    no_str,
+                    year,
+                    lang_display,
+                    source,
+                    ebook_type,
+                    "COMiC",
+                    "eBOOK",
+                ]
+            )
         elif manga:
             vol_str = f"Vol {volume}" if volume else ""
-            parts.extend([title, vol_str, year, lang_display, source, ebook_type, "MANGA", "eBOOK"])
+            parts.extend(
+                [
+                    title,
+                    vol_str,
+                    year,
+                    lang_display,
+                    source,
+                    ebook_type,
+                    "MANGA",
+                    "eBOOK",
+                ]
+            )
         elif magazine:
             no_str = f"No {issue}" if issue else ""
-            parts.extend([title, no_str, year, lang_display, source, ebook_type, "MAGAZiNE", "eBOOK"])
+            parts.extend(
+                [
+                    title,
+                    no_str,
+                    year,
+                    lang_display,
+                    source,
+                    ebook_type,
+                    "MAGAZiNE",
+                    "eBOOK",
+                ]
+            )
         elif newspaper:
-            parts.extend([title, year, lang_display, source, ebook_type, "eBOOK"])
+            parts.extend(
+                [title, year, lang_display, source, ebook_type, "eBOOK"]
+            )
         else:
-            parts.extend([author_or_publisher, "-", title_without_author, edition, year, lang_display, source, ebook_type, "eBOOK"])
+            parts.extend(
+                [
+                    author_or_publisher,
+                    "-",
+                    title_without_author,
+                    edition,
+                    year,
+                    lang_display,
+                    source,
+                    ebook_type,
+                    "eBOOK",
+                ]
+            )
 
         cleaned_parts = [p for p in parts if p]
         base_name = " ".join(cleaned_parts)
         return " ".join(base_name.split())
 
     @staticmethod
-    def _strip_prefix_author_or_publisher(title: str, author_or_publisher: str) -> str:
+    def _strip_prefix_author_or_publisher(
+        title: str, author_or_publisher: str
+    ) -> str:
         if not title or not author_or_publisher:
             return title.strip()
-        return re.sub(rf"^{re.escape(author_or_publisher)}\s*-\s*", "", title.strip(), flags=re.IGNORECASE).strip()
+        return re.sub(
+            rf"^{re.escape(author_or_publisher)}\s*-\s*",
+            "",
+            title.strip(),
+            flags=re.IGNORECASE,
+        ).strip()
 
     def extract_game_name(self, meta: Meta) -> str:
         """Build a game release name losely based on the SCENE 2021_GAMEiSO ruleset."""
         title = meta.title.strip()
         edition = str(meta.manual_edition or meta.edition or "").strip()
         year = str(meta.manual_year or meta.year or "").strip()
-        platform = str(meta.manual_platform or meta.platform or "").strip().upper()
+        platform = (
+            str(meta.manual_platform or meta.platform or "").strip().upper()
+        )
         game_version = meta.game_version or "".strip()
         repack = meta.repack or "".strip().upper()
         force_multi = bool(meta.manual_multi)
@@ -356,7 +491,11 @@ class NameManager:
         # Version / Update tag  →  "Update v1.2.3"
         if game_version:
             # Normalise: ensure leading 'v'
-            ver = game_version if game_version.lower().startswith("v") else f"v{game_version}"
+            ver = (
+                game_version
+                if game_version.lower().startswith("v")
+                else f"v{game_version}"
+            )
             tokens.append(ver)
 
         # Year - scene rarely includes year in the dirname, but keep it if present
@@ -380,11 +519,15 @@ class NameManager:
         return re.sub(r"\.{2,}", " ", base_name)
 
     @staticmethod
-    def _music_release_field(release: dict[str, Any], name: str, default: Any = "") -> Any:
+    def _music_release_field(
+        release: dict[str, Any], name: str, default: Any = ""
+    ) -> Any:
         """Read a serialized MusicRelease field without its provenance."""
         fields = release.get("fields", {})
         value = fields.get(name, {}) if isinstance(fields, dict) else {}
-        return value.get("value", default) if isinstance(value, dict) else default
+        return (
+            value.get("value", default) if isinstance(value, dict) else default
+        )
 
     @staticmethod
     def _music_codec(value: Any) -> str:
@@ -416,25 +559,50 @@ class NameManager:
 
     def extract_music_name(self, meta: Meta) -> str:
         """Build MUSIC names with the LST Discogs-based naming convention."""
-        release = meta.music_release if isinstance(meta.music_release, dict) else {}
+        release = (
+            meta.music_release if isinstance(meta.music_release, dict) else {}
+        )
         artist = self._music_release_field(release, "artist", meta.artist)
         title = self._music_release_field(release, "album", meta.title)
-        year = self._music_release_field(release, "release_year", self._music_release_field(release, "year", meta.year))
-        source = self._music_source(self._music_release_field(release, "media", meta.source))
-        tracks = release.get("tracks", []) if isinstance(release.get("tracks"), list) else []
-        first_track = tracks[0] if tracks and isinstance(tracks[0], dict) else {}
-        codec = self._music_codec(first_track.get("codec") or first_track.get("format") or meta.format or meta.type)
+        year = self._music_release_field(
+            release,
+            "release_year",
+            self._music_release_field(release, "year", meta.year),
+        )
+        source = self._music_source(
+            self._music_release_field(release, "media", meta.source)
+        )
+        tracks = (
+            release.get("tracks", [])
+            if isinstance(release.get("tracks"), list)
+            else []
+        )
+        first_track = (
+            tracks[0] if tracks and isinstance(tracks[0], dict) else {}
+        )
+        codec = self._music_codec(
+            first_track.get("codec")
+            or first_track.get("format")
+            or meta.format
+            or meta.type
+        )
         parts = [str(artist), "-", str(title), str(year), source, codec]
 
         # LST omits technical PCM fields for lossy codecs.
         if codec in {"FLAC", "ALAC"}:
-            depth = first_track.get("bit_depth") or self._music_release_field(release, "nfo_bit_depth")
-            rate = first_track.get("sample_rate") or self._music_release_field(release, "nfo_sample_rate")
+            depth = first_track.get("bit_depth") or self._music_release_field(
+                release, "nfo_bit_depth"
+            )
+            rate = first_track.get("sample_rate") or self._music_release_field(
+                release, "nfo_sample_rate"
+            )
             if depth:
                 parts.append(f"{depth}-bit")
             if rate:
                 parts.append(f"{int(rate) / 1000:g} kHz")
-        return " ".join(part.strip() for part in parts if str(part or "").strip())
+        return " ".join(
+            part.strip() for part in parts if str(part or "").strip()
+        )
 
     async def clean_filename(self, name: str) -> str:
         invalid = '<>:"/\\|?*'
@@ -442,7 +610,9 @@ class NameManager:
             name = name.replace(char, "-")
         return name
 
-    async def extract_title_and_year(self, meta: Meta, filename: str) -> tuple[str | None, str | None, str | None]:
+    async def extract_title_and_year(
+        self, meta: Meta, filename: str
+    ) -> tuple[str | None, str | None, str | None]:
         basename = Path(filename).stem
 
         secondary_title: str | None = None
@@ -458,7 +628,9 @@ class NameManager:
                     secondary_part = aka_parts[1].strip()
 
                     # Look for a year in the primary title
-                    year_match_primary = re.search(r"\b(19|20)\d{2}\b", primary_title)
+                    year_match_primary = re.search(
+                        r"\b(19|20)\d{2}\b", primary_title
+                    )
                     if year_match_primary:
                         year = year_match_primary.group(0)
 
@@ -472,15 +644,25 @@ class NameManager:
                             r"\b(19|20)\d{2}\b|\bBluRay\b|\bREMUX\b|\b\d+p\b|\bDTS-HD\b|\bAVC\b",
                             secondary_part,
                         )
-                        if year_or_release_match and re.fullmatch(r"(19|20)\d{2}", year_or_release_match.group(0)) and not year:
+                        if (
+                            year_or_release_match
+                            and re.fullmatch(
+                                r"(19|20)\d{2}", year_or_release_match.group(0)
+                            )
+                            and not year
+                        ):
                             year = year_or_release_match.group(0)
-                            secondary_title = secondary_part[: year_or_release_match.start()].strip()
+                            secondary_title = secondary_part[
+                                : year_or_release_match.start()
+                            ].strip()
                         else:
                             secondary_title = secondary_part
 
                     primary_title = primary_title.replace(".", " ").strip()
                     if secondary_title is not None:
-                        secondary_title = secondary_title.replace(".", " ").strip()
+                        secondary_title = secondary_title.replace(
+                            ".", " "
+                        ).strip()
                     return primary_title, secondary_title, year
 
         # if not AKA, catch titles that begin with a year
@@ -495,11 +677,20 @@ class NameManager:
                 return title, None, year
 
         folder_name = Path(meta.uuid).name if meta.uuid else ""
-        logger.debug(f"[cyan]Extracting title and year from folder name: {folder_name}[/cyan]")
+        logger.debug(
+            f"[cyan]Extracting title and year from folder name: {folder_name}[/cyan]"
+        )
         # lets do some subsplease handling
         if "subsplease" in folder_name.lower():
-            guess_data = guessit_fn(folder_name, {"excludes": ["country", "language"]})
-            parsed = cast(dict[str, Any] | None, cast(Any, anitopy).parse(cast(str, guess_data.get("title", ""))))
+            guess_data = guessit_fn(
+                folder_name, {"excludes": ["country", "language"]}
+            )
+            parsed = cast(
+                dict[str, Any] | None,
+                cast(Any, anitopy).parse(
+                    cast(str, guess_data.get("title", ""))
+                ),
+            )
             parsed_title = parsed.get("anime_title") if parsed else None
             if parsed_title:
                 return str(parsed_title), None, None
@@ -523,30 +714,66 @@ class NameManager:
             first_year = years[0]
             second_year = years[1]
 
-            logger.debug(f"[cyan]Found double year pattern: {full_match}, using {second_year} as year[/cyan]")
+            logger.debug(
+                f"[cyan]Found double year pattern: {full_match}, using {second_year} as year[/cyan]"
+            )
 
             modified_folder_name = folder_name.replace(full_match, first_year)
             year_match = None
-            res_match = re.search(res_pattern, modified_folder_name, re.IGNORECASE)
-            season_pattern_match = re.search(season_pattern, modified_folder_name, re.IGNORECASE)
-            season_episode_match = re.search(season_episode_pattern, modified_folder_name, re.IGNORECASE)
-            extension_match = re.search(extension_pattern, modified_folder_name, re.IGNORECASE)
-            type_match = re.search(type_pattern, modified_folder_name, re.IGNORECASE)
+            res_match = re.search(
+                res_pattern, modified_folder_name, re.IGNORECASE
+            )
+            season_pattern_match = re.search(
+                season_pattern, modified_folder_name, re.IGNORECASE
+            )
+            season_episode_match = re.search(
+                season_episode_pattern, modified_folder_name, re.IGNORECASE
+            )
+            extension_match = re.search(
+                extension_pattern, modified_folder_name, re.IGNORECASE
+            )
+            type_match = re.search(
+                type_pattern, modified_folder_name, re.IGNORECASE
+            )
 
             # If the folder starts with YYYY.YYYY (e.g. "1917.2019..."), the first year is the title.
             # Otherwise, treat the match as a delimiter after a normal title (e.g. "Some.Movie.1982.2011...").
-            year_boundary = double_year_match.start() + len(first_year) if double_year_match.start() == 0 else double_year_match.start()
+            year_boundary = (
+                double_year_match.start() + len(first_year)
+                if double_year_match.start() == 0
+                else double_year_match.start()
+            )
             indices = [("year", year_boundary, second_year)]
             if res_match:
                 indices.append(("res", res_match.start(), res_match.group()))
             if season_pattern_match:
-                indices.append(("season", season_pattern_match.start(), season_pattern_match.group()))
+                indices.append(
+                    (
+                        "season",
+                        season_pattern_match.start(),
+                        season_pattern_match.group(),
+                    )
+                )
             if season_episode_match:
-                indices.append(("season_episode", season_episode_match.start(), season_episode_match.group()))
+                indices.append(
+                    (
+                        "season_episode",
+                        season_episode_match.start(),
+                        season_episode_match.group(),
+                    )
+                )
             if extension_match:
-                indices.append(("extension", extension_match.start(), extension_match.group()))
+                indices.append(
+                    (
+                        "extension",
+                        extension_match.start(),
+                        extension_match.group(),
+                    )
+                )
             if type_match:
-                indices.append(("type", type_match.start(), type_match.group()))
+                indices.append(
+                    ("type", type_match.start(), type_match.group())
+                )
 
             folder_name_for_title = modified_folder_name
             actual_year = second_year
@@ -555,29 +782,61 @@ class NameManager:
             date_match = re.search(date_pattern, folder_name)
             year_match = re.search(year_pattern, folder_name)
             res_match = re.search(res_pattern, folder_name, re.IGNORECASE)
-            season_pattern_match = re.search(season_pattern, folder_name, re.IGNORECASE)
-            season_episode_match = re.search(season_episode_pattern, folder_name, re.IGNORECASE)
-            extension_match = re.search(extension_pattern, folder_name, re.IGNORECASE)
+            season_pattern_match = re.search(
+                season_pattern, folder_name, re.IGNORECASE
+            )
+            season_episode_match = re.search(
+                season_episode_pattern, folder_name, re.IGNORECASE
+            )
+            extension_match = re.search(
+                extension_pattern, folder_name, re.IGNORECASE
+            )
             type_match = re.search(type_pattern, folder_name, re.IGNORECASE)
 
             indices: list[tuple[str, int, str]] = []
             if date_match:
-                indices.append(("date", date_match.start(), date_match.group()))
+                indices.append(
+                    ("date", date_match.start(), date_match.group())
+                )
             if year_match and not date_match:
-                indices.append(("year", year_match.start(), year_match.group()))
+                indices.append(
+                    ("year", year_match.start(), year_match.group())
+                )
             if res_match:
                 indices.append(("res", res_match.start(), res_match.group()))
             if season_pattern_match:
-                indices.append(("season", season_pattern_match.start(), season_pattern_match.group()))
+                indices.append(
+                    (
+                        "season",
+                        season_pattern_match.start(),
+                        season_pattern_match.group(),
+                    )
+                )
             if season_episode_match:
-                indices.append(("season_episode", season_episode_match.start(), season_episode_match.group()))
+                indices.append(
+                    (
+                        "season_episode",
+                        season_episode_match.start(),
+                        season_episode_match.group(),
+                    )
+                )
             if extension_match:
-                indices.append(("extension", extension_match.start(), extension_match.group()))
+                indices.append(
+                    (
+                        "extension",
+                        extension_match.start(),
+                        extension_match.group(),
+                    )
+                )
             if type_match:
-                indices.append(("type", type_match.start(), type_match.group()))
+                indices.append(
+                    ("type", type_match.start(), type_match.group())
+                )
 
             folder_name_for_title = folder_name
-            actual_year = year_match.group() if year_match and not date_match else None
+            actual_year = (
+                year_match.group() if year_match and not date_match else None
+            )
 
         if indices:
             indices.sort(key=lambda x: x[1])
@@ -587,7 +846,9 @@ class NameManager:
             # Handle unmatched opening parenthesis
             if title_part.count("(") > title_part.count(")"):
                 paren_pos = title_part.rfind("(")
-                content_after_paren = folder_name_for_title[paren_pos + 1 : first_index].strip()
+                content_after_paren = folder_name_for_title[
+                    paren_pos + 1 : first_index
+                ].strip()
 
                 if content_after_paren:
                     secondary_title = content_after_paren
@@ -632,7 +893,9 @@ class NameManager:
         }
         filename = re.sub(r"\s+", " ", filename)
         filename = (await self.multi_replace(title_part, replacements)).strip()
-        processed_secondary = (await self.multi_replace(secondary_title or "", replacements)).strip()
+        processed_secondary = (
+            await self.multi_replace(secondary_title or "", replacements)
+        ).strip()
         secondary_title = processed_secondary if processed_secondary else None
         if filename:
             # Look for content in parentheses
@@ -641,12 +904,16 @@ class NameManager:
 
             if bracket_match:
                 bracket_content = bracket_match.group(1).strip()
-                bracket_content = await self.multi_replace(bracket_content, replacements)
+                bracket_content = await self.multi_replace(
+                    bracket_content, replacements
+                )
 
                 # Only add to secondary_title if we don't already have one
                 if not secondary_title and bracket_content:
                     secondary_title = bracket_content
-                    secondary_title = re.sub(r"[\.\-_ ]+$", "", secondary_title)
+                    secondary_title = re.sub(
+                        r"[\.\-_ ]+$", "", secondary_title
+                    )
 
                 filename = re.sub(bracket_pattern, " ", filename)
                 filename = re.sub(r"\s+", " ", filename).strip()
@@ -662,13 +929,19 @@ class NameManager:
 
         return None, None, None
 
-    async def multi_replace(self, text: str, replacements: dict[str, str]) -> str:
+    async def multi_replace(
+        self, text: str, replacements: dict[str, str]
+    ) -> str:
         for old, new in replacements.items():
             text = re.sub(re.escape(old), new, text, flags=re.IGNORECASE)
         return text
 
-    async def missing_disc_info(self, meta: Meta, active_trackers: Sequence[str]) -> tuple[str, str, list[str]]:
-        distributor_id = await self.common.unit3d_distributor_ids(meta.distributor)
+    async def missing_disc_info(
+        self, meta: Meta, active_trackers: Sequence[str]
+    ) -> tuple[str, str, list[str]]:
+        distributor_id = await self.common.unit3d_distributor_ids(
+            meta.distributor
+        )
         region_id = await self.common.unit3d_region_ids(str(meta.region))
         region_name = str(meta.region)
         distributor_name = meta.distributor
@@ -683,30 +956,52 @@ class NameManager:
                 if requirements.get("distributor") == "mandatory":
                     strictest["distributor"] = "mandatory"
             if not region_id:
-                region_name = await self._prompt_for_field(meta, "Region code", strictest["region"] == "mandatory")
+                region_name = await self._prompt_for_field(
+                    meta, "Region code", strictest["region"] == "mandatory"
+                )
                 if region_name and region_name != "SKIPPED":
-                    region_id = await self.common.unit3d_region_ids(region_name)
+                    region_id = await self.common.unit3d_region_ids(
+                        region_name
+                    )
             if not distributor_id:
-                distributor_name = await self._prompt_for_field(meta, "Distributor", strictest["distributor"] == "mandatory")
+                distributor_name = await self._prompt_for_field(
+                    meta,
+                    "Distributor",
+                    strictest["distributor"] == "mandatory",
+                )
                 if distributor_name and distributor_name != "SKIPPED":
-                    logger.info(f"Looking up distributor ID for: {distributor_name}")
-                    distributor_id = await self.common.unit3d_distributor_ids(distributor_name)
+                    logger.info(
+                        f"Looking up distributor ID for: {distributor_name}"
+                    )
+                    distributor_id = await self.common.unit3d_distributor_ids(
+                        distributor_name
+                    )
                     logger.info(f"Found distributor ID: {distributor_id}")
 
             for tracker in active_trackers:
                 requirements = TRACKER_DISC_REQUIREMENTS.get(tracker, {})
-                if (requirements.get("region") == "mandatory" and region_name == "SKIPPED") or (
-                    requirements.get("distributor") == "mandatory" and distributor_name == "SKIPPED"
+                if (
+                    requirements.get("region") == "mandatory"
+                    and region_name == "SKIPPED"
+                ) or (
+                    requirements.get("distributor") == "mandatory"
+                    and distributor_name == "SKIPPED"
                 ):
                     trackers_to_remove.append(tracker)
 
         return region_name, distributor_name, trackers_to_remove
 
-    async def _prompt_for_field(self, meta: Meta, field_name: str, is_mandatory: bool) -> str:
+    async def _prompt_for_field(
+        self, meta: Meta, field_name: str, is_mandatory: bool
+    ) -> str:
         """Prompt user for disc field with appropriate mandatory/optional text."""
         if meta.unattended and not meta.unattended_confirm:
             return "SKIPPED"
-        suffix = " (MANDATORY): " if is_mandatory else " (optional, press Enter to skip): "
+        suffix = (
+            " (MANDATORY): "
+            if is_mandatory
+            else " (optional, press Enter to skip): "
+        )
         prompt = f"{field_name} not found for disc. Please enter it manually{suffix}"
         try:
             value = cli_ui.ask_string(prompt)
@@ -715,4 +1010,6 @@ class NameManager:
             logger.info("\n[red]Exiting on user request (Ctrl+C)[/red]")
             await cleanup_manager.cleanup()
             cleanup_manager.reset_terminal()
-            raise OperationAbortedError(f"Required release field was not provided: {field_name}") from None
+            raise OperationAbortedError(
+                f"Required release field was not provided: {field_name}"
+            ) from None

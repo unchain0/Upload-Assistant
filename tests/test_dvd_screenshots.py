@@ -1,7 +1,11 @@
-from src.integrations.media.screenshot_capture import discard_smallest_capture_result
+from src.integrations.media.screenshot_capture import (
+    discard_smallest_capture_result,
+)
 
 
-def test_discard_smallest_capture_result_only_removes_current_batch(tmp_path) -> None:
+def test_discard_smallest_capture_result_only_removes_current_batch(
+    tmp_path,
+) -> None:
     existing = tmp_path / "disc-0.png"
     captured_large = tmp_path / "disc-1.png"
     captured_small = tmp_path / "disc-2.png"

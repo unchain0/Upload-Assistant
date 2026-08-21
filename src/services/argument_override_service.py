@@ -13,21 +13,33 @@ UserArgsEntry = dict[str, Any]
 
 
 class ArgumentParserPort(Protocol):
-    def parse(self, argv: list[str], meta: Meta) -> tuple[Meta, object, list[str]]: ...
+    def parse(
+        self, argv: list[str], meta: Meta
+    ) -> tuple[Meta, object, list[str]]: ...
 
 
 ArgumentParserFactory = Callable[[dict[str, Any]], ArgumentParserPort]
 
 
 class ApplyOverrides:
-    def __init__(self, config: dict[str, Any], argument_parser_factory: ArgumentParserFactory | None = None) -> None:
+    def __init__(
+        self,
+        config: dict[str, Any],
+        argument_parser_factory: ArgumentParserFactory | None = None,
+    ) -> None:
         self.config = config
         self._argument_parser_factory = argument_parser_factory
 
-    async def get_source_override(self, meta: Meta, other_id: bool = False) -> Meta:
+    async def get_source_override(
+        self, meta: Meta, other_id: bool = False
+    ) -> Meta:
         try:
-            user_args_path = Path(meta.base_dir) / "data" / "templates" / "user-args.json"
-            user_args_text = await asyncio.to_thread(user_args_path.read_text, encoding="utf-8")
+            user_args_path = (
+                Path(meta.base_dir) / "data" / "templates" / "user-args.json"
+            )
+            user_args_text = await asyncio.to_thread(
+                user_args_path.read_text, encoding="utf-8"
+            )
             logger.info("[green]Found user-args.json")
             user_args = cast(dict[str, Any], json.loads(user_args_text))
 
@@ -46,7 +58,9 @@ class ApplyOverrides:
                 current_tvdb_id = int(current_tvdb_id)
 
             if not other_id:
-                for entry in cast(list[UserArgsEntry], user_args.get("entries", [])):
+                for entry in cast(
+                    list[UserArgsEntry], user_args.get("entries", [])
+                ):
                     entry_tmdb_id = entry.get("tmdb_id")
                     args = cast(list[str], entry.get("args", []))
 
@@ -54,26 +68,45 @@ class ApplyOverrides:
                         continue
 
                     # Parse the entry's TMDB ID from the user-args.json file
-                    entry_category, entry_normalized_id = await self.parse_tmdb_id(entry_tmdb_id)
+                    (
+                        entry_category,
+                        entry_normalized_id,
+                    ) = await self.parse_tmdb_id(entry_tmdb_id)
                     if entry_category and entry_category != meta.category:
-                        logger.debug(f"Skipping user entry because override category {entry_category} does not match UA category {meta.category}:")
+                        logger.debug(
+                            f"Skipping user entry because override category {entry_category} does not match UA category {meta.category}:"
+                        )
                         continue
 
                     # Check if IDs match
                     if entry_normalized_id == current_tmdb_id:
-                        logger.info(f"[green]Found matching override for TMDb ID: {entry_normalized_id}")
-                        logger.info(f"[yellow]Applying arguments: {' '.join(args)}")
+                        logger.info(
+                            f"[green]Found matching override for TMDb ID: {entry_normalized_id}"
+                        )
+                        logger.info(
+                            f"[yellow]Applying arguments: {' '.join(args)}"
+                        )
 
                         meta = await self.apply_args_to_meta(meta, args)
                         break
 
             else:
-                for entry in cast(list[UserArgsEntry], user_args.get("other_ids", [])):
+                for entry in cast(
+                    list[UserArgsEntry], user_args.get("other_ids", [])
+                ):
                     # Check for TVDB ID match
-                    if "tvdb_id" in entry and str(entry["tvdb_id"]) == str(current_tvdb_id) and current_tvdb_id != 0:
+                    if (
+                        "tvdb_id" in entry
+                        and str(entry["tvdb_id"]) == str(current_tvdb_id)
+                        and current_tvdb_id != 0
+                    ):
                         args = cast(list[str], entry.get("args", []))
-                        logger.info(f"[green]Found matching override for TVDb ID: {current_tvdb_id}")
-                        logger.info(f"[yellow]Applying arguments: {' '.join(args)}")
+                        logger.info(
+                            f"[green]Found matching override for TVDb ID: {current_tvdb_id}"
+                        )
+                        logger.info(
+                            f"[yellow]Applying arguments: {' '.join(args)}"
+                        )
                         meta = await self.apply_args_to_meta(meta, args)
                         break
 
@@ -83,10 +116,17 @@ class ApplyOverrides:
                         if str(entry_imdb).startswith("tt"):
                             entry_imdb = entry_imdb[2:]
 
-                        if str(entry_imdb) == str(current_imdb_id) and current_imdb_id != 0:
+                        if (
+                            str(entry_imdb) == str(current_imdb_id)
+                            and current_imdb_id != 0
+                        ):
                             args = cast(list[str], entry.get("args", []))
-                            logger.info(f"[green]Found matching override for IMDb ID: {current_imdb_id}")
-                            logger.info(f"[yellow]Applying arguments: {' '.join(args)}")
+                            logger.info(
+                                f"[green]Found matching override for IMDb ID: {current_imdb_id}"
+                            )
+                            logger.info(
+                                f"[yellow]Applying arguments: {' '.join(args)}"
+                            )
                             meta = await self.apply_args_to_meta(meta, args)
                             break
 
@@ -95,7 +135,9 @@ class ApplyOverrides:
 
         return meta
 
-    async def parse_tmdb_id(self, tmdb_id: Any | None, category: str | None = None) -> tuple[str | None, int]:
+    async def parse_tmdb_id(
+        self, tmdb_id: Any | None, category: str | None = None
+    ) -> tuple[str | None, int]:
         if tmdb_id is None:
             return category, 0
 
@@ -141,15 +183,21 @@ class ApplyOverrides:
 
                     # Store the value if it exists
                     if i + 1 < len(args) and not args[i + 1].startswith("--"):
-                        arg_values[key] = args[i + 1]  # Store the value with its key
+                        arg_values[key] = args[
+                            i + 1
+                        ]  # Store the value with its key
                         i += 1
                 i += 1
 
-            logger.debug(f"[Debug] Tracking changes for keys: {', '.join(arg_keys_to_track)}")
+            logger.debug(
+                f"[Debug] Tracking changes for keys: {', '.join(arg_keys_to_track)}"
+            )
 
             # CLI parsing is supplied through a delivery-owned port.
             if self._argument_parser_factory is None:
-                logger.warning("[yellow]Skipping user-args override because no argument parser port was supplied.[/yellow]")
+                logger.warning(
+                    "[yellow]Skipping user-args override because no argument parser port was supplied.[/yellow]"
+                )
                 return meta
             arg_processor = self._argument_parser_factory(self.config)
             full_args = ["upload.py", *args]
@@ -168,14 +216,22 @@ class ApplyOverrides:
             for key in arg_keys_to_track:
                 # Special handling for ID fields
                 if key in id_mappings:
-                    if key in arg_values:  # Check if we have a value for this key
+                    if (
+                        key in arg_values
+                    ):  # Check if we have a value for this key
                         value: Any = arg_values[key]
                         # Convert to int if possible
                         try:
                             if isinstance(value, str) and value.isdigit():
                                 value = int(value)
-                            elif isinstance(value, str) and key == "imdb" and value.startswith("tt"):
-                                value = int(value[2:])  # Remove 'tt' prefix and convert to int
+                            elif (
+                                isinstance(value, str)
+                                and key == "imdb"
+                                and value.startswith("tt")
+                            ):
+                                value = int(
+                                    value[2:]
+                                )  # Remove 'tt' prefix and convert to int
                         except ValueError:
                             pass
 
@@ -183,7 +239,9 @@ class ApplyOverrides:
                         for related_key in id_mappings[key]:
                             meta[related_key] = value
                             modified_keys.append(related_key)
-                            logger.debug(f"[Debug] Override: {related_key} changed from {meta.get(related_key)} to {value}")
+                            logger.debug(
+                                f"[Debug] Override: {related_key} changed from {meta.get(related_key)} to {value}"
+                            )
                 # Handle regular fields
                 elif key in updated_meta and key in meta:
                     # Skip path to preserve original
@@ -196,9 +254,13 @@ class ApplyOverrides:
                     if new_value != old_value:
                         meta[key] = new_value
                         modified_keys.append(key)
-                        logger.debug(f"[Debug] Override: {key} changed from {old_value} to {new_value}")
+                        logger.debug(
+                            f"[Debug] Override: {key} changed from {old_value} to {new_value}"
+                        )
             if meta.debug and modified_keys:
-                logger.info(f"[Debug] Applied overrides for: {', '.join(modified_keys)}")
+                logger.info(
+                    f"[Debug] Applied overrides for: {', '.join(modified_keys)}"
+                )
 
         except Exception as e:
             logger.error(f"[red]Error processing arguments: {e}")

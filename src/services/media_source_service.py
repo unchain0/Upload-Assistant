@@ -16,17 +16,32 @@ _guessit_module = importlib.import_module("guessit")
 _guessit_fn: GuessitFn = _guessit_module.guessit
 
 
-def guessit_fn(value: str, options: dict[str, Any] | None = None) -> dict[str, Any]:
+def guessit_fn(
+    value: str, options: dict[str, Any] | None = None
+) -> dict[str, Any]:
     return _guessit_fn(value, options)
 
 
-async def get_source(type: str, video: str, path: str, is_disc: str, meta: Meta, folder_id: str, base_dir: str) -> tuple[str, str]:
+async def get_source(
+    type: str,
+    video: str,
+    path: str,
+    is_disc: str,
+    meta: Meta,
+    folder_id: str,
+    base_dir: str,
+) -> tuple[str, str]:
     source = "BluRay"
     system = ""
     mi: dict[str, Any] = {}
     if meta.is_disc != "BDMV":
         try:
-            mi_text = await asyncio.to_thread(Path(f"{base_dir}{'/' + 'tmp' + '/'}{folder_id}/MediaInfo.json").read_text, encoding="utf-8")
+            mi_text = await asyncio.to_thread(
+                Path(
+                    f"{base_dir}{'/' + 'tmp' + '/'}{folder_id}/MediaInfo.json"
+                ).read_text,
+                encoding="utf-8",
+            )
             mi = json.loads(mi_text)
         except Exception:
             logger.debug("No mediainfo.json")
@@ -41,7 +56,10 @@ async def get_source(type: str, video: str, path: str, is_disc: str, meta: Meta,
                     source = guessit_fn(path).get("source", source)
                 except Exception:
                     source = "BluRay"
-        if source in ("Blu-ray", "Ultra HD Blu-ray", "BluRay", "BR") or is_disc == "BDMV":
+        if (
+            source in ("Blu-ray", "Ultra HD Blu-ray", "BluRay", "BR")
+            or is_disc == "BDMV"
+        ):
             if type == "DISC":
                 source = "Blu-ray"
             elif type in ("ENCODE", "REMUX"):
@@ -66,7 +84,9 @@ async def get_source(type: str, video: str, path: str, is_disc: str, meta: Meta,
                     system = ""
                 if system == "" or system not in ("PAL", "NTSC"):
                     try:
-                        framerate = str(mi["media"]["track"][1].get("FrameRate", ""))
+                        framerate = str(
+                            mi["media"]["track"][1].get("FrameRate", "")
+                        )
                         if "25" in framerate or "50" in framerate:
                             system = "PAL"
                         elif framerate:

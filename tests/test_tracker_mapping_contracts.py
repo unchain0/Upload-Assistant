@@ -92,23 +92,42 @@ def _configured_catalog() -> dict[str, Any]:
             continue
         for key in tuple(tracker_config):
             normalized = key.casefold()
-            if any(marker in normalized for marker in ("api", "token", "passkey", "cookie", "password", "username", "announce")):
+            if any(
+                marker in normalized
+                for marker in (
+                    "api",
+                    "token",
+                    "passkey",
+                    "cookie",
+                    "password",
+                    "username",
+                    "announce",
+                )
+            ):
                 tracker_config[key] = "test-value"
         tracker_config.setdefault("api_key", "test-key")
-        tracker_config.setdefault("announce_url", "https://tracker.invalid/announce")
+        tracker_config.setdefault(
+            "announce_url", "https://tracker.invalid/announce"
+        )
         tracker_config.setdefault("categorie", "podcast")
         tracker_config.setdefault("type", "audio")
     return config
 
 
-def _release(root: Path, *, category: str, release_type: str, resolution: str) -> Meta:
+def _release(
+    root: Path, *, category: str, release_type: str, resolution: str
+) -> Meta:
     root.mkdir(parents=True, exist_ok=True)
     content = root / f"Example.2025.{resolution}.{release_type}.mkv"
     content.write_bytes(b"media")
     temp = root / "tmp" / "contract"
     temp.mkdir(parents=True, exist_ok=True)
     media_text = "General\nFormat : Matroska\nVideo\nFormat : AVC\nAudio\nFormat : DTS\n"
-    for filename in ("MEDIAINFO.txt", "MEDIAINFO_CLEANPATH.txt", "MEDIAINFO_CLEANPATH.json"):
+    for filename in (
+        "MEDIAINFO.txt",
+        "MEDIAINFO_CLEANPATH.txt",
+        "MEDIAINFO_CLEANPATH.json",
+    ):
         (temp / filename).write_text(media_text, encoding="utf-8")
     (temp / "MediaInfo.json").write_text(
         '{"media":{"track":[{"@type":"General","Format":"Matroska"},'
@@ -116,7 +135,9 @@ def _release(root: Path, *, category: str, release_type: str, resolution: str) -
         '{"@type":"Audio","Format":"DTS","Language":"en","Channels":"6"}]}}',
         encoding="utf-8",
     )
-    (temp / "DESCRIPTION.txt").write_text("A representative release description.", encoding="utf-8")
+    (temp / "DESCRIPTION.txt").write_text(
+        "A representative release description.", encoding="utf-8"
+    )
     (temp / "BD_SUMMARY_00.txt").write_text("DISC INFO", encoding="utf-8")
     (temp / "BASE.torrent").write_bytes(
         bencodepy.encode(
@@ -146,7 +167,9 @@ def _release(root: Path, *, category: str, release_type: str, resolution: str) -
         year=2025,
         category=category,
         type=release_type,
-        source="BluRay" if release_type in {"DISC", "REMUX", "ENCODE"} else "Web",
+        source="BluRay"
+        if release_type in {"DISC", "REMUX", "ENCODE"}
+        else "Web",
         resolution=resolution,
         video_codec="H.264",
         audio="DTS-HD MA 5.1",
@@ -170,7 +193,13 @@ def _release(root: Path, *, category: str, release_type: str, resolution: str) -
         anime=False,
         adult_media=category == "XXX",
         screens=6,
-        image_list=[{"img_url": "https://img.invalid/0.png", "raw_url": "https://img.invalid/0.png", "web_url": "https://img.invalid/0"}],
+        image_list=[
+            {
+                "img_url": "https://img.invalid/0.png",
+                "raw_url": "https://img.invalid/0.png",
+                "web_url": "https://img.invalid/0",
+            }
+        ],
         filelist=[str(content)],
         tracker_status={},
         keywords=["action", "adventure"],
@@ -184,8 +213,18 @@ def _release(root: Path, *, category: str, release_type: str, resolution: str) -
             "media": {
                 "track": [
                     {"@type": "General", "Format": "Matroska"},
-                    {"@type": "Video", "Format": "AVC", "Width": "1920", "Height": "1080"},
-                    {"@type": "Audio", "Format": "DTS", "Language": "en", "Channels": "6"},
+                    {
+                        "@type": "Video",
+                        "Format": "AVC",
+                        "Width": "1920",
+                        "Height": "1080",
+                    },
+                    {
+                        "@type": "Audio",
+                        "Format": "DTS",
+                        "Language": "en",
+                        "Channels": "6",
+                    },
                     {"@type": "Text", "Language": "en", "Forced": "No"},
                 ]
             }
@@ -194,7 +233,13 @@ def _release(root: Path, *, category: str, release_type: str, resolution: str) -
             "size": 50_000_000_000,
             "playlist": "00001.MPLS",
             "video": [{"codec": "MPEG-4 AVC", "resolution": "1080p"}],
-            "audio": [{"codec": "DTS-HD Master Audio", "language": "English", "channels": "5.1"}],
+            "audio": [
+                {
+                    "codec": "DTS-HD Master Audio",
+                    "language": "English",
+                    "channels": "5.1",
+                }
+            ],
             "subtitles": ["English"],
         },
         discs=[],
@@ -247,18 +292,34 @@ def _argument(parameter: inspect.Parameter, meta: Meta) -> object:
     if name.endswith("id") or name.endswith("_id"):
         return 1
     if name in {"imdb_info", "movie_info"}:
-        return {"type": "movie", "runtime": "120", "genres": ["Action"], "title": meta.title, "year": meta.year}
-    if "data" in name or "mapping" in name or "config" in name or "info" in name:
+        return {
+            "type": "movie",
+            "runtime": "120",
+            "genres": ["Action"],
+            "title": meta.title,
+            "year": meta.year,
+        }
+    if (
+        "data" in name
+        or "mapping" in name
+        or "config" in name
+        or "info" in name
+    ):
         return {}
     if "list" in name or "items" in name or "tags" in name:
         return []
-    if parameter.annotation is bool or "bool" in str(parameter.annotation).casefold():
+    if (
+        parameter.annotation is bool
+        or "bool" in str(parameter.annotation).casefold()
+    ):
         return False
     return ""
 
 
 @pytest.mark.asyncio
-async def test_registered_trackers_implement_deterministic_mapping_contracts(tmp_path: Path) -> None:
+async def test_registered_trackers_implement_deterministic_mapping_contracts(
+    tmp_path: Path,
+) -> None:
     config = _configured_catalog()
     variants = [
         ("MOVIE", "DISC", "2160p"),
@@ -272,7 +333,12 @@ async def test_registered_trackers_implement_deterministic_mapping_contracts(tmp
         ("XXX", "WEBDL", "1080p"),
     ]
     releases = [
-        _release(tmp_path / f"case-{index}", category=category, release_type=release_type, resolution=resolution)
+        _release(
+            tmp_path / f"case-{index}",
+            category=category,
+            release_type=release_type,
+            resolution=resolution,
+        )
         for index, (category, release_type, resolution) in enumerate(variants)
     ]
     attempted: set[tuple[str, str]] = set()
@@ -281,10 +347,17 @@ async def test_registered_trackers_implement_deterministic_mapping_contracts(tmp
 
     for tracker_name, tracker_class in sorted(tracker_class_map.items()):
         tracker = tracker_class(config)
-        supported = {str(value).upper() for value in getattr(tracker, "supported_categories", ()) or ()}
+        supported = {
+            str(value).upper()
+            for value in getattr(tracker, "supported_categories", ()) or ()
+        }
         for method_name in _MAPPING_METHODS:
             method = getattr(tracker, method_name, None)
-            if method is None or not callable(method) or inspect.iscoroutinefunction(method):
+            if (
+                method is None
+                or not callable(method)
+                or inspect.iscoroutinefunction(method)
+            ):
                 continue
             key = (tracker_name, method_name)
             attempted.add(key)
@@ -294,7 +367,10 @@ async def test_registered_trackers_implement_deterministic_mapping_contracts(tmp
                 signature = inspect.signature(method)
                 args: list[object] = []
                 for parameter in signature.parameters.values():
-                    if parameter.kind in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}:
+                    if parameter.kind in {
+                        inspect.Parameter.VAR_POSITIONAL,
+                        inspect.Parameter.VAR_KEYWORD,
+                    }:
                         continue
                     if parameter.default is not inspect.Parameter.empty:
                         continue
@@ -303,31 +379,54 @@ async def test_registered_trackers_implement_deterministic_mapping_contracts(tmp
                     result = method(*args)
                     if inspect.isawaitable(result):
                         await result
-                except (FileNotFoundError, KeyError, TypeError, ValueError, AttributeError, IndexError) as error:
-                    failures.setdefault(key, []).append(f"{meta.category}/{meta.type}: {type(error).__name__}: {error}")
+                except (
+                    FileNotFoundError,
+                    KeyError,
+                    TypeError,
+                    ValueError,
+                    AttributeError,
+                    IndexError,
+                ) as error:
+                    failures.setdefault(key, []).append(
+                        f"{meta.category}/{meta.type}: {type(error).__name__}: {error}"
+                    )
                     continue
                 successful.add(key)
 
-    unresolved = sorted(key for key in attempted - successful if key[0] in tracker_class_map)
+    unresolved = sorted(
+        key for key in attempted - successful if key[0] in tracker_class_map
+    )
     assert len(attempted) >= 100
-    assert not unresolved, "Unresolved deterministic mapping contracts:\n" + "\n".join(
-        f"{tracker}.{method}: {'; '.join(failures.get((tracker, method), [])[:3])}" for tracker, method in unresolved[:50]
+    assert not unresolved, (
+        "Unresolved deterministic mapping contracts:\n"
+        + "\n".join(
+            f"{tracker}.{method}: {'; '.join(failures.get((tracker, method), [])[:3])}"
+            for tracker, method in unresolved[:50]
+        )
     )
 
 
-def _mapping_mode_cases(signature: inspect.Signature, meta: Meta) -> list[dict[str, object]]:
+def _mapping_mode_cases(
+    signature: inspect.Signature, meta: Meta
+) -> list[dict[str, object]]:
     cases: list[dict[str, object]] = []
     if "mapping_only" in signature.parameters:
         cases.append({"mapping_only": True})
     if "reverse" in signature.parameters:
         cases.append({"reverse": True})
-    for name, value in (("category", meta.category), ("type", meta.type), ("resolution", meta.resolution)):
+    for name, value in (
+        ("category", meta.category),
+        ("type", meta.type),
+        ("resolution", meta.resolution),
+    ):
         if name in signature.parameters:
             cases.append({name: value})
     return cases
 
 
-async def _call_mapping_mode(method: Any, meta: Meta, kwargs: dict[str, object]) -> object:
+async def _call_mapping_mode(
+    method: Any, meta: Meta, kwargs: dict[str, object]
+) -> object:
     result = method(meta, **kwargs)
     return await result if inspect.isawaitable(result) else result
 
@@ -337,7 +436,9 @@ def _mapping_method(tracker: object, method_name: str) -> Any | None:
     return method if callable(method) else None
 
 
-async def _exercise_tracker_mapping_modes(tracker_name: str, tracker: object, meta: Meta) -> int:
+async def _exercise_tracker_mapping_modes(
+    tracker_name: str, tracker: object, meta: Meta
+) -> int:
     if tracker_name == "UNWALLED":
         return 0
     tracker_meta = meta.copy()
@@ -347,7 +448,9 @@ async def _exercise_tracker_mapping_modes(tracker_name: str, tracker: object, me
         method = _mapping_method(tracker, method_name)
         if method is None:
             continue
-        for kwargs in _mapping_mode_cases(inspect.signature(method), tracker_meta):
+        for kwargs in _mapping_mode_cases(
+            inspect.signature(method), tracker_meta
+        ):
             result = await _call_mapping_mode(method, tracker_meta, kwargs)
             assert result is not None
             attempted += 1
@@ -355,10 +458,19 @@ async def _exercise_tracker_mapping_modes(tracker_name: str, tracker: object, me
 
 
 @pytest.mark.asyncio
-async def test_registered_mapping_modes_cover_forward_reverse_and_mapping_only(tmp_path: Path) -> None:
+async def test_registered_mapping_modes_cover_forward_reverse_and_mapping_only(
+    tmp_path: Path,
+) -> None:
     config = _configured_catalog()
-    meta = _release(tmp_path / "mapping-modes", category="MOVIE", release_type="DISC", resolution="2160p")
+    meta = _release(
+        tmp_path / "mapping-modes",
+        category="MOVIE",
+        release_type="DISC",
+        resolution="2160p",
+    )
     attempted = 0
     for tracker_name, tracker_class in sorted(tracker_class_map.items()):
-        attempted += await _exercise_tracker_mapping_modes(tracker_name, tracker_class(config), meta)
+        attempted += await _exercise_tracker_mapping_modes(
+            tracker_name, tracker_class(config), meta
+        )
     assert attempted >= 300

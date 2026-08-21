@@ -20,7 +20,9 @@ class _Uploader:
     def __init__(self, _config: dict[str, Any] | None = None) -> None:
         pass
 
-    async def upload_screens(self, _meta: Meta, **kwargs: Any) -> tuple[list[dict[str, str]], int]:
+    async def upload_screens(
+        self, _meta: Meta, **kwargs: Any
+    ) -> tuple[list[dict[str, str]], int]:
         files = list(kwargs.get("custom_img_list", []))
         type(self).calls.append(files)
         uploaded = [
@@ -104,7 +106,9 @@ def _png(path: Path, value: int = 255) -> None:
     Image.new("RGB", (4, 4), (value, value, value)).save(path)
 
 
-def test_select_evenly_spaced_and_discard_error_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_select_evenly_spaced_and_discard_error_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     assert disc_menus.select_evenly_spaced([1, 2], 3) == [1, 2]
     assert disc_menus.select_evenly_spaced([1, 2, 3], 0) == []
     assert disc_menus.select_evenly_spaced([1, 2, 3], 1) == [1]
@@ -122,11 +126,15 @@ def test_select_evenly_spaced_and_discard_error_paths(tmp_path: Path, monkeypatc
         original_unlink(path, *args, **kwargs)
 
     monkeypatch.setattr(Path, "unlink", flaky_unlink)
-    disc_menus.discard_previous_menu_capture_files(tmp_path / "DVD-VTS_01_0-%03d.png")
+    disc_menus.discard_previous_menu_capture_files(
+        tmp_path / "DVD-VTS_01_0-%03d.png"
+    )
     assert not first.exists() and second.exists()
 
 
-def test_get_disc_menu_images_dispatches_all_modes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_disc_menu_images_dispatches_all_modes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(disc_menus, "UploadScreensManager", _Uploader)
     meta = _meta(tmp_path)
     manager = DiscMenus(meta, {"DEFAULT": {}})
@@ -152,7 +160,9 @@ def test_get_disc_menu_images_dispatches_all_modes(tmp_path: Path, monkeypatch: 
     asyncio.run(DiscMenus(meta, {"DEFAULT": {}}).get_disc_menu_images(meta))
 
 
-def test_local_images_and_json_persistence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_local_images_and_json_persistence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(disc_menus, "UploadScreensManager", _Uploader)
     _Uploader.reset()
     local = tmp_path / "menus"
@@ -171,7 +181,9 @@ def test_local_images_and_json_persistence(tmp_path: Path, monkeypatch: pytest.M
     asyncio.run(manager.save_images_to_json(meta, []))
 
 
-def test_auto_capture_unsupported_invalid_paths_and_scan_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_auto_capture_unsupported_invalid_paths_and_scan_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(disc_menus, "UploadScreensManager", _Uploader)
     manager = DiscMenus(_meta(tmp_path), {"DEFAULT": {}})
     asyncio.run(manager.auto_capture_dvd_menus(_meta(tmp_path, discs=[])))
@@ -189,7 +201,9 @@ def test_auto_capture_unsupported_invalid_paths_and_scan_errors(tmp_path: Path, 
 
     dvd = tmp_path / "dvd"
     dvd.mkdir()
-    meta = _meta(tmp_path, discs=[{"type": "DVD", "name": "Broken", "path": str(dvd)}])
+    meta = _meta(
+        tmp_path, discs=[{"type": "DVD", "name": "Broken", "path": str(dvd)}]
+    )
     original_iterdir = Path.iterdir
 
     def fail_iterdir(path: Path):
@@ -201,7 +215,9 @@ def test_auto_capture_unsupported_invalid_paths_and_scan_errors(tmp_path: Path, 
     asyncio.run(manager.auto_capture_dvd_menus(meta))
 
 
-def test_auto_capture_static_motion_fallback_retry_filter_limit_and_upload(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_auto_capture_static_motion_fallback_retry_filter_limit_and_upload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(disc_menus, "UploadScreensManager", _Uploader)
     _Uploader.reset()
     dvd = tmp_path / "VIDEO_TS"
@@ -220,22 +236,50 @@ def test_auto_capture_static_motion_fallback_retry_filter_limit_and_upload(tmp_p
         if path == bad_info:
             raise RuntimeError("mediainfo failed")
         if path == motion:
-            return SimpleNamespace(tracks=[_Track(width="720", height="480", par="1.2", dar="1.8", duration="5000")])
+            return SimpleNamespace(
+                tracks=[
+                    _Track(
+                        width="720",
+                        height="480",
+                        par="1.2",
+                        dar="1.8",
+                        duration="5000",
+                    )
+                ]
+            )
         if path == failed:
             return SimpleNamespace(tracks=[_Track(duration="1000")])
         if path == exploding:
             return SimpleNamespace(tracks=[_Track(duration="1000")])
-        return SimpleNamespace(tracks=[_Track(width=None, height=None, par=None, dar=None, duration="1000")])
+        return SimpleNamespace(
+            tracks=[
+                _Track(
+                    width=None,
+                    height=None,
+                    par=None,
+                    dar=None,
+                    duration="1000",
+                )
+            ]
+        )
 
     monkeypatch.setattr(disc_menus.MediaInfo, "parse", parse)
-    monkeypatch.setattr(disc_menus, "configured_binary", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        disc_menus, "configured_binary", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr(disc_menus.platform, "system", lambda: "Linux")
     monkeypatch.setattr(disc_menus.platform, "machine", lambda: "x86_64")
     ffmpeg = tmp_path / "bin" / "ffmpeg" / "amd" / "ffmpeg"
     ffmpeg.parent.mkdir(parents=True)
     ffmpeg.write_bytes(b"binary")
-    monkeypatch.setattr(disc_menus, "should_scale_screenshots_for_par", lambda _config: True)
-    monkeypatch.setattr(disc_menus, "screenshot_par_scale_factors", lambda *_args: (1.201, 0.801))
+    monkeypatch.setattr(
+        disc_menus, "should_scale_screenshots_for_par", lambda _config: True
+    )
+    monkeypatch.setattr(
+        disc_menus,
+        "screenshot_par_scale_factors",
+        lambda *_args: (1.201, 0.801),
+    )
 
     output = tmp_path / "tmp" / "disc-menu" / "menu_screenshots"
 
@@ -267,9 +311,21 @@ def test_auto_capture_static_motion_fallback_retry_filter_limit_and_upload(tmp_p
             raise RuntimeError("spawn failed")
         return next(processes)
 
-    monkeypatch.setattr(disc_menus.asyncio, "create_subprocess_exec", subprocess_factory)
-    meta = _meta(tmp_path, discs=[{"type": "DVD", "name": "DVD:Name", "path": str(dvd)}])
-    manager = DiscMenus(meta, {"DEFAULT": {"max_menu_screens": "2", "scale_screenshots_for_par": True}})
+    monkeypatch.setattr(
+        disc_menus.asyncio, "create_subprocess_exec", subprocess_factory
+    )
+    meta = _meta(
+        tmp_path, discs=[{"type": "DVD", "name": "DVD:Name", "path": str(dvd)}]
+    )
+    manager = DiscMenus(
+        meta,
+        {
+            "DEFAULT": {
+                "max_menu_screens": "2",
+                "scale_screenshots_for_par": True,
+            }
+        },
+    )
     asyncio.run(manager.auto_capture_dvd_menus(meta))
     assert len(meta.menu_images) == 2
     assert _Uploader.calls and len(_Uploader.calls[-1]) == 2
@@ -277,13 +333,23 @@ def test_auto_capture_static_motion_fallback_retry_filter_limit_and_upload(tmp_p
     assert static.exists() and motion.exists()
 
 
-def test_auto_capture_timeouts_kill_processes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_auto_capture_timeouts_kill_processes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(disc_menus, "UploadScreensManager", _Uploader)
     dvd = tmp_path / "timeout-dvd"
     _large_file(dvd / "VIDEO_TS.VOB")
-    monkeypatch.setattr(disc_menus.MediaInfo, "parse", lambda _path: SimpleNamespace(tracks=[_Track(duration=1000)]))
+    monkeypatch.setattr(
+        disc_menus.MediaInfo,
+        "parse",
+        lambda _path: SimpleNamespace(tracks=[_Track(duration=1000)]),
+    )
     process = _Process(returncode=1, stderr=b"timed out")
-    monkeypatch.setattr(disc_menus.asyncio, "create_subprocess_exec", AsyncMock(return_value=process))
+    monkeypatch.setattr(
+        disc_menus.asyncio,
+        "create_subprocess_exec",
+        AsyncMock(return_value=process),
+    )
 
     async def timeout(awaitable: Any, **_kwargs: object) -> Any:
         close = getattr(awaitable, "close", None)
@@ -292,12 +358,20 @@ def test_auto_capture_timeouts_kill_processes(tmp_path: Path, monkeypatch: pytes
         raise TimeoutError
 
     monkeypatch.setattr(disc_menus.asyncio, "wait_for", timeout)
-    meta = _meta(tmp_path, discs=[{"type": "DVD", "name": "Timeout", "path": str(dvd)}])
-    asyncio.run(DiscMenus(meta, {"DEFAULT": {"max_menu_screens": "bad"}}).auto_capture_dvd_menus(meta))
+    meta = _meta(
+        tmp_path, discs=[{"type": "DVD", "name": "Timeout", "path": str(dvd)}]
+    )
+    asyncio.run(
+        DiscMenus(
+            meta, {"DEFAULT": {"max_menu_screens": "bad"}}
+        ).auto_capture_dvd_menus(meta)
+    )
     assert process.killed
 
 
-def test_process_disc_menus_wrapper(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_process_disc_menus_wrapper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     get = AsyncMock()
 
     class FakeMenus:
@@ -312,12 +386,18 @@ def test_process_disc_menus_wrapper(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     get.assert_awaited_once_with(meta)
 
 
-def test_auto_capture_motion_fallback_filters_black_and_corrupt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_auto_capture_motion_fallback_filters_black_and_corrupt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(disc_menus, "UploadScreensManager", _Uploader)
     _Uploader.reset()
     dvd = tmp_path / "fallback-dvd"
     motion = _large_file(dvd / "VIDEO_TS.VOB")
-    monkeypatch.setattr(disc_menus.MediaInfo, "parse", lambda _path: SimpleNamespace(tracks=[_Track(duration=5000)]))
+    monkeypatch.setattr(
+        disc_menus.MediaInfo,
+        "parse",
+        lambda _path: SimpleNamespace(tracks=[_Track(duration=5000)]),
+    )
     output = tmp_path / "tmp" / "disc-menu" / "menu_screenshots"
 
     def fallback_frames(_calls: int) -> None:
@@ -326,20 +406,39 @@ def test_auto_capture_motion_fallback_filters_black_and_corrupt(tmp_path: Path, 
         _png(output / "Fallback-VIDEO_TS-003.png", 255)
 
     processes = iter([_Process(), _Process(callback=fallback_frames)])
-    monkeypatch.setattr(disc_menus.asyncio, "create_subprocess_exec", AsyncMock(side_effect=lambda *_args, **_kwargs: next(processes)))
-    meta = _meta(tmp_path, discs=[{"type": "DVD", "name": "Fallback", "path": str(dvd)}])
-    asyncio.run(DiscMenus(meta, {"DEFAULT": {"max_menu_screens": 3}}).auto_capture_dvd_menus(meta))
+    monkeypatch.setattr(
+        disc_menus.asyncio,
+        "create_subprocess_exec",
+        AsyncMock(side_effect=lambda *_args, **_kwargs: next(processes)),
+    )
+    meta = _meta(
+        tmp_path, discs=[{"type": "DVD", "name": "Fallback", "path": str(dvd)}]
+    )
+    asyncio.run(
+        DiscMenus(
+            meta, {"DEFAULT": {"max_menu_screens": 3}}
+        ).auto_capture_dvd_menus(meta)
+    )
     assert len(meta.menu_images) == 2
-    assert any(image["raw_url"].endswith("Fallback-VIDEO_TS-003.png") for image in meta.menu_images)
+    assert any(
+        image["raw_url"].endswith("Fallback-VIDEO_TS-003.png")
+        for image in meta.menu_images
+    )
     assert motion.exists()
 
 
-def test_auto_capture_motion_timeouts_cover_fallback_and_retry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_auto_capture_motion_timeouts_cover_fallback_and_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(disc_menus, "UploadScreensManager", _Uploader)
     _Uploader.reset()
     dvd = tmp_path / "timeout-motion"
     _large_file(dvd / "VIDEO_TS.VOB")
-    monkeypatch.setattr(disc_menus.MediaInfo, "parse", lambda _path: SimpleNamespace(tracks=[_Track(duration=5000)]))
+    monkeypatch.setattr(
+        disc_menus.MediaInfo,
+        "parse",
+        lambda _path: SimpleNamespace(tracks=[_Track(duration=5000)]),
+    )
     output = tmp_path / "tmp" / "disc-menu" / "menu_screenshots"
 
     def retry_frames(_calls: int) -> None:
@@ -348,7 +447,11 @@ def test_auto_capture_motion_timeouts_cover_fallback_and_retry(tmp_path: Path, m
         _png(output / "Timeout-VIDEO_TS-003.png", 255)
 
     processes = [_Process(), _Process(), _Process(callback=retry_frames)]
-    monkeypatch.setattr(disc_menus.asyncio, "create_subprocess_exec", AsyncMock(side_effect=processes))
+    monkeypatch.setattr(
+        disc_menus.asyncio,
+        "create_subprocess_exec",
+        AsyncMock(side_effect=processes),
+    )
 
     async def timeout(awaitable: Any, **_kwargs: object) -> Any:
         close = getattr(awaitable, "close", None)
@@ -357,7 +460,13 @@ def test_auto_capture_motion_timeouts_cover_fallback_and_retry(tmp_path: Path, m
         raise TimeoutError
 
     monkeypatch.setattr(disc_menus.asyncio, "wait_for", timeout)
-    meta = _meta(tmp_path, discs=[{"type": "DVD", "name": "Timeout", "path": str(dvd)}])
-    asyncio.run(DiscMenus(meta, {"DEFAULT": {"max_menu_screens": 3}}).auto_capture_dvd_menus(meta))
+    meta = _meta(
+        tmp_path, discs=[{"type": "DVD", "name": "Timeout", "path": str(dvd)}]
+    )
+    asyncio.run(
+        DiscMenus(
+            meta, {"DEFAULT": {"max_menu_screens": 3}}
+        ).auto_capture_dvd_menus(meta)
+    )
     assert all(process.killed for process in processes)
     assert len(meta.menu_images) == 2

@@ -18,9 +18,14 @@ from pathlib import Path
 from typing import Any
 
 from src.domain_models.release import Meta
-from src.integrations.filesystem.temp_paths import dynamic_hdr_plots_dir, release_temp_dir
+from src.integrations.filesystem.temp_paths import (
+    dynamic_hdr_plots_dir,
+    release_temp_dir,
+)
 from src.integrations.observability.runtime_support import logger
-from src.integrations.runtime_tools.configured_binaries import configured_binary
+from src.integrations.runtime_tools.configured_binaries import (
+    configured_binary,
+)
 from src.integrations.runtime_tools.dynamic_hdr_tools import TOOLS, get_tool
 
 CACHE_VERSION = 1
@@ -28,7 +33,9 @@ VIDEO_EXTENSIONS = {".m2ts", ".mkv", ".mp4", ".ts", ".hevc", ".h265"}
 MAX_TOOL_TIMEOUT_SECONDS = 7200
 
 
-def _positive_config_int(config: dict[str, Any], key: str, default: int) -> int:
+def _positive_config_int(
+    config: dict[str, Any], key: str, default: int
+) -> int:
     try:
         return max(1, int(config["DEFAULT"].get(key, default)))
     except KeyError, TypeError, ValueError:
@@ -43,7 +50,12 @@ def _source_files(meta: Meta, max_files: int) -> list[Path]:
             candidate = Path(disc_path) / "STREAM" / stream
             if candidate.is_file():
                 return [candidate]
-    sources = [Path(file) for file in meta.filelist if Path(file).suffix.lower() in VIDEO_EXTENSIONS and Path(file).is_file()]
+    sources = [
+        Path(file)
+        for file in meta.filelist
+        if Path(file).suffix.lower() in VIDEO_EXTENSIONS
+        and Path(file).is_file()
+    ]
     return list(dict.fromkeys(sources))[:max_files]
 
 
@@ -61,7 +73,9 @@ def _fingerprint(sources: list[Path], formats: list[str]) -> str:
     digest = hashlib.sha256()
     for source in sources:
         info = source.stat()
-        digest.update(f"{source.resolve()}:{info.st_size}:{info.st_mtime_ns}".encode())
+        digest.update(
+            f"{source.resolve()}:{info.st_size}:{info.st_mtime_ns}".encode()
+        )
     digest.update(",".join(formats).encode())
     return digest.hexdigest()
 
@@ -72,7 +86,15 @@ async def _terminate_process(process: asyncio.subprocess.Process) -> None:
     pid = getattr(process, "pid", None)
     if os.name == "nt" and pid is not None:
         try:
-            killer = await asyncio.create_subprocess_exec("taskkill", "/F", "/T", "/PID", str(pid), stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+            killer = await asyncio.create_subprocess_exec(
+                "taskkill",
+                "/F",
+                "/T",
+                "/PID",
+                str(pid),
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
             try:
                 await asyncio.wait_for(killer.wait(), timeout=5)
             except TimeoutError:
@@ -99,19 +121,27 @@ async def _run(command: list[str], timeout_seconds: int = 3600) -> None:
         *command,
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL,
-        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0,
+        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
+        if os.name == "nt"
+        else 0,
         start_new_session=os.name != "nt",
     )
     try:
-        returncode = await asyncio.wait_for(process.wait(), timeout=timeout_seconds)
+        returncode = await asyncio.wait_for(
+            process.wait(), timeout=timeout_seconds
+        )
     except TimeoutError:
         await _terminate_process(process)
-        raise RuntimeError(f"{' '.join(command[:2])} timed out after {timeout_seconds} seconds") from None
+        raise RuntimeError(
+            f"{' '.join(command[:2])} timed out after {timeout_seconds} seconds"
+        ) from None
     except BaseException:
         await _terminate_process(process)
         raise
     if returncode:
-        raise RuntimeError(f"{' '.join(command[:2])} failed with exit code {returncode}")
+        raise RuntimeError(
+            f"{' '.join(command[:2])} failed with exit code {returncode}"
+        )
 
 
 async def _generate_plot(
@@ -123,7 +153,9 @@ async def _generate_plot(
     ffmpeg_binary: str = "ffmpeg",
 ) -> Path:
     stem = source.stem
-    artifact_id = hashlib.sha256(str(source.resolve()).encode()).hexdigest()[:12]
+    artifact_id = hashlib.sha256(str(source.resolve()).encode()).hexdigest()[
+        :12
+    ]
     artifact_name = f"{stem}_{artifact_id}"
     output = output_dir / f"dynamic_hdr_{kind}_{artifact_name}.png"
     work_dir = output_dir / ".metadata"
@@ -134,25 +166,71 @@ async def _generate_plot(
         # transport streams and MP4 containers with a stream copy, never a re-encode.
         input_source = work_dir / f"{artifact_name}.hevc"
         await _run(
-            [ffmpeg_binary, "-y", "-i", str(source), "-map", "0:v:0", "-c:v", "copy", "-bsf:v", "hevc_mp4toannexb", "-f", "hevc", str(input_source)],
+            [
+                ffmpeg_binary,
+                "-y",
+                "-i",
+                str(source),
+                "-map",
+                "0:v:0",
+                "-c:v",
+                "copy",
+                "-bsf:v",
+                "hevc_mp4toannexb",
+                "-f",
+                "hevc",
+                str(input_source),
+            ],
             timeout_seconds,
         )
     if kind == "dovi":
         rpu = work_dir / f"{artifact_name}.rpu.bin"
-        await _run([binary, "extract-rpu", str(input_source), "-o", str(rpu)], timeout_seconds)
-        await _run([binary, "plot", str(rpu), "-t", f"Dolby Vision L1 Plot - {stem}", "-o", str(output)], timeout_seconds)
+        await _run(
+            [binary, "extract-rpu", str(input_source), "-o", str(rpu)],
+            timeout_seconds,
+        )
+        await _run(
+            [
+                binary,
+                "plot",
+                str(rpu),
+                "-t",
+                f"Dolby Vision L1 Plot - {stem}",
+                "-o",
+                str(output),
+            ],
+            timeout_seconds,
+        )
     else:
         metadata = work_dir / f"{artifact_name}.hdr10plus.json"
-        await _run([binary, "extract", str(input_source), "-o", str(metadata)], timeout_seconds)
-        await _run([binary, "plot", str(metadata), "-t", f"HDR10+ Plot - {stem}", "-o", str(output)], timeout_seconds)
+        await _run(
+            [binary, "extract", str(input_source), "-o", str(metadata)],
+            timeout_seconds,
+        )
+        await _run(
+            [
+                binary,
+                "plot",
+                str(metadata),
+                "-t",
+                f"HDR10+ Plot - {stem}",
+                "-o",
+                str(output),
+            ],
+            timeout_seconds,
+        )
     if not output.is_file():
-        raise RuntimeError(f"{TOOLS[kind]['command']} did not create {output.name}")
+        raise RuntimeError(
+            f"{TOOLS[kind]['command']} did not create {output.name}"
+        )
     return output
 
 
 def dynamic_hdr_plot_enabled(meta: Meta, config: dict[str, Any]) -> bool:
     """Return whether plots are enabled globally, explicitly, or by an active tracker."""
-    if meta.dynamic_hdr_plot or config["DEFAULT"].get("add_dynamic_hdr_plot", False):
+    if meta.dynamic_hdr_plot or config["DEFAULT"].get(
+        "add_dynamic_hdr_plot", False
+    ):
         return True
 
     selected_trackers = meta.trackers
@@ -161,38 +239,60 @@ def dynamic_hdr_plot_enabled(meta: Meta, config: dict[str, Any]) -> bool:
 
     tracker_configs = config.get("TRACKERS", {})
     return any(
-        isinstance(tracker, str) and isinstance(tracker_configs.get(tracker.upper()), dict) and tracker_configs[tracker.upper()].get("add_dynamic_hdr_plot", False)
+        isinstance(tracker, str)
+        and isinstance(tracker_configs.get(tracker.upper()), dict)
+        and tracker_configs[tracker.upper()].get("add_dynamic_hdr_plot", False)
         for tracker in selected_trackers
     )
 
 
-async def process_dynamic_hdr_plots(meta: Meta, config: dict[str, Any], uploadscreens_manager: Any = None) -> list[str]:
+async def process_dynamic_hdr_plots(
+    meta: Meta, config: dict[str, Any], uploadscreens_manager: Any = None
+) -> list[str]:
     """Generate, cache and upload plots for detected dynamic HDR formats."""
     if meta.dynamic_hdr_plot_images:
         return []
     formats = _formats(meta)
     if not formats:
-        logger.info("[cyan]Dynamic HDR plot skipped: no Dolby Vision or HDR10+ metadata detected.[/cyan]")
+        logger.info(
+            "[cyan]Dynamic HDR plot skipped: no Dolby Vision or HDR10+ metadata detected.[/cyan]"
+        )
         return []
-    sources = _source_files(meta, _positive_config_int(config, "dynamic_hdr_plot_max_files", 1))
+    sources = _source_files(
+        meta, _positive_config_int(config, "dynamic_hdr_plot_max_files", 1)
+    )
     if not sources:
-        logger.warning("[yellow]Dynamic HDR plot skipped: no supported video source found.[/yellow]")
+        logger.warning(
+            "[yellow]Dynamic HDR plot skipped: no supported video source found.[/yellow]"
+        )
         return []
 
     output_dir = dynamic_hdr_plots_dir(meta.base_dir, meta.uuid)
-    cache_path = release_temp_dir(meta.base_dir, meta.uuid) / "dynamic_hdr_plot_images.json"
+    cache_path = (
+        release_temp_dir(meta.base_dir, meta.uuid)
+        / "dynamic_hdr_plot_images.json"
+    )
     fingerprint = _fingerprint(sources, formats)
     try:
         cache = json.loads(cache_path.read_text(encoding="utf-8"))
-        if cache.get("cache_version") == CACHE_VERSION and cache.get("fingerprint") == fingerprint and isinstance(cache.get("dynamic_hdr_plot_images"), list):
+        if (
+            cache.get("cache_version") == CACHE_VERSION
+            and cache.get("fingerprint") == fingerprint
+            and isinstance(cache.get("dynamic_hdr_plot_images"), list)
+        ):
             meta.dynamic_hdr_plot_images = cache["dynamic_hdr_plot_images"]
             return []
     except OSError, ValueError, TypeError:
         pass
 
     jobs = [(kind, source) for source in sources for kind in formats]
-    tool_timeout = min(_positive_config_int(config, "dynamic_hdr_plot_tool_timeout", 3600), MAX_TOOL_TIMEOUT_SECONDS)
-    logger.info("[yellow]Generating dynamic HDR plots reads each selected video file in full; this may take a while for large releases.[/yellow]")
+    tool_timeout = min(
+        _positive_config_int(config, "dynamic_hdr_plot_tool_timeout", 3600),
+        MAX_TOOL_TIMEOUT_SECONDS,
+    )
+    logger.info(
+        "[yellow]Generating dynamic HDR plots reads each selected video file in full; this may take a while for large releases.[/yellow]"
+    )
 
     tools: dict[str, str] = {}
     ffmpeg_binary = configured_binary("ffmpeg_path", config) or "ffmpeg"
@@ -200,22 +300,45 @@ async def process_dynamic_hdr_plots(meta: Meta, config: dict[str, Any], uploadsc
     for _position, (kind, source) in enumerate(jobs, start=1):
         try:
             if kind not in tools:
-                tools[kind] = configured_binary(f"{TOOLS[kind]['command']}_path", config) or await get_tool(meta.base_dir, kind)
+                tools[kind] = configured_binary(
+                    f"{TOOLS[kind]['command']}_path", config
+                ) or await get_tool(meta.base_dir, kind)
             binary = tools[kind]
-            plot = await _generate_plot(binary, kind, source, output_dir, tool_timeout, ffmpeg_binary)
+            plot = await _generate_plot(
+                binary, kind, source, output_dir, tool_timeout, ffmpeg_binary
+            )
             generated.append(str(plot))
             detail = f"Generated {kind} plot for {source.name}"
         except Exception as error:
             detail = f"{kind} plot failed for {source.name}: {error!s}"
             logger.warning(f"[yellow]{detail}[/yellow]")
 
-    if generated and uploadscreens_manager and not meta.skip_imghost_upload and not meta.debug:
+    if (
+        generated
+        and uploadscreens_manager
+        and not meta.skip_imghost_upload
+        and not meta.debug
+    ):
         try:
-            images, _ = await uploadscreens_manager.upload_screens(meta, len(generated), 1, 0, len(generated), generated, {})
+            images, _ = await uploadscreens_manager.upload_screens(
+                meta, len(generated), 1, 0, len(generated), generated, {}
+            )
             if images:
                 meta.dynamic_hdr_plot_images = images
-                cache_path.write_text(json.dumps({"cache_version": CACHE_VERSION, "fingerprint": fingerprint, "dynamic_hdr_plot_images": images}, indent=4), encoding="utf-8")
+                cache_path.write_text(
+                    json.dumps(
+                        {
+                            "cache_version": CACHE_VERSION,
+                            "fingerprint": fingerprint,
+                            "dynamic_hdr_plot_images": images,
+                        },
+                        indent=4,
+                    ),
+                    encoding="utf-8",
+                )
         except Exception as error:
-            logger.error(f"[red]Error uploading dynamic HDR plots: {error!s}[/red]")
+            logger.error(
+                f"[red]Error uploading dynamic HDR plots: {error!s}[/red]"
+            )
 
     return generated

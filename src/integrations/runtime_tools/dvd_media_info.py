@@ -9,7 +9,11 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from src.integrations.observability.console import logger
-from src.integrations.runtime_tools.download_integrity import download_verified_asset_sync, extract_zip_regular_member, promote_files_with_rollback
+from src.integrations.runtime_tools.download_integrity import (
+    download_verified_asset_sync,
+    extract_zip_regular_member,
+    promote_files_with_rollback,
+)
 
 MEDIAINFO_VERSION = "23.04"
 MEDIAINFO_CLI_BASE_URL = "https://mediaarea.net/download/binary/mediainfo"
@@ -43,28 +47,45 @@ def download_file(url: str, output_path: Path) -> None:
     download_verified_asset_sync(url, output_path, output_path.name)
 
 
-def extract_linux(cli_archive: Path, lib_archive: Path, output_dir: Path) -> None:
+def extract_linux(
+    cli_archive: Path, lib_archive: Path, output_dir: Path
+) -> None:
     staging = output_dir / ".mediainfo-staging"
     shutil.rmtree(staging, ignore_errors=True)
     staging.mkdir()
     try:
         with zipfile.ZipFile(cli_archive, "r") as archive:
-            cli_members = [name for name in archive.namelist() if name.endswith("/mediainfo") or name == "mediainfo"]
+            cli_members = [
+                name
+                for name in archive.namelist()
+                if name.endswith("/mediainfo") or name == "mediainfo"
+            ]
             if len(cli_members) != 1:
-                raise RuntimeError("MediaInfo archive must contain exactly one CLI binary")
-            extract_zip_regular_member(archive, cli_members[0], staging / "mediainfo")
+                raise RuntimeError(
+                    "MediaInfo archive must contain exactly one CLI binary"
+                )
+            extract_zip_regular_member(
+                archive, cli_members[0], staging / "mediainfo"
+            )
         with zipfile.ZipFile(lib_archive, "r") as archive:
             library_member = "lib/libmediainfo.so.0.0.0"
             if library_member not in archive.namelist():
-                raise RuntimeError("MediaInfo library archive does not contain the required library")
-            extract_zip_regular_member(archive, library_member, staging / "libmediainfo.so.0")
+                raise RuntimeError(
+                    "MediaInfo library archive does not contain the required library"
+                )
+            extract_zip_regular_member(
+                archive, library_member, staging / "libmediainfo.so.0"
+            )
         (staging / "mediainfo").chmod(0o700)
         staged_version = staging / f"version_{MEDIAINFO_VERSION}"
         staged_version.write_text(f"MediaInfo {MEDIAINFO_VERSION}")
         promote_files_with_rollback(
             [
                 (staging / "mediainfo", output_dir / "mediainfo"),
-                (staging / "libmediainfo.so.0", output_dir / "libmediainfo.so.0"),
+                (
+                    staging / "libmediainfo.so.0",
+                    output_dir / "libmediainfo.so.0",
+                ),
                 (staged_version, output_dir / staged_version.name),
             ],
             output_dir / ".mediainfo-backup",
@@ -76,10 +97,18 @@ def extract_linux(cli_archive: Path, lib_archive: Path, output_dir: Path) -> Non
 def extract_windows(cli_archive: Path, output_dir: Path) -> None:
     """Extract the legacy Windows DVD CLI without unpacking arbitrary archive members."""
     with zipfile.ZipFile(cli_archive, "r") as zip_ref:
-        members = [name for name in zip_ref.namelist() if Path(name).name == "MediaInfo.exe"]
+        members = [
+            name
+            for name in zip_ref.namelist()
+            if Path(name).name == "MediaInfo.exe"
+        ]
         if len(members) != 1:
-            raise RuntimeError("MediaInfo archive must contain exactly one MediaInfo.exe")
-        extract_zip_regular_member(zip_ref, members[0], output_dir / "MediaInfo.exe")
+            raise RuntimeError(
+                "MediaInfo archive must contain exactly one MediaInfo.exe"
+            )
+        extract_zip_regular_member(
+            zip_ref, members[0], output_dir / "MediaInfo.exe"
+        )
 
 
 def download_dvd_mediainfo(base_dir: str) -> str | None:
@@ -93,7 +122,9 @@ def download_dvd_mediainfo(base_dir: str) -> str | None:
 
     if system == "windows":
         if machine != "x86_64":
-            raise RuntimeError("MediaInfo 23.04 is unavailable for Windows ARM64; DVD language parsing cannot use the newer CLI")
+            raise RuntimeError(
+                "MediaInfo 23.04 is unavailable for Windows ARM64; DVD language parsing cannot use the newer CLI"
+            )
 
         output_dir = Path(base_dir) / "bin" / "MI" / "windows" / "dvd"
         cli_file = output_dir / "MediaInfo.exe"
@@ -106,14 +137,20 @@ def download_dvd_mediainfo(base_dir: str) -> str | None:
         with TemporaryDirectory() as tmp_dir:
             cli_archive = Path(tmp_dir) / cli_filename
             download_file(get_url(system, machine), cli_archive)
-            with TemporaryDirectory(dir=output_dir.parent, prefix="mediainfo-dvd-") as staging_dir:
+            with TemporaryDirectory(
+                dir=output_dir.parent, prefix="mediainfo-dvd-"
+            ) as staging_dir:
                 staging_dir_path = Path(staging_dir)
                 extract_windows(cli_archive, staging_dir_path)
                 staged_cli = staging_dir_path / "MediaInfo.exe"
                 if not staged_cli.is_file():
-                    raise RuntimeError("Failed to extract MediaInfo CLI for DVD processing")
+                    raise RuntimeError(
+                        "Failed to extract MediaInfo CLI for DVD processing"
+                    )
                 staged_cli.replace(cli_file)
-        version_file.write_text(f"MediaInfo {MEDIAINFO_VERSION}\n", encoding="utf-8")
+        version_file.write_text(
+            f"MediaInfo {MEDIAINFO_VERSION}\n", encoding="utf-8"
+        )
         return str(cli_file)
 
     if system != "linux":
@@ -133,9 +170,13 @@ def download_dvd_mediainfo(base_dir: str) -> str | None:
     version_file = output_dir / f"version_{MEDIAINFO_VERSION}"
 
     if cli_file.exists() and lib_file.exists() and version_file.exists():
-        logger.debug(f"[blue]MediaInfo CLI and Library {MEDIAINFO_VERSION} exist[/blue]")
+        logger.debug(
+            f"[blue]MediaInfo CLI and Library {MEDIAINFO_VERSION} exist[/blue]"
+        )
         return str(cli_file)
-    logger.info(f"[yellow]Downloading specific MediaInfo CLI and Library for DVD processing: {MEDIAINFO_VERSION}...[/yellow]")
+    logger.info(
+        f"[yellow]Downloading specific MediaInfo CLI and Library for DVD processing: {MEDIAINFO_VERSION}...[/yellow]"
+    )
     # Download MediaInfo CLI
     cli_url = get_url(system, machine, "cli")
     cli_filename = get_filename(system, machine, "cli")

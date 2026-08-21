@@ -13,7 +13,13 @@ import importlib
 import inspect
 import os
 import pkgutil
-from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
+from collections.abc import (
+    AsyncIterator,
+    Callable,
+    Iterator,
+    Mapping,
+    Sequence,
+)
 from pathlib import Path
 from types import ModuleType
 from typing import Any, ClassVar, Self, get_args, get_origin, get_type_hints
@@ -32,11 +38,21 @@ class _Response:
     scenario = "success"
     request = httpx.Request("GET", "https://api.invalid")
     url = "https://api.invalid/result"
-    headers: ClassVar[dict[str, str]] = {"content-type": "application/json", "content-length": "2"}
+    headers: ClassVar[dict[str, str]] = {
+        "content-type": "application/json",
+        "content-length": "2",
+    }
 
     @property
     def status_code(self) -> int:
-        return {"success": 200, "empty": 200, "not_found": 404, "unauthorized": 401, "rate_limited": 429, "server_error": 503}[type(self).scenario]
+        return {
+            "success": 200,
+            "empty": 200,
+            "not_found": 404,
+            "unauthorized": 401,
+            "rate_limited": 429,
+            "server_error": 503,
+        }[type(self).scenario]
 
     @property
     def text(self) -> str:
@@ -79,9 +95,21 @@ class _Response:
             "items": [],
             "totalItems": 0,
             "torrents": {},
-            "show": {"id": 123, "name": "Example", "externals": {"thetvdb": 456}},
-            "series": {"id": 123, "title": "Example", "tvdbId": 456, "imdbId": "tt1234567"},
-            "movieFile": {"originalFilePath": "/media/example.mkv", "releaseGroup": "GROUP"},
+            "show": {
+                "id": 123,
+                "name": "Example",
+                "externals": {"thetvdb": 456},
+            },
+            "series": {
+                "id": 123,
+                "title": "Example",
+                "tvdbId": 456,
+                "imdbId": "tt1234567",
+            },
+            "movieFile": {
+                "originalFilePath": "/media/example.mkv",
+                "releaseGroup": "GROUP",
+            },
             "musicInfo": {"artists": [{"name": "Artist"}]},
             "group": {"id": 1, "name": "Album"},
             "torrent": {"id": 1},
@@ -91,7 +119,13 @@ class _Response:
 
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
-            raise httpx.HTTPStatusError("API error", request=self.request, response=httpx.Response(self.status_code, request=self.request))
+            raise httpx.HTTPStatusError(
+                "API error",
+                request=self.request,
+                response=httpx.Response(
+                    self.status_code, request=self.request
+                ),
+            )
 
     def iter_bytes(self) -> Iterator[bytes]:
         yield self.content
@@ -200,7 +234,12 @@ class _Universal(dict[str, Any]):
 
 
 def _modules() -> list[ModuleType]:
-    return [importlib.import_module(info.name) for info in pkgutil.iter_modules(external_apis.__path__, f"{external_apis.__name__}.")]
+    return [
+        importlib.import_module(info.name)
+        for info in pkgutil.iter_modules(
+            external_apis.__path__, f"{external_apis.__name__}."
+        )
+    ]
 
 
 def _meta(tmp_path: Path, profile: int = 0) -> Meta:
@@ -270,7 +309,9 @@ def _config() -> dict[str, Any]:
     return config
 
 
-def _value(name: str, annotation: object, meta: Meta, tmp_path: Path, profile: int) -> object:
+def _value(
+    name: str, annotation: object, meta: Meta, tmp_path: Path, profile: int
+) -> object:
     key = name.casefold().lstrip("_")
     response_data = _Response().json()
     values: dict[str, object] = {
@@ -358,7 +399,11 @@ def _value(name: str, annotation: object, meta: Meta, tmp_path: Path, profile: i
     if origin is set:
         return set()
     if origin is tuple:
-        return tuple(_value(key, item, meta, tmp_path, profile) for item in args if item is not Ellipsis)
+        return tuple(
+            _value(key, item, meta, tmp_path, profile)
+            for item in args
+            if item is not Ellipsis
+        )
     if origin is not None and type(None) in args:
         concrete = next((item for item in args if item is not type(None)), str)
         return _value(key, concrete, meta, tmp_path, profile)
@@ -381,11 +426,26 @@ async def _invoke(
     positional: list[object] = []
     keywords: dict[str, object] = {}
     for parameter in inspect.signature(function).parameters.values():
-        if parameter.kind in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}:
+        if parameter.kind in {
+            inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.VAR_KEYWORD,
+        }:
             continue
-        if parameter.default is not inspect.Parameter.empty and parameter.name not in overrides:
+        if (
+            parameter.default is not inspect.Parameter.empty
+            and parameter.name not in overrides
+        ):
             continue
-        value = overrides.get(parameter.name, _value(parameter.name, hints.get(parameter.name, parameter.annotation), meta, tmp_path, profile))
+        value = overrides.get(
+            parameter.name,
+            _value(
+                parameter.name,
+                hints.get(parameter.name, parameter.annotation),
+                meta,
+                tmp_path,
+                profile,
+            ),
+        )
         if parameter.kind is inspect.Parameter.KEYWORD_ONLY:
             keywords[parameter.name] = value
         else:
@@ -396,7 +456,9 @@ async def _invoke(
     return result
 
 
-def test_external_api_private_helpers_execute_with_local_doubles(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_external_api_private_helpers_execute_with_local_doubles(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     modules = _modules()
     repository = Path.cwd()
     monkeypatch.setattr(httpx, "AsyncClient", _AsyncClient)
@@ -404,7 +466,9 @@ def test_external_api_private_helpers_execute_with_local_doubles(tmp_path: Path,
     monkeypatch.setattr(requests, "get", _Session().get)
     monkeypatch.setattr(requests, "post", _Session().post)
 
-    async def no_sleep(_delay: float = 0, *_args: object, **_kwargs: object) -> None:
+    async def no_sleep(
+        _delay: float = 0, *_args: object, **_kwargs: object
+    ) -> None:
         return None
 
     monkeypatch.setattr(asyncio, "sleep", no_sleep)
@@ -412,43 +476,82 @@ def test_external_api_private_helpers_execute_with_local_doubles(tmp_path: Path,
     process_terminations: list[str] = []
     expected_rejections: list[str] = []
 
-    async def invoke_scenarios(qualified: str, function: Callable[..., object]) -> None:
+    async def invoke_scenarios(
+        qualified: str, function: Callable[..., object]
+    ) -> None:
         attempted.add(qualified)
         scenarios = [("success", {}, {})]
         scenarios.extend(
-            ("success", meta_updates, argument_updates) for meta_updates, argument_updates in literal_branch_scenarios(function, Meta.__dataclass_fields__, limit=128)
+            ("success", meta_updates, argument_updates)
+            for meta_updates, argument_updates in literal_branch_scenarios(
+                function, Meta.__dataclass_fields__, limit=128
+            )
         )
-        scenarios.extend((scenario, {}, {}) for scenario in ("empty", "not_found", "unauthorized", "rate_limited", "server_error"))
-        for profile, (scenario, meta_updates, argument_updates) in enumerate(scenarios):
+        scenarios.extend(
+            (scenario, {}, {})
+            for scenario in (
+                "empty",
+                "not_found",
+                "unauthorized",
+                "rate_limited",
+                "server_error",
+            )
+        )
+        for profile, (scenario, meta_updates, argument_updates) in enumerate(
+            scenarios
+        ):
             _Response.scenario = scenario
             meta = _meta(tmp_path, profile % 5)
             for key, value in meta_updates.items():
                 if key in Meta.__dataclass_fields__:
                     setattr(meta, key, value)
             try:
-                await _invoke(function, meta, tmp_path, profile % 5, argument_updates)
+                await _invoke(
+                    function, meta, tmp_path, profile % 5, argument_updates
+                )
             except (KeyboardInterrupt, SystemExit) as error:
-                process_terminations.append(f"{qualified}:{type(error).__name__}")
+                process_terminations.append(
+                    f"{qualified}:{type(error).__name__}"
+                )
             except Exception as error:
-                expected_rejections.append(f"{qualified}:{type(error).__name__}")
+                expected_rejections.append(
+                    f"{qualified}:{type(error).__name__}"
+                )
             finally:
                 os.chdir(repository)
 
     async def exercise() -> None:
         for module in modules:
-            for attribute, replacement in (("AsyncClient", _AsyncClient), ("Client", _Session), ("Session", _Session)):
+            for attribute, replacement in (
+                ("AsyncClient", _AsyncClient),
+                ("Client", _Session),
+                ("Session", _Session),
+            ):
                 if hasattr(module, attribute):
                     monkeypatch.setattr(module, attribute, replacement)
-            for name, function in inspect.getmembers(module, inspect.isfunction):
-                if function.__module__ == module.__name__ and not name.startswith("__"):
-                    await invoke_scenarios(f"{module.__name__}.{name}", function)
-            for class_name, class_type in inspect.getmembers(module, inspect.isclass):
+            for name, function in inspect.getmembers(
+                module, inspect.isfunction
+            ):
+                if (
+                    function.__module__ == module.__name__
+                    and not name.startswith("__")
+                ):
+                    await invoke_scenarios(
+                        f"{module.__name__}.{name}", function
+                    )
+            for class_name, class_type in inspect.getmembers(
+                module, inspect.isclass
+            ):
                 if class_type.__module__ != module.__name__:
                     continue
                 try:
-                    instance = await _invoke(class_type, _meta(tmp_path), tmp_path, 0)
+                    instance = await _invoke(
+                        class_type, _meta(tmp_path), tmp_path, 0
+                    )
                 except Exception as error:
-                    expected_rejections.append(f"{module.__name__}.{class_name}.__init__:{type(error).__name__}")
+                    expected_rejections.append(
+                        f"{module.__name__}.{class_name}.__init__:{type(error).__name__}"
+                    )
                     continue
                 for method_name, member in inspect.getmembers_static(instance):
                     if method_name.startswith("__") or not callable(member):
@@ -456,12 +559,19 @@ def test_external_api_private_helpers_execute_with_local_doubles(tmp_path: Path,
                     try:
                         method = getattr(instance, method_name)
                     except Exception as error:
-                        expected_rejections.append(f"{module.__name__}.{class_name}.{method_name}:{type(error).__name__}")
+                        expected_rejections.append(
+                            f"{module.__name__}.{class_name}.{method_name}:{type(error).__name__}"
+                        )
                         continue
-                    await invoke_scenarios(f"{module.__name__}.{class_name}.{method_name}", method)
+                    await invoke_scenarios(
+                        f"{module.__name__}.{class_name}.{method_name}", method
+                    )
 
     asyncio.run(exercise())
     assert attempted
-    assert all(any(name.startswith(f"{module.__name__}.") for name in attempted) for module in modules)
+    assert all(
+        any(name.startswith(f"{module.__name__}.") for name in attempted)
+        for module in modules
+    )
     assert process_terminations == []
     assert all(":" in rejection for rejection in expected_rejections)

@@ -86,11 +86,15 @@ class HomieHelpDesk(UNIT3D):
 
     async def get_additional_checks(self, meta: Meta) -> bool:
         if meta.type == "DVDRIP":
-            logger.info(f"{self.tracker}: [bold red]DVDRIP uploads are not allowed on {self.tracker}.[/bold red]")
+            logger.info(
+                f"{self.tracker}: [bold red]DVDRIP uploads are not allowed on {self.tracker}.[/bold red]"
+            )
             return False
 
         if meta.category == "MUSIC" and not self._music_upload_data(meta):
-            logger.info(f"{self.tracker}: [bold red]Music uploads require a valid MusicBrainz or Discogs ID.[/bold red]")
+            logger.info(
+                f"{self.tracker}: [bold red]Music uploads require a valid MusicBrainz or Discogs ID.[/bold red]"
+            )
             return False
 
         return True
@@ -98,12 +102,22 @@ class HomieHelpDesk(UNIT3D):
     @staticmethod
     def _music_upload_data(meta: Meta) -> dict[str, str]:
         """Build HomieHelpDesk's music-specific external-ID payload."""
-        release = meta.music_release if isinstance(meta.music_release, dict) else {}
+        release = (
+            meta.music_release if isinstance(meta.music_release, dict) else {}
+        )
         external_ids = release.get("external_ids", {})
         external_ids = external_ids if isinstance(external_ids, dict) else {}
 
-        musicbrainz = str(external_ids.get("musicbrainz_release") or external_ids.get("musicbrainz_release_group") or "").strip()
-        if re.fullmatch(r"[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}", musicbrainz, re.IGNORECASE):
+        musicbrainz = str(
+            external_ids.get("musicbrainz_release")
+            or external_ids.get("musicbrainz_release_group")
+            or ""
+        ).strip()
+        if re.fullmatch(
+            r"[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}",
+            musicbrainz,
+            re.IGNORECASE,
+        ):
             return {
                 "music_exists_on_musicbrainz": "1",
                 "musicbrainz": musicbrainz,
@@ -134,7 +148,13 @@ class HomieHelpDesk(UNIT3D):
             return self._music_upload_data(meta)
         return {}
 
-    async def get_category_id(self, meta: Meta, category: str = "", reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_category_id(
+        self,
+        meta: Meta,
+        category: str = "",
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         category_id = {
             "MOVIE": "1",
             "TV": "2",
@@ -169,7 +189,13 @@ class HomieHelpDesk(UNIT3D):
 
         return {"category_id": category_id.get(resolved_category, "0")}
 
-    async def get_type_id(self, meta: Meta, type: str = "", reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_type_id(
+        self,
+        meta: Meta,
+        type: str = "",
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         type_id = {
             "DISC": "1",
             "REMUX": "2",
@@ -215,18 +241,48 @@ class HomieHelpDesk(UNIT3D):
             resolved_type = "OTHER"
 
         if meta.category == "GAME":
-            resolved_type = "CONSOLE" if meta.console_game else meta.platform.upper()
+            resolved_type = (
+                "CONSOLE" if meta.console_game else meta.platform.upper()
+            )
         elif meta.category == "MUSIC":
-            release = meta.music_release if isinstance(meta.music_release, dict) else {}
+            release = (
+                meta.music_release
+                if isinstance(meta.music_release, dict)
+                else {}
+            )
             fields = release.get("fields", {})
-            music_format = fields.get("format", {}) if isinstance(fields, dict) else {}
-            resolved_type = music_format.get("value", meta.format) if isinstance(music_format, dict) else meta.format
+            music_format = (
+                fields.get("format", {}) if isinstance(fields, dict) else {}
+            )
+            resolved_type = (
+                music_format.get("value", meta.format)
+                if isinstance(music_format, dict)
+                else meta.format
+            )
             resolved_type = str(resolved_type or "").upper()
 
         return {"type_id": type_id.get(str(resolved_type), "0")}
 
-    async def get_resolution_id(self, meta: Meta, resolution: str | None = None, reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
-        resolution_id = {"4320p": "1", "2160p": "2", "1440p": "3", "1080p": "3", "1080i": "4", "720p": "5", "576p": "6", "576i": "7", "480p": "8", "480i": "9", "Other": "10"}
+    async def get_resolution_id(
+        self,
+        meta: Meta,
+        resolution: str | None = None,
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
+        resolution_id = {
+            "4320p": "1",
+            "2160p": "2",
+            "1440p": "3",
+            "1080p": "3",
+            "1080i": "4",
+            "720p": "5",
+            "576p": "6",
+            "576i": "7",
+            "480p": "8",
+            "480i": "9",
+            "Other": "10",
+        }
         if mapping_only:
             return resolution_id
         if reverse:

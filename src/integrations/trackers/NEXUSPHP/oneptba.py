@@ -58,7 +58,14 @@ class OnePTBA(NEXUSPHP):
                 "tv show",
                 "variety",
             ]
-            if any(re.search(rf"(^|,\s*){re.escape(keyword)}(\s*,|$)", genres, re.IGNORECASE) for keyword in game_show_keywords):
+            if any(
+                re.search(
+                    rf"(^|,\s*){re.escape(keyword)}(\s*,|$)",
+                    genres,
+                    re.IGNORECASE,
+                )
+                for keyword in game_show_keywords
+            ):
                 return tv_shows
             return tv_series
 
@@ -114,9 +121,19 @@ class OnePTBA(NEXUSPHP):
 
         codec = meta.video_codec.lower()
 
-        if "h265" in codec or "x265" in codec or "hevc" in codec or "265" in codec:
+        if (
+            "h265" in codec
+            or "x265" in codec
+            or "hevc" in codec
+            or "265" in codec
+        ):
             return h265
-        if "h264" in codec or "x264" in codec or "avc" in codec or "264" in codec:
+        if (
+            "h264" in codec
+            or "x264" in codec
+            or "avc" in codec
+            or "264" in codec
+        ):
             return h264
         if "vc1" in codec or "vc-1" in codec:
             return vc1
@@ -271,5 +288,7 @@ class OnePTBA(NEXUSPHP):
         return ""
 
     async def get_anonymous_data(self, meta: Meta) -> dict[str, str]:
-        anonymous = not (meta.anon == 0 and not self.tracker_config.get("anon", False))
+        anonymous = not (
+            meta.anon == 0 and not self.tracker_config.get("anon", False)
+        )
         return {"anonymous": "1"} if anonymous else {}

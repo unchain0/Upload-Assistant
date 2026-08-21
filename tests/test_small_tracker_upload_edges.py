@@ -24,10 +24,14 @@ class FakeCommon:
     def __init__(self, config: dict[str, Any]) -> None:
         self.config = config
 
-    async def create_torrent_for_upload(self, *args: object, **_kwargs: object) -> None:
+    async def create_torrent_for_upload(
+        self, *args: object, **_kwargs: object
+    ) -> None:
         type(self).created.append(args)
 
-    async def create_torrent_ready_to_seed(self, *args: object, **_kwargs: object) -> None:
+    async def create_torrent_ready_to_seed(
+        self, *args: object, **_kwargs: object
+    ) -> None:
         type(self).ready.append(args)
 
     @classmethod
@@ -103,17 +107,27 @@ def _bithd_meta(tmp_path: Path, **values: object) -> Meta:
 
 def _bithd_files(meta: Meta) -> None:
     root = release_temp_dir(meta.base_dir, meta.uuid)
-    (root / "MEDIAINFO_CLEANPATH.txt").write_text("mediainfo", encoding="utf-8")
-    (root / "[BITHDTV]DESCRIPTION.txt").write_text("description", encoding="utf-8")
+    (root / "MEDIAINFO_CLEANPATH.txt").write_text(
+        "mediainfo", encoding="utf-8"
+    )
+    (root / "[BITHDTV]DESCRIPTION.txt").write_text(
+        "description", encoding="utf-8"
+    )
     (root / "[BITHDTV].torrent").write_bytes(b"torrent")
 
 
-def test_bithdtv_success_and_debug_upload_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_bithdtv_success_and_debug_upload_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     FakeCommon.reset()
     monkeypatch.setattr(bithdtv_module, "Common", FakeCommon)
     monkeypatch.setattr(bithdtv_module.httpx, "AsyncClient", BithdClient)
     monkeypatch.setattr(BitHDTV, "edit_desc", AsyncMock())
-    monkeypatch.setattr(bithdtv_module.DescriptionBuilder, "format_short_mediainfo_json", lambda *_args, **_kwargs: "short-mi")
+    monkeypatch.setattr(
+        bithdtv_module.DescriptionBuilder,
+        "format_short_mediainfo_json",
+        lambda *_args, **_kwargs: "short-mi",
+    )
     tracker = BitHDTV(_bithd_config())
 
     meta = _bithd_meta(tmp_path)
@@ -125,31 +139,62 @@ def test_bithdtv_success_and_debug_upload_paths(tmp_path: Path, monkeypatch: pyt
     debug = _bithd_meta(tmp_path, uuid="debug", debug=True)
     _bithd_files(debug)
     assert asyncio.run(tracker.upload(debug))
-    assert debug.tracker_status["BITHDTV"]["status_message"].startswith("Debug mode")
+    assert debug.tracker_status["BITHDTV"]["status_message"].startswith(
+        "Debug mode"
+    )
 
 
 def test_bithdtv_h265_remux_and_encode_type_ids() -> None:
     tracker = BitHDTV(_bithd_config())
-    assert asyncio.run(tracker.get_type_movie_id(Meta(type="REMUX", name="Movie 265", three_d=False))) == "48"
-    assert asyncio.run(tracker.get_type_movie_id(Meta(type="ENCODE", name="Movie 265", three_d=False))) == "43"
+    assert (
+        asyncio.run(
+            tracker.get_type_movie_id(
+                Meta(type="REMUX", name="Movie 265", three_d=False)
+            )
+        )
+        == "48"
+    )
+    assert (
+        asyncio.run(
+            tracker.get_type_movie_id(
+                Meta(type="ENCODE", name="Movie 265", three_d=False)
+            )
+        )
+        == "43"
+    )
 
 
 def _aither_config() -> dict[str, Any]:
     return {"DEFAULT": {}, "TRACKERS": {"AITHER": {}}}
 
 
-def test_aither_invalid_mediainfo_and_hdr_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_aither_invalid_mediainfo_and_hdr_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     tracker = Aither(_aither_config())
     tracker.common.check_language_requirements = AsyncMock(return_value=False)  # type: ignore[method-assign]
-    assert not asyncio.run(tracker.get_additional_checks(Meta(is_disc="", valid_mi=True)))
-    assert not asyncio.run(tracker.get_additional_checks(Meta(is_disc="BDMV", valid_mi=False)))
+    assert not asyncio.run(
+        tracker.get_additional_checks(Meta(is_disc="", valid_mi=True))
+    )
+    assert not asyncio.run(
+        tracker.get_additional_checks(Meta(is_disc="BDMV", valid_mi=False))
+    )
     monkeypatch.setattr(tracker, "get_flag", AsyncMock(return_value=0))
-    assert asyncio.run(tracker.get_additional_data(Meta(hdr="HDR"))) == {"mod_queue_opt_in": 0, "hdr": 1}
+    assert asyncio.run(tracker.get_additional_data(Meta(hdr="HDR"))) == {
+        "mod_queue_opt_in": 0,
+        "hdr": 1,
+    }
 
 
-def test_aither_foreign_dvd_and_nondisc_names(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_aither_foreign_dvd_and_nondisc_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     tracker = Aither(_aither_config())
-    monkeypatch.setattr(aither_module.languages_manager, "has_english_language", AsyncMock(return_value=False))
+    monkeypatch.setattr(
+        aither_module.languages_manager,
+        "has_english_language",
+        AsyncMock(return_value=False),
+    )
 
     dvd = Meta(
         name="Movie 2025 DVD REMUX",
@@ -203,7 +248,9 @@ def test_aither_alt_title_ordering() -> None:
 
 
 class PtsResponse:
-    def __init__(self, text: str, url: str = "https://www.ptskit.org/torrents.php") -> None:
+    def __init__(
+        self, text: str, url: str = "https://www.ptskit.org/torrents.php"
+    ) -> None:
         self.text = text
         self.url = url
 
@@ -224,13 +271,26 @@ class PtsSession:
 
 
 def _ptskit_config() -> dict[str, Any]:
-    return {"DEFAULT": {}, "TRACKERS": {"PTSKIT": {"announce_url": "https://tracker.invalid/announce"}}}
+    return {
+        "DEFAULT": {},
+        "TRACKERS": {
+            "PTSKIT": {"announce_url": "https://tracker.invalid/announce"}
+        },
+    }
 
 
-def test_ptskit_login_redirect_marks_tracker_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(ptskit_module.httpx, "AsyncClient", lambda *_args, **_kwargs: PtsSession(PtsResponse("")))
+def test_ptskit_login_redirect_marks_tracker_skipped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        ptskit_module.httpx,
+        "AsyncClient",
+        lambda *_args, **_kwargs: PtsSession(PtsResponse("")),
+    )
     tracker = Ptskit(_ptskit_config())
-    tracker.session = PtsSession(PtsResponse("login", "https://www.ptskit.org/login.php"))  # type: ignore[assignment]
+    tracker.session = PtsSession(
+        PtsResponse("login", "https://www.ptskit.org/login.php")
+    )  # type: ignore[assignment]
     tracker.cookie_validator.handle_validation_failure = AsyncMock()  # type: ignore[method-assign]
     meta = Meta(imdb_info={"imdbID": "tt1"})
 
@@ -239,7 +299,9 @@ def test_ptskit_login_redirect_marks_tracker_skipped(monkeypatch: pytest.MonkeyP
     tracker.cookie_validator.handle_validation_failure.assert_awaited_once()
 
 
-def test_ptskit_extracts_torrent_names(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ptskit_extracts_torrent_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     html = """
     <table class='torrents'>
       <tr><td><table class='torrentname'><tr><td><b>Release One</b></td></tr></table></td></tr>
@@ -247,8 +309,14 @@ def test_ptskit_extracts_torrent_names(monkeypatch: pytest.MonkeyPatch) -> None:
       <tr><td><table class='torrentname'><tr><td><b>Release Two</b></td></tr></table></td></tr>
     </table>
     """
-    monkeypatch.setattr(ptskit_module.httpx, "AsyncClient", lambda *_args, **_kwargs: PtsSession(PtsResponse(html)))
+    monkeypatch.setattr(
+        ptskit_module.httpx,
+        "AsyncClient",
+        lambda *_args, **_kwargs: PtsSession(PtsResponse(html)),
+    )
     tracker = Ptskit(_ptskit_config())
     tracker.session = PtsSession(PtsResponse(html))  # type: ignore[assignment]
 
-    assert asyncio.run(tracker.search_existing(Meta(imdb_info={"imdbID": "tt1"}))) == ["Release One", "Release Two"]
+    assert asyncio.run(
+        tracker.search_existing(Meta(imdb_info={"imdbID": "tt1"}))
+    ) == ["Release One", "Release Two"]

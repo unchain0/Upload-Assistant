@@ -42,7 +42,9 @@ class Cinematik(UNIT3D):
 
     async def get_additional_checks(self, meta: Meta) -> bool:
         if not meta.is_disc:
-            logger.info(f"{self.tracker}: [red]Only disc-based content allowed at Cinematik")
+            logger.info(
+                f"{self.tracker}: [red]Only disc-based content allowed at Cinematik"
+            )
             return False
 
         return True
@@ -65,11 +67,17 @@ class Cinematik(UNIT3D):
 
     @classmethod
     def _film_disc_name(cls, meta: Meta) -> str:
-        identity = cls._title_identity(meta, str(meta.year) if meta.year is not None else "")
+        identity = cls._title_identity(
+            meta, str(meta.year) if meta.year is not None else ""
+        )
         if meta.is_disc == "BDMV":
-            return cls._compact_name(f"{identity} {meta.disctype} {meta.resolution} {meta.video_codec} {cls._three_d_tag(meta)}")
+            return cls._compact_name(
+                f"{identity} {meta.disctype} {meta.resolution} {meta.video_codec} {cls._three_d_tag(meta)}"
+            )
         if meta.is_disc == "DVD":
-            return cls._compact_name(f"{identity} {meta.source} {meta.dvd_size}")
+            return cls._compact_name(
+                f"{identity} {meta.source} {meta.dvd_size}"
+            )
         return ""
 
     @classmethod
@@ -77,9 +85,13 @@ class Cinematik(UNIT3D):
         year = str(meta.search_year or meta.year or "")
         identity = cls._title_identity(meta, year)
         if meta.is_disc == "BDMV":
-            return cls._compact_name(f"{identity} {meta.season} {meta.disctype} {meta.resolution} {meta.video_codec}")
+            return cls._compact_name(
+                f"{identity} {meta.season} {meta.disctype} {meta.resolution} {meta.video_codec}"
+            )
         if meta.is_disc == "DVD":
-            return cls._compact_name(f"{identity} {meta.season} {meta.source} {meta.dvd_size}")
+            return cls._compact_name(
+                f"{identity} {meta.season} {meta.source} {meta.dvd_size}"
+            )
         return ""
 
     @staticmethod
@@ -97,14 +109,26 @@ class Cinematik(UNIT3D):
     def _compact_name(value: str) -> str:
         return " ".join(value.split())
 
-    async def get_category_id(self, meta: Meta, category: str | None = None, reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_category_id(
+        self,
+        meta: Meta,
+        category: str | None = None,
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         _ = (category, reverse, mapping_only)
         category_name = str(meta.category)
         if category_name == "MOVIE":
             return {"category_id": self._movie_category_id(meta)}
         if category_name == "TV":
             return {"category_id": self._tv_category_id(meta)}
-        mapping = {"FILM": "1", "Foreign Film": "3", "Foreign TV": "4", "Opera & Musical": "5", "Asian Film": "6"}
+        mapping = {
+            "FILM": "1",
+            "Foreign Film": "3",
+            "Foreign TV": "4",
+            "Opera & Musical": "5",
+            "Asian Film": "6",
+        }
         return {"category_id": mapping.get(category_name, "0")}
 
     @staticmethod
@@ -121,22 +145,53 @@ class Cinematik(UNIT3D):
             return "4"
         return "5" if meta.opera else "2"
 
-    async def get_type_id(self, meta: Meta, type: str | None = None, reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_type_id(
+        self,
+        meta: Meta,
+        type: str | None = None,
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         _ = (type, reverse, mapping_only)
         disctype = meta.disctype
-        type_id_map = {"Custom": "1", "BD100": "3", "BD66": "4", "BD50": "5", "BD25": "6", "NTSC DVD9": "7", "NTSC DVD5": "8", "PAL DVD9": "9", "PAL DVD5": "10", "3D": "11"}
+        type_id_map = {
+            "Custom": "1",
+            "BD100": "3",
+            "BD66": "4",
+            "BD50": "5",
+            "BD25": "6",
+            "NTSC DVD9": "7",
+            "NTSC DVD5": "8",
+            "PAL DVD9": "9",
+            "PAL DVD5": "10",
+            "3D": "11",
+        }
 
         if not disctype:
             logger.info(f"{self.tracker}: [red]You must specify a --disctype")
             # Raise an exception since we can't proceed without disctype
-            raise ValueError("disctype is required for Cinematik tracker but was not provided")
+            raise ValueError(
+                "disctype is required for Cinematik tracker but was not provided"
+            )
 
-        disctype_value = str(cast(Any, disctype[0])) if isinstance(disctype, list) and disctype else str(cast(Any, disctype))
-        type_id = type_id_map.get(disctype_value, "1")  # '1' is the default fallback
+        disctype_value = (
+            str(cast(Any, disctype[0]))
+            if isinstance(disctype, list) and disctype
+            else str(cast(Any, disctype))
+        )
+        type_id = type_id_map.get(
+            disctype_value, "1"
+        )  # '1' is the default fallback
 
         return {"type_id": type_id}
 
-    async def get_resolution_id(self, meta: Meta, resolution: str | None = None, reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_resolution_id(
+        self,
+        meta: Meta,
+        resolution: str | None = None,
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         _ = (resolution, reverse, mapping_only)
         resolution_id = {
             "Other": "10",
@@ -162,7 +217,9 @@ class Cinematik(UNIT3D):
         country_name = self.country_code_to_name(str(meta.region))
         poster_url = await self._poster_url(meta)
         screenshots = self._screenshot_urls(meta)
-        description = self._build_description(meta, discs, total_bitrate, country_name, poster_url, screenshots)
+        description = self._build_description(
+            meta, discs, total_bitrate, country_name, poster_url, screenshots
+        )
         description = await self._maybe_edit_description(meta, description)
         await self._write_description(meta, description)
         return {"description": description}
@@ -170,13 +227,22 @@ class Cinematik(UNIT3D):
     async def _custom_description(self, meta: Meta) -> str | None:
         if not meta.description_link and not meta.description_file:
             return None
-        description = await DescriptionBuilder(self.tracker, self.config).general_description_generator(meta, mediainfo=False, nfo=False)
-        logger.info(f"{self.tracker}: Custom Description Link/File Path: {description}", extra={"markup": False})
+        description = await DescriptionBuilder(
+            self.tracker, self.config
+        ).general_description_generator(meta, mediainfo=False, nfo=False)
+        logger.info(
+            f"{self.tracker}: Custom Description Link/File Path: {description}",
+            extra={"markup": False},
+        )
         return description
 
     @staticmethod
     def _disc_entries(meta: Meta) -> list[dict[str, Any]]:
-        return cast(list[dict[str, Any]], meta.discs) if isinstance(meta.discs, list) else []
+        return (
+            cast(list[dict[str, Any]], meta.discs)
+            if isinstance(meta.discs, list)
+            else []
+        )
 
     @staticmethod
     def _total_bitrate(discs: list[dict[str, Any]]) -> str:
@@ -187,41 +253,66 @@ class Cinematik(UNIT3D):
         return match.group(1) if match else "Unknown"
 
     async def _poster_url(self, meta: Meta) -> str:
-        poster_url = f"https://image.tmdb.org/t/p/original{meta.tmdb_poster_path}"
+        poster_url = (
+            f"https://image.tmdb.org/t/p/original{meta.tmdb_poster_path}"
+        )
         poster_path = self._existing_poster_path(meta)
         if poster_path is None:
             poster_path = await self._download_poster(meta, poster_url)
         if poster_path is None or not poster_path.exists():
-            logger.info(f"{self.tracker}: [red]Cover file not found, cannot upload.[/red]")
+            logger.info(
+                f"{self.tracker}: [red]Cover file not found, cannot upload.[/red]"
+            )
             return poster_url
         return await self._rehost_poster(meta, poster_path, poster_url)
 
     @staticmethod
     def _poster_candidates(meta: Meta) -> list[Path]:
         root = artwork_dir(meta.base_dir, meta.uuid)
-        return [root / filename for filename in ("POSTER.png", "poster.png", "POSTER.jpg", "poster.jpg")]
+        return [
+            root / filename
+            for filename in (
+                "POSTER.png",
+                "poster.png",
+                "POSTER.jpg",
+                "poster.jpg",
+            )
+        ]
 
     def _existing_poster_path(self, meta: Meta) -> Path | None:
-        existing = next((path for path in self._poster_candidates(meta) if path.is_file()), None)
+        existing = next(
+            (path for path in self._poster_candidates(meta) if path.is_file()),
+            None,
+        )
         if existing is not None:
-            logger.info(f"{self.tracker}: [green]Cover already exists as {existing.name}, skipping download.[/green]")
+            logger.info(
+                f"{self.tracker}: [green]Cover already exists as {existing.name}, skipping download.[/green]"
+            )
         return existing
 
-    async def _download_poster(self, meta: Meta, poster_url: str) -> Path | None:
+    async def _download_poster(
+        self, meta: Meta, poster_url: str
+    ) -> Path | None:
         target = artwork_dir(meta.base_dir, meta.uuid) / "poster.jpg"
         try:
             response = await self._poster_response(poster_url)
             target.write_bytes(response.content)
-            logger.info(f"{self.tracker}: [green]Cover downloaded to {escape(str(target))}[/green]")
+            logger.info(
+                f"{self.tracker}: [green]Cover downloaded to {escape(str(target))}[/green]"
+            )
             return target
         except (httpx.HTTPError, OSError, ValueError) as error:
-            logger.error(f"{self.tracker}: [red]Error downloading poster: {escape(str(error))}[/red]")
+            logger.error(
+                f"{self.tracker}: [red]Error downloading poster: {escape(str(error))}[/red]"
+            )
             return None
 
     @staticmethod
     async def _poster_response(url: str) -> httpx.Response:
         Cinematik._validate_poster_url(url)
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(
+            timeout=30.0, follow_redirects=True
+        ) as client:
             response = await client.get(url)
             response.raise_for_status()
             return response
@@ -231,13 +322,21 @@ class Cinematik(UNIT3D):
         if not url.startswith(("http://", "https://")):
             raise ValueError("Poster URL must use HTTP(S)")
 
-    async def _rehost_poster(self, meta: Meta, poster_path: Path, fallback_url: str) -> str:
+    async def _rehost_poster(
+        self, meta: Meta, poster_path: Path, fallback_url: str
+    ) -> str:
         try:
-            logger.info(f"{self.tracker}: Uploading standard poster to image host....")
-            images, _ = await self.uploadscreens_manager.upload_screens(meta, 1, 1, 0, 1, [str(poster_path)], {})
+            logger.info(
+                f"{self.tracker}: Uploading standard poster to image host...."
+            )
+            images, _ = await self.uploadscreens_manager.upload_screens(
+                meta, 1, 1, 0, 1, [str(poster_path)], {}
+            )
             return self._first_raw_url(images, fallback_url)
         except (httpx.HTTPError, ValueError, KeyError) as error:
-            logger.error(f"{self.tracker}: [red]Error uploading poster: {escape(str(error))}[/red]")
+            logger.error(
+                f"{self.tracker}: [red]Error uploading poster: {escape(str(error))}[/red]"
+            )
             return fallback_url
 
     @staticmethod
@@ -252,7 +351,11 @@ class Cinematik(UNIT3D):
     @staticmethod
     def _screenshot_urls(meta: Meta) -> list[str]:
         images = meta.image_list if isinstance(meta.image_list, list) else []
-        urls = [str(item.get("raw_url", "")) for item in images[:6] if isinstance(item, dict)]
+        urls = [
+            str(item.get("raw_url", ""))
+            for item in images[:6]
+            if isinstance(item, dict)
+        ]
         return (urls + [""] * 6)[:6]
 
     def _build_description(
@@ -298,42 +401,68 @@ class Cinematik(UNIT3D):
 
     @staticmethod
     def _synopsis_section(meta: Meta) -> str:
-        overview = meta.overview if meta.overview is not None else "No synopsis available."
+        overview = (
+            meta.overview
+            if meta.overview is not None
+            else "No synopsis available."
+        )
         return (
             "[h3]Synopsis/Review/Personal Thoughts (edit as needed)[/h3]\n"
             "[color=red]Default TMDB sypnosis added, more love if you use a sypnosis from credible film institutions such as the BFI or directly quoting well-known film critics, see rule 6.3[/color]\n"
             f"[quote]\n{overview}\n[/quote]\n\n"
         )
 
-    def _technical_section(self, meta: Meta, discs: list[dict[str, Any]], total_bitrate: str, country_name: str) -> str:
+    def _technical_section(
+        self,
+        meta: Meta,
+        discs: list[dict[str, Any]],
+        total_bitrate: str,
+        country_name: str,
+    ) -> str:
         lines = ["[h3]Technical Info[/h3]\n", "[code]\n"]
         self._append_technical_header(lines, meta, country_name)
         self._append_audio_subtitles(lines, meta, discs)
         self._append_video_source(lines, meta)
         lines.append(f"  Average Bitrate....: {total_bitrate}\n")
-        lines.append("  Ripping Program....:  [color=red]Specify - if it's your rip or custom version, otherwise 'Not my rip'[/color]\n\n")
+        lines.append(
+            "  Ripping Program....:  [color=red]Specify - if it's your rip or custom version, otherwise 'Not my rip'[/color]\n\n"
+        )
         self._append_untouched_status(lines, meta)
         lines.append("[/code]\n\n")
         return "".join(lines)
 
-    def _append_technical_header(self, lines: list[str], meta: Meta, country_name: str) -> None:
+    def _append_technical_header(
+        self, lines: list[str], meta: Meta, country_name: str
+    ) -> None:
         bdinfo = meta.bdinfo if isinstance(meta.bdinfo, dict) else {}
         if meta.is_disc == "BDMV":
             lines.append(f"  Disc Label.........:{bdinfo.get('label', '')}\n")
         imdb = meta.imdb_info if isinstance(meta.imdb_info, dict) else {}
-        lines.append(f"  IMDb...............: [url]{imdb.get('imdb_url', '')!s}{meta.imdb_rating}[/url]\n")
-        lines.append(f"  Year...............: {'' if meta.year is None else meta.year}\n")
+        lines.append(
+            f"  IMDb...............: [url]{imdb.get('imdb_url', '')!s}{meta.imdb_rating}[/url]\n"
+        )
+        lines.append(
+            f"  Year...............: {'' if meta.year is None else meta.year}\n"
+        )
         lines.append(f"  Country............: {country_name}\n")
         self._append_runtime(lines, meta, bdinfo)
 
     @staticmethod
-    def _append_runtime(lines: list[str], meta: Meta, bdinfo: dict[str, Any]) -> None:
+    def _append_runtime(
+        lines: list[str], meta: Meta, bdinfo: dict[str, Any]
+    ) -> None:
         if meta.is_disc == "BDMV":
-            lines.append(f"  Runtime............: {bdinfo.get('length', '')} hrs [color=red](double check this is actual runtime)[/color]\n")
+            lines.append(
+                f"  Runtime............: {bdinfo.get('length', '')} hrs [color=red](double check this is actual runtime)[/color]\n"
+            )
         else:
-            lines.append("  Runtime............:  [color=red]Insert the actual runtime[/color]\n")
+            lines.append(
+                "  Runtime............:  [color=red]Insert the actual runtime[/color]\n"
+            )
 
-    def _append_audio_subtitles(self, lines: list[str], meta: Meta, discs: list[dict[str, Any]]) -> None:
+    def _append_audio_subtitles(
+        self, lines: list[str], meta: Meta, discs: list[dict[str, Any]]
+    ) -> None:
         if meta.is_disc == "BDMV":
             self._append_bdmv_audio_subtitles(lines, meta)
             return
@@ -341,10 +470,16 @@ class Cinematik(UNIT3D):
             self._append_dvd_audio_subtitles(lines, disc)
 
     @classmethod
-    def _append_bdmv_audio_subtitles(cls, lines: list[str], meta: Meta) -> None:
+    def _append_bdmv_audio_subtitles(
+        cls, lines: list[str], meta: Meta
+    ) -> None:
         bdinfo = cls._bdinfo_mapping(meta)
-        lines.append(f"  Audio..............: {cls._bdmv_audio_text(bdinfo)}\n")
-        lines.append(f"  Subtitles..........: {cls._bdmv_subtitle_text(bdinfo)}\n")
+        lines.append(
+            f"  Audio..............: {cls._bdmv_audio_text(bdinfo)}\n"
+        )
+        lines.append(
+            f"  Subtitles..........: {cls._bdmv_subtitle_text(bdinfo)}\n"
+        )
 
     @staticmethod
     def _bdinfo_mapping(meta: Meta) -> dict[str, Any]:
@@ -354,7 +489,11 @@ class Cinematik(UNIT3D):
     def _bdmv_audio_text(bdinfo: dict[str, Any]) -> str:
         audio = bdinfo.get("audio", [])
         tracks = audio if isinstance(audio, list) else []
-        return ", ".join(Cinematik._bdmv_audio_track_text(track) for track in tracks if isinstance(track, dict))
+        return ", ".join(
+            Cinematik._bdmv_audio_track_text(track)
+            for track in tracks
+            if isinstance(track, dict)
+        )
 
     @staticmethod
     def _bdmv_audio_track_text(track: dict[str, Any]) -> str:
@@ -366,13 +505,17 @@ class Cinematik(UNIT3D):
         values = subtitles if isinstance(subtitles, list) else []
         return ", ".join(str(value) for value in values)
 
-    def _append_dvd_audio_subtitles(self, lines: list[str], disc: dict[str, Any]) -> None:
+    def _append_dvd_audio_subtitles(
+        self, lines: list[str], disc: dict[str, Any]
+    ) -> None:
         audio = self._dvd_audio_info(disc)
         if audio:
             lines.append(f"  Audio..............: {audio}\n")
         subtitles = self.parse_subtitles(str(disc.get("ifo_mi", "")))
         if subtitles:
-            lines.append(f"  Subtitles..........: {', '.join(sorted(subtitles))}\n")
+            lines.append(
+                f"  Subtitles..........: {', '.join(sorted(subtitles))}\n"
+            )
 
     def _dvd_audio_info(self, disc: dict[str, Any]) -> str:
         section = self._dvd_audio_section(str(disc.get("vob_mi", "")))
@@ -391,26 +534,46 @@ class Cinematik(UNIT3D):
 
     @staticmethod
     def _dvd_audio_codec(section: str) -> str:
-        mapping = (("AC-3", "AC-3"), ("DTS", "DTS"), ("MPEG Audio", "MPEG Audio"), ("PCM", "PCM"), ("AAC", "AAC"))
-        return next((value for key, value in mapping if key in section), "Unknown")
+        mapping = (
+            ("AC-3", "AC-3"),
+            ("DTS", "DTS"),
+            ("MPEG Audio", "MPEG Audio"),
+            ("PCM", "PCM"),
+            ("AAC", "AAC"),
+        )
+        return next(
+            (value for key, value in mapping if key in section), "Unknown"
+        )
 
     @staticmethod
     def _dvd_audio_channels(section: str) -> str:
         if "Channel(s)" not in section:
             return "Unknown"
-        value = section.split("Channel(s)", 1)[1].split(":", 1)[1].strip().split(" ", 1)[0]
+        value = (
+            section.split("Channel(s)", 1)[1]
+            .split(":", 1)[1]
+            .strip()
+            .split(" ", 1)[0]
+        )
         return "5.1" if value == "6" else value
 
     @staticmethod
     def _dvd_audio_language(value: str) -> str:
         if "Language" not in value:
             return "Unknown"
-        return value.split("Language", 1)[1].split(":", 1)[1].strip().split("\n", 1)[0]
+        return (
+            value.split("Language", 1)[1]
+            .split(":", 1)[1]
+            .strip()
+            .split("\n", 1)[0]
+        )
 
     @classmethod
     def _append_video_source(cls, lines: list[str], meta: Meta) -> None:
         lines.append(cls._video_format_line(meta))
-        lines.append("  Film Aspect Ratio..: [color=red]The actual aspect ratio of the content, not including the black bars[/color]\n")
+        lines.append(
+            "  Film Aspect Ratio..: [color=red]The actual aspect ratio of the content, not including the black bars[/color]\n"
+        )
         lines.append(cls._technical_source_line(meta))
         lines.append(cls._distributor_line(meta))
 
@@ -441,7 +604,9 @@ class Cinematik(UNIT3D):
 
     @staticmethod
     def _distributor_line(meta: Meta) -> str:
-        distributor = meta.distributor if meta.distributor is not None else "Unknown"
+        distributor = (
+            meta.distributor if meta.distributor is not None else "Unknown"
+        )
         return f"  Film Distributor...: [url={meta.distributor_link}]{distributor}[/url] [color=red]Don't forget the actual distributor link\n"
 
     @staticmethod
@@ -477,39 +642,66 @@ class Cinematik(UNIT3D):
 
     @staticmethod
     def _comments_section(meta: Meta) -> str:
-        comments = meta.uploader_comments if meta.uploader_comments is not None else "No comments."
+        comments = (
+            meta.uploader_comments
+            if meta.uploader_comments is not None
+            else "No comments."
+        )
         return f"[h4]Uploader Comments[/h4]\n - {comments}\n"
 
-    async def _maybe_edit_description(self, meta: Meta, description: str) -> str:
+    async def _maybe_edit_description(
+        self, meta: Meta, description: str
+    ) -> str:
         if meta.unattended and not meta.unattended_confirm:
-            logger.info(f"{self.tracker}: [green]Unattended mode: Keeping the original description.[/green]")
+            logger.info(
+                f"{self.tracker}: [green]Unattended mode: Keeping the original description.[/green]"
+            )
             return description
         return self._interactive_description(description)
 
     def _interactive_description(self, description: str) -> str:
-        logger.info(f"{self.tracker}: Current description: {description}", extra={"markup": False})
-        logger.info(f"{self.tracker}: [cyan]Do you want to edit or keep the description?[/cyan]")
-        choice = cli_ui.ask_string("Enter 'e' to edit, or press Enter to keep it as is: ")
+        logger.info(
+            f"{self.tracker}: Current description: {description}",
+            extra={"markup": False},
+        )
+        logger.info(
+            f"{self.tracker}: [cyan]Do you want to edit or keep the description?[/cyan]"
+        )
+        choice = cli_ui.ask_string(
+            "Enter 'e' to edit, or press Enter to keep it as is: "
+        )
         if (choice or "").lower() != "e":
-            logger.info(f"{self.tracker}: [green]Keeping the original description.[/green]")
+            logger.info(
+                f"{self.tracker}: [green]Keeping the original description.[/green]"
+            )
             return description
         return self._edited_description(description)
 
     def _edited_description(self, description: str) -> str:
         edited = cast(str | None, click.edit(description))
         result = edited.strip() if edited else description
-        logger.info(f"{self.tracker}: Final description after editing: {result}", extra={"markup": False})
+        logger.info(
+            f"{self.tracker}: Final description after editing: {result}",
+            extra={"markup": False},
+        )
         return result
 
     async def _write_description(self, meta: Meta, description: str) -> None:
-        path = Path(meta.base_dir) / "tmp" / meta.uuid / f"[{self.tracker}]DESCRIPTION.txt"
+        path = (
+            Path(meta.base_dir)
+            / "tmp"
+            / meta.uuid
+            / f"[{self.tracker}]DESCRIPTION.txt"
+        )
         path.parent.mkdir(parents=True, exist_ok=True)
         async with aiofiles.open(path, "w", encoding="utf-8") as handle:
             await handle.write(description)
 
     def parse_subtitles(self, disc_mi: str) -> set[str]:
         unique_subtitles: set[str] = set()  # Store unique subtitle strings
-        lines = disc_mi.splitlines()  # Split the multiline text into individual lines
+        lines = (
+            disc_mi.splitlines()
+        )  # Split the multiline text into individual lines
         current_block = None
 
         for line in lines:

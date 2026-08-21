@@ -8,7 +8,10 @@ from src.integrations.observability.console import logger
 from src.services.duplicate_check_service import DupeChecker
 from src.services.upload_decision_service import UploadHelper
 
-CONFIG: dict[str, Any] = {"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}}
+CONFIG: dict[str, Any] = {
+    "DEFAULT": {"tmdb_api": "test-key"},
+    "TRACKERS": {"DARKPEERS": {}},
+}
 
 
 def _tv_meta(name: str) -> Meta:
@@ -36,9 +39,15 @@ def _candidate(name: str, torrent_id: int) -> dict[str, object]:
 
 def test_darkpeers_normal_release_marks_matching_repack_as_preferred() -> None:
     meta = _tv_meta("Show S01E01 1080p WEB-DL H.264-Kitsune")
-    candidate = _candidate("Show S01E01 REPACK 1080p WEB-DL H.264-Kitsune", 117485)
+    candidate = _candidate(
+        "Show S01E01 REPACK 1080p WEB-DL H.264-Kitsune", 117485
+    )
 
-    dupes = asyncio.run(DupeChecker({"DEFAULT": {}}).filter_dupes([candidate], meta, "DARKPEERS"))
+    dupes = asyncio.run(
+        DupeChecker({"DEFAULT": {}}).filter_dupes(
+            [candidate], meta, "DARKPEERS"
+        )
+    )
 
     assert [dupe.get("id") for dupe in dupes] == [117485]
     assert meta["DARKPEERS_preferred_repack"]["id"] == 117485
@@ -48,31 +57,58 @@ def test_darkpeers_repack_keeps_existing_original_for_manual_report() -> None:
     meta = _tv_meta("Show S01E01 REPACK 1080p WEB-DL H.264-Kitsune")
     candidate = _candidate("Show S01E01 1080p WEB-DL H.264-Kitsune", 117400)
 
-    dupes = asyncio.run(DupeChecker({"DEFAULT": {}}).filter_dupes([candidate], meta, "DARKPEERS"))
+    dupes = asyncio.run(
+        DupeChecker({"DEFAULT": {}}).filter_dupes(
+            [candidate], meta, "DARKPEERS"
+        )
+    )
 
     assert [dupe.get("id") for dupe in dupes] == [117400]
-    assert meta["DARKPEERS_repack_replaces"]["link"] == "https://darkpeers.org/torrents/117400"
+    assert (
+        meta["DARKPEERS_repack_replaces"]["link"]
+        == "https://darkpeers.org/torrents/117400"
+    )
 
 
 def test_darkpeers_blocks_normal_release_when_repack_is_available() -> None:
     meta = _tv_meta("Show S01E01 1080p WEB-DL H.264-Kitsune")
     meta.dupe = True
-    candidate = _candidate("Show S01E01 REPACK 1080p WEB-DL H.264-Kitsune", 117485)
+    candidate = _candidate(
+        "Show S01E01 REPACK 1080p WEB-DL H.264-Kitsune", 117485
+    )
     helper = UploadHelper(CONFIG)
 
-    dupes = asyncio.run(DupeChecker({"DEFAULT": {}}).filter_dupes([candidate], meta, "DARKPEERS"))
-    is_dupe, _ = asyncio.run(helper.dupe_check(cast(list[dict[str, Any] | str], dupes), meta, "DARKPEERS"))
+    dupes = asyncio.run(
+        DupeChecker({"DEFAULT": {}}).filter_dupes(
+            [candidate], meta, "DARKPEERS"
+        )
+    )
+    is_dupe, _ = asyncio.run(
+        helper.dupe_check(
+            cast(list[dict[str, Any] | str], dupes), meta, "DARKPEERS"
+        )
+    )
 
     assert is_dupe is True
 
 
-def test_darkpeers_allows_repack_and_preserves_original_report_target() -> None:
+def test_darkpeers_allows_repack_and_preserves_original_report_target() -> (
+    None
+):
     meta = _tv_meta("Show S01E01 REPACK 1080p WEB-DL H.264-Kitsune")
     original = _candidate("Show S01E01 1080p WEB-DL H.264-Kitsune", 117400)
     helper = UploadHelper(CONFIG)
 
-    dupes = asyncio.run(DupeChecker({"DEFAULT": {}}).filter_dupes([original], meta, "DARKPEERS"))
-    is_dupe, result = asyncio.run(helper.dupe_check(cast(list[dict[str, Any] | str], dupes), meta, "DARKPEERS"))
+    dupes = asyncio.run(
+        DupeChecker({"DEFAULT": {}}).filter_dupes(
+            [original], meta, "DARKPEERS"
+        )
+    )
+    is_dupe, result = asyncio.run(
+        helper.dupe_check(
+            cast(list[dict[str, Any] | str], dupes), meta, "DARKPEERS"
+        )
+    )
 
     assert is_dupe is False
     assert result["DARKPEERS_repack_replaces"]["id"] == 117400
@@ -81,70 +117,136 @@ def test_darkpeers_allows_repack_and_preserves_original_report_target() -> None:
 def test_darkpeers_blocks_repack_when_same_repack_already_exists() -> None:
     meta = _tv_meta("Show S01E01 REPACK 1080p WEB-DL H.264-Kitsune")
     original = _candidate("Show S01E01 1080p WEB-DL H.264-Kitsune", 117400)
-    existing_repack = _candidate("Show S01E01 REPACK 1080p WEB-DL H.264-Kitsune", 117485)
+    existing_repack = _candidate(
+        "Show S01E01 REPACK 1080p WEB-DL H.264-Kitsune", 117485
+    )
     helper = UploadHelper(CONFIG)
 
-    dupes = asyncio.run(DupeChecker({"DEFAULT": {}}).filter_dupes([original, existing_repack], meta, "DARKPEERS"))
-    is_dupe, _ = asyncio.run(helper.dupe_check(cast(list[dict[str, Any] | str], dupes), meta, "DARKPEERS"))
+    dupes = asyncio.run(
+        DupeChecker({"DEFAULT": {}}).filter_dupes(
+            [original, existing_repack], meta, "DARKPEERS"
+        )
+    )
+    is_dupe, _ = asyncio.run(
+        helper.dupe_check(
+            cast(list[dict[str, Any] | str], dupes), meta, "DARKPEERS"
+        )
+    )
 
     assert is_dupe is True
     assert meta["DARKPEERS_preferred_repack"]["id"] == 117485
     assert meta.get("DARKPEERS_repack_replaces") is None
 
 
-def test_darkpeers_does_not_match_repack_with_different_release_characteristics() -> None:
+def test_darkpeers_does_not_match_repack_with_different_release_characteristics() -> (
+    None
+):
     meta = _tv_meta("Show S01E01 1080p AMZN WEB-DL H.264-Kitsune")
-    different_service = _candidate("Show S01E01 REPACK 1080p NF WEB-DL H.264-Kitsune", 117486)
+    different_service = _candidate(
+        "Show S01E01 REPACK 1080p NF WEB-DL H.264-Kitsune", 117486
+    )
 
-    asyncio.run(DupeChecker({"DEFAULT": {}}).filter_dupes([different_service], meta, "DARKPEERS"))
+    asyncio.run(
+        DupeChecker({"DEFAULT": {}}).filter_dupes(
+            [different_service], meta, "DARKPEERS"
+        )
+    )
 
     assert meta.get("DARKPEERS_preferred_repack") is None
 
 
 def test_darkpeers_matches_dotted_repack_name() -> None:
     meta = _tv_meta("Show S01E01 1080p WEB-DL H.264-Kitsune")
-    dotted = _candidate("Show.S01E01.REPACK.1080p.WEB-DL.H.264-Kitsune", 117486)
+    dotted = _candidate(
+        "Show.S01E01.REPACK.1080p.WEB-DL.H.264-Kitsune", 117486
+    )
 
-    asyncio.run(DupeChecker({"DEFAULT": {}}).filter_dupes([dotted], meta, "DARKPEERS"))
+    asyncio.run(
+        DupeChecker({"DEFAULT": {}}).filter_dupes([dotted], meta, "DARKPEERS")
+    )
 
     assert meta["DARKPEERS_preferred_repack"]["id"] == 117486
 
 
-def test_darkpeers_repack_replacement_keeps_other_dupes_in_normal_check() -> None:
+def test_darkpeers_repack_replacement_keeps_other_dupes_in_normal_check() -> (
+    None
+):
     meta = _tv_meta("Show S01E01 REPACK 1080p WEB-DL H.264-Kitsune")
     original = _candidate("Show S01E01 1080p WEB-DL H.264-Kitsune", 117400)
     other_dupe = _candidate("Show S01E01 1080p WEB-DL H.264-Other", 117401)
     helper = UploadHelper(CONFIG)
 
-    dupes = asyncio.run(DupeChecker({"DEFAULT": {}}).filter_dupes([original, other_dupe], meta, "DARKPEERS"))
-    is_dupe, _ = asyncio.run(helper.dupe_check(cast(list[dict[str, Any] | str], dupes), meta, "DARKPEERS"))
+    dupes = asyncio.run(
+        DupeChecker({"DEFAULT": {}}).filter_dupes(
+            [original, other_dupe], meta, "DARKPEERS"
+        )
+    )
+    is_dupe, _ = asyncio.run(
+        helper.dupe_check(
+            cast(list[dict[str, Any] | str], dupes), meta, "DARKPEERS"
+        )
+    )
 
     assert is_dupe is True
     assert meta["DARKPEERS_repack_replaces"]["id"] == 117400
 
 
-def test_darkpeers_repack_replacement_with_missing_ids_keeps_other_dupes() -> None:
+def test_darkpeers_repack_replacement_with_missing_ids_keeps_other_dupes() -> (
+    None
+):
     meta = _tv_meta("Show S01E01 REPACK 1080p WEB-DL H.264-Kitsune")
-    original: dict[str, object] = {"name": "Show S01E01 1080p WEB-DL H.264-Kitsune", "id": None}
-    other_dupe: dict[str, object] = {"name": "Show S01E01 1080p WEB-DL H.264-Other", "id": None}
+    original: dict[str, object] = {
+        "name": "Show S01E01 1080p WEB-DL H.264-Kitsune",
+        "id": None,
+    }
+    other_dupe: dict[str, object] = {
+        "name": "Show S01E01 1080p WEB-DL H.264-Other",
+        "id": None,
+    }
     helper = UploadHelper(CONFIG)
 
-    dupes = asyncio.run(DupeChecker({"DEFAULT": {}}).filter_dupes([original, other_dupe], meta, "DARKPEERS"))
-    is_dupe, _ = asyncio.run(helper.dupe_check(cast(list[dict[str, Any] | str], dupes), meta, "DARKPEERS"))
+    dupes = asyncio.run(
+        DupeChecker({"DEFAULT": {}}).filter_dupes(
+            [original, other_dupe], meta, "DARKPEERS"
+        )
+    )
+    is_dupe, _ = asyncio.run(
+        helper.dupe_check(
+            cast(list[dict[str, Any] | str], dupes), meta, "DARKPEERS"
+        )
+    )
 
     assert is_dupe is True
     assert meta["DARKPEERS_repack_replaces"]["name"] == original["name"]
 
 
-def test_darkpeers_repack_replacement_with_same_name_keeps_distinct_link() -> None:
+def test_darkpeers_repack_replacement_with_same_name_keeps_distinct_link() -> (
+    None
+):
     meta = _tv_meta("Show S01E01 REPACK 1080p WEB-DL H.264-Kitsune")
     name = "Show S01E01 1080p WEB-DL H.264-Kitsune"
-    original: dict[str, object] = {"name": name, "id": None, "link": "https://darkpeers.org/torrents/old"}
-    other_dupe: dict[str, object] = {"name": name, "id": None, "link": "https://darkpeers.org/torrents/other"}
+    original: dict[str, object] = {
+        "name": name,
+        "id": None,
+        "link": "https://darkpeers.org/torrents/old",
+    }
+    other_dupe: dict[str, object] = {
+        "name": name,
+        "id": None,
+        "link": "https://darkpeers.org/torrents/other",
+    }
     helper = UploadHelper(CONFIG)
 
-    dupes = asyncio.run(DupeChecker({"DEFAULT": {}}).filter_dupes([original, other_dupe], meta, "DARKPEERS"))
-    is_dupe, _ = asyncio.run(helper.dupe_check(cast(list[dict[str, Any] | str], dupes), meta, "DARKPEERS"))
+    dupes = asyncio.run(
+        DupeChecker({"DEFAULT": {}}).filter_dupes(
+            [original, other_dupe], meta, "DARKPEERS"
+        )
+    )
+    is_dupe, _ = asyncio.run(
+        helper.dupe_check(
+            cast(list[dict[str, Any] | str], dupes), meta, "DARKPEERS"
+        )
+    )
 
     assert is_dupe is True
     assert meta["DARKPEERS_repack_replaces"]["link"] == original["link"]
@@ -152,13 +254,23 @@ def test_darkpeers_repack_replacement_with_same_name_keeps_distinct_link() -> No
 
 def test_darkpeers_repack_policy_requires_exact_release_group() -> None:
     normal = _tv_meta("Show S01E01 1080p WEB-DL H.264-Kitsune")
-    other_group_repack = _candidate("Show S01E01 REPACK 1080p WEB-DL H.264-NotKitsune", 117486)
+    other_group_repack = _candidate(
+        "Show S01E01 REPACK 1080p WEB-DL H.264-NotKitsune", 117486
+    )
     replacement = _tv_meta("Show S01E01 REPACK 1080p WEB-DL H.264-Kitsune")
-    substring_group_original = _candidate("Show S01E01 1080p WEB-DL H.264-KitsuneX", 117401)
+    substring_group_original = _candidate(
+        "Show S01E01 1080p WEB-DL H.264-KitsuneX", 117401
+    )
     checker = DupeChecker({"DEFAULT": {}})
 
-    asyncio.run(checker.filter_dupes([other_group_repack], normal, "DARKPEERS"))
-    asyncio.run(checker.filter_dupes([substring_group_original], replacement, "DARKPEERS"))
+    asyncio.run(
+        checker.filter_dupes([other_group_repack], normal, "DARKPEERS")
+    )
+    asyncio.run(
+        checker.filter_dupes(
+            [substring_group_original], replacement, "DARKPEERS"
+        )
+    )
 
     assert normal.get("DARKPEERS_preferred_repack") is None
     assert replacement.get("DARKPEERS_repack_replaces") is None
@@ -169,7 +281,9 @@ def test_repack_detection_change_does_not_affect_other_trackers() -> None:
     meta.uuid = "show-without-marker"
     candidate = _candidate("Show S01E01 1080p WEB-DL H.264-Kitsune", 117400)
 
-    dupes = asyncio.run(DupeChecker({"DEFAULT": {}}).filter_dupes([candidate], meta, "AITHER"))
+    dupes = asyncio.run(
+        DupeChecker({"DEFAULT": {}}).filter_dupes([candidate], meta, "AITHER")
+    )
 
     assert [dupe.get("id") for dupe in dupes] == [117400]
 
@@ -177,7 +291,9 @@ def test_repack_detection_change_does_not_affect_other_trackers() -> None:
 def test_darkpeers_repack_markers_are_reset_before_each_filter_pass() -> None:
     meta = _tv_meta("Show S01E01 1080p WEB-DL H.264-Kitsune")
     checker = DupeChecker({"DEFAULT": {}})
-    repack = _candidate("Show S01E01 REPACK 1080p WEB-DL H.264-Kitsune", 117485)
+    repack = _candidate(
+        "Show S01E01 REPACK 1080p WEB-DL H.264-Kitsune", 117485
+    )
     ordinary = _candidate("Show S01E01 1080p WEB-DL H.264-Kitsune", 117400)
 
     asyncio.run(checker.filter_dupes([repack], meta, "DARKPEERS"))
@@ -190,7 +306,9 @@ def test_darkpeers_repack_markers_are_reset_before_each_filter_pass() -> None:
 
 
 @pytest.mark.parametrize("torrent_id", ["²", "9" * 5000])
-def test_darkpeers_repack_notice_strips_terminal_controls_and_rejects_invalid_id(monkeypatch: pytest.MonkeyPatch, torrent_id: str) -> None:
+def test_darkpeers_repack_notice_strips_terminal_controls_and_rejects_invalid_id(
+    monkeypatch: pytest.MonkeyPatch, torrent_id: str
+) -> None:
     meta = _tv_meta("Show S01E01 1080p WEB-DL H.264-Kitsune")
     malicious: dict[str, object] = {
         "name": "\x1b]8;;https://evil.invalid\x07click\x1b]8;;\x07[bold red]fake[/bold red]",
@@ -200,34 +318,58 @@ def test_darkpeers_repack_notice_strips_terminal_controls_and_rejects_invalid_id
     meta["DARKPEERS_preferred_repack"] = malicious
     messages: list[str] = []
 
-    def record_message(message: object, *_args: object, **_kwargs: object) -> None:
+    def record_message(
+        message: object, *_args: object, **_kwargs: object
+    ) -> None:
         messages.append(str(message))
 
     monkeypatch.setattr(logger, "info", record_message)
 
-    is_dupe, _ = asyncio.run(UploadHelper(CONFIG).dupe_check([malicious], meta, "DARKPEERS"))
+    is_dupe, _ = asyncio.run(
+        UploadHelper(CONFIG).dupe_check([malicious], meta, "DARKPEERS")
+    )
 
     assert is_dupe is True
-    assert any(r"\[bold red]fake\[/bold red]" in message for message in messages)
-    assert all("\x1b" not in message and "\x07" not in message for message in messages)
+    assert any(
+        r"\[bold red]fake\[/bold red]" in message for message in messages
+    )
+    assert all(
+        "\x1b" not in message and "\x07" not in message for message in messages
+    )
     assert all("evil.invalid" not in message for message in messages)
     assert all("file:///etc/passwd" not in message for message in messages)
-    assert all("https://darkpeers.org/torrents/" not in message for message in messages)
+    assert all(
+        "https://darkpeers.org/torrents/" not in message
+        for message in messages
+    )
 
 
-def test_darkpeers_repack_notice_builds_trusted_url_from_numeric_id(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_darkpeers_repack_notice_builds_trusted_url_from_numeric_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     meta = _tv_meta("Show S01E01 1080p WEB-DL H.264-Kitsune")
-    candidate: dict[str, object] = {"name": "[bold red]fake[/bold red]", "id": 117485, "link": "javascript:alert(1)"}
+    candidate: dict[str, object] = {
+        "name": "[bold red]fake[/bold red]",
+        "id": 117485,
+        "link": "javascript:alert(1)",
+    }
     meta["DARKPEERS_preferred_repack"] = candidate
     messages: list[str] = []
 
-    def record_message(message: object, *_args: object, **_kwargs: object) -> None:
+    def record_message(
+        message: object, *_args: object, **_kwargs: object
+    ) -> None:
         messages.append(str(message))
 
     monkeypatch.setattr(logger, "info", record_message)
 
-    is_dupe, _ = asyncio.run(UploadHelper(CONFIG).dupe_check([candidate], meta, "DARKPEERS"))
+    is_dupe, _ = asyncio.run(
+        UploadHelper(CONFIG).dupe_check([candidate], meta, "DARKPEERS")
+    )
 
     assert is_dupe is True
-    assert any("https://darkpeers.org/torrents/117485" in message for message in messages)
+    assert any(
+        "https://darkpeers.org/torrents/117485" in message
+        for message in messages
+    )
     assert all("javascript:" not in message for message in messages)

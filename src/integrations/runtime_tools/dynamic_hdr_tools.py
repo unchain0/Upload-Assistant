@@ -24,8 +24,16 @@ from src.integrations.runtime_tools.download_integrity import (
 from src.integrations.runtime_tools.runtime_tool_paths import tool_install_dir
 
 TOOLS = {
-    "dovi": {"command": "dovi_tool", "repository": "quietvoid/dovi_tool", "version": "2.3.3"},
-    "hdr10plus": {"command": "hdr10plus_tool", "repository": "quietvoid/hdr10plus_tool", "version": "1.7.2"},
+    "dovi": {
+        "command": "dovi_tool",
+        "repository": "quietvoid/dovi_tool",
+        "version": "2.3.3",
+    },
+    "hdr10plus": {
+        "command": "hdr10plus_tool",
+        "repository": "quietvoid/hdr10plus_tool",
+        "version": "1.7.2",
+    },
 }
 
 ASSET_SHA256 = {
@@ -51,14 +59,18 @@ def _asset_name(tool: str) -> tuple[str, str]:
     elif machine in {"amd64", "x86_64"}:
         arch = "x86_64"
     else:
-        raise RuntimeError(f"Dynamic HDR plots are not supported on {system} {machine}")
+        raise RuntimeError(
+            f"Dynamic HDR plots are not supported on {system} {machine}"
+        )
     if system == "windows":
         return f"{tool}_tool-{version}-{arch}-pc-windows-msvc.zip", ".exe"
     if system == "darwin":
         return f"{tool}_tool-{version}-universal-macOS.zip", ""
     if system == "linux" and arch in {"x86_64", "aarch64"}:
         return f"{tool}_tool-{version}-{arch}-unknown-linux-musl.tar.gz", ""
-    raise RuntimeError(f"Dynamic HDR plots are not supported on {system} {machine}")
+    raise RuntimeError(
+        f"Dynamic HDR plots are not supported on {system} {machine}"
+    )
 
 
 def _verify_checksum_file(asset: str, path: Path) -> None:
@@ -73,10 +85,14 @@ def _verify_checksum_file(asset: str, path: Path) -> None:
 def _safe_extract(archive: Path, destination: Path) -> None:
     if archive.suffix == ".zip":
         with zipfile.ZipFile(archive) as contents:
-            safe_extract_zip(contents, destination, max_bytes=MAX_EXTRACTED_BYTES)
+            safe_extract_zip(
+                contents, destination, max_bytes=MAX_EXTRACTED_BYTES
+            )
     else:
         with tarfile.open(archive, "r:gz") as contents:
-            safe_extract_tar(contents, destination, max_bytes=MAX_EXTRACTED_BYTES)
+            safe_extract_tar(
+                contents, destination, max_bytes=MAX_EXTRACTED_BYTES
+            )
 
 
 async def get_tool(base_dir: str, tool: str) -> str:
@@ -91,7 +107,11 @@ async def get_tool(base_dir: str, tool: str) -> str:
     target_dir = tool_install_dir(base_dir, command, f"{system}/{machine}")
     binary = target_dir / f"{command}{extension}"
     version_file = target_dir / TOOLS[tool]["version"]
-    if binary.is_file() and binary.stat().st_size > 0 and version_file.is_file():
+    if (
+        binary.is_file()
+        and binary.stat().st_size > 0
+        and version_file.is_file()
+    ):
         return str(binary)
 
     staging = target_dir / ".download"
@@ -99,22 +119,43 @@ async def get_tool(base_dir: str, tool: str) -> str:
     staging.mkdir()
     archive = staging / asset
     url = f"https://github.com/{TOOLS[tool]['repository']}/releases/download/{TOOLS[tool]['version']}/{asset}"
-    logger.info(f"[yellow]Downloading {command} for dynamic HDR plots...[/yellow]")
+    logger.info(
+        f"[yellow]Downloading {command} for dynamic HDR plots...[/yellow]"
+    )
     try:
-        async with httpx.AsyncClient(timeout=90.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(
+            timeout=90.0, follow_redirects=True
+        ) as client:
             await download_bounded_asset(client, url, archive)
         await asyncio.to_thread(_verify_checksum_file, asset, archive)
         await asyncio.to_thread(_safe_extract, archive, staging)
-        candidates = [path for path in staging.rglob(f"{command}{extension}") if path.is_file()]
+        candidates = [
+            path
+            for path in staging.rglob(f"{command}{extension}")
+            if path.is_file()
+        ]
         if not candidates:
             raise RuntimeError(f"{asset} did not contain {command}{extension}")
         staged_binary = staging / f".{command}{extension}.staged"
         shutil.move(str(candidates[0]), staged_binary)
         if system != "windows":
-            staged_binary.chmod(staged_binary.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+            staged_binary.chmod(
+                staged_binary.stat().st_mode
+                | stat.S_IXUSR
+                | stat.S_IXGRP
+                | stat.S_IXOTH
+            )
         staged_version = staging / TOOLS[tool]["version"]
-        staged_version.write_text(f"{command} {TOOLS[tool]['version']}\n", encoding="utf-8")
-        stale_markers = [candidate for candidate in target_dir.iterdir() if candidate.is_file() and candidate != binary and candidate != version_file]
+        staged_version.write_text(
+            f"{command} {TOOLS[tool]['version']}\n", encoding="utf-8"
+        )
+        stale_markers = [
+            candidate
+            for candidate in target_dir.iterdir()
+            if candidate.is_file()
+            and candidate != binary
+            and candidate != version_file
+        ]
         promote_files_with_rollback(
             [(staged_binary, binary), (staged_version, version_file)],
             target_dir / ".dynamic-hdr-backup",

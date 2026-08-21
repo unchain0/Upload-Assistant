@@ -15,7 +15,9 @@ class _Parser:
         self.fail = fail
         self.calls: list[tuple[list[str], Meta]] = []
 
-    def parse(self, argv: list[str], meta: Meta) -> tuple[Meta, object, list[str]]:
+    def parse(
+        self, argv: list[str], meta: Meta
+    ) -> tuple[Meta, object, list[str]]:
         self.calls.append((argv, meta.copy()))
         if self.fail:
             raise RuntimeError("parse failed")
@@ -45,23 +47,36 @@ def _write_args(tmp_path: Path, payload: object) -> Path:
     return target
 
 
-def test_parse_tmdb_id_covers_empty_prefixed_numeric_and_invalid_values() -> None:
+def test_parse_tmdb_id_covers_empty_prefixed_numeric_and_invalid_values() -> (
+    None
+):
     service = ApplyOverrides({})
 
     async def exercise() -> None:
         assert await service.parse_tmdb_id(None, "MOVIE") == ("MOVIE", 0)
         assert await service.parse_tmdb_id("  ", "TV") == ("TV", 0)
         assert await service.parse_tmdb_id("tv/123", None) == ("TV", 123)
-        assert await service.parse_tmdb_id("movie/456/extra", None) == ("MOVIE", 456)
-        assert await service.parse_tmdb_id("person/789", "MOVIE") == ("MOVIE", 789)
-        assert await service.parse_tmdb_id("movie/not-a-number", None) == ("MOVIE", 0)
+        assert await service.parse_tmdb_id("movie/456/extra", None) == (
+            "MOVIE",
+            456,
+        )
+        assert await service.parse_tmdb_id("person/789", "MOVIE") == (
+            "MOVIE",
+            789,
+        )
+        assert await service.parse_tmdb_id("movie/not-a-number", None) == (
+            "MOVIE",
+            0,
+        )
         assert await service.parse_tmdb_id("321", "TV") == ("TV", 321)
         assert await service.parse_tmdb_id("invalid", "TV") == ("TV", 0)
 
     asyncio.run(exercise())
 
 
-def test_get_source_override_applies_matching_tmdb_and_skips_invalid_entries(tmp_path: Path) -> None:
+def test_get_source_override_applies_matching_tmdb_and_skips_invalid_entries(
+    tmp_path: Path,
+) -> None:
     _write_args(
         tmp_path,
         {
@@ -84,7 +99,9 @@ def test_get_source_override_applies_matching_tmdb_and_skips_invalid_entries(tmp
     assert result.path == str(tmp_path / "release.mkv")
 
 
-def test_get_source_override_applies_tvdb_and_imdb_matches(tmp_path: Path) -> None:
+def test_get_source_override_applies_tvdb_and_imdb_matches(
+    tmp_path: Path,
+) -> None:
     parser = _Parser({"title": "Matched"})
     service = ApplyOverrides({}, lambda _config: parser)
 
@@ -97,7 +114,11 @@ def test_get_source_override_applies_tvdb_and_imdb_matches(tmp_path: Path) -> No
             ]
         },
     )
-    tvdb = asyncio.run(service.get_source_override(_meta(tmp_path, tvdb_id="789"), other_id=True))
+    tvdb = asyncio.run(
+        service.get_source_override(
+            _meta(tmp_path, tvdb_id="789"), other_id=True
+        )
+    )
     assert tvdb.title == "Matched"
     assert parser.calls[-1][0][-1] == "TVDB"
 
@@ -110,16 +131,30 @@ def test_get_source_override_applies_tvdb_and_imdb_matches(tmp_path: Path) -> No
             ]
         },
     )
-    imdb = asyncio.run(service.get_source_override(_meta(tmp_path, imdb_id="456", tvdb_id=0), other_id=True))
+    imdb = asyncio.run(
+        service.get_source_override(
+            _meta(tmp_path, imdb_id="456", tvdb_id=0), other_id=True
+        )
+    )
     assert imdb.title == "Matched"
     assert parser.calls[-1][0][-1] == "IMDB"
 
-    _write_args(tmp_path, {"other_ids": [{"imdb_id": 0, "args": ["--title", "ignored"]}]})
+    _write_args(
+        tmp_path,
+        {"other_ids": [{"imdb_id": 0, "args": ["--title", "ignored"]}]},
+    )
     unchanged = _meta(tmp_path, imdb_id=0, tvdb_id=0)
-    assert asyncio.run(service.get_source_override(unchanged, other_id=True)).title == "Original"
+    assert (
+        asyncio.run(
+            service.get_source_override(unchanged, other_id=True)
+        ).title
+        == "Original"
+    )
 
 
-def test_get_source_override_handles_missing_and_invalid_json(tmp_path: Path) -> None:
+def test_get_source_override_handles_missing_and_invalid_json(
+    tmp_path: Path,
+) -> None:
     service = ApplyOverrides({})
     meta = _meta(tmp_path)
     assert asyncio.run(service.get_source_override(meta)) is meta
@@ -132,18 +167,29 @@ def test_get_source_override_handles_missing_and_invalid_json(tmp_path: Path) ->
 def test_apply_args_without_parser_and_regular_changes(tmp_path: Path) -> None:
     meta = _meta(tmp_path)
     no_parser = ApplyOverrides({})
-    assert asyncio.run(no_parser.apply_args_to_meta(meta, ["--title", "ignored"])) is meta
+    assert (
+        asyncio.run(no_parser.apply_args_to_meta(meta, ["--title", "ignored"]))
+        is meta
+    )
     assert meta.title == "Original"
 
-    parser = _Parser({"title": "Updated", "path": "/wrong", "untouched": "new"})
+    parser = _Parser(
+        {"title": "Updated", "path": "/wrong", "untouched": "new"}
+    )
     service = ApplyOverrides({}, lambda _config: parser)
-    result = asyncio.run(service.apply_args_to_meta(meta, ["--title", "Updated", "--path", "/wrong", "--flag"]))
+    result = asyncio.run(
+        service.apply_args_to_meta(
+            meta, ["--title", "Updated", "--path", "/wrong", "--flag"]
+        )
+    )
     assert result.title == "Updated"
     assert result.path == str(tmp_path / "release.mkv")
     assert result.get("untouched") is False
 
 
-def test_apply_args_updates_all_identifier_aliases_and_value_shapes(tmp_path: Path) -> None:
+def test_apply_args_updates_all_identifier_aliases_and_value_shapes(
+    tmp_path: Path,
+) -> None:
     parser = _Parser({})
     service = ApplyOverrides({}, lambda _config: parser)
     meta = _meta(tmp_path)
@@ -164,12 +210,28 @@ def test_apply_args_updates_all_identifier_aliases_and_value_shapes(tmp_path: Pa
         )
     )
 
-    assert result.tmdb_id == 101 and result.tmdb == 101 and result.tmdb_manual == 101
-    assert result.tvmaze_id == 202 and result.tvmaze == 202 and result.tvmaze_manual == 202
-    assert result.imdb_id == 303 and result.imdb == 303 and result.imdb_manual == 303
-    assert result.tvdb_id == "not-numeric" and result.tvdb_manual == "not-numeric"
+    assert (
+        result.tmdb_id == 101
+        and result.tmdb == 101
+        and result.tmdb_manual == 101
+    )
+    assert (
+        result.tvmaze_id == 202
+        and result.tvmaze == 202
+        and result.tvmaze_manual == 202
+    )
+    assert (
+        result.imdb_id == 303
+        and result.imdb == 303
+        and result.imdb_manual == 303
+    )
+    assert (
+        result.tvdb_id == "not-numeric" and result.tvdb_manual == "not-numeric"
+    )
 
-    invalid_imdb = asyncio.run(service.apply_args_to_meta(_meta(tmp_path), ["--imdb", "ttabc"]))
+    invalid_imdb = asyncio.run(
+        service.apply_args_to_meta(_meta(tmp_path), ["--imdb", "ttabc"])
+    )
     assert invalid_imdb.imdb_id == "ttabc"
 
 
@@ -177,5 +239,8 @@ def test_apply_args_parser_failure_is_non_fatal(tmp_path: Path) -> None:
     parser = _Parser({}, fail=True)
     service = ApplyOverrides({}, lambda _config: parser)
     meta = _meta(tmp_path)
-    assert asyncio.run(service.apply_args_to_meta(meta, ["--title", "Updated"])) is meta
+    assert (
+        asyncio.run(service.apply_args_to_meta(meta, ["--title", "Updated"]))
+        is meta
+    )
     assert meta.title == "Original"

@@ -9,7 +9,10 @@ from pathlib import Path
 from typing import Any, cast
 
 from src.domain_models.release import Meta
-from src.domain_models.release_group import is_valid_prefixed_release_group, is_valid_release_group
+from src.domain_models.release_group import (
+    is_valid_prefixed_release_group,
+    is_valid_release_group,
+)
 from src.integrations.observability.runtime_support import logger
 
 guessit_module = import_module("guessit")
@@ -20,7 +23,9 @@ SPACE_SEPARATED_RELEASE_GROUPS = {
 }
 
 
-def guessit_fn(value: str, options: dict[str, Any] | None = None) -> dict[str, Any]:
+def guessit_fn(
+    value: str, options: dict[str, Any] | None = None
+) -> dict[str, Any]:
     return cast(dict[str, Any], guessit_module.guessit(value, options))
 
 
@@ -34,7 +39,9 @@ def _prefixed_release_group(video: str, meta: Meta) -> str | None:
     return candidate if is_valid_prefixed_release_group(candidate) else None
 
 
-async def get_tag(video: str, meta: Meta, season_pack_check: bool = False) -> str:
+async def get_tag(
+    video: str, meta: Meta, season_pack_check: bool = False
+) -> str:
     # Using regex from cross-seed (https://github.com/cross-seed/cross-seed/tree/master?tab=Apache-2.0-1-ov-file)
     release_group = None
     matched_anime = False
@@ -53,14 +60,23 @@ async def get_tag(video: str, meta: Meta, season_pack_check: bool = False) -> st
         if Path(video).is_dir():
             # If video is a directory, use the directory name as basename
             basename_stripped = Path(os.path.normpath(video)).name
-        elif (meta.tv_pack or meta.keep_folder or meta.category in ("BOOK", "GAME")) and not season_pack_check:
+        elif (
+            meta.tv_pack
+            or meta.keep_folder
+            or meta.category in ("BOOK", "GAME")
+        ) and not season_pack_check:
             basename_stripped = meta.uuid
         else:
             # If video is a file, use the filename without extension
             basename_no_path = Path(video).name
-            name, ext = Path(basename_no_path).stem, Path(basename_no_path).suffix
+            name, ext = (
+                Path(basename_no_path).stem,
+                Path(basename_no_path).suffix,
+            )
             # If the extension contains a hyphen, it's not a real extension
-            basename_stripped = basename_no_path if ext and "-" in ext else name
+            basename_stripped = (
+                basename_no_path if ext and "-" in ext else name
+            )
         # Strip common file extensions if present (e.g. from directories or custom uuid paths)
         known_extensions = {
             ".mkv",
@@ -86,27 +102,46 @@ async def get_tag(video: str, meta: Meta, season_pack_check: bool = False) -> st
             ".tar",
             ".7z",
         }
-        name, ext = Path(basename_stripped).stem, Path(basename_stripped).suffix
+        name, ext = (
+            Path(basename_stripped).stem,
+            Path(basename_stripped).suffix,
+        )
         if ext.lower() in known_extensions:
             basename_stripped = name
 
         non_anime_match = re.search(
-            r"(?<=-)((?!\s*(?:WEB-DL|Blu-ray|H-264|H-265))(?:\W|\b)(?!(?:\d{3,4}[ip]))(?!\d+\b)(?:\W|\b)([\w.]+?))(?:\[.+\])?(?:\))?(?:\s\[.+\])?$", basename_stripped
+            r"(?<=-)((?!\s*(?:WEB-DL|Blu-ray|H-264|H-265))(?:\W|\b)(?!(?:\d{3,4}[ip]))(?!\d+\b)(?:\W|\b)([\w.]+?))(?:\[.+\])?(?:\))?(?:\s\[.+\])?$",
+            basename_stripped,
         )
         if non_anime_match:
             release_group = non_anime_match.group(1).strip()
             # Prevent misinterpreting "Author - Title" space-hyphen-space separators as release groups
             if meta.category in ("BOOK", "GAME") and release_group:
                 hyphen_idx = non_anime_match.start() - 1
-                if hyphen_idx > 0 and basename_stripped[hyphen_idx - 1].isspace():
+                if (
+                    hyphen_idx > 0
+                    and basename_stripped[hyphen_idx - 1].isspace()
+                ):
                     release_group = None
                 else:
-                    tag_norm = "".join(c for c in release_group.lower() if c.isalnum())
-                    title_norm = "".join(c for c in (meta.title or "").lower() if c.isalnum())
-                    author_norm = "".join(c for c in (meta.author or "").lower() if c.isalnum())
+                    tag_norm = "".join(
+                        c for c in release_group.lower() if c.isalnum()
+                    )
+                    title_norm = "".join(
+                        c for c in (meta.title or "").lower() if c.isalnum()
+                    )
+                    author_norm = "".join(
+                        c for c in (meta.author or "").lower() if c.isalnum()
+                    )
                     if tag_norm and (
                         tag_norm in (title_norm, author_norm)
-                        or (len(tag_norm) >= 4 and (tag_norm in title_norm or tag_norm in author_norm))
+                        or (
+                            len(tag_norm) >= 4
+                            and (
+                                tag_norm in title_norm
+                                or tag_norm in author_norm
+                            )
+                        )
                         or (len(title_norm) >= 4 and title_norm in tag_norm)
                         or (len(author_norm) >= 4 and author_norm in tag_norm)
                     ):
@@ -114,12 +149,19 @@ async def get_tag(video: str, meta: Meta, season_pack_check: bool = False) -> st
                     else:
                         # Rejoin an intra-word hyphen (e.g. "Spider-Man" -> "spiderman") so short
                         # trailing fragments of hyphenated title/author words aren't taken as groups
-                        prefix_match = re.search(r"(\w+)$", basename_stripped[:hyphen_idx])
+                        prefix_match = re.search(
+                            r"(\w+)$", basename_stripped[:hyphen_idx]
+                        )
                         first_word_match = re.match(r"\w+", release_group)
                         if prefix_match and first_word_match:
-                            merged = (prefix_match.group(1) + first_word_match.group(0)).lower()
+                            merged = (
+                                prefix_match.group(1)
+                                + first_word_match.group(0)
+                            ).lower()
                             merged = "".join(c for c in merged if c.isalnum())
-                            if merged and (merged in title_norm or merged in author_norm):
+                            if merged and (
+                                merged in title_norm or merged in author_norm
+                            ):
                                 release_group = None
 
             if release_group:
@@ -130,12 +172,18 @@ async def get_tag(video: str, meta: Meta, season_pack_check: bool = False) -> st
             logger.debug(f"Non-anime regex match: {release_group}")
 
         if not release_group and meta.category in ("MOVIE", "TV"):
-            space_separated_match = re.search(r"\s([A-Za-z0-9]+)$", basename_stripped)
+            space_separated_match = re.search(
+                r"\s([A-Za-z0-9]+)$", basename_stripped
+            )
             if space_separated_match:
                 candidate = space_separated_match.group(1)
-                release_group = SPACE_SEPARATED_RELEASE_GROUPS.get(candidate.upper())
+                release_group = SPACE_SEPARATED_RELEASE_GROUPS.get(
+                    candidate.upper()
+                )
                 if release_group:
-                    logger.debug(f"Space-separated release group match: {release_group}")
+                    logger.debug(
+                        f"Space-separated release group match: {release_group}"
+                    )
 
     # If regex patterns didn't work, fall back to guessit
     if not release_group and meta.is_disc:
@@ -149,7 +197,11 @@ async def get_tag(video: str, meta: Meta, season_pack_check: bool = False) -> st
             release_group = None
 
     # BDMV validation
-    if meta.is_disc == "BDMV" and release_group and f"{release_group}" not in video:
+    if (
+        meta.is_disc == "BDMV"
+        and release_group
+        and f"{release_group}" not in video
+    ):
         release_group = None
 
     # Format the tag
@@ -165,7 +217,9 @@ async def get_tag(video: str, meta: Meta, season_pack_check: bool = False) -> st
 _legacy_get_tag = get_tag
 
 
-async def _validated_get_tag(video: str, meta: Meta, season_pack_check: bool = False) -> str:
+async def _validated_get_tag(
+    video: str, meta: Meta, season_pack_check: bool = False
+) -> str:
     """Detect a release group with prefix priority and semantic validation."""
     prefixed = _prefixed_release_group(video, meta)
     if prefixed:
@@ -174,7 +228,9 @@ async def _validated_get_tag(video: str, meta: Meta, season_pack_check: bool = F
     tag = await _legacy_get_tag(video, meta, season_pack_check)
     if not tag or is_valid_release_group(tag):
         return tag
-    logger.warning(f"[yellow]Ignoring invalid release-group candidate {tag!r}: value matches season/episode syntax.[/yellow]")
+    logger.warning(
+        f"[yellow]Ignoring invalid release-group candidate {tag!r}: value matches season/episode syntax.[/yellow]"
+    )
     return ""
 
 
@@ -183,7 +239,9 @@ get_tag = _validated_get_tag
 
 async def tag_override(meta: Meta) -> Meta:
     try:
-        tags_text = await asyncio.to_thread(Path(f"{meta.base_dir}/data/tags.json").read_text, encoding="utf-8")
+        tags_text = await asyncio.to_thread(
+            Path(f"{meta.base_dir}/data/tags.json").read_text, encoding="utf-8"
+        )
         tags = json.loads(tags_text)
 
         for tag in tags:

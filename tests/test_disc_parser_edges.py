@@ -83,9 +83,13 @@ def _parser(**defaults: object) -> DiscParse:
     return DiscParse({"DEFAULT": {"use_largest_playlist": False, **defaults}})
 
 
-def test_process_group_options_and_playlist_scoring(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_process_group_options_and_playlist_scoring(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     original_os = disc_parser.os
-    monkeypatch.setattr(disc_parser.subprocess, "CREATE_NEW_PROCESS_GROUP", 512, raising=False)
+    monkeypatch.setattr(
+        disc_parser.subprocess, "CREATE_NEW_PROCESS_GROUP", 512, raising=False
+    )
     monkeypatch.setattr(disc_parser, "os", SimpleNamespace(name="nt"))
     assert DiscParse._process_group_options() == {"creationflags": 512}
     monkeypatch.setattr(disc_parser, "os", SimpleNamespace(name="posix"))
@@ -107,11 +111,19 @@ def test_process_group_options_and_playlist_scoring(monkeypatch: pytest.MonkeyPa
         }
     )
     assert 89.9 <= score <= 90.1
-    concentrated = parser._calculate_playlist_score({"items": [{"file": "a", "size": 1}], "duration": 1, "total_play_items": 1})
+    concentrated = parser._calculate_playlist_score(
+        {
+            "items": [{"file": "a", "size": 1}],
+            "duration": 1,
+            "total_play_items": 1,
+        }
+    )
     assert concentrated > 10
 
 
-def test_terminate_process_tree_every_platform(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_terminate_process_tree_every_platform(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     async def exercise() -> None:
         done = _Process(returncode=0)
         await DiscParse._terminate_process_tree(done)  # type: ignore[arg-type]
@@ -122,14 +134,20 @@ def test_terminate_process_tree_every_platform(monkeypatch: pytest.MonkeyPatch) 
         process = _Process(returncode=None, pid=44)
         create = AsyncMock(return_value=tree)
         monkeypatch.setattr(disc_parser, "os", SimpleNamespace(name="nt"))
-        monkeypatch.setattr(disc_parser.asyncio, "create_subprocess_exec", create)
+        monkeypatch.setattr(
+            disc_parser.asyncio, "create_subprocess_exec", create
+        )
         await DiscParse._terminate_process_tree(process)  # type: ignore[arg-type]
         assert process.killed
         create.assert_awaited_once()
 
         tree = _Process(returncode=None)
         process = _Process(returncode=None, pid=45)
-        monkeypatch.setattr(disc_parser.asyncio, "create_subprocess_exec", AsyncMock(return_value=tree))
+        monkeypatch.setattr(
+            disc_parser.asyncio,
+            "create_subprocess_exec",
+            AsyncMock(return_value=tree),
+        )
         original_wait_for = disc_parser.asyncio.wait_for
         calls = 0
 
@@ -152,7 +170,9 @@ def test_terminate_process_tree_every_platform(monkeypatch: pytest.MonkeyPatch) 
         monkeypatch.setattr(
             disc_parser,
             "os",
-            SimpleNamespace(name="posix", killpg=lambda pid, sig: killed.append((pid, sig))),
+            SimpleNamespace(
+                name="posix", killpg=lambda pid, sig: killed.append((pid, sig))
+            ),
         )
         process = _Process(returncode=None, pid=46)
         await DiscParse._terminate_process_tree(process)  # type: ignore[arg-type]
@@ -166,16 +186,28 @@ def test_terminate_process_tree_every_platform(monkeypatch: pytest.MonkeyPatch) 
     asyncio.run(exercise())
 
 
-def test_specialized_mediainfo_success_timeout_and_cancellation(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_specialized_mediainfo_success_timeout_and_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     parser = _parser()
 
     async def exercise() -> None:
         success = _Process(returncode=0, stdout=b"json", stderr=b"")
-        monkeypatch.setattr(disc_parser.asyncio, "create_subprocess_exec", AsyncMock(return_value=success))
-        assert await parser._run_specialized_mediainfo("mediainfo", "file", env={"X": "1"}) == (b"json", b"", 0)
+        monkeypatch.setattr(
+            disc_parser.asyncio,
+            "create_subprocess_exec",
+            AsyncMock(return_value=success),
+        )
+        assert await parser._run_specialized_mediainfo(
+            "mediainfo", "file", env={"X": "1"}
+        ) == (b"json", b"", 0)
 
         timed = _Process(returncode=None)
-        monkeypatch.setattr(disc_parser.asyncio, "create_subprocess_exec", AsyncMock(return_value=timed))
+        monkeypatch.setattr(
+            disc_parser.asyncio,
+            "create_subprocess_exec",
+            AsyncMock(return_value=timed),
+        )
         terminate = AsyncMock()
         monkeypatch.setattr(parser, "_terminate_process_tree", terminate)
         original_wait_for = disc_parser.asyncio.wait_for
@@ -197,7 +229,11 @@ def test_specialized_mediainfo_success_timeout_and_cancellation(monkeypatch: pyt
         terminate.assert_awaited_once_with(timed)
 
         cancelled = _Process(returncode=None)
-        monkeypatch.setattr(disc_parser.asyncio, "create_subprocess_exec", AsyncMock(return_value=cancelled))
+        monkeypatch.setattr(
+            disc_parser.asyncio,
+            "create_subprocess_exec",
+            AsyncMock(return_value=cancelled),
+        )
         terminate.reset_mock()
         calls = 0
 
@@ -220,12 +256,20 @@ def test_specialized_mediainfo_success_timeout_and_cancellation(monkeypatch: pyt
     asyncio.run(exercise())
 
 
-def test_setup_mediainfo_all_sources(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_setup_mediainfo_all_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     parser = _parser()
-    monkeypatch.setattr(disc_parser, "configured_binary", lambda *_args, **_kwargs: "/configured/mediainfo")
+    monkeypatch.setattr(
+        disc_parser,
+        "configured_binary",
+        lambda *_args, **_kwargs: "/configured/mediainfo",
+    )
     assert parser.setup_mediainfo_for_dvd(None)[0] == "/configured/mediainfo"  # type: ignore[index]
 
-    monkeypatch.setattr(disc_parser, "configured_binary", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        disc_parser, "configured_binary", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr(disc_parser.platform, "system", lambda: "Windows")
     windows = tmp_path / "bin" / "MI" / "windows" / "dvd" / "MediaInfo.exe"
     windows.parent.mkdir(parents=True)
@@ -248,40 +292,74 @@ def test_setup_mediainfo_all_sources(tmp_path: Path, monkeypatch: pytest.MonkeyP
     monkeypatch.delenv("LD_LIBRARY_PATH")
     parser = _parser()
     result = parser.setup_mediainfo_for_dvd(str(linux_root))
-    assert result is not None and result[1]["LD_LIBRARY_PATH"] == str(linux_dir)
+    assert result is not None and result[1]["LD_LIBRARY_PATH"] == str(
+        linux_dir
+    )
 
     parser = _parser()
     monkeypatch.setattr(disc_parser.platform, "system", lambda: "Other")
     assert parser.setup_mediainfo_for_dvd(None) is None
-    monkeypatch.setattr(disc_parser, "find_dvd_mediainfo", lambda _base: {"cli": "/fallback", "lib": None})
+    monkeypatch.setattr(
+        disc_parser,
+        "find_dvd_mediainfo",
+        lambda _base: {"cli": "/fallback", "lib": None},
+    )
     assert parser.setup_mediainfo_for_dvd(str(tmp_path))[0] == "/fallback"  # type: ignore[index]
     parser.mediainfo_config = {"cli": None}
     assert parser.setup_mediainfo_for_dvd(str(tmp_path)) is None
 
 
-def test_bdinfo_progress_success_nonzero_missing_stream_and_cleanup(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_bdinfo_progress_success_nonzero_missing_stream_and_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     parser = _parser()
     monkeypatch.setattr(disc_parser, "progress_display", _Progress)
     _Progress.instances = []
-    progress = b"Stream scan: 50.0% (1 GB / 2 GB, files 1/2, read 10 MB/s, ETA 1s)\r"
+    progress = (
+        b"Stream scan: 50.0% (1 GB / 2 GB, files 1/2, read 10 MB/s, ETA 1s)\r"
+    )
     process = _BDProcess([progress[:20], progress[20:], b""], 0)
-    monkeypatch.setattr(disc_parser.asyncio, "create_subprocess_exec", AsyncMock(return_value=process))
-    assert asyncio.run(parser._run_bdinfo_with_progress(["bdinfo", "/disc"], "id")) == 0
-    assert any(update[1].get("completed") == 100 for update in _Progress.instances[-1].updates)
+    monkeypatch.setattr(
+        disc_parser.asyncio,
+        "create_subprocess_exec",
+        AsyncMock(return_value=process),
+    )
+    assert (
+        asyncio.run(
+            parser._run_bdinfo_with_progress(["bdinfo", "/disc"], "id")
+        )
+        == 0
+    )
+    assert any(
+        update[1].get("completed") == 100
+        for update in _Progress.instances[-1].updates
+    )
 
     process = _BDProcess([progress, b""], 2)
-    monkeypatch.setattr(disc_parser.asyncio, "create_subprocess_exec", AsyncMock(return_value=process))
+    monkeypatch.setattr(
+        disc_parser.asyncio,
+        "create_subprocess_exec",
+        AsyncMock(return_value=process),
+    )
     assert asyncio.run(parser._run_bdinfo_with_progress(["bdinfo"], "id")) == 2
 
     process = _Process(returncode=0)
     process.stderr = None  # type: ignore[attr-defined]
-    monkeypatch.setattr(disc_parser.asyncio, "create_subprocess_exec", AsyncMock(return_value=process))
+    monkeypatch.setattr(
+        disc_parser.asyncio,
+        "create_subprocess_exec",
+        AsyncMock(return_value=process),
+    )
     with pytest.raises(RuntimeError, match="progress output"):
         asyncio.run(parser._run_bdinfo_with_progress(["bdinfo"], "id"))
 
     process = _BDProcess([b""], 0)
     process.returncode = None
-    monkeypatch.setattr(disc_parser.asyncio, "create_subprocess_exec", AsyncMock(return_value=process))
+    monkeypatch.setattr(
+        disc_parser.asyncio,
+        "create_subprocess_exec",
+        AsyncMock(return_value=process),
+    )
     terminate = AsyncMock()
     monkeypatch.setattr(parser, "_terminate_process_tree", terminate)
     asyncio.run(parser._run_bdinfo_with_progress(["bdinfo"], "id"))
@@ -332,7 +410,10 @@ def test_parse_bdinfo_files_and_summary_variants() -> None:
     assert len(parsed["video"]) == 2 and parsed["video"][1]["3d"] == "Left Eye"
     assert parsed["audio"][0]["atmos_why_you_be_like_this"] == "Atmos"
     assert parsed["audio"][1]["codec"] == "AAC"
-    assert parsed["title"].strip() == "Example Disc" and parsed["label"].strip() == "EXAMPLE"
+    assert (
+        parsed["title"].strip() == "Example Disc"
+        and parsed["label"].strip() == "EXAMPLE"
+    )
     assert parsed["subtitles"] == ["English"]
 
 
@@ -349,7 +430,12 @@ def test_duration_and_timecode_helpers() -> None:
 
 def _dvd_files(root: Path, *, large: bool = False) -> None:
     root.mkdir(parents=True, exist_ok=True)
-    for name in ("VTS_01_0.IFO", "VTS_01_1.VOB", "VTS_02_0.IFO", "VTS_02_1.VOB"):
+    for name in (
+        "VTS_01_0.IFO",
+        "VTS_01_1.VOB",
+        "VTS_02_0.IFO",
+        "VTS_02_1.VOB",
+    ):
         path = root / name
         if large and name == "VTS_02_1.VOB":
             with path.open("wb") as stream:
@@ -358,27 +444,59 @@ def _dvd_files(root: Path, *, large: bool = False) -> None:
             path.write_bytes(b"dvd")
 
 
-def test_get_dvdinfo_specialized_success_fallback_and_sizes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_dvdinfo_specialized_success_fallback_and_sizes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     small = tmp_path / "small-dvd"
     _dvd_files(small)
     large = tmp_path / "large-dvd"
     _dvd_files(large, large=True)
     parser = _parser()
-    monkeypatch.setattr(parser, "setup_mediainfo_for_dvd", lambda _base: ("dvd-mediainfo", {"ENV": "1"}))
+    monkeypatch.setattr(
+        parser,
+        "setup_mediainfo_for_dvd",
+        lambda _base: ("dvd-mediainfo", {"ENV": "1"}),
+    )
 
     sequence = iter(
         (
-            (json.dumps({"media": {"track": [{}, {"Duration": "100.0"}]}}).encode(), b"", 0),
-            (json.dumps({"media": {"track": [{}, {"Duration": "50"}]}}).encode(), b"", 0),
+            (
+                json.dumps(
+                    {"media": {"track": [{}, {"Duration": "100.0"}]}}
+                ).encode(),
+                b"",
+                0,
+            ),
+            (
+                json.dumps(
+                    {"media": {"track": [{}, {"Duration": "50"}]}}
+                ).encode(),
+                b"",
+                0,
+            ),
             (b"VOB SPECIAL\r\n", b"", 0),
             (b"", b"ifo failed", 1),
-            (json.dumps({"media": {"track": [{}, {"Duration": "100.0"}]}}).encode(), b"", 0),
-            (json.dumps({"media": {"track": [{}, {"Duration": "50"}]}}).encode(), b"", 0),
+            (
+                json.dumps(
+                    {"media": {"track": [{}, {"Duration": "100.0"}]}}
+                ).encode(),
+                b"",
+                0,
+            ),
+            (
+                json.dumps(
+                    {"media": {"track": [{}, {"Duration": "50"}]}}
+                ).encode(),
+                b"",
+                0,
+            ),
             (b"VOB LARGE\r\n", b"", 0),
             (b"IFO LARGE\r\n", b"", 0),
         )
     )
-    monkeypatch.setattr(parser, "_run_specialized_mediainfo", AsyncMock(side_effect=sequence))
+    monkeypatch.setattr(
+        parser, "_run_specialized_mediainfo", AsyncMock(side_effect=sequence)
+    )
 
     def standard(path: str, *, output: str, full: bool | None = None) -> str:
         del full
@@ -416,7 +534,9 @@ def async_value(value: Any) -> Any:
     return inner()
 
 
-def test_get_dvdinfo_standard_errors_invalid_durations_and_outer_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_dvdinfo_standard_errors_invalid_durations_and_outer_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     root = tmp_path / "dvd"
     _dvd_files(root)
     parser = _parser()
@@ -429,13 +549,17 @@ def test_get_dvdinfo_standard_errors_invalid_durations_and_outer_fallback(tmp_pa
         if output == "JSON":
             if path.startswith("VTS_01"):
                 return json.dumps({"media": {"track": [{}]}})
-            return json.dumps({"media": {"track": [{}, {"Duration": "invalid"}]}})
+            return json.dumps(
+                {"media": {"track": [{}, {"Duration": "invalid"}]}}
+            )
         return f"MI {path}"
 
     monkeypatch.setattr(disc_parser.MediaInfo, "parse", parse)
     cwd = Path.cwd()
     try:
-        result = asyncio.run(parser.get_dvdinfo([{"path": str(root)}], str(tmp_path)))
+        result = asyncio.run(
+            parser.get_dvdinfo([{"path": str(root)}], str(tmp_path))
+        )
     finally:
         os.chdir(cwd)
     assert result[0]["main_set"] == []
@@ -444,15 +568,25 @@ def test_get_dvdinfo_standard_errors_invalid_durations_and_outer_fallback(tmp_pa
     # JSON-specialized failure falls back to standard, while repeated string
     # failures exercise the outer VOB/IFO recovery block.
     parser = _parser()
-    monkeypatch.setattr(parser, "setup_mediainfo_for_dvd", lambda _base: ("dvd-mi", {}))
+    monkeypatch.setattr(
+        parser, "setup_mediainfo_for_dvd", lambda _base: ("dvd-mi", {})
+    )
     monkeypatch.setattr(
         parser,
         "_run_specialized_mediainfo",
-        AsyncMock(side_effect=[RuntimeError("json failed"), RuntimeError("vob failed"), RuntimeError("ifo failed")]),
+        AsyncMock(
+            side_effect=[
+                RuntimeError("json failed"),
+                RuntimeError("vob failed"),
+                RuntimeError("ifo failed"),
+            ]
+        ),
     )
     string_calls = 0
 
-    def fallback_parse(path: str, *, output: str, full: bool | None = None) -> str:
+    def fallback_parse(
+        path: str, *, output: str, full: bool | None = None
+    ) -> str:
         nonlocal string_calls
         del full
         if output == "JSON":
@@ -465,7 +599,9 @@ def test_get_dvdinfo_standard_errors_invalid_durations_and_outer_fallback(tmp_pa
     monkeypatch.setattr(disc_parser.MediaInfo, "parse", fallback_parse)
     cwd = Path.cwd()
     try:
-        result = asyncio.run(parser.get_dvdinfo([{"path": str(root)}], str(tmp_path)))
+        result = asyncio.run(
+            parser.get_dvdinfo([{"path": str(root)}], str(tmp_path))
+        )
     finally:
         os.chdir(cwd)
     assert result[0]["vob_mi"].startswith("RECOVERED")
@@ -498,7 +634,9 @@ def _hddvd_xml(path: Path) -> None:
     )
 
 
-def test_parse_hddvd_playlist_full_short_invalid_and_root_none(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_parse_hddvd_playlist_full_short_invalid_and_root_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     parser = _parser()
     playlist = tmp_path / "playlist.xpl"
     _hddvd_xml(playlist)
@@ -507,16 +645,25 @@ def test_parse_hddvd_playlist_full_short_invalid_and_root_none(tmp_path: Path, m
     title = result[0]
     assert title["id"] == "main"
     assert title["primaryClips"][0]["audioTracks"][0]["track"] == "1"
-    assert title["primaryClips"][0]["subtitleTracks"][0]["description"] == "French"
+    assert (
+        title["primaryClips"][0]["subtitleTracks"][0]["description"]
+        == "French"
+    )
     assert title["chapters"][0]["displayName"] == "Chapter 1"
     assert title["audioTracks"][0]["language"] == "English"
     assert title["subtitleTracks"][0]["language"] == "French"
-    assert title["applicationSegments"][0]["resources"][0]["src"] == "asset.png"
+    assert (
+        title["applicationSegments"][0]["resources"][0]["src"] == "asset.png"
+    )
 
     invalid = tmp_path / "invalid.xpl"
     invalid.write_text("<broken>", encoding="utf-8")
     assert parser.parse_hddvd_playlist(str(invalid)) == []
-    monkeypatch.setattr(disc_parser.ElementTree, "parse", lambda _path: SimpleNamespace(getroot=lambda: None))
+    monkeypatch.setattr(
+        disc_parser.ElementTree,
+        "parse",
+        lambda _path: SimpleNamespace(getroot=lambda: None),
+    )
     assert parser.parse_hddvd_playlist(str(playlist)) == []
 
 
@@ -534,8 +681,18 @@ def _playlist(
         "titleDuration": duration,
         "primaryClips": [{"src": src} for src in srcs],
         "audioTracks": [
-            {"track": "1", "language": "English", "langcode": "en", "description": "Main"},
-            {"track": "2", "language": "French", "langcode": "fr", "description": "Missing block"},
+            {
+                "track": "1",
+                "language": "English",
+                "langcode": "en",
+                "description": "Main",
+            },
+            {
+                "track": "2",
+                "language": "French",
+                "langcode": "fr",
+                "description": "Missing block",
+            },
         ],
         "subtitleTracks": [
             {"track": "1", "language": "French", "langcode": "fr"},
@@ -545,7 +702,9 @@ def _playlist(
     }
 
 
-def test_get_hddvd_valid_interactive_and_language_injection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_hddvd_valid_interactive_and_language_injection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     root = tmp_path / "hddvd"
     adv = root / "ADV_OBJ"
     adv.mkdir(parents=True)
@@ -562,29 +721,47 @@ def test_get_hddvd_valid_interactive_and_language_injection(tmp_path: Path, monk
         "parse_hddvd_playlist",
         lambda _path: [
             _playlist(id_="one", srcs=["A.MAP", "B.MAP"], size=30),
-            _playlist(id_="two", srcs=["C.MAP"], size=5, duration="01:00:00:00"),
+            _playlist(
+                id_="two", srcs=["C.MAP"], size=5, duration="01:00:00:00"
+            ),
         ],
     )
     answers = iter(("9", "1"))
-    monkeypatch.setattr(disc_parser, "prompt_in_thread", lambda *_args, **_kwargs: async_value(next(answers)))
+    monkeypatch.setattr(
+        disc_parser,
+        "prompt_in_thread",
+        lambda *_args, **_kwargs: async_value(next(answers)),
+    )
     monkeypatch.setattr(
         disc_parser.MediaInfo,
         "parse",
-        lambda *_args, **_kwargs: "General\nFile size : 1 GiB\nDuration : 1 h\n\nAudio #1\nFormat : DTS\nCompression mode : Lossless\n\nText #1\nFormat : PGS",
+        lambda *_args, **_kwargs: (
+            "General\nFile size : 1 GiB\nDuration : 1 h\n\nAudio #1\nFormat : DTS\nCompression mode : Lossless\n\nText #1\nFormat : PGS"
+        ),
     )
     meta = Meta(unattended=False, unattended_confirm=False)
     cwd = Path.cwd()
     try:
-        result = asyncio.run(parser.get_hddvd_info([{"path": str(root)}], meta))
+        result = asyncio.run(
+            parser.get_hddvd_info([{"path": str(root)}], meta)
+        )
     finally:
         os.chdir(cwd)
     assert result[0]["largest_evo"] == str(b.resolve())
-    assert "Language                                 : English" in result[0]["evo_mi"]
-    assert "Language                                 : French" in result[0]["evo_mi"]
+    assert (
+        "Language                                 : English"
+        in result[0]["evo_mi"]
+    )
+    assert (
+        "Language                                 : French"
+        in result[0]["evo_mi"]
+    )
     assert meta.HDDVD_PLAYLIST["id"] == "one"
 
 
-def test_get_hddvd_largest_unattended_and_fallbacks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_hddvd_largest_unattended_and_fallbacks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     root = tmp_path / "largest"
     adv = root / "ADV_OBJ"
     adv.mkdir(parents=True)
@@ -593,11 +770,21 @@ def test_get_hddvd_largest_unattended_and_fallbacks(tmp_path: Path, monkeypatch:
     c = root / "C.EVO"
     a.write_bytes(b"a" * 10)
     c.write_bytes(b"c" * 50)
-    monkeypatch.setattr(disc_parser.MediaInfo, "parse", lambda path, **_kwargs: f"MI {path}\nDuration : old\nFile size : old")
+    monkeypatch.setattr(
+        disc_parser.MediaInfo,
+        "parse",
+        lambda path, **_kwargs: f"MI {path}\nDuration : old\nFile size : old",
+    )
 
     for config, meta in (
-        ({"DEFAULT": {"use_largest_playlist": True}}, Meta(unattended=False, unattended_confirm=False)),
-        ({"DEFAULT": {"use_largest_playlist": False}}, Meta(unattended=True, unattended_confirm=False)),
+        (
+            {"DEFAULT": {"use_largest_playlist": True}},
+            Meta(unattended=False, unattended_confirm=False),
+        ),
+        (
+            {"DEFAULT": {"use_largest_playlist": False}},
+            Meta(unattended=True, unattended_confirm=False),
+        ),
     ):
         parser = DiscParse(config)
         monkeypatch.setattr(
@@ -610,7 +797,11 @@ def test_get_hddvd_largest_unattended_and_fallbacks(tmp_path: Path, monkeypatch:
         )
         cwd = Path.cwd()
         try:
-            result = asyncio.run(parser.get_hddvd_info([{"path": str(root)}, {"path": ""}, {"path": 1}], meta))
+            result = asyncio.run(
+                parser.get_hddvd_info(
+                    [{"path": str(root)}, {"path": ""}, {"path": 1}], meta
+                )
+            )
         finally:
             os.chdir(cwd)
         assert result[0]["largest_evo"] == str(c.resolve())
@@ -622,7 +813,9 @@ def test_get_hddvd_largest_unattended_and_fallbacks(tmp_path: Path, monkeypatch:
     parser = _parser()
     cwd = Path.cwd()
     try:
-        result = asyncio.run(parser.get_hddvd_info([{"path": str(fallback)}], Meta()))
+        result = asyncio.run(
+            parser.get_hddvd_info([{"path": str(fallback)}], Meta())
+        )
     finally:
         os.chdir(cwd)
     assert result[0]["largest_evo"].endswith("large.EVO")
@@ -631,14 +824,18 @@ def test_get_hddvd_largest_unattended_and_fallbacks(tmp_path: Path, monkeypatch:
     empty.mkdir()
     cwd = Path.cwd()
     try:
-        result = asyncio.run(parser.get_hddvd_info([{"path": str(empty)}], Meta()))
+        result = asyncio.run(
+            parser.get_hddvd_info([{"path": str(empty)}], Meta())
+        )
     finally:
         os.chdir(cwd)
     assert "largest_evo" not in result[0]
 
 
 class _PlayItem:
-    def __init__(self, clip: object, *, intime: object = 0, outtime: object = 45000) -> None:
+    def __init__(
+        self, clip: object, *, intime: object = 0, outtime: object = 45000
+    ) -> None:
         self.clip_information_filename = clip
         self.intime = intime
         self.outtime = outtime
@@ -696,13 +893,21 @@ FILES:
 """
 
 
-def _bluray_tree(tmp_path: Path, *, folder: str = "BDMV") -> tuple[Path, Path, Path]:
+def _bluray_tree(
+    tmp_path: Path, *, folder: str = "BDMV"
+) -> tuple[Path, Path, Path]:
     root = tmp_path / folder
     playlists = root / "PLAYLIST"
     streams = root / "STREAM"
     playlists.mkdir(parents=True)
     streams.mkdir()
-    for name in ("valid1.mpls", "valid2.mpls", "empty.mpls", "bad.mpls", "ignore.txt"):
+    for name in (
+        "valid1.mpls",
+        "valid2.mpls",
+        "empty.mpls",
+        "bad.mpls",
+        "ignore.txt",
+    ):
         (playlists / name).write_bytes(b"mpls")
     (streams / "A.m2ts").write_bytes(b"a" * 100)
     (streams / "B.m2ts").write_bytes(b"b" * 200)
@@ -734,11 +939,17 @@ def _install_bluray_playlists(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(disc_parser, "MplsParser", _FakeMplsParser)
 
 
-def test_get_bdinfo_interactive_all_playlists_reports_and_editions(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_bdinfo_interactive_all_playlists_reports_and_editions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     root, _playlists, _streams = _bluray_tree(tmp_path)
     _install_bluray_playlists(monkeypatch)
     parser = _parser()
-    monkeypatch.setattr(disc_parser, "configured_binary", lambda *_args, **_kwargs: "/configured/bdinfo")
+    monkeypatch.setattr(
+        disc_parser,
+        "configured_binary",
+        lambda *_args, **_kwargs: "/configured/bdinfo",
+    )
 
     answers = iter(("bad", "9", "all", "Director's Cut", ""))
 
@@ -750,13 +961,17 @@ def test_get_bdinfo_interactive_all_playlists_reports_and_editions(tmp_path: Pat
     async def scan(command: list[str], _progress_id: str) -> int:
         report = Path(command[command.index("--reportfilename") + 1])
         playlist = command[command.index("--playlist") + 1]
-        report.write_text(_bdinfo_report(f"Report {playlist}", playlist), encoding="utf-8")
+        report.write_text(
+            _bdinfo_report(f"Report {playlist}", playlist), encoding="utf-8"
+        )
         return 0
 
     monkeypatch.setattr(parser, "_run_bdinfo_with_progress", scan)
     disc: dict[str, Any] = {"type": "BDMV", "path": str(root)}
     meta = Meta(debug=True, unattended=False, unattended_confirm=False)
-    discs, primary = asyncio.run(parser.get_bdinfo(meta, [disc], "release", str(tmp_path), []))
+    discs, primary = asyncio.run(
+        parser.get_bdinfo(meta, [disc], "release", str(tmp_path), [])
+    )
 
     assert meta.discs_missing_certificate == [str(root)]
     assert primary["title"].strip().startswith("Report")
@@ -768,37 +983,64 @@ def test_get_bdinfo_interactive_all_playlists_reports_and_editions(tmp_path: Pat
     assert (tmp_path / "tmp" / "release" / "BD_SUMMARY_EXT_00_1.txt").is_file()
 
 
-def test_get_bdinfo_unattended_unique_durations_and_existing_meta_discs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_bdinfo_unattended_unique_durations_and_existing_meta_discs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     root, playlists, _streams = _bluray_tree(tmp_path, folder="BDMV2")
     (playlists / "valid3.mpls").write_bytes(b"mpls")
     _install_bluray_playlists(monkeypatch)
-    _FakeMplsParser.playlists["valid3.mpls"] = SimpleNamespace(play_items=[_PlayItem("C", outtime=45000 * 3000.2)])
+    _FakeMplsParser.playlists["valid3.mpls"] = SimpleNamespace(
+        play_items=[_PlayItem("C", outtime=45000 * 3000.2)]
+    )
     parser = _parser(use_largest_playlist=True)
-    monkeypatch.setattr(disc_parser, "configured_binary", lambda *_args, **_kwargs: "/configured/bdinfo")
+    monkeypatch.setattr(
+        disc_parser,
+        "configured_binary",
+        lambda *_args, **_kwargs: "/configured/bdinfo",
+    )
 
     async def scan(command: list[str], _progress_id: str) -> int:
         report = Path(command[command.index("--reportfilename") + 1])
         playlist = command[command.index("--playlist") + 1]
-        report.write_text(_bdinfo_report("Automatic", playlist), encoding="utf-8")
+        report.write_text(
+            _bdinfo_report("Automatic", playlist), encoding="utf-8"
+        )
         return 0
 
     monkeypatch.setattr(parser, "_run_bdinfo_with_progress", scan)
     disc: dict[str, Any] = {"type": "BDMV", "path": str(root)}
     meta = Meta(debug=False, unattended=True, unattended_confirm=False)
-    discs, primary = asyncio.run(parser.get_bdinfo(meta, [disc], "auto", str(tmp_path), []))
+    discs, primary = asyncio.run(
+        parser.get_bdinfo(meta, [disc], "auto", str(tmp_path), [])
+    )
     assert primary["label"].strip() == "AUTOMATIC"
     assert len(discs[0]["all_valid_playlists"]) == 2
-    assert discs[0]["all_valid_playlists"][0]["duration"] >= discs[0]["all_valid_playlists"][1]["duration"]
+    assert (
+        discs[0]["all_valid_playlists"][0]["duration"]
+        >= discs[0]["all_valid_playlists"][1]["duration"]
+    )
 
     cached_dir = tmp_path / "tmp" / "cached"
     cached_dir.mkdir(parents=True)
     (cached_dir / "BD_SUMMARY_00.txt").write_text("cached", encoding="utf-8")
-    cached = [{"type": "BDMV", "path": str(root), "bdinfo": {"label": "CACHED"}}]
-    result, primary = asyncio.run(parser.get_bdinfo(Meta(), [{"type": "BDMV", "path": str(root)}], "cached", str(tmp_path), cached))
+    cached = [
+        {"type": "BDMV", "path": str(root), "bdinfo": {"label": "CACHED"}}
+    ]
+    result, primary = asyncio.run(
+        parser.get_bdinfo(
+            Meta(),
+            [{"type": "BDMV", "path": str(root)}],
+            "cached",
+            str(tmp_path),
+            cached,
+        )
+    )
     assert result is cached and primary == {"label": "CACHED"}
 
 
-def test_get_bdinfo_missing_paths_no_valid_scanner_failures_and_safe_empty_return(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_bdinfo_missing_paths_no_valid_scanner_failures_and_safe_empty_return(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     parser = _parser()
     missing_playlist = tmp_path / "no-playlists"
     missing_playlist.mkdir()
@@ -815,8 +1057,12 @@ def test_get_bdinfo_missing_paths_no_valid_scanner_failures_and_safe_empty_retur
 
     root, _playlists, _streams = _bluray_tree(tmp_path, folder="no-valid")
     _install_bluray_playlists(monkeypatch)
-    _FakeMplsParser.playlists["valid1.mpls"] = SimpleNamespace(play_items=[_PlayItem("MISSING")])
-    _FakeMplsParser.playlists["valid2.mpls"] = SimpleNamespace(play_items=[_PlayItem("MISSING")])
+    _FakeMplsParser.playlists["valid1.mpls"] = SimpleNamespace(
+        play_items=[_PlayItem("MISSING")]
+    )
+    _FakeMplsParser.playlists["valid2.mpls"] = SimpleNamespace(
+        play_items=[_PlayItem("MISSING")]
+    )
     result, primary = asyncio.run(
         parser.get_bdinfo(
             Meta(debug=False, unattended=True, unattended_confirm=False),
@@ -831,7 +1077,9 @@ def test_get_bdinfo_missing_paths_no_valid_scanner_failures_and_safe_empty_retur
     # Valid playlist but no configured, bundled, or system scanner.
     root, _playlists, _streams = _bluray_tree(tmp_path, folder="no-scanner")
     _install_bluray_playlists(monkeypatch)
-    monkeypatch.setattr(disc_parser, "configured_binary", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        disc_parser, "configured_binary", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr(disc_parser.platform, "system", lambda: "unknown")
     monkeypatch.setattr(disc_parser.shutil, "which", lambda _name: None)
     result, primary = asyncio.run(
@@ -846,7 +1094,11 @@ def test_get_bdinfo_missing_paths_no_valid_scanner_failures_and_safe_empty_retur
     assert primary == {} and "bdinfo" not in result[0]
 
     # Scanner non-zero and scanner exception both remain isolated per playlist.
-    monkeypatch.setattr(disc_parser, "configured_binary", lambda *_args, **_kwargs: "/configured/bdinfo")
+    monkeypatch.setattr(
+        disc_parser,
+        "configured_binary",
+        lambda *_args, **_kwargs: "/configured/bdinfo",
+    )
     parser._run_bdinfo_with_progress = AsyncMock(return_value=2)  # type: ignore[method-assign]
     result, primary = asyncio.run(
         parser.get_bdinfo(
@@ -859,7 +1111,9 @@ def test_get_bdinfo_missing_paths_no_valid_scanner_failures_and_safe_empty_retur
     )
     assert primary == {}
 
-    parser._run_bdinfo_with_progress = AsyncMock(side_effect=RuntimeError("scan failed"))  # type: ignore[method-assign]
+    parser._run_bdinfo_with_progress = AsyncMock(
+        side_effect=RuntimeError("scan failed")
+    )  # type: ignore[method-assign]
     result, primary = asyncio.run(
         parser.get_bdinfo(
             Meta(debug=False, unattended=True, unattended_confirm=False),
@@ -870,34 +1124,59 @@ def test_get_bdinfo_missing_paths_no_valid_scanner_failures_and_safe_empty_retur
         )
     )
     assert primary == {}
-    assert asyncio.run(parser.get_bdinfo(Meta(), [], "empty", str(tmp_path), [])) == ([], {})
+    assert asyncio.run(
+        parser.get_bdinfo(Meta(), [], "empty", str(tmp_path), [])
+    ) == ([], {})
 
 
-def test_bdinfo_progress_nonmatching_update_and_final_buffer(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_bdinfo_progress_nonmatching_update_and_final_buffer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     parser = _parser()
     monkeypatch.setattr(disc_parser, "progress_display", _Progress)
     _Progress.instances = []
-    final = b"Stream scan: 75.0% (3 GB / 4 GB, files 3/4, read 20 MB/s, ETA 2s)"
+    final = (
+        b"Stream scan: 75.0% (3 GB / 4 GB, files 3/4, read 20 MB/s, ETA 2s)"
+    )
     process = _BDProcess([b"unrelated status\r", final, b""], 0)
-    monkeypatch.setattr(disc_parser.asyncio, "create_subprocess_exec", AsyncMock(return_value=process))
+    monkeypatch.setattr(
+        disc_parser.asyncio,
+        "create_subprocess_exec",
+        AsyncMock(return_value=process),
+    )
     assert asyncio.run(parser._run_bdinfo_with_progress(["bdinfo"], "id")) == 0
-    completed = [update[1].get("completed") for update in _Progress.instances[-1].updates]
+    completed = [
+        update[1].get("completed")
+        for update in _Progress.instances[-1].updates
+    ]
     assert 75.0 in completed and 100 in completed
 
 
-def _single_bluray(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, folder: str) -> Path:
+def _single_bluray(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, folder: str
+) -> Path:
     root, _playlists, _streams = _bluray_tree(tmp_path, folder=folder)
     _install_bluray_playlists(monkeypatch)
-    _FakeMplsParser.playlists["valid1.mpls"] = SimpleNamespace(play_items=[_PlayItem("A"), _PlayItem(""), _BrokenClip()])
-    _FakeMplsParser.playlists["valid2.mpls"] = SimpleNamespace(play_items=[_PlayItem("MISSING")])
+    _FakeMplsParser.playlists["valid1.mpls"] = SimpleNamespace(
+        play_items=[_PlayItem("A"), _PlayItem(""), _BrokenClip()]
+    )
+    _FakeMplsParser.playlists["valid2.mpls"] = SimpleNamespace(
+        play_items=[_PlayItem("MISSING")]
+    )
     return root
 
 
-def test_get_bdinfo_single_playlist_default_and_numeric_selection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_bdinfo_single_playlist_default_and_numeric_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # Single valid playlist auto-selection.
     root = _single_bluray(tmp_path, monkeypatch, "single")
     parser = _parser()
-    monkeypatch.setattr(disc_parser, "configured_binary", lambda *_args, **_kwargs: "/configured/bdinfo")
+    monkeypatch.setattr(
+        disc_parser,
+        "configured_binary",
+        lambda *_args, **_kwargs: "/configured/bdinfo",
+    )
 
     async def scan(command: list[str], _progress_id: str) -> int:
         report = Path(command[command.index("--reportfilename") + 1])
@@ -914,14 +1193,21 @@ def test_get_bdinfo_single_playlist_default_and_numeric_selection(tmp_path: Path
             [],
         )
     )
-    assert primary["label"].strip() == "SINGLE" and len(discs[0]["playlists"]) == 1
+    assert (
+        primary["label"].strip() == "SINGLE"
+        and len(discs[0]["playlists"]) == 1
+    )
 
     # Blank input selects the first of multiple playlists.
     root, _playlists, _streams = _bluray_tree(tmp_path, folder="blank")
     _install_bluray_playlists(monkeypatch)
     parser = _parser()
     monkeypatch.setattr(parser, "_run_bdinfo_with_progress", scan)
-    monkeypatch.setattr(disc_parser, "prompt_in_thread", lambda *_args, **_kwargs: async_value(""))
+    monkeypatch.setattr(
+        disc_parser,
+        "prompt_in_thread",
+        lambda *_args, **_kwargs: async_value(""),
+    )
     discs, _primary = asyncio.run(
         parser.get_bdinfo(
             Meta(debug=False, unattended=False, unattended_confirm=False),
@@ -938,7 +1224,11 @@ def test_get_bdinfo_single_playlist_default_and_numeric_selection(tmp_path: Path
     _install_bluray_playlists(monkeypatch)
     parser = _parser()
     monkeypatch.setattr(parser, "_run_bdinfo_with_progress", scan)
-    monkeypatch.setattr(disc_parser, "prompt_in_thread", lambda *_args, **_kwargs: async_value("1"))
+    monkeypatch.setattr(
+        disc_parser,
+        "prompt_in_thread",
+        lambda *_args, **_kwargs: async_value("1"),
+    )
     discs, _primary = asyncio.run(
         parser.get_bdinfo(
             Meta(debug=False, unattended=False, unattended_confirm=False),
@@ -975,14 +1265,18 @@ def test_get_bdinfo_bundled_binary_resolution(
     binary.parent.mkdir(parents=True, exist_ok=True)
     binary.write_bytes(b"binary")
     parser = _parser(use_largest_playlist=True)
-    monkeypatch.setattr(disc_parser, "configured_binary", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        disc_parser, "configured_binary", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr(disc_parser.platform, "system", lambda: system)
     monkeypatch.setattr(disc_parser.platform, "machine", lambda: machine)
     commands: list[list[str]] = []
 
     async def scan(command: list[str], _progress_id: str) -> int:
         commands.append(command)
-        Path(command[command.index("--reportfilename") + 1]).write_text(_bdinfo_report("Bundled"), encoding="utf-8")
+        Path(command[command.index("--reportfilename") + 1]).write_text(
+            _bdinfo_report("Bundled"), encoding="utf-8"
+        )
         return 0
 
     monkeypatch.setattr(parser, "_run_bdinfo_with_progress", scan)
@@ -995,20 +1289,30 @@ def test_get_bdinfo_bundled_binary_resolution(
             [],
         )
     )
-    assert commands[0][0] == str(binary) and primary["label"].strip() == "BUNDLED"
+    assert (
+        commands[0][0] == str(binary) and primary["label"].strip() == "BUNDLED"
+    )
 
 
-def test_get_bdinfo_system_binary_existing_report_missing_report_and_malformed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_bdinfo_system_binary_existing_report_missing_report_and_malformed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     root = _single_bluray(tmp_path, monkeypatch, "system")
     parser = _parser(use_largest_playlist=True)
-    monkeypatch.setattr(disc_parser, "configured_binary", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        disc_parser, "configured_binary", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr(disc_parser.platform, "system", lambda: "Unknown")
-    monkeypatch.setattr(disc_parser.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(
+        disc_parser.shutil, "which", lambda name: f"/usr/bin/{name}"
+    )
     commands: list[list[str]] = []
 
     async def scan(command: list[str], _progress_id: str) -> int:
         commands.append(command)
-        Path(command[command.index("--reportfilename") + 1]).write_text(_bdinfo_report("System"), encoding="utf-8")
+        Path(command[command.index("--reportfilename") + 1]).write_text(
+            _bdinfo_report("System"), encoding="utf-8"
+        )
         return 0
 
     monkeypatch.setattr(parser, "_run_bdinfo_with_progress", scan)
@@ -1030,7 +1334,9 @@ def test_get_bdinfo_system_binary_existing_report_missing_report_and_malformed(t
     existing = save / "Disc1_valid1_FULL.txt"
     existing.write_text(_bdinfo_report("Existing"), encoding="utf-8")
     parser = _parser(use_largest_playlist=True)
-    parser._run_bdinfo_with_progress = AsyncMock(side_effect=AssertionError("scanner should not run"))  # type: ignore[method-assign]
+    parser._run_bdinfo_with_progress = AsyncMock(
+        side_effect=AssertionError("scanner should not run")
+    )  # type: ignore[method-assign]
     _discs, primary = asyncio.run(
         parser.get_bdinfo(
             Meta(debug=False, unattended=True, unattended_confirm=False),
@@ -1045,7 +1351,11 @@ def test_get_bdinfo_system_binary_existing_report_missing_report_and_malformed(t
     # Successful scanner that creates no report is rejected.
     root = _single_bluray(tmp_path, monkeypatch, "missing-report")
     parser = _parser(use_largest_playlist=True)
-    monkeypatch.setattr(disc_parser, "configured_binary", lambda *_args, **_kwargs: "/configured/bdinfo")
+    monkeypatch.setattr(
+        disc_parser,
+        "configured_binary",
+        lambda *_args, **_kwargs: "/configured/bdinfo",
+    )
     parser._run_bdinfo_with_progress = AsyncMock(return_value=0)  # type: ignore[method-assign]
     _discs, primary = asyncio.run(
         parser.get_bdinfo(
@@ -1109,13 +1419,17 @@ def test_parse_bdinfo_short_track_padding() -> None:
     assert parsed["audio"][0]["bit_depth"] == ""
 
 
-def test_get_dvdinfo_remaining_specialized_and_standard_branches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_dvdinfo_remaining_specialized_and_standard_branches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     root = tmp_path / "dvd-remaining"
     root.mkdir()
     for name in ("VTS_01_0.IFO", "VTS_01_1.VOB"):
         (root / name).write_bytes(b"dvd")
     parser = _parser()
-    monkeypatch.setattr(parser, "setup_mediainfo_for_dvd", lambda _base: ("dvd-mi", {}))
+    monkeypatch.setattr(
+        parser, "setup_mediainfo_for_dvd", lambda _base: ("dvd-mi", {})
+    )
     sequence = iter(
         (
             (b"", b"json stderr", 1),
@@ -1124,7 +1438,9 @@ def test_get_dvdinfo_remaining_specialized_and_standard_branches(tmp_path: Path,
         )
     )
 
-    async def specialized(*_args: object, **_kwargs: object) -> tuple[bytes, bytes, int]:
+    async def specialized(
+        *_args: object, **_kwargs: object
+    ) -> tuple[bytes, bytes, int]:
         value = next(sequence)
         if isinstance(value, BaseException):
             raise value
@@ -1141,7 +1457,9 @@ def test_get_dvdinfo_remaining_specialized_and_standard_branches(tmp_path: Path,
     monkeypatch.setattr(disc_parser.MediaInfo, "parse", standard)
     cwd = Path.cwd()
     try:
-        result = asyncio.run(parser.get_dvdinfo([{"path": str(root)}], str(tmp_path)))
+        result = asyncio.run(
+            parser.get_dvdinfo([{"path": str(root)}], str(tmp_path))
+        )
     finally:
         os.chdir(cwd)
     assert result[0]["vob_mi"] == "STANDARD VTS_01_1.VOB\n"
@@ -1152,10 +1470,14 @@ def test_get_dvdinfo_remaining_specialized_and_standard_branches(tmp_path: Path,
     monkeypatch.setattr(disc_parser.MediaInfo, "parse", standard)
     cwd = Path.cwd()
     try:
-        result = asyncio.run(parser.get_dvdinfo([{"path": str(root)}], str(tmp_path)))
+        result = asyncio.run(
+            parser.get_dvdinfo([{"path": str(root)}], str(tmp_path))
+        )
     finally:
         os.chdir(cwd)
-    assert result[0]["vob_mi"].startswith("STANDARD") and result[0]["ifo_mi"].startswith("STANDARD")
+    assert result[0]["vob_mi"].startswith("STANDARD") and result[0][
+        "ifo_mi"
+    ].startswith("STANDARD")
 
     parser = _parser()
     monkeypatch.setattr(parser, "setup_mediainfo_for_dvd", lambda _base: None)
@@ -1169,30 +1491,46 @@ def test_get_dvdinfo_remaining_specialized_and_standard_branches(tmp_path: Path,
     monkeypatch.setattr(disc_parser.MediaInfo, "parse", always_bad)
     cwd = Path.cwd()
     try:
-        result = asyncio.run(parser.get_dvdinfo([{"path": str(root)}], str(tmp_path)))
+        result = asyncio.run(
+            parser.get_dvdinfo([{"path": str(root)}], str(tmp_path))
+        )
     finally:
         os.chdir(cwd)
     assert result[0]["main_set"] == []
 
 
-def test_get_hddvd_invalid_playlists_and_transient_evo_disappearance(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_hddvd_invalid_playlists_and_transient_evo_disappearance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     root = tmp_path / "hddvd-invalid"
     adv = root / "ADV_OBJ"
     adv.mkdir(parents=True)
     (adv / "main.xpl").write_text("playlist", encoding="utf-8")
     parser = _parser(use_largest_playlist=True)
-    monkeypatch.setattr(parser, "parse_hddvd_playlist", lambda _path: [_playlist(id_="missing", srcs=["MISSING.MAP"], size=0)])
+    monkeypatch.setattr(
+        parser,
+        "parse_hddvd_playlist",
+        lambda _path: [_playlist(id_="missing", srcs=["MISSING.MAP"], size=0)],
+    )
     cwd = Path.cwd()
     try:
-        result = asyncio.run(parser.get_hddvd_info([{"path": str(root)}], Meta()))
+        result = asyncio.run(
+            parser.get_hddvd_info([{"path": str(root)}], Meta())
+        )
     finally:
         os.chdir(cwd)
     assert "largest_evo" not in result[0]
 
     target = root / "A.EVO"
     target.write_bytes(b"video")
-    monkeypatch.setattr(parser, "parse_hddvd_playlist", lambda _path: [_playlist(id_="race", srcs=["A.MAP"], size=5)])
-    monkeypatch.setattr(disc_parser.MediaInfo, "parse", lambda path, **_kwargs: f"MI {path}")
+    monkeypatch.setattr(
+        parser,
+        "parse_hddvd_playlist",
+        lambda _path: [_playlist(id_="race", srcs=["A.MAP"], size=5)],
+    )
+    monkeypatch.setattr(
+        disc_parser.MediaInfo, "parse", lambda path, **_kwargs: f"MI {path}"
+    )
     original_exists = Path.exists
     calls = 0
 
@@ -1207,7 +1545,9 @@ def test_get_hddvd_invalid_playlists_and_transient_evo_disappearance(tmp_path: P
     monkeypatch.setattr(Path, "exists", transient_exists)
     cwd = Path.cwd()
     try:
-        result = asyncio.run(parser.get_hddvd_info([{"path": str(root)}], Meta()))
+        result = asyncio.run(
+            parser.get_hddvd_info([{"path": str(root)}], Meta())
+        )
     finally:
         os.chdir(cwd)
     assert result[0]["largest_evo"].endswith("A.EVO")
@@ -1225,7 +1565,9 @@ def test_get_hddvd_invalid_playlists_and_transient_evo_disappearance(tmp_path: P
     monkeypatch.setattr(Path, "exists", disappears_later)
     cwd = Path.cwd()
     try:
-        result = asyncio.run(parser.get_hddvd_info([{"path": str(root)}], Meta()))
+        result = asyncio.run(
+            parser.get_hddvd_info([{"path": str(root)}], Meta())
+        )
     finally:
         os.chdir(cwd)
     assert result[0]["largest_evo"].endswith("A.EVO")

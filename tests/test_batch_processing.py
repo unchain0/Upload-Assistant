@@ -24,7 +24,10 @@ def _configure_do_the_thing_stubs(
     meta_overrides: dict[str, Any] | None = None,
 ) -> tuple[list[str], AsyncMock]:
     queue_items = list(queue)
-    queue_paths = [str(item.get("path", item)) if isinstance(item, dict) else str(item) for item in queue_items]
+    queue_paths = [
+        str(item.get("path", item)) if isinstance(item, dict) else str(item)
+        for item in queue_items
+    ]
     for path in queue_paths:
         Path(path).touch()
 
@@ -33,21 +36,36 @@ def _configure_do_the_thing_stubs(
     test_base_dir = str(Path(queue_paths[0]).parent / "ua-state")
     monkeypatch.setattr("upload.base_dir", test_base_dir)
 
-    monkeypatch.setattr("upload._CONFIGURATION_SERVICE.load_mutable", lambda: dict(upload.config))
-    monkeypatch.setattr("upload.configured_binary", lambda *_args, **_kwargs: "ffmpeg")
-    monkeypatch.setattr("upload.ensure_mediainfo_binary", AsyncMock(return_value="mediainfo"))
+    monkeypatch.setattr(
+        "upload._CONFIGURATION_SERVICE.load_mutable",
+        lambda: dict(upload.config),
+    )
+    monkeypatch.setattr(
+        "upload.configured_binary", lambda *_args, **_kwargs: "ffmpeg"
+    )
+    monkeypatch.setattr(
+        "upload.ensure_mediainfo_binary", AsyncMock(return_value="mediainfo")
+    )
 
     info_messages: list[str] = []
 
     def fake_parse(argv: list[str], meta: Meta) -> tuple[Meta, Any, list[str]]:
         first = argv[0] if argv else queue_paths[0]
         parsed_queue = [] if meta_queue is _DEFAULT_META_QUEUE else meta_queue
-        values: dict[str, Any] = {"path": first, "queue": parsed_queue, "base_dir": upload.base_dir, "trackers": [], "site_check": False}
+        values: dict[str, Any] = {
+            "path": first,
+            "queue": parsed_queue,
+            "base_dir": upload.base_dir,
+            "trackers": [],
+            "site_check": False,
+        }
         values.update(meta_overrides or {})
         parsed = Meta(**values)
         return parsed, None, []
 
-    async def fake_handle_queue(_path: str, _meta: Meta, _paths: list[str], _base_dir: str) -> tuple[list[str], str | None]:
+    async def fake_handle_queue(
+        _path: str, _meta: Meta, _paths: list[str], _base_dir: str
+    ) -> tuple[list[str], str | None]:
         return list(queue_items), None
 
     class _NoopCleanup:
@@ -57,17 +75,30 @@ def _configure_do_the_thing_stubs(
         def reset_terminal(self) -> None:
             return None
 
-    monkeypatch.setattr("upload.parser", type("Parser", (), {"parse": staticmethod(fake_parse)})())
+    monkeypatch.setattr(
+        "upload.parser",
+        type("Parser", (), {"parse": staticmethod(fake_parse)})(),
+    )
     handle_queue = AsyncMock(side_effect=fake_handle_queue)
     process_meta_mock = AsyncMock(side_effect=process_meta)
     monkeypatch.setattr("upload.QueueManager.handle_queue", handle_queue)
     monkeypatch.setattr("upload.process_meta", process_meta_mock)
-    monkeypatch.setattr("upload.update_notification", AsyncMock(return_value=""))
+    monkeypatch.setattr(
+        "upload.update_notification", AsyncMock(return_value="")
+    )
     monkeypatch.setattr("upload.get_mkbrr_path", AsyncMock(return_value=False))
     monkeypatch.setattr("upload.cleanup_manager", _NoopCleanup())
-    monkeypatch.setattr("upload.save_processed_file", AsyncMock(return_value=None))
-    monkeypatch.setattr("upload.cancel_and_drain_early_artifact_tasks", AsyncMock(return_value=None))
-    monkeypatch.setattr("upload.logger.info", lambda message, *args, **kwargs: info_messages.append(str(message)))
+    monkeypatch.setattr(
+        "upload.save_processed_file", AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr(
+        "upload.cancel_and_drain_early_artifact_tasks",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        "upload.logger.info",
+        lambda message, *args, **kwargs: info_messages.append(str(message)),
+    )
     default_config = dict(upload.config.get("DEFAULT", {}))
     if "cross_seeding" not in default_config:
         default_config["cross_seeding"] = False
@@ -82,14 +113,22 @@ def _configure_do_the_thing_stubs(
     default_config["mkbrr"] = False
     default_config["debug"] = False
     monkeypatch.setitem(upload.config, "DEFAULT", default_config)
-    monkeypatch.setattr("src.services.configuration_validation_service.validate_config", lambda *_args, **_kwargs: (True, [], []))
-    monkeypatch.setattr("src.services.configuration_validation_service.group_warnings", lambda warnings: warnings)
+    monkeypatch.setattr(
+        "src.services.configuration_validation_service.validate_config",
+        lambda *_args, **_kwargs: (True, [], []),
+    )
+    monkeypatch.setattr(
+        "src.services.configuration_validation_service.group_warnings",
+        lambda warnings: warnings,
+    )
 
     return info_messages, process_meta_mock
 
 
 @pytest.mark.asyncio
-async def test_batch_continues_when_first_item_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_batch_continues_when_first_item_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     queue = [str(tmp_path / "first_fail.mkv"), str(tmp_path / "second_ok.mkv")]
 
     def fake_process_meta(meta: Meta, _base_dir: str) -> Any:
@@ -97,73 +136,122 @@ async def test_batch_continues_when_first_item_fails(tmp_path: Path, monkeypatch
             raise ItemProcessingError("No Video files found", meta.path)
         return True
 
-    info_messages, process_meta_mock = _configure_do_the_thing_stubs(monkeypatch, queue, fake_process_meta)
+    info_messages, process_meta_mock = _configure_do_the_thing_stubs(
+        monkeypatch, queue, fake_process_meta
+    )
     monkeypatch.setattr("sys.argv", ["upload.py", *queue])
 
     await upload.do_the_thing(upload.base_dir)
 
     assert process_meta_mock.call_count == 2
-    assert any("Batch summary: total queued 2, fully successful 0, partial 0, skipped/failed 2" in message for message in info_messages)
-    assert any("first_fail.mkv" in message and "No Video files found" in message for message in info_messages)
+    assert any(
+        "Batch summary: total queued 2, fully successful 0, partial 0, skipped/failed 2"
+        in message
+        for message in info_messages
+    )
+    assert any(
+        "first_fail.mkv" in message and "No Video files found" in message
+        for message in info_messages
+    )
 
 
 @pytest.mark.asyncio
-async def test_batch_continues_when_intermediate_item_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    queue = [str(tmp_path / "first_ok.mkv"), str(tmp_path / "middle_fail.mkv"), str(tmp_path / "last_ok.mkv")]
+async def test_batch_continues_when_intermediate_item_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    queue = [
+        str(tmp_path / "first_ok.mkv"),
+        str(tmp_path / "middle_fail.mkv"),
+        str(tmp_path / "last_ok.mkv"),
+    ]
 
     def fake_process_meta(meta: Meta, _base_dir: str) -> Any:
         if "middle_fail" in (meta.path or ""):
             raise ItemProcessingError("No Video files found", meta.path)
         return True
 
-    info_messages, process_meta_mock = _configure_do_the_thing_stubs(monkeypatch, queue, fake_process_meta)
+    info_messages, process_meta_mock = _configure_do_the_thing_stubs(
+        monkeypatch, queue, fake_process_meta
+    )
     monkeypatch.setattr("sys.argv", ["upload.py", *queue])
 
     await upload.do_the_thing(upload.base_dir)
 
     assert process_meta_mock.call_count == 3
-    assert any("Batch summary: total queued 3, fully successful 0, partial 0, skipped/failed 3" in message for message in info_messages)
-    assert any("middle_fail.mkv" in message and "No Video files found" in message for message in info_messages)
+    assert any(
+        "Batch summary: total queued 3, fully successful 0, partial 0, skipped/failed 3"
+        in message
+        for message in info_messages
+    )
+    assert any(
+        "middle_fail.mkv" in message and "No Video files found" in message
+        for message in info_messages
+    )
 
 
 @pytest.mark.asyncio
-async def test_batch_fails_all_items_without_aborting(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_batch_fails_all_items_without_aborting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     queue = [str(tmp_path / "bad_one.mkv"), str(tmp_path / "bad_two.mkv")]
 
     def fake_process_meta(meta: Meta, _base_dir: str) -> Any:
         raise ItemProcessingError("No Video files found", meta.path)
 
-    info_messages, process_meta_mock = _configure_do_the_thing_stubs(monkeypatch, queue, fake_process_meta)
+    info_messages, process_meta_mock = _configure_do_the_thing_stubs(
+        monkeypatch, queue, fake_process_meta
+    )
     monkeypatch.setattr("sys.argv", ["upload.py", *queue])
 
     await upload.do_the_thing(upload.base_dir)
 
     assert process_meta_mock.call_count == 2
-    assert any("Batch summary: total queued 2, fully successful 0, partial 0, skipped/failed 2" in message for message in info_messages)
-    assert any("bad_one.mkv" in message and "No Video files found" in message for message in info_messages)
-    assert any("bad_two.mkv" in message and "No Video files found" in message for message in info_messages)
+    assert any(
+        "Batch summary: total queued 2, fully successful 0, partial 0, skipped/failed 2"
+        in message
+        for message in info_messages
+    )
+    assert any(
+        "bad_one.mkv" in message and "No Video files found" in message
+        for message in info_messages
+    )
+    assert any(
+        "bad_two.mkv" in message and "No Video files found" in message
+        for message in info_messages
+    )
 
 
 @pytest.mark.asyncio
-async def test_single_item_failure_still_aborts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_single_item_failure_still_aborts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     queue = [str(tmp_path / "single_fail.mkv")]
 
     def fake_process_meta(_meta: Meta, _base_dir: str) -> Any:
         raise ItemProcessingError("No Video files found", None)
 
-    info_messages, process_meta_mock = _configure_do_the_thing_stubs(monkeypatch, queue, fake_process_meta)
+    info_messages, process_meta_mock = _configure_do_the_thing_stubs(
+        monkeypatch, queue, fake_process_meta
+    )
     monkeypatch.setattr("sys.argv", ["upload.py", *queue])
 
     await upload.do_the_thing(upload.base_dir)
 
     assert not any("Batch summary:" in message for message in info_messages)
-    assert any("Skipping" in message and "No Video files found" in message for message in info_messages)
-    assert not any("unexpected error" in message.lower() for message in info_messages)
+    assert any(
+        "Skipping" in message and "No Video files found" in message
+        for message in info_messages
+    )
+    assert not any(
+        "unexpected error" in message.lower() for message in info_messages
+    )
     assert process_meta_mock.call_count == 1
 
 
 @pytest.mark.asyncio
-async def test_site_check_batch_reports_completed_checks_instead_of_failures(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_site_check_batch_reports_completed_checks_instead_of_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     queue = [str(tmp_path / "first.mkv"), str(tmp_path / "second.mkv")]
 
     info_messages, process_meta_mock = _configure_do_the_thing_stubs(
@@ -177,16 +265,26 @@ async def test_site_check_batch_reports_completed_checks_instead_of_failures(tmp
     await upload.do_the_thing(upload.base_dir)
 
     assert process_meta_mock.call_count == 2
-    assert any("skipped/failed 0, site checks completed 2" in message for message in info_messages)
+    assert any(
+        "skipped/failed 0, site checks completed 2" in message
+        for message in info_messages
+    )
     assert not any("Failed items:" in message for message in info_messages)
 
 
 @pytest.mark.parametrize("mode", [{"debug": True}, {"site_check": True}])
 @pytest.mark.asyncio
-async def test_cross_seed_processing_has_no_side_effects_in_read_only_modes(monkeypatch: pytest.MonkeyPatch, mode: dict[str, bool]) -> None:
+async def test_cross_seed_processing_has_no_side_effects_in_read_only_modes(
+    monkeypatch: pytest.MonkeyPatch, mode: dict[str, bool]
+) -> None:
     download_torrent = AsyncMock()
     add_to_client = AsyncMock()
-    monkeypatch.setattr("upload.Common", lambda _config: SimpleNamespace(download_tracker_torrent=download_torrent))
+    monkeypatch.setattr(
+        "upload.Common",
+        lambda _config: SimpleNamespace(
+            download_tracker_torrent=download_torrent
+        ),
+    )
     monkeypatch.setattr("upload.client.add_to_client", add_to_client)
     meta = Meta(**mode)
     meta["DARKPEERS_cross_seed"] = "https://example.test/download/1"
@@ -198,7 +296,9 @@ async def test_cross_seed_processing_has_no_side_effects_in_read_only_modes(monk
 
 
 @pytest.mark.asyncio
-async def test_ctrl_c_stops_batch_processing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_ctrl_c_stops_batch_processing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     queue = [str(tmp_path / "first_ok.mkv"), str(tmp_path / "second_ok.mkv")]
 
     def fake_process_meta(_meta: Meta, _base_dir: str) -> Any:
@@ -212,7 +312,9 @@ async def test_ctrl_c_stops_batch_processing(tmp_path: Path, monkeypatch: pytest
 
 
 @pytest.mark.asyncio
-async def test_ctrl_c_stops_single_item_processing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_ctrl_c_stops_single_item_processing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     queue = [str(tmp_path / "single_interrupt.mkv")]
 
     def fake_process_meta(_meta: Meta, _base_dir: str) -> Any:
@@ -225,21 +327,47 @@ async def test_ctrl_c_stops_single_item_processing(tmp_path: Path, monkeypatch: 
         await upload.do_the_thing(upload.base_dir)
 
 
-def test_sigterm_signal_maps_to_keyboard_interrupt(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_sigterm_signal_maps_to_keyboard_interrupt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     upload._reset_shutdown_state()
     with pytest.raises(KeyboardInterrupt):
         upload._handle_shutdown_signal(signal.SIGTERM, None)
     assert upload._shutdown_requested is True
 
 
-def test_movie_tv_identity_validation_rejects_invalid_automatic_metadata() -> None:
-    assert upload._movie_tv_identity_error(Meta(category="TV", title="", unattended=True)) == "TV metadata has no valid title. Refusing to process the upload."
-    assert upload._movie_tv_identity_error(Meta(category="MOVIE", title="Known Title", unattended=True)) == (
+def test_movie_tv_identity_validation_rejects_invalid_automatic_metadata() -> (
+    None
+):
+    assert (
+        upload._movie_tv_identity_error(
+            Meta(category="TV", title="", unattended=True)
+        )
+        == "TV metadata has no valid title. Refusing to process the upload."
+    )
+    assert upload._movie_tv_identity_error(
+        Meta(category="MOVIE", title="Known Title", unattended=True)
+    ) == (
         "Unattended MOVIE metadata has no valid TMDb, IMDb, TVDB, TVmaze, or MAL identifier. Refusing to process the upload."
     )
-    assert upload._movie_tv_identity_error(Meta(category="TV", title="Known Show", tmdb=123, unattended=True)) is None
-    assert upload._movie_tv_identity_error(Meta(category="TV", title="Manual Show", unattended=False)) is None
-    assert upload._movie_tv_identity_error(Meta(category="BOOK", title="", unattended=True)) is None
+    assert (
+        upload._movie_tv_identity_error(
+            Meta(category="TV", title="Known Show", tmdb=123, unattended=True)
+        )
+        is None
+    )
+    assert (
+        upload._movie_tv_identity_error(
+            Meta(category="TV", title="Manual Show", unattended=False)
+        )
+        is None
+    )
+    assert (
+        upload._movie_tv_identity_error(
+            Meta(category="BOOK", title="", unattended=True)
+        )
+        is None
+    )
 
 
 @pytest.mark.parametrize(
@@ -260,8 +388,17 @@ def test_movie_tv_identity_validation_rejects_invalid_automatic_metadata() -> No
         {"mal_id": "abc"},
     ],
 )
-def test_movie_tv_identity_validation_rejects_provider_placeholders_and_malformed_ids(identity: dict[str, Any]) -> None:
-    assert upload._movie_tv_identity_error(Meta(category="TV", title="Known Show", unattended=True, **identity)) is not None
+def test_movie_tv_identity_validation_rejects_provider_placeholders_and_malformed_ids(
+    identity: dict[str, Any],
+) -> None:
+    assert (
+        upload._movie_tv_identity_error(
+            Meta(
+                category="TV", title="Known Show", unattended=True, **identity
+            )
+        )
+        is not None
+    )
 
 
 @pytest.mark.parametrize(
@@ -279,32 +416,65 @@ def test_movie_tv_identity_validation_rejects_provider_placeholders_and_malforme
         {"mal_id": 123},
     ],
 )
-def test_movie_tv_identity_validation_accepts_provider_specific_ids(identity: dict[str, Any]) -> None:
-    assert upload._movie_tv_identity_error(Meta(category="TV", title="Known Show", unattended=True, **identity)) is None
+def test_movie_tv_identity_validation_accepts_provider_specific_ids(
+    identity: dict[str, Any],
+) -> None:
+    assert (
+        upload._movie_tv_identity_error(
+            Meta(
+                category="TV", title="Known Show", unattended=True, **identity
+            )
+        )
+        is None
+    )
 
 
 def test_movie_tv_identity_validation_rejects_unmapped_anime_episode() -> None:
-    meta = Meta(category="TV", title="Rilakkuma and Kaoru", unattended=True, anime=True, episode_int=19, tvdb_id=347929)
+    meta = Meta(
+        category="TV",
+        title="Rilakkuma and Kaoru",
+        unattended=True,
+        anime=True,
+        episode_int=19,
+        tvdb_id=347929,
+    )
 
-    assert upload._movie_tv_identity_error(meta) == "Unattended anime episode could not be mapped to a TVDB episode. Refusing to process the upload."
+    assert (
+        upload._movie_tv_identity_error(meta)
+        == "Unattended anime episode could not be mapped to a TVDB episode. Refusing to process the upload."
+    )
 
 
 def test_movie_tv_identity_validation_accepts_mapped_anime_episode() -> None:
-    meta = Meta(category="TV", title="Known Anime", unattended=True, anime=True, episode_int=1, tvdb_id=123, tvdb_episode_id=456)
+    meta = Meta(
+        category="TV",
+        title="Known Anime",
+        unattended=True,
+        anime=True,
+        episode_int=1,
+        tvdb_id=123,
+        tvdb_episode_id=456,
+    )
 
     assert upload._movie_tv_identity_error(meta) is None
 
 
-def test_available_screens_preserves_configured_minimum(tmp_path: Path) -> None:
+def test_available_screens_preserves_configured_minimum(
+    tmp_path: Path,
+) -> None:
     screenshot_dir = tmp_path / "tmp" / "release" / "screenshots"
     screenshot_dir.mkdir(parents=True)
     (screenshot_dir / "one.png").write_bytes(b"image")
     (screenshot_dir / "two.png").write_bytes(b"image")
 
-    assert upload.available_screens(Meta(base_dir=str(tmp_path), uuid="release"), 4) == (2, 4)
+    assert upload.available_screens(
+        Meta(base_dir=str(tmp_path), uuid="release"), 4
+    ) == (2, 4)
 
 
-def test_failed_tracker_names_include_attempted_failure_after_upload_flag_is_cleared() -> None:
+def test_failed_tracker_names_include_attempted_failure_after_upload_flag_is_cleared() -> (
+    None
+):
     statuses = {
         "LUMINARR": {"upload": False, "upload_success": False},
         "SKIPPED": {"upload": False, "skipped": True},
@@ -328,27 +498,49 @@ def test_failed_tracker_names_excludes_late_duplicate() -> None:
 
 
 @pytest.mark.asyncio
-async def test_batch_summary_lists_skipped_terminal_outcomes_separately(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    queue = [str(tmp_path / "missing-year.pdf"), str(tmp_path / "duplicate.mp3")]
+async def test_batch_summary_lists_skipped_terminal_outcomes_separately(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    queue = [
+        str(tmp_path / "missing-year.pdf"),
+        str(tmp_path / "duplicate.mp3"),
+    ]
 
     def fake_process_meta(meta: Meta, _base_dir: str) -> bool:
         meta.we_are_uploading = False
-        meta.tracker_status = {"TRACKER": {"skipped": True, "skip_reason": "Required BOOK fields missing: year"}}
+        meta.tracker_status = {
+            "TRACKER": {
+                "skipped": True,
+                "skip_reason": "Required BOOK fields missing: year",
+            }
+        }
         return True
 
-    info_messages, _ = _configure_do_the_thing_stubs(monkeypatch, queue, fake_process_meta)
+    info_messages, _ = _configure_do_the_thing_stubs(
+        monkeypatch, queue, fake_process_meta
+    )
     monkeypatch.setattr("sys.argv", ["upload.py", *queue])
 
     await upload.do_the_thing(upload.base_dir)
 
     assert any("Skipped items:" in message for message in info_messages)
-    assert any("missing-year.pdf" in message and "Required BOOK fields missing: year" in message for message in info_messages)
-    assert any("duplicate.mp3" in message and "Required BOOK fields missing: year" in message for message in info_messages)
+    assert any(
+        "missing-year.pdf" in message
+        and "Required BOOK fields missing: year" in message
+        for message in info_messages
+    )
+    assert any(
+        "duplicate.mp3" in message
+        and "Required BOOK fields missing: year" in message
+        for message in info_messages
+    )
     assert not any("Failed items:" in message for message in info_messages)
 
 
 @pytest.mark.asyncio
-async def test_process_meta_stops_before_trackers_for_invalid_automatic_tv_metadata(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_process_meta_stops_before_trackers_for_invalid_automatic_tv_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     class FakePrep:
         def __init__(self, **_kwargs: Any) -> None:
             pass
@@ -363,97 +555,181 @@ async def test_process_meta_stops_before_trackers_for_invalid_automatic_tv_metad
 
     cancel_tasks = AsyncMock(return_value=None)
     monkeypatch.setattr("upload.Prep", FakePrep)
-    monkeypatch.setattr("upload.cancel_and_drain_early_artifact_tasks", cancel_tasks)
-    meta = Meta(base_dir=str(tmp_path), uuid="invalid-tv", imghost="imgbb", unattended=True, trackers=["PEERGARDEN"])
+    monkeypatch.setattr(
+        "upload.cancel_and_drain_early_artifact_tasks", cancel_tasks
+    )
+    meta = Meta(
+        base_dir=str(tmp_path),
+        uuid="invalid-tv",
+        imghost="imgbb",
+        unattended=True,
+        trackers=["PEERGARDEN"],
+    )
 
     assert await upload.process_meta(meta, str(tmp_path)) is False
     cancel_tasks.assert_awaited_once_with("invalid-tv")
 
 
 @pytest.mark.asyncio
-async def test_batch_summary_reports_partial_tracker_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_batch_summary_reports_partial_tracker_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     queue = [str(tmp_path / "partial.epub"), str(tmp_path / "complete.epub")]
 
     def fake_process_meta(meta: Meta, _base_dir: str) -> Any:
         meta.we_are_uploading = True
-        meta.trackers = ["GOOD", "BAD"] if "partial" in str(meta.path) else ["GOOD"]
-        meta.tracker_status = {tracker: {"upload": True} for tracker in meta.trackers}
+        meta.trackers = (
+            ["GOOD", "BAD"] if "partial" in str(meta.path) else ["GOOD"]
+        )
+        meta.tracker_status = {
+            tracker: {"upload": True} for tracker in meta.trackers
+        }
         return True
 
-    async def fake_process_trackers(meta: Meta, *_args: Any, **_kwargs: Any) -> None:
+    async def fake_process_trackers(
+        meta: Meta, *_args: Any, **_kwargs: Any
+    ) -> None:
         for tracker in meta.trackers:
             meta.tracker_status[tracker]["upload_success"] = tracker == "GOOD"
 
-    info_messages, _ = _configure_do_the_thing_stubs(monkeypatch, queue, fake_process_meta)
+    info_messages, _ = _configure_do_the_thing_stubs(
+        monkeypatch, queue, fake_process_meta
+    )
     monkeypatch.setattr("upload.process_trackers", fake_process_trackers)
     monkeypatch.setattr("sys.argv", ["upload.py", *queue])
 
     await upload.do_the_thing(upload.base_dir)
 
-    assert any("total queued 2, fully successful 1, partial 1, skipped/failed 0" in message for message in info_messages)
-    assert any("Successfully uploaded 1/2 files" in message for message in info_messages)
-    assert not any("Successfully uploaded 2/2 files" in message for message in info_messages)
+    assert any(
+        "total queued 2, fully successful 1, partial 1, skipped/failed 0"
+        in message
+        for message in info_messages
+    )
+    assert any(
+        "Successfully uploaded 1/2 files" in message
+        for message in info_messages
+    )
+    assert not any(
+        "Successfully uploaded 2/2 files" in message
+        for message in info_messages
+    )
 
 
 @pytest.mark.asyncio
-async def test_batch_records_tracker_outcomes_without_meta_queue(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_batch_records_tracker_outcomes_without_meta_queue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     queue = [str(tmp_path / "partial.epub"), str(tmp_path / "complete.epub")]
 
     def fake_process_meta(meta: Meta, _base_dir: str) -> Any:
         meta.we_are_uploading = True
-        meta.trackers = ["GOOD", "BAD"] if "partial" in str(meta.path) else ["GOOD"]
-        meta.tracker_status = {tracker: {"upload": True} for tracker in meta.trackers}
+        meta.trackers = (
+            ["GOOD", "BAD"] if "partial" in str(meta.path) else ["GOOD"]
+        )
+        meta.tracker_status = {
+            tracker: {"upload": True} for tracker in meta.trackers
+        }
         return True
 
-    async def fake_process_trackers(meta: Meta, *_args: Any, **_kwargs: Any) -> None:
+    async def fake_process_trackers(
+        meta: Meta, *_args: Any, **_kwargs: Any
+    ) -> None:
         for tracker in meta.trackers:
             meta.tracker_status[tracker]["upload_success"] = tracker == "GOOD"
 
-    info_messages, _ = _configure_do_the_thing_stubs(monkeypatch, queue, fake_process_meta, meta_queue=None)
+    info_messages, _ = _configure_do_the_thing_stubs(
+        monkeypatch, queue, fake_process_meta, meta_queue=None
+    )
     monkeypatch.setattr("upload.process_trackers", fake_process_trackers)
     monkeypatch.setattr("sys.argv", ["upload.py", *queue])
 
     await upload.do_the_thing(upload.base_dir)
 
-    assert any("total queued 2, fully successful 1, partial 1, skipped/failed 0" in message for message in info_messages)
-    assert any("partial.epub" in message and "BAD" in message for message in info_messages)
+    assert any(
+        "total queued 2, fully successful 1, partial 1, skipped/failed 0"
+        in message
+        for message in info_messages
+    )
+    assert any(
+        "partial.epub" in message and "BAD" in message
+        for message in info_messages
+    )
 
 
 @pytest.mark.asyncio
-async def test_site_upload_queue_failure_uses_original_item_identifier(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_site_upload_queue_failure_uses_original_item_identifier(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     path = str(tmp_path / "site-item.mkv")
     queue = [{"path": path, "tracker": "SITE", "imdb_id": 1}]
-    info_messages, _ = _configure_do_the_thing_stubs(monkeypatch, queue, lambda *_args: True, meta_overrides={"site_upload_queue": True})
-    monkeypatch.setattr("upload.QueueManager.process_site_upload_item", AsyncMock(side_effect=RuntimeError("site queue failure")))
+    info_messages, _ = _configure_do_the_thing_stubs(
+        monkeypatch,
+        queue,
+        lambda *_args: True,
+        meta_overrides={"site_upload_queue": True},
+    )
+    monkeypatch.setattr(
+        "upload.QueueManager.process_site_upload_item",
+        AsyncMock(side_effect=RuntimeError("site queue failure")),
+    )
     monkeypatch.setattr("sys.argv", ["upload.py", path])
 
     await upload.do_the_thing(upload.base_dir)
 
-    assert any(path in message and "site queue failure" in message for message in info_messages)
+    assert any(
+        path in message and "site queue failure" in message
+        for message in info_messages
+    )
 
 
 @pytest.mark.asyncio
-async def test_args_line_queue_failure_uses_original_item_identifier(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_args_line_queue_failure_uses_original_item_identifier(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     path = str(tmp_path / "args-item.mkv")
     line = f'"{path}" -tk SITE'
     queue = [{"path": path, "line": line, "args": [path, "-tk", "SITE"]}]
-    info_messages, _ = _configure_do_the_thing_stubs(monkeypatch, queue, lambda *_args: True, meta_overrides={"args_line_queue": True})
+    info_messages, _ = _configure_do_the_thing_stubs(
+        monkeypatch,
+        queue,
+        lambda *_args: True,
+        meta_overrides={"args_line_queue": True},
+    )
 
-    def fail_item_parse(argv: list[str], meta: Meta) -> tuple[Meta, Any, list[str]]:
+    def fail_item_parse(
+        argv: list[str], meta: Meta
+    ) -> tuple[Meta, Any, list[str]]:
         if meta.args_line_queue:
             raise RuntimeError("args queue failure")
-        return Meta(path=argv[0], args_line_queue=True, base_dir=upload.base_dir, trackers=[]), None, []
+        return (
+            Meta(
+                path=argv[0],
+                args_line_queue=True,
+                base_dir=upload.base_dir,
+                trackers=[],
+            ),
+            None,
+            [],
+        )
 
-    monkeypatch.setattr("upload.parser", type("Parser", (), {"parse": staticmethod(fail_item_parse)})())
+    monkeypatch.setattr(
+        "upload.parser",
+        type("Parser", (), {"parse": staticmethod(fail_item_parse)})(),
+    )
     monkeypatch.setattr("sys.argv", ["upload.py", path])
 
     await upload.do_the_thing(upload.base_dir)
 
-    assert any(line in message and "args queue failure" in message for message in info_messages)
+    assert any(
+        line in message and "args queue failure" in message
+        for message in info_messages
+    )
 
 
 @pytest.mark.asyncio
-async def test_limit_queue_records_unprocessed_items(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_limit_queue_records_unprocessed_items(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     queue = [str(tmp_path / f"item-{index}.mkv") for index in range(5)]
 
     def fake_process_meta(meta: Meta, _base_dir: str) -> bool:
@@ -462,22 +738,38 @@ async def test_limit_queue_records_unprocessed_items(tmp_path: Path, monkeypatch
         meta.tracker_status = {"GOOD": {"upload": True}}
         return True
 
-    async def fake_process_trackers(meta: Meta, *_args: Any, **_kwargs: Any) -> None:
+    async def fake_process_trackers(
+        meta: Meta, *_args: Any, **_kwargs: Any
+    ) -> None:
         meta.tracker_status["GOOD"]["upload_success"] = True
 
-    info_messages, process_meta_mock = _configure_do_the_thing_stubs(monkeypatch, queue, fake_process_meta, meta_overrides={"limit_queue": 1})
+    info_messages, process_meta_mock = _configure_do_the_thing_stubs(
+        monkeypatch,
+        queue,
+        fake_process_meta,
+        meta_overrides={"limit_queue": 1},
+    )
     monkeypatch.setattr("upload.process_trackers", fake_process_trackers)
     monkeypatch.setattr("sys.argv", ["upload.py", *queue])
 
     await upload.do_the_thing(upload.base_dir)
 
     assert process_meta_mock.call_count == 1
-    assert any("total queued 5, fully successful 1, partial 0, skipped/failed 4" in message for message in info_messages)
-    assert any("item-4.mkv" in message and "Queue limit of 1" in message for message in info_messages)
+    assert any(
+        "total queued 5, fully successful 1, partial 0, skipped/failed 4"
+        in message
+        for message in info_messages
+    )
+    assert any(
+        "item-4.mkv" in message and "Queue limit of 1" in message
+        for message in info_messages
+    )
 
 
 @pytest.mark.asyncio
-async def test_debug_items_do_not_consume_success_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_debug_items_do_not_consume_success_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     queue = [str(tmp_path / f"debug-{index}.mkv") for index in range(2)]
 
     def fake_process_meta(meta: Meta, _base_dir: str) -> bool:
@@ -492,17 +784,25 @@ async def test_debug_items_do_not_consume_success_limit(tmp_path: Path, monkeypa
         fake_process_meta,
         meta_overrides={"debug": True, "limit_queue": 1},
     )
-    monkeypatch.setattr("upload.process_trackers", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        "upload.process_trackers", AsyncMock(return_value=None)
+    )
     monkeypatch.setattr("sys.argv", ["upload.py", *queue])
 
     await upload.do_the_thing(upload.base_dir)
 
     assert process_meta_mock.call_count == 2
-    assert any("total queued 2, fully successful 0, partial 0, skipped/failed 0, site checks completed 2" in message for message in info_messages)
+    assert any(
+        "total queued 2, fully successful 0, partial 0, skipped/failed 0, site checks completed 2"
+        in message
+        for message in info_messages
+    )
 
 
 @pytest.mark.asyncio
-async def test_batch_metadata_failure_without_meta_queue_updates_progress_and_persists_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_batch_metadata_failure_without_meta_queue_updates_progress_and_persists_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     path = str(tmp_path / "failed.mkv")
     second_path = str(tmp_path / "second-failed.mkv")
     queue = [path, second_path]
@@ -513,61 +813,95 @@ async def test_batch_metadata_failure_without_meta_queue_updates_progress_and_pe
         lambda *_args: False,
         meta_queue=None,
     )
-    monkeypatch.setattr("upload.QueueManager.handle_queue", AsyncMock(return_value=(queue, log_file)))
+    monkeypatch.setattr(
+        "upload.QueueManager.handle_queue",
+        AsyncMock(return_value=(queue, log_file)),
+    )
     save_processed = AsyncMock(return_value=None)
     monkeypatch.setattr("upload.save_processed_file", save_processed)
     monkeypatch.setattr("sys.argv", ["upload.py", *queue])
 
     await upload.do_the_thing(upload.base_dir)
 
-    assert any("Processed 2/2 files with 2 skipped uploading" in message for message in info_messages)
+    assert any(
+        "Processed 2/2 files with 2 skipped uploading" in message
+        for message in info_messages
+    )
     assert save_processed.await_args_list[0].args == (log_file, path)
     assert save_processed.await_args_list[1].args == (log_file, second_path)
 
 
 @pytest.mark.asyncio
-async def test_batch_reports_torrent_success_with_usenet_preparation_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_batch_reports_torrent_success_with_usenet_preparation_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     queue = [str(tmp_path / "mixed.epub"), str(tmp_path / "torrent-only.epub")]
 
     def fake_process_meta(meta: Meta, _base_dir: str) -> bool:
         meta.we_are_uploading = True
-        meta.trackers = ["GOOD", "NZB"] if "mixed" in str(meta.path) else ["GOOD"]
-        meta.tracker_status = {tracker: {"upload": True} for tracker in meta.trackers}
+        meta.trackers = (
+            ["GOOD", "NZB"] if "mixed" in str(meta.path) else ["GOOD"]
+        )
+        meta.tracker_status = {
+            tracker: {"upload": True} for tracker in meta.trackers
+        }
         return True
 
-    async def fake_process_trackers(meta: Meta, *_args: Any, **_kwargs: Any) -> None:
+    async def fake_process_trackers(
+        meta: Meta, *_args: Any, **_kwargs: Any
+    ) -> None:
         for tracker in meta.trackers:
             meta.tracker_status[tracker]["upload_success"] = True
 
     class UsenetTracker:
         is_usenet = True
 
-    info_messages, _ = _configure_do_the_thing_stubs(monkeypatch, queue, fake_process_meta)
+    info_messages, _ = _configure_do_the_thing_stubs(
+        monkeypatch, queue, fake_process_meta
+    )
     monkeypatch.setitem(upload.tracker_class_map, "NZB", UsenetTracker)
     monkeypatch.setattr("upload.process_trackers", fake_process_trackers)
-    monkeypatch.setattr("src.integrations.usenet.creator.prepare_and_upload_usenet", AsyncMock(side_effect=RuntimeError("Usenet preparation failed")))
+    monkeypatch.setattr(
+        "src.integrations.usenet.creator.prepare_and_upload_usenet",
+        AsyncMock(side_effect=RuntimeError("Usenet preparation failed")),
+    )
     monkeypatch.setattr("sys.argv", ["upload.py", *queue])
 
     await upload.do_the_thing(upload.base_dir)
 
-    assert any("total queued 2, fully successful 1, partial 1, skipped/failed 0" in message for message in info_messages)
-    assert any("mixed.epub" in message and "NZB" in message for message in info_messages)
+    assert any(
+        "total queued 2, fully successful 1, partial 1, skipped/failed 0"
+        in message
+        for message in info_messages
+    )
+    assert any(
+        "mixed.epub" in message and "NZB" in message
+        for message in info_messages
+    )
 
 
 @pytest.mark.asyncio
-async def test_usenet_pipeline_exception_preserves_completed_indexer_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_usenet_pipeline_exception_preserves_completed_indexer_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     queue = [str(tmp_path / "mixed.epub")]
     captured: dict[str, Meta] = {}
 
     def fake_process_meta(meta: Meta, _base_dir: str) -> bool:
         meta.we_are_uploading = True
         meta.trackers = ["NZB_OK", "NZB_FAIL"]
-        meta.tracker_status = {tracker: {"upload": True} for tracker in meta.trackers}
+        meta.tracker_status = {
+            tracker: {"upload": True} for tracker in meta.trackers
+        }
         captured["meta"] = meta
         return True
 
-    async def fake_process_trackers(meta: Meta, *_args: Any, **_kwargs: Any) -> None:
-        meta.tracker_status["NZB_OK"].update(upload_success=True, status_message="uploaded")
+    async def fake_process_trackers(
+        meta: Meta, *_args: Any, **_kwargs: Any
+    ) -> None:
+        meta.tracker_status["NZB_OK"].update(
+            upload_success=True, status_message="uploaded"
+        )
         raise RuntimeError("second indexer failed")
 
     class UsenetTracker:
@@ -577,7 +911,10 @@ async def test_usenet_pipeline_exception_preserves_completed_indexer_success(tmp
     monkeypatch.setitem(upload.tracker_class_map, "NZB_OK", UsenetTracker)
     monkeypatch.setitem(upload.tracker_class_map, "NZB_FAIL", UsenetTracker)
     monkeypatch.setattr("upload.process_trackers", fake_process_trackers)
-    monkeypatch.setattr("src.integrations.usenet.creator.prepare_and_upload_usenet", AsyncMock(return_value=str(tmp_path / "release.nzb")))
+    monkeypatch.setattr(
+        "src.integrations.usenet.creator.prepare_and_upload_usenet",
+        AsyncMock(return_value=str(tmp_path / "release.nzb")),
+    )
     monkeypatch.setattr("sys.argv", ["upload.py", *queue])
 
     await upload.do_the_thing(upload.base_dir)
@@ -588,8 +925,13 @@ async def test_usenet_pipeline_exception_preserves_completed_indexer_success(tmp
 
 
 @pytest.mark.asyncio
-async def test_batch_summary_preserves_required_game_field_reason(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    queue = [str(tmp_path / "Native_Instruments_SuperStarSaw_1.0.0_[HCiSO].dmg"), str(tmp_path / "another.dmg")]
+async def test_batch_summary_preserves_required_game_field_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    queue = [
+        str(tmp_path / "Native_Instruments_SuperStarSaw_1.0.0_[HCiSO].dmg"),
+        str(tmp_path / "another.dmg"),
+    ]
 
     def fake_process_meta(meta: Meta, _base_dir: str) -> bool:
         meta.we_are_uploading = False
@@ -602,9 +944,15 @@ async def test_batch_summary_preserves_required_game_field_reason(tmp_path: Path
         }
         return True
 
-    info_messages, _ = _configure_do_the_thing_stubs(monkeypatch, queue, fake_process_meta)
+    info_messages, _ = _configure_do_the_thing_stubs(
+        monkeypatch, queue, fake_process_meta
+    )
     monkeypatch.setattr("sys.argv", ["upload.py", *queue])
 
     await upload.do_the_thing(upload.base_dir)
 
-    assert any("Native_Instruments_SuperStarSaw" in message and "Required GAME fields missing: year" in message for message in info_messages)
+    assert any(
+        "Native_Instruments_SuperStarSaw" in message
+        and "Required GAME fields missing: year" in message
+        for message in info_messages
+    )

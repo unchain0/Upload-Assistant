@@ -100,7 +100,9 @@ def _field(value: object, source: str = "file_tag") -> dict[str, object]:
         ("invalid", None),
     ],
 )
-def test_parse_size_to_bytes_all_formats(raw: object, expected: int | None) -> None:
+def test_parse_size_to_bytes_all_formats(
+    raw: object, expected: int | None
+) -> None:
     assert decisions.parse_size_to_bytes(raw) == expected
 
 
@@ -109,18 +111,45 @@ def test_hsl_and_difference_color_cover_every_sector_and_clamp() -> None:
         rgb = decisions.hsl_to_rgb(float(hue), 0.9, 0.6)
         assert len(rgb) == 3
         assert all(0 <= component <= 255 for component in rgb)
-    assert decisions.get_color_for_diff(-1.0) == decisions.get_color_for_diff(0.0)
-    assert decisions.get_color_for_diff(2.0) == decisions.get_color_for_diff(0.5)
+    assert decisions.get_color_for_diff(-1.0) == decisions.get_color_for_diff(
+        0.0
+    )
+    assert decisions.get_color_for_diff(2.0) == decisions.get_color_for_diff(
+        0.5
+    )
     assert len(decisions.get_color_for_diff(0.25)) == 6
 
 
-def test_music_confirmation_lines_rich_metadata_conflicts_sidecars_and_artwork(tmp_path: Path) -> None:
+def test_music_confirmation_lines_rich_metadata_conflicts_sidecars_and_artwork(
+    tmp_path: Path,
+) -> None:
     artwork = tmp_path / "cover.png"
     artwork.write_bytes(b"image")
     tracks = [
-        {"format": "M4A", "codec": "AAC", "bit_depth": 16, "sample_rate": 44100, "channels": 2, "bitrate": 256000},
-        {"format": "FLAC", "codec": "FLAC", "bit_depth": 24, "sample_rate": 96000, "channels": 1, "bitrate": 1000000},
-        {"format": "MP3", "codec": "MP3", "bit_depth": 16, "sample_rate": 48000, "channels": 6, "bitrate": 320000},
+        {
+            "format": "M4A",
+            "codec": "AAC",
+            "bit_depth": 16,
+            "sample_rate": 44100,
+            "channels": 2,
+            "bitrate": 256000,
+        },
+        {
+            "format": "FLAC",
+            "codec": "FLAC",
+            "bit_depth": 24,
+            "sample_rate": 96000,
+            "channels": 1,
+            "bitrate": 1000000,
+        },
+        {
+            "format": "MP3",
+            "codec": "MP3",
+            "bit_depth": 16,
+            "sample_rate": 48000,
+            "channels": 6,
+            "bitrate": 320000,
+        },
     ]
     release = {
         "fields": {
@@ -151,21 +180,44 @@ def test_music_confirmation_lines_rich_metadata_conflicts_sidecars_and_artwork(t
             "scans": ["one", "two"],
         },
         "conflicts": {f"field_{index}": ["a", "b"] for index in range(7)},
-        "warnings": ["warning one", "warning two", "warning three", "warning four"],
+        "warnings": [
+            "warning one",
+            "warning two",
+            "warning three",
+            "warning four",
+        ],
     }
-    meta = _meta(tmp_path, "MUSIC", music_release=release, artwork_path=str(artwork), debug=True)
+    meta = _meta(
+        tmp_path,
+        "MUSIC",
+        music_release=release,
+        artwork_path=str(artwork),
+        debug=True,
+    )
     lines = decisions._music_confirmation_lines(meta, "MISSING")
-    rendered = "\n".join(f"{item[0]}: {item[1]}" if isinstance(item, tuple) else item for item in lines)
+    rendered = "\n".join(
+        f"{item[0]}: {item[1]}" if isinstance(item, tuple) else item
+        for item in lines
+    )
     assert "Artist & Guest" in rendered
     assert "3 variants" in rendered
     assert "2 cues" in rendered
     assert "Metadata conflicts" in rendered and "(+2)" in rendered
     assert "warning one; warning two; warning three (+1 more)" in rendered
-    assert "local/embedded artwork available; host upload skipped in debug" in rendered
-    assert "This Release" in rendered and "Edition" in rendered and "Genre" in rendered
+    assert (
+        "local/embedded artwork available; host upload skipped in debug"
+        in rendered
+    )
+    assert (
+        "This Release" in rendered
+        and "Edition" in rendered
+        and "Genre" in rendered
+    )
 
 
-def test_music_confirmation_lines_public_missing_and_invalid_structures(tmp_path: Path) -> None:
+def test_music_confirmation_lines_public_missing_and_invalid_structures(
+    tmp_path: Path,
+) -> None:
     public = _meta(
         tmp_path,
         "MUSIC",
@@ -175,13 +227,25 @@ def test_music_confirmation_lines_public_missing_and_invalid_structures(tmp_path
         source="CD",
         format="FLAC",
         artwork_url="https://images.invalid/cover.jpg",
-        music_release={"fields": [], "tracks": {}, "auxiliary": [], "warnings": {}, "conflicts": []},
+        music_release={
+            "fields": [],
+            "tracks": {},
+            "auxiliary": [],
+            "warnings": {},
+            "conflicts": [],
+        },
     )
     rendered = str(decisions._music_confirmation_lines(public, "MISSING"))
     assert "public URL supplied" in rendered
     assert "Fallback Artist" in rendered
 
-    missing = _meta(tmp_path, "MUSIC", artwork_url="ftp://invalid", artwork_path="", music_release="invalid")
+    missing = _meta(
+        tmp_path,
+        "MUSIC",
+        artwork_url="ftp://invalid",
+        artwork_path="",
+        music_release="invalid",
+    )
     rendered = str(decisions._music_confirmation_lines(missing, "MISSING"))
     assert "not found (optional for Orpheus)" in rendered
 
@@ -208,8 +272,14 @@ class _Tracker:
         return self.rename
 
 
-def _helper(monkeypatch: pytest.MonkeyPatch, tracker: str = "TEST", tracker_class: type[_Tracker] = _Tracker) -> UploadHelper:
-    helper = UploadHelper({"DEFAULT": {"show_dupe_size_diff": True, "embed_dupe_links": True}})
+def _helper(
+    monkeypatch: pytest.MonkeyPatch,
+    tracker: str = "TEST",
+    tracker_class: type[_Tracker] = _Tracker,
+) -> UploadHelper:
+    helper = UploadHelper(
+        {"DEFAULT": {"show_dupe_size_diff": True, "embed_dupe_links": True}}
+    )
     mapping = dict(helper.tracker_class_map)
     mapping[tracker] = tracker_class
     monkeypatch.setattr(helper, "tracker_class_map", mapping)
@@ -231,7 +301,9 @@ def _dupe(name: str = "Existing Release", **values: object) -> dict[str, Any]:
     return data
 
 
-def test_dupe_check_no_dupes_rename_failure_and_unattended_decisions(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_dupe_check_no_dupes_rename_failure_and_unattended_decisions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     helper = _helper(monkeypatch)
     meta = _meta(tmp_path, source_size=100)
     assert asyncio.run(helper.dupe_check([], meta, "TEST")) == (False, meta)
@@ -239,20 +311,32 @@ def test_dupe_check_no_dupes_rename_failure_and_unattended_decisions(tmp_path: P
     _Tracker.fail_name = True
     try:
         blocked = _meta(tmp_path, source_size=100, dupe=False, unattended=True)
-        assert asyncio.run(helper.dupe_check([_dupe()], blocked, "TEST"))[0] is True
+        assert (
+            asyncio.run(helper.dupe_check([_dupe()], blocked, "TEST"))[0]
+            is True
+        )
         allowed = _meta(tmp_path, source_size=100, dupe=True, unattended=True)
-        assert asyncio.run(helper.dupe_check([_dupe()], allowed, "TEST"))[0] is False
+        assert (
+            asyncio.run(helper.dupe_check([_dupe()], allowed, "TEST"))[0]
+            is False
+        )
     finally:
         _Tracker.fail_name = False
 
 
-def test_dupe_rendering_size_links_deduplication_and_same_name_suffix(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_dupe_rendering_size_links_deduplication_and_same_name_suffix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     helper = _helper(monkeypatch)
     meta = _meta(tmp_path, source_size=200, unattended=False, dupe=True)
     candidates = [
         _dupe(meta.name, size="100 B"),
         _dupe("Duplicate Link", size="300 B"),
-        _dupe("Duplicate Link Again", link="https://tracker.invalid/torrents/1", size=None),
+        _dupe(
+            "Duplicate Link Again",
+            link="https://tracker.invalid/torrents/1",
+            size=None,
+        ),
         "plain entry",
     ]
     skip, result = asyncio.run(helper.dupe_check(candidates, meta, "TEST"))
@@ -260,7 +344,9 @@ def test_dupe_rendering_size_links_deduplication_and_same_name_suffix(tmp_path: 
     assert result.name.endswith("DUPE?")
 
 
-def test_preferred_repack_skip_and_replacement_id_link_and_identity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_preferred_repack_skip_and_replacement_id_link_and_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     class RepackTracker(_Tracker):
         prefers_repack = True
 
@@ -268,31 +354,53 @@ def test_preferred_repack_skip_and_replacement_id_link_and_identity(tmp_path: Pa
 
     preferred = _dupe("Preferred REPACK", id=9)
     meta = _meta(tmp_path, REPACK_preferred_repack=preferred)
-    assert asyncio.run(helper.dupe_check([preferred], meta, "REPACK"))[0] is True
+    assert (
+        asyncio.run(helper.dupe_check([preferred], meta, "REPACK"))[0] is True
+    )
 
     replaced = _dupe("Original", id=1)
     meta = _meta(tmp_path, REPACK_repack_replaces=replaced, unattended=True)
-    assert asyncio.run(helper.dupe_check([replaced], meta, "REPACK"))[0] is False
+    assert (
+        asyncio.run(helper.dupe_check([replaced], meta, "REPACK"))[0] is False
+    )
 
-    link_only = _dupe("Original", id=None, link="https://tracker.invalid/original")
+    link_only = _dupe(
+        "Original", id=None, link="https://tracker.invalid/original"
+    )
     meta = _meta(tmp_path, REPACK_repack_replaces=link_only, unattended=True)
-    assert asyncio.run(helper.dupe_check([link_only], meta, "REPACK"))[0] is False
+    assert (
+        asyncio.run(helper.dupe_check([link_only], meta, "REPACK"))[0] is False
+    )
 
     identity = {"name": "original identity"}
     meta = _meta(tmp_path, REPACK_repack_replaces=identity, unattended=True)
-    assert asyncio.run(helper.dupe_check([identity], meta, "REPACK"))[0] is False
+    assert (
+        asyncio.run(helper.dupe_check([identity], meta, "REPACK"))[0] is False
+    )
 
     remaining = _dupe("Another", id=2, link="https://tracker.invalid/2")
-    meta = _meta(tmp_path, REPACK_repack_replaces=replaced, unattended=True, dupe=True)
-    assert asyncio.run(helper.dupe_check([replaced, remaining], meta, "REPACK"))[0] is False
+    meta = _meta(
+        tmp_path, REPACK_repack_replaces=replaced, unattended=True, dupe=True
+    )
+    assert (
+        asyncio.run(helper.dupe_check([replaced, remaining], meta, "REPACK"))[
+            0
+        ]
+        is False
+    )
 
 
-def test_repack_result_sanitizes_control_text_and_uses_trusted_numeric_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_repack_result_sanitizes_control_text_and_uses_trusted_numeric_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     class RepackTracker(_Tracker):
         prefers_repack = True
 
     helper = _helper(monkeypatch, "REPACK", RepackTracker)
-    unsafe = {"name": "Bad\x1b]8;;https://evil.invalid\x07Name\x00", "id": "not-a-number"}
+    unsafe = {
+        "name": "Bad\x1b]8;;https://evil.invalid\x07Name\x00",
+        "id": "not-a-number",
+    }
     meta = _meta(tmp_path, REPACK_preferred_repack=unsafe)
     assert asyncio.run(helper.dupe_check([unsafe], meta, "REPACK"))[0] is True
 
@@ -305,26 +413,45 @@ def test_repack_result_sanitizes_control_text_and_uses_trusted_numeric_id(tmp_pa
     assert asyncio.run(helper.dupe_check([huge], meta, "REPACK"))[0] is True
 
 
-def test_season_pack_direct_skip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_season_pack_direct_skip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     helper = _helper(monkeypatch)
-    meta = _meta(tmp_path, "TV", dupe=False, season_pack_exists=True, season_pack_name="Season Pack")
+    meta = _meta(
+        tmp_path,
+        "TV",
+        dupe=False,
+        season_pack_exists=True,
+        season_pack_name="Season Pack",
+    )
     assert asyncio.run(helper.dupe_check([_dupe()], meta, "TEST"))[0] is True
 
 
-def test_trumpable_prompt_accept_decline_filter_and_tag_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_trumpable_prompt_accept_decline_filter_and_tag_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     helper = _helper(monkeypatch, "AITHER")
 
-    accepted = _meta(tmp_path, "TV", unattended=False, dupe=False, trumpable_id=1)
+    accepted = _meta(
+        tmp_path, "TV", unattended=False, dupe=False, trumpable_id=1
+    )
     candidate = _dupe("Show.S01E01-GROUP", trumpable=True)
     monkeypatch.setattr(helper, "prompt_yes_no", AsyncMock(return_value=True))
-    skip, accepted = asyncio.run(helper.dupe_check([candidate], accepted, "AITHER"))
+    skip, accepted = asyncio.run(
+        helper.dupe_check([candidate], accepted, "AITHER")
+    )
     assert skip is False
     assert accepted.we_asked and accepted.were_trumping
     assert accepted.trump_reason == "trumpable_release"
 
     matched = [
         _dupe("Show.S01E01-OTHER", id=1, tracker="AITHER"),
-        _dupe("Show.S01E01-GROUP", id=2, link="https://tracker.invalid/2", tracker="AITHER"),
+        _dupe(
+            "Show.S01E01-GROUP",
+            id=2,
+            link="https://tracker.invalid/2",
+            tracker="AITHER",
+        ),
     ]
     declined = _meta(
         tmp_path,
@@ -337,7 +464,9 @@ def test_trumpable_prompt_accept_decline_filter_and_tag_fallback(tmp_path: Path,
         AITHER_matched_episode_ids=matched,
     )
     monkeypatch.setattr(helper, "prompt_yes_no", AsyncMock(return_value=False))
-    skip, declined = asyncio.run(helper.dupe_check(matched, declined, "AITHER"))
+    skip, declined = asyncio.run(
+        helper.dupe_check(matched, declined, "AITHER")
+    )
     assert skip is False
     assert declined.AITHER_matched_episode_ids == []
 
@@ -350,22 +479,32 @@ def test_trumpable_prompt_accept_decline_filter_and_tag_fallback(tmp_path: Path,
         tag="-MISSING",
         AITHER_matched_episode_ids=matched,
     )
-    assert asyncio.run(helper.dupe_check(matched, no_tag, "AITHER"))[0] is False
+    assert (
+        asyncio.run(helper.dupe_check(matched, no_tag, "AITHER"))[0] is False
+    )
 
 
-def test_trumpable_prompt_eof_translates_to_domain_abort(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_trumpable_prompt_eof_translates_to_domain_abort(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     helper = _helper(monkeypatch, "AITHER")
     meta = _meta(tmp_path, "TV", unattended=False, dupe=False, trumpable_id=1)
-    monkeypatch.setattr(helper, "prompt_yes_no", AsyncMock(side_effect=EOFError))
+    monkeypatch.setattr(
+        helper, "prompt_yes_no", AsyncMock(side_effect=EOFError)
+    )
     cleanup = AsyncMock()
     monkeypatch.setattr(decisions.cleanup_manager, "cleanup", cleanup)
-    monkeypatch.setattr(decisions.cleanup_manager, "reset_terminal", lambda: None)
+    monkeypatch.setattr(
+        decisions.cleanup_manager, "reset_terminal", lambda: None
+    )
     with pytest.raises(OperationAbortedError, match="cancelled"):
         asyncio.run(helper.dupe_check([_dupe(trumpable=True)], meta, "AITHER"))
     cleanup.assert_awaited_once()
 
 
-def test_exact_match_prompt_aither_other_decline_and_eof(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_exact_match_prompt_aither_other_decline_and_eof(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     helper = _helper(monkeypatch, "AITHER")
     exact = _meta(
         tmp_path,
@@ -377,23 +516,51 @@ def test_exact_match_prompt_aither_other_decline_and_eof(tmp_path: Path, monkeyp
     )
     monkeypatch.setattr(helper, "prompt_yes_no", AsyncMock(return_value=True))
     skip, exact = asyncio.run(helper.dupe_check([_dupe()], exact, "AITHER"))
-    assert skip is False and exact.were_trumping and exact.trump_reason == "exact_match"
+    assert (
+        skip is False
+        and exact.were_trumping
+        and exact.trump_reason == "exact_match"
+    )
     assert exact.AITHER_trumpable_id == 7
 
     other = _helper(monkeypatch, "OTHER")
-    meta = _meta(tmp_path, unattended=False, dupe=False, filename_match="file", file_count_match=1)
+    meta = _meta(
+        tmp_path,
+        unattended=False,
+        dupe=False,
+        filename_match="file",
+        file_count_match=1,
+    )
     monkeypatch.setattr(other, "prompt_yes_no", AsyncMock(return_value=False))
     assert asyncio.run(other.dupe_check([_dupe()], meta, "OTHER"))[0] is True
     assert meta.we_asked
 
-    monkeypatch.setattr(other, "prompt_yes_no", AsyncMock(side_effect=EOFError))
+    monkeypatch.setattr(
+        other, "prompt_yes_no", AsyncMock(side_effect=EOFError)
+    )
     monkeypatch.setattr(decisions.cleanup_manager, "cleanup", AsyncMock())
-    monkeypatch.setattr(decisions.cleanup_manager, "reset_terminal", lambda: None)
+    monkeypatch.setattr(
+        decisions.cleanup_manager, "reset_terminal", lambda: None
+    )
     with pytest.raises(OperationAbortedError):
-        asyncio.run(other.dupe_check([_dupe()], _meta(tmp_path, unattended=False, dupe=False, filename_match="file", file_count_match=1), "OTHER"))
+        asyncio.run(
+            other.dupe_check(
+                [_dupe()],
+                _meta(
+                    tmp_path,
+                    unattended=False,
+                    dupe=False,
+                    filename_match="file",
+                    file_count_match=1,
+                ),
+                "OTHER",
+            )
+        )
 
 
-def test_general_dupes_bdinfo_prompt_season_pack_display_and_eof(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_general_dupes_bdinfo_prompt_season_pack_display_and_eof(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     helper = _helper(monkeypatch)
     helper.ask_bdinfo_comparison = AsyncMock()
     monkeypatch.setattr(helper, "prompt_yes_no", AsyncMock(return_value=False))
@@ -413,16 +580,30 @@ def test_general_dupes_bdinfo_prompt_season_pack_display_and_eof(tmp_path: Path,
     # The early season-pack guard applies only when dupe is explicitly false.
     assert asyncio.run(helper.dupe_check([_dupe()], pack, "TEST"))[0] is True
 
-    monkeypatch.setattr(helper, "prompt_yes_no", AsyncMock(side_effect=EOFError))
+    monkeypatch.setattr(
+        helper, "prompt_yes_no", AsyncMock(side_effect=EOFError)
+    )
     monkeypatch.setattr(decisions.cleanup_manager, "cleanup", AsyncMock())
-    monkeypatch.setattr(decisions.cleanup_manager, "reset_terminal", lambda: None)
+    monkeypatch.setattr(
+        decisions.cleanup_manager, "reset_terminal", lambda: None
+    )
     with pytest.raises(OperationAbortedError):
-        asyncio.run(helper.dupe_check([_dupe()], _meta(tmp_path, unattended=False, dupe=False), "TEST"))
+        asyncio.run(
+            helper.dupe_check(
+                [_dupe()],
+                _meta(tmp_path, unattended=False, dupe=False),
+                "TEST",
+            )
+        )
 
 
-def test_cross_seed_beyondhd_filename_count_and_size(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cross_seed_beyondhd_filename_count_and_size(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     class Beyond(_Tracker):
-        rename: ClassVar[object] = {"name": "Release 2026 1080p WEB-DL-GROUP Director's Cut US"}
+        rename: ClassVar[object] = {
+            "name": "Release 2026 1080p WEB-DL-GROUP Director's Cut US"
+        }
 
     helper = _helper(monkeypatch, "BEYONDHD", Beyond)
     beyond = _meta(
@@ -435,7 +616,10 @@ def test_cross_seed_beyondhd_filename_count_and_size(tmp_path: Path, monkeypatch
         dupe=True,
     )
     candidate = _dupe("Release 2026 1080p WEB-DL-GROUP")
-    assert asyncio.run(helper.dupe_check([candidate], beyond, "BEYONDHD"))[0] is False
+    assert (
+        asyncio.run(helper.dupe_check([candidate], beyond, "BEYONDHD"))[0]
+        is False
+    )
     assert beyond.BEYONDHD_cross_seed == "https://download.invalid/bhd"
 
     helper = _helper(monkeypatch, "TEST")
@@ -465,17 +649,31 @@ def test_cross_seed_beyondhd_filename_count_and_size(tmp_path: Path, monkeypatch
         _Tracker.rename = "Tracker Release"
 
 
-def test_remaining_dupe_formatting_repack_string_and_exact_trump_reason(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_remaining_dupe_formatting_repack_string_and_exact_trump_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     helper = _helper(monkeypatch)
     meta = _meta(tmp_path, unattended=False, dupe=True, source_size=100)
-    assert asyncio.run(helper.dupe_check([_dupe("No Link", link=None, size=200)], meta, "TEST"))[0] is False
+    assert (
+        asyncio.run(
+            helper.dupe_check(
+                [_dupe("No Link", link=None, size=200)], meta, "TEST"
+            )
+        )[0]
+        is False
+    )
 
     class RepackTracker(_Tracker):
         prefers_repack = True
 
     repack_helper = _helper(monkeypatch, "REPACK_STRING", RepackTracker)
     meta = _meta(tmp_path, REPACK_STRING_preferred_repack="unsafe\x00 string")
-    assert asyncio.run(repack_helper.dupe_check(["unsafe string"], meta, "REPACK_STRING"))[0] is True
+    assert (
+        asyncio.run(
+            repack_helper.dupe_check(["unsafe string"], meta, "REPACK_STRING")
+        )[0]
+        is True
+    )
 
     trump = _helper(monkeypatch, "AITHER")
     meta = _meta(
@@ -487,11 +685,15 @@ def test_remaining_dupe_formatting_repack_string_and_exact_trump_reason(tmp_path
         file_count_match=1,
     )
     monkeypatch.setattr(trump, "prompt_yes_no", AsyncMock(return_value=True))
-    _, meta = asyncio.run(trump.dupe_check([_dupe(trumpable=True)], meta, "AITHER"))
+    _, meta = asyncio.run(
+        trump.dupe_check([_dupe(trumpable=True)], meta, "AITHER")
+    )
     assert meta.trump_reason == "exact_match"
 
 
-def test_ask_bdinfo_comparison_no_content_decline_and_rendered_results(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ask_bdinfo_comparison_no_content_decline_and_rendered_results(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     helper = _helper(monkeypatch)
     meta = _meta(tmp_path, is_disc="BDMV")
     monkeypatch.setattr(decisions, "has_bdinfo_content", lambda _entry: "")
@@ -500,7 +702,9 @@ def test_ask_bdinfo_comparison_no_content_decline_and_rendered_results(tmp_path:
     asyncio.run(helper.ask_bdinfo_comparison(meta, ["plain", _dupe()], "TEST"))
     prompt.assert_not_awaited()
 
-    monkeypatch.setattr(decisions, "has_bdinfo_content", lambda _entry: "BDINFO")
+    monkeypatch.setattr(
+        decisions, "has_bdinfo_content", lambda _entry: "BDINFO"
+    )
     monkeypatch.setattr(helper, "prompt_yes_no", AsyncMock(return_value=False))
     asyncio.run(helper.ask_bdinfo_comparison(meta, [_dupe()], "TEST"))
 
@@ -511,12 +715,20 @@ def test_ask_bdinfo_comparison_no_content_decline_and_rendered_results(tmp_path:
             ("warning three", ""),
         )
     )
-    monkeypatch.setattr(decisions, "compare_bdinfo", lambda *_args, **_kwargs: next(responses))
+    monkeypatch.setattr(
+        decisions, "compare_bdinfo", lambda *_args, **_kwargs: next(responses)
+    )
     monkeypatch.setattr(helper, "prompt_yes_no", AsyncMock(return_value=True))
-    asyncio.run(helper.ask_bdinfo_comparison(meta, ["plain", _dupe(id=1), _dupe(id=2), _dupe(id=3)], "TEST"))
+    asyncio.run(
+        helper.ask_bdinfo_comparison(
+            meta, ["plain", _dupe(id=1), _dupe(id=2), _dupe(id=3)], "TEST"
+        )
+    )
 
 
-def test_get_confirmation_unattended_book_and_music_views(tmp_path: Path) -> None:
+def test_get_confirmation_unattended_book_and_music_views(
+    tmp_path: Path,
+) -> None:
     helper = UploadHelper({"DEFAULT": {"sfx_on_prompt": False}})
     cover = tmp_path / "book-cover.jpg"
     cover.write_bytes(b"cover")
@@ -550,13 +762,27 @@ def test_get_confirmation_unattended_book_and_music_views(tmp_path: Path) -> Non
             "media": _field("WEB"),
             "format": _field("FLAC"),
         },
-        "tracks": [{"format": "FLAC", "codec": "FLAC", "sample_rate": 44100, "channels": 2}],
+        "tracks": [
+            {
+                "format": "FLAC",
+                "codec": "FLAC",
+                "sample_rate": 44100,
+                "channels": 2,
+            }
+        ],
     }
-    music = _meta(tmp_path, "MUSIC", music_release=music_release, artwork_url="https://images.invalid/cover.jpg")
+    music = _meta(
+        tmp_path,
+        "MUSIC",
+        music_release=music_release,
+        artwork_url="https://images.invalid/cover.jpg",
+    )
     assert asyncio.run(helper.get_confirmation(music)) is True
 
 
-def test_get_confirmation_game_notes_ids_languages_and_cover_variants(tmp_path: Path) -> None:
+def test_get_confirmation_game_notes_ids_languages_and_cover_variants(
+    tmp_path: Path,
+) -> None:
     helper = UploadHelper({"DEFAULT": {"sfx_on_prompt": False}})
     configured = _meta(
         tmp_path,
@@ -619,7 +845,9 @@ def test_get_confirmation_game_notes_ids_languages_and_cover_variants(tmp_path: 
     assert asyncio.run(helper.get_confirmation(missing_pc)) is True
 
 
-def test_get_confirmation_tv_disc_ids_personal_freeleech_and_episode_fields(tmp_path: Path) -> None:
+def test_get_confirmation_tv_disc_ids_personal_freeleech_and_episode_fields(
+    tmp_path: Path,
+) -> None:
     helper = UploadHelper({"DEFAULT": {"sfx_on_prompt": False}})
     tv = _meta(
         tmp_path,
@@ -635,11 +863,20 @@ def test_get_confirmation_tv_disc_ids_personal_freeleech_and_episode_fields(tmp_
     assert asyncio.run(helper.get_confirmation(tv)) is True
     assert tv.keep_folder is False
 
-    pack = _meta(tmp_path, "TV", tv_pack=True, auto_episode_title="Hidden", overview_meta="Hidden", demographic="")
+    pack = _meta(
+        tmp_path,
+        "TV",
+        tv_pack=True,
+        auto_episode_title="Hidden",
+        overview_meta="Hidden",
+        demographic="",
+    )
     assert asyncio.run(helper.get_confirmation(pack)) is True
 
 
-def test_get_confirmation_keep_folder_rejection_and_tracker_name_variants(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_confirmation_keep_folder_rejection_and_tracker_name_variants(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     class SingleValue(_Tracker):
         rename: ClassVar[object] = {"release": "Single Value Name"}
 
@@ -654,10 +891,19 @@ def test_get_confirmation_keep_folder_rejection_and_tracker_name_variants(tmp_pa
 
     helper = UploadHelper({"DEFAULT": {"sfx_on_prompt": True}})
     mapping = dict(helper.tracker_class_map)
-    mapping.update({"SINGLE": SingleValue, "NAMED": NamedDict, "STRING": StringName, "BROKEN": BrokenName})
+    mapping.update(
+        {
+            "SINGLE": SingleValue,
+            "NAMED": NamedDict,
+            "STRING": StringName,
+            "BROKEN": BrokenName,
+        }
+    )
     monkeypatch.setattr(helper, "tracker_class_map", mapping)
 
-    rejected = _meta(tmp_path, unattended=False, keep_folder=True, isdir=True, trackers=[])
+    rejected = _meta(
+        tmp_path, unattended=False, keep_folder=True, isdir=True, trackers=[]
+    )
     monkeypatch.setattr(helper, "prompt_yes_no", AsyncMock(return_value=False))
     with pytest.raises(OperationAbortedError, match="cancelled"):
         asyncio.run(helper.get_confirmation(rejected))
@@ -667,13 +913,25 @@ def test_get_confirmation_keep_folder_rejection_and_tracker_name_variants(tmp_pa
         unattended=False,
         keep_folder=True,
         isdir=True,
-        trackers=["MANUAL", "USENET", "MISSING", "SINGLE", "NAMED", "STRING", "BROKEN"],
+        trackers=[
+            "MANUAL",
+            "USENET",
+            "MISSING",
+            "SINGLE",
+            "NAMED",
+            "STRING",
+            "BROKEN",
+        ],
     )
-    monkeypatch.setattr(helper, "prompt_yes_no", AsyncMock(side_effect=[True, False]))
+    monkeypatch.setattr(
+        helper, "prompt_yes_no", AsyncMock(side_effect=[True, False])
+    )
     assert asyncio.run(helper.get_confirmation(accepted)) is False
 
 
-def test_get_confirmation_unchanged_ids_returns_before_audit_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_confirmation_unchanged_ids_returns_before_audit_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     helper = UploadHelper({"DEFAULT": {"sfx_on_prompt": False}})
     meta = _meta(tmp_path, unattended=False, trackers=[])
     monkeypatch.setattr(helper, "prompt_yes_no", AsyncMock(return_value=True))
@@ -681,7 +939,9 @@ def test_get_confirmation_unchanged_ids_returns_before_audit_file(tmp_path: Path
     assert not (tmp_path / "data" / "db_check.json").exists()
 
 
-def test_get_confirmation_changed_ids_writes_and_appends_audit_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_confirmation_changed_ids_writes_and_appends_audit_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     helper = UploadHelper({"DEFAULT": {"sfx_on_prompt": False}})
     prompt = AsyncMock(return_value=True)
     monkeypatch.setattr(helper, "prompt_yes_no", prompt)
@@ -723,7 +983,9 @@ def test_get_confirmation_changed_ids_writes_and_appends_audit_file(tmp_path: Pa
     assert len(json.loads(path.read_text(encoding="utf-8"))) == 2
 
 
-def test_get_confirmation_changed_ids_handles_empty_and_invalid_url_values(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_confirmation_changed_ids_handles_empty_and_invalid_url_values(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     helper = UploadHelper({"DEFAULT": {"sfx_on_prompt": False}})
     monkeypatch.setattr(helper, "prompt_yes_no", AsyncMock(return_value=True))
     path = tmp_path / "data" / "db_check.json"
@@ -752,9 +1014,18 @@ def test_get_confirmation_changed_ids_handles_empty_and_invalid_url_values(tmp_p
     assert payload["changed"]["tmdb_url"] is None
 
 
-def test_get_confirmation_disc_clears_keep_folder_before_interactive_prompt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_confirmation_disc_clears_keep_folder_before_interactive_prompt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     helper = UploadHelper({"DEFAULT": {"sfx_on_prompt": False}})
-    meta = _meta(tmp_path, unattended=False, is_disc="BDMV", keep_folder=True, isdir=True, trackers=[])
+    meta = _meta(
+        tmp_path,
+        unattended=False,
+        is_disc="BDMV",
+        keep_folder=True,
+        isdir=True,
+        trackers=[],
+    )
     prompt = AsyncMock(return_value=False)
     monkeypatch.setattr(helper, "prompt_yes_no", prompt)
 

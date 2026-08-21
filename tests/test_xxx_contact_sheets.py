@@ -7,7 +7,9 @@ from pathlib import Path
 import pytest
 
 from src.domain_models.release import Meta
-from src.integrations.filesystem.screenshot_manifest import files as manifest_files
+from src.integrations.filesystem.screenshot_manifest import (
+    files as manifest_files,
+)
 from src.integrations.media import screenshot_capture as takescreens
 
 
@@ -18,13 +20,23 @@ def test_xxx_contact_sheet_settings_have_expected_defaults():
 
 
 def test_xxx_contact_sheet_settings_allow_overrides():
-    takescreens._apply_config({"DEFAULT": {"xxx_contact_sheet_rows": "3", "xxx_contact_sheet_columns": 4, "xxx_contact_sheet_max_videos": "2"}})
+    takescreens._apply_config(
+        {
+            "DEFAULT": {
+                "xxx_contact_sheet_rows": "3",
+                "xxx_contact_sheet_columns": 4,
+                "xxx_contact_sheet_max_videos": "2",
+            }
+        }
+    )
 
     assert takescreens.xxx_contact_sheet_settings() == (3, 4, 2)
 
 
 def test_xxx_contact_sheet_animation_defaults_to_a_five_second_webp_option():
-    takescreens._apply_config({"DEFAULT": {"xxx_contact_sheet_animated_webp": True}})
+    takescreens._apply_config(
+        {"DEFAULT": {"xxx_contact_sheet_animated_webp": True}}
+    )
 
     assert takescreens.xxx_contact_sheet_animation_settings() == (True, 5.0)
 
@@ -34,14 +46,24 @@ def test_xxx_contact_sheet_timestamp_formatting():
 
 
 @pytest.mark.asyncio
-async def test_xxx_contact_sheets_create_one_grid_per_video_up_to_configured_limit(tmp_path, monkeypatch):
+async def test_xxx_contact_sheets_create_one_grid_per_video_up_to_configured_limit(
+    tmp_path, monkeypatch
+):
     videos = []
     for index in range(3):
         video = tmp_path / f"OnlyFans.Creator.{index}.mp4"
         video.write_bytes(b"video")
         videos.append(str(video))
 
-    takescreens._apply_config({"DEFAULT": {"xxx_contact_sheet_rows": 2, "xxx_contact_sheet_columns": 3, "xxx_contact_sheet_max_videos": 2}})
+    takescreens._apply_config(
+        {
+            "DEFAULT": {
+                "xxx_contact_sheet_rows": 2,
+                "xxx_contact_sheet_columns": 3,
+                "xxx_contact_sheet_max_videos": 2,
+            }
+        }
+    )
     commands = []
 
     def fake_probe(_path):
@@ -49,17 +71,30 @@ async def test_xxx_contact_sheets_create_one_grid_per_video_up_to_configured_lim
 
     async def fake_run_ffmpeg(command):
         commands.append(" ".join(takescreens.compile_ffmpeg_command(command)))
-        output = Path(takescreens.get_ffmpeg_output_path(command, takescreens.compile_ffmpeg_command(command)))
+        output = Path(
+            takescreens.get_ffmpeg_output_path(
+                command, takescreens.compile_ffmpeg_command(command)
+            )
+        )
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(b"contact sheet")
         return 0, b"", b""
 
-    monkeypatch.setattr("src.integrations.media.screenshot_capture.ffmpeg.probe", fake_probe)
-    monkeypatch.setattr("src.integrations.media.screenshot_capture.run_ffmpeg", fake_run_ffmpeg)
-    monkeypatch.setattr("src.integrations.media.screenshot_capture._xxx_contact_sheet_fontfile", lambda: "C:/Windows/Fonts/arial.ttf")
+    monkeypatch.setattr(
+        "src.integrations.media.screenshot_capture.ffmpeg.probe", fake_probe
+    )
+    monkeypatch.setattr(
+        "src.integrations.media.screenshot_capture.run_ffmpeg", fake_run_ffmpeg
+    )
+    monkeypatch.setattr(
+        "src.integrations.media.screenshot_capture._xxx_contact_sheet_fontfile",
+        lambda: "C:/Windows/Fonts/arial.ttf",
+    )
     meta = Meta(base_dir=str(tmp_path), uuid="xxx-release", category="XXX")
 
-    sheets = await takescreens.xxx_contact_sheets(videos, meta.uuid, meta.base_dir, meta)
+    sheets = await takescreens.xxx_contact_sheets(
+        videos, meta.uuid, meta.base_dir, meta
+    )
 
     assert len(sheets) == 2
     assert meta.screens == 2
@@ -71,10 +106,20 @@ async def test_xxx_contact_sheets_create_one_grid_per_video_up_to_configured_lim
 
 
 @pytest.mark.asyncio
-async def test_animated_xxx_contact_sheet_is_registered_as_webp(tmp_path, monkeypatch):
+async def test_animated_xxx_contact_sheet_is_registered_as_webp(
+    tmp_path, monkeypatch
+):
     video = tmp_path / "OnlyFans.Creator.mp4"
     video.write_bytes(b"video")
-    takescreens._apply_config({"DEFAULT": {"xxx_contact_sheet_rows": 1, "xxx_contact_sheet_columns": 2, "xxx_contact_sheet_animated_webp": True}})
+    takescreens._apply_config(
+        {
+            "DEFAULT": {
+                "xxx_contact_sheet_rows": 1,
+                "xxx_contact_sheet_columns": 2,
+                "xxx_contact_sheet_animated_webp": True,
+            }
+        }
+    )
     commands = []
 
     def fake_probe(_path):
@@ -83,17 +128,28 @@ async def test_animated_xxx_contact_sheet_is_registered_as_webp(tmp_path, monkey
     async def fake_run_ffmpeg(command):
         command_args = takescreens.compile_ffmpeg_command(command)
         commands.append(" ".join(command_args))
-        output = Path(takescreens.get_ffmpeg_output_path(command, command_args))
+        output = Path(
+            takescreens.get_ffmpeg_output_path(command, command_args)
+        )
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(b"animated webp")
         return 0, b"", b""
 
-    monkeypatch.setattr("src.integrations.media.screenshot_capture.ffmpeg.probe", fake_probe)
-    monkeypatch.setattr("src.integrations.media.screenshot_capture.run_ffmpeg", fake_run_ffmpeg)
-    monkeypatch.setattr("src.integrations.media.screenshot_capture._xxx_contact_sheet_fontfile", lambda: "C:/Windows/Fonts/arial.ttf")
+    monkeypatch.setattr(
+        "src.integrations.media.screenshot_capture.ffmpeg.probe", fake_probe
+    )
+    monkeypatch.setattr(
+        "src.integrations.media.screenshot_capture.run_ffmpeg", fake_run_ffmpeg
+    )
+    monkeypatch.setattr(
+        "src.integrations.media.screenshot_capture._xxx_contact_sheet_fontfile",
+        lambda: "C:/Windows/Fonts/arial.ttf",
+    )
     meta = Meta(base_dir=str(tmp_path), uuid="animated-xxx", category="XXX")
 
-    sheets = await takescreens.xxx_contact_sheets([str(video)], meta.uuid, meta.base_dir, meta)
+    sheets = await takescreens.xxx_contact_sheets(
+        [str(video)], meta.uuid, meta.base_dir, meta
+    )
 
     assert len(sheets) == 1
     assert Path(sheets[0]).suffix == ".webp"

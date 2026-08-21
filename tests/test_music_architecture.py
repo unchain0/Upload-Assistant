@@ -12,11 +12,26 @@ import httpx
 from src.delivery.cli.arguments import Args
 from src.domain_models.music import AudioTrack, MetadataSource, MusicRelease
 from src.domain_models.release import Meta
-from src.integrations.external_apis.music_sources import DiscogsEnricher, MusicBrainzEnricher, _music_cache_path, _write_music_cache
-from src.integrations.media.music_analyzer import MusicReleaseAnalyzer, _clean, _format_for
+from src.integrations.external_apis.music_sources import (
+    DiscogsEnricher,
+    MusicBrainzEnricher,
+    _music_cache_path,
+    _write_music_cache,
+)
+from src.integrations.media.music_analyzer import (
+    MusicReleaseAnalyzer,
+    _clean,
+    _format_for,
+)
 from src.integrations.trackers.description_builder import DescriptionBuilder
 from src.integrations.trackers.orpheus import Orpheus
-from src.services.music_preparation import _apply_music_cli_overrides, _discogs_ids, _find_discogs_release, _music_override_year, enrich_music_from_orpheus
+from src.services.music_preparation import (
+    _apply_music_cli_overrides,
+    _discogs_ids,
+    _find_discogs_release,
+    _music_override_year,
+    enrich_music_from_orpheus,
+)
 from src.services.preparation_service import Prep
 from src.services.upload_decision_service import _music_confirmation_lines
 
@@ -41,12 +56,28 @@ def test_description_builder_renders_music_release_details():
                 "format": {"value": "FLAC"},
             },
             "tracks": [
-                {"format": "FLAC", "codec": "FLAC", "bit_depth": 24, "sample_rate": 96000, "channels": 2, "bitrate": 3000000},
-                {"format": "FLAC", "codec": "FLAC", "bit_depth": 24, "sample_rate": 96000, "channels": 2, "bitrate": 3100000},
+                {
+                    "format": "FLAC",
+                    "codec": "FLAC",
+                    "bit_depth": 24,
+                    "sample_rate": 96000,
+                    "channels": 2,
+                    "bitrate": 3000000,
+                },
+                {
+                    "format": "FLAC",
+                    "codec": "FLAC",
+                    "bit_depth": 24,
+                    "sample_rate": 96000,
+                    "channels": 2,
+                    "bitrate": 3100000,
+                },
             ],
         },
     )
-    builder = DescriptionBuilder("PEERGARDEN", {"DEFAULT": {}, "TRACKERS": {"PEERGARDEN": {}}})
+    builder = DescriptionBuilder(
+        "PEERGARDEN", {"DEFAULT": {}, "TRACKERS": {"PEERGARDEN": {}}}
+    )
 
     result = builder._build_music_desc_section(meta)
 
@@ -75,14 +106,24 @@ def test_description_builder_renders_external_music_ids_as_links():
             },
         },
     )
-    builder = DescriptionBuilder("PEERGARDEN", {"DEFAULT": {}, "TRACKERS": {"PEERGARDEN": {}}})
+    builder = DescriptionBuilder(
+        "PEERGARDEN", {"DEFAULT": {}, "TRACKERS": {"PEERGARDEN": {}}}
+    )
 
     result = builder._build_music_desc_section(meta)
 
     assert "External IDs" in result
-    assert f"[url=https://musicbrainz.org/release/{musicbrainz_release}]{musicbrainz_release}[/url]" in result
-    assert f"[url=https://musicbrainz.org/release-group/{musicbrainz_group}]{musicbrainz_group}[/url]" in result
-    assert "[url=https://www.discogs.com/release/1791341]1791341[/url]" in result
+    assert (
+        f"[url=https://musicbrainz.org/release/{musicbrainz_release}]{musicbrainz_release}[/url]"
+        in result
+    )
+    assert (
+        f"[url=https://musicbrainz.org/release-group/{musicbrainz_group}]{musicbrainz_group}[/url]"
+        in result
+    )
+    assert (
+        "[url=https://www.discogs.com/release/1791341]1791341[/url]" in result
+    )
     assert "[url=https://www.discogs.com/master/28700]28700[/url]" in result
 
 
@@ -97,7 +138,9 @@ def test_description_generator_includes_music_release_details():
             "tracks": [{"format": "FLAC", "sample_rate": 96000}],
         },
     )
-    builder = DescriptionBuilder("PEERGARDEN", {"DEFAULT": {}, "TRACKERS": {"PEERGARDEN": {}}})
+    builder = DescriptionBuilder(
+        "PEERGARDEN", {"DEFAULT": {}, "TRACKERS": {"PEERGARDEN": {}}}
+    )
 
     result = asyncio.run(
         builder.general_description_generator(
@@ -138,7 +181,9 @@ def test_description_builder_skips_invalid_music_technical_values():
             ],
         },
     )
-    builder = DescriptionBuilder("PEERGARDEN", {"DEFAULT": {}, "TRACKERS": {"PEERGARDEN": {}}})
+    builder = DescriptionBuilder(
+        "PEERGARDEN", {"DEFAULT": {}, "TRACKERS": {"PEERGARDEN": {}}}
+    )
 
     result = builder._build_music_desc_section(meta)
 
@@ -149,7 +194,9 @@ def test_description_builder_skips_invalid_music_technical_values():
 
 def test_rip_log_establishes_cd_media_without_using_filename_alone(tmp_path):
     log = tmp_path / "release.log"
-    log.write_text("Exact Audio Copy V1.6 from 23. October 2020\n", encoding="utf-8")
+    log.write_text(
+        "Exact Audio Copy V1.6 from 23. October 2020\n", encoding="utf-8"
+    )
     release = MusicRelease(root=str(tmp_path))
     release.auxiliary.logs.append(log.name)
 
@@ -163,10 +210,15 @@ def test_external_metadata_does_not_create_file_tag_conflicts():
     release = MusicRelease(root=".")
     release.set_field("album", "Embedded Album", MetadataSource.FILE_TAG, 1.0)
     release.set_field("album", "External Album", MetadataSource.EXTERNAL, 0.8)
-    release.set_field("album", "Different Embedded Album", MetadataSource.FILE_TAG, 0.8)
+    release.set_field(
+        "album", "Different Embedded Album", MetadataSource.FILE_TAG, 0.8
+    )
 
     assert release.get("album") == "Embedded Album"
-    assert release.conflicts["album"] == ["Embedded Album", "Different Embedded Album"]
+    assert release.conflicts["album"] == [
+        "Embedded Album",
+        "Different Embedded Album",
+    ]
 
 
 def test_mp4_is_not_an_audio_release_extension(tmp_path):
@@ -195,7 +247,9 @@ def test_original_group_year_and_explicit_remaster_edition_are_distinct():
         )
     )
 
-    MusicReleaseAnalyzer()._derive_release_fields(release, "(1969) Led Zeppelin II [2014 Remaster]")
+    MusicReleaseAnalyzer()._derive_release_fields(
+        release, "(1969) Led Zeppelin II [2014 Remaster]"
+    )
 
     assert release.get("year") == "1969"
     assert release.get("release_year") == "2014"
@@ -221,7 +275,9 @@ def test_edition_only_folder_does_not_promote_edition_year_to_group_year():
         )
     )
 
-    MusicReleaseAnalyzer()._derive_release_fields(release, "Led Zeppelin - Coda [2015 Deluxe Edition] (FLAC)")
+    MusicReleaseAnalyzer()._derive_release_fields(
+        release, "Led Zeppelin - Coda [2015 Deluxe Edition] (FLAC)"
+    )
 
     assert not release.get("year")
     assert release.get("release_year") == "2015"
@@ -260,7 +316,9 @@ def test_web_directory_brackets_populate_release_not_edition_metadata():
 
 def test_compilation_uses_multiple_artists_not_various_artists_literal():
     release = MusicRelease(root=".")
-    for index, artist in enumerate(("Artist One", "Artist Two", "Artist Three", "Artist Four"), start=1):
+    for index, artist in enumerate(
+        ("Artist One", "Artist Two", "Artist Three", "Artist Four"), start=1
+    ):
         release.tracks.append(
             AudioTrack(
                 path=f"{index}.flac",
@@ -279,7 +337,12 @@ def test_compilation_uses_multiple_artists_not_various_artists_literal():
     MusicReleaseAnalyzer()._derive_release_fields(release, "Compilation")
 
     assert release.get("release_type") == "Compilation"
-    assert release.get("artists") == ["Artist One", "Artist Two", "Artist Three", "Artist Four"]
+    assert release.get("artists") == [
+        "Artist One",
+        "Artist Two",
+        "Artist Three",
+        "Artist Four",
+    ]
     assert release.get("artist") == "Various Artists"
 
 
@@ -322,7 +385,9 @@ def test_featured_track_artists_do_not_turn_a_stable_album_artist_into_a_compila
             )
         )
 
-    MusicReleaseAnalyzer()._derive_release_fields(release, "Bootsy_Collins-Metal_Health-16BIT-WEB-FLAC-2026-ENViED")
+    MusicReleaseAnalyzer()._derive_release_fields(
+        release, "Bootsy_Collins-Metal_Health-16BIT-WEB-FLAC-2026-ENViED"
+    )
 
     assert release.get("release_type") == "Album"
     assert release.get("artists") == ["Bootsy Collins"]
@@ -347,7 +412,9 @@ def test_album_title_containing_ost_letters_is_not_a_soundtrack():
             )
         )
 
-    MusicReleaseAnalyzer()._derive_release_fields(release, "RiN-NOSTALGIA-DE-16BIT-WEB-FLAC-2026-ENRiCH")
+    MusicReleaseAnalyzer()._derive_release_fields(
+        release, "RiN-NOSTALGIA-DE-16BIT-WEB-FLAC-2026-ENRiCH"
+    )
 
     assert release.get("release_type") == "Album"
 
@@ -355,7 +422,16 @@ def test_album_title_containing_ost_letters_is_not_a_soundtrack():
 def test_orpheus_preserves_multiple_artists_and_release_namespace():
     release = MusicRelease(root=".")
     release.tracks.append(
-        AudioTrack(path="track.flac", relative_path="track.flac", format="FLAC", codec="FLAC", bit_depth=16, sample_rate=44_100, title="No Church in the Wild", track_number=1)
+        AudioTrack(
+            path="track.flac",
+            relative_path="track.flac",
+            format="FLAC",
+            codec="FLAC",
+            bit_depth=16,
+            sample_rate=44_100,
+            title="No Church in the Wild",
+            track_number=1,
+        )
     )
     for field, value in {
         "artists": ["Jay-Z", "Kanye West"],
@@ -370,7 +446,10 @@ def test_orpheus_preserves_multiple_artists_and_release_namespace():
         release.set_field(field, value, MetadataSource.FILE_TAG, 1.0)
 
     adapter = Orpheus({"TRACKERS": {"ORPHEUS": {}}})
-    payload = adapter.build_upload_payload(Meta(category="MUSIC", artwork_url="https://images.example/cover.jpg"), release)
+    payload = adapter.build_upload_payload(
+        Meta(category="MUSIC", artwork_url="https://images.example/cover.jpg"),
+        release,
+    )
 
     assert payload["artists[]"] == ["Jay-Z", "Kanye West"]
     assert payload["importance[]"] == [1, 1]
@@ -378,13 +457,21 @@ def test_orpheus_preserves_multiple_artists_and_release_namespace():
     assert payload["catalogue_number"] == "B0015962-02"
     assert "remaster_record_label" not in payload
     assert "remaster_catalogue_number" not in payload
-    assert [entry for entry in adapter._form_data(payload) if entry[0] == "artists[]"] == [("artists[]", "Jay-Z"), ("artists[]", "Kanye West")]
+    assert [
+        entry
+        for entry in adapter._form_data(payload)
+        if entry[0] == "artists[]"
+    ] == [("artists[]", "Jay-Z"), ("artists[]", "Kanye West")]
 
 
 def test_orpheus_additional_checks_block_prohibited_music_artists():
     release = MusicRelease(root=".")
-    release.set_field("artists", ["Paul DVR & Allowed Guest"], MetadataSource.FILE_TAG, 1.0)
-    release.set_field("artist", "Paul DVR & Allowed Guest", MetadataSource.FILE_TAG, 1.0)
+    release.set_field(
+        "artists", ["Paul DVR & Allowed Guest"], MetadataSource.FILE_TAG, 1.0
+    )
+    release.set_field(
+        "artist", "Paul DVR & Allowed Guest", MetadataSource.FILE_TAG, 1.0
+    )
     meta = Meta(category="MUSIC", debug=True, music_release=release.to_dict())
     adapter = Orpheus({"TRACKERS": {"ORPHEUS": {}}})
 
@@ -404,7 +491,10 @@ def test_orpheus_additional_checks_block_blacklisted_releases_and_labels():
         ("Michael Jackson", "Super Mix"),
         ("Pink Floyd", "Tree Full of Secrets"),
         ("The Beatles", "Carnival of Light"),
-        ("The Upholsterers", "Your Furniture Was Always Dead... I Was Just Afraid To Tell You"),
+        (
+            "The Upholsterers",
+            "Your Furniture Was Always Dead... I Was Just Afraid To Tell You",
+        ),
         ("Various Artists", "The Ultimate 500 CD Jazz Collection"),
         ("Wu-Tang Clan", "Once Upon a Time in Shaolin"),
     ):
@@ -415,7 +505,10 @@ def test_orpheus_additional_checks_block_blacklisted_releases_and_labels():
         meta = Meta(category="MUSIC", music_release=release.to_dict())
 
         assert not asyncio.run(adapter.get_additional_checks(meta))
-        assert "blacklisted release" in meta.tracker_status["ORPHEUS"]["status_message"]
+        assert (
+            "blacklisted release"
+            in meta.tracker_status["ORPHEUS"]["status_message"]
+        )
 
     for label in ("Sandero Classic Sound", "Sip It & Trip It Records"):
         release = MusicRelease(root=".")
@@ -423,34 +516,75 @@ def test_orpheus_additional_checks_block_blacklisted_releases_and_labels():
         meta = Meta(category="MUSIC", music_release=release.to_dict())
 
         assert not asyncio.run(adapter.get_additional_checks(meta))
-        assert f"blacklisted label {label}" in meta.tracker_status["ORPHEUS"]["status_message"]
+        assert (
+            f"blacklisted label {label}"
+            in meta.tracker_status["ORPHEUS"]["status_message"]
+        )
 
 
 def test_orpheus_album_description_includes_track_and_total_durations():
     release = MusicRelease(root=".")
     release.tracks.extend(
         [
-            AudioTrack(path="01.flac", relative_path="01.flac", format="FLAC", codec="FLAC", title="Never Said No", track_number=1, duration=213.4),
-            AudioTrack(path="02.flac", relative_path="02.flac", format="FLAC", codec="FLAC", title="All The Beauty", track_number=2, duration=237.0),
+            AudioTrack(
+                path="01.flac",
+                relative_path="01.flac",
+                format="FLAC",
+                codec="FLAC",
+                title="Never Said No",
+                track_number=1,
+                duration=213.4,
+            ),
+            AudioTrack(
+                path="02.flac",
+                relative_path="02.flac",
+                format="FLAC",
+                codec="FLAC",
+                title="All The Beauty",
+                track_number=2,
+                duration=237.0,
+            ),
         ]
     )
 
-    assert Orpheus._album_description(release) == "[b]Tracklist[/b] (1 disc(s))\n\n1. Never Said No (03:33)\n2. All The Beauty (03:57)\n\nTotal length: 07:30"
+    assert (
+        Orpheus._album_description(release)
+        == "[b]Tracklist[/b] (1 disc(s))\n\n1. Never Said No (03:33)\n2. All The Beauty (03:57)\n\nTotal length: 07:30"
+    )
 
 
 def test_orpheus_debug_renders_payload_without_public_cover_url():
     """Debug must inspect an embedded/local cover without hosting or blocking."""
     release = MusicRelease(root=".")
     release.tracks.append(
-        AudioTrack(path="single.flac", relative_path="single.flac", format="FLAC", codec="FLAC", bit_depth=16, sample_rate=44_100, title="Single", track_number=1)
+        AudioTrack(
+            path="single.flac",
+            relative_path="single.flac",
+            format="FLAC",
+            codec="FLAC",
+            bit_depth=16,
+            sample_rate=44_100,
+            title="Single",
+            track_number=1,
+        )
     )
-    for field, value in {"artist": "Artist", "artists": ["Artist"], "album": "Album", "year": "2024", "media": "WEB", "release_type": "Single"}.items():
+    for field, value in {
+        "artist": "Artist",
+        "artists": ["Artist"],
+        "album": "Album",
+        "year": "2024",
+        "media": "WEB",
+        "release_type": "Single",
+    }.items():
         release.set_field(field, value, MetadataSource.FILE_TAG, 1.0)
     meta = Meta(category="MUSIC", debug=True, music_release=release.to_dict())
 
     assert asyncio.run(Orpheus({"TRACKERS": {"ORPHEUS": {}}}).upload(meta))
     assert "image" not in meta.tracker_status["ORPHEUS"]["debug_payload"]
-    assert "Artwork is optional" in meta.tracker_status["ORPHEUS"]["status_message"]
+    assert (
+        "Artwork is optional"
+        in meta.tracker_status["ORPHEUS"]["status_message"]
+    )
 
 
 def test_orpheus_form_values_include_ogg_and_current_release_types():
@@ -464,7 +598,16 @@ def test_orpheus_form_values_include_ogg_and_current_release_types():
 def test_orpheus_uses_concrete_release_year_for_required_edition_year():
     release = MusicRelease(root=".")
     release.tracks.append(
-        AudioTrack(path="track.flac", relative_path="track.flac", format="FLAC", codec="FLAC", bit_depth=16, sample_rate=44_100, title="Track", track_number=1)
+        AudioTrack(
+            path="track.flac",
+            relative_path="track.flac",
+            format="FLAC",
+            codec="FLAC",
+            bit_depth=16,
+            sample_rate=44_100,
+            title="Track",
+            track_number=1,
+        )
     )
     for field, value in {
         "artist": "Artist",
@@ -477,7 +620,9 @@ def test_orpheus_uses_concrete_release_year_for_required_edition_year():
     }.items():
         release.set_field(field, value, MetadataSource.FILE_TAG, 1.0)
 
-    payload = Orpheus({"TRACKERS": {"ORPHEUS": {}}}).build_upload_payload(Meta(category="MUSIC"), release)
+    payload = Orpheus({"TRACKERS": {"ORPHEUS": {}}}).build_upload_payload(
+        Meta(category="MUSIC"), release
+    )
 
     assert payload["remaster"] == 1
     assert payload["remaster_year"] == "2026"
@@ -486,7 +631,12 @@ def test_orpheus_uses_concrete_release_year_for_required_edition_year():
 
 def test_orpheus_request_match_is_title_artist_and_initial_year_aware():
     release = MusicRelease(root=".")
-    for field, value in {"artists": ["Led Zeppelin"], "artist": "Led Zeppelin", "album": "Coda", "year": "1982"}.items():
+    for field, value in {
+        "artists": ["Led Zeppelin"],
+        "artist": "Led Zeppelin",
+        "album": "Coda",
+        "year": "1982",
+    }.items():
         release.set_field(field, value, MetadataSource.FILE_TAG, 1.0)
     record = {
         "title": "Coda",
@@ -495,17 +645,27 @@ def test_orpheus_request_match_is_title_artist_and_initial_year_aware():
     }
 
     assert Orpheus._request_match_type(release, record) == "exact"
-    assert Orpheus._request_match_type(release, {**record, "year": 2015}) == "partial"
-    assert Orpheus._request_match_type(release, {**record, "title": "Presence"}) is None
+    assert (
+        Orpheus._request_match_type(release, {**record, "year": 2015})
+        == "partial"
+    )
+    assert (
+        Orpheus._request_match_type(release, {**record, "title": "Presence"})
+        is None
+    )
 
 
-def test_nfo_enrichment_is_auxiliary_and_sidecars_are_checked_without_hashing(tmp_path):
+def test_nfo_enrichment_is_auxiliary_and_sidecars_are_checked_without_hashing(
+    tmp_path,
+):
     (tmp_path / "release.nfo").write_text(
         "Improve the quality or value of.\nARTIST.....: Artist\nALBUM......: Album\nLABEL......: Example Records\nGENRE......: Rock\nSOURCE.....: WEB\nQUALITY....: 24 bit / 48 kHz\nRETAIL DATE: 2026-07-24\nURL........: https://store.example/album\n",
         encoding="utf-8",
     )
     (tmp_path / "release.m3u").write_text("01-track.flac\n", encoding="utf-8")
-    (tmp_path / "release.sfv").write_text("01-track.flac 1234ABCD\n", encoding="utf-8")
+    (tmp_path / "release.sfv").write_text(
+        "01-track.flac 1234ABCD\n", encoding="utf-8"
+    )
     release = MusicRelease(root=str(tmp_path))
     release.tracks.append(
         AudioTrack(
@@ -523,10 +683,16 @@ def test_nfo_enrichment_is_auxiliary_and_sidecars_are_checked_without_hashing(tm
         )
     )
     analyzer = MusicReleaseAnalyzer()
-    for path in (tmp_path / "release.nfo", tmp_path / "release.m3u", tmp_path / "release.sfv"):
+    for path in (
+        tmp_path / "release.nfo",
+        tmp_path / "release.m3u",
+        tmp_path / "release.sfv",
+    ):
         analyzer._classify_auxiliary(release, path, tmp_path)
 
-    analyzer._derive_release_fields(release, "Artist-Album-24BIT-48KHZ-WEB-FLAC-2026-GRP")
+    analyzer._derive_release_fields(
+        release, "Artist-Album-24BIT-48KHZ-WEB-FLAC-2026-GRP"
+    )
 
     assert release.get("release_label") == "Example Records"
     assert release.get("retail_date") == "2026-07-24"
@@ -568,7 +734,13 @@ def test_music_confirmation_reports_music_specific_review_data(tmp_path):
         release.set_field(name, value, MetadataSource.FILE_TAG, 1.0)
     release.warnings.append("warning: verify retail date")
 
-    lines = dict(item for item in _music_confirmation_lines(Meta(category="MUSIC", music_release=release.to_dict()), "MISSING") if isinstance(item, tuple))
+    lines = dict(
+        item
+        for item in _music_confirmation_lines(
+            Meta(category="MUSIC", music_release=release.to_dict()), "MISSING"
+        )
+        if isinstance(item, tuple)
+    )
 
     assert lines["Artist"].startswith("Artist")
     assert lines["Audio"] == "FLAC / 24-bit / 48 kHz / Stereo"
@@ -604,15 +776,25 @@ def test_orpheus_success_response_records_ids_and_warnings():
     assert status["group_id"] == 1625999
     assert status["new_group"] is True
     assert status["warnings"] == ["Please verify the edition details."]
-    assert "Warnings: Please verify the edition details." in status["status_message"]
+    assert (
+        "Warnings: Please verify the edition details."
+        in status["status_message"]
+    )
 
 
 def test_discogs_reference_and_release_metadata_preserve_stronger_file_tags():
-    assert DiscogsEnricher.parse_reference("https://www.discogs.com/release/12345-Test") == ("release", "12345")
-    assert DiscogsEnricher.parse_reference("master/67890") == ("master", "67890")
+    assert DiscogsEnricher.parse_reference(
+        "https://www.discogs.com/release/12345-Test"
+    ) == ("release", "12345")
+    assert DiscogsEnricher.parse_reference("master/67890") == (
+        "master",
+        "67890",
+    )
 
     release = MusicRelease(root=".")
-    release.set_field("release_label", "Embedded Label", MetadataSource.FILE_TAG, 0.95)
+    release.set_field(
+        "release_label", "Embedded Label", MetadataSource.FILE_TAG, 0.95
+    )
     DiscogsEnricher._apply_release(
         release,
         {
@@ -689,21 +871,49 @@ def test_musicbrainz_prefers_matching_cd_barcode_over_same_track_count_vinyl():
 
 def test_external_single_cannot_override_an_album_length_local_release():
     release = MusicRelease(root=".")
-    release.tracks = [AudioTrack(path=f"{index}.flac", relative_path=f"{index}.flac", format="FLAC", codec="FLAC", duration=150) for index in range(18)]
+    release.tracks = [
+        AudioTrack(
+            path=f"{index}.flac",
+            relative_path=f"{index}.flac",
+            format="FLAC",
+            codec="FLAC",
+            duration=150,
+        )
+        for index in range(18)
+    ]
     release.set_field("artist", "RiN", MetadataSource.FILE_TAG, 1.0)
     release.set_field("album", "NOSTALGIA", MetadataSource.FILE_TAG, 1.0)
     release.set_field("release_type", "Album", MetadataSource.INFERRED, 0.65)
-    external_single = {"id": "wrong-single", "release-group": {"primary-type": "Single"}}
+    external_single = {
+        "id": "wrong-single",
+        "release-group": {"primary-type": "Single"},
+    }
 
-    with patch.object(MusicBrainzEnricher, "_find_release", new=AsyncMock(return_value=external_single)):
+    with patch.object(
+        MusicBrainzEnricher,
+        "_find_release",
+        new=AsyncMock(return_value=external_single),
+    ):
         asyncio.run(MusicBrainzEnricher().enrich(release))
 
     assert release.get("release_type") == "Album"
-    assert any("Ignored external MusicBrainz release type 'Single'" in warning for warning in release.warnings)
+    assert any(
+        "Ignored external MusicBrainz release type 'Single'" in warning
+        for warning in release.warnings
+    )
 
 
 def test_music_discogs_cli_ids_keep_user_requested_identifiers(tmp_path):
-    meta, _, _ = Args({"DEFAULT": {"screens": 1}}).parse([str(tmp_path), "--music-discogs-id", "master/67890", "--music-discogs-release-id", "12345"], Meta())
+    meta, _, _ = Args({"DEFAULT": {"screens": 1}}).parse(
+        [
+            str(tmp_path),
+            "--music-discogs-id",
+            "master/67890",
+            "--music-discogs-release-id",
+            "12345",
+        ],
+        Meta(),
+    )
     release = MusicRelease(root=str(tmp_path))
 
     release_id, master_id = _discogs_ids(meta, release)
@@ -715,15 +925,23 @@ def test_music_discogs_cli_ids_keep_user_requested_identifiers(tmp_path):
 
 
 def test_no_music_discogs_cli_disables_automatic_lookup(tmp_path):
-    meta, _, _ = Args({"DEFAULT": {"screens": 1}}).parse([str(tmp_path), "--no-music-discogs"], Meta())
+    meta, _, _ = Args({"DEFAULT": {"screens": 1}}).parse(
+        [str(tmp_path), "--no-music-discogs"], Meta()
+    )
 
     assert meta.music_discogs_enabled is False
 
 
 def test_discogs_exact_search_requires_exact_artist_and_title():
-    assert DiscogsEnricher._is_exact_release({"title": "Artist - Album"}, "Artist", "Album")
-    assert not DiscogsEnricher._is_exact_release({"title": "Artist - Album (Deluxe)"}, "Artist", "Album")
-    assert not DiscogsEnricher._is_exact_release({"title": "Another Artist - Album"}, "Artist", "Album")
+    assert DiscogsEnricher._is_exact_release(
+        {"title": "Artist - Album"}, "Artist", "Album"
+    )
+    assert not DiscogsEnricher._is_exact_release(
+        {"title": "Artist - Album (Deluxe)"}, "Artist", "Album"
+    )
+    assert not DiscogsEnricher._is_exact_release(
+        {"title": "Another Artist - Album"}, "Artist", "Album"
+    )
 
 
 def test_discogs_match_filter_excludes_incompatible_media():
@@ -736,23 +954,56 @@ def test_discogs_match_filter_excludes_incompatible_media():
         {"id": 6, "format": ["MiniDisc", "Album"]},
     ]
 
-    assert [candidate["id"] for candidate in DiscogsEnricher.filter_releases_by_media(candidates, "WEB")] == [1, 4]
-    assert [candidate["id"] for candidate in DiscogsEnricher.filter_releases_by_media(candidates, "CD")] == [3, 4, 5]
-    assert [candidate["id"] for candidate in DiscogsEnricher.filter_releases_by_media(candidates, "DVD")] == [2, 4]
+    assert [
+        candidate["id"]
+        for candidate in DiscogsEnricher.filter_releases_by_media(
+            candidates, "WEB"
+        )
+    ] == [1, 4]
+    assert [
+        candidate["id"]
+        for candidate in DiscogsEnricher.filter_releases_by_media(
+            candidates, "CD"
+        )
+    ] == [3, 4, 5]
+    assert [
+        candidate["id"]
+        for candidate in DiscogsEnricher.filter_releases_by_media(
+            candidates, "DVD"
+        )
+    ] == [2, 4]
 
 
 def test_discogs_catalogue_filter_preserves_hyphens_and_uses_safe_fallbacks():
-    candidates = [{"id": 1, "catno": "B0012198-02"}, {"id": 2, "catno": "1791341"}]
+    candidates = [
+        {"id": 1, "catno": "B0012198-02"},
+        {"id": 2, "catno": "1791341"},
+    ]
 
-    assert DiscogsEnricher.filter_releases_by_catalogue(candidates, "B001219802") == candidates
-    assert DiscogsEnricher.filter_releases_by_catalogue(candidates, " B0012198-02 ") == [candidates[0]]
-    assert DiscogsEnricher.filter_releases_by_catalogue(candidates, "does-not-exist") == candidates
+    assert (
+        DiscogsEnricher.filter_releases_by_catalogue(candidates, "B001219802")
+        == candidates
+    )
+    assert DiscogsEnricher.filter_releases_by_catalogue(
+        candidates, " B0012198-02 "
+    ) == [candidates[0]]
+    assert (
+        DiscogsEnricher.filter_releases_by_catalogue(
+            candidates, "does-not-exist"
+        )
+        == candidates
+    )
 
 
-def test_directory_catalogue_and_label_are_extracted_from_braced_release_info(tmp_path):
+def test_directory_catalogue_and_label_are_extracted_from_braced_release_info(
+    tmp_path,
+):
     release = MusicRelease(root=str(tmp_path))
 
-    MusicReleaseAnalyzer._derive_from_directory(release, "Kanye West - 808s & Heartbreak (2008) [FLAC] {Roc-A-Fella Records B001219802 CD}")
+    MusicReleaseAnalyzer._derive_from_directory(
+        release,
+        "Kanye West - 808s & Heartbreak (2008) [FLAC] {Roc-A-Fella Records B001219802 CD}",
+    )
 
     assert release.get("release_catalogue_number") == "B001219802"
     assert release.get("directory_catalogue_number") == "B001219802"
@@ -762,14 +1013,18 @@ def test_directory_catalogue_and_label_are_extracted_from_braced_release_info(tm
 def test_directory_derivation_strips_only_matched_bracketed_metadata(tmp_path):
     release = MusicRelease(root=str(tmp_path))
 
-    MusicReleaseAnalyzer._derive_from_directory(release, "Artist - Album (2008) [FLAC] {Label CATNO CD}")
+    MusicReleaseAnalyzer._derive_from_directory(
+        release, "Artist - Album (2008) [FLAC] {Label CATNO CD}"
+    )
 
     assert release.get("artist") == "Artist"
     assert release.get("album") == "Album"
     assert release.get("year") == "2008"
 
 
-def test_lidarr_directory_derivation_removes_technical_suffix_and_uuid(tmp_path):
+def test_lidarr_directory_derivation_removes_technical_suffix_and_uuid(
+    tmp_path,
+):
     release = MusicRelease(root=str(tmp_path))
 
     MusicReleaseAnalyzer._derive_from_directory(
@@ -782,7 +1037,9 @@ def test_lidarr_directory_derivation_removes_technical_suffix_and_uuid(tmp_path)
     assert release.get("year") == "2023"
 
 
-def test_single_file_dated_recording_uses_stem_and_title_as_album(tmp_path, monkeypatch):
+def test_single_file_dated_recording_uses_stem_and_title_as_album(
+    tmp_path, monkeypatch
+):
     source = tmp_path / "The Bruenigs - 2026-08-10 - Summers End.mp3"
     source.write_bytes(b"audio")
     track = AudioTrack(
@@ -807,12 +1064,16 @@ def test_single_file_dated_recording_uses_stem_and_title_as_album(tmp_path, monk
     assert release.get("album") == "Summers End"
     assert release.get("year") == "2026"
     assert not release.get("release_type")
-    assert any("long one-track release" in warning for warning in release.warnings)
+    assert any(
+        "long one-track release" in warning for warning in release.warnings
+    )
 
 
 def test_common_album_artist_avoids_feature_conflict_and_compilation(tmp_path):
     release = MusicRelease(root=str(tmp_path))
-    for index, album_artist in enumerate(("Kanye West", "Kanye West & Featured Artist"), start=1):
+    for index, album_artist in enumerate(
+        ("Kanye West", "Kanye West & Featured Artist"), start=1
+    ):
         release.tracks.append(
             AudioTrack(
                 path=f"{index}.flac",
@@ -828,7 +1089,9 @@ def test_common_album_artist_avoids_feature_conflict_and_compilation(tmp_path):
             )
         )
 
-    MusicReleaseAnalyzer()._derive_release_fields(release, "Ye - Yeezus (2013) - 16bit 44.1kHz CD")
+    MusicReleaseAnalyzer()._derive_release_fields(
+        release, "Ye - Yeezus (2013) - 16bit 44.1kHz CD"
+    )
 
     assert release.get("artist") == "Kanye West"
     assert release.get("release_type") == "EP"
@@ -837,7 +1100,9 @@ def test_common_album_artist_avoids_feature_conflict_and_compilation(tmp_path):
 
 def test_featured_album_artist_text_keeps_common_primary_artist(tmp_path):
     release = MusicRelease(root=str(tmp_path))
-    for index, album_artist in enumerate(("Kanye West", "Kanye West feat. Chance the Rapper"), start=1):
+    for index, album_artist in enumerate(
+        ("Kanye West", "Kanye West feat. Chance the Rapper"), start=1
+    ):
         release.tracks.append(
             AudioTrack(
                 path=f"{index}.flac",
@@ -853,14 +1118,18 @@ def test_featured_album_artist_text_keeps_common_primary_artist(tmp_path):
             )
         )
 
-    MusicReleaseAnalyzer()._derive_release_fields(release, "Ye - The Life of Pablo (2016) - 16bit 44.1kHz Digital Media")
+    MusicReleaseAnalyzer()._derive_release_fields(
+        release, "Ye - The Life of Pablo (2016) - 16bit 44.1kHz Digital Media"
+    )
 
     assert release.get("artist") == "Kanye West"
     assert release.get("release_type") == "EP"
     assert "artist" not in release.conflicts
 
 
-def test_conflicting_file_tag_albums_remain_authoritative_over_directory(tmp_path):
+def test_conflicting_file_tag_albums_remain_authoritative_over_directory(
+    tmp_path,
+):
     release = MusicRelease(root=str(tmp_path))
     for index, album in enumerate(("K-POP", "K-POP (Instrumental)"), start=1):
         release.tracks.append(
@@ -890,18 +1159,44 @@ def test_conflicting_file_tag_albums_remain_authoritative_over_directory(tmp_pat
 def test_orpheus_enrichment_extracts_discogs_master_from_group_wiki(tmp_path):
     release = MusicRelease(root=str(tmp_path))
     release.set_field("artist", "Kanye West", MetadataSource.FILE_TAG, 1.0)
-    release.set_field("album", "808s & Heartbreak", MetadataSource.FILE_TAG, 1.0)
-    meta = Meta(category="MUSIC", tracker_ids={"ORPHEUS": "953914"}, base_dir=str(tmp_path), uuid="orpheus-master", music_release=release.to_dict())
+    release.set_field(
+        "album", "808s & Heartbreak", MetadataSource.FILE_TAG, 1.0
+    )
+    meta = Meta(
+        category="MUSIC",
+        tracker_ids={"ORPHEUS": "953914"},
+        base_dir=str(tmp_path),
+        uuid="orpheus-master",
+        music_release=release.to_dict(),
+    )
     response = {
-        "group": {"id": 610888, "name": "808s & Heartbreak", "year": 2008, "wikiBBcode": "https://www.discogs.com/master/8489"},
-        "torrent": {"media": "CD", "encoding": "Lossless", "remasterYear": 2008, "remasterRecordLabel": "Roc-A-Fella Records", "remasterCatalogueNumber": "B001219802"},
+        "group": {
+            "id": 610888,
+            "name": "808s & Heartbreak",
+            "year": 2008,
+            "wikiBBcode": "https://www.discogs.com/master/8489",
+        },
+        "torrent": {
+            "media": "CD",
+            "encoding": "Lossless",
+            "remasterYear": 2008,
+            "remasterRecordLabel": "Roc-A-Fella Records",
+            "remasterCatalogueNumber": "B001219802",
+        },
     }
 
-    with patch.object(Orpheus, "get_torrent", new=AsyncMock(return_value=response)):
-        assert asyncio.run(enrich_music_from_orpheus(meta, {"TRACKERS": {"ORPHEUS": {}}}))
+    with patch.object(
+        Orpheus, "get_torrent", new=AsyncMock(return_value=response)
+    ):
+        assert asyncio.run(
+            enrich_music_from_orpheus(meta, {"TRACKERS": {"ORPHEUS": {}}})
+        )
 
     assert meta.music_release["external_ids"]["discogs_master"] == "8489"
-    assert meta.music_release["fields"]["release_catalogue_number"]["value"] == "B001219802"
+    assert (
+        meta.music_release["fields"]["release_catalogue_number"]["value"]
+        == "B001219802"
+    )
     assert "edition_year" not in meta.music_release["fields"]
 
 
@@ -911,15 +1206,38 @@ def test_discogs_auto_lookup_uses_only_one_exact_match(tmp_path):
     release.set_field("artist", "Artist", MetadataSource.FILE_TAG, 1.0)
     release.set_field("album", "Album", MetadataSource.FILE_TAG, 1.0)
 
-    with patch.object(DiscogsEnricher, "find_exact_releases", new=AsyncMock(return_value=[{"id": 12345}])):
-        assert asyncio.run(_find_discogs_release(meta, release, "token")) == "12345"
+    with patch.object(
+        DiscogsEnricher,
+        "find_exact_releases",
+        new=AsyncMock(return_value=[{"id": 12345}]),
+    ):
+        assert (
+            asyncio.run(_find_discogs_release(meta, release, "token"))
+            == "12345"
+        )
 
-    with patch.object(DiscogsEnricher, "find_exact_releases", new=AsyncMock(return_value=[{"id": 12345}, {"id": 67890}])):
+    with patch.object(
+        DiscogsEnricher,
+        "find_exact_releases",
+        new=AsyncMock(return_value=[{"id": 12345}, {"id": 67890}]),
+    ):
         assert asyncio.run(_find_discogs_release(meta, release, "token")) == ""
 
     release.set_field("media", "WEB", MetadataSource.USER, 1.0)
-    with patch.object(DiscogsEnricher, "find_exact_releases", new=AsyncMock(return_value=[{"id": 12345, "format": ["File"]}, {"id": 67890, "format": ["DVD"]}])):
-        assert asyncio.run(_find_discogs_release(meta, release, "token")) == "12345"
+    with patch.object(
+        DiscogsEnricher,
+        "find_exact_releases",
+        new=AsyncMock(
+            return_value=[
+                {"id": 12345, "format": ["File"]},
+                {"id": 67890, "format": ["DVD"]},
+            ]
+        ),
+    ):
+        assert (
+            asyncio.run(_find_discogs_release(meta, release, "token"))
+            == "12345"
+        )
 
 
 def test_discogs_exact_lookup_requires_a_token(tmp_path):
@@ -929,19 +1247,36 @@ def test_discogs_exact_lookup_requires_a_token(tmp_path):
 
 
 def test_discogs_and_musicbrainz_use_persistent_music_metadata_cache(tmp_path):
-    discogs_path = _music_cache_path(str(tmp_path), "discogs", "releases", "987654321")
+    discogs_path = _music_cache_path(
+        str(tmp_path), "discogs", "releases", "987654321"
+    )
     musicbrainz_key = "artist\x1falbum\x1f2\x1f\x1f"
-    musicbrainz_path = _music_cache_path(str(tmp_path), "musicbrainz", "release_search", musicbrainz_key)
-    asyncio.run(_write_music_cache(discogs_path, {"id": 987654321, "title": "Artist - Album"}))
-    asyncio.run(_write_music_cache(musicbrainz_path, {"id": "cached-release", "title": "Album"}))
+    musicbrainz_path = _music_cache_path(
+        str(tmp_path), "musicbrainz", "release_search", musicbrainz_key
+    )
+    asyncio.run(
+        _write_music_cache(
+            discogs_path, {"id": 987654321, "title": "Artist - Album"}
+        )
+    )
+    asyncio.run(
+        _write_music_cache(
+            musicbrainz_path, {"id": "cached-release", "title": "Album"}
+        )
+    )
 
     DiscogsEnricher._cache.clear()
     MusicBrainzEnricher._cache.clear()
     discogs = DiscogsEnricher(base_dir=str(tmp_path))
     musicbrainz = MusicBrainzEnricher(base_dir=str(tmp_path))
 
-    assert asyncio.run(discogs._get("releases", "987654321"))["id"] == 987654321
-    assert asyncio.run(musicbrainz._find_release("Artist", "Album", 2))["id"] == "cached-release"
+    assert (
+        asyncio.run(discogs._get("releases", "987654321"))["id"] == 987654321
+    )
+    assert (
+        asyncio.run(musicbrainz._find_release("Artist", "Album", 2))["id"]
+        == "cached-release"
+    )
 
 
 def test_music_prep_runs_shared_client_path_lookup_before_returning():
@@ -953,17 +1288,34 @@ def test_music_prep_runs_shared_client_path_lookup_before_returning():
     tracker_ids = ["orpheus"]
 
     with (
-        patch("src.services.preparation_service.prep_helpers.init_meta", return_value=(False, False, client, False, hash_ids, tracker_ids)),
-        patch("src.services.preparation_service.prep_helpers.detect_disc_and_category", new=AsyncMock(return_value=("", {}))),
+        patch(
+            "src.services.preparation_service.prep_helpers.init_meta",
+            return_value=(False, False, client, False, hash_ids, tracker_ids),
+        ),
+        patch(
+            "src.services.preparation_service.prep_helpers.detect_disc_and_category",
+            new=AsyncMock(return_value=("", {})),
+        ),
         patch.object(Prep, "_gather_music_prep", new=AsyncMock()),
-        patch("src.services.preparation_service.prep_helpers.process_trackers_and_torrent", new=AsyncMock()) as process_trackers,
-        patch("src.services.preparation_service._enrich_music_from_orpheus_fn", new=AsyncMock()) as enrich_orpheus,
-        patch("src.services.preparation_service._enrich_music_from_discogs_fn", new=AsyncMock()) as enrich_discogs,
+        patch(
+            "src.services.preparation_service.prep_helpers.process_trackers_and_torrent",
+            new=AsyncMock(),
+        ) as process_trackers,
+        patch(
+            "src.services.preparation_service._enrich_music_from_orpheus_fn",
+            new=AsyncMock(),
+        ) as enrich_orpheus,
+        patch(
+            "src.services.preparation_service._enrich_music_from_discogs_fn",
+            new=AsyncMock(),
+        ) as enrich_discogs,
     ):
         result = asyncio.run(prep.gather_prep(meta, "cli"))
 
     assert result is meta
-    process_trackers.assert_awaited_once_with(prep, meta, client, hash_ids, tracker_ids, "", "")
+    process_trackers.assert_awaited_once_with(
+        prep, meta, client, hash_ids, tracker_ids, "", ""
+    )
     enrich_orpheus.assert_awaited_once_with(meta, prep.config)
     enrich_discogs.assert_awaited_once_with(meta, prep.config)
 
@@ -1023,8 +1375,20 @@ def test_orpheus_async_multipart_uses_mapping_and_repeats_list_fields():
             request = client.build_request(
                 "POST",
                 "https://example.invalid/ajax.php?action=upload",
-                data={"artists[]": ["Artist One", "Artist Two"], "importance[]": [1, 1]},
-                files=[("file_input", ("release.torrent", io.BytesIO(b"torrent"), "application/x-bittorrent"))],
+                data={
+                    "artists[]": ["Artist One", "Artist Two"],
+                    "importance[]": [1, 1],
+                },
+                files=[
+                    (
+                        "file_input",
+                        (
+                            "release.torrent",
+                            io.BytesIO(b"torrent"),
+                            "application/x-bittorrent",
+                        ),
+                    )
+                ],
             )
             return b"".join([chunk async for chunk in request.stream])
 
@@ -1062,8 +1426,14 @@ def test_gather_music_prep_generates_mediainfo(tmp_path):
 
     with (
         patch.object(MusicReleaseAnalyzer, "analyze", return_value=release),
-        patch("src.integrations.media.media_info_export.export_info", new=AsyncMock(return_value=mock_mi)) as mock_export_info,
-        patch("src.services.music_preparation.prepare_music_cover", new=AsyncMock(return_value="")),
+        patch(
+            "src.integrations.media.media_info_export.export_info",
+            new=AsyncMock(return_value=mock_mi),
+        ) as mock_export_info,
+        patch(
+            "src.services.music_preparation.prepare_music_cover",
+            new=AsyncMock(return_value=""),
+        ),
     ):
         asyncio.run(gather_music_prep(meta, {"DEFAULT": {}}))
 

@@ -197,7 +197,9 @@ class PeerGarden(UNIT3D):
                 resolved_type = "CONSOLE"
             elif "ANDROID" in platform:
                 resolved_type = "ANDROID"
-            elif "IOS" in platform or "IPHONE" in platform or "IPAD" in platform:
+            elif (
+                "IOS" in platform or "IPHONE" in platform or "IPAD" in platform
+            ):
                 resolved_type = "IOS"
             elif "MAC" in platform:
                 resolved_type = "MAC"
@@ -261,7 +263,9 @@ class PeerGarden(UNIT3D):
 
     async def get_additional_checks(self, meta: Meta) -> bool:
         if meta.software:
-            logger.info(f"{self.tracker}: [yellow]Software uploads are not mapped to a dedicated tracker category. Skipping upload.[/yellow]")
+            logger.info(
+                f"{self.tracker}: [yellow]Software uploads are not mapped to a dedicated tracker category. Skipping upload.[/yellow]"
+            )
             return False
         return True
 

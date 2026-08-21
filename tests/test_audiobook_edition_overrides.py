@@ -9,7 +9,9 @@ from src.delivery.cli.arguments import Args
 from src.domain_models.release import Meta
 
 
-def test_cli_accepts_complete_audiobook_edition_override(tmp_path: Path) -> None:
+def test_cli_accepts_complete_audiobook_edition_override(
+    tmp_path: Path,
+) -> None:
     source = tmp_path / "The Gabriel Hounds.mp3"
     source.touch()
 
@@ -41,7 +43,9 @@ def test_cli_accepts_complete_audiobook_edition_override(tmp_path: Path) -> None
 
 
 @pytest.mark.asyncio
-async def test_complete_audiobook_edition_override_survives_conflicting_enrichment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_complete_audiobook_edition_override_survives_conflicting_enrichment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     source = tmp_path / "The Gabriel Hounds.mp3"
     source.touch()
     meta = Meta(
@@ -59,7 +63,12 @@ async def test_complete_audiobook_edition_override_survives_conflicting_enrichme
         publisher="Recorded Books",
         isbn="9781664616110",
         year=1991,
-        torrent_comments=[{"trackers": "https://myanonamouse.net/announce", "comment": "MID=123"}],
+        torrent_comments=[
+            {
+                "trackers": "https://myanonamouse.net/announce",
+                "comment": "MID=123",
+            }
+        ],
     )
 
     async def export_stub(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
@@ -85,13 +94,24 @@ async def test_complete_audiobook_edition_override_survives_conflicting_enrichme
         return 64
 
     monkeypatch.setattr(book_prep, "export_info", export_stub)
-    monkeypatch.setattr("src.integrations.external_apis.myanonamouse.myanonamouse_manager.search_by_id", mam_stub)
-    monkeypatch.setattr("src.integrations.external_apis.google_books.google_books_manager.search_by_isbn", no_result)
-    monkeypatch.setattr("src.integrations.external_apis.openlibrary.openlibrary_manager.search_by_isbn", no_result)
+    monkeypatch.setattr(
+        "src.integrations.external_apis.myanonamouse.myanonamouse_manager.search_by_id",
+        mam_stub,
+    )
+    monkeypatch.setattr(
+        "src.integrations.external_apis.google_books.google_books_manager.search_by_isbn",
+        no_result,
+    )
+    monkeypatch.setattr(
+        "src.integrations.external_apis.openlibrary.openlibrary_manager.search_by_isbn",
+        no_result,
+    )
     monkeypatch.setattr(book_prep, "get_audiobook_duration", duration_stub)
     monkeypatch.setattr(book_prep, "get_audiobook_bitrate", bitrate_stub)
 
-    await book_prep.gather_book_prep(meta, str(source), str(tmp_path), {"DEFAULT": {}})
+    await book_prep.gather_book_prep(
+        meta, str(source), str(tmp_path), {"DEFAULT": {}}
+    )
 
     assert meta.title == "The Gabriel Hounds"
     assert meta.author == "Mary Stewart"

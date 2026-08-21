@@ -3,7 +3,9 @@ import re
 from typing import Any, ClassVar
 
 from src.domain_models.release import Meta
-from src.integrations.filesystem.screenshot_manifest import files as manifest_files
+from src.integrations.filesystem.screenshot_manifest import (
+    files as manifest_files,
+)
 from src.integrations.trackers.description_builder import DescriptionBuilder
 from src.integrations.trackers.UNIT3D import UNIT3D
 
@@ -86,7 +88,10 @@ class BitPorn(UNIT3D):
         ("Old and Young", r"\bold (?:and|n) young\b"),
         ("Gay / Bi", r"\b(?:gay|bi|bisexual)\b"),
         ("HiddenCam", r"\b(?:hidden ?cam|hiddencam)\b"),
-        ("Fansite", r"\b(?:fansite|onlyfans|fansly|fanvue|manyvids|fancentro|loyalfans|justforfans|pocketstars|avnstars|unfiltrd)\b"),
+        (
+            "Fansite",
+            r"\b(?:fansite|onlyfans|fansly|fanvue|manyvids|fancentro|loyalfans|justforfans|pocketstars|avnstars|unfiltrd)\b",
+        ),
         ("Amateur", r"\bamateur\b"),
         ("Anal", r"\banal\b"),
         ("Asian", r"\basian\b"),
@@ -148,14 +153,24 @@ class BitPorn(UNIT3D):
     def __init__(self, config: Config) -> None:
         super().__init__(config, tracker_name=self.tracker)
 
-    async def get_category_id(self, meta: Meta, category: str | None = None, reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_category_id(
+        self,
+        meta: Meta,
+        category: str | None = None,
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         if mapping_only:
             return self.category_ids
         if reverse:
             return {value: name for name, value in self.category_ids.items()}
 
         if category:
-            return {"category_id": self.category_ids.get(category, self.category_ids["Uncategorized"])}
+            return {
+                "category_id": self.category_ids.get(
+                    category, self.category_ids["Uncategorized"]
+                )
+            }
 
         basename = str(meta.basename_no_ext or "")
         normalized_basename = re.sub(r"[^a-z0-9]+", " ", basename.casefold())
@@ -165,20 +180,38 @@ class BitPorn(UNIT3D):
 
         return {"category_id": self.category_ids["Uncategorized"]}
 
-    async def get_type_id(self, meta: Meta, type: str | None = None, reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_type_id(
+        self,
+        meta: Meta,
+        type: str | None = None,
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         _ = meta, type, reverse, mapping_only
         return {"type_id": "1"}
 
-    async def get_resolution_id(self, meta: Meta, resolution: str | None = None, reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+    async def get_resolution_id(
+        self,
+        meta: Meta,
+        resolution: str | None = None,
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
         if mapping_only:
             return self.resolution_ids
         if reverse:
             return {value: name for name, value in self.resolution_ids.items()}
 
         resolved_resolution = resolution if resolution else meta.resolution
-        return {"resolution_id": self.resolution_ids.get(str(resolved_resolution), self.resolution_ids["OTHER"])}
+        return {
+            "resolution_id": self.resolution_ids.get(
+                str(resolved_resolution), self.resolution_ids["OTHER"]
+            )
+        }
 
-    async def _description_image_files(self, meta: Meta) -> list[tuple[str, bytes, str]]:
+    async def _description_image_files(
+        self, meta: Meta
+    ) -> list[tuple[str, bytes, str]]:
         """Return local XXX contact sheets for BitPorn to host during upload."""
         images: list[tuple[str, bytes, str]] = []
         for path in manifest_files(meta.base_dir, meta.uuid, "main"):
@@ -189,7 +222,9 @@ class BitPorn(UNIT3D):
 
     async def get_description(self, meta: Meta) -> dict[str, str]:
         """Use BitPorn placeholders so its API, rather than an external host, serves screenshots."""
-        description = await DescriptionBuilder(self.tracker, self.config).general_description_generator(
+        description = await DescriptionBuilder(
+            self.tracker, self.config
+        ).general_description_generator(
             meta,
             audio_spectrogram=False,
             bluray=False,
@@ -201,7 +236,9 @@ class BitPorn(UNIT3D):
         )
         images = await self._description_image_files(meta)
         if images:
-            placeholders = "".join(f"[upimg{index}]" for index in range(1, len(images) + 1))
+            placeholders = "".join(
+                f"[upimg{index}]" for index in range(1, len(images) + 1)
+            )
             description = f"{description}\n[center]{placeholders}[/center]"
         return {"description": description}
 
@@ -221,11 +258,15 @@ class BitPorn(UNIT3D):
         ):
             data.update(await getter(meta))
 
-        for index, _ in enumerate(await self._description_image_files(meta), start=1):
+        for index, _ in enumerate(
+            await self._description_image_files(meta), start=1
+        ):
             data[f"description_image_widths[{index}]"] = "450"
         return data
 
-    async def get_additional_files(self, meta: Meta) -> dict[str, tuple[str, bytes, str]]:
+    async def get_additional_files(
+        self, meta: Meta
+    ) -> dict[str, tuple[str, bytes, str]]:
         """Use BitPorn's multipart names for tracker-hosted artwork and screenshots."""
         files = await super().get_additional_files(meta)
         if cover := files.pop("torrent-cover", None):
@@ -233,6 +274,8 @@ class BitPorn(UNIT3D):
         if banner := files.pop("torrent-banner", None):
             files["banner"] = banner
 
-        for index, image in enumerate(await self._description_image_files(meta)):
+        for index, image in enumerate(
+            await self._description_image_files(meta)
+        ):
             files[f"description_images[{index}]"] = image
         return files

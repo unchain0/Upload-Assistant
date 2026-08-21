@@ -17,7 +17,13 @@ import subprocess
 import sys
 import types
 import zipfile
-from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
+from collections.abc import (
+    AsyncIterator,
+    Callable,
+    Iterator,
+    Mapping,
+    Sequence,
+)
 from pathlib import Path
 from types import ModuleType
 from typing import Any, ClassVar, Self, get_args, get_origin, get_type_hints
@@ -54,7 +60,9 @@ class _Process:
         self.stderr = _Stream(b"")
         self.pid = 1
 
-    async def communicate(self, _input: bytes | None = None) -> tuple[bytes, bytes]:
+    async def communicate(
+        self, _input: bytes | None = None
+    ) -> tuple[bytes, bytes]:
         return b"ok", b""
 
     async def wait(self) -> int:
@@ -73,7 +81,10 @@ class _Process:
 class _Response:
     status_code = 200
     url = "https://media.example/artwork.png"
-    headers: ClassVar[dict[str, str]] = {"content-type": "image/png", "content-length": "128"}
+    headers: ClassVar[dict[str, str]] = {
+        "content-type": "image/png",
+        "content-length": "128",
+    }
     content = b"\x89PNG\r\n\x1a\n"
 
     @property
@@ -206,7 +217,9 @@ def _install_optional_media_modules(monkeypatch: Any) -> None:
 
 
 def _fixture_tree(tmp_path: Path) -> dict[str, Path]:
-    media = tmp_path / "Example.Release.2026.1080p.WEB-DL.H.264.DDP5.1-GROUP.mkv"
+    media = (
+        tmp_path / "Example.Release.2026.1080p.WEB-DL.H.264.DDP5.1-GROUP.mkv"
+    )
     media.write_bytes(b"media")
     audio = tmp_path / "Example Album.flac"
     audio.write_bytes(b"audio")
@@ -216,7 +229,10 @@ def _fixture_tree(tmp_path: Path) -> dict[str, Path]:
     pdf.write_bytes(b"%PDF-1.4\n%%EOF")
     epub = tmp_path / "Example Book.epub"
     with zipfile.ZipFile(epub, "w") as archive:
-        archive.writestr("META-INF/container.xml", '<container><rootfiles><rootfile full-path="OEBPS/content.opf"/></rootfiles></container>')
+        archive.writestr(
+            "META-INF/container.xml",
+            '<container><rootfiles><rootfile full-path="OEBPS/content.opf"/></rootfiles></container>',
+        )
         archive.writestr(
             "OEBPS/content.opf",
             '<package xmlns:dc="http://purl.org/dc/elements/1.1/"><metadata><dc:title>Example Book</dc:title>'
@@ -241,13 +257,29 @@ def _fixture_tree(tmp_path: Path) -> dict[str, Path]:
     video_ts.mkdir()
     (video_ts / "VIDEO_TS.IFO").write_bytes(b"ifo")
     (video_ts / "VTS_01_1.VOB").write_bytes(b"vob")
-    return {"media": media, "audio": audio, "m4b": m4b, "pdf": pdf, "epub": epub, "png": png, "nfo": nfo, "bdmv": bdmv, "dvd": video_ts}
+    return {
+        "media": media,
+        "audio": audio,
+        "m4b": m4b,
+        "pdf": pdf,
+        "epub": epub,
+        "png": png,
+        "nfo": nfo,
+        "bdmv": bdmv,
+        "dvd": video_ts,
+    }
 
 
 def _meta(tmp_path: Path, files: Mapping[str, Path], profile: int) -> Meta:
     categories = ("MOVIE", "TV", "MUSIC", "BOOK", "XXX")
     category = categories[profile % len(categories)]
-    selected = files["m4b"] if category == "BOOK" else files["audio"] if category == "MUSIC" else files["media"]
+    selected = (
+        files["m4b"]
+        if category == "BOOK"
+        else files["audio"]
+        if category == "MUSIC"
+        else files["media"]
+    )
     return Meta(
         base_dir=str(tmp_path),
         uuid=f"media-{profile}",
@@ -290,14 +322,38 @@ def _meta(tmp_path: Path, files: Mapping[str, Path], profile: int) -> Meta:
         mediainfo={
             "media": {
                 "track": [
-                    {"@type": "General", "Format": "Matroska", "Duration": "7200000", "FileSize": "1000000"},
-                    {"@type": "Video", "Format": "HEVC", "Width": "1920", "Height": "1080", "FrameRate": "24", "Language": "en"},
-                    {"@type": "Audio", "Format": "E-AC-3", "Channels": "6", "BitRate": "640000", "Language": "en"},
+                    {
+                        "@type": "General",
+                        "Format": "Matroska",
+                        "Duration": "7200000",
+                        "FileSize": "1000000",
+                    },
+                    {
+                        "@type": "Video",
+                        "Format": "HEVC",
+                        "Width": "1920",
+                        "Height": "1080",
+                        "FrameRate": "24",
+                        "Language": "en",
+                    },
+                    {
+                        "@type": "Audio",
+                        "Format": "E-AC-3",
+                        "Channels": "6",
+                        "BitRate": "640000",
+                        "Language": "en",
+                    },
                     {"@type": "Text", "Format": "UTF-8", "Language": "en"},
                 ]
             }
         },
-        bdinfo={"size": 25.0, "playlist": "00000.MPLS", "video": [], "audio": [], "subtitles": []},
+        bdinfo={
+            "size": 25.0,
+            "playlist": "00000.MPLS",
+            "video": [],
+            "audio": [],
+            "subtitles": [],
+        },
         discs=[{"type": "BDMV", "path": str(files["bdmv"]), "name": "DISC1"}],
         audio_languages=["English", "Japanese"],
         subtitle_languages=["English"],
@@ -317,10 +373,21 @@ def _meta(tmp_path: Path, files: Mapping[str, Path], profile: int) -> Meta:
 
 def _modules(monkeypatch: Any) -> list[ModuleType]:
     _install_optional_media_modules(monkeypatch)
-    return [importlib.import_module(info.name) for info in pkgutil.iter_modules(media_package.__path__, f"{media_package.__name__}.")]
+    return [
+        importlib.import_module(info.name)
+        for info in pkgutil.iter_modules(
+            media_package.__path__, f"{media_package.__name__}."
+        )
+    ]
 
 
-def _value(name: str, annotation: object, meta: Meta, files: Mapping[str, Path], profile: int) -> object:
+def _value(
+    name: str,
+    annotation: object,
+    meta: Meta,
+    files: Mapping[str, Path],
+    profile: int,
+) -> object:
     normalized = name.casefold().lstrip("_")
     values: dict[str, object] = {
         "meta": meta,
@@ -383,7 +450,19 @@ def _value(name: str, annotation: object, meta: Meta, files: Mapping[str, Path],
         "payload": {},
         "clip": _FakeClip(),
         "frame": _Universal(props={}),
-        "args": (0, str(files["media"]), 10.0, str(files["png"]), 1920.0, 1080.0, 1920.0, 1080.0, "error", False, meta),
+        "args": (
+            0,
+            str(files["media"]),
+            10.0,
+            str(files["png"]),
+            1920.0,
+            1080.0,
+            1920.0,
+            1080.0,
+            "error",
+            False,
+            meta,
+        ),
     }
     if normalized in values:
         return values[normalized]
@@ -406,17 +485,29 @@ def _value(name: str, annotation: object, meta: Meta, files: Mapping[str, Path],
     if origin in {dict, Mapping}:
         return {}
     if origin is tuple:
-        return tuple(_value(normalized, item, meta, files, profile) for item in args if item is not Ellipsis)
+        return tuple(
+            _value(normalized, item, meta, files, profile)
+            for item in args
+            if item is not Ellipsis
+        )
     if origin is not None and type(None) in args:
         concrete = next((item for item in args if item is not type(None)), str)
         return _value(normalized, concrete, meta, files, profile)
     return _Universal()
 
 
-_PROTECTED_ARGUMENTS = frozenset({"meta", "config", "clip", "frame", "process", "response"})
+_PROTECTED_ARGUMENTS = frozenset(
+    {"meta", "config", "clip", "frame", "process", "response"}
+)
 
 
-def _coerce_override(value: object, annotation: object, meta: Meta, files: Mapping[str, Path], profile: int) -> object:
+def _coerce_override(
+    value: object,
+    annotation: object,
+    meta: Meta,
+    files: Mapping[str, Path],
+    profile: int,
+) -> object:
     origin = get_origin(annotation)
     args = get_args(annotation)
     if annotation is Meta:
@@ -449,7 +540,9 @@ def _coerce_override(value: object, annotation: object, meta: Meta, files: Mappi
     if origin is set:
         return value if isinstance(value, set) else {value}
     if origin is not None and type(None) in args and value is not None:
-        concrete = next((item for item in args if item is not type(None)), object)
+        concrete = next(
+            (item for item in args if item is not type(None)), object
+        )
         return _coerce_override(value, concrete, meta, files, profile)
     return value
 
@@ -470,13 +563,25 @@ async def _invoke(
     except NameError, TypeError:
         hints = {}
     for parameter in inspect.signature(function).parameters.values():
-        if parameter.kind in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}:
+        if parameter.kind in {
+            inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.VAR_KEYWORD,
+        }:
             continue
-        if parameter.default is not inspect.Parameter.empty and parameter.name not in overrides:
+        if (
+            parameter.default is not inspect.Parameter.empty
+            and parameter.name not in overrides
+        ):
             continue
         annotation = hints.get(parameter.name, parameter.annotation)
-        value = overrides.get(parameter.name, _value(parameter.name, annotation, meta, files, profile))
-        if parameter.name in overrides and parameter.name not in _PROTECTED_ARGUMENTS:
+        value = overrides.get(
+            parameter.name,
+            _value(parameter.name, annotation, meta, files, profile),
+        )
+        if (
+            parameter.name in overrides
+            and parameter.name not in _PROTECTED_ARGUMENTS
+        ):
             value = _coerce_override(value, annotation, meta, files, profile)
         elif parameter.name in _PROTECTED_ARGUMENTS:
             value = _value(parameter.name, annotation, meta, files, profile)
@@ -490,31 +595,53 @@ async def _invoke(
     return result
 
 
-def test_media_catalog_uses_local_fakes_and_domain_releases(tmp_path: Path, monkeypatch: Any) -> None:
+def test_media_catalog_uses_local_fakes_and_domain_releases(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
     files = _fixture_tree(tmp_path)
     modules = _modules(monkeypatch)
 
     async def fake_subprocess(*_args: object, **_kwargs: object) -> _Process:
         return _Process()
 
-    async def no_sleep(_delay: float = 0, *_args: object, **_kwargs: object) -> None:
+    async def no_sleep(
+        _delay: float = 0, *_args: object, **_kwargs: object
+    ) -> None:
         return None
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_subprocess)
     monkeypatch.setattr(asyncio, "create_subprocess_shell", fake_subprocess)
     monkeypatch.setattr(asyncio, "sleep", no_sleep)
-    monkeypatch.setattr(subprocess, "run", lambda *_args, **_kwargs: _Completed())
-    monkeypatch.setattr(subprocess, "check_output", lambda *_args, **_kwargs: b"ok")
+    monkeypatch.setattr(
+        subprocess, "run", lambda *_args, **_kwargs: _Completed()
+    )
+    monkeypatch.setattr(
+        subprocess, "check_output", lambda *_args, **_kwargs: b"ok"
+    )
     monkeypatch.setattr(httpx, "AsyncClient", _AsyncClient)
 
     # Keep expensive numeric/plot operations deterministic and in-memory.
     import librosa
     import matplotlib.pyplot as plt
 
-    monkeypatch.setattr(librosa, "load", lambda *_args, **_kwargs: (np.ones(2048, dtype=float), 48000))
-    monkeypatch.setattr(librosa, "stft", lambda *_args, **_kwargs: np.ones((8, 8), dtype=complex))
-    monkeypatch.setattr(librosa, "amplitude_to_db", lambda value, **_kwargs: np.abs(value))
-    monkeypatch.setattr(plt, "savefig", lambda path, **_kwargs: Image.new("RGB", (64, 64), "white").save(path))
+    monkeypatch.setattr(
+        librosa,
+        "load",
+        lambda *_args, **_kwargs: (np.ones(2048, dtype=float), 48000),
+    )
+    monkeypatch.setattr(
+        librosa,
+        "stft",
+        lambda *_args, **_kwargs: np.ones((8, 8), dtype=complex),
+    )
+    monkeypatch.setattr(
+        librosa, "amplitude_to_db", lambda value, **_kwargs: np.abs(value)
+    )
+    monkeypatch.setattr(
+        plt,
+        "savefig",
+        lambda path, **_kwargs: Image.new("RGB", (64, 64), "white").save(path),
+    )
     monkeypatch.setattr("builtins.input", lambda *_args, **_kwargs: "1")
 
     attempted: set[str] = set()
@@ -524,62 +651,135 @@ def test_media_catalog_uses_local_fakes_and_domain_releases(tmp_path: Path, monk
     async def exercise() -> None:
         for module in modules:
             functions = [
-                (name, function) for name, function in inspect.getmembers(module, inspect.isfunction) if function.__module__ == module.__name__ and not name.startswith("__")
+                (name, function)
+                for name, function in inspect.getmembers(
+                    module, inspect.isfunction
+                )
+                if function.__module__ == module.__name__
+                and not name.startswith("__")
             ]
             for name, function in functions:
                 qualified = f"{module.__name__}.{name}"
                 attempted.add(qualified)
                 for profile in range(5):
                     try:
-                        await _invoke(function, _meta(tmp_path, files, profile), files, profile)
+                        await _invoke(
+                            function,
+                            _meta(tmp_path, files, profile),
+                            files,
+                            profile,
+                        )
                     except (KeyboardInterrupt, SystemExit) as error:
-                        terminations.append(f"{qualified}:{type(error).__name__}")
+                        terminations.append(
+                            f"{qualified}:{type(error).__name__}"
+                        )
                     except Exception as error:
-                        expected_rejections.append(f"{qualified}:{type(error).__name__}")
-                for meta_updates, argument_overrides in literal_branch_scenarios(function, Meta.__dataclass_fields__, limit=192):
-                    argument_overrides = {key: value for key, value in argument_overrides.items() if key not in _PROTECTED_ARGUMENTS}
+                        expected_rejections.append(
+                            f"{qualified}:{type(error).__name__}"
+                        )
+                for (
+                    meta_updates,
+                    argument_overrides,
+                ) in literal_branch_scenarios(
+                    function, Meta.__dataclass_fields__, limit=192
+                ):
+                    argument_overrides = {
+                        key: value
+                        for key, value in argument_overrides.items()
+                        if key not in _PROTECTED_ARGUMENTS
+                    }
                     scenario_meta = _meta(tmp_path, files, 0)
                     for key, value in meta_updates.items():
                         if key in Meta.__dataclass_fields__:
                             setattr(scenario_meta, key, value)
                     try:
-                        await _invoke(function, scenario_meta, files, 0, argument_overrides)
+                        await _invoke(
+                            function,
+                            scenario_meta,
+                            files,
+                            0,
+                            argument_overrides,
+                        )
                     except (KeyboardInterrupt, SystemExit) as error:
-                        terminations.append(f"{qualified}:{type(error).__name__}")
+                        terminations.append(
+                            f"{qualified}:{type(error).__name__}"
+                        )
                     except Exception as error:
-                        expected_rejections.append(f"{qualified}:{type(error).__name__}")
+                        expected_rejections.append(
+                            f"{qualified}:{type(error).__name__}"
+                        )
 
-            classes = [(class_name, class_type) for class_name, class_type in inspect.getmembers(module, inspect.isclass) if class_type.__module__ == module.__name__]
+            classes = [
+                (class_name, class_type)
+                for class_name, class_type in inspect.getmembers(
+                    module, inspect.isclass
+                )
+                if class_type.__module__ == module.__name__
+            ]
             for class_name, class_type in classes:
                 try:
-                    instance = await _invoke(class_type, _meta(tmp_path, files, 0), files, 0)
+                    instance = await _invoke(
+                        class_type, _meta(tmp_path, files, 0), files, 0
+                    )
                 except Exception as error:
-                    expected_rejections.append(f"{module.__name__}.{class_name}.__init__:{type(error).__name__}")
+                    expected_rejections.append(
+                        f"{module.__name__}.{class_name}.__init__:{type(error).__name__}"
+                    )
                     continue
-                for method_name, method in inspect.getmembers(instance, callable):
+                for method_name, method in inspect.getmembers(
+                    instance, callable
+                ):
                     if method_name.startswith("__"):
                         continue
                     qualified = f"{module.__name__}.{class_name}.{method_name}"
                     attempted.add(qualified)
                     for profile in range(3):
                         try:
-                            await _invoke(method, _meta(tmp_path, files, profile), files, profile)
+                            await _invoke(
+                                method,
+                                _meta(tmp_path, files, profile),
+                                files,
+                                profile,
+                            )
                         except (KeyboardInterrupt, SystemExit) as error:
-                            terminations.append(f"{qualified}:{type(error).__name__}")
+                            terminations.append(
+                                f"{qualified}:{type(error).__name__}"
+                            )
                         except Exception as error:
-                            expected_rejections.append(f"{qualified}:{type(error).__name__}")
-                    for meta_updates, argument_overrides in literal_branch_scenarios(method, Meta.__dataclass_fields__, limit=192):
-                        argument_overrides = {key: value for key, value in argument_overrides.items() if key not in _PROTECTED_ARGUMENTS}
+                            expected_rejections.append(
+                                f"{qualified}:{type(error).__name__}"
+                            )
+                    for (
+                        meta_updates,
+                        argument_overrides,
+                    ) in literal_branch_scenarios(
+                        method, Meta.__dataclass_fields__, limit=192
+                    ):
+                        argument_overrides = {
+                            key: value
+                            for key, value in argument_overrides.items()
+                            if key not in _PROTECTED_ARGUMENTS
+                        }
                         scenario_meta = _meta(tmp_path, files, 0)
                         for key, value in meta_updates.items():
                             if key in Meta.__dataclass_fields__:
                                 setattr(scenario_meta, key, value)
                         try:
-                            await _invoke(method, scenario_meta, files, 0, argument_overrides)
+                            await _invoke(
+                                method,
+                                scenario_meta,
+                                files,
+                                0,
+                                argument_overrides,
+                            )
                         except (KeyboardInterrupt, SystemExit) as error:
-                            terminations.append(f"{qualified}:{type(error).__name__}")
+                            terminations.append(
+                                f"{qualified}:{type(error).__name__}"
+                            )
                         except Exception as error:
-                            expected_rejections.append(f"{qualified}:{type(error).__name__}")
+                            expected_rejections.append(
+                                f"{qualified}:{type(error).__name__}"
+                            )
 
     asyncio.run(exercise())
 

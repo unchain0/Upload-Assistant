@@ -25,7 +25,12 @@ class _Cache:
 
 
 class _Response:
-    def __init__(self, status_code: int = 200, payload: object = None, text: str = "response") -> None:
+    def __init__(
+        self,
+        status_code: int = 200,
+        payload: object = None,
+        text: str = "response",
+    ) -> None:
         self.status_code = status_code
         self.payload = payload
         self.text = text
@@ -67,18 +72,32 @@ def _reset(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_constructor_paths() -> None:
     assert IGDBAPI("id", "secret").token_file == ""
-    assert str(IGDBAPI("id", "secret", "/base").token_file).endswith("tmp/igdb_cache/igdb_token.json")
+    assert str(IGDBAPI("id", "secret", "/base").token_file).endswith(
+        "tmp/igdb_cache/igdb_token.json"
+    )
 
 
-def test_access_token_cached_valid_expired_invalid_and_network_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_access_token_cached_valid_expired_invalid_and_network_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     api = IGDBAPI("id", "secret", str(tmp_path))
     token = Path(api.token_file)
     token.parent.mkdir(parents=True)
-    token.write_text(json.dumps({"access_token": "cached", "expires_at": time.time() + 1000}), encoding="utf-8")
+    token.write_text(
+        json.dumps(
+            {"access_token": "cached", "expires_at": time.time() + 1000}
+        ),
+        encoding="utf-8",
+    )
     assert asyncio.run(api.get_access_token()) == "cached"
 
-    token.write_text(json.dumps({"access_token": "expired", "expires_at": 1}), encoding="utf-8")
-    _Client.queue = [_Response(200, {"access_token": "fresh", "expires_in": 60})]
+    token.write_text(
+        json.dumps({"access_token": "expired", "expires_at": 1}),
+        encoding="utf-8",
+    )
+    _Client.queue = [
+        _Response(200, {"access_token": "fresh", "expires_in": 60})
+    ]
     monkeypatch.setattr(igdb.time, "time", lambda: 100.0)
     assert asyncio.run(api.get_access_token()) == "fresh"
     saved = json.loads(token.read_text(encoding="utf-8"))
@@ -87,7 +106,9 @@ def test_access_token_cached_valid_expired_invalid_and_network_success(tmp_path:
     token.write_text("bad json", encoding="utf-8")
     _Client.queue = [_Response(200, {"access_token": "fresh2"})]
     assert asyncio.run(api.get_access_token()) == "fresh2"
-    assert json.loads(token.read_text(encoding="utf-8"))["expires_at"] == 3700.0
+    assert (
+        json.loads(token.read_text(encoding="utf-8"))["expires_at"] == 3700.0
+    )
 
 
 def test_access_token_status_exception_and_no_token_file() -> None:
@@ -96,11 +117,15 @@ def test_access_token_status_exception_and_no_token_file() -> None:
     assert asyncio.run(api.get_access_token()) is None
     _Client.queue = [RuntimeError("network")]
     assert asyncio.run(api.get_access_token()) is None
-    _Client.queue = [_Response(200, {"access_token": "token", "expires_in": 1})]
+    _Client.queue = [
+        _Response(200, {"access_token": "token", "expires_in": 1})
+    ]
     assert asyncio.run(api.get_access_token()) == "token"
 
 
-def test_search_cache_token_failure_success_empty_none_status_and_error(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_search_cache_token_failure_success_empty_none_status_and_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     cache = _Cache([{"id": 1}])
     monkeypatch.setattr(igdb, "cache_for", lambda _base: cache)
     monkeypatch.setattr(igdb, "is_cache_miss", lambda _value: False)
@@ -132,7 +157,9 @@ def _async_value(value: object):
     return result()
 
 
-def test_fetch_game_id_invalid_cache_token_success_empty_none_status_error(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_fetch_game_id_invalid_cache_token_success_empty_none_status_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     cache = _Cache({"id": 1})
     monkeypatch.setattr(igdb, "cache_for", lambda _base: cache)
     monkeypatch.setattr(igdb, "is_cache_miss", lambda _value: False)
@@ -158,7 +185,9 @@ def test_fetch_game_id_invalid_cache_token_success_empty_none_status_error(monke
     assert asyncio.run(api.fetch_game_by_id("1")) is None
 
 
-def test_fetch_steam_invalid_cache_token_success_empty_none_status_error(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_fetch_steam_invalid_cache_token_success_empty_none_status_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     cache = _Cache({"id": 2})
     monkeypatch.setattr(igdb, "cache_for", lambda _base: cache)
     monkeypatch.setattr(igdb, "is_cache_miss", lambda _value: False)
@@ -184,7 +213,9 @@ def test_fetch_steam_invalid_cache_token_success_empty_none_status_error(monkeyp
     assert asyncio.run(api.fetch_game_by_steam_id("2")) is None
 
 
-def test_cache_game_details_guards_and_success(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cache_game_details_guards_and_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     cache = _Cache()
     monkeypatch.setattr(igdb, "cache_for", lambda _base: cache)
     api = IGDBAPI("id", "secret")
@@ -195,4 +226,9 @@ def test_cache_game_details_guards_and_success(monkeypatch: pytest.MonkeyPatch) 
         asyncio.run(api.cache_game_details(payload))
     assert cache.set_calls == []
     asyncio.run(api.cache_game_details({"id": 3, "name": "Game"}))
-    assert cache.set_calls[-1][0] == ("igdb", "game", "3", {"id": 3, "name": "Game"})
+    assert cache.set_calls[-1][0] == (
+        "igdb",
+        "game",
+        "3",
+        {"id": 3, "name": "Game"},
+    )
