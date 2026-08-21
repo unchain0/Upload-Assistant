@@ -545,6 +545,14 @@ class UploadScreensManager:
         )
 
 
+def _upload_task_meta(meta: object, host: str) -> Meta:
+    """Return metadata suitable for isolated and pipeline image uploads."""
+    if isinstance(meta, Meta):
+        meta.imghost = host
+        return meta
+    return Meta(imghost=host)
+
+
 async def upload_image_task(args: Sequence[Any]) -> dict[str, Any]:
     """Upload one image to the selected host and return its generated URLs."""
     image, img_host, config, meta = args
@@ -553,8 +561,7 @@ async def upload_image_task(args: Sequence[Any]) -> dict[str, Any]:
         handler = _image_upload_handler(host)
         if handler is None:
             return _unsupported_host_result(host)
-        task_meta = cast(Meta, meta)
-        task_meta.imghost = host
+        task_meta = _upload_task_meta(meta, host)
         return await handler(str(image), cast(dict[str, Any], config), task_meta, 60.0)
     except Exception as error:
         return {
