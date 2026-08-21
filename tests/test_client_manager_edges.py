@@ -15,17 +15,27 @@ from src.integrations.torrent_clients.client_manager import Clients
 
 
 class FakeTorrent:
-    def __init__(self, *, piece_size: int = 4 * 1024 * 1024, files: list[str] | None = None, pieces: int = 10) -> None:
+    def __init__(
+        self,
+        *,
+        piece_size: int = 4 * 1024 * 1024,
+        files: list[str] | None = None,
+        pieces: int = 10,
+    ) -> None:
         self.piece_size = piece_size
         self.files = files or ["video.mkv"]
         self.pieces = pieces
-        self.metainfo: dict[str, Any] = {"info": {"name": "release", "length": 1}}
+        self.metainfo: dict[str, Any] = {
+            "info": {"name": "release", "length": 1}
+        }
 
     def verify(self, *_args: object, **_kwargs: object) -> bool:
         return True
 
 
-async def _valid_path(_meta: Meta, path: str, *_args: object) -> tuple[bool, str]:
+async def _valid_path(
+    _meta: Meta, path: str, *_args: object
+) -> tuple[bool, str]:
     return True, path
 
 
@@ -79,7 +89,9 @@ class Session:
         cls.closed = 0
 
 
-def _config(tmp_path: Path, *, torrent_client: str = "qbit", **defaults: object) -> dict[str, Any]:
+def _config(
+    tmp_path: Path, *, torrent_client: str = "qbit", **defaults: object
+) -> dict[str, Any]:
     client = {
         "torrent_client": torrent_client,
         "local_path": [str(tmp_path)],
@@ -127,27 +139,46 @@ def _meta(tmp_path: Path, **values: object) -> Meta:
 
 
 def _torrent_file(meta: Meta, tracker: str = "TEST", suffix: str = "") -> Path:
-    target = Path(meta.base_dir) / "tmp" / meta.uuid / f"[{tracker}{suffix}].torrent"
+    target = (
+        Path(meta.base_dir)
+        / "tmp"
+        / meta.uuid
+        / f"[{tracker}{suffix}].torrent"
+    )
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(b"torrent")
     return target
 
 
-def test_read_torrent_compat_invalid_and_no_md5(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_read_torrent_compat_invalid_and_no_md5(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     source = tmp_path / "bad.torrent"
     source.write_bytes(b"raw")
     original = RuntimeError("torf failed")
-    monkeypatch.setattr(client_manager.Torrent, "read", Mock(side_effect=original))
+    monkeypatch.setattr(
+        client_manager.Torrent, "read", Mock(side_effect=original)
+    )
     monkeypatch.setattr(client_manager.bencodepy, "decode", lambda _data: [])
     with pytest.raises(RuntimeError, match="torf failed"):
-        Clients._read_torrent_compat(str(source), tmp_path / "normalized.torrent")
+        Clients._read_torrent_compat(
+            str(source), tmp_path / "normalized.torrent"
+        )
 
-    monkeypatch.setattr(client_manager.bencodepy, "decode", lambda _data: {b"info": {b"name": b"x"}})
+    monkeypatch.setattr(
+        client_manager.bencodepy,
+        "decode",
+        lambda _data: {b"info": {b"name": b"x"}},
+    )
     with pytest.raises(RuntimeError, match="torf failed"):
-        Clients._read_torrent_compat(str(source), tmp_path / "normalized.torrent")
+        Clients._read_torrent_compat(
+            str(source), tmp_path / "normalized.torrent"
+        )
 
 
-def test_comment_id_extraction_covers_all_tracker_styles(tmp_path: Path) -> None:
+def test_comment_id_extraction_covers_all_tracker_styles(
+    tmp_path: Path,
+) -> None:
     clients = Clients(_config(tmp_path))
     clients._tracker_comment_hosts = {
         "PASSTHEPOPCORN": ("passthepopcorn.me",),
@@ -180,11 +211,23 @@ def test_comment_id_extraction_covers_all_tracker_styles(tmp_path: Path) -> None
     assert clients._extract_tracker_ids_from_comment("") == {}
 
 
-def test_add_to_client_guards_and_client_selection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_add_to_client_guards_and_client_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     clients = Clients(_config(tmp_path))
-    monkeypatch.setattr(client_manager.Torrent, "read", lambda _path: FakeTorrent())
-    assert asyncio.run(clients.add_to_client(_meta(tmp_path, path=None), "TEST")) is None
-    assert asyncio.run(clients.add_to_client(_meta(tmp_path, no_seed=True), "TEST")) is None
+    monkeypatch.setattr(
+        client_manager.Torrent, "read", lambda _path: FakeTorrent()
+    )
+    assert (
+        asyncio.run(clients.add_to_client(_meta(tmp_path, path=None), "TEST"))
+        is None
+    )
+    assert (
+        asyncio.run(
+            clients.add_to_client(_meta(tmp_path, no_seed=True), "TEST")
+        )
+        is None
+    )
     assert asyncio.run(clients.add_to_client(_meta(tmp_path), "TEST")) is None
 
     meta = _meta(tmp_path, client="none")
@@ -198,7 +241,9 @@ def test_add_to_client_guards_and_client_selection(tmp_path: Path, monkeypatch: 
     fake = FakeTorrent()
     monkeypatch.setattr(client_manager.Torrent, "read", lambda _path: fake)
     clients.qbittorrent = AsyncMock()  # type: ignore[method-assign]
-    clients.remote_path_map = AsyncMock(return_value=(str(tmp_path), "/remote"))  # type: ignore[method-assign]
+    clients.remote_path_map = AsyncMock(
+        return_value=(str(tmp_path), "/remote")
+    )  # type: ignore[method-assign]
     clients.inject_delay = AsyncMock()  # type: ignore[method-assign]
     asyncio.run(clients.add_to_client(meta, "TEST"))
     clients.qbittorrent.assert_awaited_once()
@@ -209,10 +254,27 @@ def test_add_to_client_guards_and_client_selection(tmp_path: Path, monkeypatch: 
     clients.qbittorrent.assert_not_awaited()
 
 
-def test_add_to_client_dispatch_all_clients_and_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_add_to_client_dispatch_all_clients_and_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     config = _config(tmp_path)
-    config["DEFAULT"]["injecting_client_list"] = ["rt", "qbit", "deluge", "transmission", "watch", "missing", "", "none"]
-    for name, kind in (("rt", "rtorrent"), ("qbit", "qbit"), ("deluge", "deluge"), ("transmission", "transmission"), ("watch", "watch")):
+    config["DEFAULT"]["injecting_client_list"] = [
+        "rt",
+        "qbit",
+        "deluge",
+        "transmission",
+        "watch",
+        "missing",
+        "",
+        "none",
+    ]
+    for name, kind in (
+        ("rt", "rtorrent"),
+        ("qbit", "qbit"),
+        ("deluge", "deluge"),
+        ("transmission", "transmission"),
+        ("watch", "watch"),
+    ):
         config["TORRENT_CLIENTS"][name] = {
             "torrent_client": kind,
             "local_path": [str(tmp_path)],
@@ -223,9 +285,13 @@ def test_add_to_client_dispatch_all_clients_and_errors(tmp_path: Path, monkeypat
     clients = Clients(config)
     meta = _meta(tmp_path)
     torrent_path = _torrent_file(meta)
-    monkeypatch.setattr(client_manager.Torrent, "read", lambda _path: FakeTorrent())
+    monkeypatch.setattr(
+        client_manager.Torrent, "read", lambda _path: FakeTorrent()
+    )
     clients.inject_delay = AsyncMock()  # type: ignore[method-assign]
-    clients.remote_path_map = AsyncMock(return_value=(str(tmp_path), "/remote"))  # type: ignore[method-assign]
+    clients.remote_path_map = AsyncMock(
+        return_value=(str(tmp_path), "/remote")
+    )  # type: ignore[method-assign]
     clients.rtorrent = Mock()  # type: ignore[method-assign]
     clients.qbittorrent = AsyncMock()  # type: ignore[method-assign]
     clients.deluge = Mock()  # type: ignore[method-assign]
@@ -237,21 +303,27 @@ def test_add_to_client_dispatch_all_clients_and_errors(tmp_path: Path, monkeypat
     clients.qbittorrent.assert_awaited_once()
     clients.deluge.assert_called_once()
     clients.transmission.assert_called_once()
-    client_manager.shutil.copy.assert_called_once_with(str(torrent_path), str(tmp_path / "watch"))
+    client_manager.shutil.copy.assert_called_once_with(
+        str(torrent_path), str(tmp_path / "watch")
+    )
 
     clients.qbittorrent.side_effect = RuntimeError("client failed")
     config["DEFAULT"]["injecting_client_list"] = ["qbit"]
     asyncio.run(clients.add_to_client(meta, "TEST"))
 
 
-def test_add_to_client_cross_debug_lists_default_and_bad_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_add_to_client_cross_debug_lists_default_and_bad_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     config = _config(tmp_path)
     clients = Clients(config)
     fake = FakeTorrent()
     monkeypatch.setattr(client_manager.Torrent, "read", lambda _path: fake)
     clients.qbittorrent = AsyncMock()  # type: ignore[method-assign]
     clients.inject_delay = AsyncMock()  # type: ignore[method-assign]
-    clients.remote_path_map = AsyncMock(return_value=(str(tmp_path), "/remote"))  # type: ignore[method-assign]
+    clients.remote_path_map = AsyncMock(
+        return_value=(str(tmp_path), "/remote")
+    )  # type: ignore[method-assign]
 
     cross = _meta(tmp_path)
     _torrent_file(cross, suffix="_cross")
@@ -274,7 +346,9 @@ def test_add_to_client_cross_debug_lists_default_and_bad_config(tmp_path: Path, 
     asyncio.run(clients.add_to_client(normal, "TEST"))
 
 
-def test_inject_delay_invalid_negative_and_positive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_inject_delay_invalid_negative_and_positive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     sleep = AsyncMock()
     monkeypatch.setattr(client_manager.asyncio, "sleep", sleep)
     config = _config(tmp_path, inject_delay="bad")
@@ -287,7 +361,9 @@ def test_inject_delay_invalid_negative_and_positive(tmp_path: Path, monkeypatch:
     sleep.assert_not_awaited()
 
     config["TRACKERS"]["TEST"]["inject_delay"] = "6"
-    asyncio.run(clients.inject_delay(_meta(tmp_path, debug=True), "TEST", "main"))
+    asyncio.run(
+        clients.inject_delay(_meta(tmp_path, debug=True), "TEST", "main")
+    )
     sleep.assert_awaited_once_with(6)
 
     config["TRACKERS"]["TEST"]["inject_delay"] = ""
@@ -297,13 +373,20 @@ def test_inject_delay_invalid_negative_and_positive(tmp_path: Path, monkeypatch:
 def test_remote_path_map_defaults_overflow_and_errors(tmp_path: Path) -> None:
     clients = Clients(_config(tmp_path))
     meta = _meta(tmp_path, path=str(tmp_path / "nested" / "video.mkv"))
-    local, remote = asyncio.run(clients.remote_path_map(meta, {"local_path": [], "remote_path": []}))
-    assert local == os.path.normpath("/LocalPath") and remote == os.path.normpath("/RemotePath")
+    local, remote = asyncio.run(
+        clients.remote_path_map(meta, {"local_path": [], "remote_path": []})
+    )
+    assert local == os.path.normpath(
+        "/LocalPath"
+    ) and remote == os.path.normpath("/RemotePath")
 
     local, remote = asyncio.run(
         clients.remote_path_map(
             meta,
-            {"local_path": [str(tmp_path / "elsewhere"), str(tmp_path)], "remote_path": ["/one"]},
+            {
+                "local_path": [str(tmp_path / "elsewhere"), str(tmp_path)],
+                "remote_path": ["/one"],
+            },
         )
     )
     assert local == str(tmp_path) and remote == os.path.normpath("/one")
@@ -319,47 +402,139 @@ def test_get_ptp_from_hash_guards_dispatch(tmp_path: Path) -> None:
     clients = Clients({"DEFAULT": {}, "TORRENT_CLIENTS": {}})
     assert asyncio.run(clients.get_ptp_from_hash(meta)) is meta
 
-    clients = Clients({"DEFAULT": {"default_torrent_client": "missing"}, "TORRENT_CLIENTS": {}})
+    clients = Clients(
+        {
+            "DEFAULT": {"default_torrent_client": "missing"},
+            "TORRENT_CLIENTS": {},
+        }
+    )
     assert asyncio.run(clients.get_ptp_from_hash(meta)) is meta
 
     clients = Clients(
         {
             "DEFAULT": {"default_torrent_client": "rt"},
-            "TORRENT_CLIENTS": {"rt": {"torrent_client": "rtorrent"}, "q": {"torrent_client": "qbit"}, "x": {"torrent_client": "other"}},
+            "TORRENT_CLIENTS": {
+                "rt": {"torrent_client": "rtorrent"},
+                "q": {"torrent_client": "qbit"},
+                "x": {"torrent_client": "other"},
+            },
         }
     )
     clients.get_ptp_from_hash_rtorrent = AsyncMock()  # type: ignore[method-assign]
     assert asyncio.run(clients.get_ptp_from_hash(meta, True)) is meta
     clients.get_ptp_from_hash_rtorrent.assert_awaited_once()
     clients.get_ptp_from_hash_qbit = AsyncMock(return_value=meta)  # type: ignore[method-assign]
-    assert asyncio.run(clients.get_ptp_from_hash(meta, client_name="q")) is meta
+    assert (
+        asyncio.run(clients.get_ptp_from_hash(meta, client_name="q")) is meta
+    )
     clients.get_ptp_from_hash_qbit.assert_awaited_once()
-    assert asyncio.run(clients.get_ptp_from_hash(meta, client_name="x")) is meta
+    assert (
+        asyncio.run(clients.get_ptp_from_hash(meta, client_name="x")) is meta
+    )
 
 
-def test_search_single_hash_storage_success_and_invalid(tmp_path: Path) -> None:
+def test_invalid_prespecified_piece_length_is_rejected_and_cached(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    torrent_path = storage / "ABC.torrent"
+    torrent_path.write_bytes(
+        client_manager.bencodepy.encode(
+            {
+                b"announce": b"https://tracker.invalid/announce",
+                b"info": {
+                    b"length": 5,
+                    b"name": b"video.mkv",
+                    b"piece length": 16769024,
+                    b"pieces": b"0" * 20,
+                },
+            }
+        )
+    )
+    meta = _meta(
+        tmp_path,
+        torrenthash="ABC",
+        ext_torrenthash="ABC",
+    )
+    clients = Clients(config)
+    clients.is_valid_torrent = AsyncMock(  # type: ignore[method-assign]
+        return_value=(True, str(torrent_path))
+    )
+
+    assert asyncio.run(clients.find_existing_torrent(meta)) is None
+    assert asyncio.run(clients.find_existing_torrent(meta)) is None
+
+    clients.is_valid_torrent.assert_not_awaited()
+    assert meta.reuse_torrent_search_completed is True
+    assert meta.reuse_torrent_path is None
+    assert meta.rejected_reuse_torrent_path == str(torrent_path)
+    assert meta.rejected_reuse_piece_length == 16769024
+
+
+def test_find_existing_torrent_caches_negative_search_result(
+    tmp_path: Path,
+) -> None:
+    clients = Clients(_config(tmp_path))
+    search = AsyncMock(return_value=None)
+    clients._find_existing_torrent_uncached = search  # type: ignore[method-assign]
+    meta = _meta(tmp_path)
+
+    assert asyncio.run(clients.find_existing_torrent(meta)) is None
+    assert asyncio.run(clients.find_existing_torrent(meta)) is None
+
+    search.assert_awaited_once_with(meta)
+    assert meta.reuse_torrent_search_completed is True
+
+
+def test_search_single_hash_storage_success_and_invalid(
+    tmp_path: Path,
+) -> None:
     config = _config(tmp_path)
     storage = tmp_path / "storage"
     storage.mkdir()
     clients = Clients(config)
     meta = _meta(tmp_path, torrenthash="ABC")
-    clients.is_valid_torrent = AsyncMock(return_value=(True, str(storage / "ABC.torrent")))  # type: ignore[method-assign]
-    result = asyncio.run(clients._search_single_client_for_torrent(meta, "main", False, False, None))
+    clients.is_valid_torrent = AsyncMock(
+        return_value=(True, str(storage / "ABC.torrent"))
+    )  # type: ignore[method-assign]
+    result = asyncio.run(
+        clients._search_single_client_for_torrent(
+            meta, "main", False, False, None
+        )
+    )
     assert result == str(storage / "ABC.torrent")
 
     clients.is_valid_torrent = AsyncMock(return_value=(False, ""))  # type: ignore[method-assign]
     meta.torrenthash = None
     meta.ext_torrenthash = "DEF"
-    assert asyncio.run(clients._search_single_client_for_torrent(meta, "main", False, False, None)) is None
+    assert (
+        asyncio.run(
+            clients._search_single_client_for_torrent(
+                meta, "main", False, False, None
+            )
+        )
+        is None
+    )
 
     config["TORRENT_CLIENTS"]["main"]["torrent_client"] = "rtorrent"
     config["TORRENT_CLIENTS"]["main"]["torrent_storage_dir"] = ""
     meta.ext_torrenthash = None
     meta.torrenthash = "XYZ"
-    assert asyncio.run(clients._search_single_client_for_torrent(meta, "main", False, False, None)) is None
+    assert (
+        asyncio.run(
+            clients._search_single_client_for_torrent(
+                meta, "main", False, False, None
+            )
+        )
+        is None
+    )
 
 
-def test_search_single_hash_qbit_export_local_success_empty_and_errors(tmp_path: Path) -> None:
+def test_search_single_hash_qbit_export_local_success_empty_and_errors(
+    tmp_path: Path,
+) -> None:
     config = _config(tmp_path)
     config["TORRENT_CLIENTS"]["main"]["torrent_storage_dir"] = ""
     clients = Clients(config)
@@ -372,28 +547,64 @@ def test_search_single_hash_qbit_export_local_success_empty_and_errors(tmp_path:
     clients.retry_qbt_operation = retry  # type: ignore[method-assign]
     clients.is_valid_torrent = AsyncMock(side_effect=_valid_path)  # type: ignore[method-assign]
     meta = _meta(tmp_path, torrenthash="ABC")
-    result = asyncio.run(clients._search_single_client_for_torrent(meta, "main", False, False, None))
+    result = asyncio.run(
+        clients._search_single_client_for_torrent(
+            meta, "main", False, False, None
+        )
+    )
     assert result and Path(result).read_bytes() == b"torrent"
 
     clients.init_qbittorrent_client = AsyncMock(return_value=None)  # type: ignore[method-assign]
     meta = _meta(tmp_path, uuid="none", torrenthash="ABC")
-    assert asyncio.run(clients._search_single_client_for_torrent(meta, "main", False, False, None)) is None
+    assert (
+        asyncio.run(
+            clients._search_single_client_for_torrent(
+                meta, "main", False, False, None
+            )
+        )
+        is None
+    )
 
     clients.init_qbittorrent_client = AsyncMock(return_value=Qbt(b""))  # type: ignore[method-assign]
     clients.retry_qbt_operation = AsyncMock(return_value=b"")  # type: ignore[method-assign]
     meta = _meta(tmp_path, uuid="empty", torrenthash="ABC")
-    assert asyncio.run(clients._search_single_client_for_torrent(meta, "main", False, False, None)) is None
+    assert (
+        asyncio.run(
+            clients._search_single_client_for_torrent(
+                meta, "main", False, False, None
+            )
+        )
+        is None
+    )
 
     clients.retry_qbt_operation = AsyncMock(side_effect=TimeoutError("slow"))  # type: ignore[method-assign]
     meta = _meta(tmp_path, uuid="timeout", torrenthash="ABC")
-    assert asyncio.run(clients._search_single_client_for_torrent(meta, "main", False, False, None)) is None
+    assert (
+        asyncio.run(
+            clients._search_single_client_for_torrent(
+                meta, "main", False, False, None
+            )
+        )
+        is None
+    )
 
-    clients.init_qbittorrent_client = AsyncMock(side_effect=client_manager.qbittorrentapi.APIError("bad"))  # type: ignore[method-assign]
+    clients.init_qbittorrent_client = AsyncMock(
+        side_effect=client_manager.qbittorrentapi.APIError("bad")
+    )  # type: ignore[method-assign]
     meta = _meta(tmp_path, uuid="api", torrenthash="ABC")
-    assert asyncio.run(clients._search_single_client_for_torrent(meta, "main", False, False, None)) is None
+    assert (
+        asyncio.run(
+            clients._search_single_client_for_torrent(
+                meta, "main", False, False, None
+            )
+        )
+        is None
+    )
 
 
-def test_search_single_hash_proxy_status_and_exception(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_search_single_hash_proxy_status_and_exception(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     config = _config(tmp_path)
     client = config["TORRENT_CLIENTS"]["main"]
     client["torrent_storage_dir"] = ""
@@ -404,40 +615,91 @@ def test_search_single_hash_proxy_status_and_exception(tmp_path: Path, monkeypat
 
     Session.reset(Response(200, b"proxy-torrent"))
     meta = _meta(tmp_path, torrenthash="ABC")
-    result = asyncio.run(clients._search_single_client_for_torrent(meta, "main", False, False, None))
+    result = asyncio.run(
+        clients._search_single_client_for_torrent(
+            meta, "main", False, False, None
+        )
+    )
     assert result and Path(result).read_bytes() == b"proxy-torrent"
 
     Session.reset(Response(500))
-    assert asyncio.run(clients._search_single_client_for_torrent(_meta(tmp_path, uuid="status", torrenthash="ABC"), "main", False, False, None)) is None
+    assert (
+        asyncio.run(
+            clients._search_single_client_for_torrent(
+                _meta(tmp_path, uuid="status", torrenthash="ABC"),
+                "main",
+                False,
+                False,
+                None,
+            )
+        )
+        is None
+    )
     Session.reset(RuntimeError("proxy failed"))
-    assert asyncio.run(clients._search_single_client_for_torrent(_meta(tmp_path, uuid="error", torrenthash="ABC"), "main", False, False, None)) is None
+    assert (
+        asyncio.run(
+            clients._search_single_client_for_torrent(
+                _meta(tmp_path, uuid="error", torrenthash="ABC"),
+                "main",
+                False,
+                False,
+                None,
+            )
+        )
+        is None
+    )
 
 
-def test_search_qbit_search_session_cancellation_timeout_and_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_search_qbit_search_session_cancellation_timeout_and_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     config = _config(tmp_path)
     client = config["TORRENT_CLIENTS"]["main"]
     client["enable_search"] = True
     client["torrent_storage_dir"] = str(tmp_path / "storage")
     clients = Clients(config)
     session = Session()
-    monkeypatch.setattr(client_manager.httpx, "AsyncClient", lambda *_args, **_kwargs: session)
+    monkeypatch.setattr(
+        client_manager.httpx, "AsyncClient", lambda *_args, **_kwargs: session
+    )
     clients.create_ssl_context_for_client = Mock(return_value=False)  # type: ignore[method-assign]
 
     client["qui_proxy_url"] = "https://proxy"
     clients.search_qbit_for_torrent = AsyncMock(side_effect=KeyboardInterrupt)  # type: ignore[method-assign]
     with pytest.raises(KeyboardInterrupt):
-        asyncio.run(clients._search_single_client_for_torrent(_meta(tmp_path), "main", False, False, None))
+        asyncio.run(
+            clients._search_single_client_for_torrent(
+                _meta(tmp_path), "main", False, False, None
+            )
+        )
     assert Session.closed >= 1
 
-    clients.search_qbit_for_torrent = AsyncMock(side_effect=TimeoutError("slow"))  # type: ignore[method-assign]
+    clients.search_qbit_for_torrent = AsyncMock(
+        side_effect=TimeoutError("slow")
+    )  # type: ignore[method-assign]
     with pytest.raises(TimeoutError):
-        asyncio.run(clients._search_single_client_for_torrent(_meta(tmp_path), "main", False, False, None))
+        asyncio.run(
+            clients._search_single_client_for_torrent(
+                _meta(tmp_path), "main", False, False, None
+            )
+        )
 
-    clients.search_qbit_for_torrent = AsyncMock(side_effect=RuntimeError("bad"))  # type: ignore[method-assign]
-    assert asyncio.run(clients._search_single_client_for_torrent(_meta(tmp_path), "main", False, False, None)) is None
+    clients.search_qbit_for_torrent = AsyncMock(
+        side_effect=RuntimeError("bad")
+    )  # type: ignore[method-assign]
+    assert (
+        asyncio.run(
+            clients._search_single_client_for_torrent(
+                _meta(tmp_path), "main", False, False, None
+            )
+        )
+        is None
+    )
 
 
-def test_search_qbit_found_storage_and_piece_preferences(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_search_qbit_found_storage_and_piece_preferences(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     config = _config(tmp_path)
     client = config["TORRENT_CLIENTS"]["main"]
     client["enable_search"] = True
@@ -446,24 +708,58 @@ def test_search_qbit_found_storage_and_piece_preferences(tmp_path: Path, monkeyp
     clients = Clients(config)
     clients.init_qbittorrent_client = AsyncMock(return_value=Qbt())  # type: ignore[method-assign]
     clients.search_qbit_for_torrent = AsyncMock(return_value="FOUND")  # type: ignore[method-assign]
-    clients.is_valid_torrent = AsyncMock(return_value=(True, str(storage / "FOUND.torrent")))  # type: ignore[method-assign]
-    monkeypatch.setattr(client_manager.Torrent, "read", lambda _path: FakeTorrent(piece_size=8 * 1024 * 1024))
+    clients.is_valid_torrent = AsyncMock(
+        return_value=(True, str(storage / "FOUND.torrent"))
+    )  # type: ignore[method-assign]
+    monkeypatch.setattr(
+        client_manager.Torrent,
+        "read",
+        lambda _path: FakeTorrent(piece_size=8 * 1024 * 1024),
+    )
 
-    result = asyncio.run(clients._search_single_client_for_torrent(_meta(tmp_path), "main", False, False, None))
+    result = asyncio.run(
+        clients._search_single_client_for_torrent(
+            _meta(tmp_path), "main", False, False, None
+        )
+    )
     assert result == str(storage / "FOUND.torrent")
 
-    result = asyncio.run(clients._search_single_client_for_torrent(_meta(tmp_path), "main", True, True, None))
+    result = asyncio.run(
+        clients._search_single_client_for_torrent(
+            _meta(tmp_path), "main", True, True, None
+        )
+    )
     assert result == str(storage / "FOUND.torrent")
 
-    monkeypatch.setattr(client_manager.Torrent, "read", lambda _path: FakeTorrent(piece_size=32 * 1024 * 1024))
-    result = asyncio.run(clients._search_single_client_for_torrent(_meta(tmp_path), "main", True, True, None))
+    monkeypatch.setattr(
+        client_manager.Torrent,
+        "read",
+        lambda _path: FakeTorrent(piece_size=32 * 1024 * 1024),
+    )
+    result = asyncio.run(
+        clients._search_single_client_for_torrent(
+            _meta(tmp_path), "main", True, True, None
+        )
+    )
     assert isinstance(result, dict) and result["torrenthash"] == "FOUND"
-    best = {"torrenthash": "OLD", "torrent_path": "old", "piece_size": 64 * 1024 * 1024}
-    result = asyncio.run(clients._search_single_client_for_torrent(_meta(tmp_path), "main", True, True, best))
-    assert isinstance(result, dict) and result["piece_size"] == 32 * 1024 * 1024
+    best = {
+        "torrenthash": "OLD",
+        "torrent_path": "old",
+        "piece_size": 64 * 1024 * 1024,
+    }
+    result = asyncio.run(
+        clients._search_single_client_for_torrent(
+            _meta(tmp_path), "main", True, True, best
+        )
+    )
+    assert (
+        isinstance(result, dict) and result["piece_size"] == 32 * 1024 * 1024
+    )
 
 
-def test_search_qbit_found_export_local_proxy_and_failures(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_search_qbit_found_export_local_proxy_and_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     config = _config(tmp_path)
     client = config["TORRENT_CLIENTS"]["main"]
     client["enable_search"] = True
@@ -474,72 +770,150 @@ def test_search_qbit_found_export_local_proxy_and_failures(tmp_path: Path, monke
     clients.search_qbit_for_torrent = AsyncMock(return_value="FOUND")  # type: ignore[method-assign]
     clients.retry_qbt_operation = AsyncMock(return_value=b"exported")  # type: ignore[method-assign]
     clients.is_valid_torrent = AsyncMock(side_effect=_valid_path)  # type: ignore[method-assign]
-    monkeypatch.setattr(client_manager.Torrent, "read", lambda _path: FakeTorrent())
-    result = asyncio.run(clients._search_single_client_for_torrent(_meta(tmp_path), "main", False, False, None))
+    monkeypatch.setattr(
+        client_manager.Torrent, "read", lambda _path: FakeTorrent()
+    )
+    result = asyncio.run(
+        clients._search_single_client_for_torrent(
+            _meta(tmp_path), "main", False, False, None
+        )
+    )
     assert result and Path(result).exists()
 
     clients.init_qbittorrent_client = AsyncMock(return_value=None)  # type: ignore[method-assign]
-    assert asyncio.run(clients._search_single_client_for_torrent(_meta(tmp_path, uuid="none"), "main", False, False, None)) is None
+    assert (
+        asyncio.run(
+            clients._search_single_client_for_torrent(
+                _meta(tmp_path, uuid="none"), "main", False, False, None
+            )
+        )
+        is None
+    )
 
     clients.init_qbittorrent_client = AsyncMock(return_value=qbt)  # type: ignore[method-assign]
     clients.retry_qbt_operation = AsyncMock(side_effect=TimeoutError("export"))  # type: ignore[method-assign]
-    assert asyncio.run(clients._search_single_client_for_torrent(_meta(tmp_path, uuid="timeout"), "main", False, False, None)) is None
+    assert (
+        asyncio.run(
+            clients._search_single_client_for_torrent(
+                _meta(tmp_path, uuid="timeout"), "main", False, False, None
+            )
+        )
+        is None
+    )
 
     client["qui_proxy_url"] = "https://proxy"
     monkeypatch.setattr(client_manager.httpx, "AsyncClient", Session)
     clients.search_qbit_for_torrent = AsyncMock(return_value="PROXY")  # type: ignore[method-assign]
     Session.reset(Response(200, b"proxy"))
-    result = asyncio.run(clients._search_single_client_for_torrent(_meta(tmp_path, uuid="proxy"), "main", False, False, None))
+    result = asyncio.run(
+        clients._search_single_client_for_torrent(
+            _meta(tmp_path, uuid="proxy"), "main", False, False, None
+        )
+    )
     assert result and Path(result).exists()
 
     Session.reset(Response(500))
     clients.search_qbit_for_torrent = AsyncMock(return_value="BAD")  # type: ignore[method-assign]
-    assert asyncio.run(clients._search_single_client_for_torrent(_meta(tmp_path, uuid="bad"), "main", False, False, None)) is None
+    assert (
+        asyncio.run(
+            clients._search_single_client_for_torrent(
+                _meta(tmp_path, uuid="bad"), "main", False, False, None
+            )
+        )
+        is None
+    )
 
 
-def test_find_existing_torrent_result_modes_subtitle_fallback_and_best(tmp_path: Path) -> None:
+def test_find_existing_torrent_result_modes_subtitle_fallback_and_best(
+    tmp_path: Path,
+) -> None:
     config = _config(tmp_path, prefer_max_16_torrent=True)
     config["DEFAULT"]["searching_client_list"] = ["missing", "main"]
     clients = Clients(config)
     meta = _meta(tmp_path)
-    assert asyncio.run(clients.find_existing_torrent(_meta(tmp_path, skip_auto_torrent=True))) is None
+    assert (
+        asyncio.run(
+            clients.find_existing_torrent(
+                _meta(tmp_path, skip_auto_torrent=True)
+            )
+        )
+        is None
+    )
 
-    clients._search_single_client_for_torrent = AsyncMock(return_value="ideal.torrent")  # type: ignore[method-assign]
+    clients._search_single_client_for_torrent = AsyncMock(
+        return_value="ideal.torrent"
+    )  # type: ignore[method-assign]
     assert asyncio.run(clients.find_existing_torrent(meta)) == "ideal.torrent"
     assert meta.reuse_torrent_client == "main"
 
     config["DEFAULT"]["prefer_max_16_torrent"] = False
     clients = Clients(config)
-    clients._search_single_client_for_torrent = AsyncMock(return_value={"torrenthash": "A", "torrent_path": "best.torrent", "piece_size": 1})  # type: ignore[method-assign]
+    clients._search_single_client_for_torrent = AsyncMock(
+        return_value={
+            "torrenthash": "A",
+            "torrent_path": "best.torrent",
+            "piece_size": 1,
+        }
+    )  # type: ignore[method-assign]
     meta = _meta(tmp_path, uuid="dict")
     assert asyncio.run(clients.find_existing_torrent(meta)) == "best.torrent"
     assert meta.reuse_torrent_client == "main"
 
     config["DEFAULT"]["prefer_max_16_torrent"] = True
     clients = Clients(config)
-    clients._search_single_client_for_torrent = AsyncMock(return_value={"torrenthash": "A", "torrent_path": "best.torrent", "piece_size": 20})  # type: ignore[method-assign]
+    clients._search_single_client_for_torrent = AsyncMock(
+        return_value={
+            "torrenthash": "A",
+            "torrent_path": "best.torrent",
+            "piece_size": 20,
+        }
+    )  # type: ignore[method-assign]
     meta = _meta(tmp_path, uuid="best")
     assert asyncio.run(clients.find_existing_torrent(meta)) == "best.torrent"
 
     clients = Clients(config)
-    clients._search_single_client_for_torrent = AsyncMock(return_value="video-only.torrent")  # type: ignore[method-assign]
+    clients._search_single_client_for_torrent = AsyncMock(
+        return_value="video-only.torrent"
+    )  # type: ignore[method-assign]
     clients._torrent_includes_all_local_subtitles = Mock(return_value=False)  # type: ignore[method-assign]
     clients._torrent_has_no_subtitles = Mock(return_value=True)  # type: ignore[method-assign]
-    meta = _meta(tmp_path, uuid="subs", subtitle_files=[str(tmp_path / "sub.srt")])
-    assert asyncio.run(clients.find_existing_torrent(meta)) == "video-only.torrent"
+    meta = _meta(
+        tmp_path, uuid="subs", subtitle_files=[str(tmp_path / "sub.srt")]
+    )
+    assert (
+        asyncio.run(clients.find_existing_torrent(meta))
+        == "video-only.torrent"
+    )
     assert meta.reuse_torrent_client == "main"
 
     clients._torrent_has_no_subtitles = Mock(return_value=False)  # type: ignore[method-assign]
-    assert asyncio.run(clients.find_existing_torrent(_meta(tmp_path, uuid="partial", subtitle_files=["sub.srt"]))) is None
+    assert (
+        asyncio.run(
+            clients.find_existing_torrent(
+                _meta(tmp_path, uuid="partial", subtitle_files=["sub.srt"])
+            )
+        )
+        is None
+    )
 
 
 def test_find_existing_client_lists_and_no_clients(tmp_path: Path) -> None:
     config = _config(tmp_path)
     config["DEFAULT"]["default_torrent_client"] = "none"
-    assert asyncio.run(Clients(config).find_existing_torrent(_meta(tmp_path))) is None
+    assert (
+        asyncio.run(Clients(config).find_existing_torrent(_meta(tmp_path)))
+        is None
+    )
 
     config["DEFAULT"]["searching_client_list"] = "invalid"
-    assert asyncio.run(Clients(config).find_existing_torrent(_meta(tmp_path, uuid="invalid"))) is None
+    assert (
+        asyncio.run(
+            Clients(config).find_existing_torrent(
+                _meta(tmp_path, uuid="invalid")
+            )
+        )
+        is None
+    )
 
     config["DEFAULT"]["default_torrent_client"] = "main"
     meta = _meta(tmp_path, uuid="chosen", client="main")
@@ -548,14 +922,20 @@ def test_find_existing_client_lists_and_no_clients(tmp_path: Path) -> None:
     assert asyncio.run(clients.find_existing_torrent(meta)) is None
 
 
-def test_add_to_client_meta_client_and_broken_default_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_add_to_client_meta_client_and_broken_default_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     config = _config(tmp_path)
     clients = Clients(config)
     meta = _meta(tmp_path, client="main")
     _torrent_file(meta)
-    monkeypatch.setattr(client_manager.Torrent, "read", lambda _path: FakeTorrent())
+    monkeypatch.setattr(
+        client_manager.Torrent, "read", lambda _path: FakeTorrent()
+    )
     clients.inject_delay = AsyncMock()  # type: ignore[method-assign]
-    clients.remote_path_map = AsyncMock(return_value=(str(tmp_path), "/remote"))  # type: ignore[method-assign]
+    clients.remote_path_map = AsyncMock(
+        return_value=(str(tmp_path), "/remote")
+    )  # type: ignore[method-assign]
     clients.qbittorrent = AsyncMock()  # type: ignore[method-assign]
     asyncio.run(clients.add_to_client(meta, "TEST"))
     clients.qbittorrent.assert_awaited_once()
@@ -574,14 +954,18 @@ def test_add_to_client_meta_client_and_broken_default_config(tmp_path: Path, mon
     clients = Clients(config)
     clients.qbittorrent = AsyncMock()  # type: ignore[method-assign]
     clients.inject_delay = AsyncMock()  # type: ignore[method-assign]
-    clients.remote_path_map = AsyncMock(return_value=(str(tmp_path), "/remote"))  # type: ignore[method-assign]
+    clients.remote_path_map = AsyncMock(
+        return_value=(str(tmp_path), "/remote")
+    )  # type: ignore[method-assign]
     meta = _meta(tmp_path, uuid="flaky")
     _torrent_file(meta)
     asyncio.run(clients.add_to_client(meta, "TEST"))
     clients.qbittorrent.assert_awaited_once()
 
 
-def test_inject_delay_tracker_invalid_and_global_positive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_inject_delay_tracker_invalid_and_global_positive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     sleep = AsyncMock()
     monkeypatch.setattr(client_manager.asyncio, "sleep", sleep)
     config = _config(tmp_path)
@@ -595,7 +979,9 @@ def test_inject_delay_tracker_invalid_and_global_positive(tmp_path: Path, monkey
     sleep.assert_awaited_once_with(6)
 
 
-def test_find_existing_falls_back_to_default_when_search_list_empty(tmp_path: Path) -> None:
+def test_find_existing_falls_back_to_default_when_search_list_empty(
+    tmp_path: Path,
+) -> None:
     config = _config(tmp_path)
     config["DEFAULT"]["searching_client_list"] = []
     clients = Clients(config)
@@ -604,7 +990,9 @@ def test_find_existing_falls_back_to_default_when_search_list_empty(tmp_path: Pa
     clients._search_single_client_for_torrent.assert_awaited_once()
 
 
-def test_search_qbit_proxy_generic_export_error_and_outer_write_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_search_qbit_proxy_generic_export_error_and_outer_write_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     config = _config(tmp_path)
     client = config["TORRENT_CLIENTS"]["main"]
     client["enable_search"] = True
@@ -614,16 +1002,32 @@ def test_search_qbit_proxy_generic_export_error_and_outer_write_error(tmp_path: 
     clients.search_qbit_for_torrent = AsyncMock(return_value="FOUND")  # type: ignore[method-assign]
     monkeypatch.setattr(client_manager.httpx, "AsyncClient", Session)
     Session.reset(RuntimeError("proxy export failed"))
-    assert asyncio.run(clients._search_single_client_for_torrent(_meta(tmp_path), "main", False, False, None)) is None
+    assert (
+        asyncio.run(
+            clients._search_single_client_for_torrent(
+                _meta(tmp_path), "main", False, False, None
+            )
+        )
+        is None
+    )
 
     client.pop("qui_proxy_url")
     clients.init_qbittorrent_client = AsyncMock(return_value=Qbt())  # type: ignore[method-assign]
     clients.search_qbit_for_torrent = AsyncMock(return_value="WRITE")  # type: ignore[method-assign]
     clients.retry_qbt_operation = AsyncMock(return_value=object())  # type: ignore[method-assign]
-    assert asyncio.run(clients._search_single_client_for_torrent(_meta(tmp_path, uuid="write"), "main", False, False, None)) is None
+    assert (
+        asyncio.run(
+            clients._search_single_client_for_torrent(
+                _meta(tmp_path, uuid="write"), "main", False, False, None
+            )
+        )
+        is None
+    )
 
 
-def test_search_qbit_existing_found_torrent_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_search_qbit_existing_found_torrent_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     config = _config(tmp_path)
     client = config["TORRENT_CLIENTS"]["main"]
     client["enable_search"] = True
@@ -635,49 +1039,98 @@ def test_search_qbit_existing_found_torrent_file(tmp_path: Path, monkeypatch: py
     existing.parent.mkdir(parents=True)
     existing.write_bytes(b"torrent")
     clients.is_valid_torrent = AsyncMock(return_value=(True, str(existing)))  # type: ignore[method-assign]
-    monkeypatch.setattr(client_manager.Torrent, "read", lambda _path: FakeTorrent())
-    result = asyncio.run(clients._search_single_client_for_torrent(_meta(tmp_path, uuid="existing"), "main", False, False, None))
+    monkeypatch.setattr(
+        client_manager.Torrent, "read", lambda _path: FakeTorrent()
+    )
+    result = asyncio.run(
+        clients._search_single_client_for_torrent(
+            _meta(tmp_path, uuid="existing"), "main", False, False, None
+        )
+    )
     assert result == str(existing)
 
 
-def test_is_valid_torrent_missing_path_read_error_and_rtorrent_case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_is_valid_torrent_missing_path_read_error_and_rtorrent_case(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     clients = Clients(_config(tmp_path))
-    assert asyncio.run(clients.is_valid_torrent(_meta(tmp_path, path=None), "missing", "ABC", "qbit", {})) == (False, "missing")
+    assert asyncio.run(
+        clients.is_valid_torrent(
+            _meta(tmp_path, path=None), "missing", "ABC", "qbit", {}
+        )
+    ) == (False, "missing")
 
     path = tmp_path / "bad.torrent"
     path.write_bytes(b"bad")
-    monkeypatch.setattr(clients, "_read_torrent_compat", Mock(side_effect=RuntimeError("read failed")))
-    valid, resolved = asyncio.run(clients.is_valid_torrent(_meta(tmp_path), str(path), "ABC", "qbit", {}))
+    monkeypatch.setattr(
+        clients,
+        "_read_torrent_compat",
+        Mock(side_effect=RuntimeError("read failed")),
+    )
+    valid, resolved = asyncio.run(
+        clients.is_valid_torrent(_meta(tmp_path), str(path), "ABC", "qbit", {})
+    )
     assert not valid and resolved.endswith("bad.torrent")
 
-    monkeypatch.setattr(clients, "_read_torrent_compat", Mock(return_value=(FakeTorrent(), str(path))))
-    valid, _ = asyncio.run(clients.is_valid_torrent(_meta(tmp_path, debug=True), str(path), "abc", "rtorrent", {}))
+    monkeypatch.setattr(
+        clients,
+        "_read_torrent_compat",
+        Mock(return_value=(FakeTorrent(), str(path))),
+    )
+    valid, _ = asyncio.run(
+        clients.is_valid_torrent(
+            _meta(tmp_path, debug=True), str(path), "abc", "rtorrent", {}
+        )
+    )
     assert valid
 
 
-def test_is_valid_torrent_disc_layout_single_multi_and_verify_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_is_valid_torrent_disc_layout_single_multi_and_verify_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     path = tmp_path / "reuse.torrent"
     path.write_bytes(b"torrent")
     clients = Clients(_config(tmp_path))
 
     disc_torrent = FakeTorrent(files=[str(tmp_path / "Disc" / "video.m2ts")])
     disc_torrent.metainfo = {"info": {"name": "other", "length": 1}}
-    monkeypatch.setattr(clients, "_read_torrent_compat", Mock(return_value=(disc_torrent, str(path))))
-    disc_meta = _meta(tmp_path, path=str(tmp_path / "Disc"), uuid="release", is_disc="BDMV", filelist=[str(tmp_path / "Disc" / "video.m2ts")], debug=True)
+    monkeypatch.setattr(
+        clients,
+        "_read_torrent_compat",
+        Mock(return_value=(disc_torrent, str(path))),
+    )
+    disc_meta = _meta(
+        tmp_path,
+        path=str(tmp_path / "Disc"),
+        uuid="release",
+        is_disc="BDMV",
+        filelist=[str(tmp_path / "Disc" / "video.m2ts")],
+        debug=True,
+    )
     (tmp_path / "Disc").mkdir(exist_ok=True)
     (tmp_path / "Disc" / "video.m2ts").write_bytes(b"v")
-    valid, _ = asyncio.run(clients.is_valid_torrent(disc_meta, str(path), "ABC", "qbit", {}))
+    valid, _ = asyncio.run(
+        clients.is_valid_torrent(disc_meta, str(path), "ABC", "qbit", {})
+    )
     assert valid
 
     single_file = Path(_meta(tmp_path).filelist[0])
     single = FakeTorrent(files=[str(single_file)])
-    single.metainfo = {"info": {"name": "release", "length": single_file.stat().st_size}}
-    monkeypatch.setattr(clients, "_read_torrent_compat", Mock(return_value=(single, str(path))))
-    valid, _ = asyncio.run(clients.is_valid_torrent(_meta(tmp_path), str(path), "ABC", "qbit", {}))
+    single.metainfo = {
+        "info": {"name": "release", "length": single_file.stat().st_size}
+    }
+    monkeypatch.setattr(
+        clients, "_read_torrent_compat", Mock(return_value=(single, str(path)))
+    )
+    valid, _ = asyncio.run(
+        clients.is_valid_torrent(_meta(tmp_path), str(path), "ABC", "qbit", {})
+    )
     assert valid
 
     single.verify = Mock(side_effect=RuntimeError("verify failed"))
-    valid, _ = asyncio.run(clients.is_valid_torrent(_meta(tmp_path), str(path), "ABC", "qbit", {}))
+    valid, _ = asyncio.run(
+        clients.is_valid_torrent(_meta(tmp_path), str(path), "ABC", "qbit", {})
+    )
     assert not valid
 
     folder = tmp_path / "multi"
@@ -687,15 +1140,27 @@ def test_is_valid_torrent_disc_layout_single_multi_and_verify_failure(tmp_path: 
     local_b = folder / "b" / "same.mkv"
     local_a.write_bytes(b"a")
     local_b.write_bytes(b"b")
-    torrent = FakeTorrent(files=[str(folder / "a" / "same.mkv"), str(folder / "b" / "same.mkv")])
+    torrent = FakeTorrent(
+        files=[str(folder / "a" / "same.mkv"), str(folder / "b" / "same.mkv")]
+    )
     torrent.metainfo = {"info": {"name": "multi"}}
-    monkeypatch.setattr(clients, "_read_torrent_compat", Mock(return_value=(torrent, str(path))))
-    multi_meta = _meta(tmp_path, path=str(folder), filelist=[str(local_a), str(local_b)])
-    valid, _ = asyncio.run(clients.is_valid_torrent(multi_meta, str(path), "ABC", "qbit", {}))
+    monkeypatch.setattr(
+        clients,
+        "_read_torrent_compat",
+        Mock(return_value=(torrent, str(path))),
+    )
+    multi_meta = _meta(
+        tmp_path, path=str(folder), filelist=[str(local_a), str(local_b)]
+    )
+    valid, _ = asyncio.run(
+        clients.is_valid_torrent(multi_meta, str(path), "ABC", "qbit", {})
+    )
     assert valid
 
 
-def test_is_valid_torrent_piece_restrictions_and_stat_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_is_valid_torrent_piece_restrictions_and_stat_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     path = tmp_path / "reuse.torrent"
     path.write_bytes(b"torrent")
     media = Path(_meta(tmp_path).filelist[0])
@@ -703,9 +1168,19 @@ def test_is_valid_torrent_piece_restrictions_and_stat_error(tmp_path: Path, monk
 
     def run_with(torrent: FakeTorrent, **meta_values: object) -> bool:
         torrent.files = [str(media)]
-        torrent.metainfo = {"info": {"name": "release", "length": media.stat().st_size}}
-        monkeypatch.setattr(clients, "_read_torrent_compat", Mock(return_value=(torrent, str(path))))
-        valid, _ = asyncio.run(clients.is_valid_torrent(_meta(tmp_path, **meta_values), str(path), "ABC", "qbit", {}))
+        torrent.metainfo = {
+            "info": {"name": "release", "length": media.stat().st_size}
+        }
+        monkeypatch.setattr(
+            clients,
+            "_read_torrent_compat",
+            Mock(return_value=(torrent, str(path))),
+        )
+        valid, _ = asyncio.run(
+            clients.is_valid_torrent(
+                _meta(tmp_path, **meta_values), str(path), "ABC", "qbit", {}
+            )
+        )
         return valid
 
     assert not run_with(FakeTorrent(piece_size=1024 * 1024, pieces=5000))
@@ -728,13 +1203,19 @@ def test_is_valid_torrent_piece_restrictions_and_stat_error(tmp_path: Path, monk
     assert not run_with(FakeTorrent(piece_size=4 * 1024 * 1024, pieces=1))
 
 
-def test_torrent_subtitle_and_piece_helpers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_torrent_subtitle_and_piece_helpers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     clients = Clients(_config(tmp_path))
     meta = _meta(tmp_path, subtitle_files=[])
     assert clients._torrent_includes_all_local_subtitles("unused", meta)
 
-    monkeypatch.setattr(client_manager.Torrent, "read", Mock(side_effect=RuntimeError("bad")))
-    assert not clients._torrent_includes_all_local_subtitles("bad", _meta(tmp_path, subtitle_files=["sub.srt"]))
+    monkeypatch.setattr(
+        client_manager.Torrent, "read", Mock(side_effect=RuntimeError("bad"))
+    )
+    assert not clients._torrent_includes_all_local_subtitles(
+        "bad", _meta(tmp_path, subtitle_files=["sub.srt"])
+    )
     assert not clients._torrent_has_no_subtitles("bad")
     assert not clients._is_preferred_piece_size_candidate("bad", "bad2", True)
 
@@ -742,19 +1223,31 @@ def test_torrent_subtitle_and_piece_helpers(tmp_path: Path, monkeypatch: pytest.
         "candidate": FakeTorrent(piece_size=8 * 1024 * 1024),
         "current": FakeTorrent(piece_size=32 * 1024 * 1024),
     }
-    monkeypatch.setattr(client_manager.Torrent, "read", lambda value: torrents[str(value)])
-    assert clients._is_preferred_piece_size_candidate("candidate", "current", True)
-    assert not clients._is_preferred_piece_size_candidate("candidate", "current", False)
+    monkeypatch.setattr(
+        client_manager.Torrent, "read", lambda value: torrents[str(value)]
+    )
+    assert clients._is_preferred_piece_size_candidate(
+        "candidate", "current", True
+    )
+    assert not clients._is_preferred_piece_size_candidate(
+        "candidate", "current", False
+    )
 
 
 def test_remote_path_map_root_preserves_separator(tmp_path: Path) -> None:
     clients = Clients(_config(tmp_path))
     meta = _meta(tmp_path, path="/video.mkv")
-    local, remote = asyncio.run(clients.remote_path_map(meta, {"local_path": ["/"], "remote_path": ["/remote"]}))
+    local, remote = asyncio.run(
+        clients.remote_path_map(
+            meta, {"local_path": ["/"], "remote_path": ["/remote"]}
+        )
+    )
     assert local == os.path.normpath("/") and remote.endswith(os.sep)
 
 
-def test_final_client_manager_validation_branches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_final_client_manager_validation_branches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     clients = Clients(_config(tmp_path))
     torrent_path = tmp_path / "reuse.torrent"
     torrent_path.write_bytes(b"torrent")
@@ -765,7 +1258,11 @@ def test_final_client_manager_validation_branches(tmp_path: Path, monkeypatch: p
     subtitle.write_bytes(b"sub")
     torrent = FakeTorrent(files=[str(video_file), str(subtitle)])
     torrent.metainfo = {"info": {"name": "release"}}
-    monkeypatch.setattr(clients, "_read_torrent_compat", Mock(return_value=(torrent, str(torrent_path))))
+    monkeypatch.setattr(
+        clients,
+        "_read_torrent_compat",
+        Mock(return_value=(torrent, str(torrent_path))),
+    )
     valid, _ = asyncio.run(
         clients.is_valid_torrent(
             _meta(tmp_path, subtitle_files=[str(subtitle)]),
@@ -780,22 +1277,46 @@ def test_final_client_manager_validation_branches(tmp_path: Path, monkeypatch: p
     # Single-file name mismatch remains invalid and reaches the debug branch.
     mismatch = FakeTorrent(files=[str(tmp_path / "different.mkv")])
     mismatch.metainfo = {"info": {"name": "release", "length": 1}}
-    monkeypatch.setattr(clients, "_read_torrent_compat", Mock(return_value=(mismatch, str(torrent_path))))
-    valid, _ = asyncio.run(clients.is_valid_torrent(_meta(tmp_path, debug=True), str(torrent_path), "ABC", "qbit", {}))
+    monkeypatch.setattr(
+        clients,
+        "_read_torrent_compat",
+        Mock(return_value=(mismatch, str(torrent_path))),
+    )
+    valid, _ = asyncio.run(
+        clients.is_valid_torrent(
+            _meta(tmp_path, debug=True), str(torrent_path), "ABC", "qbit", {}
+        )
+    )
     assert not valid
 
     # Missing reusable torrent is a normal miss and also exercises the debug
     # diagnostics for an unwanted candidate.
     missing = tmp_path / "missing.torrent"
-    valid, _ = asyncio.run(clients.is_valid_torrent(_meta(tmp_path, debug=True), str(missing), "ABC", "qbit", {}))
+    valid, _ = asyncio.run(
+        clients.is_valid_torrent(
+            _meta(tmp_path, debug=True), str(missing), "ABC", "qbit", {}
+        )
+    )
     assert not valid
 
     # 8k-piece boundary uses the second piece-size policy (the 4 MiB guard must
     # not match first).
-    boundary = FakeTorrent(piece_size=5 * 1024 * 1024, pieces=8000, files=[str(video_file)])
-    boundary.metainfo = {"info": {"name": "release", "length": video_file.stat().st_size}}
-    monkeypatch.setattr(clients, "_read_torrent_compat", Mock(return_value=(boundary, str(torrent_path))))
-    valid, _ = asyncio.run(clients.is_valid_torrent(_meta(tmp_path), str(torrent_path), "ABC", "qbit", {}))
+    boundary = FakeTorrent(
+        piece_size=5 * 1024 * 1024, pieces=8000, files=[str(video_file)]
+    )
+    boundary.metainfo = {
+        "info": {"name": "release", "length": video_file.stat().st_size}
+    }
+    monkeypatch.setattr(
+        clients,
+        "_read_torrent_compat",
+        Mock(return_value=(boundary, str(torrent_path))),
+    )
+    valid, _ = asyncio.run(
+        clients.is_valid_torrent(
+            _meta(tmp_path), str(torrent_path), "ABC", "qbit", {}
+        )
+    )
     assert not valid
 
     class BrokenPieceTorrent(FakeTorrent):
@@ -808,13 +1329,25 @@ def test_final_client_manager_validation_branches(tmp_path: Path, monkeypatch: p
             return None
 
     broken = BrokenPieceTorrent(files=[str(video_file)])
-    broken.metainfo = {"info": {"name": "release", "length": video_file.stat().st_size}}
-    monkeypatch.setattr(clients, "_read_torrent_compat", Mock(return_value=(broken, str(torrent_path))))
-    valid, _ = asyncio.run(clients.is_valid_torrent(_meta(tmp_path), str(torrent_path), "ABC", "qbit", {}))
+    broken.metainfo = {
+        "info": {"name": "release", "length": video_file.stat().st_size}
+    }
+    monkeypatch.setattr(
+        clients,
+        "_read_torrent_compat",
+        Mock(return_value=(broken, str(torrent_path))),
+    )
+    valid, _ = asyncio.run(
+        clients.is_valid_torrent(
+            _meta(tmp_path), str(torrent_path), "ABC", "qbit", {}
+        )
+    )
     assert not valid
 
 
-def test_search_qbit_reuses_temp_export_when_configured_storage_is_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_search_qbit_reuses_temp_export_when_configured_storage_is_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A qBittorrent search may export to tmp even when configured storage is remote/unmounted."""
     config = _config(tmp_path)
     client = config["TORRENT_CLIENTS"]["main"]
@@ -824,20 +1357,28 @@ def test_search_qbit_reuses_temp_export_when_configured_storage_is_missing(tmp_p
     clients.init_qbittorrent_client = AsyncMock(return_value=Qbt())  # type: ignore[method-assign]
     clients.search_qbit_for_torrent = AsyncMock(return_value="FOUND")  # type: ignore[method-assign]
     clients.is_valid_torrent = AsyncMock(side_effect=_valid_path)  # type: ignore[method-assign]
-    monkeypatch.setattr(client_manager.Torrent, "read", lambda _path: FakeTorrent())
+    monkeypatch.setattr(
+        client_manager.Torrent, "read", lambda _path: FakeTorrent()
+    )
 
     exported = tmp_path / "tmp" / "release" / "FOUND.torrent"
     exported.parent.mkdir(parents=True, exist_ok=True)
     exported.write_bytes(b"exported-by-search")
 
-    result = asyncio.run(clients._search_single_client_for_torrent(_meta(tmp_path), "main", False, False, None))
+    result = asyncio.run(
+        clients._search_single_client_for_torrent(
+            _meta(tmp_path), "main", False, False, None
+        )
+    )
 
     assert result == str(exported)
     clients.is_valid_torrent.assert_awaited_once()
     assert clients.is_valid_torrent.await_args.args[1] == str(exported)
 
 
-def test_preset_hash_prefers_existing_temp_export_over_missing_storage(tmp_path: Path) -> None:
+def test_preset_hash_prefers_existing_temp_export_over_missing_storage(
+    tmp_path: Path,
+) -> None:
     config = _config(tmp_path)
     storage = tmp_path / "storage"
     config["TORRENT_CLIENTS"]["main"]["torrent_storage_dir"] = str(storage)
@@ -848,16 +1389,26 @@ def test_preset_hash_prefers_existing_temp_export_over_missing_storage(tmp_path:
     exported.parent.mkdir(parents=True, exist_ok=True)
     exported.write_bytes(b"exported")
 
-    result = asyncio.run(clients._search_single_client_for_torrent(meta, "main", False, False, None))
+    result = asyncio.run(
+        clients._search_single_client_for_torrent(
+            meta, "main", False, False, None
+        )
+    )
 
     assert result == str(exported)
     assert clients.is_valid_torrent.await_args.args[1] == str(exported)
 
 
-def test_validated_qbit_search_result_keeps_existing_best_on_invalid_candidate(tmp_path: Path) -> None:
+def test_validated_qbit_search_result_keeps_existing_best_on_invalid_candidate(
+    tmp_path: Path,
+) -> None:
     clients = Clients(_config(tmp_path))
     clients.is_valid_torrent = AsyncMock(return_value=(False, "candidate"))  # type: ignore[method-assign]
-    best = {"torrenthash": "OLD", "torrent_path": "old", "piece_size": 4 * 1024 * 1024}
+    best = {
+        "torrenthash": "OLD",
+        "torrent_path": "old",
+        "piece_size": 4 * 1024 * 1024,
+    }
 
     result = asyncio.run(
         clients._validated_qbit_search_result(
@@ -875,5 +1426,12 @@ def test_validated_qbit_search_result_keeps_existing_best_on_invalid_candidate(t
 
 
 def test_better_piece_match_keeps_smaller_existing_match() -> None:
-    best = {"torrenthash": "OLD", "torrent_path": "old", "piece_size": 4 * 1024 * 1024}
-    assert Clients._better_piece_match(best, "NEW", "new", 8 * 1024 * 1024) is best
+    best = {
+        "torrenthash": "OLD",
+        "torrent_path": "old",
+        "piece_size": 4 * 1024 * 1024,
+    }
+    assert (
+        Clients._better_piece_match(best, "NEW", "new", 8 * 1024 * 1024)
+        is best
+    )

@@ -90,7 +90,9 @@ class Meta:
     client: str | None = None
     combined_genres: list[str] | str = field(default_factory=list)
     comic: bool = False
-    comparison_groups: dict[str, dict[str, Any]] | list[dict[str, Any]] = field(default_factory=dict)
+    comparison_groups: dict[str, dict[str, Any]] | list[dict[str, Any]] = (
+        field(default_factory=dict)
+    )
     comparison_index: int | None = None
     comparison: str | None = None
     console_game: bool = False
@@ -369,6 +371,9 @@ class Meta:
     retry_count: int = 0
     reuse_torrent_client: str | None = None
     reuse_torrent_path: str | None = None
+    reuse_torrent_search_completed: bool = False
+    rejected_reuse_torrent_path: str | None = None
+    rejected_reuse_piece_length: int | None = None
     rtorrent_label: str | None = None
     runtime: int = 60
     saved_description: bool | None = None
@@ -449,7 +454,9 @@ class Meta:
     tmdb: int | None = None
     tonemapped: bool = False
     torrent_comments: list[Any] = field(default_factory=list)
-    tracker_image_collections: dict[str, dict[str, list[dict[str, Any]]]] = field(default_factory=dict)
+    tracker_image_collections: dict[str, dict[str, list[dict[str, Any]]]] = (
+        field(default_factory=dict)
+    )
     tracker_status: dict[str, Any] = field(default_factory=dict)
     trackers_pass: int | None = None
     trackers_remove: str | bool = False
@@ -532,7 +539,9 @@ class Meta:
 
     def __setattr__(self, name: str, value: Any) -> None:
         """Keep established semantic metadata from being erased by empty fallbacks."""
-        if name == "original_language" and self._empty_original_language(value):
+        if name == "original_language" and self._empty_original_language(
+            value
+        ):
             current = self.__dict__.get("original_language")
             if not self._empty_original_language(current):
                 return
@@ -542,7 +551,9 @@ class Meta:
     def _empty_original_language(value: Any) -> bool:
         return value is None or (isinstance(value, str) and not value.strip())
 
-    def __init__(self, _data: dict[str, Any] | None = None, **kwargs: Any) -> None:
+    def __init__(
+        self, _data: dict[str, Any] | None = None, **kwargs: Any
+    ) -> None:
         self._initialize_defaults()
         self._apply_values(_data or {})
         self._apply_values(kwargs)
@@ -588,7 +599,9 @@ class Meta:
         return self.manual_cast, imdb_stars, self.tmdb_cast
 
     @classmethod
-    def _canonical_cast_names(cls, sources: tuple[Any, ...], limit: int) -> list[str]:
+    def _canonical_cast_names(
+        cls, sources: tuple[Any, ...], limit: int
+    ) -> list[str]:
         names: list[str] = []
         seen: set[str] = set()
         for source in sources:
@@ -608,7 +621,9 @@ class Meta:
         return [value for value in values if isinstance(value, str)]
 
     @staticmethod
-    def _append_cast_name(names: list[str], seen: set[str], value: str) -> None:
+    def _append_cast_name(
+        names: list[str], seen: set[str], value: str
+    ) -> None:
         name = " ".join(value.split())
         key = name.casefold()
         if not name or key in seen:
@@ -663,7 +678,9 @@ class Meta:
         """Persist tracker torrent IDs under their canonical tracker names."""
         normalized: dict[str, str] = {}
         for tracker_name, torrent_id in (self.tracker_ids or {}).items():
-            normalized[self.canonical_tracker_name(str(tracker_name))] = str(torrent_id)
+            normalized[self.canonical_tracker_name(str(tracker_name))] = str(
+                torrent_id
+            )
         for tracker_name, torrent_id in (tracker_ids or {}).items():
             key = self.canonical_tracker_name(str(tracker_name))
             value = str(torrent_id)
@@ -695,7 +712,11 @@ class Meta:
         # Reset to default
         for f in fields(self):
             if f.name == key:
-                value = f.default_factory() if f.default_factory is not MISSING else f.default
+                value = (
+                    f.default_factory()
+                    if f.default_factory is not MISSING
+                    else f.default
+                )
                 setattr(self, key, value)
                 break
         else:
