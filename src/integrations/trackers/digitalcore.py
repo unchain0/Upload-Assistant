@@ -376,7 +376,13 @@ class DigitalCore:
         scene_name = meta.scene_name or ""
         if self._use_metadata_name():
             return self._metadata_release_name(meta, scene_name)
-        return f"{scene_name} [NORAR]" if scene_name else meta.basename_no_ext
+        return self._default_release_name(meta, scene_name)
+
+    @classmethod
+    def _default_release_name(cls, meta: Meta, scene_name: str) -> str:
+        base_name = scene_name or str(meta.basename_no_ext or "")
+        sanitized = cls._sanitize_release_name(base_name)
+        return f"{sanitized} [NORAR]" if scene_name else sanitized
 
     def _use_metadata_name(self) -> bool:
         return bool(

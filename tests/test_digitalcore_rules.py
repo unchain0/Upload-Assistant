@@ -99,6 +99,30 @@ def test_digitalcore_names_scene_release_with_norar_when_metadata_names_enabled(
     )
 
 
+def test_digitalcore_sanitizes_default_book_names_for_upload() -> None:
+    cases = (
+        (
+            "Only with a Bargepole: A Novel 1974 SCAN eBOOK",
+            "Only with a Bargepole A Novel 1974 SCAN eBOOK",
+        ),
+        (
+            "Ellin Carsta - Die unbeugsame Händlerstochter 2020 GERMAN AUDIOBOOK",
+            "Ellin Carsta - Die unbeugsame Handlerstochter 2020 GERMAN AUDIOBOOK",
+        ),
+        (
+            "Doris Litz - Blutzeit - Das Böse wartet auf dich! 2021 GERMAN AUDIOBOOK",
+            "Doris Litz - Blutzeit - Das Bose wartet auf dich 2021 GERMAN AUDIOBOOK",
+        ),
+    )
+    for raw_name, expected in cases:
+        meta = _make_meta(
+            category="BOOK",
+            scene_name="",
+            basename_no_ext=raw_name,
+        )
+        assert asyncio.run(_tracker().get_name(meta)) == expected
+
+
 def test_digitalcore_keeps_scene_name_and_norar_when_not_using_metadata() -> (
     None
 ):
