@@ -3,7 +3,7 @@ import platform
 import re
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlparse
 
 import aiofiles
@@ -217,7 +217,7 @@ class HDSpace:
 
     @staticmethod
     def _has_next_page(soup: BeautifulSoup, current_page: int) -> bool:
-        next_link = soup.find("a", href=re.compile(r"pages="), string=re.compile(r"Next|>>", re.I))
+        next_link = cast(Any, soup).find("a", href=re.compile(r"pages="), string=re.compile(r"Next|>>", re.I))
         if next_link:
             return True
         return soup.find("a", href=re.compile(rf"pages={current_page + 1}")) is not None

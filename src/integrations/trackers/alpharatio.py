@@ -389,7 +389,7 @@ class AlphaRatio:
         if not query:
             logger.info(f"{self.tracker}: [red]Title is missing.")
             return []
-        response = await self._search_response(meta, query, cookie_jar)
+        response = await self._search_response(meta, query, cast(httpx.Cookies, cookie_jar))
         if await self._search_requires_login(meta, response):
             return []
         response.raise_for_status()
@@ -461,7 +461,7 @@ class AlphaRatio:
         cookie_jar = await self.cookie_validator.load_session_cookies(meta, self.tracker)
         if not cookie_jar:
             return None
-        return await self._fetch_auth_key(meta, cookie_jar)
+        return await self._fetch_auth_key(meta, cast(httpx.Cookies, cookie_jar))
 
     async def _fetch_auth_key(self, meta: Meta, cookie_jar: httpx.Cookies) -> str | None:
         try:
@@ -484,7 +484,7 @@ class AlphaRatio:
     @staticmethod
     def _extract_auth_key(html: str) -> str | None:
         soup = BeautifulSoup(html, "html.parser")
-        logout_link = soup.find("a", href=True, string="Logout")
+        logout_link = cast(Any, soup).find("a", href=True, string="Logout")
         if logout_link is None:
             return None
         href_value = logout_link.get("href")
@@ -523,7 +523,7 @@ class AlphaRatio:
             meta.tracker_status[self.tracker]["status_message"] = "data error: Failed to load cookies for upload"
             return False
         data = await self._upload_data(meta, description, cover, auth_key)
-        return await self._submit_upload(meta, data, cookies)
+        return await self._submit_upload(meta, data, cast(httpx.Cookies, cookies))
 
     async def _upload_description(self, meta: Meta) -> str | None:
         path = release_temp_dir(meta.base_dir, meta.uuid) / f"[{self.tracker}]DESCRIPTION.txt"

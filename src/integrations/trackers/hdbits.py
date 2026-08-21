@@ -81,7 +81,7 @@ class HDBits:
             return 1
         if meta.type == "HDTV":
             return 3 if meta.has_encode_settings is True else 4
-        return {"ENCODE": 3, "WEBRIP": 3, "REMUX": 5, "WEBDL": 6}.get(meta.type, 0)
+        return {"ENCODE": 3, "WEBRIP": 3, "REMUX": 5, "WEBDL": 6}.get(str(meta.type or ""), 0)
 
     async def get_res_id(self, resolution: str) -> str:
         return {

@@ -170,7 +170,7 @@ class RetroFlix:
             meta,
             self.tracker,
             self.source_flag,
-            self._tracker_config().get("announce_url"),
+            cast(str | list[str], self._tracker_config().get("announce_url")),
             f"{self.base_url}/browse/t/{torrent_id}",
         )
         return True

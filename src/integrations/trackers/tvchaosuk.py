@@ -706,7 +706,7 @@ class TVChaosUK:
             meta,
             self.tracker,
             self.source_flag,
-            self._tracker_config().get("announce_url"),
+            cast(str | list[str], self._tracker_config().get("announce_url")),
             f"{self.base_url}/torrents/{torrent_id}",
         )
         return True
@@ -879,7 +879,7 @@ class TVChaosUK:
         cached = meta.tmdb_episode_data if isinstance(meta.tmdb_episode_data, dict) else {}
         if cached:
             return cached
-        return await self.tmdb_manager.get_episode_details(int(meta.tmdb), int(meta.season_int), int(meta.episode_int))
+        return await self.tmdb_manager.get_episode_details(cast(int, meta.tmdb), cast(int, meta.season_int), cast(int, meta.episode_int))
 
     @staticmethod
     def _apply_episode_info(meta: Meta, episode: dict[str, Any]) -> None:
@@ -891,7 +891,7 @@ class TVChaosUK:
         cached = meta.tmdb_season_data if isinstance(meta.tmdb_season_data, dict) else {}
         if cached:
             return cached
-        return await self.tmdb_manager.get_season_details(int(meta.tmdb), int(meta.season_int))
+        return await self.tmdb_manager.get_season_details(cast(int, meta.tmdb), cast(int, meta.season_int))
 
     @classmethod
     def _apply_season_info(cls, meta: Meta, season: dict[str, Any]) -> None:

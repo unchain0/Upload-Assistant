@@ -169,7 +169,7 @@ class PTerClub:
         disc = cls._disc_medium_id(meta)
         if disc is not None:
             return disc
-        return cls._file_medium_id(meta.type)
+        return cls._file_medium_id(str(meta.type or ""))
 
     @staticmethod
     def _disc_medium_id(meta: Meta) -> str | None:

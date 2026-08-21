@@ -349,7 +349,7 @@ class HawkeUno(UNIT3D):
         data = await self.get_data(meta)
         status = meta.tracker_status.setdefault(self.tracker, {})
         if meta.debug:
-            return await self._debug_upload(meta, data, status)
+            return await self._debug_upload_with_status(meta, data, status)
         try:
             response = await self._submit_upload(meta, data)
             return self._handle_upload_response(status, response)
@@ -363,7 +363,7 @@ class HawkeUno(UNIT3D):
             logger.info(f"{self.tracker}: [bold red]Upload unexpected error: {escape(str(error))}[/bold red]")
             raise
 
-    async def _debug_upload(self, meta: Meta, data: dict[str, Any], status: dict[str, Any]) -> bool:
+    async def _debug_upload_with_status(self, meta: Meta, data: dict[str, Any], status: dict[str, Any]) -> bool:
         logger.debug(f"{self.tracker}: [cyan]Request Data:")
         logger.debug(Redaction.redact_private_info(data))
         status["status_message"] = "Debug mode enabled, not uploading."

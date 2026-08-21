@@ -5,7 +5,7 @@ import io
 import re
 import unicodedata
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 from urllib.parse import urlparse
 
 import aiofiles
@@ -26,6 +26,12 @@ from src.integrations.trackers.USENET.search_helpers import (
 )
 
 Config = dict[str, Any]
+
+
+class _ParsedUploadResponse(TypedDict):
+    comment: str
+    font_error: str
+    error: bool
 
 
 class Suio:
@@ -189,7 +195,10 @@ class Suio:
         if not allowed:
             logger.info(f"{self.tracker}: [yellow]Duplicate search stopped because the 24-hour API hit limit ({self.daily_api_hit_limit}) has been reached.[/yellow]")
             return False
-        response = await client.get(self.search_url, params=self._request_params(query))
+        search_url = self.search_url
+        if search_url is None:
+            return False
+        response = await client.get(search_url, params=self._request_params(query))
         logger.debug(f"{self.tracker}: Duplicate search used API hit {used_hits}/{self.daily_api_hit_limit} in the last 24 hours.")
         response.raise_for_status()
         self._append_search_dupes(response.text, dupes, seen_keys)
@@ -575,8 +584,11 @@ class Suio:
     async def _upload_response(self, meta: Meta, username: str, data: dict[str, Any], files: dict[str, Any]) -> httpx.Response:
         params = {"user": username, "api": self.api_key}
         headers = {"User-Agent": self._user_agent(meta)}
+        upload_url = self.upload_url
+        if upload_url is None:
+            raise ValueError("SUIO upload URL is not configured")
         async with httpx.AsyncClient(timeout=60.0) as client:
-            return await client.post(self.upload_url, files=files, data=data, params=params, headers=headers, follow_redirects=True)
+            return await client.post(upload_url, files=files, data=data, params=params, headers=headers, follow_redirects=True)
 
     @staticmethod
     def _user_agent(meta: Meta) -> str:
@@ -603,7 +615,7 @@ class Suio:
         return True
 
     @staticmethod
-    def _parsed_upload_response(response: httpx.Response) -> dict[str, str | bool]:
+    def _parsed_upload_response(response: httpx.Response) -> _ParsedUploadResponse:
         comment = Suio._response_comment(response.text)
         font_error = Suio._font_error(response.text)
         final_url = str(response.url)
@@ -629,11 +641,11 @@ class Suio:
         return any(marker in lowered for marker in ("invalid", "error", "did not select", "fail"))
 
     @staticmethod
-    def _response_failed(response: httpx.Response, parsed: dict[str, str | bool]) -> bool:
+    def _response_failed(response: httpx.Response, parsed: _ParsedUploadResponse) -> bool:
         return response.status_code not in {200, 201} or bool(parsed["error"])
 
     @staticmethod
-    def _failure_message(response: httpx.Response, parsed: dict[str, str | bool]) -> str:
+    def _failure_message(response: httpx.Response, parsed: _ParsedUploadResponse) -> str:
         font_error = str(parsed["font_error"])
         if font_error:
             return font_error

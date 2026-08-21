@@ -11,7 +11,7 @@ from rich.markup import escape
 
 from src.domain_models.release import Meta
 from src.domain_models.release_description import base_description
-from src.domain_models.tracker_image_policy import get_tracker_image_collection
+from src.domain_models.tracker_image_policy import ImageCollection, get_tracker_image_collection
 from src.integrations.filesystem.temp_paths import release_temp_dir
 from src.integrations.image_hosts.rehosting import ImageHostPolicy, RehostImagesManager
 from src.integrations.observability.runtime_support import logger
@@ -247,7 +247,7 @@ class BEYONDHD:
                 meta,
                 self.tracker,
                 self.source_flag,
-                self.tracker_config.get("announce_url"),
+                cast(str | list[str], self.tracker_config.get("announce_url")),
                 details_link,
             )
             return True
@@ -293,7 +293,7 @@ class BEYONDHD:
     def _bdmv_type(cls, meta: Meta) -> str:
         bdinfo = meta.bdinfo if isinstance(meta.bdinfo, dict) else {}
         bd_size = cls._bd_size(cls._safe_number(bdinfo.get("size"), 100))
-        type_id = cls._bd_type_label(meta.uhd, bd_size)
+        type_id = cls._bd_type_label("UHD" if meta.uhd == "UHD" else None, bd_size)
         return type_id if type_id in cls._allowed_bd_types() else "Other"
 
     @staticmethod
@@ -362,11 +362,12 @@ class BEYONDHD:
 
     def _rehosted_base_description(self, meta: Meta, base: str) -> str:
         result = base
-        for collection_name in ("menu_images", "spectrograms_images", "dynamic_hdr_plot_images"):
+        collections: tuple[ImageCollection, ...] = ("menu_images", "spectrograms_images", "dynamic_hdr_plot_images")
+        for collection_name in collections:
             result = self._replace_rehosted_collection(meta, result, collection_name)
         return result
 
-    def _replace_rehosted_collection(self, meta: Meta, text: str, collection_name: str) -> str:
+    def _replace_rehosted_collection(self, meta: Meta, text: str, collection_name: ImageCollection) -> str:
         original = getattr(meta, collection_name, [])
         rehosted = get_tracker_image_collection(meta, self.tracker, collection_name)
         if not isinstance(original, list) or not isinstance(rehosted, list):

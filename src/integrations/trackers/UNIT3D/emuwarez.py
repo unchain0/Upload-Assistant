@@ -508,9 +508,9 @@ class Emuwarez(UNIT3D):
             delay=10,
         )
         scraper.get(self.base_url, timeout=15.0)
-        return scraper.get(url=self.search_url, params=params, headers=self._search_headers(api_key), timeout=15.0)
+        return scraper.get(url=self.search_url, params=params, headers=self._emu_search_headers(api_key), timeout=15.0)
 
-    def _search_headers(self, api_key: str) -> dict[str, str]:
+    def _emu_search_headers(self, api_key: str) -> dict[str, str]:
         return {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
@@ -523,7 +523,7 @@ class Emuwarez(UNIT3D):
     @classmethod
     def _search_results(cls, payload: Any, is_disc: bool) -> list[dict[str, Any]]:
         items = cls._search_items(payload)
-        return [entry for item in items if (entry := cls._search_result(item, is_disc)) is not None]
+        return [entry for item in items if (entry := cls._emu_search_result(item, is_disc)) is not None]
 
     @staticmethod
     def _search_items(payload: Any) -> list[Any]:
@@ -533,7 +533,7 @@ class Emuwarez(UNIT3D):
         return items if isinstance(items, list) else []
 
     @classmethod
-    def _search_result(cls, torrent: Any, is_disc: bool) -> dict[str, Any] | None:
+    def _emu_search_result(cls, torrent: Any, is_disc: bool) -> dict[str, Any] | None:
         attributes = cls._torrent_attributes(torrent)
         if not attributes or "name" not in attributes:
             return None
@@ -545,7 +545,7 @@ class Emuwarez(UNIT3D):
         }
         if not is_disc:
             files = cls._torrent_files(attributes)
-            result["files"] = cls._file_names(files)
+            result["files"] = cls._emu_file_names(files)
             result["file_count"] = len(files)
         return result
 
@@ -562,7 +562,7 @@ class Emuwarez(UNIT3D):
         return files if isinstance(files, list) else []
 
     @staticmethod
-    def _file_names(files: list[Any]) -> list[str]:
+    def _emu_file_names(files: list[Any]) -> list[str]:
         return [str(file["name"]) for file in files if isinstance(file, dict) and isinstance(file.get("name"), str)]
 
     async def get_upload_data(self, meta: Meta) -> dict[str, Any]:
