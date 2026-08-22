@@ -146,55 +146,63 @@ def detect_newspaper(meta: Meta) -> None:
                 break
 
 
+def _normalized_underscored_name(value: str) -> tuple[str, bool]:
+    has_underscores = "_" in value and " " not in value
+    return (
+        value.replace("_", " ") if has_underscores else value
+    ), has_underscores
+
+
+def _restore_name_underscores(value: str, had_underscores: bool) -> str:
+    return value.replace(" ", "_") if had_underscores else value
+
+
+def _clean_person_fragment(value: str) -> str:
+    value = re.sub(r"\s*[,;/&]+\s*$", "", value)
+    value = re.sub(r"^\s*[,;/&]+\s*", "", value)
+    value = re.sub(r"\b(?:and|e)\b\s*$", "", value, flags=re.IGNORECASE)
+    value = re.sub(r"^\s*\b(?:and|e)\b\s*", "", value, flags=re.IGNORECASE)
+    value = re.sub(r"\s*-\s*$", "", value)
+    value = re.sub(r"^\s*-\s*", "", value)
+    value = re.sub(r"\s+", " ", value).strip()
+    return re.sub(r"\(\s*\)|\[\s*\]", "", value).strip()
+
+
+def _manual_translator_names(value: str) -> list[str]:
+    return [
+        name.replace("_", " ").strip()
+        for name in value.split(",")
+        if name.strip()
+    ]
+
+
+def _remove_manual_translators(author: str, translator: str) -> str:
+    for name in _manual_translator_names(translator):
+        pattern = r"\b" + re.escape(name) + r"\b"
+        author = re.sub(pattern, "", author, flags=re.IGNORECASE)
+    return _clean_person_fragment(author)
+
+
+def _book_author_value(meta: Meta) -> str:
+    return meta.author or meta.book_author or ""
+
+
 def sanitize_book_author(meta: Meta) -> None:
     """Validate and sanitize author in meta by detecting and removing translators."""
-    author = meta.author
+    author = _book_author_value(meta)
     if not author:
-        # Check if book_author is present and copy it if needed
-        book_author = meta.book_author
-        if book_author:
-            author = book_author
-        else:
-            meta.author = ""
-            return
+        meta.author = ""
+        return
 
-    author = author
-    has_underscores = "_" in author and " " not in author
-    normalized_author = author.replace("_", " ") if has_underscores else author
-
+    normalized_author, had_underscores = _normalized_underscored_name(author)
     manual_translator = meta.book_translator
     if manual_translator:
-        # Also replace underscores in manual translator names in case they entered underscores
-        manual_translator_str = manual_translator
-        names_to_remove = [
-            n.replace("_", " ").strip()
-            for n in manual_translator_str.split(",")
-            if n.strip()
-        ]
-        for name in names_to_remove:
-            pattern = r"\b" + re.escape(name) + r"\b"
-            normalized_author = re.sub(
-                pattern, "", normalized_author, flags=re.IGNORECASE
-            )
-
-        # Clean up delimiters and extra whitespace left behind
-        normalized_author = re.sub(r"\s*[,;/&]+\s*$", "", normalized_author)
-        normalized_author = re.sub(r"^\s*[,;/&]+\s*", "", normalized_author)
-        normalized_author = re.sub(
-            r"\b(?:and|e)\b\s*$", "", normalized_author, flags=re.IGNORECASE
+        normalized_author = _remove_manual_translators(
+            normalized_author, manual_translator
         )
-        normalized_author = re.sub(
-            r"^\s*\b(?:and|e)\b\s*", "", normalized_author, flags=re.IGNORECASE
-        )
-        normalized_author = re.sub(r"\s*-\s*$", "", normalized_author)
-        normalized_author = re.sub(r"^\s*-\s*", "", normalized_author)
-        normalized_author = re.sub(r"\s+", " ", normalized_author).strip()
-        normalized_author = re.sub(
-            r"\(\s*\)|\[\s*\]", "", normalized_author
-        ).strip()
-
-    if has_underscores:
-        normalized_author = normalized_author.replace(" ", "_")
+    normalized_author = _restore_name_underscores(
+        normalized_author, had_underscores
+    )
 
     cleaned_author, translator = clean_translator_from_author(
         normalized_author
@@ -204,116 +212,93 @@ def sanitize_book_author(meta: Meta) -> None:
         meta.book_translator = translator
 
 
-def clean_translator_from_author(author: str) -> tuple[str, str]:
-    """Detect if a name is a translator, remove it from the author field and return both."""
-    if not author:
-        return author, ""
-
-    # If it contains underscores and no spaces, e.g. "Rosa_Montero_Mariana_Sanchez_tradutor"
-    # we normalize underscores to spaces for processing.
-    has_underscores = "_" in author and " " not in author
-    normalized = author.replace("_", " ") if has_underscores else author
-
-    # Translator keywords (case-insensitive)
+def _translator_keyword_pattern() -> str:
     keywords = [
-        r"tradutor\w*",  # tradutor, tradutora, tradutores, tradutoras
-        r"translator\w*",  # translator, translators
-        r"traduzido\b",  # traduzido, traduzida
-        r"trad\b\.?",  # trad, trad.
-        r"trans\b\.?",  # trans, trans.
-        r"tradu[cç]ao\b",  # tradução, traducao
-        r"translated\b",  # translated
+        r"tradutor\w*",
+        r"translator\w*",
+        r"traduzido\b",
+        r"trad\b\.?",
+        r"trans\b\.?",
+        r"tradu[cç]ao\b",
+        r"translated\b",
     ]
-    pattern_keywords = "(?:" + "|".join(keywords) + ")"
+    return "(?:" + "|".join(keywords) + ")"
 
-    # Pattern 1: [Name] followed by translator keyword (e.g. "Mariana Sanchez (tradutor)" or "Mariana Sanchez - tradutor")
-    # Limit to matching at most 2 capitalized words to prevent greedily matching the author name if no delimiter is present.
+
+def _translator_patterns(keyword_pattern: str) -> tuple[str, str]:
     pattern1 = (
-        r"\b([A-Z][A-Za-zÀ-ÿ]+(?:\s+(?:de|da|do|dos|das|e))\s+[A-Z][A-Za-zÀ-ÿ]+|"  # 2 words with particle
-        r"[A-Z][A-Za-zÀ-ÿ]+(?:\s+[A-Z][A-Za-zÀ-ÿ]+)?)"  # 1 or 2 capitalized words
-        r"\s*(?:\(|\[|-|\s_)*" + pattern_keywords + r"\)?\]?(?!\s+[A-ZÀ-ÿ])"
+        r"\b([A-Z][A-Za-zÀ-ÿ]+(?:\s+(?:de|da|do|dos|das|e))\s+[A-Z][A-Za-zÀ-ÿ]+|"
+        r"[A-Z][A-Za-zÀ-ÿ]+(?:\s+[A-Z][A-Za-zÀ-ÿ]+)?)"
+        r"\s*(?:\(|\[|-|\s_)*" + keyword_pattern + r"\)?\]?(?!\s+[A-ZÀ-ÿ])"
     )
-
-    # Pattern 2: Translator keyword followed by [Name] (e.g. "translated by John Doe" or "traduzido por John Doe")
     pattern2 = (
         r"\b(?:translated\s+by|traduzido\s+por|tradutor\w*|translator\w*|tradu[cç]ao)\s*:?\s*"
         r"([A-Z][A-Za-zÀ-ÿ]+(?:\s+[A-Z][A-Za-zÀ-ÿ]+)*)"
     )
+    return pattern1, pattern2
 
-    translators = [
+
+def _translator_matches(normalized: str, pattern: str) -> list[str]:
+    return [
         match.group(1).strip()
-        for match in re.finditer(pattern1, normalized, flags=re.IGNORECASE)
+        for match in re.finditer(pattern, normalized, flags=re.IGNORECASE)
     ]
 
-    # Find all matches for pattern2 to extract translator name(s)
-    translators.extend(
-        match.group(1).strip()
-        for match in re.finditer(pattern2, normalized, flags=re.IGNORECASE)
-    )
 
-    # Apply pattern 1
+def _strip_translator_patterns(
+    normalized: str, pattern1: str, pattern2: str
+) -> tuple[str, int]:
     normalized, count1 = re.subn(pattern1, "", normalized, flags=re.IGNORECASE)
-
-    # Apply pattern 2
     normalized, count2 = re.subn(pattern2, "", normalized, flags=re.IGNORECASE)
+    return normalized, count1 + count2
 
-    # If neither pattern matched but a bare keyword is present, fallback to word-based stripping
-    if count1 == 0 and count2 == 0:
-        match = re.search(
-            r"\b" + pattern_keywords + r"\b", normalized, re.IGNORECASE
-        )
-        if match:
-            before_keyword = normalized[: match.start()].strip()
-            before_keyword = before_keyword.rstrip(" _-,;([/")
-            words = before_keyword.split()
-            if len(words) >= 2:
-                translators.append(" ".join(words[-2:]))
-                normalized = " ".join(words[:-2])
-            elif len(words) == 1:
-                translators.append(words[0])
-                normalized = ""
-            else:
-                normalized = ""
 
-    # Clean up delimiters and extra whitespace left behind (anchored to start/end of the string)
-    normalized = re.sub(r"\s*[,;/&]+\s*$", "", normalized)
-    normalized = re.sub(r"^\s*[,;/&]+\s*", "", normalized)
-    normalized = re.sub(
-        r"\b(?:and|e)\b\s*$", "", normalized, flags=re.IGNORECASE
+def _fallback_bare_translator(
+    normalized: str, keyword_pattern: str
+) -> tuple[str, list[str]]:
+    match = re.search(
+        r"\b" + keyword_pattern + r"\b", normalized, re.IGNORECASE
     )
-    normalized = re.sub(
-        r"^\s*\b(?:and|e)\b\s*", "", normalized, flags=re.IGNORECASE
+    if match is None:
+        return normalized, []
+    before_keyword = normalized[: match.start()].strip().rstrip(" _-,;([/")
+    words = before_keyword.split()
+    if len(words) >= 2:
+        return " ".join(words[:-2]), [" ".join(words[-2:])]
+    if len(words) == 1:
+        return "", [words[0]]
+    return "", []
+
+
+def _unique_clean_translators(translators: list[str]) -> list[str]:
+    result: list[str] = []
+    for translator in translators:
+        cleaned = _clean_person_fragment(translator.strip())
+        if cleaned and cleaned not in result:
+            result.append(cleaned)
+    return result
+
+
+def clean_translator_from_author(author: str) -> tuple[str, str]:
+    """Detect translator names, remove them from author text, and return both."""
+    if not author:
+        return author, ""
+
+    normalized, had_underscores = _normalized_underscored_name(author)
+    keyword_pattern = _translator_keyword_pattern()
+    pattern1, pattern2 = _translator_patterns(keyword_pattern)
+    translators = _translator_matches(normalized, pattern1)
+    translators.extend(_translator_matches(normalized, pattern2))
+    normalized, match_count = _strip_translator_patterns(
+        normalized, pattern1, pattern2
     )
-    normalized = re.sub(r"\s*-\s*$", "", normalized)
-    normalized = re.sub(r"^\s*-\s*", "", normalized)
-    normalized = re.sub(r"\s+", " ", normalized).strip()
-
-    # Remove any empty brackets/parentheses left behind
-    normalized = re.sub(r"\(\s*\)|\[\s*\]", "", normalized).strip()
-
-    if has_underscores:
-        normalized = normalized.replace(" ", "_")
-
-    # Format the translator list as a comma-separated string
-    unique_translators = []
-    for t in translators:
-        t_clean = t.strip()
-        t_clean = re.sub(r"\s*[,;/&]+\s*$", "", t_clean)
-        t_clean = re.sub(r"^\s*[,;/&]+\s*", "", t_clean)
-        t_clean = re.sub(
-            r"\b(?:and|e)\b\s*$", "", t_clean, flags=re.IGNORECASE
+    if match_count == 0:
+        normalized, fallback_translators = _fallback_bare_translator(
+            normalized, keyword_pattern
         )
-        t_clean = re.sub(
-            r"^\s*\b(?:and|e)\b\s*", "", t_clean, flags=re.IGNORECASE
-        )
-        t_clean = re.sub(r"\s*-\s*$", "", t_clean)
-        t_clean = re.sub(r"^\s*-\s*", "", t_clean)
-        t_clean = re.sub(r"\s+", " ", t_clean).strip()
-        t_clean = re.sub(r"\(\s*\)|\[\s*\]", "", t_clean).strip()
+        translators.extend(fallback_translators)
 
-        if t_clean and t_clean not in unique_translators:
-            unique_translators.append(t_clean)
-
-    translator_name = ", ".join(unique_translators)
-
+    normalized = _clean_person_fragment(normalized)
+    normalized = _restore_name_underscores(normalized, had_underscores)
+    translator_name = ", ".join(_unique_clean_translators(translators))
     return normalized, translator_name
