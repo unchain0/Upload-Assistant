@@ -64,6 +64,9 @@ def test_pesto_unsupported_cache_linux_windows_success_and_failure(
     assert asyncio.run(
         pesto.PestoBinaryManager.ensure_pesto_binary(tmp_path)
     ) == str(binary)
+    assert not pesto._pesto_installation_current(
+        "linux", target / "missing-pesto", marker, [marker]
+    )
 
     marker.unlink()
     binary.unlink()
