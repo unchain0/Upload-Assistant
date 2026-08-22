@@ -135,6 +135,18 @@ def test_explicit_configuration_is_materialized_for_all_legacy_consumers(
     )
 
 
+def test_legacy_config_seeds_missing_runtime(tmp_path: Path) -> None:
+    legacy_path = tmp_path / "checkout" / "data" / "config.py"
+    defaults_path = tmp_path / "checkout" / "data" / "example_config.py"
+    _write_config(legacy_path, {"DEFAULT": {"tmdb_api": "legacy-key"}})
+    _write_config(defaults_path, {"DEFAULT": {"tmdb_api": ""}})
+
+    loaded = _service(tmp_path).load()
+
+    assert loaded.section("DEFAULT")["tmdb_api"] == "legacy-key"
+    assert (tmp_path / "state" / "data" / "config.py").is_file()
+
+
 def test_defaults_are_materialized_when_no_user_configuration_exists(
     tmp_path: Path,
 ) -> None:
@@ -147,6 +159,17 @@ def test_defaults_are_materialized_when_no_user_configuration_exists(
 
     assert loaded.source.kind is ConfigurationSourceKind.RUNTIME
     assert (tmp_path / "state" / "data" / "config.py").is_file()
+
+
+def test_load_mutable_returns_fresh_legacy_view(tmp_path: Path) -> None:
+    _write_config(
+        tmp_path / "checkout" / "data" / "example_config.py",
+        {"DEFAULT": {"tmdb_api": "mutable-key"}},
+    )
+
+    mutable = _service(tmp_path).load_mutable()
+
+    assert mutable["DEFAULT"]["tmdb_api"] == "mutable-key"
 
 
 def test_missing_explicit_configuration_is_semantic_error(

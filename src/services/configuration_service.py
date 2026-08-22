@@ -35,50 +35,76 @@ class ConfigurationService:
         self._defaults_path = defaults_path
         self._explicit_path = explicit_path
 
-    def prepare_runtime_configuration(self) -> ConfigurationMigration:
-        defaults = self._repository.load(
+    def _load_defaults(self) -> ApplicationConfiguration:
+        return self._repository.load(
             self._defaults_path, ConfigurationSourceKind.DEFAULT
         )
 
-        if self._explicit_path is not None:
-            resolved_explicit = self._explicit_path.expanduser().resolve()
-            if not resolved_explicit.is_file():
-                raise ConfigurationNotFoundError(
-                    f"Explicit configuration file not found: {resolved_explicit}"
-                )
-            if resolved_explicit != self._runtime_path.expanduser().resolve():
-                self._repository.copy_atomically(
-                    resolved_explicit, self._runtime_path
-                )
-
-        if not self._runtime_path.expanduser().is_file():
-            source = (
-                self._legacy_path
-                if self._legacy_path.expanduser().is_file()
-                else self._defaults_path
+    def _materialize_explicit_configuration(self) -> None:
+        if self._explicit_path is None:
+            return
+        resolved_explicit = self._explicit_path.expanduser().resolve()
+        if not resolved_explicit.is_file():
+            raise ConfigurationNotFoundError(
+                f"Explicit configuration file not found: {resolved_explicit}"
             )
-            self._repository.copy_atomically(source, self._runtime_path)
-
-        runtime = self._repository.load(
-            self._runtime_path, ConfigurationSourceKind.RUNTIME
-        )
-        legacy: ApplicationConfiguration = (
-            self._repository.load(
-                self._legacy_path, ConfigurationSourceKind.LEGACY
+        runtime = self._runtime_path.expanduser().resolve()
+        if resolved_explicit != runtime:
+            self._repository.copy_atomically(
+                resolved_explicit, self._runtime_path
             )
-            if self._legacy_path.expanduser().is_file()
-            else defaults
+
+    def _runtime_seed_source(self) -> Path:
+        if self._legacy_path.expanduser().is_file():
+            return self._legacy_path
+        return self._defaults_path
+
+    def _ensure_runtime_configuration(self) -> None:
+        if self._runtime_path.expanduser().is_file():
+            return
+        self._repository.copy_atomically(
+            self._runtime_seed_source(), self._runtime_path
         )
-        migration = reconcile_runtime_configuration(
+
+    def _load_legacy_or_defaults(
+        self, defaults: ApplicationConfiguration
+    ) -> ApplicationConfiguration:
+        if not self._legacy_path.expanduser().is_file():
+            return defaults
+        return self._repository.load(
+            self._legacy_path, ConfigurationSourceKind.LEGACY
+        )
+
+    def _reconcile_configuration(
+        self,
+        runtime: ApplicationConfiguration,
+        legacy: ApplicationConfiguration,
+        defaults: ApplicationConfiguration,
+    ) -> ConfigurationMigration:
+        return reconcile_runtime_configuration(
             runtime,
             legacy,
             defaults,
             runtime_path=str(self._runtime_path.expanduser().resolve()),
         )
-        if migration.changed:
-            self._repository.write_atomically(
-                migration.configuration, self._runtime_path
-            )
+
+    def _persist_migration(self, migration: ConfigurationMigration) -> None:
+        if not migration.changed:
+            return
+        self._repository.write_atomically(
+            migration.configuration, self._runtime_path
+        )
+
+    def prepare_runtime_configuration(self) -> ConfigurationMigration:
+        defaults = self._load_defaults()
+        self._materialize_explicit_configuration()
+        self._ensure_runtime_configuration()
+        runtime = self._repository.load(
+            self._runtime_path, ConfigurationSourceKind.RUNTIME
+        )
+        legacy = self._load_legacy_or_defaults(defaults)
+        migration = self._reconcile_configuration(runtime, legacy, defaults)
+        self._persist_migration(migration)
         return migration
 
     def load(self) -> ApplicationConfiguration:
