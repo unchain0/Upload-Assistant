@@ -60,6 +60,47 @@ class DesiTorrents(UNIT3D):
         resolved_id = category_id.get(meta_category, "0")
         return {"category_id": resolved_id}
 
+    @staticmethod
+    def _type_mapping() -> dict[str, str]:
+        return {
+            "DISC": "3",
+            "REMUX": "5",
+            "ENCODE": "12",
+            "WEBDL": "11",
+            "WEBRIP": "12",
+            "HDTV": "13",
+            "DVD": "8",
+        }
+
+    @staticmethod
+    def _disc_type_id(meta: Meta) -> str:
+        return "4" if meta.disctype == "BD25" else "3"
+
+    @staticmethod
+    def _uhd_type_id(meta_type: str, is_uhd: bool) -> str | None:
+        type_ids = {
+            "REMUX": ("2", "5"),
+            "ENCODE": ("1", "12"),
+        }.get(meta_type)
+        if type_ids is None:
+            return None
+        return type_ids[0] if is_uhd else type_ids[1]
+
+    @classmethod
+    def _dynamic_type_id(cls, meta: Meta) -> str:
+        meta_type = str(meta.type or "")
+        if meta_type == "DISC":
+            return cls._disc_type_id(meta)
+        uhd_type = cls._uhd_type_id(meta_type, bool(meta.uhd))
+        if uhd_type is not None:
+            return uhd_type
+        return {
+            "WEBDL": "11",
+            "WEBRIP": "12",
+            "DVD": "8",
+            "HDTV": "13",
+        }.get(meta_type, "0")
+
     async def get_type_id(
         self,
         meta: Meta,
@@ -67,51 +108,15 @@ class DesiTorrents(UNIT3D):
         reverse: bool = False,
         mapping_only: bool = False,
     ) -> dict[str, str]:
-        """
-        Returns the type ID (source) for the release.
-        """
-
-        # Standard Mapping for reverse lookups
-        type_id_map = {
-            "DISC": "3",  # Defaulting to BD50
-            "REMUX": "5",  # Defaulting to BD Remux
-            "ENCODE": "12",  # Defaulting to BD Encode
-            "WEBDL": "11",
-            "WEBRIP": "12",  # Changed to Encode per tracker rules
-            "HDTV": "13",
-            "DVD": "8",
-        }
-
+        """Returns the type ID (source) for the release."""
+        type_id_map = self._type_mapping()
         if mapping_only:
             return type_id_map
         if reverse:
-            return {v: k for k, v in type_id_map.items()}
+            return {value: key for key, value in type_id_map.items()}
         if type:
             return {"type_id": type_id_map.get(type, "0")}
-        # Dynamic Logic for DesiTorrents specific IDs (UHD vs 1080p)
-        meta_type = meta.type
-        is_uhd = meta.uhd
-
-        resolved_id = "0"
-
-        if meta_type == "DISC":
-            resolved_id = "3"  # BD50
-            if meta.disctype == "BD25":
-                resolved_id = "4"
-        elif meta_type == "REMUX":
-            resolved_id = "2" if is_uhd else "5"
-        elif meta_type == "ENCODE":
-            resolved_id = "1" if is_uhd else "12"
-        elif meta_type == "WEBDL":
-            resolved_id = "11"
-        elif meta_type == "WEBRIP":
-            resolved_id = "12"  # Mapped to Encode
-        elif meta_type == "DVD":
-            resolved_id = "8"
-        elif meta_type == "HDTV":
-            resolved_id = "13"
-
-        return {"type_id": resolved_id}
+        return {"type_id": self._dynamic_type_id(meta)}
 
     async def get_resolution_id(
         self,
