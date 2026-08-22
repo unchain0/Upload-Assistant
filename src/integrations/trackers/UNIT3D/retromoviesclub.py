@@ -102,14 +102,9 @@ class RetroMoviesClub(UNIT3D):
         category_value = category or meta.category
         return {"category_id": category_id.get(category_value, "0")}
 
-    async def get_type_id(
-        self,
-        meta: Meta,
-        type: str = "",
-        reverse: bool = False,
-        mapping_only: bool = False,
-    ) -> dict[str, str]:
-        type_id = {
+    @staticmethod
+    def _type_mapping() -> dict[str, str]:
+        return {
             "BDMV": "1",
             "REMUX_BLURAY": "2",
             "DVD": "3",
@@ -122,39 +117,103 @@ class RetroMoviesClub(UNIT3D):
             "HDTV": "10",
             "TV_SD": "11",
         }
+
+    @staticmethod
+    def _type_context(
+        meta: Meta, explicit_type: str
+    ) -> tuple[str, str, str, str]:
+        return (
+            str(meta.source or "").upper(),
+            str(meta.is_disc or "").upper(),
+            meta.category.upper(),
+            (explicit_type or str(meta.type or "")).upper(),
+        )
+
+    @staticmethod
+    def _is_bluray_remux(source: str, type_value: str) -> bool:
+        return type_value == "REMUX" and source in {"BLURAY", "BLU-RAY"}
+
+    @staticmethod
+    def _is_dvd_remux(source: str, type_value: str) -> bool:
+        return type_value == "REMUX" and source in {
+            "DVD",
+            "PAL DVD",
+            "NTSC DVD",
+        }
+
+    @classmethod
+    def _disc_type_key(
+        cls, source: str, is_disc: str, type_value: str
+    ) -> str | None:
+        if is_disc == "BDMV":
+            return "BDMV"
+        if cls._is_bluray_remux(source, type_value):
+            return "REMUX_BLURAY"
+        if is_disc == "DVD":
+            return "DVD"
+        if cls._is_dvd_remux(source, type_value):
+            return "REMUX_DVD"
+        return None
+
+    @staticmethod
+    def _direct_stream_type_key(type_value: str) -> str | None:
+        return {
+            "ENCODE": "ENCODE",
+            "DVDRIP": "DVDRIP",
+            "WEBDL": "WEBDL",
+        }.get(type_value)
+
+    @staticmethod
+    def _is_web_release(source: str, type_value: str) -> bool:
+        return type_value == "WEBRIP" or source == "WEB"
+
+    @staticmethod
+    def _tv_sd_type_key(category: str, sd: int) -> str | None:
+        return "TV_SD" if category == "TV" and sd == 1 else None
+
+    @classmethod
+    def _stream_type_key(
+        cls,
+        source: str,
+        category: str,
+        type_value: str,
+        sd: int,
+    ) -> str | None:
+        direct = cls._direct_stream_type_key(type_value)
+        if direct is not None:
+            return direct
+        if cls._is_web_release(source, type_value):
+            return "WEBRIP"
+        if source == "UHDTV":
+            return "UHDTV"
+        if type_value == "HDTV":
+            return "HDTV"
+        return cls._tv_sd_type_key(category, sd)
+
+    @classmethod
+    def _type_key(cls, meta: Meta, explicit_type: str) -> str | None:
+        source, is_disc, category, type_value = cls._type_context(
+            meta, explicit_type
+        )
+        disc_key = cls._disc_type_key(source, is_disc, type_value)
+        if disc_key is not None:
+            return disc_key
+        return cls._stream_type_key(source, category, type_value, meta.sd)
+
+    async def get_type_id(
+        self,
+        meta: Meta,
+        type: str = "",
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
+        type_id = self._type_mapping()
         if mapping_only:
             return type_id
         if reverse:
             return {value: key for key, value in type_id.items()}
-
-        source = str(meta.source or "").upper()
-        is_disc = str(meta.is_disc or "").upper()
-        category = meta.category.upper()
-        type_value = (type or str(meta.type or "")).upper()
-
-        if is_disc == "BDMV":
-            return {"type_id": "1"}
-        if type_value == "REMUX" and source in {"BLURAY", "BLU-RAY"}:
-            return {"type_id": "2"}
-        if is_disc == "DVD":
-            return {"type_id": "3"}
-        if type_value == "REMUX" and source in {"DVD", "PAL DVD", "NTSC DVD"}:
-            return {"type_id": "4"}
-        if type_value == "ENCODE":
-            return {"type_id": "5"}
-        if type_value == "DVDRIP":
-            return {"type_id": "6"}
-        if type_value == "WEBDL":
-            return {"type_id": "7"}
-        if type_value == "WEBRIP" or source == "WEB":
-            return {"type_id": "8"}
-        if source == "UHDTV":
-            return {"type_id": "9"}
-        if type_value == "HDTV":
-            return {"type_id": "10"}
-        if category == "TV" and meta.sd == 1:
-            return {"type_id": "11"}
-        return {"type_id": "0"}
+        key = self._type_key(meta, type)
+        return {"type_id": type_id.get(key or "", "0")}
 
     async def get_resolution_id(
         self,

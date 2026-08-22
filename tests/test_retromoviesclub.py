@@ -46,6 +46,41 @@ def test_retromoviesclub_accepts_movies_released_in_2000_or_earlier():
     )
 
 
+def test_retromoviesclub_mapping_modes_and_fallbacks():
+    tracker = _tracker()
+    meta = Meta(category="MOVIE", resolution="1080p")
+
+    category_mapping = asyncio.run(
+        tracker.get_category_id(meta, mapping_only=True)
+    )
+    assert category_mapping == {"MOVIE": "1"}
+    assert asyncio.run(tracker.get_category_id(meta, reverse=True)) == {
+        "1": "MOVIE"
+    }
+    assert asyncio.run(tracker.get_category_id(meta, category="TV")) == {
+        "category_id": "0"
+    }
+
+    type_mapping = asyncio.run(tracker.get_type_id(meta, mapping_only=True))
+    assert type_mapping["BDMV"] == "1"
+    assert asyncio.run(tracker.get_type_id(meta, reverse=True))["1"] == "BDMV"
+
+    resolution_mapping = asyncio.run(
+        tracker.get_resolution_id(meta, mapping_only=True)
+    )
+    assert resolution_mapping["2160p"] == "2"
+    assert (
+        asyncio.run(tracker.get_resolution_id(meta, reverse=True))["2"]
+        == "2160p"
+    )
+    assert asyncio.run(tracker.get_resolution_id(meta, resolution="720p")) == {
+        "resolution_id": "5"
+    }
+    assert asyncio.run(tracker.get_resolution_id(Meta(resolution="360p"))) == {
+        "resolution_id": "11"
+    }
+
+
 def test_retromoviesclub_uses_tracker_specific_type_ids():
     tracker = _tracker()
 
