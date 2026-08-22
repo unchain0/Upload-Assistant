@@ -58,15 +58,56 @@ def test_digitalcore_non_video_category_skips_video_file_rules() -> None:
     )
 
 
-def test_digitalcore_firstpic_uses_hosted_artwork() -> None:
+def test_digitalcore_firstpic_uses_safe_hosted_artwork() -> None:
     meta = Meta(
         category="BOOK",
-        hosted_artwork=[{"raw_url": "https://example.com/cover.jpg"}],
+        hosted_artwork=[{"raw_url": "https://img.digitalcore.club/cover.jpg"}],
     )
     assert (
         asyncio.run(_tracker().get_firstpic(meta))
-        == "https://example.com/cover.jpg"
+        == "https://img.digitalcore.club/cover.jpg"
     )
+
+
+def test_digitalcore_firstpic_rehosts_unsafe_artwork() -> None:
+    tracker = _tracker()
+    tracker.rehost_images_manager.check_policy = AsyncMock(
+        return_value=(
+            [{"raw_url": "https://img.digitalcore.club/rehosted.jpg"}],
+            False,
+            True,
+        )
+    )
+    meta = Meta(
+        category="BOOK",
+        hosted_artwork=[{"raw_url": "https://i.ibb.co/unsafe.jpg"}],
+        imghost="imgbb",
+    )
+
+    result = asyncio.run(tracker.get_firstpic(meta))
+
+    assert result == "https://img.digitalcore.club/rehosted.jpg"
+    assert meta.imghost == "imgbb"
+    tracker.rehost_images_manager.check_policy.assert_awaited_once_with(
+        meta, "covers", tracker.image_host_policy
+    )
+
+
+def test_digitalcore_firstpic_drops_unrehosted_unsafe_artwork() -> None:
+    tracker = _tracker()
+    tracker.rehost_images_manager.check_policy = AsyncMock(
+        return_value=(
+            [{"raw_url": "https://i.ibb.co/still-unsafe.jpg"}],
+            False,
+            True,
+        )
+    )
+    meta = Meta(
+        category="MUSIC",
+        hosted_artwork=[{"raw_url": "https://i.ibb.co/unsafe.jpg"}],
+    )
+
+    assert asyncio.run(tracker.get_firstpic(meta)) == ""
 
 
 @pytest.mark.asyncio

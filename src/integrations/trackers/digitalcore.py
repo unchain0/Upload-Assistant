@@ -4,6 +4,7 @@ import unicodedata
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import urlparse
 
 import aiofiles
 import httpx
@@ -33,28 +34,18 @@ class DigitalCore:
     base_url = "https://digitalcore.club"
     api_base_url = f"{base_url}/api/v1/torrents"
     banned_groups = ("",)
-    # PTScreens is allowed by DigitalCore's CSP img-src directive.
-    approved_image_hosts = (
-        "imgbox",
-        "imgbb",
-        "bhd",
-        "imgur",
-        "postimg",
-        "sharex",
-        "ptscreens",
-    )
+    # DigitalCore's renderer is reliable with its own ShareX image service and
+    # PTScreens. External hosts may be accepted syntactically but are often
+    # replaced by /img/not-found-image.svg when the site cannot proxy them.
+    approved_image_hosts = ("sharex", "ptscreens")
     image_host_policy = ImageHostPolicy(
         {
-            "ibb.co": "imgbb",
-            "imgbox.com": "imgbox",
-            "beyondhd.co": "bhd",
-            "imgur.com": "imgur",
-            "postimg.cc": "postimg",
             "digitalcore.club": "sharex",
             "img.digitalcore.club": "sharex",
             "ptscreens.com": "ptscreens",
         },
         approved_image_hosts,
+        preferred_image_host="sharex",
     )
     torrent_url = f"{base_url}/torrent/"
     supported_categories = ("TV", "MOVIE", "BOOK", "GAME", "MUSIC")
@@ -535,14 +526,60 @@ class DigitalCore:
             )
         )
 
-    async def get_firstpic(self, meta: Meta) -> str:
-        if meta.category in ("BOOK", "MUSIC"):
-            covers = meta.hosted_artwork
-            if isinstance(covers, list) and len(covers) > 0:
-                raw_url = covers[0].get("raw_url")
-                if raw_url:
-                    return str(raw_url)
+    @staticmethod
+    def _hostname_matches(hostname: str, source_host: str) -> bool:
+        source = source_host.lower()
+        return hostname == source or hostname.endswith(f".{source}")
+
+    @classmethod
+    def _mapped_image_host(cls, hostname: str) -> str:
+        for (
+            source_host,
+            mapped_host,
+        ) in cls.image_host_policy.url_host_mapping.items():
+            if cls._hostname_matches(hostname, source_host):
+                return mapped_host
         return ""
+
+    @classmethod
+    def _safe_image_url(cls, value: object) -> str:
+        raw_url = str(value or "").strip()
+        if not raw_url:
+            return ""
+        hostname = (urlparse(raw_url).hostname or "").lower()
+        mapped_host = cls._mapped_image_host(hostname)
+        return raw_url if mapped_host in cls.approved_image_hosts else ""
+
+    @classmethod
+    def _safe_hosted_artwork(cls, meta: Meta) -> str:
+        covers = meta.hosted_artwork
+        if not isinstance(covers, list):
+            return ""
+        for cover in covers:
+            if not isinstance(cover, Mapping):
+                continue
+            raw_url = cls._safe_image_url(cover.get("raw_url"))
+            if raw_url:
+                return raw_url
+        return ""
+
+    async def _rehost_cover(self, meta: Meta) -> str:
+        images, _, _ = await self.rehost_images_manager.check_policy(
+            meta, "covers", self.image_host_policy
+        )
+        for image in images:
+            raw_url = self._safe_image_url(image.get("raw_url"))
+            if raw_url:
+                return raw_url
+        return ""
+
+    async def get_firstpic(self, meta: Meta) -> str:
+        if meta.category not in ("BOOK", "MUSIC"):
+            return ""
+        existing = self._safe_hosted_artwork(meta)
+        if existing:
+            return existing
+        return await self._rehost_cover(meta)
 
     @staticmethod
     def _is_rar_file(path_value: str) -> bool:

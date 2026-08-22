@@ -207,6 +207,59 @@ def test_policy_selection_and_simple_helpers(
     assert rehosting._image_host("not a url", {}) == ""
 
 
+def test_policy_can_prefer_unconfigured_approved_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = RehostImagesManager({"DEFAULT": _default()})
+    meta = _meta(tmp_path, imghost="imgbb", imghost_from_cli=False)
+    seen_hosts: list[str] = []
+
+    async def check_hosts(
+        value: Meta,
+        _tracker: str,
+        url_host_mapping: dict[str, str],
+        **kwargs: object,
+    ) -> tuple[list[dict[str, str]], bool, bool]:
+        assert url_host_mapping == {"img.digitalcore.club": "sharex"}
+        effective = kwargs["default_config"]
+        assert isinstance(effective, dict)
+        assert effective["img_host_1"] == "sharex"
+        seen_hosts.append(str(value.imghost))
+        return [], False, False
+
+    monkeypatch.setattr(rehosting, "_check_hosts", check_hosts)
+    monkeypatch.setattr(
+        rehosting,
+        "_check_additional_image_collections",
+        AsyncMock(return_value=None),
+    )
+    policy = ImageHostPolicy(
+        {"img.digitalcore.club": "sharex"},
+        ("sharex", "ptscreens"),
+        preferred_image_host="sharex",
+    )
+
+    assert asyncio.run(manager.check_policy(meta, "DIGITALCORE", policy)) == (
+        [],
+        False,
+        False,
+    )
+    assert seen_hosts == ["sharex"]
+    assert meta.imghost == "imgbb"
+    meta.imghost = "sharex"
+    effective = rehosting._effective_image_host_config(
+        _default(), meta, ("sharex", "ptscreens"), 1, True
+    )
+    assert effective["img_host_1"] == "sharex"
+    assert rehosting._select_approved_upload_host(
+        meta,
+        "DIGITALCORE",
+        effective,
+        ("sharex", "ptscreens"),
+        1,
+    ) == (1, False)
+
+
 def test_manager_wrappers_and_tracker_hooks(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

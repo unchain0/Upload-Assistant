@@ -43,6 +43,7 @@ class ImageHostPolicy:
     url_host_mapping: Mapping[str, str]
     approved_image_hosts: tuple[str, ...]
     img_host_index: int = 1
+    preferred_image_host: str | None = None
 
 
 def _as_str(value: Any) -> str | None:
@@ -186,13 +187,45 @@ class RehostImagesManager:
         self, meta: Meta, tracker: str, policy: ImageHostPolicy
     ) -> tuple[list[dict[str, str]], bool, bool]:
         """Apply a tracker's declarative image-host policy."""
-        return await self.check_hosts(
-            meta,
-            tracker,
-            url_host_mapping=dict(policy.url_host_mapping),
-            img_host_index=policy.img_host_index,
-            approved_image_hosts=list(policy.approved_image_hosts),
-        )
+        original_host = str(meta.imghost or "")
+        preferred = policy.preferred_image_host
+        use_preferred = False
+        if preferred is not None and not getattr(
+            meta, "imghost_from_cli", False
+        ):
+            meta.imghost = preferred
+            use_preferred = True
+        try:
+            approved_hosts = list(policy.approved_image_hosts)
+            effective_config = _effective_image_host_config(
+                self.default_config,
+                meta,
+                approved_hosts,
+                policy.img_host_index,
+                use_preferred,
+            )
+            images, retry_mode, images_reuploaded = await _check_hosts(
+                meta,
+                tracker,
+                dict(policy.url_host_mapping),
+                img_host_index=policy.img_host_index,
+                approved_image_hosts=approved_hosts,
+                default_config=effective_config,
+                takescreens_manager=self.takescreens_manager,
+                uploadscreens_manager=self.uploadscreens_manager,
+            )
+            if tracker != "covers":
+                await _check_additional_image_collections(
+                    meta,
+                    tracker,
+                    dict(policy.url_host_mapping),
+                    approved_image_hosts=approved_hosts,
+                    default_config=effective_config,
+                    uploadscreens_manager=self.uploadscreens_manager,
+                )
+            return images, retry_mode, images_reuploaded
+        finally:
+            meta.imghost = original_host
 
     async def handle_image_upload(
         self,
@@ -424,6 +457,23 @@ async def _check_additional_image_collections(
             )
     finally:
         meta.imghost = original_imghost
+
+
+def _effective_image_host_config(
+    default_config: Mapping[str, Any],
+    meta: Meta,
+    approved_hosts: Sequence[str],
+    img_host_index: int,
+    allow_unconfigured_preferred: bool,
+) -> Mapping[str, Any]:
+    if not allow_unconfigured_preferred:
+        return default_config
+    preferred = str(meta.imghost or "").strip().lower()
+    if not preferred or preferred not in approved_hosts:
+        return default_config
+    effective = dict(default_config)
+    effective[f"img_host_{img_host_index}"] = preferred
+    return effective
 
 
 async def _check_hosts(
