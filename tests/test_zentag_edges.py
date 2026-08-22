@@ -93,14 +93,88 @@ def test_source_detection_and_prepare_flags(tmp_path: Path) -> None:
     assert not zentag.should_prepare_zenith_ebook(
         _meta(tmp_path / "book.epub", audiobook=False), config
     )
+    auto_config = {"DEFAULT": {"auto_zentag": True}}
+    assert not zentag._zentag_auto_allowed(
+        _meta(m4b, trackers=["OTHER"]), auto_config
+    )
 
     epub = tmp_path / "book.epub"
     epub.write_bytes(b"book")
     meta = _meta(tmp_path / "folder", audiobook=False, filelist=[str(epub)])
     assert zentag._ebook_source(meta) == epub.resolve()
+    assert not zentag._plain_ebook(_meta(epub, audiobook=True))
+    asin_source = tmp_path / "Book.B012345678.m4b"
+    assert zentag._audiobook_asin(_meta(asin_source), asin_source) == "B012345678"
+    assert zentag._series_part(_meta(epub, book_series="")) == ""
+    assert (
+        zentag._series_part(
+            _meta(epub, book_series="Series", book_series_index="2")
+        )
+        == "2"
+    )
     meta.filelist = [str(epub), str(tmp_path / "other.pdf")]
     (tmp_path / "other.pdf").write_bytes(b"pdf")
     assert zentag._ebook_source(meta) is None
+
+
+def test_refactor_helper_edge_branches(tmp_path: Path) -> None:
+    m4b = tmp_path / "book.m4b"
+    m4b.write_bytes(b"audio")
+    epub = tmp_path / "book.epub"
+    epub.write_bytes(b"book")
+    config = {"DEFAULT": {"auto_zentag": True}}
+
+    assert not zentag._zentag_auto_allowed(
+        _meta(m4b, trackers=["OTHER"]), config
+    )
+    assert not zentag._plain_ebook(
+        _meta(epub, category="MOVIE", audiobook=False)
+    )
+    assert (
+        zentag._audiobook_asin(_meta(m4b, book_asin="B012345678"), m4b)
+        == "B012345678"
+    )
+    assert (
+        zentag._series_part(
+            _meta(
+                epub,
+                audiobook=False,
+                book_series="Series",
+                book_series_index="2",
+            )
+        )
+        == "2"
+    )
+    output_root = tmp_path / "zentag-output"
+    output_root.mkdir()
+    assert zentag._written_path('Wrote "bad json', output_root) is None
+
+
+def test_refactor_helper_edge_branches(tmp_path: Path) -> None:
+    epub = tmp_path / "book.epub"
+    epub.write_bytes(b"book")
+
+    not_selected = _meta(epub, audiobook=False, trackers=["OTHER"])
+    assert not zentag._zentag_auto_allowed(
+        not_selected, {"DEFAULT": {"auto_zentag": True}}
+    )
+    assert not zentag._plain_ebook(_meta(epub, audiobook=True))
+
+    meta = _meta(
+        epub,
+        audiobook=False,
+        book_asin="b012345678",
+        book_series="Series",
+        book_series_index="2",
+    )
+    assert zentag._audiobook_asin(meta, epub) == "B012345678"
+    assert zentag._series_part(meta) == "2"
+
+    output_root = tmp_path / "output"
+    output_root.mkdir()
+    outside = tmp_path / "outside.epub"
+    outside.write_bytes(b"book")
+    assert zentag._written_path(f"Wrote {outside}", output_root) is None
 
 
 def test_run_transform_prompts_and_missing_pipes(
@@ -142,6 +216,7 @@ def test_written_output_all_shapes(tmp_path: Path) -> None:
     assert zentag._written_output("nothing", root) is None
     assert zentag._written_output(f"Wrote {directory}", root) == directory
     assert zentag._written_output(f"Wrote {file}", root) == directory
+    assert zentag._written_path(f"Wrote {file}", root) == file.resolve()
     assert (
         zentag._written_output(f"Wrote {tmp_path / 'outside'}", root) is None
     )
@@ -362,3 +437,75 @@ def test_final_zentag_branch_matrix(
         )
         is None
     )
+
+
+def test_refactor_helper_coverage_edges(tmp_path: Path) -> None:
+    m4b = tmp_path / "book.m4b"
+    m4b.write_bytes(b"audio")
+    epub = tmp_path / "book.epub"
+    epub.write_bytes(b"book")
+    config = {"DEFAULT": {"auto_zentag": True}}
+
+    assert not zentag._zentag_auto_allowed(
+        _meta(m4b, trackers=["OTHER"]), config
+    )
+    assert not zentag._plain_ebook(
+        _meta(epub, audiobook=False, category="MOVIE")
+    )
+    assert (
+        zentag._audiobook_asin(
+            _meta(m4b, book_asin="b012345678"), m4b
+        )
+        == "B012345678"
+    )
+    assert zentag._series_part(_meta(m4b, book_series="")) == ""
+
+    output_root = tmp_path / "output"
+    output_root.mkdir()
+    assert zentag._written_path('Wrote "bad json', output_root) is None
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    assert zentag._written_path(f"Wrote {outside}", output_root) is None
+
+
+def test_refactor_helper_coverage_edges(tmp_path: Path) -> None:
+    m4b = tmp_path / "book.m4b"
+    m4b.write_bytes(b"audio")
+    epub = tmp_path / "book.epub"
+    epub.write_bytes(b"book")
+    config = {"DEFAULT": {"auto_zentag": True}}
+
+    assert not zentag._zentag_auto_allowed(
+        _meta(m4b, trackers=["OTHER"]), config
+    )
+    assert not zentag._zentag_auto_allowed(
+        _meta(m4b), {"DEFAULT": {"auto_zentag": False}}
+    )
+    assert not zentag._plain_ebook(
+        _meta(epub, audiobook=False, category="MOVIE")
+    )
+    assert not zentag._plain_ebook(
+        _meta(epub, audiobook=False, comic=True)
+    )
+    assert (
+        zentag._audiobook_asin(_meta(m4b, book_asin="b012345678"), m4b)
+        == "B012345678"
+    )
+    assert zentag._audiobook_asin(_meta(m4b), m4b) == ""
+    assert zentag._series_part(_meta(m4b, book_series="")) == ""
+    assert (
+        zentag._series_part(
+            _meta(m4b, book_series="Series", book_series_index="2")
+        )
+        == "2"
+    )
+
+    output_root = tmp_path / "output"
+    output_root.mkdir()
+    assert zentag._written_path('Wrote "bad json', output_root) is None
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    assert zentag._written_path(f"Wrote {outside}", output_root) is None
+    inside = output_root / "book.m4b"
+    inside.write_bytes(b"audio")
+    assert zentag._written_path(f"Wrote {inside}", output_root) == inside

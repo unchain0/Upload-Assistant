@@ -31,44 +31,56 @@ def _contains_m4b(source: Path) -> bool:
     )
 
 
+def _zentag_auto_allowed(meta: Meta, config: dict[str, Any]) -> bool:
+    if meta.site_check or not meta.unattended:
+        return False
+    if not _zenith_selected(meta):
+        return False
+    return bool(config.get("DEFAULT", {}).get("auto_zentag", True))
+
+
 def should_prepare_zenith_audiobook(
     meta: Meta, config: dict[str, Any]
 ) -> bool:
-    if meta.site_check or not meta.unattended or not _zenith_selected(meta):
-        return False
-    if not config.get("DEFAULT", {}).get("auto_zentag", True):
+    if not _zentag_auto_allowed(meta, config):
         return False
     source = Path(str(meta.path or "")).expanduser().resolve()
     return _contains_m4b(source)
 
 
-def _ebook_source(meta: Meta) -> Path | None:
-    source = Path(str(meta.path or "")).expanduser().resolve()
-    if source.is_file() and source.suffix.lower() in EBOOK_SUFFIXES:
-        return source
-    candidates = [
-        Path(str(path)).expanduser().resolve()
-        for path in meta.filelist
-        if Path(str(path)).suffix.lower() in EBOOK_SUFFIXES
+def _resolved_ebook_path(value: object) -> Path | None:
+    candidate = Path(str(value)).expanduser().resolve()
+    if candidate.suffix.lower() not in EBOOK_SUFFIXES:
+        return None
+    return candidate if candidate.is_file() else None
+
+
+def _ebook_candidates(meta: Meta) -> list[Path]:
+    return [
+        candidate
+        for value in meta.filelist
+        if (candidate := _resolved_ebook_path(value)) is not None
     ]
-    return (
-        candidates[0]
-        if len(candidates) == 1 and candidates[0].is_file()
-        else None
-    )
+
+
+def _ebook_source(meta: Meta) -> Path | None:
+    source = _resolved_ebook_path(meta.path)
+    if source is not None:
+        return source
+    candidates = _ebook_candidates(meta)
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def _plain_ebook(meta: Meta) -> bool:
+    if meta.category != "BOOK" or meta.audiobook:
+        return False
+    return not any((meta.comic, meta.manga, meta.magazine, meta.newspaper))
 
 
 def should_prepare_zenith_ebook(meta: Meta, config: dict[str, Any]) -> bool:
-    if meta.site_check or not meta.unattended or not _zenith_selected(meta):
+    if not _zentag_auto_allowed(meta, config) or not _plain_ebook(meta):
         return False
-    if not config.get("DEFAULT", {}).get("auto_zentag", True):
-        return False
-    return (
-        meta.category == "BOOK"
-        and not meta.audiobook
-        and not (meta.comic or meta.manga or meta.magazine or meta.newspaper)
-        and _ebook_source(meta) is not None
-    )
+    return _ebook_source(meta) is not None
 
 
 async def _run_process(command: list[str]) -> tuple[int, str, str]:
@@ -157,23 +169,70 @@ async def _run_transform(command: list[str]) -> tuple[int, str, str]:
     )
 
 
-def _written_output(stdout: str, output_root: Path) -> Path | None:
+def _reported_output_path(stdout: str, output_root: Path) -> Path | None:
     match = re.search(r"Wrote (.+)$", stdout, re.MULTILINE)
     if not match:
         return None
     try:
         raw_output = match.group(1).strip()
-        output = Path(
+        value = (
             json.loads(raw_output)
             if raw_output.startswith('"')
             else raw_output
-        ).resolve()
+        )
+        output = Path(value).resolve()
         output.relative_to(output_root.resolve())
+        return output
     except json.JSONDecodeError, OSError, ValueError:
+        return None
+
+
+def _output_directory(output: Path | None) -> Path | None:
+    if output is None:
         return None
     if output.is_dir():
         return output
     return output.parent if output.is_file() else None
+
+
+def _written_output(stdout: str, output_root: Path) -> Path | None:
+    return _output_directory(_reported_output_path(stdout, output_root))
+
+
+def _zentag_config_lines(output_root: Path, base_dir: str) -> list[str]:
+    session_dir = Path(base_dir) / "tmp" / "zentag-sessions"
+    return [
+        f"output_dir: {json.dumps(str(output_root))}",
+        f"session_dir: {json.dumps(str(session_dir))}",
+    ]
+
+
+def _existing_ebook_meta_path(value: str) -> Path:
+    resolved = Path(value).expanduser()
+    if not resolved.exists():
+        raise RuntimeError(
+            f"Configured ebook_meta_path does not exist: {resolved}"
+        )
+    if not resolved.is_file():
+        raise RuntimeError(
+            f"Configured ebook_meta_path is not a file: {resolved}"
+        )
+    return resolved
+
+
+def _ensure_ebook_meta_executable(path: Path) -> None:
+    if os.name == "nt" or os.access(path, os.X_OK):
+        return
+    raise RuntimeError(f"Configured ebook_meta_path is not executable: {path}")
+
+
+def _validated_ebook_meta_path(value: object) -> Path | None:
+    ebook_meta_path = str(value or "").strip()
+    if not ebook_meta_path:
+        return None
+    resolved = _existing_ebook_meta_path(ebook_meta_path)
+    _ensure_ebook_meta_executable(resolved)
+    return resolved
 
 
 def _zentag_paths(
@@ -183,30 +242,12 @@ def _zentag_paths(
     config_path = Path(base_dir) / "tmp" / "zentag-auto.yaml"
     output_root.mkdir(parents=True, exist_ok=True)
     config_path.parent.mkdir(parents=True, exist_ok=True)
-    lines = [
-        f"output_dir: {json.dumps(str(output_root))}",
-        f"session_dir: {json.dumps(str(Path(base_dir) / 'tmp' / 'zentag-sessions'))}",
-    ]
-    ebook_meta_path = str(default_config.get("ebook_meta_path", "")).strip()
-    if ebook_meta_path:
-        resolved_ebook_meta_path = Path(ebook_meta_path).expanduser()
-        if not resolved_ebook_meta_path.exists():
-            raise RuntimeError(
-                f"Configured ebook_meta_path does not exist: {resolved_ebook_meta_path}"
-            )
-        if not resolved_ebook_meta_path.is_file():
-            raise RuntimeError(
-                f"Configured ebook_meta_path is not a file: {resolved_ebook_meta_path}"
-            )
-        if os.name != "nt" and not os.access(
-            resolved_ebook_meta_path, os.X_OK
-        ):
-            raise RuntimeError(
-                f"Configured ebook_meta_path is not executable: {resolved_ebook_meta_path}"
-            )
-        lines.append(
-            f"ebook_meta_path: {json.dumps(str(resolved_ebook_meta_path))}"
-        )
+    lines = _zentag_config_lines(output_root, base_dir)
+    ebook_meta_path = _validated_ebook_meta_path(
+        default_config.get("ebook_meta_path", "")
+    )
+    if ebook_meta_path is not None:
+        lines.append(f"ebook_meta_path: {json.dumps(str(ebook_meta_path))}")
     config_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return output_root, config_path
 
