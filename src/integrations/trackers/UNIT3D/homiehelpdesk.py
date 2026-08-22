@@ -100,47 +100,76 @@ class HomieHelpDesk(UNIT3D):
         return True
 
     @staticmethod
-    def _music_upload_data(meta: Meta) -> dict[str, str]:
-        """Build HomieHelpDesk's music-specific external-ID payload."""
-        release = (
+    def _music_release(meta: Meta) -> dict[str, Any]:
+        return (
             meta.music_release if isinstance(meta.music_release, dict) else {}
         )
-        external_ids = release.get("external_ids", {})
-        external_ids = external_ids if isinstance(external_ids, dict) else {}
 
-        musicbrainz = str(
-            external_ids.get("musicbrainz_release")
-            or external_ids.get("musicbrainz_release_group")
-            or ""
-        ).strip()
-        if re.fullmatch(
-            r"[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}",
-            musicbrainz,
-            re.IGNORECASE,
-        ):
+    @classmethod
+    def _music_external_ids(cls, meta: Meta) -> dict[str, Any]:
+        external_ids = cls._music_release(meta).get("external_ids", {})
+        return external_ids if isinstance(external_ids, dict) else {}
+
+    @classmethod
+    def _musicbrainz_reference(cls, meta: Meta) -> str:
+        external_ids = cls._music_external_ids(meta)
+        return cls._first_reference(
+            (
+                external_ids.get("musicbrainz_release"),
+                external_ids.get("musicbrainz_release_group"),
+            )
+        )
+
+    @staticmethod
+    def _valid_musicbrainz_reference(value: str) -> bool:
+        return bool(
+            re.fullmatch(
+                r"[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}",
+                value,
+                re.IGNORECASE,
+            )
+        )
+
+    @staticmethod
+    def _first_reference(values: tuple[object, ...]) -> str:
+        for value in values:
+            reference = str(value or "").strip()
+            if reference:
+                return reference
+        return ""
+
+    @classmethod
+    def _discogs_reference(cls, meta: Meta) -> str:
+        if not meta.music_discogs_enabled:
+            return ""
+        external_ids = cls._music_external_ids(meta)
+        return cls._first_reference(
+            (
+                external_ids.get("discogs_release_url"),
+                external_ids.get("discogs_release"),
+                meta.music_discogs_release_id,
+                meta.music_discogs_id,
+                external_ids.get("discogs_master_url"),
+                external_ids.get("discogs_master"),
+                meta.music_discogs_master_id,
+            )
+        )
+
+    @classmethod
+    def _music_upload_data(cls, meta: Meta) -> dict[str, str]:
+        """Build HomieHelpDesk's music-specific external-ID payload."""
+        musicbrainz = cls._musicbrainz_reference(meta)
+        if cls._valid_musicbrainz_reference(musicbrainz):
             return {
                 "music_exists_on_musicbrainz": "1",
                 "musicbrainz": musicbrainz,
             }
-
-        discogs = ""
-        if meta.music_discogs_enabled:
-            discogs = str(
-                external_ids.get("discogs_release_url")
-                or external_ids.get("discogs_release")
-                or meta.music_discogs_release_id
-                or meta.music_discogs_id
-                or external_ids.get("discogs_master_url")
-                or external_ids.get("discogs_master")
-                or meta.music_discogs_master_id
-                or ""
-            ).strip()
+        discogs = cls._discogs_reference(meta)
         if DiscogsEnricher.parse_reference(discogs):
             return {
                 "music_exists_on_discogs": "1",
                 "discogs": discogs,
             }
-
         return {}
 
     async def get_additional_data(self, meta: Meta) -> dict[str, str]:
@@ -148,14 +177,9 @@ class HomieHelpDesk(UNIT3D):
             return self._music_upload_data(meta)
         return {}
 
-    async def get_category_id(
-        self,
-        meta: Meta,
-        category: str = "",
-        reverse: bool = False,
-        mapping_only: bool = False,
-    ) -> dict[str, str]:
-        category_id = {
+    @staticmethod
+    def _category_mapping() -> dict[str, str]:
+        return {
             "MOVIE": "1",
             "TV": "2",
             "ANIME": "3",
@@ -169,34 +193,42 @@ class HomieHelpDesk(UNIT3D):
             "COMICS": "11",
             "MAGAZINE": "12",
         }
-        if mapping_only:
-            return category_id
-        if reverse:
-            return {v: k for k, v in category_id.items()}
 
-        resolved_category = category if category else meta.category
-        if resolved_category == "BOOK":
-            if meta.audiobook:
-                resolved_category = "AUDIOBOOK"
-            elif meta.comic:
-                resolved_category = "COMICS"
-            elif meta.manga:
-                resolved_category = "MANGA"
-            elif meta.magazine:
-                resolved_category = "MAGAZINE"
-            else:
-                resolved_category = "BOOKS"
+    @staticmethod
+    def _book_category(meta: Meta) -> str:
+        if meta.audiobook:
+            return "AUDIOBOOK"
+        if meta.comic:
+            return "COMICS"
+        if meta.manga:
+            return "MANGA"
+        if meta.magazine:
+            return "MAGAZINE"
+        return "BOOKS"
 
-        return {"category_id": category_id.get(resolved_category, "0")}
+    @classmethod
+    def _resolved_category(cls, meta: Meta, category: str) -> str:
+        selected = category if category else meta.category
+        return cls._book_category(meta) if selected == "BOOK" else selected
 
-    async def get_type_id(
+    async def get_category_id(
         self,
         meta: Meta,
-        type: str = "",
+        category: str = "",
         reverse: bool = False,
         mapping_only: bool = False,
     ) -> dict[str, str]:
-        type_id = {
+        category_id = self._category_mapping()
+        if mapping_only:
+            return category_id
+        if reverse:
+            return {value: key for key, value in category_id.items()}
+        resolved = self._resolved_category(meta, category)
+        return {"category_id": category_id.get(resolved, "0")}
+
+    @staticmethod
+    def _type_mapping() -> dict[str, str]:
+        return {
             "DISC": "1",
             "REMUX": "2",
             "ENCODE": "3",
@@ -228,49 +260,62 @@ class HomieHelpDesk(UNIT3D):
             "LINUX": "27",
             "CONSOLE": "28",
         }
-        if mapping_only:
-            return type_id
-        if reverse:
-            return {v: k for k, v in type_id.items()}
 
-        resolved_type = type if type else meta.type
-        if isinstance(resolved_type, str):
-            resolved_type = resolved_type.upper()
+    @staticmethod
+    def _normalized_type(value: object) -> str:
+        return str(value or "").upper()
 
-        if meta.category == "BOOK" and resolved_type not in type_id:
-            resolved_type = "OTHER"
+    @classmethod
+    def _music_type(cls, meta: Meta) -> str:
+        fields = cls._music_release(meta).get("fields", {})
+        fields = fields if isinstance(fields, dict) else {}
+        music_format = fields.get("format", {})
+        value = (
+            music_format.get("value", meta.format)
+            if isinstance(music_format, dict)
+            else meta.format
+        )
+        return cls._normalized_type(value)
 
+    @staticmethod
+    def _game_type(meta: Meta) -> str:
+        return "CONSOLE" if meta.console_game else meta.platform.upper()
+
+    @staticmethod
+    def _book_type(resolved: str, mapping: dict[str, str]) -> str:
+        return resolved if resolved in mapping else "OTHER"
+
+    @classmethod
+    def _resolved_type(
+        cls, meta: Meta, explicit_type: str, mapping: dict[str, str]
+    ) -> str:
+        resolved = cls._normalized_type(explicit_type or meta.type)
         if meta.category == "GAME":
-            resolved_type = (
-                "CONSOLE" if meta.console_game else meta.platform.upper()
-            )
-        elif meta.category == "MUSIC":
-            release = (
-                meta.music_release
-                if isinstance(meta.music_release, dict)
-                else {}
-            )
-            fields = release.get("fields", {})
-            music_format = (
-                fields.get("format", {}) if isinstance(fields, dict) else {}
-            )
-            resolved_type = (
-                music_format.get("value", meta.format)
-                if isinstance(music_format, dict)
-                else meta.format
-            )
-            resolved_type = str(resolved_type or "").upper()
+            return cls._game_type(meta)
+        if meta.category == "MUSIC":
+            return cls._music_type(meta)
+        if meta.category == "BOOK":
+            return cls._book_type(resolved, mapping)
+        return resolved
 
-        return {"type_id": type_id.get(str(resolved_type), "0")}
-
-    async def get_resolution_id(
+    async def get_type_id(
         self,
         meta: Meta,
-        resolution: str | None = None,
+        type: str = "",
         reverse: bool = False,
         mapping_only: bool = False,
     ) -> dict[str, str]:
-        resolution_id = {
+        type_id = self._type_mapping()
+        if mapping_only:
+            return type_id
+        if reverse:
+            return {value: key for key, value in type_id.items()}
+        resolved = self._resolved_type(meta, type, type_id)
+        return {"type_id": type_id.get(resolved, "0")}
+
+    @staticmethod
+    def _resolution_mapping() -> dict[str, str]:
+        return {
             "4320p": "1",
             "2160p": "2",
             "1440p": "3",
@@ -283,12 +328,18 @@ class HomieHelpDesk(UNIT3D):
             "480i": "9",
             "Other": "10",
         }
+
+    async def get_resolution_id(
+        self,
+        meta: Meta,
+        resolution: str | None = None,
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
+        resolution_id = self._resolution_mapping()
         if mapping_only:
             return resolution_id
         if reverse:
-            return {v: k for k, v in resolution_id.items()}
-        if resolution is not None:
-            return {"resolution_id": resolution_id.get(resolution, "10")}
-        meta_resolution = meta.resolution
-        resolved_id = resolution_id.get(meta_resolution, "10")
-        return {"resolution_id": resolved_id}
+            return {value: key for key, value in resolution_id.items()}
+        selected = meta.resolution if resolution is None else resolution
+        return {"resolution_id": resolution_id.get(selected, "10")}
