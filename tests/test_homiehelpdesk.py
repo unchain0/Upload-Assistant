@@ -15,9 +15,7 @@ def test_homiehelpdesk_music_upload_uses_musicbrainz_release_id() -> None:
         category="MUSIC",
         music_release={
             "external_ids": {
-                "musicbrainz_release": (
-                    "c0d17e85-3a36-4dc8-9a88-c188a5e78b0d"
-                )
+                "musicbrainz_release": ("c0d17e85-3a36-4dc8-9a88-c188a5e78b0d")
             }
         },
     )
