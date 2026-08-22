@@ -34,38 +34,40 @@ class ItaTorrents(UNIT3D):
         self.config: Config = config
         self.common = Common(config)
 
+    @staticmethod
+    def _basename_type_markers() -> tuple[tuple[str, str], ...]:
+        return (
+            ("dlmux", "DLMux"),
+            ("bdmux", "BDMux"),
+            ("webmux", "WEBMux"),
+            ("dvdmux", "DVDMux"),
+            ("bdrip", "BDRip"),
+        )
+
+    @classmethod
+    def _basename_type_name(cls, basename: str) -> str | None:
+        lower_name = basename.lower()
+        for marker, type_name in cls._basename_type_markers():
+            if marker in lower_name:
+                return type_name
+        return None
+
+    @staticmethod
+    def _fallback_type_name(meta: Meta) -> str | None:
+        return str(meta.type) if meta.type else None
+
     async def get_type_name(self, meta: Meta) -> str | None:
-        type_name: str | None = None
+        basename = str(meta.basename_no_ext or "")
+        detected = self._basename_type_name(basename) if basename else None
+        return (
+            detected
+            if detected is not None
+            else self._fallback_type_name(meta)
+        )
 
-        uuid_string = meta.basename_no_ext
-        if uuid_string:
-            lower_uuid = uuid_string.lower()
-
-            if "dlmux" in lower_uuid:
-                type_name = "DLMux"
-            elif "bdmux" in lower_uuid:
-                type_name = "BDMux"
-            elif "webmux" in lower_uuid:
-                type_name = "WEBMux"
-            elif "dvdmux" in lower_uuid:
-                type_name = "DVDMux"
-            elif "bdrip" in lower_uuid:
-                type_name = "BDRip"
-
-        if type_name is None:
-            type_value = meta.type
-            type_name = str(type_value) if type_value else None
-
-        return type_name
-
-    async def get_type_id(
-        self,
-        meta: Meta,
-        type: str | None = None,
-        reverse: bool = False,
-        mapping_only: bool = False,
-    ) -> dict[str, str]:
-        type_id_map = {
+    @staticmethod
+    def _type_id_mapping() -> dict[str, str]:
+        return {
             "DISC": "1",
             "REMUX": "2",
             "WEBDL": "4",
@@ -80,17 +82,28 @@ class ItaTorrents(UNIT3D):
             "DVDRIP": "24",
             "Cinema-MD": "14",
         }
+
+    async def _selected_type_name(
+        self, meta: Meta, explicit_type: str | None
+    ) -> str:
+        if explicit_type is not None:
+            return explicit_type
+        return await self.get_type_name(meta) or ""
+
+    async def get_type_id(
+        self,
+        meta: Meta,
+        type: str | None = None,
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
+        type_id_map = self._type_id_mapping()
         if mapping_only:
             return type_id_map
         if reverse:
-            return {v: k for k, v in type_id_map.items()}
-        if type is not None:
-            return {"type_id": type_id_map.get(type, "0")}
-
-        resolved_type = await self.get_type_name(meta)
-        type_id = type_id_map.get(resolved_type or "", "0")
-
-        return {"type_id": type_id}
+            return {value: key for key, value in type_id_map.items()}
+        selected = await self._selected_type_name(meta, type)
+        return {"type_id": type_id_map.get(selected, "0")}
 
     async def get_name(self, meta: Meta) -> dict[str, str]:
         type_name = await self.get_type_name(meta) or ""
@@ -192,20 +205,27 @@ class ItaTorrents(UNIT3D):
             .strip(),
         )
 
+    async def _ensure_languages(self, meta: Meta) -> None:
+        if meta.language_checked:
+            return
+        await languages_manager.process_desc_language(
+            meta, tracker=self.tracker
+        )
+
+    @staticmethod
+    def _audio_language_set(meta: Meta) -> set[str]:
+        value = meta.audio_languages
+        if not isinstance(value, list):
+            return set()
+        return {str(language) for language in value}
+
+    @staticmethod
+    def _dubs_label(audio_languages: set[str]) -> str:
+        return " ".join(language[:3].upper() for language in audio_languages)
+
     async def get_dubs(self, meta: Meta) -> str:
-        if not meta.language_checked:
-            await languages_manager.process_desc_language(
-                meta, tracker=self.tracker
-            )
-        dubs = ""
-        audio_languages_value = meta.audio_languages
-        audio_languages: set[str] = set()
-        if isinstance(audio_languages_value, list):
-            audio_languages_list = audio_languages_value
-            audio_languages = {str(lang) for lang in audio_languages_list}
-        if audio_languages:
-            dubs = " ".join(lang[:3].upper() for lang in audio_languages)
-        return dubs
+        await self._ensure_languages(meta)
+        return self._dubs_label(self._audio_language_set(meta))
 
     async def get_additional_checks(self, meta: Meta) -> bool:
         # From rules:
