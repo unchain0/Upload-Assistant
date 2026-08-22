@@ -1,4 +1,7 @@
 # Upload Assistant © 2026 Audionut & wastaken7 — Licensed under UAPL v1.0
+from __future__ import annotations
+
+import contextlib
 import json
 import re
 import time
@@ -27,13 +30,11 @@ _GAME_FIELDS = (
 async def _cached_token(token_file: str | Path) -> tuple[bool, Any]:
     if not token_file or not Path(token_file).exists():
         return False, None
-    try:
+    with contextlib.suppress(Exception):
         async with aiofiles.open(token_file, encoding="utf-8") as handle:
             cached = json.loads(await handle.read())
         if cached.get("expires_at", 0) > time.time() + 300:
             return True, cached.get("access_token")
-    except Exception:
-        pass
     return False, None
 
 
@@ -51,7 +52,7 @@ async def _save_token(
         await handle.write(json.dumps(payload))
 
 
-def _oauth_params(api: "IGDBAPI") -> dict[str, str]:
+def _oauth_params(api: IGDBAPI) -> dict[str, str]:
     return {
         "client_id": api.client_id,
         "client_secret": api.client_secret,
@@ -59,7 +60,7 @@ def _oauth_params(api: "IGDBAPI") -> dict[str, str]:
     }
 
 
-async def _request_access_token(api: "IGDBAPI") -> Any:
+async def _request_access_token(api: IGDBAPI) -> Any:
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(_OAUTH_URL, params=_oauth_params(api))
@@ -79,7 +80,7 @@ async def _request_access_token(api: "IGDBAPI") -> Any:
         return None
 
 
-def _api_headers(api: "IGDBAPI", token: str) -> dict[str, str]:
+def _api_headers(api: IGDBAPI, token: str) -> dict[str, str]:
     return {
         "Client-ID": api.client_id,
         "Authorization": f"Bearer {token}",
@@ -88,9 +89,7 @@ def _api_headers(api: "IGDBAPI", token: str) -> dict[str, str]:
     }
 
 
-async def _post_games(
-    api: "IGDBAPI", token: str, query: str
-) -> httpx.Response:
+async def _post_games(api: IGDBAPI, token: str, query: str) -> httpx.Response:
     async with httpx.AsyncClient(timeout=10.0) as client:
         return await client.post(
             _GAMES_URL,
@@ -152,7 +151,7 @@ async def _search_response(
 
 
 async def _remote_search(
-    api: "IGDBAPI",
+    api: IGDBAPI,
     cache: Any,
     key: str,
     title: str,
@@ -195,7 +194,7 @@ async def _single_response(
 
 
 async def _remote_single_game(
-    api: "IGDBAPI",
+    api: IGDBAPI,
     cache: Any,
     resource: str,
     key: str,
@@ -227,7 +226,7 @@ def _numeric_id(value: str, label: str) -> str | None:
 
 
 async def _fetch_single_game(
-    api: "IGDBAPI",
+    api: IGDBAPI,
     resource: str,
     key: str,
     query: str,
