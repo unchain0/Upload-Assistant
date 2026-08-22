@@ -25,229 +25,216 @@ class PTCafe(NEXUSPHP):
     def __init__(self, config: Config) -> None:
         super().__init__(config, "PTCAFE")
 
+    @staticmethod
+    def _metadata_text(values: list[str]) -> str:
+        return ", ".join(values).lower()
+
+    @staticmethod
+    def _tv_show_keywords() -> tuple[str, ...]:
+        return (
+            "award show",
+            "competition",
+            "game show",
+            "music show",
+            "performance",
+            "reality television",
+            "reality tv",
+            "reality",
+            "stand-up",
+            "talk show",
+            "tv show",
+            "variety",
+        )
+
+    @classmethod
+    def _is_tv_show_genre(cls, genres: str) -> bool:
+        return any(
+            re.search(
+                rf"(^|,\s*){re.escape(keyword)}(\s*,|$)",
+                genres,
+                re.IGNORECASE,
+            )
+            for keyword in cls._tv_show_keywords()
+        )
+
+    @staticmethod
+    def _themed_category(meta: Meta, genres: str, keywords: str) -> int | None:
+        combined = f"{genres}, {keywords}"
+        if "documentary" in combined:
+            return 404
+        if meta.anime or "animation" in combined:
+            return 405
+        return None
+
     def get_category(self, meta: Meta) -> int:
-        animations = 405
-        documentaries = 404
-        movies = 401
-        tv_series = 402
-        tv_shows = 403
-
-        category = (meta.category).upper()
-        genres = ", ".join(meta.genres).lower()
-        keywords = ", ".join(meta.keywords).lower()
-
-        if "documentary" in genres or "documentary" in keywords:
-            return documentaries
-        if meta.anime or "animation" in genres or "animation" in keywords:
-            return animations
-
-        if category == "MOVIE":
-            return movies
+        category = str(meta.category).upper()
+        genres = self._metadata_text(meta.genres)
+        keywords = self._metadata_text(meta.keywords)
+        themed = self._themed_category(meta, genres, keywords)
+        if themed is not None:
+            return themed
         if category == "TV":
-            game_show_keywords = [
-                "award show",
-                "competition",
-                "game show",
-                "music show",
-                "performance",
-                "reality television",
-                "reality tv",
-                "reality",
-                "stand-up",
-                "talk show",
-                "tv show",
-                "variety",
-            ]
-            if any(
-                re.search(
-                    rf"(^|,\s*){re.escape(keyword)}(\s*,|$)",
-                    genres,
-                    re.IGNORECASE,
-                )
-                for keyword in game_show_keywords
-            ):
-                return tv_shows
-            return tv_series
+            return 403 if self._is_tv_show_genre(genres) else 402
+        return 401
 
-        return movies
+    @staticmethod
+    def _western_regions() -> frozenset[str]:
+        return frozenset(
+            (
+                "AG",
+                "AI",
+                "AR",
+                "AW",
+                "BB",
+                "BL",
+                "BM",
+                "BO",
+                "BQ",
+                "BR",
+                "BS",
+                "BV",
+                "BZ",
+                "CA",
+                "CL",
+                "CO",
+                "CR",
+                "CU",
+                "CW",
+                "DM",
+                "DO",
+                "EC",
+                "FK",
+                "GD",
+                "GF",
+                "GL",
+                "GP",
+                "GS",
+                "GT",
+                "GY",
+                "HN",
+                "HT",
+                "JM",
+                "KN",
+                "KY",
+                "LC",
+                "MF",
+                "MQ",
+                "MS",
+                "MX",
+                "NI",
+                "PA",
+                "PE",
+                "PM",
+                "PR",
+                "PY",
+                "SR",
+                "SV",
+                "SX",
+                "TC",
+                "TT",
+                "US",
+                "UY",
+                "VC",
+                "VE",
+                "VG",
+                "VI",
+                "AD",
+                "AL",
+                "AT",
+                "AX",
+                "BA",
+                "BE",
+                "BG",
+                "BY",
+                "CH",
+                "CZ",
+                "DE",
+                "DK",
+                "EE",
+                "ES",
+                "FI",
+                "FO",
+                "FR",
+                "GB",
+                "GG",
+                "GI",
+                "GR",
+                "HR",
+                "HU",
+                "IE",
+                "IM",
+                "IS",
+                "IT",
+                "JE",
+                "LI",
+                "LT",
+                "LU",
+                "LV",
+                "MC",
+                "MD",
+                "ME",
+                "MK",
+                "MT",
+                "NL",
+                "NO",
+                "PL",
+                "PT",
+                "RO",
+                "RS",
+                "RU",
+                "SE",
+                "SI",
+                "SJ",
+                "SK",
+                "SM",
+                "SU",
+                "UA",
+                "VA",
+                "XC",
+            )
+        )
 
     def get_region(self, meta: Meta) -> int:
-        america = [
-            "AG",
-            "AI",
-            "AR",
-            "AW",
-            "BB",
-            "BL",
-            "BM",
-            "BO",
-            "BQ",
-            "BR",
-            "BS",
-            "BV",
-            "BZ",
-            "CA",
-            "CL",
-            "CO",
-            "CR",
-            "CU",
-            "CW",
-            "DM",
-            "DO",
-            "EC",
-            "FK",
-            "GD",
-            "GF",
-            "GL",
-            "GP",
-            "GS",
-            "GT",
-            "GY",
-            "HN",
-            "HT",
-            "JM",
-            "KN",
-            "KY",
-            "LC",
-            "MF",
-            "MQ",
-            "MS",
-            "MX",
-            "NI",
-            "PA",
-            "PE",
-            "PM",
-            "PR",
-            "PY",
-            "SR",
-            "SV",
-            "SX",
-            "TC",
-            "TT",
-            "US",
-            "UY",
-            "VC",
-            "VE",
-            "VG",
-            "VI",
-        ]
-
-        europe = [
-            "AD",
-            "AL",
-            "AT",
-            "AX",
-            "BA",
-            "BE",
-            "BG",
-            "BY",
-            "CH",
-            "CZ",
-            "DE",
-            "DK",
-            "EE",
-            "ES",
-            "FI",
-            "FO",
-            "FR",
-            "GB",
-            "GG",
-            "GI",
-            "GR",
-            "HR",
-            "HU",
-            "IE",
-            "IM",
-            "IS",
-            "IT",
-            "JE",
-            "LI",
-            "LT",
-            "LU",
-            "LV",
-            "MC",
-            "MD",
-            "ME",
-            "MK",
-            "MT",
-            "NL",
-            "NO",
-            "PL",
-            "PT",
-            "RO",
-            "RS",
-            "RU",
-            "SE",
-            "SI",
-            "SJ",
-            "SK",
-            "SM",
-            "SU",
-            "UA",
-            "VA",
-            "XC",
-        ]
-
         country = meta.origin_country[0].upper()
-        if country in america or country in europe:
+        if country in self._western_regions():
             return 3
-        if country == "CN":
-            return 1
-        if country == "TW" or country == "HK":
-            return 2
-        if country == "JP":
-            return 4
-        if country == "KR":
-            return 5
-        if country == "IN":
-            return 6
+        return {
+            "CN": 1,
+            "TW": 2,
+            "HK": 2,
+            "JP": 4,
+            "KR": 5,
+            "IN": 6,
+        }.get(country, 7)
 
+    @staticmethod
+    def _bdmv_type_id(meta: Meta) -> int:
+        uhd = str(meta.resolution).lower() == "2160p"
+        if meta.diy_disc:
+            return 2 if uhd else 5
+        return 1 if uhd else 4
+
+    @classmethod
+    def _disc_type_id(cls, meta: Meta) -> int | None:
+        is_disc = str(meta.is_disc).lower()
+        if is_disc == "bdmv":
+            return cls._bdmv_type_id(meta)
+        return 10 if "dvd" in is_disc else None
+
+    @staticmethod
+    def _file_type_id(meta: Meta) -> int:
+        release_type = str(meta.type).lower()
+        if release_type == "remux":
+            return 3 if str(meta.resolution).lower() == "2160p" else 6
+        if release_type in {"webdl", "webrip"}:
+            return 8
+        if "tv" in release_type:
+            return 9
         return 7
 
     def get_type(self, meta: Meta) -> int:
-        blu_ray = 4
-        blu_ray_diy = 5
-        dvd = 10
-        encode = 7
-        remux = 6
-        tv = 9
-        uhd_diy = 2
-        uhd_master_disc = 1
-        uhd_remux = 3
-        web_dl = 8
-
-        is_disc = (meta.is_disc).lower()
-        is_diy = meta.diy_disc
-        mtype = str(meta.type).lower()
-        resolution = meta.resolution.lower()
-
-        if is_disc == "bdmv":
-            if resolution == "2160p":
-                if is_diy:
-                    return uhd_diy
-                return uhd_master_disc
-            if is_diy:
-                return blu_ray_diy
-            return blu_ray
-
-        if "dvd" in is_disc:
-            return dvd
-
-        if mtype == "remux":
-            if resolution == "2160p":
-                return uhd_remux
-            return remux
-
-        if mtype in ("webdl", "webrip"):
-            return web_dl
-
-        if "tv" in mtype:
-            return tv
-
-        if mtype == "encode":
-            return encode
-
-        return encode
+        disc_type = self._disc_type_id(meta)
+        return disc_type if disc_type is not None else self._file_type_id(meta)
 
     def get_codec(self, meta: Meta) -> int:
         codec = meta.video_codec.lower()
@@ -270,60 +257,49 @@ class PTCafe(NEXUSPHP):
             11,
         )
 
+    @staticmethod
+    def _resolution_rules() -> tuple[tuple[int, str], ...]:
+        return (
+            (3, "1080"),
+            (4, "720"),
+            (2, "2160"),
+            (1, "4320"),
+        )
+
     def get_resolution(self, meta: Meta) -> int:
-        resolution = meta.resolution.lower()
+        resolution = str(meta.resolution).lower()
+        for resolution_id, token in self._resolution_rules():
+            if token in resolution:
+                return resolution_id
+        return 5 if meta.sd else 6
 
-        if "1080" in resolution:
-            return 3
-        if "720" in resolution:
-            return 4
-        if meta.sd:
-            return 5
-        if "2160" in resolution:
-            return 2
-        if "4320" in resolution:
-            return 1
-
-        return 6
+    @staticmethod
+    def _audio_codec_rules() -> tuple[tuple[int, str], ...]:
+        return (
+            (1, "dts:x 7.1"),
+            (2, "hd ma"),
+            (3, "hd hr"),
+            (4, "dts-hd"),
+            (5, "dts:x"),
+            (6, "lpcm"),
+            (7, "dd"),
+            (8, "atmos"),
+            (9, "aac"),
+            (10, "true"),
+            (11, "dts"),
+            (12, "flac"),
+            (13, "ape"),
+            (14, "mp3"),
+            (15, "wav"),
+            (16, "opus"),
+            (17, "ogg"),
+        )
 
     def get_audio_codec(self, meta: Meta) -> int:
-        audio_codec = meta.audio.lower()
-
-        if "dts:x 7.1" in audio_codec:
-            return 1
-        if "hd ma" in audio_codec:
-            return 2
-        if "hd hr" in audio_codec:
-            return 3
-        if "dts-hd" in audio_codec:
-            return 4
-        if "dts:x" in audio_codec:
-            return 5
-        if "lpcm" in audio_codec:
-            return 6
-        if "dd" in audio_codec:
-            return 7
-        if "atmos" in audio_codec:
-            return 8
-        if "aac" in audio_codec:
-            return 9
-        if "true" in audio_codec:
-            return 10
-        if "dts" in audio_codec:
-            return 11
-        if "flac" in audio_codec:
-            return 12
-        if "ape" in audio_codec:
-            return 13
-        if "mp3" in audio_codec:
-            return 14
-        if "wav" in audio_codec:
-            return 15
-        if "opus" in audio_codec:
-            return 16
-        if "ogg" in audio_codec:
-            return 17
-
+        audio_codec = str(meta.audio).lower()
+        for codec_id, token in self._audio_codec_rules():
+            if token in audio_codec:
+                return codec_id
         return 18
 
     def get_group_tag(self, meta: Meta) -> int:
@@ -362,43 +338,31 @@ class PTCafe(NEXUSPHP):
         group = meta.tag.lower() if meta.tag else ""
         return group_tag.get(group, 30)
 
-    def get_checkboxes(self, meta: Meta) -> list[str]:
-        cantonese_audio = 8
-        chinese_audio = 7
-        chinese_subtitle = 9
-        diy = 13
-        dv = 11
-        hdr = 12
-        reposting_prohibited = 5
+    @staticmethod
+    def _has_chinese(values: list[str] | str) -> bool:
+        return "Chinese" in values or "Mandarin" in values
 
+    @classmethod
+    def _checkbox_options(cls, meta: Meta) -> tuple[tuple[bool, int], ...]:
         audio_tracks = meta.audio_languages or []
-        mhdr = meta.hdr
         subtitle_tracks = meta.subtitle_languages or []
+        hdr = str(meta.hdr).upper()
+        return (
+            (bool(meta.exclusive), 5),
+            (cls._has_chinese(audio_tracks), 7),
+            ("Cantonese" in audio_tracks, 8),
+            (cls._has_chinese(subtitle_tracks), 9),
+            ("HDR" in hdr, 12),
+            ("DV" in hdr, 11),
+            (bool(meta.diy_disc), 13),
+        )
 
-        checkboxes = []
-
-        if meta.exclusive:
-            checkboxes.append(str(reposting_prohibited))
-
-        if "Chinese" in audio_tracks or "Mandarin" in audio_tracks:
-            checkboxes.append(str(chinese_audio))
-
-        if "Cantonese" in audio_tracks:
-            checkboxes.append(str(cantonese_audio))
-
-        if "Chinese" in subtitle_tracks or "Mandarin" in subtitle_tracks:
-            checkboxes.append(str(chinese_subtitle))
-
-        if "HDR" in mhdr.upper():
-            checkboxes.append(str(hdr))
-
-        if "DV" in mhdr.upper():
-            checkboxes.append(str(dv))
-
-        if meta.diy_disc:
-            checkboxes.append(str(diy))
-
-        return checkboxes
+    def get_checkboxes(self, meta: Meta) -> list[str]:
+        return [
+            str(checkbox_id)
+            for enabled, checkbox_id in self._checkbox_options(meta)
+            if enabled
+        ]
 
     def get_douban_url(self, meta: Meta) -> str:
         _ = meta
