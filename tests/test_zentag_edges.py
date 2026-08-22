@@ -533,7 +533,7 @@ def test_remaining_refactor_process_edges(
         AsyncMock(return_value=timed_out),
     )
 
-    async def fail_wait_for(awaitable: object, timeout: float) -> object:
+    async def fail_wait_for(awaitable: object, _timeout: float) -> object:
         close = getattr(awaitable, "close", None)
         if callable(close):
             close()
@@ -714,7 +714,7 @@ def test_run_process_success_failure_and_transform_cleanup(
     assert failure.killed
 
     class FailingReader(Reader):
-        async def read(self, size: int = -1) -> bytes:
+        async def read(self, _size: int = -1) -> bytes:
             raise RuntimeError("read failed")
 
     transform = Process(stderr=b"warning", code=None)
