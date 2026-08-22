@@ -37,22 +37,29 @@ class ReelFlix(UNIT3D):
             meta, self.tracker
         )
 
-    async def get_name(self, meta: Meta) -> dict[str, str]:
-        rf_name = meta.name
-        tag_value = meta.tag or ""
+    @staticmethod
+    def _invalid_group_tags() -> tuple[str, ...]:
+        return ("nogrp", "nogroup", "unknown", "-unk-")
+
+    @classmethod
+    def _needs_no_group(cls, tag_value: str) -> bool:
+        if not tag_value:
+            return True
         tag_lower = tag_value.lower()
-        invalid_tags = ["nogrp", "nogroup", "unknown", "-unk-"]
+        return any(tag in tag_lower for tag in cls._invalid_group_tags())
 
-        if tag_value == "" or any(
-            invalid_tag in tag_lower for invalid_tag in invalid_tags
-        ):
-            for invalid_tag in invalid_tags:
-                rf_name = re.sub(
-                    f"-{invalid_tag}", "", rf_name, flags=re.IGNORECASE
-                )
-            rf_name = f"{rf_name}-NoGroup"
+    @classmethod
+    def _without_invalid_group_tags(cls, name: str) -> str:
+        for invalid_tag in cls._invalid_group_tags():
+            name = re.sub(f"-{invalid_tag}", "", name, flags=re.IGNORECASE)
+        return name
 
-        return {"name": rf_name}
+    async def get_name(self, meta: Meta) -> dict[str, str]:
+        tag_value = meta.tag or ""
+        if not self._needs_no_group(tag_value):
+            return {"name": meta.name}
+        name = self._without_invalid_group_tags(meta.name)
+        return {"name": f"{name}-NoGroup"}
 
     async def get_type_id(
         self,
