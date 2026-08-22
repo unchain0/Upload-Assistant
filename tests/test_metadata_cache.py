@@ -125,4 +125,6 @@ def test_metadata_cache_refactor_helper_edges(tmp_path):
         tmp_path,
         {"DEFAULT": "invalid"},
     )
-    assert tracker_cache.root == tmp_path / "data" / "cache" / "tracker_metadata"
+    assert (
+        tracker_cache.root == tmp_path / "data" / "cache" / "tracker_metadata"
+    )
