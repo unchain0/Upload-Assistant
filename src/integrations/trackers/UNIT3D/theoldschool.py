@@ -40,6 +40,33 @@ class TheOldSchool(UNIT3D):
         self.config = config
         self.common = Common(config)
 
+    @staticmethod
+    def _is_subtitled_release(meta: Meta) -> bool:
+        tags_lower = meta.tag.lower() if meta.tag else ""
+        return "vostfr" in tags_lower or "subfrench" in tags_lower
+
+    @staticmethod
+    def _category_mapping(subtitled: bool) -> dict[str, str]:
+        return (
+            {"MOVIE": "6", "TV": "7"}
+            if subtitled
+            else {"MOVIE": "1", "TV": "2"}
+        )
+
+    @staticmethod
+    def _pack_category_id(meta: Meta, subtitled: bool) -> str | None:
+        if meta.category != "TV" or not meta.tv_pack:
+            return None
+        return "9" if subtitled else "8"
+
+    @classmethod
+    def _category_value(cls, meta: Meta) -> str:
+        subtitled = cls._is_subtitled_release(meta)
+        pack_category = cls._pack_category_id(meta, subtitled)
+        if pack_category is not None:
+            return pack_category
+        return cls._category_mapping(subtitled).get(meta.category, "0")
+
     async def get_category_id(
         self,
         meta: Meta,
@@ -48,20 +75,7 @@ class TheOldSchool(UNIT3D):
         mapping_only: bool = False,
     ) -> dict[str, str]:
         _ = (category, reverse, mapping_only)
-        tags_lower = meta.tag.lower() if meta.tag else ""
-        if "vostfr" in tags_lower or "subfrench" in tags_lower:
-            category_id = (
-                "9"
-                if meta.category == "TV" and meta.tv_pack
-                else {"MOVIE": "6", "TV": "7"}.get(meta.category, "0")
-            )
-        else:
-            category_id = (
-                "8"
-                if meta.category == "TV" and meta.tv_pack
-                else {"MOVIE": "1", "TV": "2"}.get(meta.category, "0")
-            )
-        return {"category_id": category_id}
+        return {"category_id": self._category_value(meta)}
 
     async def get_type_id(
         self,
@@ -86,45 +100,55 @@ class TheOldSchool(UNIT3D):
             }.get(meta.type or "", "0")
         return {"type_id": type_id}
 
-    async def get_name(self, meta: Meta) -> dict[str, str]:
+    @staticmethod
+    def _clean_non_scene_name(name: str) -> str:
+        replacements = {
+            ".mkv": "",
+            ".mp4": "",
+            ".torrent": "",
+            " ": ".",
+        }
+        for old, new in replacements.items():
+            name = name.replace(old, new)
+        return name
+
+    @classmethod
+    def _base_release_name(cls, meta: Meta) -> str:
         is_scene = meta.scene
-        base_name: str = meta.scene_name if is_scene else meta.basename_no_ext
+        name = meta.scene_name if is_scene else meta.basename_no_ext
+        return cls._clean_non_scene_name(name) if is_scene is False else name
 
-        if is_scene is False:
-            replacements = {
-                ".mkv": "",
-                ".mp4": "",
-                ".torrent": "",
-                " ": ".",
-            }
+    def _announce_url(self) -> str:
+        tracker_config = self.config["TRACKERS"].get(self.tracker, {})
+        return str(
+            tracker_config.get("announce_url", "https://fake.tracker")
+        ).strip()
 
-            for old, new in replacements.items():
-                base_name = base_name.replace(old, new)
-
-        # Hook into this function for torrent file recreation if needed
-        if meta.keep_nfo:
-            tracker_config = self.config["TRACKERS"].get(self.tracker, {})
-            tracker_url = str(
-                tracker_config.get("announce_url", "https://fake.tracker")
-            ).strip()
-            torrent_create = f"[{self.tracker}]"
-            try:
-                cooldown = int(
-                    self.config.get("DEFAULT", {}).get("rehash_cooldown", 0)
-                    or 0
-                )
-            except ValueError, TypeError:
-                cooldown = 0
-            if cooldown > 0:
-                await asyncio.sleep(
-                    cooldown
-                )  # Small cooldown before rehashing
-
-            await TorrentCreator.create_torrent(
-                meta, str(meta.path), torrent_create, tracker_url=tracker_url
+    def _rehash_cooldown(self) -> int:
+        try:
+            return int(
+                self.config.get("DEFAULT", {}).get("rehash_cooldown", 0) or 0
             )
+        except ValueError, TypeError:
+            return 0
 
-        return {"name": base_name}
+    async def _rehash_if_needed(self, meta: Meta) -> None:
+        if not meta.keep_nfo:
+            return
+        cooldown = self._rehash_cooldown()
+        if cooldown > 0:
+            await asyncio.sleep(cooldown)
+        await TorrentCreator.create_torrent(
+            meta,
+            str(meta.path),
+            f"[{self.tracker}]",
+            tracker_url=self._announce_url(),
+        )
+
+    async def get_name(self, meta: Meta) -> dict[str, str]:
+        name = self._base_release_name(meta)
+        await self._rehash_if_needed(meta)
+        return {"name": name}
 
     async def get_additional_checks(self, meta: Meta) -> bool:
         # Check language requirements: must be French audio OR original audio with French subtitles
