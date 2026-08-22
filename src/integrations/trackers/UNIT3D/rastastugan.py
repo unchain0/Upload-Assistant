@@ -59,14 +59,9 @@ class Rastastugan(UNIT3D):
             check_subtitle=True,
         )
 
-    async def get_category_id(
-        self,
-        meta: Meta,
-        category: str = "",
-        reverse: bool = False,
-        mapping_only: bool = False,
-    ) -> dict[str, str]:
-        category_id = {
+    @staticmethod
+    def _category_mapping() -> dict[str, str]:
+        return {
             "MOVIE": "1",
             "TV": "2",
             "MUSIC": "3",
@@ -74,27 +69,31 @@ class Rastastugan(UNIT3D):
             "BOOK": "8",
             "GAME": "5",
         }
-        if mapping_only:
-            return category_id
-        if reverse:
-            return {v: k for k, v in category_id.items()}
-        if category:
-            return {"category_id": category_id.get(category, "0")}
-        meta_category = meta.category
-        if meta.audiobook:
-            meta_category = "AUDIOBOOK"
-        resolved_id = category_id.get(meta_category, "0")
-        return {"category_id": resolved_id}
 
-    async def get_type_id(
+    @staticmethod
+    def _selected_category(meta: Meta, category: str) -> str:
+        if category:
+            return category
+        return "AUDIOBOOK" if meta.audiobook else meta.category
+
+    async def get_category_id(
         self,
         meta: Meta,
-        type: str = "",
+        category: str = "",
         reverse: bool = False,
         mapping_only: bool = False,
     ) -> dict[str, str]:
-        type_id = {
-            # Video
+        category_id = self._category_mapping()
+        if mapping_only:
+            return category_id
+        if reverse:
+            return {value: key for key, value in category_id.items()}
+        selected = self._selected_category(meta, category)
+        return {"category_id": category_id.get(selected, "0")}
+
+    @staticmethod
+    def _type_mapping() -> dict[str, str]:
+        return {
             "DISC": "1",
             "REMUX": "2",
             "WEBDL": "4",
@@ -103,55 +102,90 @@ class Rastastugan(UNIT3D):
             "ENCODE": "3",
             "DVDRIP": "3",
             "CAM": "13",
-            # Audio
             "FLAC": "7",
             "MP3": "8",
             "M4A": "14",
             "M4B": "20",
-            # Game platforms / types
             "MAC": "9",
             "WINDOWS": "10",
             "CONSOLE": "11",
             "LINUX": "18",
-            # Book formats
             "EPUB": "15",
             "PDF": "16",
             "MOBI": "17",
             "STL": "21",
-            # Other
             "OTHER": "19",
         }
+
+    @staticmethod
+    def _normalized_type(value: object) -> str:
+        return str(value or "").upper().strip().lstrip(".")
+
+    @staticmethod
+    def _windows_game_platform(platform: str) -> bool:
+        return "windows" in platform or "pc" in platform
+
+    @staticmethod
+    def _named_game_platform_type_id(platform: str) -> str | None:
+        if "mac" in platform:
+            return "9"
+        if "linux" in platform:
+            return "18"
+        return None
+
+    @classmethod
+    def _game_platform_type_id(cls, meta: Meta) -> str | None:
+        platform = meta.platform.lower()
+        named_type = cls._named_game_platform_type_id(platform)
+        if named_type is not None:
+            return named_type
+        if cls._windows_game_platform(platform):
+            return "10"
+        return "11" if meta.console_game else None
+
+    @classmethod
+    def _game_type_id(
+        cls, meta: Meta, type_id: dict[str, str], meta_type: str
+    ) -> str:
+        platform_type = cls._game_platform_type_id(meta)
+        if platform_type is not None:
+            return platform_type
+        return type_id.get(meta_type, "19")
+
+    @staticmethod
+    def _book_type_id(resolved_id: str) -> str:
+        return "19" if resolved_id == "0" else resolved_id
+
+    @classmethod
+    def _category_type_id(
+        cls,
+        meta: Meta,
+        type_id: dict[str, str],
+        meta_type: str,
+    ) -> str:
+        resolved_id = type_id.get(meta_type, "0")
+        if meta.category == "MUSIC":
+            return type_id.get(meta.format.upper(), "19")
+        if meta.category == "GAME":
+            return cls._game_type_id(meta, type_id, meta_type)
+        if meta.category in ("BOOK", "AUDIOBOOK"):
+            return cls._book_type_id(resolved_id)
+        return resolved_id
+
+    async def get_type_id(
+        self,
+        meta: Meta,
+        type: str = "",
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
+        type_id = self._type_mapping()
         if mapping_only:
             return type_id
         if reverse:
-            return {v: k for k, v in type_id.items()}
+            return {value: key for key, value in type_id.items()}
         if type:
-            resolved_type = type.upper().strip()
+            resolved_type = self._normalized_type(type)
             return {"type_id": type_id.get(resolved_type, "0")}
-        category = meta.category
-        meta_type = meta.type
-        if isinstance(meta_type, str):
-            meta_type = meta_type.upper().strip().lstrip(".")
-
-        resolved_id = type_id.get(meta_type or "", "0")
-
-        if category == "MUSIC":
-            resolved_id = type_id.get(meta.format.upper(), "19")
-        elif category == "GAME":
-            platform = meta.platform.lower()
-            if "mac" in platform:
-                resolved_id = "9"
-            elif "linux" in platform:
-                resolved_id = "18"
-            elif any(word in platform for word in ["windows", "pc"]):
-                resolved_id = "10"
-            elif meta.console_game:
-                resolved_id = "11"
-            elif meta_type in type_id:
-                resolved_id = type_id[meta_type]
-            else:
-                resolved_id = "19"
-        elif category in ("BOOK", "AUDIOBOOK") and resolved_id == "0":
-            resolved_id = "19"
-
-        return {"type_id": resolved_id}
+        meta_type = self._normalized_type(meta.type)
+        return {"type_id": self._category_type_id(meta, type_id, meta_type)}
