@@ -40,18 +40,34 @@ def ensure_temp_root(base_dir: str | Path) -> Path:
     return path
 
 
+def _release_id_is_path_alias(value: str) -> bool:
+    return value in {".", ".."}
+
+
+def _release_id_has_separator_or_nul(value: str) -> bool:
+    return any(token in value for token in ("\x00", "/", "\\"))
+
+
+def _release_id_has_windows_drive(value: str) -> bool:
+    return bool(PureWindowsPath(value).drive)
+
+
+def _release_id_is_unsafe(value: str) -> bool:
+    return any(
+        (
+            _release_id_is_path_alias(value),
+            _release_id_has_separator_or_nul(value),
+            _release_id_has_windows_drive(value),
+        )
+    )
+
+
 def _safe_release_id(release_id: str) -> str:
     """Validate that a release identifier is one filesystem path component."""
     value = str(release_id)
     if not value:
         return "release-pending"
-    if (
-        value in {".", ".."}
-        or "\x00" in value
-        or "/" in value
-        or "\\" in value
-        or PureWindowsPath(value).drive
-    ):
+    if _release_id_is_unsafe(value):
         raise ValueError(
             f"Release id must be a single safe path component: {value!r}"
         )
