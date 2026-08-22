@@ -10,19 +10,19 @@ from pathlib import Path
 CODE_DIR = Path(__file__).resolve().parents[3]
 
 
-def _default_data_dir() -> Path:
+def _configured_data_dir() -> Path | None:
     override = os.environ.get("UA_DATA_DIR", "").strip()
-    if override:
-        return Path(override).expanduser()
-    if os.name == "nt":
-        return (
-            Path(
-                os.environ.get(
-                    "LOCALAPPDATA", Path.home() / "AppData" / "Local"
-                )
-            )
-            / "Upload-Assistant"
-        )
+    return Path(override).expanduser() if override else None
+
+
+def _windows_data_dir() -> Path:
+    local_app_data = os.environ.get(
+        "LOCALAPPDATA", Path.home() / "AppData" / "Local"
+    )
+    return Path(local_app_data) / "Upload-Assistant"
+
+
+def _unix_data_dir() -> Path:
     xdg_data_home = os.environ.get("XDG_DATA_HOME", "").strip()
     base = (
         Path(xdg_data_home).expanduser()
@@ -31,9 +31,14 @@ def _default_data_dir() -> Path:
     )
     primary = base / "Upload-Assistant"
     legacy = base / "upload-assistant"
-    if not primary.exists() and legacy.exists():
-        return legacy
-    return primary
+    return legacy if not primary.exists() and legacy.exists() else primary
+
+
+def _default_data_dir() -> Path:
+    override = _configured_data_dir()
+    if override is not None:
+        return override
+    return _windows_data_dir() if os.name == "nt" else _unix_data_dir()
 
 
 STATE_DIR = _default_data_dir()
