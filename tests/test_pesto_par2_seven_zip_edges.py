@@ -217,6 +217,9 @@ def test_seven_zip_unsupported_cache_windows_linux_duplicate_and_failure(
     assert asyncio.run(
         seven_zip.SevenZipBinaryManager.ensure_7z_binary(tmp_path)
     ) == str(binary)
+    assert not seven_zip._seven_zip_installation_current(
+        "linux", target / "missing-7zz", marker, [marker]
+    )
 
     binary.unlink()
     marker.unlink()
