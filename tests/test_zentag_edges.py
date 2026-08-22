@@ -57,6 +57,11 @@ class Process:
     async def wait(self) -> int:
         return int(self.returncode or 0)
 
+    async def communicate(self) -> tuple[bytes, bytes]:
+        stdout = await self.stdout.read() if self.stdout is not None else b""
+        stderr = await self.stderr.read() if self.stderr is not None else b""
+        return stdout, stderr
+
     def kill(self) -> None:
         self.killed = True
         self.returncode = -9
@@ -480,3 +485,292 @@ def test_refactor_helper_coverage_matrix_edges(tmp_path: Path) -> None:
     inside = output_root / "book.m4b"
     inside.write_bytes(b"audio")
     assert zentag._written_path(f"Wrote {inside}", output_root) == inside
+
+
+def test_remaining_refactor_eligibility_and_value_edges(
+    tmp_path: Path,
+) -> None:
+    m4b = tmp_path / "book.m4b"
+    m4b.write_bytes(b"audio")
+    epub = tmp_path / "book.epub"
+    epub.write_bytes(b"book")
+    config = {"DEFAULT": {"auto_zentag": True}}
+
+    assert zentag.should_prepare_zenith_audiobook(_meta(m4b), config)
+    ebook_meta = _meta(epub, audiobook=False)
+    assert zentag._ebook_source(ebook_meta) == epub.resolve()
+    assert zentag.should_prepare_zenith_ebook(ebook_meta, config)
+
+    command = ["zentag"]
+    zentag._append_cli_values(command, {"--empty": "", "--title": " Book "})
+    assert command == ["zentag", "--title", "Book"]
+    assert zentag._preferred_text(None, "", "  ") == ""
+
+    missing = tmp_path / "missing-ebook-meta"
+    with pytest.raises(RuntimeError, match="does not exist"):
+        zentag._existing_ebook_meta_path(str(missing))
+
+
+def test_remaining_refactor_process_edges(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = Process(b"stdout", b"stderr", 3)
+    monkeypatch.setattr(
+        zentag.asyncio,
+        "create_subprocess_exec",
+        AsyncMock(return_value=process),
+    )
+    assert asyncio.run(zentag._run_process(["zentag", "check"])) == (
+        3,
+        "stdout",
+        "stderr",
+    )
+
+    timed_out = Process(code=None)
+    monkeypatch.setattr(
+        zentag.asyncio,
+        "create_subprocess_exec",
+        AsyncMock(return_value=timed_out),
+    )
+
+    async def fail_wait_for(awaitable: object, timeout: float) -> object:
+        close = getattr(awaitable, "close", None)
+        if callable(close):
+            close()
+        raise TimeoutError
+
+    monkeypatch.setattr(zentag.asyncio, "wait_for", fail_wait_for)
+    with pytest.raises(TimeoutError):
+        asyncio.run(zentag._run_transform(["zentag", "transform"]))
+    assert timed_out.killed
+
+
+def test_remaining_refactor_executable_and_output_edges(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    executable = tmp_path / "ebook-meta"
+    executable.write_bytes(b"binary")
+    monkeypatch.setattr(
+        zentag,
+        "os",
+        SimpleNamespace(
+            name="posix", access=lambda *_args: False, X_OK=os.X_OK
+        ),
+    )
+    with pytest.raises(RuntimeError, match="not executable"):
+        zentag._ensure_ebook_meta_executable(executable)
+
+    output_root = tmp_path / "output"
+    output_root.mkdir()
+    epub = output_root / "book.epub"
+    epub.write_bytes(b"book")
+    assert (
+        zentag._ebook_output_directory(f"Wrote {epub}", output_root)
+        == output_root
+    )
+    other = output_root / "book.txt"
+    other.write_text("text", encoding="utf-8")
+    assert (
+        zentag._ebook_output_directory(f"Wrote {other}", output_root) is None
+    )
+
+
+def test_remaining_refactor_prepare_success_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    m4b = tmp_path / "book.m4b"
+    m4b.write_bytes(b"audio")
+    epub = tmp_path / "book.epub"
+    epub.write_bytes(b"book")
+    config = {"DEFAULT": {"auto_zentag": True}}
+
+    monkeypatch.setattr(
+        zentag.ZentagBinaryManager,
+        "ensure_binary",
+        AsyncMock(return_value="zentag"),
+    )
+    audiobook_output = tmp_path / "zentag-output" / "audiobook"
+    audiobook_output.mkdir(parents=True)
+    monkeypatch.setattr(
+        zentag,
+        "_run_transform",
+        AsyncMock(return_value=(0, f"Wrote {audiobook_output}", "")),
+    )
+    validate = AsyncMock(return_value=None)
+    monkeypatch.setattr(zentag, "_validate_audiobook_output", validate)
+    assert asyncio.run(
+        zentag._prepare_audiobook_copy(_meta(m4b), m4b, str(tmp_path), config)
+    ) == str(audiobook_output)
+    validate.assert_awaited_once()
+
+    ebook_output_dir = tmp_path / "zentag-output"
+    ebook_output_dir.mkdir(exist_ok=True)
+    ebook_output = ebook_output_dir / "book.epub"
+    ebook_output.write_bytes(b"book")
+    monkeypatch.setattr(
+        zentag,
+        "_run_process",
+        AsyncMock(return_value=(0, f"Wrote {ebook_output}", "")),
+    )
+    assert asyncio.run(
+        zentag._prepare_ebook_copy(
+            _meta(epub, audiobook=False), epub, str(tmp_path), config
+        )
+    ) == str(ebook_output_dir)
+
+
+def test_refactor_positive_selection_and_helper_edges(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    m4b = tmp_path / "book.m4b"
+    m4b.write_bytes(b"audio")
+    epub = tmp_path / "book.epub"
+    epub.write_bytes(b"book")
+    config = {"DEFAULT": {"auto_zentag": True}}
+
+    assert zentag.should_prepare_zenith_audiobook(_meta(m4b), config)
+    ebook_meta = _meta(epub, audiobook=False)
+    assert zentag._ebook_source(ebook_meta) == epub.resolve()
+    assert zentag.should_prepare_zenith_ebook(ebook_meta, config)
+
+    with pytest.raises(RuntimeError, match="does not exist"):
+        zentag._existing_ebook_meta_path(str(tmp_path / "missing-tool"))
+
+    non_executable = tmp_path / "ebook-meta"
+    non_executable.write_bytes(b"tool")
+    monkeypatch.setattr(
+        zentag,
+        "os",
+        SimpleNamespace(
+            name="posix", access=lambda *_args: False, X_OK=os.X_OK
+        ),
+    )
+    with pytest.raises(RuntimeError, match="not executable"):
+        zentag._ensure_ebook_meta_executable(non_executable)
+
+    command = ["zentag"]
+    zentag._append_cli_values(command, {"--author": " Alice ", "--skip": " "})
+    assert command == ["zentag", "--author", "Alice"]
+    assert zentag._preferred_text("", None, " Title ") == "Title"
+
+    output_root = tmp_path / "ebook-output"
+    output_root.mkdir()
+    invalid = output_root / "book.txt"
+    invalid.write_text("text", encoding="utf-8")
+    assert (
+        zentag._ebook_output_directory(f"Wrote {invalid}", output_root) is None
+    )
+    valid = output_root / "book.epub"
+    valid.write_bytes(b"book")
+    assert (
+        zentag._ebook_output_directory(f"Wrote {valid}", output_root)
+        == output_root
+    )
+
+
+def test_run_process_success_failure_and_transform_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class CommunicatingProcess:
+        def __init__(
+            self, *, error: BaseException | None = None, code: int | None = 3
+        ) -> None:
+            self.error = error
+            self.returncode = code
+            self.killed = False
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            if self.error is not None:
+                raise self.error
+            return b"stdout", b"stderr"
+
+        async def wait(self) -> int:
+            return int(self.returncode or 0)
+
+        def kill(self) -> None:
+            self.killed = True
+            self.returncode = -9
+
+    success = CommunicatingProcess()
+    monkeypatch.setattr(
+        zentag.asyncio,
+        "create_subprocess_exec",
+        AsyncMock(return_value=success),
+    )
+    assert asyncio.run(zentag._run_process(["zentag", "check"])) == (
+        3,
+        "stdout",
+        "stderr",
+    )
+
+    failure = CommunicatingProcess(error=RuntimeError("boom"), code=None)
+    monkeypatch.setattr(
+        zentag.asyncio,
+        "create_subprocess_exec",
+        AsyncMock(return_value=failure),
+    )
+    with pytest.raises(RuntimeError, match="boom"):
+        asyncio.run(zentag._run_process(["zentag", "check"]))
+    assert failure.killed
+
+    class FailingReader(Reader):
+        async def read(self, size: int = -1) -> bytes:
+            raise RuntimeError("read failed")
+
+    transform = Process(stderr=b"warning", code=None)
+    transform.stdout = FailingReader(b"")
+    monkeypatch.setattr(
+        zentag.asyncio,
+        "create_subprocess_exec",
+        AsyncMock(return_value=transform),
+    )
+    with pytest.raises(RuntimeError, match="read failed"):
+        asyncio.run(zentag._run_transform(["zentag", "transform"]))
+    assert transform.killed
+
+
+def test_prepare_copy_success_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    m4b = tmp_path / "book.m4b"
+    m4b.write_bytes(b"audio")
+    output_root = tmp_path / "zentag-output"
+    audiobook_output = output_root / "audiobook"
+    audiobook_output.mkdir(parents=True)
+
+    monkeypatch.setattr(
+        zentag.ZentagBinaryManager,
+        "ensure_binary",
+        AsyncMock(return_value="zentag"),
+    )
+    monkeypatch.setattr(
+        zentag,
+        "_run_transform",
+        AsyncMock(return_value=(0, f"Wrote {audiobook_output}", "")),
+    )
+    validate = AsyncMock(return_value=None)
+    monkeypatch.setattr(zentag, "_validate_audiobook_output", validate)
+    assert asyncio.run(
+        zentag._prepare_audiobook_copy(
+            _meta(m4b), m4b, str(tmp_path), {"DEFAULT": {}}
+        )
+    ) == str(audiobook_output)
+    validate.assert_awaited_once()
+
+    epub = tmp_path / "book.epub"
+    epub.write_bytes(b"book")
+    ebook_output = output_root / "prepared.epub"
+    ebook_output.write_bytes(b"prepared")
+    monkeypatch.setattr(
+        zentag,
+        "_run_process",
+        AsyncMock(return_value=(0, f"Wrote {ebook_output}", "")),
+    )
+    assert asyncio.run(
+        zentag._prepare_ebook_copy(
+            _meta(epub, audiobook=False),
+            epub,
+            str(tmp_path),
+            {"DEFAULT": {}},
+        )
+    ) == str(output_root)
