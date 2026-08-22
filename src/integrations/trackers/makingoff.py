@@ -952,9 +952,11 @@ class MakingOff:
 
     @staticmethod
     def _valid_resolution_text(resolution: str) -> bool:
-        return bool(
-            resolution and "x0" not in resolution and "0x" not in resolution
-        )
+        match = re.fullmatch(r"\s*(\d+)\s*[xX\u00d7]\s*(\d+)\s*", resolution)
+        if match is None:
+            return False
+        width, height = (int(value) for value in match.groups())
+        return width > 0 and height > 0
 
     @staticmethod
     def _bitrate_line(label: str, value: str) -> str:
