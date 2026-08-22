@@ -4,6 +4,13 @@
 from typing import Any
 
 
+def _convert_int(value: float | str, fallback: int) -> int:
+    try:
+        return int(value)
+    except ValueError, OverflowError:
+        return fallback
+
+
 def to_int(value: Any, fallback: int = 0) -> int:
     """
     Safely convert a value to an integer.
@@ -19,14 +26,6 @@ def to_int(value: Any, fallback: int = 0) -> int:
         return int(value)
     if isinstance(value, int):
         return value
-    if isinstance(value, float):
-        try:
-            return int(value)
-        except ValueError, OverflowError:
-            return fallback
-    if isinstance(value, str):
-        try:
-            return int(value)
-        except ValueError, OverflowError:
-            return fallback
+    if isinstance(value, (float, str)):
+        return _convert_int(value, fallback)
     return fallback
