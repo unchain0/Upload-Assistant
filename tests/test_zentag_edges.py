@@ -533,8 +533,7 @@ def test_remaining_refactor_process_edges(
         AsyncMock(return_value=timed_out),
     )
 
-    async def fail_wait_for(awaitable: object, timeout: float) -> object:
-        del timeout
+    async def fail_wait_for(awaitable: object, **_kwargs: object) -> object:
         close = getattr(awaitable, "close", None)
         if callable(close):
             close()
