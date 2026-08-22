@@ -172,41 +172,57 @@ class AsianCinema(UNIT3D):
 
         return {"region_id": region_map.get(region, "")}
 
-    async def get_name(self, meta: Meta) -> dict[str, str]:
-        name: str = meta.name
-        aka: str = meta.aka
-        original_title: str = meta.original_title
-        audio: str = meta.audio
-        source: str = meta.source or ""
-        is_disc: str = meta.is_disc
-        resolution: str = meta.resolution
-        if aka != "":
-            # ugly fix to remove the extra space in the title
-            aka = aka + " "
-            name = name.replace(
-                aka, f" / {original_title} {chr(int('202A', 16))}"
-            )
-        elif aka == "":
-            if meta.title != original_title:
-                # name = f'{name[:name.find(year)]}/ {original_title} {chr(int("202A", 16))}{name[name.find(year):]}'
-                name = name.replace(
-                    meta.title,
-                    f"{meta.title} / {original_title} {chr(int('202A', 16))}",
-                )
-        if "AAC" in audio:
-            name = name.replace(
-                audio.strip().replace("  ", " "), audio.replace("AAC ", "AAC")
-            )
-        name = name.replace("DD+ ", "DD+")
-        name = name.replace("UHD BluRay REMUX", "Remux")
-        name = name.replace("BluRay REMUX", "Remux")
-        name = name.replace("H.265", "HEVC")
-        name = name.replace(" Atmos", "")
-        if is_disc == "DVD":
-            name = name.replace(f"{source} DVD5", f"{resolution} DVD {source}")
-            name = name.replace(f"{source} DVD9", f"{resolution} DVD {source}")
-            if audio == meta.channels:
-                name = name.replace(f"{audio}", f"MPEG {audio}")
+    @staticmethod
+    def _original_title_separator() -> str:
+        return chr(int("202A", 16))
 
-        name = name + self.get_subs_tag(meta)
-        return {"name": name}
+    @classmethod
+    def _name_with_original_title(cls, meta: Meta, name: str) -> str:
+        original_title = meta.original_title
+        separator = cls._original_title_separator()
+        if meta.aka:
+            return name.replace(
+                f"{meta.aka} ",
+                f" / {original_title} {separator}",
+            )
+        if meta.title != original_title:
+            replacement = f"{meta.title} / {original_title} {separator}"
+            return name.replace(meta.title, replacement)
+        return name
+
+    @staticmethod
+    def _normalize_audio_tokens(meta: Meta, name: str) -> str:
+        audio = meta.audio
+        if "AAC" in audio:
+            source_audio = audio.strip().replace("  ", " ")
+            name = name.replace(source_audio, audio.replace("AAC ", "AAC"))
+        return name
+
+    @staticmethod
+    def _normalize_release_tokens(name: str) -> str:
+        return (
+            name.replace("DD+ ", "DD+")
+            .replace("UHD BluRay REMUX", "Remux")
+            .replace("BluRay REMUX", "Remux")
+            .replace("H.265", "HEVC")
+            .replace(" Atmos", "")
+        )
+
+    @staticmethod
+    def _dvd_name(meta: Meta, name: str) -> str:
+        if meta.is_disc != "DVD":
+            return name
+        source = meta.source or ""
+        resolution = meta.resolution
+        name = name.replace(f"{source} DVD5", f"{resolution} DVD {source}")
+        name = name.replace(f"{source} DVD9", f"{resolution} DVD {source}")
+        if meta.audio == meta.channels:
+            return name.replace(meta.audio, f"MPEG {meta.audio}")
+        return name
+
+    async def get_name(self, meta: Meta) -> dict[str, str]:
+        name = self._name_with_original_title(meta, meta.name)
+        name = self._normalize_audio_tokens(meta, name)
+        name = self._normalize_release_tokens(name)
+        name = self._dvd_name(meta, name)
+        return {"name": name + self.get_subs_tag(meta)}
