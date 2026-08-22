@@ -32,5 +32,25 @@ def test_torrenthr_category_mappings(meta: Meta, expected: str) -> None:
     }
 
 
+def test_torrenthr_mapping_modes_and_category_edges() -> None:
+    tracker = _tracker()
+    mapping = asyncio.run(
+        tracker.get_category_id(Meta(category="MOVIE"), mapping_only=True)
+    )
+    assert mapping["MOVIE_SD"] == "4"
+
+    reverse = asyncio.run(
+        tracker.get_category_id(Meta(category="MOVIE"), reverse=True)
+    )
+    assert reverse["4"] == "MOVIE_SD"
+
+    assert asyncio.run(
+        tracker.get_category_id(Meta(category="OTHER"), category="TV")
+    ) == {"category_id": "34"}
+    assert asyncio.run(tracker.get_category_id(Meta(category="OTHER"))) == {
+        "category_id": "0"
+    }
+
+
 def test_torrenthr_is_registered() -> None:
     assert tracker_class_map["TORRENTHR"] is TorrentHR
