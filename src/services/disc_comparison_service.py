@@ -39,25 +39,36 @@ def get_relevant_lines(
     return source_lines, target_lines
 
 
+def _technical_line_relevant(line_lower: str) -> bool:
+    markers = ("kbps", "presentation graphics", "subtitle:")
+    return any(marker in line_lower for marker in markers)
+
+
+def _strict_line_allowed(clean_line: str, strict_mode: bool) -> bool:
+    if not strict_mode:
+        return True
+    keywords = ("Video:", "Audio:", "Subtitle:")
+    return any(keyword in clean_line for keyword in keywords)
+
+
+def _normalized_technical_line(line: str, strict_mode: bool) -> str | None:
+    clean_line = line.strip()
+    if not _technical_line_relevant(clean_line.lower()):
+        return None
+    if not _strict_line_allowed(clean_line, strict_mode):
+        return None
+    return " ".join(clean_line.split())
+
+
 def normalize_and_filter(content: str, strict_mode: bool = False) -> list[str]:
     """
     Filters content to keep only relevant technical lines and normalizes whitespace.
     """
     results: list[str] = []
-    keywords = ("Video:", "Audio:", "Subtitle:")
-
     for line in content.splitlines():
-        clean_line = line.strip()
-        line_lower = clean_line.lower()
-
-        if any(
-            x in line_lower
-            for x in ("kbps", "presentation graphics", "subtitle:")
-        ):
-            if strict_mode and not any(k in clean_line for k in keywords):
-                continue
-            results.append(" ".join(clean_line.split()))
-
+        normalized = _normalized_technical_line(line, strict_mode)
+        if normalized is not None:
+            results.append(normalized)
     return results
 
 
@@ -102,78 +113,83 @@ def remove_playlist_variations(
     )
 
 
+def _comparison_results(
+    source_lines: list[str], target_lines: list[str]
+) -> tuple[list[dict[str, str]], dict[str, int]]:
+    results: list[dict[str, str]] = []
+    stats = {"+ ": 0, "- ": 0}
+    for line in difflib.ndiff(source_lines, target_lines):
+        if line.startswith("? "):
+            continue
+        prefix, content = line[:2], line[2:].strip()
+        results.append({"prefix": prefix, "content": content})
+        if prefix in stats:
+            stats[prefix] += 1
+    return results, stats
+
+
+def _comparison_style_label(prefix: str) -> tuple[str, str]:
+    values = {
+        "- ": ("bold red", "YOURS"),
+        "+ ": ("bold green", "DUPE"),
+    }
+    return values.get(prefix, ("bold white", "MATCH"))
+
+
+def _log_comparison_item(item: dict[str, str]) -> bool:
+    prefix = item["prefix"]
+    content = item["content"]
+    style, label = _comparison_style_label(prefix)
+    symbol = prefix.strip() or " "
+    logger.info(f"[{style}][{symbol}] {label.ljust(10)}: {content}[/{style}]")
+    return prefix != "  "
+
+
+def _render_comparison_details(results: list[dict[str, str]]) -> bool:
+    results.sort(key=sorting_priority)
+    detected_changes = False
+    for item in results:
+        if _log_comparison_item(item):
+            detected_changes = True
+    return detected_changes
+
+
+def _log_different_disc_notice(tracker_name: str, has_changes: bool) -> None:
+    if not has_changes or tracker_name not in {"LST", "AITHER"}:
+        return
+    logger.info(
+        f"[green]{tracker_name} allows uploads for different BD discs.[/green]"
+    )
+
+
+def _comparison_summary(stats: dict[str, int], release_name: str) -> str:
+    add_val = f"+{stats['+ ']}".ljust(3)
+    rem_val = f"-{stats['- ']}".ljust(3)
+    diff_summary = (
+        f"[bold green]{add_val}[/bold green] [bold red]{rem_val}[/bold red]"
+    )
+    has_diff = bool(stats["+ "] or stats["- "])
+    status_icon = " " if has_diff else "[yellow]⚠  [/yellow]"
+    return f"{diff_summary} | {status_icon}{release_name}"
+
+
 def compare_bdinfo(
     meta: Meta, entry: dict[str, Any], tracker_name: str
 ) -> tuple[str, str]:
     release_name = str(entry.get("name", "") or "")
     duplicate_content = has_bdinfo_content(entry)
     source_lines, target_lines = get_relevant_lines(meta, duplicate_content)
-
-    diff_generator = difflib.ndiff(source_lines, target_lines)
-
-    comparison_results: list[dict[str, str]] = []
-    stats = {"+ ": 0, "- ": 0}
-
-    for line in diff_generator:
-        if line.startswith("? "):
-            continue
-
-        prefix, content = line[:2], line[2:].strip()
-        comparison_results.append({"prefix": prefix, "content": content})
-        if prefix in stats:
-            stats[prefix] += 1
+    results, stats = _comparison_results(source_lines, target_lines)
 
     logger.info(f"\n[bold yellow]RELEASE:[/bold yellow] {release_name}")
     logger.info("[dim]Comparison Details:[/dim]\n")
 
-    comparison_results.sort(key=sorting_priority)
-
-    has_detected_changes = False
-    for item in comparison_results:
-        prefix, content = item["prefix"], item["content"]
-        if prefix != "  ":
-            has_detected_changes = True
-
-        style = (
-            "bold red"
-            if prefix == "- "
-            else "bold green"
-            if prefix == "+ "
-            else "bold white"
-        )
-        label = (
-            "YOURS"
-            if prefix == "- "
-            else "DUPE"
-            if prefix == "+ "
-            else "MATCH"
-        )
-        symbol = prefix.strip() or " "
-
-        logger.info(
-            f"[{style}][{symbol}] {label.ljust(10)}: {content}[/{style}]"
-        )
-
+    has_detected_changes = _render_comparison_details(results)
     warning_message = generate_warning(
         release_name, duplicate_content, has_detected_changes
     )
-    if has_detected_changes and tracker_name in ["LST", "AITHER"]:
-        logger.info(
-            f"[green]{tracker_name} allows uploads for different BD discs.[/green]"
-        )
-
-    add_val = f"+{stats['+ ']}".ljust(3)
-    rem_val = f"-{stats['- ']}".ljust(3)
-    diff_summary = (
-        f"[bold green]{add_val}[/bold green] [bold red]{rem_val}[/bold red]"
-    )
-
-    status_icon = (
-        "[yellow]⚠  [/yellow]" if not (stats["+ "] or stats["- "]) else " "
-    )
-    results = f"{diff_summary} | {status_icon}{release_name}"
-
-    return warning_message, results
+    _log_different_disc_notice(tracker_name, has_detected_changes)
+    return warning_message, _comparison_summary(stats, release_name)
 
 
 def generate_warning(
@@ -204,17 +220,20 @@ def load_bdinfo_file(meta: Meta) -> tuple[str, str]:
     return read_file("BD_SUMMARY_00.txt"), read_file("BD_SUMMARY_EXT_00.txt")
 
 
+def _description_has_bdinfo_marker(description: str) -> bool:
+    markers = ("Disc Title:", "Disc Label:", "Disc Size: ")
+    return any(marker in description for marker in markers)
+
+
 def has_bdinfo_content(entry: dict[str, Any]) -> str:
     """
     Attempts to locate BDInfo content within an entry's fields.
     """
     content = str(entry.get("bd_info", "") or "")
-    if not content:
-        description = str(entry.get("description", "") or "")
-        keywords = ["Disc Title:", "Disc Label:", "Disc Size: "]
-        if any(keyword in description for keyword in keywords):
-            content = description
-    return content
+    if content:
+        return content
+    description = str(entry.get("description", "") or "")
+    return description if _description_has_bdinfo_marker(description) else ""
 
 
 def remove_formatting(content: str) -> str:
