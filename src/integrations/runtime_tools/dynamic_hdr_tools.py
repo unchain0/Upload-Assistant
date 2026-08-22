@@ -50,27 +50,41 @@ ASSET_SHA256 = {
 }
 
 
-def _asset_name(tool: str) -> tuple[str, str]:
-    """Return the release asset name and executable extension for this host."""
-    system, machine = platform.system().lower(), platform.machine().lower()
-    version = TOOLS[tool]["version"]
+def _machine_arch(system: str, machine: str) -> str:
     if machine in {"arm64", "aarch64"}:
-        arch = "aarch64"
-    elif machine in {"amd64", "x86_64"}:
-        arch = "x86_64"
-    else:
-        raise RuntimeError(
-            f"Dynamic HDR plots are not supported on {system} {machine}"
-        )
+        return "aarch64"
+    if machine in {"amd64", "x86_64"}:
+        return "x86_64"
+    raise RuntimeError(
+        f"Dynamic HDR plots are not supported on {system} {machine}"
+    )
+
+
+def _platform_asset(
+    tool: str,
+    version: str,
+    system: str,
+    machine: str,
+    arch: str,
+) -> tuple[str, str]:
     if system == "windows":
         return f"{tool}_tool-{version}-{arch}-pc-windows-msvc.zip", ".exe"
     if system == "darwin":
         return f"{tool}_tool-{version}-universal-macOS.zip", ""
-    if system == "linux" and arch in {"x86_64", "aarch64"}:
+    if system == "linux":
         return f"{tool}_tool-{version}-{arch}-unknown-linux-musl.tar.gz", ""
     raise RuntimeError(
         f"Dynamic HDR plots are not supported on {system} {machine}"
     )
+
+
+def _asset_name(tool: str) -> tuple[str, str]:
+    """Return the release asset name and executable extension for this host."""
+    system = platform.system().lower()
+    machine = platform.machine().lower()
+    version = TOOLS[tool]["version"]
+    arch = _machine_arch(system, machine)
+    return _platform_asset(tool, version, system, machine, arch)
 
 
 def _verify_checksum_file(asset: str, path: Path) -> None:
@@ -95,72 +109,173 @@ def _safe_extract(archive: Path, destination: Path) -> None:
             )
 
 
+def _cached_tool_path(binary: Path, version_file: Path) -> str | None:
+    if not binary.is_file() or binary.stat().st_size <= 0:
+        return None
+    return str(binary) if version_file.is_file() else None
+
+
+def _tool_target_paths(
+    base_dir: str,
+    command: str,
+    extension: str,
+    version: str,
+) -> tuple[str, Path, Path, Path]:
+    system = platform.system().lower()
+    machine = platform.machine().lower()
+    target_dir = tool_install_dir(base_dir, command, f"{system}/{machine}")
+    binary = target_dir / f"{command}{extension}"
+    return system, target_dir, binary, target_dir / version
+
+
+def _prepare_download_dir(target_dir: Path) -> Path:
+    staging = target_dir / ".download"
+    shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir()
+    return staging
+
+
+def _release_url(tool: str, asset: str) -> str:
+    definition = TOOLS[tool]
+    return (
+        f"https://github.com/{definition['repository']}/releases/download/"
+        f"{definition['version']}/{asset}"
+    )
+
+
+async def _download_tool_archive(
+    tool: str,
+    command: str,
+    asset: str,
+    archive: Path,
+) -> None:
+    logger.info(
+        f"[yellow]Downloading {command} for dynamic HDR plots...[/yellow]"
+    )
+    async with httpx.AsyncClient(
+        timeout=90.0, follow_redirects=True
+    ) as client:
+        await download_bounded_asset(
+            client, _release_url(tool, asset), archive
+        )
+    await asyncio.to_thread(_verify_checksum_file, asset, archive)
+
+
+def _extracted_tool_candidate(
+    staging: Path, command: str, extension: str, asset: str
+) -> Path:
+    candidates = [
+        path
+        for path in staging.rglob(f"{command}{extension}")
+        if path.is_file()
+    ]
+    if not candidates:
+        raise RuntimeError(f"{asset} did not contain {command}{extension}")
+    return candidates[0]
+
+
+def _stage_tool_binary(
+    candidate: Path,
+    staging: Path,
+    command: str,
+    extension: str,
+    system: str,
+) -> Path:
+    staged_binary = staging / f".{command}{extension}.staged"
+    shutil.move(str(candidate), staged_binary)
+    if system != "windows":
+        staged_binary.chmod(
+            staged_binary.stat().st_mode
+            | stat.S_IXUSR
+            | stat.S_IXGRP
+            | stat.S_IXOTH
+        )
+    return staged_binary
+
+
+def _stage_tool_version(staging: Path, tool: str, command: str) -> Path:
+    version = TOOLS[tool]["version"]
+    staged_version = staging / version
+    staged_version.write_text(f"{command} {version}\n", encoding="utf-8")
+    return staged_version
+
+
+def _stale_tool_markers(
+    target_dir: Path, binary: Path, version_file: Path
+) -> list[Path]:
+    return [
+        candidate
+        for candidate in target_dir.iterdir()
+        if candidate.is_file()
+        and candidate != binary
+        and candidate != version_file
+    ]
+
+
+def _promote_tool(
+    target_dir: Path,
+    binary: Path,
+    version_file: Path,
+    staged_binary: Path,
+    staged_version: Path,
+) -> None:
+    promote_files_with_rollback(
+        [(staged_binary, binary), (staged_version, version_file)],
+        target_dir / ".dynamic-hdr-backup",
+        remove_targets=_stale_tool_markers(target_dir, binary, version_file),
+    )
+
+
+async def _install_tool(
+    tool: str,
+    command: str,
+    asset: str,
+    extension: str,
+    system: str,
+    target_dir: Path,
+    binary: Path,
+    version_file: Path,
+) -> str:
+    staging = _prepare_download_dir(target_dir)
+    archive = staging / asset
+    try:
+        await _download_tool_archive(tool, command, asset, archive)
+        await asyncio.to_thread(_safe_extract, archive, staging)
+        candidate = _extracted_tool_candidate(
+            staging, command, extension, asset
+        )
+        staged_binary = _stage_tool_binary(
+            candidate, staging, command, extension, system
+        )
+        staged_version = _stage_tool_version(staging, tool, command)
+        _promote_tool(
+            target_dir, binary, version_file, staged_binary, staged_version
+        )
+        return str(binary)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+
 async def get_tool(base_dir: str, tool: str) -> str:
     """Return a PATH tool or download the pinned release below ``bin/``."""
     command = TOOLS[tool]["command"]
     if installed := shutil.which(command):
         return installed
-
     asset, extension = _asset_name(tool)
-    system = platform.system().lower()
-    machine = platform.machine().lower()
-    target_dir = tool_install_dir(base_dir, command, f"{system}/{machine}")
-    binary = target_dir / f"{command}{extension}"
-    version_file = target_dir / TOOLS[tool]["version"]
-    if (
-        binary.is_file()
-        and binary.stat().st_size > 0
-        and version_file.is_file()
-    ):
-        return str(binary)
-
-    staging = target_dir / ".download"
-    shutil.rmtree(staging, ignore_errors=True)
-    staging.mkdir()
-    archive = staging / asset
-    url = f"https://github.com/{TOOLS[tool]['repository']}/releases/download/{TOOLS[tool]['version']}/{asset}"
-    logger.info(
-        f"[yellow]Downloading {command} for dynamic HDR plots...[/yellow]"
+    version = TOOLS[tool]["version"]
+    system, target_dir, binary, version_file = _tool_target_paths(
+        base_dir, command, extension, version
     )
-    try:
-        async with httpx.AsyncClient(
-            timeout=90.0, follow_redirects=True
-        ) as client:
-            await download_bounded_asset(client, url, archive)
-        await asyncio.to_thread(_verify_checksum_file, asset, archive)
-        await asyncio.to_thread(_safe_extract, archive, staging)
-        candidates = [
-            path
-            for path in staging.rglob(f"{command}{extension}")
-            if path.is_file()
-        ]
-        if not candidates:
-            raise RuntimeError(f"{asset} did not contain {command}{extension}")
-        staged_binary = staging / f".{command}{extension}.staged"
-        shutil.move(str(candidates[0]), staged_binary)
-        if system != "windows":
-            staged_binary.chmod(
-                staged_binary.stat().st_mode
-                | stat.S_IXUSR
-                | stat.S_IXGRP
-                | stat.S_IXOTH
-            )
-        staged_version = staging / TOOLS[tool]["version"]
-        staged_version.write_text(
-            f"{command} {TOOLS[tool]['version']}\n", encoding="utf-8"
-        )
-        stale_markers = [
-            candidate
-            for candidate in target_dir.iterdir()
-            if candidate.is_file()
-            and candidate != binary
-            and candidate != version_file
-        ]
-        promote_files_with_rollback(
-            [(staged_binary, binary), (staged_version, version_file)],
-            target_dir / ".dynamic-hdr-backup",
-            remove_targets=stale_markers,
-        )
-        return str(binary)
-    finally:
-        shutil.rmtree(staging, ignore_errors=True)
+    cached = _cached_tool_path(binary, version_file)
+    if cached is not None:
+        return cached
+    return await _install_tool(
+        tool,
+        command,
+        asset,
+        extension,
+        system,
+        target_dir,
+        binary,
+        version_file,
+    )
