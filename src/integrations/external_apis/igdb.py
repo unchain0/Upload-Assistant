@@ -325,8 +325,7 @@ class IGDBAPI:
                 _steam_query(steam_id_str),
                 "[cyan]IGDB: Using cached game details for Steam ID: "
                 f"{steam_id_str}[/cyan]",
-                "[red]IGDB: No game found with Steam ID "
-                f"{steam_id_str}[/red]",
+                f"[red]IGDB: No game found with Steam ID {steam_id_str}[/red]",
                 "Steam Fetch error",
             ),
         )
@@ -335,6 +334,4 @@ class IGDBAPI:
         if not self.base_dir or not game_data or "id" not in game_data:
             return
         igdb_id = str(game_data["id"])
-        await cache_for(self.base_dir).set(
-            "igdb", "game", igdb_id, game_data
-        )
+        await cache_for(self.base_dir).set("igdb", "game", igdb_id, game_data)
