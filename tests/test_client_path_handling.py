@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 from src.domain_models.release import Meta
 from src.integrations.torrent_clients.client_manager import Clients
 from src.integrations.torrent_clients.path_utils import (
+    _mapping_relative_parts,
     coerce_str_list,
     is_path_under,
     map_save_path,
@@ -36,6 +37,16 @@ def test_map_save_path_does_not_rewrite_sibling_paths() -> None:
     mapped_path = map_save_path("/locality/release", "/local", "/remote")
 
     assert mapped_path == "/locality/release/"
+    assert _mapping_relative_parts("/local/release", "", "/remote") is None
+    assert (
+        _mapping_relative_parts("/local/release", "/local", "/local") is None
+    )
+    assert map_save_path("/local/release", None, "/remote") == (
+        "/local/release/"
+    )
+    assert map_save_path("/local/release", "/local", "/local") == (
+        "/local/release/"
+    )
 
 
 def test_map_save_path_preserves_case_insensitive_mapping_and_client_format() -> (
