@@ -282,6 +282,7 @@ def test_screenshot_manifest_complete_lifecycle_and_malformed_data(
 
     manifest_path.write_text(json.dumps({"screenshots": []}), encoding="utf-8")
     assert manifest.files(tmp_path, release_id) == []
+    assert manifest.group_for(tmp_path, release_id, Path("none.png")) == "main"
     manifest.clear_group(tmp_path, release_id, "main")
     manifest.forget_file(tmp_path, release_id, Path("none.png"))
 

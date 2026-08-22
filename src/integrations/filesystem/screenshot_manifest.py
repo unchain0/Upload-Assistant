@@ -48,6 +48,35 @@ def _save(
     temporary.replace(output)
 
 
+def _mutable_entries(manifest: dict[str, Any]) -> dict[str, Any]:
+    entries = manifest.setdefault("screenshots", {})
+    if isinstance(entries, dict):
+        return entries
+    manifest["screenshots"] = {}
+    return manifest["screenshots"]
+
+
+def _unique_target(source: Path) -> tuple[str, Path]:
+    screenshot_id = uuid.uuid4().hex
+    suffix = source.suffix.lower() or ".png"
+    target = source.with_name(f"{screenshot_id}{suffix}")
+    while target.exists():
+        screenshot_id = uuid.uuid4().hex
+        target = source.with_name(f"{screenshot_id}{suffix}")
+    return screenshot_id, target
+
+
+def _register_file(
+    source: Path, group: str, entries: dict[str, Any]
+) -> Path | None:
+    if not source.is_file():
+        return None
+    screenshot_id, target = _unique_target(source)
+    source.replace(target)
+    entries[screenshot_id] = {"file": target.name, "group": group}
+    return target
+
+
 def register(
     base_dir: str | Path,
     release_id: str,
@@ -57,43 +86,50 @@ def register(
     """Publish capture files under UUID names and return their new paths."""
     with _lock(base_dir, release_id):
         manifest = _load(base_dir, release_id)
-        entries = manifest.setdefault("screenshots", {})
-        if not isinstance(entries, dict):
-            entries = manifest["screenshots"] = {}
+        entries = _mutable_entries(manifest)
         result: list[Path] = []
         for value in paths:
-            source = Path(value)
-            if not source.is_file():
-                continue
-            screenshot_id = uuid.uuid4().hex
-            suffix = source.suffix.lower() or ".png"
-            target = source.with_name(f"{screenshot_id}{suffix}")
-            while target.exists():
-                screenshot_id = uuid.uuid4().hex
-                target = source.with_name(f"{screenshot_id}{suffix}")
-            source.replace(target)
-            entries[screenshot_id] = {"file": target.name, "group": group}
-            result.append(target)
+            target = _register_file(Path(value), group, entries)
+            if target is not None:
+                result.append(target)
         _save(base_dir, release_id, manifest)
         return result
+
+
+def _loaded_entries(
+    base_dir: str | Path, release_id: str
+) -> dict[str, Any] | None:
+    entries = _load(base_dir, release_id).get("screenshots", {})
+    return entries if isinstance(entries, dict) else None
+
+
+def _entry_matches_group(value: object, group: str | None) -> bool:
+    if not isinstance(value, dict):
+        return False
+    return group is None or value.get("group") == group
+
+
+def _active_entry_path(
+    directory: Path, screenshot_id: str, value: dict[str, Any]
+) -> Path | None:
+    path = directory / str(value.get("file", f"{screenshot_id}.png"))
+    return path if path.is_file() else None
 
 
 def files(
     base_dir: str | Path, release_id: str, group: str | None = None
 ) -> list[Path]:
     """Return active UUID screenshots, optionally limited to a capture group."""
-    directory = screenshots_dir(base_dir, release_id)
-    entries = _load(base_dir, release_id).get("screenshots", {})
-    if not isinstance(entries, dict):
+    entries = _loaded_entries(base_dir, release_id)
+    if entries is None:
         return []
-    result = []
+    directory = screenshots_dir(base_dir, release_id)
+    result: list[Path] = []
     for screenshot_id, value in entries.items():
-        if not isinstance(value, dict) or (
-            group is not None and value.get("group") != group
-        ):
+        if not _entry_matches_group(value, group):
             continue
-        path = directory / str(value.get("file", f"{screenshot_id}.png"))
-        if path.is_file():
+        path = _active_entry_path(directory, screenshot_id, value)
+        if path is not None:
             result.append(path)
     return sorted(result, key=lambda path: path.name)
 
@@ -115,15 +151,22 @@ def clear_group(base_dir: str | Path, release_id: str, group: str) -> None:
         _save(base_dir, release_id, manifest)
 
 
+def _entry_group_for_path(value: object, path: Path) -> str | None:
+    if not isinstance(value, dict) or value.get("file") != path.name:
+        return None
+    group = value.get("group")
+    return group if isinstance(group, str) and group else None
+
+
 def group_for(base_dir: str | Path, release_id: str, path: Path) -> str:
     """Return the logical capture group for a local screenshot."""
-    entries = _load(base_dir, release_id).get("screenshots", {})
-    if isinstance(entries, dict):
-        for value in entries.values():
-            if isinstance(value, dict) and value.get("file") == path.name:
-                group = value.get("group")
-                if isinstance(group, str) and group:
-                    return group
+    entries = _loaded_entries(base_dir, release_id)
+    if entries is None:
+        return "main"
+    for value in entries.values():
+        group = _entry_group_for_path(value, path)
+        if group is not None:
+            return group
     return "main"
 
 
