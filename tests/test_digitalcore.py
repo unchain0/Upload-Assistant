@@ -26,3 +26,15 @@ def test_uses_only_renderer_safe_image_hosts_for_digitalcore():
         )
         not in DigitalCore.approved_image_hosts
     )
+
+
+def test_ptscreens_raw_urls_use_digitalcore_csp_compatible_cdn() -> None:
+    legacy = "https://img.ptscreens.com/example.png"
+    expected = "https://img2.ptscreens.com/example.png"
+
+    assert DigitalCore._normalize_renderer_image_urls(legacy) == expected
+    assert DigitalCore._safe_image_url(legacy) == expected
+    assert (
+        DigitalCore._safe_image_url("https://img2.ptscreens.com/example.png")
+        == expected
+    )

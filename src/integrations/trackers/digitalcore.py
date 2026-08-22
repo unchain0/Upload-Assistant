@@ -80,16 +80,29 @@ class DigitalCore:
 
         return mediainfo
 
+    @staticmethod
+    def _normalize_renderer_image_urls(value: str) -> str:
+        return re.sub(
+            r"https?://img\.ptscreens\.com(?=[/:])",
+            "https://img2.ptscreens.com",
+            value,
+            flags=re.IGNORECASE,
+        )
+
     async def generate_description(self, meta: Meta) -> str:
         builder = DescriptionBuilder(self.tracker, self.config)
-        return await builder.general_description_generator(
+        description = await builder.general_description_generator(
             meta,
             approved_image_hosts=self.approved_image_hosts,
             bluray=False,
             custom_signature=False,
             logo=False,
-            signature=f"[center][url=https://github.com/wastaken7/Upload-Assistant]{meta.ua_signature}[/url][/center]",
+            signature=(
+                "[center][url=https://github.com/wastaken7/Upload-Assistant]"
+                f"{meta.ua_signature}[/url][/center]"
+            ),
         )
+        return self._normalize_renderer_image_urls(description)
 
     def get_category_id(self, meta: Meta) -> int | None:
         disc_category = self._disc_category_id(meta)
@@ -543,7 +556,7 @@ class DigitalCore:
 
     @classmethod
     def _safe_image_url(cls, value: object) -> str:
-        raw_url = str(value or "").strip()
+        raw_url = cls._normalize_renderer_image_urls(str(value or "").strip())
         if not raw_url:
             return ""
         hostname = (urlparse(raw_url).hostname or "").lower()

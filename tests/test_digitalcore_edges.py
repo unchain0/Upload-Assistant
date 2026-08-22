@@ -110,6 +110,42 @@ def test_digitalcore_firstpic_drops_unrehosted_unsafe_artwork() -> None:
     assert asyncio.run(tracker.get_firstpic(meta)) == ""
 
 
+def test_digitalcore_firstpic_normalizes_ptscreens_cdn() -> None:
+    meta = Meta(
+        category="BOOK",
+        hosted_artwork=[{"raw_url": "https://img.ptscreens.com/cover.png"}],
+    )
+
+    assert (
+        asyncio.run(_tracker().get_firstpic(meta))
+        == "https://img2.ptscreens.com/cover.png"
+    )
+
+
+@pytest.mark.asyncio
+async def test_digitalcore_description_normalizes_ptscreens_csp_urls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    description = (
+        "[center][url=https://ptscreens.com/image/example]"
+        "[img=350]https://img.ptscreens.com/example.png[/img][/url] "
+        "[url=https://ptscreens.com/image/spectrogram]"
+        "[img=350]https://img.ptscreens.com/spectrogram.png[/img][/url]"
+        "[/center]"
+    )
+    monkeypatch.setattr(
+        "src.integrations.trackers.digitalcore.DescriptionBuilder."
+        "general_description_generator",
+        AsyncMock(return_value=description),
+    )
+
+    result = await _tracker().generate_description(_make_meta())
+
+    assert "img.ptscreens.com" not in result
+    assert result.count("https://img2.ptscreens.com/") == 2
+    assert "https://ptscreens.com/image/example" in result
+
+
 @pytest.mark.asyncio
 async def test_digitalcore_upload_release_success(
     monkeypatch: pytest.MonkeyPatch,
