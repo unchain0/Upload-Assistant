@@ -10,6 +10,7 @@ from typing import Any, cast
 import aiofiles
 
 import src.services.preparation_helpers as prep_helpers
+from src.domain_models.errors import OperationAbortedError
 from src.domain_models.release import Meta
 from src.engines.region_mapping import get_service
 from src.integrations.cache.metadata_cache import set_run_disabled
@@ -21,7 +22,10 @@ from src.integrations.filesystem.screenshot_manifest import (
     files as manifest_files,
 )
 from src.integrations.image_hosts.rehosting import RehostImagesManager
-from src.integrations.media.artwork import prepare_artwork
+from src.integrations.media.artwork import (
+    audiobook_cover_missing_or_invalid,
+    prepare_artwork,
+)
 from src.integrations.media.audio import AudioManager
 from src.integrations.media.disc_info import DiscInfoManager
 from src.integrations.media.language_adapter import languages_manager
@@ -128,6 +132,16 @@ class Prep:
     ) -> None:
         """Delegate to :func:`src.services.book_preparation.gather_book_prep`."""
         await _gather_book_prep_fn(meta, videopath, base_dir, self.config)
+
+    @staticmethod
+    def _ensure_audiobook_cover(meta: Meta) -> None:
+        if not audiobook_cover_missing_or_invalid(meta):
+            return
+        reason = "Audiobook cover is required but no valid prepared cover is available"
+        logger.error(
+            f"[bold red]{reason}. Upload preparation aborted.[/bold red]"
+        )
+        raise OperationAbortedError(reason)
 
     @staticmethod
     def _resolve_game_filelist(
@@ -612,3 +626,15 @@ class Prep:
 
         except Exception as e:
             logger.debug(f"[red]Error parsing NFO file: {e}[/red]")
+
+
+_legacy_gather_prep = Prep.gather_prep
+
+
+async def _validated_gather_prep(self: Prep, meta: Meta, mode: str) -> Meta:
+    result = await _legacy_gather_prep(self, meta, mode)
+    self._ensure_audiobook_cover(result)
+    return result
+
+
+Prep.gather_prep = _validated_gather_prep

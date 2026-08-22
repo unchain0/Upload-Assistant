@@ -426,6 +426,62 @@ async def test_unit3d_kept_nfo_path(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_unit3d_audiobook_upload_requires_cover_multipart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tracker = _tracker()
+    tracker.requires_book_cover = False
+    root = tmp_path / "tmp" / "release"
+    root.mkdir(parents=True)
+    (root / "BASE.torrent").write_bytes(b"torrent")
+    monkeypatch.setattr(
+        tracker, "get_upload_torrent_filename", AsyncMock(return_value="BASE")
+    )
+    monkeypatch.setattr(
+        tracker, "get_additional_files", AsyncMock(return_value={})
+    )
+
+    audiobook = _meta(
+        tmp_path,
+        category="BOOK",
+        audiobook=True,
+        tracker_status={"TEST": {}},
+    )
+    with pytest.raises(
+        unit3d_module._UploadRejectedError,
+        match="torrent-cover",
+    ):
+        await tracker._upload_files(audiobook)
+    assert audiobook.tracker_status["TEST"]["upload"] is False
+    assert audiobook.tracker_status["TEST"]["skipped"] is True
+    tracker._ensure_required_book_cover_file(
+        audiobook,
+        {"torrent-cover": ("cover.png", b"cover", "image/png")},
+    )
+
+    monkeypatch.setattr(
+        tracker, "get_data", AsyncMock(return_value={"name": "Book"})
+    )
+    post_with_retries = AsyncMock(return_value="/uploaded.torrent")
+    monkeypatch.setattr(tracker, "_post_with_retries", post_with_retries)
+    with pytest.raises(
+        unit3d_module._UploadRejectedError,
+        match="torrent-cover",
+    ):
+        await tracker.upload(audiobook)
+    post_with_retries.assert_not_awaited()
+
+    ebook = _meta(
+        tmp_path,
+        category="BOOK",
+        audiobook=False,
+        tracker_status={"TEST": {}},
+    )
+    files = await tracker._upload_files(ebook)
+    assert set(files) == {"torrent"}
+
+
+@pytest.mark.asyncio
 async def test_unit3d_upload_request_parts_and_debug(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

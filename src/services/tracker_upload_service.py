@@ -21,7 +21,10 @@ from src.integrations.image_hosts.rehosting import (
     has_restricted_image_hosts,
     select_common_image_host,
 )
-from src.integrations.media.artwork import is_valid_cover_image
+from src.integrations.media.artwork import (
+    audiobook_cover_missing_or_invalid,
+    is_valid_cover_image,
+)
 from src.integrations.media.zentag import (
     prepare_zenith_audiobook,
     prepare_zenith_ebook,
@@ -849,6 +852,15 @@ async def process_trackers(
 _legacy_process_trackers = process_trackers
 
 
+def _global_upload_refusal_reason(meta: Meta) -> str | None:
+    invalid_group = invalid_release_group_tag(meta)
+    if invalid_group is not None:
+        return f"Invalid release group {invalid_group!r} matches season/episode syntax"
+    if audiobook_cover_missing_or_invalid(meta):
+        return "Audiobook cover is missing or invalid"
+    return None
+
+
 async def _validated_process_trackers(
     meta: Meta,
     config: dict[str, Any],
@@ -860,9 +872,9 @@ async def _validated_process_trackers(
     upload_target: str = "tracker",
     argument_parser_factory: ArgumentParserFactory | None = None,
 ) -> None:
-    """Refuse every tracker upload when the release group is episode syntax."""
-    invalid_group = invalid_release_group_tag(meta)
-    if invalid_group is None:
+    """Refuse tracker processing when a release-wide safety invariant fails."""
+    reason = _global_upload_refusal_reason(meta)
+    if reason is None:
         return await _legacy_process_trackers(
             meta,
             config,
@@ -874,7 +886,6 @@ async def _validated_process_trackers(
             upload_target,
             argument_parser_factory,
         )
-    reason = f"Invalid release group {invalid_group!r} matches season/episode syntax"
     for tracker in meta.trackers:
         meta.tracker_status.setdefault(str(tracker), {}).update(
             upload=False, skipped=True, status_message=f"Skipped: {reason}"

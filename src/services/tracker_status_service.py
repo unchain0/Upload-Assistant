@@ -24,6 +24,7 @@ from src.engines.upload_safety_policy import (
 )
 from src.integrations.external_apis.imdb import imdb_manager
 from src.integrations.filesystem.cleanup import cleanup_manager
+from src.integrations.media.artwork import audiobook_cover_missing_or_invalid
 from src.integrations.media.zentag import (
     should_prepare_zenith_audiobook,
     should_prepare_zenith_ebook,
@@ -128,6 +129,8 @@ class TrackerStatusManager:
         invalid_group = invalid_release_group_tag(meta)
         if invalid_group:
             return f"Release group {invalid_group!r} matches season/episode syntax. Correct or clear the release group before uploading."
+        if audiobook_cover_missing_or_invalid(meta):
+            return "Audiobook cover is missing or invalid. Prepare a valid cover before uploading."
         return (
             TrackerStatusManager._unsafe_path_reason(meta)
             if blocks_automatic_upload(meta)

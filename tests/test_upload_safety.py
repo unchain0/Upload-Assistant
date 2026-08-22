@@ -59,6 +59,38 @@ def test_allow_spaces_is_an_explicit_override() -> None:
     assert blocks_automatic_upload(meta) is False
 
 
+def test_audiobook_cover_is_global_upload_safety_invariant() -> None:
+    reason = TrackerStatusManager._unsafe_release_reason(
+        Meta(category="BOOK", audiobook=True, artwork_path="")
+    )
+    assert reason is not None
+    assert "Audiobook cover is missing or invalid" in reason
+
+
+def test_global_guard_refuses_audiobook_without_cover() -> None:
+    meta = Meta(
+        category="BOOK",
+        audiobook=True,
+        trackers=["YUSCENE", "PEERGARDEN"],
+        unattended=True,
+    )
+
+    successful = asyncio.run(
+        TrackerStatusManager({}).process_all_trackers(meta)
+    )
+
+    assert successful == 0
+    assert set(meta.tracker_status) == {"YUSCENE", "PEERGARDEN"}
+    assert all(
+        status["skipped"] is True and status["upload"] is False
+        for status in meta.tracker_status.values()
+    )
+    assert all(
+        "Audiobook cover is missing or invalid" in status["skip_reason"]
+        for status in meta.tracker_status.values()
+    )
+
+
 def test_invalid_release_group_tag_detects_episode_syntax() -> None:
     assert invalid_release_group_tag(Meta(tag="-_S01E05_")) == "S01E05"
     assert invalid_release_group_tag(Meta(tag="-Gecko")) is None

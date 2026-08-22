@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from src.domain_models.errors import OperationAbortedError
 from src.domain_models.release import Meta
 from src.services import preparation_service
 from src.services.preparation_service import Prep
@@ -20,6 +21,19 @@ def _prep(config: dict | None = None) -> Prep:
         takescreens_manager=SimpleNamespace()
     )
     return prep
+
+
+def test_audiobook_cover_postcondition_is_fail_closed() -> None:
+    prep = _prep()
+    with pytest.raises(
+        OperationAbortedError, match="Audiobook cover is required"
+    ):
+        prep._ensure_audiobook_cover(
+            Meta(category="BOOK", audiobook=True, artwork_path="")
+        )
+    prep._ensure_audiobook_cover(
+        Meta(category="BOOK", audiobook=False, artwork_path="")
+    )
 
 
 def test_check_adult_media_manual_tmdb_keywords_genres_and_false() -> None:

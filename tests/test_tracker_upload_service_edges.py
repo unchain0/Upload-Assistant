@@ -564,6 +564,71 @@ def test_disabled_cover_cjk_zentag_and_dupe_status_guards(
     assert "upload_success" not in dupe.tracker_status["TEST"]
 
 
+def test_audiobook_without_cover_refuses_upload_before_tracker_adapter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_basics(monkeypatch, ["TEST"])
+
+    class NeverUpload(_Tracker):
+        tracker = "TEST"
+        calls = 0
+
+        async def upload(self, _meta: Meta) -> bool:
+            type(self).calls += 1
+            return True
+
+    meta = _meta(
+        tmp_path,
+        ["TEST"],
+        category="BOOK",
+        audiobook=True,
+        artwork_path="",
+    )
+    _run(meta, _config(), {"TEST": NeverUpload}, api=("TEST",))
+
+    status = meta.tracker_status["TEST"]
+    assert status["upload"] is False
+    assert status["skipped"] is True
+    assert "Audiobook cover is missing or invalid" in status["status_message"]
+    assert NeverUpload.calls == 0
+
+
+def test_audiobook_with_valid_cover_reaches_tracker_adapter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_basics(monkeypatch, ["TEST"])
+    monkeypatch.setattr(
+        tracker_upload_service,
+        "audiobook_cover_missing_or_invalid",
+        lambda _meta: False,
+    )
+    monkeypatch.setattr(
+        tracker_upload_service,
+        "is_valid_cover_image",
+        lambda _path: True,
+    )
+
+    class Upload(_Tracker):
+        tracker = "TEST"
+        calls = 0
+
+        async def upload(self, _meta: Meta) -> bool:
+            type(self).calls += 1
+            return True
+
+    meta = _meta(
+        tmp_path,
+        ["TEST"],
+        category="BOOK",
+        audiobook=True,
+        artwork_path=str(tmp_path / "cover.png"),
+    )
+    _run(meta, _config(), {"TEST": Upload}, api=("TEST",))
+
+    assert meta.tracker_status["TEST"]["upload_success"] is True
+    assert Upload.calls == 1
+
+
 def test_invalid_release_group_refuses_upload_before_tracker_adapter(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

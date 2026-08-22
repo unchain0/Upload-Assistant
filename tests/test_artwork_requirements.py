@@ -10,6 +10,7 @@ from src.integrations.media.artwork import (
     MAX_ARTWORK_BYTES,
     _find_local_artwork_sources,
     _write_png,
+    audiobook_cover_missing_or_invalid,
     is_valid_cover_image,
     prepare_artwork,
 )
@@ -332,6 +333,11 @@ def test_valid_cover_within_size_limit_is_still_accepted(
     Image.new("RGB", (32, 48), "blue").save(cover_file)
 
     assert is_valid_cover_image(cover_file)
+    assert not audiobook_cover_missing_or_invalid(
+        Meta(audiobook=True, artwork_path=str(cover_file))
+    )
+    assert audiobook_cover_missing_or_invalid(Meta(audiobook=True))
+    assert not audiobook_cover_missing_or_invalid(Meta(audiobook=False))
 
 
 def test_local_artwork_discovery_skips_media_files(tmp_path: Path) -> None:
@@ -368,4 +374,28 @@ async def test_unit3d_attaches_only_a_decodable_book_cover(
 
     cover_file.write_bytes(b"not an image")
     files = await tracker.get_additional_files(meta)
+    assert "torrent-cover" not in files
+
+
+@pytest.mark.asyncio
+async def test_unit3d_cover_size_gap_is_fail_closed(tmp_path: Path) -> None:
+    cover_file = tmp_path / "large-cover.png"
+    Image.new("RGB", (32, 48), "green").save(cover_file)
+    target_size = 5 * 1024 * 1024 + 1024
+    with cover_file.open("ab") as output:
+        output.write(b"\0" * (target_size - cover_file.stat().st_size))
+
+    assert is_valid_cover_image(cover_file)
+
+    meta = Meta(
+        category="BOOK",
+        audiobook=True,
+        base_dir=str(tmp_path),
+        uuid="book-large-cover",
+        artwork_path=str(cover_file),
+    )
+    tracker = UNIT3D({"DEFAULT": {}, "TRACKERS": {"TEST": {}}}, "TEST")
+
+    files = await tracker.get_additional_files(meta)
+
     assert "torrent-cover" not in files

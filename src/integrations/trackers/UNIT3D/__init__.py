@@ -824,6 +824,33 @@ class UNIT3D:
         files = await self._upload_files(meta)
         return data, files, self._upload_headers(meta)
 
+    def _book_cover_required(self, meta: Meta) -> bool:
+        if meta.category != "BOOK":
+            return False
+        return bool(
+            meta.audiobook or getattr(self, "requires_book_cover", True)
+        )
+
+    def _ensure_required_book_cover_file(
+        self,
+        meta: Meta,
+        files: dict[str, tuple[str, bytes, str]],
+    ) -> None:
+        if not self._book_cover_required(meta):
+            return
+        if "torrent-cover" in files:
+            return
+        reason = "BOOK upload requires a valid torrent-cover multipart file"
+        meta.tracker_status.setdefault(self.tracker, {}).update(
+            upload=False,
+            skipped=True,
+            status_message=f"Skipped: {reason}",
+        )
+        logger.error(
+            f"[bold red]{self.tracker}: {reason}. Refusing upload.[/bold red]"
+        )
+        raise _UploadRejectedError(reason)
+
     async def _upload_files(
         self, meta: Meta
     ) -> dict[str, tuple[str, bytes, str]]:
@@ -842,6 +869,7 @@ class UNIT3D:
             )
         }
         files.update(await self.get_additional_files(meta))
+        self._ensure_required_book_cover_file(meta, files)
         return files
 
     def _upload_headers(self, meta: Meta) -> dict[str, str]:

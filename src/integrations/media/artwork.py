@@ -116,6 +116,11 @@ def is_valid_cover_image(path: str | Path | None) -> bool:
     return bool(image_bytes is not None and is_valid_image_bytes(image_bytes))
 
 
+def audiobook_cover_missing_or_invalid(meta: Meta) -> bool:
+    """Return whether an audiobook lacks a usable prepared cover artifact."""
+    return bool(meta.audiobook and not is_valid_cover_image(meta.artwork_path))
+
+
 def _artwork_directory(media_path: str) -> Path | None:
     if not media_path:
         return None
