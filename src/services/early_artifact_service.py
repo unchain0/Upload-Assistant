@@ -81,146 +81,202 @@ async def restart_early_artifact_tasks(
     return start_early_artifact_tasks(meta, client, config)
 
 
-def is_usenet_only(meta: Meta) -> bool:
+def _normalized_trackers(meta: Meta) -> list[str]:
     raw_trackers = meta.trackers
     trackers = (
         raw_trackers.split(",")
         if isinstance(raw_trackers, str)
         else raw_trackers
     )
-    normalized = [
+    return [
         str(tracker).strip().upper()
         for tracker in trackers
         if str(tracker).strip()
     ]
-    return bool(normalized) and all(
-        tracker in ("USENET", "MANUAL")
+
+
+def _tracker_is_usenet(tracker: str) -> bool:
+    return bool(
+        tracker in {"USENET", "MANUAL"}
         or getattr(tracker_class_map.get(tracker), "is_usenet", False)
-        for tracker in normalized
+    )
+
+
+def is_usenet_only(meta: Meta) -> bool:
+    normalized = _normalized_trackers(meta)
+    return bool(normalized) and all(
+        _tracker_is_usenet(tracker) for tracker in normalized
+    )
+
+
+def _skip_early_torrent_creation(meta: Meta) -> bool:
+    return bool(
+        meta.nohash
+        or meta.rehash
+        or meta.force_recheck
+        or is_usenet_only(meta)
+    )
+
+
+def _early_torrent_paths(meta: Meta) -> tuple[str, Path, Path]:
+    release_id = str(meta.uuid)
+    release_root = Path(str(meta.base_dir)) / "tmp" / release_id
+    return (
+        release_id,
+        release_root / "BASE.torrent",
+        release_root / "BASE_SUBS.torrent",
+    )
+
+
+def _reusable_torrent_exists(value: object) -> bool:
+    return bool(value and Path(str(value)).exists())
+
+
+async def _find_reusable_torrent(meta: Meta, client: Clients) -> str | None:
+    reuse_torrent = meta.reuse_torrent_path
+    if _reusable_torrent_exists(reuse_torrent):
+        return str(reuse_torrent)
+    logger.debug(
+        "[cyan]Early torrent creation has no cached reusable torrent; "
+        "searching client.[/cyan]"
+    )
+    search_started = time.perf_counter()
+    reuse_torrent = await client.find_existing_torrent(meta)
+    logger.debug(
+        "[cyan]Early client torrent search completed in "
+        f"{time.perf_counter() - search_started:.2f}s[/cyan]"
+    )
+    return str(reuse_torrent) if reuse_torrent else None
+
+
+async def _create_early_base(
+    meta: Meta, release_id: str, reuse_torrent: str | None
+) -> None:
+    if not _reusable_torrent_exists(reuse_torrent):
+        logger.debug(
+            "[cyan]No reusable client torrent found; creating BASE torrent "
+            "while metadata and screenshots are processed.[/cyan]"
+        )
+        await TorrentCreator.create_torrent(
+            meta, Path(cast(str, meta.path)), "BASE"
+        )
+        return
+    meta.reuse_torrent_path = reuse_torrent
+    logger.debug(
+        "[cyan]Creating torrent from the client copy while metadata and "
+        "screenshots are processed.[/cyan]"
+    )
+    base_creation_started = time.perf_counter()
+    created_path = await TorrentCreator.create_base_from_existing_torrent(
+        cast(str, reuse_torrent), str(meta.base_dir), release_id
+    )
+    logger.debug(
+        "[cyan]Early base torrent creation completed in "
+        f"{time.perf_counter() - base_creation_started:.2f}s: "
+        f"{created_path or 'no file created'}[/cyan]"
+    )
+
+
+async def _create_early_subtitle_torrent(
+    meta: Meta, subs_torrent_path: Path
+) -> None:
+    if not meta.subtitle_files or subs_torrent_path.exists():
+        return
+    await TorrentCreator.create_torrent(
+        meta, Path(cast(str, meta.path)), "BASE_SUBS"
+    )
+
+
+async def _run_early_torrent_creation(
+    meta: Meta, client: Clients, task_started: float
+) -> None:
+    release_id, torrent_path, subs_torrent_path = _early_torrent_paths(meta)
+    if torrent_path.exists():
+        logger.debug(
+            "[cyan]Skipping early torrent creation; BASE already exists at "
+            f"{torrent_path}[/cyan]"
+        )
+        return
+    reuse_torrent = await _find_reusable_torrent(meta, client)
+    await _create_early_base(meta, release_id, reuse_torrent)
+    await _create_early_subtitle_torrent(meta, subs_torrent_path)
+    logger.debug(
+        "[cyan]Early torrent task completed in "
+        f"{time.perf_counter() - task_started:.2f}s[/cyan]"
     )
 
 
 async def create_base_torrents_early(meta: Meta, client: Clients) -> None:
     """Reuse or hash BASE torrents while metadata and screenshots are processed."""
     task_started = time.perf_counter()
-    if (
-        meta.nohash
-        or meta.rehash
-        or meta.force_recheck
-        or is_usenet_only(meta)
-    ):
+    if _skip_early_torrent_creation(meta):
         logger.debug(
-            "[cyan]Skipping early torrent creation due to hashing or tracker settings.[/cyan]"
+            "[cyan]Skipping early torrent creation due to hashing or tracker "
+            "settings.[/cyan]"
         )
         return
-
-    release_id = str(meta.uuid)
-    release_root = Path(str(meta.base_dir)) / "tmp" / release_id
-    torrent_path = release_root / "BASE.torrent"
-    subs_torrent_path = release_root / "BASE_SUBS.torrent"
-    if torrent_path.exists():
-        logger.debug(
-            f"[cyan]Skipping early torrent creation; BASE already exists at {torrent_path}[/cyan]"
-        )
-        return
-
     try:
-        reuse_torrent = meta.reuse_torrent_path
-        if not reuse_torrent or not Path(reuse_torrent).exists():
-            logger.debug(
-                "[cyan]Early torrent creation has no cached reusable torrent; searching client.[/cyan]"
-            )
-            search_started = time.perf_counter()
-            reuse_torrent = await client.find_existing_torrent(meta)
-            logger.debug(
-                f"[cyan]Early client torrent search completed in {time.perf_counter() - search_started:.2f}s[/cyan]"
-            )
-        if reuse_torrent and Path(reuse_torrent).exists():
-            meta.reuse_torrent_path = reuse_torrent
-            logger.debug(
-                "[cyan]Creating torrent from the client copy while metadata and screenshots are processed.[/cyan]"
-            )
-            base_creation_started = time.perf_counter()
-            created_path = (
-                await TorrentCreator.create_base_from_existing_torrent(
-                    reuse_torrent, str(meta.base_dir), release_id
-                )
-            )
-            logger.debug(
-                f"[cyan]Early base torrent creation completed in {time.perf_counter() - base_creation_started:.2f}s: {created_path or 'no file created'}[/cyan]"
-            )
-        else:
-            logger.debug(
-                "[cyan]No reusable client torrent found; creating BASE torrent while metadata and screenshots are processed.[/cyan]"
-            )
-            await TorrentCreator.create_torrent(
-                meta, Path(cast(str, meta.path)), "BASE"
-            )
-        if meta.subtitle_files and not subs_torrent_path.exists():
-            await TorrentCreator.create_torrent(
-                meta, Path(cast(str, meta.path)), "BASE_SUBS"
-            )
-        logger.debug(
-            f"[cyan]Early torrent task completed in {time.perf_counter() - task_started:.2f}s[/cyan]"
-        )
+        await _run_early_torrent_creation(meta, client, task_started)
     except asyncio.CancelledError:
         raise
     except Exception as error:
         logger.warning(
-            f"[yellow]Early torrent creation failed; upload stage will retry: {error}[/yellow]"
+            "[yellow]Early torrent creation failed; upload stage will retry: "
+            f"{error}[/yellow]"
         )
 
 
 def needs_usenet_archive(meta: Meta) -> bool:
-    raw_trackers = meta.trackers
-    trackers = (
-        raw_trackers.split(",")
-        if isinstance(raw_trackers, str)
-        else raw_trackers
+    if meta.usenet:
+        return True
+    return any(
+        _tracker_is_usenet(tracker)
+        for tracker in _normalized_trackers(meta)
+        if tracker != "MANUAL"
     )
-    return bool(meta.usenet) or any(
-        str(tracker).strip().upper() == "USENET"
-        or getattr(
-            tracker_class_map.get(str(tracker).strip().upper()),
-            "is_usenet",
-            False,
+
+
+def _usenet_archive_allowed(meta: Meta, config: Mapping[str, Any]) -> bool:
+    usenet_cfg = config.get("USENET", {})
+    if not needs_usenet_archive(meta):
+        return False
+    if not isinstance(usenet_cfg, Mapping):
+        return False
+    return not bool(usenet_cfg.get("skip_archive", False))
+
+
+async def _prepare_usenet_archive(
+    meta: Meta, config: Mapping[str, Any]
+) -> None:
+    from src.integrations.usenet.creator import prepare_and_upload_usenet
+
+    logger.debug(
+        "[cyan]Preparing Usenet archive and PAR2 files while metadata and "
+        "screenshots are processed.[/cyan]"
+    )
+    with suppress_cli_progress():
+        prepared_path = await prepare_and_upload_usenet(
+            meta, dict(config), prepare_only=True
         )
-        for tracker in trackers
-        if str(tracker).strip()
-    )
+    if not prepared_path:
+        logger.warning(
+            "[yellow]Early Usenet preparation did not complete; posting stage "
+            "will retry.[/yellow]"
+        )
 
 
 async def prepare_usenet_archive_early(
     meta: Meta, config: Mapping[str, Any]
 ) -> None:
     """Create archive/PAR2 files before duplicate confirmation, never post them."""
-    usenet_cfg = config.get("USENET", {})
-    if (
-        not needs_usenet_archive(meta)
-        or not isinstance(usenet_cfg, Mapping)
-        or usenet_cfg.get("skip_archive", False)
-    ):
+    if not _usenet_archive_allowed(meta, config):
         return
     try:
-        from src.integrations.usenet.creator import prepare_and_upload_usenet
-
-        logger.debug(
-            "[cyan]Preparing Usenet archive and PAR2 files while metadata and screenshots are processed.[/cyan]"
-        )
-        # Archive/PAR2 generation overlaps metadata and duplicate checking. Keep
-        # its Rich updates out of the CLI until the actual posting stage, while
-        # structured CLI progress remains available.
-        with suppress_cli_progress():
-            prepared_path = await prepare_and_upload_usenet(
-                meta, dict(config), prepare_only=True
-            )
-        if not prepared_path:
-            logger.warning(
-                "[yellow]Early Usenet preparation did not complete; posting stage will retry.[/yellow]"
-            )
+        await _prepare_usenet_archive(meta, config)
     except asyncio.CancelledError:
         raise
     except Exception as error:
         logger.warning(
-            f"[yellow]Early Usenet preparation failed; posting stage will retry: {error}[/yellow]"
+            "[yellow]Early Usenet preparation failed; posting stage will retry: "
+            f"{error}[/yellow]"
         )
