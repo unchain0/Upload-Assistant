@@ -26,12 +26,14 @@ def test_homiehelpdesk_music_upload_uses_musicbrainz_release_id():
     }
 
 
-def test_homiehelpdesk_music_upload_uses_discogs_url_when_musicbrainz_is_unavailable():
+def test_homiehelpdesk_discogs_fallback_without_musicbrainz() -> None:
     meta = Meta(
         category="MUSIC",
         music_release={
             "external_ids": {
-                "discogs_master_url": "https://www.discogs.com/master/28700-Example"
+                "discogs_master_url": (
+                    "https://www.discogs.com/master/28700-Example"
+                )
             }
         },
     )
