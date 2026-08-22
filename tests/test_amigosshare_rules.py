@@ -90,6 +90,73 @@ async def run_checks(
         await client.session.aclose()
 
 
+@pytest.mark.parametrize(
+    ("enabled", "expected"),
+    [
+        ({"audiobook": True}, "121"),
+        ({"comic": True}, "112"),
+        ({"manga": True}, "147"),
+        ({"magazine": True}, "68"),
+        ({}, "67"),
+    ],
+)
+def test_amigosshare_book_type_mapping(
+    enabled: dict[str, bool], expected: str
+) -> None:
+    values = {
+        "audiobook": False,
+        "comic": False,
+        "manga": False,
+        "magazine": False,
+    }
+    values.update(enabled)
+    assert AmigosShare._book_type_id(SimpleNamespace(**values)) == expected
+
+
+def test_amigosshare_audio_and_video_mapping_helpers() -> None:
+    assert (
+        AmigosShare._audio_type_id({"portuguese"}, "portuguese", False) == "4"
+    )
+    assert (
+        AmigosShare._audio_type_id({"portuguese", "english"}, "english", False)
+        == "2"
+    )
+    assert AmigosShare._audio_type_id({"portuguese"}, "english", False) == "3"
+    assert AmigosShare._audio_type_id({"english"}, "english", True) == "1"
+    assert AmigosShare._audio_type_id({"english"}, "english", False) == "7"
+    assert AmigosShare._codec_from_encode("x264") == "H264"
+    assert AmigosShare._codec_from_encode("x265") == "HEVC"
+    assert AmigosShare._hdr_codec_id("HEVC", "HDR") == "28"
+    assert AmigosShare._hdr_codec_id("H264", "HDR") == "32"
+
+
+def test_amigosshare_localized_title_and_book_cover_helpers() -> None:
+    assert (
+        AmigosShare._localized_display_title("Original", "Brasil", "Original")
+        == "Brasil (Original)"
+    )
+    assert (
+        AmigosShare._localized_display_title(
+            "Original", "Original", "Original"
+        )
+        == "Original"
+    )
+    meta = SimpleNamespace(
+        hosted_artwork=[{"raw_url": "https://img/cover.jpg"}]
+    )
+    assert AmigosShare._hosted_book_cover(meta) == "https://img/cover.jpg"
+    assert (
+        AmigosShare._clean_base_description("[h1]Título[/h1] [img=350]x[/img]")
+        == "[u][b]Título[/b][/u] [img]x[/img]"
+    )
+
+
+def test_amigosshare_game_language_mapping_helpers() -> None:
+    assert AmigosShare._game_language_id(["english"]) == "4"
+    assert AmigosShare._game_language_id(["klingon"]) == "6"
+    assert AmigosShare._has_portuguese_game_language(["brazilian portuguese"])
+
+
 def test_movie_accepts_localized_ptbr_overview() -> None:
     meta = make_meta(
         audio_languages=["portuguese"],
