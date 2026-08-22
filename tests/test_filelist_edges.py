@@ -578,3 +578,85 @@ def test_filelist_final_uncovered_branches(
     )
     asyncio.run(tracker.login(str(tmp_path / "cookies.json")))
     save.assert_not_called()
+
+
+def test_filelist_refactor_pure_helper_edges(tmp_path: Path) -> None:
+    tracker = FileList(_config(tmp_path))
+
+    assert tracker._raw_json_cookie_values({}) == {}
+    assert (
+        tracker._base_category_id(
+            _meta(tmp_path, uuid="other-category", category="OTHER"), False
+        )
+        == 4
+    )
+    assert (
+        tracker._name_imdb_overrides(
+            _meta(tmp_path, uuid="invalid-imdb-info", imdb_info="bad"),
+            "Release",
+        )
+        == "Release"
+    )
+    assert (
+        tracker._name_imdb_year(
+            _meta(tmp_path, uuid="missing-year", year=None), "Release", {}
+        )
+        == "Release"
+    )
+
+    upload_data: dict[str, Any] = {}
+    tracker._add_imdb_upload_data(
+        _meta(tmp_path, uuid="missing-imdb", imdb_id=None), upload_data
+    )
+    assert upload_data == {}
+
+    assert (
+        tracker._raw_mediainfo_tracks(
+            _meta(
+                tmp_path,
+                uuid="invalid-media",
+                mediainfo={"media": "bad"},
+            )
+        )
+        == []
+    )
+    assert (
+        tracker._raw_mediainfo_tracks(
+            _meta(
+                tmp_path,
+                uuid="invalid-tracks",
+                mediainfo={"media": {"track": "bad"}},
+            )
+        )
+        == []
+    )
+    assert not tracker._ro_bd_audio(
+        _meta(
+            tmp_path,
+            uuid="non-ro-bd-audio",
+            is_disc="BDMV",
+            bdinfo={"audio": [{"language": "English"}]},
+        )
+    )
+
+
+def test_filelist_refactor_prompt_helper_edges(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tracker = FileList(_config(tmp_path))
+    attended = _meta(tmp_path, uuid="confirmed-name", unattended=False)
+
+    monkeypatch.setattr(
+        filelist_module, "prompt_in_thread", AsyncMock(return_value=True)
+    )
+    assert (
+        asyncio.run(tracker._confirmed_upload_name(attended, "Release.Name"))
+        == "Release.Name"
+    )
+
+    monkeypatch.setattr(
+        filelist_module, "prompt_in_thread", AsyncMock(return_value=False)
+    )
+    assert not asyncio.run(
+        tracker._relogin(attended, str(tmp_path / "cookies.json"))
+    )

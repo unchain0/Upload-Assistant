@@ -60,174 +60,447 @@ class FileList:
 
         self.cookie_validator = CookieValidator(config)
 
+    @staticmethod
+    def _movie_uses_bluray_category(meta: Meta) -> bool:
+        return meta.is_disc == "BDMV" or meta.type == "REMUX"
+
+    @staticmethod
+    def _movie_bluray_category_id(meta: Meta) -> int:
+        return 26 if meta.resolution == "2160p" else 20
+
+    @classmethod
+    def _movie_base_category_id(cls, meta: Meta) -> int:
+        if cls._movie_uses_bluray_category(meta):
+            return cls._movie_bluray_category_id(meta)
+        if meta.resolution == "2160p":
+            return 6
+        return 1 if meta.sd == 1 else 4
+
+    @staticmethod
+    def _movie_ro_category_applies(meta: Meta, has_ro_sub: bool) -> bool:
+        return bool(has_ro_sub and meta.sd == 0 and meta.resolution != "2160p")
+
+    @classmethod
+    def _movie_category_id(cls, meta: Meta, has_ro_sub: bool) -> int:
+        if cls._movie_ro_category_applies(meta, has_ro_sub):
+            return 19
+        return cls._movie_base_category_id(meta)
+
+    @staticmethod
+    def _tv_category_id(meta: Meta) -> int:
+        if meta.resolution == "2160p":
+            return 27
+        return 23 if meta.sd == 1 else 21
+
+    @staticmethod
+    def _disc_category_override(meta: Meta, has_ro_sub: bool) -> int | None:
+        if meta.is_disc != "DVD":
+            return None
+        return 3 if has_ro_sub else 2
+
+    @classmethod
+    def _base_category_id(cls, meta: Meta, has_ro_sub: bool) -> int:
+        if meta.category == "MOVIE":
+            return cls._movie_category_id(meta, has_ro_sub)
+        if meta.category == "TV":
+            return cls._tv_category_id(meta)
+        return 4
+
     async def get_category_id(self, meta: Meta) -> int:
         _has_ro_audio, has_ro_sub = await self.get_ro_tracks(meta)
-        cat_id = 4
-        # 25 = 3D Movie
-        if meta.category == "MOVIE":
-            # 4 = Movie HD
-            cat_id = 4
-            if meta.is_disc == "BDMV" or meta.type == "REMUX":
-                # 20 = BluRay
-                cat_id = 20
-                if meta.resolution == "2160p":
-                    # 26 = 4k Movie - BluRay
-                    cat_id = 26
-            elif meta.resolution == "2160p":
-                # 6 = 4k Movie
-                cat_id = 6
-            elif meta.sd == 1:
-                # 1 = Movie SD
-                cat_id = 1
-            if has_ro_sub and meta.sd == 0 and meta.resolution != "2160p":
-                # 19 = Movie + RO
-                cat_id = 19
+        category_id = self._base_category_id(meta, has_ro_sub)
+        disc_override = self._disc_category_override(meta, has_ro_sub)
+        if disc_override is not None:
+            category_id = disc_override
+        return 24 if meta.anime is True else category_id
 
-        if meta.category == "TV":
-            # 21 = TV HD
-            cat_id = 21
-            if meta.resolution == "2160p":
-                # 27 = TV 4k
-                cat_id = 27
-            elif meta.sd == 1:
-                # 23 = TV SD
-                cat_id = 23
-
-        if meta.is_disc == "DVD":
-            # 2 = DVD
-            cat_id = 2
-            if has_ro_sub:
-                # 3 = DVD + RO
-                cat_id = 3
-
-        if meta.anime is True:
-            # 24 = Anime
-            cat_id = 24
-        return cat_id
-
-    async def get_name(self, meta: Meta) -> str:
-        fl_name = meta.name
-        hdr = meta.hdr
-        audio = meta.audio
-        if "DV" in hdr:
-            fl_name = fl_name.replace(" DV ", " DoVi ")
+    @staticmethod
+    def _name_hdr_and_audio(meta: Meta, name: str) -> str:
+        if "DV" in meta.hdr:
+            name = name.replace(" DV ", " DoVi ")
         if meta.type in ("WEBDL", "WEBRIP", "ENCODE"):
-            fl_name = fl_name.replace(audio, audio.replace(" ", "", 1))
-        fl_name = fl_name.replace(meta.aka, "")
-        imdb_info = meta.imdb_info
-        if isinstance(imdb_info, dict):
-            imdb_info_dict = imdb_info
-            title = meta.title
-            imdb_aka = str(imdb_info_dict.get("aka", ""))
-            if imdb_aka:
-                fl_name = fl_name.replace(title, imdb_aka)
-            meta_year = str(meta.year).strip() if meta.year is not None else ""
-            imdb_year = str(imdb_info_dict.get("year", meta_year))
-            if meta_year and meta_year != imdb_year:
-                fl_name = fl_name.replace(meta_year, imdb_year)
-        if "DD+" in audio and "DDP" in meta.basename_no_ext:
-            fl_name = fl_name.replace("DD+", "DDP")
-        if "Atmos" in audio and "Atmos" not in meta.basename_no_ext:
-            fl_name = fl_name.replace("Atmos", "")
+            name = name.replace(meta.audio, meta.audio.replace(" ", "", 1))
+        return name.replace(meta.aka, "")
 
-        fl_name = (
-            fl_name.replace("BluRay REMUX", "Remux")
+    @staticmethod
+    def _name_imdb_aka(
+        meta: Meta, name: str, imdb_info: dict[str, Any]
+    ) -> str:
+        imdb_aka = str(imdb_info.get("aka", ""))
+        return name.replace(meta.title, imdb_aka) if imdb_aka else name
+
+    @staticmethod
+    def _name_imdb_year(
+        meta: Meta, name: str, imdb_info: dict[str, Any]
+    ) -> str:
+        meta_year = str(meta.year).strip() if meta.year is not None else ""
+        imdb_year = str(imdb_info.get("year", meta_year))
+        if meta_year and meta_year != imdb_year:
+            return name.replace(meta_year, imdb_year)
+        return name
+
+    @classmethod
+    def _name_imdb_overrides(cls, meta: Meta, name: str) -> str:
+        if not isinstance(meta.imdb_info, dict):
+            return name
+        imdb_info = meta.imdb_info
+        name = cls._name_imdb_aka(meta, name, imdb_info)
+        return cls._name_imdb_year(meta, name, imdb_info)
+
+    @staticmethod
+    def _name_audio_corrections(meta: Meta, name: str) -> str:
+        if "DD+" in meta.audio and "DDP" in meta.basename_no_ext:
+            name = name.replace("DD+", "DDP")
+        if "Atmos" in meta.audio and "Atmos" not in meta.basename_no_ext:
+            name = name.replace("Atmos", "")
+        return name
+
+    @staticmethod
+    def _name_release_normalization(name: str) -> str:
+        name = (
+            name.replace("BluRay REMUX", "Remux")
             .replace("BluRay Remux", "Remux")
             .replace("Bluray Remux", "Remux")
         )
-        fl_name = fl_name.replace("PQ10", "HDR").replace("HDR10+", "HDR")
-        fl_name = (
-            fl_name.replace("DoVi HDR HEVC", "HEVC DoVi HDR")
+        name = name.replace("PQ10", "HDR").replace("HDR10+", "HDR")
+        name = (
+            name.replace("DoVi HDR HEVC", "HEVC DoVi HDR")
             .replace("HDR HEVC", "HEVC HDR")
             .replace("DoVi HEVC", "HEVC DoVi")
         )
-        fl_name = (
-            fl_name.replace("DTS7.1", "DTS")
+        name = (
+            name.replace("DTS7.1", "DTS")
             .replace("DTS5.1", "DTS")
             .replace("DTS2.0", "DTS")
             .replace("DTS1.0", "DTS")
         )
-        fl_name = fl_name.replace("Dubbed", "").replace("Dual-Audio", "")
-        fl_name = " ".join(fl_name.split())
-        fl_name = re.sub(r"[^0-9a-zA-ZÀ-ÿ. &+'\-\[\]]+", "", fl_name)
-        return fl_name.replace(" ", ".").replace("..", ".")
+        return name.replace("Dubbed", "").replace("Dual-Audio", "")
+
+    @staticmethod
+    def _finalize_name(name: str) -> str:
+        name = " ".join(name.split())
+        name = re.sub(r"[^0-9a-zA-ZÀ-ÿ. &+'\-\[\]]+", "", name)
+        return name.replace(" ", ".").replace("..", ".")
+
+    async def get_name(self, meta: Meta) -> str:
+        name = self._name_hdr_and_audio(meta, meta.name)
+        name = self._name_imdb_overrides(meta, name)
+        name = self._name_audio_corrections(meta, name)
+        return self._finalize_name(self._name_release_normalization(name))
 
     def _is_true(self, value: Any) -> bool:
         return str(value).strip().lower() in {"true", "1", "yes"}
+
+    @staticmethod
+    def _netscape_cookie_line(line: str) -> tuple[str, str] | None:
+        if not line.strip() or line.startswith(("# ", "#")):
+            return None
+        fields = re.split(r"\s+", line.strip())
+        if len(fields) < 7:
+            return None
+        return fields[5], fields[6]
+
+    def _load_netscape_cookies(self, path: Path) -> dict[str, str]:
+        cookies: dict[str, str] = {}
+        try:
+            with path.open(
+                "r", encoding="utf-8", errors="ignore"
+            ) as file_handle:
+                for line in file_handle:
+                    entry = self._netscape_cookie_line(line)
+                    if entry is not None:
+                        cookies[entry[0]] = entry[1]
+        except Exception as error:
+            logger.error(
+                f"{self.tracker}: [red]Error parsing {self.tracker} Netscape "
+                f"cookie file: {escape(str(error))}[/red]"
+            )
+        return cookies
+
+    def _load_pickle_cookies(self, path: Path) -> dict[str, str]:
+        try:
+            import pickle
+
+            with path.open("rb") as file_handle:
+                session_cookies = pickle.load(file_handle)  # noqa: S301
+            self.cookie_validator._save_cookies_secure(
+                session_cookies, str(path.with_suffix(".json"))
+            )  # pyright: ignore[reportPrivateUsage]
+            return {cookie.name: cookie.value for cookie in session_cookies}
+        except Exception as error:
+            logger.error(
+                f"{self.tracker}: [red]Failed to migrate legacy cookies "
+                f"from pickle: {error}[/red]"
+            )
+            return {}
+
+    def _load_secure_cookies(self, path: Path) -> dict[str, str]:
+        raw_cookies = self.cookie_validator._load_cookies_dict_secure(
+            str(path)
+        )  # pyright: ignore[reportPrivateUsage]
+        return {
+            name: str(data.get("value", ""))
+            for name, data in raw_cookies.items()
+        }
+
+    @staticmethod
+    def _nested_raw_cookie_values(data: dict[Any, Any]) -> dict[str, str]:
+        return {
+            str(name): str(cast(dict[str, Any], item).get("value", ""))
+            for name, item in data.items()
+        }
+
+    @staticmethod
+    def _flat_raw_cookie_values(data: dict[Any, Any]) -> dict[str, str]:
+        return {str(name): str(value) for name, value in data.items()}
+
+    @classmethod
+    def _raw_json_cookie_values(cls, data: dict[Any, Any]) -> dict[str, str]:
+        if not data:
+            return {}
+        first_value = next(iter(data.values()))
+        if isinstance(first_value, dict) and "value" in first_value:
+            return cls._nested_raw_cookie_values(data)
+        return cls._flat_raw_cookie_values(data)
+
+    def _load_raw_json_cookies(self, path: Path) -> dict[str, str]:
+        try:
+            with path.open("r", encoding="utf-8") as file_handle:
+                data = json.load(file_handle)
+            return (
+                self._raw_json_cookie_values(cast(dict[Any, Any], data))
+                if isinstance(data, dict)
+                else {}
+            )
+        except Exception as error:
+            logger.error(
+                f"{self.tracker}: [yellow]Warning: Error parsing cookie file: "
+                f"{error}[/yellow]"
+            )
+            return {}
+
+    def _load_json_cookies(self, path: Path) -> dict[str, str]:
+        try:
+            return self._load_secure_cookies(path)
+        except Exception:
+            return self._load_raw_json_cookies(path)
 
     def _load_cookie_dict(self, cookiefile: str) -> dict[str, str]:
         path = Path(cookiefile)
         if not path.exists():
             return {}
+        suffix = path.suffix.lower()
+        if suffix == ".txt":
+            return self._load_netscape_cookies(path)
+        if suffix in {".pkl", ".pickle"}:
+            return self._load_pickle_cookies(path)
+        return self._load_json_cookies(path)
 
-        # If it's a Netscape cookies file (ends with .txt)
-        if path.suffix.lower() == ".txt":
-            cookies: dict[str, str] = {}
-            try:
-                with path.open("r", encoding="utf-8", errors="ignore") as f:
-                    for line in f:
-                        if line.strip() and not line.startswith(("# ", "#")):
-                            line_fields = re.split(r"\s+", line.strip())
-                            if len(line_fields) >= 7:
-                                cookies[line_fields[5]] = line_fields[6]
-            except Exception as e:
-                logger.error(
-                    f"{self.tracker}: [red]Error parsing {self.tracker} Netscape cookie file: {escape(str(e))}[/red]"
-                )
-            return cookies
+    async def _confirmed_upload_name(
+        self, meta: Meta, filelist_name: str
+    ) -> str | None:
+        cli_ui.info(f"Filelist name: {filelist_name}")
+        if meta.unattended is not False:
+            return filelist_name
+        confirmed = await prompt_in_thread(
+            cli_ui.ask_yes_no, "Correct?", default=False
+        )
+        if confirmed is True:
+            return filelist_name
+        manual_name = await prompt_in_thread(
+            cli_ui.ask_string, "Please enter a proper name", default=""
+        )
+        if manual_name != "":
+            return str(manual_name)
+        logger.info(f"{self.tracker}: No proper name given")
+        logger.info(f"{self.tracker}: Aborting...")
+        return None
 
-        # If it's a pickle file (ends with .pkl or .pickle)
-        if path.suffix.lower() in [".pkl", ".pickle"]:
-            try:
-                import pickle
+    @staticmethod
+    def _torrent_file_name(meta: Meta, filelist_name: str) -> str:
+        if meta.anime is True and meta.tag == "-SubsPlease":
+            return str(filelist_name)
+        return meta.basename_no_ext
 
-                with path.open("rb") as f:
-                    session_cookies = pickle.load(f)  # noqa: S301
-                # Save it as JSON with same name but .json extension (standard migration)
-                json_path = path.with_suffix(".json")
-                self.cookie_validator._save_cookies_secure(
-                    session_cookies, str(json_path)
-                )  # pyright: ignore[reportPrivateUsage]
-                return {
-                    cookie.name: cookie.value for cookie in session_cookies
-                }
-            except Exception as e:
-                logger.error(
-                    f"{self.tracker}: [red]Failed to migrate legacy cookies from pickle: {e}[/red]"
-                )
-                return {}
+    @staticmethod
+    def _upload_tmp_dir(meta: Meta) -> Path:
+        return Path(meta.base_dir) / "tmp" / meta.uuid
 
-        # Default to loading as JSON
-        try:
-            raw_cookies = self.cookie_validator._load_cookies_dict_secure(
-                str(path)
-            )  # pyright: ignore[reportPrivateUsage]
-            return {
-                name: str(data.get("value", ""))
-                for name, data in raw_cookies.items()
-            }
-        except Exception:
-            # Maybe it's a raw JSON dict of {name: value} or {name: {"value": val}}?
-            try:
-                with path.open("r", encoding="utf-8") as f:
-                    data = json.load(f)
-                if isinstance(data, dict):
-                    if data:
-                        first_val = next(iter(data.values()))
-                        if (
-                            isinstance(first_val, dict)
-                            and "value" in first_val
-                        ):
-                            return {
-                                name: str(item.get("value", ""))
-                                for name, item in data.items()
-                            }
-                    return {name: str(val) for name, val in data.items()}
-            except Exception as e:
-                logger.error(
-                    f"{self.tracker}: [yellow]Warning: Error parsing cookie file: {e}[/yellow]"
-                )
-            return {}
+    @classmethod
+    def _upload_artifact_paths(cls, meta: Meta) -> tuple[Path, Path, Path]:
+        tmp_dir = cls._upload_tmp_dir(meta)
+        description = tmp_dir / "[FILELIST]DESCRIPTION.txt"
+        torrent = tmp_dir / "[FILELIST].torrent"
+        media_info = (
+            tmp_dir / "BD_SUMMARY_00.txt"
+            if meta.bdinfo
+            else tmp_dir / "MEDIAINFO_CLEANPATH.txt"
+        )
+        return description, torrent, media_info
+
+    @classmethod
+    async def _upload_artifacts(
+        cls, meta: Meta, torrent_file_name: str
+    ) -> tuple[dict[str, tuple[str, bytes, str]], str, str, str]:
+        description_path, torrent_path, media_info_path = (
+            cls._upload_artifact_paths(meta)
+        )
+        async with aiofiles.open(
+            description_path, newline="", encoding="utf-8"
+        ) as description_file:
+            description = await description_file.read()
+        async with aiofiles.open(
+            media_info_path, encoding="utf-8"
+        ) as media_file:
+            media_info = await media_file.read()
+        async with aiofiles.open(torrent_path, "rb") as torrent_file:
+            torrent_bytes = await torrent_file.read()
+        torrent_name = unidecode(torrent_file_name)
+        files = {
+            "file": (
+                f"{torrent_name}.torrent",
+                torrent_bytes,
+                "application/x-bittorent",
+            )
+        }
+        return files, description, media_info, str(torrent_path)
+
+    @staticmethod
+    def _has_imdb_id(meta: Meta) -> bool:
+        value = str(meta.imdb_id if meta.imdb_id is not None else "0")
+        return value.isdigit() and int(value) != 0
+
+    @classmethod
+    def _add_imdb_upload_data(cls, meta: Meta, data: dict[str, Any]) -> None:
+        if not cls._has_imdb_id(meta):
+            return
+        data["imdbid"] = meta.imdb
+        imdb_info = meta.imdb_info if isinstance(meta.imdb_info, dict) else {}
+        data["description"] = imdb_info.get("genres", "")
+
+    def _uploader_name_allowed(self) -> bool:
+        anon = self.config["TRACKERS"][self.tracker].get("anon", "False")
+        return self.uploader_name not in ("", None) and not self._is_true(anon)
+
+    @staticmethod
+    def _disc_freeleech_required(meta: Meta) -> bool:
+        return meta.is_disc == "BDMV" or meta.type == "REMUX"
+
+    @staticmethod
+    def _numeric_flag_enabled(value: object) -> bool:
+        normalized = value if value is not None else "0"
+        return int(cast(Any, normalized)) != 0
+
+    @classmethod
+    def _freeleech_required(cls, meta: Meta) -> bool:
+        if cls._disc_freeleech_required(meta):
+            return True
+        if cls._numeric_flag_enabled(meta.tv_pack):
+            return True
+        return cls._numeric_flag_enabled(meta.freeleech)
+
+    def _apply_upload_flags(
+        self, meta: Meta, data: dict[str, Any], has_ro_audio: bool
+    ) -> None:
+        if self._uploader_name_allowed():
+            data["epenis"] = self.uploader_name
+        if has_ro_audio:
+            data["materialro"] = "on"
+        if self._freeleech_required(meta):
+            data["freeleech"] = "on"
+
+    def _upload_data(
+        self,
+        meta: Meta,
+        filelist_name: str,
+        category_id: int,
+        description: str,
+        media_info: str,
+        has_ro_audio: bool,
+    ) -> dict[str, Any]:
+        data: dict[str, Any] = {
+            "name": filelist_name,
+            "type": category_id,
+            "descr": description.strip(),
+            "nfo": media_info,
+        }
+        self._add_imdb_upload_data(meta, data)
+        self._apply_upload_flags(meta, data, has_ro_audio)
+        return data
+
+    async def _debug_upload(
+        self,
+        common: Common,
+        meta: Meta,
+        url: str,
+        data: dict[str, Any],
+    ) -> bool:
+        logger.debug(url)
+        logger.debug(Redaction.redact_private_info(data))
+        meta.tracker_status[self.tracker]["status_message"] = (
+            "Debug mode enabled, not uploading."
+        )
+        debug_tracker = f"{self.tracker}_DEBUG"
+        await common.create_torrent_for_upload(
+            meta,
+            debug_tracker,
+            debug_tracker,
+            announce_url="https://fake.tracker",
+        )
+        return True
+
+    def _cookie_values(self, meta: Meta) -> dict[str, str]:
+        from src.integrations.trackers.cookie_auth import find_cookie_file
+
+        cookiefile = find_cookie_file(meta.base_dir, self.tracker, self.config)
+        return self._load_cookie_dict(cookiefile)
+
+    async def _post_upload(
+        self,
+        url: str,
+        data: dict[str, Any],
+        files: dict[str, tuple[str, bytes, str]],
+        cookies: dict[str, str],
+    ) -> httpx.Response:
+        async with httpx.AsyncClient(
+            cookies=cookies, timeout=60.0, follow_redirects=True
+        ) as client:
+            return await client.post(url=url, data=data, files=files)
+
+    def _upload_success_match(
+        self, response_url: object
+    ) -> re.Match[str] | None:
+        host = self.base_url.replace("https://", "")
+        return re.match(
+            rf".*?{re.escape(host)}/details\.php\?id=(\d+)&uploaded=(\d+)",
+            str(response_url),
+        )
+
+    async def _complete_upload(
+        self,
+        meta: Meta,
+        response: httpx.Response,
+        cookies: dict[str, str],
+        torrent_path: str,
+        data: dict[str, Any],
+    ) -> bool:
+        match = self._upload_success_match(response.url)
+        if match is not None:
+            meta.tracker_status[self.tracker]["status_message"] = match.group(
+                0
+            )
+            await self.download_new_torrent(
+                cookies, match.group(1), torrent_path
+            )
+            return True
+        logger.info(data)
+        logger.info(f"{self.tracker}: \n\n")
+        logger.info(response.text)
+        raise UploadError(
+            f"Upload to FILELIST Failed: result URL {response.url} "
+            f"({response.status_code}) was not expected",
+            "red",
+        )
 
     async def upload(self, meta: Meta) -> bool:
         common = Common(config=self.config)
@@ -235,195 +508,108 @@ class FileList:
             meta, self.tracker, self.source_flag
         )
         await self.edit_desc(meta)
-        fl_name = await self.get_name(meta)
-        cat_id = await self.get_category_id(meta)
+        filelist_name = await self.get_name(meta)
+        category_id = await self.get_category_id(meta)
         has_ro_audio, _has_ro_sub = await self.get_ro_tracks(meta)
-
-        # Confirm the correct naming order for FILELIST
-        cli_ui.info(f"Filelist name: {fl_name}")
-        if meta.unattended is False:
-            fl_confirm = await prompt_in_thread(
-                cli_ui.ask_yes_no, "Correct?", default=False
-            )
-            if fl_confirm is not True:
-                fl_name_manually = await prompt_in_thread(
-                    cli_ui.ask_string, "Please enter a proper name", default=""
-                )
-                if fl_name_manually == "":
-                    logger.info(f"{self.tracker}: No proper name given")
-                    logger.info(f"{self.tracker}: Aborting...")
-                    return False
-                fl_name = fl_name_manually
-
-        # Torrent File Naming
-        # Note: Don't Edit .torrent filename after creation, SubsPlease anime releases (because of their weird naming) are an exception
-        torrent_file_name = (
-            str(fl_name)
-            if meta.anime is True and meta.tag == "-SubsPlease"
-            else meta.basename_no_ext
+        confirmed_name = await self._confirmed_upload_name(meta, filelist_name)
+        if confirmed_name is None:
+            return False
+        torrent_name = self._torrent_file_name(meta, confirmed_name)
+        (
+            files,
+            description,
+            media_info,
+            torrent_path,
+        ) = await self._upload_artifacts(meta, torrent_name)
+        data = self._upload_data(
+            meta,
+            confirmed_name,
+            category_id,
+            description,
+            media_info,
+            has_ro_audio,
         )
-
-        # Download new .torrent from site
-        desc_path = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{self.tracker}]DESCRIPTION.txt"
-        async with aiofiles.open(
-            desc_path, newline="", encoding="utf-8"
-        ) as desc_file:
-            fl_desc = await desc_file.read()
-        torrent_path = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{self.tracker}].torrent"
-        mi_path = (
-            f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/BD_SUMMARY_00.txt"
-            if meta.bdinfo
-            else f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/MEDIAINFO_CLEANPATH.txt"
-        )
-        async with aiofiles.open(mi_path, encoding="utf-8") as mi_file:
-            mi_dump = await mi_file.read()
-        async with aiofiles.open(torrent_path, "rb") as torrent_file:
-            torrent_bytes = await torrent_file.read()
-        torrent_file_name = unidecode(torrent_file_name)
-        files = {
-            "file": (
-                f"{torrent_file_name}.torrent",
-                torrent_bytes,
-                "application/x-bittorent",
-            )
-        }
-        data = {
-            "name": fl_name,
-            "type": cat_id,
-            "descr": fl_desc.strip(),
-            "nfo": mi_dump,
-        }
-
-        imdb_id_value = str(meta.imdb_id if meta.imdb_id is not None else "0")
-        if imdb_id_value.isdigit() and int(imdb_id_value) != 0:
-            data["imdbid"] = meta.imdb
-            imdb_info = meta.imdb_info
-            imdb_info_dict = imdb_info if isinstance(imdb_info, dict) else {}
-            data["description"] = imdb_info_dict.get("genres", "")
-        if self.uploader_name not in ("", None) and not self._is_true(
-            self.config["TRACKERS"][self.tracker].get("anon", "False")
-        ):
-            data["epenis"] = self.uploader_name
-        if has_ro_audio:
-            data["materialro"] = "on"
-        if meta.is_disc == "BDMV" or meta.type == "REMUX":
-            data["freeleech"] = "on"
-        if int(meta.tv_pack if meta.tv_pack is not None else "0") != 0:
-            data["freeleech"] = "on"
-        if int(meta.freeleech if meta.freeleech is not None else "0") != 0:
-            data["freeleech"] = "on"
-
         url = f"{self.base_url}/takeupload.php"
-        # Submit
         if meta.debug:
-            logger.debug(url)
-            logger.debug(Redaction.redact_private_info(data))
-            meta.tracker_status[self.tracker]["status_message"] = (
-                "Debug mode enabled, not uploading."
-            )
-            await common.create_torrent_for_upload(
-                meta,
-                f"{self.tracker}" + "_DEBUG",
-                f"{self.tracker}" + "_DEBUG",
-                announce_url="https://fake.tracker",
-            )
-            return True  # Debug mode - simulated success
-        from src.integrations.trackers.cookie_auth import find_cookie_file
-
-        cookiefile = find_cookie_file(meta.base_dir, self.tracker, self.config)
-        cookies = self._load_cookie_dict(cookiefile)
-        async with httpx.AsyncClient(
-            cookies=cookies, timeout=60.0, follow_redirects=True
-        ) as client:
-            up = await client.post(url=url, data=data, files=files)
-
-        # Match url to verify successful upload
-        match = re.match(
-            rf".*?{re.escape(self.base_url.replace('https://', ''))}/details\.php\?id=(\d+)&uploaded=(\d+)",
-            str(up.url),
+            return await self._debug_upload(common, meta, url, data)
+        cookies = self._cookie_values(meta)
+        response = await self._post_upload(url, data, files, cookies)
+        return await self._complete_upload(
+            meta, response, cookies, torrent_path, data
         )
-        if match:
-            meta.tracker_status[self.tracker]["status_message"] = match.group(
-                0
-            )
-            torrent_id = match.group(1)
-            await self.download_new_torrent(cookies, torrent_id, torrent_path)
-            return True
-        logger.info(data)
-        logger.info(f"{self.tracker}: \n\n")
-        logger.info(up.text)
-        raise UploadError(
-            f"Upload to FILELIST Failed: result URL {up.url} ({up.status_code}) was not expected",
-            "red",
-        )
+
+    @classmethod
+    async def _search_params(
+        cls, meta: Meta, category_id: int
+    ) -> dict[str, Any]:
+        if cls._has_imdb_id(meta):
+            return {"search": meta.imdb, "cat": category_id, "searchin": "3"}
+        return {"search": meta.title, "cat": category_id, "searchin": "0"}
+
+    @staticmethod
+    def _dupe_title(anchor: Any) -> str | None:
+        href = anchor.get("href")
+        title = anchor.get("title")
+        if not isinstance(href, str) or not href.startswith("details.php?id="):
+            return None
+        if "&" in href or not isinstance(title, str):
+            return None
+        return title
+
+    @classmethod
+    def _parse_dupe_titles(cls, html_text: str) -> list[str]:
+        soup = BeautifulSoup(html_text, "html.parser")
+        titles: list[str] = []
+        for anchor in soup.find_all("a", href=True):
+            title = cls._dupe_title(anchor)
+            if title is not None:
+                titles.append(title)
+        return titles
 
     async def search_existing(self, meta: Meta) -> list[str]:
-        dupes: list[str] = []
-        from src.integrations.trackers.cookie_auth import find_cookie_file
-
-        cookiefile = find_cookie_file(meta.base_dir, self.tracker, self.config)
-        cookies = self._load_cookie_dict(cookiefile)
-
-        search_url = f"{self.base_url}/browse.php"
-
-        imdb_id_value = str(meta.imdb_id if meta.imdb_id is not None else "0")
-        if imdb_id_value.isdigit() and int(imdb_id_value) != 0:
-            params = {
-                "search": meta.imdb,
-                "cat": await self.get_category_id(meta),
-                "searchin": "3",
-            }
-        else:
-            params = {
-                "search": meta.title,
-                "cat": await self.get_category_id(meta),
-                "searchin": "0",
-            }
-
+        cookies = self._cookie_values(meta)
+        category_id = await self.get_category_id(meta)
+        params = await self._search_params(meta, category_id)
         async with httpx.AsyncClient(cookies=cookies, timeout=10.0) as client:
-            response = await client.get(search_url, params=params)
+            response = await client.get(
+                f"{self.base_url}/browse.php", params=params
+            )
             response.raise_for_status()
-            soup = BeautifulSoup(response.text, "html.parser")
-            find = soup.find_all("a", href=True)
-            for each in find:
-                href_attr = each.get("href")
-                title_attr = each.get("title")
-                if (
-                    isinstance(href_attr, str)
-                    and href_attr.startswith("details.php?id=")
-                    and "&" not in href_attr
-                    and isinstance(title_attr, str)
-                ):
-                    dupes.append(title_attr)
+            dupes = self._parse_dupe_titles(response.text)
             await asyncio.sleep(0.5)
-
         return dupes
+
+    @staticmethod
+    def _can_relogin(meta: Meta) -> bool:
+        return bool(not meta.unattended or meta.unattended_confirm)
+
+    async def _relogin(self, meta: Meta, cookiefile: str) -> bool:
+        recreate = await prompt_in_thread(
+            cli_ui.ask_yes_no, "Log in again and create new session?"
+        )
+        if recreate is not True:
+            return False
+        path = Path(cookiefile)
+        if path.exists():
+            path.unlink()
+        await self.login(cookiefile)
+        return await self.validate_cookies(meta, cookiefile)
 
     async def validate_credentials(self, meta: Meta) -> bool:
         from src.integrations.trackers.cookie_auth import find_cookie_file
 
         cookiefile = find_cookie_file(meta.base_dir, self.tracker, self.config)
-
         if not Path(cookiefile).exists():
             await self.login(cookiefile)
-        vcookie = await self.validate_cookies(meta, cookiefile)
-        if vcookie is not True:
-            logger.error(
-                f"{self.tracker}: [red]Failed to validate cookies. Please confirm that the site is up and your passkey is valid."
-            )
-            if not meta.unattended or (
-                meta.unattended and meta.unattended_confirm
-            ):
-                recreate = await prompt_in_thread(
-                    cli_ui.ask_yes_no, "Log in again and create new session?"
-                )
-                if recreate is True:
-                    if Path(cookiefile).exists():
-                        Path(cookiefile).unlink()
-                    await self.login(cookiefile)
-                    return await self.validate_cookies(meta, cookiefile)
-            return False
-        return True
+        if await self.validate_cookies(meta, cookiefile):
+            return True
+        logger.error(
+            f"{self.tracker}: [red]Failed to validate cookies. Please confirm "
+            "that the site is up and your passkey is valid."
+        )
+        if self._can_relogin(meta):
+            return await self._relogin(meta, cookiefile)
+        return False
 
     async def validate_cookies(self, meta: Meta, _cookiefile: str) -> bool:
         url = f"{self.base_url}/index.php"
@@ -497,173 +683,196 @@ class FileList:
             logger.info(r.text)
         return
 
-    async def edit_desc(self, meta: Meta) -> None:
-        base = base_description(meta)
+    @staticmethod
+    def _description_output_path(meta: Meta, tracker: str) -> Path:
+        return (
+            Path(meta.base_dir)
+            / "tmp"
+            / meta.uuid
+            / f"[{tracker}]DESCRIPTION.txt"
+        )
+
+    @staticmethod
+    def _formatted_base_description(meta: Meta) -> str:
+        from src.integrations.trackers.bbcode_formatting import BBCODE
+
+        bbcode = BBCODE()
+        desc = base_description(meta)
+        desc = bbcode.remove_spoiler(desc)
+        desc = bbcode.convert_code_to_quote(desc)
+        desc = bbcode.convert_comparison_to_centered(desc, 900)
+        desc = desc.replace("[img]", "[img]").replace("[/img]", "[/img]")
+        return re.sub(r"(\[img=\d+)]", "[img]", desc, flags=re.IGNORECASE)
+
+    @staticmethod
+    def _description_api_url() -> str:
+        return "https://up.img4k.net/api/description"
+
+    async def _screenshot_upload_files(
+        self, meta: Meta
+    ) -> list[tuple[str, tuple[str, bytes, str]]]:
+        screen_dir = screenshots_dir(meta.base_dir, meta.uuid)
+        names = [
+            path.name
+            for path in screen_dir.glob(f"{glob.escape(meta.filename)}-*.png")
+        ]
+        files: list[tuple[str, tuple[str, bytes, str]]] = []
+        for name in names:
+            async with aiofiles.open(screen_dir / name, "rb") as image_file:
+                image_bytes = await image_file.read()
+            files.append(
+                ("images", (Path(name).name, image_bytes, "image/png"))
+            )
+        return files
+
+    def _description_api_auth(self) -> tuple[Any, Any]:
+        return self.fltools["user"], self.fltools["pass"]
+
+    async def _post_description_api(
+        self,
+        *,
+        data: dict[str, Any] | None = None,
+        files: list[tuple[str, tuple[str, bytes, str]]],
+    ) -> str:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                self._description_api_url(),
+                data=data,
+                files=files,
+                auth=self._description_api_auth(),
+            )
+        return response.text.replace("\r\n", "\n")
+
+    @classmethod
+    def _mediainfo_description_path(cls, meta: Meta) -> Path:
+        return cls._upload_tmp_dir(meta) / "MEDIAINFO_CLEANPATH.txt"
+
+    async def _web_description_data(self, meta: Meta) -> dict[str, Any]:
         async with aiofiles.open(
-            f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{self.tracker}]DESCRIPTION.txt",
+            self._mediainfo_description_path(meta), encoding="utf-8"
+        ) as media_file:
+            data: dict[str, Any] = {"mediainfo": await media_file.read()}
+        if meta.imdb_id:
+            data["imdbURL"] = f"tt{meta.imdb_id}"
+        return data
+
+    async def _web_description(self, meta: Meta) -> str:
+        data = await self._web_description_data(meta)
+        files = await self._screenshot_upload_files(meta)
+        return await self._post_description_api(data=data, files=files)
+
+    @classmethod
+    def _bd_summary_path(cls, meta: Meta) -> Path:
+        return cls._upload_tmp_dir(meta) / "BD_SUMMARY_EXT.txt"
+
+    @staticmethod
+    def _format_bd_summary(summary: str, base_desc: str) -> str:
+        summary = summary.replace(
+            "[/pre][/quote]", f"[/pre][/quote]\n\n{base_desc}\n", 1
+        )
+        summary = (
+            summary.replace(
+                "DISC INFO:",
+                "[pre][quote=BD_Info][b][color=#FF0000]DISC INFO:[/color][/b]",
+            )
+            .replace(
+                "PLAYLIST REPORT:",
+                "[b][color=#FF0000]PLAYLIST REPORT:[/color][/b]",
+            )
+            .replace("VIDEO:", "[b][color=#FF0000]VIDEO:[/color][/b]")
+            .replace("AUDIO:", "[b][color=#FF0000]AUDIO:[/color][/b]")
+            .replace("SUBTITLES:", "[b][color=#FF0000]SUBTITLES:[/color][/b]")
+        )
+        return f"{summary}[/pre][/quote]\n"
+
+    async def _bluray_description(self, meta: Meta, base_desc: str) -> str:
+        async with aiofiles.open(
+            self._bd_summary_path(meta), encoding="utf-8"
+        ) as bd_file:
+            summary = await bd_file.read()
+        if not summary.strip():
+            return summary
+        formatted = self._format_bd_summary(summary, base_desc)
+        files = await self._screenshot_upload_files(meta)
+        screenshots = await self._post_description_api(files=files)
+        return f"{formatted}{screenshots}"
+
+    async def _generated_description(self, meta: Meta, base_desc: str) -> str:
+        if meta.is_disc == "BDMV":
+            return await self._bluray_description(meta, base_desc)
+        return await self._web_description(meta)
+
+    async def edit_desc(self, meta: Meta) -> None:
+        base_desc = self._formatted_base_description(meta)
+        final_desc = await self._generated_description(meta, base_desc)
+        async with aiofiles.open(
+            self._description_output_path(meta, self.tracker),
             "w",
             newline="",
             encoding="utf-8",
-        ) as descfile:
-            from src.integrations.trackers.bbcode_formatting import BBCODE
-
-            bbcode = BBCODE()
-
-            desc = base
-            desc = bbcode.remove_spoiler(desc)
-            desc = bbcode.convert_code_to_quote(desc)
-            desc = bbcode.convert_comparison_to_centered(desc, 900)
-            desc = desc.replace("[img]", "[img]").replace("[/img]", "[/img]")
-            desc = re.sub(r"(\[img=\d+)]", "[img]", desc, flags=re.IGNORECASE)
-            if meta.is_disc != "BDMV":
-                url = "https://up.img4k.net/api/description"
-                mediainfo_path = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/MEDIAINFO_CLEANPATH.txt"
-                async with aiofiles.open(
-                    mediainfo_path, encoding="utf-8"
-                ) as mi_file:
-                    data = {
-                        "mediainfo": await mi_file.read(),
-                    }
-                if meta.imdb_id:
-                    data["imdbURL"] = f"tt{meta.imdb_id}"
-                screen_dir = screenshots_dir(meta.base_dir, meta.uuid)
-                screen_glob = [
-                    f.name
-                    for f in screen_dir.glob(
-                        f"{glob.escape(meta.filename)}-*.png"
-                    )
-                ]
-                files = []
-                for screen in screen_glob:
-                    async with aiofiles.open(
-                        screen_dir / screen, "rb"
-                    ) as image_file:
-                        image_bytes = await image_file.read()
-                    files.append(
-                        (
-                            "images",
-                            (Path(screen).name, image_bytes, "image/png"),
-                        )
-                    )
-                async with httpx.AsyncClient(timeout=30.0) as client:
-                    response = await client.post(
-                        url,
-                        data=data,
-                        files=files,
-                        auth=(self.fltools["user"], self.fltools["pass"]),
-                    )
-                final_desc = response.text.replace("\r\n", "\n")
-            else:
-                # BD Description Generator
-                bd_summary_path = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/BD_SUMMARY_EXT.txt"
-                async with aiofiles.open(
-                    bd_summary_path, encoding="utf-8"
-                ) as bd_file:
-                    final_desc = await bd_file.read()
-                if (
-                    final_desc.strip() != ""
-                ):  # Use BD_SUMMARY_EXT and bbcode format it
-                    final_desc = final_desc.replace(
-                        "[/pre][/quote]", f"[/pre][/quote]\n\n{desc}\n", 1
-                    )
-                    final_desc = (
-                        final_desc.replace(
-                            "DISC INFO:",
-                            "[pre][quote=BD_Info][b][color=#FF0000]DISC INFO:[/color][/b]",
-                        )
-                        .replace(
-                            "PLAYLIST REPORT:",
-                            "[b][color=#FF0000]PLAYLIST REPORT:[/color][/b]",
-                        )
-                        .replace(
-                            "VIDEO:", "[b][color=#FF0000]VIDEO:[/color][/b]"
-                        )
-                        .replace(
-                            "AUDIO:", "[b][color=#FF0000]AUDIO:[/color][/b]"
-                        )
-                        .replace(
-                            "SUBTITLES:",
-                            "[b][color=#FF0000]SUBTITLES:[/color][/b]",
-                        )
-                    )
-                    final_desc += "[/pre][/quote]\n"  # Closed bbcode tags
-                    # Upload screens and append to the end of the description
-                    url = "https://up.img4k.net/api/description"
-                    screen_dir = screenshots_dir(meta.base_dir, meta.uuid)
-                    screen_glob = [
-                        f.name
-                        for f in screen_dir.glob(
-                            f"{glob.escape(meta.filename)}-*.png"
-                        )
-                    ]
-                    files = []
-                    for screen in screen_glob:
-                        async with aiofiles.open(
-                            screen_dir / screen, "rb"
-                        ) as image_file:
-                            image_bytes = await image_file.read()
-                        files.append(
-                            (
-                                "images",
-                                (Path(screen).name, image_bytes, "image/png"),
-                            )
-                        )
-                    async with httpx.AsyncClient(timeout=30.0) as client:
-                        response = await client.post(
-                            url,
-                            files=files,
-                            auth=(self.fltools["user"], self.fltools["pass"]),
-                        )
-                    final_desc += response.text.replace("\r\n", "\n")
-            await descfile.write(final_desc)
-
+        ) as description_file:
+            await description_file.write(final_desc)
             if self.signature is not None:
-                await descfile.write(self.signature)
+                await description_file.write(self.signature)
+
+    @staticmethod
+    def _raw_mediainfo_tracks(meta: Meta) -> list[Any]:
+        if not isinstance(meta.mediainfo, dict):
+            return []
+        media = meta.mediainfo.get("media")
+        if not isinstance(media, dict):
+            return []
+        tracks = media.get("track")
+        return cast(list[Any], tracks) if isinstance(tracks, list) else []
+
+    @classmethod
+    def _mediainfo_tracks(cls, meta: Meta) -> list[dict[str, Any]]:
+        return [
+            cast(dict[str, Any], track)
+            for track in cls._raw_mediainfo_tracks(meta)
+            if isinstance(track, dict)
+        ]
+
+    @staticmethod
+    def _ro_mediainfo_tracks(
+        tracks: list[dict[str, Any]],
+    ) -> tuple[bool, bool]:
+        has_audio = any(
+            track.get("@type") == "Audio" and track.get("Audio") == "ro"
+            for track in tracks
+        )
+        has_subtitle = any(
+            track.get("@type") == "Text" and track.get("Language") == "ro"
+            for track in tracks
+        )
+        return has_audio, has_subtitle
+
+    @staticmethod
+    def _bdinfo_dict(meta: Meta) -> dict[str, Any]:
+        return meta.bdinfo if isinstance(meta.bdinfo, dict) else {}
+
+    @classmethod
+    def _ro_bd_subtitle(cls, meta: Meta) -> bool:
+        subtitles = cls._bdinfo_dict(meta).get("subtitles")
+        return bool(isinstance(subtitles, list) and "Romanian" in subtitles)
+
+    @classmethod
+    def _ro_bd_audio(cls, meta: Meta) -> bool:
+        audio_tracks = cls._bdinfo_dict(meta).get("audio")
+        if not isinstance(audio_tracks, list):
+            return False
+        for audio_track in audio_tracks:
+            if not isinstance(audio_track, dict):
+                continue
+            if audio_track.get("language") == "Romanian":
+                return True
+        return False
+
+    @classmethod
+    def _ro_bd_tracks(cls, meta: Meta) -> tuple[bool, bool]:
+        return cls._ro_bd_audio(meta), cls._ro_bd_subtitle(meta)
 
     async def get_ro_tracks(self, meta: Meta) -> tuple[bool, bool]:
-        has_ro_audio = has_ro_sub = False
-        if meta.is_disc != "BDMV":
-            mi = meta.mediainfo
-            if isinstance(mi, dict):
-                mi_dict = mi
-                media = mi_dict.get("media")
-                if isinstance(media, dict):
-                    media_dict = cast(dict[str, Any], media)
-                    tracks = media_dict.get("track")
-                    if isinstance(tracks, list):
-                        tracks_list = tracks
-                        for track in tracks_list:
-                            if not isinstance(track, dict):
-                                continue
-                            track_dict = cast(dict[str, Any], track)
-                            if (
-                                track_dict.get("@type") == "Text"
-                                and track_dict.get("Language") == "ro"
-                            ):
-                                has_ro_sub = True
-                            if (
-                                track_dict.get("@type") == "Audio"
-                                and track_dict.get("Audio") == "ro"
-                            ):
-                                has_ro_audio = True
-        else:
-            bdinfo = meta.bdinfo
-            if isinstance(bdinfo, dict):
-                bdinfo_dict = bdinfo
-                subtitles = bdinfo_dict.get("subtitles")
-                if isinstance(subtitles, list) and "Romanian" in subtitles:
-                    has_ro_sub = True
-                audio_tracks = bdinfo_dict.get("audio")
-                if isinstance(audio_tracks, list):
-                    audio_tracks_list = audio_tracks
-                    for audio_track in audio_tracks_list:
-                        if isinstance(audio_track, dict):
-                            audio_track_dict = cast(
-                                dict[str, Any], audio_track
-                            )
-                        else:
-                            continue
-                        if audio_track_dict.get("language") == "Romanian":
-                            has_ro_audio = True
-                            break
-        return has_ro_audio, has_ro_sub
+        if meta.is_disc == "BDMV":
+            return self._ro_bd_tracks(meta)
+        return self._ro_mediainfo_tracks(self._mediainfo_tracks(meta))
