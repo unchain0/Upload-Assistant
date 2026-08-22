@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+from unittest.mock import AsyncMock
 
 from data.example_config import config as example_config
 from src.domain_models.release import Meta
@@ -17,6 +18,46 @@ def _tracker() -> Rastastugan:
     values.setdefault("api_key", "test-key")
     values.setdefault("announce_url", "https://tracker.invalid/announce")
     return Rastastugan(config)
+
+
+def test_rastastugan_additional_checks_delegate_nordic_languages() -> None:
+    tracker = _tracker()
+    meta = Meta(category="MOVIE")
+    check = AsyncMock(return_value=True)
+    tracker.common.check_language_requirements = check
+
+    assert asyncio.run(tracker.get_additional_checks(meta))
+    check.assert_awaited_once_with(
+        meta,
+        tracker.tracker,
+        languages_to_check=[
+            "danish",
+            "swedish",
+            "norwegian",
+            "icelandic",
+            "finnish",
+            "english",
+        ],
+        check_audio=True,
+        check_subtitle=True,
+    )
+
+
+def test_rastastugan_game_platform_helper_branches() -> None:
+    tracker = _tracker()
+    mapping = tracker._type_mapping()
+
+    assert tracker._named_game_platform_type_id("macos") == "9"
+    assert tracker._named_game_platform_type_id("linux") == "18"
+    assert tracker._game_platform_type_id(
+        Meta(category="GAME", platform="Windows PC")
+    ) == "10"
+    assert tracker._game_platform_type_id(
+        Meta(category="GAME", platform="macOS")
+    ) == "9"
+    assert tracker._game_type_id(
+        Meta(category="GAME", platform="Linux"), mapping, "OTHER"
+    ) == "18"
 
 
 def test_rastastugan_category_mapping_reverse_and_selection() -> None:
