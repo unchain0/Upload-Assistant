@@ -355,3 +355,17 @@ def test_centered_comparison_caps_width_and_empty_collapse_sources() -> None:
         )
         == empty_sources
     )
+
+
+def test_refactor_helper_edge_branches() -> None:
+    bb = BBCODE()
+    excluded = "https://x.example/excluded.jpg"
+    desc, images = bb._extract_ptp_loose_images(
+        excluded,
+        excluded,
+        {excluded},
+    )
+    assert desc == excluded
+    assert images == []
+    assert bb._comparison_rows(["", "https://x.example/a.jpg"], 1, 100)
+    assert bb._collapse_sources("[quote=x]value[/quote]", "quote") == ""
