@@ -49,15 +49,22 @@ def test_rastastugan_game_platform_helper_branches() -> None:
 
     assert tracker._named_game_platform_type_id("macos") == "9"
     assert tracker._named_game_platform_type_id("linux") == "18"
-    assert tracker._game_platform_type_id(
-        Meta(category="GAME", platform="Windows PC")
-    ) == "10"
-    assert tracker._game_platform_type_id(
-        Meta(category="GAME", platform="macOS")
-    ) == "9"
-    assert tracker._game_type_id(
-        Meta(category="GAME", platform="Linux"), mapping, "OTHER"
-    ) == "18"
+    assert (
+        tracker._game_platform_type_id(
+            Meta(category="GAME", platform="Windows PC")
+        )
+        == "10"
+    )
+    assert (
+        tracker._game_platform_type_id(Meta(category="GAME", platform="macOS"))
+        == "9"
+    )
+    assert (
+        tracker._game_type_id(
+            Meta(category="GAME", platform="Linux"), mapping, "OTHER"
+        )
+        == "18"
+    )
 
 
 def test_rastastugan_category_mapping_reverse_and_selection() -> None:

@@ -1,6 +1,9 @@
 """Regression tests for Rastastugan MUSIC type mappings."""
 
 import asyncio
+from unittest.mock import ANY, AsyncMock
+
+import pytest
 
 from src.domain_models.release import Meta
 from src.integrations.trackers.UNIT3D.rastastugan import Rastastugan
@@ -121,3 +124,103 @@ def test_rastastugan_type_mapping_modes_and_regular_fallback() -> None:
     assert asyncio.run(
         tracker.get_type_id(Meta(category="MOVIE", type="REMUX"))
     ) == {"type_id": "2"}
+
+
+def test_rastastugan_refactor_helper_branches() -> None:
+    tracker = _tracker()
+    mapping = tracker._type_mapping()
+
+    assert tracker._category_mapping()["GAME"] == "5"
+    assert tracker._selected_category(Meta(category="TV"), "GAME") == "GAME"
+    assert (
+        tracker._selected_category(Meta(category="BOOK", audiobook=True), "")
+        == "AUDIOBOOK"
+    )
+    assert (
+        asyncio.run(
+            tracker.get_category_id(Meta(category="TV"), mapping_only=True)
+        )["TV"]
+        == "2"
+    )
+    assert (
+        asyncio.run(
+            tracker.get_category_id(Meta(category="TV"), reverse=True)
+        )["2"]
+        == "TV"
+    )
+
+    assert tracker._named_game_platform_type_id("macos") == "9"
+    assert tracker._named_game_platform_type_id("linux") == "18"
+    assert tracker._named_game_platform_type_id("other") is None
+    assert tracker._game_platform_type_id(Meta(platform="windows")) == "10"
+    assert (
+        tracker._game_platform_type_id(
+            Meta(platform="other", console_game=True)
+        )
+        == "11"
+    )
+    assert tracker._game_platform_type_id(Meta(platform="other")) is None
+    assert (
+        tracker._game_type_id(Meta(platform="other"), mapping, "WINDOWS")
+        == "10"
+    )
+    assert (
+        tracker._game_type_id(Meta(platform="other"), mapping, "bad") == "19"
+    )
+
+    assert (
+        tracker._category_type_id(
+            Meta(category="MUSIC", format="FLAC"), mapping, ""
+        )
+        == "7"
+    )
+    assert (
+        tracker._category_type_id(
+            Meta(category="GAME", platform="other"), mapping, "WINDOWS"
+        )
+        == "10"
+    )
+    assert (
+        tracker._category_type_id(Meta(category="BOOK"), mapping, "unknown")
+        == "19"
+    )
+    assert (
+        tracker._category_type_id(Meta(category="MOVIE"), mapping, "REMUX")
+        == "2"
+    )
+
+
+def test_rastastugan_additional_checks_delegate_nordic_languages() -> None:
+    tracker = _tracker()
+    check = AsyncMock(return_value=True)
+    tracker.common.check_language_requirements = check
+
+    assert asyncio.run(tracker.get_additional_checks(Meta())) is True
+    check.assert_awaited_once_with(
+        ANY,
+        "RASTASTUGAN",
+        languages_to_check=[
+            "danish",
+            "swedish",
+            "norwegian",
+            "icelandic",
+            "finnish",
+            "english",
+        ],
+        check_audio=True,
+        check_subtitle=True,
+    )
+
+
+@pytest.mark.parametrize(
+    ("meta", "expected"),
+    (
+        (Meta(category="GAME", platform="macOS", type="OTHER"), "9"),
+        (Meta(category="GAME", platform="Linux", type="OTHER"), "18"),
+        (Meta(category="GAME", platform="Windows PC", type="OTHER"), "10"),
+        (Meta(category="GAME", console_game=True, type="OTHER"), "11"),
+        (Meta(category="GAME", type="OTHER"), "19"),
+    ),
+)
+def test_rastastugan_game_type_variants(meta: Meta, expected: str) -> None:
+    assert asyncio.run(_tracker().get_type_id(meta)) == {"type_id": expected}

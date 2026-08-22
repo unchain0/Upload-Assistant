@@ -76,6 +76,32 @@ def _safe_destination(base: Path, member_name: str) -> Path:
     return destination
 
 
+def _validate_zip_member_type(member: zipfile.ZipInfo) -> None:
+    mode = member.external_attr >> 16
+    file_type = stat.S_IFMT(mode)
+    if stat.S_ISLNK(mode):
+        raise RuntimeError(f"Archive links are not allowed: {member.filename}")
+    if file_type and not (stat.S_ISREG(mode) or stat.S_ISDIR(mode)):
+        raise RuntimeError(f"Unsupported archive member: {member.filename}")
+
+
+def _expanded_total(current: int, size: int, max_bytes: int) -> int:
+    total = current + size
+    if size > max_bytes or total > max_bytes:
+        raise RuntimeError(
+            f"Archive exceeds the {max_bytes}-byte expanded-size limit"
+        )
+    return total
+
+
+def _copy_zip_member(
+    archive: zipfile.ZipFile, member: zipfile.ZipInfo, target: Path
+) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with archive.open(member) as source, target.open("wb") as output:
+        shutil.copyfileobj(source, output, length=1024 * 1024)
+
+
 def safe_extract_zip(
     archive: zipfile.ZipFile,
     destination: Path,
@@ -87,27 +113,33 @@ def safe_extract_zip(
     total = 0
     for member in archive.infolist():
         target = _safe_destination(base, member.filename)
-        mode = member.external_attr >> 16
-        file_type = stat.S_IFMT(mode)
-        if stat.S_ISLNK(mode):
-            raise RuntimeError(
-                f"Archive links are not allowed: {member.filename}"
-            )
-        if file_type and not (stat.S_ISREG(mode) or stat.S_ISDIR(mode)):
-            raise RuntimeError(
-                f"Unsupported archive member: {member.filename}"
-            )
+        _validate_zip_member_type(member)
         if member.is_dir():
             target.mkdir(parents=True, exist_ok=True)
             continue
-        total += member.file_size
-        if member.file_size > max_bytes or total > max_bytes:
-            raise RuntimeError(
-                f"Archive exceeds the {max_bytes}-byte expanded-size limit"
-            )
-        target.parent.mkdir(parents=True, exist_ok=True)
-        with archive.open(member) as source, target.open("wb") as output:
-            shutil.copyfileobj(source, output, length=1024 * 1024)
+        total = _expanded_total(total, member.file_size, max_bytes)
+        _copy_zip_member(archive, member, target)
+
+
+def _zip_member_is_regular(member: zipfile.ZipInfo) -> bool:
+    mode = member.external_attr >> 16
+    file_type = stat.S_IFMT(mode)
+    if member.is_dir() or stat.S_ISLNK(mode):
+        return False
+    return not file_type or stat.S_ISREG(mode)
+
+
+def _validate_regular_zip_member(
+    member: zipfile.ZipInfo, member_name: str, max_bytes: int
+) -> None:
+    if not _zip_member_is_regular(member):
+        raise RuntimeError(
+            f"Archive member is not a regular file: {member_name}"
+        )
+    if member.file_size > max_bytes:
+        raise RuntimeError(
+            f"Archive member exceeds the {max_bytes}-byte expanded-size limit"
+        )
 
 
 def extract_zip_regular_member(
@@ -119,22 +151,18 @@ def extract_zip_regular_member(
 ) -> None:
     """Copy one regular ZIP member to a fixed destination with an expanded-size limit."""
     member = archive.getinfo(member_name)
-    mode = member.external_attr >> 16
-    file_type = stat.S_IFMT(mode)
-    if (
-        member.is_dir()
-        or stat.S_ISLNK(mode)
-        or (file_type and not stat.S_ISREG(mode))
-    ):
-        raise RuntimeError(
-            f"Archive member is not a regular file: {member_name}"
-        )
-    if member.file_size > max_bytes:
-        raise RuntimeError(
-            f"Archive member exceeds the {max_bytes}-byte expanded-size limit"
-        )
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    with archive.open(member) as source, destination.open("wb") as output:
+    _validate_regular_zip_member(member, member_name, max_bytes)
+    _copy_zip_member(archive, member, destination)
+
+
+def _copy_tar_member(
+    archive: tarfile.TarFile, member: tarfile.TarInfo, target: Path
+) -> None:
+    source = archive.extractfile(member)
+    if source is None:
+        raise RuntimeError(f"Unable to read archive member: {member.name}")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with source, target.open("wb") as output:
         shutil.copyfileobj(source, output, length=1024 * 1024)
 
 
@@ -154,17 +182,90 @@ def safe_extract_tar(
             continue
         if not member.isfile():
             raise RuntimeError(f"Unsupported archive member: {member.name}")
-        total += member.size
-        if member.size > max_bytes or total > max_bytes:
-            raise RuntimeError(
-                f"Archive exceeds the {max_bytes}-byte expanded-size limit"
-            )
-        source = archive.extractfile(member)
-        if source is None:
-            raise RuntimeError(f"Unable to read archive member: {member.name}")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        with source, target.open("wb") as output:
-            shutil.copyfileobj(source, output, length=1024 * 1024)
+        total = _expanded_total(total, member.size, max_bytes)
+        _copy_tar_member(archive, member, target)
+
+
+def _promotion_targets(
+    replacements: list[tuple[Path, Path]],
+    remove_targets: list[Path] | None,
+) -> list[Path]:
+    targets = [target for _source, target in replacements]
+    targets.extend(remove_targets or [])
+    target_names = [target.name for target in targets]
+    if len(target_names) != len(set(target_names)):
+        raise ValueError(
+            "Transactional promotion targets must have unique filenames"
+        )
+    return targets
+
+
+def _prepare_backup_dir(backup_dir: Path) -> None:
+    if backup_dir.exists():
+        raise RuntimeError(
+            f"Recovery backup must be resolved before another update: {backup_dir}"
+        )
+    backup_dir.mkdir(parents=True)
+
+
+def _backup_existing_targets(
+    targets: list[Path],
+    backup_dir: Path,
+    backups: list[tuple[Path, Path]],
+) -> None:
+    for target in targets:
+        if not target.exists():
+            continue
+        backup = backup_dir / target.name
+        target.replace(backup)
+        backups.append((backup, target))
+
+
+def _promote_replacements(
+    replacements: list[tuple[Path, Path]], promoted: list[Path]
+) -> None:
+    for source, target in replacements:
+        source.replace(target)
+        promoted.append(target)
+
+
+def _remove_promoted_files(promoted: list[Path]) -> list[BaseException]:
+    errors: list[BaseException] = []
+    for target in reversed(promoted):
+        try:
+            target.unlink(missing_ok=True)
+        except BaseException as error:
+            errors.append(error)
+    return errors
+
+
+def _restore_backup_files(
+    backups: list[tuple[Path, Path]],
+) -> list[BaseException]:
+    errors: list[BaseException] = []
+    for backup, target in reversed(backups):
+        try:
+            backup.replace(target)
+        except BaseException as error:
+            errors.append(error)
+    return errors
+
+
+def _rollback_errors(
+    promoted: list[Path], backups: list[tuple[Path, Path]]
+) -> list[BaseException]:
+    return [
+        *_remove_promoted_files(promoted),
+        *_restore_backup_files(backups),
+    ]
+
+
+def _backup_cleanup_allowed(
+    promotion_succeeded: bool, backups: list[tuple[Path, Path]]
+) -> bool:
+    if promotion_succeeded:
+        return True
+    return not any(backup.exists() for backup, _target in backups)
 
 
 def promote_files_with_rollback(
@@ -174,43 +275,17 @@ def promote_files_with_rollback(
     remove_targets: list[Path] | None = None,
 ) -> None:
     """Promote staged files together, restoring every previous target on failure."""
-    targets = [target for _source, target in replacements]
-    targets.extend(remove_targets or [])
-    target_names = [target.name for target in targets]
-    if len(target_names) != len(set(target_names)):
-        raise ValueError(
-            "Transactional promotion targets must have unique filenames"
-        )
-    if backup_dir.exists():
-        raise RuntimeError(
-            f"Recovery backup must be resolved before another update: {backup_dir}"
-        )
-    backup_dir.mkdir(parents=True)
+    targets = _promotion_targets(replacements, remove_targets)
+    _prepare_backup_dir(backup_dir)
     backups: list[tuple[Path, Path]] = []
     promoted: list[Path] = []
     promotion_succeeded = False
     try:
-        for target in targets:
-            if target.exists():
-                backup = backup_dir / target.name
-                target.replace(backup)
-                backups.append((backup, target))
-        for source, target in replacements:
-            source.replace(target)
-            promoted.append(target)
+        _backup_existing_targets(targets, backup_dir, backups)
+        _promote_replacements(replacements, promoted)
         promotion_succeeded = True
     except BaseException as promotion_error:
-        rollback_errors: list[BaseException] = []
-        for target in reversed(promoted):
-            try:
-                target.unlink(missing_ok=True)
-            except BaseException as error:
-                rollback_errors.append(error)
-        for backup, target in reversed(backups):
-            try:
-                backup.replace(target)
-            except BaseException as error:
-                rollback_errors.append(error)
+        rollback_errors = _rollback_errors(promoted, backups)
         if rollback_errors:
             raise BaseExceptionGroup(
                 "File promotion failed and rollback was incomplete",
@@ -218,9 +293,7 @@ def promote_files_with_rollback(
             ) from promotion_error
         raise
     finally:
-        if promotion_succeeded or not any(
-            backup.exists() for backup, _target in backups
-        ):
+        if _backup_cleanup_allowed(promotion_succeeded, backups):
             shutil.rmtree(backup_dir, ignore_errors=True)
 
 
