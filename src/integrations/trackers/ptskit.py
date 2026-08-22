@@ -82,42 +82,47 @@ class Ptskit:
             check_subtitle=True,
         )
 
-    async def search_existing(self, meta: Meta) -> list[str] | None:
-        search_url = f"{self.base_url}/torrents.php"
-        params: dict[str, Any] = {
+    @staticmethod
+    def _search_params(meta: Meta) -> dict[str, Any]:
+        return {
             "incldead": 1,
             "search": str(meta.imdb_info.get("imdbID", "")),
             "search_area": 4,
         }
-        found_items: list[str] = []
 
+    @staticmethod
+    def _login_required(response: httpx.Response) -> bool:
+        return "login.php" in str(response.url) or "login.php" in response.text
+
+    @staticmethod
+    def _torrent_names(html_text: str) -> list[str]:
+        soup = BeautifulSoup(html_text, "html.parser")
+        torrents_table = soup.find("table", class_="torrents")
+        if torrents_table is None:
+            return []
+        names: list[str] = []
+        for torrent_table in torrents_table.find_all(
+            "table", class_="torrentname"
+        ):
+            name_tag = torrent_table.find("b")
+            if name_tag is not None:
+                names.append(name_tag.get_text(strip=True))
+        return names
+
+    async def search_existing(self, meta: Meta) -> list[str] | None:
         response = await self.session.get(
-            search_url, params=params, cookies=self.session.cookies
+            f"{self.base_url}/torrents.php",
+            params=self._search_params(meta),
+            cookies=self.session.cookies,
         )
-        if "login.php" in str(response.url) or "login.php" in response.text:
+        if self._login_required(response):
             await self.cookie_validator.handle_validation_failure(
                 meta, self.tracker, response.text
             )
-            meta.skipping = f"{self.tracker}"
-            return found_items
+            meta.skipping = self.tracker
+            return []
         response.raise_for_status()
-
-        soup = BeautifulSoup(response.text, "html.parser")
-
-        torrents_table = soup.find("table", class_="torrents")
-
-        if torrents_table:
-            torrent_name_tables = torrents_table.find_all(
-                "table", class_="torrentname"
-            )
-
-            for torrent_table in torrent_name_tables:
-                name_tag = torrent_table.find("b")
-                if name_tag:
-                    torrent_name = name_tag.get_text(strip=True)
-                    found_items.append(torrent_name)
-
-        return found_items
+        return self._torrent_names(response.text)
 
     async def get_data(self, meta: Meta) -> dict[str, Any]:
         data: dict[str, Any] = {
