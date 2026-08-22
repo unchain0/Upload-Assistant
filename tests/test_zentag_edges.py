@@ -104,7 +104,9 @@ def test_source_detection_and_prepare_flags(tmp_path: Path) -> None:
     assert zentag._ebook_source(meta) == epub.resolve()
     assert not zentag._plain_ebook(_meta(epub, audiobook=True))
     asin_source = tmp_path / "Book.B012345678.m4b"
-    assert zentag._audiobook_asin(_meta(asin_source), asin_source) == "B012345678"
+    assert (
+        zentag._audiobook_asin(_meta(asin_source), asin_source) == "B012345678"
+    )
     assert zentag._series_part(_meta(epub, book_series="")) == ""
     assert (
         zentag._series_part(
@@ -117,7 +119,7 @@ def test_source_detection_and_prepare_flags(tmp_path: Path) -> None:
     assert zentag._ebook_source(meta) is None
 
 
-def test_refactor_helper_edge_branches(tmp_path: Path) -> None:
+def test_refactor_helper_selection_and_metadata_edges(tmp_path: Path) -> None:
     m4b = tmp_path / "book.m4b"
     m4b.write_bytes(b"audio")
     epub = tmp_path / "book.epub"
@@ -150,7 +152,7 @@ def test_refactor_helper_edge_branches(tmp_path: Path) -> None:
     assert zentag._written_path('Wrote "bad json', output_root) is None
 
 
-def test_refactor_helper_edge_branches(tmp_path: Path) -> None:
+def test_refactor_helper_output_path_edges(tmp_path: Path) -> None:
     epub = tmp_path / "book.epub"
     epub.write_bytes(b"book")
 
@@ -439,7 +441,7 @@ def test_final_zentag_branch_matrix(
     )
 
 
-def test_refactor_helper_coverage_edges(tmp_path: Path) -> None:
+def test_refactor_helper_output_validation_edges(tmp_path: Path) -> None:
     m4b = tmp_path / "book.m4b"
     m4b.write_bytes(b"audio")
     epub = tmp_path / "book.epub"
@@ -453,9 +455,7 @@ def test_refactor_helper_coverage_edges(tmp_path: Path) -> None:
         _meta(epub, audiobook=False, category="MOVIE")
     )
     assert (
-        zentag._audiobook_asin(
-            _meta(m4b, book_asin="b012345678"), m4b
-        )
+        zentag._audiobook_asin(_meta(m4b, book_asin="b012345678"), m4b)
         == "B012345678"
     )
     assert zentag._series_part(_meta(m4b, book_series="")) == ""
@@ -468,7 +468,7 @@ def test_refactor_helper_coverage_edges(tmp_path: Path) -> None:
     assert zentag._written_path(f"Wrote {outside}", output_root) is None
 
 
-def test_refactor_helper_coverage_edges(tmp_path: Path) -> None:
+def test_refactor_helper_coverage_matrix_edges(tmp_path: Path) -> None:
     m4b = tmp_path / "book.m4b"
     m4b.write_bytes(b"audio")
     epub = tmp_path / "book.epub"
@@ -484,9 +484,7 @@ def test_refactor_helper_coverage_edges(tmp_path: Path) -> None:
     assert not zentag._plain_ebook(
         _meta(epub, audiobook=False, category="MOVIE")
     )
-    assert not zentag._plain_ebook(
-        _meta(epub, audiobook=False, comic=True)
-    )
+    assert not zentag._plain_ebook(_meta(epub, audiobook=False, comic=True))
     assert (
         zentag._audiobook_asin(_meta(m4b, book_asin="b012345678"), m4b)
         == "B012345678"
