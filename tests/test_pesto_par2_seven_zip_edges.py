@@ -118,6 +118,7 @@ def test_par2_unsupported_cache_zip_success_duplicate_and_failure(
 ) -> None:
     target = tmp_path / "par2"
     target.mkdir()
+    assert not par2._par2_binary_valid("linux", target / "missing-par2")
     monkeypatch.setattr(par2, "tool_install_dir", lambda *_args: target)
     _platform(monkeypatch, par2, "FreeBSD", "x86_64")
     with pytest.raises(Exception, match="Unsupported platform"):
