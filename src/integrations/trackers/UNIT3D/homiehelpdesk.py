@@ -87,13 +87,15 @@ class HomieHelpDesk(UNIT3D):
     async def get_additional_checks(self, meta: Meta) -> bool:
         if meta.type == "DVDRIP":
             logger.info(
-                f"{self.tracker}: [bold red]DVDRIP uploads are not allowed on {self.tracker}.[/bold red]"
+                f"{self.tracker}: [bold red]DVDRIP uploads are not "
+                f"allowed on {self.tracker}.[/bold red]"
             )
             return False
 
         if meta.category == "MUSIC" and not self._music_upload_data(meta):
             logger.info(
-                f"{self.tracker}: [bold red]Music uploads require a valid MusicBrainz or Discogs ID.[/bold red]"
+                f"{self.tracker}: [bold red]Music uploads require a valid "
+                "MusicBrainz or Discogs ID.[/bold red]"
             )
             return False
 

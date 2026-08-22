@@ -12,17 +12,34 @@ def _tracker() -> HomieHelpDesk:
 
 def test_homiehelpdesk_music_helper_fallback_edges() -> None:
     tracker = _tracker()
-    assert tracker._discogs_reference(
-        Meta(category="MUSIC", music_discogs_enabled=False)
-    ) == ""
-    assert asyncio.run(tracker.get_additional_data(Meta(category="MOVIE"))) == {}
+    assert (
+        tracker._discogs_reference(
+            Meta(category="MUSIC", music_discogs_enabled=False)
+        )
+        == ""
+    )
+    assert (
+        asyncio.run(tracker.get_additional_data(Meta(category="MOVIE"))) == {}
+    )
+
+
+def test_homiehelpdesk_additional_checks_edges() -> None:
+    tracker = _tracker()
+    assert not asyncio.run(
+        tracker.get_additional_checks(Meta(category="MOVIE", type="DVDRIP"))
+    )
+    assert asyncio.run(
+        tracker.get_additional_checks(Meta(category="MOVIE", type="REMUX"))
+    )
 
 
 def test_homiehelpdesk_category_mapping_edges() -> None:
     tracker = _tracker()
     audiobook = Meta(category="BOOK", audiobook=True)
     assert tracker._book_category(audiobook) == "AUDIOBOOK"
-    assert asyncio.run(tracker.get_category_id(audiobook)) == {"category_id": "8"}
+    assert asyncio.run(tracker.get_category_id(audiobook)) == {
+        "category_id": "8"
+    }
 
     mapping = asyncio.run(tracker.get_category_id(Meta(), mapping_only=True))
     assert mapping["MOVIE"] == "1"
@@ -43,7 +60,11 @@ def test_homiehelpdesk_type_mapping_edges() -> None:
     assert asyncio.run(tracker.get_type_id(pc)) == {"type_id": "25"}
 
     generic = Meta(category="MOVIE", type="REMUX")
-    assert tracker._resolved_type(generic, "", tracker._type_mapping()) == "REMUX"
+    assert (
+        tracker._resolved_type(generic, "", tracker._type_mapping()) == "REMUX"
+    )
+    book = Meta(category="BOOK", type="UNKNOWN")
+    assert tracker._resolved_type(book, "", tracker._type_mapping()) == "OTHER"
     mapping = asyncio.run(tracker.get_type_id(generic, mapping_only=True))
     assert mapping["REMUX"] == "2"
     reverse = asyncio.run(tracker.get_type_id(generic, reverse=True))
@@ -60,10 +81,12 @@ def test_homiehelpdesk_resolution_mapping_edges() -> None:
     assert mapping["2160p"] == "2"
     reverse = asyncio.run(tracker.get_resolution_id(meta, reverse=True))
     assert reverse["2"] == "2160p"
-    assert asyncio.run(tracker.get_resolution_id(meta)) == {"resolution_id": "2"}
+    assert asyncio.run(tracker.get_resolution_id(meta)) == {
+        "resolution_id": "2"
+    }
     assert asyncio.run(tracker.get_resolution_id(meta, resolution="720p")) == {
         "resolution_id": "5"
     }
-    assert asyncio.run(tracker.get_resolution_id(meta, resolution="unknown")) == {
-        "resolution_id": "10"
-    }
+    assert asyncio.run(
+        tracker.get_resolution_id(meta, resolution="unknown")
+    ) == {"resolution_id": "10"}
