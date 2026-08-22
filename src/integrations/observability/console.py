@@ -162,29 +162,53 @@ def _get_log_buffer_lock() -> asyncio.Lock:
         return lock
 
 
+def _rich_handlers(root_logger: logging.Logger) -> list[RichHandler]:
+    return [
+        handler
+        for handler in root_logger.handlers
+        if isinstance(handler, RichHandler)
+    ]
+
+
+def _install_log_buffer(
+    root_logger: logging.Logger,
+    rich_handlers: list[RichHandler],
+    buffer_handler: LogBufferHandler,
+) -> None:
+    for handler in rich_handlers:
+        root_logger.removeHandler(handler)
+    root_logger.addHandler(buffer_handler)
+
+
+def _restore_log_buffer(
+    root_logger: logging.Logger,
+    rich_handlers: list[RichHandler],
+    buffer_handler: LogBufferHandler,
+) -> None:
+    root_logger.removeHandler(buffer_handler)
+    for handler in rich_handlers:
+        root_logger.addHandler(handler)
+    for record in buffer_handler.buffer:
+        for handler in rich_handlers:
+            handler.handle(record)
+
+
 @contextlib.asynccontextmanager
 async def buffer_console_logs() -> AsyncGenerator[None]:
-    """Temporarily hold console log output in memory while user prompts are active."""
+    """Temporarily hold console log output while user prompts are active."""
     async with _get_log_buffer_lock():
         root_logger = logger
-        original_rich_handlers = [
-            h for h in root_logger.handlers if isinstance(h, RichHandler)
-        ]
+        rich_handlers = _rich_handlers(root_logger)
         buffer_handler = LogBufferHandler()
-
-        for h in original_rich_handlers:
-            root_logger.removeHandler(h)
-        root_logger.addHandler(buffer_handler)
-
+        _install_log_buffer(root_logger, rich_handlers, buffer_handler)
         try:
             yield
         finally:
-            root_logger.removeHandler(buffer_handler)
-            for h in original_rich_handlers:
-                root_logger.addHandler(h)
-            for record in buffer_handler.buffer:
-                for h in original_rich_handlers:
-                    h.handle(record)
+            _restore_log_buffer(
+                root_logger,
+                rich_handlers,
+                buffer_handler,
+            )
 
 
 async def prompt_in_thread[PromptResult](
@@ -237,26 +261,30 @@ class DynamicFileHandler(logging.Handler):
         if formatter:
             self.setFormatter(formatter)
 
+    @staticmethod
+    def _ensure_log_directory(log_path: str) -> None:
+        log_dir = Path(log_path).parent
+        if str(log_dir) and not log_dir.exists():
+            log_dir.mkdir(parents=True, exist_ok=True)
+
+    def _append_record(
+        self,
+        record: logging.LogRecord,
+        log_path: str,
+    ) -> None:
+        message = self.format(record)
+        self._ensure_log_directory(log_path)
+        with Path(log_path).open("a", encoding="utf-8") as file_handle:
+            file_handle.write(message + "\n")
+
     def emit(self, record: logging.LogRecord) -> None:
         try:
             if not _write_log_enabled:
                 return
-
             log_path = current_release_log_path.get()
             if not log_path:
                 return
-
-            # Format message
-            msg = self.format(record)
-
-            # Ensure target directory exists
-            log_dir = Path(log_path).parent
-            if str(log_dir) and not log_dir.exists():
-                log_dir.mkdir(parents=True, exist_ok=True)
-
-            # Append message to file
-            with Path(log_path).open("a", encoding="utf-8") as f:
-                f.write(msg + "\n")
+            self._append_record(record, log_path)
         except Exception:
             self.handleError(record)
 
