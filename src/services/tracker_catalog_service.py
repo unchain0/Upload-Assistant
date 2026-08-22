@@ -19,27 +19,43 @@ def _hostname(value: object) -> str | None:
     return parsed.hostname.lower() if parsed.hostname else None
 
 
+def _tracker_runtime_config(config: Mapping[str, Any]) -> Mapping[str, Any]:
+    trackers_value = config.get("TRACKERS", {})
+    return trackers_value if isinstance(trackers_value, Mapping) else {}
+
+
+def _configured_comment_hosts(configured: object) -> list[str]:
+    if not isinstance(configured, Mapping):
+        return []
+    hosts: list[str] = []
+    for key in ("base_url", "announce_url"):
+        hostname = _hostname(configured.get(key))
+        if hostname:
+            hosts.append(hostname)
+    return hosts
+
+
+def _merged_comment_hosts(
+    catalog_hosts: tuple[str, ...], configured: object
+) -> tuple[str, ...]:
+    domains = [*catalog_hosts, *_configured_comment_hosts(configured)]
+    return tuple(dict.fromkeys(domains))
+
+
 def get_tracker_comment_hosts(
     config: Mapping[str, Any],
 ) -> dict[str, tuple[str, ...]]:
     """Return catalog aliases merged with runtime URL overrides."""
 
-    trackers_value = config.get("TRACKERS", {})
-    tracker_config = (
-        trackers_value if isinstance(trackers_value, Mapping) else {}
-    )
+    tracker_config = _tracker_runtime_config(config)
     result: dict[str, tuple[str, ...]] = {}
-
     for tracker_name, definition in TRACKER_DEFINITIONS.items():
-        domains = list(definition.comment_hosts)
-        configured = tracker_config.get(tracker_name, {})
-        if isinstance(configured, Mapping):
-            for key in ("base_url", "announce_url"):
-                hostname = _hostname(configured.get(key))
-                if hostname:
-                    domains.append(hostname)
-        if domains:
-            result[tracker_name] = tuple(dict.fromkeys(domains))
+        hosts = _merged_comment_hosts(
+            definition.comment_hosts,
+            tracker_config.get(tracker_name, {}),
+        )
+        if hosts:
+            result[tracker_name] = hosts
     return result
 
 
