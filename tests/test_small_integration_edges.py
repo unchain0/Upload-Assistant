@@ -133,6 +133,7 @@ def test_python_config_repository_reports_all_invalid_sources(
         "non_literal.py": "config = dict()",
         "not_dict.py": "config = []",
         "bad_section.py": "config = {'DEFAULT': 1}",
+        "bad_annotated_target.py": "obj.config: dict = {}",
     }
     for filename, source in cases.items():
         path = tmp_path / filename

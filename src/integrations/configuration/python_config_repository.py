@@ -21,68 +21,110 @@ from src.domain_models.errors import (
 )
 
 
+def _resolved_configuration_file(path: Path) -> Path:
+    resolved = path.expanduser().resolve()
+    if resolved.is_file():
+        return resolved
+    raise ConfigurationNotFoundError(
+        f"Configuration file not found: {resolved}"
+    )
+
+
+def _read_configuration_source(resolved: Path) -> str:
+    try:
+        return resolved.read_text(encoding="utf-8")
+    except OSError as error:
+        raise ConfigurationNotFoundError(
+            f"Could not read configuration at {resolved}: {error}"
+        ) from error
+
+
+def _parse_configuration_tree(source: str, resolved: Path) -> ast.Module:
+    try:
+        return ast.parse(source, filename=str(resolved))
+    except SyntaxError as error:
+        raise ConfigurationSyntaxError(
+            f"Could not parse configuration at {resolved}: {error}"
+        ) from error
+
+
+def _targets_config(targets: list[ast.expr]) -> bool:
+    return any(
+        isinstance(target, ast.Name) and target.id == "config"
+        for target in targets
+    )
+
+
+def _annotated_config_value(statement: ast.AnnAssign) -> ast.expr | None:
+    if not isinstance(statement.target, ast.Name):
+        return None
+    return statement.value if statement.target.id == "config" else None
+
+
+def _statement_config_value(statement: ast.stmt) -> ast.expr | None:
+    if isinstance(statement, ast.Assign) and _targets_config(
+        statement.targets
+    ):
+        return statement.value
+    if isinstance(statement, ast.AnnAssign):
+        return _annotated_config_value(statement)
+    return None
+
+
+def _config_value_node(tree: ast.Module, resolved: Path) -> ast.expr:
+    for statement in tree.body:
+        value = _statement_config_value(statement)
+        if value is not None:
+            return value
+    raise ConfigurationSyntaxError(
+        f"Configuration at {resolved} does not define 'config'"
+    )
+
+
+def _literal_configuration(
+    value_node: ast.expr, resolved: Path
+) -> dict[str, object]:
+    try:
+        raw = ast.literal_eval(value_node)
+    except (TypeError, ValueError, SyntaxError) as error:
+        raise ConfigurationSyntaxError(
+            f"Configuration at {resolved} must be a literal mapping: {error}"
+        ) from error
+    if not isinstance(raw, dict):
+        raise ConfigurationSyntaxError(
+            f"Configuration at {resolved} must define a dictionary"
+        )
+    return cast(dict[str, object], raw)
+
+
+def _application_configuration(
+    raw: dict[str, object],
+    resolved: Path,
+    kind: ConfigurationSourceKind,
+) -> ApplicationConfiguration:
+    try:
+        return ApplicationConfiguration.from_mapping(
+            raw,
+            ConfigurationSource(path=str(resolved), kind=kind),
+        )
+    except TypeError as error:
+        raise ConfigurationSyntaxError(
+            f"Configuration at {resolved} has an invalid section: {error}"
+        ) from error
+
+
 class PythonConfigurationRepository:
     """Load and persist the exact configuration path selected by the service."""
 
     def load(
         self, path: Path, kind: ConfigurationSourceKind
     ) -> ApplicationConfiguration:
-        resolved = path.expanduser().resolve()
-        if not resolved.is_file():
-            raise ConfigurationNotFoundError(
-                f"Configuration file not found: {resolved}"
-            )
-        try:
-            source = resolved.read_text(encoding="utf-8")
-        except OSError as error:
-            raise ConfigurationNotFoundError(
-                f"Could not read configuration at {resolved}: {error}"
-            ) from error
-        try:
-            tree = ast.parse(source, filename=str(resolved))
-        except SyntaxError as error:
-            raise ConfigurationSyntaxError(
-                f"Could not parse configuration at {resolved}: {error}"
-            ) from error
-
-        value_node: ast.expr | None = None
-        for statement in tree.body:
-            if isinstance(statement, ast.Assign) and any(
-                isinstance(target, ast.Name) and target.id == "config"
-                for target in statement.targets
-            ):
-                value_node = statement.value
-                break
-            if (
-                isinstance(statement, ast.AnnAssign)
-                and isinstance(statement.target, ast.Name)
-                and statement.target.id == "config"
-            ):
-                value_node = statement.value
-                break
-        if value_node is None:
-            raise ConfigurationSyntaxError(
-                f"Configuration at {resolved} does not define 'config'"
-            )
-        try:
-            raw = ast.literal_eval(value_node)
-        except (TypeError, ValueError, SyntaxError) as error:
-            raise ConfigurationSyntaxError(
-                f"Configuration at {resolved} must be a literal mapping: {error}"
-            ) from error
-        if not isinstance(raw, dict):
-            raise ConfigurationSyntaxError(
-                f"Configuration at {resolved} must define a dictionary"
-            )
-        try:
-            return ApplicationConfiguration.from_mapping(
-                cast(dict[str, object], raw),
-                ConfigurationSource(path=str(resolved), kind=kind),
-            )
-        except TypeError as error:
-            raise ConfigurationSyntaxError(
-                f"Configuration at {resolved} has an invalid section: {error}"
-            ) from error
+        resolved = _resolved_configuration_file(path)
+        source = _read_configuration_source(resolved)
+        tree = _parse_configuration_tree(source, resolved)
+        value_node = _config_value_node(tree, resolved)
+        raw = _literal_configuration(value_node, resolved)
+        return _application_configuration(raw, resolved, kind)
 
     def copy_atomically(self, source: Path, destination: Path) -> Path | None:
         source = source.expanduser().resolve()
