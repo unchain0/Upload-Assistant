@@ -25,180 +25,150 @@ class XingyungePT(NEXUSPHP):
     def __init__(self, config: Config) -> None:
         super().__init__(config, "XINGYUNGEPT")
 
+    @staticmethod
+    def _metadata_text(values: list[str]) -> str:
+        return ", ".join(values).lower()
+
+    @staticmethod
+    def _tv_show_keywords() -> tuple[str, ...]:
+        return (
+            "award show",
+            "competition",
+            "game show",
+            "music show",
+            "performance",
+            "reality television",
+            "reality tv",
+            "reality",
+            "stand-up",
+            "talk show",
+            "tv show",
+            "variety",
+        )
+
+    @classmethod
+    def _is_tv_show_genre(cls, genres: str) -> bool:
+        return any(
+            re.search(
+                rf"(^|,\s*){re.escape(keyword)}(\s*,|$)",
+                genres,
+                re.IGNORECASE,
+            )
+            for keyword in cls._tv_show_keywords()
+        )
+
+    @staticmethod
+    def _themed_category(meta: Meta, genres: str, keywords: str) -> int | None:
+        combined = f"{genres}, {keywords}"
+        if "documentary" in combined:
+            return 404
+        if meta.anime or "animation" in combined:
+            return 405
+        return None
+
     def get_category(self, meta: Meta) -> int:
-        animations = 405
-        documentaries = 404
-        movies = 401
-        tv_series = 402
-        tv_shows = 403
-
-        category = meta.category.upper()
-        genres = ", ".join(meta.genres).lower()
-        keywords = ", ".join(meta.keywords).lower()
-
-        if "documentary" in genres or "documentary" in keywords:
-            return documentaries
-        if meta.anime or "animation" in genres or "animation" in keywords:
-            return animations
-
-        if category == "MOVIE":
-            return movies
+        category = str(meta.category).upper()
+        genres = self._metadata_text(meta.genres)
+        keywords = self._metadata_text(meta.keywords)
+        themed = self._themed_category(meta, genres, keywords)
+        if themed is not None:
+            return themed
         if category == "TV":
-            game_show_keywords = [
-                "award show",
-                "competition",
-                "game show",
-                "music show",
-                "performance",
-                "reality television",
-                "reality tv",
-                "reality",
-                "stand-up",
-                "talk show",
-                "tv show",
-                "variety",
-            ]
-            if any(
-                re.search(
-                    rf"(^|,\s*){re.escape(keyword)}(\s*,|$)",
-                    genres,
-                    re.IGNORECASE,
-                )
-                for keyword in game_show_keywords
-            ):
-                return tv_shows
-            return tv_series
+            return 403 if self._is_tv_show_genre(genres) else 402
+        return 401
 
-        return movies
+    @staticmethod
+    def _disc_type_id(meta: Meta) -> int | None:
+        is_disc = str(meta.is_disc or "").lower()
+        if is_disc == "bdmv":
+            return 2 if str(meta.resolution).lower() == "2160p" else 1
+        return 6 if "dvd" in is_disc else None
+
+    @staticmethod
+    def _file_type_id(release_type: str) -> int:
+        if release_type == "remux":
+            return 3
+        if "web" in release_type:
+            return 4
+        if release_type == "hdtv":
+            return 5
+        return 7
 
     def get_type(self, meta: Meta) -> int:
-        blu_ray = 1
-        dvd = 6
-        encode = 7
-        hdtv = 5
-        remux = 3
-        uhd_bluray = 2
-        web_dl = 4
+        disc_type = self._disc_type_id(meta)
+        if disc_type is not None:
+            return disc_type
+        return self._file_type_id(str(meta.type).lower())
 
-        is_disc = (meta.is_disc or "").lower()
-        mtype = str(meta.type).lower()
-        resolution = meta.resolution.lower()
-
-        if is_disc == "bdmv":
-            if resolution == "2160p":
-                return uhd_bluray
-            return blu_ray
-
-        if "dvd" in is_disc:
-            return dvd
-
-        if mtype == "remux":
-            return remux
-
-        if "web" in mtype:
-            return web_dl
-
-        if mtype == "hdtv":
-            return hdtv
-
-        if mtype == "encode":
-            return encode
-
-        return encode
+    @staticmethod
+    def _codec_rules() -> tuple[tuple[int, tuple[str, ...]], ...]:
+        return (
+            (2, ("h265", "x265", "hevc", "265")),
+            (1, ("h264", "x264", "avc", "264")),
+            (3, ("vc1", "vc-1")),
+            (4, ("mpeg2", "mpeg-2")),
+            (5, ("av1",)),
+        )
 
     def get_codec(self, meta: Meta) -> int:
-        av1 = 5
-        h264 = 1
-        h265 = 2
-        mpeg2 = 4
-        other = 6
-        vc1 = 3
-
-        codec = meta.video_codec.lower()
-
-        if (
-            "h265" in codec
-            or "x265" in codec
-            or "hevc" in codec
-            or "265" in codec
-        ):
-            return h265
-        if (
-            "h264" in codec
-            or "x264" in codec
-            or "avc" in codec
-            or "264" in codec
-        ):
-            return h264
-        if "vc1" in codec or "vc-1" in codec:
-            return vc1
-        if "mpeg2" in codec or "mpeg-2" in codec:
-            return mpeg2
-        if "av1" in codec:
-            return av1
-
-        return other
-
-    def get_resolution(self, meta: Meta) -> int:
-        resolution = meta.resolution.lower()
-
-        if "4320" in resolution or "8k" in resolution:
-            return 5
-        if "2160" in resolution or "4k" in resolution:
-            return 4
-        if "1080" in resolution:
-            return 3
-        if "720" in resolution:
-            return 2
-        if meta.sd or "480" in resolution:
-            return 1
-
+        codec = str(meta.video_codec).lower()
+        for codec_id, tokens in self._codec_rules():
+            if any(token in codec for token in tokens):
+                return codec_id
         return 6
 
+    @staticmethod
+    def _resolution_rules() -> tuple[tuple[int, tuple[str, ...]], ...]:
+        return (
+            (5, ("4320", "8k")),
+            (4, ("2160", "4k")),
+            (3, ("1080",)),
+            (2, ("720",)),
+        )
+
+    @staticmethod
+    def _fallback_resolution_id(meta: Meta, resolution: str) -> int:
+        return 1 if meta.sd or "480" in resolution else 6
+
+    def get_resolution(self, meta: Meta) -> int:
+        resolution = str(meta.resolution).lower()
+        for resolution_id, tokens in self._resolution_rules():
+            if any(token in resolution for token in tokens):
+                return resolution_id
+        return self._fallback_resolution_id(meta, resolution)
+
+    @staticmethod
+    def _audio_codec_rules() -> tuple[tuple[int, tuple[str, ...]], ...]:
+        return (
+            (1, ("flac",)),
+            (2, ("mp3",)),
+            (3, ("wav",)),
+            (4, ("m4a",)),
+            (7, ("dts:x", "dtsx")),
+            (6, ("dts-hd ma", "dtshd ma")),
+            (5, ("dts",)),
+            (12, ("atmos", "true")),
+            (8, ("true",)),
+            (9, ("lpcm", "pcm")),
+            (11, ("ddp", "eac3", "e-ac-3")),
+            (10, ("dd", "ac3", "ac-3")),
+            (13, ("ape",)),
+            (14, ("aac",)),
+            (15, ("alac",)),
+            (17, ("opus",)),
+        )
+
+    @staticmethod
+    def _audio_rule_matches(audio_codec: str, tokens: tuple[str, ...]) -> bool:
+        if tokens == ("atmos", "true"):
+            return all(token in audio_codec for token in tokens)
+        return any(token in audio_codec for token in tokens)
+
     def get_audio_codec(self, meta: Meta) -> int:
-        audio_codec = meta.audio.lower()
-
-        if "flac" in audio_codec:
-            return 1
-        if "mp3" in audio_codec:
-            return 2
-        if "wav" in audio_codec:
-            return 3
-        if "m4a" in audio_codec:
-            return 4
-        if "dts:x" in audio_codec or "dtsx" in audio_codec:
-            return 7
-        if "dts-hd ma" in audio_codec or "dtshd ma" in audio_codec:
-            return 6
-        if "dts" in audio_codec:
-            return 5
-        if "atmos" in audio_codec and "true" in audio_codec:
-            return 12
-        if "true" in audio_codec:
-            return 8
-        if "lpcm" in audio_codec or "pcm" in audio_codec:
-            return 9
-        if (
-            "ddp" in audio_codec
-            or "eac3" in audio_codec
-            or "e-ac-3" in audio_codec
-        ):
-            return 11
-        if (
-            "dd" in audio_codec
-            or "ac3" in audio_codec
-            or "ac-3" in audio_codec
-        ):
-            return 10
-        if "ape" in audio_codec:
-            return 13
-        if "aac" in audio_codec:
-            return 14
-        if "alac" in audio_codec:
-            return 15
-        if "opus" in audio_codec:
-            return 17
-
+        audio_codec = str(meta.audio).lower()
+        for codec_id, tokens in self._audio_codec_rules():
+            if self._audio_rule_matches(audio_codec, tokens):
+                return codec_id
         return 16
 
     def get_group_tag(self, meta: Meta) -> int:
@@ -219,46 +189,43 @@ class XingyungePT(NEXUSPHP):
         group = meta.tag.lower() if meta.tag else ""
         return group_tag.get(group, 5)
 
-    def get_checkboxes(self, meta: Meta) -> list[str]:
-        chinese_audio = 5
-        chinese_subtitle = 6
-        diy = 4
-        dolby_vision = 8
-        episode = 10
-        hdr = 7
-        pack = 11
-        reposting_prohibited = 1
+    @staticmethod
+    def _has_chinese(values: list[str] | str) -> bool:
+        return "Chinese" in values or "Mandarin" in values
 
+    @staticmethod
+    def _has_dolby_vision(hdr: str) -> bool:
+        upper = hdr.upper()
+        return "DV" in upper or "DOLBY" in upper
+
+    @staticmethod
+    def _tv_checkbox(meta: Meta) -> int | None:
+        if meta.tv_pack:
+            return 11
+        return 10 if meta.category == "TV" else None
+
+    @classmethod
+    def _checkbox_options(cls, meta: Meta) -> tuple[tuple[bool, int], ...]:
         audio_tracks = meta.audio_languages or []
         subtitle_tracks = meta.subtitle_languages or []
-        mhdr = meta.hdr
+        hdr = str(meta.hdr)
+        tv_checkbox = cls._tv_checkbox(meta)
+        return (
+            (bool(meta.exclusive), 1),
+            (cls._has_chinese(audio_tracks), 5),
+            (cls._has_chinese(subtitle_tracks), 6),
+            (bool(meta.diy_disc), 4),
+            (cls._has_dolby_vision(hdr), 8),
+            ("HDR" in hdr.upper(), 7),
+            (tv_checkbox is not None, tv_checkbox or 0),
+        )
 
-        checkboxes: list[str] = []
-
-        if meta.exclusive:
-            checkboxes.append(str(reposting_prohibited))
-
-        if "Chinese" in audio_tracks or "Mandarin" in audio_tracks:
-            checkboxes.append(str(chinese_audio))
-
-        if "Chinese" in subtitle_tracks or "Mandarin" in subtitle_tracks:
-            checkboxes.append(str(chinese_subtitle))
-
-        if meta.diy_disc:
-            checkboxes.append(str(diy))
-
-        if "DV" in mhdr.upper() or "DOLBY" in mhdr.upper():
-            checkboxes.append(str(dolby_vision))
-
-        if "HDR" in mhdr.upper():
-            checkboxes.append(str(hdr))
-
-        if meta.tv_pack:
-            checkboxes.append(str(pack))
-        elif meta.category == "TV":
-            checkboxes.append(str(episode))
-
-        return checkboxes
+    def get_checkboxes(self, meta: Meta) -> list[str]:
+        return [
+            str(checkbox_id)
+            for enabled, checkbox_id in self._checkbox_options(meta)
+            if enabled
+        ]
 
     def get_douban_url(self, meta: Meta) -> str:
         return super().get_douban_url(meta)
