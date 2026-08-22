@@ -153,6 +153,21 @@ class BitPorn(UNIT3D):
     def __init__(self, config: Config) -> None:
         super().__init__(config, tracker_name=self.tracker)
 
+    @classmethod
+    def _inferred_category_name(cls, meta: Meta) -> str:
+        basename = str(meta.basename_no_ext or "")
+        normalized = re.sub(r"[^a-z0-9]+", " ", basename.casefold())
+        for category_name, pattern in cls._category_patterns:
+            if re.search(pattern, normalized):
+                return category_name
+        return "Uncategorized"
+
+    @classmethod
+    def _category_id(cls, category_name: str) -> str:
+        return cls.category_ids.get(
+            category_name, cls.category_ids["Uncategorized"]
+        )
+
     async def get_category_id(
         self,
         meta: Meta,
@@ -164,21 +179,8 @@ class BitPorn(UNIT3D):
             return self.category_ids
         if reverse:
             return {value: name for name, value in self.category_ids.items()}
-
-        if category:
-            return {
-                "category_id": self.category_ids.get(
-                    category, self.category_ids["Uncategorized"]
-                )
-            }
-
-        basename = str(meta.basename_no_ext or "")
-        normalized_basename = re.sub(r"[^a-z0-9]+", " ", basename.casefold())
-        for category_name, pattern in self._category_patterns:
-            if re.search(pattern, normalized_basename):
-                return {"category_id": self.category_ids[category_name]}
-
-        return {"category_id": self.category_ids["Uncategorized"]}
+        category_name = category or self._inferred_category_name(meta)
+        return {"category_id": self._category_id(category_name)}
 
     async def get_type_id(
         self,

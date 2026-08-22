@@ -55,6 +55,12 @@ def test_bitporn_category_mappings_and_no_type_field() -> None:
         asyncio.run(bitporn.get_category_id(meta, reverse=True))["52"]
         == "Uncategorized"
     )
+    assert asyncio.run(bitporn.get_category_id(meta, category="Anal")) == {
+        "category_id": "5"
+    }
+    assert asyncio.run(bitporn.get_category_id(meta, category="Unknown")) == {
+        "category_id": "52"
+    }
     assert asyncio.run(bitporn.get_type_id(meta)) == {"type_id": "1"}
 
 
@@ -71,6 +77,15 @@ def test_bitporn_resolution_mapping() -> None:
     assert asyncio.run(bitporn.get_resolution_id(meta, "1080i")) == {
         "resolution_id": "11"
     }
+    assert (
+        asyncio.run(bitporn.get_resolution_id(meta, mapping_only=True))[
+            "2160p"
+        ]
+        == "18"
+    )
+    assert asyncio.run(bitporn.get_resolution_id(meta, reverse=True))[
+        "18"
+    ] == ("2160p")
 
 
 def test_bitporn_uses_its_image_upload_contract(tmp_path: Path) -> None:
