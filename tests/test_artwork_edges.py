@@ -85,6 +85,15 @@ def test_image_bytes_and_cover_error_paths(
     )
     assert not artwork.is_valid_image_bytes(b"x")
 
+    class EmptyImage(FakeImage):
+        format = "PNG"
+        width = 0
+
+    monkeypatch.setattr(
+        artwork.Image, "open", lambda *_args, **_kwargs: EmptyImage()
+    )
+    assert not artwork.is_valid_image_bytes(b"x")
+
     file = tmp_path / "cover.png"
     file.write_bytes(_png_bytes())
     original_stat = Path.stat
@@ -110,6 +119,8 @@ def test_local_artwork_discovery_priorities_and_missing(
     )
     media = tmp_path / "movie.mkv"
     media.write_bytes(b"video")
+    assert not artwork._valid_local_artwork_candidate(tmp_path / "missing.png")
+    assert artwork._candidate_artwork_match(Path("random.png")) is None
     for name, color in (
         ("z-artwork.jpg", "red"),
         ("cover.jpg", "blue"),
