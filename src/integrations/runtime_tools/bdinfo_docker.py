@@ -34,57 +34,73 @@ def secure_extract_tar(tar_path: Path, extract_to: Path) -> None:
         safe_extract_tar(tar_ref, extract_to)
 
 
-def download_bdinfo_for_docker(
-    base_dir: Path = Path("/Upload-Assistant"), version: str = BDINFO_VERSION
-) -> str:
+def _docker_machine() -> str:
     system = platform.system().lower()
     machine = platform.machine().lower()
     logger.info(
         f"System: {system}, Architecture: {machine}", extra={"markup": False}
     )
-
     if system != "linux":
         raise Exception(
             f"This script is only for Linux containers, got: {system}"
         )
+    return machine
 
+
+def _architecture_asset(machine: str) -> tuple[str, str]:
     if machine in ("amd64", "x86_64"):
-        asset = "linux_amd64.tar.gz"
-        folder = "linux/amd64"
-    elif machine in ("arm64", "aarch64"):
-        asset = "linux_arm64.tar.gz"
-        folder = "linux/arm64"
-    elif machine.startswith("arm"):
-        asset = "linux_arm.tar.gz"
-        folder = "linux/arm"
-    else:
-        raise Exception(f"Unsupported architecture: {machine}")
+        return "linux_amd64.tar.gz", "linux/amd64"
+    if machine in ("arm64", "aarch64"):
+        return "linux_arm64.tar.gz", "linux/arm64"
+    if machine.startswith("arm"):
+        return "linux_arm.tar.gz", "linux/arm"
+    raise Exception(f"Unsupported architecture: {machine}")
 
-    file_pattern = f"bdinfo_{version.removeprefix('v')}_{asset}"
+
+def _installation_paths(
+    base_dir: Path, folder: str, version: str
+) -> tuple[Path, Path, Path]:
     bin_dir = base_dir / "bin" / "bdinfo" / folder
     bin_dir.mkdir(parents=True, exist_ok=True)
-    binary_path = bin_dir / "bdinfo"
-    version_path = bin_dir / version
+    return bin_dir, bin_dir / "bdinfo", bin_dir / version
 
-    if (
-        version_path.exists()
-        and binary_path.exists()
-        and os.access(binary_path, os.X_OK)
-    ):
-        logger.info(
-            f"bdinfo {version} already installed", extra={"markup": False}
-        )
-        return str(binary_path)
 
+def _cached_binary(
+    binary_path: Path, version_path: Path, version: str
+) -> str | None:
+    if not version_path.exists() or not binary_path.exists():
+        return None
+    if not os.access(binary_path, os.X_OK):
+        return None
+    logger.info(f"bdinfo {version} already installed", extra={"markup": False})
+    return str(binary_path)
+
+
+def _download_layout(
+    bin_dir: Path, version: str, asset: str
+) -> tuple[str, str, Path, Path]:
+    file_pattern = f"bdinfo_{version.removeprefix('v')}_{asset}"
     download_url = f"{BASE_RELEASE_URL}/{version}/{file_pattern}"
+    temp_archive = bin_dir / f"temp_{file_pattern}"
+    staging = bin_dir / ".bdinfo-staging"
+    return file_pattern, download_url, temp_archive, staging
+
+
+def _prepare_staging(staging: Path) -> None:
+    shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir()
+
+
+def _download_and_extract(
+    download_url: str,
+    file_pattern: str,
+    temp_archive: Path,
+    staging: Path,
+) -> None:
     logger.info(
         f"Downloading bdinfo from: {download_url}", extra={"markup": False}
     )
-
-    temp_archive = bin_dir / f"temp_{file_pattern}"
-    staging = bin_dir / ".bdinfo-staging"
-    shutil.rmtree(staging, ignore_errors=True)
-    staging.mkdir()
+    _prepare_staging(staging)
     try:
         download_file(download_url, temp_archive)
         verify_downloaded_asset(temp_archive, file_pattern)
@@ -95,38 +111,78 @@ def download_bdinfo_for_docker(
     finally:
         temp_archive.unlink(missing_ok=True)
 
-    try:
-        candidates = [
-            candidate
-            for candidate in staging.rglob("bdinfo")
-            if candidate.is_file()
-        ]
-        if len(candidates) != 1:
-            raise Exception(
-                f"Failed to extract exactly one bdinfo binary for {binary_path}"
-            )
-        staged_binary = candidates[0]
-        staged_binary.chmod(0o755)
-        staged_version = staging / version
-        staged_version.write_text(
-            f"autobrr/go-bdinfo version {version} installed successfully.",
-            encoding="utf-8",
+
+def _unique_staged_binary(staging: Path, binary_path: Path) -> Path:
+    candidates = [
+        candidate
+        for candidate in staging.rglob("bdinfo")
+        if candidate.is_file()
+    ]
+    if len(candidates) != 1:
+        raise Exception(
+            f"Failed to extract exactly one bdinfo binary for {binary_path}"
         )
-        stale_markers = [
-            candidate
-            for candidate in bin_dir.iterdir()
-            if candidate.is_file()
-            and candidate.name.startswith("v")
-            and candidate != version_path
-        ]
+    staged_binary = candidates[0]
+    staged_binary.chmod(0o755)
+    return staged_binary
+
+
+def _write_staged_version(staging: Path, version: str) -> Path:
+    staged_version = staging / version
+    staged_version.write_text(
+        f"autobrr/go-bdinfo version {version} installed successfully.",
+        encoding="utf-8",
+    )
+    return staged_version
+
+
+def _stale_version_markers(bin_dir: Path, version_path: Path) -> list[Path]:
+    return [
+        candidate
+        for candidate in bin_dir.iterdir()
+        if candidate.is_file()
+        and candidate.name.startswith("v")
+        and candidate != version_path
+    ]
+
+
+def _promote_staged_install(
+    bin_dir: Path,
+    staging: Path,
+    binary_path: Path,
+    version_path: Path,
+    version: str,
+) -> None:
+    try:
+        staged_binary = _unique_staged_binary(staging, binary_path)
+        staged_version = _write_staged_version(staging, version)
         promote_files_with_rollback(
             [(staged_binary, binary_path), (staged_version, version_path)],
             bin_dir / ".bdinfo-backup",
-            remove_targets=stale_markers,
+            remove_targets=_stale_version_markers(bin_dir, version_path),
         )
     finally:
         shutil.rmtree(staging, ignore_errors=True)
 
+
+def download_bdinfo_for_docker(
+    base_dir: Path = Path("/Upload-Assistant"), version: str = BDINFO_VERSION
+) -> str:
+    machine = _docker_machine()
+    asset, folder = _architecture_asset(machine)
+    bin_dir, binary_path, version_path = _installation_paths(
+        base_dir, folder, version
+    )
+    cached = _cached_binary(binary_path, version_path, version)
+    if cached is not None:
+        return cached
+    file_pattern, download_url, temp_archive, staging = _download_layout(
+        bin_dir, version, asset
+    )
+    _download_and_extract(download_url, file_pattern, temp_archive, staging)
+    _promote_staged_install(
+        bin_dir, staging, binary_path, version_path, version
+    )
     logger.info(f"Installed bdinfo: {binary_path}", extra={"markup": False})
     return str(binary_path)
 

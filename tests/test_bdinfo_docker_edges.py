@@ -52,6 +52,19 @@ def test_docker_platform_architecture_and_cache_paths(
     with pytest.raises(Exception, match="Unsupported architecture"):
         bdinfo_docker.download_bdinfo_for_docker(tmp_path)
 
+    cache_binary = tmp_path / "cache-disabled" / "bdinfo"
+    cache_binary.parent.mkdir(parents=True)
+    cache_binary.write_bytes(b"cached")
+    cache_version = cache_binary.parent / "v0.3.1"
+    cache_version.write_text("cached", encoding="utf-8")
+    monkeypatch.setattr(bdinfo_docker.os, "access", lambda *_args: False)
+    assert (
+        bdinfo_docker._cached_binary(cache_binary, cache_version, "v0.3.1")
+        is None
+    )
+    monkeypatch.undo()
+    monkeypatch.setattr(bdinfo_docker.platform, "system", lambda: "Linux")
+
     for machine, folder in (
         ("amd64", "linux/amd64"),
         ("aarch64", "linux/arm64"),
