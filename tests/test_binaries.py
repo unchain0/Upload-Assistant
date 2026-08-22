@@ -3,7 +3,11 @@ from unittest.mock import patch
 
 import pytest
 
+from src.integrations.runtime_tools import (
+    configured_binaries as binaries_module,
+)
 from src.integrations.runtime_tools.configured_binaries import (
+    configure_binary_paths,
     configured_binary,
 )
 
@@ -80,6 +84,27 @@ def test_configured_binary_rejects_missing_override(tmp_path: Path) -> None:
             "ffmpeg_path",
             {"DEFAULT": {"ffmpeg_path": str(tmp_path / "missing.exe")}},
         )
+
+
+def test_configure_binary_paths_binds_active_override(tmp_path: Path) -> None:
+    executable = tmp_path / "ffmpeg"
+    executable.touch()
+    executable.chmod(executable.stat().st_mode | 0o111)
+    configure_binary_paths({"ffmpeg_path": str(executable)})
+    try:
+        assert configured_binary("ffmpeg_path") == str(executable)
+    finally:
+        configure_binary_paths({})
+
+
+def test_configured_binary_helper_fallback_edges() -> None:
+    assert binaries_module._default_binary_config("bad") == {}  # type: ignore[arg-type]
+    assert (
+        configured_binary(
+            "mediainfo_path", {"DEFAULT": {"mediainfo_path": ""}}
+        )
+        is None
+    )
 
 
 def test_configured_binary_rejects_non_executable_posix_override(
