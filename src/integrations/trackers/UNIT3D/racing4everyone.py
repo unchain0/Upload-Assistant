@@ -31,6 +31,27 @@ class Racing4Everyone(UNIT3D):
         self.config: Config = config
         self.common = Common(config)
 
+    @staticmethod
+    def _genre_ids(meta: Meta) -> set[str]:
+        if not meta.genre_ids:
+            return set()
+        return {
+            genre_id.strip()
+            for genre_id in str(meta.genre_ids).split(",")
+            if genre_id.strip()
+        }
+
+    @staticmethod
+    def _category_value(category: str, documentary: bool) -> str:
+        mapping = {
+            "MOVIE": ("70", "66"),
+            "TV": ("79", "2"),
+        }
+        values = mapping.get(category)
+        if values is None:
+            return "24"
+        return values[1] if documentary else values[0]
+
     async def get_category_id(
         self,
         meta: Meta,
@@ -39,33 +60,14 @@ class Racing4Everyone(UNIT3D):
         mapping_only: bool = False,
     ) -> dict[str, str]:
         _ = (category, reverse, mapping_only)
-        category_id = "24"
-        genre_ids = (
-            [genre_id.strip() for genre_id in str(meta.genre_ids).split(",")]
-            if meta and meta.genre_ids
-            else []
-        )
-        is_docu = "99" in genre_ids
+        documentary = "99" in self._genre_ids(meta)
+        return {
+            "category_id": self._category_value(meta.category, documentary)
+        }
 
-        if meta.category == "MOVIE":
-            category_id = "70"  # Motorsports Movie
-            if is_docu:
-                category_id = "66"  # Documentary
-        elif meta.category == "TV":
-            category_id = "79"  # TV Series
-            if is_docu:
-                category_id = "2"  # TV Documentary
-
-        return {"category_id": category_id}
-
-    async def get_type_id(
-        self,
-        meta: Meta,
-        type: str | None = None,
-        reverse: bool = False,
-        mapping_only: bool = False,
-    ) -> dict[str, str]:
-        type_id = {
+    @staticmethod
+    def _type_mapping() -> dict[str, str]:
+        return {
             "DISC": "1",
             "REMUX": "2",
             "WEBDL": "4",
@@ -74,14 +76,27 @@ class Racing4Everyone(UNIT3D):
             "ENCODE": "3",
             "DVDRIP": "3",
         }
+
+    @staticmethod
+    def _selected_type(meta: Meta, explicit_type: str | None) -> str:
+        if explicit_type is not None and explicit_type != "":
+            return explicit_type
+        return str(meta.type)
+
+    async def get_type_id(
+        self,
+        meta: Meta,
+        type: str | None = None,
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
+        type_id = self._type_mapping()
         if mapping_only:
             return type_id
         if reverse:
-            return {v: k for k, v in type_id.items()}
-        type_value = (
-            type if type is not None and type != "" else str(meta.type)
-        )
-        return {"type_id": type_id.get(type_value, "0")}
+            return {value: key for key, value in type_id.items()}
+        selected = self._selected_type(meta, type)
+        return {"type_id": type_id.get(selected, "0")}
 
     async def get_personal_release(self, meta: Meta) -> dict[str, str]:
         _ = meta
@@ -107,14 +122,9 @@ class Racing4Everyone(UNIT3D):
         _ = meta
         return {}
 
-    async def get_resolution_id(
-        self,
-        meta: Meta,
-        resolution: str | None = None,
-        reverse: bool = False,
-        mapping_only: bool = False,
-    ) -> dict[str, str]:
-        resolution_id = {
+    @staticmethod
+    def _resolution_mapping() -> dict[str, str]:
+        return {
             "8640p": "2160p",
             "4320p": "2160p",
             "2160p": "2160p",
@@ -127,16 +137,27 @@ class Racing4Everyone(UNIT3D):
             "480p": "SD",
             "480i": "SD",
         }
+
+    @staticmethod
+    def _selected_resolution(meta: Meta, resolution: str | None) -> str:
+        if resolution is not None and resolution != "":
+            return resolution
+        return str(meta.resolution)
+
+    async def get_resolution_id(
+        self,
+        meta: Meta,
+        resolution: str | None = None,
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
+        resolution_id = self._resolution_mapping()
         if mapping_only:
             return resolution_id
         if reverse:
-            return {v: k for k, v in resolution_id.items()}
-        resolution_value = (
-            resolution
-            if resolution is not None and resolution != ""
-            else str(meta.resolution)
-        )
-        return {"resolution_id": resolution_id.get(resolution_value, "SD")}
+            return {value: key for key, value in resolution_id.items()}
+        selected = self._selected_resolution(meta, resolution)
+        return {"resolution_id": resolution_id.get(selected, "SD")}
 
     async def search_existing(self, meta: Meta) -> list[dict[str, Any]]:
         dupes: list[dict[str, Any]] = []
