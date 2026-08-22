@@ -2,7 +2,12 @@ import asyncio
 import json
 
 from src.integrations.cache.metadata_cache import (
+    _cache_defaults,
     _cache_entry_value,
+    _cache_root,
+    _cache_services,
+    _safe_cache_component,
+    _ttl_seconds,
     cache_for,
     is_cache_miss,
     set_run_disabled,
@@ -102,3 +107,22 @@ def test_metadata_cache_uses_defaults_for_invalid_ttls(tmp_path):
 
     assert cache.default_ttl == 168 * 3600
     assert cache.negative_ttl == 60 * 60
+
+
+def test_metadata_cache_refactor_helper_edges(tmp_path):
+    absolute = tmp_path / "absolute-cache"
+
+    assert _cache_defaults({"DEFAULT": "invalid"}) == {}
+    assert _cache_root(tmp_path, absolute) == absolute
+    assert _ttl_seconds(-2, 10, 60) == 0
+    assert _cache_services({"metadata_cache_services": "invalid"}) == {}
+    assert _safe_cache_component(" TMDB! PT-BR ") == "tmdbpt-br"
+    assert is_cache_miss(
+        _cache_entry_value({"version": 1, "expires_at": 9999999999})
+    )
+
+    tracker_cache = tracker_metadata_cache_for(
+        tmp_path,
+        {"DEFAULT": "invalid"},
+    )
+    assert tracker_cache.root == tmp_path / "data" / "cache" / "tracker_metadata"
