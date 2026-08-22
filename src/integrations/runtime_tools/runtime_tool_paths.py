@@ -9,18 +9,24 @@ from pathlib import Path
 _private_root: Path | None = None
 
 
+def _path_is_real_directory(path: Path) -> bool:
+    return not path.is_symlink() and path.is_dir()
+
+
+def _posix_directory_is_private(path: Path) -> bool:
+    attributes = path.stat()
+    shared_write = stat.S_IWGRP | stat.S_IWOTH
+    owned = attributes.st_uid == os.geteuid()
+    private_mode = not attributes.st_mode & shared_write
+    return bool(owned and private_mode and os.access(path, os.W_OK | os.X_OK))
+
+
 def _is_private_writable_directory(path: Path) -> bool:
-    if path.is_symlink() or not path.is_dir():
+    if not _path_is_real_directory(path):
         return False
     if os.name == "nt":
         return os.access(path, os.W_OK | os.X_OK)
-    attributes = path.stat()
-    shared_write = stat.S_IWGRP | stat.S_IWOTH
-    return (
-        attributes.st_uid == os.geteuid()
-        and not attributes.st_mode & shared_write
-        and os.access(path, os.W_OK | os.X_OK)
-    )
+    return _posix_directory_is_private(path)
 
 
 def _private_tool_root() -> Path:
@@ -46,14 +52,22 @@ def tool_install_dir(base_dir: str | Path, tool: str, folder: str) -> Path:
     return private
 
 
+def _basic_executable_check(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    return os.name == "nt" or os.access(path, os.X_OK)
+
+
+def _posix_executable_is_trusted(path: Path) -> bool:
+    shared_write = stat.S_IWGRP | stat.S_IWOTH
+    if path.stat().st_mode & shared_write:
+        return False
+    return not path.parent.stat().st_mode & shared_write
+
+
 def trusted_executable(path: Path) -> bool:
-    if not path.is_file() or (
-        os.name != "nt" and not os.access(path, os.X_OK)
-    ):
+    if not _basic_executable_check(path):
         return False
     if os.name == "nt":
         return True
-    if path.stat().st_mode & (stat.S_IWGRP | stat.S_IWOTH):
-        return False
-    parent_mode = path.parent.stat().st_mode
-    return not parent_mode & (stat.S_IWGRP | stat.S_IWOTH)
+    return _posix_executable_is_trusted(path)

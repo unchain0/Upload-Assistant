@@ -55,6 +55,10 @@ def test_trusted_executable_rejects_shared_writable_file(
     assert runtime_tool_paths.trusted_executable(binary) is False
 
 
+def test_trusted_executable_rejects_missing_path(tmp_path: Path) -> None:
+    assert not runtime_tool_paths.trusted_executable(tmp_path / "missing")
+
+
 def test_windows_runtime_tool_path_checks_use_access_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
