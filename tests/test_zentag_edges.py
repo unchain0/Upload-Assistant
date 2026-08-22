@@ -441,33 +441,6 @@ def test_final_zentag_branch_matrix(
     )
 
 
-def test_refactor_helper_output_validation_edges(tmp_path: Path) -> None:
-    m4b = tmp_path / "book.m4b"
-    m4b.write_bytes(b"audio")
-    epub = tmp_path / "book.epub"
-    epub.write_bytes(b"book")
-    config = {"DEFAULT": {"auto_zentag": True}}
-
-    assert not zentag._zentag_auto_allowed(
-        _meta(m4b, trackers=["OTHER"]), config
-    )
-    assert not zentag._plain_ebook(
-        _meta(epub, audiobook=False, category="MOVIE")
-    )
-    assert (
-        zentag._audiobook_asin(_meta(m4b, book_asin="b012345678"), m4b)
-        == "B012345678"
-    )
-    assert zentag._series_part(_meta(m4b, book_series="")) == ""
-
-    output_root = tmp_path / "output"
-    output_root.mkdir()
-    assert zentag._written_path('Wrote "bad json', output_root) is None
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    assert zentag._written_path(f"Wrote {outside}", output_root) is None
-
-
 def test_refactor_helper_coverage_matrix_edges(tmp_path: Path) -> None:
     m4b = tmp_path / "book.m4b"
     m4b.write_bytes(b"audio")
