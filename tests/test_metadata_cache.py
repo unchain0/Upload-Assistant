@@ -2,9 +2,11 @@ import asyncio
 import json
 
 from src.integrations.cache.metadata_cache import (
+    _cache_entry_value,
     cache_for,
     is_cache_miss,
     set_run_disabled,
+    tracker_metadata_cache_for,
 )
 from src.integrations.filesystem.paths import CODE_DIR
 
@@ -64,6 +66,27 @@ def test_metadata_cache_can_be_disabled_for_one_run(tmp_path):
             set_run_disabled(False)
 
     asyncio.run(run())
+
+
+def test_cache_entry_validation_rejects_invalid_shapes():
+    assert is_cache_miss(_cache_entry_value([]))
+    assert is_cache_miss(
+        _cache_entry_value({"version": 999, "expires_at": 9999999999})
+    )
+    assert is_cache_miss(
+        _cache_entry_value({"version": 1, "expires_at": "invalid"})
+    )
+
+
+def test_tracker_metadata_cache_uses_separate_defaults(tmp_path):
+    cache = tracker_metadata_cache_for(
+        tmp_path,
+        {"DEFAULT": {"tracker_metadata_cache_dir": "tracker-cache"}},
+    )
+
+    assert cache.root == tmp_path / "tracker-cache"
+    assert cache.default_ttl == 24 * 3600
+    assert cache.negative_ttl == 15 * 60
 
 
 def test_metadata_cache_uses_defaults_for_invalid_ttls(tmp_path):

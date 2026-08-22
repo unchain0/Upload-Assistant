@@ -8,7 +8,7 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from src.integrations.filesystem.paths import CODE_DIR
 
@@ -30,6 +30,51 @@ def _project_root() -> Path:
     return CODE_DIR
 
 
+def _cache_defaults(config: dict[str, Any] | None) -> dict[str, Any]:
+    selected = config or _default_config()
+    default = selected.get("DEFAULT", selected)
+    return default if isinstance(default, dict) else {}
+
+
+def _cache_root(base_dir: str | Path, configured_dir: object) -> Path:
+    directory_text = str(configured_dir or "data/cache/metadata").strip()
+    root = Path(base_dir) if base_dir else _project_root()
+    cache_dir = Path(directory_text or "data/cache/metadata")
+    return cache_dir if cache_dir.is_absolute() else root / cache_dir
+
+
+def _ttl_seconds(value: object, fallback: int, multiplier: int) -> int:
+    try:
+        return max(0, int(cast(Any, value))) * multiplier
+    except TypeError, ValueError:
+        return fallback * multiplier
+
+
+def _cache_services(default: dict[str, Any]) -> dict[str, Any]:
+    services = default.get("metadata_cache_services", {})
+    return services if isinstance(services, dict) else {}
+
+
+def _safe_cache_component(value: str) -> str:
+    return "".join(
+        char for char in value.lower() if char.isalnum() or char in "_-"
+    )
+
+
+def _cache_entry_value(entry: object) -> Any:
+    if not isinstance(entry, dict):
+        return _MISSING
+    if entry.get("version") != _VERSION:
+        return _MISSING
+    try:
+        expired = float(entry.get("expires_at", 0)) < time.time()
+    except TypeError, ValueError:
+        return _MISSING
+    if expired:
+        return _MISSING
+    return entry.get("value", _MISSING)
+
+
 class MetadataCache:
     """JSON cache whose entries are safe to share between upload runs.
 
@@ -40,42 +85,23 @@ class MetadataCache:
     def __init__(
         self, base_dir: str | Path, config: dict[str, Any] | None = None
     ) -> None:
-        config = config or _default_config()
-        default = (
-            config.get("DEFAULT", config) if isinstance(config, dict) else {}
-        )
-        default = default if isinstance(default, dict) else {}
+        default = _cache_defaults(config)
         self.enabled = bool(default.get("metadata_cache_enabled", True))
-        configured_dir = str(
-            default.get("metadata_cache_dir", "data/cache/metadata")
-        ).strip()
-        root = Path(base_dir) if base_dir else _project_root()
-        cache_dir = Path(configured_dir or "data/cache/metadata")
-        self.root = cache_dir if cache_dir.is_absolute() else root / cache_dir
-        try:
-            self.default_ttl = (
-                max(
-                    0,
-                    int(default.get("metadata_cache_default_ttl_hours", 168)),
-                )
-                * 3600
-            )
-        except TypeError, ValueError:
-            self.default_ttl = 168 * 3600
-        try:
-            self.negative_ttl = (
-                max(
-                    0,
-                    int(
-                        default.get("metadata_cache_negative_ttl_minutes", 60)
-                    ),
-                )
-                * 60
-            )
-        except TypeError, ValueError:
-            self.negative_ttl = 60 * 60
-        services = default.get("metadata_cache_services", {})
-        self.services = services if isinstance(services, dict) else {}
+        self.root = _cache_root(
+            base_dir,
+            default.get("metadata_cache_dir", "data/cache/metadata"),
+        )
+        self.default_ttl = _ttl_seconds(
+            default.get("metadata_cache_default_ttl_hours", 168),
+            168,
+            3600,
+        )
+        self.negative_ttl = _ttl_seconds(
+            default.get("metadata_cache_negative_ttl_minutes", 60),
+            60,
+            60,
+        )
+        self.services = _cache_services(default)
 
     def _service_settings(self, provider: str) -> dict[str, Any]:
         value = self.services.get(provider, {})
@@ -103,12 +129,8 @@ class MetadataCache:
 
     def _path(self, provider: str, resource: str, key: str) -> Path:
         digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
-        safe_provider = "".join(
-            char for char in provider.lower() if char.isalnum() or char in "_-"
-        )
-        safe_resource = "".join(
-            char for char in resource.lower() if char.isalnum() or char in "_-"
-        )
+        safe_provider = _safe_cache_component(provider)
+        safe_resource = _safe_cache_component(resource)
         return self.root / safe_provider / safe_resource / f"{digest}.json"
 
     async def get(self, provider: str, resource: str, key: str) -> Any:
@@ -118,15 +140,9 @@ class MetadataCache:
         try:
             raw = await asyncio.to_thread(path.read_text, encoding="utf-8")
             entry = json.loads(raw)
-            if (
-                not isinstance(entry, dict)
-                or entry.get("version") != _VERSION
-                or float(entry.get("expires_at", 0)) < time.time()
-            ):
-                return _MISSING
-            return entry.get("value", _MISSING)
         except OSError, ValueError, TypeError:
             return _MISSING
+        return _cache_entry_value(entry)
 
     async def set(
         self,
