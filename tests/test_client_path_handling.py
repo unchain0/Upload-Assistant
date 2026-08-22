@@ -23,6 +23,9 @@ from src.integrations.torrent_clients.qbittorrent import (
 def test_qbittorrent_coerce_str_list_parses_stringified_paths() -> None:
     assert coerce_str_list("['/local', '/remote']") == ["/local", "/remote"]
     assert coerce_str_list("/local") == ["/local"]
+    assert coerce_str_list("[not valid]") == ["[not valid]"]
+    assert coerce_str_list(42) == ["42"]
+    assert coerce_str_list(None) == []
 
 
 def test_qbittorrent_map_save_path_accepts_path_objects() -> None:
@@ -124,6 +127,7 @@ def test_tracker_directory_rejects_paths_outside_link_root() -> None:
 def test_automatic_management_paths_require_path_boundaries() -> None:
     assert is_path_under("/media/local/release", "/media/local")
     assert not is_path_under("/media/locality/release", "/media/local")
+    assert not is_path_under("/media/local", "/media/local/release")
 
 
 def test_cross_seed_links_normalize_component_paths(tmp_path: Path) -> None:
