@@ -212,3 +212,20 @@ def test_bdinfo_temp_archive_unlink_warning_is_nonfatal(
     assert any(
         path.name.startswith("temp_bdinfo_") for path in target.iterdir()
     )
+
+
+def test_bdinfo_refactor_helper_edges(tmp_path: Path) -> None:
+    missing_binary = tmp_path / "missing-bdinfo"
+    assert not bdinfo._binary_valid("linux", missing_binary)
+
+    current_marker = tmp_path / "v0.3.1"
+    current_marker.write_text("current", encoding="utf-8")
+    assert not bdinfo._is_stale_marker(current_marker, current_marker)
+
+    marker_dir = tmp_path / "marker-dir"
+    marker_dir.mkdir()
+    assert not bdinfo._is_stale_marker(marker_dir, current_marker)
+
+    absent_archive = tmp_path / "temp_bdinfo_missing.tar.gz"
+    bdinfo._cleanup_temp_archive(absent_archive)
+    assert not absent_archive.exists()

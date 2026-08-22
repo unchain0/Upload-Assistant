@@ -144,8 +144,9 @@ def test_promote_success_remove_target_and_complete_rollback(
     stale.write_bytes(b"stale")
     backup = tmp_path / ".backup"
 
+    missing = tmp_path / "missing"
     integrity.promote_files_with_rollback(
-        [(source, target)], backup, remove_targets=[stale]
+        [(source, target)], backup, remove_targets=[stale, missing]
     )
     assert target.read_bytes() == b"new"
     assert not stale.exists() and not backup.exists()
