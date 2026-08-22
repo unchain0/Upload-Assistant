@@ -37,6 +37,246 @@ from src.integrations.trackers.cookie_auth import CookieValidator
 
 Config = dict[str, Any]
 
+FORUM_COUNTRY_GROUPS: tuple[tuple[int, frozenset[str]], ...] = (
+    (
+        461,
+        frozenset(
+            [
+                "DZ",
+                "AO",
+                "BJ",
+                "BW",
+                "BF",
+                "BI",
+                "CM",
+                "CV",
+                "CF",
+                "TD",
+                "KM",
+                "CD",
+                "CG",
+                "CI",
+                "DJ",
+                "EG",
+                "GQ",
+                "ER",
+                "ET",
+                "GA",
+                "GM",
+                "GH",
+                "GN",
+                "GW",
+                "KE",
+                "LS",
+                "LR",
+                "LY",
+                "MG",
+                "MW",
+                "ML",
+                "MR",
+                "MU",
+                "MA",
+                "MZ",
+                "NA",
+                "NE",
+                "NG",
+                "RW",
+                "ST",
+                "SN",
+                "SC",
+                "SL",
+                "SO",
+                "ZA",
+                "SS",
+                "SD",
+                "SZ",
+                "TZ",
+                "TG",
+                "TN",
+                "UG",
+                "ZM",
+                "ZW",
+            ]
+        ),
+    ),
+    (
+        24,
+        frozenset(
+            [
+                "AF",
+                "AM",
+                "AZ",
+                "BD",
+                "BT",
+                "BN",
+                "KH",
+                "CN",
+                "GE",
+                "IN",
+                "ID",
+                "JP",
+                "KZ",
+                "KG",
+                "LA",
+                "MY",
+                "MV",
+                "MN",
+                "MM",
+                "NP",
+                "KP",
+                "KR",
+                "PK",
+                "PH",
+                "SG",
+                "LK",
+                "TW",
+                "TJ",
+                "TH",
+                "TL",
+                "TM",
+                "UZ",
+                "VN",
+            ]
+        ),
+    ),
+    (
+        25,
+        frozenset(
+            [
+                "AL",
+                "XC",
+                "AD",
+                "AT",
+                "BY",
+                "BE",
+                "BA",
+                "BG",
+                "HR",
+                "SU",
+                "CY",
+                "CZ",
+                "DK",
+                "EE",
+                "FI",
+                "FR",
+                "DE",
+                "GR",
+                "HU",
+                "IS",
+                "IE",
+                "IT",
+                "XK",
+                "LV",
+                "LI",
+                "LT",
+                "LU",
+                "MT",
+                "MD",
+                "MC",
+                "ME",
+                "MK",
+                "NL",
+                "NO",
+                "PL",
+                "PT",
+                "RO",
+                "RU",
+                "SM",
+                "RS",
+                "SK",
+                "SI",
+                "ES",
+                "SE",
+                "CH",
+                "UA",
+                "GB",
+                "VA",
+            ]
+        ),
+    ),
+    (
+        29,
+        frozenset(
+            [
+                "AR",
+                "BO",
+                "CL",
+                "CO",
+                "CR",
+                "CU",
+                "DO",
+                "EC",
+                "SV",
+                "GT",
+                "HN",
+                "MX",
+                "NI",
+                "PA",
+                "PY",
+                "PE",
+                "UY",
+                "VE",
+            ]
+        ),
+    ),
+    (27, frozenset({"BR"})),
+    (26, frozenset({"US", "CA"})),
+    (
+        31,
+        frozenset(
+            [
+                "AU",
+                "FJ",
+                "KI",
+                "MH",
+                "FM",
+                "NR",
+                "NZ",
+                "PW",
+                "PG",
+                "WS",
+                "SB",
+                "TO",
+                "TV",
+                "VU",
+            ]
+        ),
+    ),
+    (
+        30,
+        frozenset(
+            [
+                "BH",
+                "IR",
+                "IQ",
+                "IL",
+                "JO",
+                "KW",
+                "LB",
+                "OM",
+                "QA",
+                "SA",
+                "SY",
+                "AE",
+                "YE",
+            ]
+        ),
+    ),
+)
+
+FORUM_OPTIONS: dict[str, tuple[int, str]] = {
+    "1": (461, "África"),
+    "2": (24, "Asiático"),
+    "3": (77, "Curtas"),
+    "4": (28, "Documentários"),
+    "5": (25, "Europeu"),
+    "6": (29, "Latino Americano"),
+    "7": (27, "Nacional (Brasil)"),
+    "8": (26, "Norte-Americano"),
+    "9": (31, "Oceania"),
+    "10": (30, "Oriente Médio"),
+}
+
 
 class MakingOff:
     """
@@ -1132,6 +1372,140 @@ class MakingOff:
 
         return 0
 
+    def _parse_attachment_combined(self, value: str) -> dict[str, Any] | None:
+        if not value:
+            return None
+        try:
+            parsed = json.loads(value)
+        except Exception as error:
+            logger.debug(
+                f"{self.tracker}: Failed to parse attachment_hash_combined: {error}"
+            )
+            return None
+        return (
+            cast(dict[str, Any], parsed) if isinstance(parsed, dict) else None
+        )
+
+    def _attachment_context(
+        self, attachment_hash_combined: str, forum_id: int
+    ) -> tuple[str, dict[str, Any]]:
+        combined = self._parse_attachment_combined(attachment_hash_combined)
+        if combined is None:
+            return "post", {"node_id": forum_id}
+        attachment_type = str(combined.get("type", "post"))
+        raw_context = combined.get("context", {})
+        context = (
+            cast(dict[str, Any], raw_context)
+            if isinstance(raw_context, dict)
+            else {}
+        )
+        return attachment_type, context
+
+    @staticmethod
+    def _attachment_payload(
+        csrf_token: str,
+        attachment_hash: str,
+        attachment_type: str,
+        context: dict[str, Any],
+    ) -> dict[str, str]:
+        payload = {
+            "_xfToken": csrf_token,
+            "_xfResponseType": "json",
+            "hash": attachment_hash,
+            "type": attachment_type,
+        }
+        for key, value in context.items():
+            payload[f"context[{key}]"] = str(value)
+        return payload
+
+    @staticmethod
+    def _attachment_mime_type(file_path: str, filename: str) -> str:
+        mime_type, _ = mimetypes.guess_type(file_path)
+        if mime_type:
+            return mime_type
+        return (
+            "application/x-bittorrent"
+            if filename.endswith(".torrent")
+            else "application/octet-stream"
+        )
+
+    @staticmethod
+    async def _attachment_bytes(file_path: str) -> bytes:
+        async with aiofiles.open(file_path, "rb") as file_handle:
+            return await file_handle.read()
+
+    async def _post_attachment(
+        self,
+        url: str,
+        payload: dict[str, str],
+        filename: str,
+        data: bytes,
+        mime_type: str,
+    ) -> dict[str, Any]:
+        response = await self.session.post(
+            url,
+            data=payload,
+            files={"upload": (filename, data, mime_type)},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+        response.raise_for_status()
+        return cast(dict[str, Any], response.json())
+
+    @staticmethod
+    def _attachment_error_message(data: dict[str, Any]) -> str:
+        errors = data.get("errors", {})
+        error_html = data.get("errorHtml", {})
+        content = (
+            error_html.get("content", "")
+            if isinstance(error_html, dict)
+            else ""
+        )
+        return str(content or errors)
+
+    async def _upload_attachment_response(
+        self,
+        file_path: str,
+        payload: dict[str, str],
+        filename: str,
+    ) -> dict[str, Any] | None:
+        try:
+            data = await self._attachment_bytes(file_path)
+            mime_type = self._attachment_mime_type(file_path, filename)
+            return await self._post_attachment(
+                f"{self.base_url}/attachments/upload",
+                payload,
+                filename,
+                data,
+                mime_type,
+            )
+        except FileNotFoundError:
+            logger.error(
+                f"{self.tracker}: [bold red]File not found[/bold red]: {file_path}"
+            )
+            return None
+        except httpx.HTTPError as error:
+            logger.error(
+                f"{self.tracker}: [bold red]Failed uploading attachment:[/bold red] {error}"
+            )
+            response = getattr(error, "response", None)
+            if response is not None:
+                logger.debug(
+                    f"{self.tracker}: Response: {cast(httpx.Response, response).text}"
+                )
+            return None
+        except ValueError as error:
+            logger.error(
+                f"{self.tracker}: [bold red]Failed to process upload response:[/bold red] {error}"
+            )
+            return None
+
+    @staticmethod
+    def _attachment_succeeded(response_data: dict[str, Any]) -> bool:
+        return bool(
+            response_data.get("status") == "ok"
+            or "attachment" in response_data
+        )
+
     async def upload_attachment(
         self,
         file_path: str,
@@ -1140,129 +1514,40 @@ class MakingOff:
         attachment_hash_combined: str,
         forum_id: int,
     ) -> bool:
-        """
-        Upload a file (torrent, subtitle, etc.) as a forum attachment.
-
-        Args:
-            file_path (str): Path to the file.
-            csrf_token (str): Active CSRF token.
-            attachment_hash (str): Attachment hash.
-            attachment_hash_combined (str): JSON string containing type, context, and hash.
-            forum_id (int): Target forum ID.
-
-        Returns:
-            bool: True if the upload succeeded.
-        """
-        url = f"{self.base_url}/attachments/upload"
-
-        attachment_type = "post"
-        context = {"node_id": forum_id}
-        if attachment_hash_combined:
-            try:
-                combined_data = json.loads(attachment_hash_combined)
-                attachment_type = combined_data.get("type", "post")
-                context = combined_data.get("context", {})
-            except Exception as e:
-                logger.debug(
-                    f"{self.tracker}: Failed to parse attachment_hash_combined: {e}"
-                )
-
-        payload: dict[str, str] = {
-            "_xfToken": csrf_token,
-            "_xfResponseType": "json",
-            "hash": attachment_hash,
-            "type": attachment_type,
-        }
-        for k, v in context.items():
-            payload[f"context[{k}]"] = str(v)
-
-        try:
-            async with aiofiles.open(file_path, "rb") as f:
-                data = await f.read()
-            filename = Path(file_path).name
-
-            mime_type, _ = mimetypes.guess_type(file_path)
-            if not mime_type:
-                mime_type = (
-                    "application/x-bittorrent"
-                    if filename.endswith(".torrent")
-                    else "application/octet-stream"
-                )
-
-            resp = await self.session.post(
-                url,
-                data=payload,
-                files={"upload": (filename, data, mime_type)},
-                headers={"X-Requested-With": "XMLHttpRequest"},
-            )
-            resp.raise_for_status()
-            res_data = resp.json()
-        except FileNotFoundError:
-            logger.error(
-                f"{self.tracker}: [bold red]File not found[/bold red]: {file_path}"
-            )
+        """Upload a file as a XenForo forum attachment."""
+        attachment_type, context = self._attachment_context(
+            attachment_hash_combined, forum_id
+        )
+        payload = self._attachment_payload(
+            csrf_token, attachment_hash, attachment_type, context
+        )
+        filename = Path(file_path).name
+        response_data = await self._upload_attachment_response(
+            file_path, payload, filename
+        )
+        if response_data is None:
             return False
-        except httpx.HTTPError as e:
-            logger.error(
-                f"{self.tracker}: [bold red]Failed uploading attachment:[/bold red] {e}"
-            )
-            response = getattr(e, "response", None)
-            if response is not None:
-                logger.debug(
-                    f"{self.tracker}: Response: {cast(httpx.Response, response).text}"
-                )
-            return False
-        except ValueError as e:
-            logger.error(
-                f"{self.tracker}: [bold red]Failed to process upload response:[/bold red] {e}"
-            )
-            return False
-
-        if res_data.get("status") == "ok" or "attachment" in res_data:
+        if self._attachment_succeeded(response_data):
             logger.info(
                 f"{self.tracker}: [green]Attachment sent successfully: {filename}[/green]"
             )
             return True
-
-        errors = res_data.get("errors", {})
-        error_msg = res_data.get("errorHtml", {}).get("content", "") or str(
-            errors
-        )
         logger.error(
-            f"{self.tracker}: [bold red]Unwanted response while uploading attachment {filename}:[/bold red]\n{error_msg}"
+            f"{self.tracker}: [bold red]Unwanted response while uploading attachment "
+            f"{filename}:[/bold red]\n{self._attachment_error_message(response_data)}"
         )
         return False
 
-    async def search_candidate(
-        self,
+    @staticmethod
+    def _search_payload(
         phrase: str,
-        forum_id: int | None = None,
-        title_only: bool = True,
-    ) -> dict[str, str] | None:
-        """
-        Performs a search on the forum.
-
-        Args:
-            phrase (str): The text to be searched.
-            forum_id (int | None): Optional forum node ID to restrict search.
-            title_only (bool): If True, search only in thread titles. Default is True.
-
-        Returns:
-            dict[str, str]: A dictionary mapping title -> topic URL.
-            None: if the search results nothing.
-        """
-        if not self._csrf_token:
-            await self.refresh_session()
-            if not self._csrf_token:
-                logger.error(
-                    f"{self.tracker}: Cannot search, no CSRF token available."
-                )
-                return None
-
-        search_url = f"{self.base_url}/search/search"
+        csrf_token: str,
+        forum_id: int | None,
+        title_only: bool,
+    ) -> dict[str, str]:
         payload = {
             "keywords": phrase,
-            "_xfToken": self._csrf_token,
+            "_xfToken": csrf_token,
             "_xfResponseType": "json",
         }
         if title_only:
@@ -1270,124 +1555,194 @@ class MakingOff:
         if forum_id is not None:
             payload["c[nodes][0]"] = str(forum_id)
             payload["c[child_nodes]"] = "1"
+        return payload
 
+    async def _search_redirect(self, payload: dict[str, str]) -> str | None:
         try:
-            resp = await self.session.post(
-                search_url,
+            response = await self.session.post(
+                f"{self.base_url}/search/search",
                 data=payload,
                 headers={"X-Requested-With": "XMLHttpRequest"},
             )
-            resp.raise_for_status()
-            res_data = resp.json()
-        except httpx.HTTPError as e:
+            response.raise_for_status()
+            data = cast(dict[str, Any], response.json())
+        except httpx.HTTPError as error:
             logger.error(
-                f"{self.tracker}: [bold red]Error on the search POST:[/bold red] {e}"
+                f"{self.tracker}: [bold red]Error on the search POST:[/bold red] {error}"
             )
             return None
-        except ValueError as e:
+        except ValueError as error:
             logger.error(
-                f"{self.tracker}: [bold red]Unwanted response while searching POST:[/bold red] {e}"
+                f"{self.tracker}: [bold red]Unwanted response while searching POST:[/bold red] {error}"
+            )
+            return None
+        redirect = data.get("redirect")
+        if redirect:
+            return str(redirect)
+        errors = data.get("errors", {})
+        if errors:
+            logger.debug(f"{self.tracker}: Search errors: {errors}")
+        return None
+
+    def _absolute_forum_url(self, value: str) -> str:
+        return urljoin(f"{self.base_url}/", value)
+
+    @staticmethod
+    def _href_text(value: object) -> str:
+        if isinstance(value, list):
+            return " ".join(str(item) for item in value).strip()
+        return str(value or "").strip()
+
+    def _search_item_result(self, item: Any) -> tuple[str, str] | None:
+        anchor = item.find("a")
+        if anchor is None:
+            return None
+        title = anchor.get_text(" ", strip=True)
+        href = self._href_text(anchor.get("href", ""))
+        if not href:
+            return None
+        return title, self._absolute_forum_url(href)
+
+    @staticmethod
+    def _store_search_result(
+        results: dict[str, str], title: str, url: str
+    ) -> None:
+        if title not in results:
+            results[title] = url
+            return
+        topic_id = url.rstrip("/").split(".")[-1]
+        results[f"{title} ({topic_id})"] = url
+
+    def _parse_search_page(self, html: str, results: dict[str, str]) -> str:
+        soup = BeautifulSoup(html, "html.parser")
+        for item in soup.find_all(class_="contentRow-title"):
+            parsed = self._search_item_result(item)
+            if parsed is not None:
+                self._store_search_result(results, *parsed)
+        next_page = soup.select_one("a.pageNav-jump--next[href]")
+        return self._href_text(next_page["href"]) if next_page else ""
+
+    async def _search_page_html(self, page_url: str) -> str | None:
+        try:
+            response = await self.session.get(page_url)
+            response.raise_for_status()
+            return response.text
+        except httpx.HTTPError as error:
+            logger.error(
+                f"{self.tracker}: [bold red]Error fetching search results page:[/bold red] {error}"
             )
             return None
 
-        redirect_url = res_data.get("redirect")
-        if not redirect_url:
-            errors = res_data.get("errors", {})
-            if errors:
-                logger.debug(f"{self.tracker}: Search errors: {errors}")
+    @staticmethod
+    def _search_page_allowed(page_url: str, visited: set[str]) -> bool:
+        return bool(page_url and page_url not in visited)
+
+    async def _next_search_page(
+        self, page_url: str, results: dict[str, str]
+    ) -> str | None:
+        html = await self._search_page_html(page_url)
+        if html is None:
             return None
+        next_page = self._parse_search_page(html, results)
+        return self._absolute_forum_url(next_page) if next_page else ""
 
-        if redirect_url.startswith("/"):
-            redirect_url = (
-                f"{self.base_url.rstrip('/')}/{redirect_url.lstrip('/')}"
-            )
+    def _warn_search_page_limit(
+        self, page_url: str, visited: set[str]
+    ) -> None:
+        if not page_url or len(visited) != self.max_search_pages:
+            return
+        logger.warning(
+            f"{self.tracker}: [yellow]Stopped duplicate search after "
+            f"{self.max_search_pages} result pages.[/yellow]"
+        )
 
+    async def _collect_search_pages(self, start_url: str) -> dict[str, str]:
         results: dict[str, str] = {}
-        page_url = redirect_url
-        visited_pages: set[str] = set()
-
-        while (
-            page_url
-            and page_url not in visited_pages
-            and len(visited_pages) < self.max_search_pages
-        ):
-            visited_pages.add(page_url)
-            try:
-                resp = await self.session.get(page_url)
-                resp.raise_for_status()
-            except httpx.HTTPError as e:
-                logger.error(
-                    f"{self.tracker}: [bold red]Error fetching search results page:[/bold red] {e}"
-                )
+        visited: set[str] = set()
+        page_url = self._absolute_forum_url(start_url)
+        for _ in range(self.max_search_pages):
+            if not self._search_page_allowed(page_url, visited):
                 break
+            visited.add(page_url)
+            next_page = await self._next_search_page(page_url, results)
+            if next_page is None:
+                break
+            page_url = next_page
+        self._warn_search_page_limit(page_url, visited)
+        return results
 
-            soup = BeautifulSoup(resp.text, "html.parser")
-            for item in soup.find_all(class_="contentRow-title"):
-                a_tag = item.find("a")
-                if not a_tag:
-                    continue
-                title = a_tag.get_text(" ", strip=True)
-                href_val = a_tag.get("href", "")
-                href = (
-                    " ".join(href_val)
-                    if isinstance(href_val, list)
-                    else str(href_val)
-                )
-                href = href.strip()
-                if not href:
-                    continue
-                href = urljoin(f"{self.base_url}/", href)
-                if title in results:
-                    # Append topic ID from URL to avoid title duplication conflicts.
-                    topic_id = href.rstrip("/").split(".")[-1]
-                    title = f"{title} ({topic_id})"
-                results[title] = href
-
-            next_page = soup.select_one("a.pageNav-jump--next[href]")
-            page_url = (
-                urljoin(f"{self.base_url}/", str(next_page["href"]))
-                if next_page
-                else ""
+    async def search_candidate(
+        self,
+        phrase: str,
+        forum_id: int | None = None,
+        title_only: bool = True,
+    ) -> dict[str, str] | None:
+        """Search XenForo for a candidate release title."""
+        if not self._csrf_token:
+            await self.refresh_session()
+        if not self._csrf_token:
+            logger.error(
+                f"{self.tracker}: Cannot search, no CSRF token available."
             )
-
-        if page_url and len(visited_pages) == self.max_search_pages:
-            logger.warning(
-                f"{self.tracker}: [yellow]Stopped duplicate search after {self.max_search_pages} result pages.[/yellow]"
-            )
-
+            return None
+        payload = self._search_payload(
+            phrase, self._csrf_token, forum_id, title_only
+        )
+        redirect = await self._search_redirect(payload)
+        if redirect is None:
+            return None
+        results = await self._collect_search_pages(redirect)
         return results or None
 
     @staticmethod
-    def _parse_index_results(html: str, imdb_tt: str) -> dict[str, str]:
-        """Extract only exact IMDb matches from the MakingOff catalogue cards."""
-        soup = BeautifulSoup(html, "html.parser")
-        results: dict[str, str] = {}
-        imdb_pattern = re.compile(
-            rf"/title/{re.escape(imdb_tt)}(?:[/?#]|$)", re.IGNORECASE
+    def _card_matches_imdb(card: Any, imdb_pattern: re.Pattern[str]) -> bool:
+        return any(
+            imdb_pattern.search(str(anchor.get("href", "")))
+            for anchor in card.select("a[href]")
         )
 
+    @staticmethod
+    def _card_topic_anchor(card: Any) -> Any | None:
+        primary = card.select_one(".card-title a[href*='/topicos/']")
+        return primary or card.select_one("a[href*='/topicos/']")
+
+    @staticmethod
+    def _card_year(card: Any) -> str:
+        year_anchor = card.select_one("a[href^='?ano=']")
+        return year_anchor.get_text(" ", strip=True) if year_anchor else ""
+
+    @classmethod
+    def _card_topic_result(cls, card: Any) -> tuple[str, str, str] | None:
+        anchor = cls._card_topic_anchor(card)
+        if anchor is None:
+            return None
+        title = anchor.get_text(" ", strip=True)
+        href = str(anchor.get("href", "")).strip()
+        if not title or not href:
+            return None
+        return title, href, cls._card_year(card)
+
+    @staticmethod
+    def _index_display_title(title: str, year: str) -> str:
+        return f"{title} ({year})" if year.isdigit() else title
+
+    @classmethod
+    def _parse_index_results(cls, html: str, imdb_tt: str) -> dict[str, str]:
+        """Extract only exact IMDb matches from the MakingOff catalogue cards."""
+        soup = BeautifulSoup(html, "html.parser")
+        pattern = re.compile(
+            rf"/title/{re.escape(imdb_tt)}(?:[/?#]|$)", re.IGNORECASE
+        )
+        results: dict[str, str] = {}
         for card in soup.select(".filme-card"):
-            if not any(
-                imdb_pattern.search(str(anchor.get("href", "")))
-                for anchor in card.select("a[href]")
-            ):
+            if not cls._card_matches_imdb(card, pattern):
                 continue
-
-            topic_anchor = card.select_one(
-                ".card-title a[href*='/topicos/']"
-            ) or card.select_one("a[href*='/topicos/']")
-            if not topic_anchor:
+            parsed = cls._card_topic_result(card)
+            if parsed is None:
                 continue
-            title = topic_anchor.get_text(" ", strip=True)
-            href = str(topic_anchor.get("href", "")).strip()
-            if not title or not href:
-                continue
-
-            year_anchor = card.select_one("a[href^='?ano=']")
-            year = year_anchor.get_text(" ", strip=True) if year_anchor else ""
-            display_title = f"{title} ({year})" if year.isdigit() else title
-            results[display_title] = urljoin(f"{MakingOff.base_url}/", href)
-
+            title, href, year = parsed
+            display_title = cls._index_display_title(title, year)
+            results[display_title] = urljoin(f"{cls.base_url}/", href)
         return results
 
     async def search_index_by_imdb(
@@ -1433,6 +1788,45 @@ class MakingOff:
             "_xfRequestUri": f"/forums/{forum_id}/post-thread",
         }
 
+    async def _post_topic(
+        self, forum_id: int, fields: dict[str, str]
+    ) -> dict[str, Any] | None:
+        try:
+            response = await self.session.post(
+                f"{self.base_url}/forums/{forum_id}/post-thread",
+                data=fields,
+                headers={"X-Requested-With": "XMLHttpRequest"},
+            )
+            response.raise_for_status()
+            return cast(dict[str, Any], response.json())
+        except httpx.HTTPError as error:
+            logger.error(f"{self.tracker}: Failed creating topic: {error}")
+            response = getattr(error, "response", None)
+            if response is not None:
+                logger.debug(
+                    f"{self.tracker}: Response: {cast(httpx.Response, response).text}"
+                )
+            return None
+        except ValueError as error:
+            logger.error(f"{self.tracker}: Failed to parse response: {error}")
+            return None
+
+    def _topic_redirect(self, data: dict[str, Any]) -> str:
+        if data.get("status") != "ok" or "redirect" not in data:
+            return ""
+        return self._absolute_forum_url(str(data["redirect"]))
+
+    @staticmethod
+    def _response_error_message(data: dict[str, Any]) -> str:
+        errors = data.get("errors", {})
+        error_html = data.get("errorHtml", {})
+        content = (
+            error_html.get("content", "")
+            if isinstance(error_html, dict)
+            else ""
+        )
+        return str(content or errors)
+
     async def create_topic(
         self,
         forum_id: int,
@@ -1442,20 +1836,7 @@ class MakingOff:
         topic_title: str,
         post_body: str,
     ) -> str:
-        """
-        Create a new forum topic and return its URL.
-
-        Args:
-            forum_id (int): Target forum ID.
-            csrf_token (str): XenForo CSRF token.
-            attachment_hash (str): Attachment hash.
-            attachment_hash_combined (str): Attachment hash combined.
-            topic_title (str): Topic title.
-            post_body (str): Topic content (BBCode).
-
-        Returns:
-            str: Topic URL, or an empty string if creation failed.
-        """
+        """Create a new forum topic and return its URL."""
         fields = self.get_topic_fields(
             forum_id=forum_id,
             csrf_token=csrf_token,
@@ -1464,43 +1845,15 @@ class MakingOff:
             topic_title=topic_title,
             post_body=post_body,
         )
-
-        url = f"{self.base_url}/forums/{forum_id}/post-thread"
-
-        try:
-            resp = await self.session.post(
-                url,
-                data=fields,
-                headers={"X-Requested-With": "XMLHttpRequest"},
-            )
-            resp.raise_for_status()
-            res_data = resp.json()
-        except httpx.HTTPError as e:
-            logger.error(f"{self.tracker}: Failed creating topic: {e}")
-            response = getattr(e, "response", None)
-            if response is not None:
-                logger.debug(
-                    f"{self.tracker}: Response: {cast(httpx.Response, response).text}"
-                )
+        data = await self._post_topic(forum_id, fields)
+        if data is None:
             return ""
-        except ValueError as e:
-            logger.error(f"{self.tracker}: Failed to parse response: {e}")
-            return ""
-
-        if res_data.get("status") == "ok" and "redirect" in res_data:
-            topic_url = res_data["redirect"]
-            if topic_url.startswith("/"):
-                topic_url = (
-                    f"{self.base_url.rstrip('/')}/{topic_url.lstrip('/')}"
-                )
-            return topic_url
-
-        errors = res_data.get("errors", {})
-        error_msg = res_data.get("errorHtml", {}).get("content", "") or str(
-            errors
-        )
+        redirect = self._topic_redirect(data)
+        if redirect:
+            return redirect
         logger.error(
-            f"{self.tracker}: [bold red]Failed creating topic:[/bold red]\n{error_msg}"
+            f"{self.tracker}: [bold red]Failed creating topic:[/bold red]\n"
+            f"{self._response_error_message(data)}"
         )
         return ""
 
@@ -1532,72 +1885,78 @@ class MakingOff:
 
         return True
 
-    async def search_existing(self, meta: Meta) -> list[dict[str, str]]:
-        """
-        Search for existing releases on the forum before uploading.
+    @staticmethod
+    def _is_brazilian_origin(meta: Meta) -> bool:
+        return bool(meta.origin_country and "BR" in meta.origin_country)
 
-        Args:
-            meta: Release metadata.
+    @staticmethod
+    def _unique_titles(values: tuple[str, ...]) -> list[str]:
+        return list(dict.fromkeys(value for value in values if value))
 
-        Returns:
-            list[dict[str, str]]: Detected duplicate entries.
-        """
-        duplicates: list[dict[str, str]] = []
+    @classmethod
+    def _duplicate_candidates(cls, meta: Meta, title_ptbr: str) -> list[str]:
+        if cls._is_brazilian_origin(meta):
+            return [title_ptbr]
+        return cls._unique_titles(
+            (title_ptbr, meta.title, meta.original_title)
+        )
 
-        if not await self.validate_credentials(meta):
-            return duplicates
+    @staticmethod
+    def _search_result_conflicts(
+        results: dict[str, str], title: str, url: str
+    ) -> bool:
+        return title in results and results[title] != url
 
-        resolution_str = meta.resolution
-        uploading_hidef = self._is_hidef(meta)
-        upload_year = str(meta.year)
+    @staticmethod
+    def _search_result_alias(title: str, topic_id: str, suffix: int) -> str:
+        tail = topic_id if suffix == 1 else f"{topic_id}-{suffix}"
+        return f"{title} ({tail})"
 
-        title_ptbr = await self._resolve_display_title(meta)
-        title_orig = meta.original_title
-        title_en = meta.title
+    @classmethod
+    def _merge_search_result(
+        cls, results: dict[str, str], title: str, url: str
+    ) -> None:
+        if not cls._search_result_conflicts(results, title, url):
+            results[title] = url
+            return
+        topic_id = url.rstrip("/").split(".")[-1]
+        suffix = 1
+        result_title = title
+        while cls._search_result_conflicts(results, result_title, url):
+            result_title = cls._search_result_alias(title, topic_id, suffix)
+            suffix += 1
+        results[result_title] = url
 
-        candidates: list[str] = []
-        if self._is_brazilian(meta):
-            candidates = [title_ptbr]
-        else:
-            for t in [title_ptbr, title_en, title_orig]:
-                if t and t not in candidates:
-                    candidates.append(t)
+    @classmethod
+    def _merge_search_results(
+        cls, results: dict[str, str], found: dict[str, str]
+    ) -> None:
+        for title, url in found.items():
+            cls._merge_search_result(results, title, url)
 
-        forum_id = await self.get_forum_id(meta)
-        results: dict[str, str] = {}
-        exact_imdb_urls: set[str] = set()
+    async def _search_exact_imdb(
+        self,
+        meta: Meta,
+        results: dict[str, str],
+        exact_urls: set[str],
+    ) -> None:
+        if not meta.imdb_tt:
+            return
+        logger.info(
+            f"{self.tracker}: [yellow]Searching catalogue by IMDB ID:[/yellow] "
+            f"{meta.imdb_tt}"
+        )
+        found = await self.search_index_by_imdb(meta.imdb_tt)
+        if found:
+            self._merge_search_results(results, found)
+            exact_urls.update(found.values())
 
-        def merge_results(found: dict[str, str]) -> None:
-            """Preserve every topic when separate searches return the same title."""
-            for title, url in found.items():
-                result_title = title
-                if result_title in results and results[result_title] != url:
-                    topic_id = url.rstrip("/").split(".")[-1]
-                    result_title = f"{title} ({topic_id})"
-                    duplicate_number = 2
-                    while (
-                        result_title in results
-                        and results[result_title] != url
-                    ):
-                        result_title = (
-                            f"{title} ({topic_id}-{duplicate_number})"
-                        )
-                        duplicate_number += 1
-                results[result_title] = url
-
-        # 1. The catalogue accepts IMDb IDs directly and lets us verify the
-        # exact ID in its result card, avoiding false positives from XenForo's
-        # full-post text search.
-        if meta.imdb_tt:
-            logger.info(
-                f"{self.tracker}: [yellow]Searching catalogue by IMDB ID:[/yellow] {meta.imdb_tt}"
-            )
-            found = await self.search_index_by_imdb(meta.imdb_tt)
-            if found:
-                merge_results(found)
-                exact_imdb_urls.update(found.values())
-
-        # 2. Search by title candidates (with title_only=True)
+    async def _search_titles(
+        self,
+        candidates: list[str],
+        forum_id: int,
+        results: dict[str, str],
+    ) -> None:
         for candidate in candidates:
             phrase = candidate.strip()
             logger.info(
@@ -1607,371 +1966,253 @@ class MakingOff:
                 phrase, forum_id=forum_id, title_only=True
             )
             if found:
-                merge_results(found)
+                self._merge_search_results(results, found)
 
-        if not results:
-            return duplicates
-
-        processed_urls: set[str] = set()
-        default_config = cast(dict[str, Any], self.config.get("DEFAULT", {}))
+    @staticmethod
+    def _unique_search_results(
+        results: dict[str, str],
+    ) -> list[tuple[str, str]]:
+        seen: set[str] = set()
+        unique: list[tuple[str, str]] = []
         for title, url in results.items():
-            if url in processed_urls:
+            if url in seen:
                 continue
-            processed_urls.add(url)
-            resolution = await self.get_post_resolution(url)
-            existing_hidef = (
-                title.strip().startswith("[Hidef]") or resolution > 576
+            seen.add(url)
+            unique.append((title, url))
+        return unique
+
+    @staticmethod
+    def _resolution_height(value: str) -> int:
+        try:
+            return int(value.replace("p", "").replace("i", ""))
+        except TypeError, ValueError:
+            return 0
+
+    @staticmethod
+    def _year_is_compatible(
+        title: str, upload_year: str, exact_imdb: bool
+    ) -> bool:
+        if not upload_year or exact_imdb:
+            return True
+        year = int(upload_year)
+        return any(
+            f"({candidate})" in title
+            for candidate in (year - 1, year, year + 1)
+        )
+
+    @staticmethod
+    def _sd_blocked_by_hidef(
+        uploading_hidef: bool, existing_hidef: bool
+    ) -> bool:
+        return not uploading_hidef and existing_hidef
+
+    @staticmethod
+    def _hidef_upgrade_allowed(
+        uploading_hidef: bool, existing_hidef: bool
+    ) -> bool:
+        return uploading_hidef and not existing_hidef
+
+    @classmethod
+    def _duplicate_action(
+        cls,
+        uploading_hidef: bool,
+        existing_hidef: bool,
+        existing_height: int,
+        upload_height: int,
+    ) -> str:
+        if cls._sd_blocked_by_hidef(uploading_hidef, existing_hidef):
+            return "hidef_exists"
+        if cls._hidef_upgrade_allowed(uploading_hidef, existing_hidef):
+            return "allow_upgrade"
+        return (
+            "equivalent_or_better"
+            if existing_height >= upload_height
+            else "allow_upgrade"
+        )
+
+    @staticmethod
+    def _duplicate_entry(
+        title: str, url: str, resolution: int, include_size: bool
+    ) -> dict[str, str]:
+        return {
+            "name": f"[url={url}]{title}[/url]",
+            "size": str(resolution) if include_size else "",
+            "link": url,
+        }
+
+    def _log_duplicate_action(
+        self,
+        action: str,
+        title: str,
+        url: str,
+        default_config: dict[str, Any],
+    ) -> None:
+        label = (
+            "A Hidef release exists"
+            if action == "hidef_exists"
+            else "A better or equivalent Hidef release exists"
+        )
+        logger.warning(
+            f"{self.tracker}: [bold red]Aborting: {label}:[/bold red] "
+            f"{format_terminal_link(title, url, default_config)}"
+        )
+
+    async def _existing_duplicate(
+        self,
+        meta: Meta,
+        title: str,
+        url: str,
+        uploading_hidef: bool,
+        upload_year: str,
+        exact_imdb_urls: set[str],
+        default_config: dict[str, Any],
+    ) -> dict[str, str] | None:
+        resolution = await self.get_post_resolution(url)
+        existing_hidef = (
+            title.strip().startswith("[Hidef]") or resolution > 576
+        )
+        exact_imdb = url in exact_imdb_urls
+        if not self._year_is_compatible(title, upload_year, exact_imdb):
+            logger.info(
+                f"{self.tracker}: [yellow]Skipping: different year in existing "
+                f"release:[/yellow] {format_terminal_link(title, url, default_config)}"
             )
+            return None
+        action = self._duplicate_action(
+            uploading_hidef,
+            existing_hidef,
+            resolution,
+            self._resolution_height(meta.resolution),
+        )
+        if action == "allow_upgrade":
+            return None
+        self._log_duplicate_action(action, title, url, default_config)
+        if not meta.debug:
+            meta.skipping = self.tracker
+        return self._duplicate_entry(
+            title,
+            url,
+            resolution,
+            include_size=action == "equivalent_or_better",
+        )
 
-            if upload_year and url not in exact_imdb_urls:
-                year_int = int(upload_year)
-                if not any(
-                    f"({y})" in title
-                    for y in (year_int - 1, year_int, year_int + 1)
-                ):
-                    logger.info(
-                        f"{self.tracker}: [yellow]Skipping: different year in existing release:[/yellow] {format_terminal_link(title, url, default_config)}"
-                    )
-                    continue
-
-            # Uploading SD while a Hidef exists → block immediately.
-            if not uploading_hidef and existing_hidef:
-                logger.warning(
-                    f"{self.tracker}: [bold red]Aborting: A Hidef release exists:[/bold red] {format_terminal_link(title, url, default_config)}"
-                )
-                if not meta.debug:
-                    meta.skipping = self.tracker
-                duplicates.append(
-                    {
-                        "name": f"[url={url}]{title}[/url]",
-                        "size": "",
-                        "link": url,
-                    }
-                )
-                continue
-
-            # Uploading Hidef over an existing SD → allowed.
-            if uploading_hidef and not existing_hidef:
-                continue
-
-            # Same tier (SD vs SD or Hidef vs Hidef) → compare resolution.
-
-            try:
-                upload_height = int(
-                    resolution_str.replace("p", "").replace("i", "")
-                )
-            except TypeError, ValueError:
-                upload_height = 0
-
-            if resolution >= upload_height:
-                logger.warning(
-                    f"{self.tracker}: [bold red]Aborting: A better or equivalent Hidef release exists:[/bold red] {format_terminal_link(title, url, default_config)}"
-                )
-                if not meta.debug:
-                    meta.skipping = self.tracker
-                duplicates.append(
-                    {
-                        "name": f"[url={url}]{title}[/url]",
-                        "size": str(resolution),
-                        "link": url,
-                    }
-                )
-                continue
-
+    async def search_existing(self, meta: Meta) -> list[dict[str, str]]:
+        """Search for existing releases on the forum before uploading."""
+        if not await self.validate_credentials(meta):
+            return []
+        title_ptbr = await self._resolve_display_title(meta)
+        candidates = self._duplicate_candidates(meta, title_ptbr)
+        forum_id = await self.get_forum_id(meta)
+        results: dict[str, str] = {}
+        exact_imdb_urls: set[str] = set()
+        await self._search_exact_imdb(meta, results, exact_imdb_urls)
+        await self._search_titles(candidates, forum_id, results)
+        if not results:
+            return []
+        default_config = cast(dict[str, Any], self.config.get("DEFAULT", {}))
+        duplicates: list[dict[str, str]] = []
+        for title, url in self._unique_search_results(results):
+            duplicate = await self._existing_duplicate(
+                meta,
+                title,
+                url,
+                self._is_hidef(meta),
+                str(meta.year),
+                exact_imdb_urls,
+                default_config,
+            )
+            if duplicate is not None:
+                duplicates.append(duplicate)
         return duplicates
 
-    async def get_forum_id(self, meta: Meta) -> int:
-        """
-        Determine the target forum ID based on content type and country of origin.
+    @staticmethod
+    def _genres_text(meta: Meta) -> str:
+        genres = meta.genres or meta.combined_genres or ""
+        if isinstance(genres, list):
+            return ", ".join(str(value) for value in genres)
+        return str(genres)
 
-        Args:
-            meta: Release metadata.
+    @classmethod
+    def _is_documentary(cls, meta: Meta) -> bool:
+        genres = cls._genres_text(meta).lower()
+        return "documentary" in genres or "documentário" in genres
 
-        Returns:
-            int: Selected forum ID.
-        """
-        # https://en.wikipedia.org/wiki/List_of_ISO_3166_country_codes
-        africa = [
-            "DZ",
-            "AO",
-            "BJ",
-            "BW",
-            "BF",
-            "BI",
-            "CM",
-            "CV",
-            "CF",
-            "TD",
-            "KM",
-            "CD",
-            "CG",
-            "CI",
-            "DJ",
-            "EG",
-            "GQ",
-            "ER",
-            "ET",
-            "GA",
-            "GM",
-            "GH",
-            "GN",
-            "GW",
-            "KE",
-            "LS",
-            "LR",
-            "LY",
-            "MG",
-            "MW",
-            "ML",
-            "MR",
-            "MU",
-            "MA",
-            "MZ",
-            "NA",
-            "NE",
-            "NG",
-            "RW",
-            "ST",
-            "SN",
-            "SC",
-            "SL",
-            "SO",
-            "ZA",
-            "SS",
-            "SD",
-            "SZ",
-            "TZ",
-            "TG",
-            "TN",
-            "UG",
-            "ZM",
-            "ZW",
+    @staticmethod
+    def _origin_countries(meta: Meta) -> list[str]:
+        if meta.origin_country:
+            return [str(code) for code in meta.origin_country]
+        return [
+            str(country.get("iso_3166_1", ""))
+            for country in meta.production_countries
+            if country.get("iso_3166_1")
         ]
 
-        asia = [
-            "AF",
-            "AM",
-            "AZ",
-            "BD",
-            "BT",
-            "BN",
-            "KH",
-            "CN",
-            "GE",
-            "IN",
-            "ID",
-            "JP",
-            "KZ",
-            "KG",
-            "LA",
-            "MY",
-            "MV",
-            "MN",
-            "MM",
-            "NP",
-            "KP",
-            "KR",
-            "PK",
-            "PH",
-            "SG",
-            "LK",
-            "TW",
-            "TJ",
-            "TH",
-            "TL",
-            "TM",
-            "UZ",
-            "VN",
-        ]
+    @staticmethod
+    def _forum_for_country(code: str) -> int | None:
+        for forum_id, countries in FORUM_COUNTRY_GROUPS:
+            if code in countries:
+                return forum_id
+        return None
 
-        europe = [
-            "AL",
-            "XC",
-            "AD",
-            "AT",
-            "BY",
-            "BE",
-            "BA",
-            "BG",
-            "HR",
-            "SU",
-            "CY",
-            "CZ",
-            "DK",
-            "EE",
-            "FI",
-            "FR",
-            "DE",
-            "GR",
-            "HU",
-            "IS",
-            "IE",
-            "IT",
-            "XK",
-            "LV",
-            "LI",
-            "LT",
-            "LU",
-            "MT",
-            "MD",
-            "MC",
-            "ME",
-            "MK",
-            "NL",
-            "NO",
-            "PL",
-            "PT",
-            "RO",
-            "RU",
-            "SM",
-            "RS",
-            "SK",
-            "SI",
-            "ES",
-            "SE",
-            "CH",
-            "UA",
-            "GB",
-            "VA",
-        ]
-
-        latin_america = [
-            "AR",
-            "BO",
-            "CL",
-            "CO",
-            "CR",
-            "CU",
-            "DO",
-            "EC",
-            "SV",
-            "GT",
-            "HN",
-            "MX",
-            "NI",
-            "PA",
-            "PY",
-            "PE",
-            "UY",
-            "VE",
-        ]
-
-        brasil = ["BR"]
-        north_america = ["US", "CA"]
-
-        oceania = [
-            "AU",
-            "FJ",
-            "KI",
-            "MH",
-            "FM",
-            "NR",
-            "NZ",
-            "PW",
-            "PG",
-            "WS",
-            "SB",
-            "TO",
-            "TV",
-            "VU",
-        ]
-
-        middle_east = [
-            "BH",
-            "IR",
-            "IQ",
-            "IL",
-            "JO",
-            "KW",
-            "LB",
-            "OM",
-            "QA",
-            "SA",
-            "SY",
-            "AE",
-            "YE",
-        ]
-
-        forum_id_by_country: dict[str, int] = {}
-        for code in africa:
-            forum_id_by_country[code] = 461
-        for code in asia:
-            forum_id_by_country[code] = 24
-        for code in europe:
-            forum_id_by_country[code] = 25
-        for code in latin_america:
-            forum_id_by_country[code] = 29
-        for code in brasil:
-            forum_id_by_country[code] = 27
-        for code in north_america:
-            forum_id_by_country[code] = 26
-        for code in oceania:
-            forum_id_by_country[code] = 31
-        for code in middle_east:
-            forum_id_by_country[code] = 30
-
-        genres_raw = meta.genres or meta.combined_genres
-        genres_str = (
-            ", ".join(genres_raw)
-            if isinstance(genres_raw, list)
-            else genres_raw
-        )
-        if (
-            "documentary" in genres_str.lower()
-            or "documentário" in genres_str.lower()
-        ):
-            return 28
-
-        if 0 < meta.runtime < 40:
-            return 77
-
-        origin_countries: list[str] = meta.origin_country
-        if not origin_countries:
-            prod_countries = meta.production_countries
-            origin_countries = [
-                c.get("iso_3166_1", "")
-                for c in prod_countries
-                if c.get("iso_3166_1")
-            ]
-
-        for code in origin_countries:
-            if code in forum_id_by_country:
-                return forum_id_by_country[code]
-
+    def _unattended_forum_default(
+        self, meta: Meta, origin_countries: list[str]
+    ) -> int | None:
+        if not meta.unattended or meta.unattended_confirm:
+            return None
         logger.info(
-            f"{self.tracker}: [bold yellow]Unmapped origin country [/bold yellow]({origin_countries}). [bold yellow]Select the subforum manually:[/bold yellow]"
+            f"{self.tracker}: [yellow]Unattended mode: Unmapped origin "
+            f"country ({origin_countries}), using North-American (26) as "
+            "default.[/yellow]"
         )
-        forum_options = {
-            "1": (461, "África"),
-            "2": (24, "Asiático"),
-            "3": (77, "Curtas"),
-            "4": (28, "Documentários"),
-            "5": (25, "Europeu"),
-            "6": (29, "Latino Americano"),
-            "7": (27, "Nacional (Brasil)"),
-            "8": (26, "Norte-Americano"),
-            "9": (31, "Oceania"),
-            "10": (30, "Oriente Médio"),
-        }
-        if meta.unattended and not meta.unattended_confirm:
-            logger.info(
-                f"{self.tracker}: [yellow]Unattended mode: Unmapped origin country ({origin_countries}), using North-American (26) as default.[/yellow]"
-            )
-            return 26
+        return 26
 
-        for k, (fid, name) in forum_options.items():
-            logger.info(f"{self.tracker}:   {k}) {name} (ID: {fid})")
+    def _log_forum_options(self) -> None:
+        for key, (forum_id, name) in FORUM_OPTIONS.items():
+            logger.info(f"{self.tracker}:   {key}) {name} (ID: {forum_id})")
 
+    @staticmethod
+    def _selected_forum_id(choice: str) -> int | None:
+        option = FORUM_OPTIONS.get(choice)
+        return option[0] if option is not None else None
+
+    async def _manual_forum_id(
+        self, meta: Meta, origin_countries: list[str]
+    ) -> int:
+        logger.info(
+            f"{self.tracker}: [bold yellow]Unmapped origin country "
+            f"[/bold yellow]({origin_countries}). [bold yellow]Select the "
+            "subforum manually:[/bold yellow]"
+        )
+        unattended_default = self._unattended_forum_default(
+            meta, origin_countries
+        )
+        if unattended_default is not None:
+            return unattended_default
+        self._log_forum_options()
         choice = (
             await prompt_in_thread(cli_ui.ask_string, "Escolha: ") or ""
         ).strip()
-        if choice in forum_options:
-            return forum_options[choice][0]
-
+        selected = self._selected_forum_id(choice)
+        if selected is not None:
+            return selected
         logger.warning(
-            f"{self.tracker}: [yellow]Invalid option, using North-American (26) as default.[/yellow]"
+            f"{self.tracker}: [yellow]Invalid option, using North-American "
+            "(26) as default.[/yellow]"
         )
         return 26
+
+    async def get_forum_id(self, meta: Meta) -> int:
+        """Determine the target forum ID from genre, runtime, and origin."""
+        if self._is_documentary(meta):
+            return 28
+        if 0 < meta.runtime < 40:
+            return 77
+        origin_countries = self._origin_countries(meta)
+        for code in origin_countries:
+            forum_id = self._forum_for_country(code)
+            if forum_id is not None:
+                return forum_id
+        return await self._manual_forum_id(meta, origin_countries)
 
     # -- title resolution
 
