@@ -28,59 +28,68 @@ class Locadora(UNIT3D):
     supported_categories = ("TV", "MOVIE")
     tracker_urls = ("locadora.cc",)
     allows_bloated_audio = True
+    _name_replacements = (
+        (".mkv", ""),
+        (".mp4", ""),
+        (".", " "),
+        ("DDP2 0", "DDP2.0"),
+        ("DDP5 1", "DDP5.1"),
+        ("H 264", "H.264"),
+        ("H 265", "H.265"),
+        ("DD+7 1", "DDP7.1"),
+        ("AAC2 0", "AAC2.0"),
+        ("DD5 1", "DD5.1"),
+        ("DD2 0", "DD2.0"),
+        ("TrueHD 7 1", "TrueHD 7.1"),
+        ("TrueHD 5 1", "TrueHD 5.1"),
+        ("DTS-HD MA 7 1", "DTS-HD MA 7.1"),
+        ("DTS-HD MA 5 1", "DTS-HD MA 5.1"),
+        ("DTS-X 7 1", "DTS-X 7.1"),
+        ("DTS-X 5 1", "DTS-X 5.1"),
+        ("FLAC 2 0", "FLAC 2.0"),
+        ("FLAC 5 1", "FLAC 5.1"),
+        ("DD1 0", "DD1.0"),
+        ("DTS ES 5 1", "DTS ES 5.1"),
+        ("DTS5 1", "DTS 5.1"),
+        ("AAC1 0", "AAC1.0"),
+        ("DD+5 1", "DDP5.1"),
+        ("DD+2 0", "DDP2.0"),
+        ("DD+1 0", "DDP1.0"),
+    )
+    _invalid_group_tags = ("nogrp", "nogroup", "unknown", "-unk-")
 
     def __init__(self, config: Config) -> None:
         super().__init__(config, tracker_name="LOCADORA")
         self.config: Config = config
         self.common = Common(config)
 
-    async def get_name(self, meta: Meta) -> dict[str, str]:
-        name_value = (
-            meta.name if meta.is_disc == "BDMV" else meta.basename_no_ext
-        )
-        name = name_value
+    @staticmethod
+    def _name_source(meta: Meta) -> str:
+        return meta.name if meta.is_disc == "BDMV" else meta.basename_no_ext
 
-        replacements = {
-            ".mkv": "",
-            ".mp4": "",
-            ".": " ",
-            "DDP2 0": "DDP2.0",
-            "DDP5 1": "DDP5.1",
-            "H 264": "H.264",
-            "H 265": "H.265",
-            "DD+7 1": "DDP7.1",
-            "AAC2 0": "AAC2.0",
-            "DD5 1": "DD5.1",
-            "DD2 0": "DD2.0",
-            "TrueHD 7 1": "TrueHD 7.1",
-            "TrueHD 5 1": "TrueHD 5.1",
-            "DTS-HD MA 7 1": "DTS-HD MA 7.1",
-            "DTS-HD MA 5 1": "DTS-HD MA 5.1",
-            "DTS-X 7 1": "DTS-X 7.1",
-            "DTS-X 5 1": "DTS-X 5.1",
-            "FLAC 2 0": "FLAC 2.0",
-            "FLAC 5 1": "FLAC 5.1",
-            "DD1 0": "DD1.0",
-            "DTS ES 5 1": "DTS ES 5.1",
-            "DTS5 1": "DTS 5.1",
-            "AAC1 0": "AAC1.0",
-            "DD+5 1": "DDP5.1",
-            "DD+2 0": "DDP2.0",
-            "DD+1 0": "DDP1.0",
-        }
-
-        for old, new in replacements.items():
+    @classmethod
+    def _apply_name_replacements(cls, name: str) -> str:
+        for old, new in cls._name_replacements:
             name = name.replace(old, new)
+        return name
 
-        tag_lower = meta.tag.lower() if meta.tag else ""
-        invalid_tags = ["nogrp", "nogroup", "unknown", "-unk-"]
-        if meta.tag == "" or any(
-            invalid_tag in tag_lower for invalid_tag in invalid_tags
-        ):
-            for invalid_tag in invalid_tags:
-                name = re.sub(f"-{invalid_tag}", "", name, flags=re.IGNORECASE)
-            name = f"{name}-NoGroup"
+    @classmethod
+    def _requires_no_group(cls, tag: str | None) -> bool:
+        if not tag:
+            return True
+        lowered = tag.lower()
+        return any(invalid in lowered for invalid in cls._invalid_group_tags)
 
+    @classmethod
+    def _append_no_group(cls, name: str) -> str:
+        for invalid in cls._invalid_group_tags:
+            name = re.sub(f"-{invalid}", "", name, flags=re.IGNORECASE)
+        return f"{name}-NoGroup"
+
+    async def get_name(self, meta: Meta) -> dict[str, str]:
+        name = self._apply_name_replacements(self._name_source(meta))
+        if self._requires_no_group(meta.tag):
+            name = self._append_no_group(name)
         return {"name": name}
 
     async def get_region_id(self, meta: Meta) -> dict[str, str]:
