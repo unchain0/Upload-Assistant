@@ -22,28 +22,30 @@ def _code_dir() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def _windows_state_dir() -> Path:
+    base = os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")
+    return Path(base) / "Upload-Assistant"
+
+
+def _posix_data_base() -> Path:
+    xdg_data_home = os.environ.get("XDG_DATA_HOME", "").strip()
+    if xdg_data_home:
+        return Path(xdg_data_home).expanduser()
+    return Path.home() / ".local" / "share"
+
+
+def _posix_state_dir() -> Path:
+    base = _posix_data_base()
+    primary = base / "Upload-Assistant"
+    legacy = base / "upload-assistant"
+    return legacy if not primary.exists() and legacy.exists() else primary
+
+
 def _state_dir() -> Path:
     override = os.environ.get("UA_DATA_DIR", "").strip()
     if override:
         return Path(override).expanduser()
-    if os.name == "nt":
-        return (
-            Path(
-                os.environ.get(
-                    "LOCALAPPDATA", Path.home() / "AppData" / "Local"
-                )
-            )
-            / "Upload-Assistant"
-        )
-    xdg_data_home = os.environ.get("XDG_DATA_HOME", "").strip()
-    base = (
-        Path(xdg_data_home).expanduser()
-        if xdg_data_home
-        else Path.home() / ".local" / "share"
-    )
-    primary = base / "Upload-Assistant"
-    legacy = base / "upload-assistant"
-    return legacy if not primary.exists() and legacy.exists() else primary
+    return _windows_state_dir() if os.name == "nt" else _posix_state_dir()
 
 
 def resolve_runtime_paths() -> RuntimePaths:
