@@ -2239,203 +2239,175 @@ class MakingOff:
             return True
         return str(meta.original_language).lower() == "pt"
 
+    @staticmethod
+    def _translation_entries(
+        localized: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        raw = localized.get("translations", {}).get("translations", [])
+        return [entry for entry in raw if isinstance(entry, dict)]
+
+    @staticmethod
+    def _translation_matches(
+        entry: dict[str, Any], language: str, region: str | None
+    ) -> bool:
+        if entry.get("iso_639_1") != language:
+            return False
+        return region is None or entry.get("iso_3166_1") == region
+
+    @classmethod
+    def _matching_translation(
+        cls,
+        entries: list[dict[str, Any]],
+        language: str,
+        region: str | None,
+    ) -> dict[str, Any] | None:
+        for entry in entries:
+            if cls._translation_matches(entry, language, region):
+                return entry
+        return None
+
+    @staticmethod
+    def _translation_title(entry: dict[str, Any] | None) -> str:
+        if entry is None:
+            return ""
+        data = entry.get("data", {})
+        return (
+            str(data.get("title", "") or "") if isinstance(data, dict) else ""
+        )
+
     def _find_translation_title(
         self,
         ptbr_main_or_en_main: dict[str, Any],
         iso_639_1: str,
         iso_3166_1: str | None = None,
     ) -> str:
-        translations = ptbr_main_or_en_main.get("translations", {}).get(
-            "translations", []
-        )
-        primary: dict[str, Any] | None = next(
-            (
-                t
-                for t in translations
-                if t.get("iso_639_1") == iso_639_1
-                and (iso_3166_1 is None or t.get("iso_3166_1") == iso_3166_1)
-            ),
-            None,
-        )
-        if not primary and iso_3166_1:
-            primary = next(
-                (t for t in translations if t.get("iso_639_1") == iso_639_1),
-                None,
-            )
-        return (primary or {}).get("data", {}).get("title", "") or ""
+        entries = self._translation_entries(ptbr_main_or_en_main)
+        match = self._matching_translation(entries, iso_639_1, iso_3166_1)
+        if match is None and iso_3166_1 is not None:
+            match = self._matching_translation(entries, iso_639_1, None)
+        return self._translation_title(match)
+
+    @staticmethod
+    def _localized_main(meta: Meta, locale: str) -> dict[str, Any]:
+        value = meta.tmdb_localized_data.get(locale, {}).get("main", {})
+        return dict(value) if isinstance(value, dict) else {}
+
+    def _brazilian_display_title(
+        self, meta: Meta, ptbr_main: dict[str, Any]
+    ) -> str:
+        translated = self._find_translation_title(ptbr_main, "pt", "BR")
+        return translated or meta.original_title or meta.title
+
+    @staticmethod
+    def _different_title(candidate: str, original: str) -> str | None:
+        if candidate and candidate.lower() != original.lower():
+            return candidate
+        return None
+
+    def _foreign_pt_title(
+        self, meta: Meta, ptbr_main: dict[str, Any]
+    ) -> str | None:
+        translated = self._find_translation_title(ptbr_main, "pt", "BR")
+        return self._different_title(translated, meta.original_title)
+
+    def _foreign_english_title(
+        self, meta: Meta, en_main: dict[str, Any]
+    ) -> str | None:
+        if meta.title.lower() != meta.original_title.lower() or not en_main:
+            return None
+        english = self._find_translation_title(en_main, "en", "US")
+        return self._different_title(english, meta.original_title)
+
+    def _foreign_display_title(
+        self,
+        meta: Meta,
+        ptbr_main: dict[str, Any],
+        en_main: dict[str, Any],
+    ) -> str:
+        pt_title = self._foreign_pt_title(meta, ptbr_main)
+        if pt_title is not None:
+            return pt_title
+        return self._foreign_english_title(meta, en_main) or meta.title
+
+    def _resolved_display_title(self, meta: Meta) -> str:
+        ptbr_main = self._localized_main(meta, "pt-BR")
+        en_main = self._localized_main(meta, "en-US")
+        if self._is_brazilian(meta):
+            return self._brazilian_display_title(meta, ptbr_main)
+        return self._foreign_display_title(meta, ptbr_main, en_main)
 
     async def _resolve_display_title(self, meta: Meta) -> str:
-        """
-        Resolve the display title, preferring PT-BR.
-
-        For Brazilian films, tries PT-BR first then falls back to
-        original_title. For foreign films, tries PT-BR then English
-        when the native and original titles are identical.
-
-        The resolved title is cached on the tracker instance (keyed by
-        ``meta.uuid``) so that repeated calls within the same upload do
-        not trigger extra TMDB requests.
-
-        Args:
-            meta: Release metadata.
-
-        Returns:
-            str: Resolved display title.
-        """
-        cache_key: str = meta.uuid
+        """Resolve and cache the preferred display title."""
+        cache_key = str(meta.uuid or "")
         if cache_key and cache_key in self._display_title_cache:
             return self._display_title_cache[cache_key]
-
-        title_native = meta.title
-        title_orig = meta.original_title
-
-        ptbr_main = meta.tmdb_localized_data.get("pt-BR", {}).get("main", {})
-        en_main = meta.tmdb_localized_data.get("en-US", {}).get("main", {})
-
-        if self._is_brazilian(meta):
-            if ptbr_main:
-                ptbr = self._find_translation_title(ptbr_main, "pt", "BR")
-                if ptbr:
-                    title_native = ptbr
-                elif title_orig:
-                    title_native = title_orig
-        else:
-            if ptbr_main:
-                ptbr = self._find_translation_title(ptbr_main, "pt", "BR")
-                if ptbr and ptbr.lower() != title_orig.lower():
-                    title_native = ptbr
-                elif title_native.lower() == title_orig.lower() and en_main:
-                    en = self._find_translation_title(en_main, "en", "US")
-                    if en and en.lower() != title_orig.lower():
-                        title_native = en
-
+        title = self._resolved_display_title(meta)
         if cache_key:
-            self._display_title_cache[cache_key] = title_native
-        return title_native
+            self._display_title_cache[cache_key] = title
+        return title
+
+    def _topic_title_part(self, meta: Meta, title_ptbr: str) -> str:
+        if self._is_brazilian(meta):
+            return title_ptbr
+        original = meta.original_title
+        if original and original.lower() != title_ptbr.lower():
+            return f"{title_ptbr} / {original}"
+        return title_ptbr
+
+    @staticmethod
+    def _topic_year_suffix(meta: Meta) -> str:
+        return f" ({meta.year})" if meta.year else ""
 
     async def get_name(self, meta: Meta) -> str:
-        """
-        Generate the forum topic title.
-
-        Format for Brazilian films:  [Hidef] PT-BR Title (Year)
-        Format for foreign films:    [Hidef] PT-BR Title / Original Title (Year)
-
-        Args:
-            meta (dict[str, Any]): Release metadata.
-
-        Returns:
-            str: Formatted topic title.
-        """
+        """Generate the MakingOff forum topic title."""
         prefix = "[Hidef] " if self._is_hidef(meta) else ""
-
         title_ptbr = await self._resolve_display_title(meta)
-        year: str = str(meta.year) if meta.year else ""
-
-        if self._is_brazilian(meta):
-            title_part = title_ptbr
-        else:
-            title_orig = meta.original_title
-            title_part = (
-                f"{title_ptbr} / {title_orig}"
-                if title_orig and title_orig.lower() != title_ptbr.lower()
-                else title_ptbr
-            )
-
-        return (
-            f"{prefix}{title_part} ({year})"
-            if year
-            else f"{prefix}{title_part}"
-        )
+        title_part = self._topic_title_part(meta, title_ptbr)
+        return f"{prefix}{title_part}{self._topic_year_suffix(meta)}"
 
     # -- description generation
 
+    @staticmethod
+    def _image_url(value: object) -> str:
+        if isinstance(value, str):
+            return value
+        if not isinstance(value, dict):
+            return ""
+        for key in ("raw_url", "img_url", "url", "web_url"):
+            url = value.get(key)
+            if url:
+                return str(url)
+        return ""
+
+    @staticmethod
+    def _image_entries(meta: Meta) -> list[object]:
+        return [
+            *cast(list[object], meta.menu_images),
+            *cast(list[object], meta.image_list),
+            *cast(list[object], meta.spectrograms_images),
+            *cast(list[object], meta.dynamic_hdr_plot_images),
+        ]
+
     def _extract_image_urls(self, meta: Meta) -> list[str]:
-        """
-        Extract screenshot URLs from meta image_list.
+        """Extract screenshot URLs from all release image collections."""
+        urls = [self._image_url(image) for image in self._image_entries(meta)]
+        return [url for url in urls if url]
 
-        Handles both plain URL strings and dict entries produced by
-        various image host modules.
+    @staticmethod
+    def _subtitle_language_is_portuguese(language: str) -> bool:
+        return language.lower() in {"portuguese", "português", "pt"}
 
-        Args:
-            meta (dict[str, Any]): Release metadata.
+    def _has_external_portuguese_subtitle(self, meta: Meta) -> bool:
+        return bool(self._external_portuguese_subtitles(meta))
 
-        Returns:
-            list[str]: Resolved image URLs.
-        """
-        urls: list[str] = []
-        image_list = (
-            cast(list[dict[str, Any]], meta.menu_images)
-            + meta.image_list
-            + meta.spectrograms_images
-            + meta.dynamic_hdr_plot_images
+    @classmethod
+    def _has_embedded_portuguese_language(cls, meta: Meta) -> bool:
+        return any(
+            cls._subtitle_language_is_portuguese(language)
+            for language in (meta.subtitle_languages or [])
         )
-        for img in image_list:
-            if isinstance(img, str):
-                urls.append(img)
-            elif isinstance(img, dict):
-                url = (
-                    img.get("raw_url")
-                    or img.get("img_url")
-                    or img.get("url")
-                    or img.get("web_url")
-                    or ""
-                )
-                if url:
-                    urls.append(url)
-        return urls
 
-    async def _subtitles_ptbr(self, meta: Meta) -> str:
-        """
-        Prompt the user to select a subtitle type.
-
-        Returns:
-            str: Selected subtitle type label.
-        """
-        if not meta.language_checked:
-            await languages_manager.process_desc_language(
-                meta, tracker=self.tracker
-            )
-        portuguese_languages = {"portuguese", "português", "pt"}
-
-        meta_subtitle_languages = (
-            meta.subtitle_languages if meta.subtitle_languages else []
-        )
-        found_languages = {lang.lower() for lang in meta_subtitle_languages}
-
-        # Check if we have external Portuguese subtitles or embedded ones.
-        # If we have external Portuguese subtitle files, they will be uploaded as attachments ("Anexas").
-        has_external_pt_sub = False
-        for sub_file in getattr(meta, "subtitle_files", []):
-            if not Path(sub_file).exists():
-                continue
-            name_lower = Path(sub_file).name.lower()
-            if any(
-                term in name_lower
-                for term in (
-                    ".pt",
-                    ".pt-br",
-                    ".por",
-                    "portuguese",
-                    "ptbr",
-                    "pt_br",
-                )
-            ) or self._is_subtitle_in_portuguese(sub_file):
-                has_external_pt_sub = True
-                break
-
-        if has_external_pt_sub:
-            return "Anexas"
-
-        if any(lang in portuguese_languages for lang in found_languages):
-            return "Embutidas"
-
-        # Fallback to asking
-        if meta.unattended and not meta.unattended_confirm:
-            logger.info(
-                f"{self.tracker}: [yellow]Unattended mode: Subtitles not determined, defaulting to 'Sem Legenda'.[/yellow]"
-            )
-            return "Sem Legenda"
-
+    async def _prompt_subtitle_type(self) -> str:
         options = {
             "1": "No torrent",
             "2": "Anexas",
@@ -2444,182 +2416,256 @@ class MakingOff:
             "5": "Sem Legenda",
         }
         logger.info(f"{self.tracker}: [yellow]Any subtitles?[/yellow]")
-        for k, v in options.items():
-            logger.info(f"{self.tracker}:   {k}) {v}")
+        for key, value in options.items():
+            logger.info(f"{self.tracker}:   {key}) {value}")
         selection = (
             await prompt_in_thread(cli_ui.ask_string, "Choose: ") or ""
         ).strip()
         return options.get(selection, "Sem Legenda")
 
-    async def generate_description(self, meta: Meta) -> str:
-        """
-        Generate the BBCode description for the forum post.
+    def _known_subtitle_type(self, meta: Meta) -> str | None:
+        if self._has_external_portuguese_subtitle(meta):
+            return "Anexas"
+        if self._has_embedded_portuguese_language(meta):
+            return "Embutidas"
+        if not meta.unattended or meta.unattended_confirm:
+            return None
+        logger.info(
+            f"{self.tracker}: [yellow]Unattended mode: Subtitles not "
+            "determined, defaulting to 'Sem Legenda'.[/yellow]"
+        )
+        return "Sem Legenda"
 
-        Args:
-            meta (dict[str, Any]): Release metadata.
+    async def _subtitles_ptbr(self, meta: Meta) -> str:
+        """Return the Portuguese subtitle presentation used in the BBCode."""
+        if not meta.language_checked:
+            await languages_manager.process_desc_language(
+                meta, tracker=self.tracker
+            )
+        known = self._known_subtitle_type(meta)
+        return (
+            known if known is not None else await self._prompt_subtitle_type()
+        )
 
-        Returns:
-            str: Formatted BBCode description.
-        """
+    async def _description_titles(self, meta: Meta) -> tuple[str, str]:
         title_br = await self._resolve_display_title(meta)
-        title_orig = (
-            title_br
-            if self._is_brazilian(meta)
-            else meta.original_title or title_br
-        )
+        if self._is_brazilian(meta):
+            return title_br, title_br
+        return title_br, meta.original_title or title_br
 
+    @staticmethod
+    def _description_release(meta: Meta) -> str:
         release_name = meta.basename_no_ext or meta.name or meta.uuid
-        release = release_name.replace(" ", ".")
+        return str(release_name).replace(" ", ".")
 
-        # Prefer TMDB PT-BR overview already cached by the UA; fall back to
-        # translation details from the pre-fetched translations list.
-        ptbr_main = dict(meta.tmdb_localized_data.get("pt-BR", {})).get(
-            "main", {}
-        )
-        en_main = dict(meta.tmdb_localized_data.get("en-US", {})).get(
-            "main", {}
+    @classmethod
+    def _description_localized_data(
+        cls, meta: Meta
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        return cls._localized_main(meta, "pt-BR"), cls._localized_main(
+            meta, "en-US"
         )
 
-        poster_raw = ptbr_main.get("poster_path") or meta.tmdb_poster_path
-        poster_url = (
-            poster_raw
-            if poster_raw.startswith("http")
-            else f"https://image.tmdb.org/t/p/original{poster_raw}"
-            if poster_raw
+    @staticmethod
+    def _poster_url(meta: Meta, ptbr_main: dict[str, Any]) -> str:
+        raw = str(ptbr_main.get("poster_path") or meta.tmdb_poster_path or "")
+        if not raw:
+            return ""
+        return (
+            raw
+            if raw.startswith("http")
+            else f"https://image.tmdb.org/t/p/original{raw}"
+        )
+
+    @classmethod
+    def _translation_overview(
+        cls, ptbr_main: dict[str, Any], region: str | None
+    ) -> str:
+        entries = cls._translation_entries(ptbr_main)
+        match = cls._matching_translation(entries, "pt", region)
+        if match is None:
+            return ""
+        data = match.get("data", {})
+        return (
+            str(data.get("overview", "") or "")
+            if isinstance(data, dict)
             else ""
         )
 
-        pt_overview = ""
-        if ptbr_main:
-            translations = ptbr_main.get("translations", {}).get(
-                "translations", []
-            )
-            for iso_3166_1 in ("BR", None):
-                match = next(
-                    (
-                        t
-                        for t in translations
-                        if t.get("iso_639_1") == "pt"
-                        and (
-                            iso_3166_1 is None
-                            or t.get("iso_3166_1") == iso_3166_1
-                        )
-                    ),
-                    None,
-                )
-                if match:
-                    pt_overview = match.get("data", {}).get("overview", "")
-                    if pt_overview:
-                        break
+    @classmethod
+    def _description_overview(
+        cls, meta: Meta, ptbr_main: dict[str, Any]
+    ) -> str:
+        direct = str(ptbr_main.get("overview", "") or "")
+        if direct:
+            return direct
+        translated = cls._translation_overview(ptbr_main, "BR")
+        if not translated:
+            translated = cls._translation_overview(ptbr_main, None)
+        return translated or meta.overview
 
-        overview = ptbr_main.get("overview") or pt_overview or meta.overview
+    @staticmethod
+    def _credit_entries(
+        en_main: dict[str, Any], key: str
+    ) -> list[dict[str, Any]]:
+        credits = en_main.get("credits", {}) if en_main else {}
+        raw = credits.get(key, []) if isinstance(credits, dict) else []
+        return [entry for entry in raw if isinstance(entry, dict)]
 
-        # Romanize cast names by pulling from en-US main data, slice to 10 and join with comma, matching the JS generator
-        cast_list: list[dict[str, Any]] = (
-            cast(
-                list[dict[str, Any]],
-                en_main.get("credits", {}).get("cast", [])[:10],
-            )
-            if en_main
-            else []
-        )
-        cast_names: list[str] = [
-            cast(str, member.get("name"))
-            for member in cast_list
-            if member.get("name")
+    @staticmethod
+    def _named_members(
+        entries: list[dict[str, Any]], limit: int | None = None
+    ) -> list[str]:
+        selected = entries[:limit] if limit is not None else entries
+        names: list[str] = []
+        for member in selected:
+            name = member.get("name")
+            if name:
+                names.append(str(name))
+        return names
+
+    @classmethod
+    def _description_cast(cls, en_main: dict[str, Any]) -> str:
+        entries = cls._credit_entries(en_main, "cast")
+        return ", ".join(cls._named_members(entries, 10))
+
+    @classmethod
+    def _tmdb_directors(cls, en_main: dict[str, Any]) -> list[str]:
+        crew = cls._credit_entries(en_main, "crew")
+        directors = [
+            member for member in crew if member.get("job") == "Director"
         ]
-        cast_text = ", ".join(cast_names)
+        return cls._named_members(directors)
 
-        # Romanize director name
-        tmdb_dirs: list[str] = (
-            [
-                cast(str, member.get("name"))
-                for member in cast(
-                    list[dict[str, Any]],
-                    en_main.get("credits", {}).get("crew", []),
-                )
-                if member.get("job") == "Director" and member.get("name")
-            ]
-            if en_main
-            else []
-        )
-        imdb_dirs: list[str] = [
-            name
-            for name in cast(
-                list[Any], meta.imdb_info.get("directors", []) or []
-            )
-            if isinstance(name, str)
-        ]
-        directors = ", ".join(tmdb_dirs if tmdb_dirs else imdb_dirs)
+    @staticmethod
+    def _imdb_directors(meta: Meta) -> list[str]:
+        raw = meta.imdb_info.get("directors", []) or []
+        return [name for name in raw if isinstance(name, str)]
 
-        imdb_url = ""
-        if meta.imdb_id or meta.imdb_info.get("imdb_url"):
-            imdb_url = (
-                meta.imdb_info.get("imdb_url")
-                or f"https://www.imdb.com/title/tt{str(meta.imdb_id).zfill(7)}/"
-            )
+    @classmethod
+    def _description_directors(
+        cls, meta: Meta, en_main: dict[str, Any]
+    ) -> str:
+        tmdb = cls._tmdb_directors(en_main)
+        return ", ".join(tmdb or cls._imdb_directors(meta))
 
-        homepage_url = (
-            ptbr_main.get("homepage") or en_main.get("homepage") or ""
-        )
+    @staticmethod
+    def _description_imdb_url(meta: Meta) -> str:
+        configured = str(meta.imdb_info.get("imdb_url", "") or "")
+        if configured:
+            return configured
+        if not meta.imdb_id:
+            return ""
+        return f"https://www.imdb.com/title/tt{str(meta.imdb_id).zfill(7)}/"
 
-        # Extract tracks from meta.mediainfo
-        tracks: list[dict[str, Any]] = cast(
+    @staticmethod
+    def _description_homepage(
+        ptbr_main: dict[str, Any], en_main: dict[str, Any]
+    ) -> str:
+        return str(ptbr_main.get("homepage") or en_main.get("homepage") or "")
+
+    @staticmethod
+    def _track_by_type(
+        tracks: list[dict[str, Any]], track_type: str
+    ) -> dict[str, Any]:
+        for track in tracks:
+            if track.get("@type") == track_type:
+                return track
+        return {}
+
+    @classmethod
+    def _description_tracks(
+        cls, meta: Meta
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+        tracks = cast(
             list[dict[str, Any]],
             meta.mediainfo.get("media", {}).get("track", []),
         )
-        video_track: dict[str, Any] = next(
-            (track for track in tracks if track.get("@type") == "Video"), {}
-        )
-        audio_track: dict[str, Any] = next(
-            (track for track in tracks if track.get("@type") == "Audio"), {}
-        )
-        general_track: dict[str, Any] = next(
-            (track for track in tracks if track.get("@type") == "General"), {}
+        return (
+            cls._track_by_type(tracks, "General"),
+            cls._track_by_type(tracks, "Video"),
+            cls._track_by_type(tracks, "Audio"),
         )
 
-        width, height = meta.video_width or 0, meta.video_height or 0
+    @staticmethod
+    def _first_meta_value(meta: Meta, *names: str) -> str:
+        for name in names:
+            value = getattr(meta, name, "")
+            if value:
+                return str(value)
+        return ""
 
-        # Optional fields from meta
-        awards = (
-            getattr(meta, "awards", "")
-            or getattr(meta, "premiacoes", "")
-            or ""
-        )
-        trivia = (
-            getattr(meta, "trivia", "")
-            or getattr(meta, "curiosidades", "")
-            or ""
-        )
-        critic = (
-            getattr(meta, "critic", "") or getattr(meta, "critica", "") or ""
+    @classmethod
+    def _description_extras(cls, meta: Meta) -> tuple[str, str, str]:
+        return (
+            cls._first_meta_value(meta, "awards", "premiacoes"),
+            cls._first_meta_value(meta, "trivia", "curiosidades"),
+            cls._first_meta_value(meta, "critic", "critica"),
         )
 
+    @staticmethod
+    def _description_fps(meta: Meta) -> str:
+        return (
+            f"{meta.frame_rate:.3f} FPS" if meta.frame_rate else "23.976 FPS"
+        )
+
+    @staticmethod
+    def _description_dimensions(meta: Meta) -> tuple[object, object]:
+        width = meta.video_width if meta.video_width is not None else 0
+        height = meta.video_height if meta.video_height is not None else 0
+        return width, height
+
+    def _description_duration(
+        self,
+        meta: Meta,
+        general_track: dict[str, Any],
+        video_track: dict[str, Any],
+    ) -> str:
+        if meta.runtime:
+            return str(meta.runtime)
+        duration = self._mediainfo_duration(general_track, video_track)
+        return str(duration or "")
+
+    @staticmethod
+    def _description_year(meta: Meta) -> str:
+        return str(meta.year) if meta.year else ""
+
+    @staticmethod
+    def _description_container_fallback(meta: Meta) -> str:
+        return str(meta.container).upper() if meta.container else ""
+
+    async def generate_description(self, meta: Meta) -> str:
+        """Generate the complete MakingOff BBCode description."""
+        title_br, title_orig = await self._description_titles(meta)
+        ptbr_main, en_main = self._description_localized_data(meta)
+        general_track, video_track, audio_track = self._description_tracks(
+            meta
+        )
+        width, height = self._description_dimensions(meta)
+        awards, trivia, critic = self._description_extras(meta)
         return self._build_bbcode(
             title_br=title_br,
             title_orig=title_orig,
-            release=release,
-            poster_url=poster_url,
-            overview=overview,
+            release=self._description_release(meta),
+            poster_url=self._poster_url(meta, ptbr_main),
+            overview=self._description_overview(meta, ptbr_main),
             image_urls=self._extract_image_urls(meta),
-            cast_text=cast_text,
+            cast_text=self._description_cast(en_main),
             genres=self._localizer_genres(meta),
-            directors=directors,
-            duration=str(
-                meta.runtime
-                or self._mediainfo_duration(general_track, video_track)
-                or ""
+            directors=self._description_directors(meta, en_main),
+            duration=self._description_duration(
+                meta, general_track, video_track
             ),
-            year=str(getattr(meta, "year", "") or ""),
+            year=self._description_year(meta),
             countries=self._localizer_countries(meta),
             audio=self._localizer_audio_language(meta),
             subs=await self._subtitles_ptbr(meta),
-            imdb_url=imdb_url,
-            homepage_url=homepage_url,
+            imdb_url=self._description_imdb_url(meta),
+            homepage_url=self._description_homepage(ptbr_main, en_main),
             quality=self._localizer_video_quality(meta),
             container=self._mediainfo_container(
                 general_track,
-                fallback=(getattr(meta, "container", "") or "").upper(),
+                fallback=self._description_container_fallback(meta),
             ),
             video_codec=self._mediainfo_video_codec(meta, video_track),
             video_brate=str(meta.video_bitrate),
@@ -2627,99 +2673,134 @@ class MakingOff:
             audio_brate=str(meta.audio_bitrate),
             res_str=f"{width}x{height}",
             aspect=self._aspect_ratio(width, height),
-            fps_str=f"{meta.frame_rate:.3f} FPS"
-            if meta.frame_rate
-            else "23.976 FPS",
+            fps_str=self._description_fps(meta),
             filesize=self._mediainfo_filesize(meta),
             awards=awards,
             trivia=trivia,
             critic=critic,
         )
 
-    async def get_additional_checks(self, meta: Meta) -> bool:
-        """
-        Validate tracker-specific requirements before uploading.
+    def _category_allowed(self, meta: Meta) -> bool:
+        if str(getattr(meta, "category", "")).upper() == "MOVIE":
+            return True
+        logger.warning(
+            f"{self.tracker}: [bold red]Only films may be uploaded to this forum.[/bold red]"
+        )
+        return False
 
-        Args:
-            meta (dict[str, Any]): Release metadata.
-
-        Returns:
-            bool: True if the release meets all requirements.
-        """
-        if str(getattr(meta, "category", "")).upper() != "MOVIE":
-            logger.warning(
-                f"{self.tracker}: [bold red]Only films may be uploaded to this forum.[/bold red]"
-            )
-            return False
-
-        if bool(
+    def _adult_content_allowed(self, meta: Meta) -> bool:
+        adult = bool(
             getattr(meta, "adult_media", False)
             or getattr(meta, "tmdb_adult_media", False)
-        ):
+        )
+        if not adult:
+            return True
+        logger.warning(
+            f"{self.tracker}: [bold red]Adult releases are not allowed on this forum.[/bold red]"
+        )
+        return False
+
+    def _disc_structure_allowed(self, meta: Meta) -> bool:
+        if not meta.is_disc or meta.is_disc == "DVD":
+            return True
+        logger.warning(
+            f"{self.tracker}: [bold red]Only complete DVD structures are allowed; "
+            "Blu-ray/HDDVD structures must be remuxed to MKV.[/bold red]"
+        )
+        return False
+
+    def _container_allowed(self, meta: Meta) -> bool:
+        if meta.is_disc or meta.container.upper() in {"MKV", "AVI"}:
+            return True
+        logger.warning(
+            f"{self.tracker}: [bold red]Only MKV/AVI containers are allowed on this forum.[/bold red]"
+        )
+        return False
+
+    @staticmethod
+    def _video_codec_text(meta: Meta) -> str:
+        return f"{getattr(meta, 'video_codec', '')} {getattr(meta, 'video_encode', '')}".upper()
+
+    def _hevc_allowed(self, meta: Meta) -> bool:
+        video = self._video_codec_text(meta)
+        prohibited = ("HEVC", "H.265", "H265", "X265")
+        if not any(codec in video for codec in prohibited):
+            return True
+        logger.warning(
+            f"{self.tracker}: [bold red]HEVC/H.265 video is not allowed on this forum.[/bold red]"
+        )
+        return False
+
+    @staticmethod
+    def _h264_video(meta: Meta) -> bool:
+        video = MakingOff._video_codec_text(meta)
+        return any(
+            codec in video for codec in ("H264", "H.264", "AVC", "X264")
+        )
+
+    @staticmethod
+    def _hd_bitrate_values(meta: Meta) -> tuple[int, int]:
+        try:
+            return int(meta.video_bitrate or 0), int(meta.video_height or 0)
+        except TypeError, ValueError:
+            return 0, 0
+
+    @staticmethod
+    def _minimum_hd_bitrate(meta: Meta, height: int) -> int:
+        high_resolution = str(meta.resolution) in {
+            "1080i",
+            "1080p",
+            "1440p",
+            "2160p",
+            "4320p",
+        }
+        return 5000 if height >= 1080 or high_resolution else 2200
+
+    def _warn_low_hd_bitrate(self, meta: Meta) -> None:
+        bitrate, height = self._hd_bitrate_values(meta)
+        minimum = self._minimum_hd_bitrate(meta, height)
+        if not bitrate or bitrate >= minimum:
+            return
+        logger.warning(
+            f"{self.tracker}: [yellow]HD bitrate is {bitrate} kbps; the forum "
+            f"normally requires at least {minimum} kbps. TV/internet captures "
+            "require a manual quality review.[/yellow]"
+        )
+
+    def _hidef_profile_allowed(self, meta: Meta) -> bool:
+        if meta.is_disc or not self._is_hidef(meta):
+            return True
+        if not self._h264_video(meta):
             logger.warning(
-                f"{self.tracker}: [bold red]Adult releases are not allowed on this forum.[/bold red]"
+                f"{self.tracker}: [bold red]High-definition releases must use "
+                "H.264/AVC video.[/bold red]"
             )
             return False
+        self._warn_low_hd_bitrate(meta)
+        return True
 
-        if meta.is_disc and meta.is_disc != "DVD":
-            logger.warning(
-                f"{self.tracker}: [bold red]Only complete DVD structures are allowed; Blu-ray/HDDVD structures must be remuxed to MKV.[/bold red]"
-            )
-            return False
-
-        if not meta.is_disc and meta.container.upper() not in ("MKV", "AVI"):
-            logger.warning(
-                f"{self.tracker}: [bold red]Only MKV/AVI containers are allowed on this forum.[/bold red]"
-            )
-            return False
-
-        video = f"{getattr(meta, 'video_codec', '')} {getattr(meta, 'video_encode', '')}".upper()
-        if any(codec in video for codec in ("HEVC", "H.265", "H265", "X265")):
-            logger.warning(
-                f"{self.tracker}: [bold red]HEVC/H.265 video is not allowed on this forum.[/bold red]"
-            )
-            return False
-
-        if not meta.is_disc and self._is_hidef(meta):
-            if not any(
-                codec in video for codec in ("H264", "H.264", "AVC", "X264")
-            ):
-                logger.warning(
-                    f"{self.tracker}: [bold red]High-definition releases must use H.264/AVC video.[/bold red]"
-                )
-                return False
-
-            try:
-                bitrate = int(meta.video_bitrate or 0)
-                height = int(meta.video_height or 0)
-            except TypeError, ValueError:
-                bitrate, height = 0, 0
-            minimum = (
-                5000
-                if height >= 1080
-                or str(meta.resolution)
-                in {"1080i", "1080p", "1440p", "2160p", "4320p"}
-                else 2200
-            )
-            if bitrate and bitrate < minimum:
-                logger.warning(
-                    f"{self.tracker}: [yellow]HD bitrate is {bitrate} kbps; the forum normally requires at least {minimum} kbps. "
-                    "TV/internet captures require a manual quality review.[/yellow]"
-                )
-
-        release = self._release_tokens(meta)
-        prohibited_release = re.search(
+    @staticmethod
+    def _prohibited_release_marker(meta: Meta) -> str:
+        match = re.search(
             r"(?:^|[. _-])(cam|telesync|ts|telecine|tc|r5|dvdscr(?:eener)?|hdrip|vodrip|axxo|cm8|yify|yts|stuttershit)(?:$|[. _-])",
-            release,
+            MakingOff._release_tokens(meta),
             re.IGNORECASE,
         )
-        if prohibited_release:
-            logger.warning(
-                f"{self.tracker}: [bold red]Prohibited/low-quality release marker found: {prohibited_release.group(1)}.[/bold red]"
-            )
-            return False
+        return match.group(1) if match else ""
 
-        prohibited_files = {
+    def _release_marker_allowed(self, meta: Meta) -> bool:
+        marker = self._prohibited_release_marker(meta)
+        if not marker:
+            return True
+        logger.warning(
+            f"{self.tracker}: [bold red]Prohibited/low-quality release marker "
+            f"found: {marker}.[/bold red]"
+        )
+        return False
+
+    @staticmethod
+    def _prohibited_file(meta: Meta) -> str:
+        extensions = {
             ".zip",
             ".rar",
             ".7z",
@@ -2732,63 +2813,80 @@ class MakingOff:
             ".ps1",
             ".sh",
         }
-        bad_file = next(
-            (
-                Path(str(item)).name
-                for item in getattr(meta, "filelist", []) or []
-                if Path(str(item)).suffix.lower() in prohibited_files
-            ),
-            "",
+        for item in getattr(meta, "filelist", []) or []:
+            path = Path(str(item))
+            if path.suffix.lower() in extensions:
+                return path.name
+        return ""
+
+    def _file_types_allowed(self, meta: Meta) -> bool:
+        bad_file = self._prohibited_file(meta)
+        if not bad_file:
+            return True
+        logger.warning(
+            f"{self.tracker}: [bold red]Torrent contains prohibited "
+            f"archive/executable file: {bad_file}.[/bold red]"
         )
-        if bad_file:
-            logger.warning(
-                f"{self.tracker}: [bold red]Torrent contains prohibited archive/executable file: {bad_file}.[/bold red]"
-            )
-            return False
+        return False
 
-        if not self._has_portuguese_subtitle(meta):
-            logger.warning(
-                f"{self.tracker}: [bold red]A Portuguese subtitle is required for this forum.[/bold red]"
-            )
-            return False
-
-        return True
-
-    async def upload(self, meta: Meta) -> bool:
-        """
-        Upload a release by creating a forum topic with the torrent as attachment.
-
-        Args:
-            meta (dict[str, Any]): Release metadata.
-
-        Returns:
-            bool: True if the upload succeeded.
-        """
-        forum_id = await self.get_forum_id(meta)
-        logger.info(
-            f"{self.tracker}: [green]Selected subforum:[/green] {forum_id} "
+    def _portuguese_subtitle_allowed(self, meta: Meta) -> bool:
+        if self._has_portuguese_subtitle(meta):
+            return True
+        logger.warning(
+            f"{self.tracker}: [bold red]A Portuguese subtitle is required for this forum.[/bold red]"
         )
-        # Extract before creating the torrent so a non-hardcoded embedded
-        # Portuguese subtitle can be included in the torrent as well as
-        # attached separately to the forum post.
-        sub_files = await self._get_portuguese_subtitles(meta)
-        if (
+        return False
+
+    async def get_additional_checks(self, meta: Meta) -> bool:
+        """Validate MakingOff-specific upload requirements."""
+        checks = (
+            self._category_allowed,
+            self._adult_content_allowed,
+            self._disc_structure_allowed,
+            self._container_allowed,
+            self._hevc_allowed,
+            self._hidef_profile_allowed,
+            self._release_marker_allowed,
+            self._file_types_allowed,
+            self._portuguese_subtitle_allowed,
+        )
+        return all(check(meta) for check in checks)
+
+    def _set_upload_status(self, meta: Meta, message: str) -> None:
+        meta["tracker_status"][self.tracker]["status_message"] = message
+
+    @staticmethod
+    def _missing_required_subtitle_file(
+        meta: Meta, sub_files: list[str]
+    ) -> bool:
+        return bool(
             not sub_files
             and not getattr(meta, "hardcoded_subs", False)
             and not meta.debug
-        ):
+        )
+
+    @staticmethod
+    def _merge_upload_subtitles(meta: Meta, sub_files: list[str]) -> None:
+        if not sub_files:
+            return
+        existing = list(getattr(meta, "subtitle_files", []) or [])
+        meta.subtitle_files = list(dict.fromkeys([*existing, *sub_files]))
+
+    async def _prepare_upload_subtitles(self, meta: Meta) -> list[str] | None:
+        sub_files = await self._get_portuguese_subtitles(meta)
+        if self._missing_required_subtitle_file(meta, sub_files):
             logger.warning(
-                f"{self.tracker}: [bold red]Unable to provide a separate Portuguese subtitle file.[/bold red]"
+                f"{self.tracker}: [bold red]Unable to provide a separate "
+                "Portuguese subtitle file.[/bold red]"
             )
-            meta["tracker_status"][self.tracker]["status_message"] = (
-                "Upload blocked: no separate Portuguese subtitle file."
+            self._set_upload_status(
+                meta, "Upload blocked: no separate Portuguese subtitle file."
             )
-            return False
+            return None
+        self._merge_upload_subtitles(meta, sub_files)
+        return sub_files
 
-        if sub_files:
-            existing = list(getattr(meta, "subtitle_files", []) or [])
-            meta.subtitle_files = list(dict.fromkeys([*existing, *sub_files]))
-
+    async def _create_upload_torrent(self, meta: Meta) -> tuple[str, str]:
         await self.common.create_torrent_for_upload(
             meta=meta,
             tracker=self.tracker,
@@ -2796,141 +2894,205 @@ class MakingOff:
             is_public=True,
             public_trackers=self._public_trackers,
         )
-        torrent_path = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{self.tracker}].torrent"
-
-        # Creates a copy of the torrent with the media filename,
-        # this one should be attached to the topic.
+        temp_dir = Path(str(meta.base_dir)) / "tmp" / str(meta.uuid)
+        torrent_path = temp_dir / f"[{self.tracker}].torrent"
         release_name = meta.basename_no_ext or meta.name or meta.uuid
-        release_filename = release_name.replace(" ", ".")
-        named_torrent_path = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/{release_filename}.torrent"
-        shutil.copy2(torrent_path, named_torrent_path)
+        release_filename = str(release_name).replace(" ", ".")
+        named_torrent = temp_dir / f"{release_filename}.torrent"
+        shutil.copy2(torrent_path, named_torrent)
+        return str(named_torrent), release_filename
 
-        # Zip subtitles to comply with MakingOff allowed formats (.torrent, .rar, .zip)
-        if sub_files:
-            temp_dir = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}"
-            zip_path = str(Path(temp_dir) / f"{release_filename}.legendas.zip")
-            try:
-                with zipfile.ZipFile(
-                    zip_path, "w", zipfile.ZIP_DEFLATED
-                ) as zipf:
-                    for sub_file in sub_files:
-                        zipf.write(sub_file, arcname=Path(sub_file).name)
-                logger.info(
-                    f"{self.tracker}: [green]Zipped {len(sub_files)} subtitles to {Path(zip_path).name}[/green]"
-                )
-                sub_files = [zip_path]
-            except (OSError, zipfile.BadZipFile) as e:
-                logger.error(
-                    f"{self.tracker}: [red]Failed to create zip file for subtitles: {e}[/red]"
-                )
-                if not meta.debug:
-                    meta["tracker_status"][self.tracker]["status_message"] = (
-                        "data error: Failed to package Portuguese subtitles."
-                    )
-                    return False
-                sub_files = []
-
-        if meta.debug:
-            topic_title = await self.get_name(meta)
-            post_body = await self.generate_description(meta)
-
-            fields = self.get_topic_fields(
-                forum_id=forum_id,
-                csrf_token="DEBUG_CSRF",  # noqa: S106
-                attachment_hash="DEBUG_HASH",
-                attachment_hash_combined="DEBUG_COMBINED",
-                topic_title=topic_title,
-                post_body=post_body,
+    def _zip_subtitles(
+        self, meta: Meta, release_filename: str, sub_files: list[str]
+    ) -> list[str] | None:
+        if not sub_files:
+            return []
+        temp_dir = Path(str(meta.base_dir)) / "tmp" / str(meta.uuid)
+        zip_path = temp_dir / f"{release_filename}.legendas.zip"
+        try:
+            with zipfile.ZipFile(
+                zip_path, "w", zipfile.ZIP_DEFLATED
+            ) as archive:
+                for sub_file in sub_files:
+                    archive.write(sub_file, arcname=Path(sub_file).name)
+        except (OSError, zipfile.BadZipFile) as error:
+            logger.error(
+                f"{self.tracker}: [red]Failed to create zip file for subtitles: "
+                f"{error}[/red]"
             )
-
-            logger.info(f"{self.tracker}: [cyan]Request Data:[/cyan]")
-            logger.info(Redaction.redact_private_info(fields))
-
-            if sub_files:
-                logger.info(
-                    f"{self.tracker}: [cyan]Debug Subtitles to upload:[/cyan] {sub_files}"
-                )
-
-            txt_path = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{self.tracker}]DESCRIPTION.txt"
-            async with aiofiles.open(txt_path, "w", encoding="utf-8") as f:
-                await f.write(f"TITULO: {topic_title}\n\n")
-                await f.write(post_body)
-            logger.info(
-                f"{self.tracker}: [yellow]BBCode saved.[/yellow] {txt_path}"
+            if meta.debug:
+                return []
+            self._set_upload_status(
+                meta, "data error: Failed to package Portuguese subtitles."
             )
-            meta["tracker_status"][self.tracker]["status_message"] = (
-                "Debug mode enabled, not uploading (simulated successfully)"
-            )
-            return True
+            return None
+        logger.info(
+            f"{self.tracker}: [green]Zipped {len(sub_files)} subtitles to "
+            f"{zip_path.name}[/green]"
+        )
+        return [str(zip_path)]
 
-        # The UA instantiates a fresh tracker object for the upload step,
-        # so credentials must be loaded again here.
-        if not await self.validate_credentials(meta):
-            meta["tracker_status"][self.tracker]["status_message"] = (
-                "data error: Failed to validate credentials before upload."
-            )
-            return False
+    async def _prepare_upload_artifacts(
+        self, meta: Meta
+    ) -> tuple[str, list[str]] | None:
+        sub_files = await self._prepare_upload_subtitles(meta)
+        if sub_files is None:
+            return None
+        named_torrent, release_filename = await self._create_upload_torrent(
+            meta
+        )
+        packaged = self._zip_subtitles(meta, release_filename, sub_files)
+        if packaged is None:
+            return None
+        return named_torrent, packaged
 
-        (
-            csrf_token,
-            attachment_hash,
-            attachment_hash_combined,
-        ) = await self.get_new_post_tokens(forum_id)
-        if not csrf_token or not attachment_hash:
-            meta["tracker_status"][self.tracker]["status_message"] = (
-                "data error: Failed to retrieve XenForo tokens."
-            )
-            return False
+    async def _write_debug_description(
+        self, meta: Meta, topic_title: str, post_body: str
+    ) -> str:
+        path = (
+            Path(str(meta.base_dir))
+            / "tmp"
+            / str(meta.uuid)
+            / f"[{self.tracker}]DESCRIPTION.txt"
+        )
+        async with aiofiles.open(path, "w", encoding="utf-8") as file_handle:
+            await file_handle.write(f"TITULO: {topic_title}\n\n")
+            await file_handle.write(post_body)
+        return str(path)
 
-        if not await self.upload_attachment(
-            named_torrent_path,
-            csrf_token,
-            attachment_hash,
-            attachment_hash_combined,
-            forum_id,
-        ):
-            meta["tracker_status"][self.tracker]["status_message"] = (
-                "data error: Failed to upload .torrent attachment."
-            )
-            return False
-
-        # Upload Portuguese subtitles if any
-        for sub_file in sub_files:
-            logger.info(
-                f"{self.tracker}: [yellow]Uploading Portuguese subtitle as attachment:[/yellow] {Path(sub_file).name}"
-            )
-            if not await self.upload_attachment(
-                sub_file,
-                csrf_token,
-                attachment_hash,
-                attachment_hash_combined,
-                forum_id,
-            ):
-                meta["tracker_status"][self.tracker]["status_message"] = (
-                    "data error: Failed to upload Portuguese subtitle attachment."
-                )
-                return False
-
+    async def _debug_upload(
+        self, meta: Meta, forum_id: int, sub_files: list[str]
+    ) -> bool:
         topic_title = await self.get_name(meta)
         post_body = await self.generate_description(meta)
+        fields = self.get_topic_fields(
+            forum_id=forum_id,
+            csrf_token="DEBUG_CSRF",  # noqa: S106
+            attachment_hash="DEBUG_HASH",
+            attachment_hash_combined="DEBUG_COMBINED",
+            topic_title=topic_title,
+            post_body=post_body,
+        )
+        logger.info(f"{self.tracker}: [cyan]Request Data:[/cyan]")
+        logger.info(Redaction.redact_private_info(fields))
+        if sub_files:
+            logger.info(
+                f"{self.tracker}: [cyan]Debug Subtitles to upload:[/cyan] "
+                f"{sub_files}"
+            )
+        txt_path = await self._write_debug_description(
+            meta, topic_title, post_body
+        )
+        logger.info(
+            f"{self.tracker}: [yellow]BBCode saved.[/yellow] {txt_path}"
+        )
+        self._set_upload_status(
+            meta, "Debug mode enabled, not uploading (simulated successfully)"
+        )
+        return True
 
+    async def _live_upload_tokens(
+        self, meta: Meta, forum_id: int
+    ) -> tuple[str, str, str] | None:
+        if not await self.validate_credentials(meta):
+            self._set_upload_status(
+                meta,
+                "data error: Failed to validate credentials before upload.",
+            )
+            return None
+        tokens = await self.get_new_post_tokens(forum_id)
+        if not tokens[0] or not tokens[1]:
+            self._set_upload_status(
+                meta, "data error: Failed to retrieve XenForo tokens."
+            )
+            return None
+        return tokens
+
+    async def _upload_forum_attachments(
+        self,
+        meta: Meta,
+        forum_id: int,
+        named_torrent: str,
+        sub_files: list[str],
+        tokens: tuple[str, str, str],
+    ) -> bool:
+        csrf_token, attachment_hash, combined = tokens
+        uploaded = await self.upload_attachment(
+            named_torrent, csrf_token, attachment_hash, combined, forum_id
+        )
+        if not uploaded:
+            self._set_upload_status(
+                meta, "data error: Failed to upload .torrent attachment."
+            )
+            return False
+        for sub_file in sub_files:
+            logger.info(
+                f"{self.tracker}: [yellow]Uploading Portuguese subtitle as "
+                f"attachment:[/yellow] {Path(sub_file).name}"
+            )
+            if not await self.upload_attachment(
+                sub_file, csrf_token, attachment_hash, combined, forum_id
+            ):
+                self._set_upload_status(
+                    meta,
+                    "data error: Failed to upload Portuguese subtitle attachment.",
+                )
+                return False
+        return True
+
+    async def _create_live_topic(
+        self,
+        meta: Meta,
+        forum_id: int,
+        tokens: tuple[str, str, str],
+    ) -> bool:
+        csrf_token, attachment_hash, combined = tokens
         topic_url = await self.create_topic(
             forum_id=forum_id,
             csrf_token=csrf_token,
             attachment_hash=attachment_hash,
-            attachment_hash_combined=attachment_hash_combined,
-            topic_title=topic_title,
-            post_body=post_body,
+            attachment_hash_combined=combined,
+            topic_title=await self.get_name(meta),
+            post_body=await self.generate_description(meta),
         )
-
-        if topic_url:
-            meta["tracker_status"][self.tracker]["status_message"] = (
-                "Upload successful"
+        if not topic_url:
+            self._set_upload_status(
+                meta, "data error: Failed creating the forum topic."
             )
-            meta["tracker_status"][self.tracker]["torrent_id"] = topic_url
-            return True
+            return False
+        self._set_upload_status(meta, "Upload successful")
+        meta["tracker_status"][self.tracker]["torrent_id"] = topic_url
+        return True
 
-        meta["tracker_status"][self.tracker]["status_message"] = (
-            "data error: Failed creating the forum topic."
+    async def _live_upload(
+        self,
+        meta: Meta,
+        forum_id: int,
+        named_torrent: str,
+        sub_files: list[str],
+    ) -> bool:
+        tokens = await self._live_upload_tokens(meta, forum_id)
+        if tokens is None:
+            return False
+        attached = await self._upload_forum_attachments(
+            meta, forum_id, named_torrent, sub_files, tokens
         )
-        return False
+        if not attached:
+            return False
+        return await self._create_live_topic(meta, forum_id, tokens)
+
+    async def upload(self, meta: Meta) -> bool:
+        """Create a MakingOff forum topic with torrent/subtitle attachments."""
+        forum_id = await self.get_forum_id(meta)
+        logger.info(
+            f"{self.tracker}: [green]Selected subforum:[/green] {forum_id} "
+        )
+        artifacts = await self._prepare_upload_artifacts(meta)
+        if artifacts is None:
+            return False
+        named_torrent, sub_files = artifacts
+        if meta.debug:
+            return await self._debug_upload(meta, forum_id, sub_files)
+        return await self._live_upload(
+            meta, forum_id, named_torrent, sub_files
+        )
