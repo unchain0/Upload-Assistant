@@ -190,6 +190,25 @@ def test_dvd_fallback_handles_guess_and_media_errors(
     ) == ("", "DISC")
 
 
+def test_refactor_helper_edge_branches(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    assert (
+        asyncio.run(
+            media_source_service._load_mediainfo(
+                Meta(is_disc="BDMV"), str(tmp_path), "release"
+            )
+        )
+        == {}
+    )
+    monkeypatch.setattr(
+        media_source_service,
+        "guessit_fn",
+        lambda *_args, **_kwargs: {"other": "PAL"},
+    )
+    assert media_source_service._guess_dvd_system("Movie") == ""
+
+
 def test_outer_errors_fall_back_to_bluray(tmp_path: Path) -> None:
     class BadSource:
         def __eq__(self, _other: object) -> bool:
