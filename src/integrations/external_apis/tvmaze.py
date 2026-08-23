@@ -1,5 +1,4 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
-import contextlib
 import json
 from typing import Any, cast
 
@@ -14,6 +13,336 @@ _CACHE_MISS = object()
 
 
 class TvmazeManager:
+    @staticmethod
+    def _has_external_id_value(value: int | str | None) -> bool:
+        if not isinstance(value, int | str):
+            return False
+        return value not in ("", "0")
+
+    @staticmethod
+    def _external_id_raw(value: int | str, *, imdb: bool) -> int | str:
+        if imdb and isinstance(value, str) and value.startswith("tt"):
+            return value[2:]
+        return value
+
+    @classmethod
+    def _normalized_external_id(
+        cls,
+        value: int | str | None,
+        label: str,
+        *,
+        imdb: bool = False,
+    ) -> int:
+        if not cls._has_external_id_value(value):
+            return 0
+        raw = cls._external_id_raw(cast(int | str, value), imdb=imdb)
+        try:
+            return int(raw)
+        except TypeError, ValueError:
+            logger.error(
+                f"[red]Error: {label} is not a valid integer. Received: {value}[/red]"
+            )
+            return 0
+
+    @staticmethod
+    def _search_return_value(
+        tvmaze_id: int,
+        imdb_id: int,
+        tvdb_id: int,
+        return_full_tuple: bool,
+    ) -> int | tuple[int, int, int]:
+        if return_full_tuple:
+            return tvmaze_id, imdb_id, tvdb_id
+        return tvmaze_id
+
+    @classmethod
+    def _manual_tvmaze_value(
+        cls,
+        tvmaze_manual: int | str,
+        imdb_id: int,
+        tvdb_id: int,
+        return_full_tuple: bool,
+    ) -> int | tuple[int, int, int]:
+        try:
+            tvmaze_id = int(tvmaze_manual)
+        except TypeError, ValueError:
+            logger.error(
+                f"[red]Error: tvmaze_manual is not a valid integer. Received: {tvmaze_manual}[/red]"
+            )
+            tvmaze_id = 0
+        return cls._search_return_value(
+            tvmaze_id, imdb_id, tvdb_id, return_full_tuple
+        )
+
+    @staticmethod
+    def _search_response_items(
+        response: dict[str, Any] | list[dict[str, Any]] | None,
+    ) -> list[Any]:
+        if isinstance(response, dict):
+            return [response]
+        if isinstance(response, list):
+            return cast(list[Any], response)
+        return []
+
+    @staticmethod
+    def _dressed_search_candidate(raw_item: Any) -> dict[str, Any] | None:
+        if not isinstance(raw_item, dict):
+            return None
+        item = cast(dict[str, Any], raw_item)
+        wrapped = item.get("show")
+        candidate = (
+            cast(dict[str, Any], wrapped)
+            if isinstance(wrapped, dict)
+            else item
+        )
+        if not isinstance(candidate.get("id"), int):
+            return None
+        return candidate
+
+    @classmethod
+    def _dressed_search_candidates(
+        cls,
+        response: dict[str, Any] | list[dict[str, Any]] | None,
+    ) -> list[dict[str, Any]]:
+        return [
+            candidate
+            for raw_item in cls._search_response_items(response)
+            if (candidate := cls._dressed_search_candidate(raw_item))
+            is not None
+        ]
+
+    async def _fetch_search_candidates(
+        self,
+        url: str,
+        params: dict[str, Any],
+        base_dir: str,
+        config: dict[str, Any] | None,
+    ) -> list[dict[str, Any]]:
+        response = await self._make_tvmaze_request(
+            url, params, base_dir, config
+        )
+        return self._dressed_search_candidates(response)
+
+    async def _search_by_tvdb(
+        self,
+        tvdb_id: int,
+        base_dir: str,
+        config: dict[str, Any] | None,
+    ) -> list[dict[str, Any]]:
+        if not tvdb_id:
+            return []
+        return await self._fetch_search_candidates(
+            "https://api.tvmaze.com/lookup/shows",
+            {"thetvdb": tvdb_id},
+            base_dir,
+            config,
+        )
+
+    async def _search_by_imdb(
+        self,
+        imdb_id: int,
+        base_dir: str,
+        config: dict[str, Any] | None,
+    ) -> list[dict[str, Any]]:
+        if not imdb_id:
+            return []
+        return await self._fetch_search_candidates(
+            "https://api.tvmaze.com/lookup/shows",
+            {"imdb": f"tt{imdb_id:07d}"},
+            base_dir,
+            config,
+        )
+
+    async def _search_by_title(
+        self,
+        title: str,
+        base_dir: str,
+        config: dict[str, Any] | None,
+    ) -> list[dict[str, Any]]:
+        return await self._fetch_search_candidates(
+            "https://api.tvmaze.com/search/shows",
+            {"q": title},
+            base_dir,
+            config,
+        )
+
+    @staticmethod
+    def _short_search_title(filename: str) -> str | None:
+        first_two_words = " ".join(filename.split()[:2])
+        if not first_two_words or first_two_words == filename:
+            return None
+        return first_two_words
+
+    async def _search_candidates(
+        self,
+        filename: str,
+        imdb_id: int,
+        tvdb_id: int,
+        base_dir: str,
+        config: dict[str, Any] | None,
+    ) -> list[dict[str, Any]]:
+        results = await self._search_by_tvdb(tvdb_id, base_dir, config)
+        if not results:
+            results = await self._search_by_imdb(imdb_id, base_dir, config)
+        if not results:
+            results = await self._search_by_title(filename, base_dir, config)
+        short_title = self._short_search_title(filename)
+        if not results and short_title is not None:
+            results = await self._search_by_title(
+                short_title, base_dir, config
+            )
+        return results
+
+    @staticmethod
+    def _unique_search_results(
+        results: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        seen: set[int] = set()
+        unique: list[dict[str, Any]] = []
+        for show in results:
+            show_id = int(show["id"])
+            if show_id in seen:
+                continue
+            seen.add(show_id)
+            unique.append(show)
+        return unique
+
+    @staticmethod
+    def _log_search_results(results: list[dict[str, Any]]) -> None:
+        logger.info("[bold]Search results:[/bold]")
+        for index, show in enumerate(results, start=1):
+            logger.info(
+                f"[bold red]{index}[/bold red]. [green]{show.get('name', 'Unknown')} (TVmaze ID:[/green] [bold red]{show['id']}[/bold red])"
+            )
+            logger.info(
+                f"[yellow]   Premiered: {show.get('premiered', 'Unknown')}[/yellow]"
+            )
+            logger.info(
+                f"   Externals: {json.dumps(show.get('externals', {}), indent=2)}"
+            )
+
+    @staticmethod
+    def _selection_action(
+        choice_raw: Any, count: int
+    ) -> tuple[str, int | None]:
+        try:
+            choice = int((choice_raw or "").strip())
+        except AttributeError, TypeError, ValueError:
+            logger.info("Invalid input. Please enter a number.")
+            return "retry", None
+        if choice == 0:
+            return "skip", None
+        if 1 <= choice <= count:
+            return "select", choice - 1
+        logger.info(
+            f"Invalid choice. Please choose a number between 1 and {count}, or 0 to skip."
+        )
+        return "retry", None
+
+    @staticmethod
+    def _selected_tvdb_id(show: dict[str, Any], current_tvdb_id: int) -> int:
+        externals_raw = show.get("externals")
+        if not isinstance(externals_raw, dict):
+            return current_tvdb_id
+        externals = cast(dict[str, Any], externals_raw)
+        value = externals.get("thetvdb")
+        if value in (None, ""):
+            return current_tvdb_id
+        try:
+            return int(value)
+        except TypeError, ValueError:
+            return current_tvdb_id
+
+    @classmethod
+    def _manual_selected_show(
+        cls,
+        show: dict[str, Any],
+        tvdb_id: int,
+    ) -> tuple[int, int]:
+        tvmaze_id = int(show["id"])
+        updated_tvdb = cls._selected_tvdb_id(show, tvdb_id)
+        if updated_tvdb != tvdb_id:
+            logger.info(f"[green]Updated TVDb ID to: {updated_tvdb}[/green]")
+        logger.info(
+            f"Selected show: {show.get('name')} (TVmaze ID: {tvmaze_id})"
+        )
+        return tvmaze_id, updated_tvdb
+
+    @classmethod
+    def _manual_show_selection(
+        cls,
+        results: list[dict[str, Any]],
+        tvdb_id: int,
+    ) -> tuple[int, int]:
+        cls._log_search_results(results)
+        while True:
+            choice_raw = cli_ui.ask_string(
+                f"Enter the number of the correct show (1-{len(results)}) or 0 to skip: "
+            )
+            action, index = cls._selection_action(choice_raw, len(results))
+            if action == "skip":
+                logger.info("Skipping selection.")
+                return 0, tvdb_id
+            if action == "select" and index is not None:
+                return cls._manual_selected_show(results[index], tvdb_id)
+
+    @staticmethod
+    def _automatic_show_selection(show: dict[str, Any]) -> int:
+        tvmaze_id = int(show["id"])
+        logger.debug(
+            f"[cyan]Automatically selected show: {show.get('name')} (TVmaze ID: {tvmaze_id})[/cyan]"
+        )
+        return tvmaze_id
+
+    @staticmethod
+    def _show_by_id(
+        results: list[dict[str, Any]], tvmaze_id: int
+    ) -> dict[str, Any] | None:
+        for show in results:
+            if int(show.get("id", 0)) == tvmaze_id:
+                return show
+        return None
+
+    @staticmethod
+    def _external_ids(show: dict[str, Any]) -> tuple[Any, Any]:
+        externals_raw = show.get("externals")
+        if not isinstance(externals_raw, dict):
+            return None, None
+        externals = cast(dict[str, Any], externals_raw)
+        return externals.get("imdb"), externals.get("thetvdb")
+
+    @classmethod
+    def _adopt_selected_externals(
+        cls,
+        show: dict[str, Any] | None,
+        imdb_id: int,
+        tvdb_id: int,
+    ) -> tuple[int, int]:
+        if show is None or tvdb_id or imdb_id:
+            return imdb_id, tvdb_id
+        selected_imdb, selected_tvdb = cls._external_ids(show)
+        tvdb_id = cls._normalized_external_id(selected_tvdb, "tvdb_id")
+        imdb_id = cls._normalized_external_id(
+            selected_imdb, "imdb_id", imdb=True
+        )
+        return imdb_id, tvdb_id
+
+    @staticmethod
+    def _log_search_return(
+        tvmaze_id: int,
+        imdb_id: int,
+        tvdb_id: int,
+        return_full_tuple: bool,
+    ) -> None:
+        if return_full_tuple:
+            logger.debug(
+                f"[cyan]Returning TVmaze ID: {tvmaze_id} (type: {type(tvmaze_id).__name__}), IMDb ID: {imdb_id} (type: {type(imdb_id).__name__}), TVDB ID: {tvdb_id} (type: {type(tvdb_id).__name__})[/cyan]"
+            )
+            return
+        logger.debug(
+            f"[cyan]Returning TVmaze ID: {tvmaze_id} (type: {type(tvmaze_id).__name__})[/cyan]"
+        )
+
     async def search_tvmaze(
         self,
         filename: str,
@@ -26,222 +355,50 @@ class TvmazeManager:
         base_dir: str = "",
         config: dict[str, Any] | None = None,
     ) -> int | tuple[int, int, int]:
-        """Searches TVMaze for a show using TVDB ID, IMDb ID, or a title query.
-
-        - If `return_full_tuple=True`, returns `(tvmaze_id, imdb_id, tvdb_id)`.
-        - Otherwise, only returns `tvmaze_id`.
-        """
+        """Search TVMaze using external IDs and title fallbacks."""
         logger.debug(
             f"[cyan]Searching TVMaze for TVDB {tvdb_id} or IMDB {imdb_id} or {filename} ({year}) and returning {return_full_tuple}.[/cyan]"
         )
-        # Convert TVDB ID to integer
-        if isinstance(tvdb_id, (int, str)) and tvdb_id not in ("", "0"):
-            try:
-                tvdb_id = int(tvdb_id)
-            except ValueError, TypeError:
-                logger.error(
-                    f"[red]Error: tvdb_id is not a valid integer. Received: {tvdb_id}[/red]"
-                )
-                tvdb_id = 0
-        else:
-            tvdb_id = 0
-
-        # Handle IMDb ID - ensure it's an integer without tt prefix
-        try:
-            if isinstance(imdb_id, str) and imdb_id.startswith("tt"):
-                imdb_id = int(imdb_id[2:])
-            elif isinstance(imdb_id, (int, str)) and imdb_id not in ("", "0"):
-                imdb_id = int(imdb_id)
-            else:
-                imdb_id = 0
-        except ValueError, TypeError:
-            logger.error(
-                f"[red]Error: imdb_id is not a valid integer. Received: {imdb_id}[/red]"
-            )
-            imdb_id = 0
-
-        # If manual selection has been provided, return it directly
-        if tvmaze_manual:
-            try:
-                tvmaze_id = int(tvmaze_manual)
-                return (
-                    (tvmaze_id, imdb_id, tvdb_id)
-                    if return_full_tuple
-                    else tvmaze_id
-                )
-            except ValueError, TypeError:
-                logger.error(
-                    f"[red]Error: tvmaze_manual is not a valid integer. Received: {tvmaze_manual}[/red]"
-                )
-                tvmaze_id = 0
-                return (
-                    (tvmaze_id, imdb_id, tvdb_id)
-                    if return_full_tuple
-                    else tvmaze_id
-                )
-
-        tvmaze_id = 0
-        results: list[dict[str, Any]] = []
-
-        async def fetch_tvmaze_data(
-            url: str, params: dict[str, Any]
-        ) -> list[dict[str, Any]]:
-            """Fetch and dress TVMaze responses into show dictionaries."""
-            response = await self._make_tvmaze_request(
-                url, params, base_dir, config
-            )
-            raw_items = (
-                [response]
-                if isinstance(response, dict)
-                else response
-                if isinstance(response, list)
-                else []
-            )
-            shows: list[dict[str, Any]] = []
-            for item in raw_items:
-                if not isinstance(item, dict):
-                    continue
-                wrapped = item.get("show")
-                candidate = wrapped if isinstance(wrapped, dict) else item
-                if isinstance(candidate.get("id"), int):
-                    shows.append(candidate)
-            return shows
-
-        if tvdb_id:
-            results.extend(
-                await fetch_tvmaze_data(
-                    "https://api.tvmaze.com/lookup/shows", {"thetvdb": tvdb_id}
-                )
-            )
-
-        if not results and imdb_id:
-            results.extend(
-                await fetch_tvmaze_data(
-                    "https://api.tvmaze.com/lookup/shows",
-                    {"imdb": f"tt{imdb_id:07d}"},
-                )
-            )
-
-        if not results:
-            results.extend(
-                await fetch_tvmaze_data(
-                    "https://api.tvmaze.com/search/shows", {"q": filename}
-                )
-            )
-
-        if not results:
-            first_two_words = " ".join(filename.split()[:2])
-            if first_two_words and first_two_words != filename:
-                results.extend(
-                    await fetch_tvmaze_data(
-                        "https://api.tvmaze.com/search/shows",
-                        {"q": first_two_words},
-                    )
-                )
-
-        # Deduplicate results by TVMaze ID
-        seen: set[int] = set()
-        unique_results: list[dict[str, Any]] = []
-        for show in results:
-            show_id = int(show["id"])
-            if show_id not in seen:
-                seen.add(show_id)
-                unique_results.append(show)
-
-        if not unique_results:
-            logger.debug("[yellow]No TVMaze results found.[/yellow]")
-            return (
-                (tvmaze_id, imdb_id, tvdb_id)
-                if return_full_tuple
-                else tvmaze_id
-            )
-
-        # Ambiguous title results require an explicit selection. Date-based
-        # workflows also preserve the historical manual-selection behavior.
-        if manual_date is not None or len(unique_results) > 1:
-            logger.info("[bold]Search results:[/bold]")
-            for idx, show in enumerate(unique_results):
-                logger.info(
-                    f"[bold red]{idx + 1}[/bold red]. [green]{show.get('name', 'Unknown')} (TVmaze ID:[/green] [bold red]{show['id']}[/bold red])"
-                )
-                logger.info(
-                    f"[yellow]   Premiered: {show.get('premiered', 'Unknown')}[/yellow]"
-                )
-                logger.info(
-                    f"   Externals: {json.dumps(show.get('externals', {}), indent=2)}"
-                )
-
-            while True:
-                try:
-                    choice_raw = cli_ui.ask_string(
-                        f"Enter the number of the correct show (1-{len(unique_results)}) or 0 to skip: "
-                    )
-                    choice = int((choice_raw or "").strip())
-                    if choice == 0:
-                        logger.info("Skipping selection.")
-                        break
-                    if 1 <= choice <= len(unique_results):
-                        selected_show = unique_results[choice - 1]
-                        tvmaze_id = int(selected_show["id"])
-                        # set the tvdb id since it's sure to be correct
-                        # won't get returned outside manual date since full tuple is not returned
-                        if (
-                            "externals" in selected_show
-                            and "thetvdb" in selected_show["externals"]
-                        ):
-                            new_tvdb_id = selected_show["externals"]["thetvdb"]
-                            if new_tvdb_id:
-                                tvdb_id = int(new_tvdb_id)
-                                logger.info(
-                                    f"[green]Updated TVDb ID to: {tvdb_id}[/green]"
-                                )
-                        logger.info(
-                            f"Selected show: {selected_show.get('name')} (TVmaze ID: {tvmaze_id})"
-                        )
-                        break
-                    logger.info(
-                        f"Invalid choice. Please choose a number between 1 and {len(unique_results)}, or 0 to skip."
-                    )
-                except ValueError:
-                    logger.info("Invalid input. Please enter a number.")
-        else:
-            selected_show = unique_results[0]
-            tvmaze_id = int(selected_show["id"])
-            logger.debug(
-                f"[cyan]Automatically selected show: {selected_show.get('name')} (TVmaze ID: {tvmaze_id})[/cyan]"
-            )
-
-        selected = next(
-            (
-                show
-                for show in unique_results
-                if int(show.get("id", 0)) == tvmaze_id
-            ),
-            None,
+        normalized_tvdb = self._normalized_external_id(tvdb_id, "tvdb_id")
+        normalized_imdb = self._normalized_external_id(
+            imdb_id, "imdb_id", imdb=True
         )
-        adopt_selected_externals = not tvdb_id and not imdb_id
-        if selected is not None and adopt_selected_externals:
-            externals = selected.get("externals")
-            if isinstance(externals, dict):
-                selected_tvdb = externals.get("thetvdb")
-                if selected_tvdb not in (None, ""):
-                    with contextlib.suppress(TypeError, ValueError):
-                        tvdb_id = int(selected_tvdb)
-                selected_imdb = externals.get("imdb")
-                if isinstance(selected_imdb, str):
-                    with contextlib.suppress(TypeError, ValueError):
-                        imdb_id = int(selected_imdb.removeprefix("tt"))
-
-        if return_full_tuple:
-            logger.debug(
-                f"[cyan]Returning TVmaze ID: {tvmaze_id} (type: {type(tvmaze_id).__name__}), IMDb ID: {imdb_id} (type: {type(imdb_id).__name__}), TVDB ID: {tvdb_id} (type: {type(tvdb_id).__name__})[/cyan]"
+        if tvmaze_manual:
+            return self._manual_tvmaze_value(
+                tvmaze_manual,
+                normalized_imdb,
+                normalized_tvdb,
+                return_full_tuple,
+            )
+        results = self._unique_search_results(
+            await self._search_candidates(
+                filename,
+                normalized_imdb,
+                normalized_tvdb,
+                base_dir,
+                config,
+            )
+        )
+        if not results:
+            logger.debug("[yellow]No TVMaze results found.[/yellow]")
+            return self._search_return_value(
+                0, normalized_imdb, normalized_tvdb, return_full_tuple
+            )
+        if manual_date is not None or len(results) > 1:
+            tvmaze_id, normalized_tvdb = self._manual_show_selection(
+                results, normalized_tvdb
             )
         else:
-            logger.debug(
-                f"[cyan]Returning TVmaze ID: {tvmaze_id} (type: {type(tvmaze_id).__name__})[/cyan]"
-            )
-        return (
-            (tvmaze_id, imdb_id, tvdb_id) if return_full_tuple else tvmaze_id
+            tvmaze_id = self._automatic_show_selection(results[0])
+        selected = self._show_by_id(results, tvmaze_id)
+        normalized_imdb, normalized_tvdb = self._adopt_selected_externals(
+            selected, normalized_imdb, normalized_tvdb
+        )
+        self._log_search_return(
+            tvmaze_id, normalized_imdb, normalized_tvdb, return_full_tuple
+        )
+        return self._search_return_value(
+            tvmaze_id, normalized_imdb, normalized_tvdb, return_full_tuple
         )
 
     @staticmethod
