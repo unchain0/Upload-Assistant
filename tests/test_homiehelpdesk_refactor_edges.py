@@ -15,6 +15,7 @@ def test_non_music_and_discogs_disabled_edges() -> None:
     disabled = Meta(category="MUSIC", music_discogs_enabled=False)
 
     assert tracker._discogs_reference(disabled) == ""
+    assert asyncio.run(tracker.get_additional_data(disabled)) == {}
     assert (
         asyncio.run(tracker.get_additional_data(Meta(category="MOVIE"))) == {}
     )
@@ -44,6 +45,19 @@ def test_game_type_resolution() -> None:
     assert tracker._game_type(game) == "CONSOLE"
     assert tracker._resolved_type(game, "", mapping) == "CONSOLE"
     assert asyncio.run(tracker.get_type_id(game)) == {"type_id": "28"}
+
+
+def test_music_type_uses_release_field_value() -> None:
+    tracker = _tracker()
+    meta = Meta(
+        category="MUSIC",
+        format="MP3",
+        music_release={"fields": {"format": {"value": "FLAC"}}},
+    )
+
+    mapping = tracker._type_mapping()
+    assert tracker._resolved_type(meta, "", mapping) == "FLAC"
+    assert asyncio.run(tracker.get_type_id(meta)) == {"type_id": "7"}
 
 
 def test_type_mapping_forward_and_reverse() -> None:
