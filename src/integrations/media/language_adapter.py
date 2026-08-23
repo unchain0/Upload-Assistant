@@ -34,110 +34,172 @@ class LanguagesManager:
             return language.strip().title()
 
     @staticmethod
-    def _add_language_to_audio_section(content: str, language: str) -> str:
-        lines = content.splitlines()
+    def _audio_section_start(lines: list[str]) -> int | None:
+        for index, line in enumerate(lines):
+            if re.fullmatch(r"Audio(?:\s*#\d+)?", line.strip(), re.IGNORECASE):
+                return index
+        return None
+
+    @staticmethod
+    def _section_end(lines: list[str], start: int) -> int:
         section_header = re.compile(
             r"^(General|Video|Audio|Text|Menu)(?:\s*#\d+)?$", re.IGNORECASE
         )
-        audio_start = next(
-            (
-                index
-                for index, line in enumerate(lines)
-                if re.fullmatch(
-                    r"Audio(?:\s*#\d+)?", line.strip(), re.IGNORECASE
-                )
-            ),
-            None,
+        for index in range(start + 1, len(lines)):
+            if section_header.fullmatch(lines[index].strip()):
+                return index
+        return len(lines)
+
+    @staticmethod
+    def _section_has_language(lines: list[str], start: int, end: int) -> bool:
+        return any(
+            re.match(r"^Language\s*:", line.strip(), re.IGNORECASE)
+            for line in lines[start + 1 : end]
         )
+
+    @staticmethod
+    def _language_insert_index(lines: list[str], start: int, end: int) -> int:
+        insert_at = end
+        while insert_at > start + 1 and not lines[insert_at - 1].strip():
+            insert_at -= 1
+        return insert_at
+
+    @classmethod
+    def _add_language_to_audio_section(
+        cls, content: str, language: str
+    ) -> str:
+        lines = content.splitlines()
+        audio_start = cls._audio_section_start(lines)
         if audio_start is None:
             return content
-
-        audio_end = next(
-            (
-                index
-                for index in range(audio_start + 1, len(lines))
-                if section_header.fullmatch(lines[index].strip())
-            ),
-            len(lines),
-        )
-        if any(
-            re.match(r"^Language\s*:", line.strip(), re.IGNORECASE)
-            for line in lines[audio_start + 1 : audio_end]
-        ):
+        audio_end = cls._section_end(lines, audio_start)
+        if cls._section_has_language(lines, audio_start, audio_end):
             return content
-
-        insert_at = audio_end
-        while insert_at > audio_start + 1 and not lines[insert_at - 1].strip():
-            insert_at -= 1
+        insert_at = cls._language_insert_index(lines, audio_start, audio_end)
         lines.insert(
             insert_at, f"Language                                : {language}"
         )
-        return "\n".join(lines) + ("\n" if content.endswith("\n") else "")
+        suffix = "\n" if content.endswith("\n") else ""
+        return "\n".join(lines) + suffix
 
-    async def apply_confirmed_single_audio_language(self, meta: Meta) -> bool:
-        if meta.category not in ("MOVIE", "TV") or meta.is_disc == "BDMV":
-            return False
+    @staticmethod
+    def _is_unknown_language(value: str) -> bool:
+        return value.lower() in {"und", "unknown", "undefined"}
 
-        confirmed_language = str(meta.manual_language or "").strip()
-        if not confirmed_language or confirmed_language.lower() in (
-            "und",
-            "unknown",
-            "undefined",
-        ):
-            return False
+    @classmethod
+    def _confirmed_language_value(cls, meta: Meta) -> str | None:
+        value = str(meta.manual_language or "").strip()
+        if not value or cls._is_unknown_language(value):
+            return None
+        return value
 
+    @staticmethod
+    def _release_has_multi_audio_marker(meta: Meta) -> bool:
         release_name = " ".join(
             str(value or "") for value in (meta.uuid, meta.path, meta.name)
         )
-        if meta.dual_audio or re.search(
-            r"\b(?:DUAL(?:[ ._-]?AUDIO)?|MULTI(?:[ ._-]?AUDIO)?|DUBBED)\b",
-            release_name,
-            re.IGNORECASE,
-        ):
-            return False
+        if meta.dual_audio:
+            return True
+        return (
+            re.search(
+                r"\b(?:DUAL(?:[ ._-]?AUDIO)?|MULTI(?:[ ._-]?AUDIO)?|DUBBED)\b",
+                release_name,
+                re.IGNORECASE,
+            )
+            is not None
+        )
 
-        tracks = meta.mediainfo.get("media", {}).get("track", [])
-        audio_tracks = [
-            track for track in tracks if track.get("@type") == "Audio"
-        ]
+    @staticmethod
+    def _typed_audio_tracks(tracks: list[Any]) -> list[dict[str, Any]]:
+        audio_tracks: list[dict[str, Any]] = []
+        for raw_track in tracks:
+            if not isinstance(raw_track, dict):
+                continue
+            track = cast(dict[str, Any], raw_track)
+            if track.get("@type") == "Audio":
+                audio_tracks.append(track)
+        return audio_tracks
+
+    @classmethod
+    def _single_audio_track(cls, meta: Meta) -> dict[str, Any] | None:
+        media = cast(dict[str, Any], meta.mediainfo.get("media", {}))
+        tracks = cast(list[Any], media.get("track", []))
+        audio_tracks = cls._typed_audio_tracks(tracks)
         if len(audio_tracks) != 1:
-            return False
+            return None
+        return audio_tracks[0]
 
-        audio_track = audio_tracks[0]
-        current_language = str(audio_track.get("Language") or "").strip()
-        if current_language and current_language.lower() not in (
-            "und",
-            "unknown",
-            "undefined",
-        ):
-            return False
+    @classmethod
+    def _track_needs_language(cls, audio_track: dict[str, Any]) -> bool:
+        current = str(audio_track.get("Language") or "").strip()
+        return not current or cls._is_unknown_language(current)
 
+    @staticmethod
+    async def _read_text(path: Path) -> str:
+        async with aiofiles.open(path, encoding="utf-8") as source:
+            return await source.read()
+
+    @staticmethod
+    async def _write_text(path: Path, content: str) -> None:
+        async with aiofiles.open(
+            path, "w", newline="", encoding="utf-8"
+        ) as destination:
+            await destination.write(content)
+
+    @classmethod
+    async def _patch_mediainfo_text_files(
+        cls, release_dir: Path, language: str
+    ) -> None:
+        for filename in ("MEDIAINFO.txt", "MEDIAINFO_CLEANPATH.txt"):
+            path = release_dir / filename
+            if not path.exists():
+                continue
+            content = await cls._read_text(path)
+            updated = cls._add_language_to_audio_section(content, language)
+            if updated != content:
+                await cls._write_text(path, updated)
+
+    @staticmethod
+    async def _write_mediainfo_json(release_dir: Path, meta: Meta) -> None:
+        path = release_dir / "MediaInfo.json"
+        if not path.exists():
+            return
+        async with aiofiles.open(path, "w", encoding="utf-8") as destination:
+            await destination.write(json.dumps(meta.mediainfo, indent=4))
+
+    @classmethod
+    def _can_apply_confirmed_language(cls, meta: Meta) -> bool:
+        if meta.category not in ("MOVIE", "TV"):
+            return False
+        return meta.is_disc != "BDMV"
+
+    @classmethod
+    def _eligible_confirmed_audio_track(
+        cls, meta: Meta
+    ) -> dict[str, Any] | None:
+        audio_track = cls._single_audio_track(meta)
+        if audio_track is None:
+            return None
+        if not cls._track_needs_language(audio_track):
+            return None
+        return audio_track
+
+    async def apply_confirmed_single_audio_language(self, meta: Meta) -> bool:
+        if not self._can_apply_confirmed_language(meta):
+            return False
+        confirmed_language = self._confirmed_language_value(meta)
+        if confirmed_language is None:
+            return False
+        if self._release_has_multi_audio_marker(meta):
+            return False
+        audio_track = self._eligible_confirmed_audio_track(meta)
+        if audio_track is None:
+            return False
         language = self._language_display_name(confirmed_language)
         audio_track["Language"] = language
         release_dir = Path(meta.base_dir) / "tmp" / meta.uuid
-
-        for filename in ("MEDIAINFO.txt", "MEDIAINFO_CLEANPATH.txt"):
-            mediainfo_path = release_dir / filename
-            if not mediainfo_path.exists():
-                continue
-            async with aiofiles.open(
-                mediainfo_path, encoding="utf-8"
-            ) as source:
-                content = await source.read()
-            updated = self._add_language_to_audio_section(content, language)
-            if updated != content:
-                async with aiofiles.open(
-                    mediainfo_path, "w", newline="", encoding="utf-8"
-                ) as destination:
-                    await destination.write(updated)
-
-        json_path = release_dir / "MediaInfo.json"
-        if json_path.exists():
-            async with aiofiles.open(
-                json_path, "w", encoding="utf-8"
-            ) as destination:
-                await destination.write(json.dumps(meta.mediainfo, indent=4))
-
+        await self._patch_mediainfo_text_files(release_dir, language)
+        await self._write_mediainfo_json(release_dir, meta)
         logger.info(
             f"[cyan]Applied user-confirmed language {language} to the single untagged audio track in the upload MediaInfo.[/cyan]"
         )
