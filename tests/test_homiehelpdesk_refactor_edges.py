@@ -60,8 +60,18 @@ def test_book_and_movie_resolved_type_fallbacks() -> None:
     tracker = _tracker()
     mapping = tracker._type_mapping()
 
-    assert tracker._resolved_type(Meta(category="BOOK", type="UNKNOWN"), "", mapping) == "OTHER"
-    assert tracker._resolved_type(Meta(category="MOVIE", type="REMUX"), "", mapping) == "REMUX"
+    assert (
+        tracker._resolved_type(
+            Meta(category="BOOK", type="UNKNOWN"), "", mapping
+        )
+        == "OTHER"
+    )
+    assert (
+        tracker._resolved_type(
+            Meta(category="MOVIE", type="REMUX"), "", mapping
+        )
+        == "REMUX"
+    )
 
 
 def test_resolution_mapping_reverse_and_default_edges() -> None:
