@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, ClassVar
@@ -123,6 +124,46 @@ def _image(path: Path, name: str = "Release-0.png") -> Path:
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(b"image")
     return target
+
+
+def _image_side_effect(
+    path: Path, name: str = "Release-0.png"
+) -> Callable[..., None]:
+    def write(*_args: object, **_kwargs: object) -> None:
+        _image(path, name)
+
+    return write
+
+
+def _generation_mode_case(tmp_path: Path, mode: str) -> tuple[Meta, _Screens]:
+    meta = _meta(
+        tmp_path, image_list=[], screens=1, uuid=f"release-{mode.lower()}"
+    )
+    dirs = _dirs(meta)
+    screens = _Screens()
+    if mode == "BDMV":
+        meta.is_disc = "BDMV"
+        screens.disc_screenshots.side_effect = _image_side_effect(
+            dirs["screens"]
+        )
+    elif mode == "DVD":
+        meta.is_disc = "DVD"
+        meta.discs = [{"name": "DISC", "path": str(tmp_path)}]
+        screens.dvd_screenshots.side_effect = _image_side_effect(
+            dirs["screens"], "DISC-0.png"
+        )
+    elif mode == "XXX":
+        meta.category = "XXX"
+        screens.xxx_contact_sheets.side_effect = _image_side_effect(
+            dirs["screens"]
+        )
+    elif mode == "VIDEO":
+        screens.screenshots.side_effect = _image_side_effect(dirs["screens"])
+    else:
+        meta.video = ""
+        meta.filelist = []
+        meta.path = ""
+    return meta, screens
 
 
 def _default(**values: object) -> dict[str, Any]:
@@ -952,42 +993,7 @@ def test_handle_generation_modes_failure_invalid_host_and_no_approved(
         ),
     )
     for mode in ("BDMV", "DVD", "XXX", "VIDEO", "NOPATH"):
-        meta = _meta(
-            tmp_path, image_list=[], screens=1, uuid=f"release-{mode.lower()}"
-        )
-        dirs = _dirs(meta)
-        screens = _Screens()
-        generated = dirs["screens"] / "Release-0.png"
-
-        async def make_file(
-            *_args: object, _generated: Path = generated, **_kwargs: object
-        ) -> None:
-            _generated.write_bytes(b"image")
-
-        if mode == "BDMV":
-            meta.is_disc = "BDMV"
-            screens.disc_screenshots.side_effect = make_file
-        elif mode == "DVD":
-            meta.is_disc = "DVD"
-            meta.discs = [{"name": "DISC", "path": str(tmp_path)}]
-
-            async def dvd(
-                *_args: object,
-                _directory: Path = dirs["screens"],
-                **_kwargs: object,
-            ) -> None:
-                _image(_directory, "DISC-0.png")
-
-            screens.dvd_screenshots.side_effect = dvd
-        elif mode == "XXX":
-            meta.category = "XXX"
-            screens.xxx_contact_sheets.side_effect = make_file
-        elif mode == "VIDEO":
-            screens.screenshots.side_effect = make_file
-        else:
-            meta.video = ""
-            meta.filelist = []
-            meta.path = ""
+        meta, screens = _generation_mode_case(tmp_path, mode)
         _Uploader.reset(
             [
                 {
