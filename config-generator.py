@@ -730,6 +730,211 @@ def get_user_input(
     return _resolved_input_value(value, default, existing_value)
 
 
+SENSITIVE_DEFAULT_KEYS = frozenset(
+    {
+        "api_key",
+        "passkey",
+        "rss_key",
+        "tvdb_token",
+        "tmdb_api",
+        "tvdb_api",
+        "btn_api",
+    }
+)
+ESSENTIAL_DEFAULT_SETTINGS = frozenset({"tmdb_api"})
+
+
+def _enabled_linked_setting(value: str) -> bool:
+    return value.lower() == "true"
+
+
+def _positive_linked_setting(value: str) -> bool:
+    if not value.isdigit():
+        return False
+    return int(value) > 0
+
+
+DEFAULT_LINKED_SETTINGS: dict[str, LinkedSetting] = {
+    "update_notification": {
+        "condition": _enabled_linked_setting,
+        "settings": [
+            "verbose_notification",
+            "update_notification_cache_hours",
+        ],
+    },
+    "tone_map": {
+        "condition": _enabled_linked_setting,
+        "settings": ["algorithm", "desat", "tonemapped_header"],
+    },
+    "add_logo": {
+        "condition": _enabled_linked_setting,
+        "settings": ["logo_size", "logo_language"],
+    },
+    "frame_overlay": {
+        "condition": _enabled_linked_setting,
+        "settings": ["overlay_text_size"],
+    },
+    "multiScreens": {
+        "condition": _positive_linked_setting,
+        "settings": [
+            "pack_thumb_size",
+            "charLimit",
+            "fileLimit",
+            "processLimit",
+        ],
+    },
+    "get_bluray_info": {
+        "condition": _enabled_linked_setting,
+        "settings": [
+            "add_bluray_link",
+            "use_bluray_images",
+            "bluray_image_size",
+            "bluray_score",
+            "bluray_single_score",
+        ],
+    },
+    "qbit_bandwidth_control": {
+        "condition": _enabled_linked_setting,
+        "settings": ["qbit_bandwidth_threshold", "qbit_bandwidth_time"],
+    },
+}
+
+
+def _select_quick_setup(quick_setup: bool) -> bool:
+    if not quick_setup:
+        return False
+    selected = (
+        input(
+            "\n[i] Do you want to quick setup with just essential settings? (y/N): "
+        ).lower()
+        == "y"
+    )
+    if selected:
+        console.print(
+            "[i] Quick setup selected. You'll only be prompted for essential settings.",
+            markup=False,
+        )
+    return selected
+
+
+def _preserve_dynamic_default(
+    config_defaults: ConfigDict,
+    existing_defaults: ConfigDict,
+    key: str,
+    default_value: Any,
+) -> bool:
+    if key not in DYNAMIC_CONFIG_MAP_KEYS:
+        return False
+    if not isinstance(default_value, dict):
+        return False
+    config_defaults[key] = deepcopy(existing_defaults.get(key, default_value))
+    return True
+
+
+def _should_use_default_value(
+    key: str, do_quick_setup: bool, skip_settings: set[str]
+) -> bool:
+    if key in skip_settings:
+        return True
+    return do_quick_setup and key not in ESSENTIAL_DEFAULT_SETTINGS
+
+
+def _print_default_setting_comments(
+    config_comments: ConfigComments, key: str
+) -> None:
+    if key not in config_comments:
+        return
+    console.print("\n[i] " + "\n[i] ".join(config_comments[key]), markup=False)
+
+
+def _is_sensitive_default_key(key: str) -> bool:
+    return (
+        key in SENSITIVE_DEFAULT_KEYS
+        or "password" in key.lower()
+        or key.endswith(("_key", "_api", "_url"))
+    )
+
+
+def _configured_default_value(
+    key: str, default_value: Any, existing_defaults: ConfigDict
+) -> Any:
+    if isinstance(default_value, bool):
+        return get_user_input(
+            f"Setting '{key}'? (True/False)",
+            default=str(default_value),
+            existing_value=str(existing_defaults.get(key, default_value)),
+        )
+    value = get_user_input(
+        f"Setting '{key}'",
+        default=str(default_value),
+        is_password=_is_sensitive_default_key(key),
+        existing_value=existing_defaults.get(key),
+    )
+    if default_value is None and value in {"", "None"}:
+        return None
+    return value
+
+
+def _update_linked_setting_skips(
+    key: str, value: Any, skip_settings: set[str]
+) -> None:
+    linked_group = DEFAULT_LINKED_SETTINGS.get(key)
+    if linked_group is None:
+        return
+    if linked_group["condition"](cast(str, value)):
+        return
+    console.print(
+        f"[i] Skipping {key}-related settings since {key} is {value}",
+        markup=False,
+    )
+    skip_settings.update(linked_group["settings"])
+
+
+def _configure_default_key(
+    config_defaults: ConfigDict,
+    existing_defaults: ConfigDict,
+    config_comments: ConfigComments,
+    skip_settings: set[str],
+    do_quick_setup: bool,
+    key: str,
+    default_value: Any,
+) -> None:
+    if key == "default_torrent_client":
+        return
+    if _preserve_dynamic_default(
+        config_defaults, existing_defaults, key, default_value
+    ):
+        return
+    if _should_use_default_value(key, do_quick_setup, skip_settings):
+        config_defaults[key] = default_value
+        return
+    _print_default_setting_comments(config_comments, key)
+    value = _configured_default_value(key, default_value, existing_defaults)
+    config_defaults[key] = value
+    _update_linked_setting_skips(key, value, skip_settings)
+
+
+def _finish_quick_setup(
+    do_quick_setup: bool,
+    config_defaults: ConfigDict,
+    existing_defaults: ConfigDict,
+    example_defaults: ConfigDict,
+    config_comments: ConfigComments,
+) -> None:
+    if not do_quick_setup:
+        return
+    get_img_host(
+        config_defaults,
+        existing_defaults,
+        example_defaults,
+        config_comments,
+    )
+    console.print(
+        "\n[i] Applied default values from example config for non-essential settings.",
+        markup=False,
+    )
+
+
 def configure_default_section(
     existing_defaults: ConfigDict,
     example_defaults: ConfigDict,
@@ -745,171 +950,28 @@ def configure_default_section(
         "\n[i] Press enter to accept the default values/skip, or input your own values.",
         markup=False,
     )
-    config_defaults: dict[str, Any] = {}
-
-    # Settings that should only be prompted if a parent setting has a specific value
-    linked_settings: dict[str, LinkedSetting] = {
-        "update_notification": {
-            "condition": lambda value: value.lower() == "true",
-            "settings": [
-                "verbose_notification",
-                "update_notification_cache_hours",
-            ],
-        },
-        "tone_map": {
-            "condition": lambda value: value.lower() == "true",
-            "settings": ["algorithm", "desat", "tonemapped_header"],
-        },
-        "add_logo": {
-            "condition": lambda value: value.lower() == "true",
-            "settings": ["logo_size", "logo_language"],
-        },
-        "frame_overlay": {
-            "condition": lambda value: value.lower() == "true",
-            "settings": ["overlay_text_size"],
-        },
-        "multiScreens": {
-            "condition": lambda value: value.isdigit() and int(value) > 0,
-            "settings": [
-                "pack_thumb_size",
-                "charLimit",
-                "fileLimit",
-                "processLimit",
-            ],
-        },
-        "get_bluray_info": {
-            "condition": lambda value: value.lower() == "true",
-            "settings": [
-                "add_bluray_link",
-                "use_bluray_images",
-                "bluray_image_size",
-                "bluray_score",
-                "bluray_single_score",
-            ],
-        },
-        "qbit_bandwidth_control": {
-            "condition": lambda value: value.lower() == "true",
-            "settings": ["qbit_bandwidth_threshold", "qbit_bandwidth_time"],
-        },
-    }
-
-    # Store which settings should be skipped based on linked settings
+    config_defaults: ConfigDict = {}
     skip_settings: set[str] = set()
-
-    # If this is a fresh config (no existing defaults), offer quick setup
-    do_quick_setup = False
-    if quick_setup:
-        do_quick_setup = (
-            input(
-                "\n[i] Do you want to quick setup with just essential settings? (y/N): "
-            ).lower()
-            == "y"
-        )
-        if do_quick_setup:
-            console.print(
-                "[i] Quick setup selected. You'll only be prompted for essential settings.",
-                markup=False,
-            )
-
-    # Define essential settings for quick setup mode
-    essential_settings = ["tmdb_api"]
+    do_quick_setup = _select_quick_setup(quick_setup)
 
     for key, default_value in example_defaults.items():
-        if key in ["default_torrent_client"]:
-            continue
-
-        if key in DYNAMIC_CONFIG_MAP_KEYS and isinstance(default_value, dict):
-            config_defaults[key] = deepcopy(
-                existing_defaults.get(key, default_value)
-            )
-            continue
-
-        # Skip if this setting should be skipped based on linked settings
-        if key in skip_settings:
-            # Copy default value from example config
-            config_defaults[key] = default_value
-            continue
-
-        # Skip non-essential settings in quick setup mode
-        if do_quick_setup and key not in essential_settings:
-            config_defaults[key] = default_value
-            continue
-
-        if key in config_comments:
-            console.print(
-                "\n[i] " + "\n[i] ".join(config_comments[key]), markup=False
-            )
-
-        if isinstance(default_value, bool):
-            default_str = str(default_value)
-            existing_value = str(existing_defaults.get(key, default_value))
-            value = get_user_input(
-                f"Setting '{key}'? (True/False)",
-                default=default_str,
-                existing_value=existing_value,
-            )
-            config_defaults[key] = value
-
-            # Check if this is a linked setting that controls other settings
-            if key in linked_settings:
-                linked_group = linked_settings[key]
-                # If the condition is not met, add all linked settings to the skip list
-                if not linked_group["condition"](value):
-                    console.print(
-                        f"[i] Skipping {key}-related settings since {key} is {value}",
-                        markup=False,
-                    )
-                    skip_settings.update(linked_group["settings"])
-        else:
-            is_password = (
-                key
-                in [
-                    "api_key",
-                    "passkey",
-                    "rss_key",
-                    "tvdb_token",
-                    "tmdb_api",
-                    "tvdb_api",
-                    "btn_api",
-                ]
-                or "password" in key.lower()
-                or key.endswith("_key")
-                or key.endswith("_api")
-                or key.endswith("_url")
-            )
-            value = get_user_input(
-                f"Setting '{key}'",
-                default=str(default_value),
-                is_password=is_password,
-                existing_value=existing_defaults.get(key),
-            )
-
-            if default_value is None and (value == "" or value == "None"):
-                config_defaults[key] = None
-            else:
-                config_defaults[key] = value
-
-            if key in linked_settings:
-                linked_group = linked_settings[key]
-                if not linked_group["condition"](config_defaults[key]):
-                    console.print(
-                        f"[i] Skipping {key}-related settings since {key} is {config_defaults[key]}",
-                        markup=False,
-                    )
-                    skip_settings.update(linked_group["settings"])
-
-    if do_quick_setup:
-        get_img_host(
+        _configure_default_key(
             config_defaults,
             existing_defaults,
-            example_defaults,
             config_comments,
-        )
-        console.print(
-            "\n[i] Applied default values from example config for non-essential settings.",
-            markup=False,
+            skip_settings,
+            do_quick_setup,
+            key,
+            default_value,
         )
 
+    _finish_quick_setup(
+        do_quick_setup,
+        config_defaults,
+        existing_defaults,
+        example_defaults,
+        config_comments,
+    )
     return config_defaults
 
 
