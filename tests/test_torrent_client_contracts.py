@@ -299,22 +299,22 @@ def _modules() -> list[ModuleType]:
     ]
 
 
-def _value(
-    name: str,
-    annotation: object,
+_MISSING = object()
+
+
+def _client_values(
     meta: Meta,
     config: dict[str, Any],
     tmp_path: Path,
     media: Path,
     torrent: Path,
     profile: int,
-) -> object:
-    normalized = name.casefold().lstrip("_")
+) -> dict[str, object]:
     client = _QbitClient()
     client.root = tmp_path
     client.profile = profile
     info = _TorrentInfo(tmp_path, profile)
-    values: dict[str, object] = {
+    return {
         "config": config,
         "meta": meta,
         "client": client,
@@ -359,41 +359,82 @@ def _value(
         "data": {},
         "payload": {},
     }
-    if normalized in values:
-        return values[normalized]
-    origin = get_origin(annotation)
-    args = get_args(annotation)
-    if annotation is inspect.Parameter.empty or annotation is Any:
-        return None
-    if annotation is bool:
-        return profile % 2 == 0
-    if annotation is int:
-        return 1
-    if annotation is float:
-        return 1.0
-    if annotation is str:
-        return "example"
-    if annotation is Path:
-        return media
+
+
+def _scalar_value(annotation: object, profile: int) -> object:
+    values = {
+        bool: profile % 2 == 0,
+        int: 1,
+        float: 1.0,
+        str: "example",
+    }
+    return values.get(annotation, _MISSING)
+
+
+def _direct_composite_value(
+    origin: object, tmp_path: Path, profile: int
+) -> object:
     if origin in {list, Sequence}:
-        return [info]
+        return [_TorrentInfo(tmp_path, profile)]
     if origin in {dict, Mapping}:
         return {}
     if origin is tuple:
         return ()
-    if origin is not None and type(None) in args:
-        concrete = next((item for item in args if item is not type(None)), str)
-        return _value(
-            normalized,
-            concrete,
-            meta,
-            config,
-            tmp_path,
-            media,
-            torrent,
-            profile,
-        )
-    return None
+    return _MISSING
+
+
+def _optional_type(args: tuple[object, ...]) -> object | None:
+    if type(None) not in args:
+        return None
+    return next((item for item in args if item is not type(None)), str)
+
+
+def _composite_value(
+    name: str,
+    annotation: object,
+    meta: Meta,
+    config: dict[str, Any],
+    tmp_path: Path,
+    media: Path,
+    torrent: Path,
+    profile: int,
+) -> object:
+    origin = get_origin(annotation)
+    direct = _direct_composite_value(origin, tmp_path, profile)
+    if direct is not _MISSING:
+        return direct
+    concrete = _optional_type(get_args(annotation))
+    if concrete is None:
+        return None
+    return _value(
+        name, concrete, meta, config, tmp_path, media, torrent, profile
+    )
+
+
+def _value(
+    name: str,
+    annotation: object,
+    meta: Meta,
+    config: dict[str, Any],
+    tmp_path: Path,
+    media: Path,
+    torrent: Path,
+    profile: int,
+) -> object:
+    normalized = name.casefold().lstrip("_")
+    values = _client_values(meta, config, tmp_path, media, torrent, profile)
+    if normalized in values:
+        return values[normalized]
+    if annotation in {inspect.Parameter.empty, Any}:
+        return None
+    if annotation is Path:
+        return media
+    scalar = _scalar_value(annotation, profile)
+    if scalar is not _MISSING:
+        return scalar
+    return _composite_value(
+        normalized, annotation, meta, config, tmp_path, media, torrent, profile
+    )
 
 
 _PROTECTED_ARGUMENTS = frozenset(
@@ -411,26 +452,7 @@ _PROTECTED_ARGUMENTS = frozenset(
 )
 
 
-def _coerce_override(
-    value: object,
-    annotation: object,
-    meta: Meta,
-    config: dict[str, Any],
-    tmp_path: Path,
-    media: Path,
-    torrent: Path,
-    profile: int,
-) -> object:
-    origin = get_origin(annotation)
-    args = get_args(annotation)
-    if annotation is Meta:
-        return meta
-    if annotation is Path:
-        return value if isinstance(value, Path) else media
-    if annotation is str:
-        return str(value)
-    if annotation is bool:
-        return bool(value)
+def _coerce_number(value: object, annotation: object) -> object:
     if annotation is int:
         try:
             return int(value)
@@ -441,32 +463,212 @@ def _coerce_override(
             return float(value)
         except TypeError, ValueError:
             return 1.0
+    return _MISSING
+
+
+def _coerce_list(
+    value: object,
+    args: tuple[object, ...],
+    meta: Meta,
+    config: dict[str, Any],
+    tmp_path: Path,
+    media: Path,
+    torrent: Path,
+    profile: int,
+) -> list[object]:
+    if isinstance(value, list):
+        return value
+    element = args[0] if args else object
+    return [
+        _coerce_override(
+            value, element, meta, config, tmp_path, media, torrent, profile
+        )
+    ]
+
+
+def _coerce_mapping(value: object) -> object:
+    return value if isinstance(value, dict) else {}
+
+
+def _coerce_tuple(value: object) -> object:
+    return value if isinstance(value, tuple) else ()
+
+
+def _coerce_set(value: object) -> object:
+    return value if isinstance(value, set) else {value}
+
+
+_COLLECTION_COERCERS: dict[object, Callable[[object], object]] = {
+    dict: _coerce_mapping,
+    Mapping: _coerce_mapping,
+    tuple: _coerce_tuple,
+    set: _coerce_set,
+}
+
+
+def _coerce_direct_collection(value: object, origin: object) -> object:
+    coercer = _COLLECTION_COERCERS.get(origin)
+    if coercer is None:
+        return _MISSING
+    return coercer(value)
+
+
+def _coerce_collection(
+    value: object,
+    origin: object,
+    args: tuple[object, ...],
+    meta: Meta,
+    config: dict[str, Any],
+    tmp_path: Path,
+    media: Path,
+    torrent: Path,
+    profile: int,
+) -> object:
     if origin in {list, Sequence}:
-        if isinstance(value, list):
-            return value
-        element = args[0] if args else object
-        return [
-            _coerce_override(
-                value, element, meta, config, tmp_path, media, torrent, profile
-            )
-        ]
-    if origin in {dict, Mapping}:
-        return value if isinstance(value, dict) else {}
-    if origin is tuple:
-        return value if isinstance(value, tuple) else ()
-    if origin is set:
-        return value if isinstance(value, set) else {value}
-    if origin is not None and type(None) in args and value is not None:
-        concrete = next(
-            (item for item in args if item is not type(None)), object
+        return _coerce_list(
+            value, args, meta, config, tmp_path, media, torrent, profile
         )
-        return _coerce_override(
-            value, concrete, meta, config, tmp_path, media, torrent, profile
-        )
-    return value
+    return _coerce_direct_collection(value, origin)
 
 
-async def _invoke(
+def _optional_concrete(args: tuple[object, ...]) -> object | None:
+    if type(None) not in args:
+        return None
+    return next((item for item in args if item is not type(None)), object)
+
+
+def _coerce_optional(
+    value: object,
+    args: tuple[object, ...],
+    meta: Meta,
+    config: dict[str, Any],
+    tmp_path: Path,
+    media: Path,
+    torrent: Path,
+    profile: int,
+) -> object:
+    if value is None:
+        return value
+    concrete = _optional_concrete(args)
+    if concrete is None:
+        return value
+    return _coerce_override(
+        value, concrete, meta, config, tmp_path, media, torrent, profile
+    )
+
+
+def _coerce_meta(_value: object, meta: Meta, _media: Path) -> object:
+    return meta
+
+
+def _coerce_path(value: object, _meta: Meta, media: Path) -> object:
+    return value if isinstance(value, Path) else media
+
+
+def _coerce_str(value: object, _meta: Meta, _media: Path) -> object:
+    return str(value)
+
+
+def _coerce_bool(value: object, _meta: Meta, _media: Path) -> object:
+    return bool(value)
+
+
+_SIMPLE_COERCERS: dict[object, Callable[[object, Meta, Path], object]] = {
+    Meta: _coerce_meta,
+    Path: _coerce_path,
+    str: _coerce_str,
+    bool: _coerce_bool,
+}
+
+
+def _coerce_simple(
+    value: object, annotation: object, meta: Meta, media: Path
+) -> object:
+    coercer = _SIMPLE_COERCERS.get(annotation)
+    if coercer is None:
+        return _MISSING
+    return coercer(value, meta, media)
+
+
+def _coerce_override(
+    value: object,
+    annotation: object,
+    meta: Meta,
+    config: dict[str, Any],
+    tmp_path: Path,
+    media: Path,
+    torrent: Path,
+    profile: int,
+) -> object:
+    simple = _coerce_simple(value, annotation, meta, media)
+    if simple is not _MISSING:
+        return simple
+    number = _coerce_number(value, annotation)
+    if number is not _MISSING:
+        return number
+    origin = get_origin(annotation)
+    args = get_args(annotation)
+    collection = _coerce_collection(
+        value, origin, args, meta, config, tmp_path, media, torrent, profile
+    )
+    if collection is not _MISSING:
+        return collection
+    return _coerce_optional(
+        value, args, meta, config, tmp_path, media, torrent, profile
+    )
+
+
+def _safe_type_hints(target: object) -> dict[str, Any]:
+    try:
+        return get_type_hints(target)
+    except NameError, TypeError:
+        return {}
+
+
+def _include_parameter(
+    parameter: inspect.Parameter, overrides: Mapping[str, object]
+) -> bool:
+    if parameter.kind in {
+        inspect.Parameter.VAR_POSITIONAL,
+        inspect.Parameter.VAR_KEYWORD,
+    }:
+        return False
+    return (
+        parameter.default is inspect.Parameter.empty
+        or parameter.name in overrides
+    )
+
+
+def _override_value(
+    parameter: inspect.Parameter,
+    annotation: object,
+    value: object,
+    overrides: Mapping[str, object],
+    meta: Meta,
+    config: dict[str, Any],
+    tmp_path: Path,
+    media: Path,
+    torrent: Path,
+    profile: int,
+) -> object:
+    if (
+        parameter.name not in overrides
+        or parameter.name in _PROTECTED_ARGUMENTS
+    ):
+        return value
+    return _coerce_override(
+        overrides[parameter.name],
+        annotation,
+        meta,
+        config,
+        tmp_path,
+        media,
+        torrent,
+        profile,
+    )
+
+
+def _invocation_arguments(
     function: Callable[..., object],
     meta: Meta,
     config: dict[str, Any],
@@ -474,26 +676,14 @@ async def _invoke(
     media: Path,
     torrent: Path,
     profile: int,
-    overrides: Mapping[str, object] | None = None,
-) -> object:
+    overrides: Mapping[str, object],
+) -> tuple[list[object], dict[str, object]]:
+    target = function.__init__ if inspect.isclass(function) else function
+    hints = _safe_type_hints(target)
     positional: list[object] = []
     keywords: dict[str, object] = {}
-    overrides = overrides or {}
-    hint_target = function.__init__ if inspect.isclass(function) else function
-    try:
-        hints = get_type_hints(hint_target)
-    except NameError, TypeError:
-        hints = {}
     for parameter in inspect.signature(function).parameters.values():
-        if parameter.kind in {
-            inspect.Parameter.VAR_POSITIONAL,
-            inspect.Parameter.VAR_KEYWORD,
-        }:
-            continue
-        if (
-            parameter.default is not inspect.Parameter.empty
-            and parameter.name not in overrides
-        ):
+        if not _include_parameter(parameter, overrides):
             continue
         annotation = hints.get(parameter.name, parameter.annotation)
         value = _value(
@@ -506,28 +696,346 @@ async def _invoke(
             torrent,
             profile,
         )
-        if (
-            parameter.name in overrides
-            and parameter.name not in _PROTECTED_ARGUMENTS
-        ):
-            value = _coerce_override(
-                overrides[parameter.name],
-                annotation,
-                meta,
-                config,
-                tmp_path,
-                media,
-                torrent,
-                profile,
-            )
+        value = _override_value(
+            parameter,
+            annotation,
+            value,
+            overrides,
+            meta,
+            config,
+            tmp_path,
+            media,
+            torrent,
+            profile,
+        )
         if parameter.kind is inspect.Parameter.KEYWORD_ONLY:
             keywords[parameter.name] = value
         else:
             positional.append(value)
+    return positional, keywords
+
+
+async def _invoke(
+    function: Callable[..., object],
+    meta: Meta,
+    config: dict[str, Any],
+    tmp_path: Path,
+    media: Path,
+    torrent: Path,
+    profile: int,
+    overrides: Mapping[str, object] | None = None,
+) -> object:
+    resolved_overrides = overrides or {}
+    positional, keywords = _invocation_arguments(
+        function,
+        meta,
+        config,
+        tmp_path,
+        media,
+        torrent,
+        profile,
+        resolved_overrides,
+    )
     result = function(*positional, **keywords)
     if inspect.isawaitable(result):
         return await asyncio.wait_for(result, timeout=0.08)
     return result
+
+
+async def _no_sleep(
+    _delay: float = 0, *_args: object, **_kwargs: object
+) -> None:
+    return None
+
+
+def _patch_clients(monkeypatch: Any) -> None:
+    monkeypatch.setattr(qbittorrentapi, "Client", _QbitClient)
+    monkeypatch.setattr(transmission_rpc, "Client", _TransmissionClient)
+    monkeypatch.setattr("deluge_client.DelugeRPCClient", _DelugeClient)
+    monkeypatch.setattr("xmlrpc.client.ServerProxy", _XmlRpc)
+    monkeypatch.setattr(httpx, "AsyncClient", _AsyncClient)
+    monkeypatch.setattr(asyncio, "sleep", _no_sleep)
+
+
+def _module_functions(
+    module: ModuleType,
+) -> list[tuple[str, Callable[..., object]]]:
+    return [
+        (name, function)
+        for name, function in inspect.getmembers(module, inspect.isfunction)
+        if function.__module__ == module.__name__ and not name.startswith("__")
+    ]
+
+
+def _module_classes(module: ModuleType) -> list[tuple[str, type[Any]]]:
+    return [
+        (name, class_type)
+        for name, class_type in inspect.getmembers(module, inspect.isclass)
+        if class_type.__module__ == module.__name__
+        and not name.startswith("_")
+    ]
+
+
+def _filtered_overrides(overrides: Mapping[str, object]) -> dict[str, object]:
+    return {
+        key: value
+        for key, value in overrides.items()
+        if key not in _PROTECTED_ARGUMENTS
+    }
+
+
+def _apply_meta_updates(meta: Meta, updates: Mapping[str, object]) -> None:
+    for key, value in updates.items():
+        if key in Meta.__dataclass_fields__:
+            setattr(meta, key, value)
+
+
+async def _run_call(
+    qualified: str,
+    function: Callable[..., object],
+    meta: Meta,
+    config: dict[str, Any],
+    tmp_path: Path,
+    media: Path,
+    torrent: Path,
+    profile: int,
+    terminations: list[str],
+    rejections: list[str],
+    overrides: Mapping[str, object] | None = None,
+) -> None:
+    try:
+        await _invoke(
+            function,
+            meta,
+            config,
+            tmp_path,
+            media,
+            torrent,
+            profile,
+            overrides,
+        )
+    except (KeyboardInterrupt, SystemExit) as error:
+        terminations.append(f"{qualified}:{type(error).__name__}")
+    except Exception as error:
+        rejections.append(f"{qualified}:{type(error).__name__}")
+
+
+async def _run_profiles(
+    qualified: str,
+    function: Callable[..., object],
+    config: dict[str, Any],
+    tmp_path: Path,
+    media: Path,
+    torrent: Path,
+    terminations: list[str],
+    rejections: list[str],
+) -> None:
+    for profile in range(4):
+        await _run_call(
+            qualified,
+            function,
+            _meta(tmp_path, media, torrent, profile),
+            config,
+            tmp_path,
+            media,
+            torrent,
+            profile,
+            terminations,
+            rejections,
+        )
+
+
+async def _run_literal_scenarios(
+    qualified: str,
+    function: Callable[..., object],
+    config: dict[str, Any],
+    tmp_path: Path,
+    media: Path,
+    torrent: Path,
+    terminations: list[str],
+    rejections: list[str],
+) -> None:
+    for meta_updates, overrides in literal_branch_scenarios(
+        function, Meta.__dataclass_fields__, limit=256
+    ):
+        scenario_meta = _meta(tmp_path, media, torrent, 0)
+        _apply_meta_updates(scenario_meta, meta_updates)
+        await _run_call(
+            qualified,
+            function,
+            scenario_meta,
+            config,
+            tmp_path,
+            media,
+            torrent,
+            0,
+            terminations,
+            rejections,
+            _filtered_overrides(overrides),
+        )
+
+
+async def _exercise_callable(
+    qualified: str,
+    function: Callable[..., object],
+    config: dict[str, Any],
+    tmp_path: Path,
+    media: Path,
+    torrent: Path,
+    attempted: set[str],
+    terminations: list[str],
+    rejections: list[str],
+) -> None:
+    attempted.add(qualified)
+    await _run_profiles(
+        qualified,
+        function,
+        config,
+        tmp_path,
+        media,
+        torrent,
+        terminations,
+        rejections,
+    )
+    await _run_literal_scenarios(
+        qualified,
+        function,
+        config,
+        tmp_path,
+        media,
+        torrent,
+        terminations,
+        rejections,
+    )
+
+
+async def _instantiate_client_class(
+    module: ModuleType,
+    class_name: str,
+    class_type: type[Any],
+    config: dict[str, Any],
+    tmp_path: Path,
+    media: Path,
+    torrent: Path,
+    rejections: list[str],
+) -> object | None:
+    try:
+        instance = await _invoke(
+            class_type,
+            _meta(tmp_path, media, torrent, 0),
+            config,
+            tmp_path,
+            media,
+            torrent,
+            0,
+        )
+    except Exception as error:
+        rejections.append(
+            f"{module.__name__}.{class_name}.__init__:{type(error).__name__}"
+        )
+        return None
+    if hasattr(instance, "config"):
+        instance.config = config
+    return instance
+
+
+async def _exercise_instance(
+    module: ModuleType,
+    class_name: str,
+    instance: object,
+    config: dict[str, Any],
+    tmp_path: Path,
+    media: Path,
+    torrent: Path,
+    attempted: set[str],
+    terminations: list[str],
+    rejections: list[str],
+) -> None:
+    for method_name, method in inspect.getmembers(instance, callable):
+        if method_name.startswith("__"):
+            continue
+        await _exercise_callable(
+            f"{module.__name__}.{class_name}.{method_name}",
+            method,
+            config,
+            tmp_path,
+            media,
+            torrent,
+            attempted,
+            terminations,
+            rejections,
+        )
+
+
+async def _exercise_module(
+    module: ModuleType,
+    config: dict[str, Any],
+    tmp_path: Path,
+    media: Path,
+    torrent: Path,
+    attempted: set[str],
+    terminations: list[str],
+    rejections: list[str],
+) -> None:
+    for name, function in _module_functions(module):
+        await _exercise_callable(
+            f"{module.__name__}.{name}",
+            function,
+            config,
+            tmp_path,
+            media,
+            torrent,
+            attempted,
+            terminations,
+            rejections,
+        )
+    for class_name, class_type in _module_classes(module):
+        instance = await _instantiate_client_class(
+            module,
+            class_name,
+            class_type,
+            config,
+            tmp_path,
+            media,
+            torrent,
+            rejections,
+        )
+        if instance is not None:
+            await _exercise_instance(
+                module,
+                class_name,
+                instance,
+                config,
+                tmp_path,
+                media,
+                torrent,
+                attempted,
+                terminations,
+                rejections,
+            )
+
+
+async def _exercise_modules(
+    modules: list[ModuleType],
+    config: dict[str, Any],
+    tmp_path: Path,
+    media: Path,
+    torrent: Path,
+    attempted: set[str],
+    terminations: list[str],
+    rejections: list[str],
+) -> None:
+    for module in modules:
+        await _exercise_module(
+            module,
+            config,
+            tmp_path,
+            media,
+            torrent,
+            attempted,
+            terminations,
+            rejections,
+        )
 
 
 def test_torrent_client_catalog_uses_local_fakes(
@@ -535,178 +1043,22 @@ def test_torrent_client_catalog_uses_local_fakes(
 ) -> None:
     media, torrent = _fixture(tmp_path)
     config = _config(tmp_path)
-    monkeypatch.setattr(qbittorrentapi, "Client", _QbitClient)
-    monkeypatch.setattr(transmission_rpc, "Client", _TransmissionClient)
-    monkeypatch.setattr("deluge_client.DelugeRPCClient", _DelugeClient)
-    monkeypatch.setattr("xmlrpc.client.ServerProxy", _XmlRpc)
-    monkeypatch.setattr(httpx, "AsyncClient", _AsyncClient)
-
-    async def no_sleep(
-        _delay: float = 0, *_args: object, **_kwargs: object
-    ) -> None:
-        return None
-
-    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+    _patch_clients(monkeypatch)
     attempted: set[str] = set()
     terminations: list[str] = []
     expected_rejections: list[str] = []
-
-    async def exercise() -> None:
-        for module in _modules():
-            functions = [
-                (name, function)
-                for name, function in inspect.getmembers(
-                    module, inspect.isfunction
-                )
-                if function.__module__ == module.__name__
-                and not name.startswith("__")
-            ]
-            for name, function in functions:
-                qualified = f"{module.__name__}.{name}"
-                attempted.add(qualified)
-                for profile in range(4):
-                    try:
-                        await _invoke(
-                            function,
-                            _meta(tmp_path, media, torrent, profile),
-                            config,
-                            tmp_path,
-                            media,
-                            torrent,
-                            profile,
-                        )
-                    except (KeyboardInterrupt, SystemExit) as error:
-                        terminations.append(
-                            f"{qualified}:{type(error).__name__}"
-                        )
-                    except Exception as error:
-                        expected_rejections.append(
-                            f"{qualified}:{type(error).__name__}"
-                        )
-                for (
-                    meta_updates,
-                    argument_overrides,
-                ) in literal_branch_scenarios(
-                    function, Meta.__dataclass_fields__, limit=256
-                ):
-                    argument_overrides = {
-                        key: value
-                        for key, value in argument_overrides.items()
-                        if key not in _PROTECTED_ARGUMENTS
-                    }
-                    scenario_meta = _meta(tmp_path, media, torrent, 0)
-                    for key, value in meta_updates.items():
-                        if key in Meta.__dataclass_fields__:
-                            setattr(scenario_meta, key, value)
-                    try:
-                        await _invoke(
-                            function,
-                            scenario_meta,
-                            config,
-                            tmp_path,
-                            media,
-                            torrent,
-                            0,
-                            argument_overrides,
-                        )
-                    except (KeyboardInterrupt, SystemExit) as error:
-                        terminations.append(
-                            f"{qualified}:{type(error).__name__}"
-                        )
-                    except Exception as error:
-                        expected_rejections.append(
-                            f"{qualified}:{type(error).__name__}"
-                        )
-
-            classes = [
-                (class_name, class_type)
-                for class_name, class_type in inspect.getmembers(
-                    module, inspect.isclass
-                )
-                if class_type.__module__ == module.__name__
-                and not class_name.startswith("_")
-            ]
-            for class_name, class_type in classes:
-                try:
-                    instance = await _invoke(
-                        class_type,
-                        _meta(tmp_path, media, torrent, 0),
-                        config,
-                        tmp_path,
-                        media,
-                        torrent,
-                        0,
-                    )
-                except Exception as error:
-                    expected_rejections.append(
-                        f"{module.__name__}.{class_name}.__init__:{type(error).__name__}"
-                    )
-                    continue
-                if hasattr(instance, "config"):
-                    instance.config = config
-                for method_name, method in inspect.getmembers(
-                    instance, callable
-                ):
-                    if method_name.startswith("__"):
-                        continue
-                    qualified = f"{module.__name__}.{class_name}.{method_name}"
-                    attempted.add(qualified)
-                    for profile in range(4):
-                        try:
-                            await _invoke(
-                                method,
-                                _meta(tmp_path, media, torrent, profile),
-                                config,
-                                tmp_path,
-                                media,
-                                torrent,
-                                profile,
-                            )
-                        except (KeyboardInterrupt, SystemExit) as error:
-                            terminations.append(
-                                f"{qualified}:{type(error).__name__}"
-                            )
-                        except Exception as error:
-                            expected_rejections.append(
-                                f"{qualified}:{type(error).__name__}"
-                            )
-                    for (
-                        meta_updates,
-                        argument_overrides,
-                    ) in literal_branch_scenarios(
-                        method, Meta.__dataclass_fields__, limit=256
-                    ):
-                        argument_overrides = {
-                            key: value
-                            for key, value in argument_overrides.items()
-                            if key not in _PROTECTED_ARGUMENTS
-                        }
-                        scenario_meta = _meta(tmp_path, media, torrent, 0)
-                        for key, value in meta_updates.items():
-                            if key in Meta.__dataclass_fields__:
-                                setattr(scenario_meta, key, value)
-                        try:
-                            await _invoke(
-                                method,
-                                scenario_meta,
-                                config,
-                                tmp_path,
-                                media,
-                                torrent,
-                                0,
-                                argument_overrides,
-                            )
-                        except (KeyboardInterrupt, SystemExit) as error:
-                            terminations.append(
-                                f"{qualified}:{type(error).__name__}"
-                            )
-                        except Exception as error:
-                            expected_rejections.append(
-                                f"{qualified}:{type(error).__name__}"
-                            )
-
-    asyncio.run(exercise())
-
+    asyncio.run(
+        _exercise_modules(
+            _modules(),
+            config,
+            tmp_path,
+            media,
+            torrent,
+            attempted,
+            terminations,
+            expected_rejections,
+        )
+    )
     assert len(attempted) >= 45
     assert terminations == []
     assert all(":" in item for item in expected_rejections)
