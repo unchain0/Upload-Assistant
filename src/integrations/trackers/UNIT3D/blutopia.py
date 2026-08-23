@@ -1,5 +1,5 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
-from typing import Any
+from typing import Any, cast
 
 import cli_ui
 
@@ -7,6 +7,30 @@ from src.domain_models.release import Meta
 from src.integrations.observability.runtime_support import logger
 from src.integrations.trackers.common import Common
 from src.integrations.trackers.UNIT3D import UNIT3D
+
+CATEGORY_IDS = {"MOVIE": "1", "TV": "2", "FANRES": "3"}
+TYPE_IDS = {
+    "DISC": "1",
+    "REMUX": "3",
+    "WEBDL": "4",
+    "WEBRIP": "5",
+    "HDTV": "6",
+    "ENCODE": "12",
+}
+RESOLUTION_IDS = {
+    "8640p": "10",
+    "4320p": "11",
+    "2160p": "1",
+    "1440p": "2",
+    "1080p": "2",
+    "1080i": "3",
+    "720p": "5",
+    "576p": "6",
+    "576i": "7",
+    "480p": "8",
+    "480i": "9",
+}
+RAW_ONLY_GROUPS = frozenset({"AOC", "CMRG", "EVO", "TERMiNAL", "ViSION"})
 
 
 class Blutopia(UNIT3D):
@@ -120,133 +144,194 @@ class Blutopia(UNIT3D):
         self.config = config
         self.common = Common(config)
 
-    async def get_additional_checks(self, meta: Meta) -> bool:
-        should_continue = True
+    @staticmethod
+    def _interactive(meta: Meta) -> bool:
+        return not meta.unattended or meta.unattended_confirm
 
-        if not meta.is_disc:
-            container = meta.container.lower()
-            type_name = "" if not meta.type else meta.type.upper()
-            allowed = ["mkv"]
-            if type_name == "HDTV":
-                allowed.append("ts")
-            if (
-                type_name in ["WEBDL", "HDTV"]
-                and "DV" in meta.hdr
-                and "HDR" not in meta.hdr
-            ):
-                allowed.append("mp4")
+    @staticmethod
+    def _allows_mp4(meta: Meta, type_name: str) -> bool:
+        return (
+            type_name in {"WEBDL", "HDTV"}
+            and "DV" in meta.hdr
+            and "HDR" not in meta.hdr
+        )
 
-            if container not in allowed:
-                logger.info(
-                    f"{self.tracker}: [bold red]For this release, {self.tracker} requires one of the following containers: {', '.join([a.upper() for a in allowed])}[/bold red]"
-                )
-                return False
+    @classmethod
+    def _allowed_containers(cls, meta: Meta) -> list[str]:
+        type_name = "" if not meta.type else meta.type.upper()
+        allowed = ["mkv"]
+        if type_name == "HDTV":
+            allowed.append("ts")
+        if cls._allows_mp4(meta, type_name):
+            allowed.append("mp4")
+        return allowed
 
-        if (
-            meta.type in ["ENCODE", "REMUX"]
+    def _container_check(self, meta: Meta) -> bool:
+        if meta.is_disc:
+            return True
+        allowed = self._allowed_containers(meta)
+        if meta.container.lower() in allowed:
+            return True
+        logger.info(
+            f"{self.tracker}: [bold red]For this release, {self.tracker} requires one of the following containers: {', '.join(a.upper() for a in allowed)}[/bold red]"
+        )
+        return False
+
+    @staticmethod
+    def _needs_derived_layer_prompt(meta: Meta) -> bool:
+        return (
+            meta.type in {"ENCODE", "REMUX"}
             and "HDR" in meta.hdr
             and "DV" in meta.hdr
-            and (
-                not meta.unattended
-                or (meta.unattended and meta.unattended_confirm)
-            )
-        ):
-            logger.info(
-                f"{self.tracker}: [bold red]Releases using a Dolby Vision layer from a different source have specific description requirements.[/bold red]"
-            )
-            logger.info(
-                f"{self.tracker}: [bold red]See rule 12.5. You must have a correct pre-formatted description if this release has a derived layer[/bold red]"
-            )
-            if not cli_ui.ask_yes_no(
-                "Do you want to upload anyway?", default=False
-            ):
-                return False
-            if cli_ui.ask_yes_no(
-                "Is this a derived layer release?", default=False
-            ):
-                meta.tracker_status[self.tracker]["other"] = True
+            and Blutopia._interactive(meta)
+        )
 
-        if (
-            meta.type not in ["WEBDL"]
-            and not meta.is_disc
-            and meta.tag in ["AOC", "CMRG", "EVO", "TERMiNAL", "ViSION"]
+    def _derived_layer_check(self, meta: Meta) -> bool:
+        if not self._needs_derived_layer_prompt(meta):
+            return True
+        logger.info(
+            f"{self.tracker}: [bold red]Releases using a Dolby Vision layer from a different source have specific description requirements.[/bold red]"
+        )
+        logger.info(
+            f"{self.tracker}: [bold red]See rule 12.5. You must have a correct pre-formatted description if this release has a derived layer[/bold red]"
+        )
+        if not cli_ui.ask_yes_no(
+            "Do you want to upload anyway?", default=False
         ):
-            if not meta.unattended or (
-                meta.unattended and meta.unattended_confirm
-            ):
-                logger.info(
-                    f"{self.tracker}: [bold red]Group {meta.tag} is only allowed for raw type content[/bold red]"
-                )
-                if cli_ui.ask_yes_no(
-                    "Do you want to upload anyway?", default=False
-                ):
-                    pass
-                else:
-                    return False
-            else:
-                return False
-
-        if not meta.valid_mi_settings:
-            logger.info(
-                f"{self.tracker}: [bold red]No encoding settings in mediainfo, skipping {self.tracker} upload.[/bold red]"
-            )
             return False
+        if cli_ui.ask_yes_no(
+            "Is this a derived layer release?", default=False
+        ):
+            meta.tracker_status[self.tracker]["other"] = True
+        return True
 
-        return should_continue
+    @staticmethod
+    def _raw_only_group(meta: Meta) -> bool:
+        return (
+            meta.type != "WEBDL"
+            and not meta.is_disc
+            and meta.tag in RAW_ONLY_GROUPS
+        )
+
+    def _raw_group_check(self, meta: Meta) -> bool:
+        if not self._raw_only_group(meta):
+            return True
+        if not self._interactive(meta):
+            return False
+        logger.info(
+            f"{self.tracker}: [bold red]Group {meta.tag} is only allowed for raw type content[/bold red]"
+        )
+        return cli_ui.ask_yes_no(
+            "Do you want to upload anyway?", default=False
+        )
+
+    def _mediainfo_check(self, meta: Meta) -> bool:
+        if meta.valid_mi_settings:
+            return True
+        logger.info(
+            f"{self.tracker}: [bold red]No encoding settings in mediainfo, skipping {self.tracker} upload.[/bold red]"
+        )
+        return False
+
+    async def get_additional_checks(self, meta: Meta) -> bool:
+        if not self._container_check(meta):
+            return False
+        if not self._derived_layer_check(meta):
+            return False
+        if not self._raw_group_check(meta):
+            return False
+        return self._mediainfo_check(meta)
+
+    @staticmethod
+    def _strip_episode_title(name: str, meta: Meta) -> str:
+        if meta.category != "TV" or not meta.episode_title:
+            return name
+        return name.replace(
+            f"{meta.episode_title} {meta.resolution}", str(meta.resolution), 1
+        )
+
+    @staticmethod
+    def _imdb_values(meta: Meta) -> tuple[str, str, str]:
+        imdb_info = cast(dict[str, Any], meta.imdb_info)
+        return (
+            str(imdb_info.get("title", "")),
+            str(imdb_info.get("year", "")),
+            str(imdb_info.get("aka", "")),
+        )
+
+    @staticmethod
+    def _valid_imdb_aka(meta: Meta, imdb_name: str, imdb_aka: str) -> bool:
+        return (
+            bool(imdb_aka.strip())
+            and imdb_aka != imdb_name
+            and not meta.no_aka
+        )
+
+    @classmethod
+    def _apply_imdb_title(
+        cls, name: str, meta: Meta, imdb_name: str, imdb_aka: str
+    ) -> str:
+        if not imdb_name.strip():
+            return name
+        if meta.aka:
+            name = name.replace(f"{meta.aka} ", "", 1)
+        name = name.replace(str(meta.title), imdb_name, 1)
+        if cls._valid_imdb_aka(meta, imdb_name, imdb_aka):
+            return name.replace(imdb_name, f"{imdb_name} AKA {imdb_aka}", 1)
+        return name
+
+    @staticmethod
+    def _should_replace_year(meta: Meta, imdb_year: str, year: str) -> bool:
+        if meta.category == "TV" or not imdb_year.strip():
+            return False
+        return bool(year.strip()) and imdb_year != year
+
+    @classmethod
+    def _apply_imdb_year(cls, name: str, meta: Meta, imdb_year: str) -> str:
+        year = str(meta.year) if meta.year is not None else ""
+        if not cls._should_replace_year(meta, imdb_year, year):
+            return name
+        return name.replace(year, imdb_year, 1)
+
+    @staticmethod
+    def _apply_webdv(name: str, meta: Meta) -> str:
+        return name.replace("HYBRID ", "", 1) if meta.webdv else name
+
+    def _apply_derived_marker(self, name: str, meta: Meta) -> str:
+        tracker_status = meta.tracker_status.get(self.tracker, {})
+        if not tracker_status.get("other", False):
+            return name
+        return name.replace(
+            str(meta.resolution), f"{meta.resolution} DVP5/DVP8", 1
+        )
 
     async def get_name(self, meta: Meta) -> dict[str, str]:
-        blu_name = meta.name
-        if meta.category == "TV" and meta.episode_title != "":
-            blu_name = blu_name.replace(
-                f"{meta.episode_title} {meta.resolution}",
-                f"{meta.resolution}",
-                1,
-            )
-        imdb_name = meta.imdb_info.get("title", "")
-        imdb_year = str(meta.imdb_info.get("year", ""))
-        imdb_aka = meta.imdb_info.get("aka", "")
-        year = str(meta.year) if meta.year is not None else ""
-        aka = meta.aka
-        webdv = meta.webdv
-        if imdb_name and imdb_name.strip():
-            if aka:
-                blu_name = blu_name.replace(f"{aka} ", "", 1)
-            blu_name = blu_name.replace(f"{meta.title}", imdb_name, 1)
-
-            if (
-                imdb_aka
-                and imdb_aka.strip()
-                and imdb_aka != imdb_name
-                and not meta.no_aka
-            ):
-                blu_name = blu_name.replace(
-                    f"{imdb_name}", f"{imdb_name} AKA {imdb_aka}", 1
-                )
-
-        if (
-            meta.category != "TV"
-            and imdb_year
-            and imdb_year.strip()
-            and year
-            and year.strip()
-            and imdb_year != year
-        ):
-            blu_name = blu_name.replace(f"{year}", imdb_year, 1)
-
-        if webdv:
-            blu_name = blu_name.replace("HYBRID ", "", 1)
-
-        if meta.tracker_status.get(self.tracker, {}).get("other", False):
-            blu_name = blu_name.replace(
-                f"{meta.resolution}", f"{meta.resolution} DVP5/DVP8", 1
-            )
-
-        return {"name": blu_name}
+        imdb_name, imdb_year, imdb_aka = self._imdb_values(meta)
+        name = self._strip_episode_title(meta.name, meta)
+        name = self._apply_imdb_title(name, meta, imdb_name, imdb_aka)
+        name = self._apply_imdb_year(name, meta, imdb_year)
+        name = self._apply_webdv(name, meta)
+        return {"name": self._apply_derived_marker(name, meta)}
 
     async def get_additional_data(self, meta: Meta) -> dict[str, Any]:
         return {
             "mod_queue_opt_in": await self.get_flag(meta, "modq"),
         }
+
+    @staticmethod
+    def _mapping_result(
+        mapping: dict[str, str], mapping_only: bool, reverse: bool
+    ) -> dict[str, str] | None:
+        if mapping_only:
+            return mapping
+        if reverse:
+            return {value: key for key, value in mapping.items()}
+        return None
+
+    def _is_fanres(self, meta: Meta) -> bool:
+        if meta.category == "MOVIE" and "FANRES" in meta.edition:
+            return True
+        return bool(meta.tracker_status[self.tracker].get("other", False))
 
     async def get_category_id(
         self,
@@ -255,30 +340,13 @@ class Blutopia(UNIT3D):
         reverse: bool = False,
         mapping_only: bool = False,
     ) -> dict[str, str]:
-        edition = meta.edition
-        category_name = meta.category
-        category_id = {"MOVIE": "1", "TV": "2", "FANRES": "3"}
-
-        is_fanres = False
-
-        if category_name == "MOVIE" and "FANRES" in edition:
-            is_fanres = True
-
-        if meta.tracker_status[self.tracker].get("other", False):
-            is_fanres = True
-
-        if is_fanres:
+        if self._is_fanres(meta):
             return {"category_id": "3"}
-
-        if mapping_only:
-            return category_id
-        if reverse:
-            return {v: k for k, v in category_id.items()}
-        if category is not None:
-            return {"category_id": category_id.get(category, "0")}
-        meta_category = meta.category
-        resolved_id = category_id.get(meta_category, "0")
-        return {"category_id": resolved_id}
+        mapping = self._mapping_result(CATEGORY_IDS, mapping_only, reverse)
+        if mapping is not None:
+            return mapping
+        resolved = category if category is not None else meta.category
+        return {"category_id": CATEGORY_IDS.get(resolved, "0")}
 
     async def get_type_id(
         self,
@@ -287,24 +355,11 @@ class Blutopia(UNIT3D):
         reverse: bool = False,
         mapping_only: bool = False,
     ) -> dict[str, str]:
-        type_id = {
-            "DISC": "1",
-            "REMUX": "3",
-            "WEBDL": "4",
-            "WEBRIP": "5",
-            "HDTV": "6",
-            "ENCODE": "12",
-        }
-
-        if mapping_only:
-            return type_id
-        if reverse:
-            return {v: k for k, v in type_id.items()}
-        if type is not None:
-            return {"type_id": type_id.get(type, "0")}
-        meta_type = meta.type
-        resolved_id = type_id.get(meta_type or "", "0")
-        return {"type_id": resolved_id}
+        mapping = self._mapping_result(TYPE_IDS, mapping_only, reverse)
+        if mapping is not None:
+            return mapping
+        resolved = type if type is not None else (meta.type or "")
+        return {"type_id": TYPE_IDS.get(resolved, "0")}
 
     async def get_resolution_id(
         self,
@@ -313,25 +368,9 @@ class Blutopia(UNIT3D):
         reverse: bool = False,
         mapping_only: bool = False,
     ) -> dict[str, str]:
-        resolution_id = {
-            "8640p": "10",
-            "4320p": "11",
-            "2160p": "1",
-            "1440p": "2",
-            "1080p": "2",
-            "1080i": "3",
-            "720p": "5",
-            "576p": "6",
-            "576i": "7",
-            "480p": "8",
-            "480i": "9",
-        }
         if mapping_only:
-            return resolution_id
+            return RESOLUTION_IDS
         if reverse:
-            return {v: k for k, v in resolution_id.items()}
-        if resolution is not None:
-            return {"resolution_id": resolution_id.get(resolution, "10")}
-        meta_resolution = meta.resolution
-        resolved_id = resolution_id.get(meta_resolution, "10")
-        return {"resolution_id": resolved_id}
+            return {value: key for key, value in RESOLUTION_IDS.items()}
+        resolved = resolution if resolution is not None else meta.resolution
+        return {"resolution_id": RESOLUTION_IDS.get(resolved, "10")}
