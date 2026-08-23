@@ -87,6 +87,14 @@ class _Process:
         return self.returncode
 
 
+def _meta_source(tmp_path: Path, path: Path | str | None) -> Path | None:
+    if path is None:
+        return tmp_path / "release.mkv"
+    if path == "":
+        return None
+    return Path(path)
+
+
 def _meta(
     tmp_path: Path,
     path: Path | str | None = None,
@@ -94,11 +102,7 @@ def _meta(
     create_source: bool = True,
     **values: object,
 ) -> Meta:
-    source = (
-        Path(path)
-        if path not in (None, "")
-        else (tmp_path / "release.mkv" if path is None else None)
-    )
+    source = _meta_source(tmp_path, path)
     if source is not None and create_source and not source.exists():
         source.parent.mkdir(parents=True, exist_ok=True)
         source.write_bytes(b"video")
