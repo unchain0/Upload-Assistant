@@ -280,20 +280,23 @@ def test_create_base_from_existing_multi_single_subtitles_and_missing(
     )
 
 
+def _expected_linux_mkbrr_arch(arch: str) -> str:
+    if arch in {"aarch64", "arm64"}:
+        return "arm64"
+    if "armv6" in arch:
+        return "armv6"
+    if "arm" in arch:
+        return "arm"
+    return "amd64"
+
+
 def _expected_mkbrr(base: Path, system: str, arch: str) -> Path:
     if system == "windows":
         return base / "bin" / "mkbrr" / "windows" / "x86_64" / "mkbrr.exe"
     if system == "darwin":
         folder = "arm64" if "arm" in arch else "x86_64"
         return base / "bin" / "mkbrr" / "macos" / folder / "mkbrr"
-    if arch in {"aarch64", "arm64"}:
-        folder = "arm64"
-    elif "armv6" in arch:
-        folder = "armv6"
-    elif "arm" in arch:
-        folder = "arm"
-    else:
-        folder = "amd64"
+    folder = _expected_linux_mkbrr_arch(arch)
     return base / "bin" / "mkbrr" / "linux" / folder / "mkbrr"
 
 
