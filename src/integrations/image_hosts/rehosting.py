@@ -50,28 +50,78 @@ def _as_str(value: Any) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def _tracker_class(
+    tracker_name: str, tracker_class_map: Mapping[str, Any]
+) -> Any:
+    normalized = str(tracker_name).replace(" ", "").upper()
+    return tracker_class_map.get(normalized)
+
+
+def _legacy_approved_hosts(tracker_class: Any) -> set[str] | None:
+    if not callable(getattr(tracker_class, "check_image_hosts", None)):
+        return None
+    approved_hosts = getattr(tracker_class, "approved_image_hosts", None)
+    if not isinstance(approved_hosts, (tuple, list, set)):
+        return None
+    hosts: set[str] = set()
+    for value in cast(Iterable[Any], approved_hosts):
+        if isinstance(value, str):
+            hosts.add(value)
+    return hosts
+
+
+def _tracker_approved_hosts(tracker_class: Any) -> set[str] | None:
+    policy = getattr(tracker_class, "image_host_policy", None)
+    if isinstance(policy, ImageHostPolicy):
+        return set(policy.approved_image_hosts)
+    return _legacy_approved_hosts(tracker_class)
+
+
 def has_restricted_image_hosts(
     target_trackers: Iterable[str],
     tracker_class_map: Mapping[str, Any],
 ) -> bool:
-    """Return True if any of the target trackers define image-host restrictions."""
+    """Return True if any target tracker defines image-host restrictions."""
     for tracker_name in target_trackers:
-        tracker_class = tracker_class_map.get(
-            str(tracker_name).replace(" ", "").upper()
+        approved = _tracker_approved_hosts(
+            _tracker_class(str(tracker_name), tracker_class_map)
         )
-        policy = getattr(tracker_class, "image_host_policy", None)
-        if isinstance(policy, ImageHostPolicy) and policy.approved_image_hosts:
+        if approved:
             return True
-
-        approved_hosts = getattr(tracker_class, "approved_image_hosts", None)
-        if (
-            callable(getattr(tracker_class, "check_image_hosts", None))
-            and isinstance(approved_hosts, (tuple, list, set))
-            and any(isinstance(host, str) for host in approved_hosts)
-        ):
-            return True
-
     return False
+
+
+def _approved_host_sets(
+    target_trackers: Iterable[str], tracker_class_map: Mapping[str, Any]
+) -> list[set[str]]:
+    sets: list[set[str]] = []
+    for tracker_name in target_trackers:
+        approved = _tracker_approved_hosts(
+            _tracker_class(str(tracker_name), tracker_class_map)
+        )
+        if approved is not None:
+            sets.append(approved)
+    return sets
+
+
+def _configured_image_hosts(
+    default_config: Mapping[str, Any],
+) -> list[tuple[int, str]]:
+    configured: list[tuple[int, str]] = []
+    for key, value in default_config.items():
+        match = re.fullmatch(r"img_host_(\d+)", key)
+        host = _as_str(value)
+        if match is None or host is None or not host.strip():
+            continue
+        configured.append((int(match.group(1)), host.strip().lower()))
+    return sorted(configured, key=lambda item: item[0])
+
+
+def _common_approved_hosts(approved_sets: list[set[str]]) -> set[str]:
+    common_hosts = set(approved_sets[0])
+    for approved in approved_sets[1:]:
+        common_hosts.intersection_update(approved)
+    return common_hosts
 
 
 def select_common_image_host(
@@ -79,50 +129,17 @@ def select_common_image_host(
     target_trackers: Iterable[str],
     tracker_class_map: Mapping[str, Any],
 ) -> str | None:
-    """Return the preferred configured host accepted by every restricted target.
-
-    Trackers without a declared policy do not constrain the selection. ``None``
-    means no restricted targets or no common configured host, so callers retain
-    the normal per-tracker rehosting fallback.
-    """
-    approved_sets: list[set[str]] = []
-    for tracker_name in target_trackers:
-        tracker_class = tracker_class_map.get(
-            str(tracker_name).replace(" ", "").upper()
-        )
-        policy = getattr(tracker_class, "image_host_policy", None)
-        if isinstance(policy, ImageHostPolicy):
-            approved_sets.append(set(policy.approved_image_hosts))
-            continue
-
-        approved_hosts = getattr(tracker_class, "approved_image_hosts", None)
-        if callable(
-            getattr(tracker_class, "check_image_hosts", None)
-        ) and isinstance(approved_hosts, (tuple, list, set)):
-            approved_sets.append(
-                {host for host in approved_hosts if isinstance(host, str)}
-            )
-
+    """Return the preferred configured host accepted by every restricted target."""
+    approved_sets = _approved_host_sets(target_trackers, tracker_class_map)
     if not approved_sets:
         return None
-
-    common_hosts = set.intersection(*approved_sets)
+    common_hosts = _common_approved_hosts(approved_sets)
     if not common_hosts:
         return None
-
-    configured_hosts = sorted(
-        (
-            (int(match.group(1)), host.strip().lower())
-            for key, value in default_config.items()
-            if (match := re.fullmatch(r"img_host_(\d+)", key))
-            and (host := _as_str(value))
-            and host.strip()
-        ),
-        key=lambda item: item[0],
-    )
-    return next(
-        (host for _, host in configured_hosts if host in common_hosts), None
-    )
+    for _index, host in _configured_image_hosts(default_config):
+        if host in common_hosts:
+            return host
+    return None
 
 
 def _safe_remove(path: str) -> bool:
@@ -249,25 +266,33 @@ class RehostImagesManager:
         )
 
 
+async def _apply_declarative_policy(meta: Meta, tracker_class: Any) -> bool:
+    policy = getattr(tracker_class, "image_host_policy", None)
+    manager = getattr(tracker_class, "rehost_images_manager", None)
+    if not isinstance(policy, ImageHostPolicy) or manager is None:
+        return False
+    await manager.check_policy(meta, tracker_class.tracker, policy)
+    return True
+
+
+async def _apply_legacy_image_host_check(
+    meta: Meta, tracker_class: Any
+) -> None:
+    check_hosts = getattr(tracker_class, "check_image_hosts", None)
+    if not callable(check_hosts):
+        return
+    outcome = check_hosts(meta)
+    if inspect.isawaitable(outcome):
+        await outcome
+
+
 async def check_tracker_image_hosts(meta: Meta, tracker_class: Any) -> None:
     """Apply a tracker's image-host policy when it defines one."""
-    # MUSIC artwork is hosted before tracker processing.  It has no video
-    # screenshots, so a missing screenshot collection must not trigger the
-    # generic reupload path (which would attempt to capture the audio file).
     if meta.category == "MUSIC":
         return
-
-    policy = getattr(tracker_class, "image_host_policy", None)
-    rehost_manager = getattr(tracker_class, "rehost_images_manager", None)
-    if isinstance(policy, ImageHostPolicy) and rehost_manager is not None:
-        await rehost_manager.check_policy(meta, tracker_class.tracker, policy)
+    if await _apply_declarative_policy(meta, tracker_class):
         return
-
-    check_hosts = getattr(tracker_class, "check_image_hosts", None)
-    if callable(check_hosts):
-        outcome = check_hosts(meta)
-        if inspect.isawaitable(outcome):
-            await outcome
+    await _apply_legacy_image_host_check(meta, tracker_class)
 
 
 def _image_host(raw_url: str, url_host_mapping: Mapping[str, str]) -> str:
@@ -291,23 +316,33 @@ def _collection_directory(meta: Meta, collection_name: str) -> Path | None:
     return None
 
 
-async def _local_image_path(
+def _existing_local_path(image: Mapping[str, Any]) -> Path | None:
+    local_file_path = _as_str(image.get("local_file_path"))
+    if not local_file_path:
+        return None
+    path = Path(local_file_path)
+    return path if path.is_file() else None
+
+
+def _collection_candidate_path(
     meta: Meta, collection_name: str, image: Mapping[str, Any]
 ) -> Path | None:
-    local_file_path = _as_str(image.get("local_file_path"))
-    if local_file_path:
-        path = Path(local_file_path)
-        if path.is_file():
-            return path
-
     raw_url = _as_str(image.get("raw_url"))
     directory = _collection_directory(meta, collection_name)
     filename = Path(urlparse(raw_url or "").path).name
-    if directory and filename:
-        candidate = directory / filename
-        if candidate.is_file():
-            return candidate
-    return None
+    if directory is None or not filename:
+        return None
+    candidate = directory / filename
+    return candidate if candidate.is_file() else None
+
+
+async def _local_image_path(
+    meta: Meta, collection_name: str, image: Mapping[str, Any]
+) -> Path | None:
+    local = _existing_local_path(image)
+    if local is not None:
+        return local
+    return _collection_candidate_path(meta, collection_name, image)
 
 
 async def _download_image_for_rehost(
