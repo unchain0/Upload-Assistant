@@ -4,7 +4,7 @@ import re
 from collections.abc import Callable, Mapping
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Never, cast
 
 import anitopy
 import cli_ui
@@ -603,127 +603,168 @@ class SeasonEpisodeManager:
 
         return meta
 
+    @staticmethod
+    def _missing_episode_labels(
+        completeness: Mapping[str, Any],
+    ) -> list[str]:
+        try:
+            return [
+                f"S{s:02d}E{e:02d}"
+                for s, e in completeness["missing_episodes"]
+            ]
+        except ValueError:
+            logger.error(
+                "[red]Error determining missing episodes, you should double check the pack manually."
+            )
+            return ["Unknown"]
+
+    @staticmethod
+    def _log_incomplete_pack(missing_list: list[str], meta: Meta) -> None:
+        if "Unknown" in missing_list:
+            logger.warning(
+                "[red]Warning: Season pack appears incomplete (missing episodes could not be determined)."
+            )
+        else:
+            logger.warning("[red]Warning: Season pack appears incomplete!")
+            logger.info(f"[yellow]Missing episodes: {', '.join(missing_list)}")
+        if meta.unattended and not meta.unattended_confirm:
+            logger.info(
+                "[yellow]Unattended mode: continuing despite incomplete season pack (no confirmation)."
+            )
+
+    @staticmethod
+    def _show_file_range(filelist: list[Any], start: int, end: int) -> int:
+        batch = filelist[start:end]
+        for index, file in enumerate(batch, start=start + 1):
+            logger.info(f"[cyan]  {index:2d}. {Path(file).name}")
+        return start + len(batch)
+
+    @staticmethod
+    def _should_prompt_more(
+        files_shown: int, total_files: int, meta: Meta
+    ) -> bool:
+        if files_shown >= total_files:
+            return False
+        return not meta.unattended or meta.unattended_confirm
+
+    @staticmethod
+    async def _pack_file_prompt(remaining_files: int, batch_size: int) -> str:
+        if remaining_files > batch_size:
+            response = await prompt_in_thread(
+                cli_ui.ask_string,
+                f"Show (n)ext {batch_size} files, (a)ll remaining files, (c)ontinue with incomplete pack, or (q)uit? (n/a/c/Q): ",
+            )
+        else:
+            response = await prompt_in_thread(
+                cli_ui.ask_string,
+                f"Show (a)ll remaining {remaining_files} files, (c)ontinue with incomplete pack, or (q)uit? (a/c/Q): ",
+            )
+        return (response or "").lower()
+
+    @staticmethod
+    def _abort_incomplete_pack() -> Never:
+        logger.info(
+            "[red]Aborting torrent creation due to incomplete season pack"
+        )
+        raise OperationAbortedError(
+            "Torrent creation cancelled because the season pack is incomplete."
+        ) from None
+
+    @classmethod
+    def _apply_pack_file_response(
+        cls,
+        response: str,
+        filelist: list[Any],
+        files_shown: int,
+        batch_size: int,
+        remaining_files: int,
+    ) -> tuple[int, bool]:
+        if response == "n" and remaining_files > batch_size:
+            return (
+                cls._show_file_range(
+                    filelist, files_shown, files_shown + batch_size
+                ),
+                False,
+            )
+        if response == "a":
+            return cls._show_file_range(
+                filelist, files_shown, len(filelist)
+            ), False
+        if response == "c":
+            return files_shown, True
+        return cls._abort_incomplete_pack()
+
+    @classmethod
+    async def _review_pack_files(cls, meta: Meta) -> bool:
+        filelist = list(meta.filelist)
+        batch_size = 15
+        logger.info(f"[cyan]Filelist ({len(filelist)} files):")
+        files_shown = cls._show_file_range(filelist, 0, batch_size)
+        while cls._should_prompt_more(files_shown, len(filelist), meta):
+            remaining_files = len(filelist) - files_shown
+            logger.info(f"[yellow]... and {remaining_files} more files")
+            response = await cls._pack_file_prompt(remaining_files, batch_size)
+            files_shown, just_go = cls._apply_pack_file_response(
+                response,
+                filelist,
+                files_shown,
+                batch_size,
+                remaining_files,
+            )
+            if just_go:
+                return True
+        return False
+
+    @staticmethod
+    def _needs_pack_confirmation(meta: Meta, just_go: bool) -> bool:
+        if just_go:
+            return False
+        return not meta.unattended or meta.unattended_confirm
+
+    @classmethod
+    async def _confirm_incomplete_pack(cls, meta: Meta, just_go: bool) -> None:
+        if not cls._needs_pack_confirmation(meta, just_go):
+            return
+        response = await prompt_in_thread(
+            cli_ui.ask_string,
+            "Continue with incomplete season pack? (y/N): ",
+        )
+        if (response or "").lower() != "y":
+            cls._abort_incomplete_pack()
+
+    @classmethod
+    async def _review_incomplete_pack(
+        cls, completeness: Mapping[str, Any], meta: Meta
+    ) -> None:
+        missing_list = cls._missing_episode_labels(completeness)
+        cls._log_incomplete_pack(missing_list, meta)
+        if "Unknown" in missing_list:
+            return
+        just_go = await cls._review_pack_files(meta)
+        await cls._confirm_incomplete_pack(meta, just_go)
+
+    @staticmethod
+    def _log_pack_tags(completeness: Mapping[str, Any]) -> None:
+        if completeness["consistent_tags"]:
+            return
+        logger.warning(
+            "[yellow]Warning: Multiple group tags detected in season pack!"
+        )
+        tags_found = cast(Mapping[str, list[str]], completeness["tags_found"])
+        for tag, files in tags_found.items():
+            logger.info(f"[cyan]Tag: {tag} found in files:")
+            for file in files:
+                logger.info(f"[cyan]  - {file}")
+
     async def check_season_pack_completeness(self, meta: Meta) -> None:
         completeness = cast(
             Mapping[str, Any], await self.check_season_pack_detail(meta)
         )
-        if not completeness["complete"]:
-            just_go = False
-            unattended = meta.unattended
-            unattended_confirm = meta.unattended_confirm
-            try:
-                missing_list = [
-                    f"S{s:02d}E{e:02d}"
-                    for s, e in completeness["missing_episodes"]
-                ]
-            except ValueError:
-                logger.error(
-                    "[red]Error determining missing episodes, you should double check the pack manually."
-                )
-                missing_list = ["Unknown"]
-            if "Unknown" not in missing_list:
-                logger.warning("[red]Warning: Season pack appears incomplete!")
-                logger.info(
-                    f"[yellow]Missing episodes: {', '.join(missing_list)}"
-                )
-            else:
-                logger.warning(
-                    "[red]Warning: Season pack appears incomplete (missing episodes could not be determined)."
-                )
-
-            # In unattended mode with no confirmation prompts, ensure we always log that we're proceeding.
-            if unattended and not unattended_confirm:
-                logger.info(
-                    "[yellow]Unattended mode: continuing despite incomplete season pack (no confirmation)."
-                )
-
-            if "Unknown" not in missing_list:
-                # Show first 15 files from filelist
-                filelist = meta.filelist
-                files_shown = 0
-                batch_size = 15
-
-                logger.info(f"[cyan]Filelist ({len(filelist)} files):")
-                for i, file in enumerate(filelist[:batch_size]):
-                    logger.info(f"[cyan]  {i + 1:2d}. {Path(file).name}")
-
-                files_shown = min(batch_size, len(filelist))
-
-                # Loop to handle showing more files in batches
-                while files_shown < len(filelist) and (
-                    not unattended or unattended_confirm
-                ):
-                    remaining_files = len(filelist) - files_shown
-                    logger.info(
-                        f"[yellow]... and {remaining_files} more files"
-                    )
-
-                    if remaining_files > batch_size:
-                        response = await prompt_in_thread(
-                            cli_ui.ask_string,
-                            f"Show (n)ext {batch_size} files, (a)ll remaining files, (c)ontinue with incomplete pack, or (q)uit? (n/a/c/Q): ",
-                        )
-                    else:
-                        response = await prompt_in_thread(
-                            cli_ui.ask_string,
-                            f"Show (a)ll remaining {remaining_files} files, (c)ontinue with incomplete pack, or (q)uit? (a/c/Q): ",
-                        )
-
-                    if (
-                        response or ""
-                    ).lower() == "n" and remaining_files > batch_size:
-                        # Show next batch of files
-                        next_batch = filelist[
-                            files_shown : files_shown + batch_size
-                        ]
-                        for i, file in enumerate(next_batch):
-                            logger.info(
-                                f"[cyan]  {files_shown + i + 1:2d}. {Path(file).name}"
-                            )
-                        files_shown += len(next_batch)
-                    elif (response or "").lower() == "a":
-                        # Show all remaining files
-                        remaining_batch = filelist[files_shown:]
-                        for i, file in enumerate(remaining_batch):
-                            logger.info(
-                                f"[cyan]  {files_shown + i + 1:2d}. {Path(file).name}"
-                            )
-                        files_shown = len(filelist)
-                    elif (response or "").lower() == "c":
-                        just_go = True
-                        break  # Continue with incomplete pack
-                    else:  # 'q' or any other input
-                        logger.info(
-                            "[red]Aborting torrent creation due to incomplete season pack"
-                        )
-                        raise OperationAbortedError(
-                            "Torrent creation cancelled because the season pack is incomplete."
-                        ) from None
-
-                # Final confirmation if not in unattended mode
-                if (not unattended or unattended_confirm) and not just_go:
-                    response = await prompt_in_thread(
-                        cli_ui.ask_string,
-                        "Continue with incomplete season pack? (y/N): ",
-                    )
-                    if (response or "").lower() != "y":
-                        logger.info(
-                            "[red]Aborting torrent creation due to incomplete season pack"
-                        )
-                        raise OperationAbortedError(
-                            "Torrent creation cancelled because the season pack is incomplete."
-                        ) from None
-        else:
+        if completeness["complete"]:
             logger.debug("[green]Season pack completeness verified")
-
-        if not completeness["consistent_tags"]:
-            logger.warning(
-                "[yellow]Warning: Multiple group tags detected in season pack!"
-            )
-            for tag, files in completeness["tags_found"].items():
-                logger.info(f"[cyan]Tag: {tag} found in files:")
-                for file in files:
-                    logger.info(f"[cyan]  - {file}")
+        else:
+            await self._review_incomplete_pack(completeness, meta)
+        self._log_pack_tags(completeness)
 
     async def check_season_pack_detail(self, meta: Meta) -> dict[str, Any]:
         if not meta.tv_pack:
