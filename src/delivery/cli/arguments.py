@@ -220,10 +220,7 @@ class Args:
     def __init__(self, config: dict[str, Any]) -> None:
         self.config = config
 
-    def parse(
-        self, argv: Sequence[str], meta: Meta
-    ) -> tuple[Meta, CustomArgumentParser, list[str]]:
-        input = list(argv)
+    def _build_parser(self) -> CustomArgumentParser:
         parser = CustomArgumentParser(
             usage="upload.py [path...] [options]",
         )
@@ -1584,276 +1581,438 @@ class Args:
             type=str,
             dest="archive_password",
         )
-        parsed_args_ns, before_args = parser.parse_known_args(input)
-        parsed_args: dict[str, Any] = vars(parsed_args_ns)
-        # console.print(args)
+        return parser
 
-        # Validation: the CLI needs a path unless site-upload mode supplies one.
-        if not parsed_args.get("path") and not parsed_args.get("site_upload"):
-            logger.error(
-                "[red]Error: Either a path must be provided or --site-upload must be specified.[/red]"
+    @staticmethod
+    def _require_path_or_site_upload(
+        parser: CustomArgumentParser, parsed_args: dict[str, Any]
+    ) -> None:
+        if parsed_args.get("path"):
+            return
+        if parsed_args.get("site_upload"):
+            parsed_args["path"] = ["dummy_path_for_site_upload"]
+            return
+        logger.error(
+            "[red]Error: Either a path must be provided or --site-upload must be specified.[/red]"
+        )
+        parser.print_help()
+        sys.exit(1)
+
+    @staticmethod
+    def _joined_path(parsed_args: dict[str, Any]) -> str:
+        raw = parsed_args.get("path", [])
+        values = cast(list[Any], raw) if isinstance(raw, list) else [raw]
+        return " ".join(str(value) for value in values)
+
+    @classmethod
+    def _needs_path_repair(
+        cls, parsed_args: dict[str, Any], before_args: list[str]
+    ) -> bool:
+        if not before_args:
+            return False
+        return not Path(cls._joined_path(parsed_args)).exists()
+
+    @staticmethod
+    def _before_args_contains_mkv(before_args: list[str]) -> bool:
+        return any(".mkv" in value for value in before_args)
+
+    @staticmethod
+    def _repaired_path_ready(joined: str, has_mkv: bool) -> bool:
+        if not Path(joined).exists():
+            return False
+        if not has_mkv:
+            return True
+        return ".mkv" in joined
+
+    @classmethod
+    def _repair_split_path(
+        cls, parsed_args: dict[str, Any], before_args: list[str]
+    ) -> None:
+        if not cls._needs_path_repair(parsed_args, before_args):
+            return
+        raw_paths = parsed_args.get("path", [])
+        paths = (
+            cast(list[Any], raw_paths) if isinstance(raw_paths, list) else []
+        )
+        has_mkv = cls._before_args_contains_mkv(before_args)
+        for extra in before_args:
+            paths.append(extra)
+            joined = cls._joined_path(parsed_args)
+            if cls._repaired_path_ready(joined, has_mkv):
+                break
+
+    @staticmethod
+    def _reset_manual_identifiers(meta: Meta) -> None:
+        if meta.tmdb_manual is None and meta.imdb_manual is None:
+            return
+        meta.tmdb_manual = meta.tmdb_id = meta.tmdb = meta.imdb_id = (
+            meta.imdb
+        ) = None
+
+    @staticmethod
+    def _string_list(value: list[Any]) -> list[str]:
+        return [str(item) for item in value]
+
+    @staticmethod
+    def _apply_manual_type(meta: Meta, value: str, _values: list[str]) -> None:
+        meta.manual_type = value.upper().replace("-", "")
+
+    @staticmethod
+    def _apply_tag(meta: Meta, value: str, _values: list[str]) -> None:
+        meta["tag"] = f"-{value}"
+
+    @staticmethod
+    def _apply_resolved_path(meta: Meta, key: str, value: str) -> None:
+        meta[key] = str(Path(value).resolve())
+
+    @staticmethod
+    def _apply_screens(meta: Meta, value: str, _values: list[str]) -> None:
+        meta["screens"] = int(value)
+
+    @staticmethod
+    def _apply_imghost(meta: Meta, value: str, _values: list[str]) -> None:
+        meta.imghost = value
+        meta.imghost_from_cli = True
+
+    @staticmethod
+    def _apply_season(meta: Meta, value: str, _values: list[str]) -> None:
+        meta.manual_season = value
+
+    @staticmethod
+    def _apply_episode(meta: Meta, value: str, _values: list[str]) -> None:
+        meta.manual_episode = value
+
+    @staticmethod
+    def _apply_manual_date(meta: Meta, value: str, _values: list[str]) -> None:
+        meta.manual_date = value
+
+    def _apply_tmdb_manual(
+        self, meta: Meta, value: str, _values: list[str]
+    ) -> None:
+        meta.category, meta.tmdb_manual = self.parse_tmdb_id(
+            value, meta.category
+        )
+
+    def _apply_tracker_ids(
+        self, meta: Meta, _value: str, values: list[str]
+    ) -> None:
+        for tracker_id_value in values:
+            tracker_name, torrent_id = self.parse_tracker_id(tracker_id_value)
+            meta.set_tracker_ids({tracker_name: torrent_id})
+
+    @staticmethod
+    def _apply_manual_cast(meta: Meta, value: str, _values: list[str]) -> None:
+        meta.manual_cast = [
+            name.strip() for name in value.split(",") if name.strip()
+        ]
+
+    @staticmethod
+    def _openlibrary_path_id(url: str) -> str | None:
+        parsed = urllib.parse.urlparse(url)
+        path_parts = parsed.path.strip("/").split("/")
+        for part in path_parts:
+            upper = part.upper()
+            if upper.startswith("OL") and upper.endswith(("W", "M")):
+                return part
+        return path_parts[-1] if path_parts else None
+
+    @classmethod
+    def _apply_openlibrary(
+        cls, meta: Meta, value: str, _values: list[str]
+    ) -> None:
+        if not value.startswith("http"):
+            meta.openlibrary = value
+            return
+        try:
+            parsed_id = cls._openlibrary_path_id(value)
+            if parsed_id:
+                meta.openlibrary = parsed_id
+        except Exception:
+            logger.info("[red]Unable to parse OpenLibrary ID from url")
+            logger.info("[red]Continuing without --openlibrary")
+
+    @staticmethod
+    def _steam_url_id(value: str) -> str:
+        try:
+            parsed = urllib.parse.urlparse(value)
+            match = re.search(r"/app/(\d+)", parsed.path)
+            return match.group(1) if match else value
+        except Exception:
+            logger.info(
+                "[red]Unable to parse Steam ID from URL. Using raw value.[/red]"
             )
-            parser.print_help()
+            return value
+
+    @classmethod
+    def _apply_steam_manual(
+        cls, meta: Meta, value: str, _values: list[str]
+    ) -> None:
+        meta.steam_manual = (
+            cls._steam_url_id(value) if value.startswith("http") else value
+        )
+
+    def _list_handlers(self) -> dict[str, Any]:
+        return {
+            "manual_type": self._apply_manual_type,
+            "tag": self._apply_tag,
+            "screens": self._apply_screens,
+            "imghost": self._apply_imghost,
+            "season": self._apply_season,
+            "episode": self._apply_episode,
+            "manual_date": self._apply_manual_date,
+            "tmdb_manual": self._apply_tmdb_manual,
+            "tracker_id": self._apply_tracker_ids,
+            "manual_cast": self._apply_manual_cast,
+            "openlibrary": self._apply_openlibrary,
+            "steam_manual": self._apply_steam_manual,
+        }
+
+    def _apply_list_value(
+        self, meta: Meta, key: str, value: list[Any]
+    ) -> None:
+        values = self._string_list(value)
+        joined = self.list_to_string(values)
+        if key in {"description_file", "comparison"}:
+            self._apply_resolved_path(meta, key, joined)
+            return
+        handler = self._list_handlers().get(key)
+        if handler is None:
+            meta[key] = joined
+            return
+        handler(meta, joined, values)
+
+    def _apply_general_value(self, meta: Meta, key: str, value: Any) -> None:
+        if value in (None, []):
+            return
+        if isinstance(value, list):
+            self._apply_list_value(meta, key, cast(list[Any], value))
+            return
+        meta[key] = value
+
+    @staticmethod
+    def _site_upload_list_value(values: list[str]) -> str | None:
+        if len(values) == 1:
+            return values[0].upper()
+        if not values:
+            return None
+        return str(values).upper()
+
+    @classmethod
+    def _site_upload_value(cls, value: Any) -> Any:
+        if isinstance(value, list):
+            values = [str(item) for item in cast(list[Any], value)]
+            return cls._site_upload_list_value(values)
+        if value is None:
+            return None
+        return str(value).upper()
+
+    @staticmethod
+    def _numeric_list_value(
+        values: list[str], converter: Any, default: Any
+    ) -> Any:
+        if len(values) == 1 and values[0] != "":
+            return converter(values[0])
+        return default
+
+    @staticmethod
+    def _numeric_scalar_is_empty(value: Any, zero_is_empty: bool) -> bool:
+        if value in (None, [], ""):
+            return True
+        return bool(zero_is_empty and value == 0)
+
+    @classmethod
+    def _single_numeric_value(
+        cls,
+        value: Any,
+        converter: Any,
+        default: Any,
+        *,
+        zero_is_empty: bool = False,
+    ) -> Any:
+        if isinstance(value, list):
+            values = [str(item) for item in cast(list[Any], value)]
+            return cls._numeric_list_value(values, converter, default)
+        if cls._numeric_scalar_is_empty(value, zero_is_empty):
+            return default
+        return converter(str(value))
+
+    @staticmethod
+    def _list_value_or_default(values: list[str], empty_default: Any) -> Any:
+        if len(values) == 1:
+            return values[0]
+        if not values:
+            return empty_default
+        return values
+
+    @classmethod
+    def _list_or_scalar(cls, value: Any, empty_default: Any) -> Any:
+        if isinstance(value, list):
+            values = [str(item) for item in cast(list[Any], value)]
+            return cls._list_value_or_default(values, empty_default)
+        if value in (None, [], ""):
+            return empty_default
+        return value
+
+    @staticmethod
+    def _tvmaze_value(value: Any) -> Any:
+        if isinstance(value, list):
+            values = [str(item) for item in cast(list[Any], value)]
+            return values[0] if len(values) == 1 else values
+        if value in (None, []):
+            return None
+        return value
+
+    @staticmethod
+    def _tracker_raw_value(value: Any) -> Any:
+        if not value:
+            return None
+        if not isinstance(value, list):
+            return value
+        values = cast(list[Any], value)
+        if len(values) == 1:
+            return values[0]
+        return values
+
+    @staticmethod
+    def _expanded_tracker_string(value: str) -> list[str]:
+        cleaned = value.strip("\"'")
+        return [item.upper() for item in cleaned.split(",")]
+
+    @staticmethod
+    def _expanded_tracker_list(values: list[Any]) -> list[str]:
+        expanded: list[str] = []
+        for item in values:
+            expanded.extend(str(item).upper().split(","))
+        return expanded
+
+    @classmethod
+    def _expanded_trackers(cls, value: Any) -> list[str]:
+        raw = cls._tracker_raw_value(value)
+        if raw is None:
+            return []
+        if isinstance(raw, str):
+            return cls._expanded_tracker_string(raw)
+        if isinstance(raw, list):
+            return cls._expanded_tracker_list(cast(list[Any], raw))
+        return [str(raw).upper()]
+
+    @staticmethod
+    def _special_handlers() -> dict[str, str]:
+        return {
+            "site_upload": "_post_site_upload",
+            "manual_year": "_post_manual_year",
+            "manual_edition": "_post_manual_edition",
+            "manual_dvds": "_post_manual_dvds",
+            "dupe_size_difference_tolerance": "_post_dupe_tolerance",
+            "freeleech": "_post_freeleech",
+            "manual_episode_title": "_post_manual_episode_title",
+            "tvmaze_manual": "_post_tvmaze_manual",
+            "trackers": "_post_trackers",
+        }
+
+    def _post_site_upload(self, meta: Meta, value: Any) -> None:
+        meta["site_upload"] = self._site_upload_value(value)
+
+    def _post_manual_year(self, meta: Meta, value: Any) -> None:
+        meta["manual_year"] = self._single_numeric_value(
+            value, int, 0, zero_is_empty=True
+        )
+
+    def _post_manual_edition(self, meta: Meta, value: Any) -> None:
+        meta["manual_edition"] = self._list_or_scalar(value, [])
+
+    def _post_manual_dvds(self, meta: Meta, value: Any) -> None:
+        meta["manual_dvds"] = self._list_or_scalar(value, "")
+
+    def _post_dupe_tolerance(self, meta: Meta, value: Any) -> None:
+        meta["dupe_size_difference_tolerance"] = self._single_numeric_value(
+            value, float, None
+        )
+
+    def _post_freeleech(self, meta: Meta, value: Any) -> None:
+        meta["freeleech"] = self._single_numeric_value(
+            value, int, 0, zero_is_empty=True
+        )
+
+    @staticmethod
+    def _post_manual_episode_title(meta: Meta, value: Any) -> None:
+        if value == []:
+            meta["manual_episode_title"] = ""
+
+    @staticmethod
+    def _post_tvmaze_manual(meta: Meta, value: Any) -> None:
+        resolved = Args._tvmaze_value(value)
+        if resolved is not None:
+            meta["tvmaze_manual"] = resolved
+
+    @staticmethod
+    def _post_trackers(meta: Meta, value: Any) -> None:
+        meta["trackers"] = Args._expanded_trackers(value)
+
+    def _apply_special_value(self, meta: Meta, key: str, value: Any) -> None:
+        method_name = self._special_handlers().get(key)
+        if method_name is None:
+            return
+        handler = getattr(self, method_name)
+        handler(meta, value)
+
+    def _apply_parsed_args(
+        self, meta: Meta, parsed_args: dict[str, Any]
+    ) -> None:
+        for key, value in parsed_args.items():
+            self._apply_general_value(meta, key, value)
+            self._apply_special_value(meta, key, value)
+
+    @staticmethod
+    def _apply_archive_password_flag(
+        meta: Meta, parsed_args: dict[str, Any]
+    ) -> None:
+        if not parsed_args.get("archive_password"):
+            return
+        meta.usenet_archive_password_is_random = (
+            str(meta.archive_password).lower() == "random"
+        )
+
+    @staticmethod
+    def _parse_manual_frames(meta: Meta) -> None:
+        value = meta.manual_frames
+        if value is None:
+            meta.manual_frames = None
+            return
+        try:
+            frames_str = str(value)
+            meta.manual_frames = [
+                int(item.strip())
+                for item in frames_str.split(",")
+                if item.strip()
+            ]
+        except ValueError:
+            logger.info(
+                "[red]Invalid format for manual_frames. Please provide a comma-separated list of integers."
+            )
+            logger.info(f"Processed manual_frames: {value}")
             sys.exit(1)
 
-        # For site upload mode, provide a dummy path if none given
-        if parsed_args.get("site_upload") and not parsed_args.get("path"):
-            parsed_args["path"] = ["dummy_path_for_site_upload"]
-
-        # manual_frames parsing happens after parsed_args are merged into meta
-        if (
-            len(before_args) >= 1
-            and not Path(" ".join(parsed_args["path"])).exists()
-        ):
-            for each in before_args:
-                parsed_args["path"].append(each)
-                if Path(" ".join(parsed_args["path"])).exists():
-                    if any(".mkv" in x for x in before_args):
-                        if ".mkv" in " ".join(parsed_args["path"]):
-                            break
-                    else:
-                        break
-
-        if meta.tmdb_manual is not None or meta.imdb_manual is not None:
-            meta.tmdb_manual = meta.tmdb_id = meta.tmdb = meta.imdb_id = (
-                meta.imdb
-            ) = None
-        for key in parsed_args:
-            value = parsed_args[key]
-            if value not in (None, []):
-                if isinstance(value, list):
-                    value_list = [str(item) for item in value]
-                    value2 = self.list_to_string(value_list)
-                    if key == "manual_type":
-                        meta.manual_type = value2.upper().replace("-", "")
-                    elif key == "tag":
-                        meta[key] = f"-{value2}"
-                    elif key == "description_file" or key == "comparison":
-                        meta[key] = str(Path(value2).resolve())
-                    elif key == "screens":
-                        meta[key] = int(value2)
-                    elif key == "imghost":
-                        meta.imghost = value2
-                        meta.imghost_from_cli = True
-                    elif key == "season":
-                        meta.manual_season = value2
-                    elif key == "episode":
-                        meta.manual_episode = value2
-                    elif key == "manual_date":
-                        meta.manual_date = value2
-                    elif key == "tmdb_manual":
-                        meta.category, meta.tmdb_manual = self.parse_tmdb_id(
-                            value2, meta.category
-                        )
-                    elif key == "tracker_id":
-                        for tracker_id_value in value_list:
-                            tracker_name, torrent_id = self.parse_tracker_id(
-                                tracker_id_value
-                            )
-                            meta.set_tracker_ids({tracker_name: torrent_id})
-                    elif key == "manual_cast":
-                        meta.manual_cast = [
-                            name.strip()
-                            for name in value2.split(",")
-                            if name.strip()
-                        ]
-                    elif key == "openlibrary":
-                        if value2.startswith("http"):
-                            parsed = urllib.parse.urlparse(value2)
-                            try:
-                                path_parts = parsed.path.strip("/").split("/")
-                                for part in path_parts:
-                                    if part.upper().startswith("OL") and (
-                                        part.upper().endswith("W")
-                                        or part.upper().endswith("M")
-                                    ):
-                                        meta.openlibrary = part
-                                        break
-                                else:
-                                    meta.openlibrary = path_parts[-1]
-                            except Exception:
-                                logger.info(
-                                    "[red]Unable to parse OpenLibrary ID from url"
-                                )
-                                logger.info(
-                                    "[red]Continuing without --openlibrary"
-                                )
-                        else:
-                            meta.openlibrary = value2
-                    elif key == "steam_manual":
-                        if value2.startswith("http"):
-                            parsed = urllib.parse.urlparse(value2)
-                            try:
-                                match = re.search(r"/app/(\d+)", parsed.path)
-                                if match:
-                                    meta.steam_manual = match.group(1)
-                                else:
-                                    meta.steam_manual = value2
-                            except Exception:
-                                logger.info(
-                                    "[red]Unable to parse Steam ID from URL. Using raw value.[/red]"
-                                )
-                                meta.steam_manual = value2
-                        else:
-                            meta.steam_manual = value2
-
-                    else:
-                        meta[key] = value2
-                else:
-                    meta[key] = value
-            if key == "site_upload":
-                if isinstance(value, list):
-                    value_list = [str(item) for item in value]
-                    if len(value_list) == 1:
-                        meta[key] = (
-                            value_list[0]
-                        ).upper()  # Extract the tracker acronym and normalize it
-                    elif value_list:
-                        meta[key] = str(value_list).upper()
-                    else:
-                        meta[key] = None
-                elif value is not None:
-                    meta[key] = (value).upper()
-                else:
-                    meta[key] = None
-            if key == "manual_year":
-                if isinstance(value, list):
-                    value_list = [str(item) for item in value]
-                    if len(value_list) == 1 and value_list[0] != "":
-                        meta[key] = int(value_list[0])
-                    else:
-                        meta[key] = 0
-                elif value not in (None, [], 0, ""):
-                    meta[key] = int(str(value))
-                else:
-                    meta[key] = 0
-            if key in ("manual_edition"):
-                if isinstance(value, list):
-                    value_list = [str(item) for item in value]
-                    if len(value_list) == 1:
-                        meta[key] = value_list[0]
-                    else:
-                        meta[key] = value_list
-                else:
-                    meta[key] = value
-            if key in ("manual_dvds"):
-                if isinstance(value, list):
-                    value_list = [str(item) for item in value]
-                    if len(value_list) == 1:
-                        meta[key] = value_list[0]
-                    elif value_list:
-                        meta[key] = value_list
-                    else:
-                        meta[key] = ""
-                elif value not in (None, [], ""):
-                    meta[key] = value
-                else:
-                    meta[key] = ""
-            if key == "dupe_size_difference_tolerance":
-                if isinstance(value, list):
-                    value_list = [str(item) for item in value]
-                    if len(value_list) == 1 and value_list[0] != "":
-                        meta[key] = float(value_list[0])
-                    else:
-                        meta[key] = None
-                elif value not in (None, [], ""):
-                    meta[key] = float(str(value))
-                else:
-                    meta[key] = None
-            if key in ("freeleech"):
-                if isinstance(value, list):
-                    value_list = [str(item) for item in value]
-                    if len(value_list) == 1 and value_list[0] != "":
-                        meta[key] = int(value_list[0])
-                    else:
-                        meta[key] = 0
-                elif value not in (None, [], 0, ""):
-                    meta[key] = int(str(value))
-                else:
-                    meta[key] = 0
-            if key in ["manual_episode_title"] and value == []:
-                meta[key] = ""
-            if key in ["tvmaze_manual"]:
-                if isinstance(value, list):
-                    value_list = [str(item) for item in value]
-                    if len(value_list) == 1:
-                        meta[key] = value_list[0]
-                    else:
-                        meta[key] = value_list
-                elif value not in (None, []):
-                    meta[key] = value
-            if key == "trackers":
-                if value:
-                    # Extract from list if it's a single-item list (from nargs=1)
-                    if isinstance(value, list):
-                        value_list = value
-                        tracker_value: Any = (
-                            value_list[0]
-                            if len(value_list) == 1
-                            else value_list
-                        )
-                    else:
-                        tracker_value = value
-
-                    if isinstance(tracker_value, str):
-                        tracker_value = tracker_value.strip("\"'")
-
-                        # Split by comma if present
-                        if "," in tracker_value:
-                            meta[key] = [
-                                (t).upper() for t in tracker_value.split(",")
-                            ]
-                        else:
-                            meta[key] = [(tracker_value).upper()]
-                    elif isinstance(tracker_value, list):
-                        # Handle list of strings
-                        expanded: list[str] = []
-                        for t in tracker_value:
-                            t_str = str(t)
-                            if "," in t_str:
-                                expanded.extend(
-                                    [(x).upper() for x in t_str.split(",")]
-                                )
-                            else:
-                                expanded.append((t_str).upper())
-                        meta[key] = expanded
-                    else:
-                        meta[key] = [(str(tracker_value)).upper()]
-                else:
-                    meta[key] = []
-            else:
-                meta[key] = meta.get(key)
-            # if key == 'help' and value == True:
-            # parser.print_help()
-
-        if parsed_args.get("archive_password"):
-            meta.usenet_archive_password_is_random = (
-                str(meta.archive_password).lower() == "random"
-            )
-
-        manual_frames_value = meta.manual_frames
-        if manual_frames_value is not None:
-            try:
-                frames_str = str(manual_frames_value)
-                meta.manual_frames = [
-                    int(t.strip()) for t in frames_str.split(",") if t.strip()
-                ]
-            except ValueError:
-                logger.info(
-                    "[red]Invalid format for manual_frames. Please provide a comma-separated list of integers."
-                )
-                logger.info(f"Processed manual_frames: {manual_frames_value}")
-                sys.exit(1)
-        else:
-            meta.manual_frames = None
-
-        # Apply book metadata overrides: --author and --book-title map to meta keys
-        # used by trackers like CAPYBARABR when constructing the torrent name for BOOK category.
+    def _finalize_parsed_meta(
+        self, meta: Meta, parsed_args: dict[str, Any]
+    ) -> None:
+        self._apply_archive_password_flag(meta, parsed_args)
+        self._parse_manual_frames(meta)
         self._apply_book_meta_overrides(meta)
-
-        # Apply game metadata overrides: --platform maps to platforms key
         self._apply_game_meta_overrides(meta)
 
+    def parse(
+        self, argv: Sequence[str], meta: Meta
+    ) -> tuple[Meta, CustomArgumentParser, list[str]]:
+        input_args = list(argv)
+        parser = self._build_parser()
+        parsed_args_ns, before_args = parser.parse_known_args(input_args)
+        parsed_args: dict[str, Any] = vars(parsed_args_ns)
+        self._require_path_or_site_upload(parser, parsed_args)
+        self._repair_split_path(parsed_args, before_args)
+        self._reset_manual_identifiers(meta)
+        self._apply_parsed_args(meta, parsed_args)
+        self._finalize_parsed_meta(meta, parsed_args)
         return meta, parser, before_args
 
     @staticmethod
