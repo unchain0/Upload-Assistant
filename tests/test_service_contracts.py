@@ -7,14 +7,12 @@ boundary doubles so every service stays importable and side effects stay local.
 
 from __future__ import annotations
 
-import ast
 import asyncio
 import copy
 import importlib
 import inspect
 import pkgutil
 import subprocess
-import textwrap
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
@@ -651,125 +649,6 @@ def _safe_callable(function: Callable[..., object]) -> bool:
         "kill_all_threads",
     }
     return name not in blocked_names
-
-
-def _literal_values(node: ast.AST) -> list[object]:
-    if isinstance(node, ast.Constant) and isinstance(
-        node.value, (str, int, float, bool, type(None))
-    ):
-        return [node.value]
-    if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
-        values: list[object] = []
-        for element in node.elts:
-            values.extend(_literal_values(element))
-        return values
-    return []
-
-
-def _scenario_target(
-    node: ast.AST, meta_names: set[str], parameter_names: set[str]
-) -> tuple[str, str] | None:
-    if isinstance(node, ast.Name) and node.id in parameter_names:
-        return ("parameter", node.id)
-    if (
-        isinstance(node, ast.Attribute)
-        and isinstance(node.value, ast.Name)
-        and node.value.id in meta_names
-    ):
-        return ("meta", node.attr)
-    if (
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "get"
-        and isinstance(node.func.value, ast.Name)
-        and node.func.value.id in meta_names
-        and node.args
-        and isinstance(node.args[0], ast.Constant)
-        and isinstance(node.args[0].value, str)
-    ):
-        return ("meta", node.args[0].value)
-    if (
-        isinstance(node, ast.Subscript)
-        and isinstance(node.value, ast.Name)
-        and node.value.id in meta_names
-    ):
-        key = node.slice
-        if isinstance(key, ast.Constant) and isinstance(key.value, str):
-            return ("meta", key.value)
-    return None
-
-
-def _literal_scenarios(
-    function: Callable[..., object], limit: int = 96
-) -> list[tuple[dict[str, object], dict[str, object]]]:
-    target = getattr(function, "__func__", function)
-    try:
-        tree = ast.parse(textwrap.dedent(inspect.getsource(target)))
-        signature = inspect.signature(function)
-    except OSError, TypeError, SyntaxError, ValueError:
-        return []
-    parameter_names = set(signature.parameters)
-    meta_names = {
-        name for name in parameter_names if "meta" in name.casefold()
-    }
-    meta_fields = set(Meta.__dataclass_fields__)
-    scenarios: list[tuple[dict[str, object], dict[str, object]]] = []
-    seen: set[tuple[str, str, str]] = set()
-
-    def add(kind: str, name: str, value: object) -> None:
-        if kind == "meta" and name not in meta_fields:
-            return
-        key = (kind, name, repr(value))
-        if key in seen or len(scenarios) >= limit:
-            return
-        seen.add(key)
-        scenarios.append(
-            ({name: value}, {}) if kind == "meta" else ({}, {name: value})
-        )
-
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Compare):
-            operands = [node.left, *node.comparators]
-            for index, operand in enumerate(operands):
-                target_info = _scenario_target(
-                    operand, meta_names, parameter_names
-                )
-                if target_info is None:
-                    continue
-                for other_index, other in enumerate(operands):
-                    if other_index == index:
-                        continue
-                    for value in _literal_values(other):
-                        add(*target_info, value)
-        elif isinstance(node, ast.If):
-            target_info = _scenario_target(
-                node.test, meta_names, parameter_names
-            )
-            if target_info is not None:
-                add(*target_info, True)
-                add(*target_info, False)
-            elif isinstance(node.test, ast.UnaryOp) and isinstance(
-                node.test.op, ast.Not
-            ):
-                target_info = _scenario_target(
-                    node.test.operand, meta_names, parameter_names
-                )
-                if target_info is not None:
-                    add(*target_info, True)
-                    add(*target_info, False)
-        elif (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.args
-        ):
-            if node.func.attr in {"startswith", "endswith"}:
-                target_info = _scenario_target(
-                    node.func.value, meta_names, parameter_names
-                )
-                if target_info is not None:
-                    for value in _literal_values(node.args[0]):
-                        add(*target_info, value)
-    return scenarios
 
 
 def _annotation_text(annotation: object) -> str:
