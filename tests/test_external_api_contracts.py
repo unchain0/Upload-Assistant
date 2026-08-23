@@ -313,6 +313,58 @@ class _Session:
         return None
 
 
+class _TvdbClient:
+    def __init__(self, *_args: object, **_kwargs: object) -> None:
+        return None
+
+    def search(
+        self, *_args: object, **_kwargs: object
+    ) -> list[dict[str, Any]]:
+        if _Response.scenario == "success":
+            return [{"tvdb_id": "456", "year": "2024", "aliases": []}]
+        return []
+
+    def get_series_episodes(self, *_args: object, **kwargs: object) -> object:
+        if _Response.scenario != "success":
+            return []
+        if int(kwargs.get("page", 0)) > 0:
+            return []
+        return {
+            "slug": "example-release-2024",
+            "episodes": [
+                {
+                    "id": 1,
+                    "seasonNumber": 1,
+                    "number": 1,
+                    "absoluteNumber": 1,
+                    "aired": "2024-01-01",
+                    "name": "Episode 1",
+                    "overview": "Overview",
+                }
+            ],
+        }
+
+    def get_series_extended(
+        self, *_args: object, **_kwargs: object
+    ) -> dict[str, Any]:
+        return {"aliases": [], "slug": "example-release-2024", "year": "2024"}
+
+    def get_series_translation(
+        self, *_args: object, **_kwargs: object
+    ) -> dict[str, Any]:
+        return {"name": "Example Release", "aliases": []}
+
+    def search_by_remote_id(
+        self, *_args: object, **_kwargs: object
+    ) -> list[dict[str, Any]]:
+        return []
+
+    def get_episode_extended(
+        self, *_args: object, **_kwargs: object
+    ) -> dict[str, Any]:
+        return {"remoteIds": []}
+
+
 def _config() -> dict[str, Any]:
     config = copy.deepcopy(example_config)
     config.setdefault("DEFAULT", {}).update(
@@ -392,17 +444,17 @@ def _modules() -> list[ModuleType]:
     ]
 
 
-def _value(
-    name: str,
-    annotation: object,
+_MISSING = object()
+
+
+def _external_values(
     meta: Meta,
     config: dict[str, Any],
     tmp_path: Path,
     profile: int,
-) -> object:
-    normalized = name.casefold().lstrip("_")
+) -> dict[str, object]:
     response = _Response().json()
-    values: dict[str, object] = {
+    return {
         "config": config,
         "meta": meta,
         "filename": meta.filename or "Example.Release.2024.mkv",
@@ -487,30 +539,71 @@ def _value(
         "items": list(response.get("items", [])),
         "links": ["https://www.blu-ray.com/movies/example/1/"],
     }
+
+
+def _scalar_external_value(annotation: object, profile: int) -> object:
+    values: dict[object, object] = {
+        bool: profile == 0,
+        int: 1,
+        float: 1.0,
+        str: "example",
+        date: datetime(2024, 1, 2, tzinfo=UTC),
+        datetime: datetime(2024, 1, 2, tzinfo=UTC),
+    }
+    return values.get(annotation, _MISSING)
+
+
+def _direct_external_composite(origin: object) -> object:
+    values = {
+        list: [_Response().json()],
+        dict: _Response().json(),
+        tuple: (),
+    }
+    return values.get(origin, _MISSING)
+
+
+def _external_optional_type(args: tuple[object, ...]) -> object | None:
+    if type(None) not in args:
+        return None
+    return next((item for item in args if item is not type(None)), str)
+
+
+def _composite_external_value(
+    name: str,
+    annotation: object,
+    meta: Meta,
+    config: dict[str, Any],
+    tmp_path: Path,
+    profile: int,
+) -> object:
+    origin = get_origin(annotation)
+    direct = _direct_external_composite(origin)
+    if direct is not _MISSING:
+        return direct
+    concrete = _external_optional_type(get_args(annotation))
+    if concrete is None:
+        return "example"
+    return _value(name, concrete, meta, config, tmp_path, profile)
+
+
+def _value(
+    name: str,
+    annotation: object,
+    meta: Meta,
+    config: dict[str, Any],
+    tmp_path: Path,
+    profile: int,
+) -> object:
+    normalized = name.casefold().lstrip("_")
+    values = _external_values(meta, config, tmp_path, profile)
     if normalized in values:
         return values[normalized]
-    origin = get_origin(annotation)
-    args = get_args(annotation)
-    if annotation is bool:
-        return profile == 0
-    if annotation is int:
-        return 1
-    if annotation is float:
-        return 1.0
-    if annotation is str:
-        return "example"
-    if annotation in {date, datetime}:
-        return datetime(2024, 1, 2, tzinfo=UTC)
-    if origin is list:
-        return [response]
-    if origin is dict:
-        return response
-    if origin is tuple:
-        return ()
-    if origin is not None and type(None) in args:
-        concrete = next((item for item in args if item is not type(None)), str)
-        return _value(normalized, concrete, meta, config, tmp_path, profile)
-    return "example"
+    scalar = _scalar_external_value(annotation, profile)
+    if scalar is not _MISSING:
+        return scalar
+    return _composite_external_value(
+        normalized, annotation, meta, config, tmp_path, profile
+    )
 
 
 _PROTECTED_SCENARIO_ARGUMENTS = frozenset(
@@ -528,26 +621,7 @@ _PROTECTED_SCENARIO_ARGUMENTS = frozenset(
 )
 
 
-def _coerce_override(
-    value: object,
-    annotation: object,
-    meta: Meta,
-    config: dict[str, Any],
-    tmp_path: Path,
-    profile: int,
-) -> object:
-    origin = get_origin(annotation)
-    args = get_args(annotation)
-    if annotation is Meta:
-        return meta
-    if annotation is TmdbCredential or "TmdbCredential" in str(annotation):
-        return TmdbCredential.parse("0123456789abcdef0123456789abcdef")
-    if annotation is Path:
-        return tmp_path / "Example.Release.2024.mkv"
-    if annotation is str:
-        return str(value)
-    if annotation is bool:
-        return bool(value)
+def _coerce_external_number(value: object, annotation: object) -> object:
     if annotation is int:
         try:
             return int(value)
@@ -558,27 +632,211 @@ def _coerce_override(
             return float(value)
         except TypeError, ValueError:
             return 1.0
+    return _MISSING
+
+
+def _coerce_external_meta(
+    _value: object, meta: Meta, _tmp_path: Path
+) -> object:
+    return meta
+
+
+def _coerce_external_path(
+    _value: object, _meta: Meta, tmp_path: Path
+) -> object:
+    return tmp_path / "Example.Release.2024.mkv"
+
+
+def _coerce_external_str(
+    value: object, _meta: Meta, _tmp_path: Path
+) -> object:
+    return str(value)
+
+
+def _coerce_external_bool(
+    value: object, _meta: Meta, _tmp_path: Path
+) -> object:
+    return bool(value)
+
+
+_EXTERNAL_SIMPLE_COERCERS: dict[
+    object, Callable[[object, Meta, Path], object]
+] = {
+    Meta: _coerce_external_meta,
+    Path: _coerce_external_path,
+    str: _coerce_external_str,
+    bool: _coerce_external_bool,
+}
+
+
+def _coerce_external_simple(
+    value: object, annotation: object, meta: Meta, tmp_path: Path
+) -> object:
+    if annotation is TmdbCredential or "TmdbCredential" in str(annotation):
+        return TmdbCredential.parse("0123456789abcdef0123456789abcdef")
+    coercer = _EXTERNAL_SIMPLE_COERCERS.get(annotation)
+    if coercer is None:
+        return _MISSING
+    return coercer(value, meta, tmp_path)
+
+
+def _coerce_external_list(
+    value: object,
+    args: tuple[object, ...],
+    meta: Meta,
+    config: dict[str, Any],
+    tmp_path: Path,
+    profile: int,
+) -> list[object]:
+    if isinstance(value, list):
+        return value
+    element = args[0] if args else object
+    return [_coerce_override(value, element, meta, config, tmp_path, profile)]
+
+
+def _coerce_external_mapping(value: object) -> object:
+    return value if isinstance(value, dict) else _Response().json()
+
+
+def _coerce_external_tuple(value: object) -> object:
+    return value if isinstance(value, tuple) else ()
+
+
+def _coerce_external_set(value: object) -> object:
+    return value if isinstance(value, set) else {value}
+
+
+_EXTERNAL_COLLECTION_COERCERS: dict[object, Callable[[object], object]] = {
+    dict: _coerce_external_mapping,
+    tuple: _coerce_external_tuple,
+    set: _coerce_external_set,
+}
+
+
+def _coerce_external_collection(
+    value: object,
+    origin: object,
+    args: tuple[object, ...],
+    meta: Meta,
+    config: dict[str, Any],
+    tmp_path: Path,
+    profile: int,
+) -> object:
     if origin is list:
-        if isinstance(value, list):
-            return value
-        element = args[0] if args else object
-        return [
-            _coerce_override(value, element, meta, config, tmp_path, profile)
-        ]
-    if origin is dict:
-        return value if isinstance(value, dict) else _Response().json()
-    if origin is tuple:
-        return value if isinstance(value, tuple) else ()
-    if origin is set:
-        return value if isinstance(value, set) else {value}
-    if origin is not None and type(None) in args and value is not None:
-        concrete = next(
-            (item for item in args if item is not type(None)), object
+        return _coerce_external_list(
+            value, args, meta, config, tmp_path, profile
         )
-        return _coerce_override(
-            value, concrete, meta, config, tmp_path, profile
+    coercer = _EXTERNAL_COLLECTION_COERCERS.get(origin)
+    if coercer is None:
+        return _MISSING
+    return coercer(value)
+
+
+def _coerce_external_optional(
+    value: object,
+    origin: object,
+    args: tuple[object, ...],
+    meta: Meta,
+    config: dict[str, Any],
+    tmp_path: Path,
+    profile: int,
+) -> object:
+    if value is None or origin is None:
+        return value
+    concrete = _external_optional_type(args)
+    if concrete is None:
+        return value
+    return _coerce_override(value, concrete, meta, config, tmp_path, profile)
+
+
+def _coerce_override(
+    value: object,
+    annotation: object,
+    meta: Meta,
+    config: dict[str, Any],
+    tmp_path: Path,
+    profile: int,
+) -> object:
+    simple = _coerce_external_simple(value, annotation, meta, tmp_path)
+    if simple is not _MISSING:
+        return simple
+    number = _coerce_external_number(value, annotation)
+    if number is not _MISSING:
+        return number
+    origin = get_origin(annotation)
+    args = get_args(annotation)
+    collection = _coerce_external_collection(
+        value, origin, args, meta, config, tmp_path, profile
+    )
+    if collection is not _MISSING:
+        return collection
+    return _coerce_external_optional(
+        value, origin, args, meta, config, tmp_path, profile
+    )
+
+
+def _safe_type_hints(target: object) -> dict[str, Any]:
+    try:
+        return get_type_hints(target)
+    except NameError, TypeError:
+        return {}
+
+
+def _include_parameter(
+    parameter: inspect.Parameter, overrides: Mapping[str, object]
+) -> bool:
+    if parameter.kind in {
+        inspect.Parameter.VAR_POSITIONAL,
+        inspect.Parameter.VAR_KEYWORD,
+    }:
+        return False
+    return (
+        parameter.default is inspect.Parameter.empty
+        or parameter.name in overrides
+    )
+
+
+def _external_parameter_value(
+    parameter: inspect.Parameter,
+    annotation: object,
+    overrides: Mapping[str, object],
+    meta: Meta,
+    config: dict[str, Any],
+    tmp_path: Path,
+    profile: int,
+) -> object:
+    value = _value(parameter.name, annotation, meta, config, tmp_path, profile)
+    if parameter.name not in overrides:
+        return value
+    return _coerce_override(
+        overrides[parameter.name], annotation, meta, config, tmp_path, profile
+    )
+
+
+def _external_invocation_arguments(
+    function: Callable[..., object],
+    meta: Meta,
+    config: dict[str, Any],
+    tmp_path: Path,
+    profile: int,
+    overrides: Mapping[str, object],
+) -> tuple[list[object], dict[str, object]]:
+    hint_target = function.__init__ if inspect.isclass(function) else function
+    hints = _safe_type_hints(hint_target)
+    args: list[object] = []
+    kwargs: dict[str, object] = {}
+    for parameter in inspect.signature(function).parameters.values():
+        if not _include_parameter(parameter, overrides):
+            continue
+        annotation = hints.get(parameter.name, parameter.annotation)
+        value = _external_parameter_value(
+            parameter, annotation, overrides, meta, config, tmp_path, profile
         )
-    return value
+        if parameter.kind is inspect.Parameter.KEYWORD_ONLY:
+            kwargs[parameter.name] = value
+        else:
+            args.append(value)
+    return args, kwargs
 
 
 async def _invoke(
@@ -589,51 +847,38 @@ async def _invoke(
     profile: int,
     overrides: Mapping[str, object] | None = None,
 ) -> object:
-    args: list[object] = []
-    kwargs: dict[str, object] = {}
-    overrides = overrides or {}
-    hint_target = function.__init__ if inspect.isclass(function) else function
-    try:
-        hints = get_type_hints(hint_target)
-    except NameError, TypeError:
-        hints = {}
-    for parameter in inspect.signature(function).parameters.values():
-        if parameter.kind in {
-            inspect.Parameter.VAR_POSITIONAL,
-            inspect.Parameter.VAR_KEYWORD,
-        }:
-            continue
-        if (
-            parameter.default is not inspect.Parameter.empty
-            and parameter.name not in overrides
-        ):
-            continue
-        annotation = hints.get(parameter.name, parameter.annotation)
-        value = overrides.get(
-            parameter.name,
-            _value(
-                parameter.name, annotation, meta, config, tmp_path, profile
-            ),
-        )
-        if parameter.name in overrides:
-            value = _coerce_override(
-                value, annotation, meta, config, tmp_path, profile
-            )
-        if parameter.kind is inspect.Parameter.KEYWORD_ONLY:
-            kwargs[parameter.name] = value
-        else:
-            args.append(value)
+    resolved_overrides = overrides or {}
+    args, kwargs = _external_invocation_arguments(
+        function, meta, config, tmp_path, profile, resolved_overrides
+    )
     result = function(*args, **kwargs)
     if inspect.isawaitable(result):
         return await asyncio.wait_for(result, timeout=0.1)
     return result
 
 
-def test_external_api_catalog_uses_deterministic_boundary_fakes(
-    tmp_path: Path, monkeypatch: Any
+_EXTERNAL_SCENARIOS = (
+    "success",
+    "empty",
+    "not_found",
+    "unauthorized",
+    "rate_limited",
+    "server_error",
+    "malformed",
+)
+
+
+async def _no_sleep(
+    _delay: float = 0, *_args: object, **_kwargs: object
 ) -> None:
-    config = _config()
-    meta = _meta(tmp_path)
+    return None
+
+
+async def _affirmative_prompt(*_args: object, **_kwargs: object) -> bool:
+    return True
+
+
+def _patch_external_clients(monkeypatch: Any) -> None:
     monkeypatch.setattr(httpx, "AsyncClient", _AsyncClient)
     monkeypatch.setattr(requests, "Session", _Session)
     monkeypatch.setattr(requests, "get", _Session().get)
@@ -649,183 +894,367 @@ def test_external_api_catalog_uses_deterministic_boundary_fakes(
     )
     monkeypatch.setattr(cli_ui, "ask_string", lambda *_args, **_kwargs: "1")
     monkeypatch.setattr("builtins.input", lambda *_args, **_kwargs: "1")
+    monkeypatch.setattr(asyncio, "sleep", _no_sleep)
 
-    async def no_sleep(
-        _delay: float = 0, *_args: object, **_kwargs: object
-    ) -> None:
+
+def _patch_external_module(module: ModuleType, monkeypatch: Any) -> None:
+    if hasattr(module, "prompt_in_thread"):
+        monkeypatch.setattr(module, "prompt_in_thread", _affirmative_prompt)
+    if module.__name__.endswith(".tvdb"):
+        monkeypatch.setattr(module, "TVDB", _TvdbClient)
+        monkeypatch.setattr(module, "tvdb", _TvdbClient())
+
+
+def _module_functions(
+    module: ModuleType,
+) -> list[tuple[str, Callable[..., object]]]:
+    return [
+        (name, function)
+        for name, function in inspect.getmembers(module, inspect.isfunction)
+        if function.__module__ == module.__name__ and not name.startswith("__")
+    ]
+
+
+def _module_classes(module: ModuleType) -> list[tuple[str, type[Any]]]:
+    return [
+        (name, class_type)
+        for name, class_type in inspect.getmembers(module, inspect.isclass)
+        if class_type.__module__ == module.__name__
+    ]
+
+
+def _record_external_error(
+    qualified: str,
+    error: BaseException,
+    process_terminations: list[str],
+    validation_errors: list[str],
+) -> None:
+    if isinstance(error, KeyboardInterrupt | SystemExit):
+        process_terminations.append(f"{qualified}:{type(error).__name__}")
+        return
+    validation_errors.append(f"{qualified}:{type(error).__name__}:{error}")
+
+
+async def _run_external_call(
+    qualified: str,
+    function: Callable[..., object],
+    meta: Meta,
+    config: dict[str, Any],
+    tmp_path: Path,
+    profile: int,
+    process_terminations: list[str],
+    validation_errors: list[str],
+    overrides: Mapping[str, object] | None = None,
+) -> object | None:
+    try:
+        return await _invoke(
+            function, meta, config, tmp_path, profile, overrides
+        )
+    except BaseException as error:
+        _record_external_error(
+            qualified, error, process_terminations, validation_errors
+        )
         return None
 
-    async def affirmative_prompt(*_args: object, **_kwargs: object) -> bool:
-        return True
 
-    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+async def _instantiate_external_class(
+    module: ModuleType,
+    class_name: str,
+    class_type: type[Any],
+    meta: Meta,
+    config: dict[str, Any],
+    tmp_path: Path,
+    profile: int,
+    validation_errors: list[str],
+) -> object | None:
+    try:
+        return await _invoke(class_type, meta, config, tmp_path, profile)
+    except Exception as error:
+        validation_errors.append(
+            f"{module.__name__}.{class_name}.__init__:{type(error).__name__}:{error}"
+        )
+        return None
+
+
+async def _exercise_external_instance_scenario(
+    module: ModuleType,
+    class_name: str,
+    instance: object,
+    meta: Meta,
+    config: dict[str, Any],
+    tmp_path: Path,
+    profile: int,
+    attempted: set[str],
+    process_terminations: list[str],
+    validation_errors: list[str],
+) -> None:
+    for method_name, method in inspect.getmembers(instance, callable):
+        if method_name.startswith("__"):
+            continue
+        qualified = f"{module.__name__}.{class_name}.{method_name}"
+        attempted.add(qualified)
+        await _run_external_call(
+            qualified,
+            method,
+            meta.copy(),
+            config,
+            tmp_path,
+            profile,
+            process_terminations,
+            validation_errors,
+        )
+
+
+async def _exercise_external_http_scenario(
+    module: ModuleType,
+    functions: list[tuple[str, Callable[..., object]]],
+    classes: list[tuple[str, type[Any]]],
+    scenario: str,
+    scenario_index: int,
+    meta: Meta,
+    config: dict[str, Any],
+    tmp_path: Path,
+    attempted: set[str],
+    process_terminations: list[str],
+    validation_errors: list[str],
+) -> None:
+    _Response.scenario = scenario
+    profile = scenario_index % 2
+    for name, function in functions:
+        qualified = f"{module.__name__}.{name}"
+        attempted.add(qualified)
+        await _run_external_call(
+            qualified,
+            function,
+            meta.copy(),
+            config,
+            tmp_path,
+            profile,
+            process_terminations,
+            validation_errors,
+        )
+    for class_name, class_type in classes:
+        instance = await _instantiate_external_class(
+            module,
+            class_name,
+            class_type,
+            meta.copy(),
+            config,
+            tmp_path,
+            profile,
+            validation_errors,
+        )
+        if instance is not None:
+            await _exercise_external_instance_scenario(
+                module,
+                class_name,
+                instance,
+                meta,
+                config,
+                tmp_path,
+                profile,
+                attempted,
+                process_terminations,
+                validation_errors,
+            )
+
+
+def _filtered_external_overrides(
+    overrides: Mapping[str, object],
+) -> dict[str, object]:
+    return {
+        key: value
+        for key, value in overrides.items()
+        if key not in _PROTECTED_SCENARIO_ARGUMENTS
+    }
+
+
+def _apply_external_meta_updates(
+    meta: Meta, updates: Mapping[str, object]
+) -> None:
+    for key, value in updates.items():
+        if key in Meta.__dataclass_fields__:
+            setattr(meta, key, value)
+
+
+async def _exercise_external_literal_scenarios(
+    qualified: str,
+    function: Callable[..., object],
+    meta: Meta,
+    config: dict[str, Any],
+    tmp_path: Path,
+    process_terminations: list[str],
+    validation_errors: list[str],
+) -> None:
+    for meta_updates, argument_overrides in literal_branch_scenarios(
+        function, Meta.__dataclass_fields__, limit=384
+    ):
+        scenario_meta = meta.copy()
+        _apply_external_meta_updates(scenario_meta, meta_updates)
+        await _run_external_call(
+            qualified,
+            function,
+            scenario_meta,
+            config,
+            tmp_path,
+            0,
+            process_terminations,
+            validation_errors,
+            _filtered_external_overrides(argument_overrides),
+        )
+
+
+async def _exercise_external_instance_literals(
+    module: ModuleType,
+    class_name: str,
+    instance: object,
+    meta: Meta,
+    config: dict[str, Any],
+    tmp_path: Path,
+    process_terminations: list[str],
+    validation_errors: list[str],
+) -> None:
+    for method_name, method in inspect.getmembers(instance, callable):
+        if method_name.startswith("__"):
+            continue
+        await _exercise_external_literal_scenarios(
+            f"{module.__name__}.{class_name}.{method_name}",
+            method,
+            meta,
+            config,
+            tmp_path,
+            process_terminations,
+            validation_errors,
+        )
+
+
+async def _exercise_external_module_literals(
+    module: ModuleType,
+    functions: list[tuple[str, Callable[..., object]]],
+    classes: list[tuple[str, type[Any]]],
+    meta: Meta,
+    config: dict[str, Any],
+    tmp_path: Path,
+    process_terminations: list[str],
+    validation_errors: list[str],
+) -> None:
+    _Response.scenario = "success"
+    for name, function in functions:
+        await _exercise_external_literal_scenarios(
+            f"{module.__name__}.{name}",
+            function,
+            meta,
+            config,
+            tmp_path,
+            process_terminations,
+            validation_errors,
+        )
+    for class_name, class_type in classes:
+        instance = await _instantiate_external_class(
+            module,
+            class_name,
+            class_type,
+            meta.copy(),
+            config,
+            tmp_path,
+            0,
+            validation_errors,
+        )
+        if instance is not None:
+            await _exercise_external_instance_literals(
+                module,
+                class_name,
+                instance,
+                meta,
+                config,
+                tmp_path,
+                process_terminations,
+                validation_errors,
+            )
+
+
+async def _exercise_external_module(
+    module: ModuleType,
+    monkeypatch: Any,
+    meta: Meta,
+    config: dict[str, Any],
+    tmp_path: Path,
+    attempted: set[str],
+    process_terminations: list[str],
+    validation_errors: list[str],
+) -> None:
+    _patch_external_module(module, monkeypatch)
+    functions = _module_functions(module)
+    classes = _module_classes(module)
+    for scenario_index, scenario in enumerate(_EXTERNAL_SCENARIOS):
+        await _exercise_external_http_scenario(
+            module,
+            functions,
+            classes,
+            scenario,
+            scenario_index,
+            meta,
+            config,
+            tmp_path,
+            attempted,
+            process_terminations,
+            validation_errors,
+        )
+    await _exercise_external_module_literals(
+        module,
+        functions,
+        classes,
+        meta,
+        config,
+        tmp_path,
+        process_terminations,
+        validation_errors,
+    )
+
+
+async def _exercise_external_modules(
+    modules: list[ModuleType],
+    monkeypatch: Any,
+    meta: Meta,
+    config: dict[str, Any],
+    tmp_path: Path,
+    attempted: set[str],
+    process_terminations: list[str],
+    validation_errors: list[str],
+) -> None:
+    for module in modules:
+        await _exercise_external_module(
+            module,
+            monkeypatch,
+            meta,
+            config,
+            tmp_path,
+            attempted,
+            process_terminations,
+            validation_errors,
+        )
+
+
+def test_external_api_catalog_uses_deterministic_boundary_fakes(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    config = _config()
+    meta = _meta(tmp_path)
+    _patch_external_clients(monkeypatch)
     attempted: set[str] = set()
     process_terminations: list[str] = []
     validation_errors: list[str] = []
-
-    async def exercise() -> None:
-        scenarios = (
-            "success",
-            "empty",
-            "not_found",
-            "unauthorized",
-            "rate_limited",
-            "server_error",
-            "malformed",
+    asyncio.run(
+        _exercise_external_modules(
+            _modules(),
+            monkeypatch,
+            meta,
+            config,
+            tmp_path,
+            attempted,
+            process_terminations,
+            validation_errors,
         )
-        for module in _modules():
-            if hasattr(module, "prompt_in_thread"):
-                monkeypatch.setattr(
-                    module, "prompt_in_thread", affirmative_prompt
-                )
-            functions = [
-                (name, function)
-                for name, function in inspect.getmembers(
-                    module, inspect.isfunction
-                )
-                if function.__module__ == module.__name__
-                and not name.startswith("__")
-            ]
-            classes = [
-                (class_name, class_type)
-                for class_name, class_type in inspect.getmembers(
-                    module, inspect.isclass
-                )
-                if class_type.__module__ == module.__name__
-            ]
-            for scenario_index, scenario in enumerate(scenarios):
-                _Response.scenario = scenario
-                profile = scenario_index % 2
-                for name, function in functions:
-                    attempted.add(f"{module.__name__}.{name}")
-                    try:
-                        await _invoke(
-                            function, meta.copy(), config, tmp_path, profile
-                        )
-                    except (KeyboardInterrupt, SystemExit) as error:
-                        process_terminations.append(
-                            f"{module.__name__}.{name}:{type(error).__name__}"
-                        )
-                    except Exception as error:
-                        validation_errors.append(
-                            f"{module.__name__}.{name}:{type(error).__name__}:{error}"
-                        )
-
-                for class_name, class_type in classes:
-                    try:
-                        instance = await _invoke(
-                            class_type, meta.copy(), config, tmp_path, profile
-                        )
-                    except Exception as error:
-                        validation_errors.append(
-                            f"{module.__name__}.{class_name}.__init__:{type(error).__name__}:{error}"
-                        )
-                        continue
-                    for method_name, method in inspect.getmembers(
-                        instance, callable
-                    ):
-                        if method_name.startswith("__"):
-                            continue
-                        attempted.add(
-                            f"{module.__name__}.{class_name}.{method_name}"
-                        )
-                        try:
-                            await _invoke(
-                                method, meta.copy(), config, tmp_path, profile
-                            )
-                        except (KeyboardInterrupt, SystemExit) as error:
-                            process_terminations.append(
-                                f"{module.__name__}.{class_name}.{method_name}:{type(error).__name__}"
-                            )
-                        except Exception as error:
-                            validation_errors.append(
-                                f"{module.__name__}.{class_name}.{method_name}:{type(error).__name__}:{error}"
-                            )
-
-            _Response.scenario = "success"
-            for name, function in functions:
-                for (
-                    meta_updates,
-                    argument_overrides,
-                ) in literal_branch_scenarios(
-                    function, Meta.__dataclass_fields__, limit=384
-                ):
-                    argument_overrides = {
-                        key: value
-                        for key, value in argument_overrides.items()
-                        if key not in _PROTECTED_SCENARIO_ARGUMENTS
-                    }
-                    scenario_meta = meta.copy()
-                    for key, value in meta_updates.items():
-                        if key in Meta.__dataclass_fields__:
-                            setattr(scenario_meta, key, value)
-                    try:
-                        await _invoke(
-                            function,
-                            scenario_meta,
-                            config,
-                            tmp_path,
-                            0,
-                            argument_overrides,
-                        )
-                    except (KeyboardInterrupt, SystemExit) as error:
-                        process_terminations.append(
-                            f"{module.__name__}.{name}:{type(error).__name__}"
-                        )
-                    except Exception as error:
-                        validation_errors.append(
-                            f"{module.__name__}.{name}:{type(error).__name__}:{error}"
-                        )
-
-            for class_name, class_type in classes:
-                try:
-                    instance = await _invoke(
-                        class_type, meta.copy(), config, tmp_path, 0
-                    )
-                except Exception as error:
-                    validation_errors.append(
-                        f"{module.__name__}.{class_name}.__init__:{type(error).__name__}:{error}"
-                    )
-                    continue
-                for method_name, method in inspect.getmembers(
-                    instance, callable
-                ):
-                    if method_name.startswith("__"):
-                        continue
-                    for (
-                        meta_updates,
-                        argument_overrides,
-                    ) in literal_branch_scenarios(
-                        method, Meta.__dataclass_fields__, limit=384
-                    ):
-                        argument_overrides = {
-                            key: value
-                            for key, value in argument_overrides.items()
-                            if key not in _PROTECTED_SCENARIO_ARGUMENTS
-                        }
-                        scenario_meta = meta.copy()
-                        for key, value in meta_updates.items():
-                            if key in Meta.__dataclass_fields__:
-                                setattr(scenario_meta, key, value)
-                        try:
-                            await _invoke(
-                                method,
-                                scenario_meta,
-                                config,
-                                tmp_path,
-                                0,
-                                argument_overrides,
-                            )
-                        except (KeyboardInterrupt, SystemExit) as error:
-                            process_terminations.append(
-                                f"{module.__name__}.{class_name}.{method_name}:{type(error).__name__}"
-                            )
-                        except Exception as error:
-                            validation_errors.append(
-                                f"{module.__name__}.{class_name}.{method_name}:{type(error).__name__}:{error}"
-                            )
-
-    asyncio.run(exercise())
-
+    )
     assert len(attempted) >= 140
     assert process_terminations == []
