@@ -183,6 +183,77 @@ def test_exact_match_edge_shapes(tmp_path: Path) -> None:
     asyncio.run(exercise())
 
 
+def _matrix_meta(tmp_path: Path, category: str, tracker: str) -> Meta:
+    title = {"GAME": "Super Game", "BOOK": "Target Book"}.get(
+        category, "Episode"
+    )
+    return _meta(
+        tmp_path,
+        category=category,
+        debug=tracker == "OTHER",
+        title=title,
+        author={"BOOK": "Alice"}.get(category, ""),
+        platform={"GAME": "PlayStation 5"}.get(category, "PC"),
+        type={"BOOK": "EPUB"}.get(category, "WEBDL"),
+        audiobook=(category, tracker) == ("BOOK", "OTHER"),
+        hdr={"AITHER": "HDR", "ANTHELION": "HDR"}.get(tracker, ""),
+        tag={"AITHER": "-INT"}.get(tracker, "-GROUP"),
+    )
+
+
+def _matrix_candidates(
+    meta: Meta, names: tuple[str, ...]
+) -> list[str | dict[str, Any]]:
+    large_files = [f"file-{item}.mkv" for item in range(12)]
+    file_shapes: tuple[list[str] | str, ...] = (
+        [Path(meta.filelist[0]).name],
+        [],
+        "one.mkv,two.mkv",
+        large_files,
+    )
+    candidates: list[str | dict[str, Any]] = []
+    for index, name in enumerate(names):
+        candidates.append(
+            _entry(
+                name,
+                id=index + 1,
+                size=(None, 100, "100 B", "bad")[index % 4],
+                files=file_shapes[index % 4],
+                file_count=(1, 0, 2, "invalid")[index % 4],
+                flags=([], ["HDR"], ["DV"], ["HDR", "DV"])[index % 4],
+                internal=index % 2,
+                trumpable=index == 0,
+                type=("WEB", "BluRay", "PC", "epub")[index % 4],
+                res=("1080p", "2160p", "720p", None)[index % 4],
+                description="x" * (320 if index == 3 else 20),
+            )
+        )
+    candidates.append("Plain string candidate")
+    return candidates
+
+
+async def _record_matrix_case(
+    checker: DupeChecker,
+    candidates: list[str | dict[str, Any]],
+    meta: Meta,
+    category: str,
+    tracker: str,
+    process_terminations: list[str],
+    semantic_rejections: list[str],
+) -> None:
+    try:
+        result = await checker.filter_dupes(candidates, meta, tracker)
+        assert isinstance(result, list)
+    except (KeyboardInterrupt, SystemExit) as error:
+        process_terminations.append(
+            f"{category}/{tracker}:{type(error).__name__}"
+        )
+    except (ValueError, TypeError, KeyError, AttributeError, IndexError) as error:
+        semantic_rejections.append(
+            f"{category}/{tracker}:{type(error).__name__}"
+        )
+
+
 def test_duplicate_filter_matrix_never_terminates_process(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -237,67 +308,18 @@ def test_duplicate_filter_matrix_never_terminates_process(
         checker = DupeChecker(_config())
         for category in categories:
             for tracker in trackers:
-                meta = _meta(
-                    tmp_path,
-                    category=category,
-                    debug=tracker == "OTHER",
-                    title="Super Game"
-                    if category == "GAME"
-                    else "Target Book"
-                    if category == "BOOK"
-                    else "Episode",
-                    author="Alice" if category == "BOOK" else "",
-                    platform="PlayStation 5" if category == "GAME" else "PC",
-                    type="EPUB" if category == "BOOK" else "WEBDL",
-                    audiobook=category == "BOOK" and tracker == "OTHER",
-                    hdr="HDR" if tracker in {"AITHER", "ANTHELION"} else "",
-                    tag="-INT" if tracker == "AITHER" else "-GROUP",
-                )
-                candidates: list[str | dict[str, Any]] = []
-                for index, name in enumerate(names):
-                    candidates.append(
-                        _entry(
-                            name,
-                            id=index + 1,
-                            size=(None, 100, "100 B", "bad")[index % 4],
-                            files=(
-                                [Path(meta.filelist[0]).name],
-                                [],
-                                "one.mkv,two.mkv",
-                                [f"file-{item}.mkv" for item in range(12)],
-                            )[index % 4],
-                            file_count=(1, 0, 2, "invalid")[index % 4],
-                            flags=([], ["HDR"], ["DV"], ["HDR", "DV"])[
-                                index % 4
-                            ],
-                            internal=index % 2,
-                            trumpable=index == 0,
-                            type=("WEB", "BluRay", "PC", "epub")[index % 4],
-                            res=("1080p", "2160p", "720p", None)[index % 4],
-                            description="x" * (320 if index == 3 else 20),
-                        )
-                    )
-                candidates.append("Plain string candidate")
+                meta = _matrix_meta(tmp_path, category, tracker)
+                candidates = _matrix_candidates(meta, names)
                 attempted += 1
-                try:
-                    result = await checker.filter_dupes(
-                        candidates, meta, tracker
-                    )
-                    assert isinstance(result, list)
-                except (KeyboardInterrupt, SystemExit) as error:
-                    process_terminations.append(
-                        f"{category}/{tracker}:{type(error).__name__}"
-                    )
-                except (
-                    ValueError,
-                    TypeError,
-                    KeyError,
-                    AttributeError,
-                    IndexError,
-                ) as error:
-                    semantic_rejections.append(
-                        f"{category}/{tracker}:{type(error).__name__}"
-                    )
+                await _record_matrix_case(
+                    checker,
+                    candidates,
+                    meta,
+                    category,
+                    tracker,
+                    process_terminations,
+                    semantic_rejections,
+                )
 
     asyncio.run(exercise())
     assert attempted == len(categories) * len(trackers)
