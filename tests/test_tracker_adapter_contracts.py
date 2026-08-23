@@ -17,7 +17,7 @@ import sys
 from collections.abc import AsyncIterator, Callable, Iterator, Mapping
 from pathlib import Path
 from types import TracebackType
-from typing import Any, ClassVar, Self, get_args, get_origin
+from typing import Any, ClassVar, Self, cast, get_args, get_origin
 
 import bencodepy
 import cli_ui
@@ -298,25 +298,25 @@ def _with_meta_updates(meta: Meta, updates: Mapping[str, object]) -> Meta:
     return updated
 
 
-def _argument(
-    name: str,
-    annotation: object,
-    meta: Meta,
-    tmp_path: Path,
-    overrides: Mapping[str, object] | None = None,
-) -> object:
-    normalized = name.casefold().lstrip("_")
-    if overrides and name in overrides and name not in _PROTECTED_ARGUMENTS:
-        return _coerce_override(overrides[name], annotation, meta, tmp_path)
-    values: dict[str, object] = {
+_MISSING = object()
+
+
+def _value_or(value: object, fallback: object) -> object:
+    return value if value else fallback
+
+
+def _named_argument_values(meta: Meta, tmp_path: Path) -> dict[str, object]:
+    response = _FakeResponse()
+    response_data = response.json()
+    return {
         "meta": meta,
-        "category": meta.category or "MOVIE",
-        "type": meta.type or "WEBDL",
-        "resolution": meta.resolution or "1080p",
-        "region": meta.region or "US",
-        "name": meta.name or "Example Release",
-        "title": meta.title or "Example Release",
-        "release_title": meta.name or "Example Release",
+        "category": _value_or(meta.category, "MOVIE"),
+        "type": _value_or(meta.type, "WEBDL"),
+        "resolution": _value_or(meta.resolution, "1080p"),
+        "region": _value_or(meta.region, "US"),
+        "name": _value_or(meta.name, "Example Release"),
+        "title": _value_or(meta.title, "Example Release"),
+        "release_title": _value_or(meta.name, "Example Release"),
         "desc": "[b]Example[/b] description",
         "description": "[b]Example[/b] description",
         "code": "US",
@@ -329,16 +329,16 @@ def _argument(
         "ptp_torrent_id": 1,
         "sub_langs": [1, 2],
         "config": _configured_catalog(),
-        "payload": _FakeResponse().json(),
-        "response": _FakeResponse(),
-        "response_data": _FakeResponse().json(),
-        "data": _FakeResponse().json(),
+        "payload": response_data,
+        "response": response,
+        "response_data": response_data,
+        "data": response_data,
         "mi": meta.mediainfo,
         "mediainfo": meta.mediainfo,
         "file_path": tmp_path / "sample.txt",
         "path": tmp_path / "sample.txt",
         "torrent_path": tmp_path / "tmp" / str(meta.uuid) / "BASE.torrent",
-        "author": meta.author or "Example Author",
+        "author": _value_or(meta.author, "Example Author"),
         "language": "English",
         "languages": ["English"],
         "filename": meta.filename,
@@ -357,32 +357,93 @@ def _argument(
         "headers": {},
         "params": {},
     }
-    if normalized in values:
-        return values[normalized]
-    origin = get_origin(annotation)
-    args = get_args(annotation)
-    if annotation is bool:
-        return False
-    if annotation is int:
-        return 1
-    if annotation is float:
-        return 1.0
-    if annotation is str:
-        return "example"
+
+
+def _scalar_argument(annotation: object) -> object:
+    values: dict[object, object] = {
+        bool: False,
+        int: 1,
+        float: 1.0,
+        str: "example",
+    }
+    return values.get(annotation, _MISSING)
+
+
+def _direct_collection_argument(annotation: object, origin: object) -> object:
     if origin is list:
         return ["example"]
     if origin is dict or annotation is Mapping:
         return {}
+    return _MISSING
+
+
+def _tuple_argument(
+    name: str,
+    args: tuple[object, ...],
+    meta: Meta,
+    tmp_path: Path,
+) -> tuple[object, ...]:
+    return tuple(
+        _argument(name, item, meta, tmp_path)
+        for item in args
+        if item is not Ellipsis
+    )
+
+
+def _optional_argument(
+    name: str,
+    args: tuple[object, ...],
+    meta: Meta,
+    tmp_path: Path,
+) -> object:
+    concrete = next((item for item in args if item is not type(None)), str)
+    return _argument(name, concrete, meta, tmp_path)
+
+
+def _composite_argument(
+    name: str,
+    annotation: object,
+    meta: Meta,
+    tmp_path: Path,
+) -> object:
+    origin = get_origin(annotation)
+    args = get_args(annotation)
+    direct = _direct_collection_argument(annotation, origin)
+    if direct is not _MISSING:
+        return direct
     if origin is tuple:
-        return tuple(
-            _argument(normalized, item, meta, tmp_path)
-            for item in args
-            if item is not Ellipsis
-        )
+        return _tuple_argument(name, args, meta, tmp_path)
     if origin is not None and type(None) in args:
-        concrete = next((item for item in args if item is not type(None)), str)
-        return _argument(normalized, concrete, meta, tmp_path)
+        return _optional_argument(name, args, meta, tmp_path)
     return "example"
+
+
+def _argument_override(
+    name: str, overrides: Mapping[str, object] | None
+) -> object:
+    if overrides is None or name in _PROTECTED_ARGUMENTS:
+        return _MISSING
+    return overrides.get(name, _MISSING)
+
+
+def _argument(
+    name: str,
+    annotation: object,
+    meta: Meta,
+    tmp_path: Path,
+    overrides: Mapping[str, object] | None = None,
+) -> object:
+    normalized = name.casefold().lstrip("_")
+    override = _argument_override(name, overrides)
+    if override is not _MISSING:
+        return _coerce_override(override, annotation, meta, tmp_path)
+    values = _named_argument_values(meta, tmp_path)
+    if normalized in values:
+        return values[normalized]
+    scalar = _scalar_argument(annotation)
+    if scalar is not _MISSING:
+        return scalar
+    return _composite_argument(normalized, annotation, meta, tmp_path)
 
 
 _PROTECTED_ARGUMENTS = frozenset(
@@ -390,23 +451,7 @@ _PROTECTED_ARGUMENTS = frozenset(
 )
 
 
-def _coerce_override(
-    value: object, annotation: object, meta: Meta, tmp_path: Path
-) -> object:
-    origin = get_origin(annotation)
-    args = get_args(annotation)
-    if annotation is Meta:
-        return meta
-    if annotation is Path:
-        return (
-            value
-            if isinstance(value, Path)
-            else tmp_path / str(value or "sample.txt")
-        )
-    if annotation is str:
-        return str(value)
-    if annotation is bool:
-        return bool(value)
+def _coerce_number(value: object, annotation: object) -> object:
     if annotation is int:
         try:
             return int(value)
@@ -417,23 +462,162 @@ def _coerce_override(
             return float(value)
         except TypeError, ValueError:
             return 1.0
+    return _MISSING
+
+
+def _coerce_meta(_value: object, meta: Meta, _tmp_path: Path) -> object:
+    return meta
+
+
+def _coerce_path(value: object, _meta: Meta, tmp_path: Path) -> object:
+    if isinstance(value, Path):
+        return value
+    fallback = value if value else "sample.txt"
+    return tmp_path / str(fallback)
+
+
+def _coerce_str(value: object, _meta: Meta, _tmp_path: Path) -> object:
+    return str(value)
+
+
+def _coerce_bool(value: object, _meta: Meta, _tmp_path: Path) -> object:
+    return bool(value)
+
+
+_SIMPLE_COERCERS: dict[object, Callable[[object, Meta, Path], object]] = {
+    Meta: _coerce_meta,
+    Path: _coerce_path,
+    str: _coerce_str,
+    bool: _coerce_bool,
+}
+
+
+def _coerce_simple(
+    value: object, annotation: object, meta: Meta, tmp_path: Path
+) -> object:
+    coercer = _SIMPLE_COERCERS.get(annotation)
+    if coercer is None:
+        return _MISSING
+    return coercer(value, meta, tmp_path)
+
+
+def _coerce_list(
+    value: object,
+    args: tuple[object, ...],
+    meta: Meta,
+    tmp_path: Path,
+) -> list[object]:
+    if isinstance(value, list):
+        return cast(list[object], value)
+    element = args[0] if args else object
+    return [_coerce_override(value, element, meta, tmp_path)]
+
+
+def _coerce_mapping(value: object) -> object:
+    return value if isinstance(value, dict) else {}
+
+
+def _coerce_tuple(value: object) -> object:
+    return value if isinstance(value, tuple) else ()
+
+
+def _coerce_set(value: object) -> object:
+    return value if isinstance(value, set) else {value}
+
+
+_COLLECTION_COERCERS: dict[object, Callable[[object], object]] = {
+    dict: _coerce_mapping,
+    Mapping: _coerce_mapping,
+    tuple: _coerce_tuple,
+    set: _coerce_set,
+}
+
+
+def _collection_key(annotation: object, origin: object) -> object:
+    if annotation is Mapping:
+        return Mapping
+    return origin
+
+
+def _coerce_direct_collection(
+    value: object, annotation: object, origin: object
+) -> object:
+    coercer = _COLLECTION_COERCERS.get(_collection_key(annotation, origin))
+    if coercer is None:
+        return _MISSING
+    return coercer(value)
+
+
+def _is_optional_type(origin: object, args: tuple[object, ...]) -> bool:
+    if origin is None:
+        return False
+    return type(None) in args
+
+
+def _coerce_optional(
+    value: object,
+    origin: object,
+    args: tuple[object, ...],
+    meta: Meta,
+    tmp_path: Path,
+) -> object:
+    if value is None or not _is_optional_type(origin, args):
+        return value
+    concrete = next((item for item in args if item is not type(None)), object)
+    return _coerce_override(value, concrete, meta, tmp_path)
+
+
+def _coerce_override(
+    value: object, annotation: object, meta: Meta, tmp_path: Path
+) -> object:
+    simple = _coerce_simple(value, annotation, meta, tmp_path)
+    if simple is not _MISSING:
+        return simple
+    number = _coerce_number(value, annotation)
+    if number is not _MISSING:
+        return number
+    origin = get_origin(annotation)
+    args = get_args(annotation)
     if origin is list:
-        if isinstance(value, list):
-            return value
-        element = args[0] if args else object
-        return [_coerce_override(value, element, meta, tmp_path)]
-    if origin is dict or annotation is Mapping:
-        return value if isinstance(value, dict) else {}
-    if origin is tuple:
-        return value if isinstance(value, tuple) else ()
-    if origin is set:
-        return value if isinstance(value, set) else {value}
-    if origin is not None and type(None) in args and value is not None:
-        concrete = next(
-            (item for item in args if item is not type(None)), object
+        return _coerce_list(value, args, meta, tmp_path)
+    collection = _coerce_direct_collection(value, annotation, origin)
+    if collection is not _MISSING:
+        return collection
+    return _coerce_optional(value, origin, args, meta, tmp_path)
+
+
+def _required_parameters(
+    method: Callable[..., object],
+) -> list[inspect.Parameter]:
+    return [
+        parameter
+        for parameter in inspect.signature(method).parameters.values()
+        if parameter.kind
+        not in {
+            inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.VAR_KEYWORD,
+        }
+        and parameter.default is inspect.Parameter.empty
+    ]
+
+
+def _invocation_arguments(
+    method: Callable[..., object],
+    meta: Meta,
+    tmp_path: Path,
+    overrides: Mapping[str, object] | None,
+) -> tuple[list[object], dict[str, object]]:
+    args: list[object] = []
+    kwargs: dict[str, object] = {}
+    for parameter in _required_parameters(method):
+        value = _argument(
+            parameter.name, parameter.annotation, meta, tmp_path, overrides
         )
-        return _coerce_override(value, concrete, meta, tmp_path)
-    return value
+        if parameter.kind is inspect.Parameter.KEYWORD_ONLY:
+            kwargs[parameter.name] = value
+        else:
+            args.append(value)
+    return args, kwargs
 
 
 async def _invoke(
@@ -442,24 +626,7 @@ async def _invoke(
     tmp_path: Path,
     overrides: Mapping[str, object] | None = None,
 ) -> object:
-    signature = inspect.signature(method)
-    args: list[object] = []
-    kwargs: dict[str, object] = {}
-    for parameter in signature.parameters.values():
-        if parameter.kind in {
-            inspect.Parameter.VAR_POSITIONAL,
-            inspect.Parameter.VAR_KEYWORD,
-        }:
-            continue
-        if parameter.default is not inspect.Parameter.empty:
-            continue
-        value = _argument(
-            parameter.name, parameter.annotation, meta, tmp_path, overrides
-        )
-        if parameter.kind is inspect.Parameter.KEYWORD_ONLY:
-            kwargs[parameter.name] = value
-        else:
-            args.append(value)
+    args, kwargs = _invocation_arguments(method, meta, tmp_path, overrides)
     result = method(*args, **kwargs)
     if inspect.isawaitable(result):
         return await asyncio.wait_for(result, timeout=0.05)
