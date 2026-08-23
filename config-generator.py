@@ -657,6 +657,64 @@ def autofill_missing_keys(
                         )
 
 
+def _masked_password_value(value: str) -> str:
+    if len(value) <= 6:
+        return value
+    visible_part = value[:6]
+    masked_part = "*" * min(8, max(0, len(value) - 6))
+    return f"{visible_part}{masked_part}"
+
+
+def _masked_announce_value(value: str) -> str:
+    if len(value) <= 20:
+        return value
+    visible_prefix = value[:15]
+    visible_suffix = value[-6:]
+    masked_length = len(value) - 16
+    masked_part = "*" * min(masked_length, 15)
+    return f"{visible_prefix}...{masked_part}...{visible_suffix}"
+
+
+def _existing_display_value(
+    value: str, is_password: bool, is_announce_url: bool
+) -> str:
+    if is_password:
+        return _masked_password_value(value)
+    if is_announce_url:
+        return _masked_announce_value(value)
+    return value
+
+
+def _input_display(
+    prompt: str,
+    default: str,
+    is_password: bool,
+    is_announce_url: bool,
+    existing_value: Any | None,
+) -> str:
+    if existing_value is not None:
+        existing_value_str = str(existing_value)
+        display_value = _existing_display_value(
+            existing_value_str, is_password, is_announce_url
+        )
+        return f"{prompt} [existing: {display_value}]: "
+    if default:
+        return f"{prompt} [default: {default}]: "
+    return f"{prompt}: "
+
+
+def _resolved_input_value(
+    value: str, default: str, existing_value: Any | None
+) -> str:
+    if value:
+        return value
+    if existing_value is not None:
+        return str(existing_value)
+    if default:
+        return default
+    return value
+
+
 def get_user_input(
     prompt: str,
     default: str = "",
@@ -665,55 +723,11 @@ def get_user_input(
     existing_value: Any | None = None,
 ) -> str:
     """Get input from user with default value and optional existing value"""
-    display = prompt
-
-    # If we have an existing value, show it as an option
-    if existing_value is not None:
-        existing_value_str = str(existing_value)
-        display_value = existing_value_str
-        # For password fields: show first 6 chars and mask the rest
-        if is_password and existing_value_str:
-            visible_part = existing_value_str[:6]
-            masked_part = "*" * min(8, max(0, len(existing_value_str) - 6))
-            display_value = (
-                f"{visible_part}{masked_part}"
-                if len(existing_value_str) > 6
-                else existing_value_str
-            )
-        elif is_announce_url and existing_value_str:
-            # For announce_urls, show the first 10 chars and last 6 chars with * in between
-            if len(existing_value_str) > 20:  # Only mask if long enough
-                visible_prefix = existing_value_str[:15]
-                visible_suffix = existing_value_str[-6:]
-                masked_length = len(existing_value_str) - 16
-                masked_part = "*" * min(
-                    masked_length, 15
-                )  # Limit number of asterisks
-                display_value = (
-                    f"{visible_prefix}...{masked_part}...{visible_suffix}"
-                )
-        else:
-            display_value = existing_value_str
-        display = f"{prompt} [existing: {display_value}]"
-
-    # Show default if available
-    if default and existing_value is None:
-        display = f"{display} [default: {default}]"
-
-    display = f"{display}: "
-
-    # Prompt for input
+    display = _input_display(
+        prompt, default, is_password, is_announce_url, existing_value
+    )
     value = input(display)
-
-    # Use existing value if user just pressed Enter and we have an existing value
-    if value == "" and existing_value is not None:
-        return str(existing_value)
-
-    # Use default if no input and no existing value
-    if value == "" and default:
-        return default
-
-    return value
+    return _resolved_input_value(value, default, existing_value)
 
 
 def configure_default_section(
