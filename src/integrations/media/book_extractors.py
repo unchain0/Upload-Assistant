@@ -21,6 +21,19 @@ from src.integrations.observability.runtime_support import logger
 
 _MAX_EPUB_MEMBER_SIZE = 2 * 1024 * 1024
 _MAX_EPUB_COMPRESSION_RATIO = 100
+_DATE_EVENT_NAMES = {
+    "dcterms:available": "Available",
+    "dcterms:created": "Created",
+    "publication": "Created",
+    "dcterms:date": "Date",
+    "dcterms:dateaccepted": "DateAccepted",
+    "dcterms:datecopyrighted": "DateCopyrighted",
+    "dcterms:datesubmitted": "DateSubmitted",
+    "dcterms:issued": "Issued",
+    "original-publication": "Issued",
+    "dcterms:modified": "Modified",
+    "dcterms:valid": "Valid",
+}
 
 
 def _safe_zip_member_bytes(
@@ -469,31 +482,39 @@ def extract_mobi_metadata(mobi_path: str) -> dict[str, Any]:
     return metadata
 
 
+def _valid_isbn13(value: str) -> bool:
+    if len(value) != 13 or not value.isdigit():
+        return False
+    total = sum(
+        int(value[index]) * (1 if index % 2 == 0 else 3) for index in range(13)
+    )
+    return total % 10 == 0
+
+
+def _valid_isbn10_shape(value: str) -> bool:
+    if len(value) != 10 or not value[:9].isdigit():
+        return False
+    return value[9].isdigit() or value[9] == "X"
+
+
+def _isbn10_digit(value: str, index: int) -> int:
+    return 10 if value[index] == "X" else int(value[index])
+
+
+def _valid_isbn10(value: str) -> bool:
+    if not _valid_isbn10_shape(value):
+        return False
+    total = sum(
+        _isbn10_digit(value, index) * (10 - index) for index in range(10)
+    )
+    return total % 11 == 0
+
+
 def validate_isbn_checksum(candidate: str) -> str | None:
     """Validate and return cleaned ISBN-10 or ISBN-13 if valid, else None."""
     cleaned = re.sub(r"[- ]", "", candidate).upper()
-
-    # Check ISBN-13
-    if len(cleaned) == 13 and cleaned.isdigit():
-        total = sum(
-            int(cleaned[i]) * (1 if i % 2 == 0 else 3) for i in range(13)
-        )
-        if total % 10 == 0:
-            return cleaned
-
-    # Check ISBN-10
-    if (
-        len(cleaned) == 10
-        and cleaned[:9].isdigit()
-        and (cleaned[9].isdigit() or cleaned[9] == "X")
-    ):
-        total = sum(
-            (10 if cleaned[i] == "X" else int(cleaned[i])) * (10 - i)
-            for i in range(10)
-        )
-        if total % 11 == 0:
-            return cleaned
-
+    if _valid_isbn13(cleaned) or _valid_isbn10(cleaned):
+        return cleaned
     return None
 
 
@@ -516,6 +537,55 @@ def extract_pdf_page_count(pdf_path: str) -> int | None:
         return None
 
 
+def _pdf_page_order(num_pages: int) -> list[int]:
+    front_limit = min(30, num_pages)
+    back_limit = max(0, num_pages - 30)
+    ordered = list(range(front_limit))
+    seen = set(ordered)
+    for page_num in [*range(back_limit, num_pages), *range(num_pages)]:
+        if page_num not in seen:
+            ordered.append(page_num)
+            seen.add(page_num)
+    return ordered
+
+
+def _isbn_candidates_from_text(text: str) -> list[str]:
+    labelled = re.findall(
+        r"\bISBN(?:-1[03])?:?\s*((?:97[89][- ]?)?\d(?:[- ]?\d){8,11}[- ]?[\dX])\b",
+        text,
+        re.IGNORECASE,
+    )
+    bare_isbn13 = re.findall(r"\b(97[89](?:[- ]?\d){10})\b", text)
+    return list(dict.fromkeys([*labelled, *bare_isbn13]))
+
+
+def _validated_isbn_from_text(text: object) -> str | None:
+    if not isinstance(text, str) or not text:
+        return None
+    for candidate in _isbn_candidates_from_text(text):
+        validated = validate_isbn_checksum(candidate)
+        if validated is not None:
+            return validated
+    return None
+
+
+def _isbn_from_pdf_document(document: Any) -> str | None:
+    for page_num in _pdf_page_order(len(document)):
+        validated = _validated_isbn_from_text(document[page_num].get_text())
+        if validated is None:
+            continue
+        logger.info(
+            f"[cyan]Found valid ISBN {validated} on PDF page {page_num}[/cyan]"
+        )
+        return validated
+    return None
+
+
+def _disable_mupdf_errors(fitz: Any) -> None:
+    with contextlib.suppress(Exception):
+        fitz.TOOLS.mupdf_display_errors(False)
+
+
 def extract_isbn_from_pdf(pdf_path: str) -> str | None:
     """Search for and extract a valid ISBN from a PDF file using PyMuPDF (fitz)."""
     try:
@@ -525,84 +595,25 @@ def extract_isbn_from_pdf(pdf_path: str) -> str | None:
             "[yellow]Debug: PyMuPDF (fitz) is not installed. Skipping PDF ISBN extraction.[/yellow]"
         )
         return None
-
     if not Path(pdf_path).is_file():
         return None
-
     try:
-        # Disable mupdf display errors to avoid spamming console
-        with contextlib.suppress(Exception):
-            fitz.TOOLS.mupdf_display_errors(False)
-
-        with fitz.open(pdf_path) as doc:
-            num_pages = len(doc)
-            if num_pages == 0:
+        _disable_mupdf_errors(fitz)
+        with fitz.open(pdf_path) as document:
+            if len(document) == 0:
                 return None
-
-            # Determine page ranges: check first 30 and last 30 pages first
-            front_limit = min(30, num_pages)
-            back_limit = max(0, num_pages - 30)
-
-            pages_to_check: list[int] = list(range(front_limit))
-            # Last N pages (avoiding duplicates)
-            for p in range(back_limit, num_pages):
-                if p not in pages_to_check:
-                    pages_to_check.append(p)
-            # Middle pages as fallback
-            for p in range(num_pages):
-                if p not in pages_to_check:
-                    pages_to_check.append(p)
-
-            for page_num in pages_to_check:
-                text = doc[page_num].get_text()
-                if not isinstance(text, str) or not text:
-                    continue
-
-                labelled = re.findall(
-                    r"\bISBN(?:-1[03])?:?\s*((?:97[89][- ]?)?\d(?:[- ]?\d){8,11}[- ]?[\dX])\b",
-                    text,
-                    re.IGNORECASE,
-                )
-                bare_isbn13 = re.findall(r"\b(97[89](?:[- ]?\d){10})\b", text)
-                candidates = list(dict.fromkeys([*labelled, *bare_isbn13]))
-                for cand in candidates:
-                    validated = validate_isbn_checksum(cand)
-                    if validated:
-                        logger.info(
-                            f"[cyan]Found valid ISBN {validated} on PDF page {page_num}[/cyan]"
-                        )
-                        return validated
-    except Exception as e:
+            return _isbn_from_pdf_document(document)
+    except Exception as error:
         logger.debug(
-            f"[yellow]Warning: Error extracting ISBN from PDF: {e}[/yellow]"
+            f"[yellow]Warning: Error extracting ISBN from PDF: {error}[/yellow]"
         )
-
-    return None
+        return None
 
 
 def date_event_from_str(event_str: str | None) -> str | None:
     if not event_str:
         return "Epub"
-    val = event_str.strip().lower()
-    if val == "dcterms:available":
-        return "Available"
-    if val in ("dcterms:created", "publication"):
-        return "Created"
-    if val == "dcterms:date":
-        return "Date"
-    if val == "dcterms:dateaccepted":
-        return "DateAccepted"
-    if val == "dcterms:datecopyrighted":
-        return "DateCopyrighted"
-    if val == "dcterms:datesubmitted":
-        return "DateSubmitted"
-    if val in ("dcterms:issued", "original-publication"):
-        return "Issued"
-    if val == "dcterms:modified":
-        return "Modified"
-    if val == "dcterms:valid":
-        return "Valid"
-    return None
+    return _DATE_EVENT_NAMES.get(event_str.strip().lower())
 
 
 def get_attr_ignore_ns(elem: ET.Element, attr_name: str) -> str | None:
