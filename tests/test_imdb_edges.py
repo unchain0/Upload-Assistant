@@ -67,6 +67,20 @@ class _Client:
         cls.calls = []
 
 
+class _MatchingClient(_Client):
+    matcher: ClassVar[Any] = lambda _query: None
+
+    async def post(self, _url: str, **kwargs: object) -> _Response:
+        type(self).calls.append(dict(kwargs))
+        query = str(dict(kwargs).get("json", {}).get("query", ""))  # type: ignore[union-attr]
+        value = type(self).matcher(query)
+        if isinstance(value, BaseException):
+            raise value
+        if isinstance(value, list):
+            return _Response(_search_payload(*value))
+        return _Response(_search_payload())
+
+
 class _Cache:
     def __init__(self, value: object = _MISS) -> None:
         self.value = value
@@ -115,6 +129,20 @@ def _edge(
 
 def _search_payload(*edges: dict[str, Any]) -> dict[str, Any]:
     return {"data": {"advancedTitleSearch": {"edges": list(edges)}}}
+
+
+def _matching_edges(
+    query: str,
+    search_term: str,
+    edge: dict[str, Any],
+    *,
+    without_release_date: bool = False,
+) -> list[dict[str, Any]]:
+    if f'searchTerm: "{search_term}"' not in query:
+        return []
+    if without_release_date and "releaseDateConstraint" in query:
+        return []
+    return [edge]
 
 
 def _rich_title_payload() -> dict[str, Any]:
@@ -582,41 +610,24 @@ def test_search_fallback_prefix_wide_parsed_reduced_and_further(
 ) -> None:
     manager = ImdbManager()
 
-    class HandlerClient(_Client):
-        matcher: ClassVar[Any] = lambda _query: None
-
-        async def post(self, _url: str, **kwargs: object) -> _Response:
-            type(self).calls.append(dict(kwargs))
-            query = str(dict(kwargs).get("json", {}).get("query", ""))  # type: ignore[union-attr]
-            value = type(self).matcher(query)
-            if isinstance(value, BaseException):
-                raise value
-            return _Response(
-                _search_payload(*value)
-                if isinstance(value, list)
-                else _search_payload()
-            )
-
-    monkeypatch.setattr(imdb.httpx, "AsyncClient", HandlerClient)
+    monkeypatch.setattr(imdb.httpx, "AsyncClient", _MatchingClient)
     monkeypatch.setattr(imdb.asyncio, "sleep", AsyncMock())
 
-    HandlerClient.calls = []
-    HandlerClient.matcher = lambda query: (
-        [_edge("tt2000001", "Example")]
-        if 'searchTerm: "Example"' in query
-        else []
+    _MatchingClient.calls = []
+    _MatchingClient.matcher = lambda query: _matching_edges(
+        query, "Example", _edge("tt2000001", "Example")
     )
     assert (
         asyncio.run(manager.search_imdb("The Example", 2026, category="MOVIE"))
         == 2000001
     )
 
-    HandlerClient.calls = []
-    HandlerClient.matcher = lambda query: (
-        [_edge("tt2000002", "Wide")]
-        if 'searchTerm: "Wide"' in query
-        and "releaseDateConstraint" not in query
-        else []
+    _MatchingClient.calls = []
+    _MatchingClient.matcher = lambda query: _matching_edges(
+        query,
+        "Wide",
+        _edge("tt2000002", "Wide"),
+        without_release_date=True,
     )
     assert (
         asyncio.run(manager.search_imdb("Wide", 2026, category="MOVIE"))
@@ -631,11 +642,9 @@ def test_search_fallback_prefix_wide_parsed_reduced_and_further(
         "anitopy_parse_fn",
         lambda *_args, **_kwargs: {"anime_title": "Parsed Anime"},
     )
-    HandlerClient.calls = []
-    HandlerClient.matcher = lambda query: (
-        [_edge("tt2000003", "Parsed Anime")]
-        if 'searchTerm: "Parsed Anime"' in query
-        else []
+    _MatchingClient.calls = []
+    _MatchingClient.matcher = lambda query: _matching_edges(
+        query, "Parsed Anime", _edge("tt2000003", "Parsed Anime")
     )
     assert (
         asyncio.run(
@@ -651,11 +660,9 @@ def test_search_fallback_prefix_wide_parsed_reduced_and_further(
 
     monkeypatch.setattr(imdb, "guessit_fn", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(imdb, "anitopy_parse_fn", lambda *_args, **_kwargs: {})
-    HandlerClient.calls = []
-    HandlerClient.matcher = lambda query: (
-        [_edge("tt2000004", "Alpha Beta")]
-        if 'searchTerm: "Alpha Beta"' in query
-        else []
+    _MatchingClient.calls = []
+    _MatchingClient.matcher = lambda query: _matching_edges(
+        query, "Alpha Beta", _edge("tt2000004", "Alpha Beta")
     )
     assert (
         asyncio.run(
@@ -664,11 +671,9 @@ def test_search_fallback_prefix_wide_parsed_reduced_and_further(
         == 2000004
     )
 
-    HandlerClient.calls = []
-    HandlerClient.matcher = lambda query: (
-        [_edge("tt2000005", "One Two")]
-        if 'searchTerm: "One Two"' in query
-        else []
+    _MatchingClient.calls = []
+    _MatchingClient.matcher = lambda query: _matching_edges(
+        query, "One Two", _edge("tt2000005", "One Two")
     )
     assert (
         asyncio.run(
