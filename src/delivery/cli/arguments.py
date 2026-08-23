@@ -7,7 +7,7 @@ import sys
 import urllib.parse
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any, TextIO, cast
 
 from src.domain_models.image_host import IMAGE_HOST_NAMES
 from src.domain_models.media_identifiers import (
@@ -58,6 +58,28 @@ MUSIC_RELEASE_TYPE_CHOICES = (
 )
 
 PATHS_FROM_STDIN_OPTION = "--paths-from-stdin"
+_GAME_PLATFORM_MAPPING = {
+    "pc": "PC",
+    "ps5": "PS5",
+    "ps4": "PS4",
+    "ps3": "PS3",
+    "ps2": "PS2",
+    "ps1": "PS1",
+    "psp": "PSP",
+    "psvita": "PSVITA",
+    "xbox": "XBOX",
+    "x360": "X360",
+    "xone": "XONE",
+    "xsx": "XSX",
+    "switch": "SWITCH",
+    "3ds": "3DS",
+    "nds": "NDS",
+    "ds": "NDS",
+    "wiiu": "WIIU",
+    "wii": "WII",
+    "mac": "MAC",
+    "linux": "LINUX",
+}
 
 
 def partition_existing_paths(
@@ -74,44 +96,56 @@ def partition_existing_paths(
     return existing, missing
 
 
-def read_paths_from_stdin(
-    argv: Sequence[str], stream: TextIO
-) -> tuple[list[str], list[str]]:
-    args = list(argv)
-    option_count = args.count(PATHS_FROM_STDIN_OPTION)
-    if option_count == 0 or "-h" in args or "--help" in args:
-        return args, []
-    if option_count > 1:
+def _stdin_paths_enabled(args: list[str]) -> bool:
+    if PATHS_FROM_STDIN_OPTION not in args:
+        return False
+    return "-h" not in args and "--help" not in args
+
+
+def _validate_stdin_option_count(args: list[str]) -> None:
+    if args.count(PATHS_FROM_STDIN_OPTION) > 1:
         raise ValueError(
             f"{PATHS_FROM_STDIN_OPTION} may only be specified once"
         )
 
+
+def _read_stdin_paths(stream: TextIO, interactive: bool) -> list[str]:
+    paths: list[str] = []
+    for line in stream:
+        path = line.rstrip("\r\n")
+        if path.strip():
+            paths.append(path)
+            continue
+        if interactive:
+            break
+    return paths
+
+
+def _dedupe_paths(paths: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for path in paths:
+        if path in seen:
+            continue
+        seen.add(path)
+        deduped.append(path)
+    return deduped
+
+
+def read_paths_from_stdin(
+    argv: Sequence[str], stream: TextIO
+) -> tuple[list[str], list[str]]:
+    args = list(argv)
+    if not _stdin_paths_enabled(args):
+        return args, []
+    _validate_stdin_option_count(args)
     args.remove(PATHS_FROM_STDIN_OPTION)
     interactive = stream.isatty()
     if interactive:
         logger.info(
             "[cyan]Paste one full path per line, then press Enter on an empty line to start.[/cyan]"
         )
-
-    paths: list[str] = []
-    for line in stream:
-        path = line.rstrip("\r\n")
-        if not path.strip():
-            if interactive:
-                break
-            continue
-        paths.append(path)
-
-    if paths:
-        deduped: list[str] = []
-        seen: set[str] = set()
-        for raw_path in paths:
-            if raw_path in seen:
-                continue
-            seen.add(raw_path)
-            deduped.append(raw_path)
-        paths = deduped
-
+    paths = _dedupe_paths(_read_stdin_paths(stream, interactive))
     if not paths:
         raise ValueError(
             f"{PATHS_FROM_STDIN_OPTION} did not receive any paths"
@@ -1823,141 +1857,129 @@ class Args:
         return meta, parser, before_args
 
     @staticmethod
-    def _apply_book_meta_overrides(meta: Meta) -> None:
-        """Normalise CLI book arguments (--author, --book-title, --blang, --isbn) into *meta*.
+    def _book_overview_value(value: Any) -> str:
+        if value in (None, "", []):
+            return ""
+        if isinstance(value, list):
+            items = cast(list[Any], value)
+            return " ".join(str(item) for item in items if str(item)).strip()
+        return str(value).strip()
 
-        Maps ``book_author`` / ``book_title`` to the ``author`` / ``title`` keys
-        expected by trackers like CAPYBARABR.  Maps ``book_isbn`` to ``isbn``.
-        Resolves the ``book_language`` value via
-        *langcodes* so both a human-readable name and the ISO 639-3 code are stored.
-        Falls back gracefully when *langcodes* is unavailable or the code is unknown.
-        """
-        book_overview_arg = meta.book_overview or meta.overview
-        if book_overview_arg not in (None, "", []):
-            overview_str = (
-                " ".join(str(x) for x in book_overview_arg if str(x)).strip()
-                if isinstance(book_overview_arg, list)
-                else str(book_overview_arg).strip()
-            )
-            meta.overview = overview_str
-            meta.book_overview = overview_str
-        else:
-            meta.overview = ""
-            meta.book_overview = ""
+    @staticmethod
+    def _copy_text_override(meta: Meta, source: str, target: str) -> None:
+        value = getattr(meta, source)
+        if value not in (None, ""):
+            setattr(meta, target, str(value).strip())
 
-        book_author_arg = meta.book_author
-        if book_author_arg not in (None, ""):
-            meta.author = str(book_author_arg).strip()
+    @staticmethod
+    def _langcodes_code_result(
+        language: Any, raw_lang: str
+    ) -> tuple[str, str] | None:
+        display_name = language.display_name("en")
+        full_name = display_name if display_name else raw_lang.title()
+        if full_name.lower() == raw_lang.lower():
+            return None
+        alpha3_value = language.to_alpha3()
+        alpha3 = alpha3_value if alpha3_value else ""
+        return full_name, alpha3
 
-        book_title_arg = meta.book_title
-        if book_title_arg not in (None, ""):
-            meta.title = str(book_title_arg).strip()
+    @classmethod
+    def _langcodes_from_code(
+        cls, module: Any, raw_lang: str
+    ) -> tuple[str, str] | None:
+        try:
+            language = module.get(raw_lang.lower())
+            return cls._langcodes_code_result(language, raw_lang)
+        except Exception:
+            return None
 
-        book_isbn_arg = meta.book_isbn
-        if book_isbn_arg not in (None, ""):
-            meta.isbn = str(book_isbn_arg).strip()
+    @staticmethod
+    def _langcodes_from_name(module: Any, raw_lang: str) -> tuple[str, str]:
+        language = module.find(raw_lang)
+        full_name = language.display_name("en") or raw_lang.title()
+        return full_name, language.to_alpha3() or ""
 
-        book_asin_arg = meta.book_asin
-        if book_asin_arg not in (None, ""):
-            meta.asin = str(book_asin_arg).strip()
+    @classmethod
+    def _resolved_book_language(cls, raw_lang: str) -> tuple[str, str]:
+        try:
+            import langcodes
 
-        openlibrary_arg = meta.openlibrary
-        if openlibrary_arg not in (None, ""):
-            meta.openlibrary = str(openlibrary_arg).strip()
+            resolved = cls._langcodes_from_code(langcodes, raw_lang)
+            if resolved is not None:
+                return resolved
+            return cls._langcodes_from_name(langcodes, raw_lang)
+        except Exception:
+            return raw_lang.title(), ""
 
-        book_publisher_arg = meta.book_publisher
-        if book_publisher_arg not in (None, ""):
-            meta.publisher = str(book_publisher_arg).strip()
+    @classmethod
+    def _apply_book_language(cls, meta: Meta) -> None:
+        value = meta.book_language
+        if value in (None, ""):
+            return
+        full_name, alpha3 = cls._resolved_book_language(str(value).strip())
+        meta.book_language = full_name
+        meta.book_language_iso = alpha3
 
-        book_translator_arg = meta.book_translator
-        if book_translator_arg not in (None, ""):
-            meta.book_translator = str(book_translator_arg).strip()
+    @staticmethod
+    def _apply_manual_year(meta: Meta) -> None:
+        value = meta.manual_year
+        if value in (None, "", 0, "0"):
+            return
+        meta.year = int(value)
+        meta.search_year = value
 
-        book_language_arg = meta.book_language
-        if book_language_arg not in (None, ""):
-            raw_lang = book_language_arg.strip()
-            try:
-                import langcodes
-
-                # Try get() first (ISO 639-1/3 codes like "pt", "por")
-                try:
-                    lc = langcodes.get(raw_lang.lower())
-                    full_name = lc.display_name("en") or raw_lang.title()
-                    alpha3 = lc.to_alpha3() or ""
-                    if full_name and full_name.lower() != raw_lang.lower():
-                        meta.book_language = full_name
-                        meta.book_language_iso = alpha3
-                    else:
-                        raise LookupError("no display name change")
-                except Exception:
-                    # Fall back to find() for natural language names ("Portuguese")
-                    lc = langcodes.find(raw_lang)
-                    meta.book_language = (
-                        lc.display_name("en") or raw_lang.title()
-                    )
-                    meta.book_language_iso = lc.to_alpha3() or ""
-            except Exception:
-                meta.book_language = raw_lang.title()
-                meta.book_language_iso = ""
-
-        manual_year_arg = meta.manual_year
-        if manual_year_arg not in (None, "", 0, "0"):
-            meta.year = int(manual_year_arg)
-            meta.search_year = manual_year_arg
-
-        # Detect newspapers in overridden titles
+    @classmethod
+    def _apply_book_meta_overrides(cls, meta: Meta) -> None:
+        """Normalise CLI book arguments into *meta*."""
+        overview = cls._book_overview_value(
+            meta.book_overview or meta.overview
+        )
+        meta.overview = overview
+        meta.book_overview = overview
+        for source, target in (
+            ("book_author", "author"),
+            ("book_title", "title"),
+            ("book_isbn", "isbn"),
+            ("book_asin", "asin"),
+            ("openlibrary", "openlibrary"),
+            ("book_publisher", "publisher"),
+            ("book_translator", "book_translator"),
+        ):
+            cls._copy_text_override(meta, source, target)
+        cls._apply_book_language(meta)
+        cls._apply_manual_year(meta)
         detect_newspaper(meta)
         sanitize_book_language(meta)
         sanitize_book_author(meta)
 
     @staticmethod
-    def _apply_game_meta_overrides(meta: Meta) -> None:
+    def _apply_game_platform(meta: Meta) -> None:
+        value = meta.manual_platform
+        if value in (None, ""):
+            return
+        platform = str(value).strip().lower()
+        normalized = _GAME_PLATFORM_MAPPING.get(platform, platform.upper())
+        meta.manual_platform = normalized
+        meta.platform = normalized
+
+    @staticmethod
+    def _apply_game_text(
+        meta: Meta, field: str, *, lower: bool = False
+    ) -> None:
+        value = getattr(meta, field)
+        if value in (None, ""):
+            return
+        normalized = str(value).strip()
+        setattr(meta, field, normalized.lower() if lower else normalized)
+
+    @classmethod
+    def _apply_game_meta_overrides(cls, meta: Meta) -> None:
         """Normalise CLI game arguments (--platform) into *meta*."""
-        manual_platform_arg = meta.manual_platform
-        if manual_platform_arg not in (None, ""):
-            plat = str(manual_platform_arg).strip().lower()
-            mapping = {
-                "pc": "PC",
-                "ps5": "PS5",
-                "ps4": "PS4",
-                "ps3": "PS3",
-                "ps2": "PS2",
-                "ps1": "PS1",
-                "psp": "PSP",
-                "psvita": "PSVITA",
-                "xbox": "XBOX",
-                "x360": "X360",
-                "xone": "XONE",
-                "xsx": "XSX",
-                "switch": "SWITCH",
-                "3ds": "3DS",
-                "nds": "NDS",
-                "ds": "NDS",
-                "wiiu": "WIIU",
-                "wii": "WII",
-                "mac": "MAC",
-                "linux": "LINUX",
-            }
-            clean_plat = mapping.get(plat, plat.upper())
-            meta.manual_platform = clean_plat
-            meta.platform = clean_plat
-
-        steam_manual_arg = meta.steam_manual
-        if steam_manual_arg not in (None, ""):
-            meta.steam_manual = str(steam_manual_arg).strip()
-
-        game_version_arg = meta.game_version
-        if game_version_arg not in (None, ""):
-            meta.game_version = game_version_arg.strip()
-
-        game_subcategory_arg = meta.game_subcategory
-        if game_subcategory_arg not in (None, ""):
-            meta.game_subcategory = game_subcategory_arg.strip().lower()
-
-        manual_year_arg = meta.manual_year
-        if manual_year_arg not in (None, "", 0, "0"):
-            meta.year = int(manual_year_arg)
-            meta.search_year = manual_year_arg
+        cls._apply_game_platform(meta)
+        cls._apply_game_text(meta, "steam_manual")
+        cls._apply_game_text(meta, "game_version")
+        cls._apply_game_text(meta, "game_subcategory", lower=True)
+        cls._apply_manual_year(meta)
 
     def list_to_string(self, list: list[str]) -> str:
         if len(list) == 1:
@@ -1968,60 +1990,93 @@ class Args:
             result = "None"
         return result
 
+    @staticmethod
+    def _explicit_tracker_id(candidate: str) -> tuple[str, str]:
+        if "=" not in candidate:
+            return "", candidate
+        if candidate.startswith(("http://", "https://")):
+            return "", candidate
+        tracker, torrent_id = (
+            part.strip() for part in candidate.split("=", 1)
+        )
+        return Meta.canonical_tracker_name(tracker), torrent_id
+
+    @staticmethod
+    def _host_matches_domain(host: str, domain: str) -> bool:
+        if host == domain:
+            return True
+        return host.endswith(f".{domain}")
+
+    @classmethod
+    def _matches_tracker_domains(
+        cls, host: str, domains: Sequence[str]
+    ) -> bool:
+        for domain in domains:
+            if cls._host_matches_domain(host, domain):
+                return True
+        return False
+
+    def _matching_tracker_names(self, host: str) -> list[str]:
+        matches: list[str] = []
+        for name, domains in get_tracker_comment_hosts(self.config).items():
+            if self._matches_tracker_domains(host, domains):
+                matches.append(name)
+        return matches
+
+    def _tracker_for_host(self, host: str, original: str) -> str:
+        matches = self._matching_tracker_names(host)
+        if len(matches) != 1:
+            display = host if host else original
+            raise ValueError(
+                f"--tracker-id URL host is unknown or ambiguous: {display}"
+            )
+        return Meta.canonical_tracker_name(matches[0])
+
+    @staticmethod
+    def _tracker_id_from_url(parsed: urllib.parse.ParseResult) -> str:
+        query = urllib.parse.parse_qs(parsed.query)
+        values = query.get("torrentid") or query.get("id")
+        if values:
+            return values[0]
+        path = parsed.path.rstrip("/")
+        dotted_id = re.search(r"\.(\d+)$", path)
+        if dotted_id:
+            return dotted_id.group(1)
+        return path.split("/")[-1]
+
+    def _parsed_tracker_url(
+        self, url: str, explicit_tracker: str
+    ) -> tuple[str, str]:
+        parsed = urllib.parse.urlparse(url)
+        host = (parsed.hostname or "").lower()
+        tracker = self._tracker_for_host(host, url)
+        if explicit_tracker and explicit_tracker != tracker:
+            raise ValueError(
+                f"--tracker-id tracker {explicit_tracker} does not match URL host {host}"
+            )
+        return tracker, self._tracker_id_from_url(parsed)
+
+    @staticmethod
+    def _validate_tracker_id(
+        tracker: str, torrent_id: str, original: str
+    ) -> None:
+        if not is_known_tracker(tracker):
+            raise ValueError(
+                f"--tracker-id requires a supported tracker name, got: {tracker or original}"
+            )
+        if not torrent_id or not torrent_id.isdigit():
+            raise ValueError(
+                f"--tracker-id requires a numeric torrent ID, got: {original}"
+            )
+
     def parse_tracker_id(self, value: str) -> tuple[str, str]:
-        """Normalize ``--tracker-id`` values without exposing tracker-specific CLI flags."""
+        """Normalize ``--tracker-id`` values without tracker-specific flags."""
         candidate = value.strip()
-        tracker_name = ""
-        id_value = candidate
-        if "=" in candidate and not candidate.startswith(
-            ("http://", "https://")
-        ):
-            tracker_name, id_value = (
-                part.strip() for part in candidate.split("=", 1)
-            )
-            tracker_name = Meta.canonical_tracker_name(tracker_name)
-
-        if id_value.startswith(("http://", "https://")):
-            parsed = urllib.parse.urlparse(id_value)
-            host = (parsed.hostname or "").lower()
-            matched_trackers = [
-                name
-                for name, domains in get_tracker_comment_hosts(
-                    self.config
-                ).items()
-                if any(
-                    host == domain or host.endswith(f".{domain}")
-                    for domain in domains
-                )
-            ]
-            if len(matched_trackers) != 1:
-                raise ValueError(
-                    f"--tracker-id URL host is unknown or ambiguous: {host or id_value}"
-                )
-            url_tracker = Meta.canonical_tracker_name(matched_trackers[0])
-            if tracker_name and tracker_name != url_tracker:
-                raise ValueError(
-                    f"--tracker-id tracker {tracker_name} does not match URL host {host}"
-                )
-            tracker_name = url_tracker
-            query = urllib.parse.parse_qs(parsed.query)
-            id_value = (query.get("torrentid") or query.get("id") or [""])[0]
-            if not id_value:
-                path = parsed.path.rstrip("/")
-                dotted_id = re.search(r"\.(\d+)$", path)
-                id_value = (
-                    dotted_id.group(1) if dotted_id else path.split("/")[-1]
-                )
-
-        if not is_known_tracker(tracker_name):
-            raise ValueError(
-                f"--tracker-id requires a supported tracker name, got: {tracker_name or value}"
-            )
-        if not id_value or not id_value.isdigit():
-            raise ValueError(
-                f"--tracker-id requires a numeric torrent ID, got: {value}"
-            )
-        return tracker_name, id_value
+        tracker, torrent_id = self._explicit_tracker_id(candidate)
+        if torrent_id.startswith(("http://", "https://")):
+            tracker, torrent_id = self._parsed_tracker_url(torrent_id, tracker)
+        self._validate_tracker_id(tracker, torrent_id, value)
+        return tracker, torrent_id
 
     def parse_tmdb_id(
         self, id_str: str, category: str | None
