@@ -3,7 +3,7 @@ import contextlib
 import html
 import json
 import re
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
@@ -17,20 +17,38 @@ from src.integrations.observability.runtime_support import logger
 
 mam_color = "[#eac117]MyAnonamouse[/#eac117]"
 
+_PUBLISHER_FIELDS = (
+    "publisher",
+    "publisher_info",
+    "publisher_name",
+    "publishers",
+    "pubname",
+)
+_PUBLICATION_FIELDS = (
+    "year",
+    "release_year",
+    "publication_year",
+    "published",
+    "publish_date",
+    "publication_date",
+    "released",
+)
+_CATEGORY_MARKERS = ("comic", "manga", "magazine", "newspaper")
+
+
+def _mam_isbn_candidates(cleaned: str) -> tuple[str, ...]:
+    if len(cleaned) == 9 and cleaned.isdigit():
+        return (f"0{cleaned}", cleaned)
+    return (cleaned,)
+
 
 def _normalize_mam_isbn(value: Any) -> str | None:
     cleaned = re.sub(r"[-\s]", "", str(value or "")).upper()
-    candidates = [cleaned]
-    if len(cleaned) == 9 and cleaned.isdigit():
-        candidates.insert(0, f"0{cleaned}")
-    return next(
-        (
-            isbn
-            for candidate in candidates
-            if (isbn := validate_isbn_checksum(candidate))
-        ),
-        None,
-    )
+    for candidate in _mam_isbn_candidates(cleaned):
+        isbn = validate_isbn_checksum(candidate)
+        if isbn:
+            return isbn
+    return None
 
 
 def _clean_mam_title(value: Any, author: str = "") -> str:
@@ -60,108 +78,129 @@ def _clean_mam_title(value: Any, author: str = "") -> str:
     return title.strip()
 
 
-def _metadata_values(value: Any) -> list[str]:
-    if isinstance(value, str):
-        text = value.strip()
-        if text[:1] in "[{":
-            with contextlib.suppress(json.JSONDecodeError):
-                return _metadata_values(json.loads(text))
-        text = html.unescape(text).strip()
-        return [text] if text else []
-    if isinstance(value, dict):
-        preferred = next(
-            (
-                value.get(key)
-                for key in ("name", "publisher", "title", "value")
-                if value.get(key)
-            ),
-            None,
-        )
-        return (
-            _metadata_values(preferred)
-            if preferred is not None
-            else _metadata_values(list(value.values()))
-        )
-    if isinstance(value, (list, tuple, set)):
-        return [item for entry in value for item in _metadata_values(entry)]
-    if value is None:
-        return []
-    text = html.unescape(str(value)).strip()
+def _metadata_string_values(value: str) -> list[str]:
+    text = value.strip()
+    if text[:1] in "[{":
+        with contextlib.suppress(json.JSONDecodeError):
+            return _metadata_values(json.loads(text))
+    text = html.unescape(text).strip()
     return [text] if text else []
 
 
+def _preferred_metadata_value(value: dict[Any, Any]) -> Any:
+    for key in ("name", "publisher", "title", "value"):
+        if value.get(key):
+            return value[key]
+    return None
+
+
+def _metadata_mapping_values(value: dict[Any, Any]) -> list[str]:
+    preferred = _preferred_metadata_value(value)
+    if preferred is not None:
+        return _metadata_values(preferred)
+    return _metadata_values(list(value.values()))
+
+
+def _metadata_iterable_values(
+    value: list[Any] | tuple[Any, ...] | set[Any],
+) -> list[str]:
+    values: list[str] = []
+    for entry in value:
+        values.extend(_metadata_values(entry))
+    return values
+
+
+def _metadata_scalar_values(value: Any) -> list[str]:
+    text = html.unescape(str(value)).strip()
+    if not text:
+        return []
+    return [text]
+
+
+def _metadata_values(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return _metadata_string_values(value)
+    if isinstance(value, dict):
+        return _metadata_mapping_values(cast(dict[Any, Any], value))
+    if isinstance(value, (list, tuple, set)):
+        return _metadata_iterable_values(value)
+    if value is None:
+        return []
+    return _metadata_scalar_values(value)
+
+
 class MyAnonamouseManager:
-    def _parse_torrent_info(self, item: dict[str, Any]) -> dict[str, Any]:
-        logger.debug(f"{mam_color} raw item: {item}")
+    @staticmethod
+    def _decoded_people(value: Any) -> dict[Any, Any]:
+        if isinstance(value, dict):
+            return cast(dict[Any, Any], value)
+        if not isinstance(value, str):
+            return {}
+        decoded = json.loads(value)
+        if isinstance(decoded, dict):
+            return cast(dict[Any, Any], decoded)
+        return {}
 
-        metadata: dict[str, Any] = {}
+    @classmethod
+    def _people_names(cls, value: Any) -> list[str]:
+        people = cls._decoded_people(value)
+        return [html.unescape(str(name)).strip() for name in people.values()]
 
-        # Title & Name
-        title = item.get("title") or item.get("name")
+    @classmethod
+    def _add_people_field(
+        cls,
+        metadata: dict[str, Any],
+        item: dict[str, Any],
+        source_key: str,
+        target_key: str,
+        warning_label: str,
+    ) -> None:
+        value = item.get(source_key)
+        if not value:
+            return
+        try:
+            names = cls._people_names(value)
+        except Exception as error:
+            logger.debug(
+                f"{mam_color}: [yellow]Warning: Could not parse MAM {warning_label}: {error}[/yellow]"
+            )
+            return
+        if names:
+            metadata[target_key] = ", ".join(names)
 
-        # Authors
-        author_info = item.get("author_info")
-        if author_info:
-            try:
-                if isinstance(author_info, str):
-                    author_dict = json.loads(author_info)
-                elif isinstance(author_info, dict):
-                    author_dict = author_info
-                else:
-                    author_dict = {}
-                authors = [
-                    html.unescape(str(name)).strip()
-                    for name in author_dict.values()
-                ]
-                if authors:
-                    metadata["author"] = ", ".join(authors)
-            except Exception as e:
-                logger.debug(
-                    f"{mam_color}: [yellow]Warning: Could not parse MAM authors: {e}[/yellow]"
-                )
+    @classmethod
+    def _add_people_metadata(
+        cls, metadata: dict[str, Any], item: dict[str, Any]
+    ) -> None:
+        cls._add_people_field(
+            metadata, item, "author_info", "author", "authors"
+        )
+        cls._add_people_field(
+            metadata, item, "narrator_info", "narrator", "narrators"
+        )
 
-        # Narrator
-        narrator_info = item.get("narrator_info")
-        if narrator_info:
-            try:
-                if isinstance(narrator_info, str):
-                    narrator_dict = json.loads(narrator_info)
-                elif isinstance(narrator_info, dict):
-                    narrator_dict = narrator_info
-                else:
-                    narrator_dict = {}
-                narrators = [
-                    html.unescape(str(name)).strip()
-                    for name in narrator_dict.values()
-                ]
-                if narrators:
-                    metadata["narrator"] = ", ".join(narrators)
-            except Exception as e:
-                logger.debug(
-                    f"[yellow]Warning: Could not parse MAM narrators: {e}[/yellow]"
-                )
-
-        # Description -> overview
+    @staticmethod
+    def _add_description(
+        metadata: dict[str, Any], item: dict[str, Any]
+    ) -> None:
         description = item.get("description")
         if description:
-            # Unescape html entities
-            unescaped_desc = html.unescape(str(description)).strip()
-            metadata["overview"] = unescaped_desc
+            metadata["overview"] = html.unescape(str(description)).strip()
 
-        publisher_value = next(
-            (
-                item.get(field)
-                for field in (
-                    "publisher",
-                    "publisher_info",
-                    "publisher_name",
-                    "publishers",
-                    "pubname",
-                )
-                if item.get(field)
-            ),
-            None,
-        )
+    @staticmethod
+    def _first_item_value(
+        item: dict[str, Any], fields: tuple[str, ...]
+    ) -> Any:
+        for field in fields:
+            if item.get(field):
+                return item[field]
+        return None
+
+    @classmethod
+    def _add_publisher(
+        cls, metadata: dict[str, Any], item: dict[str, Any]
+    ) -> None:
+        publisher_value = cls._first_item_value(item, _PUBLISHER_FIELDS)
         publishers = list(
             dict.fromkeys(
                 name for name in _metadata_values(publisher_value) if name
@@ -170,202 +209,261 @@ class MyAnonamouseManager:
         if publishers:
             metadata["publisher"] = ", ".join(publishers)
 
-        # ISBN
+    @staticmethod
+    def _add_title(metadata: dict[str, Any], item: dict[str, Any]) -> None:
+        title = item.get("title") or item.get("name")
         if title:
             metadata["title"] = _clean_mam_title(
-                title, metadata.get("author", "")
+                title, str(metadata.get("author", ""))
             )
 
+    @staticmethod
+    def _add_isbn(metadata: dict[str, Any], item: dict[str, Any]) -> None:
         isbn = _normalize_mam_isbn(item.get("isbn"))
         if isbn:
             metadata["isbn"] = isbn
 
-        # ASIN
-        asin = item.get("asin") or item.get("ASIN")
+    @staticmethod
+    def _asin_value(value: Any) -> str | None:
+        if not value:
+            return None
+        asin_match = re.search(
+            r"\bASIN\s*[:#]?\s*([A-Z0-9]{10})(?![A-Z0-9])",
+            str(value),
+            re.IGNORECASE,
+        )
+        cleaned = (
+            (asin_match.group(1) if asin_match else str(value)).strip().upper()
+        )
+        if re.fullmatch(r"[A-Z0-9]{10}", cleaned):
+            return cleaned
+        return None
+
+    @classmethod
+    def _add_asin(cls, metadata: dict[str, Any], item: dict[str, Any]) -> None:
+        asin = cls._asin_value(item.get("asin") or item.get("ASIN"))
         if asin:
-            asin_match = re.search(
-                r"\bASIN\s*[:#]?\s*([A-Z0-9]{10})(?![A-Z0-9])",
-                str(asin),
-                re.IGNORECASE,
-            )
-            cleaned_asin = (
-                (asin_match.group(1) if asin_match else str(asin))
-                .strip()
-                .upper()
-            )
-            if re.fullmatch(r"[A-Z0-9]{10}", cleaned_asin):
-                metadata["asin"] = cleaned_asin
+            metadata["asin"] = asin
 
-        publication_value = next(
-            (
-                item.get(field)
-                for field in (
-                    "year",
-                    "release_year",
-                    "publication_year",
-                    "published",
-                    "publish_date",
-                    "publication_date",
-                    "released",
-                )
-                if item.get(field)
-            ),
-            None,
-        )
-        publication_match = re.search(
-            r"\b(?:18|19|20)\d{2}\b", str(publication_value or "")
-        )
-        if publication_match:
-            metadata["year"] = int(publication_match.group(0))
+    @classmethod
+    def _add_publication_year(
+        cls, metadata: dict[str, Any], item: dict[str, Any]
+    ) -> None:
+        value = cls._first_item_value(item, _PUBLICATION_FIELDS)
+        match = re.search(r"\b(?:18|19|20)\d{2}\b", str(value or ""))
+        if match:
+            metadata["year"] = int(match.group(0))
 
-        # Language
+    @staticmethod
+    def _resolved_language(lang: Any) -> tuple[str, str] | None:
+        try:
+            full, iso3 = resolve_book_language(str(lang))
+        except Exception as error:
+            logger.debug(
+                f"[yellow]Warning: Could not resolve language '{lang}': {error}[/yellow]"
+            )
+            return None
+        if not is_valid_book_language(full, iso3):
+            return None
+        return full, iso3
+
+    @classmethod
+    def _add_language(
+        cls, metadata: dict[str, Any], item: dict[str, Any]
+    ) -> None:
         lang = item.get("lang_code")
-        if lang:
-            try:
-                full, iso3 = resolve_book_language(str(lang))
-                if is_valid_book_language(full, iso3):
-                    metadata["book_language"] = full
-                    if iso3:
-                        metadata["book_language_iso"] = iso3
-            except Exception as ex:
-                logger.debug(
-                    f"[yellow]Warning: Could not resolve language '{lang}': {ex}[/yellow]"
-                )
+        if not lang:
+            return
+        resolved = cls._resolved_language(lang)
+        if resolved is None:
+            return
+        full, iso3 = resolved
+        metadata["book_language"] = full
+        if iso3:
+            metadata["book_language_iso"] = iso3
 
-        """ Not useful for now, too polluted
-        # Tags -> keywords
-        tags = item.get("tags")
-        if tags:
-            words = str(tags).split()
-            cleaned_words = [w.strip().lower() for w in words if w.strip()]
-            if cleaned_words:
-                metadata["keywords"] = ", ".join(cleaned_words)
-        """
+    @staticmethod
+    def _cover_extension(poster_type: Any) -> str:
+        lowered = str(poster_type).lower()
+        if "png" in lowered:
+            return "png"
+        if "gif" in lowered:
+            return "gif"
+        return "jpeg"
 
-        # Cover
+    @classmethod
+    def _add_cover(
+        cls, metadata: dict[str, Any], item: dict[str, Any]
+    ) -> None:
         mam_id = item.get("id")
         poster_type = item.get("poster_type")
-        if mam_id and poster_type:
-            ext = "jpeg"
-            if "png" in str(poster_type).lower():
-                ext = "png"
-            elif "gif" in str(poster_type).lower():
-                ext = "gif"
-            metadata["artwork_url"] = (
-                f"https://cdn.myanonamouse.net/t/p/large/{mam_id}.{ext}"
-            )
+        if not mam_id or not poster_type:
+            return
+        extension = cls._cover_extension(poster_type)
+        metadata["artwork_url"] = (
+            f"https://cdn.myanonamouse.net/t/p/large/{mam_id}.{extension}"
+        )
 
-        # Comic / Manga detection
-        catname = str(item.get("catname") or "").lower()
-        tags = str(item.get("tags") or "").lower()
-        categories = str(item.get("categories") or "").lower()
+    @staticmethod
+    def _category_text(item: dict[str, Any]) -> str:
+        return " ".join(
+            str(item.get(field) or "").lower()
+            for field in ("catname", "tags", "categories")
+        )
 
-        if "comic" in catname or "comic" in tags or "comic" in categories:
-            metadata["comic"] = True
-        if "manga" in catname or "manga" in tags or "manga" in categories:
-            metadata["manga"] = True
-        if (
-            "magazine" in catname
-            or "magazine" in tags
-            or "magazine" in categories
-        ):
-            metadata["magazine"] = True
-        if (
-            "newspaper" in catname
-            or "newspaper" in tags
-            or "newspaper" in categories
-        ):
-            metadata["newspaper"] = True
+    @classmethod
+    def _add_category_flags(
+        cls, metadata: dict[str, Any], item: dict[str, Any]
+    ) -> None:
+        category_text = cls._category_text(item)
+        for marker in _CATEGORY_MARKERS:
+            if marker in category_text:
+                metadata[marker] = True
 
+    def _parse_torrent_info(self, item: dict[str, Any]) -> dict[str, Any]:
+        logger.debug(f"{mam_color} raw item: {item}")
+        metadata: dict[str, Any] = {}
+        self._add_people_metadata(metadata, item)
+        self._add_description(metadata, item)
+        self._add_publisher(metadata, item)
+        self._add_title(metadata, item)
+        self._add_isbn(metadata, item)
+        self._add_asin(metadata, item)
+        self._add_publication_year(metadata, item)
+        self._add_language(metadata, item)
+        self._add_cover(metadata, item)
+        self._add_category_flags(metadata, item)
         return metadata
+
+    @staticmethod
+    def _clean_torrent_id(torrent_id: str) -> str | None:
+        clean_id = torrent_id.strip()
+        if clean_id and clean_id.isdigit():
+            return clean_id
+        return None
+
+    @staticmethod
+    async def _cached_result(
+        cache: Any, clean_id: str
+    ) -> tuple[bool, dict[str, Any] | None]:
+        cached_data = await cache.get("myanonamouse", "torrent", clean_id)
+        if is_cache_miss(cached_data) or not isinstance(cached_data, dict):
+            return False, None
+        cached = cast(dict[str, Any], cached_data)
+        if cached.get("not_found"):
+            return True, None
+        logger.info(f"{mam_color}: ID match found (cached): {clean_id}")
+        return True, cached
+
+    @staticmethod
+    def _request_headers() -> dict[str, str]:
+        return {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Content-Type": "application/json",
+        }
+
+    @staticmethod
+    def _request_payload(clean_id: str) -> dict[str, Any]:
+        return {"tor": {"id": int(clean_id)}, "description": "", "isbn": ""}
+
+    @staticmethod
+    async def _cache_not_found(cache: Any, clean_id: str) -> None:
+        await cache.set(
+            "myanonamouse",
+            "torrent",
+            clean_id,
+            {"not_found": True},
+            negative=True,
+        )
+
+    @staticmethod
+    def _first_result_item(data: Any) -> dict[str, Any] | None:
+        if not isinstance(data, dict):
+            return None
+        data_map = cast(dict[str, Any], data)
+        entries_value = data_map.get("data")
+        if not isinstance(entries_value, list):
+            return None
+        entries = cast(list[Any], entries_value)
+        if not entries:
+            return None
+        first = entries[0]
+        if not isinstance(first, dict):
+            return None
+        return cast(dict[str, Any], first)
+
+    async def _successful_result(
+        self, data: Any, cache: Any, clean_id: str
+    ) -> dict[str, Any] | None:
+        first = self._first_result_item(data)
+        if first is None:
+            logger.info(
+                f"{mam_color}: [yellow]No items found for ID: {clean_id}[/yellow]"
+            )
+            await self._cache_not_found(cache, clean_id)
+            return None
+        metadata = self._parse_torrent_info(first)
+        if not metadata:
+            return None
+        logger.info(f"{mam_color}: match found: {metadata.get('title')}")
+        await cache.set("myanonamouse", "torrent", clean_id, metadata)
+        return metadata
+
+    async def _response_result(
+        self, response: httpx.Response, cache: Any, clean_id: str
+    ) -> dict[str, Any] | None:
+        if response.status_code == 200:
+            return await self._successful_result(
+                response.json(), cache, clean_id
+            )
+        if response.status_code in (401, 403):
+            logger.info(
+                f"{mam_color}: [bold red]API: Unauthorized/Forbidden (Status {response.status_code}). Check your mam_api_key/mam_id and IP locked session cookie setting on the website.[/bold red]"
+            )
+            return None
+        logger.info(
+            f"{mam_color}: [red]API returned error status code {response.status_code} for ID: {clean_id}[/red]"
+        )
+        return None
+
+    async def _fetch_result(
+        self, clean_id: str, api_key: str, cache: Any
+    ) -> dict[str, Any] | None:
+        url = "https://www.myanonamouse.net/tor/js/loadSearchJSONbasic.php"
+        try:
+            async with httpx.AsyncClient(follow_redirects=True) as client:
+                response = await client.post(
+                    url,
+                    json=self._request_payload(clean_id),
+                    headers=self._request_headers(),
+                    cookies={"mam_id": api_key},
+                    timeout=15.0,
+                )
+            return await self._response_result(response, cache, clean_id)
+        except Exception as error:
+            logger.info(
+                f"{mam_color}: [red]API: Network or query error for ID {clean_id}: {error}[/red]"
+            )
+            return None
 
     async def search_by_id(
         self, torrent_id: str, base_dir: str = "", api_key: str = ""
     ) -> dict[str, Any] | None:
-        """
-        Search MyAnonamouse API by torrent ID.
-        Returns a dict of metadata or None if not found/error.
-        """
-        clean_id = torrent_id.strip()
-        if not clean_id or not clean_id.isdigit():
+        """Search MyAnonamouse API by torrent ID."""
+        clean_id = self._clean_torrent_id(torrent_id)
+        if clean_id is None:
             return None
-
         cache = cache_for(base_dir)
-        cached_data = await cache.get("myanonamouse", "torrent", clean_id)
-        if not is_cache_miss(cached_data) and isinstance(cached_data, dict):
-            if cached_data.get("not_found"):
-                return None
-            logger.info(f"{mam_color}: ID match found (cached): {clean_id}")
+        cached, cached_data = await self._cached_result(cache, clean_id)
+        if cached:
             return cached_data
-
         if not api_key:
             logger.debug(
                 f"{mam_color}: [yellow]API key/session cookie not configured, skipping search[/yellow]"
             )
             return None
-
-        url = "https://www.myanonamouse.net/tor/js/loadSearchJSONbasic.php"
-        payload = {"tor": {"id": int(clean_id)}, "description": "", "isbn": ""}
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Content-Type": "application/json",
-        }
-        cookies = {"mam_id": api_key}
-
         logger.debug(f"{mam_color}: Searching API for ID: {clean_id}")
-
-        try:
-            async with httpx.AsyncClient(follow_redirects=True) as client:
-                resp = await client.post(
-                    url,
-                    json=payload,
-                    headers=headers,
-                    cookies=cookies,
-                    timeout=15.0,
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    if (
-                        "data" in data
-                        and isinstance(data["data"], list)
-                        and data["data"]
-                    ):
-                        metadata = self._parse_torrent_info(data["data"][0])
-                        if metadata:
-                            logger.info(
-                                f"{mam_color}: match found: {metadata.get('title')}"
-                            )
-
-                            await cache.set(
-                                "myanonamouse", "torrent", clean_id, metadata
-                            )
-
-                            return metadata
-                    else:
-                        logger.info(
-                            f"{mam_color}: [yellow]No items found for ID: {clean_id}[/yellow]"
-                        )
-                        await cache.set(
-                            "myanonamouse",
-                            "torrent",
-                            clean_id,
-                            {"not_found": True},
-                            negative=True,
-                        )
-                elif resp.status_code in (401, 403):
-                    logger.info(
-                        f"{mam_color}: [bold red]API: Unauthorized/Forbidden (Status {resp.status_code}). Check your mam_api_key/mam_id and IP locked session cookie setting on the website.[/bold red]"
-                    )
-                else:
-                    logger.info(
-                        f"{mam_color}: [red]API returned error status code {resp.status_code} for ID: {clean_id}[/red]"
-                    )
-        except Exception as e:
-            logger.info(
-                f"{mam_color}: [red]API: Network or query error for ID {clean_id}: {e}[/red]"
-            )
-
-        return None
+        return await self._fetch_result(clean_id, api_key, cache)
 
 
 myanonamouse_manager = MyAnonamouseManager()
