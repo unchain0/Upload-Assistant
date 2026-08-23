@@ -665,6 +665,384 @@ def _effective_image_host_config(
     return effective
 
 
+def _normalized_approved_hosts(
+    approved_image_hosts: Sequence[str] | None,
+) -> list[str]:
+    if approved_image_hosts is None:
+        return []
+    return list(approved_image_hosts)
+
+
+def _current_screenshots(meta: Meta, tracker: str) -> list[dict[str, str]]:
+    return cast(
+        list[dict[str, str]],
+        get_tracker_image_collection(meta, tracker, "screenshots"),
+    )
+
+
+def _skipped_host_check_result(
+    meta: Meta, tracker: str
+) -> tuple[list[dict[str, str]], bool, bool]:
+    logger.debug(
+        f"[yellow]Skipping image host upload for {tracker} as per meta.skip_imghost_upload setting."
+    )
+    return _current_screenshots(meta, tracker), False, False
+
+
+def _log_host_check_start(
+    meta: Meta,
+    tracker: str,
+    approved_hosts: Sequence[str],
+    tracker_images: list[dict[str, str]],
+) -> None:
+    logger.debug(
+        f"[cyan]check_hosts debug: tracker={tracker} meta.imghost={meta.imghost} approved_image_hosts={approved_hosts} "
+        f"image_list={len(meta.image_list or [])} tracker_screenshots={len(tracker_images)}[/cyan]"
+    )
+
+
+async def _mapped_image_host(
+    raw_url: str, url_host_mapping: Mapping[str, str]
+) -> str:
+    hostname = urlparse(raw_url).netloc
+    matched = await match_host(hostname, url_host_mapping.keys())
+    return url_host_mapping.get(matched, matched)
+
+
+async def _existing_image_is_approved(
+    image: Mapping[str, str],
+    url_host_mapping: Mapping[str, str],
+    approved_hosts: Sequence[str],
+) -> tuple[bool, str | None, str | None]:
+    raw_url = _as_str(image.get("raw_url"))
+    if not raw_url:
+        return False, None, None
+    mapped_host = await _mapped_image_host(raw_url, url_host_mapping)
+    return mapped_host in approved_hosts, raw_url, mapped_host
+
+
+def _existing_image_entries(
+    meta: Meta, tracker: str
+) -> list[dict[str, str]] | None:
+    if not meta.image_list:
+        return None
+    if has_tracker_image_collection(meta, tracker, "screenshots"):
+        return None
+    return cast(list[dict[str, str]], meta.image_list)
+
+
+async def _collect_approved_existing_images(
+    entries: list[dict[str, str]],
+    tracker: str,
+    url_host_mapping: Mapping[str, str],
+    approved_hosts: Sequence[str],
+) -> list[dict[str, str]]:
+    approved: list[dict[str, str]] = []
+    for image in entries:
+        is_approved, raw_url, mapped_host = await _existing_image_is_approved(
+            image, url_host_mapping, approved_hosts
+        )
+        if is_approved:
+            approved.append(image)
+            logger.debug(
+                f"[green]URL '{raw_url}' is from approved host '{mapped_host}'."
+            )
+        elif raw_url:
+            logger.debug(
+                f"[yellow]URL '{raw_url}' is not from an approved host for {tracker}."
+            )
+    return approved
+
+
+def _complete_approved_collection(
+    approved: list[dict[str, str]], entries: list[dict[str, str]]
+) -> list[dict[str, str]] | None:
+    if approved and len(approved) == len(entries):
+        return approved
+    return None
+
+
+async def _approved_existing_images(
+    meta: Meta,
+    tracker: str,
+    url_host_mapping: Mapping[str, str],
+    approved_hosts: Sequence[str],
+) -> list[dict[str, str]] | None:
+    entries = _existing_image_entries(meta, tracker)
+    if entries is None:
+        return None
+    logger.debug(
+        f"[yellow]Checking if existing images in meta.image_list can be used for {tracker}..."
+    )
+    approved = await _collect_approved_existing_images(
+        entries, tracker, url_host_mapping, approved_hosts
+    )
+    return _complete_approved_collection(approved, entries)
+
+
+def _reuploaded_images_path(meta: Meta, tracker: str) -> Path:
+    filename = (
+        "covers.json" if tracker == "covers" else "reuploaded_images.json"
+    )
+    return Path(meta.base_dir) / "tmp" / meta.uuid / filename
+
+
+async def _read_reuploaded_json(path: Path) -> Any:
+    try:
+        async with aiofiles.open(path, encoding="utf-8") as source:
+            return json.loads(await source.read())
+    except Exception as error:
+        logger.error(f"[red]Failed to load reuploaded images: {error}")
+        return None
+
+
+def _typed_reuploaded_images(value: Any) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    return [
+        cast(dict[str, str], item)
+        for item in cast(list[Any], value)
+        if isinstance(item, dict)
+    ]
+
+
+async def _load_reuploaded_images(path: Path) -> list[dict[str, str]]:
+    if not path.exists():
+        return []
+    return _typed_reuploaded_images(await _read_reuploaded_json(path))
+
+
+def _cover_cache_requires_match(meta: Meta, tracker: str) -> bool:
+    if tracker != "covers":
+        return False
+    return "release_url" in meta
+
+
+def _log_cover_cache_mismatch(
+    meta: Meta, image: Mapping[str, str], raw_url: str
+) -> None:
+    if not meta.debug:
+        return
+    if "release_url" not in image:
+        logger.debug(f"[yellow]Skipping image without release_url: {raw_url}")
+        return
+    logger.debug(
+        f"[yellow]Skipping image with mismatched release_url: {image['release_url']} != {meta.release_url}"
+    )
+
+
+def _cover_cache_matches(
+    meta: Meta, tracker: str, image: Mapping[str, str], raw_url: str
+) -> bool:
+    if not _cover_cache_requires_match(meta, tracker):
+        return True
+    if image.get("release_url") == meta.release_url:
+        return True
+    _log_cover_cache_mismatch(meta, image, raw_url)
+    return False
+
+
+async def _cached_image_is_valid(
+    meta: Meta,
+    tracker: str,
+    image: Mapping[str, str],
+    url_host_mapping: Mapping[str, str],
+    approved_hosts: Sequence[str],
+) -> bool:
+    raw_url = _as_str(image.get("raw_url"))
+    if not raw_url:
+        return False
+    if not _cover_cache_matches(meta, tracker, image, raw_url):
+        return False
+    mapped_host = await _mapped_image_host(raw_url, url_host_mapping)
+    if mapped_host in approved_hosts:
+        return True
+    if meta.debug:
+        logger.info(
+            f"[red]URL '{raw_url}' from reuploaded_images.json is not recognized as an approved host."
+        )
+    return False
+
+
+async def _valid_cached_images(
+    meta: Meta,
+    tracker: str,
+    images: list[dict[str, str]],
+    url_host_mapping: Mapping[str, str],
+    approved_hosts: Sequence[str],
+) -> list[dict[str, str]]:
+    return [
+        image
+        for image in images
+        if await _cached_image_is_valid(
+            meta, tracker, image, url_host_mapping, approved_hosts
+        )
+    ]
+
+
+async def _cached_screenshots(
+    meta: Meta,
+    tracker: str,
+    url_host_mapping: Mapping[str, str],
+    approved_hosts: Sequence[str],
+) -> list[dict[str, str]] | None:
+    cached = await _load_reuploaded_images(
+        _reuploaded_images_path(meta, tracker)
+    )
+    valid = await _valid_cached_images(
+        meta, tracker, cached, url_host_mapping, approved_hosts
+    )
+    if not valid:
+        return None
+    if tracker == "covers":
+        logger.info("[green]Using valid images from covers.json.")
+    else:
+        logger.info("[green]Using valid images from reuploaded_images.json.")
+    return valid
+
+
+async def _all_tracker_images_approved(
+    tracker_images: list[dict[str, str]],
+    url_host_mapping: Mapping[str, str],
+    approved_hosts: Sequence[str],
+) -> bool:
+    if not tracker_images:
+        return False
+    for image in tracker_images:
+        raw_url = _as_str(image.get("raw_url")) or ""
+        mapped_host = await _mapped_image_host(raw_url, url_host_mapping)
+        if mapped_host not in approved_hosts:
+            return False
+    return True
+
+
+def _store_reused_screenshots(
+    meta: Meta,
+    tracker: str,
+    images: list[dict[str, str]],
+    message: str,
+) -> tuple[list[dict[str, str]], bool, bool]:
+    set_tracker_image_collection(meta, tracker, "screenshots", images)
+    logger.info(message)
+    return _current_screenshots(meta, tracker), False, False
+
+
+async def _reusable_screenshot_result(
+    meta: Meta,
+    tracker: str,
+    url_host_mapping: Mapping[str, str],
+    approved_hosts: Sequence[str],
+    tracker_images: list[dict[str, str]],
+) -> tuple[list[dict[str, str]], bool, bool] | None:
+    existing = await _approved_existing_images(
+        meta, tracker, url_host_mapping, approved_hosts
+    )
+    if existing is not None:
+        set_tracker_image_collection(meta, tracker, "screenshots", existing)
+        logger.debug(
+            f"[green]All existing images are from approved hosts for {tracker}."
+        )
+        return _current_screenshots(meta, tracker), False, False
+    cached = await _cached_screenshots(
+        meta, tracker, url_host_mapping, approved_hosts
+    )
+    if cached is not None:
+        return _store_reused_screenshots(meta, tracker, cached, "")
+    if await _all_tracker_images_approved(
+        tracker_images, url_host_mapping, approved_hosts
+    ):
+        logger.info(f"[green]Using valid tracker screenshots for {tracker}.")
+        return _current_screenshots(meta, tracker), False, False
+    return None
+
+
+def _configured_image_host_indices(
+    default_config: Mapping[str, Any],
+) -> list[int]:
+    indices: list[int] = []
+    for key in default_config:
+        match = re.fullmatch(r"img_host_(\d+)", key)
+        if match is None:
+            continue
+        if _as_str(default_config.get(key)):
+            indices.append(int(match.group(1)))
+    return sorted(indices)
+
+
+async def _try_image_host(
+    meta: Meta,
+    tracker: str,
+    url_host_mapping: dict[str, str],
+    approved_hosts: Sequence[str],
+    current_index: int,
+    default_config: Mapping[str, Any],
+    takescreens_manager: TakeScreensManager,
+    uploadscreens_manager: UploadScreensManager,
+) -> tuple[bool, bool]:
+    image_list, retry_mode, images_reuploaded = await _handle_image_upload(
+        meta,
+        tracker,
+        url_host_mapping,
+        approved_hosts,
+        img_host_index=current_index,
+        default_config=default_config,
+        takescreens_manager=takescreens_manager,
+        uploadscreens_manager=uploadscreens_manager,
+    )
+    if image_list:
+        set_tracker_image_collection(meta, tracker, "screenshots", image_list)
+    return retry_mode, images_reuploaded
+
+
+async def _reupload_with_configured_hosts(
+    meta: Meta,
+    tracker: str,
+    url_host_mapping: dict[str, str],
+    approved_hosts: Sequence[str],
+    img_host_index: int,
+    default_config: Mapping[str, Any],
+    takescreens_manager: TakeScreensManager,
+    uploadscreens_manager: UploadScreensManager,
+) -> tuple[list[dict[str, str]], bool, bool]:
+    indices = _configured_image_host_indices(default_config)
+    if not indices:
+        return [], True, False
+    position = _starting_host_position(indices, img_host_index)
+    images_reuploaded = False
+    while position < len(indices):
+        current_index = indices[position]
+        retry_mode, images_reuploaded = await _try_image_host(
+            meta,
+            tracker,
+            url_host_mapping,
+            approved_hosts,
+            current_index,
+            default_config,
+            takescreens_manager,
+            uploadscreens_manager,
+        )
+        if not retry_mode:
+            break
+        logger.info(
+            f"[yellow]Switching to the next image host. Current index: {current_index}"
+        )
+        position += 1
+    screenshots = _current_screenshots(meta, tracker)
+    if not screenshots:
+        logger.info(
+            "[red]All image hosts failed. Please check your configuration."
+        )
+    return screenshots, False, images_reuploaded
+
+
+def _log_host_check_done(meta: Meta, tracker: str) -> None:
+    screenshots = _current_screenshots(meta, tracker)
+    logger.debug(
+        f"[cyan]check_hosts debug: done tracker={tracker} image_list={len(meta.image_list or [])} "
+        f"tracker_screenshots={len(screenshots)}[/cyan]"
+    )
+
+
 async def _check_hosts(
     meta: Meta,
     tracker: str,
@@ -675,251 +1053,36 @@ async def _check_hosts(
     takescreens_manager: TakeScreensManager | None = None,
     uploadscreens_manager: UploadScreensManager | None = None,
 ) -> tuple[list[dict[str, str]], bool, bool]:
-    if default_config is None:
-        raise ValueError("default_config is required")
-    if takescreens_manager is None:
-        raise ValueError("takescreens_manager is required")
-    if uploadscreens_manager is None:
-        raise ValueError("uploadscreens_manager is required")
-    if approved_image_hosts is None:
-        approved_image_hosts = []
+    config, screens_manager, uploads_manager = (
+        _require_image_upload_dependencies(
+            default_config, takescreens_manager, uploadscreens_manager
+        )
+    )
+    approved_hosts = _normalized_approved_hosts(approved_image_hosts)
     if meta.skip_imghost_upload:
-        logger.debug(
-            f"[yellow]Skipping image host upload for {tracker} as per meta.skip_imghost_upload setting."
-        )
-        return (
-            get_tracker_image_collection(meta, tracker, "screenshots"),
-            False,
-            False,
-        )
-
-    has_tracker_override = has_tracker_image_collection(
-        meta, tracker, "screenshots"
+        return _skipped_host_check_result(meta, tracker)
+    tracker_images = _current_screenshots(meta, tracker)
+    _log_host_check_start(meta, tracker, approved_hosts, tracker_images)
+    reusable = await _reusable_screenshot_result(
+        meta, tracker, url_host_mapping, approved_hosts, tracker_images
     )
-    tracker_images = get_tracker_image_collection(meta, tracker, "screenshots")
-
-    logger.debug(
-        f"[cyan]check_hosts debug: tracker={tracker} meta.imghost={meta.imghost} approved_image_hosts={approved_image_hosts} "
-        f"image_list={len(meta.image_list or [])} tracker_screenshots={len(tracker_images)}[/cyan]"
-    )
-
-    # Check if we have main image_list but no tracker-specific images yet
-    if meta.image_list and not has_tracker_override:
-        logger.debug(
-            f"[yellow]Checking if existing images in meta.image_list can be used for {tracker}..."
-        )
-        # Check if the URLs in image_list are from approved hosts
-        approved_images: list[dict[str, str]] = []
-        need_reupload = False
-
-        image_list_entries = cast(list[dict[str, str]], meta.image_list)
-        for image in image_list_entries:
-            raw_url = _as_str(image.get("raw_url"))
-            if not raw_url:
-                continue
-
-            parsed_url = urlparse(raw_url)
-            hostname = parsed_url.netloc
-            mapped_host = await match_host(hostname, url_host_mapping.keys())
-
-            if mapped_host:
-                mapped_host = url_host_mapping.get(mapped_host, mapped_host)
-                if mapped_host in approved_image_hosts:
-                    approved_images.append(image)
-                    logger.debug(
-                        f"[green]URL '{raw_url}' is from approved host '{mapped_host}'."
-                    )
-                else:
-                    need_reupload = True
-                    logger.debug(
-                        f"[yellow]URL '{raw_url}' is not from an approved host for {tracker}."
-                    )
-            else:
-                need_reupload = True
-
-        # If all images are approved, use them directly
-        if (
-            approved_images
-            and len(approved_images) == len(meta.image_list)
-            and not need_reupload
-        ):
-            set_tracker_image_collection(
-                meta, tracker, "screenshots", approved_images
-            )
-            logger.debug(
-                f"[green]All existing images are from approved hosts for {tracker}."
-            )
-            return (
-                get_tracker_image_collection(meta, tracker, "screenshots"),
-                False,
-                False,
-            )
-
-    if tracker == "covers":
-        reuploaded_images_path = (
-            Path(meta.base_dir) / "tmp" / meta.uuid / "covers.json"
-        )
-    else:
-        reuploaded_images_path = (
-            Path(meta.base_dir) / "tmp" / meta.uuid / "reuploaded_images.json"
-        )
-    reuploaded_images: list[dict[str, str]] = []
-
-    if Path(reuploaded_images_path).exists():
-        try:
-            async with aiofiles.open(
-                reuploaded_images_path, encoding="utf-8"
-            ) as f:
-                content = await f.read()
-                loaded = json.loads(content)
-                if isinstance(loaded, list):
-                    reuploaded_images = cast(list[dict[str, str]], loaded)
-        except Exception as e:
-            logger.error(f"[red]Failed to load reuploaded images: {e}")
-
-    valid_reuploaded_images: list[dict[str, str]] = []
-    for image in reuploaded_images:
-        raw_url = _as_str(image.get("raw_url"))
-        if not raw_url:
-            continue
-
-        # For covers, verify the release_url matches
-        if (
-            tracker == "covers"
-            and "release_url" in meta
-            and (
-                "release_url" not in image
-                or image["release_url"] != meta.release_url
-            )
-        ):
-            if meta.debug:
-                if "release_url" not in image:
-                    logger.debug(
-                        f"[yellow]Skipping image without release_url: {raw_url}"
-                    )
-                else:
-                    logger.debug(
-                        f"[yellow]Skipping image with mismatched release_url: {image['release_url']} != {meta.release_url}"
-                    )
-            continue
-
-        parsed_url = urlparse(raw_url)
-        hostname = parsed_url.netloc
-        mapped_host = await match_host(hostname, url_host_mapping.keys())
-
-        if mapped_host:
-            mapped_host = url_host_mapping.get(mapped_host, mapped_host)
-            if mapped_host in approved_image_hosts:
-                valid_reuploaded_images.append(image)
-            elif meta.debug:
-                logger.info(
-                    f"[red]URL '{raw_url}' from reuploaded_images.json is not recognized as an approved host."
-                )
-
-    if valid_reuploaded_images:
-        set_tracker_image_collection(
-            meta, tracker, "screenshots", valid_reuploaded_images
-        )
-        if tracker == "covers":
-            logger.info("[green]Using valid images from covers.json.")
-        else:
-            logger.info(
-                "[green]Using valid images from reuploaded_images.json."
-            )
-        return (
-            get_tracker_image_collection(meta, tracker, "screenshots"),
-            False,
-            False,
-        )
-
-    # Check if the tracker-specific key has valid images
-    has_valid_images = False
-    if tracker_images:
-        valid_hosts: list[bool] = []
-        for image in cast(list[dict[str, str]], tracker_images):
-            raw_url = _as_str(image.get("raw_url")) or ""
-            netloc = urlparse(raw_url).netloc
-            matched_host = await match_host(netloc, url_host_mapping.keys())
-            mapped_host = url_host_mapping.get(matched_host, matched_host)
-            valid_hosts.append(mapped_host in approved_image_hosts)
-
-        # Then check if all are valid
-        if all(valid_hosts) and tracker_images:
-            has_valid_images = True
-
-    if has_valid_images:
-        logger.info(f"[green]Using valid tracker screenshots for {tracker}.")
-        return (
-            get_tracker_image_collection(meta, tracker, "screenshots"),
-            False,
-            False,
-        )
-
+    if reusable is not None:
+        return reusable
     logger.debug(
         f"[yellow]No valid images found for {tracker}, will attempt to reupload..."
     )
-
-    images_reuploaded = False
-    configured_indices = sorted(
-        int(match.group(1))
-        for key in default_config
-        if (match := re.fullmatch(r"img_host_(\d+)", key))
-        and _as_str(default_config.get(key))
+    result = await _reupload_with_configured_hosts(
+        meta,
+        tracker,
+        url_host_mapping,
+        approved_hosts,
+        img_host_index,
+        config,
+        screens_manager,
+        uploads_manager,
     )
-    if not configured_indices:
-        return [], True, images_reuploaded
-
-    current_position = next(
-        (
-            i
-            for i, index in enumerate(configured_indices)
-            if index >= img_host_index
-        ),
-        len(configured_indices),
-    )
-
-    while current_position < len(configured_indices):
-        current_index = configured_indices[current_position]
-        image_list, retry_mode, images_reuploaded = await _handle_image_upload(
-            meta,
-            tracker,
-            url_host_mapping,
-            approved_image_hosts,
-            img_host_index=current_index,
-            default_config=default_config,
-            takescreens_manager=takescreens_manager,
-            uploadscreens_manager=uploadscreens_manager,
-        )
-
-        if image_list:
-            set_tracker_image_collection(
-                meta, tracker, "screenshots", image_list
-            )
-
-        if retry_mode:
-            logger.info(
-                f"[yellow]Switching to the next image host. Current index: {current_index}"
-            )
-            current_position += 1
-            continue  # Retry with next host
-
-        break
-
-    if not get_tracker_image_collection(meta, tracker, "screenshots"):
-        logger.info(
-            "[red]All image hosts failed. Please check your configuration."
-        )
-
-    logger.debug(
-        f"[cyan]check_hosts debug: done tracker={tracker} image_list={len(meta.image_list or [])} "
-        f"tracker_screenshots={len(get_tracker_image_collection(meta, tracker, 'screenshots'))}[/cyan]"
-    )
-
-    return (
-        get_tracker_image_collection(meta, tracker, "screenshots"),
-        False,
-        images_reuploaded,
-    )
+    _log_host_check_done(meta, tracker)
+    return result
 
 
 def _require_image_upload_dependencies(
