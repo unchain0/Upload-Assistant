@@ -863,109 +863,46 @@ class TvmazeManager:
             )
             return None
 
-    async def get_tvmaze_episode_data_by_date(
+    async def _fetch_episode_data_by_date(
         self, tvmaze_id: int, airdate: str
     ) -> dict[str, Any] | None:
         url = f"https://api.tvmaze.com/shows/{tvmaze_id}/episodesbydate"
         params = {"date": airdate}
-
-        try:
-            async with httpx.AsyncClient(follow_redirects=True) as client:
-                response = await client.get(url, params=params, timeout=10.0)
-                response.raise_for_status()
-                data = response.json()
-
-                if data and len(data) > 0:
-                    # Take the first episode from the date (in case multiple episodes aired on same date)
-                    episode_data = data[0]
-
-                    # Get show data for additional information
-                    show_data: dict[str, Any] = {}
-                    if (
-                        "show" in episode_data.get("_links", {})
-                        and "href" in episode_data["_links"]["show"]
-                    ):
-                        show_url = episode_data["_links"]["show"]["href"]
-                        show_name = episode_data["_links"]["show"].get(
-                            "name", ""
-                        )
-
-                        show_response = await client.get(
-                            show_url, timeout=10.0
-                        )
-                        show_data = (
-                            show_response.json()
-                            if show_response.status_code == 200
-                            else {"name": show_name}
-                        )
-
-                    # Clean HTML tags from summary
-                    summary = episode_data.get("summary", "")
-                    if summary:
-                        summary = (
-                            summary.replace("<p>", "")
-                            .replace("</p>", "")
-                            .strip()
-                        )
-
-                    # Format the response in a consistent structure
-                    return {
-                        "episode_name": episode_data.get("name", ""),
-                        "overview": summary,
-                        "season_number": episode_data.get("season", 0),
-                        "episode_number": episode_data.get("number", 0),
-                        "air_date": episode_data.get("airdate", ""),
-                        "runtime": episode_data.get("runtime", 0),
-                        "series_name": show_data.get(
-                            "name",
-                            episode_data.get("_links", {})
-                            .get("show", {})
-                            .get("name", ""),
-                        ),
-                        "series_overview": show_data.get("summary", "")
-                        .replace("<p>", "")
-                        .replace("</p>", "")
-                        .strip(),
-                        "image": episode_data.get("image", {}).get(
-                            "original", None
-                        )
-                        if episode_data.get("image")
-                        else None,
-                        "image_medium": episode_data.get("image", {}).get(
-                            "medium", None
-                        )
-                        if episode_data.get("image")
-                        else None,
-                        "series_image": show_data.get("image", {}).get(
-                            "original", None
-                        )
-                        if show_data.get("image")
-                        else None,
-                        "series_image_medium": show_data.get("image", {}).get(
-                            "medium", None
-                        )
-                        if show_data.get("image")
-                        else None,
-                    }
-
+        async with httpx.AsyncClient(follow_redirects=True) as client:
+            response = await client.get(url, params=params, timeout=10.0)
+            response.raise_for_status()
+            payload = response.json()
+            data = self._first_episode_by_date(
+                cast(list[dict[str, Any]], payload)
+                if isinstance(payload, list)
+                else None
+            )
+            if data is None:
                 logger.info(
                     f"[yellow]No episode data found for date {airdate}[/yellow]"
                 )
                 return None
+            show_data = await self._episode_number_show_data(client, data)
+            return self._episode_number_result(data, show_data, 0, 0)
 
-        except httpx.HTTPStatusError as e:
+    async def get_tvmaze_episode_data_by_date(
+        self, tvmaze_id: int, airdate: str
+    ) -> dict[str, Any] | None:
+        try:
+            return await self._fetch_episode_data_by_date(tvmaze_id, airdate)
+        except httpx.HTTPStatusError as error:
             logger.info(
-                f"[red]TVMaze HTTP error occurred in episodesbydate: {e.response.status_code} - {e.response.text}[/red]"
+                f"[red]TVMaze HTTP error occurred in episodesbydate: {error.response.status_code} - {error.response.text}[/red]"
             )
             return None
-        except httpx.RequestError as e:
+        except httpx.RequestError as error:
             logger.info(
-                f"[red]TVMaze Request error occurred in episodesbydate: {e}[/red]"
+                f"[red]TVMaze Request error occurred in episodesbydate: {error}[/red]"
             )
             return None
-        except Exception as e:
+        except Exception as error:
             logger.info(
-                f"[red]TVMaze Error fetching TVMaze episode data by date: {e}[/red]"
+                f"[red]TVMaze Error fetching TVMaze episode data by date: {error}[/red]"
             )
             return None
 
