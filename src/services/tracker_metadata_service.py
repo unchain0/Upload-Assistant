@@ -1,7 +1,7 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
 import asyncio
-import contextlib
 import json
+import re
 import shutil
 import time
 import uuid
@@ -951,161 +951,284 @@ class TrackerDataManager:
             skip_tracker_descriptions,
         )
 
-    async def ping_unit3d(self, meta: Meta) -> None:
-        import re
-
-        from src.integrations.trackers.common import Common
-
-        common = Common(self.config)
-
-        # Prioritize trackers in this order
-        from src.integrations.trackers.registry import api_trackers
-
+    @staticmethod
+    def _unit3d_tracker_order(api_trackers: set[str]) -> list[str]:
         prioritized = ["BLUTOPIA", "AITHER", "ULCX", "LST", "ONLYENCODES"]
-        tracker_order = prioritized + sorted(
+        return prioritized + sorted(
             api_trackers - set(prioritized) - {"BEYONDHD"}
         )
 
-        # Check if we have stored torrent comments
-        if meta.torrent_comments:
-            # Try to extract tracker IDs from stored comments
-            for tracker_name in tracker_order:
-                # Skip if we already have region and distributor
-                if meta.region and meta.distributor:
-                    logger.debug(
-                        f"[green]Both region ({meta.region}) and distributor ({meta.distributor}) found - no need to check more trackers[/green]"
-                    )
-                    break
+    @staticmethod
+    def _hostname_from_url(url: Any) -> str:
+        if not isinstance(url, str):
+            return ""
+        if not url:
+            return ""
+        hostname = urlparse(url).hostname
+        return hostname.lower() if hostname else ""
 
-                tracker_id: str = ""
-                tracker_key = tracker_name.lower()
-                # Check each stored comment for matching tracker URL
-                for comment_data in meta.torrent_comments:
-                    is_tracker_comment = False
-                    comment = str(comment_data.get("comment", ""))
-                    # Dynamically build tracker hosts
-                    tracker_hosts = {}
-                    for name in api_trackers:
-                        hostname = ""
-                        if name in tracker_class_map:
-                            with contextlib.suppress(Exception):
-                                tracker_instance = tracker_class_map[name](
-                                    self.config
-                                )
-                                base_url = getattr(
-                                    tracker_instance, "base_url", ""
-                                )
-                                if base_url:
-                                    hostname = (
-                                        urlparse(base_url).hostname or ""
-                                    )
-                        if not hostname:
-                            announce_url = (
-                                self.config.get("TRACKERS", {})
-                                .get(name, {})
-                                .get("announce_url", "")
-                            )
-                            if announce_url:
-                                hostname = (
-                                    urlparse(announce_url).hostname or ""
-                                )
-                        if hostname:
-                            tracker_hosts[name] = hostname.lower()
+    def _tracker_base_url(self, tracker_name: str) -> Any:
+        factory = tracker_class_map.get(tracker_name)
+        if factory is None:
+            return ""
+        try:
+            tracker_instance = factory(self.config)
+        except Exception:
+            return ""
+        return getattr(tracker_instance, "base_url", "")
 
-                    # Fallbacks for safety
-                    for k, v in {
-                        "BLUTOPIA": "blutopia.cc",
-                        "AITHER": "aither.cc",
-                        "LST": "lst.gg",
-                        "ONLYENCODES": "onlyencodes.cc",
-                        "ULCX": "upload.cx",
-                    }.items():
-                        if k not in tracker_hosts:
-                            tracker_hosts[k] = v
+    def _tracker_base_hostname(self, tracker_name: str) -> str:
+        return self._hostname_from_url(self._tracker_base_url(tracker_name))
 
-                    expected_host = tracker_hosts.get(tracker_name)
-                    if expected_host and expected_host in comment:
-                        candidate_urls: list[str] = re.findall(
-                            r"https?://[^\s\"'<>]+", comment
-                        )
-                        for url in candidate_urls:
-                            parsed = urlparse(url)
-                            if (
-                                parsed.scheme in ("http", "https")
-                                and parsed.hostname == expected_host
-                            ):
-                                is_tracker_comment = True
-                                break
+    def _tracker_announce_hostname(self, tracker_name: str) -> str:
+        tracker_config = self.get_tracker_config(tracker_name)
+        return self._hostname_from_url(tracker_config.get("announce_url", ""))
 
-                    if is_tracker_comment:
-                        match = re.search(r"/(\d+)$", comment)
-                        if match:
-                            tracker_id = match.group(1)
-                            meta[tracker_key] = tracker_id
-                            break
+    def _tracker_hostname(self, tracker_name: str) -> str:
+        hostname = self._tracker_base_hostname(tracker_name)
+        if hostname:
+            return hostname
+        return self._tracker_announce_hostname(tracker_name)
 
-                # If we found a tracker ID, try to get region/distributor data
-                if tracker_id:
-                    missing_info: list[str] = []
-                    if not meta.region:
-                        missing_info.append("region")
-                    if not meta.distributor:
-                        missing_info.append("distributor")
+    def _unit3d_tracker_hosts(self, api_trackers: set[str]) -> dict[str, str]:
+        hosts: dict[str, str] = {}
+        for tracker_name in api_trackers:
+            hostname = self._tracker_hostname(tracker_name)
+            if hostname:
+                hosts[tracker_name] = hostname
+        for tracker_name, hostname in {
+            "BLUTOPIA": "blutopia.cc",
+            "AITHER": "aither.cc",
+            "LST": "lst.gg",
+            "ONLYENCODES": "onlyencodes.cc",
+            "ULCX": "upload.cx",
+        }.items():
+            hosts.setdefault(tracker_name, hostname)
+        return hosts
 
-                    logger.debug(
-                        f"[cyan]Using {tracker_name} ID {tracker_id} to get {'/'.join(missing_info)} info[/cyan]"
-                    )
+    @staticmethod
+    def _candidate_url_matches_host(
+        candidate_url: str, expected_host: str
+    ) -> bool:
+        parsed = urlparse(candidate_url)
+        if parsed.scheme not in ("http", "https"):
+            return False
+        return parsed.hostname == expected_host
 
-                    tracker_instance = tracker_class_map[tracker_name](
-                        config=self.config
-                    )
-                    previous_region = meta.region
-                    previous_distributor = meta.distributor
-                    cache = tracker_metadata_cache_for(
-                        meta.base_dir, self.config
-                    )
-                    cache_key = json.dumps({"id": tracker_id}, sort_keys=True)
-                    cached = await cache.get(
-                        tracker_name.lower(), "region_distributor", cache_key
-                    )
-                    if not is_cache_miss(cached) and isinstance(cached, dict):
-                        cached_metadata = cached.get("metadata")
-                        if isinstance(cached_metadata, dict):
-                            meta.update(cached_metadata)
-                        logger.debug(
-                            f"[cyan]{tracker_name}: using cached region/distributor data for torrent ID {tracker_id}.[/cyan]"
-                        )
-                    else:
-                        # Store initial state to detect changes
-                        await common.unit3d_region_distributor(
-                            meta,
-                            tracker_name,
-                            tracker_instance.torrent_url,
-                            str(tracker_id),
-                        )
-                        metadata_patch: dict[str, Any] = {}
-                        if meta.region != previous_region:
-                            metadata_patch["region"] = meta.region
-                        if meta.distributor != previous_distributor:
-                            metadata_patch["distributor"] = meta.distributor
-                        await cache.set(
-                            tracker_name.lower(),
-                            "region_distributor",
-                            cache_key,
-                            {"metadata": metadata_patch},
-                            negative=not bool(metadata_patch),
-                        )
+    @classmethod
+    def _comment_has_tracker_url(
+        cls, comment: str, expected_host: str
+    ) -> bool:
+        if not expected_host:
+            return False
+        if expected_host not in comment:
+            return False
+        return any(
+            cls._candidate_url_matches_host(candidate_url, expected_host)
+            for candidate_url in re.findall(r"https?://[^\s\"'<>]+", comment)
+        )
 
-                    if meta.region and not previous_region and meta.debug:
-                        logger.info(
-                            f"[green]Found region '{meta.region}' from {tracker_name}[/green]"
-                        )
+    @staticmethod
+    def _trailing_tracker_id(comment: str) -> str | None:
+        match = re.search(r"/(\d+)$", comment)
+        return match.group(1) if match else None
 
-                    if (
-                        meta.distributor
-                        and not previous_distributor
-                        and meta.debug
-                    ):
-                        logger.info(
-                            f"[green]Found distributor '{meta.distributor}' from {tracker_name}[/green]"
-                        )
+    def _tracker_id_from_comment(
+        self,
+        comment_data: Mapping[str, Any],
+        tracker_name: str,
+        api_trackers: set[str],
+    ) -> str | None:
+        comment = str(comment_data.get("comment", ""))
+        expected_host = self._unit3d_tracker_hosts(api_trackers).get(
+            tracker_name, ""
+        )
+        if not self._comment_has_tracker_url(comment, expected_host):
+            return None
+        return self._trailing_tracker_id(comment)
+
+    def _tracker_id_from_comments(
+        self, meta: Meta, tracker_name: str, api_trackers: set[str]
+    ) -> str | None:
+        comments = (
+            meta.torrent_comments
+            if isinstance(meta.torrent_comments, list)
+            else []
+        )
+        for raw_comment in comments:
+            if not isinstance(raw_comment, Mapping):
+                continue
+            tracker_id = self._tracker_id_from_comment(
+                cast(Mapping[str, Any], raw_comment),
+                tracker_name,
+                api_trackers,
+            )
+            if tracker_id is not None:
+                meta[tracker_name.lower()] = tracker_id
+                return tracker_id
+        return None
+
+    @staticmethod
+    def _missing_region_distributor(meta: Meta) -> list[str]:
+        missing: list[str] = []
+        if not meta.region:
+            missing.append("region")
+        if not meta.distributor:
+            missing.append("distributor")
+        return missing
+
+    @staticmethod
+    def _region_distributor_patch(
+        meta: Meta, previous_region: Any, previous_distributor: Any
+    ) -> dict[str, Any]:
+        patch: dict[str, Any] = {}
+        if meta.region != previous_region:
+            patch["region"] = meta.region
+        if meta.distributor != previous_distributor:
+            patch["distributor"] = meta.distributor
+        return patch
+
+    @staticmethod
+    def _apply_cached_region_distributor(
+        meta: Meta,
+        cached: Any,
+        tracker_name: str,
+        tracker_id: str,
+    ) -> bool:
+        if is_cache_miss(cached) or not isinstance(cached, dict):
+            return False
+        cached_mapping = cast(Mapping[str, Any], cached)
+        metadata = cached_mapping.get("metadata")
+        if isinstance(metadata, dict):
+            meta.update(cast(dict[str, Any], metadata))
+        logger.debug(
+            f"[cyan]{tracker_name}: using cached region/distributor data for torrent ID {tracker_id}.[/cyan]"
+        )
+        return True
+
+    async def _load_region_distributor(
+        self,
+        common: Any,
+        meta: Meta,
+        tracker_name: str,
+        tracker_id: str,
+    ) -> tuple[Any, Any]:
+        tracker_instance = tracker_class_map[tracker_name](config=self.config)
+        previous_region = meta.region
+        previous_distributor = meta.distributor
+        cache = tracker_metadata_cache_for(meta.base_dir, self.config)
+        cache_key = json.dumps({"id": tracker_id}, sort_keys=True)
+        cached = await cache.get(
+            tracker_name.lower(), "region_distributor", cache_key
+        )
+        if self._apply_cached_region_distributor(
+            meta, cached, tracker_name, tracker_id
+        ):
+            return previous_region, previous_distributor
+        await common.unit3d_region_distributor(
+            meta,
+            tracker_name,
+            tracker_instance.torrent_url,
+            tracker_id,
+        )
+        patch = self._region_distributor_patch(
+            meta, previous_region, previous_distributor
+        )
+        await cache.set(
+            tracker_name.lower(),
+            "region_distributor",
+            cache_key,
+            {"metadata": patch},
+            negative=not bool(patch),
+        )
+        return previous_region, previous_distributor
+
+    @staticmethod
+    def _should_log_new_value(value: Any, previous: Any, debug: bool) -> bool:
+        if not debug:
+            return False
+        if not value:
+            return False
+        return not bool(previous)
+
+    @classmethod
+    def _log_new_region(
+        cls, meta: Meta, tracker_name: str, previous_region: Any
+    ) -> None:
+        if not cls._should_log_new_value(
+            meta.region, previous_region, meta.debug
+        ):
+            return
+        logger.info(
+            f"[green]Found region '{meta.region}' from {tracker_name}[/green]"
+        )
+
+    @classmethod
+    def _log_new_distributor(
+        cls, meta: Meta, tracker_name: str, previous_distributor: Any
+    ) -> None:
+        if not cls._should_log_new_value(
+            meta.distributor, previous_distributor, meta.debug
+        ):
+            return
+        logger.info(
+            f"[green]Found distributor '{meta.distributor}' from {tracker_name}[/green]"
+        )
+
+    @classmethod
+    def _log_new_region_distributor(
+        cls,
+        meta: Meta,
+        tracker_name: str,
+        previous_region: Any,
+        previous_distributor: Any,
+    ) -> None:
+        cls._log_new_region(meta, tracker_name, previous_region)
+        cls._log_new_distributor(meta, tracker_name, previous_distributor)
+
+    async def _process_unit3d_tracker_id(
+        self,
+        common: Any,
+        meta: Meta,
+        tracker_name: str,
+        tracker_id: str,
+    ) -> None:
+        missing_info = self._missing_region_distributor(meta)
+        logger.debug(
+            f"[cyan]Using {tracker_name} ID {tracker_id} to get {'/'.join(missing_info)} info[/cyan]"
+        )
+        (
+            previous_region,
+            previous_distributor,
+        ) = await self._load_region_distributor(
+            common, meta, tracker_name, tracker_id
+        )
+        self._log_new_region_distributor(
+            meta, tracker_name, previous_region, previous_distributor
+        )
+
+    @staticmethod
+    def _unit3d_metadata_complete(meta: Meta) -> bool:
+        return bool(meta.region and meta.distributor)
+
+    async def ping_unit3d(self, meta: Meta) -> None:
+        from src.integrations.trackers.common import Common
+        from src.integrations.trackers.registry import api_trackers
+
+        if not meta.torrent_comments:
+            return
+        common = Common(self.config)
+        for tracker_name in self._unit3d_tracker_order(set(api_trackers)):
+            if self._unit3d_metadata_complete(meta):
+                logger.debug(
+                    f"[green]Both region ({meta.region}) and distributor ({meta.distributor}) found - no need to check more trackers[/green]"
+                )
+                break
+            tracker_id = self._tracker_id_from_comments(
+                meta, tracker_name, set(api_trackers)
+            )
+            if tracker_id is None:
+                continue
+            await self._process_unit3d_tracker_id(
+                common, meta, tracker_name, tracker_id
+            )
