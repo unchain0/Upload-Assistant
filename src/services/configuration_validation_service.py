@@ -916,45 +916,66 @@ def _validate_usenet_section(
     return errors, warnings
 
 
-def group_warnings(warnings: list[ConfigValidationWarning]) -> list[str]:
-    """
-    Group warnings with the same section and message, combining keys.
+def _warning_location(section: str, keys_str: str) -> str:
+    if section and keys_str:
+        return f"[{section}][{keys_str}]"
+    if section:
+        return f"[{section}]"
+    if keys_str:
+        return f"[{keys_str}]"
+    return ""
 
-    For example, multiple trackers with the same warning become:
-    [TRACKERS][BLUTOPIA, HDBITS] api_key is whitespace-only
-    """
+
+def _grouped_warning_text(section: str, message: str, keys: list[str]) -> str:
+    keys_str = ", ".join(key for key in keys if key)
+    location = _warning_location(section, keys_str)
+    return f"{location} {message}" if location else message
+
+
+def group_warnings(warnings: list[ConfigValidationWarning]) -> list[str]:
+    """Group warnings with the same section and message, combining keys."""
     from collections import defaultdict
 
-    # Group by (section, message) -> list of keys
     grouped: dict[tuple[str, str], list[str]] = defaultdict(list)
-
     for warning in warnings:
-        group_key = (warning.section, warning.message)
-        if warning.key:
-            grouped[group_key].append(warning.key)
-        else:
-            # Warnings without keys get their own entry
-            grouped[group_key].append("")
+        grouped[(warning.section, warning.message)].append(warning.key or "")
+    return [
+        _grouped_warning_text(section, message, keys)
+        for (section, message), keys in grouped.items()
+    ]
 
-    result: list[str] = []
-    for (section, message), keys in grouped.items():
-        # Filter out empty keys and deduplicate
-        non_empty_keys = [k for k in keys if k]
 
-        if section:
-            if non_empty_keys:
-                # Multiple keys with same message - combine them
-                keys_str = ", ".join(non_empty_keys)
-                result.append(f"[{section}][{keys_str}] {message}")
-            else:
-                result.append(f"[{section}] {message}")
-        elif non_empty_keys:
-            keys_str = ", ".join(non_empty_keys)
-            result.append(f"[{keys_str}] {message}")
-        else:
-            result.append(message)
+def _append_error_lines(lines: list[str], errors: list[str]) -> None:
+    if not errors:
+        return
+    lines.append("Config Validation Errors:")
+    lines.extend(f"  ✗ {error}" for error in errors)
 
-    return result
+
+def _append_warning_lines(
+    lines: list[str],
+    warnings: list[ConfigValidationWarning],
+    show_warnings: bool,
+) -> None:
+    if not show_warnings or not warnings:
+        return
+    if lines:
+        lines.append("")
+    lines.append("Config Validation Warnings:")
+    lines.extend(f"  ⚠ {warning}" for warning in group_warnings(warnings))
+
+
+def _append_validation_summary(
+    lines: list[str], is_valid: bool, warnings: list[ConfigValidationWarning]
+) -> None:
+    if not is_valid:
+        return
+    if not warnings:
+        lines.append("Config validation passed.")
+        return
+    lines.append(
+        f"\nConfig validation passed with {len(warnings)} warning(s)."
+    )
 
 
 def format_validation_results(
@@ -965,23 +986,7 @@ def format_validation_results(
 ) -> str:
     """Format validation results for display."""
     lines: list[str] = []
-
-    if errors:
-        lines.append("Config Validation Errors:")
-        lines.extend([f"  ✗ {error}" for error in errors])
-
-    if show_warnings and warnings:
-        if lines:
-            lines.append("")
-        lines.append("Config Validation Warnings:")
-        grouped = group_warnings(warnings)
-        lines.extend([f"  ⚠ {warning_str}" for warning_str in grouped])
-
-    if is_valid and not warnings:
-        lines.append("Config validation passed.")
-    elif is_valid:
-        lines.append(
-            f"\nConfig validation passed with {len(warnings)} warning(s)."
-        )
-
+    _append_error_lines(lines, errors)
+    _append_warning_lines(lines, warnings, show_warnings)
+    _append_validation_summary(lines, is_valid, warnings)
     return "\n".join(lines)
