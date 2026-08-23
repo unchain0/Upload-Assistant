@@ -8,6 +8,7 @@ import time
 import traceback
 import xmlrpc.client  # nosec B411 - Secured with defusedxml.xmlrpc.monkey_patch() below
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
@@ -36,6 +37,24 @@ _bencode_bencode = cast(Callable[[Any], bytes], bencode_any.bencode)
 _bencode_bwrite = cast(Callable[[Any, str], None], bencode_any.bwrite)
 
 
+@dataclass(frozen=True)
+class _LinkContext:
+    path: str
+    tracker_dir: str | Path | None
+    dst: str | Path
+    filelist: list[str]
+    use_symlink: bool
+    use_hardlink: bool
+
+
+@dataclass(frozen=True)
+class _MappedResume:
+    path: str
+    fr_file: str
+    modified_fr: bool
+    path_dir: str
+
+
 class RtorrentClientMixin:
     config: dict[str, Any]
 
@@ -54,245 +73,257 @@ class RtorrentClientMixin:
     ) -> dict[str, Any]:
         raise NotImplementedError
 
-    def rtorrent(
-        self,
-        path: str,
-        torrent_path: str,
-        torrent: Torrent,
-        meta: Meta,
-        local_path: str,
-        remote_path: str,
-        client: dict[str, Any],
-        tracker: str,
-    ) -> None:
-        # Get the appropriate source path (same as in qbittorrent method)
-        tracker_dir: str | Path | None = None
-        dst: str | Path = path
-        filelist = coerce_str_list(meta.filelist)
-        src = (
-            filelist[0]
-            if len(filelist) == 1
-            and Path(filelist[0]).is_file()
-            and not meta.keep_folder
-            else meta.path
-        )
+    @staticmethod
+    def _preferred_source(filelist: list[str], meta: Meta) -> str | None:
+        if len(filelist) != 1:
+            return meta.path
+        if meta.keep_folder:
+            return meta.path
+        if Path(filelist[0]).is_file():
+            return filelist[0]
+        return meta.path
 
-        if not src:
-            error_msg = "[red]No source path found in meta."
+    @classmethod
+    def _source_path(cls, meta: Meta) -> tuple[list[str], str]:
+        filelist = coerce_str_list(meta.filelist)
+        source = cls._preferred_source(filelist, meta)
+        if source:
+            return filelist, str(source)
+        error_msg = "[red]No source path found in meta."
+        logger.info(f"[bold red]{error_msg}")
+        raise ValueError(error_msg)
+
+    @staticmethod
+    def _linking_flags(client: dict[str, Any]) -> tuple[bool, bool]:
+        linking_method = client.get("linking")
+        logger.debug(f"Linking method: {linking_method}")
+        return linking_method == "symlink", linking_method == "hardlink"
+
+    @staticmethod
+    def _unix_source_drive(src: str, linked_folders: list[str]) -> str:
+        src_parts = src.strip("/").split("/")
+        if not src_parts:
+            return "/"
+        root = "/" + src_parts[0]
+        for folder in linked_folders:
+            if root in folder or folder in root:
+                return root
+        return "/"
+
+    @classmethod
+    def _source_drive(
+        cls, src: str, linked_folders: list[str], is_windows: bool
+    ) -> str:
+        if is_windows:
+            return os.path.splitdrive(src)[0]
+        return cls._unix_source_drive(src, linked_folders)
+
+    @staticmethod
+    def _windows_link_target(
+        src_drive: str, linked_folders: list[str]
+    ) -> str | None:
+        for folder in linked_folders:
+            if os.path.splitdrive(folder)[0] == src_drive:
+                return folder
+        return None
+
+    @staticmethod
+    def _unix_link_target(
+        src: str, src_drive: str, linked_folders: list[str]
+    ) -> str | None:
+        for folder in linked_folders:
+            if (
+                src.startswith(folder)
+                or folder.startswith(src)
+                or folder.startswith(src_drive)
+            ):
+                return folder
+        return None
+
+    @classmethod
+    def _link_target(
+        cls,
+        src: str,
+        src_drive: str,
+        linked_folders: list[str],
+        is_windows: bool,
+        use_symlink: bool,
+    ) -> str | None:
+        target = (
+            cls._windows_link_target(src_drive, linked_folders)
+            if is_windows
+            else cls._unix_link_target(src, src_drive, linked_folders)
+        )
+        if target is None and use_symlink and linked_folders:
+            return linked_folders[0]
+        return target
+
+    def _tracker_link_destination(
+        self, src: str, link_target: str, tracker: str
+    ) -> tuple[str | Path, Path]:
+        trackers = cast(dict[str, Any], self.config.get("TRACKERS", {}))
+        tracker_cfg = cast(dict[str, Any], trackers.get(tracker.upper(), {}))
+        link_dir_name = str(tracker_cfg.get("link_dir_name", "")).strip()
+        tracker_dir = tracker_directory(link_target, link_dir_name, tracker)
+        Path(tracker_dir).mkdir(parents=True, exist_ok=True)
+        logger.debug(
+            f"[bold yellow]Linking to tracker directory: {tracker_dir}"
+        )
+        logger.debug(f"[cyan]Source path: {src}")
+        src_name = Path(src.rstrip(os.sep)).name
+        return tracker_dir, Path(tracker_dir) / src_name
+
+    @staticmethod
+    def _hardlink_file(src: str | Path, dst: str | Path) -> None:
+        try:
+            os.link(src, dst)
+            logger.debug(f"[green]Hard link created: {dst} -> {src}")
+        except OSError as exc:
+            logger.info(f"[yellow]Hard link failed: {exc}")
+            logger.info(f"[yellow]Falling back to file copy for: {src}")
+            shutil.copy2(src, dst)
+            logger.info(f"[green]File copied instead: {dst}")
+
+    @staticmethod
+    def _hardlink_directory_file(
+        src_file: Path, dst_file: Path, meta: Meta, index: int
+    ) -> None:
+        try:
+            os.link(src_file, dst_file)
+            if meta.debug and index == 0:
+                logger.info(
+                    f"[green]Hard link created for file: {dst_file} -> {src_file}"
+                )
+        except OSError as exc:
+            logger.info(
+                f"[yellow]Hard link failed for file {src_file.name}: {exc}"
+            )
+            shutil.copy2(src_file, dst_file)
+            logger.info(f"[yellow]File copied instead: {dst_file}")
+
+    @classmethod
+    def _hardlink_directory(cls, src: str, dst: Path, meta: Meta) -> None:
+        dst.mkdir(parents=True, exist_ok=True)
+        for root, _, files in os.walk(src):
+            rel_path = os.path.relpath(root, src)
+            dst_dir = dst if rel_path == "." else dst / rel_path
+            dst_dir.mkdir(parents=True, exist_ok=True)
+            for index, filename in enumerate(files):
+                src_file = Path(root) / filename
+                cls._hardlink_directory_file(
+                    src_file, dst_dir / filename, meta, index
+                )
+        logger.debug(f"[green]Directory structure and files processed: {dst}")
+
+    @classmethod
+    def _hardlink_source(cls, src: str, dst: Path, meta: Meta) -> None:
+        try:
+            if Path(src).is_file():
+                cls._hardlink_file(src, dst)
+                return
+            cls._hardlink_directory(src, dst, meta)
+        except OSError as exc:
+            logger.info(f"[bold red]Failed to create link: {exc}")
+            if meta.debug:
+                logger.debug(
+                    f"[yellow]Source: {src} (exists: {Path(src).exists()})"
+                )
+                logger.debug(f"[yellow]Destination: {dst}")
+            logger.info(
+                "[yellow]Continuing with rTorrent addition despite linking failure"
+            )
+
+    @staticmethod
+    def _symlink_source(src: str, dst: Path, is_windows: bool) -> None:
+        try:
+            if is_windows:
+                dst.symlink_to(src, target_is_directory=Path(src).is_dir())
+            else:
+                dst.symlink_to(src)
+            logger.debug(f"[green]Symbolic link created: {dst} -> {src}")
+        except OSError as exc:
+            logger.info(f"[bold red]Failed to create symlink: {exc}")
+            logger.info(
+                "[yellow]Continuing with rTorrent addition despite linking failure"
+            )
+
+    @classmethod
+    def _create_link(
+        cls,
+        src: str,
+        dst: Path,
+        meta: Meta,
+        use_symlink: bool,
+        use_hardlink: bool,
+        is_windows: bool,
+    ) -> None:
+        if dst.exists() or dst.is_symlink():
+            logger.debug(
+                f"[yellow]Skipping linking, path already exists: {dst}"
+            )
+            return
+        if use_hardlink:
+            cls._hardlink_source(src, dst, meta)
+            return
+        if use_symlink:
+            cls._symlink_source(src, dst, is_windows)
+
+    def _link_context(
+        self, path: str, meta: Meta, client: dict[str, Any], tracker: str
+    ) -> _LinkContext:
+        filelist, src = self._source_path(meta)
+        use_symlink, use_hardlink = self._linking_flags(client)
+        if not use_symlink and not use_hardlink:
+            return _LinkContext(path, None, path, filelist, False, False)
+        linked_folders = coerce_str_list(client.get("linked_folder", []))
+        logger.debug(f"Linked folders: {linked_folders}")
+        is_windows = platform.system() == "Windows"
+        src_drive = self._source_drive(src, linked_folders, is_windows)
+        link_target = self._link_target(
+            src, src_drive, linked_folders, is_windows, use_symlink
+        )
+        logger.debug(f"Source drive: {src_drive}")
+        logger.debug(f"Link target: {link_target}")
+        if link_target is None:
+            error_msg = (
+                f"No suitable linked folder found for drive {src_drive}"
+            )
             logger.info(f"[bold red]{error_msg}")
             raise ValueError(error_msg)
-
-        # Determine linking method
-        linking_method = client.get(
-            "linking"
-        )  # "symlink", "hardlink", or None
-        logger.debug(f"Linking method: {linking_method}")
-        use_symlink = linking_method == "symlink"
-        use_hardlink = linking_method == "hardlink"
-
-        # Process linking if enabled
-        if use_symlink or use_hardlink:
-            # Get linked folder for this drive
-            linked_folder = coerce_str_list(client.get("linked_folder", []))
-            logger.debug(f"Linked folders: {linked_folder}")
-
-            # Determine drive letter (Windows) or root (Linux)
-            if platform.system() == "Windows":
-                src_drive = os.path.splitdrive(src)[0]
-            else:
-                # On Unix/Linux, use the root directory or first directory component
-                src_drive = "/"
-                # Extract the first directory component for more specific matching
-                src_parts = src.strip("/").split("/")
-                if src_parts:
-                    src_root_dir = "/" + src_parts[0]
-                    # Check if any linked folder contains this root
-                    for folder in linked_folder:
-                        if src_root_dir in folder or folder in src_root_dir:
-                            src_drive = src_root_dir
-                            break
-
-            # Find a linked folder that matches the drive
-            link_target = None
-            if platform.system() == "Windows":
-                # Windows matching based on drive letters
-                for folder in linked_folder:
-                    folder_drive = os.path.splitdrive(folder)[0]
-                    if folder_drive == src_drive:
-                        link_target = folder
-                        break
-            else:
-                # Unix/Linux matching based on path containment
-                for folder in linked_folder:
-                    # Check if source path is in the linked folder or vice versa
-                    if (
-                        src.startswith(folder)
-                        or folder.startswith(src)
-                        or folder.startswith(src_drive)
-                    ):
-                        link_target = folder
-                        break
-
-            logger.debug(f"Source drive: {src_drive}")
-            logger.debug(f"Link target: {link_target}")
-
-            # If using symlinks and no matching drive folder, allow any available one
-            if use_symlink and not link_target and linked_folder:
-                link_target = linked_folder[0]
-
-            if (use_symlink or use_hardlink) and not link_target:
-                error_msg = (
-                    f"No suitable linked folder found for drive {src_drive}"
-                )
-                logger.info(f"[bold red]{error_msg}")
-                raise ValueError(error_msg)
-
-            # Create tracker-specific directory inside linked folder.
-            tracker_cfg = cast(
-                dict[str, Any], self.config.get("TRACKERS", {})
-            ).get(tracker.upper(), {})
-            link_dir_name = str(tracker_cfg.get("link_dir_name", "")).strip()
-            tracker_dir = tracker_directory(
-                cast(str, link_target), link_dir_name, tracker
-            )
-            Path(tracker_dir).mkdir(parents=True, exist_ok=True)
-
-            logger.debug(
-                f"[bold yellow]Linking to tracker directory: {tracker_dir}"
-            )
-            logger.debug(f"[cyan]Source path: {src}")
-
-            # Extract only the folder or file name from `src`
-            src_name = Path(
-                src.rstrip(os.sep)
-            ).name  # Ensure we get just the name
-            dst = (
-                Path(tracker_dir) / src_name
-            )  # Destination inside linked folder
-
-            # path magic
-            if Path(dst).exists() or Path(dst).is_symlink():
-                logger.debug(
-                    f"[yellow]Skipping linking, path already exists: {dst}"
-                )
-            else:
-                if use_hardlink:
-                    try:
-                        # Check if we're linking a file or directory
-                        if Path(src).is_file():
-                            # For a single file, create a hardlink directly
-                            try:
-                                os.link(src, dst)
-                                logger.debug(
-                                    f"[green]Hard link created: {dst} -> {src}"
-                                )
-                            except OSError as e:
-                                # If hardlink fails, try to copy the file instead
-                                logger.info(f"[yellow]Hard link failed: {e}")
-                                logger.info(
-                                    f"[yellow]Falling back to file copy for: {src}"
-                                )
-                                shutil.copy2(
-                                    src, dst
-                                )  # copy2 preserves metadata
-                                logger.info(
-                                    f"[green]File copied instead: {dst}"
-                                )
-                        else:
-                            # For directories, we need to link each file inside
-                            Path(dst).mkdir(parents=True, exist_ok=True)
-
-                            for root, _, files in os.walk(src):
-                                # Get the relative path from source
-                                rel_path = os.path.relpath(root, src)
-
-                                dst_dir = dst
-
-                                # Create corresponding directory in destination
-                                if rel_path != ".":
-                                    dst_dir = Path(dst) / rel_path
-                                    Path(dst_dir).mkdir(
-                                        parents=True, exist_ok=True
-                                    )
-
-                                # Create hardlinks for each file
-                                for idx, file in enumerate(files):
-                                    src_file = Path(root) / file
-                                    dst_file = (
-                                        Path(
-                                            dst if rel_path == "." else dst_dir
-                                        )
-                                        / file
-                                    )
-                                    try:
-                                        os.link(src_file, dst_file)
-                                        if meta.debug and idx == 0:
-                                            logger.info(
-                                                f"[green]Hard link created for file: {dst_file} -> {src_file}"
-                                            )
-                                    except OSError as e:
-                                        # If hardlink fails, copy file instead
-                                        logger.info(
-                                            f"[yellow]Hard link failed for file {file}: {e}"
-                                        )
-                                        shutil.copy2(
-                                            src_file, dst_file
-                                        )  # copy2 preserves metadata
-                                        logger.info(
-                                            f"[yellow]File copied instead: {dst_file}"
-                                        )
-
-                            logger.debug(
-                                f"[green]Directory structure and files processed: {dst}"
-                            )
-                    except OSError as e:
-                        error_msg = f"Failed to create link: {e}"
-                        logger.info(f"[bold red]{error_msg}")
-                        if meta.debug:
-                            logger.debug(
-                                f"[yellow]Source: {src} (exists: {Path(src).exists()})"
-                            )
-                            logger.debug(f"[yellow]Destination: {dst}")
-                        # Don't raise exception - just warn and continue
-                        logger.info(
-                            "[yellow]Continuing with rTorrent addition despite linking failure"
-                        )
-
-                elif use_symlink:
-                    try:
-                        if platform.system() == "Windows":
-                            Path(dst).symlink_to(
-                                src, target_is_directory=Path(src).is_dir()
-                            )
-                        else:
-                            Path(dst).symlink_to(src)
-
-                        logger.debug(
-                            f"[green]Symbolic link created: {dst} -> {src}"
-                        )
-
-                    except OSError as e:
-                        error_msg = f"Failed to create symlink: {e}"
-                        logger.info(f"[bold red]{error_msg}")
-                        # Don't raise exception - just warn and continue
-                        logger.info(
-                            "[yellow]Continuing with rTorrent addition despite linking failure"
-                        )
-
-            # Use the linked path for rTorrent if linking was successful
-            if (use_symlink or use_hardlink) and Path(dst).exists():
-                path = str(dst)
-
-        # Apply remote pathing to `tracker_dir` before assigning `save_path`
-        save_path = (
-            str(tracker_dir) if use_symlink or use_hardlink else str(path)
+        tracker_dir, dst = self._tracker_link_destination(
+            src, link_target, tracker
+        )
+        self._create_link(
+            src, dst, meta, use_symlink, use_hardlink, is_windows
+        )
+        resolved_path = str(dst) if dst.exists() else path
+        return _LinkContext(
+            resolved_path,
+            tracker_dir,
+            dst,
+            filelist,
+            use_symlink,
+            use_hardlink,
         )
 
-        save_path = map_save_path(save_path, local_path, remote_path)
+    @staticmethod
+    def _mapped_save_path(
+        context: _LinkContext, local_path: str, remote_path: str
+    ) -> str:
+        save_path = (
+            str(context.tracker_dir)
+            if context.tracker_dir is not None
+            else context.path
+        )
+        mapped = map_save_path(save_path, local_path, remote_path)
+        logger.debug(f"[cyan]Original path: {context.path}")
+        logger.debug(f"[cyan]Mapped save path: {mapped}")
+        return mapped
 
-        logger.debug(f"[cyan]Original path: {path}")
-        logger.debug(f"[cyan]Mapped save path: {save_path}")
-
+    @staticmethod
+    def _rpc_metainfo(
+        client: dict[str, Any], torrent_path: str
+    ) -> tuple[Any, dict[str, Any]]:
         rtorrent = xmlrpc.client.Server(
             client["rtorrent_url"], context=ssl.create_default_context()
         )
@@ -305,45 +336,67 @@ class RtorrentClientMixin:
             f"metainfo: {Redaction.redact_private_info(str(metainfo))}",
             extra={"markup": False},
         )
+        return rtorrent, metainfo
 
+    @staticmethod
+    def _effective_resume_path(context: _LinkContext) -> str:
+        dst = Path(context.dst)
+        if dst.exists():
+            return str(dst)
+        return context.path
+
+    def _fast_resume_file(
+        self,
+        context: _LinkContext,
+        metainfo: dict[str, Any],
+        torrent: Torrent,
+        torrent_path: str,
+    ) -> str:
         original_meta_bytes = _bencode_bencode(metainfo)
+        resume_path = self._effective_resume_path(context)
+        logger.debug(f"[cyan]Using resume path: {resume_path}")
         try:
-            # Use dst path if linking was successful, otherwise use original path
-            resume_path = (
-                str(dst)
-                if (use_symlink or use_hardlink) and Path(dst).exists()
-                else path
-            )
-            logger.debug(f"[cyan]Using resume path: {resume_path}")
-            fast_resume = self.add_fast_resume(
-                metainfo, str(resume_path), torrent
-            )
+            fast_resume = self.add_fast_resume(metainfo, resume_path, torrent)
         except OSError as exc:
             logger.error(f"[red]Error making fast-resume data ({exc})")
             raise
+        if _bencode_bencode(fast_resume) == original_meta_bytes:
+            return torrent_path
+        fr_file = torrent_path.replace(".torrent", "-resume.torrent")
+        logger.debug(f"Creating fast resume file: {fr_file}")
+        _bencode_bwrite(fast_resume, fr_file)
+        return fr_file
 
-        fr_file = torrent_path
-        new_meta = _bencode_bencode(fast_resume)
-        if new_meta != original_meta_bytes:
-            fr_file = torrent_path.replace(".torrent", "-resume.torrent")
-            logger.debug(f"Creating fast resume file: {fr_file}")
-            _bencode_bwrite(fast_resume, fr_file)
+    @staticmethod
+    def _needs_remote_mapping(
+        path: str, local_path: str, remote_path: str
+    ) -> bool:
+        if not is_path_under(path, local_path):
+            return False
+        return os.path.normcase(local_path) != os.path.normcase(remote_path)
 
-        # Use dst path if linking was successful, otherwise use original path
-        path = (
-            str(dst)
-            if (use_symlink or use_hardlink) and Path(dst).exists()
-            else path
-        )
+    @staticmethod
+    def _use_parent_path(
+        meta: Meta, filelist: list[str], is_dir: bool
+    ) -> bool:
+        if not is_dir:
+            return True
+        return meta.category in ("BOOK", "GAME") and len(filelist) > 1
 
-        isdir = Path(path).is_dir()
-        # Remote path mount
+    @classmethod
+    def _mapped_resume(
+        cls,
+        context: _LinkContext,
+        fr_file: str,
+        meta: Meta,
+        local_path: str,
+        remote_path: str,
+    ) -> _MappedResume:
+        path = cls._effective_resume_path(context)
+        is_dir = Path(path).is_dir()
         modified_fr = False
         path_dir = ""
-        path = str(path)
-        if is_path_under(path, local_path) and os.path.normcase(
-            local_path
-        ) != os.path.normcase(remote_path):
+        if cls._needs_remote_mapping(path, local_path, remote_path):
             path_dir = str(Path(path).parent)
             path = map_save_path(
                 path, local_path, remote_path, trailing_slash=False
@@ -354,45 +407,77 @@ class RtorrentClientMixin:
             logger.debug(
                 f"[cyan]Modified fast resume file path because path mapping: {fr_file}"
             )
-        if (
-            meta.category in ("BOOK", "GAME") and len(filelist) > 1 and isdir
-        ) or isdir is False:
+        if cls._use_parent_path(meta, context.filelist, is_dir):
             path = Path(path).parent.as_posix()
         logger.debug(f"[cyan]Final path for rTorrent: {path}")
+        return _MappedResume(str(path), fr_file, modified_fr, path_dir)
 
+    @staticmethod
+    def _load_rtorrent(rtorrent: Any, mapped: _MappedResume) -> None:
         logger.info("[bold yellow]Adding and starting torrent")
         rtorrent.load.start_verbose(
-            "", fr_file, f"d.directory_base.set={path}"
+            "", mapped.fr_file, f"d.directory_base.set={mapped.path}"
         )
         logger.debug(
-            f"[green]rTorrent load start for {fr_file} with d.directory_base.set={path}"
+            f"[green]rTorrent load start for {mapped.fr_file} with d.directory_base.set={mapped.path}"
         )
         time.sleep(1)
-        # Add labels
-        if client.get("rtorrent_label") is not None:
-            logger.debug(
-                f"[cyan]Setting rTorrent label: {client['rtorrent_label']}"
-            )
-            rtorrent.d.custom1.set(torrent.infohash, client["rtorrent_label"])
+
+    @staticmethod
+    def _apply_rtorrent_labels(
+        rtorrent: Any,
+        torrent: Torrent,
+        meta: Meta,
+        client: dict[str, Any],
+    ) -> None:
+        client_label = client.get("rtorrent_label")
+        if client_label is not None:
+            logger.debug(f"[cyan]Setting rTorrent label: {client_label}")
+            rtorrent.d.custom1.set(torrent.infohash, client_label)
         if meta.rtorrent_label is not None:
             rtorrent.d.custom1.set(torrent.infohash, meta.rtorrent_label)
             logger.debug(
                 f"[cyan]Setting rTorrent label from meta: {meta.rtorrent_label}"
             )
 
-        # Delete modified fr_file location
-        if modified_fr:
+    @staticmethod
+    def _cleanup_mapped_resume(mapped: _MappedResume) -> None:
+        if not mapped.modified_fr:
+            return
+        logger.debug(
+            f"[cyan]Removing modified fast resume file: {mapped.fr_file}"
+        )
+        try:
+            Path(f"{mapped.path_dir}/fr.torrent").unlink()
+        except OSError as exc:
             logger.debug(
-                f"[cyan]Removing modified fast resume file: {fr_file}"
+                f"[yellow]Warning: Could not remove modified fast resume file: {exc}[/yellow]"
             )
-            try:
-                Path(f"{path_dir}/fr.torrent").unlink()
-            except OSError as e:
-                logger.debug(
-                    f"[yellow]Warning: Could not remove modified fast resume file: {e}[/yellow]"
-                )
-        logger.debug(f"[cyan]Path: {path}")
-        return
+
+    def rtorrent(
+        self,
+        path: str,
+        torrent_path: str,
+        torrent: Torrent,
+        meta: Meta,
+        local_path: str,
+        remote_path: str,
+        client: dict[str, Any],
+        tracker: str,
+    ) -> None:
+        context = self._link_context(path, meta, client, tracker)
+        self._mapped_save_path(context, local_path, remote_path)
+        rtorrent, metainfo = self._rpc_metainfo(client, torrent_path)
+        fr_file = self._fast_resume_file(
+            context, metainfo, torrent, torrent_path
+        )
+        mapped = self._mapped_resume(
+            context, fr_file, meta, local_path, remote_path
+        )
+        self._load_rtorrent(rtorrent, mapped)
+        self._apply_rtorrent_labels(rtorrent, torrent, meta, client)
+        self._cleanup_mapped_resume(mapped)
+        logger.debug(f"[cyan]Path: {mapped.path}")
 
     @staticmethod
     def _piece_length(metainfo: dict[str, Any]) -> int:
