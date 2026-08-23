@@ -509,6 +509,151 @@ class TvmazeManager:
         )
         return {}
 
+    @staticmethod
+    def _cached_episode_date(cached: Any) -> object:
+        if is_cache_miss(cached) or not isinstance(cached, dict):
+            return _CACHE_MISS
+        mapping = cast(dict[str, Any], cached)
+        return {} if mapping.get("not_found") else mapping
+
+    @staticmethod
+    def _first_episode_by_date(
+        response: dict[str, Any] | list[dict[str, Any]] | None,
+    ) -> dict[str, Any] | None:
+        if not isinstance(response, list) or not response:
+            return None
+        first = cast(list[Any], response)[0]
+        if not isinstance(first, dict):
+            return None
+        return cast(dict[str, Any], first)
+
+    @staticmethod
+    async def _cache_episode_date_not_found(
+        cache: Any, cache_key: str
+    ) -> None:
+        await cache.set(
+            "tvmaze",
+            "episode-date",
+            cache_key,
+            {"not_found": True},
+            negative=True,
+        )
+
+    @staticmethod
+    def _mapping_or_empty(value: Any) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            return {}
+        return cast(dict[str, Any], value)
+
+    @classmethod
+    def _episode_show_link(cls, episode: dict[str, Any]) -> dict[str, Any]:
+        links = cls._mapping_or_empty(episode.get("_links"))
+        return cls._mapping_or_empty(links.get("show"))
+
+    @staticmethod
+    def _show_link_url(show_link: dict[str, Any], tvmaze_id: int) -> str:
+        value = show_link.get("href")
+        if isinstance(value, str) and value:
+            return value
+        return f"https://api.tvmaze.com/shows/{tvmaze_id}"
+
+    async def _episode_show_data(
+        self,
+        episode: dict[str, Any],
+        tvmaze_id: int,
+        base_dir: str,
+        config: dict[str, Any] | None,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        show_link = self._episode_show_link(episode)
+        show_url = self._show_link_url(show_link, tvmaze_id)
+        response = await self._make_tvmaze_request(
+            show_url, {}, base_dir, config
+        )
+        show_data = (
+            cast(dict[str, Any], response)
+            if isinstance(response, dict)
+            else {}
+        )
+        return show_link, show_data
+
+    @staticmethod
+    def _clean_html(value: object) -> str:
+        return str(value or "").replace("<p>", "").replace("</p>", "").strip()
+
+    @classmethod
+    def _image_url(cls, value: Any) -> str:
+        image = cls._mapping_or_empty(value)
+        original = image.get("original")
+        if original:
+            return str(original)
+        medium = image.get("medium")
+        return "" if medium is None else str(medium)
+
+    @staticmethod
+    def _show_name(
+        show_data: dict[str, Any], show_link: dict[str, Any]
+    ) -> str:
+        value = show_data.get("name")
+        if value:
+            return str(value)
+        fallback = show_link.get("name")
+        return "" if fallback is None else str(fallback)
+
+    @staticmethod
+    def _text_or_empty(value: Any) -> str:
+        return "" if not value else str(value)
+
+    @staticmethod
+    def _int_or_zero(value: Any) -> int:
+        return 0 if not value else int(value)
+
+    @classmethod
+    def _episode_date_result(
+        cls,
+        episode: dict[str, Any],
+        show_link: dict[str, Any],
+        show_data: dict[str, Any],
+    ) -> dict[str, Any]:
+        externals = cls._mapping_or_empty(show_data.get("externals"))
+        result: dict[str, Any] = {
+            "episode_name": cls._text_or_empty(episode.get("name")),
+            "season": cls._int_or_zero(episode.get("season")),
+            "episode": cls._int_or_zero(episode.get("number")),
+            "airdate": cls._text_or_empty(episode.get("airdate")),
+            "runtime": cls._int_or_zero(episode.get("runtime")),
+            "episode_image": cls._image_url(episode.get("image")),
+            "show_name": cls._show_name(show_data, show_link),
+            "show_overview": cls._clean_html(show_data.get("summary")),
+            "show_image": cls._image_url(show_data.get("image")),
+            "tvdb_id": cls._int_or_zero(externals.get("thetvdb")),
+            "imdb_id": cls._text_or_empty(externals.get("imdb")),
+        }
+        overview = cls._clean_html(episode.get("summary"))
+        if overview:
+            result["episode_overview"] = overview
+        return result
+
+    async def _fetch_episode_date_result(
+        self,
+        tvmaze_id: int,
+        airdate: str,
+        base_dir: str,
+        config: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        response = await self._make_tvmaze_request(
+            f"https://api.tvmaze.com/shows/{tvmaze_id}/episodesbydate",
+            {"date": airdate},
+            base_dir,
+            config,
+        )
+        episode = self._first_episode_by_date(response)
+        if episode is None:
+            return None
+        show_link, show_data = await self._episode_show_data(
+            episode, tvmaze_id, base_dir, config
+        )
+        return self._episode_date_result(episode, show_link, show_data)
+
     async def get_episode_by_date(
         self,
         tvmaze_id: int,
@@ -518,115 +663,23 @@ class TvmazeManager:
     ) -> dict[str, Any]:
         cache_key = f"{tvmaze_id}:{airdate}"
         cache = cache_for(base_dir, config)
-        cached = await cache.get("tvmaze", "episode-date", cache_key)
-        if not is_cache_miss(cached) and isinstance(cached, dict):
-            return (
-                {} if cached.get("not_found") else cast(dict[str, Any], cached)
-            )
-
+        cached = self._cached_episode_date(
+            await cache.get("tvmaze", "episode-date", cache_key)
+        )
+        if cached is not _CACHE_MISS:
+            return cast(dict[str, Any], cached)
         try:
-            response = await self._make_tvmaze_request(
-                f"https://api.tvmaze.com/shows/{tvmaze_id}/episodesbydate",
-                {"date": airdate},
-                base_dir,
-                config,
+            result = await self._fetch_episode_date_result(
+                tvmaze_id, airdate, base_dir, config
             )
-            if (
-                not isinstance(response, list)
-                or not response
-                or not isinstance(response[0], dict)
-            ):
-                await cache.set(
-                    "tvmaze",
-                    "episode-date",
-                    cache_key,
-                    {"not_found": True},
-                    negative=True,
-                )
-                return {}
-            episode = response[0]
-            links = (
-                episode.get("_links")
-                if isinstance(episode.get("_links"), dict)
-                else {}
-            )
-            show_link = (
-                links.get("show")
-                if isinstance(links, dict)
-                and isinstance(links.get("show"), dict)
-                else {}
-            )
-            show_url = (
-                show_link.get("href") if isinstance(show_link, dict) else None
-            )
-            if not isinstance(show_url, str) or not show_url:
-                show_url = f"https://api.tvmaze.com/shows/{tvmaze_id}"
-            show_data: dict[str, Any] = {}
-            show_response = await self._make_tvmaze_request(
-                show_url, {}, base_dir, config
-            )
-            if isinstance(show_response, dict):
-                show_data = show_response
-
-            def clean_html(value: object) -> str:
-                return (
-                    str(value or "")
-                    .replace("<p>", "")
-                    .replace("</p>", "")
-                    .strip()
-                )
-
-            episode_image_value = episode.get("image")
-            show_image_value = show_data.get("image")
-            externals_value = show_data.get("externals")
-            episode_image_data: dict[str, Any] = (
-                episode_image_value
-                if isinstance(episode_image_value, dict)
-                else {}
-            )
-            show_image_data: dict[str, Any] = (
-                show_image_value if isinstance(show_image_value, dict) else {}
-            )
-            externals: dict[str, Any] = (
-                externals_value if isinstance(externals_value, dict) else {}
-            )
-            result: dict[str, Any] = {
-                "episode_name": str(episode.get("name") or ""),
-                "season": int(episode.get("season") or 0),
-                "episode": int(episode.get("number") or 0),
-                "airdate": str(episode.get("airdate") or ""),
-                "runtime": int(episode.get("runtime") or 0),
-                "episode_image": str(
-                    episode_image_data.get("original")
-                    or episode_image_data.get("medium")
-                    or ""
-                ),
-                "show_name": str(
-                    show_data.get("name")
-                    or (
-                        show_link.get("name")
-                        if isinstance(show_link, dict)
-                        else ""
-                    )
-                    or ""
-                ),
-                "show_overview": clean_html(show_data.get("summary")),
-                "show_image": str(
-                    show_image_data.get("original")
-                    or show_image_data.get("medium")
-                    or ""
-                ),
-                "tvdb_id": int(externals.get("thetvdb") or 0),
-                "imdb_id": str(externals.get("imdb") or ""),
-            }
-            overview = clean_html(episode.get("summary"))
-            if overview:
-                result["episode_overview"] = overview
-            await cache.set("tvmaze", "episode-date", cache_key, result)
-            return result
         except Exception as error:
             logger.info(f"[red]TVMaze date lookup failed: {error}[/red]")
             return {}
+        if result is None:
+            await self._cache_episode_date_not_found(cache, cache_key)
+            return {}
+        await cache.set("tvmaze", "episode-date", cache_key, result)
+        return result
 
     async def get_tvmaze_episode_data(
         self,
