@@ -256,7 +256,9 @@ def test_bounded_async_download_success_and_oversize_cleanup(
 ) -> None:
     class Response:
         status_code = 200
-        headers = {"content-length": "4"}
+
+        def __init__(self) -> None:
+            self.headers = {"content-length": "4"}
 
         def raise_for_status(self) -> None:
             return None
@@ -293,7 +295,8 @@ def test_bounded_async_download_success_and_oversize_cleanup(
     assert destination.read_bytes() == b"tool"
 
     class OversizeResponse(Response):
-        headers = {}
+        def __init__(self) -> None:
+            self.headers = {}
 
         async def aiter_bytes(self, chunk_size: int):
             assert chunk_size == 8192
@@ -306,6 +309,7 @@ def test_bounded_async_download_success_and_oversize_cleanup(
 
     class OversizeClient(Client):
         def stream(self, method: str, url: str, timeout: float):
+            del method, url, timeout
             return OversizeStream()
 
     with pytest.raises(RuntimeError, match="4-byte limit"):
