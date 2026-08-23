@@ -1003,13 +1003,73 @@ class _FakeSession:
         return None
 
 
-@pytest.mark.parametrize("tracker_name", sorted(tracker_class_map))
-def test_tracker_effect_boundary_is_exercised_with_fakes(
-    tracker_name: str, tmp_path: Path, monkeypatch: Any
-) -> None:
-    """Smoke one tracker's effectful methods without touching a real service."""
+_EFFECT_EXCLUDED_METHODS = _DETERMINISTIC_METHODS | {
+    "__class__",
+    "__delattr__",
+    "__dir__",
+    "__eq__",
+    "__format__",
+    "__ge__",
+    "__getattribute__",
+    "__getstate__",
+    "__gt__",
+    "__hash__",
+    "__init__",
+    "__init_subclass__",
+    "__le__",
+    "__lt__",
+    "__ne__",
+    "__new__",
+    "__reduce__",
+    "__reduce_ex__",
+    "__repr__",
+    "__setattr__",
+    "__sizeof__",
+    "__str__",
+    "__subclasshook__",
+}
+_EFFECT_CATEGORIES = ("MOVIE", "TV", "MUSIC", "BOOK", "GAME", "XXX")
+_EFFECT_SCENARIOS = (
+    "success",
+    "empty",
+    "unauthorized",
+    "rate_limited",
+    "server_error",
+)
+_EFFECT_MULTI_SCENARIO_METHODS = frozenset(
+    {
+        "upload",
+        "search_existing",
+        "validate_credentials",
+        "get_requests",
+        "api_test",
+        "login",
+        "download_new_torrent",
+    }
+)
+_EFFECT_RELEASE_TYPES = {
+    "MOVIE": "REMUX",
+    "TV": "WEBDL",
+    "MUSIC": "FLAC",
+    "BOOK": "M4B",
+    "GAME": "ISO",
+    "XXX": "WEBDL",
+}
 
-    config = _configured_catalog()
+
+async def _effect_no_sleep(
+    _delay: float = 0, *_args: object, **_kwargs: object
+) -> None:
+    return None
+
+
+async def _effect_affirmative_prompt(
+    *_args: object, **_kwargs: object
+) -> bool:
+    return True
+
+
+def _prepare_effect_fixture(tmp_path: Path) -> None:
     meta = _meta(tmp_path, "MOVIE")
     temp_dir = tmp_path / "tmp" / str(meta.uuid)
     temp_dir.mkdir(parents=True, exist_ok=True)
@@ -1023,6 +1083,8 @@ def test_tracker_effect_boundary_is_exercised_with_fakes(
     }.items():
         (temp_dir / name).write_text(content, encoding="utf-8")
 
+
+def _patch_effect_boundaries(monkeypatch: Any) -> None:
     monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient)
     monkeypatch.setattr(requests, "Session", _FakeSession)
     monkeypatch.setattr(requests, "get", _FakeSession().get)
@@ -1032,16 +1094,7 @@ def test_tracker_effect_boundary_is_exercised_with_fakes(
         "create_scraper",
         lambda *_args, **_kwargs: _FakeSession(),
     )
-
-    async def no_sleep(
-        _delay: float = 0, *_args: object, **_kwargs: object
-    ) -> None:
-        return None
-
-    async def affirmative_prompt(*_args: object, **_kwargs: object) -> bool:
-        return True
-
-    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+    monkeypatch.setattr(asyncio, "sleep", _effect_no_sleep)
     monkeypatch.setattr("builtins.input", lambda *_args, **_kwargs: "1")
     monkeypatch.setattr(cli_ui, "ask_yes_no", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
@@ -1051,166 +1104,202 @@ def test_tracker_effect_boundary_is_exercised_with_fakes(
     )
     monkeypatch.setattr(cli_ui, "ask_string", lambda *_args, **_kwargs: "1")
 
-    excluded = _DETERMINISTIC_METHODS | {
-        "__class__",
-        "__delattr__",
-        "__dir__",
-        "__eq__",
-        "__format__",
-        "__ge__",
-        "__getattribute__",
-        "__getstate__",
-        "__gt__",
-        "__hash__",
-        "__init__",
-        "__init_subclass__",
-        "__le__",
-        "__lt__",
-        "__ne__",
-        "__new__",
-        "__reduce__",
-        "__reduce_ex__",
-        "__repr__",
-        "__setattr__",
-        "__sizeof__",
-        "__str__",
-        "__subclasshook__",
-    }
-    categories = ("MOVIE", "TV", "MUSIC", "BOOK", "GAME", "XXX")
-    scenarios = (
-        "success",
-        "empty",
-        "unauthorized",
-        "rate_limited",
-        "server_error",
+
+def _patch_effect_tracker_module(tracker_class: Any, monkeypatch: Any) -> None:
+    module = sys.modules[tracker_class.__module__]
+    if hasattr(module, "prompt_in_thread"):
+        monkeypatch.setattr(
+            module, "prompt_in_thread", _effect_affirmative_prompt
+        )
+    for attribute, replacement in (
+        ("AsyncClient", _FakeAsyncClient),
+        ("Client", _FakeSession),
+        ("Session", _FakeSession),
+    ):
+        if hasattr(module, attribute):
+            monkeypatch.setattr(module, attribute, replacement)
+
+
+def _effect_supported_categories(tracker: object) -> set[str]:
+    raw = getattr(tracker, "supported_categories", ()) or ()
+    return {str(value).upper() for value in raw}
+
+
+def _eligible_effect_categories(supported: set[str]) -> list[str]:
+    return [
+        category
+        for category in _EFFECT_CATEGORIES
+        if not supported or category in supported
+    ]
+
+
+def _effect_method_scenarios(method_name: str) -> tuple[str, ...]:
+    if method_name in _EFFECT_MULTI_SCENARIO_METHODS:
+        return _EFFECT_SCENARIOS
+    return ("success", "empty")
+
+
+def _is_effect_method(method_name: str) -> bool:
+    if method_name.startswith("__"):
+        return False
+    return method_name not in _EFFECT_EXCLUDED_METHODS
+
+
+def _effect_release(
+    tmp_path: Path, tracker_name: str, category: str, scenario: str
+) -> Meta:
+    release = _meta(tmp_path, category)
+    tracker_temp = Path(release.base_dir) / "tmp" / str(release.uuid)
+    (tracker_temp / f"[{tracker_name}]DESCRIPTION.txt").write_text(
+        "[b]Example description[/b]", encoding="utf-8"
     )
+    (tracker_temp / f"[{tracker_name}]MEDIAINFO.txt").write_text(
+        "General\nFormat : Matroska", encoding="utf-8"
+    )
+    release.type = _EFFECT_RELEASE_TYPES[category]
+    release.resolution = "2160p" if category in {"MOVIE", "XXX"} else "1080p"
+    release.is_disc = (
+        "BDMV" if category == "MOVIE" and scenario == "empty" else ""
+    )
+    release.anime = category == "TV" and scenario == "empty"
+    return release
+
+
+async def _record_effect_invocation(
+    method_name: str,
+    method: Callable[..., object],
+    release: Meta,
+    tmp_path: Path,
+    repository_cwd: Path,
+    process_terminations: list[str],
+    validation_failures: list[str],
+    overrides: Mapping[str, object] | None = None,
+) -> None:
+    try:
+        await _invoke(method, release, tmp_path, overrides)
+    except (KeyboardInterrupt, SystemExit) as error:
+        process_terminations.append(f"{method_name}:{type(error).__name__}")
+    except Exception as error:
+        validation_failures.append(f"{method_name}:{type(error).__name__}")
+    finally:
+        os.chdir(repository_cwd)
+
+
+async def _exercise_effect_scenarios(
+    tracker_name: str,
+    method_name: str,
+    method: Callable[..., object],
+    tmp_path: Path,
+    categories: list[str],
+    repository_cwd: Path,
+    process_terminations: list[str],
+    validation_failures: list[str],
+) -> None:
+    for scenario in _effect_method_scenarios(method_name):
+        _FakeResponse.scenario = scenario
+        for category in categories:
+            await _record_effect_invocation(
+                method_name,
+                method,
+                _effect_release(tmp_path, tracker_name, category, scenario),
+                tmp_path,
+                repository_cwd,
+                process_terminations,
+                validation_failures,
+            )
+
+
+async def _exercise_effect_literals(
+    method_name: str,
+    method: Callable[..., object],
+    tmp_path: Path,
+    category: str,
+    repository_cwd: Path,
+    process_terminations: list[str],
+    validation_failures: list[str],
+) -> None:
+    _FakeResponse.scenario = "success"
+    for meta_updates, argument_overrides in _literal_scenarios(
+        method, limit=100
+    ):
+        release = _with_meta_updates(_meta(tmp_path, category), meta_updates)
+        await _record_effect_invocation(
+            method_name,
+            method,
+            release,
+            tmp_path,
+            repository_cwd,
+            process_terminations,
+            validation_failures,
+            argument_overrides,
+        )
+
+
+async def _exercise_effect_tracker(
+    tracker_name: str,
+    config: dict[str, Any],
+    tmp_path: Path,
+    monkeypatch: Any,
+    attempted: set[str],
+    process_terminations: list[str],
+    validation_failures: list[str],
+) -> None:
+    tracker_class = tracker_class_map[tracker_name]
+    _patch_effect_tracker_module(tracker_class, monkeypatch)
+    tracker = tracker_class(config)
+    categories = _eligible_effect_categories(
+        _effect_supported_categories(tracker)
+    )
+    repository_cwd = Path.cwd()
+    for method_name, method in inspect.getmembers(tracker, predicate=callable):
+        if not _is_effect_method(method_name):
+            continue
+        attempted.add(method_name)
+        if not categories:
+            continue
+        await _exercise_effect_scenarios(
+            tracker_name,
+            method_name,
+            method,
+            tmp_path,
+            categories,
+            repository_cwd,
+            process_terminations,
+            validation_failures,
+        )
+        await _exercise_effect_literals(
+            method_name,
+            method,
+            tmp_path,
+            categories[0],
+            repository_cwd,
+            process_terminations,
+            validation_failures,
+        )
+
+
+@pytest.mark.parametrize("tracker_name", sorted(tracker_class_map))
+def test_tracker_effect_boundary_is_exercised_with_fakes(
+    tracker_name: str, tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Smoke one tracker's effectful methods without touching a real service."""
+    _prepare_effect_fixture(tmp_path)
+    _patch_effect_boundaries(monkeypatch)
     attempted: set[str] = set()
     process_terminations: list[str] = []
     validation_failures: list[str] = []
-    repository_cwd = Path.cwd()
-
-    async def exercise() -> None:
-        tracker_class = tracker_class_map[tracker_name]
-        module = sys.modules[tracker_class.__module__]
-        if hasattr(module, "prompt_in_thread"):
-            monkeypatch.setattr(module, "prompt_in_thread", affirmative_prompt)
-        for attribute, replacement in (
-            ("AsyncClient", _FakeAsyncClient),
-            ("Client", _FakeSession),
-            ("Session", _FakeSession),
-        ):
-            if hasattr(module, attribute):
-                monkeypatch.setattr(module, attribute, replacement)
-
-        tracker = tracker_class(config)
-        supported = {
-            str(value).upper()
-            for value in getattr(tracker, "supported_categories", ()) or ()
-        }
-        for method_name, method in inspect.getmembers(
-            tracker, predicate=callable
-        ):
-            if method_name.startswith("__") or method_name in excluded:
-                continue
-            attempted.add(method_name)
-            effect_scenarios = (
-                scenarios
-                if method_name
-                in {
-                    "upload",
-                    "search_existing",
-                    "validate_credentials",
-                    "get_requests",
-                    "api_test",
-                    "login",
-                    "download_new_torrent",
-                }
-                else ("success", "empty")
-            )
-            eligible_categories = [
-                category
-                for category in categories
-                if not supported or category in supported
-            ]
-            if not eligible_categories:
-                continue
-            for scenario in effect_scenarios:
-                _FakeResponse.scenario = scenario
-                for category in eligible_categories:
-                    release = _meta(tmp_path, category)
-                    tracker_temp = (
-                        Path(release.base_dir) / "tmp" / str(release.uuid)
-                    )
-                    (
-                        tracker_temp / f"[{tracker_name}]DESCRIPTION.txt"
-                    ).write_text(
-                        "[b]Example description[/b]", encoding="utf-8"
-                    )
-                    (
-                        tracker_temp / f"[{tracker_name}]MEDIAINFO.txt"
-                    ).write_text(
-                        "General\nFormat : Matroska", encoding="utf-8"
-                    )
-                    release.type = {
-                        "MOVIE": "REMUX",
-                        "TV": "WEBDL",
-                        "MUSIC": "FLAC",
-                        "BOOK": "M4B",
-                        "GAME": "ISO",
-                        "XXX": "WEBDL",
-                    }[category]
-                    release.resolution = (
-                        "2160p" if category in {"MOVIE", "XXX"} else "1080p"
-                    )
-                    release.is_disc = (
-                        "BDMV"
-                        if category == "MOVIE" and scenario == "empty"
-                        else ""
-                    )
-                    release.anime = category == "TV" and scenario == "empty"
-                    try:
-                        await _invoke(method, release, tmp_path)
-                    except (KeyboardInterrupt, SystemExit) as error:
-                        process_terminations.append(
-                            f"{method_name}:{type(error).__name__}"
-                        )
-                    except Exception as error:
-                        # Focused tests own provider-specific validation. Recording
-                        # the semantic rejection keeps this smoke contract explicit
-                        # without treating expected tracker policy failures as bugs.
-                        validation_failures.append(
-                            f"{method_name}:{type(error).__name__}"
-                        )
-                    finally:
-                        # Several legacy adapters use chdir while building payloads.
-                        # Restore the repository before pytest removes this case's
-                        # temporary directory so the next fixture remains valid.
-                        os.chdir(repository_cwd)
-            _FakeResponse.scenario = "success"
-            for meta_updates, argument_overrides in _literal_scenarios(
-                method, limit=100
-            ):
-                release = _with_meta_updates(
-                    _meta(tmp_path, eligible_categories[0]), meta_updates
-                )
-                try:
-                    await _invoke(
-                        method, release, tmp_path, argument_overrides
-                    )
-                except (KeyboardInterrupt, SystemExit) as error:
-                    process_terminations.append(
-                        f"{method_name}:{type(error).__name__}"
-                    )
-                except Exception as error:
-                    validation_failures.append(
-                        f"{method_name}:{type(error).__name__}"
-                    )
-                finally:
-                    os.chdir(repository_cwd)
-
-    asyncio.run(exercise())
+    asyncio.run(
+        _exercise_effect_tracker(
+            tracker_name,
+            _configured_catalog(),
+            tmp_path,
+            monkeypatch,
+            attempted,
+            process_terminations,
+            validation_failures,
+        )
+    )
     gc.collect()
-
     assert attempted
     assert process_terminations == []
     assert all(":" in failure for failure in validation_failures)
