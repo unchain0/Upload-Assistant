@@ -4,6 +4,7 @@ import os
 import re
 import shutil
 import urllib.parse
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -32,6 +33,16 @@ from src.integrations.torrent_clients.path_utils import (
 defusedxml.xmlrpc.monkey_patch()
 
 
+def _decode_bencode(value: bytes) -> Any:
+    decoder = cast(Callable[[bytes], Any], vars(bencodepy)["decode"])
+    return decoder(value)
+
+
+def _encode_bencode(value: Any) -> bytes:
+    encoder = cast(Callable[[Any], bytes], vars(bencodepy)["encode"])
+    return encoder(value)
+
+
 @dataclass
 class _TorrentSearchState:
     piece_limit: bool
@@ -46,6 +57,11 @@ class _TorrentSearchState:
         return cls(piece_limit=piece_limit)
 
 
+ClientDispatcher = Callable[
+    [Meta, str, Torrent, str, str, dict[str, Any], str, bool], Awaitable[None]
+]
+
+
 class Clients(
     QbittorrentClientMixin,
     RtorrentClientMixin,
@@ -58,42 +74,70 @@ class Clients(
         self._tracker_comment_hosts: dict[str, tuple[str, ...]] | None = None
 
     @staticmethod
+    def _legacy_torrent_info(metainfo: Any) -> dict[bytes, Any] | None:
+        if not isinstance(metainfo, dict):
+            return None
+        metainfo_map = cast(dict[bytes, Any], metainfo)
+        info = metainfo_map.get(b"info")
+        if not isinstance(info, dict):
+            return None
+        return cast(dict[bytes, Any], info)
+
+    @staticmethod
+    def _legacy_torrent_entries(
+        info: dict[bytes, Any],
+    ) -> list[dict[bytes, Any]]:
+        entries = [info]
+        files = info.get(b"files", [])
+        if not isinstance(files, list):
+            return entries
+        entries.extend(
+            cast(dict[bytes, Any], entry)
+            for entry in cast(list[Any], files)
+            if isinstance(entry, dict)
+        )
+        return entries
+
+    @classmethod
+    def _normalize_legacy_md5(cls, info: dict[bytes, Any]) -> bool:
+        changed = False
+        for entry in cls._legacy_torrent_entries(info):
+            md5sum = entry.get(b"md5sum")
+            if isinstance(md5sum, bytes):
+                entry[b"md5sum"] = md5sum.hex().encode("ascii")
+                changed = True
+        return changed
+
+    @classmethod
+    def _legacy_compatible_torrent(
+        cls,
+        torrent_path: str,
+        normalized_path: Path,
+        original_error: Exception,
+    ) -> tuple[Torrent, str]:
+        metainfo = cast(
+            dict[bytes, Any], _decode_bencode(Path(torrent_path).read_bytes())
+        )
+        info = cls._legacy_torrent_info(metainfo)
+        if info is None or not cls._normalize_legacy_md5(info):
+            raise original_error
+        normalized_path.parent.mkdir(parents=True, exist_ok=True)
+        normalized_path.write_bytes(_encode_bencode(metainfo))
+        logger.info(
+            f"[yellow]Normalized legacy binary md5sum metadata in a working copy: {normalized_path}[/yellow]"
+        )
+        return Torrent.read(normalized_path), str(normalized_path)
+
+    @classmethod
     def _read_torrent_compat(
-        torrent_path: str, normalized_path: Path
+        cls, torrent_path: str, normalized_path: Path
     ) -> tuple[Torrent, str]:
         try:
             return Torrent.read(torrent_path), torrent_path
         except Exception as original_error:
-            metainfo = bencodepy.decode(Path(torrent_path).read_bytes())
-            if not isinstance(metainfo, dict) or not isinstance(
-                metainfo.get(b"info"), dict
-            ):
-                raise original_error
-
-            info = metainfo[b"info"]
-            entries = [info]
-            files = info.get(b"files", [])
-            if isinstance(files, list):
-                entries.extend(
-                    entry for entry in files if isinstance(entry, dict)
-                )
-
-            changed = False
-            for entry in entries:
-                md5sum = entry.get(b"md5sum")
-                if isinstance(md5sum, bytes):
-                    entry[b"md5sum"] = md5sum.hex().encode("ascii")
-                    changed = True
-
-            if not changed:
-                raise original_error
-
-            normalized_path.parent.mkdir(parents=True, exist_ok=True)
-            normalized_path.write_bytes(bencodepy.encode(metainfo))
-            logger.info(
-                f"[yellow]Normalized legacy binary md5sum metadata in a working copy: {normalized_path}[/yellow]"
+            return cls._legacy_compatible_torrent(
+                torrent_path, normalized_path, original_error
             )
-            return Torrent.read(normalized_path), str(normalized_path)
 
     @staticmethod
     def _matches_tracker_host(
@@ -118,312 +162,474 @@ class Clients(
             )
         return self._tracker_comment_hosts
 
+    @staticmethod
+    def _last_path_id(path: str) -> str | None:
+        match = re.search(r"/(\d+)$", path)
+        return match.group(1) if match else None
+
+    @staticmethod
+    def _query_id(query: str, key: str) -> str | None:
+        values = urllib.parse.parse_qs(query).get(key)
+        return values[0] if values else None
+
+    @staticmethod
+    def _tracker_key(tracker_name: str) -> str:
+        aliases = {
+            "PASSTHEPOPCORN": "ptp",
+            "HDBITS": "hdb",
+            "BEYONDHD": "bhd",
+            "BLUTOPIA": "blu",
+            "ONLYENCODES": "oe",
+            "BTN": "btn",
+        }
+        return aliases.get(tracker_name, tracker_name.lower())
+
+    @staticmethod
+    def _tracker_query_key(tracker_name: str) -> str | None:
+        return {
+            "PASSTHEPOPCORN": "torrentid",
+            "HDBITS": "id",
+            "BTN": "id",
+            "ORPHEUS": "torrentid",
+        }.get(tracker_name)
+
+    @staticmethod
+    def _beyondhd_path_id(path: str) -> str | None:
+        match = re.search(r"/details/(\d+)", path)
+        return match.group(1) if match else None
+
+    @classmethod
+    def _tracker_id_from_url(
+        cls, tracker_name: str, parsed: urllib.parse.ParseResult
+    ) -> str | None:
+        query_key = cls._tracker_query_key(tracker_name)
+        if query_key is not None:
+            return cls._query_id(parsed.query, query_key)
+        if tracker_name in {"BeyondHD", "BEYONDHD"}:
+            return cls._beyondhd_path_id(parsed.path)
+        return cls._last_path_id(parsed.path)
+
+    def _comment_tracker_id_pair(
+        self, url: str, tracker_hosts: dict[str, tuple[str, ...]]
+    ) -> tuple[str, str] | None:
+        parsed = urllib.parse.urlparse(url)
+        tracker_name = self._matches_tracker_host(
+            (parsed.hostname or "").lower(), tracker_hosts
+        )
+        if tracker_name is None:
+            return None
+        tracker_id = self._tracker_id_from_url(tracker_name, parsed)
+        if not tracker_id:
+            return None
+        return self._tracker_key(tracker_name), tracker_id
+
     def _extract_tracker_ids_from_comment(
         self, comment: str
     ) -> dict[str, str]:
         """Extract known tracker IDs from a torrent comment URL set."""
         if not comment:
             return {}
-
-        def _last_path_id(path: str) -> str | None:
-            """Extract a numeric tracker ID from the end of a URL path."""
-            match = re.search(r"/(\d+)$", path)
-            return match.group(1) if match else None
-
-        def _query_id(query: str, key: str) -> str | None:
-            """Extract the first value for key from a URL query string."""
-            values = urllib.parse.parse_qs(query).get(key)
-            return values[0] if values else None
-
         tracker_ids: dict[str, str] = {}
-        urls: list[str] = re.findall(r"https?://[^\s\"'<>]+", comment)
         tracker_hosts = self._get_tracker_comment_hosts()
-        for url in urls:
-            parsed = urllib.parse.urlparse(url)
-            host = (parsed.hostname or "").lower()
-            path = parsed.path
-
-            matched_tracker = self._matches_tracker_host(host, tracker_hosts)
-
-            if not matched_tracker:
-                continue
-
-            # Canonical-class-name → established metadata key mapping
-            _tracker_key_aliases: dict[str, str] = {
-                "PASSTHEPOPCORN": "ptp",
-                "HDBITS": "hdb",
-                "BEYONDHD": "bhd",
-                "BLUTOPIA": "blu",
-                "ONLYENCODES": "oe",
-                "BTN": "btn",
-            }
-            tracker_key = _tracker_key_aliases.get(
-                matched_tracker, matched_tracker.lower()
-            )
-
-            if matched_tracker == "PASSTHEPOPCORN":
-                ptp_id = _query_id(parsed.query, "torrentid")
-                if ptp_id:
-                    tracker_ids[tracker_key] = ptp_id
-            elif matched_tracker == "HDBITS":
-                hdb_id = _query_id(parsed.query, "id")
-                if hdb_id:
-                    tracker_ids[tracker_key] = hdb_id
-            elif matched_tracker == "BTN":
-                btn_id = _query_id(parsed.query, "id")
-                if btn_id:
-                    tracker_ids[tracker_key] = btn_id
-            elif matched_tracker in {"BeyondHD", "BEYONDHD"}:
-                match = re.search(r"/details/(\d+)", path)
-                if match:
-                    tracker_ids[tracker_key] = match.group(1)
-            elif matched_tracker == "ORPHEUS":
-                torrent_id = _query_id(parsed.query, "torrentid")
-                if torrent_id:
-                    tracker_ids[tracker_key] = torrent_id
-            else:
-                # UNIT3D style: last path ID
-                tracker_id = _last_path_id(path)
-                if tracker_id:
-                    tracker_ids[tracker_key] = tracker_id
-
+        for url in re.findall(r"https?://[^\s\"'<>]+", comment):
+            pair = self._comment_tracker_id_pair(url, tracker_hosts)
+            if pair is not None:
+                key, tracker_id = pair
+                tracker_ids[key] = tracker_id
         return tracker_ids
 
-    async def add_to_client(
-        self, meta: Meta, tracker: str, cross: bool = False
+    @staticmethod
+    def _prepared_torrent_path(meta: Meta, tracker: str, cross: bool) -> str:
+        state_dir = Path(meta.base_dir) / "tmp" / meta.uuid
+        if cross:
+            return str(state_dir / f"[{tracker}_cross].torrent")
+        if meta.debug:
+            return str(state_dir / f"[{tracker}_DEBUG].torrent")
+        return str(state_dir / f"[{tracker}].torrent")
+
+    @staticmethod
+    def _torrent_for_injection(torrent_path: str) -> Torrent | None:
+        if Path(torrent_path).exists():
+            return Torrent.read(torrent_path)
+        logger.info(
+            f"[bold red]Torrent file {torrent_path} does not exist, cannot add to client"
+        )
+        return None
+
+    @staticmethod
+    def _clean_injecting_client_list(value: list[Any]) -> list[str]:
+        clients: list[str] = []
+        for client in value:
+            normalized = str(client).strip()
+            if normalized:
+                clients.append(normalized)
+        return clients
+
+    @classmethod
+    def _injecting_clients_from_value(cls, value: Any) -> list[str]:
+        if isinstance(value, str):
+            return [value] if value.strip() else []
+        if isinstance(value, list):
+            return cls._clean_injecting_client_list(cast(list[Any], value))
+        return []
+
+    def _configured_injecting_clients(self) -> list[str]:
+        try:
+            value = self.config["DEFAULT"].get("injecting_client_list")
+        except Exception as exc:
+            logger.debug(
+                f"[cyan]DEBUG: Error reading injecting_client_list from config: {exc}[/cyan]"
+            )
+            return []
+        clients = self._injecting_clients_from_value(value)
+        if isinstance(value, str) and clients:
+            logger.debug(
+                f"[cyan]DEBUG: Converted injecting_client_list string to list: {clients}[/cyan]"
+            )
+        elif isinstance(value, list):
+            logger.debug(
+                f"[cyan]DEBUG: Using injecting_client_list from config: {clients}[/cyan]"
+            )
+        return clients
+
+    def _default_injecting_client(self) -> list[str]:
+        default_client = self.config["DEFAULT"].get("default_torrent_client")
+        if not isinstance(default_client, str) or default_client == "none":
+            return []
+        logger.debug(
+            f"[cyan]DEBUG: Falling back to default_torrent_client: {default_client}[/cyan]"
+        )
+        return [default_client]
+
+    def _injecting_clients(self, meta: Meta) -> list[str]:
+        client_value = meta.client
+        if isinstance(client_value, str):
+            if client_value == "none":
+                logger.debug(
+                    "[cyan]DEBUG: meta client is 'none', skipping adding to client[/cyan]"
+                )
+                return []
+            clients = [client_value]
+            logger.debug(
+                f"[cyan]DEBUG: Using client from meta: {clients}[/cyan]"
+            )
+            return clients
+        configured = self._configured_injecting_clients()
+        return configured or self._default_injecting_client()
+
+    def _client_is_skipped(self, tracker: str, client_name: str) -> bool:
+        client_to_skip = self.config["TRACKERS"][tracker].get(
+            "client_to_skip", []
+        )
+        if client_name not in client_to_skip:
+            return False
+        logger.debug(
+            f"[cyan]DEBUG: Skipping client '{client_name}' for tracker '{tracker}' as it's in client_to_skip list[/cyan]"
+        )
+        return True
+
+    def _torrent_client_config(
+        self, client_name: str
+    ) -> dict[str, Any] | None:
+        clients = self.config["TORRENT_CLIENTS"]
+        if client_name in clients:
+            return cast(dict[str, Any], clients[client_name])
+        logger.info(
+            f"[bold red]Torrent client '{client_name}' not found in config."
+        )
+        return None
+
+    async def _dispatch_rtorrent(
+        self,
+        meta: Meta,
+        torrent_path: str,
+        torrent: Torrent,
+        local_path: str,
+        remote_path: str,
+        client: dict[str, Any],
+        tracker: str,
+        _cross: bool,
     ) -> None:
-        """Add the prepared torrent to each configured client."""
+        self.rtorrent(
+            cast(str, meta.path),
+            torrent_path,
+            torrent,
+            meta,
+            local_path,
+            remote_path,
+            client,
+            tracker,
+        )
+
+    async def _dispatch_qbit(
+        self,
+        meta: Meta,
+        _torrent_path: str,
+        torrent: Torrent,
+        local_path: str,
+        remote_path: str,
+        client: dict[str, Any],
+        tracker: str,
+        cross: bool,
+    ) -> None:
+        await self.qbittorrent(
+            cast(str, meta.path),
+            torrent,
+            local_path,
+            remote_path,
+            client,
+            meta.is_disc,
+            meta.filelist,
+            meta,
+            tracker,
+            cross,
+        )
+
+    async def _dispatch_deluge(
+        self,
+        meta: Meta,
+        torrent_path: str,
+        torrent: Torrent,
+        local_path: str,
+        remote_path: str,
+        client: dict[str, Any],
+        _tracker: str,
+        _cross: bool,
+    ) -> None:
+        self.deluge(
+            cast(str, meta.path),
+            torrent_path,
+            torrent,
+            local_path,
+            remote_path,
+            client,
+        )
+
+    async def _dispatch_transmission(
+        self,
+        meta: Meta,
+        _torrent_path: str,
+        torrent: Torrent,
+        local_path: str,
+        remote_path: str,
+        client: dict[str, Any],
+        _tracker: str,
+        _cross: bool,
+    ) -> None:
+        self.transmission(
+            cast(str, meta.path),
+            torrent,
+            local_path,
+            remote_path,
+            client,
+            meta,
+        )
+
+    async def _dispatch_watch(
+        self,
+        _meta: Meta,
+        torrent_path: str,
+        _torrent: Torrent,
+        _local_path: str,
+        _remote_path: str,
+        client: dict[str, Any],
+        _tracker: str,
+        _cross: bool,
+    ) -> None:
+        shutil.copy(torrent_path, client["watch_folder"])
+
+    async def _dispatch_to_client(
+        self,
+        torrent_client: str,
+        meta: Meta,
+        torrent_path: str,
+        torrent: Torrent,
+        local_path: str,
+        remote_path: str,
+        client: dict[str, Any],
+        tracker: str,
+        cross: bool,
+    ) -> None:
+        dispatchers: dict[str, ClientDispatcher] = {
+            "rtorrent": self._dispatch_rtorrent,
+            "qbit": self._dispatch_qbit,
+            "deluge": self._dispatch_deluge,
+            "transmission": self._dispatch_transmission,
+            "watch": self._dispatch_watch,
+        }
+        dispatcher = dispatchers.get(torrent_client.lower())
+        if dispatcher is not None:
+            await dispatcher(
+                meta,
+                torrent_path,
+                torrent,
+                local_path,
+                remote_path,
+                client,
+                tracker,
+                cross,
+            )
+
+    def _ignore_inject_client(self, tracker: str, client_name: str) -> bool:
+        if not client_name or client_name == "none":
+            return True
+        return self._client_is_skipped(tracker, client_name)
+
+    async def _inject_into_client(
+        self,
+        meta: Meta,
+        tracker: str,
+        cross: bool,
+        torrent_path: str,
+        torrent: Torrent,
+        client_name: str,
+    ) -> None:
+        if self._ignore_inject_client(tracker, client_name):
+            return
+        client = self._torrent_client_config(client_name)
+        if client is None:
+            return
+        torrent_client = str(client["torrent_client"])
+        await self.inject_delay(meta, tracker, client_name)
+        local_path, remote_path = await self.remote_path_map(meta, client_name)
+        logger.debug(f"[bold green]Adding to {client_name} ({torrent_client})")
+        try:
+            await self._dispatch_to_client(
+                torrent_client,
+                meta,
+                torrent_path,
+                torrent,
+                local_path,
+                remote_path,
+                client,
+                tracker,
+                cross,
+            )
+        except Exception as exc:
+            logger.info(
+                f"[bold red]Failed to add torrent to {client_name}: {exc}"
+            )
+
+    def _prepared_injection(
+        self, meta: Meta, tracker: str, cross: bool
+    ) -> tuple[str, Torrent] | None:
         if meta.path is None:
             logger.info("[bold red]meta.path is None, cannot add to client")
-            return
-        if cross:
-            torrent_path = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{tracker}_cross].torrent"
-        elif meta.debug:
-            torrent_path = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{tracker}_DEBUG].torrent"
-        else:
-            torrent_path = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{tracker}].torrent"
+            return None
         if meta.no_seed is True:
             logger.info(
                 "[bold red]--no-seed was passed, so the torrent will not be added to the client"
             )
             logger.info("[bold yellow]Add torrent manually to the client")
-            return
-        if Path(torrent_path).exists():
-            torrent = Torrent.read(torrent_path)
-        else:
-            logger.info(
-                f"[bold red]Torrent file {torrent_path} does not exist, cannot add to client"
-            )
-            return
+            return None
+        torrent_path = self._prepared_torrent_path(meta, tracker, cross)
+        torrent = self._torrent_for_injection(torrent_path)
+        if torrent is None:
+            return None
+        return torrent_path, torrent
 
-        inject_clients: list[str] = []
-        client_value = meta.client
-        if isinstance(client_value, str) and client_value != "none":
-            inject_clients = [client_value]
-            logger.debug(
-                f"[cyan]DEBUG: Using client from meta: {inject_clients}[/cyan]"
-            )
-        elif client_value == "none":
-            logger.debug(
-                "[cyan]DEBUG: meta client is 'none', skipping adding to client[/cyan]"
-            )
+    async def add_to_client(
+        self, meta: Meta, tracker: str, cross: bool = False
+    ) -> None:
+        """Add the prepared torrent to each configured client."""
+        prepared = self._prepared_injection(meta, tracker, cross)
+        if prepared is None:
             return
-        else:
-            try:
-                inject_clients_config = self.config["DEFAULT"].get(
-                    "injecting_client_list"
-                )
-                if (
-                    isinstance(inject_clients_config, str)
-                    and inject_clients_config.strip()
-                ):
-                    inject_clients = [inject_clients_config]
-                    logger.debug(
-                        f"[cyan]DEBUG: Converted injecting_client_list string to list: {inject_clients}[/cyan]"
-                    )
-                elif isinstance(inject_clients_config, list):
-                    # Filter out empty strings and whitespace-only strings
-                    inject_clients_list = cast(
-                        list[Any], inject_clients_config
-                    )
-                    inject_clients = [
-                        str(c).strip()
-                        for c in inject_clients_list
-                        if str(c).strip()
-                    ]
-                    logger.debug(
-                        f"[cyan]DEBUG: Using injecting_client_list from config: {inject_clients}[/cyan]"
-                    )
-                else:
-                    inject_clients = []
-            except Exception as e:
-                logger.debug(
-                    f"[cyan]DEBUG: Error reading injecting_client_list from config: {e}[/cyan]"
-                )
-
-            if not inject_clients:
-                default_client = self.config["DEFAULT"].get(
-                    "default_torrent_client"
-                )
-                if (
-                    isinstance(default_client, str)
-                    and default_client != "none"
-                ):
-                    logger.debug(
-                        f"[cyan]DEBUG: Falling back to default_torrent_client: {default_client}[/cyan]"
-                    )
-                    inject_clients = [default_client]
-
+        torrent_path, torrent = prepared
+        inject_clients = self._injecting_clients(meta)
         if not inject_clients:
             logger.debug(
                 "[cyan]DEBUG: No clients configured for injecting[/cyan]"
             )
             return
-
         logger.debug(
             f"[cyan]DEBUG: Clients to inject into: {inject_clients}[/cyan]"
         )
-
         for client_name in inject_clients:
-            client_to_skip = self.config["TRACKERS"][tracker].get(
-                "client_to_skip", []
-            )
-            if client_name in client_to_skip:
-                logger.debug(
-                    f"[cyan]DEBUG: Skipping client '{client_name}' for tracker '{tracker}' as it's in client_to_skip list[/cyan]"
-                )
-                continue
-            if client_name == "none" or not client_name:
-                continue
-
-            if client_name not in self.config["TORRENT_CLIENTS"]:
-                logger.info(
-                    f"[bold red]Torrent client '{client_name}' not found in config."
-                )
-                continue
-
-            client = self.config["TORRENT_CLIENTS"][client_name]
-            torrent_client = client["torrent_client"]
-            await self.inject_delay(meta, tracker, client_name)
-
-            # Must pass client_name to remote_path_map
-            local_path, remote_path = await self.remote_path_map(
-                meta, client_name
+            await self._inject_into_client(
+                meta, tracker, cross, torrent_path, torrent, client_name
             )
 
-            logger.debug(
-                f"[bold green]Adding to {client_name} ({torrent_client})"
-            )
+    def _inject_delay_value(self, tracker: str) -> tuple[Any, bool]:
+        trackers = self.config.get("TRACKERS", {})
+        tracker_map = (
+            cast(dict[str, Any], trackers)
+            if isinstance(trackers, dict)
+            else {}
+        )
+        tracker_cfg = tracker_map.get(tracker, {})
+        tracker_config = (
+            cast(dict[str, Any], tracker_cfg)
+            if isinstance(tracker_cfg, dict)
+            else {}
+        )
+        has_tracker_delay = "inject_delay" in tracker_config
+        if has_tracker_delay:
+            return tracker_config.get("inject_delay"), True
+        return self.config["DEFAULT"].get("inject_delay", 0), False
 
-            try:
-                if torrent_client.lower() == "rtorrent":
-                    self.rtorrent(
-                        meta.path,
-                        torrent_path,
-                        torrent,
-                        meta,
-                        local_path,
-                        remote_path,
-                        client,
-                        tracker,
-                    )
-                elif torrent_client == "qbit":
-                    await self.qbittorrent(
-                        meta.path,
-                        torrent,
-                        local_path,
-                        remote_path,
-                        client,
-                        meta.is_disc,
-                        meta.filelist,
-                        meta,
-                        tracker,
-                        cross,
-                    )
-                elif torrent_client.lower() == "deluge":
-                    self.deluge(
-                        meta.path,
-                        torrent_path,
-                        torrent,
-                        local_path,
-                        remote_path,
-                        client,
-                    )
-                elif torrent_client.lower() == "transmission":
-                    self.transmission(
-                        meta.path,
-                        torrent,
-                        local_path,
-                        remote_path,
-                        client,
-                        meta,
-                    )
-                elif torrent_client.lower() == "watch":
-                    shutil.copy(torrent_path, client["watch_folder"])
-            except Exception as e:
-                logger.info(
-                    f"[bold red]Failed to add torrent to {client_name}: {e}"
-                )
-        return
+    @staticmethod
+    def _empty_inject_delay(value: Any) -> bool:
+        if value is None:
+            return True
+        return isinstance(value, str) and not value.strip()
+
+    @staticmethod
+    def _parsed_inject_delay(value: Any) -> int | None:
+        try:
+            return int(value)
+        except ValueError, TypeError:
+            return None
+
+    @staticmethod
+    def _log_invalid_inject_delay(
+        tracker: str, tracker_specific: bool
+    ) -> None:
+        prefix = f"{tracker}: " if tracker_specific else ""
+        logger.info(
+            f"{prefix}[bold red]CONFIG ERROR: 'inject_delay' must be an integer"
+        )
+
+    @staticmethod
+    def _nonnegative_inject_delay(value: int) -> int:
+        if value >= 0:
+            return value
+        logger.info("[bold red]CONFIG ERROR: 'inject_delay' must be >= 0")
+        return 0
+
+    @staticmethod
+    def _log_inject_delay(
+        meta: Meta,
+        tracker: str,
+        client_name: str,
+        delay: int,
+        tracker_specific: bool,
+    ) -> None:
+        if not meta.debug and delay <= 5:
+            return
+        prefix = f"{tracker}: " if tracker_specific else ""
+        logger.info(
+            f"{prefix}[cyan]Waiting {delay} seconds before adding to client '{client_name}'[/cyan]"
+        )
 
     async def inject_delay(
         self, meta: Meta, tracker: str, client_name: str
     ) -> None:
-        """
-        Applies an optional delay before injecting a torrent into the client.
-
-        The delay can be configured either per tracker or globally in the default settings.
-        When both are defined, the tracker-specific value takes precedence over the client setting.
-
-        This mechanism exists to handle cases where a tracker requires a short amount
-        of time to register the uploaded torrent hash. Injecting the torrent too early
-        may cause connectivity issues, such as failing to discover peers even though
-        they are already available.
-
-        By waiting before injection, this function helps ensure proper tracker
-        synchronization and more reliable peer discovery.
-        """
-        tracker_cfg = self.config.get("TRACKERS", {}).get(tracker, {})
-        has_tracker_delay = (
-            isinstance(tracker_cfg, dict) and "inject_delay" in tracker_cfg
-        )
-        inject_delay = (
-            tracker_cfg.get("inject_delay")
-            if has_tracker_delay
-            else self.config["DEFAULT"].get("inject_delay", 0)
-        )
-        if inject_delay is None or (
-            isinstance(inject_delay, str) and not inject_delay.strip()
-        ):
+        """Apply the configured tracker/global delay before client injection."""
+        raw_delay, tracker_specific = self._inject_delay_value(tracker)
+        if self._empty_inject_delay(raw_delay):
             return
-
-        try:
-            inject_delay = int(inject_delay)
-        except ValueError, TypeError:
-            if has_tracker_delay:
-                logger.info(
-                    f"{tracker}: [bold red]CONFIG ERROR: 'inject_delay' must be an integer"
-                )
-            else:
-                logger.info(
-                    "[bold red]CONFIG ERROR: 'inject_delay' must be an integer"
-                )
-            inject_delay = 0
-
-        if inject_delay < 0:
-            logger.info("[bold red]CONFIG ERROR: 'inject_delay' must be >= 0")
-            inject_delay = 0
-        if inject_delay > 0:
-            if meta.debug or inject_delay > 5:
-                if has_tracker_delay:
-                    logger.info(
-                        f"{tracker}: [cyan]Waiting {inject_delay} seconds before adding to client '{client_name}'[/cyan]"
-                    )
-                else:
-                    logger.info(
-                        f"[cyan]Waiting {inject_delay} seconds before adding to client '{client_name}'[/cyan]"
-                    )
-            await asyncio.sleep(inject_delay)
+        parsed = self._parsed_inject_delay(raw_delay)
+        if parsed is None:
+            self._log_invalid_inject_delay(tracker, tracker_specific)
+            return
+        delay = self._nonnegative_inject_delay(parsed)
+        if delay <= 0:
+            return
+        self._log_inject_delay(
+            meta, tracker, client_name, delay, tracker_specific
+        )
+        await asyncio.sleep(delay)
 
     async def find_existing_torrent(self, meta: Meta) -> str | None:
         """Find a reusable torrent once and cache the search result."""
@@ -706,15 +912,17 @@ class Clients(
     @staticmethod
     def _piece_length_from_file(torrent_path: str) -> int | None:
         try:
-            metainfo = bencodepy.decode(Path(torrent_path).read_bytes())
+            metainfo = cast(
+                dict[bytes, Any],
+                _decode_bencode(Path(torrent_path).read_bytes()),
+            )
         except OSError, bencodepy.BencodeDecodeError, TypeError, ValueError:
-            return None
-        if not isinstance(metainfo, dict):
             return None
         info = metainfo.get(b"info")
         if not isinstance(info, dict):
             return None
-        piece_length = info.get(b"piece length")
+        info_map = cast(dict[bytes, Any], info)
+        piece_length = info_map.get(b"piece length")
         return piece_length if isinstance(piece_length, int) else None
 
     @staticmethod
@@ -1397,96 +1605,136 @@ class Clients(
             )
         return False
 
+    def _remote_path_client_config(
+        self, torrent_client_name: str | dict[str, Any] | None
+    ) -> dict[str, Any]:
+        if isinstance(torrent_client_name, dict):
+            return torrent_client_name
+        if not isinstance(torrent_client_name, str) or not torrent_client_name:
+            raise ValueError(
+                "torrent_client_name must be a client name or client config dict"
+            )
+        try:
+            return cast(
+                dict[str, Any],
+                self.config["TORRENT_CLIENTS"][torrent_client_name],
+            )
+        except KeyError as exc:
+            raise KeyError(
+                f"Torrent client '{torrent_client_name}' not found in TORRENT_CLIENTS"
+            ) from exc
+
+    @staticmethod
+    def _path_roots(
+        client_config: dict[str, Any],
+    ) -> tuple[list[str], list[str]]:
+        local_paths = coerce_str_list(
+            client_config.get("local_path", ["/LocalPath"])
+        ) or ["/LocalPath"]
+        remote_paths = coerce_str_list(
+            client_config.get("remote_path", ["/RemotePath"])
+        ) or ["/RemotePath"]
+        return local_paths, remote_paths
+
+    @staticmethod
+    def _remote_root_for_index(remote_paths: list[str], index: int) -> str:
+        if index < len(remote_paths):
+            return remote_paths[index]
+        return remote_paths[0]
+
+    @classmethod
+    def _matching_path_roots(
+        cls, meta_path: str, local_paths: list[str], remote_paths: list[str]
+    ) -> tuple[str, str]:
+        for index, local_path in enumerate(local_paths):
+            if is_path_under(meta_path, local_path):
+                return local_path, cls._remote_root_for_index(
+                    remote_paths, index
+                )
+        return local_paths[0], remote_paths[0]
+
+    @staticmethod
+    def _normalized_path_roots(
+        local_root: str, remote_root: str
+    ) -> tuple[str, str]:
+        local_path = os.path.normpath(local_root)
+        remote_path = os.path.normpath(remote_root)
+        if local_path.endswith(os.sep):
+            remote_path = remote_path + os.sep
+        return local_path, remote_path
+
     async def remote_path_map(
         self,
         meta: Meta,
         torrent_client_name: str | dict[str, Any] | None = None,
     ) -> tuple[str, str]:
         """Return the local and remote roots matching the torrent metadata path."""
-        if isinstance(torrent_client_name, dict):
-            client_config: dict[str, Any] = torrent_client_name
-        elif isinstance(torrent_client_name, str) and torrent_client_name:
-            try:
-                client_config = cast(
-                    dict[str, Any],
-                    self.config["TORRENT_CLIENTS"][torrent_client_name],
-                )
-            except KeyError as exc:
-                raise KeyError(
-                    f"Torrent client '{torrent_client_name}' not found in TORRENT_CLIENTS"
-                ) from exc
-        else:
-            raise ValueError(
-                "torrent_client_name must be a client name or client config dict"
-            )
-
-        local_paths = coerce_str_list(
-            client_config.get("local_path", ["/LocalPath"])
+        client_config = self._remote_path_client_config(torrent_client_name)
+        local_paths, remote_paths = self._path_roots(client_config)
+        roots = self._matching_path_roots(
+            str(meta.path), local_paths, remote_paths
         )
-        remote_paths = coerce_str_list(
-            client_config.get("remote_path", ["/RemotePath"])
+        return self._normalized_path_roots(*roots)
+
+    def _ptp_client_name(self, client_name: str | None) -> str | None:
+        if client_name:
+            return client_name
+        default_config = self.config.get("DEFAULT", {})
+        if not isinstance(default_config, dict):
+            return None
+        value = cast(dict[str, Any], default_config).get(
+            "default_torrent_client"
         )
-        if not local_paths:
-            local_paths = ["/LocalPath"]
-        if not remote_paths:
-            remote_paths = ["/RemotePath"]
+        return value if isinstance(value, str) and value else None
 
-        list_local_path = local_paths[0]
-        list_remote_path = remote_paths[0]
-        meta_path = str(meta.path)
+    def _ptp_client_config(self, client_name: str) -> dict[str, Any] | None:
+        clients_config = self.config.get("TORRENT_CLIENTS", {})
+        client = (
+            cast(dict[str, Any], clients_config).get(client_name)
+            if isinstance(clients_config, dict)
+            else None
+        )
+        if isinstance(client, dict):
+            return cast(dict[str, Any], client)
+        logger.debug(
+            f"[yellow]Skipping torrent metadata lookup: client '{client_name}' is not configured.[/yellow]"
+        )
+        return None
 
-        for i, local_path_value in enumerate(local_paths):
-            if is_path_under(meta_path, local_path_value):
-                list_local_path = local_path_value
-                list_remote_path = (
-                    remote_paths[i]
-                    if i < len(remote_paths)
-                    else remote_paths[0]
-                )
-                break
+    async def _ptp_from_rtorrent(
+        self, meta: Meta, client: dict[str, Any], pathed: bool
+    ) -> Meta:
+        await self.get_ptp_from_hash_rtorrent(meta, pathed, client)
+        return meta
 
-        local_path = os.path.normpath(list_local_path)
-        remote_path = os.path.normpath(list_remote_path)
-        if local_path.endswith(os.sep):
-            remote_path = remote_path + os.sep
+    async def _ptp_from_qbit(
+        self, meta: Meta, client: dict[str, Any], pathed: bool
+    ) -> Meta:
+        return await self.get_ptp_from_hash_qbit(meta, client, pathed)
 
-        return local_path, remote_path
+    async def _ptp_from_client(
+        self, meta: Meta, client: dict[str, Any], pathed: bool
+    ) -> Meta:
+        dispatchers = {
+            "rtorrent": self._ptp_from_rtorrent,
+            "qbit": self._ptp_from_qbit,
+        }
+        dispatcher = dispatchers.get(str(client.get("torrent_client", "")))
+        if dispatcher is None:
+            return meta
+        return await dispatcher(meta, client, pathed)
 
     async def get_ptp_from_hash(
         self, meta: Meta, pathed: bool = False, client_name: str | None = None
     ) -> Meta:
         """Fetch PTP metadata through the configured torrent client when available."""
-        default_config = self.config.get("DEFAULT", {})
-        clients_config = self.config.get("TORRENT_CLIENTS", {})
-        default_torrent_client = client_name or (
-            default_config.get("default_torrent_client")
-            if isinstance(default_config, dict)
-            else None
-        )
-        if (
-            not isinstance(default_torrent_client, str)
-            or not default_torrent_client
-        ):
+        resolved_name = self._ptp_client_name(client_name)
+        if resolved_name is None:
             logger.debug(
                 "[yellow]Skipping torrent metadata lookup: no default torrent client configured.[/yellow]"
             )
             return meta
-
-        client = (
-            clients_config.get(default_torrent_client)
-            if isinstance(clients_config, dict)
-            else None
-        )
-        if not isinstance(client, dict):
-            logger.debug(
-                f"[yellow]Skipping torrent metadata lookup: client '{default_torrent_client}' is not configured.[/yellow]"
-            )
+        client = self._ptp_client_config(resolved_name)
+        if client is None:
             return meta
-
-        torrent_client = client.get("torrent_client")
-        if torrent_client == "rtorrent":
-            await self.get_ptp_from_hash_rtorrent(meta, pathed, client)
-            return meta
-        if torrent_client == "qbit":
-            return await self.get_ptp_from_hash_qbit(meta, client, pathed)
-        return meta
+        return await self._ptp_from_client(meta, client, pathed)
