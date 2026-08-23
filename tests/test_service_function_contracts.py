@@ -8,6 +8,7 @@ release types are exercised.
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import copy
 import importlib
@@ -193,48 +194,52 @@ def _modules() -> list[ModuleType]:
     ]
 
 
-def _literal_candidates(function: Callable[..., object]) -> list[object]:
-    """Collect useful literals from comparisons in one implementation."""
-
+def _source_tree(function: Callable[..., object]) -> ast.AST | None:
     try:
         source = inspect.getsource(function)
     except OSError, TypeError:
-        return []
-    import ast
-
+        return None
     try:
-        tree = ast.parse(inspect.cleandoc(source))
+        return ast.parse(inspect.cleandoc(source))
     except SyntaxError:
+        return None
+
+
+def _add_literal(values: list[object], value: object) -> None:
+    if not isinstance(value, str | int | float | bool):
+        return
+    if len(str(value)) > 80 or value in values:
+        return
+    values.append(value)
+
+
+def _collect_literals(node: ast.AST, values: list[object]) -> None:
+    if isinstance(node, ast.Constant):
+        _add_literal(values, node.value)
+        return
+    if not isinstance(node, ast.List | ast.Tuple | ast.Set):
+        return
+    for item in node.elts:
+        if isinstance(item, ast.Constant):
+            _add_literal(values, item.value)
+
+
+def _literal_candidates(function: Callable[..., object]) -> list[object]:
+    """Collect useful literals from comparisons in one implementation."""
+    tree = _source_tree(function)
+    if tree is None:
         return []
     values: list[object] = []
     for node in ast.walk(tree):
-        if isinstance(node, ast.Constant) and isinstance(
-            node.value, str | int | float | bool
-        ):
-            value = node.value
-            if value not in values and len(str(value)) <= 80:
-                values.append(value)
-        elif isinstance(node, ast.List | ast.Tuple | ast.Set):
-            for item in node.elts:
-                if (
-                    isinstance(item, ast.Constant)
-                    and isinstance(item.value, str | int | float | bool)
-                    and item.value not in values
-                ):
-                    values.append(item.value)
+        _collect_literals(node, values)
     return values[:20]
 
 
-def _argument(
-    name: str,
-    annotation: object,
-    meta: Meta,
-    tmp_path: Path,
-    literal: object | None = None,
-) -> object:
-    normalized = name.casefold().lstrip("_")
-    config = copy.deepcopy(example_config)
-    rich_mapping: dict[str, Any] = {
+_MISSING = object()
+
+
+def _rich_mapping(meta: Meta) -> dict[str, Any]:
+    return {
         "title": meta.title,
         "name": meta.name,
         "author": meta.author,
@@ -249,7 +254,21 @@ def _argument(
         "results": [],
         "attributes": {},
     }
-    values: dict[str, object] = {
+
+
+def _literal_or(literal: object | None, default: object) -> object:
+    return default if literal is None else literal
+
+
+def _named_arguments(
+    meta: Meta,
+    tmp_path: Path,
+    literal: object | None,
+    rich_mapping: dict[str, Any],
+) -> dict[str, object]:
+    config = copy.deepcopy(example_config)
+    literal_value = _literal_or(literal, "Example Value")
+    return {
         "meta": meta,
         "shared_meta": meta,
         "prepared_meta": meta,
@@ -271,10 +290,10 @@ def _argument(
         "name": meta.name,
         "author": meta.author,
         "language": "English",
-        "value": literal if literal is not None else "Example Value",
-        "raw": literal if literal is not None else "Example Value",
-        "raw_value": literal if literal is not None else "Example Value",
-        "size_str": literal if literal is not None else "1.5 GiB",
+        "value": literal_value,
+        "raw": literal_value,
+        "raw_value": literal_value,
+        "size_str": _literal_or(literal, "1.5 GiB"),
         "h": 0.5,
         "s": 0.5,
         "lx": 0.5,
@@ -296,62 +315,157 @@ def _argument(
         "skip_tracker_descriptions": False,
         "_skip_tracker_descriptions": False,
     }
-    if normalized in values:
-        return values[normalized]
-    origin = get_origin(annotation)
-    args = get_args(annotation)
-    if annotation is inspect.Parameter.empty or annotation is Any:
-        return literal if literal is not None else "example"
-    if annotation is bool:
-        return bool(literal) if isinstance(literal, bool | int) else False
-    if annotation is int:
-        return int(literal) if isinstance(literal, int | float | bool) else 1
-    if annotation is float:
-        return (
-            float(literal) if isinstance(literal, int | float | bool) else 1.0
-        )
-    if annotation is str:
-        return str(literal) if literal is not None else "example"
-    if annotation is Path:
-        return Path(meta.filelist[0])
+
+
+def _bool_argument(literal: object | None) -> bool:
+    if isinstance(literal, bool | int):
+        return bool(literal)
+    return False
+
+
+def _int_argument(literal: object | None) -> int:
+    if isinstance(literal, int | float | bool):
+        return int(literal)
+    return 1
+
+
+def _float_argument(literal: object | None) -> float:
+    if isinstance(literal, int | float | bool):
+        return float(literal)
+    return 1.0
+
+
+def _str_argument(literal: object | None) -> str:
+    return str(literal) if literal is not None else "example"
+
+
+_SCALAR_ARGUMENTS: dict[object, Callable[[object | None], object]] = {
+    bool: _bool_argument,
+    int: _int_argument,
+    float: _float_argument,
+    str: _str_argument,
+}
+
+
+def _scalar_argument(annotation: object, literal: object | None) -> object:
+    if annotation in {inspect.Parameter.empty, Any}:
+        return _literal_or(literal, "example")
+    factory = _SCALAR_ARGUMENTS.get(annotation)
+    if factory is None:
+        return _MISSING
+    return factory(literal)
+
+
+def _collection_argument(
+    origin: object, meta: Meta, rich_mapping: dict[str, Any]
+) -> object:
     if origin in {list, Sequence}:
         return list(meta.filelist)
     if origin in {dict, Mapping}:
         return rich_mapping
+    return _MISSING
+
+
+def _tuple_argument(
+    normalized: str,
+    args: tuple[object, ...],
+    meta: Meta,
+    tmp_path: Path,
+    literal: object | None,
+) -> tuple[object, ...]:
+    return tuple(
+        _argument(normalized, item, meta, tmp_path, literal)
+        for item in args
+        if item is not Ellipsis
+    )
+
+
+def _optional_argument(
+    normalized: str,
+    args: tuple[object, ...],
+    meta: Meta,
+    tmp_path: Path,
+    literal: object | None,
+) -> object:
+    concrete = next((item for item in args if item is not type(None)), str)
+    return _argument(normalized, concrete, meta, tmp_path, literal)
+
+
+def _composite_argument(
+    normalized: str,
+    annotation: object,
+    meta: Meta,
+    tmp_path: Path,
+    literal: object | None,
+    rich_mapping: dict[str, Any],
+) -> object:
+    origin = get_origin(annotation)
+    args = get_args(annotation)
+    collection = _collection_argument(origin, meta, rich_mapping)
+    if collection is not _MISSING:
+        return collection
     if origin is tuple:
-        return tuple(
-            _argument(normalized, item, meta, tmp_path, literal)
-            for item in args
-            if item is not Ellipsis
-        )
-    if origin is not None and type(None) in args:
-        concrete = next((item for item in args if item is not type(None)), str)
-        return _argument(normalized, concrete, meta, tmp_path, literal)
-    return literal if literal is not None else "example"
+        return _tuple_argument(normalized, args, meta, tmp_path, literal)
+    if origin is None or type(None) not in args:
+        return _literal_or(literal, "example")
+    return _optional_argument(normalized, args, meta, tmp_path, literal)
 
 
-async def _invoke(
-    function: Callable[..., object],
+def _argument(
+    name: str,
+    annotation: object,
     meta: Meta,
     tmp_path: Path,
     literal: object | None = None,
 ) -> object:
-    signature = inspect.signature(function)
-    hint_target = function.__init__ if inspect.isclass(function) else function
+    normalized = name.casefold().lstrip("_")
+    rich_mapping = _rich_mapping(meta)
+    named = _named_arguments(meta, tmp_path, literal, rich_mapping)
+    if normalized in named:
+        return named[normalized]
+    if annotation is Path:
+        return Path(meta.filelist[0])
+    scalar = _scalar_argument(annotation, literal)
+    if scalar is not _MISSING:
+        return scalar
+    return _composite_argument(
+        normalized, annotation, meta, tmp_path, literal, rich_mapping
+    )
+
+
+def _safe_type_hints(target: object) -> dict[str, Any]:
     try:
-        hints = get_type_hints(hint_target)
+        return get_type_hints(target)
     except NameError, TypeError:
-        hints = {}
-    args: list[object] = []
-    kwargs: dict[str, object] = {}
-    for parameter in signature.parameters.values():
-        if parameter.kind in {
+        return {}
+
+
+def _required_parameters(
+    function: Callable[..., object],
+) -> list[inspect.Parameter]:
+    return [
+        parameter
+        for parameter in inspect.signature(function).parameters.values()
+        if parameter.kind
+        not in {
             inspect.Parameter.VAR_POSITIONAL,
             inspect.Parameter.VAR_KEYWORD,
-        }:
-            continue
-        if parameter.default is not inspect.Parameter.empty:
-            continue
+        }
+        and parameter.default is inspect.Parameter.empty
+    ]
+
+
+def _invocation_arguments(
+    function: Callable[..., object],
+    meta: Meta,
+    tmp_path: Path,
+    literal: object | None,
+) -> tuple[list[object], dict[str, object]]:
+    hint_target = function.__init__ if inspect.isclass(function) else function
+    hints = _safe_type_hints(hint_target)
+    args: list[object] = []
+    kwargs: dict[str, object] = {}
+    for parameter in _required_parameters(function):
         value = _argument(
             parameter.name,
             hints.get(parameter.name, parameter.annotation),
@@ -363,16 +477,24 @@ async def _invoke(
             kwargs[parameter.name] = value
         else:
             args.append(value)
+    return args, kwargs
+
+
+async def _invoke(
+    function: Callable[..., object],
+    meta: Meta,
+    tmp_path: Path,
+    literal: object | None = None,
+) -> object:
+    args, kwargs = _invocation_arguments(function, meta, tmp_path, literal)
     result = function(*args, **kwargs)
     if inspect.isawaitable(result):
         return await asyncio.wait_for(result, timeout=0.05)
     return result
 
 
-def test_public_service_functions_accept_dressed_domain_values(
-    tmp_path: Path,
-) -> None:
-    variants = [
+def _variants(tmp_path: Path) -> list[Meta]:
+    return [
         _release(tmp_path, "MOVIE", "DISC", "2160p"),
         _release(tmp_path, "MOVIE", "REMUX", "1080p"),
         _release(tmp_path, "TV", "WEBDL", "1080p"),
@@ -381,48 +503,105 @@ def test_public_service_functions_accept_dressed_domain_values(
         _release(tmp_path, "GAME", "ISO", "OTHER"),
         _release(tmp_path, "XXX", "WEBDL", "1080p"),
     ]
+
+
+def _module_functions(
+    module: ModuleType,
+) -> list[tuple[str, Callable[..., object]]]:
+    return [
+        (name, function)
+        for name, function in inspect.getmembers(module, inspect.isfunction)
+        if not name.startswith("__")
+        and name not in _SKIP_FUNCTIONS
+        and function.__module__ == module.__name__
+    ]
+
+
+async def _run_service_scenario(
+    qualified: str,
+    function: Callable[..., object],
+    meta: Meta,
+    tmp_path: Path,
+    literal: object | None,
+    process_terminations: list[str],
+    successes: set[str],
+    validation_failures: list[str],
+) -> None:
+    try:
+        await _invoke(function, meta.copy(), tmp_path, literal)
+    except (KeyboardInterrupt, SystemExit) as error:
+        process_terminations.append(f"{qualified}: {type(error).__name__}")
+    except Exception as error:
+        validation_failures.append(f"{qualified}: {type(error).__name__}")
+    else:
+        successes.add(qualified)
+
+
+async def _exercise_module(
+    module: ModuleType,
+    variants: list[Meta],
+    tmp_path: Path,
+    attempted: set[str],
+    process_terminations: list[str],
+    successes: set[str],
+    validation_failures: list[str],
+) -> None:
+    for name, function in _module_functions(module):
+        qualified = f"{module.__name__}.{name}"
+        attempted.add(qualified)
+        literals: list[object | None] = [None, *_literal_candidates(function)]
+        for index, literal in enumerate(literals[:8]):
+            await _run_service_scenario(
+                qualified,
+                function,
+                variants[index % len(variants)],
+                tmp_path,
+                literal,
+                process_terminations,
+                successes,
+                validation_failures,
+            )
+
+
+async def _exercise_modules(
+    modules: list[ModuleType],
+    variants: list[Meta],
+    tmp_path: Path,
+    attempted: set[str],
+    process_terminations: list[str],
+    successes: set[str],
+    validation_failures: list[str],
+) -> None:
+    for module in modules:
+        await _exercise_module(
+            module,
+            variants,
+            tmp_path,
+            attempted,
+            process_terminations,
+            successes,
+            validation_failures,
+        )
+
+
+def test_public_service_functions_accept_dressed_domain_values(
+    tmp_path: Path,
+) -> None:
     attempted: set[str] = set()
     process_terminations: list[str] = []
     successes: set[str] = set()
     validation_failures: list[str] = []
-
-    async def exercise() -> None:
-        for module in _modules():
-            for name, function in inspect.getmembers(
-                module, inspect.isfunction
-            ):
-                if (
-                    name.startswith("__")
-                    or name in _SKIP_FUNCTIONS
-                    or function.__module__ != module.__name__
-                ):
-                    continue
-                qualified = f"{module.__name__}.{name}"
-                attempted.add(qualified)
-                literals: list[object | None] = [
-                    None,
-                    *_literal_candidates(function),
-                ]
-                # Pair literals with representative releases rather than taking
-                # the Cartesian product. This preserves boundary diversity while
-                # keeping the contract fast enough for every local/CI run.
-                for index, literal in enumerate(literals[:8]):
-                    meta = variants[index % len(variants)]
-                    try:
-                        await _invoke(function, meta.copy(), tmp_path, literal)
-                    except (KeyboardInterrupt, SystemExit) as error:
-                        process_terminations.append(
-                            f"{qualified}: {type(error).__name__}"
-                        )
-                    except Exception as error:
-                        validation_failures.append(
-                            f"{qualified}: {type(error).__name__}"
-                        )
-                    else:
-                        successes.add(qualified)
-
-    asyncio.run(exercise())
-
+    asyncio.run(
+        _exercise_modules(
+            _modules(),
+            _variants(tmp_path),
+            tmp_path,
+            attempted,
+            process_terminations,
+            successes,
+            validation_failures,
+        )
+    )
     assert len(attempted) >= 30
     assert len(successes) >= 20
     assert process_terminations == []
