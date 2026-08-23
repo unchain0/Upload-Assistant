@@ -230,38 +230,34 @@ def test_auto_capture_static_motion_fallback_retry_filter_limit_and_upload(
     _large_file(dvd / "VTS_06_1.VOB")
     (dvd / "VTS_07_0.VOB").write_bytes(b"small")
 
+    default_tracks = [
+        _Track(
+            width=None,
+            height=None,
+            par=None,
+            dar=None,
+            duration="1000",
+        )
+    ]
+    tracks_by_path = {
+        no_video: [_Track(track_type="Audio")],
+        motion: [
+            _Track(
+                width="720",
+                height="480",
+                par="1.2",
+                dar="1.8",
+                duration="5000",
+            )
+        ],
+        failed: [_Track(duration="1000")],
+        exploding: [_Track(duration="1000")],
+    }
+
     def parse(path: Path):
-        if path == no_video:
-            return SimpleNamespace(tracks=[_Track(track_type="Audio")])
         if path == bad_info:
             raise RuntimeError("mediainfo failed")
-        if path == motion:
-            return SimpleNamespace(
-                tracks=[
-                    _Track(
-                        width="720",
-                        height="480",
-                        par="1.2",
-                        dar="1.8",
-                        duration="5000",
-                    )
-                ]
-            )
-        if path == failed:
-            return SimpleNamespace(tracks=[_Track(duration="1000")])
-        if path == exploding:
-            return SimpleNamespace(tracks=[_Track(duration="1000")])
-        return SimpleNamespace(
-            tracks=[
-                _Track(
-                    width=None,
-                    height=None,
-                    par=None,
-                    dar=None,
-                    duration="1000",
-                )
-            ]
-        )
+        return SimpleNamespace(tracks=tracks_by_path.get(path, default_tracks))
 
     monkeypatch.setattr(disc_menus.MediaInfo, "parse", parse)
     monkeypatch.setattr(
