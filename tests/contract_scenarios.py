@@ -384,6 +384,344 @@ def _merge(groups: Iterable[Iterable[Assignment]]) -> list[Assignment] | None:
     return list(merged.values())
 
 
+def _direct_truth_assignment(
+    node: ast.AST,
+    truth: bool,
+    meta_names: set[str],
+    parameter_names: set[str],
+    domain_fields: set[str],
+    aliases: dict[str, tuple[str, str]],
+) -> list[list[Assignment]] | None:
+    target = _target(node, meta_names, parameter_names, domain_fields, aliases)
+    if target is None:
+        return None
+    return [[Assignment(*target, truth)]]
+
+
+def _not_truth_options(
+    node: ast.UnaryOp,
+    truth: bool,
+    meta_names: set[str],
+    parameter_names: set[str],
+    domain_fields: set[str],
+    aliases: dict[str, tuple[str, str]],
+) -> list[list[Assignment]]:
+    if not isinstance(node.op, ast.Not):
+        return []
+    return _condition_options(
+        node.operand,
+        truth=not truth,
+        meta_names=meta_names,
+        parameter_names=parameter_names,
+        domain_fields=domain_fields,
+        aliases=aliases,
+    )
+
+
+def _bool_children(
+    node: ast.BoolOp,
+    truth: bool,
+    meta_names: set[str],
+    parameter_names: set[str],
+    domain_fields: set[str],
+    aliases: dict[str, tuple[str, str]],
+) -> list[list[list[Assignment]]]:
+    return [
+        _condition_options(
+            value,
+            truth=truth,
+            meta_names=meta_names,
+            parameter_names=parameter_names,
+            domain_fields=domain_fields,
+            aliases=aliases,
+        )
+        for value in node.values
+    ]
+
+
+def _bool_requires_merge(node: ast.BoolOp, truth: bool) -> bool:
+    if truth and isinstance(node.op, ast.And):
+        return True
+    return not truth and isinstance(node.op, ast.Or)
+
+
+def _merged_bool_options(
+    children: list[list[list[Assignment]]],
+) -> list[list[Assignment]]:
+    options: list[list[Assignment]] = []
+    combinations = itertools.product(*[child or [[]] for child in children])
+    for combination in combinations:
+        merged = _merge(combination)
+        if merged is not None:
+            options.append(merged)
+    return options
+
+
+def _flattened_bool_options(
+    children: list[list[list[Assignment]]],
+) -> list[list[Assignment]]:
+    return [option for child in children for option in child]
+
+
+def _bool_truth_options(
+    node: ast.BoolOp,
+    truth: bool,
+    meta_names: set[str],
+    parameter_names: set[str],
+    domain_fields: set[str],
+    aliases: dict[str, tuple[str, str]],
+) -> list[list[Assignment]]:
+    children = _bool_children(
+        node, truth, meta_names, parameter_names, domain_fields, aliases
+    )
+    if _bool_requires_merge(node, truth):
+        return _merged_bool_options(children)
+    return _flattened_bool_options(children)
+
+
+def _comparison_parts(
+    node: ast.Compare,
+    meta_names: set[str],
+    parameter_names: set[str],
+    domain_fields: set[str],
+    aliases: dict[str, tuple[str, str]],
+) -> tuple[tuple[str, str], ast.AST, ast.cmpop, bool] | None:
+    if len(node.ops) != 1 or len(node.comparators) != 1:
+        return None
+    left = node.left
+    right = node.comparators[0]
+    op = node.ops[0]
+    target = _target(left, meta_names, parameter_names, domain_fields, aliases)
+    if target is not None:
+        return target, right, op, False
+    target = _target(
+        right, meta_names, parameter_names, domain_fields, aliases
+    )
+    if target is None:
+        return None
+    return target, left, op, True
+
+
+def _membership_assignment(
+    target: tuple[str, str],
+    literal_node: ast.AST,
+    op: ast.cmpop,
+    truth: bool,
+) -> list[list[Assignment]] | None:
+    if not isinstance(op, ast.In | ast.NotIn):
+        return None
+    values = _literal_values(literal_node)
+    if not values:
+        return []
+    wants_member = truth if isinstance(op, ast.In) else not truth
+    chosen = values[0] if wants_member else _alternative(values)
+    return [[Assignment(*target, chosen)]]
+
+
+def _equality_relation(op: ast.cmpop) -> bool | None:
+    if isinstance(op, ast.Eq | ast.Is):
+        return True
+    if isinstance(op, ast.NotEq | ast.IsNot):
+        return False
+    return None
+
+
+def _literal_or_constant(node: ast.AST) -> tuple[bool, object | None]:
+    literal = _literal(node)
+    if literal is not None:
+        return True, literal
+    return isinstance(node, ast.Constant), literal
+
+
+def _equality_assignment(
+    target: tuple[str, str],
+    literal_node: ast.AST,
+    op: ast.cmpop,
+    truth: bool,
+) -> list[list[Assignment]] | None:
+    supported, literal = _literal_or_constant(literal_node)
+    if not supported:
+        return None
+    equals = _equality_relation(op)
+    if equals is None:
+        return None
+    wants_equal = truth if equals else not truth
+    value = literal if wants_equal else _alternative(literal)
+    return [[Assignment(*target, value)]]
+
+
+def _ordering_candidate(
+    literal: int | float,
+    op: ast.cmpop,
+    truth: bool,
+    reverse: bool,
+) -> int | float:
+    delta: int | float = 1 if isinstance(literal, int) else 1.0
+    true_side = truth ^ reverse
+    if isinstance(op, ast.Lt | ast.LtE):
+        return literal - delta if true_side else literal + delta
+    return literal + delta if true_side else literal - delta
+
+
+def _ordering_assignment(
+    target: tuple[str, str],
+    literal_node: ast.AST,
+    op: ast.cmpop,
+    truth: bool,
+    reverse: bool,
+) -> list[list[Assignment]] | None:
+    literal = _literal(literal_node)
+    if not isinstance(literal, int | float):
+        return None
+    if not isinstance(op, ast.Lt | ast.LtE | ast.Gt | ast.GtE):
+        return None
+    candidate = _ordering_candidate(literal, op, truth, reverse)
+    return [[Assignment(*target, candidate)]]
+
+
+def _compare_truth_options(
+    node: ast.Compare,
+    truth: bool,
+    meta_names: set[str],
+    parameter_names: set[str],
+    domain_fields: set[str],
+    aliases: dict[str, tuple[str, str]],
+) -> list[list[Assignment]]:
+    parts = _comparison_parts(
+        node, meta_names, parameter_names, domain_fields, aliases
+    )
+    if parts is None:
+        return []
+    target, literal_node, op, reverse = parts
+    for resolver in (_membership_assignment, _equality_assignment):
+        resolved = resolver(target, literal_node, op, truth)
+        if resolved is not None:
+            return resolved
+    ordering = _ordering_assignment(target, literal_node, op, truth, reverse)
+    return [] if ordering is None else ordering
+
+
+def _is_isinstance_call(node: ast.Call) -> bool:
+    if not isinstance(node.func, ast.Name):
+        return False
+    if node.func.id != "isinstance":
+        return False
+    return len(node.args) >= 2
+
+
+def _assignment_from_representative(
+    target: tuple[str, str] | None,
+    representative: object | None,
+    truth: bool,
+) -> list[list[Assignment]]:
+    if target is None:
+        return []
+    if representative is None:
+        return []
+    value = representative if truth else None
+    return [[Assignment(*target, value)]]
+
+
+def _isinstance_truth_options(
+    node: ast.Call,
+    truth: bool,
+    meta_names: set[str],
+    parameter_names: set[str],
+    domain_fields: set[str],
+    aliases: dict[str, tuple[str, str]],
+) -> list[list[Assignment]] | None:
+    if not _is_isinstance_call(node):
+        return None
+    target = _target(
+        node.args[0], meta_names, parameter_names, domain_fields, aliases
+    )
+    representative = _representative_type(node.args[1])
+    return _assignment_from_representative(target, representative, truth)
+
+
+def _is_prefix_call(node: ast.Call) -> bool:
+    if not isinstance(node.func, ast.Attribute):
+        return False
+    if node.func.attr not in {"startswith", "endswith"}:
+        return False
+    return bool(node.args)
+
+
+def _prefix_assignment(
+    target: tuple[str, str] | None,
+    values: list[object],
+    truth: bool,
+) -> list[list[Assignment]]:
+    if target is None or not values:
+        return []
+    value = values[0]
+    if not isinstance(value, str):
+        return []
+    candidate = value if truth else "__other__"
+    return [[Assignment(*target, candidate)]]
+
+
+def _prefix_truth_options(
+    node: ast.Call,
+    truth: bool,
+    meta_names: set[str],
+    parameter_names: set[str],
+    domain_fields: set[str],
+    aliases: dict[str, tuple[str, str]],
+) -> list[list[Assignment]] | None:
+    if not _is_prefix_call(node):
+        return None
+    target = _target(
+        node.func.value, meta_names, parameter_names, domain_fields, aliases
+    )
+    values = _literal_values(node.args[0])
+    return _prefix_assignment(target, values, truth)
+
+
+def _call_truth_options(
+    node: ast.Call,
+    truth: bool,
+    meta_names: set[str],
+    parameter_names: set[str],
+    domain_fields: set[str],
+    aliases: dict[str, tuple[str, str]],
+) -> list[list[Assignment]]:
+    for resolver in (_isinstance_truth_options, _prefix_truth_options):
+        resolved = resolver(
+            node, truth, meta_names, parameter_names, domain_fields, aliases
+        )
+        if resolved is not None:
+            return resolved
+    return []
+
+
+def _non_target_truth_options(
+    node: ast.AST,
+    truth: bool,
+    meta_names: set[str],
+    parameter_names: set[str],
+    domain_fields: set[str],
+    aliases: dict[str, tuple[str, str]],
+) -> list[list[Assignment]]:
+    if isinstance(node, ast.UnaryOp):
+        return _not_truth_options(
+            node, truth, meta_names, parameter_names, domain_fields, aliases
+        )
+    if isinstance(node, ast.BoolOp):
+        return _bool_truth_options(
+            node, truth, meta_names, parameter_names, domain_fields, aliases
+        )
+    if isinstance(node, ast.Compare):
+        return _compare_truth_options(
+            node, truth, meta_names, parameter_names, domain_fields, aliases
+        )
+    if isinstance(node, ast.Call):
+        return _call_truth_options(
+            node, truth, meta_names, parameter_names, domain_fields, aliases
+        )
+    return []
+
+
 def _simple_truth(
     node: ast.AST,
     *,
@@ -393,151 +731,14 @@ def _simple_truth(
     domain_fields: set[str],
     aliases: dict[str, tuple[str, str]],
 ) -> list[list[Assignment]]:
-    target = _target(node, meta_names, parameter_names, domain_fields, aliases)
-    if target is not None:
-        return [[Assignment(*target, truth)]]
-
-    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
-        return _condition_options(
-            node.operand,
-            truth=not truth,
-            meta_names=meta_names,
-            parameter_names=parameter_names,
-            domain_fields=domain_fields,
-            aliases=aliases,
-        )
-
-    if isinstance(node, ast.BoolOp):
-        children = [
-            _condition_options(
-                value,
-                truth=truth,
-                meta_names=meta_names,
-                parameter_names=parameter_names,
-                domain_fields=domain_fields,
-                aliases=aliases,
-            )
-            for value in node.values
-        ]
-        if (truth and isinstance(node.op, ast.And)) or (
-            not truth and isinstance(node.op, ast.Or)
-        ):
-            options: list[list[Assignment]] = []
-            for combination in itertools.product(
-                *[child or [[]] for child in children]
-            ):
-                merged = _merge(combination)
-                if merged is not None:
-                    options.append(merged)
-            return options
-        # True OR: any child true. False AND: any child false.
-        return [option for child in children for option in child]
-
-    if (
-        isinstance(node, ast.Compare)
-        and len(node.ops) == 1
-        and len(node.comparators) == 1
-    ):
-        left, right = node.left, node.comparators[0]
-        op = node.ops[0]
-        target_info = _target(
-            left, meta_names, parameter_names, domain_fields, aliases
-        )
-        literal_node = right
-        reverse = False
-        if target_info is None:
-            target_info = _target(
-                right, meta_names, parameter_names, domain_fields, aliases
-            )
-            literal_node = left
-            reverse = True
-        if target_info is not None:
-            values = _literal_values(literal_node)
-            literal = _literal(literal_node)
-            if isinstance(op, ast.In | ast.NotIn):
-                if not values:
-                    return []
-                wants_member = truth if isinstance(op, ast.In) else not truth
-                chosen = values[0] if wants_member else _alternative(values)
-                return [[Assignment(*target_info, chosen)]]
-            if literal is not None or isinstance(literal_node, ast.Constant):
-                equals = isinstance(op, ast.Eq | ast.Is)
-                differs = isinstance(op, ast.NotEq | ast.IsNot)
-                if equals or differs:
-                    wants_equal = truth if equals else not truth
-                    return [
-                        [
-                            Assignment(
-                                *target_info,
-                                literal
-                                if wants_equal
-                                else _alternative(literal),
-                            )
-                        ]
-                    ]
-                if isinstance(literal, int | float) and isinstance(
-                    op, ast.Lt | ast.LtE | ast.Gt | ast.GtE
-                ):
-                    # Pick values on both sides of the boundary. Reverse comparison
-                    # swaps which side makes the target expression true.
-                    delta = 1 if isinstance(literal, int) else 1.0
-                    if isinstance(op, ast.Lt | ast.LtE):
-                        candidate = (
-                            literal - delta
-                            if truth ^ reverse
-                            else literal + delta
-                        )
-                    else:
-                        candidate = (
-                            literal + delta
-                            if truth ^ reverse
-                            else literal - delta
-                        )
-                    return [[Assignment(*target_info, candidate)]]
-
-    if isinstance(node, ast.Call):
-        if (
-            isinstance(node.func, ast.Name)
-            and node.func.id == "isinstance"
-            and len(node.args) >= 2
-        ):
-            target_info = _target(
-                node.args[0],
-                meta_names,
-                parameter_names,
-                domain_fields,
-                aliases,
-            )
-            representative = _representative_type(node.args[1])
-            if target_info is not None and representative is not None:
-                return [
-                    [
-                        Assignment(
-                            *target_info, representative if truth else None
-                        )
-                    ]
-                ]
-        if (
-            isinstance(node.func, ast.Attribute)
-            and node.func.attr in {"startswith", "endswith"}
-            and node.args
-        ):
-            target_info = _target(
-                node.func.value,
-                meta_names,
-                parameter_names,
-                domain_fields,
-                aliases,
-            )
-            values = _literal_values(node.args[0])
-            if target_info is not None and values:
-                value = values[0]
-                if not isinstance(value, str):
-                    return []
-                candidate = value if truth else "__other__"
-                return [[Assignment(*target_info, candidate)]]
-
-    return []
+    direct = _direct_truth_assignment(
+        node, truth, meta_names, parameter_names, domain_fields, aliases
+    )
+    if direct is not None:
+        return direct
+    return _non_target_truth_options(
+        node, truth, meta_names, parameter_names, domain_fields, aliases
+    )
 
 
 def _condition_options(
