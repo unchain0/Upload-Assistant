@@ -633,72 +633,173 @@ async def _invoke(
     return result
 
 
+_DETERMINISTIC_CATEGORIES = ("MOVIE", "TV", "MUSIC", "BOOK", "GAME", "XXX")
+_DETERMINISTIC_MULTI_CATEGORY_METHODS = frozenset(
+    {
+        "get_additional_checks",
+        "get_category",
+        "get_category_id",
+        "get_name",
+        "get_type",
+        "get_type_id",
+        "rules",
+    }
+)
+
+
+def _deterministic_method_categories(method_name: str) -> tuple[str, ...]:
+    if method_name in _DETERMINISTIC_MULTI_CATEGORY_METHODS:
+        return _DETERMINISTIC_CATEGORIES
+    return _DETERMINISTIC_CATEGORIES[:1]
+
+
+async def _record_deterministic_invocation(
+    tracker_name: str,
+    method_name: str,
+    method: Callable[..., object],
+    meta: Meta,
+    tmp_path: Path,
+    process_terminations: list[str],
+    validation_failures: list[str],
+    overrides: Mapping[str, object] | None = None,
+) -> None:
+    try:
+        await _invoke(method, meta, tmp_path, overrides)
+    except (KeyboardInterrupt, SystemExit) as error:
+        process_terminations.append(f"{tracker_name}.{method_name}: {error}")
+    except Exception as error:
+        validation_failures.append(type(error).__name__)
+
+
+async def _exercise_deterministic_categories(
+    tracker_name: str,
+    method_name: str,
+    method: Callable[..., object],
+    tmp_path: Path,
+    process_terminations: list[str],
+    validation_failures: list[str],
+) -> None:
+    for category in _deterministic_method_categories(method_name):
+        await _record_deterministic_invocation(
+            tracker_name,
+            method_name,
+            method,
+            _meta(tmp_path, category),
+            tmp_path,
+            process_terminations,
+            validation_failures,
+        )
+
+
+async def _exercise_deterministic_literals(
+    tracker_name: str,
+    method_name: str,
+    method: Callable[..., object],
+    tmp_path: Path,
+    process_terminations: list[str],
+    validation_failures: list[str],
+) -> None:
+    for meta_updates, argument_overrides in _literal_scenarios(method):
+        meta = _with_meta_updates(_meta(tmp_path, "MOVIE"), meta_updates)
+        await _record_deterministic_invocation(
+            tracker_name,
+            method_name,
+            method,
+            meta,
+            tmp_path,
+            process_terminations,
+            validation_failures,
+            argument_overrides,
+        )
+
+
+async def _exercise_deterministic_method(
+    tracker_name: str,
+    method_name: str,
+    method: Callable[..., object],
+    tmp_path: Path,
+    attempted: set[tuple[str, str]],
+    process_terminations: list[str],
+    validation_failures: list[str],
+) -> None:
+    attempted.add((tracker_name, method_name))
+    await _exercise_deterministic_categories(
+        tracker_name,
+        method_name,
+        method,
+        tmp_path,
+        process_terminations,
+        validation_failures,
+    )
+    await _exercise_deterministic_literals(
+        tracker_name,
+        method_name,
+        method,
+        tmp_path,
+        process_terminations,
+        validation_failures,
+    )
+
+
+async def _exercise_deterministic_tracker(
+    tracker_name: str,
+    tracker_class: Any,
+    config: dict[str, Any],
+    tmp_path: Path,
+    attempted: set[tuple[str, str]],
+    process_terminations: list[str],
+    validation_failures: list[str],
+) -> None:
+    tracker = tracker_class(config)
+    for method_name, method in inspect.getmembers(tracker, predicate=callable):
+        if not _is_deterministic_method(method_name, method):
+            continue
+        await _exercise_deterministic_method(
+            tracker_name,
+            method_name,
+            method,
+            tmp_path,
+            attempted,
+            process_terminations,
+            validation_failures,
+        )
+
+
+async def _exercise_deterministic_catalog(
+    config: dict[str, Any],
+    tmp_path: Path,
+    attempted: set[tuple[str, str]],
+    process_terminations: list[str],
+    validation_failures: list[str],
+) -> None:
+    for tracker_name, tracker_class in sorted(tracker_class_map.items()):
+        await _exercise_deterministic_tracker(
+            tracker_name,
+            tracker_class,
+            config,
+            tmp_path,
+            attempted,
+            process_terminations,
+            validation_failures,
+        )
+
+
 def test_tracker_catalog_deterministic_rules_accept_domain_fixtures(
     tmp_path: Path,
 ) -> None:
     (tmp_path / "sample.txt").write_text("sample", encoding="utf-8")
-    config = _configured_catalog()
-    categories = ("MOVIE", "TV", "MUSIC", "BOOK", "GAME", "XXX")
     attempted: set[tuple[str, str]] = set()
     process_terminations: list[str] = []
     validation_failures: list[str] = []
-
-    async def exercise() -> None:
-        for tracker_name, tracker_class in sorted(tracker_class_map.items()):
-            tracker = tracker_class(config)
-            for method_name, method in inspect.getmembers(
-                tracker, predicate=callable
-            ):
-                if not _is_deterministic_method(method_name, method):
-                    continue
-                attempted.add((tracker_name, method_name))
-                method_categories = (
-                    categories
-                    if method_name
-                    in {
-                        "get_additional_checks",
-                        "get_category",
-                        "get_category_id",
-                        "get_name",
-                        "get_type",
-                        "get_type_id",
-                        "rules",
-                    }
-                    else categories[:1]
-                )
-                for category in method_categories:
-                    meta = _meta(tmp_path, category)
-                    try:
-                        await _invoke(method, meta, tmp_path)
-                    except (KeyboardInterrupt, SystemExit) as error:
-                        process_terminations.append(
-                            f"{tracker_name}.{method_name}: {error}"
-                        )
-                    except Exception as error:
-                        # A representative fixture cannot satisfy every tracker
-                        # invariant. Reaching the validation path is still part
-                        # of the adapter contract; focused tests assert exact
-                        # behavior for supported tracker/category combinations.
-                        validation_failures.append(type(error).__name__)
-                for meta_updates, argument_overrides in _literal_scenarios(
-                    method
-                ):
-                    meta = _with_meta_updates(
-                        _meta(tmp_path, "MOVIE"), meta_updates
-                    )
-                    try:
-                        await _invoke(
-                            method, meta, tmp_path, argument_overrides
-                        )
-                    except (KeyboardInterrupt, SystemExit) as error:
-                        process_terminations.append(
-                            f"{tracker_name}.{method_name}: {error}"
-                        )
-                    except Exception as error:
-                        validation_failures.append(type(error).__name__)
-
-    asyncio.run(exercise())
-
+    asyncio.run(
+        _exercise_deterministic_catalog(
+            _configured_catalog(),
+            tmp_path,
+            attempted,
+            process_terminations,
+            validation_failures,
+        )
+    )
     assert len(attempted) >= 400
     assert process_terminations == []
 
