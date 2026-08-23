@@ -651,6 +651,9 @@ def _safe_callable(function: Callable[..., object]) -> bool:
     return name not in blocked_names
 
 
+_MISSING = object()
+
+
 def _annotation_text(annotation: object) -> str:
     if annotation is inspect.Parameter.empty:
         return ""
@@ -663,66 +666,188 @@ def _annotation_text(annotation: object) -> str:
     )
 
 
+def _optional_concrete_type(
+    origin: object, args: tuple[object, ...]
+) -> object | None:
+    if origin is None or type(None) not in args:
+        return None
+    return next((item for item in args if item is not type(None)), object)
+
+
+def _is_path_annotation(annotation: object, text: str) -> bool:
+    if annotation is Path or text in {"Path", "<class 'pathlib.Path'>"}:
+        return True
+    return "Path" in text and "list" not in text.casefold()
+
+
+def _is_text_annotation(annotation: object, text: str) -> bool:
+    return annotation is str or text in {"str", "<class 'str'>"}
+
+
+def _is_int_annotation(annotation: object, text: str) -> bool:
+    return annotation is int or text in {"int", "<class 'int'>"}
+
+
+def _is_float_annotation(annotation: object, text: str) -> bool:
+    return annotation is float or text in {"float", "<class 'float'>"}
+
+
+def _is_bool_annotation(annotation: object, text: str) -> bool:
+    return annotation is bool or text in {"bool", "<class 'bool'>"}
+
+
+def _coerce_int(value: object) -> int:
+    try:
+        return int(value)
+    except TypeError, ValueError:
+        return 1
+
+
+def _coerce_float(value: object) -> float:
+    try:
+        return float(value)
+    except TypeError, ValueError:
+        return 1.0
+
+
+def _coerce_path_contract_value(value: object, path: Path) -> object:
+    return value if isinstance(value, Path) else path
+
+
+def _coerce_text_contract_value(value: object, _path: Path) -> object:
+    return str(value)
+
+
+def _coerce_int_contract_value(value: object, _path: Path) -> object:
+    return _coerce_int(value)
+
+
+def _coerce_float_contract_value(value: object, _path: Path) -> object:
+    return _coerce_float(value)
+
+
+def _coerce_bool_contract_value(value: object, _path: Path) -> object:
+    return bool(value)
+
+
+_SCALAR_CONTRACT_COERCERS: tuple[
+    tuple[Callable[[object, str], bool], Callable[[object, Path], object]], ...
+] = (
+    (_is_path_annotation, _coerce_path_contract_value),
+    (_is_text_annotation, _coerce_text_contract_value),
+    (_is_int_annotation, _coerce_int_contract_value),
+    (_is_float_annotation, _coerce_float_contract_value),
+    (_is_bool_annotation, _coerce_bool_contract_value),
+)
+
+
+def _coerce_scalar_contract_value(
+    value: object, annotation: object, text: str, path: Path
+) -> object:
+    for predicate, coercer in _SCALAR_CONTRACT_COERCERS:
+        if predicate(annotation, text):
+            return coercer(value, path)
+    return _MISSING
+
+
+def _coerce_list_contract_value(
+    value: object, text: str, path: Path
+) -> object:
+    if "Path" in text:
+        return [path]
+    if isinstance(value, list):
+        return value
+    return [value]
+
+
+_COLLECTION_CONTRACT_TYPES = (
+    (list, "list[", "list"),
+    (dict, "dict[", "dict"),
+    (tuple, "tuple[", "tuple"),
+    (set, "set[", "set"),
+)
+
+
+def _collection_contract_kind(origin: object, text: str) -> str | None:
+    for expected, prefix, kind in _COLLECTION_CONTRACT_TYPES:
+        if origin is expected or text.startswith(prefix):
+            return kind
+    return None
+
+
+def _coerce_dict_contract_value(
+    value: object, _text: str, _path: Path
+) -> object:
+    return value if isinstance(value, dict) else {}
+
+
+def _coerce_tuple_contract_value(
+    value: object, _text: str, _path: Path
+) -> object:
+    return value if isinstance(value, tuple) else ()
+
+
+def _coerce_set_contract_value(
+    value: object, _text: str, _path: Path
+) -> object:
+    return value if isinstance(value, set) else set()
+
+
+_COLLECTION_CONTRACT_COERCERS: dict[
+    str, Callable[[object, str, Path], object]
+] = {
+    "list": _coerce_list_contract_value,
+    "dict": _coerce_dict_contract_value,
+    "tuple": _coerce_tuple_contract_value,
+    "set": _coerce_set_contract_value,
+}
+
+
+def _coerce_collection_contract_value(
+    value: object, origin: object, text: str, path: Path
+) -> object:
+    kind = _collection_contract_kind(origin, text)
+    if kind is None:
+        return _MISSING
+    return _COLLECTION_CONTRACT_COERCERS[kind](value, text, path)
+
+
+def _contract_callable() -> Callable[..., str]:
+    return lambda *_args, **_kwargs: "example"
+
+
+def _coerce_optional_contract_value(
+    value: object, origin: object, args: tuple[object, ...], path: Path
+) -> object:
+    concrete = _optional_concrete_type(origin, args)
+    if concrete is None or value is None:
+        return _MISSING
+    return _coerce_contract_value(value, concrete, path)
+
+
 def _coerce_contract_value(
     value: object, annotation: object, path: Path
 ) -> object:
     text = _annotation_text(annotation)
     origin = get_origin(annotation)
-    args = get_args(annotation)
-    if origin is not None and type(None) in args and value is not None:
-        concrete = next(
-            (item for item in args if item is not type(None)), object
-        )
-        return _coerce_contract_value(value, concrete, path)
-    if (
-        annotation is Path
-        or text in {"Path", "<class 'pathlib.Path'>"}
-        or ("Path" in text and "list" not in text.casefold())
-    ):
-        return value if isinstance(value, Path) else path
-    if annotation is str or text in {"str", "<class 'str'>"}:
-        return str(value)
-    if annotation is int or text in {"int", "<class 'int'>"}:
-        try:
-            return int(value)
-        except TypeError, ValueError:
-            return 1
-    if annotation is float or text in {"float", "<class 'float'>"}:
-        try:
-            return float(value)
-        except TypeError, ValueError:
-            return 1.0
-    if annotation is bool or text in {"bool", "<class 'bool'>"}:
-        return bool(value)
-    if origin is list or text.startswith("list["):
-        if "Path" in text:
-            return [path]
-        if isinstance(value, list):
-            return value
-        return [value]
-    if origin is dict or text.startswith("dict["):
-        return value if isinstance(value, dict) else {}
-    if origin is tuple or text.startswith("tuple["):
-        return value if isinstance(value, tuple) else ()
-    if origin is set or text.startswith("set["):
-        return value if isinstance(value, set) else set()
+    optional = _coerce_optional_contract_value(
+        value, origin, get_args(annotation), path
+    )
+    if optional is not _MISSING:
+        return optional
+    scalar = _coerce_scalar_contract_value(value, annotation, text, path)
+    if scalar is not _MISSING:
+        return scalar
+    collection = _coerce_collection_contract_value(value, origin, text, path)
+    if collection is not _MISSING:
+        return collection
     if "Callable" in text:
-        return lambda *_args, **_kwargs: "example"
+        return _contract_callable()
     return value
 
 
-def _value(
-    name: str,
-    annotation: object,
-    meta: Meta,
-    config: dict[str, Any],
-    tmp_path: Path,
-    profile: int,
-) -> object:
-    normalized = name.casefold().lstrip("_")
-    path = tmp_path / "Example.Release.2024.mkv"
-    path.write_bytes(b"media")
-    path_names = {
+_CONTRACT_PATH_NAMES = frozenset(
+    {
         "root",
         "directory",
         "dir_path",
@@ -731,18 +856,29 @@ def _value(
         "destination",
         "source_path",
     }
-    if normalized in path_names:
-        return _coerce_contract_value(tmp_path, annotation, path)
-    string_path_names = {
-        "videopath",
-        "videoloc",
-        "torrent_path",
-        "media_path",
-        "input_path",
-    }
-    if normalized in string_path_names:
-        return _coerce_contract_value(str(path), annotation, path)
-    values: dict[str, object] = {
+)
+_CONTRACT_STRING_PATH_NAMES = frozenset(
+    {"videopath", "videoloc", "torrent_path", "media_path", "input_path"}
+)
+
+
+def _contract_value_or(value: object, fallback: object) -> object:
+    return value if value else fallback
+
+
+def _contract_fixture_path(tmp_path: Path) -> Path:
+    path = tmp_path / "Example.Release.2024.mkv"
+    path.write_bytes(b"media")
+    return path
+
+
+def _named_contract_values(
+    meta: Meta,
+    config: dict[str, Any],
+    tmp_path: Path,
+    path: Path,
+) -> dict[str, object]:
+    return {
         "config": config,
         "configuration": config,
         "repository": _Repository(),
@@ -797,12 +933,12 @@ def _value(
         "explicit_path": None,
         "folder_id": str(meta.uuid),
         "uuid": str(meta.uuid),
-        "category": meta.category or "MOVIE",
-        "source": meta.source or "WEB",
-        "type": meta.type or "WEBDL",
-        "resolution": meta.resolution or "1080p",
-        "name": meta.name or "Example Release",
-        "title": meta.title or "Example Release",
+        "category": _contract_value_or(meta.category, "MOVIE"),
+        "source": _contract_value_or(meta.source, "WEB"),
+        "type": _contract_value_or(meta.type, "WEBDL"),
+        "resolution": _contract_value_or(meta.resolution, "1080p"),
+        "name": _contract_value_or(meta.name, "Example Release"),
+        "title": _contract_value_or(meta.title, "Example Release"),
         "year": 2024,
         "search_year": 2024,
         "season": 1,
@@ -855,46 +991,141 @@ def _value(
         "check_exists": False,
         "now": datetime(2024, 1, 2, tzinfo=UTC),
     }
+
+
+def _trackers_mapping_requested(
+    normalized: str, annotation: object, annotation_text: str
+) -> bool:
+    if normalized != "trackers":
+        return False
     origin = get_origin(annotation)
-    args = get_args(annotation)
+    return origin is dict or annotation_text.startswith("dict[")
+
+
+def _fallback_numeric_contract_value(
+    annotation: object, text: str, profile: int
+) -> object:
+    if _is_bool_annotation(annotation, text):
+        return profile == 0
+    if _is_int_annotation(annotation, text):
+        return 1
+    if _is_float_annotation(annotation, text):
+        return 1.0
+    return _MISSING
+
+
+def _fallback_text_path_contract_value(
+    annotation: object, text: str, path: Path
+) -> object:
+    if _is_text_annotation(annotation, text):
+        return "example"
+    if _is_path_annotation(annotation, text):
+        return path
+    return _MISSING
+
+
+def _fallback_scalar_contract_value(
+    annotation: object, text: str, path: Path, profile: int
+) -> object:
+    numeric = _fallback_numeric_contract_value(annotation, text, profile)
+    if numeric is not _MISSING:
+        return numeric
+    return _fallback_text_path_contract_value(annotation, text, path)
+
+
+def _fallback_list_contract_value(
+    text: str, path: Path, profile: int
+) -> object:
+    if "Path" in text:
+        return [path]
+    return [] if profile else ["example"]
+
+
+def _fallback_dict_contract_value(
+    _text: str, _path: Path, _profile: int
+) -> object:
+    return {}
+
+
+def _fallback_tuple_contract_value(
+    _text: str, _path: Path, _profile: int
+) -> object:
+    return ()
+
+
+def _fallback_set_contract_value(
+    _text: str, _path: Path, _profile: int
+) -> object:
+    return set()
+
+
+_FALLBACK_COLLECTION_VALUES: dict[str, Callable[[str, Path, int], object]] = {
+    "list": _fallback_list_contract_value,
+    "dict": _fallback_dict_contract_value,
+    "tuple": _fallback_tuple_contract_value,
+    "set": _fallback_set_contract_value,
+}
+
+
+def _fallback_collection_contract_value(
+    origin: object, text: str, path: Path, profile: int
+) -> object:
+    kind = _collection_contract_kind(origin, text)
+    if kind is None:
+        return _MISSING
+    return _FALLBACK_COLLECTION_VALUES[kind](text, path, profile)
+
+
+def _fallback_contract_value(
+    name: str,
+    annotation: object,
+    meta: Meta,
+    config: dict[str, Any],
+    tmp_path: Path,
+    path: Path,
+    profile: int,
+) -> object:
+    text = _annotation_text(annotation)
+    scalar = _fallback_scalar_contract_value(annotation, text, path, profile)
+    if scalar is not _MISSING:
+        return scalar
+    origin = get_origin(annotation)
+    collection = _fallback_collection_contract_value(
+        origin, text, path, profile
+    )
+    if collection is not _MISSING:
+        return collection
+    concrete = _optional_concrete_type(origin, get_args(annotation))
+    if concrete is not None:
+        return _value(name, concrete, meta, config, tmp_path, profile)
+    if "Callable" in text:
+        return _contract_callable()
+    return _Port()
+
+
+def _value(
+    name: str,
+    annotation: object,
+    meta: Meta,
+    config: dict[str, Any],
+    tmp_path: Path,
+    profile: int,
+) -> object:
+    normalized = name.casefold().lstrip("_")
+    path = _contract_fixture_path(tmp_path)
+    if normalized in _CONTRACT_PATH_NAMES:
+        return _coerce_contract_value(tmp_path, annotation, path)
+    if normalized in _CONTRACT_STRING_PATH_NAMES:
+        return _coerce_contract_value(str(path), annotation, path)
     annotation_text = _annotation_text(annotation)
-    if normalized == "trackers" and (
-        origin is dict or annotation_text.startswith("dict[")
-    ):
+    if _trackers_mapping_requested(normalized, annotation, annotation_text):
         return dict(config.get("TRACKERS", {}))
+    values = _named_contract_values(meta, config, tmp_path, path)
     if normalized in values:
         return _coerce_contract_value(values[normalized], annotation, path)
-    if annotation is bool or annotation_text in {"bool", "<class 'bool'>"}:
-        return profile == 0
-    if annotation is int or annotation_text in {"int", "<class 'int'>"}:
-        return 1
-    if annotation is float or annotation_text in {"float", "<class 'float'>"}:
-        return 1.0
-    if annotation is str or annotation_text in {"str", "<class 'str'>"}:
-        return "example"
-    if annotation is Path or annotation_text in {
-        "Path",
-        "<class 'pathlib.Path'>",
-    }:
-        return path
-    if origin is list or annotation_text.startswith("list["):
-        return (
-            [path]
-            if "Path" in annotation_text
-            else ([] if profile else ["example"])
-        )
-    if origin is dict or annotation_text.startswith("dict["):
-        return {}
-    if origin is tuple or annotation_text.startswith("tuple["):
-        return ()
-    if origin is set or annotation_text.startswith("set["):
-        return set()
-    if origin is not None and type(None) in args:
-        concrete = next((item for item in args if item is not type(None)), str)
-        return _value(normalized, concrete, meta, config, tmp_path, profile)
-    if "Callable" in annotation_text:
-        return lambda *_args, **_kwargs: "example"
-    return _Port()
+    return _fallback_contract_value(
+        normalized, annotation, meta, config, tmp_path, path, profile
+    )
 
 
 _PROTECTED_SCENARIO_ARGUMENTS = frozenset(
