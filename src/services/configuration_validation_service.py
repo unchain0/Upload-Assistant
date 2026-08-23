@@ -281,290 +281,382 @@ def _as_dict(value: Any) -> dict[str, Any]:
     return cast(dict[str, Any], value) if isinstance(value, dict) else {}
 
 
+def _top_level_type_error(config: Any) -> list[str]:
+    if isinstance(config, dict):
+        return []
+    return [f"Config must be a dictionary, got {type(config).__name__}"]
+
+
+def _required_section_error(
+    config: dict[str, Any], section: str
+) -> str | None:
+    if section not in config:
+        return f"Missing required config section: '{section}'"
+    value = config[section]
+    if isinstance(value, dict):
+        return None
+    return (
+        f"Config section '{section}' must be a dictionary, "
+        f"got {type(value).__name__}"
+    )
+
+
+def _required_section_errors(config: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    for section in REQUIRED_SECTIONS:
+        error = _required_section_error(config, section)
+        if error is not None:
+            errors.append(error)
+    return errors
+
+
+def _tracker_names_from_string(value: str) -> list[str]:
+    return [
+        tracker.strip().upper()
+        for tracker in value.split(",")
+        if tracker.strip()
+    ]
+
+
+def _tracker_names_from_list(value: list[Any]) -> list[str]:
+    names: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        if item.strip():
+            names.append(item.strip().upper())
+    return names
+
+
+def _default_active_trackers(trackers: dict[str, Any]) -> list[str]:
+    value = trackers.get("default_trackers", "")
+    if isinstance(value, str):
+        return _tracker_names_from_string(value)
+    if isinstance(value, list):
+        return _tracker_names_from_list(cast(list[Any], value))
+    return []
+
+
+def _resolved_active_trackers(
+    trackers: dict[str, Any], active_trackers: list[str] | None
+) -> list[str]:
+    if active_trackers is not None:
+        return active_trackers
+    return _default_active_trackers(trackers)
+
+
+def _section_validation(
+    config: dict[str, Any], active_trackers: list[str]
+) -> tuple[list[str], list[ConfigValidationWarning]]:
+    errors: list[str] = []
+    warnings: list[ConfigValidationWarning] = []
+
+    default_errors, default_warnings = _validate_default_section(
+        _as_dict(config.get("DEFAULT"))
+    )
+    errors.extend(default_errors)
+    warnings.extend(default_warnings)
+
+    tracker_errors, tracker_warnings = _validate_trackers_section(
+        _as_dict(config.get("TRACKERS")), active_trackers
+    )
+    errors.extend(tracker_errors)
+    warnings.extend(tracker_warnings)
+
+    if "TORRENT_CLIENTS" in config:
+        client_errors, client_warnings = _validate_torrent_clients_section(
+            _as_dict(config.get("TORRENT_CLIENTS"))
+        )
+        errors.extend(client_errors)
+        warnings.extend(client_warnings)
+
+    return errors, warnings
+
+
+def _active_tracker_names(active_trackers: list[str]) -> list[str]:
+    return [tracker.upper() for tracker in active_trackers]
+
+
+def _is_usenet_tracker_active(active_trackers: list[str]) -> bool:
+    return any(tracker in USENET_TRACKERS for tracker in active_trackers)
+
+
+def _is_usenet_active(
+    active_trackers: list[str], usenet_config: dict[str, Any]
+) -> bool:
+    if "USENET" in active_trackers:
+        return True
+    if _is_usenet_tracker_active(active_trackers):
+        return True
+    return bool(usenet_config.get("enabled", False))
+
+
+def _usenet_validation(
+    config: dict[str, Any], active_trackers: list[str]
+) -> tuple[list[str], list[ConfigValidationWarning]]:
+    tracker_names = _active_tracker_names(active_trackers)
+    if "USENET" in config:
+        usenet_config = _as_dict(config.get("USENET"))
+        return _validate_usenet_section(
+            usenet_config, _is_usenet_active(tracker_names, usenet_config)
+        )
+    if "USENET" in tracker_names or _is_usenet_tracker_active(tracker_names):
+        return [
+            "Missing required config section: 'USENET' (required for Usenet uploads)"
+        ], []
+    return [], []
+
+
+def _client_item_warning(
+    index: int, item: Any, key: str
+) -> ConfigValidationWarning:
+    return ConfigValidationWarning(
+        f"Item at index {index} should be a string, got {type(item).__name__}",
+        key=key,
+        section="DEFAULT",
+    )
+
+
+def _client_names_from_list(
+    value: list[Any], key: str
+) -> tuple[list[str], list[ConfigValidationWarning]]:
+    clients: list[str] = []
+    warnings: list[ConfigValidationWarning] = []
+    for index, item in enumerate(value):
+        if isinstance(item, str):
+            if item.strip():
+                clients.append(item.strip())
+            continue
+        if item:
+            warnings.append(_client_item_warning(index, item, key))
+    return clients, warnings
+
+
+def _injecting_clients(
+    value: Any,
+) -> tuple[list[str], list[ConfigValidationWarning]]:
+    if value is None:
+        return [], []
+    if isinstance(value, str):
+        return ([value.strip()] if value.strip() else []), []
+    if isinstance(value, list):
+        return _client_names_from_list(
+            cast(list[Any], value), "injecting_client_list"
+        )
+    warning = ConfigValidationWarning(
+        f"Should be a list or string, got {type(value).__name__}. "
+        "Will fall back to default_torrent_client. "
+        "Example: ['Client1', 'Client2'] or 'Client1'",
+        key="injecting_client_list",
+        section="DEFAULT",
+    )
+    return [], [warning]
+
+
+def _searching_clients(
+    value: Any,
+) -> tuple[list[str], list[ConfigValidationWarning]]:
+    if value is None:
+        return [], []
+    if isinstance(value, list):
+        return _client_names_from_list(
+            cast(list[Any], value), "searching_client_list"
+        )
+    warning = ConfigValidationWarning(
+        f"Should be a list, got {type(value).__name__}. "
+        "Will fall back to default_torrent_client. "
+        "Example: ['Client1', 'Client2']",
+        key="searching_client_list",
+        section="DEFAULT",
+    )
+    return [], [warning]
+
+
+def _undefined_client_warnings(
+    clients: list[str], key: str, torrent_clients: dict[str, Any]
+) -> list[ConfigValidationWarning]:
+    if not torrent_clients:
+        return []
+    return [
+        ConfigValidationWarning(
+            f"References undefined client '{client_name}'",
+            key=key,
+            section="DEFAULT",
+        )
+        for client_name in clients
+        if client_name != "none" and client_name not in torrent_clients
+    ]
+
+
+def _configured_default_client_warning(
+    default_client: Any, torrent_clients: dict[str, Any]
+) -> ConfigValidationWarning | None:
+    if default_client in torrent_clients:
+        return None
+    defined_clients = list(torrent_clients)
+    if defined_clients:
+        return ConfigValidationWarning(
+            f"References undefined client '{default_client}'. "
+            f"Defined clients: {', '.join(defined_clients)}",
+            key="default_torrent_client",
+            section="DEFAULT",
+        )
+    return ConfigValidationWarning(
+        f"References '{default_client}' but no clients defined in TORRENT_CLIENTS",
+        key="default_torrent_client",
+        section="DEFAULT",
+    )
+
+
+def _missing_default_client_warning(
+    injecting_clients: list[str],
+    searching_clients: list[str],
+    torrent_clients: dict[str, Any],
+) -> ConfigValidationWarning | None:
+    if injecting_clients or searching_clients or not torrent_clients:
+        return None
+    return ConfigValidationWarning(
+        "No default_torrent_client, injecting_client_list, or "
+        "searching_client_list configured",
+        key="default_torrent_client",
+        section="DEFAULT",
+    )
+
+
+def _default_client_warning(
+    default_client: Any,
+    injecting_clients: list[str],
+    searching_clients: list[str],
+    torrent_clients: dict[str, Any],
+) -> ConfigValidationWarning | None:
+    if default_client:
+        return _configured_default_client_warning(
+            default_client, torrent_clients
+        )
+    return _missing_default_client_warning(
+        injecting_clients, searching_clients, torrent_clients
+    )
+
+
+def _client_reference_warnings(
+    config: dict[str, Any],
+) -> list[ConfigValidationWarning]:
+    default_section = _as_dict(config.get("DEFAULT"))
+    if not default_section:
+        return []
+    torrent_clients = _as_dict(config.get("TORRENT_CLIENTS"))
+    injecting, injecting_warnings = _injecting_clients(
+        default_section.get("injecting_client_list")
+    )
+    searching, searching_warnings = _searching_clients(
+        default_section.get("searching_client_list")
+    )
+    warnings = [*injecting_warnings, *searching_warnings]
+    warnings.extend(
+        _undefined_client_warnings(
+            injecting, "injecting_client_list", torrent_clients
+        )
+    )
+    warnings.extend(
+        _undefined_client_warnings(
+            searching, "searching_client_list", torrent_clients
+        )
+    )
+    default_warning = _default_client_warning(
+        default_section.get("default_torrent_client", ""),
+        injecting,
+        searching,
+        torrent_clients,
+    )
+    if default_warning is not None:
+        warnings.append(default_warning)
+    return warnings
+
+
+def _unknown_section_warnings(
+    config: dict[str, Any],
+) -> list[ConfigValidationWarning]:
+    known_sections = set(REQUIRED_SECTIONS + OPTIONAL_SECTIONS)
+    return [
+        ConfigValidationWarning(
+            f"Unknown config section '{section}' - this may be intentional",
+            section=section,
+        )
+        for section in config
+        if section not in known_sections
+    ]
+
+
+def _configured_image_hosts(default: dict[str, Any]) -> list[str]:
+    hosts: list[str] = []
+    for index in range(1, MAX_IMAGE_HOST_SLOTS + 1):
+        value = default.get(f"img_host_{index}", "")
+        if isinstance(value, str) and value.strip():
+            hosts.append(value.strip())
+    return hosts
+
+
+def _active_image_hosts(
+    default: dict[str, Any], active_imghost: str | None
+) -> list[str]:
+    if active_imghost and active_imghost.strip():
+        return [active_imghost.strip()]
+    return _configured_image_hosts(default)
+
+
+def _missing_image_host_key(value: Any) -> bool:
+    if not value:
+        return True
+    return isinstance(value, str) and not value.strip()
+
+
+def _image_host_api_errors(
+    config: dict[str, Any], active_imghost: str | None
+) -> list[str]:
+    default_section = _as_dict(config.get("DEFAULT"))
+    if not default_section:
+        return []
+    errors: list[str] = []
+    for host in _active_image_hosts(default_section, active_imghost):
+        errors.extend(
+            f"Image host '{host}' requires config setting '{config_key}' but it is not set"
+            for config_key in IMAGE_HOST_REQUIRED_CONFIG.get(host, ())
+            if _missing_image_host_key(default_section.get(config_key, ""))
+        )
+    return errors
+
+
 def validate_config(
     config: Any,
     active_trackers: list[str] | None = None,
     active_imghost: str | None = None,
 ) -> tuple[bool, list[str], list[ConfigValidationWarning]]:
-    """
-    Validate the config dictionary structure and types.
-
-    Args:
-        config: The config object to validate
-        active_trackers: List of tracker names that will be used (from meta.trackers)
-                        If None, uses default_trackers from config
-        active_imghost: The image host to use (from meta.imghost)
-                       If None, uses img_host_1 from config
-
-    Returns:
-        Tuple of (is_valid, errors, warnings)
-        - is_valid: True if config passes critical validation
-        - errors: List of critical error messages
-        - warnings: List of non-critical warnings
-    """
-    errors: list[str] = []
-    warnings: list[ConfigValidationWarning] = []
-
-    # Check if config is a dictionary
-    if not isinstance(config, dict):
-        errors.append(
-            f"Config must be a dictionary, got {type(config).__name__}"
-        )
-        return False, errors, warnings
+    """Validate the config dictionary structure and types."""
+    type_errors = _top_level_type_error(config)
+    if type_errors:
+        return False, type_errors, []
 
     config_dict = cast(dict[str, Any], config)
+    section_errors = _required_section_errors(config_dict)
+    if section_errors:
+        return False, section_errors, []
 
-    # Check required sections
-    for section in REQUIRED_SECTIONS:
-        if section not in config_dict:
-            errors.append(f"Missing required config section: '{section}'")
-        elif not isinstance(config_dict[section], dict):
-            errors.append(
-                f"Config section '{section}' must be a dictionary, got {type(config_dict[section]).__name__}"
-            )
-
-    # If we have critical section errors, return early
-    if errors:
-        return False, errors, warnings
-
-    # Validate DEFAULT section
-    default_errors, default_warnings = _validate_default_section(
-        _as_dict(config_dict.get("DEFAULT"))
-    )
-    errors.extend(default_errors)
-    warnings.extend(default_warnings)
-
-    # Validate TRACKERS section
-    # Determine which trackers are active
     trackers_section = _as_dict(config_dict.get("TRACKERS"))
-    if active_trackers is None:
-        # Fall back to default_trackers from config
-        default_trackers_val = trackers_section.get("default_trackers", "")
-        if (
-            isinstance(default_trackers_val, str)
-            and default_trackers_val.strip()
-        ):
-            active_trackers = [
-                t.strip().upper()
-                for t in default_trackers_val.split(",")
-                if t.strip()
-            ]
-        elif isinstance(default_trackers_val, list):
-            active_trackers = [
-                t.strip().upper()
-                for t in default_trackers_val
-                if isinstance(t, str) and t.strip()
-            ]
-        else:
-            active_trackers = []
-
-    tracker_errors, tracker_warnings = _validate_trackers_section(
+    resolved_trackers = _resolved_active_trackers(
         trackers_section, active_trackers
     )
-    errors.extend(tracker_errors)
-    warnings.extend(tracker_warnings)
+    errors, warnings = _section_validation(config_dict, resolved_trackers)
 
-    # Validate TORRENT_CLIENTS section if present
-    if "TORRENT_CLIENTS" in config_dict:
-        client_errors, client_warnings = _validate_torrent_clients_section(
-            _as_dict(config_dict.get("TORRENT_CLIENTS"))
-        )
-        errors.extend(client_errors)
-        warnings.extend(client_warnings)
-
-    # Determine if Usenet is active (either because USENET is a target tracker, a Usenet tracker class is active, or enabled in config)
-    trackers_upper = (
-        [t.upper() for t in active_trackers] if active_trackers else []
+    usenet_errors, usenet_warnings = _usenet_validation(
+        config_dict, resolved_trackers
     )
-    is_usenet_tracker_active = any(
-        tracker in USENET_TRACKERS for tracker in trackers_upper
-    )
+    errors.extend(usenet_errors)
+    warnings.extend(usenet_warnings)
+    warnings.extend(_client_reference_warnings(config_dict))
+    warnings.extend(_unknown_section_warnings(config_dict))
+    errors.extend(_image_host_api_errors(config_dict, active_imghost))
 
-    if "USENET" in config_dict:
-        usenet_cfg = _as_dict(config_dict.get("USENET"))
-        is_usenet_active = (
-            "USENET" in trackers_upper
-            or is_usenet_tracker_active
-            or usenet_cfg.get("enabled", False)
-        )
-        usenet_errors, usenet_warnings = _validate_usenet_section(
-            usenet_cfg, is_usenet_active
-        )
-        errors.extend(usenet_errors)
-        warnings.extend(usenet_warnings)
-    else:
-        if "USENET" in trackers_upper or is_usenet_tracker_active:
-            errors.append(
-                "Missing required config section: 'USENET' (required for Usenet uploads)"
-            )
-
-    # Cross-reference validation for torrent client configuration
-    default_section = _as_dict(config_dict.get("DEFAULT"))
-    torrent_clients = _as_dict(config_dict.get("TORRENT_CLIENTS"))
-    defined_clients = list(torrent_clients.keys())
-
-    if default_section:
-        default_client = default_section.get("default_torrent_client", "")
-
-        # Validate injecting_client_list
-        injecting_list = default_section.get("injecting_client_list")
-        injecting_clients: list[str] = []
-        if injecting_list is not None:
-            if isinstance(injecting_list, str):
-                # String is valid - gets converted to single-item list at runtime
-                if injecting_list.strip():
-                    injecting_clients = [injecting_list.strip()]
-            elif isinstance(injecting_list, list):
-                # List is valid - validate each item
-                for i, item in enumerate(injecting_list):
-                    if item and isinstance(item, str) and item.strip():
-                        injecting_clients.append(item.strip())
-                    elif item and not isinstance(item, str):
-                        warnings.append(
-                            ConfigValidationWarning(
-                                f"Item at index {i} should be a string, got {type(item).__name__}",
-                                key="injecting_client_list",
-                                section="DEFAULT",
-                            )
-                        )
-            else:
-                warnings.append(
-                    ConfigValidationWarning(
-                        f"Should be a list or string, got {type(injecting_list).__name__}. "
-                        "Will fall back to default_torrent_client. "
-                        "Example: ['Client1', 'Client2'] or 'Client1'",
-                        key="injecting_client_list",
-                        section="DEFAULT",
-                    )
-                )
-
-        # Validate searching_client_list
-        searching_list = default_section.get("searching_client_list")
-        searching_clients: list[str] = []
-        if searching_list is not None:
-            if isinstance(searching_list, list):
-                for i, item in enumerate(searching_list):
-                    if item and isinstance(item, str) and item.strip():
-                        searching_clients.append(item.strip())
-                    elif item and not isinstance(item, str):
-                        warnings.append(
-                            ConfigValidationWarning(
-                                f"Item at index {i} should be a string, got {type(item).__name__}",
-                                key="searching_client_list",
-                                section="DEFAULT",
-                            )
-                        )
-            else:
-                warnings.append(
-                    ConfigValidationWarning(
-                        f"Should be a list, got {type(searching_list).__name__}. Will fall back to default_torrent_client. Example: ['Client1', 'Client2']",
-                        key="searching_client_list",
-                        section="DEFAULT",
-                    )
-                )
-
-        # Check that referenced client names exist in TORRENT_CLIENTS
-        if torrent_clients:
-            warnings.extend(
-                [
-                    ConfigValidationWarning(
-                        f"References undefined client '{client_name}'",
-                        key="injecting_client_list",
-                        section="DEFAULT",
-                    )
-                    for client_name in injecting_clients
-                    if client_name != "none"
-                    and client_name not in torrent_clients
-                ]
-            )
-
-            warnings.extend(
-                [
-                    ConfigValidationWarning(
-                        f"References undefined client '{client_name}'",
-                        key="searching_client_list",
-                        section="DEFAULT",
-                    )
-                    for client_name in searching_clients
-                    if client_name != "none"
-                    and client_name not in torrent_clients
-                ]
-            )
-
-        # Check default_torrent_client - only required if no client lists are populated
-        if default_client:
-            if default_client not in torrent_clients:
-                if defined_clients:
-                    warnings.append(
-                        ConfigValidationWarning(
-                            f"References undefined client '{default_client}'. Defined clients: {', '.join(defined_clients)}",
-                            key="default_torrent_client",
-                            section="DEFAULT",
-                        )
-                    )
-                else:
-                    warnings.append(
-                        ConfigValidationWarning(
-                            f"References '{default_client}' but no clients defined in TORRENT_CLIENTS",
-                            key="default_torrent_client",
-                            section="DEFAULT",
-                        )
-                    )
-        elif (
-            not injecting_clients and not searching_clients and defined_clients
-        ):
-            # Only warn if default_torrent_client is empty AND no client lists are configured
-            warnings.append(
-                ConfigValidationWarning(
-                    "No default_torrent_client, injecting_client_list, or searching_client_list configured",
-                    key="default_torrent_client",
-                    section="DEFAULT",
-                )
-            )
-
-    # Check for unknown top-level sections (warning only)
-    known_sections = set(REQUIRED_SECTIONS + OPTIONAL_SECTIONS)
-    warnings.extend(
-        [
-            ConfigValidationWarning(
-                f"Unknown config section '{section}' - this may be intentional",
-                section=section,
-            )
-            for section in config_dict
-            if section not in known_sections
-        ]
-    )
-
-    # Validate image host API keys
-    default_section = _as_dict(config_dict.get("DEFAULT"))
-    if default_section:
-        # Determine which image hosts are active
-        active_hosts: list[str] = []
-
-        # If imghost specified from command line, use that
-        if active_imghost and active_imghost.strip():
-            active_hosts = [active_imghost.strip()]
-        else:
-            # Collect all configured img_host_* values
-            for i in range(1, MAX_IMAGE_HOST_SLOTS + 1):
-                host_key = f"img_host_{i}"
-                host_value = default_section.get(host_key, "")
-                if isinstance(host_value, str) and host_value.strip():
-                    active_hosts.append(host_value.strip())
-
-        # Check that each active host has its required API key
-        for host in active_hosts:
-            for config_key in IMAGE_HOST_REQUIRED_CONFIG.get(host, ()):
-                config_value = default_section.get(config_key, "")
-                if not config_value or (
-                    isinstance(config_value, str) and not config_value.strip()
-                ):
-                    errors.append(
-                        f"Image host '{host}' requires config setting '{config_key}' but it is not set"
-                    )
-
-    is_valid = len(errors) == 0
-    return is_valid, errors, warnings
+    return len(errors) == 0, errors, warnings
 
 
 def _required_default_errors(default: dict[str, Any]) -> list[str]:
