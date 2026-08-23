@@ -21,6 +21,17 @@ def test_non_music_and_discogs_disabled_edges() -> None:
     )
 
 
+def test_additional_checks_reject_dvdrip_and_accept_regular_release() -> None:
+    tracker = _tracker()
+
+    assert not asyncio.run(
+        tracker.get_additional_checks(Meta(category="MOVIE", type="DVDRIP"))
+    )
+    assert asyncio.run(
+        tracker.get_additional_checks(Meta(category="MOVIE", type="REMUX"))
+    )
+
+
 def test_category_mapping_and_audiobook_edges() -> None:
     tracker = _tracker()
     audiobook = Meta(category="BOOK", audiobook=True)
@@ -35,6 +46,20 @@ def test_category_mapping_and_audiobook_edges() -> None:
     assert asyncio.run(tracker.get_category_id(audiobook)) == {
         "category_id": "8"
     }
+
+
+def test_book_category_variants() -> None:
+    tracker = _tracker()
+
+    assert (
+        tracker._book_category(Meta(category="BOOK", comic=True)) == "COMICS"
+    )
+    assert tracker._book_category(Meta(category="BOOK", manga=True)) == "MANGA"
+    assert (
+        tracker._book_category(Meta(category="BOOK", magazine=True))
+        == "MAGAZINE"
+    )
+    assert tracker._book_category(Meta(category="BOOK")) == "BOOKS"
 
 
 def test_game_type_resolution() -> None:
