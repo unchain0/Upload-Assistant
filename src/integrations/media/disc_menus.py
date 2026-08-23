@@ -23,21 +23,22 @@ from src.integrations.runtime_tools.configured_binaries import (
 )
 
 
-def select_evenly_spaced(items: list[Any], num_to_select: int) -> list[Any]:
-    if len(items) <= num_to_select:
-        return items
+def _selection_indices(length: int, num_to_select: int) -> list[int]:
     if num_to_select <= 0:
         return []
     if num_to_select == 1:
-        return [items[0]]
-
-    # With ``num_to_select < len(items)`` the linear step is greater than one,
-    # so rounded positions are strictly increasing and cannot collide.
-    indices = [
-        round(i * (len(items) - 1) / (num_to_select - 1))
-        for i in range(num_to_select)
+        return [0]
+    return [
+        round(index * (length - 1) / (num_to_select - 1))
+        for index in range(num_to_select)
     ]
-    return [items[idx] for idx in indices]
+
+
+def select_evenly_spaced(items: list[Any], num_to_select: int) -> list[Any]:
+    if len(items) <= num_to_select:
+        return items
+    indices = _selection_indices(len(items), num_to_select)
+    return [items[index] for index in indices]
 
 
 def discard_previous_menu_capture_files(image_pattern: Path) -> None:
@@ -60,27 +61,29 @@ class DiscMenus:
             cast(dict[str, Any], config)
         )
 
-    async def get_disc_menu_images(self, meta: Meta) -> None:
-        """
-        Processes disc menu images from a local directory and uploads them.
-        """
-        if not self.path_to_menu_screenshots:
-            default_section = self.config.get("DEFAULT", {})
-            if hasattr(default_section, "get") and default_section.get(
-                "auto_dvd_menus", False
-            ):
-                self.path_to_menu_screenshots = "auto"
-            else:
-                return
+    def _resolved_menu_source(self) -> str | None:
+        if self.path_to_menu_screenshots:
+            return self.path_to_menu_screenshots
+        default_section = self.config.get("DEFAULT", {})
+        if hasattr(default_section, "get") and default_section.get(
+            "auto_dvd_menus", False
+        ):
+            return "auto"
+        return None
 
-        if self.path_to_menu_screenshots.lower() == "auto":
+    async def get_disc_menu_images(self, meta: Meta) -> None:
+        """Processes disc menu images from a local directory and uploads them."""
+        menu_source = self._resolved_menu_source()
+        if menu_source is None:
+            return
+        self.path_to_menu_screenshots = menu_source
+        if menu_source.lower() == "auto":
             await self.auto_capture_dvd_menus(meta)
-        elif Path(self.path_to_menu_screenshots).is_dir():
+            return
+        if Path(menu_source).is_dir():
             await self.get_local_images(meta)
-        else:
-            logger.info(
-                f"[red]Invalid disc menus path: {self.path_to_menu_screenshots}[/red]"
-            )
+            return
+        logger.info(f"[red]Invalid disc menus path: {menu_source}[/red]")
 
     async def auto_capture_dvd_menus(self, meta: Meta) -> None:
         """
