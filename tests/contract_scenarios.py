@@ -64,6 +64,187 @@ def _unwrap(node: ast.AST) -> ast.AST:
     return current
 
 
+def _target_name(
+    node: ast.Name,
+    parameter_names: set[str],
+    aliases: dict[str, tuple[str, str]],
+) -> tuple[str, str] | None:
+    if node.id in aliases:
+        return aliases[node.id]
+    if node.id in parameter_names:
+        return ("parameter", node.id)
+    return None
+
+
+def _target_boolop(
+    node: ast.BoolOp,
+    meta_names: set[str],
+    parameter_names: set[str],
+    domain_fields: set[str],
+    aliases: dict[str, tuple[str, str]],
+) -> tuple[str, str] | None:
+    for value in node.values:
+        resolved = _target(
+            value, meta_names, parameter_names, domain_fields, aliases
+        )
+        if resolved is not None:
+            return resolved
+    return None
+
+
+def _target_attribute(
+    node: ast.Attribute,
+    meta_names: set[str],
+    parameter_names: set[str],
+    domain_fields: set[str],
+    aliases: dict[str, tuple[str, str]],
+) -> tuple[str, str] | None:
+    if (
+        isinstance(node.value, ast.Name)
+        and node.value.id in meta_names
+        and node.attr in domain_fields
+    ):
+        return ("meta", node.attr)
+    parent = _target(
+        node.value, meta_names, parameter_names, domain_fields, aliases
+    )
+    if parent is None:
+        return None
+    return (parent[0], f"{parent[1]}.{node.attr}")
+
+
+def _invalid_meta_nested_key(
+    parent: tuple[str, str], key: str, domain_fields: set[str]
+) -> bool:
+    if parent[0] != "meta":
+        return False
+    if parent[1] != "":
+        return False
+    return key not in domain_fields
+
+
+def _nested_target(
+    parent: tuple[str, str] | None,
+    key: object,
+    domain_fields: set[str],
+) -> tuple[str, str] | None:
+    if parent is None:
+        return None
+    if not isinstance(key, str):
+        return None
+    if _invalid_meta_nested_key(parent, key, domain_fields):
+        return None
+    name = f"{parent[1]}.{key}" if parent[1] else key
+    return parent[0], name
+
+
+def _target_subscript(
+    node: ast.Subscript,
+    meta_names: set[str],
+    parameter_names: set[str],
+    domain_fields: set[str],
+    aliases: dict[str, tuple[str, str]],
+) -> tuple[str, str] | None:
+    parent = _target(
+        node.value, meta_names, parameter_names, domain_fields, aliases
+    )
+    return _nested_target(parent, _literal(node.slice), domain_fields)
+
+
+def _target_cast_call(
+    node: ast.Call,
+    meta_names: set[str],
+    parameter_names: set[str],
+    domain_fields: set[str],
+    aliases: dict[str, tuple[str, str]],
+) -> tuple[str, str] | None:
+    if not isinstance(node.func, ast.Name):
+        return None
+    if node.func.id not in {"str", "int", "float", "bool"} or not node.args:
+        return None
+    return _target(
+        node.args[0], meta_names, parameter_names, domain_fields, aliases
+    )
+
+
+def _target_get_call(
+    node: ast.Call,
+    meta_names: set[str],
+    parameter_names: set[str],
+    domain_fields: set[str],
+    aliases: dict[str, tuple[str, str]],
+) -> tuple[str, str] | None:
+    if not isinstance(node.func, ast.Attribute):
+        return None
+    if node.func.attr != "get" or not node.args:
+        return None
+    parent = _target(
+        node.func.value, meta_names, parameter_names, domain_fields, aliases
+    )
+    return _nested_target(parent, _literal(node.args[0]), domain_fields)
+
+
+def _target_getattr_call(
+    node: ast.Call,
+    meta_names: set[str],
+    parameter_names: set[str],
+    domain_fields: set[str],
+    aliases: dict[str, tuple[str, str]],
+) -> tuple[str, str] | None:
+    if not isinstance(node.func, ast.Name):
+        return None
+    if node.func.id != "getattr" or len(node.args) < 2:
+        return None
+    parent = _target(
+        node.args[0], meta_names, parameter_names, domain_fields, aliases
+    )
+    return _nested_target(parent, _literal(node.args[1]), domain_fields)
+
+
+def _target_call(
+    node: ast.Call,
+    meta_names: set[str],
+    parameter_names: set[str],
+    domain_fields: set[str],
+    aliases: dict[str, tuple[str, str]],
+) -> tuple[str, str] | None:
+    for resolver in (
+        _target_cast_call,
+        _target_get_call,
+        _target_getattr_call,
+    ):
+        resolved = resolver(
+            node, meta_names, parameter_names, domain_fields, aliases
+        )
+        if resolved is not None:
+            return resolved
+    return None
+
+
+def _target_non_call(
+    node: ast.AST,
+    meta_names: set[str],
+    parameter_names: set[str],
+    domain_fields: set[str],
+    aliases: dict[str, tuple[str, str]],
+) -> tuple[str, str] | None:
+    if isinstance(node, ast.Name):
+        return _target_name(node, parameter_names, aliases)
+    if isinstance(node, ast.BoolOp):
+        return _target_boolop(
+            node, meta_names, parameter_names, domain_fields, aliases
+        )
+    if isinstance(node, ast.Attribute):
+        return _target_attribute(
+            node, meta_names, parameter_names, domain_fields, aliases
+        )
+    if isinstance(node, ast.Subscript):
+        return _target_subscript(
+            node, meta_names, parameter_names, domain_fields, aliases
+        )
+    return None
+
+
 def _target(
     node: ast.AST,
     meta_names: set[str],
@@ -71,101 +252,46 @@ def _target(
     domain_fields: set[str],
     aliases: dict[str, tuple[str, str]] | None = None,
 ) -> tuple[str, str] | None:
-    aliases = aliases or {}
+    resolved_aliases = aliases or {}
     node = _unwrap(node)
-    if isinstance(node, ast.Name):
-        if node.id in aliases:
-            return aliases[node.id]
-        if node.id in parameter_names:
-            return ("parameter", node.id)
-    if isinstance(node, ast.BoolOp):
-        for value in node.values:
-            target = _target(
-                value, meta_names, parameter_names, domain_fields, aliases
-            )
-            if target is not None:
-                return target
-    if isinstance(node, ast.Attribute):
-        if (
-            isinstance(node.value, ast.Name)
-            and node.value.id in meta_names
-            and node.attr in domain_fields
-        ):
-            return ("meta", node.attr)
-        parent = _target(
-            node.value, meta_names, parameter_names, domain_fields, aliases
-        )
-        if parent is not None:
-            return (parent[0], f"{parent[1]}.{node.attr}")
-    if isinstance(node, ast.Subscript):
-        parent = _target(
-            node.value, meta_names, parameter_names, domain_fields, aliases
-        )
-        key = _literal(node.slice)
-        if parent is not None and isinstance(key, str):
-            if (
-                parent[0] == "meta"
-                and parent[1] == ""
-                and key not in domain_fields
-            ):
-                return None
-            return (parent[0], f"{parent[1]}.{key}" if parent[1] else key)
-    if isinstance(node, ast.Call):
-        if (
-            isinstance(node.func, ast.Name)
-            and node.func.id in {"str", "int", "float", "bool"}
-            and node.args
-        ):
-            return _target(
-                node.args[0],
-                meta_names,
-                parameter_names,
-                domain_fields,
-                aliases,
-            )
-        if (
-            isinstance(node.func, ast.Attribute)
-            and node.func.attr == "get"
-            and node.args
-        ):
-            parent = _target(
-                node.func.value,
-                meta_names,
-                parameter_names,
-                domain_fields,
-                aliases,
-            )
-            key = _literal(node.args[0])
-            if parent is not None and isinstance(key, str):
-                if (
-                    parent[0] == "meta"
-                    and parent[1] == ""
-                    and key not in domain_fields
-                ):
-                    return None
-                return (parent[0], f"{parent[1]}.{key}" if parent[1] else key)
-        if (
-            isinstance(node.func, ast.Name)
-            and node.func.id == "getattr"
-            and len(node.args) >= 2
-        ):
-            parent = _target(
-                node.args[0],
-                meta_names,
-                parameter_names,
-                domain_fields,
-                aliases,
-            )
-            key = _literal(node.args[1])
-            if parent is not None and isinstance(key, str):
-                if (
-                    parent[0] == "meta"
-                    and parent[1] == ""
-                    and key not in domain_fields
-                ):
-                    return None
-                return (parent[0], f"{parent[1]}.{key}" if parent[1] else key)
-    return None
+    resolved = _target_non_call(
+        node, meta_names, parameter_names, domain_fields, resolved_aliases
+    )
+    if resolved is not None:
+        return resolved
+    if not isinstance(node, ast.Call):
+        return None
+    return _target_call(
+        node, meta_names, parameter_names, domain_fields, resolved_aliases
+    )
+
+
+def _plain_alias_assignment(node: ast.AST) -> tuple[str, ast.AST] | None:
+    if not isinstance(node, ast.Assign):
+        return None
+    if len(node.targets) != 1:
+        return None
+    target = node.targets[0]
+    if not isinstance(target, ast.Name):
+        return None
+    return target.id, node.value
+
+
+def _annotated_alias_assignment(node: ast.AST) -> tuple[str, ast.AST] | None:
+    if not isinstance(node, ast.AnnAssign):
+        return None
+    if not isinstance(node.target, ast.Name):
+        return None
+    if node.value is None:
+        return None
+    return node.target.id, node.value
+
+
+def _alias_assignment(node: ast.AST) -> tuple[str, ast.AST] | None:
+    plain = _plain_alias_assignment(node)
+    if plain is not None:
+        return plain
+    return _annotated_alias_assignment(node)
 
 
 def _aliases(
@@ -176,24 +302,10 @@ def _aliases(
 ) -> dict[str, tuple[str, str]]:
     aliases: dict[str, tuple[str, str]] = {}
     for node in ast.walk(tree):
-        target_name: str | None = None
-        value: ast.AST | None = None
-        if (
-            isinstance(node, ast.Assign)
-            and len(node.targets) == 1
-            and isinstance(node.targets[0], ast.Name)
-        ):
-            target_name = node.targets[0].id
-            value = node.value
-        elif (
-            isinstance(node, ast.AnnAssign)
-            and isinstance(node.target, ast.Name)
-            and node.value is not None
-        ):
-            target_name = node.target.id
-            value = node.value
-        if target_name is None or value is None:
+        assignment = _alias_assignment(node)
+        if assignment is None:
             continue
+        target_name, value = assignment
         resolved = _target(
             value, meta_names, parameter_names, domain_fields, aliases
         )
@@ -202,17 +314,42 @@ def _aliases(
     return aliases
 
 
+def _alternative_none(_value: object) -> object:
+    return "example"
+
+
+def _alternative_bool(value: object) -> object:
+    return not bool(value)
+
+
+def _alternative_int(value: object) -> object:
+    number = int(value)
+    return number + 1 if number != 0 else 1
+
+
+def _alternative_float(value: object) -> object:
+    number = float(value)
+    return number + 1.0 if number != 0 else 1.0
+
+
+def _alternative_str(value: object) -> object:
+    text = str(value)
+    return "__other__" if text != "__other__" else "example"
+
+
+_ALTERNATIVE_SCALARS: dict[type[object], Callable[[object], object]] = {
+    type(None): _alternative_none,
+    bool: _alternative_bool,
+    int: _alternative_int,
+    float: _alternative_float,
+    str: _alternative_str,
+}
+
+
 def _alternative(value: object) -> object:
-    if value is None:
-        return "example"
-    if isinstance(value, bool):
-        return not value
-    if isinstance(value, int):
-        return value + 1 if value != 0 else 1
-    if isinstance(value, float):
-        return value + 1.0 if value != 0 else 1.0
-    if isinstance(value, str):
-        return "__other__" if value != "__other__" else "example"
+    scalar = _ALTERNATIVE_SCALARS.get(type(value))
+    if scalar is not None:
+        return scalar(value)
     if isinstance(value, tuple | list | set | frozenset):
         return "__other__"
     return None
