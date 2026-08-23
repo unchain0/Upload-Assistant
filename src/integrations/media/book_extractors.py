@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import contextlib
+import html
 import os
 import re
 import shutil
@@ -490,113 +491,162 @@ def extract_cbr_cbz_metadata(filepath: str) -> dict[str, Any]:
     return _parse_comic_info_metadata(xml_data)
 
 
-def extract_mobi_metadata(mobi_path: str) -> dict[str, Any]:
-    """Extract metadata from a MOBI file using the mobi library and parsing the extracted OPF."""
-    metadata: dict[str, Any] = {}
-    if not Path(mobi_path).is_file():
-        return metadata
+_MOBI_TEXT_FIELDS = {
+    "title": "title",
+    "creator": "author",
+    "language": "language",
+    "date": "date",
+    "description": "description",
+    "publisher": "publisher",
+}
 
+
+@dataclass(slots=True)
+class _MobiMetadataState:
+    title: str = ""
+    author: str = ""
+    language: str = ""
+    date: str = ""
+    identifier: str = ""
+    description: str = ""
+    publisher: str = ""
+
+
+def _find_mobi_opf(tempdir: str | os.PathLike[str]) -> Path | None:
+    for root, _directories, files in os.walk(tempdir):
+        for filename in files:
+            if filename.endswith(".opf"):
+                return Path(root) / filename
+    return None
+
+
+def _parse_mobi_xml(opf_data: bytes) -> ET.Element | None:
+    try:
+        return ET.fromstring(opf_data)
+    except Exception:
+        try:
+            decoded = opf_data.decode("utf-8", errors="replace")
+            return ET.fromstring(decoded.encode("utf-8"))
+        except Exception as error:
+            logger.debug(
+                f"[yellow]Debug: Error parsing MOBI XML data: {error}[/yellow]"
+            )
+            return None
+
+
+def _mobi_identifier_value(value: str) -> str:
+    lowered = value.lower()
+    if lowered.startswith("urn:isbn:"):
+        return value[9:]
+    if lowered.startswith("isbn:"):
+        return value[5:]
+    return ""
+
+
+def _record_mobi_element(
+    state: _MobiMetadataState, element: ET.Element
+) -> None:
+    tag_local = element.tag.split("}")[-1]
+    text = _epub_element_text(element)
+    if tag_local == "identifier":
+        identifier = _mobi_identifier_value(text)
+        if identifier:
+            state.identifier = identifier
+        return
+    attribute = _MOBI_TEXT_FIELDS.get(tag_local)
+    if attribute is not None:
+        setattr(state, attribute, text)
+
+
+def _parse_mobi_state(root: ET.Element) -> _MobiMetadataState:
+    state = _MobiMetadataState()
+    for element in root.iter():
+        _record_mobi_element(state, element)
+    return state
+
+
+def _mobi_year(value: str) -> str:
+    if not value or value.startswith("0101-01-01"):
+        return ""
+    match = re.search(r"\b\d{4}\b", value)
+    return match.group(0) if match else ""
+
+
+def _mobi_isbn(value: str) -> str:
+    if not value:
+        return ""
+    cleaned = re.sub(r"[^\d]", "", value)
+    return cleaned if len(cleaned) in (10, 13) else ""
+
+
+def _mobi_description(value: str) -> str:
+    if not value:
+        return ""
+    without_tags = re.sub(r"<[^>]+>", "", value)
+    return html.unescape(without_tags).strip()
+
+
+def _metadata_from_mobi_state(state: _MobiMetadataState) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    _set_book_metadata_value(metadata, "title", state.title)
+    _set_book_metadata_value(metadata, "author", state.author)
+    _set_book_metadata_value(metadata, "book_language_raw", state.language)
+    _set_book_metadata_value(metadata, "year", _mobi_year(state.date))
+    _set_book_metadata_value(metadata, "isbn", _mobi_isbn(state.identifier))
+    _set_book_metadata_value(
+        metadata, "overview", _mobi_description(state.description)
+    )
+    _set_book_metadata_value(metadata, "publisher", state.publisher)
+    return metadata
+
+
+def _metadata_from_mobi_opf(opf_path: Path | None) -> dict[str, Any]:
+    if opf_path is None or not opf_path.is_file():
+        return {}
+    opf_data = opf_path.read_bytes()
+    root = _parse_mobi_xml(opf_data)
+    if root is None:
+        return {}
+    return _metadata_from_mobi_state(_parse_mobi_state(root))
+
+
+def _mobi_extract_tempdir(mobi_api: Any, mobi_path: str) -> str:
+    tempdir, _output = mobi_api.extract(mobi_path)
+    return str(tempdir)
+
+
+def _cleanup_mobi_tempdir(tempdir: str | None) -> None:
+    if not tempdir:
+        return
+    path = Path(tempdir)
+    if not path.exists():
+        return
+    with contextlib.suppress(Exception):
+        shutil.rmtree(path)
+
+
+def extract_mobi_metadata(mobi_path: str) -> dict[str, Any]:
+    """Extract metadata from a MOBI file using its extracted OPF."""
+    if not Path(mobi_path).is_file():
+        return {}
     try:
         import mobi
     except ImportError:
         logger.debug(
             "[yellow]Debug: mobi library is not installed. Skipping MOBI metadata extraction.[/yellow]"
         )
-        return metadata
-
-    tempdir = None
+        return {}
+    tempdir: str | None = None
     try:
-        tempdir, _ = mobi.extract(mobi_path)
-
-        # Search for any .opf file in the tempdir
-        opf_path = None
-        for root, _, files in os.walk(tempdir):
-            for file in files:
-                if file.endswith(".opf"):
-                    opf_path = Path(root) / file
-                    break
-            if opf_path:
-                break
-
-        if opf_path and Path(opf_path).is_file():
-            with Path(opf_path).open("rb") as f:
-                opf_data = f.read()
-
-            try:
-                root = ET.fromstring(opf_data)
-            except Exception:
-                try:
-                    decoded = opf_data.decode("utf-8", errors="replace")
-                    root = ET.fromstring(decoded.encode("utf-8"))
-                except Exception as e:
-                    logger.debug(
-                        f"[yellow]Debug: Error parsing MOBI XML data: {e}[/yellow]"
-                    )
-                    root = None
-
-            if root is not None:
-                title = ""
-                author = ""
-                language = ""
-                date = ""
-                identifier = ""
-                description = ""
-                publisher = ""
-
-                for elem in root.iter():
-                    tag_local = elem.tag.split("}")[-1]
-                    if tag_local == "title":
-                        title = (elem.text or "").strip()
-                    elif tag_local == "creator":
-                        author = (elem.text or "").strip()
-                    elif tag_local == "language":
-                        language = (elem.text or "").strip()
-                    elif tag_local == "date":
-                        date = (elem.text or "").strip()
-                    elif tag_local == "identifier":
-                        val = (elem.text or "").strip()
-                        if val.lower().startswith("urn:isbn:"):
-                            identifier = val[9:]
-                        elif val.lower().startswith("isbn:"):
-                            identifier = val[5:]
-                    elif tag_local == "description":
-                        description = (elem.text or "").strip()
-                    elif tag_local == "publisher":
-                        publisher = (elem.text or "").strip()
-
-                if title:
-                    metadata["title"] = title
-                if author:
-                    metadata["author"] = author
-                if language:
-                    metadata["book_language_raw"] = language
-                if date and not date.startswith("0101-01-01"):
-                    match = re.search(r"\b\d{4}\b", date)
-                    if match:
-                        metadata["year"] = match.group(0)
-                if identifier:
-                    cleaned_id = re.sub(r"[^\d]", "", identifier)
-                    if len(cleaned_id) in (10, 13):
-                        metadata["isbn"] = cleaned_id
-                if description:
-                    import html
-
-                    cleaned_description = re.sub(r"<[^>]+>", "", description)
-                    cleaned_description = html.unescape(cleaned_description)
-                    metadata["overview"] = cleaned_description.strip()
-                if publisher:
-                    metadata["publisher"] = publisher
-
-    except Exception as e:
+        tempdir = _mobi_extract_tempdir(cast(Any, mobi), mobi_path)
+        return _metadata_from_mobi_opf(_find_mobi_opf(tempdir))
+    except Exception as error:
         logger.debug(
-            f"[yellow]Warning: Error parsing MOBI metadata: {e}[/yellow]"
+            f"[yellow]Warning: Error parsing MOBI metadata: {error}[/yellow]"
         )
+        return {}
     finally:
-        if tempdir and Path(tempdir).exists():
-            with contextlib.suppress(Exception):
-                shutil.rmtree(tempdir)
-
-    return metadata
+        _cleanup_mobi_tempdir(tempdir)
 
 
 def _valid_isbn13(value: str) -> bool:
