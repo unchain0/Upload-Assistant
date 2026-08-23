@@ -1,6 +1,7 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
 import json
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
@@ -13,6 +14,26 @@ from src.domain_models.errors import OperationAbortedError
 from src.domain_models.release import Meta
 from src.integrations.filesystem.cleanup import cleanup_manager
 from src.integrations.observability.runtime_support import logger
+
+_DISC_INFO_KEYS = {"Disc Title", "Disc Label", "Disc Size", "Protection"}
+_PLAYLIST_INFO_KEYS = {"Playlist", "Size", "Length", "Total Bitrate"}
+_MEDIAINFO_FIELDS = {
+    "video": {"format", "duration", "bit rate", "encoding settings", "title"},
+    "audio": {
+        "format",
+        "duration",
+        "bit rate",
+        "language",
+        "commercial name",
+        "channel",
+        "channel (s)",
+        "title",
+    },
+    "text": {"format", "duration", "bit rate", "language", "title"},
+}
+_MEDIAINFO_SECTION_RE = re.compile(
+    r"^(General|Video|Audio|Text|Menu)(?:\s*#\d+)?$", re.IGNORECASE
+)
 
 
 class LanguagesManager:
@@ -205,22 +226,28 @@ class LanguagesManager:
         )
         return True
 
-    async def parse_blu_ray(self, meta: Meta) -> dict[str, Any]:
+    @staticmethod
+    def _bluray_summary_path(meta: Meta) -> Path:
+        return Path(meta.base_dir) / "tmp" / meta.uuid / "BD_SUMMARY_00.txt"
+
+    @classmethod
+    async def _read_bluray_summary(cls, meta: Meta) -> str | None:
+        path = cls._bluray_summary_path(meta)
+        if not path.exists():
+            logger.info(
+                f"[yellow]BD_SUMMARY_00.txt not found at {path}[/yellow]"
+            )
+            return None
         try:
-            bd_summary_file = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/BD_SUMMARY_00.txt"
-            if not Path(bd_summary_file).exists():
-                logger.info(
-                    f"[yellow]BD_SUMMARY_00.txt not found at {bd_summary_file}[/yellow]"
-                )
-                return {}
+            async with aiofiles.open(path, encoding="utf-8") as source:
+                return await source.read()
+        except Exception as error:
+            logger.error(f"[red]Error reading BD_SUMMARY file: {error}[/red]")
+            return None
 
-            async with aiofiles.open(bd_summary_file, encoding="utf-8") as f:
-                content = await f.read()
-        except Exception as e:
-            logger.error(f"[red]Error reading BD_SUMMARY file: {e}[/red]")
-            return {}
-
-        parsed_data: dict[str, Any] = {
+    @staticmethod
+    def _empty_bluray_data() -> dict[str, Any]:
+        return {
             "disc_info": {},
             "playlist_info": {},
             "video": {},
@@ -228,195 +255,210 @@ class LanguagesManager:
             "subtitles": [],
         }
 
-        lines = content.strip().split("\n")
+    @staticmethod
+    def _bluray_key(key: str) -> str:
+        return key.lower().replace(" ", "_")
 
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
+    @classmethod
+    def _set_bluray_info(
+        cls, parsed: dict[str, Any], key: str, value: str
+    ) -> None:
+        target = "disc_info" if key in _DISC_INFO_KEYS else "playlist_info"
+        section = cast(dict[str, Any], parsed[target])
+        section[cls._bluray_key(key)] = value
 
-            if ":" in line:
-                key, value = line.split(":", 1)
-                key = key.strip()
-                value = value.strip()
+    @staticmethod
+    def _video_data(value: str) -> dict[str, str]:
+        parts = [part.strip() for part in value.split("/")]
+        if len(parts) < 6:
+            return {"format": value}
+        keys = (
+            "format",
+            "bitrate",
+            "resolution",
+            "framerate",
+            "aspect_ratio",
+            "profile",
+        )
+        return dict(zip(keys, parts[:6], strict=False))
 
-                if key in [
-                    "Disc Title",
-                    "Disc Label",
-                    "Disc Size",
-                    "Protection",
-                ]:
-                    parsed_data["disc_info"][key.lower().replace(" ", "_")] = (
-                        value
-                    )
+    @staticmethod
+    def _indexed_track(
+        parts: list[str], keys: tuple[str, ...]
+    ) -> dict[str, Any]:
+        return dict(zip(keys, parts, strict=False))
 
-                elif key in ["Playlist", "Size", "Length", "Total Bitrate"]:
-                    parsed_data["playlist_info"][
-                        key.lower().replace(" ", "_")
-                    ] = value
+    @classmethod
+    def _audio_data(cls, key: str, value: str) -> dict[str, Any]:
+        parts = [part.strip() for part in value.split("/")]
+        track = cls._indexed_track(
+            parts[:4], ("language", "format", "channels", "sample_rate")
+        )
+        track["is_commentary"] = key.startswith("*")
+        if len(parts) >= 5:
+            bitrate = parts[4].strip()
+            track["bitrate"] = bitrate
+            match = re.search(r"(\d+)\s*kbps", bitrate)
+            if match:
+                track["bitrate_num"] = int(match.group(1))
+        if len(parts) >= 6:
+            track["bit_depth"] = parts[5].split("(")[0].strip()
+        return track
 
-                elif key == "Video":
-                    video_parts = [part.strip() for part in value.split("/")]
-                    if len(video_parts) >= 6:
-                        parsed_data["video"] = {
-                            "format": video_parts[0],
-                            "bitrate": video_parts[1],
-                            "resolution": video_parts[2],
-                            "framerate": video_parts[3],
-                            "aspect_ratio": video_parts[4],
-                            "profile": video_parts[5],
-                        }
-                    else:
-                        parsed_data["video"]["format"] = value
+    @classmethod
+    def _subtitle_data(cls, key: str, value: str) -> dict[str, Any]:
+        parts = [part.strip() for part in value.split("/")]
+        track = cls._indexed_track(parts[:2], ("language", "bitrate"))
+        track["is_commentary"] = key.startswith("*")
+        return track
 
-                elif key == "Audio" or (
-                    key.startswith("*") and "Audio" in key
-                ):
-                    is_commentary = key.startswith("*")
-                    audio_parts = [part.strip() for part in value.split("/")]
+    @staticmethod
+    def _is_audio_key(key: str) -> bool:
+        return key == "Audio" or (key.startswith("*") and "Audio" in key)
 
-                    audio_track: dict[str, Any] = {
-                        "is_commentary": is_commentary
-                    }
+    @staticmethod
+    def _is_subtitle_key(key: str) -> bool:
+        return key == "Subtitle" or (key.startswith("*") and "Subtitle" in key)
 
-                    if len(audio_parts) >= 1:
-                        audio_track["language"] = audio_parts[0]
-                    if len(audio_parts) >= 2:
-                        audio_track["format"] = audio_parts[1]
-                    if len(audio_parts) >= 3:
-                        audio_track["channels"] = audio_parts[2]
-                    if len(audio_parts) >= 4:
-                        audio_track["sample_rate"] = audio_parts[3]
-                    if len(audio_parts) >= 5:
-                        bitrate_str = audio_parts[4].strip()
-                        bitrate_match = re.search(r"(\d+)\s*kbps", bitrate_str)
-                        if bitrate_match:
-                            audio_track["bitrate_num"] = int(
-                                bitrate_match.group(1)
-                            )
-                        audio_track["bitrate"] = bitrate_str
-                    if len(audio_parts) >= 6:
-                        audio_track["bit_depth"] = (
-                            audio_parts[5].split("(")[0].strip()
-                        )
-
-                    parsed_data["audio"].append(audio_track)
-
-                elif key == "Subtitle" or (
-                    key.startswith("*") and "Subtitle" in key
-                ):
-                    is_commentary = key.startswith("*")
-                    subtitle_parts = [
-                        part.strip() for part in value.split("/")
-                    ]
-
-                    subtitle_track: dict[str, Any] = {
-                        "is_commentary": is_commentary
-                    }
-
-                    if len(subtitle_parts) >= 1:
-                        subtitle_track["language"] = subtitle_parts[0]
-                    if len(subtitle_parts) >= 2:
-                        subtitle_track["bitrate"] = subtitle_parts[1]
-
-                    parsed_data["subtitles"].append(subtitle_track)
-
-        return parsed_data
-
-    async def parsed_mediainfo(self, meta: Meta) -> dict[str, Any]:
-        try:
-            mediainfo_file = (
-                f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/MEDIAINFO.txt"
-            )
-            if Path(mediainfo_file).exists():
-                async with aiofiles.open(
-                    mediainfo_file, encoding="utf-8"
-                ) as f:
-                    mediainfo_content = await f.read()
-            else:
-                return {}
-        except Exception as e:
-            logger.error(f"[red]Error reading MEDIAINFO file: {e}[/red]")
-            return {}
-
-        parsed_data: dict[str, Any] = {
-            "general": {},
-            "video": [],
-            "audio": [],
-            "text": [],
-        }
-
-        current_section: str | None = None
-        current_track: dict[str, str] = {}
-
-        lines = mediainfo_content.strip().split("\n")
-
-        section_header_re = re.compile(
-            r"^(General|Video|Audio|Text|Menu)(?:\s*#\d+)?$", re.IGNORECASE
+    @classmethod
+    def _bluray_handlers(
+        cls,
+    ) -> tuple[
+        tuple[
+            Callable[[str], bool], Callable[[dict[str, Any], str, str], None]
+        ],
+        ...,
+    ]:
+        return (
+            (
+                lambda key: (
+                    key in _DISC_INFO_KEYS or key in _PLAYLIST_INFO_KEYS
+                ),
+                cls._set_bluray_info,
+            ),
+            (
+                lambda key: key == "Video",
+                lambda parsed, _key, value: parsed.__setitem__(
+                    "video", cls._video_data(value)
+                ),
+            ),
+            (
+                cls._is_audio_key,
+                lambda parsed, key, value: cast(
+                    list[dict[str, Any]], parsed["audio"]
+                ).append(cls._audio_data(key, value)),
+            ),
+            (
+                cls._is_subtitle_key,
+                lambda parsed, key, value: cast(
+                    list[dict[str, Any]], parsed["subtitles"]
+                ).append(cls._subtitle_data(key, value)),
+            ),
         )
 
-        for line in lines:
-            line = line.strip()
+    @classmethod
+    def _parse_bluray_line(cls, parsed: dict[str, Any], line: str) -> None:
+        if ":" not in line:
+            return
+        key, value = (part.strip() for part in line.split(":", 1))
+        for predicate, handler in cls._bluray_handlers():
+            if predicate(key):
+                handler(parsed, key, value)
+                return
+
+    async def parse_blu_ray(self, meta: Meta) -> dict[str, Any]:
+        content = await self._read_bluray_summary(meta)
+        if content is None:
+            return {}
+        parsed = self._empty_bluray_data()
+        for raw_line in content.strip().split("\n"):
+            line = raw_line.strip()
+            if line:
+                self._parse_bluray_line(parsed, line)
+        return parsed
+
+    @staticmethod
+    def _mediainfo_path(meta: Meta) -> Path:
+        return Path(meta.base_dir) / "tmp" / meta.uuid / "MEDIAINFO.txt"
+
+    @classmethod
+    async def _read_mediainfo(cls, meta: Meta) -> str | None:
+        path = cls._mediainfo_path(meta)
+        if not path.exists():
+            return None
+        try:
+            async with aiofiles.open(path, encoding="utf-8") as source:
+                return await source.read()
+        except Exception as error:
+            logger.error(f"[red]Error reading MEDIAINFO file: {error}[/red]")
+            return None
+
+    @staticmethod
+    def _empty_mediainfo_data() -> dict[str, Any]:
+        return {"general": {}, "video": [], "audio": [], "text": []}
+
+    @staticmethod
+    def _store_mediainfo_track(
+        parsed: dict[str, Any], section: str | None, track: dict[str, str]
+    ) -> None:
+        if not section or not track:
+            return
+        if section == "general":
+            parsed["general"] = track
+            return
+        if section in _MEDIAINFO_FIELDS:
+            cast(list[dict[str, str]], parsed[section]).append(track)
+
+    @staticmethod
+    def _mediainfo_key_value(
+        line: str, section: str | None
+    ) -> tuple[str, str] | None:
+        if section is None or ":" not in line:
+            return None
+        key, value = line.split(":", 1)
+        return key.strip().lower(), value.strip()
+
+    @staticmethod
+    def _record_mediainfo_field(
+        section: str, track: dict[str, str], key: str, value: str
+    ) -> None:
+        if section == "general" or key in _MEDIAINFO_FIELDS.get(
+            section, set()
+        ):
+            track[key.replace(" ", "_")] = value
+
+    @classmethod
+    def _parse_mediainfo_content(cls, content: str) -> dict[str, Any]:
+        parsed = cls._empty_mediainfo_data()
+        current_section: str | None = None
+        current_track: dict[str, str] = {}
+        for raw_line in content.strip().split("\n"):
+            line = raw_line.strip()
             if not line:
                 continue
-
-            section_match = section_header_re.match(line)
-            if section_match:
-                if current_section and current_track:
-                    if current_section in ["video", "audio", "text"]:
-                        parsed_data[current_section].append(current_track)
-                    elif current_section == "general":
-                        parsed_data["general"] = current_track
-
-                current_section = section_match.group(1).lower()
+            match = _MEDIAINFO_SECTION_RE.match(line)
+            if match:
+                cls._store_mediainfo_track(
+                    parsed, current_section, current_track
+                )
+                current_section = match.group(1).lower()
                 current_track = {}
                 continue
+            key_value = cls._mediainfo_key_value(line, current_section)
+            if key_value is None:
+                continue
+            key, value = key_value
+            cls._record_mediainfo_field(
+                cast(str, current_section), current_track, key, value
+            )
+        cls._store_mediainfo_track(parsed, current_section, current_track)
+        return parsed
 
-            if ":" in line and current_section:
-                key, value = line.split(":", 1)
-                key = key.strip().lower()
-                value = value.strip()
-
-                if current_section == "video":
-                    if key in [
-                        "format",
-                        "duration",
-                        "bit rate",
-                        "encoding settings",
-                        "title",
-                    ]:
-                        current_track[key.replace(" ", "_")] = value
-                elif current_section == "audio":
-                    if key in [
-                        "format",
-                        "duration",
-                        "bit rate",
-                        "language",
-                        "commercial name",
-                        "channel",
-                        "channel (s)",
-                        "title",
-                    ]:
-                        current_track[key.replace(" ", "_")] = value
-                elif current_section == "text":
-                    if key in [
-                        "format",
-                        "duration",
-                        "bit rate",
-                        "language",
-                        "title",
-                    ]:
-                        current_track[key.replace(" ", "_")] = value
-                elif current_section == "general":
-                    current_track[key.replace(" ", "_")] = value
-
-        if current_section and current_track:
-            if current_section in ["video", "audio", "text"]:
-                parsed_data[current_section].append(current_track)
-            elif current_section == "general":
-                parsed_data["general"] = current_track
-
-        return parsed_data
+    async def parsed_mediainfo(self, meta: Meta) -> dict[str, Any]:
+        content = await self._read_mediainfo(meta)
+        if content is None:
+            return {}
+        return self._parse_mediainfo_content(content)
 
     async def process_desc_language(
         self, meta: Meta, tracker: str = ""
