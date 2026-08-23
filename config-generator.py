@@ -333,47 +333,52 @@ def migrate_old_config(config_dict: ConfigDict) -> ConfigDict:
     return config_dict
 
 
+def _parse_existing_config(content: str, path: Path) -> ConfigDict | None:
+    match = re.search(
+        r"config(?:\s*:\s*[^{=]+)?\s*=\s*({.*})",
+        content,
+        re.DOTALL,
+    )
+    if match is None:
+        return None
+    config_dict = ast.literal_eval(match.group(1))
+    if not isinstance(config_dict, dict):
+        console.print(
+            f"\n[!] Error loading config from {path}: config is not a dict",
+            markup=False,
+        )
+        return None
+    return cast(ConfigDict, config_dict)
+
+
+def _load_existing_config_path(
+    path: Path,
+) -> tuple[ConfigDict, Path] | None:
+    try:
+        content = path.read_text(encoding="utf-8")
+        config_dict = _parse_existing_config(content, path)
+        if config_dict is None:
+            return None
+        console.print(f"\n[OK] Found existing config at {path}", markup=False)
+        destination = CONFIG_PATH if path == LEGACY_CONFIG_PATH else path
+        return migrate_old_config(config_dict), destination
+    except Exception as exc:
+        console.print(
+            f"\n[!] Error loading config from {path}: {exc}",
+            markup=False,
+        )
+        return None
+
+
 def load_existing_config() -> tuple[ConfigDict | None, Path | None]:
     """Load an existing config file if available"""
     config_paths = [CONFIG_PATH, DATA_DIR / "config1.py", LEGACY_CONFIG_PATH]
-
     for path in config_paths:
-        if path.exists():
-            try:
-                with Path(path).open(encoding="utf-8") as file:
-                    content = file.read()
-
-                # Extract the config dict from the file
-                match = re.search(
-                    r"config(?:\s*:\s*[^{=]+)?\s*=\s*({.*})",
-                    content,
-                    re.DOTALL,
-                )
-                if match:
-                    config_dict_str = match.group(1)
-                    # Convert to proper Python dict
-                    config_dict = ast.literal_eval(config_dict_str)
-                    if not isinstance(config_dict, dict):
-                        console.print(
-                            f"\n[!] Error loading config from {path}: config is not a dict",
-                            markup=False,
-                        )
-                        continue
-                    console.print(
-                        f"\n[OK] Found existing config at {path}", markup=False
-                    )
-                    destination = (
-                        CONFIG_PATH if path == LEGACY_CONFIG_PATH else path
-                    )
-                    return migrate_old_config(
-                        cast(ConfigDict, config_dict)
-                    ), destination
-            except Exception as e:
-                console.print(
-                    f"\n[!] Error loading config from {path}: {e}",
-                    markup=False,
-                )
-
+        if not path.exists():
+            continue
+        loaded = _load_existing_config_path(path)
+        if loaded is not None:
+            return loaded
     return None, None
 
 
