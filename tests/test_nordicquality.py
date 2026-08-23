@@ -93,6 +93,39 @@ def test_nordicquality_type_ids_for_music_books_and_games():
     }
 
 
+def test_nordicquality_refactor_helper_edges():
+    tracker = _tracker()
+
+    assert asyncio.run(tracker.get_additional_checks(Meta(category="BOOK")))
+    category_mapping = asyncio.run(
+        tracker.get_category_id(Meta(category="MOVIE"), mapping_only=True)
+    )
+    assert category_mapping["AUDIOBOOK"] == "8"
+    category_reverse = asyncio.run(
+        tracker.get_category_id(Meta(category="MOVIE"), reverse=True)
+    )
+    assert category_reverse["1"] == "MOVIE"
+
+    type_mapping = asyncio.run(
+        tracker.get_type_id(Meta(category="MOVIE"), mapping_only=True)
+    )
+    assert type_mapping["REMUX"] == "2"
+    type_reverse = asyncio.run(
+        tracker.get_type_id(Meta(category="MOVIE"), reverse=True)
+    )
+    assert type_reverse["2"] == "REMUX"
+    assert asyncio.run(
+        tracker.get_type_id(Meta(category="MOVIE"), type=".webdl")
+    ) == {"type_id": "4"}
+    assert asyncio.run(
+        tracker.get_type_id(Meta(category="MOVIE", type="REMUX"))
+    ) == {"type_id": "2"}
+    assert (
+        tracker._single_media_name(Meta(category="MOVIE", filelist=["   "]))
+        == ""
+    )
+
+
 def test_nordicquality_accepts_nordic_subtitles_when_unattended():
     meta = Meta(
         category="MOVIE",

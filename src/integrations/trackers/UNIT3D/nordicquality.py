@@ -77,14 +77,9 @@ class NordicQuality(UNIT3D):
             check_subtitle=True,
         )
 
-    async def get_category_id(
-        self,
-        meta: Meta,
-        category: str = "",
-        reverse: bool = False,
-        mapping_only: bool = False,
-    ) -> dict[str, str]:
-        category_id = {
+    @staticmethod
+    def _category_mapping() -> dict[str, str]:
+        return {
             "MOVIE": "1",
             "TV": "2",
             "MUSIC": "3",
@@ -92,24 +87,32 @@ class NordicQuality(UNIT3D):
             "BOOK": "7",
             "AUDIOBOOK": "8",
         }
+
+    @staticmethod
+    def _resolved_category(meta: Meta, category: str) -> str:
+        resolved = category or meta.category
+        if resolved == "BOOK" and meta.audiobook:
+            return "AUDIOBOOK"
+        return resolved
+
+    async def get_category_id(
+        self,
+        meta: Meta,
+        category: str = "",
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
+        category_id = self._category_mapping()
         if mapping_only:
             return category_id
         if reverse:
             return {value: key for key, value in category_id.items()}
+        resolved = self._resolved_category(meta, category)
+        return {"category_id": category_id.get(resolved, "0")}
 
-        resolved_category = category or meta.category
-        if resolved_category == "BOOK" and meta.audiobook:
-            resolved_category = "AUDIOBOOK"
-        return {"category_id": category_id.get(resolved_category, "0")}
-
-    async def get_type_id(
-        self,
-        meta: Meta,
-        type: str = "",
-        reverse: bool = False,
-        mapping_only: bool = False,
-    ) -> dict[str, str]:
-        type_id = {
+    @staticmethod
+    def _type_mapping() -> dict[str, str]:
+        return {
             "DISC": "1",
             "REMUX": "2",
             "ENCODE": "3",
@@ -130,65 +133,81 @@ class NordicQuality(UNIT3D):
             "LINUX": "17",
             "CONSOLE": "18",
         }
+
+    @staticmethod
+    def _normalized_type(value: str) -> str:
+        return value.upper().strip().lstrip(".")
+
+    @classmethod
+    def _game_type(cls, meta: Meta) -> str:
+        if meta.console_game:
+            return "CONSOLE"
+        platform = meta.platform.lower()
+        rules = (
+            ("WINDOWS", ("windows", "pc")),
+            ("LINUX", ("linux",)),
+            ("MAC", ("mac",)),
+            ("ANDROID", ("android",)),
+            ("IOS", ("ios",)),
+        )
+        for resolved_type, tokens in rules:
+            if any(token in platform for token in tokens):
+                return resolved_type
+        return "OTHER"
+
+    @classmethod
+    def _resolved_type(cls, meta: Meta) -> str:
+        if meta.category in {"MUSIC", "BOOK"}:
+            return cls._normalized_type(meta.format)
+        if meta.category == "GAME":
+            return cls._game_type(meta)
+        return cls._normalized_type(meta.type) if meta.type else ""
+
+    @staticmethod
+    def _type_fallback(meta: Meta) -> str:
+        return "15" if meta.category in {"MUSIC", "BOOK", "GAME"} else "0"
+
+    async def get_type_id(
+        self,
+        meta: Meta,
+        type: str = "",
+        reverse: bool = False,
+        mapping_only: bool = False,
+    ) -> dict[str, str]:
+        type_id = self._type_mapping()
         if mapping_only:
             return type_id
         if reverse:
             return {value: key for key, value in type_id.items()}
         if type:
-            return {
-                "type_id": type_id.get(type.upper().strip().lstrip("."), "0")
-            }
+            return {"type_id": type_id.get(self._normalized_type(type), "0")}
+        resolved = self._resolved_type(meta)
+        return {"type_id": type_id.get(resolved, self._type_fallback(meta))}
 
-        if meta.category in {"MUSIC", "BOOK"}:
-            resolved_type = meta.format.upper().strip().lstrip(".")
-        elif meta.category == "GAME":
-            platform = meta.platform.lower()
-            if meta.console_game:
-                resolved_type = "CONSOLE"
-            elif "windows" in platform or "pc" in platform:
-                resolved_type = "WINDOWS"
-            elif "linux" in platform:
-                resolved_type = "LINUX"
-            elif "mac" in platform:
-                resolved_type = "MAC"
-            elif "android" in platform:
-                resolved_type = "ANDROID"
-            elif "ios" in platform:
-                resolved_type = "IOS"
-            else:
-                resolved_type = "OTHER"
-        else:
-            resolved_type = (
-                meta.type.upper().strip().lstrip(".") if meta.type else ""
-            )
+    @staticmethod
+    def _single_media_name(meta: Meta) -> str:
+        if meta.is_disc or len(meta.filelist) != 1:
+            return ""
+        media_path = meta.filelist[0]
+        if not isinstance(media_path, str) or not media_path.strip():
+            return ""
+        return Path(media_path).name
 
-        return {
-            "type_id": type_id.get(
-                resolved_type,
-                "15" if meta.category in {"MUSIC", "BOOK", "GAME"} else "0",
-            )
-        }
+    @classmethod
+    def _strip_known_media_extension(cls, source_name: str) -> str:
+        extension = Path(source_name).suffix
+        if extension.casefold() not in cls.KNOWN_MEDIA_EXTENSIONS:
+            return source_name
+        return source_name[: -len(extension)]
 
     @classmethod
     def _release_name_source(cls, meta: Meta) -> str:
         if meta.category not in {"MOVIE", "TV"}:
             return Path(meta.uuid or meta.name).stem
-
-        source_name = ""
-        if not meta.is_disc and len(meta.filelist) == 1:
-            media_path = meta.filelist[0]
-            if isinstance(media_path, str) and media_path.strip():
-                source_name = Path(media_path).name
-
+        source_name = cls._single_media_name(meta)
         if not source_name:
             source_name = Path(meta.uuid or meta.name).name
-
-        extension = Path(source_name).suffix
-        return (
-            source_name[: -len(extension)]
-            if extension.casefold() in cls.KNOWN_MEDIA_EXTENSIONS
-            else source_name
-        )
+        return cls._strip_known_media_extension(source_name)
 
     async def get_name(self, meta: Meta) -> dict[str, str]:
         name = self._release_name_source(meta).replace(" ", ".")
