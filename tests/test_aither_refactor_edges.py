@@ -351,6 +351,7 @@ def test_aither_final_name_trump_and_alt_title_ordering() -> None:
 def test_aither_public_checks_and_additional_data(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(aither_module.logger, "info", lambda *_args, **_kwargs: None)
     tracker = _tracker()
     tracker.common.check_language_requirements = AsyncMock(return_value=False)  # type: ignore[method-assign]
     assert not asyncio.run(
