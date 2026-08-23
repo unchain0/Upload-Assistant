@@ -14,6 +14,13 @@ def _tracker() -> Aither:
     return Aither({"DEFAULT": {}, "TRACKERS": {"AITHER": {}}})
 
 
+def test_aither_additional_checks_accept_valid_disc() -> None:
+    tracker = _tracker()
+    assert asyncio.run(
+        tracker.get_additional_checks(Meta(is_disc="BDMV", valid_mi=True))
+    )
+
+
 @pytest.mark.parametrize(
     ("hdr", "expected"),
     (
@@ -277,6 +284,17 @@ def test_aither_dvd_adjustment_routing() -> None:
         "DVD",
     )
 
+    inferred_disc = Meta(is_disc="", region="R1", audio="AAC")
+    assert Aither._dvd_disc_applies(inferred_disc, "DISC", "DVD")
+    assert "576p R1 DVD" in Aither._dvd_adjusted_name(
+        inferred_disc,
+        "Movie R1 DVD AAC",
+        "576p",
+        "MPEG2",
+        "DISC",
+        "DVD",
+    )
+
     remux = Meta(source="DVD", audio="AAC")
     assert Aither._foreign_dvd_remux("REMUX", "DVD")
     assert "576p DVD" in Aither._dvd_adjusted_name(
@@ -328,3 +346,57 @@ def test_aither_final_name_trump_and_alt_title_ordering() -> None:
         )
         == "Movie 2025 Alternate 1080p"
     )
+
+
+def test_aither_public_checks_and_additional_data(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracker = _tracker()
+    tracker.common.check_language_requirements = AsyncMock(return_value=False)  # type: ignore[method-assign]
+    assert not asyncio.run(
+        tracker.get_additional_checks(Meta(is_disc="", valid_mi=True))
+    )
+
+    tracker.common.check_language_requirements = AsyncMock(return_value=True)  # type: ignore[method-assign]
+    assert not asyncio.run(
+        tracker.get_additional_checks(Meta(is_disc="BDMV", valid_mi=False))
+    )
+    assert asyncio.run(
+        tracker.get_additional_checks(Meta(is_disc="BDMV", valid_mi=True))
+    )
+
+    monkeypatch.setattr(tracker, "get_flag", AsyncMock(return_value=1))
+    assert asyncio.run(tracker.get_additional_data(Meta(hdr="HLG"))) == {
+        "mod_queue_opt_in": 1,
+        "hdr": 1,
+    }
+
+
+def test_aither_public_get_name_end_to_end(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracker = _tracker()
+    monkeypatch.setattr(
+        aither_module.languages_manager,
+        "has_english_language",
+        AsyncMock(return_value=True),
+    )
+    meta = Meta(
+        category="MOVIE",
+        name="Movie 2025 1080p WEB-DL",
+        year=2025,
+        manual_year=0,
+        no_year=False,
+        language_checked=True,
+        audio_languages=["English"],
+        type="WEBDL",
+        source="WEB",
+        resolution="1080p",
+        video_codec="H264",
+        aka="",
+        no_aka=True,
+    )
+
+    assert asyncio.run(tracker.get_name(meta)) == {
+        "name": "Movie 2025 1080p WEB-DL"
+    }
