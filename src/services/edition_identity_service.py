@@ -13,6 +13,9 @@ from src.services.runtime_support import logger, prompt_in_thread
 
 guessit_module: Any = cast(Any, guessit)
 GuessitFn = Callable[[str, dict[str, Any] | None], dict[str, Any]]
+EditionInfo = dict[str, Any]
+EditionDetails = dict[str, EditionInfo]
+EditionCandidate = dict[str, Any]
 
 
 def guessit_fn(
@@ -22,12 +25,7 @@ def guessit_fn(
 
 
 def _has_release_token(value: str, token: str) -> bool:
-    """Return whether a scene-release marker appears as its own token.
-
-    Release names commonly use dots, dashes, and spaces as separators.  A
-    substring check is too broad here: for example, ``TV2`` is a broadcaster,
-    not the ``V2`` marker for a repack.
-    """
+    """Return whether a scene-release marker appears as its own token."""
     return (
         re.search(
             rf"(?<![A-Z0-9]){re.escape(token)}(?![A-Z0-9])",
@@ -48,6 +46,645 @@ def _strip_release_tokens(value: str) -> str:
     ).strip()
 
 
+def _edition_context(meta: Meta) -> tuple[EditionDetails, int]:
+    imdb_info = cast(dict[str, Any], meta.imdb_info)
+    details = cast(EditionDetails, imdb_info.get("edition_details", {}))
+    count_value = imdb_info.get("edition_count", len(details))
+    try:
+        return details, int(count_value)
+    except TypeError, ValueError:
+        return details, len(details)
+
+
+def _should_match_imdb(
+    meta: Meta,
+    details: EditionDetails,
+    edition_count: int,
+    manual_edition: str | list[str],
+) -> bool:
+    return (
+        meta.category == "MOVIE"
+        and not meta.anime
+        and bool(details)
+        and edition_count > 1
+        and not manual_edition
+    )
+
+
+def _interactive(meta: Meta) -> bool:
+    return not meta.unattended or meta.unattended_confirm
+
+
+def _edition_attributes(info: EditionInfo) -> list[Any]:
+    attributes = info.get("attributes")
+    if isinstance(attributes, list):
+        return cast(list[Any], attributes)
+    return []
+
+
+def _general_duration(meta: Meta) -> Any | None:
+    tracks = cast(
+        list[dict[str, Any]],
+        meta.mediainfo.get("media", {}).get("track", []) or [],
+    )
+    general = next(
+        (track for track in tracks if track.get("@type") == "General"),
+        None,
+    )
+    if general is None:
+        return None
+    return general.get("Duration")
+
+
+def _candidate_difference(candidate: EditionCandidate) -> float:
+    return float(candidate.get("difference", 0) or 0)
+
+
+def _closest(candidates: list[EditionCandidate]) -> EditionCandidate:
+    return min(candidates, key=_candidate_difference)
+
+
+def _valid_choice(choice: str, count: int) -> bool:
+    if not choice.strip() or not choice.isdigit():
+        return False
+    return 1 <= int(choice) <= count
+
+
+def _duration_candidate(
+    info: EditionInfo, media_seconds: float, leeway_seconds: float
+) -> EditionCandidate | None:
+    edition_seconds = float(info.get("seconds", 0) or 0)
+    difference = abs(media_seconds - edition_seconds)
+    if difference > leeway_seconds:
+        return None
+    formatted = format_duration(edition_seconds)
+    attributes = _edition_attributes(info)
+    logger.debug(
+        f"[green]Potential match: {info.get('display_name', '')} - duration {formatted}, difference: {format_duration(difference)}[/green]"
+    )
+    if not attributes:
+        logger.debug(
+            "[yellow]Edition without attributes are theatrical editions and skipped[/yellow]"
+        )
+        return None
+    return {
+        "name": " ".join(smart_title(str(attr)) for attr in attributes),
+        "display_name": str(info.get("display_name", "")),
+        "has_attributes": True,
+        "minutes": info.get("minutes"),
+        "difference": difference,
+        "formatted_duration": formatted,
+    }
+
+
+def _duration_candidates(
+    details: EditionDetails, media_seconds: float, leeway_seconds: float
+) -> list[EditionCandidate]:
+    candidates: list[EditionCandidate] = []
+    for info in details.values():
+        candidate = _duration_candidate(info, media_seconds, leeway_seconds)
+        if candidate is not None:
+            candidates.append(candidate)
+    return candidates
+
+
+async def _prompt_duration_candidate(
+    candidates: list[EditionCandidate], formatted_duration: str
+) -> EditionCandidate:
+    logger.info(
+        f"[yellow]Media file duration {formatted_duration} matches multiple editions:[/yellow]"
+    )
+    for index, candidate in enumerate(candidates):
+        logger.info(
+            f"[yellow]{index + 1}. [green]{candidate.get('name', '')} ({candidate.get('display_name', '')}, duration: {candidate.get('formatted_duration', '')}, diff: {format_duration(_candidate_difference(candidate))})[/yellow]"
+        )
+    try:
+        choice = (
+            await prompt_in_thread(
+                cli_ui.ask_string,
+                f"Select edition number (1-{len(candidates)}) or press Enter to use the closest match:",
+                default="",
+            )
+            or ""
+        )
+        if _valid_choice(choice, len(candidates)):
+            return candidates[int(choice) - 1]
+    except Exception as exc:
+        logger.error(
+            f"[red]Error processing selection: {exc}. Using closest match.[/red]"
+        )
+    selected = _closest(candidates)
+    logger.info(
+        f"[yellow]Using closest match: {selected.get('name', '')}[/yellow]"
+    )
+    return selected
+
+
+async def _select_duration_candidate(
+    meta: Meta,
+    candidates: list[EditionCandidate],
+    formatted_duration: str,
+) -> EditionCandidate:
+    if _interactive(meta):
+        return await _prompt_duration_candidate(candidates, formatted_duration)
+    selected = _closest(candidates)
+    logger.info(
+        f"[yellow]Multiple matches found in unattended mode. Using closest match: {selected.get('name', '')}[/yellow]"
+    )
+    return selected
+
+
+def _parsed_duration(duration_value: Any) -> float | None:
+    try:
+        return float(duration_value)
+    except (ValueError, TypeError) as exc:
+        logger.info(f"[yellow]Error parsing duration: {exc}[/yellow]")
+        return None
+
+
+def _candidate_edition_name(candidate: EditionCandidate) -> str:
+    if not candidate.get("has_attributes"):
+        return ""
+    return str(candidate.get("name", ""))
+
+
+async def _duration_edition(meta: Meta, details: EditionDetails) -> str:
+    duration_value = _general_duration(meta)
+    if not duration_value:
+        return ""
+    media_seconds = _parsed_duration(duration_value)
+    if media_seconds is None:
+        return ""
+    formatted = format_duration(media_seconds)
+    logger.debug(
+        f"[cyan]Found media duration: {formatted} ({media_seconds} seconds)[/cyan]"
+    )
+    leeway_seconds = 50.0
+    candidates = _duration_candidates(details, media_seconds, leeway_seconds)
+    if not candidates:
+        logger.debug(
+            f"[yellow]No matching editions found within {int(leeway_seconds)} seconds of media duration[/yellow]"
+        )
+        return ""
+    selected = candidates[0]
+    if len(candidates) > 1:
+        selected = await _select_duration_candidate(
+            meta, candidates, formatted
+        )
+    edition = _candidate_edition_name(selected)
+    logger.info(
+        f"[bold green]Setting edition from duration match: {edition}[/bold green]"
+    )
+    return edition
+
+
+def _disc_playlists(meta: Meta) -> list[dict[str, Any]]:
+    key = "playlists" if _interactive(meta) else "all_valid_playlists"
+    playlists: list[dict[str, Any]] = []
+    for disc in cast(list[dict[str, Any]], meta.discs):
+        values = disc.get(key)
+        if isinstance(values, list):
+            playlists.extend(cast(list[dict[str, Any]], values))
+    return playlists
+
+
+def _playlist_candidate(
+    info: EditionInfo, playlist_duration: float, leeway_seconds: float
+) -> EditionCandidate | None:
+    edition_seconds = float(info.get("seconds", 0) or 0)
+    difference = abs(playlist_duration - edition_seconds)
+    if difference > leeway_seconds:
+        return None
+    attributes = _edition_attributes(info)
+    name = (
+        " ".join(smart_title(str(attr)) for attr in attributes)
+        if attributes
+        else f"{info.get('minutes')} Minute Version (Theatrical)"
+    )
+    return {
+        "name": name,
+        "display_name": str(info.get("display_name", "")),
+        "has_attributes": bool(attributes),
+        "minutes": info.get("minutes"),
+        "difference": difference,
+    }
+
+
+def _playlist_candidates(
+    details: EditionDetails, duration: float, leeway_seconds: float = 50.0
+) -> list[EditionCandidate]:
+    candidates: list[EditionCandidate] = []
+    for info in details.values():
+        candidate = _playlist_candidate(info, duration, leeway_seconds)
+        if candidate is not None:
+            candidates.append(candidate)
+    return candidates
+
+
+def _log_playlist_candidates(
+    candidates: list[EditionCandidate],
+    playlist_edition: str,
+    playlist_file: str,
+    formatted_duration: str,
+) -> None:
+    logger.info(
+        f"[yellow]Playlist edition [green]{playlist_edition} [yellow]using file [green]{playlist_file} [yellow]with duration [green]{formatted_duration} [yellow]matches multiple editions:[/yellow]"
+    )
+    for index, candidate in enumerate(candidates):
+        logger.info(
+            f"[yellow]{index + 1}. [green]{candidate['name']} ({candidate['display_name']}, diff: {_candidate_difference(candidate):.2f} seconds)"
+        )
+
+
+async def _prompt_playlist_candidate(
+    candidates: list[EditionCandidate],
+    playlist_edition: str,
+    playlist_file: str,
+    formatted_duration: str,
+) -> str | EditionCandidate:
+    _log_playlist_candidates(
+        candidates, playlist_edition, playlist_file, formatted_duration
+    )
+    try:
+        choice = (
+            await prompt_in_thread(
+                cli_ui.ask_string,
+                f"Select edition number (1-{len(candidates)}), press e to use playlist edition or press Enter to use the closest match:",
+                default="",
+            )
+            or ""
+        )
+        if _valid_choice(choice, len(candidates)):
+            return candidates[int(choice) - 1]
+        if choice.strip().lower() == "e":
+            return playlist_edition
+        selected = _closest(candidates)
+        logger.info(
+            f"[yellow]Using closest match: {selected['name']}[/yellow]"
+        )
+        return selected
+    except Exception as exc:
+        logger.error(
+            f"[red]Error processing selection: {exc}. Using closest match.[/red]"
+        )
+        return _closest(candidates)
+
+
+async def _select_playlist_candidate(
+    meta: Meta,
+    candidates: list[EditionCandidate],
+    playlist_edition: str,
+    playlist_file: str,
+    formatted_duration: str,
+) -> str | EditionCandidate:
+    if _interactive(meta):
+        return await _prompt_playlist_candidate(
+            candidates, playlist_edition, playlist_file, formatted_duration
+        )
+    logger.info(
+        f"[yellow]Playlist edition [green]{playlist_edition} [yellow]using file [green]{playlist_file} [yellow]with duration [green]{formatted_duration} [yellow]matches multiple editions, but unattended mode is enabled. Using closest match.[/yellow]"
+    )
+    return _closest(candidates)
+
+
+def _append_candidate(
+    candidate: EditionCandidate,
+    with_attributes: list[str],
+    without_attributes: list[str],
+) -> None:
+    if candidate.get("has_attributes"):
+        name = str(candidate.get("name", ""))
+        if name not in with_attributes:
+            with_attributes.append(name)
+            logger.info(
+                f"[green]Added edition with attributes: {name}[/green]"
+            )
+        return
+    without_attributes.append(str(candidate.get("minutes", "")))
+    logger.info(
+        f"[yellow]Added edition without attributes: {candidate.get('name', '')}[/yellow]"
+    )
+
+
+def _consume_playlist_string(
+    selection: str,
+    candidates: list[EditionCandidate],
+    with_attributes: list[str],
+    without_attributes: list[str],
+) -> None:
+    normalized = selection.strip().lower()
+    if not normalized:
+        logger.info(
+            "[yellow]Empty playlist edition, using closest match.[/yellow]"
+        )
+        _append_candidate(
+            _closest(candidates), with_attributes, without_attributes
+        )
+        return
+    if normalized in {"theatrical", "theater", "theatre"}:
+        logger.info(
+            f"[yellow]Playlist edition '{selection}' is theatrical, treating as non-attribute edition.[/yellow]"
+        )
+        without_attributes.append(str(_closest(candidates).get("minutes", "")))
+        return
+    stripped = selection.strip()
+    if stripped not in with_attributes:
+        with_attributes.append(stripped)
+        logger.info(f"[green]Using playlist edition: {selection}[/green]")
+    else:
+        logger.info(
+            f"[yellow]Playlist edition '{selection}' already added, skipping duplicate.[/yellow]"
+        )
+
+
+def _consume_playlist_selection(
+    selection: str | EditionCandidate,
+    candidates: list[EditionCandidate],
+    with_attributes: list[str],
+    without_attributes: list[str],
+) -> None:
+    if isinstance(selection, str):
+        _consume_playlist_string(
+            selection, candidates, with_attributes, without_attributes
+        )
+        return
+    _append_candidate(selection, with_attributes, without_attributes)
+
+
+def _playlist_text(playlist: dict[str, Any], key: str) -> str:
+    return str(playlist.get(key) or "")
+
+
+def _consume_single_playlist_candidate(
+    candidate: EditionCandidate,
+    playlist_edition: str,
+    with_attributes: list[str],
+    without_attributes: list[str],
+) -> None:
+    logger.debug(
+        f"[green]Playlist {playlist_edition} matches edition: {candidate['display_name']} {candidate['name']}[/green]"
+    )
+    _append_candidate(candidate, with_attributes, without_attributes)
+
+
+async def _process_playlist(
+    meta: Meta,
+    playlist: dict[str, Any],
+    details: EditionDetails,
+    with_attributes: list[str],
+    without_attributes: list[str],
+) -> None:
+    duration_value = playlist.get("duration")
+    if not duration_value:
+        return
+    duration = float(duration_value)
+    formatted = format_duration(duration)
+    logger.debug(
+        f"[cyan]Checking playlist duration: {formatted} seconds[/cyan]"
+    )
+    candidates = _playlist_candidates(details, duration)
+    if not candidates:
+        return
+    playlist_edition = _playlist_text(playlist, "edition")
+    playlist_file = _playlist_text(playlist, "file")
+    if len(candidates) == 1:
+        _consume_single_playlist_candidate(
+            candidates[0],
+            playlist_edition,
+            with_attributes,
+            without_attributes,
+        )
+        return
+    selection = await _select_playlist_candidate(
+        meta, candidates, playlist_edition, playlist_file, formatted
+    )
+    _consume_playlist_selection(
+        selection, candidates, with_attributes, without_attributes
+    )
+
+
+def _combined_playlist_editions(
+    with_attributes: list[str], without_attributes: list[str]
+) -> list[str]:
+    if with_attributes and without_attributes:
+        logger.debug(
+            "[cyan]Adding 'Theatrical' label because we have both attribute and non-attribute editions[/cyan]"
+        )
+        return [*with_attributes, "Theatrical"]
+    if with_attributes:
+        logger.debug("[cyan]Using only editions with attributes[/cyan]")
+        return with_attributes
+    logger.debug("[cyan]No useful editions found[/cyan]")
+    return []
+
+
+def _format_playlist_editions(editions: list[str]) -> str:
+    if not editions:
+        return ""
+    if len(editions) == 1:
+        return editions[0]
+    unique = list(set(editions))
+    if "Theatrical" in unique:
+        unique.remove("Theatrical")
+        unique = ["Theatrical", *sorted(unique)]
+    if len(unique) == 1:
+        return unique[0]
+    return f"{len(unique)}in1 " + " / ".join(unique)
+
+
+async def _bluray_edition(meta: Meta, details: EditionDetails) -> str:
+    logger.debug("[cyan]Checking BDMV playlists for edition matches...[/cyan]")
+    playlists = _disc_playlists(meta)
+    logger.debug(
+        f"[cyan]Found {len(playlists)} playlists to check against IMDb editions[/cyan]"
+    )
+    with_attributes: list[str] = []
+    without_attributes: list[str] = []
+    for playlist in playlists:
+        await _process_playlist(
+            meta, playlist, details, with_attributes, without_attributes
+        )
+    edition = _format_playlist_editions(
+        _combined_playlist_editions(with_attributes, without_attributes)
+    )
+    if edition:
+        logger.debug(
+            f"[bold green]Setting edition from BDMV playlist matches: {edition}[/bold green]"
+        )
+    return edition
+
+
+async def _matched_imdb_edition(meta: Meta, details: EditionDetails) -> str:
+    if meta.is_disc == "BDMV":
+        if not meta.discs:
+            return ""
+        return await _bluray_edition(meta, details)
+    if not meta.mediainfo.get("media", {}).get("track"):
+        return ""
+    return await _duration_edition(meta, details)
+
+
+def _discard_unusable_edition(edition: str) -> str:
+    if not edition:
+        return ""
+    if edition.lower() in {"cut", "approximate"} or len(edition) < 6:
+        return ""
+    return edition
+
+
+def _normalize_automatic_edition(edition: str) -> str:
+    edition = _discard_unusable_edition(edition)
+    if not edition:
+        return ""
+    if "edition" in edition.lower():
+        edition = re.sub(
+            r"\bedition\b", "", edition, flags=re.IGNORECASE
+        ).strip()
+    if "extended" in edition.lower():
+        return "Extended"
+    return edition
+
+
+def _guess_release_group(guess: dict[str, Any]) -> str:
+    tag_value = guess.get("release_group", "NOGROUP")
+    if isinstance(tag_value, list):
+        return " ".join(str(tag) for tag in cast(list[Any], tag_value))
+    return str(tag_value)
+
+
+def _guess_edition_value(
+    guess: dict[str, Any], bdinfo: dict[str, Any] | None
+) -> Any:
+    if bdinfo is not None:
+        try:
+            return guessit_fn(bdinfo["label"]).get("edition", "")
+        except Exception as exc:
+            logger.debug(
+                f"BDInfo Edition Guess Error: {exc}", extra={"markup": False}
+            )
+            return ""
+    try:
+        return guess.get("edition", "")
+    except Exception as exc:
+        logger.debug(
+            f"Video Edition Guess Error: {exc}", extra={"markup": False}
+        )
+        return ""
+
+
+def _edition_text(value: Any) -> str:
+    if isinstance(value, list):
+        return " ".join(str(item) for item in cast(list[Any], value))
+    return str(value or "")
+
+
+def _normalized_video(video: str, filelist: list[str], tag: str) -> str:
+    if len(filelist) == 1:
+        video = Path(video).name
+    return (
+        video.upper()
+        .replace(".", " ")
+        .replace(tag.upper(), "")
+        .replace("-", " ")
+    )
+
+
+def _guess_missing_edition(
+    video: str, bdinfo: dict[str, Any] | None, filelist: list[str]
+) -> tuple[str, str]:
+    if video.lower().startswith("dc"):
+        video = video.lower().replace("dc", "", 1)
+    guess = guessit_fn(video)
+    tag = _guess_release_group(guess)
+    edition = _edition_text(_guess_edition_value(guess, bdinfo))
+    video = _normalized_video(video, filelist, tag)
+    if "OPEN MATTE" in video.upper():
+        edition += " Open Matte"
+    return edition, video
+
+
+def _manual_edition(manual_edition: str | list[str]) -> str:
+    if isinstance(manual_edition, list):
+        return " ".join(str(item) for item in manual_edition)
+    return manual_edition
+
+
+_REPACK_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("REPACK", ("REPACK", "V2")),
+    ("REPACK2", ("REPACK2", "V3")),
+    ("REPACK3", ("REPACK3", "V4")),
+    ("PROPER", ("PROPER",)),
+    ("PROPER2", ("PROPER2",)),
+    ("PROPER3", ("PROPER3",)),
+    ("RERIP", ("RERIP",)),
+)
+_RELEASE_MARKERS = {
+    "repack",
+    "repack2",
+    "repack3",
+    "proper",
+    "proper2",
+    "proper3",
+    "rerip",
+}
+
+
+def _detect_repack(release_text: str) -> str:
+    repack = ""
+    for value, tokens in _REPACK_RULES:
+        if any(_has_release_token(release_text, token) for token in tokens):
+            repack = value
+    return repack
+
+
+def _should_strip_markers(manual_edition: str) -> bool:
+    if not manual_edition:
+        return True
+    return all(
+        token not in _RELEASE_MARKERS
+        for token in manual_edition.strip().lower().split()
+    )
+
+
+def _hybrid(meta: Meta, video: str, edition: str) -> bool:
+    if meta.webdv:
+        return bool(meta.webdv)
+    return "HYBRID" in video.upper() or "HYBRID" in edition.upper()
+
+
+def _bad_edition_terms(meta: Meta, distributor: str) -> list[str]:
+    bad = ["internal", "limited", "retail", "version", "remastered"]
+    if distributor and meta.is_disc:
+        bad.append(distributor.lower())
+        meta.distributor = distributor
+    return bad
+
+
+def _strip_bad_terms(edition: str, bad: list[str]) -> str:
+    if not any(term.lower() in edition.lower() for term in bad):
+        return edition
+    edition = re.sub(
+        r"\b(?:" + "|".join(bad) + r")\b",
+        "",
+        edition,
+        flags=re.IGNORECASE,
+    ).strip()
+    while "  " in edition:
+        edition = edition.replace("  ", " ")
+    return edition
+
+
+async def _clean_distributor(edition: str, meta: Meta) -> str:
+    if not edition:
+        return edition
+    distributor = await get_distributor(edition)
+    edition = _strip_bad_terms(edition, _bad_edition_terms(meta, distributor))
+    if edition:
+        edition = edition.strip()
+        logger.debug(f"Final Edition: {edition}")
+    return edition
+
+
 async def get_edition(
     video: str,
     bdinfo: dict[str, Any] | None,
@@ -55,675 +692,22 @@ async def get_edition(
     manual_edition: str | list[str],
     meta: Meta,
 ) -> tuple[str, str, bool]:
+    details, edition_count = _edition_context(meta)
     edition = ""
-    imdb_info = cast(dict[str, Any], meta.imdb_info)
-    edition_details = cast(
-        dict[str, dict[str, Any]], imdb_info.get("edition_details", {})
-    )
-    imdb_edition_count_value = imdb_info.get(
-        "edition_count", len(edition_details)
-    )
-    try:
-        imdb_edition_count = int(imdb_edition_count_value)
-    except TypeError, ValueError:
-        imdb_edition_count = len(edition_details)
-
-    if (
-        meta.category == "MOVIE"
-        and not meta.anime
-        and edition_details
-        and imdb_edition_count > 1
-        and not manual_edition
-    ):
-        if meta.is_disc != "BDMV" and meta.mediainfo.get("media", {}).get(
-            "track"
-        ):
-            mediainfo = meta.mediainfo
-            tracks = cast(
-                list[dict[str, Any]],
-                mediainfo.get("media", {}).get("track", []),
-            )
-            general_track = next(
-                (track for track in tracks if track.get("@type") == "General"),
-                None,
-            )
-
-            if general_track and general_track.get("Duration"):
-                try:
-                    media_duration_seconds = float(general_track["Duration"])
-                    formatted_duration = format_duration(
-                        media_duration_seconds
-                    )
-                    logger.debug(
-                        f"[cyan]Found media duration: {formatted_duration} ({media_duration_seconds} seconds)[/cyan]"
-                    )
-
-                    leeway_seconds = 50
-                    matching_editions: list[dict[str, Any]] = []
-
-                    # Find all matching editions
-                    for edition_info in edition_details.values():
-                        edition_seconds = float(
-                            edition_info.get("seconds", 0) or 0
-                        )
-                        edition_formatted = format_duration(edition_seconds)
-                        difference = abs(
-                            media_duration_seconds - edition_seconds
-                        )
-
-                        if difference <= leeway_seconds:
-                            attributes = edition_info.get("attributes")
-                            attributes_list = (
-                                attributes
-                                if isinstance(attributes, list)
-                                else []
-                            )
-                            has_attributes = bool(attributes_list)
-                            logger.debug(
-                                f"[green]Potential match: {edition_info.get('display_name', '')} - duration {edition_formatted}, difference: {format_duration(difference)}[/green]"
-                            )
-
-                            if has_attributes:
-                                edition_name = " ".join(
-                                    smart_title(str(attr))
-                                    for attr in attributes_list
-                                )
-
-                                matching_editions.append(
-                                    {
-                                        "name": edition_name,
-                                        "display_name": str(
-                                            edition_info.get(
-                                                "display_name", ""
-                                            )
-                                        ),
-                                        "has_attributes": bool(
-                                            edition_info.get("attributes")
-                                            and len(edition_info["attributes"])
-                                            > 0
-                                        ),
-                                        "minutes": edition_info.get("minutes"),
-                                        "difference": difference,
-                                        "formatted_duration": edition_formatted,
-                                    }
-                                )
-                            else:
-                                logger.debug(
-                                    "[yellow]Edition without attributes are theatrical editions and skipped[/yellow]"
-                                )
-
-                    if len(matching_editions) > 1:
-                        if not meta.unattended or (
-                            meta.unattended and meta.unattended_confirm
-                        ):
-                            logger.info(
-                                f"[yellow]Media file duration {formatted_duration} matches multiple editions:[/yellow]"
-                            )
-                            for i, ed in enumerate(matching_editions):
-                                diff_formatted = format_duration(
-                                    float(ed.get("difference", 0) or 0)
-                                )
-                                logger.info(
-                                    f"[yellow]{i + 1}. [green]{ed.get('name', '')} ({ed.get('display_name', '')}, duration: {ed.get('formatted_duration', '')}, diff: {diff_formatted})[/yellow]"
-                                )
-
-                            try:
-                                choice = (
-                                    await prompt_in_thread(
-                                        cli_ui.ask_string,
-                                        f"Select edition number (1-{len(matching_editions)}) or press Enter to use the closest match:",
-                                        default="",
-                                    )
-                                    or ""
-                                )
-
-                                if (
-                                    choice.strip()
-                                    and choice.isdigit()
-                                    and 1
-                                    <= int(choice)
-                                    <= len(matching_editions)
-                                ):
-                                    selected = matching_editions[
-                                        int(choice) - 1
-                                    ]
-                                else:
-                                    selected = min(
-                                        matching_editions,
-                                        key=lambda x: float(
-                                            x.get("difference", 0) or 0
-                                        ),
-                                    )
-                                    logger.info(
-                                        f"[yellow]Using closest match: {selected.get('name', '')}[/yellow]"
-                                    )
-                            except Exception as e:
-                                logger.error(
-                                    f"[red]Error processing selection: {e}. Using closest match.[/red]"
-                                )
-                                selected = min(
-                                    matching_editions,
-                                    key=lambda x: float(
-                                        x.get("difference", 0) or 0
-                                    ),
-                                )
-                        else:
-                            selected = min(
-                                matching_editions,
-                                key=lambda x: float(
-                                    x.get("difference", 0) or 0
-                                ),
-                            )
-                            logger.info(
-                                f"[yellow]Multiple matches found in unattended mode. Using closest match: {selected.get('name', '')}[/yellow]"
-                            )
-
-                        edition = (
-                            str(selected.get("name", ""))
-                            if selected.get("has_attributes")
-                            else ""
-                        )
-
-                        logger.info(
-                            f"[bold green]Setting edition from duration match: {edition}[/bold green]"
-                        )
-
-                    elif len(matching_editions) == 1:
-                        selected = matching_editions[0]
-                        edition = (
-                            str(selected.get("name", ""))
-                            if selected.get("has_attributes")
-                            else ""
-                        )  # No special edition for single matches without attributes
-
-                        logger.info(
-                            f"[bold green]Setting edition from duration match: {edition}[/bold green]"
-                        )
-
-                    else:
-                        logger.debug(
-                            f"[yellow]No matching editions found within {leeway_seconds} seconds of media duration[/yellow]"
-                        )
-
-                except (ValueError, TypeError) as e:
-                    logger.info(
-                        f"[yellow]Error parsing duration: {e}[/yellow]"
-                    )
-
-        elif meta.is_disc == "BDMV" and meta.discs:
-            logger.debug(
-                "[cyan]Checking BDMV playlists for edition matches...[/cyan]"
-            )
-            matched_editions: list[str] = []
-
-            all_playlists: list[dict[str, Any]] = []
-            discs = cast(list[dict[str, Any]], meta.discs)
-            for disc in discs:
-                if not meta.unattended or (
-                    meta.unattended and meta.unattended_confirm
-                ):
-                    playlists = disc.get("playlists")
-                    if isinstance(playlists, list):
-                        all_playlists.extend(
-                            cast(list[dict[str, Any]], playlists)
-                        )
-                else:
-                    valid_playlists = disc.get("all_valid_playlists")
-                    if isinstance(valid_playlists, list):
-                        all_playlists.extend(
-                            cast(list[dict[str, Any]], valid_playlists)
-                        )
-            logger.debug(
-                f"[cyan]Found {len(all_playlists)} playlists to check against IMDb editions[/cyan]"
-            )
-
-            leeway_seconds = 50
-            matched_editions_with_attributes: list[str] = []
-            matched_editions_without_attributes: list[str] = []
-
-            for playlist in all_playlists:
-                playlist_file = str(playlist.get("file") or "")
-                playlist_edition = str(playlist.get("edition") or "")
-                if playlist.get("duration"):
-                    playlist_duration = float(playlist.get("duration") or 0)
-                    formatted_duration = format_duration(playlist_duration)
-                    logger.debug(
-                        f"[cyan]Checking playlist duration: {formatted_duration} seconds[/cyan]"
-                    )
-
-                    playlist_matching_editions: list[dict[str, Any]] = []
-
-                    for edition_info in edition_details.values():
-                        edition_seconds = float(
-                            edition_info.get("seconds", 0) or 0
-                        )
-                        difference = abs(playlist_duration - edition_seconds)
-
-                        if difference <= leeway_seconds:
-                            # Store the complete edition info
-                            attributes = edition_info.get("attributes")
-                            attributes_list = (
-                                attributes
-                                if isinstance(attributes, list)
-                                else []
-                            )
-                            if attributes_list:
-                                edition_name = " ".join(
-                                    smart_title(str(attr))
-                                    for attr in attributes_list
-                                )
-                            else:
-                                edition_name = f"{edition_info.get('minutes')} Minute Version (Theatrical)"
-
-                            playlist_matching_editions.append(
-                                {
-                                    "name": edition_name,
-                                    "display_name": str(
-                                        edition_info.get("display_name", "")
-                                    ),
-                                    "has_attributes": bool(
-                                        edition_info.get("attributes")
-                                        and len(edition_info["attributes"]) > 0
-                                    ),
-                                    "minutes": edition_info.get("minutes"),
-                                    "difference": difference,
-                                }
-                            )
-
-                    # If multiple editions match this playlist, ask the user
-                    if len(playlist_matching_editions) > 1:
-                        if not meta.unattended or (
-                            meta.unattended and meta.unattended_confirm
-                        ):
-                            logger.info(
-                                f"[yellow]Playlist edition [green]{playlist_edition} [yellow]using file [green]{playlist_file} [yellow]with duration [green]{formatted_duration} [yellow]matches multiple editions:[/yellow]"
-                            )
-                            for i, ed in enumerate(playlist_matching_editions):
-                                logger.info(
-                                    f"[yellow]{i + 1}. [green]{ed['name']} ({ed['display_name']}, diff: {ed['difference']:.2f} seconds)"
-                                )
-
-                            try:
-                                choice = (
-                                    await prompt_in_thread(
-                                        cli_ui.ask_string,
-                                        f"Select edition number (1-{len(playlist_matching_editions)}), press e to use playlist edition or press Enter to use the closest match:",
-                                        default="",
-                                    )
-                                    or ""
-                                )
-
-                                playlist_selected: str | dict[str, Any]
-
-                                if (
-                                    choice.strip()
-                                    and choice.isdigit()
-                                    and 1
-                                    <= int(choice)
-                                    <= len(playlist_matching_editions)
-                                ):
-                                    playlist_selected = (
-                                        playlist_matching_editions[
-                                            int(choice) - 1
-                                        ]
-                                    )
-                                elif choice.strip().lower() == "e":
-                                    playlist_selected = playlist_edition
-                                else:
-                                    # Default to the closest match (smallest difference)
-                                    playlist_selected = min(
-                                        playlist_matching_editions,
-                                        key=lambda x: x["difference"],
-                                    )
-                                    logger.info(
-                                        f"[yellow]Using closest match: {playlist_selected['name']}[/yellow]"
-                                    )
-
-                                # Add the selected edition to our matches
-                                if isinstance(playlist_selected, str):
-                                    normalized_playlist = (
-                                        playlist_selected.strip().lower()
-                                    )
-                                    if not normalized_playlist:
-                                        # Empty playlist edition, fall back to closest match
-                                        logger.info(
-                                            "[yellow]Empty playlist edition, using closest match.[/yellow]"
-                                        )
-                                        playlist_selected = min(
-                                            playlist_matching_editions,
-                                            key=lambda x: x["difference"],
-                                        )
-                                        if playlist_selected["has_attributes"]:
-                                            if (
-                                                playlist_selected["name"]
-                                                not in matched_editions_with_attributes
-                                            ):
-                                                matched_editions_with_attributes.append(
-                                                    playlist_selected["name"]
-                                                )
-                                                logger.info(
-                                                    f"[green]Added edition with attributes: {playlist_selected['name']}[/green]"
-                                                )
-                                        else:
-                                            matched_editions_without_attributes.append(
-                                                str(
-                                                    playlist_selected[
-                                                        "minutes"
-                                                    ]
-                                                )
-                                            )
-                                            logger.info(
-                                                f"[yellow]Added edition without attributes: {playlist_selected['name']}[/yellow]"
-                                            )
-                                    elif normalized_playlist in (
-                                        "theatrical",
-                                        "theater",
-                                        "theatre",
-                                    ):
-                                        # Theatrical is a non-attribute edition; use closest match's minutes
-                                        logger.info(
-                                            f"[yellow]Playlist edition '{playlist_selected}' is theatrical, treating as non-attribute edition.[/yellow]"
-                                        )
-                                        fallback = min(
-                                            playlist_matching_editions,
-                                            key=lambda x: x["difference"],
-                                        )
-                                        matched_editions_without_attributes.append(
-                                            str(fallback["minutes"])
-                                        )
-                                    else:
-                                        # Genuine attribute edition from playlist
-                                        if (
-                                            playlist_selected.strip()
-                                            not in matched_editions_with_attributes
-                                        ):
-                                            matched_editions_with_attributes.append(
-                                                playlist_selected.strip()
-                                            )
-                                            logger.info(
-                                                f"[green]Using playlist edition: {playlist_selected}[/green]"
-                                            )
-                                        else:
-                                            logger.info(
-                                                f"[yellow]Playlist edition '{playlist_selected}' already added, skipping duplicate.[/yellow]"
-                                            )
-                                else:
-                                    if playlist_selected["has_attributes"]:
-                                        if (
-                                            playlist_selected["name"]
-                                            not in matched_editions_with_attributes
-                                        ):
-                                            matched_editions_with_attributes.append(
-                                                playlist_selected["name"]
-                                            )
-                                            logger.info(
-                                                f"[green]Added edition with attributes: {playlist_selected['name']}[/green]"
-                                            )
-                                    else:
-                                        matched_editions_without_attributes.append(
-                                            str(playlist_selected["minutes"])
-                                        )
-                                        logger.info(
-                                            f"[yellow]Added edition without attributes: {playlist_selected['name']}[/yellow]"
-                                        )
-
-                            except Exception as e:
-                                logger.error(
-                                    f"[red]Error processing selection: {e}. Using closest match.[/red]"
-                                )
-                                # Default to closest match
-                                fallback_selected = min(
-                                    playlist_matching_editions,
-                                    key=lambda x: x["difference"],
-                                )
-                                if fallback_selected["has_attributes"]:
-                                    matched_editions_with_attributes.append(
-                                        fallback_selected["name"]
-                                    )
-                                else:
-                                    matched_editions_without_attributes.append(
-                                        str(fallback_selected["minutes"])
-                                    )
-                        else:
-                            logger.info(
-                                f"[yellow]Playlist edition [green]{playlist_edition} [yellow]using file [green]{playlist_file} [yellow]with duration [green]{formatted_duration} [yellow]matches multiple editions, but unattended mode is enabled. Using closest match.[/yellow]"
-                            )
-                            unattended_selected = min(
-                                playlist_matching_editions,
-                                key=lambda x: x["difference"],
-                            )
-                            if unattended_selected["has_attributes"]:
-                                matched_editions_with_attributes.append(
-                                    unattended_selected["name"]
-                                )
-                            else:
-                                matched_editions_without_attributes.append(
-                                    str(unattended_selected["minutes"])
-                                )
-
-                    # If just one edition matches, add it directly
-                    elif len(playlist_matching_editions) == 1:
-                        edition_info = playlist_matching_editions[0]
-                        logger.debug(
-                            f"[green]Playlist {playlist_edition} matches edition: {edition_info['display_name']} {edition_info['name']}[/green]"
-                        )
-
-                        if edition_info["has_attributes"]:
-                            if (
-                                edition_info["name"]
-                                not in matched_editions_with_attributes
-                            ):
-                                matched_editions_with_attributes.append(
-                                    edition_info["name"]
-                                )
-                                logger.debug(
-                                    f"[green]Added edition with attributes: {edition_info['name']}[/green]"
-                                )
-                        else:
-                            matched_editions_without_attributes.append(
-                                str(edition_info["minutes"])
-                            )
-                            logger.debug(
-                                f"[yellow]Added edition without attributes: {edition_info['name']}[/yellow]"
-                            )
-
-                # Process the matched editions
-                if (
-                    matched_editions_with_attributes
-                    or matched_editions_without_attributes
-                ):
-                    # Only use "Theatrical" if we have at least one edition with attributes
-                    if (
-                        matched_editions_with_attributes
-                        and matched_editions_without_attributes
-                    ):
-                        matched_editions = [
-                            *matched_editions_with_attributes,
-                            "Theatrical",
-                        ]
-                        logger.debug(
-                            "[cyan]Adding 'Theatrical' label because we have both attribute and non-attribute editions[/cyan]"
-                        )
-                    elif matched_editions_with_attributes:
-                        matched_editions = matched_editions_with_attributes
-                        logger.debug(
-                            "[cyan]Using only editions with attributes[/cyan]"
-                        )
-                    else:
-                        logger.debug("[cyan]No useful editions found[/cyan]")
-
-                    # Handle final edition formatting
-                    if matched_editions:
-                        # If multiple editions, prefix with count
-                        if len(matched_editions) > 1:
-                            unique_editions = list(
-                                set(matched_editions)
-                            )  # Remove duplicates
-                            if "Theatrical" in unique_editions:
-                                unique_editions.remove("Theatrical")
-                                unique_editions = [
-                                    "Theatrical",
-                                    *sorted(unique_editions),
-                                ]
-                            edition = (
-                                f"{len(unique_editions)}in1 "
-                                + " / ".join(unique_editions)
-                                if len(unique_editions) > 1
-                                else unique_editions[0]
-                            )  # Just one unique edition
-                        else:
-                            edition = matched_editions[0]
-
-                        logger.debug(
-                            f"[bold green]Setting edition from BDMV playlist matches: {edition}[/bold green]"
-                        )
-
-    if edition and (
-        edition.lower() in ["cut", "approximate"] or len(edition) < 6
-    ):
-        edition = ""
-    if edition and "edition" in edition.lower():
-        edition = re.sub(
-            r"\bedition\b", "", edition, flags=re.IGNORECASE
-        ).strip()
-    if edition and "extended" in edition.lower():
-        edition = "Extended"
-
+    if _should_match_imdb(meta, details, edition_count, manual_edition):
+        edition = await _matched_imdb_edition(meta, details)
+    edition = _normalize_automatic_edition(edition)
     if not edition:
-        if video.lower().startswith("dc"):
-            video = video.lower().replace("dc", "", 1)
-
-        guess: Any = guessit_fn(video)
-
-        tag_value: Any = guess.get("release_group", "NOGROUP")
-        tag = (
-            " ".join(str(t) for t in tag_value)
-            if isinstance(tag_value, list)
-            else str(tag_value)
-        )
-        repack = ""
-
-        if bdinfo is not None:
-            try:
-                edition_value: Any = guessit_fn(bdinfo["label"]).get(
-                    "edition", ""
-                )
-            except Exception as e:
-                logger.debug(
-                    f"BDInfo Edition Guess Error: {e}", extra={"markup": False}
-                )
-                edition_value = ""
-        else:
-            try:
-                edition_value = guess.get("edition", "")
-            except Exception as e:
-                logger.debug(
-                    f"Video Edition Guess Error: {e}", extra={"markup": False}
-                )
-                edition_value = ""
-
-        edition = (
-            " ".join(str(e) for e in cast(list[Any], edition_value))
-            if isinstance(edition_value, list)
-            else str(edition_value or "")
-        )
-
-        if len(filelist) == 1:
-            video = Path(video).name
-
-        video = (
-            video.upper()
-            .replace(".", " ")
-            .replace(tag.upper(), "")
-            .replace("-", " ")
-        )
-
-        if "OPEN MATTE" in video.upper():
-            edition = edition + " Open Matte"
-
-    # Manual edition overrides everything
-    if manual_edition:
-        if isinstance(manual_edition, list):
-            manual_edition = " ".join(e for e in manual_edition)
-        edition = manual_edition
-
+        edition, video = _guess_missing_edition(video, bdinfo, filelist)
+    manual = _manual_edition(manual_edition)
+    if manual:
+        edition = manual
     edition = edition.replace(",", " ")
-
-    # Handle repack info
-    repack = ""
-    release_text = f"{video} {edition}"
-    if _has_release_token(release_text, "REPACK") or _has_release_token(
-        release_text, "V2"
-    ):
-        repack = "REPACK"
-    if _has_release_token(release_text, "REPACK2") or _has_release_token(
-        release_text, "V3"
-    ):
-        repack = "REPACK2"
-    if _has_release_token(release_text, "REPACK3") or _has_release_token(
-        release_text, "V4"
-    ):
-        repack = "REPACK3"
-    if _has_release_token(release_text, "PROPER"):
-        repack = "PROPER"
-    if _has_release_token(release_text, "PROPER2"):
-        repack = "PROPER2"
-    if _has_release_token(release_text, "PROPER3"):
-        repack = "PROPER3"
-    if _has_release_token(release_text, "RERIP"):
-        repack = "RERIP"
-
-    # Only remove REPACK, RERIP, or PROPER from edition if not in manual edition
-    if not manual_edition or (
-        isinstance(manual_edition, str)
-        and all(
-            tag.lower()
-            not in [
-                "repack",
-                "repack2",
-                "repack3",
-                "proper",
-                "proper2",
-                "proper3",
-                "rerip",
-            ]
-            for tag in manual_edition.strip().lower().split()
-        )
-    ):
+    repack = _detect_repack(f"{video} {edition}")
+    if _should_strip_markers(manual):
         edition = _strip_release_tokens(edition)
-
-    if not meta.webdv:
-        hybrid = False
-        if "HYBRID" in video.upper() or "HYBRID" in edition.upper():
-            hybrid = True
-    else:
-        hybrid = meta.webdv
-
-    # Handle distributor info
-    if edition:
-        distributors = await get_distributor(edition)
-
-        bad = ["internal", "limited", "retail", "version", "remastered"]
-
-        if distributors and meta.is_disc:
-            bad.append(distributors.lower())
-            meta.distributor = distributors
-
-        if any(term.lower() in edition.lower() for term in bad):
-            edition = re.sub(
-                r"\b(?:" + "|".join(bad) + r")\b",
-                "",
-                edition,
-                flags=re.IGNORECASE,
-            ).strip()
-            # Clean up extra spaces
-            while "  " in edition:
-                edition = edition.replace("  ", " ")
-
-        if edition != "":
-            edition = edition.strip()
-            logger.debug(f"Final Edition: {edition}")
-
+    hybrid = _hybrid(meta, video, edition)
+    edition = await _clean_distributor(edition, meta)
     return edition, repack, hybrid
 
 
@@ -736,9 +720,10 @@ def format_duration(seconds: float) -> str:
 
 
 def smart_title(s: str) -> str:
-    """Custom title function that doesn't capitalize after apostrophes"""
+    """Custom title function that doesn't capitalize after apostrophes."""
     result = s.title()
-    # Fix capitalization after apostrophes
     return re.sub(
-        r"(\w)'(\w)", lambda m: f"{m.group(1)}'{m.group(2).lower()}", result
+        r"(\w)'(\w)",
+        lambda match: f"{match.group(1)}'{match.group(2).lower()}",
+        result,
     )
