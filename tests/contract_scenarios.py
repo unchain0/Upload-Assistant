@@ -786,6 +786,242 @@ def _as_scenario(assignments: Iterable[Assignment]) -> Scenario:
     return meta, parameters
 
 
+@dataclass(slots=True)
+class _ScenarioCollector:
+    limit: int
+    scenarios: list[Scenario]
+    seen: set[str]
+
+    @classmethod
+    def create(cls, limit: int) -> _ScenarioCollector:
+        return cls(limit=limit, scenarios=[], seen=set())
+
+    @property
+    def full(self) -> bool:
+        return len(self.scenarios) >= self.limit
+
+    def add(self, assignments: Iterable[Assignment]) -> None:
+        if self.full:
+            return
+        scenario = _as_scenario(assignments)
+        if not any(scenario):
+            return
+        key = repr(scenario)
+        if key in self.seen:
+            return
+        self.seen.add(key)
+        self.scenarios.append(scenario)
+
+
+def _source_tree_and_signature(
+    function: Callable[..., object],
+) -> tuple[ast.AST, inspect.Signature] | None:
+    target = getattr(function, "__func__", function)
+    try:
+        tree = ast.parse(textwrap.dedent(inspect.getsource(target)))
+        signature = inspect.signature(function)
+    except OSError, TypeError, SyntaxError, ValueError:
+        return None
+    return tree, signature
+
+
+def _meta_parameter_names(parameter_names: set[str]) -> set[str]:
+    return {
+        name
+        for name in parameter_names
+        if "meta" in name.casefold() or name in {"release", "item"}
+    }
+
+
+def _node_condition(node: ast.AST) -> ast.AST | None:
+    if isinstance(node, ast.If | ast.IfExp | ast.While | ast.Assert):
+        return node.test
+    if isinstance(node, ast.Return):
+        return node.value
+    if isinstance(node, ast.Compare | ast.Call):
+        return node
+    return None
+
+
+def _add_condition_scenarios(
+    collector: _ScenarioCollector,
+    condition: ast.AST,
+    meta_names: set[str],
+    parameter_names: set[str],
+    fields: set[str],
+    aliases: dict[str, tuple[str, str]],
+) -> None:
+    for truth in (True, False):
+        options = _condition_options(
+            condition,
+            truth=truth,
+            meta_names=meta_names,
+            parameter_names=parameter_names,
+            domain_fields=fields,
+            aliases=aliases,
+        )
+        for assignments in options:
+            collector.add(assignments)
+
+
+def _match_case_assignment(
+    case: ast.match_case,
+    target: tuple[str, str],
+) -> Assignment | None:
+    if isinstance(case.pattern, ast.MatchValue):
+        value = _literal(case.pattern.value)
+        if value is not None:
+            return Assignment(*target, value)
+        return None
+    if isinstance(case.pattern, ast.MatchSingleton):
+        return Assignment(*target, case.pattern.value)
+    return None
+
+
+def _add_match_scenarios(
+    collector: _ScenarioCollector,
+    node: ast.Match,
+    meta_names: set[str],
+    parameter_names: set[str],
+    fields: set[str],
+    aliases: dict[str, tuple[str, str]],
+) -> None:
+    target = _target(
+        node.subject, meta_names, parameter_names, fields, aliases
+    )
+    if target is None:
+        return
+    for case in node.cases:
+        assignment = _match_case_assignment(case, target)
+        if assignment is not None:
+            collector.add([assignment])
+
+
+def _collect_base_scenarios(
+    collector: _ScenarioCollector,
+    tree: ast.AST,
+    meta_names: set[str],
+    parameter_names: set[str],
+    fields: set[str],
+    aliases: dict[str, tuple[str, str]],
+) -> None:
+    for node in ast.walk(tree):
+        condition = _node_condition(node)
+        if condition is not None:
+            _add_condition_scenarios(
+                collector,
+                condition,
+                meta_names,
+                parameter_names,
+                fields,
+                aliases,
+            )
+            continue
+        if isinstance(node, ast.Match):
+            _add_match_scenarios(
+                collector,
+                node,
+                meta_names,
+                parameter_names,
+                fields,
+                aliases,
+            )
+
+
+def _mapping_conflicts(
+    merged: dict[str, object], incoming: dict[str, object]
+) -> bool:
+    for key, value in incoming.items():
+        if key in merged and merged[key] != value:
+            return True
+    return False
+
+
+def _merged_scenario_parts(
+    parts: tuple[Scenario, ...],
+) -> tuple[dict[str, object], dict[str, object]] | None:
+    merged_meta: dict[str, object] = {}
+    merged_params: dict[str, object] = {}
+    for meta_values, parameter_values in parts:
+        if _mapping_conflicts(merged_meta, meta_values):
+            return None
+        if _mapping_conflicts(merged_params, parameter_values):
+            return None
+        merged_meta.update(meta_values)
+        merged_params.update(parameter_values)
+    return merged_meta, merged_params
+
+
+def _merged_assignments(
+    parts: tuple[Scenario, ...],
+) -> list[Assignment] | None:
+    merged = _merged_scenario_parts(parts)
+    if merged is None:
+        return None
+    merged_meta, merged_params = merged
+    assignments = [
+        Assignment("meta", key, value) for key, value in merged_meta.items()
+    ]
+    assignments.extend(
+        Assignment("parameter", key, value)
+        for key, value in merged_params.items()
+    )
+    return assignments
+
+
+def _add_merged_scenarios(
+    collector: _ScenarioCollector, parts: tuple[Scenario, ...]
+) -> None:
+    assignments = _merged_assignments(parts)
+    if assignments is not None:
+        collector.add(assignments)
+
+
+def _add_pairwise_combinations(
+    collector: _ScenarioCollector, base: list[Scenario]
+) -> bool:
+    for first_index, first in enumerate(base[:64]):
+        for second in base[first_index + 1 : 64]:
+            _add_merged_scenarios(collector, (first, second))
+            if collector.full:
+                return True
+    return False
+
+
+def _add_triple_combinations(
+    collector: _ScenarioCollector, base: list[Scenario]
+) -> bool:
+    for first_index, first in enumerate(base[:24]):
+        seconds = base[first_index + 1 : 24]
+        for second_index, second in enumerate(seconds, start=first_index + 1):
+            for third in base[second_index + 1 : 24]:
+                _add_merged_scenarios(collector, (first, second, third))
+                if collector.full:
+                    return True
+    return False
+
+
+def _scenario_targets(scenario: Scenario) -> set[tuple[str, str]]:
+    meta_values, parameter_values = scenario
+    targets = {("meta", key) for key in meta_values}
+    targets.update(("parameter", key) for key in parameter_values)
+    return targets
+
+
+def _representative_scenarios(base: list[Scenario]) -> list[Scenario]:
+    representatives: list[Scenario] = []
+    used_targets: set[tuple[str, str]] = set()
+    for scenario in base:
+        targets = _scenario_targets(scenario)
+        if not targets:
+            continue
+        if targets & used_targets:
+            continue
+        representatives.append(scenario)
+        used_targets.update(targets)
+    return representatives
+
+
 def literal_branch_scenarios(
     function: Callable[..., object],
     domain_fields: Iterable[str],
@@ -793,141 +1029,23 @@ def literal_branch_scenarios(
     limit: int = 512,
 ) -> list[Scenario]:
     """Return deterministic scenarios that make source-level branches true/false."""
-
-    target = getattr(function, "__func__", function)
-    try:
-        tree = ast.parse(textwrap.dedent(inspect.getsource(target)))
-        signature = inspect.signature(function)
-    except OSError, TypeError, SyntaxError, ValueError:
+    source = _source_tree_and_signature(function)
+    if source is None:
         return []
+    tree, signature = source
     parameter_names = set(signature.parameters)
-    meta_names = {
-        name
-        for name in parameter_names
-        if "meta" in name.casefold() or name in {"release", "item"}
-    }
+    meta_names = _meta_parameter_names(parameter_names)
     fields = set(domain_fields)
     aliases = _aliases(tree, meta_names, parameter_names, fields)
-    scenarios: list[Scenario] = []
-    seen: set[str] = set()
-
-    def add(assignments: Iterable[Assignment]) -> None:
-        if len(scenarios) >= limit:
-            return
-        scenario = _as_scenario(assignments)
-        key = repr(scenario)
-        if key not in seen and any(scenario):
-            seen.add(key)
-            scenarios.append(scenario)
-
-    for node in ast.walk(tree):
-        if isinstance(node, ast.If | ast.IfExp | ast.While | ast.Assert):
-            test = node.test
-            for truth in (True, False):
-                for assignments in _condition_options(
-                    test,
-                    truth=truth,
-                    meta_names=meta_names,
-                    parameter_names=parameter_names,
-                    domain_fields=fields,
-                    aliases=aliases,
-                ):
-                    add(assignments)
-        elif isinstance(node, ast.Return) and node.value is not None:
-            for truth in (True, False):
-                for assignments in _condition_options(
-                    node.value,
-                    truth=truth,
-                    meta_names=meta_names,
-                    parameter_names=parameter_names,
-                    domain_fields=fields,
-                    aliases=aliases,
-                ):
-                    add(assignments)
-        elif isinstance(node, ast.Compare | ast.Call):
-            for truth in (True, False):
-                for assignments in _condition_options(
-                    node,
-                    truth=truth,
-                    meta_names=meta_names,
-                    parameter_names=parameter_names,
-                    domain_fields=fields,
-                    aliases=aliases,
-                ):
-                    add(assignments)
-        elif isinstance(node, ast.Match):
-            target_info = _target(
-                node.subject, meta_names, parameter_names, fields, aliases
-            )
-            if target_info is not None:
-                for case in node.cases:
-                    if isinstance(case.pattern, ast.MatchValue):
-                        value = _literal(case.pattern.value)
-                        if value is not None:
-                            add([Assignment(*target_info, value)])
-                    elif isinstance(case.pattern, ast.MatchSingleton):
-                        add([Assignment(*target_info, case.pattern.value)])
-
-    # Pairwise and bounded triple combinations exercise conjunctions split
-    # across nested branches while keeping every contract run deterministic.
-    base = list(scenarios)
-
-    def add_merged(parts: tuple[Scenario, ...]) -> None:
-        merged_meta: dict[str, object] = {}
-        merged_params: dict[str, object] = {}
-        for meta_values, parameter_values in parts:
-            if any(
-                key in merged_meta and merged_meta[key] != value
-                for key, value in meta_values.items()
-            ):
-                return
-            if any(
-                key in merged_params and merged_params[key] != value
-                for key, value in parameter_values.items()
-            ):
-                return
-            merged_meta.update(meta_values)
-            merged_params.update(parameter_values)
-        add(
-            [
-                *(
-                    Assignment("meta", key, value)
-                    for key, value in merged_meta.items()
-                ),
-                *(
-                    Assignment("parameter", key, value)
-                    for key, value in merged_params.items()
-                ),
-            ]
-        )
-
-    for first_index, first in enumerate(base[:64]):
-        for second in base[first_index + 1 : 64]:
-            add_merged((first, second))
-            if len(scenarios) >= limit:
-                return scenarios
-
-    for first_index, first in enumerate(base[:24]):
-        for second_index, second in enumerate(
-            base[first_index + 1 : 24], start=first_index + 1
-        ):
-            for third in base[second_index + 1 : 24]:
-                add_merged((first, second, third))
-                if len(scenarios) >= limit:
-                    return scenarios
-
-    # Finally combine one representative assignment for as many distinct
-    # targets as possible. This reaches common deeply nested happy paths.
-    representatives: list[Scenario] = []
-    used_targets: set[tuple[str, str]] = set()
-    for scenario in base:
-        targets = {
-            *(("meta", key) for key in scenario[0]),
-            *(("parameter", key) for key in scenario[1]),
-        }
-        if targets and not targets & used_targets:
-            representatives.append(scenario)
-            used_targets.update(targets)
-    if representatives:
-        add_merged(tuple(representatives))
-    return scenarios
+    collector = _ScenarioCollector.create(limit)
+    _collect_base_scenarios(
+        collector, tree, meta_names, parameter_names, fields, aliases
+    )
+    base = list(collector.scenarios)
+    if _add_pairwise_combinations(collector, base):
+        return collector.scenarios
+    if _add_triple_combinations(collector, base):
+        return collector.scenarios
+    representatives = _representative_scenarios(base)
+    _add_merged_scenarios(collector, tuple(representatives))
+    return collector.scenarios
