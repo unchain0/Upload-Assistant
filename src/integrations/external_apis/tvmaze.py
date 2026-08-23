@@ -681,6 +681,164 @@ class TvmazeManager:
         await cache.set("tvmaze", "episode-date", cache_key, result)
         return result
 
+    @classmethod
+    def _episode_number_show_link(cls, data: dict[str, Any]) -> dict[str, Any]:
+        return cls._episode_show_link(data)
+
+    @classmethod
+    async def _episode_number_show_data(
+        cls, client: httpx.AsyncClient, data: dict[str, Any]
+    ) -> dict[str, Any]:
+        show_link = cls._episode_number_show_link(data)
+        show_url = show_link.get("href")
+        if not isinstance(show_url, str) or not show_url:
+            return {}
+        show_response = await client.get(show_url, timeout=10.0)
+        if show_response.status_code == 200:
+            payload = show_response.json()
+            return (
+                cast(dict[str, Any], payload)
+                if isinstance(payload, dict)
+                else {}
+            )
+        return {"name": show_link.get("name", "")}
+
+    @classmethod
+    def _optional_image_values(cls, value: Any) -> tuple[Any, Any]:
+        image = cls._mapping_or_empty(value)
+        if not image:
+            return None, None
+        return image.get("original"), image.get("medium")
+
+    @classmethod
+    def _episode_number_series_name(
+        cls, data: dict[str, Any], show_data: dict[str, Any]
+    ) -> Any:
+        show_link = cls._episode_number_show_link(data)
+        return show_data.get("name", show_link.get("name", ""))
+
+    @classmethod
+    def _episode_number_result(
+        cls,
+        data: dict[str, Any],
+        show_data: dict[str, Any],
+        season: int,
+        episode: int,
+    ) -> dict[str, Any]:
+        episode_image, episode_medium = cls._optional_image_values(
+            data.get("image")
+        )
+        series_image, series_medium = cls._optional_image_values(
+            show_data.get("image")
+        )
+        summary = data.get("summary", "")
+        overview = cls._clean_html(summary) if summary else summary
+        return {
+            "episode_name": data.get("name", ""),
+            "overview": overview,
+            "season_number": data.get("season", season),
+            "episode_number": data.get("number", episode),
+            "air_date": data.get("airdate", ""),
+            "runtime": data.get("runtime", 0),
+            "series_name": cls._episode_number_series_name(data, show_data),
+            "series_overview": cls._clean_html(show_data.get("summary", "")),
+            "image": episode_image,
+            "image_medium": episode_medium,
+            "series_image": series_image,
+            "series_image_medium": series_medium,
+        }
+
+    async def _fetch_episode_number_result(
+        self, tvmaze_id: int, season: int, episode: int
+    ) -> dict[str, Any] | None:
+        url = f"https://api.tvmaze.com/shows/{tvmaze_id}/episodebynumber"
+        params = {"season": season, "number": episode}
+        async with httpx.AsyncClient(follow_redirects=True) as client:
+            response = await client.get(url, params=params, timeout=10.0)
+            response.raise_for_status()
+            payload = response.json()
+            if not isinstance(payload, dict) or not payload:
+                logger.info(
+                    f"[yellow]No episode data found for S{season:02d}E{episode:02d}[/yellow]"
+                )
+                return None
+            data = cast(dict[str, Any], payload)
+            show_data = await self._episode_number_show_data(client, data)
+            return self._episode_number_result(
+                data, show_data, season, episode
+            )
+
+    @staticmethod
+    def _tvdb_episode_raw_entries(data: Any) -> list[Any]:
+        if isinstance(data, list):
+            return cast(list[Any], data)
+        if not isinstance(data, dict):
+            return []
+        episodes = cast(dict[str, Any], data).get("episodes", [])
+        return cast(list[Any], episodes) if isinstance(episodes, list) else []
+
+    @classmethod
+    def _tvdb_episode_entries(cls, meta: Meta) -> list[dict[str, Any]]:
+        return [
+            cast(dict[str, Any], item)
+            for item in cls._tvdb_episode_raw_entries(meta.tvdb_episode_data)
+            if isinstance(item, dict)
+        ]
+
+    @classmethod
+    def _tvdb_episode_airdate(cls, meta: Meta) -> str | None:
+        episode_id = meta.tvdb_episode_id
+        for entry in cls._tvdb_episode_entries(meta):
+            if entry.get("id") != episode_id:
+                continue
+            airdate = entry.get("aired")
+            if isinstance(airdate, str):
+                logger.debug(
+                    f"[cyan]Found airdate from TVDB episode data: {airdate}[/cyan]"
+                )
+                return airdate
+        if meta.debug:
+            logger.info(
+                f"[yellow]Could not find airdate for TVDB episode ID {episode_id}[/yellow]"
+            )
+        return None
+
+    @classmethod
+    def _episode_fallback_airdate(cls, meta: Meta) -> str | None:
+        if meta.manual_date:
+            value = (
+                meta.manual_date if isinstance(meta.manual_date, str) else None
+            )
+            logger.debug(f"[cyan]Using manual_date: {value}[/cyan]")
+            return value
+        if meta.tvdb_episode_id and meta.tvdb_episode_data:
+            return cls._tvdb_episode_airdate(meta)
+        return None
+
+    async def _fallback_episode_number_by_date(
+        self, tvmaze_id: int, meta: Meta
+    ) -> dict[str, Any] | None:
+        airdate = self._episode_fallback_airdate(meta)
+        if not airdate:
+            logger.debug(
+                "[yellow]No airdate available for fallback lookup[/yellow]"
+            )
+            return None
+        logger.debug(
+            f"[cyan]Attempting TVMaze lookup by date: {airdate}[/cyan]"
+        )
+        return await self.get_tvmaze_episode_data_by_date(tvmaze_id, airdate)
+
+    async def _episode_http_error_fallback(
+        self, error: httpx.HTTPStatusError, tvmaze_id: int, meta: Meta | None
+    ) -> dict[str, Any] | None:
+        if error.response.status_code != 404 or meta is None:
+            return None
+        logger.info(
+            "[yellow]Episode not found using season/episode, trying date-based lookup...[/yellow]"
+        )
+        return await self._fallback_episode_number_by_date(tvmaze_id, meta)
+
     async def get_tvmaze_episode_data(
         self,
         tvmaze_id: int,
@@ -688,152 +846,20 @@ class TvmazeManager:
         episode: int,
         meta: Meta | None = None,
     ) -> dict[str, Any] | None:
-        url = f"https://api.tvmaze.com/shows/{tvmaze_id}/episodebynumber"
-        params = {"season": season, "number": episode}
-
         try:
-            async with httpx.AsyncClient(follow_redirects=True) as client:
-                response = await client.get(url, params=params, timeout=10.0)
-                response.raise_for_status()
-                data = response.json()
-
-                if data:
-                    # Get show data for additional information
-                    show_data: dict[str, Any] = {}
-                    if (
-                        "show" in data.get("_links", {})
-                        and "href" in data["_links"]["show"]
-                    ):
-                        show_url = data["_links"]["show"]["href"]
-                        show_name = data["_links"]["show"].get("name", "")
-
-                        show_response = await client.get(
-                            show_url, timeout=10.0
-                        )
-                        show_data = (
-                            show_response.json()
-                            if show_response.status_code == 200
-                            else {"name": show_name}
-                        )
-
-                    # Clean HTML tags from summary
-                    summary = data.get("summary", "")
-                    if summary:
-                        summary = (
-                            summary.replace("<p>", "")
-                            .replace("</p>", "")
-                            .strip()
-                        )
-
-                    # Format the response in a consistent structure
-                    return {
-                        "episode_name": data.get("name", ""),
-                        "overview": summary,
-                        "season_number": data.get("season", season),
-                        "episode_number": data.get("number", episode),
-                        "air_date": data.get("airdate", ""),
-                        "runtime": data.get("runtime", 0),
-                        "series_name": show_data.get(
-                            "name",
-                            data.get("_links", {})
-                            .get("show", {})
-                            .get("name", ""),
-                        ),
-                        "series_overview": show_data.get("summary", "")
-                        .replace("<p>", "")
-                        .replace("</p>", "")
-                        .strip(),
-                        "image": data.get("image", {}).get("original", None)
-                        if data.get("image")
-                        else None,
-                        "image_medium": data.get("image", {}).get(
-                            "medium", None
-                        )
-                        if data.get("image")
-                        else None,
-                        "series_image": show_data.get("image", {}).get(
-                            "original", None
-                        )
-                        if show_data.get("image")
-                        else None,
-                        "series_image_medium": show_data.get("image", {}).get(
-                            "medium", None
-                        )
-                        if show_data.get("image")
-                        else None,
-                    }
-
-                logger.info(
-                    f"[yellow]No episode data found for S{season:02d}E{episode:02d}[/yellow]"
-                )
-                return None
-
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 404 and meta is not None:
-                logger.info(
-                    "[yellow]Episode not found using season/episode, trying date-based lookup...[/yellow]"
-                )
-
-                # Try to get airdate from meta data
-                airdate = None
-
-                # First priority: manual_date
-                if meta and meta.manual_date:
-                    manual_date = meta.manual_date
-                    if isinstance(manual_date, str):
-                        airdate = manual_date
-                    logger.debug(f"[cyan]Using manual_date: {airdate}[/cyan]")
-
-                # Second priority: find airdate from tvdb_episode_data using tvdb_episode_id
-                elif meta and meta.tvdb_episode_id and meta.tvdb_episode_data:
-                    tvdb_episode_id = meta.tvdb_episode_id
-                    tvdb_data = meta.tvdb_episode_data
-
-                    episodes: list[dict[str, Any]] = []
-                    if isinstance(tvdb_data, dict):
-                        tvdb_data_dict = tvdb_data
-                        tvdb_episodes_raw = tvdb_data_dict.get("episodes", [])
-                        if isinstance(tvdb_episodes_raw, list):
-                            episodes = list(
-                                cast(list[dict[str, Any]], tvdb_episodes_raw)
-                            )
-                    elif isinstance(tvdb_data, list):
-                        episodes = list(cast(list[dict[str, Any]], tvdb_data))
-
-                    for ep in episodes:
-                        if ep.get("id") == tvdb_episode_id:
-                            ep_airdate = ep.get("aired")
-                            if isinstance(ep_airdate, str):
-                                airdate = ep_airdate
-                                logger.debug(
-                                    f"[cyan]Found airdate from TVDB episode data: {airdate}[/cyan]"
-                                )
-                                break
-
-                    if not airdate and meta.debug:
-                        logger.info(
-                            f"[yellow]Could not find airdate for TVDB episode ID {tvdb_episode_id}[/yellow]"
-                        )
-
-                # Try date-based lookup if we have an airdate
-                if isinstance(airdate, str) and airdate:
-                    logger.debug(
-                        f"[cyan]Attempting TVMaze lookup by date: {airdate}[/cyan]"
-                    )
-                    return await self.get_tvmaze_episode_data_by_date(
-                        tvmaze_id, airdate
-                    )
-                logger.debug(
-                    "[yellow]No airdate available for fallback lookup[/yellow]"
-                )
-                return None
+            return await self._fetch_episode_number_result(
+                tvmaze_id, season, episode
+            )
+        except httpx.HTTPStatusError as error:
+            return await self._episode_http_error_fallback(
+                error, tvmaze_id, meta
+            )
+        except httpx.RequestError as error:
+            logger.info(f"[red]TVMaze Request error occurred: {error}[/red]")
             return None
-        except httpx.RequestError as e:
-            logger.info(f"[red]TVMaze Request error occurred: {e}[/red]")
-            return None
-        except Exception as e:
+        except Exception as error:
             logger.info(
-                f"[red]TVMaze Error fetching TVMaze episode data: {e}[/red]"
+                f"[red]TVMaze Error fetching TVMaze episode data: {error}[/red]"
             )
             return None
 
