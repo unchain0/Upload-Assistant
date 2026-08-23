@@ -76,6 +76,43 @@ _MAPPING_METHODS = frozenset(
 )
 
 
+_CONFIG_SECRET_MARKERS = (
+    "api",
+    "token",
+    "passkey",
+    "cookie",
+    "password",
+    "username",
+    "announce",
+)
+_ARGUMENT_MISSING = object()
+_MAPPING_FAILURES = (
+    FileNotFoundError,
+    KeyError,
+    TypeError,
+    ValueError,
+    AttributeError,
+    IndexError,
+)
+
+
+def _is_config_secret(key: str) -> bool:
+    normalized = key.casefold()
+    return any(marker in normalized for marker in _CONFIG_SECRET_MARKERS)
+
+
+def _prepare_tracker_config(tracker_config: dict[str, Any]) -> None:
+    for key in tuple(tracker_config):
+        if _is_config_secret(key):
+            tracker_config[key] = "test-value"
+    tracker_config.setdefault("api_key", "test-key")
+    tracker_config.setdefault(
+        "announce_url", "https://tracker.invalid/announce"
+    )
+    tracker_config.setdefault("categorie", "podcast")
+    tracker_config.setdefault("type", "audio")
+
+
 def _configured_catalog() -> dict[str, Any]:
     config = copy.deepcopy(example_config)
     default = config.setdefault("DEFAULT", {})
@@ -88,29 +125,8 @@ def _configured_catalog() -> dict[str, Any]:
         }
     )
     for tracker_config in config.get("TRACKERS", {}).values():
-        if not isinstance(tracker_config, dict):
-            continue
-        for key in tuple(tracker_config):
-            normalized = key.casefold()
-            if any(
-                marker in normalized
-                for marker in (
-                    "api",
-                    "token",
-                    "passkey",
-                    "cookie",
-                    "password",
-                    "username",
-                    "announce",
-                )
-            ):
-                tracker_config[key] = "test-value"
-        tracker_config.setdefault("api_key", "test-key")
-        tracker_config.setdefault(
-            "announce_url", "https://tracker.invalid/announce"
-        )
-        tracker_config.setdefault("categorie", "podcast")
-        tracker_config.setdefault("type", "audio")
+        if isinstance(tracker_config, dict):
+            _prepare_tracker_config(tracker_config)
     return config
 
 
@@ -261,59 +277,238 @@ def _release(
     )
 
 
-def _argument(parameter: inspect.Parameter, meta: Meta) -> object:
-    name = parameter.name.casefold()
-    if name in {"meta", "metadata"}:
-        return meta
-    if "category" in name or name in {"cat", "cat_id"}:
+def _exact_argument(name: str, meta: Meta) -> object:
+    values: dict[str, object] = {
+        "meta": meta,
+        "metadata": meta,
+        "cat": meta.category,
+        "cat_id": meta.category,
+        "res": meta.resolution,
+        "res_id": meta.resolution,
+        "type": meta.type,
+        "release_type": meta.type,
+        "type_id": meta.type,
+    }
+    return values.get(name, _ARGUMENT_MISSING)
+
+
+def _identity_argument(name: str, meta: Meta) -> object:
+    if "category" in name:
         return meta.category
-    if "resolution" in name or name in {"res", "res_id"}:
+    if "resolution" in name:
         return meta.resolution
-    if name in {"type", "release_type", "type_id"}:
-        return meta.type
     if "source" in name:
         return meta.source
     if "codec" in name:
         return meta.video_codec
-    if "audio" in name:
-        return meta.audio
-    if "channel" in name:
-        return meta.channels
-    if "title" in name or "name" in name:
-        return meta.name
-    if "path" in name or "file" in name:
-        return meta.path
+    return _ARGUMENT_MISSING
+
+
+def _contains_any(name: str, markers: tuple[str, ...]) -> bool:
+    return any(marker in name for marker in markers)
+
+
+def _media_argument(name: str, meta: Meta) -> object:
+    aliases: tuple[tuple[tuple[str, ...], object], ...] = (
+        (("audio",), meta.audio),
+        (("channel",), meta.channels),
+        (("title", "name"), meta.name),
+        (("path", "file"), meta.path),
+    )
+    for markers, value in aliases:
+        if _contains_any(name, markers):
+            return value
+    return _ARGUMENT_MISSING
+
+
+def _episode_argument(name: str, meta: Meta) -> object:
     if "season" in name:
         return meta.season_int
     if "episode" in name:
         return meta.episode_int
     if "year" in name:
         return meta.year
-    if name.endswith("id") or name.endswith("_id"):
+    if name.endswith("id"):
         return 1
+    return _ARGUMENT_MISSING
+
+
+def _movie_info(meta: Meta) -> dict[str, object]:
+    return {
+        "type": "movie",
+        "runtime": "120",
+        "genres": ["Action"],
+        "title": meta.title,
+        "year": meta.year,
+    }
+
+
+def _structured_name_argument(name: str, meta: Meta) -> object:
     if name in {"imdb_info", "movie_info"}:
-        return {
-            "type": "movie",
-            "runtime": "120",
-            "genres": ["Action"],
-            "title": meta.title,
-            "year": meta.year,
-        }
-    if (
-        "data" in name
-        or "mapping" in name
-        or "config" in name
-        or "info" in name
-    ):
+        return _movie_info(meta)
+    if _contains_any(name, ("data", "mapping", "config", "info")):
         return {}
-    if "list" in name or "items" in name or "tags" in name:
+    if _contains_any(name, ("list", "items", "tags")):
         return []
-    if (
-        parameter.annotation is bool
-        or "bool" in str(parameter.annotation).casefold()
-    ):
+    return _ARGUMENT_MISSING
+
+
+def _annotation_argument(annotation: object) -> object:
+    if annotation is bool:
         return False
+    if "bool" in str(annotation).casefold():
+        return False
+    return _ARGUMENT_MISSING
+
+
+def _structured_argument(name: str, annotation: object, meta: Meta) -> object:
+    named = _structured_name_argument(name, meta)
+    if named is not _ARGUMENT_MISSING:
+        return named
+    return _annotation_argument(annotation)
+
+
+def _argument(parameter: inspect.Parameter, meta: Meta) -> object:
+    name = parameter.name.casefold()
+    exact = _exact_argument(name, meta)
+    if exact is not _ARGUMENT_MISSING:
+        return exact
+    for resolver in (_identity_argument, _media_argument, _episode_argument):
+        value = resolver(name, meta)
+        if value is not _ARGUMENT_MISSING:
+            return value
+    structured = _structured_argument(name, parameter.annotation, meta)
+    if structured is not _ARGUMENT_MISSING:
+        return structured
     return ""
+
+
+_RELEASE_VARIANTS = (
+    ("MOVIE", "DISC", "2160p"),
+    ("MOVIE", "REMUX", "1080p"),
+    ("MOVIE", "ENCODE", "720p"),
+    ("TV", "WEBDL", "1080p"),
+    ("TV", "WEBRIP", "2160p"),
+    ("MUSIC", "WEB", "OTHER"),
+    ("BOOK", "WEB", "OTHER"),
+    ("GAME", "WEB", "OTHER"),
+    ("XXX", "WEBDL", "1080p"),
+)
+
+
+def _contract_releases(tmp_path: Path) -> list[Meta]:
+    return [
+        _release(
+            tmp_path / f"case-{index}",
+            category=category,
+            release_type=release_type,
+            resolution=resolution,
+        )
+        for index, (category, release_type, resolution) in enumerate(
+            _RELEASE_VARIANTS
+        )
+    ]
+
+
+def _supported_categories(tracker: object) -> set[str]:
+    values = getattr(tracker, "supported_categories", ())
+    if not values:
+        return set()
+    return {str(value).upper() for value in values}
+
+
+def _contract_method(tracker: object, method_name: str) -> Any | None:
+    method = getattr(tracker, method_name, None)
+    if method is None:
+        return None
+    if not callable(method):
+        return None
+    if inspect.iscoroutinefunction(method):
+        return None
+    return method
+
+
+def _required_arguments(method: Any, meta: Meta) -> list[object]:
+    args: list[object] = []
+    for parameter in inspect.signature(method).parameters.values():
+        if parameter.kind in {
+            inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.VAR_KEYWORD,
+        }:
+            continue
+        if parameter.default is not inspect.Parameter.empty:
+            continue
+        args.append(_argument(parameter, meta))
+    return args
+
+
+def _unsupported_release(supported: set[str], meta: Meta) -> bool:
+    return bool(supported) and meta.category not in supported
+
+
+async def _mapping_failure(method: Any, meta: Meta) -> str | None:
+    try:
+        result = method(*_required_arguments(method, meta))
+        if inspect.isawaitable(result):
+            await result
+    except _MAPPING_FAILURES as error:
+        return f"{meta.category}/{meta.type}: {type(error).__name__}: {error}"
+    return None
+
+
+async def _exercise_mapping_method(
+    tracker_name: str,
+    tracker: object,
+    method_name: str,
+    releases: list[Meta],
+    attempted: set[tuple[str, str]],
+    successful: set[tuple[str, str]],
+    failures: dict[tuple[str, str], list[str]],
+) -> None:
+    method = _contract_method(tracker, method_name)
+    if method is None:
+        return
+    key = (tracker_name, method_name)
+    attempted.add(key)
+    supported = _supported_categories(tracker)
+    for meta in releases:
+        if _unsupported_release(supported, meta):
+            continue
+        failure = await _mapping_failure(method, meta)
+        if failure is not None:
+            failures.setdefault(key, []).append(failure)
+            continue
+        successful.add(key)
+
+
+async def _exercise_tracker_contracts(
+    tracker_name: str,
+    tracker: object,
+    releases: list[Meta],
+    attempted: set[tuple[str, str]],
+    successful: set[tuple[str, str]],
+    failures: dict[tuple[str, str], list[str]],
+) -> None:
+    for method_name in _MAPPING_METHODS:
+        await _exercise_mapping_method(
+            tracker_name,
+            tracker,
+            method_name,
+            releases,
+            attempted,
+            successful,
+            failures,
+        )
+
+
+def _unresolved_message(
+    unresolved: list[tuple[str, str]],
+    failures: dict[tuple[str, str], list[str]],
+) -> str:
+    return "Unresolved deterministic mapping contracts:\n" + "\n".join(
+        f"{tracker}.{method}: {'; '.join(failures.get((tracker, method), [])[:3])}"
+        for tracker, method in unresolved[:50]
+    )
 
 
 @pytest.mark.asyncio
@@ -321,89 +516,26 @@ async def test_registered_trackers_implement_deterministic_mapping_contracts(
     tmp_path: Path,
 ) -> None:
     config = _configured_catalog()
-    variants = [
-        ("MOVIE", "DISC", "2160p"),
-        ("MOVIE", "REMUX", "1080p"),
-        ("MOVIE", "ENCODE", "720p"),
-        ("TV", "WEBDL", "1080p"),
-        ("TV", "WEBRIP", "2160p"),
-        ("MUSIC", "WEB", "OTHER"),
-        ("BOOK", "WEB", "OTHER"),
-        ("GAME", "WEB", "OTHER"),
-        ("XXX", "WEBDL", "1080p"),
-    ]
-    releases = [
-        _release(
-            tmp_path / f"case-{index}",
-            category=category,
-            release_type=release_type,
-            resolution=resolution,
-        )
-        for index, (category, release_type, resolution) in enumerate(variants)
-    ]
+    releases = _contract_releases(tmp_path)
     attempted: set[tuple[str, str]] = set()
     successful: set[tuple[str, str]] = set()
     failures: dict[tuple[str, str], list[str]] = {}
 
     for tracker_name, tracker_class in sorted(tracker_class_map.items()):
-        tracker = tracker_class(config)
-        supported = {
-            str(value).upper()
-            for value in getattr(tracker, "supported_categories", ()) or ()
-        }
-        for method_name in _MAPPING_METHODS:
-            method = getattr(tracker, method_name, None)
-            if (
-                method is None
-                or not callable(method)
-                or inspect.iscoroutinefunction(method)
-            ):
-                continue
-            key = (tracker_name, method_name)
-            attempted.add(key)
-            for meta in releases:
-                if supported and meta.category not in supported:
-                    continue
-                signature = inspect.signature(method)
-                args: list[object] = []
-                for parameter in signature.parameters.values():
-                    if parameter.kind in {
-                        inspect.Parameter.VAR_POSITIONAL,
-                        inspect.Parameter.VAR_KEYWORD,
-                    }:
-                        continue
-                    if parameter.default is not inspect.Parameter.empty:
-                        continue
-                    args.append(_argument(parameter, meta))
-                try:
-                    result = method(*args)
-                    if inspect.isawaitable(result):
-                        await result
-                except (
-                    FileNotFoundError,
-                    KeyError,
-                    TypeError,
-                    ValueError,
-                    AttributeError,
-                    IndexError,
-                ) as error:
-                    failures.setdefault(key, []).append(
-                        f"{meta.category}/{meta.type}: {type(error).__name__}: {error}"
-                    )
-                    continue
-                successful.add(key)
+        await _exercise_tracker_contracts(
+            tracker_name,
+            tracker_class(config),
+            releases,
+            attempted,
+            successful,
+            failures,
+        )
 
     unresolved = sorted(
         key for key in attempted - successful if key[0] in tracker_class_map
     )
     assert len(attempted) >= 100
-    assert not unresolved, (
-        "Unresolved deterministic mapping contracts:\n"
-        + "\n".join(
-            f"{tracker}.{method}: {'; '.join(failures.get((tracker, method), [])[:3])}"
-            for tracker, method in unresolved[:50]
-        )
-    )
+    assert not unresolved, _unresolved_message(unresolved, failures)
 
 
 def _mapping_mode_cases(
