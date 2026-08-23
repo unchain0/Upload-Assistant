@@ -9,6 +9,7 @@ import re
 import shutil
 import xml.etree.ElementTree as ET
 import zipfile
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,13 @@ from src.integrations.observability.runtime_support import logger
 
 _MAX_EPUB_MEMBER_SIZE = 2 * 1024 * 1024
 _MAX_EPUB_COMPRESSION_RATIO = 100
+_EPUB_TEXT_FIELDS = {
+    "title": "title",
+    "language": "language",
+    "description": "description",
+    "publisher": "publisher",
+}
+
 _DATE_EVENT_NAMES = {
     "dcterms:available": "Available",
     "dcterms:created": "Created",
@@ -61,185 +69,295 @@ def normalize_series_index(value: str) -> str:
     return str(int(idx)) if idx.is_integer() else str(idx)
 
 
+@dataclass(slots=True)
+class _EpubMetadataState:
+    title: str = ""
+    creators: list[tuple[str, str, str]] = field(default_factory=list)
+    creator_roles: dict[str, str] = field(default_factory=dict)
+    language: str = ""
+    date: str = ""
+    identifiers: list[tuple[str, str]] = field(default_factory=list)
+    description: str = ""
+    publisher: str = ""
+    series: str = ""
+    series_index: str = ""
+
+
+def _rootfile_path_from_container(container_data: bytes) -> str | None:
+    root = ET.fromstring(container_data)
+    for element in root.iter():
+        if not element.tag.endswith("rootfile"):
+            continue
+        path = element.attrib.get("full-path")
+        if path:
+            return path
+    return None
+
+
+def _epub_container_rootfile(archive: zipfile.ZipFile) -> str | None:
+    try:
+        container_data = _safe_zip_member_bytes(
+            archive, "META-INF/container.xml"
+        )
+        if container_data is None:
+            raise ValueError("unsafe or missing EPUB container metadata")
+        return _rootfile_path_from_container(container_data)
+    except Exception as error:
+        logger.debug(
+            f"[yellow]Debug: META-INF/container.xml not found or unreadable: {error}[/yellow]"
+        )
+        return None
+
+
+def _epub_fallback_rootfile(archive: zipfile.ZipFile) -> str | None:
+    for name in archive.namelist():
+        if name.endswith(".opf"):
+            return name
+    return None
+
+
+def _epub_rootfile_path(archive: zipfile.ZipFile) -> str | None:
+    return _epub_container_rootfile(archive) or _epub_fallback_rootfile(
+        archive
+    )
+
+
+def _epub_element_text(element: ET.Element) -> str:
+    return (element.text or "").strip()
+
+
+def _epub_inline_role(element: ET.Element) -> str:
+    for key, value in element.attrib.items():
+        if key.split("}")[-1] == "role":
+            return value.strip().lower()
+    return ""
+
+
+def _record_epub_creator(
+    state: _EpubMetadataState, element: ET.Element
+) -> None:
+    creator = _epub_element_text(element)
+    if not creator:
+        return
+    creator_id = element.attrib.get("id", "").strip()
+    state.creators.append((creator_id, creator, _epub_inline_role(element)))
+
+
+def _record_epub_date(state: _EpubMetadataState, element: ET.Element) -> None:
+    event = str(get_attr_ignore_ns(element, "event") or "").strip().casefold()
+    if event in {"modification", "modified", "dcterms:modified"}:
+        return
+    state.date = _epub_element_text(element)
+
+
+def _record_epub_identifier(
+    state: _EpubMetadataState, element: ET.Element
+) -> None:
+    state.identifiers.append(
+        (element.attrib.get("id", "").strip(), _epub_element_text(element))
+    )
+
+
+def _epub_attribute_text(element: ET.Element, key: str) -> str:
+    value = element.attrib.get(key)
+    return "" if value is None else value
+
+
+def _epub_role_meta_value(element: ET.Element) -> tuple[str, str] | None:
+    property_name = _epub_attribute_text(element, "property").lower()
+    if property_name != "role":
+        return None
+    refined_id = _epub_attribute_text(element, "refines").lstrip("#").strip()
+    if not refined_id:
+        return None
+    role = (
+        element.text
+        if element.text is not None
+        else _epub_attribute_text(element, "content")
+    )
+    return refined_id, role.strip().lower()
+
+
+def _record_epub_role_meta(
+    state: _EpubMetadataState, element: ET.Element
+) -> bool:
+    role_meta = _epub_role_meta_value(element)
+    if role_meta is None:
+        return False
+    refined_id, role = role_meta
+    state.creator_roles[refined_id] = role
+    return True
+
+
+def _record_epub_series_meta(
+    state: _EpubMetadataState, element: ET.Element
+) -> None:
+    meta_name = (element.attrib.get("name") or "").lower()
+    content = (element.attrib.get("content") or "").strip()
+    if meta_name == "calibre:series":
+        state.series = content
+    elif meta_name == "calibre:series_index":
+        state.series_index = content
+
+
+def _record_epub_meta(state: _EpubMetadataState, element: ET.Element) -> None:
+    if _record_epub_role_meta(state, element):
+        return
+    _record_epub_series_meta(state, element)
+
+
+def _record_epub_text_field(
+    state: _EpubMetadataState, tag_local: str, element: ET.Element
+) -> bool:
+    attribute = _EPUB_TEXT_FIELDS.get(tag_local)
+    if attribute is None:
+        return False
+    setattr(state, attribute, _epub_element_text(element))
+    return True
+
+
+def _record_epub_structured_element(
+    state: _EpubMetadataState, tag_local: str, element: ET.Element
+) -> None:
+    if tag_local == "creator":
+        _record_epub_creator(state, element)
+    elif tag_local == "date":
+        _record_epub_date(state, element)
+    elif tag_local == "identifier":
+        _record_epub_identifier(state, element)
+    elif tag_local == "meta":
+        _record_epub_meta(state, element)
+
+
+def _record_epub_element(
+    state: _EpubMetadataState, element: ET.Element
+) -> None:
+    tag_local = element.tag.split("}")[-1]
+    if _record_epub_text_field(state, tag_local, element):
+        return
+    _record_epub_structured_element(state, tag_local, element)
+
+
+def _parse_epub_state(root: ET.Element) -> _EpubMetadataState:
+    state = _EpubMetadataState()
+    for element in root.iter():
+        _record_epub_element(state, element)
+    return state
+
+
+def _epub_author(state: _EpubMetadataState) -> str:
+    for creator_id, creator, inline_role in state.creators:
+        if (
+            inline_role == "aut"
+            or state.creator_roles.get(creator_id) == "aut"
+        ):
+            return creator
+    return state.creators[0][1] if state.creators else ""
+
+
+def _epub_year(date: str) -> str:
+    if not date or date.startswith("0101-01-01"):
+        return ""
+    match = re.search(r"\b\d{4}\b", date)
+    return match.group(0) if match else ""
+
+
+def _unique_epub_identifiers(
+    identifiers: list[tuple[str, str]], unique_id: str
+) -> list[str]:
+    if not unique_id:
+        return []
+    return [
+        value
+        for identifier_id, value in identifiers
+        if identifier_id == unique_id
+    ]
+
+
+def _prefixed_isbn_identifiers(
+    identifiers: list[tuple[str, str]],
+) -> list[str]:
+    return [
+        value
+        for _identifier_id, value in identifiers
+        if value.lower().startswith(("urn:isbn:", "isbn:"))
+    ]
+
+
+def _ordered_epub_identifiers(
+    identifiers: list[tuple[str, str]], unique_id: str
+) -> list[str]:
+    ordered = _unique_epub_identifiers(identifiers, unique_id)
+    ordered.extend(_prefixed_isbn_identifiers(identifiers))
+    ordered.extend(value for _identifier_id, value in identifiers)
+    return ordered
+
+
+def _epub_isbn(state: _EpubMetadataState, unique_id: str) -> str:
+    for identifier in _ordered_epub_identifiers(state.identifiers, unique_id):
+        cleaned = re.sub(r"[^\dXx]", "", identifier).upper()
+        if validate_isbn_checksum(cleaned):
+            return cleaned
+    return ""
+
+
+def _set_book_metadata_value(
+    metadata: dict[str, Any], key: str, value: str
+) -> None:
+    if value:
+        metadata[key] = value
+
+
+def _metadata_from_epub_state(
+    state: _EpubMetadataState, unique_id: str
+) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    _set_book_metadata_value(metadata, "title", state.title)
+    _set_book_metadata_value(metadata, "author", _epub_author(state))
+    _set_book_metadata_value(metadata, "book_language_raw", state.language)
+    _set_book_metadata_value(metadata, "year", _epub_year(state.date))
+    _set_book_metadata_value(metadata, "isbn", _epub_isbn(state, unique_id))
+    _set_book_metadata_value(metadata, "overview", state.description)
+    _set_book_metadata_value(metadata, "publisher", state.publisher)
+    _set_book_metadata_value(metadata, "book_series", state.series)
+    series_index = (
+        normalize_series_index(state.series_index)
+        if state.series_index
+        else ""
+    )
+    _set_book_metadata_value(metadata, "book_series_index", series_index)
+    return metadata
+
+
+def _extract_epub_archive_metadata(archive: zipfile.ZipFile) -> dict[str, Any]:
+    if len(archive.infolist()) > 4096:
+        return {}
+    rootfile_path = _epub_rootfile_path(archive)
+    if not rootfile_path:
+        logger.debug(
+            "[yellow]Debug: No OPF metadata file found in EPUB ZIP[/yellow]"
+        )
+        return {}
+    opf_data = _safe_zip_member_bytes(archive, rootfile_path)
+    if opf_data is None:
+        return {}
+    root = ET.fromstring(opf_data)
+    unique_id = get_attr_ignore_ns(root, "unique-identifier") or ""
+    return _metadata_from_epub_state(_parse_epub_state(root), unique_id)
+
+
 def extract_epub_metadata(epub_path: str) -> dict[str, Any]:
     """Extract metadata from an EPUB zip container's OPF file."""
-    metadata: dict[str, Any] = {}
     if not Path(epub_path).is_file() or not zipfile.is_zipfile(epub_path):
-        return metadata
-
+        return {}
     try:
-        with zipfile.ZipFile(epub_path, "r") as z:
-            if len(z.infolist()) > 4096:
-                return metadata
-            # 1. Read META-INF/container.xml to find the .opf file path
-            rootfile_path: str | None = None
-            try:
-                container_data = _safe_zip_member_bytes(
-                    z, "META-INF/container.xml"
-                )
-                if container_data is None:
-                    raise ValueError(
-                        "unsafe or missing EPUB container metadata"
-                    )
-                root = ET.fromstring(container_data)
-                for elem in root.iter():
-                    if elem.tag.endswith("rootfile"):
-                        rootfile_path = elem.attrib.get("full-path")
-                        if rootfile_path:
-                            break
-            except Exception as e:
-                logger.debug(
-                    f"[yellow]Debug: META-INF/container.xml not found or unreadable: {e}[/yellow]"
-                )
-
-            # Fallback: search for any .opf file in the archive
-            if not rootfile_path:
-                for name in z.namelist():
-                    if name.endswith(".opf"):
-                        rootfile_path = name
-                        break
-
-            if not rootfile_path:
-                logger.debug(
-                    "[yellow]Debug: No OPF metadata file found in EPUB ZIP[/yellow]"
-                )
-                return metadata
-
-            # 2. Read and parse the .opf file
-            opf_data = _safe_zip_member_bytes(z, rootfile_path)
-            if opf_data is None:
-                return metadata
-            root = ET.fromstring(opf_data)
-            unique_id = get_attr_ignore_ns(root, "unique-identifier") or ""
-
-            title = ""
-            creators: list[tuple[str, str, str]] = []
-            creator_roles: dict[str, str] = {}
-            language = ""
-            date = ""
-            identifiers: list[tuple[str, str]] = []
-            description = ""
-            publisher = ""
-            series = ""
-            series_index = ""
-
-            for elem in root.iter():
-                tag_local = elem.tag.split("}")[-1]
-                if tag_local == "title":
-                    title = (elem.text or "").strip()
-                elif tag_local == "creator":
-                    creator = (elem.text or "").strip()
-                    creator_id = elem.attrib.get("id", "").strip()
-                    inline_role = next(
-                        (
-                            value.strip().lower()
-                            for key, value in elem.attrib.items()
-                            if key.split("}")[-1] == "role"
-                        ),
-                        "",
-                    )
-                    if creator:
-                        creators.append((creator_id, creator, inline_role))
-                elif tag_local == "language":
-                    language = (elem.text or "").strip()
-                elif tag_local == "date":
-                    event = (
-                        str(get_attr_ignore_ns(elem, "event") or "")
-                        .strip()
-                        .casefold()
-                    )
-                    if event not in {
-                        "modification",
-                        "modified",
-                        "dcterms:modified",
-                    }:
-                        date = (elem.text or "").strip()
-                elif tag_local == "identifier":
-                    val = (elem.text or "").strip()
-                    identifiers.append(
-                        (elem.attrib.get("id", "").strip(), val)
-                    )
-                elif tag_local == "description":
-                    description = (elem.text or "").strip()
-                elif tag_local == "publisher":
-                    publisher = (elem.text or "").strip()
-                elif tag_local == "meta":
-                    meta_name = (elem.attrib.get("name") or "").lower()
-                    property_name = (elem.attrib.get("property") or "").lower()
-                    refined_id = (
-                        (elem.attrib.get("refines") or "").lstrip("#").strip()
-                    )
-                    if property_name == "role" and refined_id:
-                        creator_roles[refined_id] = (
-                            (elem.text or elem.attrib.get("content") or "")
-                            .strip()
-                            .lower()
-                        )
-                    elif meta_name == "calibre:series":
-                        series = (elem.attrib.get("content") or "").strip()
-                    elif meta_name == "calibre:series_index":
-                        series_index = (
-                            elem.attrib.get("content") or ""
-                        ).strip()
-
-            if title:
-                metadata["title"] = title
-            author = next(
-                (
-                    creator
-                    for creator_id, creator, inline_role in creators
-                    if inline_role == "aut"
-                    or creator_roles.get(creator_id) == "aut"
-                ),
-                creators[0][1] if creators else "",
-            )
-            if author:
-                metadata["author"] = author
-            if language:
-                metadata["book_language_raw"] = language
-            if date and not date.startswith(
-                "0101-01-01"
-            ):  # ignore placeholder date
-                match = re.search(r"\b\d{4}\b", date)
-                if match:
-                    metadata["year"] = match.group(0)
-            ordered_identifiers: list[str] = []
-            if unique_id:
-                ordered_identifiers.extend(
-                    value
-                    for identifier_id, value in identifiers
-                    if identifier_id == unique_id
-                )
-            ordered_identifiers.extend(
-                value
-                for _identifier_id, value in identifiers
-                if value.lower().startswith(("urn:isbn:", "isbn:"))
-            )
-            ordered_identifiers.extend(
-                value for _identifier_id, value in identifiers
-            )
-            for identifier_value in ordered_identifiers:
-                cleaned_id = re.sub(r"[^\dXx]", "", identifier_value).upper()
-                if validate_isbn_checksum(cleaned_id):
-                    metadata["isbn"] = cleaned_id
-                    break
-            if description:
-                metadata["overview"] = description
-            if publisher:
-                metadata["publisher"] = publisher
-            if series:
-                metadata["book_series"] = series
-            if series_index:
-                metadata["book_series_index"] = normalize_series_index(
-                    series_index
-                )
-
-    except Exception as e:
+        with zipfile.ZipFile(epub_path, "r") as archive:
+            return _extract_epub_archive_metadata(archive)
+    except Exception as error:
         logger.debug(
-            f"[yellow]Warning: Error parsing EPUB metadata: {e}[/yellow]"
+            f"[yellow]Warning: Error parsing EPUB metadata: {error}[/yellow]"
         )
-
-    return metadata
+        return {}
 
 
 def extract_series_from_filename(filename: str) -> tuple[str, str]:
