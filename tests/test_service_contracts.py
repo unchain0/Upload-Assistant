@@ -1227,11 +1227,27 @@ async def _invoke(
     return result
 
 
-def test_service_catalog_accepts_domain_fixtures_and_boundary_doubles(
-    tmp_path: Path, monkeypatch: Any
+async def _service_no_sleep(
+    _delay: float = 0, *_args: object, **_kwargs: object
 ) -> None:
-    config = _config()
-    modules = _modules()
+    return None
+
+
+async def _service_affirmative_prompt(
+    callback: Callable[..., object], *_args: object, **kwargs: object
+) -> object:
+    name = getattr(callback, "__name__", "")
+    if "choice" in name:
+        choices = kwargs.get("choices", ["example"])
+        return next(iter(choices)) if choices else "example"
+    if "string" in name:
+        return "example"
+    return True
+
+
+def _patch_service_boundaries(
+    monkeypatch: Any, config: dict[str, Any], tmp_path: Path
+) -> None:
     monkeypatch.setattr(httpx, "AsyncClient", _AsyncClient)
     monkeypatch.setattr(requests, "Session", _Session)
     monkeypatch.setattr(requests, "get", _Session().get)
@@ -1242,8 +1258,6 @@ def test_service_catalog_accepts_domain_fixtures_and_boundary_doubles(
     monkeypatch.setattr(
         subprocess, "check_output", lambda *_args, **_kwargs: b"ok"
     )
-    # Return warning-free awaitable doubles even if a tested validation branch
-    # abandons the provider result before awaiting it.
     monkeypatch.setattr(
         ImdbManager,
         "get_imdb_info_api",
@@ -1254,7 +1268,13 @@ def test_service_catalog_accepts_domain_fixtures_and_boundary_doubles(
         "search_tvmaze",
         lambda *_args, **_kwargs: _AwaitableValue(),
     )
+    _patch_preparation_helpers(monkeypatch, config, tmp_path)
+    monkeypatch.setattr(asyncio, "sleep", _service_no_sleep)
 
+
+def _patch_preparation_helpers(
+    monkeypatch: Any, config: dict[str, Any], tmp_path: Path
+) -> None:
     import src.services.preparation_helpers as preparation_helpers
 
     manager_double = _ManagerPort(config, tmp_path)
@@ -1264,171 +1284,274 @@ def test_service_catalog_accepts_domain_fixtures_and_boundary_doubles(
     monkeypatch.setattr(preparation_helpers, "imdb_manager", manager_double)
     monkeypatch.setattr(preparation_helpers, "tvmaze_manager", manager_double)
 
-    async def no_sleep(
-        _delay: float = 0, *_args: object, **_kwargs: object
-    ) -> None:
+
+def _patch_service_module_prompt(module: ModuleType, monkeypatch: Any) -> None:
+    if hasattr(module, "prompt_in_thread"):
+        monkeypatch.setattr(
+            module, "prompt_in_thread", _service_affirmative_prompt
+        )
+
+
+def _service_module_functions(
+    module: ModuleType,
+) -> list[tuple[str, Callable[..., object]]]:
+    return [
+        (name, function)
+        for name, function in inspect.getmembers(module, inspect.isfunction)
+        if function.__module__ == module.__name__ and _safe_callable(function)
+    ]
+
+
+def _service_module_classes(module: ModuleType) -> list[tuple[str, type[Any]]]:
+    return [
+        (name, class_type)
+        for name, class_type in inspect.getmembers(module, inspect.isclass)
+        if class_type.__module__ == module.__name__
+        and not getattr(class_type, "_is_protocol", False)
+    ]
+
+
+def _service_instance_methods(
+    module: ModuleType, instance: object
+) -> list[tuple[str, Callable[..., object]]]:
+    methods: list[tuple[str, Callable[..., object]]] = []
+    for method_name, method in inspect.getmembers(instance, callable):
+        if getattr(method, "__module__", None) != module.__name__:
+            continue
+        if method_name.startswith("__") or not _safe_callable(method):
+            continue
+        methods.append((method_name, method))
+    return methods
+
+
+def _service_scenario_overrides(
+    overrides: Mapping[str, object],
+) -> dict[str, object]:
+    return {
+        key: value
+        for key, value in overrides.items()
+        if key not in _PROTECTED_SCENARIO_ARGUMENTS
+    }
+
+
+def _service_scenario_meta(
+    tmp_path: Path, updates: Mapping[str, object]
+) -> Meta:
+    meta = _meta(tmp_path, 0)
+    for key, value in updates.items():
+        if key in Meta.__dataclass_fields__:
+            setattr(meta, key, value)
+    return meta
+
+
+async def _record_service_invocation(
+    qualified: str,
+    function: Callable[..., object],
+    meta: Meta,
+    config: dict[str, Any],
+    tmp_path: Path,
+    profile: int,
+    process_terminations: list[str],
+    validation_errors: list[str],
+    overrides: Mapping[str, object] | None = None,
+) -> None:
+    try:
+        await _invoke(function, meta, config, tmp_path, profile, overrides)
+    except (KeyboardInterrupt, SystemExit) as error:
+        process_terminations.append(f"{qualified}:{type(error).__name__}")
+    except Exception as error:
+        validation_errors.append(f"{qualified}:{type(error).__name__}:{error}")
+
+
+async def _exercise_service_profiles(
+    qualified: str,
+    function: Callable[..., object],
+    config: dict[str, Any],
+    tmp_path: Path,
+    process_terminations: list[str],
+    validation_errors: list[str],
+) -> None:
+    for profile in range(6):
+        await _record_service_invocation(
+            qualified,
+            function,
+            _meta(tmp_path, profile),
+            config,
+            tmp_path,
+            profile,
+            process_terminations,
+            validation_errors,
+        )
+
+
+async def _exercise_service_literals(
+    qualified: str,
+    function: Callable[..., object],
+    config: dict[str, Any],
+    tmp_path: Path,
+    process_terminations: list[str],
+    validation_errors: list[str],
+) -> None:
+    for meta_updates, argument_overrides in literal_branch_scenarios(
+        function, Meta.__dataclass_fields__
+    ):
+        await _record_service_invocation(
+            qualified,
+            function,
+            _service_scenario_meta(tmp_path, meta_updates),
+            config,
+            tmp_path,
+            0,
+            process_terminations,
+            validation_errors,
+            _service_scenario_overrides(argument_overrides),
+        )
+
+
+async def _exercise_service_callable(
+    qualified: str,
+    function: Callable[..., object],
+    config: dict[str, Any],
+    tmp_path: Path,
+    attempted: set[str],
+    process_terminations: list[str],
+    validation_errors: list[str],
+) -> None:
+    attempted.add(qualified)
+    await _exercise_service_profiles(
+        qualified,
+        function,
+        config,
+        tmp_path,
+        process_terminations,
+        validation_errors,
+    )
+    await _exercise_service_literals(
+        qualified,
+        function,
+        config,
+        tmp_path,
+        process_terminations,
+        validation_errors,
+    )
+
+
+async def _service_class_instance(
+    module: ModuleType,
+    class_name: str,
+    class_type: type[Any],
+    config: dict[str, Any],
+    tmp_path: Path,
+    validation_errors: list[str],
+) -> object | None:
+    try:
+        return await _invoke(class_type, _meta(tmp_path), config, tmp_path, 0)
+    except Exception as error:
+        validation_errors.append(
+            f"{module.__name__}.{class_name}.__init__:{type(error).__name__}:{error}"
+        )
         return None
 
-    async def affirmative_prompt(
-        callback: Callable[..., object], *_args: object, **kwargs: object
-    ) -> object:
-        name = getattr(callback, "__name__", "")
-        if "choice" in name:
-            choices = kwargs.get("choices", ["example"])
-            return next(iter(choices)) if choices else "example"
-        if "string" in name:
-            return "example"
-        return True
 
-    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+async def _exercise_service_class(
+    module: ModuleType,
+    class_name: str,
+    class_type: type[Any],
+    config: dict[str, Any],
+    tmp_path: Path,
+    attempted: set[str],
+    process_terminations: list[str],
+    validation_errors: list[str],
+) -> None:
+    instance = await _service_class_instance(
+        module, class_name, class_type, config, tmp_path, validation_errors
+    )
+    if instance is None:
+        return
+    for method_name, method in _service_instance_methods(module, instance):
+        await _exercise_service_callable(
+            f"{module.__name__}.{class_name}.{method_name}",
+            method,
+            config,
+            tmp_path,
+            attempted,
+            process_terminations,
+            validation_errors,
+        )
+
+
+async def _exercise_service_module(
+    module: ModuleType,
+    config: dict[str, Any],
+    tmp_path: Path,
+    monkeypatch: Any,
+    attempted: set[str],
+    process_terminations: list[str],
+    validation_errors: list[str],
+) -> None:
+    _patch_service_module_prompt(module, monkeypatch)
+    for name, function in _service_module_functions(module):
+        await _exercise_service_callable(
+            f"{module.__name__}.{name}",
+            function,
+            config,
+            tmp_path,
+            attempted,
+            process_terminations,
+            validation_errors,
+        )
+    for class_name, class_type in _service_module_classes(module):
+        await _exercise_service_class(
+            module,
+            class_name,
+            class_type,
+            config,
+            tmp_path,
+            attempted,
+            process_terminations,
+            validation_errors,
+        )
+
+
+async def _exercise_service_catalog(
+    modules: list[ModuleType],
+    config: dict[str, Any],
+    tmp_path: Path,
+    monkeypatch: Any,
+    attempted: set[str],
+    process_terminations: list[str],
+    validation_errors: list[str],
+) -> None:
+    for module in modules:
+        await _exercise_service_module(
+            module,
+            config,
+            tmp_path,
+            monkeypatch,
+            attempted,
+            process_terminations,
+            validation_errors,
+        )
+
+
+def test_service_catalog_accepts_domain_fixtures_and_boundary_doubles(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    config = _config()
+    _patch_service_boundaries(monkeypatch, config, tmp_path)
     attempted: set[str] = set()
     process_terminations: list[str] = []
     validation_errors: list[str] = []
-
-    async def exercise() -> None:
-        for module in modules:
-            if hasattr(module, "prompt_in_thread"):
-                monkeypatch.setattr(
-                    module, "prompt_in_thread", affirmative_prompt
-                )
-            for name, function in inspect.getmembers(
-                module, inspect.isfunction
-            ):
-                if (
-                    function.__module__ != module.__name__
-                    or not _safe_callable(function)
-                ):
-                    continue
-                attempted.add(f"{module.__name__}.{name}")
-                for profile in range(6):
-                    try:
-                        await _invoke(
-                            function,
-                            _meta(tmp_path, profile),
-                            config,
-                            tmp_path,
-                            profile,
-                        )
-                    except (KeyboardInterrupt, SystemExit) as error:
-                        process_terminations.append(
-                            f"{module.__name__}.{name}:{type(error).__name__}"
-                        )
-                    except Exception as error:
-                        validation_errors.append(
-                            f"{module.__name__}.{name}:{type(error).__name__}:{error}"
-                        )
-                for (
-                    meta_updates,
-                    argument_overrides,
-                ) in literal_branch_scenarios(
-                    function, Meta.__dataclass_fields__
-                ):
-                    argument_overrides = {
-                        key: value
-                        for key, value in argument_overrides.items()
-                        if key not in _PROTECTED_SCENARIO_ARGUMENTS
-                    }
-                    scenario_meta = _meta(tmp_path, 0)
-                    for key, value in meta_updates.items():
-                        if key in Meta.__dataclass_fields__:
-                            setattr(scenario_meta, key, value)
-                    try:
-                        await _invoke(
-                            function,
-                            scenario_meta,
-                            config,
-                            tmp_path,
-                            0,
-                            argument_overrides,
-                        )
-                    except (KeyboardInterrupt, SystemExit) as error:
-                        process_terminations.append(
-                            f"{module.__name__}.{name}:{type(error).__name__}"
-                        )
-                    except Exception as error:
-                        validation_errors.append(
-                            f"{module.__name__}.{name}:{type(error).__name__}:{error}"
-                        )
-
-            for class_name, class_type in inspect.getmembers(
-                module, inspect.isclass
-            ):
-                if class_type.__module__ != module.__name__ or getattr(
-                    class_type, "_is_protocol", False
-                ):
-                    continue
-                try:
-                    instance = await _invoke(
-                        class_type, _meta(tmp_path), config, tmp_path, 0
-                    )
-                except Exception as error:
-                    validation_errors.append(
-                        f"{module.__name__}.{class_name}.__init__:{type(error).__name__}:{error}"
-                    )
-                    continue
-                for method_name, method in inspect.getmembers(
-                    instance, callable
-                ):
-                    if (
-                        getattr(method, "__module__", None) != module.__name__
-                        or method_name.startswith("__")
-                        or not _safe_callable(method)
-                    ):
-                        continue
-                    attempted.add(
-                        f"{module.__name__}.{class_name}.{method_name}"
-                    )
-                    for profile in range(6):
-                        try:
-                            await _invoke(
-                                method,
-                                _meta(tmp_path, profile),
-                                config,
-                                tmp_path,
-                                profile,
-                            )
-                        except (KeyboardInterrupt, SystemExit) as error:
-                            process_terminations.append(
-                                f"{module.__name__}.{class_name}.{method_name}:{type(error).__name__}"
-                            )
-                        except Exception as error:
-                            validation_errors.append(
-                                f"{module.__name__}.{class_name}.{method_name}:{type(error).__name__}:{error}"
-                            )
-                    for (
-                        meta_updates,
-                        argument_overrides,
-                    ) in literal_branch_scenarios(
-                        method, Meta.__dataclass_fields__
-                    ):
-                        argument_overrides = {
-                            key: value
-                            for key, value in argument_overrides.items()
-                            if key not in _PROTECTED_SCENARIO_ARGUMENTS
-                        }
-                        scenario_meta = _meta(tmp_path, 0)
-                        for key, value in meta_updates.items():
-                            if key in Meta.__dataclass_fields__:
-                                setattr(scenario_meta, key, value)
-                        try:
-                            await _invoke(
-                                method,
-                                scenario_meta,
-                                config,
-                                tmp_path,
-                                0,
-                                argument_overrides,
-                            )
-                        except (KeyboardInterrupt, SystemExit) as error:
-                            process_terminations.append(
-                                f"{module.__name__}.{class_name}.{method_name}:{type(error).__name__}"
-                            )
-                        except Exception as error:
-                            validation_errors.append(
-                                f"{module.__name__}.{class_name}.{method_name}:{type(error).__name__}:{error}"
-                            )
-
-    asyncio.run(exercise())
-
+    asyncio.run(
+        _exercise_service_catalog(
+            _modules(),
+            config,
+            tmp_path,
+            monkeypatch,
+            attempted,
+            process_terminations,
+            validation_errors,
+        )
+    )
     assert len(attempted) >= 240
     assert process_terminations == [], process_terminations
