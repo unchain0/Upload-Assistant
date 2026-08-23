@@ -1256,6 +1256,326 @@ def get_img_host(
     )
 
 
+TRACKER_SECRET_KEYS = frozenset(
+    {"api_key", "passkey", "rss_key", "password", "opt_uri"}
+)
+
+
+def _example_tracker_names(example_trackers: ConfigDict) -> list[str]:
+    return [
+        tracker_name
+        for tracker_name, settings in example_trackers.items()
+        if tracker_name != "default_trackers" and isinstance(settings, dict)
+    ]
+
+
+def _print_tracker_catalog(example_tracker_list: list[str]) -> None:
+    if not example_tracker_list:
+        return
+    console.print(
+        f"[i] Available trackers in example config: \n{', '.join(example_tracker_list)}",
+        markup=False,
+    )
+    console.print(
+        "\n[i] (default trackers list) Only add the trackers you want to upload to on a regular basis.",
+        markup=False,
+    )
+    console.print(
+        "[i] You can add other tracker configs later if needed.",
+        markup=False,
+    )
+
+
+def _existing_default_tracker_names(
+    existing_trackers: ConfigDict,
+) -> list[str]:
+    value = existing_trackers.get("default_trackers", "")
+    if not value:
+        return []
+    return _tracker_tokens(str(value))
+
+
+def _uppercase_tracker_names(value: str) -> list[str]:
+    return [tracker.upper() for tracker in _tracker_tokens(value)]
+
+
+def _prompt_default_tracker_names(existing_trackers: ConfigDict) -> list[str]:
+    existing_names = _existing_default_tracker_names(existing_trackers)
+    trackers_input = get_user_input(
+        "\nEnter tracker acronyms separated by commas (e.g. BEYONDHD, PASSTHEPOPCORN, AITHER)",
+        existing_value=", ".join(existing_names),
+    )
+    return _uppercase_tracker_names(trackers_input)
+
+
+def _tracker_update_selection(
+    trackers_list: list[str],
+) -> tuple[bool, list[str]]:
+    update_all = (
+        input(
+            "\n[i] Do you want to update ALL trackers in your default trackers list? (Y/n): "
+        ).lower()
+        != "n"
+    )
+    if update_all:
+        return True, trackers_list.copy()
+    update_specific = input(
+        "\nEnter tracker acronyms to update (comma separated), or leave blank to skip all: "
+    )
+    return False, _uppercase_tracker_names(update_specific)
+
+
+def _should_skip_tracker_update(
+    tracker: str, update_all: bool, update_trackers_list: list[str]
+) -> bool:
+    if update_all:
+        return False
+    return tracker not in update_trackers_list
+
+
+def _copy_skipped_tracker(
+    tracker: str,
+    existing_trackers: ConfigDict,
+    trackers_config: ConfigDict,
+) -> None:
+    console.print(f"\nSkipping configuration for {tracker}", markup=False)
+    if tracker in existing_trackers:
+        trackers_config[tracker] = existing_trackers[tracker]
+
+
+def _copy_existing_dynamic_tracker_maps(
+    tracker_config: ConfigDict, existing_tracker_config: ConfigDict
+) -> None:
+    for key in DYNAMIC_CONFIG_MAP_KEYS:
+        value = existing_tracker_config.get(key)
+        if isinstance(value, dict):
+            tracker_config[key] = deepcopy(value)
+
+
+def _is_hd_torrents_announce(tracker: str, key: str) -> bool:
+    return tracker == "HDTORRENTS" and key == "announce_url"
+
+
+def _is_dynamic_tracker_setting(key: str, default_value: Any) -> bool:
+    return key in DYNAMIC_CONFIG_MAP_KEYS and isinstance(default_value, dict)
+
+
+def _print_tracker_setting_comments(
+    tracker: str, key: str, config_comments: ConfigComments
+) -> None:
+    comment_key = f"TRACKERS.{tracker}.{key}"
+    if comment_key not in config_comments:
+        return
+    console.print(
+        "\n[i] " + "\n[i] ".join(config_comments[comment_key]),
+        markup=False,
+    )
+
+
+def _is_tracker_secret(key: str) -> bool:
+    if key in TRACKER_SECRET_KEYS:
+        return True
+    return key.endswith("rss_key")
+
+
+def _existing_tracker_setting_value(
+    key: str, default_value: Any, existing_tracker_config: ConfigDict
+) -> Any:
+    if isinstance(default_value, bool):
+        return get_user_input(
+            f"Tracker setting '{key}'? (True/False)",
+            default=str(default_value),
+            existing_value=str(
+                existing_tracker_config.get(key, default_value)
+            ),
+        )
+    return get_user_input(
+        f"Tracker setting '{key}'",
+        default=str(default_value) if default_value else "",
+        is_password=_is_tracker_secret(key),
+        is_announce_url=key.endswith("announce_url"),
+        existing_value=existing_tracker_config.get(key),
+    )
+
+
+def _additional_tracker_setting_value(key: str, default_value: Any) -> Any:
+    if isinstance(default_value, bool):
+        return get_user_input(
+            f"Tracker setting '{key}'? (True/False)",
+            default=str(default_value),
+        )
+    return get_user_input(
+        f"Tracker setting '{key}'",
+        default=str(default_value) if default_value else "",
+        is_password=_is_tracker_secret(key),
+        is_announce_url=key.endswith("announce_url"),
+    )
+
+
+def _apply_existing_tracker_setting(
+    tracker: str,
+    key: str,
+    default_value: Any,
+    example_tracker: ConfigDict,
+    existing_tracker_config: ConfigDict,
+    tracker_config: ConfigDict,
+    config_comments: ConfigComments,
+) -> None:
+    if _is_hd_torrents_announce(tracker, key):
+        tracker_config[key] = example_tracker[key]
+        return
+    if _is_dynamic_tracker_setting(key, default_value):
+        tracker_config[key] = deepcopy(
+            existing_tracker_config.get(key, default_value)
+        )
+        return
+    _print_tracker_setting_comments(tracker, key, config_comments)
+    tracker_config[key] = _existing_tracker_setting_value(
+        key, default_value, existing_tracker_config
+    )
+
+
+def _configured_existing_tracker(
+    tracker: str,
+    existing_trackers: ConfigDict,
+    example_trackers: ConfigDict,
+    config_comments: ConfigComments,
+) -> ConfigDict:
+    existing_tracker_config = cast(
+        ConfigDict, existing_trackers.get(tracker, {})
+    )
+    example_tracker = cast(ConfigDict, example_trackers.get(tracker, {}))
+    tracker_config: ConfigDict = {}
+    _copy_existing_dynamic_tracker_maps(
+        tracker_config, existing_tracker_config
+    )
+    if not example_tracker:
+        console.print(
+            f"[!] No example config found for tracker '{tracker}'.",
+            markup=False,
+        )
+        return tracker_config
+    for key, default_value in example_tracker.items():
+        _apply_existing_tracker_setting(
+            tracker,
+            key,
+            default_value,
+            example_tracker,
+            existing_tracker_config,
+            tracker_config,
+            config_comments,
+        )
+    return tracker_config
+
+
+def _configure_default_trackers(
+    trackers_list: list[str],
+    update_all: bool,
+    update_trackers_list: list[str],
+    existing_trackers: ConfigDict,
+    example_trackers: ConfigDict,
+    config_comments: ConfigComments,
+    trackers_config: ConfigDict,
+) -> None:
+    for tracker in trackers_list:
+        if _should_skip_tracker_update(
+            tracker, update_all, update_trackers_list
+        ):
+            _copy_skipped_tracker(tracker, existing_trackers, trackers_config)
+            continue
+        console.print(f"\n\nConfiguring **{tracker}**:", markup=False)
+        trackers_config[tracker] = _configured_existing_tracker(
+            tracker, existing_trackers, example_trackers, config_comments
+        )
+
+
+def _remaining_tracker_names(
+    example_tracker_list: list[str], trackers_list: list[str]
+) -> list[str]:
+    selected_names = {tracker.upper() for tracker in trackers_list}
+    return [
+        tracker
+        for tracker in example_tracker_list
+        if tracker.upper() not in selected_names
+    ]
+
+
+def _prompt_additional_tracker_names(
+    remaining_trackers: list[str],
+) -> list[str]:
+    if not remaining_trackers:
+        return []
+    console.print(
+        "\n[i] Other trackers available in the example config that are not in your default list:",
+        markup=False,
+    )
+    console.print(", ".join(remaining_trackers), markup=False)
+    console.print(
+        "\n[i] This just adds the tracker config, not to your list of default trackers.",
+        markup=False,
+    )
+    console.print("\nFor example so you can use with -tk.", markup=False)
+    add_more = get_user_input(
+        "\nEnter any additional tracker acronyms to add (comma separated), or leave blank to skip"
+    )
+    return _uppercase_tracker_names(add_more)
+
+
+def _apply_additional_tracker_setting(
+    tracker: str,
+    key: str,
+    default_value: Any,
+    example_tracker: ConfigDict,
+    tracker_config: ConfigDict,
+    config_comments: ConfigComments,
+) -> None:
+    if _is_hd_torrents_announce(tracker, key):
+        tracker_config[key] = example_tracker[key]
+        return
+    _print_tracker_setting_comments(tracker, key, config_comments)
+    tracker_config[key] = _additional_tracker_setting_value(key, default_value)
+
+
+def _configured_additional_tracker(
+    tracker: str,
+    example_trackers: ConfigDict,
+    config_comments: ConfigComments,
+) -> ConfigDict:
+    example_tracker = cast(ConfigDict, example_trackers.get(tracker, {}))
+    tracker_config: ConfigDict = {}
+    if not example_tracker:
+        console.print(
+            f"[!] No example config found for tracker '{tracker}'.",
+            markup=False,
+        )
+        return tracker_config
+    for key, default_value in example_tracker.items():
+        _apply_additional_tracker_setting(
+            tracker,
+            key,
+            default_value,
+            example_tracker,
+            tracker_config,
+            config_comments,
+        )
+    return tracker_config
+
+
+def _configure_additional_trackers(
+    additional: list[str],
+    example_trackers: ConfigDict,
+    config_comments: ConfigComments,
+    trackers_config: ConfigDict,
+) -> None:
+    for tracker in additional:
+        if tracker in trackers_config:
+            continue
+        console.print(f"\n\nConfiguring **{tracker}**:", markup=False)
+        trackers_config[tracker] = _configured_additional_tracker(
+            tracker, example_trackers, config_comments
+        )
+
+
 def configure_trackers(
     existing_trackers: ConfigDict,
     example_trackers: ConfigDict,
@@ -1266,229 +1586,29 @@ def configure_trackers(
     Returns a dict with the configured trackers.
     """
     console.print("\n====== TRACKERS ======", markup=False)
-
-    # Get list of trackers to configure
-    example_tracker_list = [
-        t
-        for t in example_trackers
-        if t != "default_trackers" and isinstance(example_trackers[t], dict)
-    ]
-    if example_tracker_list:
-        console.print(
-            f"[i] Available trackers in example config: \n{', '.join(example_tracker_list)}",
-            markup=False,
-        )
-        console.print(
-            "\n[i] (default trackers list) Only add the trackers you want to upload to on a regular basis.",
-            markup=False,
-        )
-        console.print(
-            "[i] You can add other tracker configs later if needed.",
-            markup=False,
-        )
-
-    existing_trackers_value = existing_trackers.get("default_trackers", "")
-    existing_tracker_str = (
-        str(existing_trackers_value) if existing_trackers_value else ""
-    )
-    existing_tracker_list = (
-        existing_tracker_str.split(",") if existing_tracker_str else []
-    )
-    existing_tracker_list = [
-        t.strip() for t in existing_tracker_list if t.strip()
-    ]
-    existing_trackers_str = ", ".join(existing_tracker_list)
-
-    trackers_input = get_user_input(
-        "\nEnter tracker acronyms separated by commas (e.g. BEYONDHD, PASSTHEPOPCORN, AITHER)",
-        existing_value=existing_trackers_str,
-    ).upper()
-    trackers_list = [
-        t.strip().upper() for t in trackers_input.split(",") if t.strip()
-    ]
-
-    trackers_config: dict[str, Any] = {
+    example_tracker_list = _example_tracker_names(example_trackers)
+    _print_tracker_catalog(example_tracker_list)
+    trackers_list = _prompt_default_tracker_names(existing_trackers)
+    trackers_config: ConfigDict = {
         "default_trackers": ", ".join(trackers_list)
     }
-
-    # Ask if user wants to update all trackers or specific ones
-    update_all = (
-        input(
-            "\n[i] Do you want to update ALL trackers in your default trackers list? (Y/n): "
-        ).lower()
-        != "n"
+    update_all, update_trackers_list = _tracker_update_selection(trackers_list)
+    _configure_default_trackers(
+        trackers_list,
+        update_all,
+        update_trackers_list,
+        existing_trackers,
+        example_trackers,
+        config_comments,
+        trackers_config,
     )
-
-    if not update_all:
-        # Ask which specific trackers to update
-        update_specific = input(
-            "\nEnter tracker acronyms to update (comma separated), or leave blank to skip all: "
-        ).upper()
-        update_trackers_list = [
-            t.strip() for t in update_specific.split(",") if t.strip()
-        ]
-    else:
-        # Update all trackers in the list
-        update_trackers_list = trackers_list.copy()
-
-    # Only update trackers in the update list
-    for tracker in trackers_list:
-        # Skip if not in update list (unless updating all)
-        if not update_all and tracker not in update_trackers_list:
-            console.print(
-                f"\nSkipping configuration for {tracker}", markup=False
-            )
-            # Copy existing config if available
-            if tracker in existing_trackers:
-                trackers_config[tracker] = existing_trackers[tracker]
-            continue
-
-        console.print(f"\n\nConfiguring **{tracker}**:", markup=False)
-        existing_tracker_config: ConfigDict = cast(
-            ConfigDict, existing_trackers.get(tracker, {})
-        )
-        example_tracker: ConfigDict = cast(
-            ConfigDict, example_trackers.get(tracker, {})
-        )
-        tracker_config: dict[str, Any] = {}
-
-        for key in DYNAMIC_CONFIG_MAP_KEYS:
-            value = existing_tracker_config.get(key)
-            if isinstance(value, dict):
-                tracker_config[key] = deepcopy(value)
-
-        if example_tracker:
-            for key, default_value in example_tracker.items():
-                # Skip keys that should not be prompted
-                if tracker == "HDTORRENTS" and key == "announce_url":
-                    tracker_config[key] = example_tracker[key]
-                    continue
-
-                if key in DYNAMIC_CONFIG_MAP_KEYS and isinstance(
-                    default_value, dict
-                ):
-                    tracker_config[key] = deepcopy(
-                        existing_tracker_config.get(key, default_value)
-                    )
-                    continue
-
-                comment_key = f"TRACKERS.{tracker}.{key}"
-                if comment_key in config_comments:
-                    console.print(
-                        "\n[i] " + "\n[i] ".join(config_comments[comment_key]),
-                        markup=False,
-                    )
-
-                if isinstance(default_value, bool):
-                    default_str = str(default_value)
-                    existing_value = str(
-                        existing_tracker_config.get(key, default_value)
-                    )
-                    value = get_user_input(
-                        f"Tracker setting '{key}'? (True/False)",
-                        default=default_str,
-                        existing_value=existing_value,
-                    )
-                    tracker_config[key] = value
-                else:
-                    is_password = key in [
-                        "api_key",
-                        "passkey",
-                        "rss_key",
-                        "password",
-                        "opt_uri",
-                    ] or key.endswith("rss_key")
-                    is_announce_url = key.endswith("announce_url")
-                    tracker_config[key] = get_user_input(
-                        f"Tracker setting '{key}'",
-                        default=str(default_value) if default_value else "",
-                        is_password=is_password,
-                        is_announce_url=is_announce_url,
-                        existing_value=existing_tracker_config.get(key),
-                    )
-        else:
-            console.print(
-                f"[!] No example config found for tracker '{tracker}'.",
-                markup=False,
-            )
-
-        trackers_config[tracker] = tracker_config
-
-    # Offer to add more trackers from the example config
-    remaining_trackers = [
-        t
-        for t in example_tracker_list
-        if t.upper() not in [x.upper() for x in trackers_list]
-    ]
-    if remaining_trackers:
-        console.print(
-            "\n[i] Other trackers available in the example config that are not in your default list:",
-            markup=False,
-        )
-        console.print(", ".join(remaining_trackers), markup=False)
-        console.print(
-            "\n[i] This just adds the tracker config, not to your list of default trackers.",
-            markup=False,
-        )
-        console.print("\nFor example so you can use with -tk.", markup=False)
-        add_more = get_user_input(
-            "\nEnter any additional tracker acronyms to add (comma separated), or leave blank to skip"
-        )
-        additional = [
-            t.strip().upper() for t in add_more.split(",") if t.strip()
-        ]
-        for tracker in additional:
-            if tracker in trackers_config:
-                continue  # Already configured
-            console.print(f"\n\nConfiguring **{tracker}**:", markup=False)
-            example_tracker = cast(
-                ConfigDict, example_trackers.get(tracker, {})
-            )
-            additional_tracker_config: dict[str, Any] = {}
-            if example_tracker:
-                for key, default_value in example_tracker.items():
-                    if tracker == "HDTORRENTS" and key == "announce_url":
-                        additional_tracker_config[key] = example_tracker[key]
-                        continue
-                    comment_key = f"TRACKERS.{tracker}.{key}"
-                    if comment_key in config_comments:
-                        console.print(
-                            "\n[i] "
-                            + "\n[i] ".join(config_comments[comment_key]),
-                            markup=False,
-                        )
-
-                    if isinstance(default_value, bool):
-                        default_str = str(default_value)
-                        value = get_user_input(
-                            f"Tracker setting '{key}'? (True/False)",
-                            default=default_str,
-                        )
-                        additional_tracker_config[key] = value
-                    else:
-                        is_password = key in [
-                            "api_key",
-                            "passkey",
-                            "rss_key",
-                            "password",
-                            "opt_uri",
-                        ] or key.endswith("rss_key")
-                        is_announce_url = key.endswith("announce_url")
-                        additional_tracker_config[key] = get_user_input(
-                            f"Tracker setting '{key}'",
-                            default=str(default_value)
-                            if default_value
-                            else "",
-                            is_password=is_password,
-                            is_announce_url=is_announce_url,
-                        )
-            else:
-                console.print(
-                    f"[!] No example config found for tracker '{tracker}'.",
-                    markup=False,
-                )
-            trackers_config[tracker] = additional_tracker_config
-
+    remaining_trackers = _remaining_tracker_names(
+        example_tracker_list, trackers_list
+    )
+    additional = _prompt_additional_tracker_names(remaining_trackers)
+    _configure_additional_trackers(
+        additional, example_trackers, config_comments, trackers_config
+    )
     return trackers_config
 
 
