@@ -30,6 +30,26 @@ async def _stop_process(process: asyncio.subprocess.Process) -> None:
         await process.wait()
 
 
+async def _wait_for_process_exit(process: asyncio.subprocess.Process) -> None:
+    for _ in range(100):
+        if process.returncode is not None:
+            return
+        await asyncio.sleep(0.01)
+    pytest.fail("cancelled run_ffmpeg left its owned subprocess running")
+
+
+async def _cleanup_process_test(
+    task: asyncio.Task[object],
+    owned_processes: list[asyncio.subprocess.Process],
+    unrelated: asyncio.subprocess.Process,
+) -> None:
+    if not task.done():
+        task.cancel()
+    for process in owned_processes:
+        await _stop_process(process)
+    await _stop_process(unrelated)
+
+
 @pytest.mark.asyncio
 async def test_run_ffmpeg_writes_report_next_to_output(tmp_path, monkeypatch):
     output = tmp_path / "release" / "screenshots" / "frame.png"
@@ -151,24 +171,12 @@ async def test_cancelling_run_ffmpeg_terminates_only_its_owned_process(
             await task
 
         owned = owned_processes[0]
-        for _ in range(100):
-            if owned.returncode is not None:
-                break
-            await asyncio.sleep(0.01)
-        if owned.returncode is None:
-            pytest.fail(
-                "cancelled run_ffmpeg left its owned subprocess running"
-            )
-
+        await _wait_for_process_exit(owned)
         assert unrelated.returncode is None, (
             "cancelling run_ffmpeg terminated an unrelated sibling process"
         )
     finally:
-        if not task.done():
-            task.cancel()
-        for process in owned_processes:
-            await _stop_process(process)
-        await _stop_process(unrelated)
+        await _cleanup_process_test(task, owned_processes, unrelated)
 
 
 @pytest.mark.asyncio
