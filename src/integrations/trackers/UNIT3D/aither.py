@@ -59,114 +59,208 @@ class Aither(UNIT3D):
 
         return should_continue
 
-    async def get_additional_data(self, meta: Meta):
-        hdr_value = meta.hdr or ""
-        has_hdr10p = "HDR10+" in hdr_value
+    @staticmethod
+    def _hdr_flags(hdr_value: str) -> dict[str, int]:
+        flags: dict[str, int] = {}
+        if "DV" in hdr_value:
+            flags["dv"] = 1
+        if "HDR10+" in hdr_value:
+            flags["hdr10p"] = 1
+            return flags
+        if any(flag in hdr_value for flag in ("HDR", "HLG")):
+            flags["hdr"] = 1
+        return flags
 
+    async def get_additional_data(self, meta: Meta) -> dict[str, Any]:
         data: dict[str, Any] = {
             "mod_queue_opt_in": await self.get_flag(meta, "modq"),
         }
-        if "DV" in hdr_value:
-            data["dv"] = 1
-        if has_hdr10p:
-            data["hdr10p"] = 1
-        elif not has_hdr10p and any(
-            flag in hdr_value for flag in ["HDR", "HLG"]
-        ):
-            data["hdr"] = 1
-
+        data.update(self._hdr_flags(meta.hdr or ""))
         return data
 
-    async def get_name(self, meta: Meta):
-        aither_name: str = meta.name
-        resolution: str = meta.resolution
-        video_codec: str = meta.video_codec
-        video_encode: str = meta.video_encode
-        name_type: str = meta.type or ""
-        source: str = meta.source or ""
-        alt_title = meta.aka if not meta.no_aka else ""
+    @staticmethod
+    def _base_year(meta: Meta) -> str:
+        if meta.category != "TV":
+            return str(meta.year) if meta.year is not None else ""
+        if meta.year is None or meta.search_year == "":
+            return ""
+        return str(meta.year)
 
-        year = str(meta.year) if meta.year is not None else ""
-        if meta.category == "TV":
-            year = (
-                str(meta.year)
-                if (meta.year is not None and meta.search_year != "")
-                else ""
-            )
-        manual_year_value = str(meta.manual_year)
-        if manual_year_value and int(manual_year_value) > 0:
-            year = manual_year_value
-        if meta.no_year:
-            year = ""
+    @staticmethod
+    def _manual_year(meta: Meta) -> str:
+        manual_year = str(meta.manual_year)
+        if manual_year and int(manual_year) > 0:
+            return manual_year
+        return ""
 
+    @classmethod
+    def _resolved_year(cls, meta: Meta) -> str:
+        year = cls._manual_year(meta) or cls._base_year(meta)
+        return "" if meta.no_year else year
+
+    async def _foreign_language(self, meta: Meta) -> str:
         if not meta.language_checked:
             await languages_manager.process_desc_language(
-                meta, tracker=self.tracker
+                meta,
+                tracker=self.tracker,
             )
-        audio_languages: list[str] = (
-            [] if not meta.audio_languages else meta.audio_languages
+        audio_languages = meta.audio_languages or []
+        if not audio_languages:
+            return ""
+        if await languages_manager.has_english_language(audio_languages):
+            return ""
+        return audio_languages[0].upper()
+
+    @staticmethod
+    def _foreign_dvd_remux(
+        name_type: str,
+        source: str,
+    ) -> bool:
+        return bool(
+            name_type == "REMUX" and source in {"PAL DVD", "NTSC DVD", "DVD"}
         )
-        if (
-            audio_languages
-            and not await languages_manager.has_english_language(
-                audio_languages
-            )
-        ):
-            foreign_lang = audio_languages[0].upper()
-            if name_type == "REMUX" and source in (
-                "PAL DVD",
-                "NTSC DVD",
-                "DVD",
-            ):
-                if year:
-                    aither_name = aither_name.replace(
-                        year, f"{year} {foreign_lang}", 1
-                    )
-            elif meta.is_disc != "BDMV":
-                aither_name = aither_name.replace(
-                    meta.resolution, f"{foreign_lang} {meta.resolution}", 1
-                )
 
+    @classmethod
+    def _apply_foreign_language(
+        cls,
+        meta: Meta,
+        name: str,
+        year: str,
+        name_type: str,
+        source: str,
+        foreign_lang: str,
+    ) -> str:
+        if not foreign_lang:
+            return name
+        if cls._foreign_dvd_remux(name_type, source):
+            if year:
+                return name.replace(year, f"{year} {foreign_lang}", 1)
+            return name
+        if meta.is_disc != "BDMV":
+            return name.replace(
+                meta.resolution,
+                f"{foreign_lang} {meta.resolution}",
+                1,
+            )
+        return name
+
+    @staticmethod
+    def _dvdrip_name(meta: Meta, name: str, resolution: str) -> str:
+        value = name.replace(f"{meta.source} ", "", 1)
+        value = value.replace(str(meta.video_encode), "", 1)
+        value = value.replace("DVDRip", f"{resolution} DVDRip", 1)
+        return value.replace(
+            meta.audio,
+            f"{meta.audio}{meta.video_encode}",
+            1,
+        )
+
+    @staticmethod
+    def _joined_name_parts(*parts: object) -> str:
+        return " ".join(str(part) for part in parts if part)
+
+    @classmethod
+    def _dvd_disc_name(
+        cls,
+        meta: Meta,
+        name: str,
+        resolution: str,
+        video_codec: str,
+        source: str,
+    ) -> str:
+        region_and_source = cls._joined_name_parts(meta.region, source)
+        disc_details = cls._joined_name_parts(
+            resolution,
+            meta.region,
+            source,
+        )
+        if region_and_source:
+            name = name.replace(region_and_source, disc_details, 1)
+        return name.replace(
+            meta.audio,
+            f"{video_codec} {meta.audio}",
+            1,
+        )
+
+    @staticmethod
+    def _dvd_remux_name(
+        meta: Meta,
+        name: str,
+        resolution: str,
+        video_codec: str,
+    ) -> str:
+        name = name.replace(
+            meta.source or "",
+            f"{resolution} {meta.source}",
+            1,
+        )
+        return name.replace(
+            meta.audio,
+            f"{video_codec} {meta.audio}",
+            1,
+        )
+
+    @classmethod
+    def _dvd_adjusted_name(
+        cls,
+        meta: Meta,
+        name: str,
+        resolution: str,
+        video_codec: str,
+        name_type: str,
+        source: str,
+    ) -> str:
         if name_type == "DVDRIP":
-            source = "DVDRip"
-            aither_name = aither_name.replace(f"{meta.source} ", "", 1)
-            aither_name = aither_name.replace(f"{meta.video_encode}", "", 1)
-            aither_name = aither_name.replace(
-                f"{source}", f"{resolution} {source}", 1
+            return cls._dvdrip_name(meta, name, resolution)
+        if meta.is_disc == "DVD":
+            return cls._dvd_disc_name(
+                meta,
+                name,
+                resolution,
+                video_codec,
+                source,
             )
-            aither_name = aither_name.replace(
-                (meta.audio), f"{meta.audio}{video_encode}", 1
+        if cls._foreign_dvd_remux(name_type, source):
+            return cls._dvd_remux_name(
+                meta,
+                name,
+                resolution,
+                video_codec,
             )
+        return name
 
-        elif meta.is_disc == "DVD":
-            region_and_source = " ".join(
-                part for part in (meta.region, source) if part
-            )
-            disc_details = " ".join(
-                part for part in (resolution, meta.region, source) if part
-            )
-            if region_and_source:
-                aither_name = aither_name.replace(
-                    region_and_source, disc_details, 1
-                )
-            aither_name = aither_name.replace(
-                (meta.audio), f"{video_codec} {meta.audio}", 1
-            )
-
-        elif name_type == "REMUX" and source in ("PAL DVD", "NTSC DVD", "DVD"):
-            aither_name = aither_name.replace(
-                meta.source or "", f"{resolution} {meta.source}", 1
-            )
-            aither_name = aither_name.replace(
-                (meta.audio), f"{video_codec} {meta.audio}", 1
-            )
-
+    @staticmethod
+    def _final_name(meta: Meta, name: str, year: str) -> str:
         if meta.trump_reason == "exact_match":
-            aither_name = aither_name + " - TRUMP"
-
+            name = f"{name} - TRUMP"
+        alt_title = meta.aka if not meta.no_aka else ""
         if alt_title:
-            aither_name = aither_name.replace(
-                f"{year} {alt_title}", f"{alt_title} {year}", 1
+            name = name.replace(
+                f"{year} {alt_title}",
+                f"{alt_title} {year}",
+                1,
             )
+        return name
 
-        return {"name": aither_name}
+    async def get_name(self, meta: Meta) -> dict[str, str]:
+        year = self._resolved_year(meta)
+        name_type = meta.type or ""
+        source = meta.source or ""
+        foreign_lang = await self._foreign_language(meta)
+        name = self._apply_foreign_language(
+            meta,
+            meta.name,
+            year,
+            name_type,
+            source,
+            foreign_lang,
+        )
+        name = self._dvd_adjusted_name(
+            meta,
+            name,
+            meta.resolution,
+            meta.video_codec,
+            name_type,
+            source,
+        )
+        return {"name": self._final_name(meta, name, year)}
