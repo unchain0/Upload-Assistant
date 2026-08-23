@@ -49,33 +49,16 @@ class TrackerDataManager:
     def get_tracker_config(self, tracker_name: str) -> Mapping[str, Any]:
         return self.trackers_config.get(tracker_name, MappingProxyType({}))
 
-    async def update_metadata_from_explicit_tracker(
-        self,
-        tracker_name: str,
-        tracker_instance: Any,
-        meta: Meta,
-        search_term: str,
-        search_file_folder: str,
-        skip_tracker_descriptions: bool,
-        *,
-        use_cache: bool = True,
-    ) -> tuple[Meta, bool]:
-        """Reuse a cached tracker response only when the user supplied a torrent ID."""
-        tracker_id = (meta.get_tracker_id(tracker_name) or "").strip()
-        if not tracker_id:
-            return (
-                await self.tracker_meta_manager.update_metadata_from_tracker(
-                    tracker_name,
-                    tracker_instance,
-                    meta,
-                    search_term,
-                    search_file_folder,
-                    skip_tracker_descriptions,
-                )
-            )
+    @staticmethod
+    def _explicit_tracker_id(meta: Meta, tracker_name: str) -> str:
+        value = meta.get_tracker_id(tracker_name)
+        return "" if value is None else str(value).strip()
 
-        cache = tracker_metadata_cache_for(meta.base_dir, self.config)
-        cache_key = json.dumps(
+    @staticmethod
+    def _tracker_cache_key(
+        tracker_id: str, meta: Meta, skip_tracker_descriptions: bool
+    ) -> str:
+        return json.dumps(
             {
                 "id": tracker_id,
                 "is_disc": bool(meta.is_disc),
@@ -84,25 +67,84 @@ class TrackerDataManager:
             },
             sort_keys=True,
         )
-        cached = (
-            await cache.get(tracker_name.lower(), "torrent", cache_key)
-            if use_cache
-            else None
-        )
-        if (
-            use_cache
-            and not is_cache_miss(cached)
-            and isinstance(cached, dict)
-        ):
-            cached_metadata = cached.get("metadata")
-            if isinstance(cached_metadata, dict):
-                meta.update(cached_metadata)
-            match = bool(cached.get("match", False))
-            logger.debug(
-                f"[cyan]{tracker_name}: using cached metadata for torrent ID {tracker_id}.[/cyan]"
-            )
-            return meta, match
 
+    @staticmethod
+    def _metadata_patch(
+        before: Mapping[str, Any], after: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        return {
+            key: value
+            for key, value in after.items()
+            if before.get(key) != value
+        }
+
+    @staticmethod
+    def _apply_cached_tracker_result(
+        meta: Meta,
+        cached: Any,
+        tracker_name: str,
+        tracker_id: str,
+    ) -> tuple[Meta, bool] | None:
+        if is_cache_miss(cached) or not isinstance(cached, dict):
+            return None
+        cached_mapping = cast(Mapping[str, Any], cached)
+        metadata = cached_mapping.get("metadata")
+        if isinstance(metadata, dict):
+            meta.update(cast(dict[str, Any], metadata))
+        match = bool(cached_mapping.get("match", False))
+        logger.debug(
+            f"[cyan]{tracker_name}: using cached metadata for torrent ID {tracker_id}.[/cyan]"
+        )
+        return meta, match
+
+    async def _tracker_cache_result(
+        self,
+        meta: Meta,
+        tracker_name: str,
+        tracker_id: str,
+        cache_key: str,
+        *,
+        use_cache: bool,
+    ) -> tuple[Meta, bool] | None:
+        if not use_cache:
+            return None
+        cache = tracker_metadata_cache_for(meta.base_dir, self.config)
+        cached = await cache.get(tracker_name.lower(), "torrent", cache_key)
+        return self._apply_cached_tracker_result(
+            meta, cached, tracker_name, tracker_id
+        )
+
+    async def _store_tracker_cache_result(
+        self,
+        meta: Meta,
+        tracker_name: str,
+        cache_key: str,
+        match: bool,
+        metadata_patch: dict[str, Any],
+        *,
+        use_cache: bool,
+    ) -> None:
+        if not use_cache:
+            return
+        cache = tracker_metadata_cache_for(meta.base_dir, self.config)
+        await cache.set(
+            tracker_name.lower(),
+            "torrent",
+            cache_key,
+            {"match": match, "metadata": metadata_patch},
+            negative=not match,
+        )
+
+    async def _fetch_explicit_tracker_metadata(
+        self,
+        tracker_name: str,
+        tracker_instance: Any,
+        meta: Meta,
+        search_term: str,
+        search_file_folder: str,
+        skip_tracker_descriptions: bool,
+        tracker_id: str,
+    ) -> tuple[Meta, bool, dict[str, Any]]:
         before = meta.to_dict()
         (
             updated_meta,
@@ -116,20 +158,66 @@ class TrackerDataManager:
             skip_tracker_descriptions,
             torrent_id=tracker_id,
         )
-        after = updated_meta.to_dict()
-        metadata_patch = {
-            key: value
-            for key, value in after.items()
-            if before.get(key) != value
-        }
-        if use_cache:
-            await cache.set(
-                tracker_name.lower(),
-                "torrent",
-                cache_key,
-                {"match": match, "metadata": metadata_patch},
-                negative=not match,
+        patch = self._metadata_patch(before, updated_meta.to_dict())
+        return updated_meta, match, patch
+
+    async def update_metadata_from_explicit_tracker(
+        self,
+        tracker_name: str,
+        tracker_instance: Any,
+        meta: Meta,
+        search_term: str,
+        search_file_folder: str,
+        skip_tracker_descriptions: bool,
+        *,
+        use_cache: bool = True,
+    ) -> tuple[Meta, bool]:
+        """Reuse a cached tracker response only when the user supplied a torrent ID."""
+        tracker_id = self._explicit_tracker_id(meta, tracker_name)
+        if not tracker_id:
+            return (
+                await self.tracker_meta_manager.update_metadata_from_tracker(
+                    tracker_name,
+                    tracker_instance,
+                    meta,
+                    search_term,
+                    search_file_folder,
+                    skip_tracker_descriptions,
+                )
             )
+        cache_key = self._tracker_cache_key(
+            tracker_id, meta, skip_tracker_descriptions
+        )
+        cached_result = await self._tracker_cache_result(
+            meta,
+            tracker_name,
+            tracker_id,
+            cache_key,
+            use_cache=use_cache,
+        )
+        if cached_result is not None:
+            return cached_result
+        (
+            updated_meta,
+            match,
+            patch,
+        ) = await self._fetch_explicit_tracker_metadata(
+            tracker_name,
+            tracker_instance,
+            meta,
+            search_term,
+            search_file_folder,
+            skip_tracker_descriptions,
+            tracker_id,
+        )
+        await self._store_tracker_cache_result(
+            updated_meta,
+            tracker_name,
+            cache_key,
+            match,
+            patch,
+            use_cache=use_cache,
+        )
         return updated_meta, match
 
     def _search_enabled(self, tracker_name: str) -> bool:
@@ -140,23 +228,43 @@ class TrackerDataManager:
         return str(use_search).lower() == "true"
 
     @staticmethod
-    def _candidate_score(original: Meta, candidate: Meta) -> int:
+    def _identifier_changed(
+        original: Meta, candidate: Meta, field: str
+    ) -> bool:
+        value = candidate.get(field)
+        if not value:
+            return False
+        return value != original.get(field)
+
+    @classmethod
+    def _identifier_score(cls, original: Meta, candidate: Meta) -> int:
         score = 0
         for field in ("tmdb_id", "imdb_id", "tvdb_id", "mal_id"):
-            if candidate.get(field) and candidate.get(field) != original.get(
-                field
-            ):
+            if cls._identifier_changed(original, candidate, field):
                 score += 20
-        provenance = candidate.description_provenance
-        if provenance:
-            score += int(provenance.get("score", 0)) + 10
-        if (
-            candidate.description
-            and candidate.description != original.description
-        ):
-            score += 10
-        score += min(len(candidate.image_list), 10)
         return score
+
+    @staticmethod
+    def _provenance_score(candidate: Meta) -> int:
+        provenance = candidate.description_provenance
+        if not provenance:
+            return 0
+        return int(provenance.get("score", 0)) + 10
+
+    @staticmethod
+    def _description_score(original: Meta, candidate: Meta) -> int:
+        if not candidate.description:
+            return 0
+        return 10 if candidate.description != original.description else 0
+
+    @classmethod
+    def _candidate_score(cls, original: Meta, candidate: Meta) -> int:
+        return (
+            cls._identifier_score(original, candidate)
+            + cls._provenance_score(candidate)
+            + cls._description_score(original, candidate)
+            + min(len(candidate.image_list), 10)
+        )
 
     async def _collect_explicit_tracker_candidate(
         self,
