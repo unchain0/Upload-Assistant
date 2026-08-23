@@ -1387,6 +1387,150 @@ def configure_trackers(
     return trackers_config
 
 
+def _print_available_clients(title: str, clients: list[str]) -> None:
+    console.print(title, markup=False)
+    for client_name in clients:
+        console.print(f"  - {client_name}", markup=False)
+
+
+def _existing_default_client(
+    default_client_name: str | None, existing_clients: ConfigDict
+) -> str | None:
+    if default_client_name is None:
+        return None
+    if default_client_name not in existing_clients:
+        return None
+    return default_client_name
+
+
+def _prompt_default_client(
+    example_clients: ConfigDict, existing_value: str | None = None
+) -> str:
+    _print_available_clients(
+        "Available clients in example config:", list(example_clients)
+    )
+    return get_user_input(
+        "Enter the name of the torrent client to use",
+        default="qbittorrent",
+        existing_value=existing_value,
+    )
+
+
+def _select_default_client(
+    existing_clients: ConfigDict,
+    example_clients: ConfigDict,
+    default_client_name: str | None,
+) -> str:
+    existing_default = _existing_default_client(
+        default_client_name, existing_clients
+    )
+    if existing_default is not None:
+        keep_existing = (
+            input(
+                f"\nDo you want to keep the existing client '{existing_default}'? (y/n): "
+            ).lower()
+            == "y"
+        )
+        if keep_existing:
+            return existing_default
+        console.print("What client do you want to use instead?", markup=False)
+        return _prompt_default_client(example_clients, existing_default)
+
+    console.print(
+        "No default client found. Let's configure one.", markup=False
+    )
+    console.print("What client do you want to use?", markup=False)
+    return _prompt_default_client(example_clients)
+
+
+def _wants_additional_client() -> bool:
+    return (
+        input(
+            "\n\n[i] Do you want to add configuration for another torrent client? (y/N): "
+        ).lower()
+        == "y"
+    )
+
+
+def _available_additional_clients(
+    example_clients: ConfigDict, config_clients: ConfigDict
+) -> list[str]:
+    return [
+        client for client in example_clients if client not in config_clients
+    ]
+
+
+def _valid_additional_client(
+    additional_client: str,
+    config_clients: ConfigDict,
+    example_clients: ConfigDict,
+    available_clients: list[str],
+) -> bool:
+    if not additional_client:
+        console.print(
+            "No client name provided, skipping additional client configuration.",
+            markup=False,
+        )
+        return False
+    if additional_client in config_clients:
+        console.print(
+            f"Client '{additional_client}' is already configured.",
+            markup=False,
+        )
+        return False
+    if additional_client not in example_clients:
+        console.print(
+            f"Client '{additional_client}' not found in example config. Available clients: {', '.join(available_clients)}",
+            markup=False,
+        )
+        return False
+    return True
+
+
+def _configure_additional_clients(
+    config_clients: ConfigDict,
+    existing_clients: ConfigDict,
+    example_clients: ConfigDict,
+    config_comments: ConfigComments,
+) -> None:
+    while True:
+        if not _wants_additional_client():
+            return
+        available_clients = _available_additional_clients(
+            example_clients, config_clients
+        )
+        if not available_clients:
+            console.print(
+                "All available clients from the example config have been configured.",
+                markup=False,
+            )
+            return
+        _print_available_clients(
+            "\nAvailable clients to configure:", available_clients
+        )
+        additional_client = get_user_input(
+            "Enter the name of the torrent client to configure"
+        )
+        if not _valid_additional_client(
+            additional_client,
+            config_clients,
+            example_clients,
+            available_clients,
+        ):
+            continue
+        console.print(
+            f"\nConfiguring additional client: {additional_client}",
+            markup=False,
+        )
+        configure_single_client(
+            additional_client,
+            existing_clients,
+            example_clients,
+            config_clients,
+            config_comments,
+        )
+
+
 def configure_torrent_clients(
     existing_clients: ConfigDict | None = None,
     example_clients: ConfigDict | None = None,
@@ -1401,118 +1545,26 @@ def configure_torrent_clients(
     existing_clients = existing_clients or {}
     example_clients = example_clients or {}
     config_comments = config_comments or {}
-
-    # Only use default_client_name if provided and in existing_clients
-    if default_client_name and default_client_name in existing_clients:
-        keep_existing_client = (
-            input(
-                f"\nDo you want to keep the existing client '{default_client_name}'? (y/n): "
-            ).lower()
-            == "y"
-        )
-        if not keep_existing_client:
-            console.print(
-                "What client do you want to use instead?", markup=False
-            )
-            console.print("Available clients in example config:", markup=False)
-            for client_name in example_clients:
-                console.print(f"  - {client_name}", markup=False)
-            new_client = get_user_input(
-                "Enter the name of the torrent client to use",
-                default="qbittorrent",
-                existing_value=default_client_name,
-            )
-            default_client_name = new_client
-    else:
-        # No default client specified or not in existing_clients, ask user to select one
-        console.print(
-            "No default client found. Let's configure one.", markup=False
-        )
-        console.print("What client do you want to use?", markup=False)
-        console.print("Available clients in example config:", markup=False)
-        for client_name in example_clients:
-            console.print(f"  - {client_name}", markup=False)
-        default_client_name = get_user_input(
-            "Enter the name of the torrent client to use",
-            default="qbittorrent",
-        )
-
-    # Configure the default client
-    console.print(
-        f"\nConfiguring default client: {default_client_name}", markup=False
+    selected_default = _select_default_client(
+        existing_clients, example_clients, default_client_name
     )
-    config_clients = configure_single_client(
-        default_client_name,
+    console.print(
+        f"\nConfiguring default client: {selected_default}", markup=False
+    )
+    configure_single_client(
+        selected_default,
         existing_clients,
         example_clients,
         config_clients,
         config_comments,
     )
-
-    # After configuring the default client, ask if the user wants to add additional clients
-    while True:
-        add_another = (
-            input(
-                "\n\n[i] Do you want to add configuration for another torrent client? (y/N): "
-            ).lower()
-            == "y"
-        )
-        if not add_another:
-            break
-
-        # Show available clients not yet configured
-        available_clients = [
-            c for c in example_clients if c not in config_clients
-        ]
-        if not available_clients:
-            console.print(
-                "All available clients from the example config have been configured.",
-                markup=False,
-            )
-            break
-
-        console.print("\nAvailable clients to configure:", markup=False)
-        for client_name in available_clients:
-            console.print(f"  - {client_name}", markup=False)
-
-        additional_client = get_user_input(
-            "Enter the name of the torrent client to configure"
-        )
-        if not additional_client:
-            console.print(
-                "No client name provided, skipping additional client configuration.",
-                markup=False,
-            )
-            continue
-
-        if additional_client in config_clients:
-            console.print(
-                f"Client '{additional_client}' is already configured.",
-                markup=False,
-            )
-            continue
-
-        if additional_client not in example_clients:
-            console.print(
-                f"Client '{additional_client}' not found in example config. Available clients: {', '.join(available_clients)}",
-                markup=False,
-            )
-            continue
-
-        # Configure the additional client
-        console.print(
-            f"\nConfiguring additional client: {additional_client}",
-            markup=False,
-        )
-        config_clients = configure_single_client(
-            additional_client,
-            existing_clients,
-            example_clients,
-            config_clients,
-            config_comments,
-        )
-
-    return config_clients, default_client_name
+    _configure_additional_clients(
+        config_clients,
+        existing_clients,
+        example_clients,
+        config_comments,
+    )
+    return config_clients, selected_default
 
 
 def _use_existing_client_without_example(
