@@ -40,40 +40,133 @@ class ZentagBinaryManager:
     }
 
     @classmethod
-    async def ensure_binary(cls, base_dir: str | Path) -> str:
+    def _platform_asset(cls) -> tuple[str, str, str, str]:
         system = platform.system().lower()
         machine = platform.machine().lower()
-        arch = (
-            "arm64"
-            if machine in {"arm64", "aarch64"}
-            else "amd64"
-            if machine in {"x86_64", "amd64"}
-            else ""
-        )
-        os_name = "darwin" if system == "darwin" else system
+        arch = {
+            "arm64": "arm64",
+            "aarch64": "arm64",
+            "x86_64": "amd64",
+            "amd64": "amd64",
+        }.get(machine, "")
+        os_name = system
         if os_name not in {"linux", "darwin", "windows"} or not arch:
             raise RuntimeError(
                 f"Unsupported zentag platform: {system} {machine}"
             )
-
-        version_number = cls.VERSION.lstrip("v")
         extension = "zip" if os_name == "windows" else "tar.gz"
+        version_number = cls.VERSION.lstrip("v")
         asset = f"zentag_{version_number}_{os_name}_{arch}.{extension}"
+        return os_name, arch, extension, asset
+
+    @classmethod
+    def _install_paths(
+        cls, base_dir: str | Path, os_name: str, arch: str
+    ) -> tuple[Path, Path, Path]:
         target_dir = tool_install_dir(base_dir, "zentag", f"{os_name}/{arch}")
         binary = target_dir / (
             "zentag.exe" if os_name == "windows" else "zentag"
         )
         marker = target_dir / cls.VERSION
-        expected_binary = cls.BINARY_CHECKSUMS.get(asset, "")
-        cached_digest = sha256_file(binary) if binary.is_file() else ""
-        if (
-            expected_binary
-            and cached_digest == expected_binary
-            and marker.is_file()
-            and marker.read_text(encoding="utf-8").strip() == cls.VERSION
-        ):
-            return str(binary)
+        return target_dir, binary, marker
 
+    @classmethod
+    def _is_cached_binary(cls, binary: Path, marker: Path, asset: str) -> bool:
+        expected_binary = cls.BINARY_CHECKSUMS.get(asset, "")
+        if not expected_binary:
+            return False
+        if not binary.is_file():
+            return False
+        if sha256_file(binary) != expected_binary:
+            return False
+        if not marker.is_file():
+            return False
+        return marker.read_text(encoding="utf-8").strip() == cls.VERSION
+
+    @classmethod
+    def _verify_archive_checksum(cls, archive_path: Path, asset: str) -> None:
+        expected = cls.CHECKSUMS.get(asset, "")
+        if not expected or sha256_file(archive_path) != expected:
+            raise RuntimeError(
+                f"zentag checksum verification failed for {asset}"
+            )
+
+    @staticmethod
+    def _zip_member(
+        archive: zipfile.ZipFile, binary_name: str
+    ) -> zipfile.ZipInfo | None:
+        for item in archive.infolist():
+            if Path(item.filename).name == binary_name:
+                return item
+        return None
+
+    @classmethod
+    def _zip_payload(
+        cls, archive_path: Path, binary: Path, asset: str
+    ) -> bytes:
+        with zipfile.ZipFile(archive_path) as archive:
+            member = cls._zip_member(archive, binary.name)
+            if member is None:
+                raise RuntimeError(f"zentag binary not found in {asset}")
+            if member.file_size > MAX_ASSET_BYTES:
+                raise RuntimeError(
+                    f"zentag binary exceeds the {MAX_ASSET_BYTES}-byte limit"
+                )
+            return archive.read(member)
+
+    @staticmethod
+    def _tar_member(
+        archive: tarfile.TarFile, binary_name: str
+    ) -> tarfile.TarInfo | None:
+        for item in archive.getmembers():
+            if not item.isfile():
+                continue
+            if Path(item.name).name == binary_name:
+                return item
+        return None
+
+    @classmethod
+    def _tar_payload(
+        cls, archive_path: Path, binary: Path, asset: str
+    ) -> bytes:
+        with tarfile.open(archive_path, mode="r:gz") as archive:
+            member = cls._tar_member(archive, binary.name)
+            if member is None:
+                raise RuntimeError(f"zentag binary not found in {asset}")
+            if member.size > MAX_ASSET_BYTES:
+                raise RuntimeError(
+                    f"zentag binary exceeds the {MAX_ASSET_BYTES}-byte limit"
+                )
+            extracted = archive.extractfile(member)
+            if extracted is None:
+                raise RuntimeError(f"zentag binary not found in {asset}")
+            payload = extracted.read(MAX_ASSET_BYTES + 1)
+            if len(payload) > MAX_ASSET_BYTES:
+                raise RuntimeError(
+                    f"zentag binary exceeds the {MAX_ASSET_BYTES}-byte limit"
+                )
+            return payload
+
+    @classmethod
+    def _archive_payload(
+        cls,
+        extension: str,
+        archive_path: Path,
+        binary: Path,
+        asset: str,
+    ) -> bytes:
+        if extension == "zip":
+            return cls._zip_payload(archive_path, binary, asset)
+        return cls._tar_payload(archive_path, binary, asset)
+
+    @classmethod
+    async def _download_payload(
+        cls,
+        target_dir: Path,
+        binary: Path,
+        extension: str,
+        asset: str,
+    ) -> bytes:
         release_url = f"https://github.com/znth-cx/zentag/releases/download/{cls.VERSION}"
         downloaded_archive = target_dir / f".{asset}.download"
         try:
@@ -83,63 +176,16 @@ class ZentagBinaryManager:
                 await download_bounded_asset(
                     client, f"{release_url}/{asset}", downloaded_archive
                 )
-            expected = cls.CHECKSUMS.get(asset, "")
-            if not expected or sha256_file(downloaded_archive) != expected:
-                raise RuntimeError(
-                    f"zentag checksum verification failed for {asset}"
-                )
-
-            if extension == "zip":
-                with zipfile.ZipFile(downloaded_archive) as archive:
-                    member = next(
-                        (
-                            item
-                            for item in archive.infolist()
-                            if Path(item.filename).name == binary.name
-                        ),
-                        None,
-                    )
-                    if member is None:
-                        raise RuntimeError(
-                            f"zentag binary not found in {asset}"
-                        )
-                    if member.file_size > MAX_ASSET_BYTES:
-                        raise RuntimeError(
-                            f"zentag binary exceeds the {MAX_ASSET_BYTES}-byte limit"
-                        )
-                    payload = archive.read(member)
-            else:
-                with tarfile.open(downloaded_archive, mode="r:gz") as archive:
-                    member = next(
-                        (
-                            item
-                            for item in archive.getmembers()
-                            if item.isfile()
-                            and Path(item.name).name == binary.name
-                        ),
-                        None,
-                    )
-                    if member is not None and member.size > MAX_ASSET_BYTES:
-                        raise RuntimeError(
-                            f"zentag binary exceeds the {MAX_ASSET_BYTES}-byte limit"
-                        )
-                    extracted = (
-                        archive.extractfile(member)
-                        if member is not None
-                        else None
-                    )
-                    if extracted is None:
-                        raise RuntimeError(
-                            f"zentag binary not found in {asset}"
-                        )
-                    payload = extracted.read(MAX_ASSET_BYTES + 1)
-                    if len(payload) > MAX_ASSET_BYTES:
-                        raise RuntimeError(
-                            f"zentag binary exceeds the {MAX_ASSET_BYTES}-byte limit"
-                        )
+            cls._verify_archive_checksum(downloaded_archive, asset)
+            return cls._archive_payload(
+                extension, downloaded_archive, binary, asset
+            )
         finally:
             downloaded_archive.unlink(missing_ok=True)
 
+    @classmethod
+    def _verify_binary_payload(cls, payload: bytes, asset: str) -> None:
+        expected_binary = cls.BINARY_CHECKSUMS.get(asset, "")
         if (
             not expected_binary
             or hashlib.sha256(payload).hexdigest() != expected_binary
@@ -148,22 +194,51 @@ class ZentagBinaryManager:
                 f"zentag binary checksum verification failed for {asset}"
             )
 
+    @staticmethod
+    def _stale_markers(target_dir: Path, marker: Path) -> list[Path]:
+        stale: list[Path] = []
+        for candidate in target_dir.iterdir():
+            if not candidate.is_file():
+                continue
+            if not candidate.name.startswith("v"):
+                continue
+            if candidate == marker:
+                continue
+            stale.append(candidate)
+        return stale
+
+    @classmethod
+    def _stage_payload(
+        cls,
+        target_dir: Path,
+        binary: Path,
+        marker: Path,
+        os_name: str,
+        payload: bytes,
+    ) -> None:
         staged_binary = target_dir / f".{binary.name}.staged"
         staged_marker = target_dir / f".{cls.VERSION}.staged"
         staged_binary.write_bytes(payload)
         if os_name != "windows":
             staged_binary.chmod(staged_binary.stat().st_mode | stat.S_IEXEC)
         staged_marker.write_text(cls.VERSION, encoding="utf-8")
-        stale_markers = [
-            candidate
-            for candidate in target_dir.iterdir()
-            if candidate.is_file()
-            and candidate.name.startswith("v")
-            and candidate != marker
-        ]
         promote_files_with_rollback(
             [(staged_binary, binary), (staged_marker, marker)],
             target_dir / ".zentag-backup",
-            remove_targets=stale_markers,
+            remove_targets=cls._stale_markers(target_dir, marker),
         )
+
+    @classmethod
+    async def ensure_binary(cls, base_dir: str | Path) -> str:
+        os_name, arch, extension, asset = cls._platform_asset()
+        target_dir, binary, marker = cls._install_paths(
+            base_dir, os_name, arch
+        )
+        if cls._is_cached_binary(binary, marker, asset):
+            return str(binary)
+        payload = await cls._download_payload(
+            target_dir, binary, extension, asset
+        )
+        cls._verify_binary_payload(payload, asset)
+        cls._stage_payload(target_dir, binary, marker, os_name, payload)
         return str(binary)
