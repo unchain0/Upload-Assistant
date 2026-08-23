@@ -24,9 +24,7 @@ def test_aither_positive_checks_and_hdr_flag_edges(
         tracker.get_additional_checks(Meta(is_disc="", valid_mi=True))
     )
     monkeypatch.setattr(tracker, "get_flag", AsyncMock(return_value=1))
-    assert asyncio.run(
-        tracker.get_additional_data(Meta(hdr="DV HDR10+"))
-    ) == {
+    assert asyncio.run(tracker.get_additional_data(Meta(hdr="DV HDR10+"))) == {
         "mod_queue_opt_in": 1,
         "dv": 1,
         "hdr10p": 1,
@@ -36,13 +34,27 @@ def test_aither_positive_checks_and_hdr_flag_edges(
 def test_aither_year_helper_edges() -> None:
     tracker = _tracker()
     assert tracker._base_year(Meta(category="MOVIE", year=None)) == ""
-    assert tracker._base_year(Meta(category="TV", year=2025, search_year="")) == ""
-    assert tracker._base_year(Meta(category="TV", year=2025, search_year=2025)) == "2025"
+    assert (
+        tracker._base_year(Meta(category="TV", year=2025, search_year=""))
+        == ""
+    )
+    assert (
+        tracker._base_year(Meta(category="TV", year=2025, search_year=2025))
+        == "2025"
+    )
     assert tracker._manual_year(Meta(manual_year=2024)) == "2024"
-    assert tracker._resolved_year(Meta(category="MOVIE", year=2025, manual_year=2024)) == "2024"
-    assert tracker._resolved_year(
-        Meta(category="MOVIE", year=2025, manual_year=2024, no_year=True)
-    ) == ""
+    assert (
+        tracker._resolved_year(
+            Meta(category="MOVIE", year=2025, manual_year=2024)
+        )
+        == "2024"
+    )
+    assert (
+        tracker._resolved_year(
+            Meta(category="MOVIE", year=2025, manual_year=2024, no_year=True)
+        )
+        == ""
+    )
 
 
 def test_aither_foreign_language_helper_edges(
@@ -112,30 +124,39 @@ def test_aither_dvd_name_helper_edges() -> None:
         video_encode="x264",
         audio="AAC",
     )
-    assert tracker._dvdrip_name(
-        dvdrip,
-        "Movie PAL DVD DVDRip x264 AAC",
-        "576p",
-    ) == "Movie 576p DVDRip  AACx264"
+    assert (
+        tracker._dvdrip_name(
+            dvdrip,
+            "Movie PAL DVD DVDRip x264 AAC",
+            "576p",
+        )
+        == "Movie 576p DVDRip  AACx264"
+    )
     assert tracker._joined_name_parts("576p", "", None, "DVD") == "576p DVD"
 
     disc = Meta(region="R1", audio="AAC")
-    assert tracker._dvd_disc_name(
-        disc,
-        "Movie R1 DVD AAC",
-        "480p",
-        "MPEG-2",
-        "DVD",
-    ) == "Movie 480p R1 DVD MPEG-2 AAC"
+    assert (
+        tracker._dvd_disc_name(
+            disc,
+            "Movie R1 DVD AAC",
+            "480p",
+            "MPEG-2",
+            "DVD",
+        )
+        == "Movie 480p R1 DVD MPEG-2 AAC"
+    )
 
     no_region = Meta(region="", audio="AAC")
-    assert tracker._dvd_disc_name(
-        no_region,
-        "Movie AAC",
-        "480p",
-        "MPEG-2",
-        "",
-    ) == "Movie MPEG-2 AAC"
+    assert (
+        tracker._dvd_disc_name(
+            no_region,
+            "Movie AAC",
+            "480p",
+            "MPEG-2",
+            "",
+        )
+        == "Movie MPEG-2 AAC"
+    )
 
 
 def test_aither_dvd_adjustment_and_final_name_edges() -> None:
@@ -174,4 +195,7 @@ def test_aither_dvd_adjustment_and_final_name_edges() -> None:
     )
 
     trump = Meta(trump_reason="exact_match", aka="", no_aka=True)
-    assert tracker._final_name(trump, "Movie 2025", "2025") == "Movie 2025 - TRUMP"
+    assert (
+        tracker._final_name(trump, "Movie 2025", "2025")
+        == "Movie 2025 - TRUMP"
+    )
