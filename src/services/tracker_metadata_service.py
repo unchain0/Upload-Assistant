@@ -266,6 +266,126 @@ class TrackerDataManager:
             + min(len(candidate.image_list), 10)
         )
 
+    @staticmethod
+    def _new_tracker_candidate(meta: Meta, tracker_name: str) -> Meta:
+        candidate = meta.copy()
+        candidate.uuid = (
+            f"{meta.uuid}-candidate-{tracker_name.lower()}-{uuid.uuid4().hex}"
+        )
+        candidate.unattended = True
+        candidate.unattended_confirm = False
+        candidate.persist_description = False
+        return candidate
+
+    @classmethod
+    def _candidate_result(
+        cls, tracker_name: str, original: Meta, candidate: Meta
+    ) -> tuple[str, Meta, int]:
+        return (
+            tracker_name,
+            candidate,
+            cls._candidate_score(original, candidate),
+        )
+
+    @staticmethod
+    def _btn_api_value(default_config: Mapping[str, Any]) -> str | None:
+        value = default_config.get("btn_api")
+        if not isinstance(value, str):
+            return None
+        return value if len(value) > 25 else None
+
+    @staticmethod
+    def _prefer_identifier(value: Any, fallback: Any) -> Any:
+        return value if value else fallback
+
+    async def _collect_btn_candidate(
+        self, original: Meta, candidate: Meta
+    ) -> tuple[str, Meta, int] | None:
+        btn_api = self._btn_api_value(self.default_config)
+        if btn_api is None:
+            return None
+        btn_id = self._explicit_tracker_id(candidate, "BTN")
+        imdb, tvdb = await BtnIdManager.get_btn_torrents(btn_api, btn_id)
+        if not imdb and not tvdb:
+            return None
+        candidate.imdb_id = self._prefer_identifier(imdb, candidate.imdb_id)
+        candidate.tvdb_id = self._prefer_identifier(tvdb, candidate.tvdb_id)
+        return self._candidate_result("BTN", original, candidate)
+
+    async def _collect_anthelion_candidate(
+        self, original: Meta, candidate: Meta
+    ) -> tuple[str, Meta, int] | None:
+        data = await tracker_class_map["ANTHELION"](
+            config=self.config
+        ).get_data_from_files(candidate)
+        if not data:
+            return None
+        for values in data:
+            candidate.update(values)
+        return self._candidate_result("ANTHELION", original, candidate)
+
+    async def _collect_generic_candidate(
+        self,
+        tracker_name: str,
+        original: Meta,
+        candidate: Meta,
+        search_term: str,
+        search_file_folder: str,
+        skip_tracker_descriptions: bool,
+    ) -> tuple[str, Meta, int] | None:
+        factory = tracker_class_map.get(tracker_name)
+        if factory is None:
+            return None
+        candidate, match = await self.update_metadata_from_explicit_tracker(
+            tracker_name,
+            factory(config=self.config),
+            candidate,
+            search_term,
+            search_file_folder,
+            skip_tracker_descriptions,
+            use_cache=True,
+        )
+        if not match:
+            return None
+        return self._candidate_result(tracker_name, original, candidate)
+
+    async def _candidate_by_tracker(
+        self,
+        tracker_name: str,
+        original: Meta,
+        candidate: Meta,
+        search_term: str,
+        search_file_folder: str,
+        skip_tracker_descriptions: bool,
+    ) -> tuple[str, Meta, int] | None:
+        if tracker_name == "BTN":
+            return await self._collect_btn_candidate(original, candidate)
+        if tracker_name == "ANTHELION":
+            return await self._collect_anthelion_candidate(original, candidate)
+        return await self._collect_generic_candidate(
+            tracker_name,
+            original,
+            candidate,
+            search_term,
+            search_file_folder,
+            skip_tracker_descriptions,
+        )
+
+    @staticmethod
+    def _log_candidate_error(tracker_name: str, error: Exception) -> None:
+        if isinstance(
+            error, (httpx.ConnectError, requests.exceptions.ConnectionError)
+        ):
+            logger.info(
+                f"{tracker_name} tracker request failed due to connection error: {error}",
+                extra={"markup": False},
+            )
+            return
+        logger.info(
+            f"{tracker_name} tracker metadata candidate failed: {error}",
+            extra={"markup": False},
+        )
+
     async def _collect_explicit_tracker_candidate(
         self,
         tracker_name: str,
@@ -275,89 +395,67 @@ class TrackerDataManager:
         skip_tracker_descriptions: bool,
     ) -> tuple[str, Meta, int] | None:
         """Fetch one candidate without allowing it to mutate the live release."""
-        candidate = meta.copy()
-        candidate.uuid = (
-            f"{meta.uuid}-candidate-{tracker_name.lower()}-{uuid.uuid4().hex}"
-        )
-        candidate.unattended = True
-        candidate.unattended_confirm = False
-        candidate.persist_description = False
+        candidate = self._new_tracker_candidate(meta, tracker_name)
         candidate_dir = Path(meta.base_dir) / "tmp" / candidate.uuid
         await asyncio.to_thread(
             candidate_dir.mkdir, mode=0o700, parents=True, exist_ok=True
         )
         try:
-            if tracker_name == "BTN":
-                btn_id = candidate.get_tracker_id("BTN") or ""
-                btn_api = self.default_config.get("btn_api")
-                if not isinstance(btn_api, str) or len(btn_api) <= 25:
-                    return None
-                imdb, tvdb = await BtnIdManager.get_btn_torrents(
-                    btn_api, btn_id
-                )
-                if not (imdb or tvdb):
-                    return None
-                candidate.imdb_id = imdb or candidate.imdb_id
-                candidate.tvdb_id = tvdb or candidate.tvdb_id
-                return (
-                    tracker_name,
-                    candidate,
-                    self._candidate_score(meta, candidate),
-                )
-
-            if tracker_name == "ANTHELION":
-                data = await tracker_class_map[tracker_name](
-                    config=self.config
-                ).get_data_from_files(candidate)
-                if not data:
-                    return None
-                for values in data:
-                    candidate.update(values)
-                return (
-                    tracker_name,
-                    candidate,
-                    self._candidate_score(meta, candidate),
-                )
-
-            factory = tracker_class_map.get(tracker_name)
-            if factory is None:
-                return None
-            (
-                candidate,
-                match,
-            ) = await self.update_metadata_from_explicit_tracker(
+            return await self._candidate_by_tracker(
                 tracker_name,
-                factory(config=self.config),
+                meta,
                 candidate,
                 search_term,
                 search_file_folder,
                 skip_tracker_descriptions,
-                use_cache=True,
             )
-            if not match:
-                return None
-            return (
-                tracker_name,
-                candidate,
-                self._candidate_score(meta, candidate),
-            )
-        except (
-            httpx.ConnectError,
-            requests.exceptions.ConnectionError,
-        ) as error:
-            logger.info(
-                f"{tracker_name} tracker request failed due to connection error: {error}",
-                extra={"markup": False},
-            )
-            return None
         except Exception as error:
-            logger.info(
-                f"{tracker_name} tracker metadata candidate failed: {error}",
-                extra={"markup": False},
-            )
+            self._log_candidate_error(tracker_name, error)
             return None
         finally:
             await asyncio.to_thread(shutil.rmtree, candidate_dir, True)
+
+    @staticmethod
+    def _ranked_candidates(
+        candidates: list[tuple[str, Meta, int]],
+    ) -> list[tuple[str, Meta, int]]:
+        return sorted(candidates, key=lambda item: (-item[2], item[0]))
+
+    @staticmethod
+    def _should_prompt_candidate(
+        meta: Meta, ranked: list[tuple[str, Meta, int]]
+    ) -> bool:
+        return len(ranked) > 1 and not meta.unattended
+
+    @staticmethod
+    def _log_candidate_choices(ranked: list[tuple[str, Meta, int]]) -> None:
+        logger.info("[cyan]Tracker metadata candidates:[/cyan]")
+        for index, (tracker_name, candidate, score) in enumerate(
+            ranked, start=1
+        ):
+            display_name = (
+                candidate.name if candidate.name else candidate.filename
+            )
+            logger.info(
+                f"  {index}. {tracker_name}: score {score}, {display_name}"
+            )
+
+    @staticmethod
+    def _candidate_choice(
+        choice: Any, ranked: list[tuple[str, Meta, int]]
+    ) -> tuple[str, Meta] | None:
+        text = "" if choice is None else str(choice).strip()
+        if not text:
+            return None
+        if not text.isdigit():
+            logger.warning(
+                "[yellow]Invalid candidate selection; using the best score.[/yellow]"
+            )
+            return None
+        selected = int(text) - 1
+        if not 0 <= selected < len(ranked):
+            return None
+        return ranked[selected][0], ranked[selected][1]
 
     async def _choose_explicit_tracker_candidate(
         self,
@@ -366,27 +464,17 @@ class TrackerDataManager:
     ) -> tuple[str, Meta] | None:
         if not candidates:
             return None
-        ranked = sorted(candidates, key=lambda item: (-item[2], item[0]))
-        if len(ranked) > 1 and not meta.unattended:
-            logger.info("[cyan]Tracker metadata candidates:[/cyan]")
-            for index, (tracker_name, candidate, score) in enumerate(
-                ranked, start=1
-            ):
-                logger.info(
-                    f"  {index}. {tracker_name}: score {score}, {candidate.name or candidate.filename}"
-                )
-            choice = await prompt_in_thread(
-                cli_ui.ask_string,
-                f"Choose a tracker candidate [1-{len(ranked)}] (Enter for best): ",
-            )
-            if choice and choice.strip().isdigit():
-                selected = int(choice.strip()) - 1
-                if 0 <= selected < len(ranked):
-                    return ranked[selected][0], ranked[selected][1]
-            elif choice and choice.strip():
-                logger.warning(
-                    "[yellow]Invalid candidate selection; using the best score.[/yellow]"
-                )
+        ranked = self._ranked_candidates(candidates)
+        if not self._should_prompt_candidate(meta, ranked):
+            return ranked[0][0], ranked[0][1]
+        self._log_candidate_choices(ranked)
+        choice = await prompt_in_thread(
+            cli_ui.ask_string,
+            f"Choose a tracker candidate [1-{len(ranked)}] (Enter for best): ",
+        )
+        selected = self._candidate_choice(choice, ranked)
+        if selected is not None:
+            return selected
         return ranked[0][0], ranked[0][1]
 
     async def _apply_explicit_tracker_candidate(
@@ -405,11 +493,53 @@ class TrackerDataManager:
                 meta[key] = value
         meta.matched_tracker = tracker_name
 
+    @staticmethod
+    def _can_review_candidate_description(meta: Meta, candidate: Meta) -> bool:
+        if meta.unattended:
+            return False
+        return bool(candidate.description)
+
+    @staticmethod
+    async def _edit_candidate_description(
+        candidate: Meta, tracker_name: str
+    ) -> None:
+        edited = await asyncio.to_thread(click.edit, candidate.description)
+        if edited is None:
+            return
+        candidate.description = str(edited).strip()
+        candidate.saved_description = bool(candidate.description)
+        candidate.description_fingerprint = description_fingerprint(
+            candidate, tracker_name
+        )
+        candidate.description_provenance = {
+            **candidate.description_provenance,
+            "edited": True,
+        }
+
+    @staticmethod
+    def _discard_candidate_description(candidate: Meta) -> None:
+        candidate.description = ""
+        candidate.saved_description = False
+        candidate.description_provenance = {
+            **candidate.description_provenance,
+            "discarded": True,
+        }
+
+    @classmethod
+    async def _apply_description_review_choice(
+        cls, choice: str, candidate: Meta, tracker_name: str
+    ) -> None:
+        if choice == "e":
+            await cls._edit_candidate_description(candidate, tracker_name)
+            return
+        if choice == "d":
+            cls._discard_candidate_description(candidate)
+
     async def _review_explicit_tracker_description(
         self, meta: Meta, tracker_name: str, candidate: Meta
     ) -> None:
         """Allow an interactive run to edit the selected tracker description."""
-        if meta.unattended or not candidate.description:
+        if not self._can_review_candidate_description(meta, candidate):
             return
         logger.info(
             f"[cyan]Selected description from {tracker_name}:[/cyan]\n{candidate.description[:1000]}",
@@ -419,26 +549,10 @@ class TrackerDataManager:
             cli_ui.ask_string,
             "\nEnter 'e' to edit, 'd' to discard the description, or press Enter to keep it: ",
         )
-        choice = (choice or "").strip().lower()
-        if choice == "e":
-            edited = await asyncio.to_thread(click.edit, candidate.description)
-            if edited is not None:
-                candidate.description = str(edited).strip()
-                candidate.saved_description = bool(candidate.description)
-                candidate.description_fingerprint = description_fingerprint(
-                    candidate, tracker_name
-                )
-                candidate.description_provenance = {
-                    **candidate.description_provenance,
-                    "edited": True,
-                }
-        elif choice == "d":
-            candidate.description = ""
-            candidate.saved_description = False
-            candidate.description_provenance = {
-                **candidate.description_provenance,
-                "discarded": True,
-            }
+        normalized = "" if choice is None else str(choice).strip().lower()
+        await self._apply_description_review_choice(
+            normalized, candidate, tracker_name
+        )
 
     async def get_tracker_timestamps(
         self, base_dir: str | None = None
