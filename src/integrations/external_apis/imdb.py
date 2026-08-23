@@ -1,7 +1,8 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
 import asyncio
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from difflib import SequenceMatcher
 from typing import Any, cast
@@ -32,6 +33,19 @@ def guessit_fn(
     value: str, options: dict[str, Any] | None = None
 ) -> dict[str, Any]:
     return cast(dict[str, Any], guessit_module.guessit(value, options))
+
+
+@dataclass(frozen=True)
+class _SearchContext:
+    filename: str
+    search_year: str | int | None
+    quickie: bool
+    category: str | None
+    secondary_title: str | None
+    untouched_filename: str | None
+    attempted: int
+    duration: str | int | None
+    unattended: bool
 
 
 class ImdbManager:
@@ -741,6 +755,674 @@ class ImdbManager:
             data, imdb_id_str, manual_language, cache, cache_key
         )
 
+    @staticmethod
+    def _search_attempted(attempted: int | None) -> int:
+        return 0 if attempted is None else attempted
+
+    @staticmethod
+    async def _search_delay(attempted: int) -> None:
+        if attempted:
+            await asyncio.sleep(1)
+
+    @staticmethod
+    def _movie_search_title(filename: str, category: str | None) -> str:
+        if category != "MOVIE":
+            return filename
+        return (
+            filename.replace("and", "&")
+            .replace("And", "&")
+            .replace("AND", "&")
+            .strip()
+        )
+
+    @staticmethod
+    def _release_date_constraint(
+        search_year: str | int | None, wide_search: bool
+    ) -> str | None:
+        if wide_search or not search_year:
+            return None
+        year = int(search_year)
+        return (
+            "releaseDateConstraint: {releaseDateRange: "
+            f'{{start: "{year - 1}-01-01", end: "{year + 1}-12-31"}}}}'
+        )
+
+    @staticmethod
+    def _runtime_constraint(
+        duration: str | int | None, wide_search: bool
+    ) -> str | None:
+        if wide_search or not isinstance(duration, int):
+            return None
+        return (
+            "runtimeConstraint: {runtimeRangeMinutes: "
+            f"{{min: {duration - 10}, max: {duration + 10}}}}}"
+        )
+
+    @classmethod
+    def _search_constraints(
+        cls,
+        filename: str,
+        search_year: str | int | None,
+        duration: str | int | None,
+        wide_search: bool,
+    ) -> str:
+        parts = [
+            f"titleTextConstraint: {{searchTerm: {json.dumps(filename)}}}"
+        ]
+        parts.extend(
+            constraint
+            for constraint in (
+                cls._release_date_constraint(search_year, wide_search),
+                cls._runtime_constraint(duration, wide_search),
+            )
+            if constraint is not None
+        )
+        return ", ".join(parts)
+
+    @staticmethod
+    def _advanced_search_query(constraints: str) -> dict[str, str]:
+        return {
+            "query": f"""
+                {{
+                    advancedTitleSearch(
+                        first: 10,
+                        constraints: {{{constraints}}}
+                    ) {{
+                        total
+                        edges {{
+                            node {{
+                                title {{
+                                    id
+                                    titleText {{ text }}
+                                    titleType {{ text }}
+                                    releaseYear {{ year }}
+                                    plot {{ plotText {{ plainText }} }}
+                                }}
+                            }}
+                        }}
+                    }}
+                }}
+            """
+        }
+
+    async def _fetch_search_results(
+        self, query: dict[str, str]
+    ) -> list[dict[str, Any]]:
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    "https://api.graphql.imdb.com/",
+                    json=query,
+                    headers=IMDB_GRAPHQL_HEADERS,
+                    timeout=10,
+                )
+                response.raise_for_status()
+                data = response.json()
+        except Exception as error:
+            logger.info(f"[red]IMDb GraphQL API error: {error}[/red]")
+            return []
+        raw = self.safe_get(data, ["data", "advancedTitleSearch", "edges"], [])
+        if not isinstance(raw, list):
+            return []
+        return [
+            cast(dict[str, Any], item)
+            for item in cast(list[Any], raw)
+            if isinstance(item, dict)
+        ]
+
+    async def _run_imdb_search(
+        self,
+        filename: str,
+        search_year: str | int | None,
+        category: str | None,
+        attempted: int,
+        duration: str | int | None = None,
+        *,
+        wide_search: bool,
+        quickie: bool,
+    ) -> list[dict[str, Any]]:
+        await self._search_delay(attempted)
+        title = self._movie_search_title(filename, category)
+        constraints = self._search_constraints(
+            title, search_year, duration, wide_search
+        )
+        results = await self._fetch_search_results(
+            self._advanced_search_query(constraints)
+        )
+        logger.debug(f"[yellow]Found {len(results)} results...[/yellow]")
+        logger.debug(
+            f"quickie: {quickie}, category: {category}, search_year: {search_year}"
+        )
+        return results
+
+    async def _attempt_primary(
+        self, context: _SearchContext
+    ) -> list[dict[str, Any]]:
+        return await self._run_imdb_search(
+            context.filename,
+            context.search_year,
+            context.category,
+            context.attempted,
+            context.duration,
+            wide_search=False,
+            quickie=context.quickie,
+        )
+
+    async def _attempt_secondary(
+        self, context: _SearchContext
+    ) -> list[dict[str, Any]]:
+        if not context.secondary_title:
+            return []
+        logger.debug(
+            f"[yellow]Trying IMDb with secondary title: {context.secondary_title}[/yellow]"
+        )
+        return await self._run_imdb_search(
+            context.secondary_title,
+            context.search_year,
+            context.category,
+            context.attempted,
+            context.duration,
+            wide_search=True,
+            quickie=context.quickie,
+        )
+
+    @staticmethod
+    def _without_leading_the(filename: str) -> str | None:
+        words = filename.split()
+        if not words:
+            return None
+        if words[0].lower() != "the":
+            return None
+        return " ".join(words[1:])
+
+    async def _attempt_prefix(
+        self, context: _SearchContext
+    ) -> list[dict[str, Any]]:
+        try:
+            title = self._without_leading_the(context.filename)
+            if title is None:
+                return []
+            logger.debug(
+                f"[bold yellow]Trying IMDb with the prefix removed: {title}[/bold yellow]"
+            )
+            return await self._run_imdb_search(
+                title,
+                context.search_year,
+                context.category,
+                context.attempted + 1,
+                wide_search=False,
+                quickie=context.quickie,
+            )
+        except Exception as error:
+            logger.info(
+                f"[bold red]Reduced name search error:[/bold red] {error}"
+            )
+            return []
+
+    async def _attempt_wide(
+        self, context: _SearchContext
+    ) -> list[dict[str, Any]]:
+        logger.debug(
+            "[yellow]No results found, trying with a wider search...[/yellow]"
+        )
+        try:
+            return await self._run_imdb_search(
+                context.filename,
+                context.search_year,
+                context.category,
+                context.attempted + 1,
+                wide_search=True,
+                quickie=context.quickie,
+            )
+        except Exception as error:
+            logger.error(f"[red]Error during wide search: {error}[/red]")
+            return []
+
+    @staticmethod
+    def _parsed_search_title(untouched_filename: str | None) -> str:
+        parsed = guessit_fn(
+            untouched_filename or "", {"excludes": ["country", "language"]}
+        )
+        anime_raw: Any = anitopy_parse_fn(parsed.get("title", "")) or {}
+        if not isinstance(anime_raw, dict):
+            return ""
+        anime = cast(dict[str, Any], anime_raw)
+        return str(anime.get("anime_title", ""))
+
+    async def _attempt_parsed(
+        self, context: _SearchContext
+    ) -> list[dict[str, Any]]:
+        try:
+            title = self._parsed_search_title(context.untouched_filename)
+            logger.debug(
+                f"[bold yellow]Trying IMDB with parsed title: {title}[/bold yellow]"
+            )
+            return await self._run_imdb_search(
+                title,
+                context.search_year,
+                context.category,
+                context.attempted + 1,
+                wide_search=True,
+                quickie=context.quickie,
+            )
+        except Exception:
+            logger.info(
+                "[bold red]Guessit failed parsing title, trying another method[/bold red]"
+            )
+            return []
+
+    @staticmethod
+    def _words_without_extension(filename: str) -> list[str]:
+        words = filename.split()
+        words_lower = [word.lower() for word in words]
+        for extension in ("mp4", "mkv", "avi", "webm", "mov", "wmv"):
+            if extension in words_lower:
+                index = words_lower.index(extension)
+                words.pop(index)
+                break
+        return words
+
+    @classmethod
+    def _reduced_search_title(cls, filename: str, count: int) -> str | None:
+        words = cls._words_without_extension(filename)
+        if len(words) <= count:
+            return None
+        return " ".join(words[:-count])
+
+    async def _attempt_reduced(
+        self, context: _SearchContext
+    ) -> list[dict[str, Any]]:
+        try:
+            title = self._reduced_search_title(context.filename, 1)
+            if title is None:
+                return []
+            logger.debug(
+                f"[bold yellow]Trying IMDB with reduced name: {title}[/bold yellow]"
+            )
+            return await self._run_imdb_search(
+                title,
+                context.search_year,
+                context.category,
+                context.attempted + 1,
+                wide_search=True,
+                quickie=context.quickie,
+            )
+        except Exception as error:
+            logger.info(
+                f"[bold red]Reduced name search error:[/bold red] {error}"
+            )
+            return []
+
+    async def _attempt_further_reduced(
+        self, context: _SearchContext
+    ) -> list[dict[str, Any]]:
+        try:
+            title = self._reduced_search_title(context.filename, 2)
+            if title is None:
+                return []
+            logger.debug(
+                f"[bold yellow]Trying IMDB with further reduced name: {title}[/bold yellow]"
+            )
+            return await self._run_imdb_search(
+                title,
+                context.search_year,
+                context.category,
+                context.attempted + 1,
+                wide_search=True,
+                quickie=context.quickie,
+            )
+        except Exception as error:
+            logger.info(
+                f"[bold red]Further reduced name search error:[/bold red] {error}"
+            )
+            return []
+
+    def _search_attempts(
+        self,
+    ) -> tuple[
+        Callable[[_SearchContext], Awaitable[list[dict[str, Any]]]], ...
+    ]:
+        return (
+            self._attempt_primary,
+            self._attempt_secondary,
+            self._attempt_prefix,
+            self._attempt_wide,
+            self._attempt_parsed,
+            self._attempt_reduced,
+            self._attempt_further_reduced,
+        )
+
+    async def _collect_search_results(
+        self, context: _SearchContext
+    ) -> list[dict[str, Any]]:
+        for attempt in self._search_attempts():
+            results = await attempt(context)
+            if results:
+                return results
+        return []
+
+    @staticmethod
+    def _normalized_category(category: str | None) -> str:
+        return "" if category is None else category.lower()
+
+    @classmethod
+    def _quickie_type_matches(
+        cls, title_type: str, category: str | None
+    ) -> bool:
+        normalized = cls._normalized_category(category)
+        if normalized == "tv":
+            return "tv series" in title_type
+        if normalized == "movie":
+            return "tv series" not in title_type
+        return False
+
+    @staticmethod
+    def _numeric_imdb_id(value: Any) -> int | None:
+        if not value:
+            return None
+        return int(str(value).replace("tt", "").strip())
+
+    @staticmethod
+    def _optional_int(value: Any) -> int | None:
+        if not value:
+            return None
+        return int(value)
+
+    @classmethod
+    def _quickie_year_result(
+        cls, imdb_id: Any, year: Any, search_year: str | int | None
+    ) -> int:
+        result_id = cls._numeric_imdb_id(imdb_id)
+        if result_id is None:
+            return 0
+        year_int = cls._optional_int(year)
+        search_year_int = cls._optional_int(search_year)
+        if year_int is None or search_year_int is None:
+            return result_id
+        if year_int == search_year_int:
+            return result_id
+        logger.debug(
+            f"[yellow]Year mismatch: found {year_int}, expected {search_year_int}[/yellow]"
+        )
+        return 0
+
+    def _quickie_result(
+        self,
+        results: list[dict[str, Any]],
+        search_year: str | int | None,
+        category: str | None,
+    ) -> int:
+        if not results:
+            return 0
+        first = results[0]
+        logger.debug(f"[cyan]Quickie search result: {first}[/cyan]")
+        title = self.safe_get(first, ["node", "title"], {})
+        type_info = self.safe_get(title, ["titleType"], {})
+        title_type = str(self.safe_get(type_info, ["text"], "")).lower()
+        imdb_id = self.safe_get(title, ["id"], "")
+        if not imdb_id:
+            logger.debug("[yellow]No IMDb ID found in quickie result[/yellow]")
+            return 0
+        if not self._quickie_type_matches(title_type, category):
+            logger.debug(
+                f"[yellow]Type mismatch: found {self.safe_get(type_info, ['text'], '')}, expected {category}[/yellow]"
+            )
+            return 0
+        year = self.safe_get(title, ["releaseYear", "year"], None)
+        return self._quickie_year_result(imdb_id, year, search_year)
+
+    def _result_title(self, result: dict[str, Any]) -> Any:
+        return self.safe_get(result, ["node", "title"], {})
+
+    def _result_similarity(
+        self, result: dict[str, Any], filename_norm: str, search_year: int
+    ) -> float:
+        title = self._result_title(result)
+        title_text = str(self.safe_get(title, ["titleText", "text"], ""))
+        result_year = int(
+            self.safe_get(title, ["releaseYear", "year"], 0) or 0
+        )
+        similarity = SequenceMatcher(
+            None, filename_norm, title_text.lower().strip()
+        ).ratio()
+        if similarity < 0.99:
+            return similarity
+        return similarity + self._year_similarity_boost(
+            result_year, search_year
+        )
+
+    @staticmethod
+    def _year_similarity_boost(result_year: int, search_year: int) -> float:
+        if result_year <= 0 or search_year <= 0:
+            return 0.0
+        if result_year == search_year:
+            return 0.1
+        if result_year == search_year - 1:
+            return 0.05
+        return 0.0
+
+    def _ranked_results(
+        self,
+        results: list[dict[str, Any]],
+        filename: str,
+        search_year: str | int | None,
+    ) -> list[tuple[dict[str, Any], float]]:
+        filename_norm = filename.lower().strip()
+        search_year_int = int(search_year) if search_year else 0
+        ranked = [
+            (
+                result,
+                self._result_similarity(
+                    result, filename_norm, search_year_int
+                ),
+            )
+            for result in results
+        ]
+        ranked.sort(key=lambda item: item[1], reverse=True)
+        return self._filter_ranked_results(ranked)
+
+    @staticmethod
+    def _filter_ranked_results(
+        ranked: list[tuple[dict[str, Any], float]],
+    ) -> list[tuple[dict[str, Any], float]]:
+        if not ranked or ranked[0][1] < 0.90:
+            return ranked
+        best = ranked[0][1]
+        filtered = [item for item in ranked if item[1] >= 0.75]
+        logger.debug(
+            f"[yellow]Filtered out low similarity results (< 0.70) since best match has {best:.2f} similarity[/yellow]"
+        )
+        return filtered
+
+    @staticmethod
+    def _has_clear_best_match(
+        ranked: list[tuple[dict[str, Any], float]],
+    ) -> bool:
+        if not ranked:
+            return False
+        if ranked[0][1] < 0.85:
+            return False
+        second_best = ranked[1][1] if len(ranked) > 1 else 0.0
+        return ranked[0][1] - second_best >= 0.10
+
+    def _clear_best_match(
+        self, ranked: list[tuple[dict[str, Any], float]]
+    ) -> int | None:
+        if not self._has_clear_best_match(ranked):
+            return None
+        title = self._result_title(ranked[0][0])
+        imdb_id = self.safe_get(title, ["id"], "")
+        result_id = self._numeric_imdb_id(imdb_id)
+        if result_id is None:
+            return None
+        name = self.safe_get(title, ["titleText", "text"], "")
+        logger.debug(
+            f"[green]Auto-selecting best match: {name} (similarity: {ranked[0][1]:.2f})[/green]"
+        )
+        return result_id
+
+    def _first_ranked_id(
+        self, ranked: list[tuple[dict[str, Any], float]]
+    ) -> int | None:
+        if not ranked:
+            return None
+        title = self._result_title(ranked[0][0])
+        return self._numeric_imdb_id(self.safe_get(title, ["id"], ""))
+
+    def _log_ranked_results(
+        self, ranked: list[tuple[dict[str, Any], float]]
+    ) -> None:
+        logger.info(
+            "[bold yellow]Multiple IMDb results found. Please select the correct entry:[/bold yellow]"
+        )
+        for index, (candidate, similarity) in enumerate(ranked, 1):
+            title = self._result_title(candidate)
+            title_text = self.safe_get(title, ["titleText", "text"], "")
+            year = self.safe_get(title, ["releaseYear", "year"], None)
+            imdb_id = self.safe_get(title, ["id"], "")
+            title_type = self.safe_get(title, ["titleType", "text"], "")
+            plot = str(
+                self.safe_get(title, ["plot", "plotText", "plainText"], "")
+            )
+            logger.info(
+                f"[cyan]{index}.[/cyan] [bold]{title_text}[/bold] ({year}) [yellow]ID:[/yellow] {imdb_id} [yellow]Type:[/yellow] {title_type} [dim](similarity: {similarity:.2f})[/dim]"
+            )
+            if plot:
+                suffix = "..." if len(plot) > 200 else ""
+                logger.info(f"[green]Plot:[/green] {plot[:200]}{suffix}")
+            logger.info("")
+
+    @staticmethod
+    async def _ask_imdb_selection(prompt: str) -> str:
+        try:
+            return await prompt_in_thread(cli_ui.ask_string, prompt) or ""
+        except EOFError, KeyboardInterrupt:
+            logger.info("\n[red]Exiting on user request (Ctrl+C)[/red]")
+            await cleanup_manager.cleanup()
+            cleanup_manager.reset_terminal()
+            raise OperationAbortedError(
+                "IMDb selection was cancelled by the user."
+            ) from None
+
+    @staticmethod
+    def _manual_imdb_selection(selection: str) -> tuple[bool, int | None]:
+        try:
+            if not selection.lower().startswith("tt") or len(selection) < 3:
+                return False, None
+            manual = selection.lower().replace("tt", "").strip()
+            if manual.isdigit():
+                logger.info(
+                    f"[green]Using manual IMDb ID: {selection}[/green]"
+                )
+                return True, int(manual)
+            logger.info(
+                "[bold red]Invalid IMDb ID format. Please try again.[/bold red]"
+            )
+            return True, None
+        except Exception as error:
+            logger.info(
+                f"[bold red]Error parsing IMDb ID: {error}. Please try again.[/bold red]"
+            )
+            return True, None
+
+    def _numeric_search_selection(
+        self,
+        selection: str,
+        ranked: list[tuple[dict[str, Any], float]],
+    ) -> int | None:
+        try:
+            selected_index = int(selection)
+        except ValueError:
+            logger.info(
+                "[bold red]Invalid input. Please enter a number or IMDb ID (tt1234567).[/bold red]"
+            )
+            return None
+        if selected_index == 0:
+            logger.info("[bold red]Skipping IMDb[/bold red]")
+            return 0
+        if not 1 <= selected_index <= len(ranked):
+            logger.info(
+                "[bold red]Selection out of range. Please try again.[/bold red]"
+            )
+            return None
+        title = self._result_title(ranked[selected_index - 1][0])
+        return self._numeric_imdb_id(self.safe_get(title, ["id"], ""))
+
+    async def _prompt_ranked_result(
+        self, ranked: list[tuple[dict[str, Any], float]]
+    ) -> int:
+        prompt = (
+            "Enter the number of the correct entry, 0 for none, or manual IMDb ID "
+            "(tt1234567): "
+        )
+        while True:
+            selection = await self._ask_imdb_selection(prompt)
+            is_manual, manual_id = self._manual_imdb_selection(selection)
+            if is_manual:
+                if manual_id is not None:
+                    return manual_id
+                continue
+            selected_id = self._numeric_search_selection(selection, ranked)
+            if selected_id is not None:
+                return selected_id
+
+    async def _multiple_search_result(
+        self,
+        results: list[dict[str, Any]],
+        filename: str,
+        search_year: str | int | None,
+        unattended: bool,
+    ) -> int:
+        ranked = self._ranked_results(results, filename, search_year)
+        clear_best = self._clear_best_match(ranked)
+        if clear_best is not None:
+            return clear_best
+        if unattended:
+            result_id = self._first_ranked_id(ranked)
+            if result_id is None:
+                return 0
+            logger.debug(
+                f"[green]Unattended mode: auto-selected IMDb ID {result_id}[/green]"
+            )
+            return result_id
+        self._log_ranked_results(ranked)
+        return await self._prompt_ranked_result(ranked)
+
+    async def _no_search_result(self, unattended: bool) -> int:
+        if unattended:
+            logger.info(
+                "[bold red]No IMDb results found in unattended mode. Skipping IMDb.[/bold red]"
+            )
+            return 0
+        selection = await self._ask_imdb_selection(
+            "No results found. Please enter a manual IMDb ID (tt1234567) or 0 to skip: "
+        )
+        is_manual, manual_id = self._manual_imdb_selection(selection)
+        if not is_manual or manual_id is None:
+            return 0
+        return manual_id
+
+    async def _resolve_search_results(
+        self,
+        results: list[dict[str, Any]],
+        context: _SearchContext,
+    ) -> int:
+        if context.quickie:
+            return self._quickie_result(
+                results, context.search_year, context.category
+            )
+        if len(results) == 1:
+            title = self._result_title(results[0])
+            return self._numeric_imdb_id(self.safe_get(title, ["id"], "")) or 0
+        if len(results) > 1:
+            return await self._multiple_search_result(
+                results,
+                context.filename,
+                context.search_year,
+                context.unattended,
+            )
+        return await self._no_search_result(context.unattended)
+
     async def search_imdb(
         self,
         filename: str,
@@ -754,564 +1436,24 @@ class ImdbManager:
         duration: str | int | None = None,
         unattended: bool = False,
     ) -> int:
-        search_results: list[dict[str, Any]] = []
-        imdb_id_result = imdb_id = 0
-        if attempted is None:
-            attempted = 0
+        normalized_attempted = self._search_attempted(attempted)
         logger.debug(
             f"[yellow]Searching IMDb for {filename} and year {search_year}...[/yellow]"
         )
-        if attempted:
-            await asyncio.sleep(1)  # Whoa baby, slow down
-
-        async def run_imdb_search(
-            filename: str,
-            search_year: str | int | None,
-            category: str | None = None,
-            attempted: int | None = 0,
-            duration: str | int | None = None,
-            wide_search: bool = False,
-        ) -> list[dict[str, Any]]:
-            search_results: list[dict[str, Any]] = []
-            if attempted:
-                await asyncio.sleep(1)  # Whoa baby, slow down
-            url = "https://api.graphql.imdb.com/"
-            if category == "MOVIE":
-                filename = (
-                    filename.replace("and", "&")
-                    .replace("And", "&")
-                    .replace("AND", "&")
-                    .strip()
-                )
-
-            constraints_parts = [
-                f"titleTextConstraint: {{searchTerm: {json.dumps(filename)}}}"
-            ]
-
-            # Add release date constraint if search_year is provided
-            if not wide_search and search_year:
-                search_year_int = int(search_year)
-                start_year = search_year_int - 1
-                end_year = search_year_int + 1
-                constraints_parts.append(
-                    f'releaseDateConstraint: {{releaseDateRange: {{start: "{start_year}-01-01", end: "{end_year}-12-31"}}}}'
-                )
-
-            if not wide_search and duration and isinstance(duration, int):
-                duration = str(duration)
-                start_duration = int(duration) - 10
-                end_duration = int(duration) + 10
-                constraints_parts.append(
-                    f"runtimeConstraint: {{runtimeRangeMinutes: {{min: {start_duration}, max: {end_duration}}}}}"
-                )
-
-            constraints_string = ", ".join(constraints_parts)
-
-            query = {
-                "query": f"""
-                    {{
-                        advancedTitleSearch(
-                            first: 10,
-                            constraints: {{{constraints_string}}}
-                        ) {{
-                            total
-                            edges {{
-                                node {{
-                                    title {{
-                                        id
-                                        titleText {{
-                                            text
-                                        }}
-                                        titleType {{
-                                            text
-                                        }}
-                                        releaseYear {{
-                                            year
-                                        }}
-                                        plot {{
-                                            plotText {{
-                                            plainText
-                                            }}
-                                        }}
-                                    }}
-                                }}
-                            }}
-                        }}
-                    }}
-                """
-            }
-
-            try:
-                async with httpx.AsyncClient() as client:
-                    response = await client.post(
-                        url,
-                        json=query,
-                        headers=IMDB_GRAPHQL_HEADERS,
-                        timeout=10,
-                    )
-                    response.raise_for_status()
-                    data = response.json()
-            except Exception as e:
-                logger.info(f"[red]IMDb GraphQL API error: {e}[/red]")
-                return []
-
-            results = cast(
-                list[dict[str, Any]],
-                self.safe_get(
-                    data, ["data", "advancedTitleSearch", "edges"], []
-                ),
-            )
-            search_results = results
-
-            logger.debug(f"[yellow]Found {len(results)} results...[/yellow]")
-            logger.debug(
-                f"quickie: {quickie}, category: {category}, search_year: {search_year}"
-            )
-            return search_results
-
-        if not search_results:
-            result = await run_imdb_search(
-                filename,
-                search_year,
-                category,
-                attempted,
-                duration,
-                wide_search=False,
-            )
-            if result and len(result) > 0:
-                search_results = result
-
-        if not search_results and secondary_title:
-            logger.debug(
-                f"[yellow]Trying IMDb with secondary title: {secondary_title}[/yellow]"
-            )
-            result = await run_imdb_search(
-                secondary_title,
-                search_year,
-                category,
-                attempted,
-                duration,
-                wide_search=True,
-            )
-            if result and len(result) > 0:
-                search_results = result
-
-        # remove 'the' from the beginning of the title if it exists
-        if not search_results:
-            try:
-                words = filename.split()
-                bad_words = ["the"]
-                words_lower = [word.lower() for word in words]
-
-                if words_lower and words_lower[0] in bad_words:
-                    words.pop(0)
-                    words_lower.pop(0)
-                    title = " ".join(words)
-                    logger.debug(
-                        f"[bold yellow]Trying IMDb with the prefix removed: {title}[/bold yellow]"
-                    )
-                    result = await run_imdb_search(
-                        title,
-                        search_year,
-                        category,
-                        attempted + 1,
-                        wide_search=False,
-                    )
-                    if result and len(result) > 0:
-                        search_results = result
-            except Exception as e:
-                logger.info(
-                    f"[bold red]Reduced name search error:[/bold red] {e}"
-                )
-                search_results = []
-
-        # relax the constraints
-        if not search_results:
-            logger.debug(
-                "[yellow]No results found, trying with a wider search...[/yellow]"
-            )
-            try:
-                result = await run_imdb_search(
-                    filename,
-                    search_year,
-                    category,
-                    attempted + 1,
-                    wide_search=True,
-                )
-                if result and len(result) > 0:
-                    search_results = result
-            except Exception as e:
-                logger.error(f"[red]Error during wide search: {e}[/red]")
-
-        # Try parsed title (anitopy + guessit)
-        if not search_results:
-            try:
-                parsed = guessit_fn(
-                    untouched_filename or "",
-                    {"excludes": ["country", "language"]},
-                )
-                parsed_title_data = cast(
-                    dict[str, Any],
-                    anitopy_parse_fn(parsed.get("title", "")) or {},
-                )
-                parsed_title = str(parsed_title_data.get("anime_title", ""))
-                logger.debug(
-                    f"[bold yellow]Trying IMDB with parsed title: {parsed_title}[/bold yellow]"
-                )
-                result = await run_imdb_search(
-                    parsed_title,
-                    search_year,
-                    category,
-                    attempted + 1,
-                    wide_search=True,
-                )
-                if result and len(result) > 0:
-                    search_results = result
-            except Exception:
-                logger.info(
-                    "[bold red]Guessit failed parsing title, trying another method[/bold red]"
-                )
-
-        # Try with less words in the title
-        if not search_results:
-            try:
-                words = filename.split()
-                extensions = ["mp4", "mkv", "avi", "webm", "mov", "wmv"]
-                words_lower = [word.lower() for word in words]
-
-                for ext in extensions:
-                    if ext in words_lower:
-                        ext_index = words_lower.index(ext)
-                        words.pop(ext_index)
-                        words_lower.pop(ext_index)
-                        break
-
-                if len(words) > 1:
-                    reduced_title = " ".join(words[:-1])
-                    logger.debug(
-                        f"[bold yellow]Trying IMDB with reduced name: {reduced_title}[/bold yellow]"
-                    )
-                    result = await run_imdb_search(
-                        reduced_title,
-                        search_year,
-                        category,
-                        attempted + 1,
-                        wide_search=True,
-                    )
-                    if result and len(result) > 0:
-                        search_results = result
-            except Exception as e:
-                logger.info(
-                    f"[bold red]Reduced name search error:[/bold red] {e}"
-                )
-
-        # Try with even fewer words
-        if not search_results:
-            try:
-                words = filename.split()
-                extensions = ["mp4", "mkv", "avi", "webm", "mov", "wmv"]
-                words_lower = [word.lower() for word in words]
-
-                for ext in extensions:
-                    if ext in words_lower:
-                        ext_index = words_lower.index(ext)
-                        words.pop(ext_index)
-                        words_lower.pop(ext_index)
-                        break
-
-                if len(words) > 2:
-                    further_reduced_title = " ".join(words[:-2])
-                    logger.debug(
-                        f"[bold yellow]Trying IMDB with further reduced name: {further_reduced_title}[/bold yellow]"
-                    )
-                    result = await run_imdb_search(
-                        further_reduced_title,
-                        search_year,
-                        category,
-                        attempted + 1,
-                        wide_search=True,
-                    )
-                    if result and len(result) > 0:
-                        search_results = result
-            except Exception as e:
-                logger.info(
-                    f"[bold red]Further reduced name search error:[/bold red] {e}"
-                )
-
-        if quickie:
-            if search_results:
-                first_result = search_results[0]
-                logger.debug(
-                    f"[cyan]Quickie search result: {first_result}[/cyan]"
-                )
-                node = self.safe_get(first_result, ["node"], {})
-                title = self.safe_get(node, ["title"], {})
-                type_info = self.safe_get(title, ["titleType"], {})
-                year = self.safe_get(title, ["releaseYear", "year"], None)
-                imdb_id = self.safe_get(title, ["id"], "")
-                year_int = int(year) if year else None
-                search_year_int = int(search_year) if search_year else None
-
-                type_matches = False
-                if type_info:
-                    title_type = type_info.get("text", "").lower()
-                    is_tv = bool(
-                        category
-                        and category.lower() == "tv"
-                        and "tv series" in title_type
-                    )
-                    is_movie = bool(
-                        category
-                        and category.lower() == "movie"
-                        and "tv series" not in title_type
-                    )
-                    type_matches = is_tv or is_movie
-
-                if imdb_id and type_matches:
-                    if year_int and search_year_int:
-                        if year_int == search_year_int:
-                            return int(imdb_id.replace("tt", "").strip())
-                        logger.debug(
-                            f"[yellow]Year mismatch: found {year_int}, expected {search_year_int}[/yellow]"
-                        )
-                        return 0
-                    return int(imdb_id.replace("tt", "").strip())
-                if not imdb_id:
-                    logger.debug(
-                        "[yellow]No IMDb ID found in quickie result[/yellow]"
-                    )
-                if not type_matches:
-                    logger.debug(
-                        f"[yellow]Type mismatch: found {type_info.get('text', '')}, expected {category}[/yellow]"
-                    )
-                imdb_id_result = 0
-
-            return imdb_id_result if imdb_id_result else 0
-
-        if len(search_results) == 1:
-            imdb_id = self.safe_get(
-                search_results[0], ["node", "title", "id"], ""
-            )
-            if imdb_id:
-                return int(imdb_id.replace("tt", "").strip())
-        elif len(search_results) > 1:
-            # Calculate similarity for all results
-            results_with_similarity: list[tuple[dict[str, Any], float]] = []
-            filename_norm = filename.lower().strip()
-            search_year_int = int(search_year) if search_year else 0
-
-            for r in search_results:
-                node = self.safe_get(r, ["node"], {})
-                title = self.safe_get(node, ["title"], {})
-                title_text = self.safe_get(title, ["titleText", "text"], "")
-                result_year = self.safe_get(title, ["releaseYear", "year"], 0)
-
-                similarity = SequenceMatcher(
-                    None, filename_norm, title_text.lower().strip()
-                ).ratio()
-
-                # Only boost similarity if titles are very similar (>= 0.99) AND years match
-                if (
-                    similarity >= 0.99
-                    and search_year_int > 0
-                    and result_year > 0
-                ):
-                    if result_year == search_year_int:
-                        similarity += 0.1  # Full boost for exact year match
-                    elif result_year == search_year_int - 1:
-                        similarity += 0.05  # Half boost for -1 year
-
-                results_with_similarity.append((r, similarity))
-
-            # Sort by similarity (highest first)
-            results_with_similarity.sort(key=lambda x: x[1], reverse=True)
-
-            # Filter results: if we have high similarity matches (>= 0.90), hide low similarity ones (< 0.75)
-            best_similarity = results_with_similarity[0][1]
-            if best_similarity >= 0.90:
-                filtered_results_with_similarity: list[
-                    tuple[dict[str, Any], float]
-                ] = [
-                    (result, sim)
-                    for result, sim in results_with_similarity
-                    if sim >= 0.75
-                ]
-                results_with_similarity = filtered_results_with_similarity
-
-                logger.debug(
-                    f"[yellow]Filtered out low similarity results (< 0.70) since best match has {best_similarity:.2f} similarity[/yellow]"
-                )
-
-            sorted_results: list[dict[str, Any]] = [
-                r[0] for r in results_with_similarity
-            ]
-
-            # Check if the best match is significantly better than others
-            best_similarity = results_with_similarity[0][1]
-            similarity_threshold = 0.85
-
-            if best_similarity >= similarity_threshold:
-                second_best = (
-                    results_with_similarity[1][1]
-                    if len(results_with_similarity) > 1
-                    else 0.0
-                )
-
-                if best_similarity - second_best >= 0.10:
-                    logger.debug(
-                        f"[green]Auto-selecting best match: {self.safe_get(sorted_results[0], ['node', 'title', 'titleText', 'text'], '')} (similarity: {best_similarity:.2f})[/green]"
-                    )
-                    imdb_id = self.safe_get(
-                        sorted_results[0], ["node", "title", "id"], ""
-                    )
-                    if imdb_id:
-                        return int(imdb_id.replace("tt", "").strip())
-
-            if unattended:
-                imdb_id = self.safe_get(
-                    sorted_results[0], ["node", "title", "id"], ""
-                )
-                if imdb_id:
-                    imdb_id_result = int(imdb_id.replace("tt", "").strip())
-                    logger.debug(
-                        f"[green]Unattended mode: auto-selected IMDb ID {imdb_id_result}[/green]"
-                    )
-                    return imdb_id_result
-
-            # Show sorted results to user
-            logger.info(
-                "[bold yellow]Multiple IMDb results found. Please select the correct entry:[/bold yellow]"
-            )
-
-            for idx, candidate in enumerate(sorted_results):
-                node = self.safe_get(candidate, ["node"], {})
-                title = self.safe_get(node, ["title"], {})
-                title_text = self.safe_get(title, ["titleText", "text"], "")
-                year = self.safe_get(title, ["releaseYear", "year"], None)
-                imdb_id = self.safe_get(title, ["id"], "")
-                title_type = self.safe_get(title, ["titleType", "text"], "")
-                plot = self.safe_get(
-                    title, ["plot", "plotText", "plainText"], ""
-                )
-                similarity_score = results_with_similarity[idx][1]
-
-                logger.info(
-                    f"[cyan]{idx + 1}.[/cyan] [bold]{title_text}[/bold] ({year}) [yellow]ID:[/yellow] {imdb_id} [yellow]Type:[/yellow] {title_type} [dim](similarity: {similarity_score:.2f})[/dim]"
-                )
-                if plot:
-                    logger.info(
-                        f"[green]Plot:[/green] {plot[:200]}{'...' if len(plot) > 200 else ''}"
-                    )
-                logger.info("")
-
-            if sorted_results:
-                selection = None
-                while True:
-                    try:
-                        selection = (
-                            await prompt_in_thread(
-                                cli_ui.ask_string,
-                                "Enter the number of the correct entry, 0 for none, or manual IMDb ID (tt1234567): ",
-                            )
-                            or ""
-                        )
-                    except EOFError, KeyboardInterrupt:
-                        logger.info(
-                            "\n[red]Exiting on user request (Ctrl+C)[/red]"
-                        )
-                        await cleanup_manager.cleanup()
-                        cleanup_manager.reset_terminal()
-                        raise OperationAbortedError(
-                            "IMDb selection was cancelled by the user."
-                        ) from None
-                    try:
-                        # Check if it's a manual IMDb ID entry
-                        if (
-                            selection.lower().startswith("tt")
-                            and len(selection) >= 3
-                        ):
-                            try:
-                                manual_imdb_id = (
-                                    selection.lower().replace("tt", "").strip()
-                                )
-                                if manual_imdb_id.isdigit():
-                                    logger.info(
-                                        f"[green]Using manual IMDb ID: {selection}[/green]"
-                                    )
-                                    return int(manual_imdb_id)
-                                logger.info(
-                                    "[bold red]Invalid IMDb ID format. Please try again.[/bold red]"
-                                )
-                                continue
-                            except Exception as e:
-                                logger.info(
-                                    f"[bold red]Error parsing IMDb ID: {e}. Please try again.[/bold red]"
-                                )
-                                continue
-
-                        # Handle numeric selection
-                        selection_int = int(selection)
-                        if 1 <= selection_int <= len(sorted_results):
-                            selected = sorted_results[selection_int - 1]
-                            imdb_id = self.safe_get(
-                                selected, ["node", "title", "id"], ""
-                            )
-                            if imdb_id:
-                                return int(imdb_id.replace("tt", "").strip())
-                        elif selection_int == 0:
-                            logger.info("[bold red]Skipping IMDb[/bold red]")
-                            return 0
-                        else:
-                            logger.info(
-                                "[bold red]Selection out of range. Please try again.[/bold red]"
-                            )
-                    except ValueError:
-                        logger.info(
-                            "[bold red]Invalid input. Please enter a number or IMDb ID (tt1234567).[/bold red]"
-                        )
-
-        else:
-            if not unattended:
-                try:
-                    selection = (
-                        await prompt_in_thread(
-                            cli_ui.ask_string,
-                            "No results found. Please enter a manual IMDb ID (tt1234567) or 0 to skip: ",
-                        )
-                        or ""
-                    )
-                except EOFError, KeyboardInterrupt:
-                    logger.info(
-                        "\n[red]Exiting on user request (Ctrl+C)[/red]"
-                    )
-                    await cleanup_manager.cleanup()
-                    cleanup_manager.reset_terminal()
-                    raise OperationAbortedError(
-                        "IMDb selection was cancelled by the user."
-                    ) from None
-                if selection.lower().startswith("tt") and len(selection) >= 3:
-                    try:
-                        manual_imdb_id = (
-                            selection.lower().replace("tt", "").strip()
-                        )
-                        if manual_imdb_id.isdigit():
-                            logger.info(
-                                f"[green]Using manual IMDb ID: {selection}[/green]"
-                            )
-                            return int(manual_imdb_id)
-                        logger.info(
-                            "[bold red]Invalid IMDb ID format. Please try again.[/bold red]"
-                        )
-                    except Exception as e:
-                        logger.info(
-                            f"[bold red]Error parsing IMDb ID: {e}. Please try again.[/bold red]"
-                        )
-            else:
-                logger.info(
-                    "[bold red]No IMDb results found in unattended mode. Skipping IMDb.[/bold red]"
-                )
-
-        return imdb_id_result if imdb_id_result else 0
+        await self._search_delay(normalized_attempted)
+        context = _SearchContext(
+            filename=filename,
+            search_year=search_year,
+            quickie=quickie,
+            category=category,
+            secondary_title=secondary_title,
+            untouched_filename=untouched_filename,
+            attempted=normalized_attempted,
+            duration=duration,
+            unattended=unattended,
+        )
+        results = await self._collect_search_results(context)
+        return await self._resolve_search_results(results, context)
 
     @staticmethod
     def _episode_imdb_id(imdb_id: int | str) -> str:
