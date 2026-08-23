@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from src.domain_models.release import Meta
+from src.services import argument_override_service as override_module
 from src.services.argument_override_service import ApplyOverrides
 
 
@@ -233,6 +234,18 @@ def test_apply_args_updates_all_identifier_aliases_and_value_shapes(
         service.apply_args_to_meta(_meta(tmp_path), ["--imdb", "ttabc"])
     )
     assert invalid_imdb.imdb_id == "ttabc"
+
+
+def test_refactor_helper_edges(tmp_path: Path) -> None:
+    meta = _meta(tmp_path)
+    assert override_module._first_tmdb_match([], meta, 123) is None
+    assert override_module._normalized_imdb_entry({"imdb_id": 456}) == 456
+
+    updated = meta.copy()
+    modified: list[str] = []
+    override_module._apply_regular_override(meta, updated, "title", modified)
+    assert modified == []
+    assert meta.title == "Original"
 
 
 def test_apply_args_parser_failure_is_non_fatal(tmp_path: Path) -> None:
