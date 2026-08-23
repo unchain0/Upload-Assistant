@@ -625,6 +625,292 @@ class TrackerDataManager:
 
         return available, waiting
 
+    def _enabled_specific_trackers(self, meta: Meta) -> list[str]:
+        enabled: list[str] = []
+        for tracker in sorted(meta.tracker_ids):
+            if self._search_enabled(tracker):
+                enabled.append(tracker)
+                continue
+            logger.debug(
+                f"[yellow]Tracker {tracker} is not enabled for metadata search, skipping[/yellow]"
+            )
+        return enabled
+
+    @staticmethod
+    def _apply_specific_tracker_constraints(
+        meta: Meta, trackers: list[str]
+    ) -> None:
+        if meta.is_disc and "ANTHELION" in trackers:
+            trackers.remove("ANTHELION")
+        if meta.category == "MOVIE" and "BTN" in trackers:
+            trackers.remove("BTN")
+
+    @staticmethod
+    def _normalized_meta_trackers(meta: Meta) -> list[str]:
+        raw = meta.trackers
+        if isinstance(raw, str):
+            return [item.strip().upper() for item in raw.split(",")]
+        if isinstance(raw, list):
+            return [str(item).upper() for item in cast(list[Any], raw)]
+        return []
+
+    @staticmethod
+    def _remove_site_check_trackers(
+        meta: Meta, specific_trackers: list[str], meta_trackers: list[str]
+    ) -> None:
+        if not meta.site_check:
+            return
+        for tracker in list(specific_trackers):
+            if tracker not in meta_trackers:
+                continue
+            specific_trackers.remove(tracker)
+            meta_trackers.remove(tracker)
+
+    @classmethod
+    def _prepare_specific_trackers(
+        cls, meta: Meta, trackers: list[str]
+    ) -> list[str]:
+        cls._apply_specific_tracker_constraints(meta, trackers)
+        meta_trackers = cls._normalized_meta_trackers(meta)
+        cls._remove_site_check_trackers(meta, trackers, meta_trackers)
+        meta.trackers = meta_trackers
+        return trackers
+
+    @staticmethod
+    def _cooldown_wait_time(waiting: list[tuple[str, float]]) -> float:
+        return max(wait for _tracker, wait in waiting)
+
+    @staticmethod
+    def _cooldown_waiting_names(waiting: list[tuple[str, float]]) -> str:
+        return ", ".join(
+            f"{tracker} ({wait:.1f}s)" for tracker, wait in waiting
+        )
+
+    async def _available_specific_trackers(
+        self, trackers: list[str], meta: Meta
+    ) -> list[str]:
+        available, waiting = await self.get_available_trackers(
+            trackers, meta.base_dir, debug=meta.debug
+        )
+        if available or not waiting:
+            return available
+        logger.info(
+            "[yellow]Waiting for tracker metadata candidate cooldowns: "
+            f"{self._cooldown_waiting_names(waiting)}[/yellow]"
+        )
+        await asyncio.sleep(self._cooldown_wait_time(waiting))
+        available, waiting = await self.get_available_trackers(
+            trackers, meta.base_dir, debug=meta.debug
+        )
+        if waiting:
+            logger.warning(
+                "[yellow]Some tracker metadata candidates remain in cooldown and will not be queried.[/yellow]"
+            )
+        return available
+
+    def _tracker_search_semaphore(self) -> asyncio.Semaphore:
+        value = self.default_config.get("tracker_search_concurrency", 4)
+        try:
+            return asyncio.Semaphore(max(1, int(value)))
+        except TypeError, ValueError:
+            return asyncio.Semaphore(4)
+
+    async def _collect_candidate_with_semaphore(
+        self,
+        semaphore: asyncio.Semaphore,
+        tracker_name: str,
+        meta: Meta,
+        search_term: str,
+        search_file_folder: str,
+        skip_tracker_descriptions: bool,
+    ) -> tuple[str, Meta, int] | None:
+        async with semaphore:
+            return await self._collect_explicit_tracker_candidate(
+                tracker_name,
+                meta,
+                search_term,
+                search_file_folder,
+                skip_tracker_descriptions,
+            )
+
+    async def _collect_available_candidates(
+        self,
+        available_trackers: list[str],
+        meta: Meta,
+        search_term: str,
+        search_file_folder: str,
+        skip_tracker_descriptions: bool,
+    ) -> list[tuple[str, Meta, int]]:
+        semaphore = self._tracker_search_semaphore()
+        tasks = [
+            self._collect_candidate_with_semaphore(
+                semaphore,
+                tracker_name,
+                meta,
+                search_term,
+                search_file_folder,
+                skip_tracker_descriptions,
+            )
+            for tracker_name in available_trackers
+        ]
+        results = await asyncio.gather(*tasks)
+        for tracker_name in available_trackers:
+            await self.save_tracker_timestamp(
+                tracker_name, base_dir=meta.base_dir
+            )
+        return [result for result in results if result is not None]
+
+    async def _apply_selected_tracker_candidate(
+        self, meta: Meta, candidates: list[tuple[str, Meta, int]]
+    ) -> bool:
+        selected = await self._choose_explicit_tracker_candidate(
+            meta, candidates
+        )
+        if selected is None:
+            return False
+        tracker_name, candidate = selected
+        await self._review_explicit_tracker_description(
+            meta, tracker_name, candidate
+        )
+        await self._apply_explicit_tracker_candidate(
+            meta, tracker_name, candidate
+        )
+        logger.debug(
+            f"[green]Selected tracker metadata candidate: {tracker_name}[/green]"
+        )
+        return True
+
+    @staticmethod
+    def _log_specific_search_result(meta: Meta, found_match: bool) -> None:
+        if found_match:
+            tracker = (
+                meta.matched_tracker
+                if meta.matched_tracker is not None
+                else "Unknown"
+            )
+            logger.debug(
+                f"[green]Successfully found match using tracker: {tracker}[/green]"
+            )
+            return
+        logger.debug(
+            "[yellow]No matches found on any available specific trackers.[/yellow]"
+        )
+
+    async def _search_specific_tracker_data(
+        self,
+        meta: Meta,
+        trackers: list[str],
+        search_term: str,
+        search_file_folder: str,
+        skip_tracker_descriptions: bool,
+    ) -> Meta:
+        trackers = self._prepare_specific_trackers(meta, trackers)
+        available = await self._available_specific_trackers(trackers, meta)
+        candidates = await self._collect_available_candidates(
+            available,
+            meta,
+            search_term,
+            search_file_folder,
+            skip_tracker_descriptions,
+        )
+        found_match = await self._apply_selected_tracker_candidate(
+            meta, candidates
+        )
+        self._log_specific_search_result(meta, found_match)
+        return meta
+
+    @staticmethod
+    def _filename_tracker_order(meta: Meta, cat: str | None) -> list[str]:
+        from src.integrations.trackers.registry import api_trackers
+
+        other_api = sorted(api_trackers - {"BEYONDHD"})
+        order = ["PASSTHEPOPCORN", "HDBITS", "BEYONDHD", *other_api]
+        if cat != "TV" and meta.category != "TV":
+            return order
+        logger.debug(
+            "[yellow]Detected TV content, skipping PASSTHEPOPCORN tracker check"
+        )
+        return [tracker for tracker in order if tracker != "PASSTHEPOPCORN"]
+
+    async def _process_filename_tracker(
+        self,
+        tracker_name: str,
+        meta: Meta,
+        search_term: str,
+        search_file_folder: str,
+        skip_tracker_descriptions: bool,
+    ) -> tuple[Meta, bool]:
+        factory = tracker_class_map.get(tracker_name)
+        if factory is None:
+            logger.info(
+                f"[red]Tracker class for {tracker_name} not found.[/red]"
+            )
+            return meta, False
+        try:
+            (
+                updated_meta,
+                match,
+            ) = await self.update_metadata_from_explicit_tracker(
+                tracker_name,
+                factory(config=self.config),
+                meta,
+                search_term,
+                search_file_folder,
+                skip_tracker_descriptions,
+            )
+        except httpx.ConnectError:
+            logger.info(
+                f"{tracker_name} tracker request failed due to SSL/Connection error.",
+                extra={"markup": False},
+            )
+            return meta, False
+        except requests.exceptions.ConnectionError as error:
+            logger.info(
+                f"{tracker_name} tracker request failed due to connection error: {error}",
+                extra={"markup": False},
+            )
+            return meta, False
+        if match:
+            logger.debug(
+                f"[green]Match found on tracker: {tracker_name}[/green]"
+            )
+            meta.matched_tracker = tracker_name
+        return updated_meta, match
+
+    @staticmethod
+    def _mark_filename_search_result(meta: Meta, found_match: bool) -> None:
+        if found_match:
+            return
+        meta.no_tracker_match = True
+        logger.debug("[yellow]No matches found on any trackers.[/yellow]")
+
+    async def _search_filename_trackers(
+        self,
+        meta: Meta,
+        search_term: str,
+        search_file_folder: str,
+        cat: str | None,
+        skip_tracker_descriptions: bool,
+    ) -> Meta:
+        found_match = False
+        for tracker_name in self._filename_tracker_order(meta, cat):
+            if found_match:
+                break
+            if not self._search_enabled(tracker_name):
+                continue
+            meta, found_match = await self._process_filename_tracker(
+                tracker_name,
+                meta,
+                search_term,
+                search_file_folder,
+                skip_tracker_descriptions,
+            )
+        self._mark_filename_search_result(meta, found_match)
+        return meta
+
+    def _tracker_comment_only(self) -> bool:
+        return bool(self.default_config.get("tracker_comment_only", True))
+
     async def get_tracker_data(
         self,
         _video: Any,
@@ -634,246 +920,36 @@ class TrackerDataManager:
         cat: str | None = None,
         skip_tracker_descriptions: bool = False,
     ) -> Meta:
-        found_match = False
-        base_dir = meta.base_dir
-        search_term_value = search_term or ""
-        search_file_folder_value = search_file_folder or ""
-        if search_term:
-            # Check if a specific tracker is already set in meta
-            specific_tracker = sorted(meta.tracker_ids)
-
-            # Filter out trackers that don't have valid config or api_key/announce_url
-            if specific_tracker:
-                valid_trackers: list[str] = []
-                for tracker in specific_tracker:
-                    if not self._search_enabled(tracker):
-                        logger.debug(
-                            f"[yellow]Tracker {tracker} is not enabled for metadata search, skipping[/yellow]"
-                        )
-                        continue
-
-                    valid_trackers.append(tracker)
-
-                specific_tracker = valid_trackers
-
-            logger.debug(
-                f"[blue]Specific trackers to check: {specific_tracker}[/blue]"
-            )
-
-            if specific_tracker:
-                if meta.is_disc and "ANTHELION" in specific_tracker:
-                    specific_tracker.remove("ANTHELION")
-                if meta.category == "MOVIE" and "BTN" in specific_tracker:
-                    specific_tracker.remove("BTN")
-
-                meta_trackers_raw = meta.trackers
-                meta_trackers: list[str]
-                if isinstance(meta_trackers_raw, str):
-                    meta_trackers = [
-                        t.strip().upper() for t in meta_trackers_raw.split(",")
-                    ]
-                elif isinstance(meta_trackers_raw, list):
-                    meta_trackers_list = meta_trackers_raw
-                    meta_trackers = [t.upper() for t in meta_trackers_list]
-                else:
-                    meta_trackers = []
-
-                # for just searching, remove any specific trackers already in meta.trackers
-                # since that tracker was found in client, and remove it from meta.trackers
-                for tracker in list(specific_tracker):
-                    if tracker in meta_trackers and meta.site_check:
-                        specific_tracker.remove(tracker)
-                        meta_trackers.remove(tracker)
-
-                # Update meta.trackers preserving list format
-                if meta_trackers:
-                    meta.trackers = meta_trackers
-                else:
-                    meta.trackers = []
-
-                (
-                    available_trackers,
-                    waiting_trackers,
-                ) = await self.get_available_trackers(
-                    specific_tracker, base_dir, debug=meta.debug
-                )
-                if waiting_trackers and not available_trackers:
-                    wait_time = max(
-                        wait for _tracker, wait in waiting_trackers
-                    )
-                    waiting_names = ", ".join(
-                        f"{tracker} ({wait:.1f}s)"
-                        for tracker, wait in waiting_trackers
-                    )
-                    logger.info(
-                        f"[yellow]Waiting for tracker metadata candidate cooldowns: {waiting_names}[/yellow]"
-                    )
-                    await asyncio.sleep(wait_time)
-                    (
-                        available_trackers,
-                        waiting_trackers,
-                    ) = await self.get_available_trackers(
-                        specific_tracker, base_dir, debug=meta.debug
-                    )
-                    if waiting_trackers:
-                        logger.warning(
-                            "[yellow]Some tracker metadata candidates remain in cooldown and will not be queried.[/yellow]"
-                        )
-
-                search_limit = self.default_config.get(
-                    "tracker_search_concurrency", 4
-                )
-                try:
-                    semaphore = asyncio.Semaphore(max(1, int(search_limit)))
-                except TypeError, ValueError:
-                    semaphore = asyncio.Semaphore(4)
-
-                async def collect(
-                    tracker_name: str,
-                ) -> tuple[str, Meta, int] | None:
-                    async with semaphore:
-                        return await self._collect_explicit_tracker_candidate(
-                            tracker_name,
-                            meta,
-                            search_term_value,
-                            search_file_folder_value,
-                            skip_tracker_descriptions,
-                        )
-
-                results = await asyncio.gather(
-                    *(
-                        collect(tracker_name)
-                        for tracker_name in available_trackers
-                    )
-                )
-                candidates = [
-                    result for result in results if result is not None
-                ]
-                for tracker_name in available_trackers:
-                    await self.save_tracker_timestamp(
-                        tracker_name, base_dir=base_dir
-                    )
-
-                selected_candidate = (
-                    await self._choose_explicit_tracker_candidate(
-                        meta, candidates
-                    )
-                )
-                if selected_candidate:
-                    tracker_name, candidate_meta = selected_candidate
-                    await self._review_explicit_tracker_description(
-                        meta, tracker_name, candidate_meta
-                    )
-                    await self._apply_explicit_tracker_candidate(
-                        meta, tracker_name, candidate_meta
-                    )
-                    found_match = True
-                    logger.debug(
-                        f"[green]Selected tracker metadata candidate: {tracker_name}[/green]"
-                    )
-
-                if found_match:
-                    logger.debug(
-                        f"[green]Successfully found match using tracker: {(meta.matched_tracker if meta.matched_tracker is not None else 'Unknown')}[/green]"
-                    )
-                else:
-                    logger.debug(
-                        "[yellow]No matches found on any available specific trackers.[/yellow]"
-                    )
-
-            else:
-                if self.default_config.get("tracker_comment_only", True):
-                    logger.debug(
-                        "[cyan]Skipping filename-based tracker metadata searches because DEFAULT.tracker_comment_only is enabled.[/cyan]"
-                    )
-                    return meta
-
-                # Process all trackers with API = true if no specific tracker is set in meta
-                from src.integrations.trackers.registry import api_trackers
-
-                other_api = sorted(api_trackers - {"BEYONDHD"})
-                tracker_order = [
-                    "PASSTHEPOPCORN",
-                    "HDBITS",
-                    "BEYONDHD",
-                    *other_api,
-                ]
-
-                if cat == "TV" or meta.category == "TV":
-                    logger.debug(
-                        "[yellow]Detected TV content, skipping PASSTHEPOPCORN tracker check"
-                    )
-                    tracker_order = [
-                        tracker
-                        for tracker in tracker_order
-                        if tracker != "PASSTHEPOPCORN"
-                    ]
-
-                async def process_tracker(
-                    tracker_name: str,
-                    meta: Meta,
-                    skip_tracker_descriptions: bool,
-                ) -> Meta:
-                    nonlocal found_match
-                    tracker_factory = tracker_class_map.get(tracker_name)
-                    if tracker_factory is None:
-                        logger.info(
-                            f"[red]Tracker class for {tracker_name} not found.[/red]"
-                        )
-                        return meta
-
-                    tracker_instance = tracker_factory(config=self.config)
-                    try:
-                        (
-                            updated_meta,
-                            match,
-                        ) = await self.update_metadata_from_explicit_tracker(
-                            tracker_name,
-                            tracker_instance,
-                            meta,
-                            search_term_value,
-                            search_file_folder_value,
-                            skip_tracker_descriptions,
-                        )
-                        if match:
-                            found_match = True
-                            logger.debug(
-                                f"[green]Match found on tracker: {tracker_name}[/green]"
-                            )
-                            meta.matched_tracker = tracker_name
-                        return updated_meta
-                    except httpx.ConnectError:
-                        logger.info(
-                            f"{tracker_name} tracker request failed due to SSL/Connection error.",
-                            extra={"markup": False},
-                        )
-                    except requests.exceptions.ConnectionError as conn_err:
-                        logger.info(
-                            f"{tracker_name} tracker request failed due to connection error: {conn_err}",
-                            extra={"markup": False},
-                        )
-                    return meta
-
-                for tracker_name in tracker_order:
-                    if not found_match and self._search_enabled(
-                        tracker_name
-                    ):  # Stop checking once a match is found
-                        meta = await process_tracker(
-                            tracker_name, meta, skip_tracker_descriptions
-                        )
-
-                if not found_match:
-                    meta.no_tracker_match = True
-                    logger.debug(
-                        "[yellow]No matches found on any trackers.[/yellow]"
-                    )
-
-        else:
+        if not search_term:
             logger.warning(
                 "[yellow]Warning: No valid search term available, skipping tracker updates.[/yellow]"
             )
-
-        return meta
+            return meta
+        search_file_folder_value = search_file_folder or ""
+        specific_trackers = self._enabled_specific_trackers(meta)
+        logger.debug(
+            f"[blue]Specific trackers to check: {specific_trackers}[/blue]"
+        )
+        if specific_trackers:
+            return await self._search_specific_tracker_data(
+                meta,
+                specific_trackers,
+                search_term,
+                search_file_folder_value,
+                skip_tracker_descriptions,
+            )
+        if self._tracker_comment_only():
+            logger.debug(
+                "[cyan]Skipping filename-based tracker metadata searches because DEFAULT.tracker_comment_only is enabled.[/cyan]"
+            )
+            return meta
+        return await self._search_filename_trackers(
+            meta,
+            search_term,
+            search_file_folder_value,
+            cat,
+            skip_tracker_descriptions,
+        )
 
     async def ping_unit3d(self, meta: Meta) -> None:
         import re
