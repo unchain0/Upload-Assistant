@@ -1,7 +1,6 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
 import asyncio
 import contextlib
-import multiprocessing
 import os
 import platform
 import re
@@ -13,8 +12,6 @@ from concurrent.futures import ThreadPoolExecutor
 from importlib import import_module
 from pathlib import Path
 from typing import Any
-
-import psutil
 
 from src.integrations.observability.runtime_support import logger
 
@@ -33,191 +30,293 @@ IS_MACOS = sys.platform == "darwin"
 erase_key: str | None = None
 
 
+def _shutdown_thread_executor() -> None:
+    global thread_executor
+    if thread_executor is None:
+        return
+    thread_executor.shutdown(wait=True)
+    thread_executor = None
+
+
+def _close_process_streams(proc: subprocess.Popen[Any]) -> None:
+    for stream in (proc.stdout, proc.stderr, proc.stdin):
+        if stream:
+            with contextlib.suppress(Exception):
+                stream.close()
+
+
+def _force_kill_after_timeout(proc: subprocess.Popen[Any]) -> None:
+    if IS_ANDROID:
+        return
+    with contextlib.suppress(PermissionError, OSError):
+        proc.kill()
+
+
+def _log_termination_denied(proc: subprocess.Popen[Any]) -> None:
+    if IS_ANDROID:
+        return
+    logger.info(
+        f"[yellow]Cannot terminate process {proc.pid}: Permission denied[/yellow]"
+    )
+
+
+async def _terminate_live_process(proc: subprocess.Popen[Any]) -> None:
+    try:
+        proc.terminate()
+        try:
+            await asyncio.wait_for(asyncio.to_thread(proc.wait), timeout=3)
+        except TimeoutError:
+            _force_kill_after_timeout(proc)
+    except PermissionError, OSError:
+        _log_termination_denied(proc)
+
+
+async def _terminate_tracked_process(proc: subprocess.Popen[Any]) -> None:
+    if proc.returncode is None:
+        await _terminate_live_process(proc)
+    _close_process_streams(proc)
+
+
+async def _terminate_tracked_subprocesses() -> None:
+    while running_subprocesses:
+        await _terminate_tracked_process(running_subprocesses.pop())
+
+
+async def _settle_subprocess_transports() -> None:
+    with contextlib.suppress(RuntimeError):
+        await asyncio.sleep(0.1)
+
+
+def _remaining_tasks() -> list[asyncio.Task[Any]]:
+    current = asyncio.current_task()
+    return [task for task in asyncio.all_tasks() if task is not current]
+
+
+def _cancel_tasks(tasks: list[asyncio.Task[Any]]) -> None:
+    for task in tasks:
+        task.cancel()
+
+
+async def _gather_cancelled_tasks(tasks: list[asyncio.Task[Any]]) -> list[Any]:
+    if not tasks:
+        return []
+    try:
+        return list(await asyncio.gather(*tasks, return_exceptions=True))
+    except RuntimeError:
+        return []
+
+
+async def _cancel_remaining_tasks() -> list[Any]:
+    try:
+        tasks = _remaining_tasks()
+    except RuntimeError:
+        return []
+    _cancel_tasks(tasks)
+    with contextlib.suppress(RuntimeError):
+        await asyncio.sleep(0.1)
+    return await _gather_cancelled_tasks(tasks)
+
+
+def _report_cleanup_results(results: list[Any]) -> None:
+    for result in results:
+        if isinstance(result, Exception) and not isinstance(
+            result, asyncio.CancelledError
+        ):
+            logger.error(f"[red]Error during cleanup: {result}[/red]")
+
+
+def _terminate_remaining_tracked_subprocesses() -> None:
+    for proc in list(running_subprocesses):
+        if proc.returncode is not None:
+            continue
+        with contextlib.suppress(PermissionError, OSError):
+            proc.terminate()
+
+
+def _delete_dead_thread(thread: Any, current: Any) -> None:
+    if thread == current or thread.is_alive():
+        return
+    delete_fn = getattr(thread, "_delete", None)
+    if callable(delete_fn):
+        with contextlib.suppress(Exception):
+            delete_fn()
+
+
+def _cleanup_dead_threads() -> None:
+    try:
+        current = threading.current_thread()
+        for thread in threading.enumerate():
+            _delete_dead_thread(thread, current)
+    except Exception as error:
+        logger.error(f"[red]Error cleaning up threads: {error}[/red]")
+
+
+def _shutdown_thread_executor() -> None:
+    global thread_executor
+    if thread_executor is None:
+        return
+    thread_executor.shutdown(wait=True)
+    thread_executor = None
+
+
+def _close_process_streams(proc: subprocess.Popen[Any]) -> None:
+    for stream in (proc.stdout, proc.stderr, proc.stdin):
+        if stream:
+            with contextlib.suppress(Exception):
+                stream.close()
+
+
+async def _wait_for_process_exit(proc: subprocess.Popen[Any]) -> None:
+    try:
+        await asyncio.wait_for(asyncio.to_thread(proc.wait), timeout=3)
+    except TimeoutError:
+        if IS_ANDROID:
+            return
+        with contextlib.suppress(PermissionError, OSError):
+            proc.kill()
+
+
+async def _terminate_tracked_process(proc: subprocess.Popen[Any]) -> None:
+    if proc.returncode is None:
+        try:
+            proc.terminate()
+            await _wait_for_process_exit(proc)
+        except PermissionError, OSError:
+            if not IS_ANDROID:
+                logger.info(
+                    f"[yellow]Cannot terminate process {proc.pid}: "
+                    "Permission denied[/yellow]"
+                )
+    _close_process_streams(proc)
+
+
+async def _cleanup_tracked_subprocesses() -> None:
+    while running_subprocesses:
+        await _terminate_tracked_process(running_subprocesses.pop())
+
+
+async def _safe_cleanup_sleep() -> None:
+    with contextlib.suppress(RuntimeError):
+        await asyncio.sleep(0.1)
+
+
+def _remaining_asyncio_tasks() -> list[Any]:
+    current = asyncio.current_task()
+    return [task for task in asyncio.all_tasks() if task is not current]
+
+
+async def _gather_cancelled_tasks(tasks: list[Any]) -> list[Any]:
+    for task in tasks:
+        task.cancel()
+    await _safe_cleanup_sleep()
+    if not tasks:
+        return []
+    try:
+        return await asyncio.gather(*tasks, return_exceptions=True)
+    except RuntimeError:
+        return []
+
+
+async def _cancel_remaining_tasks() -> list[Any]:
+    try:
+        return await _gather_cancelled_tasks(_remaining_asyncio_tasks())
+    except RuntimeError:
+        return []
+
+
+def _log_cleanup_results(results: list[Any]) -> None:
+    for result in results:
+        if isinstance(result, Exception) and not isinstance(
+            result, asyncio.CancelledError
+        ):
+            logger.error(f"[red]Error during cleanup: {result}[/red]")
+
+
+def _terminate_android_tracked_processes() -> None:
+    with contextlib.suppress(Exception):
+        for proc in list(running_subprocesses):
+            if proc.returncode is not None:
+                continue
+            with contextlib.suppress(
+                PermissionError, psutil.AccessDenied, OSError
+            ):
+                proc.terminate()
+
+
+def _terminate_child_processes(children: list[Any]) -> None:
+    for child in children:
+        with contextlib.suppress(
+            psutil.NoSuchProcess, psutil.AccessDenied, PermissionError
+        ):
+            child.terminate()
+
+
+def _kill_stubborn_children(children: list[Any]) -> None:
+    if IS_MACOS:
+        return
+    try:
+        _, still_alive = psutil.wait_procs(children, timeout=3)
+        for child in still_alive:
+            with contextlib.suppress(
+                psutil.NoSuchProcess, psutil.AccessDenied, PermissionError
+            ):
+                child.kill()
+    except psutil.AccessDenied, PermissionError:
+        return
+
+
+def _terminate_non_android_children() -> None:
+    try:
+        children = psutil.Process().children(recursive=True)
+        _terminate_child_processes(children)
+        _kill_stubborn_children(children)
+    except (PermissionError, psutil.AccessDenied, OSError) as error:
+        if not IS_ANDROID:
+            logger.info(f"[yellow]Limited process access: {error}[/yellow]")
+    except Exception as error:
+        logger.error(f"[red]Error during process cleanup: {error}[/red]")
+
+
+def _terminate_macos_children() -> None:
+    if not IS_MACOS or not hasattr(multiprocessing, "active_children"):
+        return
+    for child in multiprocessing.active_children():
+        with contextlib.suppress(Exception):
+            child.terminate()
+            child.join(1)
+
+
+def _delete_completed_thread_references() -> None:
+    try:
+        current = threading.current_thread()
+        for thread in threading.enumerate():
+            if thread == current or thread.is_alive():
+                continue
+            delete_fn = getattr(thread, "_delete", None)
+            if callable(delete_fn):
+                with contextlib.suppress(Exception):
+                    delete_fn()
+    except Exception as error:
+        logger.error(f"[red]Error cleaning up threads: {error}[/red]")
+
+
 class CleanupManager:
     async def cleanup(self) -> None:
-        """Ensure all running tasks, threads, and subprocesses are properly cleaned up before exiting."""
-        # console.print("[yellow]Cleaning up tasks before exiting...[/yellow]")
-
-        # Step 1: Shutdown ThreadPoolExecutor **before checking for threads**
-        global thread_executor
-        if thread_executor:
-            # console.print("[yellow]Shutting down thread pool executor...[/yellow]")
-            thread_executor.shutdown(
-                wait=True
-            )  # Ensure threads terminate before proceeding
-            thread_executor = None  # Remove reference
-
-        # 🔹 Step 1: Stop the monitoring thread safely
-        # if not stop_monitoring.is_set():
-        #    console.print("[yellow]Stopping thread monitor...[/yellow]")
-        #    stop_monitoring.set()  # Tell monitoring thread to stop
-
-        # 🔹 Step 2: Wait for the monitoring thread to exit completely
-        # if monitor_thread and monitor_thread.is_alive():
-        #    console.print("[yellow]Waiting for monitoring thread to exit...[/yellow]")
-        #    monitor_thread.join(timeout=3)  # Ensure complete shutdown
-        #    if monitor_thread.is_alive():
-        #        console.print("[red]Warning: Monitoring thread did not exit in time.[/red]")
-
-        # 🔹 Step 3: Terminate all tracked subprocesses
-        while running_subprocesses:
-            proc = running_subprocesses.pop()
-            if proc.returncode is None:  # If still running
-                # console.print(f"[yellow]Terminating subprocess {proc.pid}...[/yellow]")
-                try:
-                    proc.terminate()  # Send SIGTERM first
-                    try:
-                        await asyncio.wait_for(
-                            asyncio.to_thread(proc.wait), timeout=3
-                        )  # Wait for process to exit
-                    except TimeoutError:
-                        if (
-                            not IS_ANDROID
-                        ):  # Only try force kill on non-Android
-                            # console.print(f"[red]Subprocess {proc.pid} did not exit in time, force killing.[/red]")
-                            with contextlib.suppress(PermissionError, OSError):
-                                proc.kill()  # Force kill if it doesn't exit
-                except PermissionError, OSError:
-                    # Android doesn't allow process termination in many cases
-                    if not IS_ANDROID:
-                        logger.info(
-                            f"[yellow]Cannot terminate process {proc.pid}: Permission denied[/yellow]"
-                        )
-
-            # 🔹 Close process streams safely
-            for stream in (proc.stdout, proc.stderr, proc.stdin):
-                if stream:
-                    with contextlib.suppress(Exception):
-                        stream.close()
-
-        # 🔹 Step 4: Ensure subprocess transport cleanup
-        with contextlib.suppress(RuntimeError):
-            await asyncio.sleep(0.1)
-
-        # 🔹 Step 5: Cancel all running asyncio tasks **gracefully**
-        try:
-            tasks = [
-                t
-                for t in asyncio.all_tasks()
-                if t is not asyncio.current_task()
-            ]
-            # console.print(f"[yellow]Cancelling {len(tasks)} remaining tasks...[/yellow]")
-
-            for task in tasks:
-                task.cancel()
-
-            # Stage 1: Give tasks a moment to cancel themselves
-            with contextlib.suppress(RuntimeError):
-                await asyncio.sleep(0.1)
-
-            # Stage 2: Gather tasks with exception handling
-            if tasks:  # Only gather if there are tasks
-                try:
-                    results = await asyncio.gather(
-                        *tasks, return_exceptions=True
-                    )
-                except RuntimeError:
-                    # Event loop is no longer running, skip gather
-                    results = []
-            else:
-                results = []
-        except RuntimeError:
-            # Event loop is no longer running, skip task cleanup
-            results = []
-
-        for result in results:
-            if isinstance(result, Exception) and not isinstance(
-                result, asyncio.CancelledError
-            ):
-                logger.error(f"[red]Error during cleanup: {result}[/red]")
-
-        # 🔹 Step 6: Kill all remaining threads and orphaned processes
+        """Clean tracked task resources before application exit."""
+        _shutdown_thread_executor()
+        await _cleanup_tracked_subprocesses()
+        await _safe_cleanup_sleep()
+        _log_cleanup_results(await _cancel_remaining_tasks())
         self.kill_all_threads()
 
-        # console.print("[green]Cleanup completed. Exiting safely.[/green]")
-
     def kill_all_threads(self) -> None:
-        """Forcefully kill any lingering threads and subprocesses before exit."""
-        # console.print("[yellow]Checking for remaining background threads...[/yellow]")
-
-        # 🔹 Kill any lingering subprocesses
+        """Clean lingering child resources using the existing platform rules."""
         if IS_ANDROID:
-            # On Android, we have limited process access - just clean up what we can
-            with contextlib.suppress(Exception):
-                # Only try to clean up processes we directly spawned
-                for proc in list(running_subprocesses):
-                    if proc.returncode is None:
-                        with contextlib.suppress(
-                            PermissionError, psutil.AccessDenied, OSError
-                        ):
-                            proc.terminate()
-                # Silently handle Android permission issues
+            _terminate_android_tracked_processes()
         else:
-            # Standard process cleanup for non-Android systems
-            try:
-                current_process = psutil.Process()
-                children = current_process.children(recursive=True)
-
-                for child in children:
-                    # console.print(f"[yellow]Terminating process {child.pid}...[/yellow]")
-                    with contextlib.suppress(
-                        psutil.NoSuchProcess,
-                        psutil.AccessDenied,
-                        PermissionError,
-                    ):
-                        child.terminate()
-
-                # Wait for a short time for processes to terminate
-                if not IS_MACOS:
-                    try:
-                        _, still_alive = psutil.wait_procs(children, timeout=3)
-                        for child in still_alive:
-                            # console.print(f"[red]Force killing stubborn process: {child.pid}[/red]")
-                            with contextlib.suppress(
-                                psutil.NoSuchProcess,
-                                psutil.AccessDenied,
-                                PermissionError,
-                            ):
-                                child.kill()
-                    except psutil.AccessDenied, PermissionError:
-                        # Handle systems where we can't wait for processes
-                        pass
-            except (PermissionError, psutil.AccessDenied, OSError) as e:
-                if not IS_ANDROID:
-                    logger.info(
-                        f"[yellow]Limited process access: {e}[/yellow]"
-                    )
-            except Exception as e:
-                logger.error(f"[red]Error during process cleanup: {e}[/red]")
-
-        # 🔹 For macOS, specifically check and terminate any multiprocessing processes
-        if IS_MACOS and hasattr(multiprocessing, "active_children"):
-            for child in multiprocessing.active_children():
-                with contextlib.suppress(Exception):
-                    child.terminate()
-                    child.join(1)  # Wait 1 second for it to terminate
-
-        # 🔹 Remove references to completed threads
-        try:
-            for thread in threading.enumerate():
-                if (
-                    thread != threading.current_thread()
-                    and not thread.is_alive()
-                ):
-                    delete_fn = getattr(thread, "_delete", None)
-                    if callable(delete_fn):
-                        with contextlib.suppress(Exception):
-                            delete_fn()
-        except Exception as e:
-            logger.error(f"[red]Error cleaning up threads: {e}[/red]")
-
-        # 🔹 Print remaining active threads
-        # active_threads = [t for t in threading.enumerate()]
-        # console.print(f"[bold yellow]Remaining active threads:[/bold yellow] {len(active_threads)}")
-        # for t in active_threads:
-        #    console.print(f"  - {t.name} (Alive: {t.is_alive()})")
-
-        # console.print("[green]Thread cleanup completed.[/green]")
+            _terminate_non_android_children()
+        _terminate_macos_children()
+        _delete_completed_thread_references()
 
     def reset_terminal(self) -> None:
         """Reset the terminal without affecting unrelated processes."""

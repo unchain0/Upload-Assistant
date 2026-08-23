@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 from io import StringIO
 from types import SimpleNamespace
-from typing import ClassVar
 
 import pytest
 
@@ -202,64 +201,30 @@ class _Child:
         self.joined = True
 
 
-class _PsProcess:
-    children_value: ClassVar[list[_Child]] = []
-    error: ClassVar[BaseException | None] = None
-
-    def __init__(self) -> None:
-        if type(self).error:
-            raise type(self).error
-
-    def children(self, *, recursive: bool) -> list[_Child]:
-        assert recursive
-        return type(self).children_value
-
-
-def test_kill_all_threads_non_android_wait_kill_access_and_generic_errors(
+def test_kill_all_threads_only_terminates_tracked_processes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    children = [_Child(), _Child()]
-    _PsProcess.children_value = children
-    _PsProcess.error = None
-    monkeypatch.setattr(cleanup, "IS_ANDROID", False)
-    monkeypatch.setattr(cleanup, "IS_MACOS", False)
-    monkeypatch.setattr(cleanup.psutil, "Process", _PsProcess)
-    monkeypatch.setattr(
-        cleanup.psutil,
-        "wait_procs",
-        lambda _children, **_kwargs: ([], [children[1]]),
+    tracked = _Process()
+    completed = _Process(returncode=0)
+    denied = _Process(terminate_error=PermissionError("denied"))
+    untracked = _Child()
+    cleanup.running_subprocesses.update(  # type: ignore[arg-type]
+        {tracked, completed, denied}
     )
     monkeypatch.setattr(cleanup.threading, "enumerate", lambda: [])
-    CleanupManager().kill_all_threads()
-    assert all(child.terminated for child in children) and children[1].killed
 
-    monkeypatch.setattr(
-        cleanup.psutil,
-        "wait_procs",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            cleanup.psutil.AccessDenied()
-        ),
-    )
     CleanupManager().kill_all_threads()
 
-    _PsProcess.error = PermissionError("denied")
-    CleanupManager().kill_all_threads()
-    _PsProcess.error = RuntimeError("unexpected")
-    CleanupManager().kill_all_threads()
+    assert tracked.terminated
+    assert not completed.terminated
+    assert not denied.terminated
+    assert not untracked.terminated
+    assert not untracked.killed
 
 
-def test_kill_all_threads_android_macos_and_thread_delete_paths(
+def test_kill_all_threads_cleans_dead_thread_refs_and_handles_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    child = _Child()
-    process = _Process()
-    cleanup.running_subprocesses.add(process)  # type: ignore[arg-type]
-    monkeypatch.setattr(cleanup, "IS_ANDROID", True)
-    monkeypatch.setattr(cleanup, "IS_MACOS", True)
-    monkeypatch.setattr(
-        cleanup.multiprocessing, "active_children", lambda: [child]
-    )
-
     deleted: list[bool] = []
 
     class DeadThread:
@@ -269,18 +234,20 @@ def test_kill_all_threads_android_macos_and_thread_delete_paths(
         def _delete(self) -> None:
             deleted.append(True)
 
+    class LiveThread:
+        @staticmethod
+        def is_alive() -> bool:
+            return True
+
     current = SimpleNamespace(name="current")
     monkeypatch.setattr(cleanup.threading, "current_thread", lambda: current)
     monkeypatch.setattr(
-        cleanup.threading, "enumerate", lambda: [current, DeadThread()]
+        cleanup.threading,
+        "enumerate",
+        lambda: [current, LiveThread(), DeadThread()],
     )
     CleanupManager().kill_all_threads()
-    assert (
-        process.terminated
-        and child.terminated
-        and child.joined
-        and deleted == [True]
-    )
+    assert deleted == [True]
 
     monkeypatch.setattr(
         cleanup.threading,
@@ -445,3 +412,33 @@ def test_reset_terminal_stdout_write_error_and_outer_error_reporting(
         "Error during terminal reset: first flush failed"
         in reporter.getvalue()
     )
+
+
+def test_cleanup_refactor_helper_guard_edges(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(cleanup, "termios", None)
+    cleanup._flush_terminal_input()
+    monkeypatch.setattr(
+        cleanup,
+        "termios",
+        SimpleNamespace(tcflush=lambda *_args: None),
+    )
+    cleanup._flush_terminal_input()
+
+    closed_stream = SimpleNamespace(closed=True)
+    monkeypatch.setattr(cleanup.sys, "stdout", closed_stream)
+    cleanup._restore_stdout()
+    monkeypatch.setattr(cleanup.sys, "stderr", closed_stream)
+    cleanup._report_terminal_reset_error(RuntimeError("ignored"))
+
+    class Input:
+        closed = False
+
+        @staticmethod
+        def isatty() -> bool:
+            return True
+
+    monkeypatch.setattr(cleanup.sys, "stdin", Input())
+    monkeypatch.setattr(cleanup.shutil, "which", lambda _name: None)
+    assert cleanup._read_erase_key() is None
