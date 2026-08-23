@@ -11,7 +11,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 try:
     import rarfile
@@ -369,126 +369,125 @@ def extract_series_from_filename(filename: str) -> tuple[str, str]:
     return match.group(1).strip(), normalize_series_index(match.group(2))
 
 
-def extract_cbr_cbz_metadata(filepath: str) -> dict[str, Any]:
-    """Extract metadata from a CBR (RAR) or CBZ (ZIP) container's ComicInfo.xml file."""
-    metadata: dict[str, Any] = {}
-    if not Path(filepath).is_file():
-        return metadata
+_COMIC_INFO_FIELDS = {
+    "Series": "series",
+    "Title": "title",
+    "Writer": "writer",
+    "Penciller": "penciller",
+    "Publisher": "publisher",
+    "Year": "year",
+    "LanguageISO": "language_iso",
+    "Summary": "summary",
+    "Genre": "genre",
+}
 
-    ext = Path(filepath).suffix.lower()
-    xml_data: bytes | None = None
 
-    if ext == ".cbz" or zipfile.is_zipfile(filepath):
-        try:
-            with zipfile.ZipFile(filepath, "r") as z:
-                # Find ComicInfo.xml (case-insensitive search)
-                xml_name = next(
-                    (
-                        name
-                        for name in z.namelist()
-                        if name.lower().endswith("comicinfo.xml")
-                    ),
-                    None,
-                )
-                if xml_name:
-                    xml_data = z.read(xml_name)
-        except Exception as e:
-            logger.debug(
-                f"[yellow]Debug: Error reading CBZ zip archive: {e}[/yellow]"
-            )
-    elif ext == ".cbr":
-        if rarfile is None:
-            logger.debug(
-                "[yellow]Debug: rarfile library not available for CBR metadata extraction.[/yellow]"
-            )
-        else:
-            try:
-                with rarfile.RarFile(filepath, "r") as r:
-                    xml_name = next(
-                        (
-                            name
-                            for name in r.namelist()
-                            if name.lower().endswith("comicinfo.xml")
-                        ),
-                        None,
-                    )
-                    if xml_name:
-                        xml_data = r.read(xml_name)
-            except Exception as e:
-                logger.debug(
-                    f"[yellow]Debug: Error reading CBR rar archive: {e}[/yellow]"
-                )
+def _comic_info_name(names: list[str]) -> str | None:
+    return next(
+        (name for name in names if name.lower().endswith("comicinfo.xml")),
+        None,
+    )
 
-    if not xml_data:
-        return metadata
 
+def _read_cbz_comic_info(filepath: str) -> bytes | None:
     try:
-        root = ET.fromstring(xml_data)
-
-        series = ""
-        title = ""
-        writer = ""
-        penciller = ""
-        publisher = ""
-        year = ""
-        language_iso = ""
-        summary = ""
-        genre = ""
-
-        for elem in root.iter():
-            tag_local = elem.tag.split("}")[-1]
-            if tag_local == "Series":
-                series = (elem.text or "").strip()
-            elif tag_local == "Title":
-                title = (elem.text or "").strip()
-            elif tag_local == "Writer":
-                writer = (elem.text or "").strip()
-            elif tag_local == "Penciller":
-                penciller = (elem.text or "").strip()
-            elif tag_local == "Publisher":
-                publisher = (elem.text or "").strip()
-            elif tag_local == "Year":
-                year = (elem.text or "").strip()
-            elif tag_local == "LanguageISO":
-                language_iso = (elem.text or "").strip()
-            elif tag_local == "Summary":
-                summary = (elem.text or "").strip()
-            elif tag_local == "Genre":
-                genre = (elem.text or "").strip()
-
-        # Map to common metadata fields
-        final_title = series or title
-        if final_title:
-            metadata["title"] = final_title
-
-        final_author = writer or penciller
-        if final_author:
-            metadata["author"] = final_author
-
-        if publisher:
-            metadata["publisher"] = publisher
-
-        if year:
-            match = re.search(r"\b\d{4}\b", year)
-            if match:
-                metadata["year"] = match.group(0)
-
-        if language_iso:
-            metadata["book_language_raw"] = language_iso
-
-        if summary:
-            metadata["overview"] = summary
-
-        if genre:
-            genres_list = [g.strip() for g in genre.split(",") if g.strip()]
-            metadata["keywords"] = metadata["genres"] = genres_list
-
-    except Exception as e:
+        with zipfile.ZipFile(filepath, "r") as archive:
+            xml_name = _comic_info_name(archive.namelist())
+            return archive.read(xml_name) if xml_name else None
+    except Exception as error:
         logger.debug(
-            f"[yellow]Warning: Error parsing ComicInfo.xml metadata: {e}[/yellow]"
+            f"[yellow]Debug: Error reading CBZ zip archive: {error}[/yellow]"
         )
+        return None
 
+
+def _read_cbr_comic_info(filepath: str) -> bytes | None:
+    if rarfile is None:
+        logger.debug(
+            "[yellow]Debug: rarfile library not available for CBR metadata extraction.[/yellow]"
+        )
+        return None
+    try:
+        with rarfile.RarFile(filepath, "r") as archive:
+            xml_name = _comic_info_name(archive.namelist())
+            if not xml_name:
+                return None
+            archive_api = cast(Any, archive)
+            return bytes(archive_api.read(xml_name))
+    except Exception as error:
+        logger.debug(
+            f"[yellow]Debug: Error reading CBR rar archive: {error}[/yellow]"
+        )
+        return None
+
+
+def _comic_info_bytes(filepath: str) -> bytes | None:
+    extension = Path(filepath).suffix.lower()
+    if extension == ".cbz" or zipfile.is_zipfile(filepath):
+        return _read_cbz_comic_info(filepath)
+    if extension == ".cbr":
+        return _read_cbr_comic_info(filepath)
+    return None
+
+
+def _comic_info_values(root: ET.Element) -> dict[str, str]:
+    values = dict.fromkeys(_COMIC_INFO_FIELDS.values(), "")
+    for element in root.iter():
+        field = _COMIC_INFO_FIELDS.get(element.tag.split("}")[-1])
+        if field is not None:
+            values[field] = _epub_element_text(element)
+    return values
+
+
+def _comic_year(value: str) -> str:
+    match = re.search(r"\b\d{4}\b", value)
+    return match.group(0) if match else ""
+
+
+def _comic_genres(value: str) -> list[str]:
+    return [genre.strip() for genre in value.split(",") if genre.strip()]
+
+
+def _comic_info_metadata(values: dict[str, str]) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    _set_book_metadata_value(
+        metadata, "title", values["series"] or values["title"]
+    )
+    _set_book_metadata_value(
+        metadata, "author", values["writer"] or values["penciller"]
+    )
+    _set_book_metadata_value(metadata, "publisher", values["publisher"])
+    _set_book_metadata_value(metadata, "year", _comic_year(values["year"]))
+    _set_book_metadata_value(
+        metadata, "book_language_raw", values["language_iso"]
+    )
+    _set_book_metadata_value(metadata, "overview", values["summary"])
+    genres = _comic_genres(values["genre"])
+    if genres:
+        metadata["keywords"] = metadata["genres"] = genres
     return metadata
+
+
+def _parse_comic_info_metadata(xml_data: bytes) -> dict[str, Any]:
+    try:
+        return _comic_info_metadata(
+            _comic_info_values(ET.fromstring(xml_data))
+        )
+    except Exception as error:
+        logger.debug(
+            f"[yellow]Warning: Error parsing ComicInfo.xml metadata: {error}[/yellow]"
+        )
+        return {}
+
+
+def extract_cbr_cbz_metadata(filepath: str) -> dict[str, Any]:
+    """Extract metadata from a CBR (RAR) or CBZ (ZIP) ComicInfo.xml file."""
+    if not Path(filepath).is_file():
+        return {}
+    xml_data = _comic_info_bytes(filepath)
+    if not xml_data:
+        return {}
+    return _parse_comic_info_metadata(xml_data)
 
 
 def extract_mobi_metadata(mobi_path: str) -> dict[str, Any]:
