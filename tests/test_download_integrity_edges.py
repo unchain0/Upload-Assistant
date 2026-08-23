@@ -9,6 +9,7 @@ import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
 from src.integrations.runtime_tools import download_integrity as integrity
@@ -133,6 +134,53 @@ def test_safe_extract_tar_directory_regular_limit_and_missing_stream(
             integrity.safe_extract_tar(archive, tmp_path / "missing-stream")
 
 
+def test_safe_extract_tar_rejects_special_member(tmp_path: Path) -> None:
+    archive_path = tmp_path / "special.tar"
+    with tarfile.open(archive_path, "w") as archive:
+        member = tarfile.TarInfo("link")
+        member.type = tarfile.SYMTYPE
+        member.linkname = "target"
+        archive.addfile(member)
+
+    with (
+        tarfile.open(archive_path) as archive,
+        pytest.raises(RuntimeError, match="Unsupported archive member"),
+    ):
+        integrity.safe_extract_tar(archive, tmp_path / "output")
+
+
+def test_promotion_helper_error_edges(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source"
+    first_target = tmp_path / "one" / "tool"
+    duplicate_target = tmp_path / "two" / "tool"
+    with pytest.raises(ValueError, match="unique filenames"):
+        integrity._promotion_targets(
+            [(source, first_target)], [duplicate_target]
+        )
+
+    backup_dir = tmp_path / "backup"
+    backup_dir.mkdir()
+    with pytest.raises(RuntimeError, match="Recovery backup"):
+        integrity._prepare_backup_dir(backup_dir)
+
+    backup = tmp_path / "saved"
+    target = tmp_path / "restored"
+    backup.write_bytes(b"old")
+    original_replace = Path.replace
+
+    def fail_restore(path: Path, destination: Path) -> Path:
+        if path == backup:
+            raise OSError("restore failed")
+        return original_replace(path, destination)
+
+    monkeypatch.setattr(Path, "replace", fail_restore)
+    errors = integrity._restore_backup_files([(backup, target)])
+    assert len(errors) == 1
+    assert str(errors[0]) == "restore failed"
+
+
 def test_promote_success_remove_target_and_complete_rollback(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -201,6 +249,113 @@ def test_declared_size_none_invalid_valid_and_excessive() -> None:
         integrity._validate_declared_size(
             SimpleNamespace(headers={"content-length": "11"}), 10
         )
+
+
+def test_bounded_async_download_success_and_oversize_cleanup(
+    tmp_path: Path,
+) -> None:
+    class Response:
+        status_code = 200
+        headers = {"content-length": "4"}
+
+        def raise_for_status(self) -> None:
+            return None
+
+        async def aiter_bytes(self, chunk_size: int):
+            assert chunk_size == 8192
+            yield b"tool"
+
+    class Stream:
+        async def __aenter__(self):
+            return Response()
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    class Client:
+        def stream(self, method: str, url: str, timeout: float):
+            assert method == "GET"
+            assert url == "https://example.invalid/tool"
+            assert timeout == 5.0
+            return Stream()
+
+    destination = tmp_path / "asset"
+    destination.write_bytes(b"stale")
+    asyncio.run(
+        integrity.download_bounded_asset(
+            Client(),
+            "https://example.invalid/tool",
+            destination,
+            max_bytes=4,
+            timeout_seconds=5.0,
+        )
+    )
+    assert destination.read_bytes() == b"tool"
+
+    class OversizeResponse(Response):
+        headers = {}
+
+        async def aiter_bytes(self, chunk_size: int):
+            assert chunk_size == 8192
+            yield b"123"
+            yield b"45"
+
+    class OversizeStream(Stream):
+        async def __aenter__(self):
+            return OversizeResponse()
+
+    class OversizeClient(Client):
+        def stream(self, method: str, url: str, timeout: float):
+            return OversizeStream()
+
+    with pytest.raises(RuntimeError, match="4-byte limit"):
+        asyncio.run(
+            integrity.download_bounded_asset(
+                OversizeClient(),
+                "https://example.invalid/tool",
+                destination,
+                max_bytes=4,
+                timeout_seconds=5.0,
+            )
+        )
+    assert not destination.exists()
+
+
+def test_bounded_sync_download_delegates_to_async(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[tuple[str, Path, int, float]] = []
+
+    class FakeClient:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    async def fake_download(
+        _client: object,
+        url: str,
+        destination: Path,
+        *,
+        max_bytes: int,
+        timeout_seconds: float,
+    ) -> None:
+        calls.append((url, destination, max_bytes, timeout_seconds))
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
+    monkeypatch.setattr(integrity, "download_bounded_asset", fake_download)
+    destination = tmp_path / "asset"
+    integrity.download_bounded_asset_sync(
+        "https://example.invalid/tool",
+        destination,
+        max_bytes=123,
+        timeout_seconds=7.0,
+    )
+    assert calls == [("https://example.invalid/tool", destination, 123, 7.0)]
 
 
 def test_verified_download_success_failure_cleanup_async_and_sync(
