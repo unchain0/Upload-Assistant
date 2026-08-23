@@ -162,8 +162,8 @@ exclude = [
 
 
 [tool.radon]
-cc_min = "B"
-cc_max = "F"
+cc_min = "A"
+cc_max = "A"
 show_complexity = true
 no_assert = true
 exclude = ".git,.venv,build,data/cache,data/sessions,tmp"
