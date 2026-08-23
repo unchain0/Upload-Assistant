@@ -77,64 +77,98 @@ def _clear_episode_metadata(meta: Meta) -> None:
     meta.we_checked_tvdb = False
 
 
-def sync_single_episode_from_filename(meta: Meta) -> bool:
-    if (
-        meta.category != "TV"
-        or bool(meta.is_disc)
-        or meta.tv_pack
-        or meta.manual_date
+_VIDEO_EXTENSIONS = frozenset(
+    {
+        ".avi",
+        ".m2ts",
+        ".m4v",
+        ".mkv",
+        ".mp4",
+        ".mpeg",
+        ".mpg",
+        ".ts",
+        ".vob",
+    }
+)
+_EPISODE_IDENTITY_PATTERN = re.compile(
+    r"(?i)(?<![^\W_])S([0-9]{1,3})E([0-9]{1,4})(?![^\W_])"
+)
+
+
+def _has_manual_episode_identity(meta: Meta) -> bool:
+    return bool(
+        meta.manual_date
         or meta.manual_season is not None
         or meta.manual_episode is not None
-    ):
-        return False
+    )
 
+
+def _eligible_for_filename_episode_sync(meta: Meta) -> bool:
+    if meta.category != "TV":
+        return False
+    if bool(meta.is_disc) or meta.tv_pack:
+        return False
+    return not _has_manual_episode_identity(meta)
+
+
+def _is_video_file_path(path: object) -> bool:
+    if not isinstance(path, (str, Path)):
+        return False
+    return Path(path).suffix.lower() in _VIDEO_EXTENSIONS
+
+
+def _single_video_file(meta: Meta) -> Path | None:
     filelist = meta.filelist if isinstance(meta.filelist, list) else []
     video_files = [
-        Path(path)
-        for path in filelist
-        if isinstance(path, (str, Path))
-        and Path(path).suffix.lower()
-        in {
-            ".avi",
-            ".m2ts",
-            ".m4v",
-            ".mkv",
-            ".mp4",
-            ".mpeg",
-            ".mpg",
-            ".ts",
-            ".vob",
-        }
+        Path(path) for path in filelist if _is_video_file_path(path)
     ]
     if len(video_files) != 1:
-        return False
+        return None
+    return video_files[0]
 
-    filename = video_files[0].name
-    if len(filename) > 1024:
-        return False
 
+def _guessit_allows_single_episode(filename: str) -> bool:
     try:
         guessed_episodes = _guessit_data(filename).get("episode")
     except Exception:
         return False
-    if isinstance(guessed_episodes, list):
-        return False
+    return not isinstance(guessed_episodes, list)
 
-    matches = re.findall(
-        r"(?i)(?<![^\W_])S([0-9]{1,3})E([0-9]{1,4})(?![^\W_])", filename
-    )
+
+def _episode_identity_from_filename(filename: str) -> tuple[int, int] | None:
+    if len(filename) > 1024:
+        return None
+    if not _guessit_allows_single_episode(filename):
+        return None
+    matches = _EPISODE_IDENTITY_PATTERN.findall(filename)
     if len(matches) != 1:
-        return False
+        return None
+    season_value, episode_value = matches[0]
+    return int(season_value), int(episode_value)
 
-    season_int, episode_int = (int(value) for value in matches[0])
-    if season_int == meta.season_int and episode_int == meta.episode_int:
-        return False
 
+def _apply_episode_identity(
+    meta: Meta, season_int: int, episode_int: int
+) -> None:
     _clear_episode_metadata(meta)
     meta.season_int = season_int
     meta.episode_int = episode_int
     meta.season = f"S{season_int:02d}"
     meta.episode = f"E{episode_int:02d}"
+
+
+def sync_single_episode_from_filename(meta: Meta) -> bool:
+    if not _eligible_for_filename_episode_sync(meta):
+        return False
+    video_file = _single_video_file(meta)
+    if video_file is None:
+        return False
+    identity = _episode_identity_from_filename(video_file.name)
+    if identity is None:
+        return False
+    if identity == (meta.season_int, meta.episode_int):
+        return False
+    _apply_episode_identity(meta, *identity)
     return True
 
 
