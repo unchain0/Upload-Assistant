@@ -144,9 +144,7 @@ def _encode_clip(encode: str | None) -> tuple[str | None, Any | None]:
     return None, None
 
 
-def _write_random_frames(
-    src: Any, num: int, screens_file: Path
-) -> list[int]:
+def _write_random_frames(src: Any, num: int, screens_file: Path) -> list[int]:
     start, end = 1000, len(src) - 10000
     frames = sorted(
         random.randint(start, end)  # nosec B311  # noqa: S311
@@ -183,9 +181,7 @@ def _resize_source_for_encode(src: Any, enc: Any | None) -> Any:
     return zresize(src, width=width, height=height)
 
 
-def _tonemap_clips(
-    src: Any, enc: Any | None
-) -> tuple[Any, Any | None, bool]:
+def _tonemap_clips(src: Any, enc: Any | None) -> tuple[Any, Any | None, bool]:
     frame = src.get_frame(0)
     if frame.props["_Primaries"] != 9:
         return src, enc, False
@@ -223,9 +219,7 @@ def vs_screengn(
     dir: str = ".",
     config: dict[str, Any] | None = None,
 ) -> None:
-    selected_config = (
-        {"optimize_images": True} if config is None else config
-    )
+    selected_config = {"optimize_images": True} if config is None else config
     screens_file = Path(dir) / "screens.txt"
     existing_frames = _existing_screen_frames(screens_file, num)
     src = _index_source(source, dir)
