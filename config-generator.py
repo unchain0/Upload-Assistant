@@ -620,6 +620,132 @@ def find_missing_keys(
     return missing_keys
 
 
+def _fill_missing_config_values(
+    target: ConfigDict, template: ConfigDict, description: str
+) -> None:
+    for key, value in template.items():
+        if key in target:
+            continue
+        target[key] = value
+        console.print(
+            f"[i] Added missing key '{key}' to {description} with default value",
+            markup=False,
+        )
+
+
+def _should_add_tracker_template(
+    tracker_name: str, trackers_config: ConfigDict
+) -> bool:
+    if tracker_name in {"default_trackers", "MANUAL"}:
+        return False
+    return tracker_name not in trackers_config
+
+
+def _add_new_tracker_templates(
+    trackers_config: ConfigDict, example_section: ConfigDict
+) -> None:
+    for tracker_name, tracker_settings in example_section.items():
+        if not _should_add_tracker_template(tracker_name, trackers_config):
+            continue
+        if not isinstance(tracker_settings, dict):
+            continue
+        trackers_config[tracker_name] = deepcopy(tracker_settings)
+        console.print(
+            f"[i] Added new tracker '{tracker_name}' with default settings",
+            markup=False,
+        )
+
+
+def _tracker_template(
+    example_section: ConfigDict, tracker_name: str
+) -> ConfigDict | None:
+    return _as_config_dict(example_section.get(tracker_name))
+
+
+def _fill_existing_tracker_settings(
+    trackers_config: ConfigDict, example_section: ConfigDict
+) -> None:
+    for tracker_name, tracker_settings in trackers_config.items():
+        if tracker_name == "default_trackers":
+            continue
+        if not isinstance(tracker_settings, dict):
+            continue
+        template = _tracker_template(example_section, tracker_name)
+        if template is None:
+            continue
+        _fill_missing_config_values(
+            tracker_settings, template, f"tracker '{tracker_name}'"
+        )
+
+
+def _autofill_tracker_section(
+    config_data: ConfigDict, example_section: ConfigDict
+) -> None:
+    trackers_config = cast(
+        ConfigDict,
+        config_data.setdefault("TRACKERS", {"default_trackers": ""}),
+    )
+    _add_new_tracker_templates(trackers_config, example_section)
+    _fill_existing_tracker_settings(trackers_config, example_section)
+
+
+def _client_template_by_type(
+    example_section: ConfigDict, client_type: Any
+) -> ConfigDict | None:
+    for template_settings in example_section.values():
+        if not isinstance(template_settings, dict):
+            continue
+        if template_settings.get("torrent_client") == client_type:
+            return cast(ConfigDict, template_settings)
+    return None
+
+
+def _matching_client_template(
+    client_name: str,
+    client_settings: ConfigDict,
+    example_section: ConfigDict,
+) -> ConfigDict | None:
+    if client_name in example_section:
+        return _as_config_dict(example_section[client_name])
+    client_type = client_settings.get("torrent_client")
+    if not client_type:
+        return None
+    return _client_template_by_type(example_section, client_type)
+
+
+def _autofill_torrent_client_section(
+    config_data: ConfigDict, example_section: ConfigDict
+) -> None:
+    clients = cast(ConfigDict, config_data.setdefault("TORRENT_CLIENTS", {}))
+    for client_name, client_settings in clients.items():
+        if not isinstance(client_settings, dict):
+            continue
+        template = _matching_client_template(
+            client_name, client_settings, example_section
+        )
+        if template is None:
+            continue
+        _fill_missing_config_values(
+            client_settings, template, f"torrent client '{client_name}'"
+        )
+
+
+def _autofill_static_section(
+    config_data: ConfigDict, section: str, example_section: ConfigDict
+) -> None:
+    if section not in config_data:
+        config_data[section] = example_section.copy()
+        console.print(
+            f"[i] Added missing section '{section}' with default values",
+            markup=False,
+        )
+        return
+    section_config = cast(ConfigDict, config_data[section])
+    _fill_missing_config_values(
+        section_config, example_section, f"section '{section}'"
+    )
+
+
 def autofill_missing_keys(
     config_data: ConfigDict, example_config: ConfigDict
 ) -> None:
@@ -627,99 +753,13 @@ def autofill_missing_keys(
     for section, example_section in example_config.items():
         if not isinstance(example_section, dict):
             continue
-
         if section == "TRACKERS":
-            trackers_config = cast(
-                ConfigDict,
-                config_data.setdefault("TRACKERS", {"default_trackers": ""}),
-            )
-
-            # Trackers are independent configuration sections.  Unlike their
-            # individual settings, a newly supported tracker has no existing
-            # user section to iterate over, so add its template explicitly.
-            for tracker_name, tracker_settings in example_section.items():
-                if (
-                    tracker_name in {"default_trackers", "MANUAL"}
-                    or tracker_name in trackers_config
-                ):
-                    continue
-                if isinstance(tracker_settings, dict):
-                    trackers_config[tracker_name] = deepcopy(tracker_settings)
-                    console.print(
-                        f"[i] Added new tracker '{tracker_name}' with default settings",
-                        markup=False,
-                    )
-
-            for tracker_name, tracker_settings in trackers_config.items():
-                if tracker_name == "default_trackers":
-                    continue
-                if (
-                    isinstance(tracker_settings, dict)
-                    and tracker_name in example_section
-                ):
-                    example_tracker = example_section[tracker_name]
-                    if isinstance(example_tracker, dict):
-                        for key, value in example_tracker.items():
-                            if key not in tracker_settings:
-                                tracker_settings[key] = value
-                                console.print(
-                                    f"[i] Added missing key '{key}' to tracker '{tracker_name}' with default value",
-                                    markup=False,
-                                )
-
-        elif section == "TORRENT_CLIENTS":
-            if "TORRENT_CLIENTS" not in config_data:
-                config_data["TORRENT_CLIENTS"] = {}
-
-            for client_name, client_settings in config_data[
-                "TORRENT_CLIENTS"
-            ].items():
-                if isinstance(client_settings, dict):
-                    # Try to find a matching template client from example config
-                    example_client = None
-                    if client_name in example_section:
-                        example_client = example_section[client_name]
-                    else:
-                        # Match by "torrent_client" property
-                        client_type = client_settings.get("torrent_client")
-                        if client_type:
-                            for (
-                                _template_name,
-                                template_settings,
-                            ) in example_section.items():  # noqa: PERF102
-                                if (
-                                    isinstance(template_settings, dict)
-                                    and template_settings.get("torrent_client")
-                                    == client_type
-                                ):
-                                    example_client = template_settings
-                                    break
-
-                    if isinstance(example_client, dict):
-                        for key, value in example_client.items():
-                            if key not in client_settings:
-                                client_settings[key] = value
-                                console.print(
-                                    f"[i] Added missing key '{key}' to torrent client '{client_name}' with default value",
-                                    markup=False,
-                                )
-
-        else:
-            # Static sections like DEFAULT, USENET, IMAGES, etc.
-            if section not in config_data:
-                config_data[section] = example_section.copy()
-                console.print(
-                    f"[i] Added missing section '{section}' with default values",
-                    markup=False,
-                )
-            else:
-                for key, value in example_section.items():
-                    if key not in config_data[section]:
-                        config_data[section][key] = value
-                        console.print(
-                            f"[i] Added missing key '{key}' to section '{section}' with default value",
-                            markup=False,
-                        )
+            _autofill_tracker_section(config_data, example_section)
+            continue
+        if section == "TORRENT_CLIENTS":
+            _autofill_torrent_client_section(config_data, example_section)
+            continue
+        _autofill_static_section(config_data, section, example_section)
 
 
 def _masked_password_value(value: str) -> str:
