@@ -140,6 +140,16 @@ def test_router_handles_invalid_year_and_explicit_sd():
     assert current._is_sd(make_meta(sd=True, resolution="1080p")) is True
 
 
+def test_refactor_helper_fallback_branches():
+    current = router()
+    assert not current._recent_privatehd_candidate(make_meta(), {"FR"})
+    assert not current._recent_privatehd_candidate(
+        make_meta(year=1970), {"US"}
+    )
+    assert current._avistaz_destinations(set()) == []
+    assert current._destinations_for_source("OTHER", make_meta(), {"US"}) == []
+
+
 def test_privatehd_direct_region_decisions_cover_cinemaz_and_avistaz():
     current = router()
     cinema = current.decide(
