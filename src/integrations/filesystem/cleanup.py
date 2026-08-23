@@ -26,6 +26,7 @@ IS_ANDROID = (
 
 running_subprocesses: set[subprocess.Popen[Any]] = set()
 thread_executor: ThreadPoolExecutor | None = None
+IS_MACOS = sys.platform == "darwin"
 erase_key: str | None = None
 
 
