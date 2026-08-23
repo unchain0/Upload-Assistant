@@ -270,16 +270,35 @@ def _fixture_tree(tmp_path: Path) -> dict[str, Path]:
     }
 
 
+_MEDIA_CATEGORIES = ("MOVIE", "TV", "MUSIC", "BOOK", "XXX")
+_MEDIA_TYPES = ("WEBDL", "REMUX", "FLAC", "M4B", "ENCODE")
+_MEDIA_RESOLUTIONS = ("2160p", "1080p", "720p", "OTHER", "1080p")
+_MEDIA_DISC_TYPES = ("", "BDMV", "DVD", "", "")
+_MEDIA_VIDEO_CODECS = ("H.265", "H.264", "H.264", "H.264", "H.264")
+_MEDIA_HDR = ("DV HDR10+", "HDR", "", "", "")
+_MEDIA_AUDIO = (
+    "TrueHD Atmos 7.1",
+    "DDP 5.1",
+    "DDP 5.1",
+    "DDP 5.1",
+    "DDP 5.1",
+)
+_MEDIA_AUDIO_CODECS = ("TrueHD", "DDP", "DDP", "DDP", "DDP")
+_MEDIA_CHANNELS = ("7.1", "5.1", "5.1", "5.1", "5.1")
+_CATEGORY_FILE_KEYS = {"BOOK": "m4b", "MUSIC": "audio"}
+
+
+def _profile_value(values: tuple[Any, ...], profile: int) -> Any:
+    return values[profile % len(values)]
+
+
+def _profile_media_file(files: Mapping[str, Path], category: str) -> Path:
+    return files[_CATEGORY_FILE_KEYS.get(category, "media")]
+
+
 def _meta(tmp_path: Path, files: Mapping[str, Path], profile: int) -> Meta:
-    categories = ("MOVIE", "TV", "MUSIC", "BOOK", "XXX")
-    category = categories[profile % len(categories)]
-    selected = (
-        files["m4b"]
-        if category == "BOOK"
-        else files["audio"]
-        if category == "MUSIC"
-        else files["media"]
-    )
+    category = _profile_value(_MEDIA_CATEGORIES, profile)
+    selected = _profile_media_file(files, category)
     return Meta(
         base_dir=str(tmp_path),
         uuid=f"media-{profile}",
@@ -287,10 +306,10 @@ def _meta(tmp_path: Path, files: Mapping[str, Path], profile: int) -> Meta:
         filename=selected.name,
         filelist=[str(selected), str(files["audio"]), str(files["png"])],
         category=category,
-        type=("WEBDL", "REMUX", "FLAC", "M4B", "ENCODE")[profile % 5],
-        source="BluRay" if profile % 2 else "WEB",
-        is_disc="BDMV" if profile == 1 else "DVD" if profile == 2 else "",
-        resolution=("2160p", "1080p", "720p", "OTHER", "1080p")[profile % 5],
+        type=_profile_value(_MEDIA_TYPES, profile),
+        source=_profile_value(("WEB", "BluRay"), profile),
+        is_disc=_profile_value(_MEDIA_DISC_TYPES, profile),
+        resolution=_profile_value(_MEDIA_RESOLUTIONS, profile),
         title="Example Release",
         name="Example Release 2026 1080p WEB-DL H.264 DDP 5.1-GROUP",
         clean_name="Example.Release.2026.1080p.WEB-DL.H.264.DDP5.1-GROUP",
@@ -299,13 +318,13 @@ def _meta(tmp_path: Path, files: Mapping[str, Path], profile: int) -> Meta:
         episode=1,
         season_int=1,
         episode_int=1,
-        video_codec="H.265" if profile == 0 else "H.264",
-        video_encode="H.265" if profile == 0 else "H.264",
+        video_codec=_profile_value(_MEDIA_VIDEO_CODECS, profile),
+        video_encode=_profile_value(_MEDIA_VIDEO_CODECS, profile),
         bit_depth="10",
-        hdr="DV HDR10+" if profile == 0 else "HDR" if profile == 1 else "",
-        audio="TrueHD Atmos 7.1" if profile == 0 else "DDP 5.1",
-        audio_codec="TrueHD" if profile == 0 else "DDP",
-        channels="7.1" if profile == 0 else "5.1",
+        hdr=_profile_value(_MEDIA_HDR, profile),
+        audio=_profile_value(_MEDIA_AUDIO, profile),
+        audio_codec=_profile_value(_MEDIA_AUDIO_CODECS, profile),
+        channels=_profile_value(_MEDIA_CHANNELS, profile),
         container="MKV",
         tag="-GROUP",
         group="GROUP",
@@ -381,15 +400,13 @@ def _modules(monkeypatch: Any) -> list[ModuleType]:
     ]
 
 
-def _value(
-    name: str,
-    annotation: object,
-    meta: Meta,
-    files: Mapping[str, Path],
-    profile: int,
-) -> object:
-    normalized = name.casefold().lstrip("_")
-    values: dict[str, object] = {
+_MISSING = object()
+
+
+def _named_media_values(
+    meta: Meta, files: Mapping[str, Path]
+) -> dict[str, object]:
+    return {
         "meta": meta,
         "config": example_config,
         "path": str(files["media"]),
@@ -464,45 +481,56 @@ def _value(
             meta,
         ),
     }
-    if normalized in values:
-        return values[normalized]
-    origin = get_origin(annotation)
-    args = get_args(annotation)
-    if annotation is inspect.Parameter.empty or annotation is Any:
+
+
+def _scalar_media_value(
+    annotation: object, files: Mapping[str, Path], profile: int
+) -> object:
+    if annotation in {inspect.Parameter.empty, Any}:
         return _Universal()
-    if annotation is bool:
-        return bool(profile % 2)
-    if annotation is int:
-        return 1
-    if annotation is float:
-        return 1.0
-    if annotation is str:
-        return "example"
     if annotation is Path:
         return files["media"]
-    if origin in {list, Sequence}:
-        return ["example"]
-    if origin in {dict, Mapping}:
-        return {}
-    if origin is tuple:
-        return tuple(
-            _value(normalized, item, meta, files, profile)
-            for item in args
-            if item is not Ellipsis
-        )
-    if origin is not None and type(None) in args:
-        concrete = next((item for item in args if item is not type(None)), str)
-        return _value(normalized, concrete, meta, files, profile)
-    return _Universal()
+    values: dict[object, object] = {
+        bool: bool(profile % 2),
+        int: 1,
+        float: 1.0,
+        str: "example",
+    }
+    return values.get(annotation, _MISSING)
 
 
-_PROTECTED_ARGUMENTS = frozenset(
-    {"meta", "config", "clip", "frame", "process", "response"}
-)
+def _direct_media_composite(origin: object) -> object:
+    values: dict[object, object] = {
+        list: ["example"],
+        Sequence: ["example"],
+        dict: {},
+        Mapping: {},
+    }
+    return values.get(origin, _MISSING)
 
 
-def _coerce_override(
-    value: object,
+def _tuple_media_value(
+    normalized: str,
+    args: tuple[object, ...],
+    meta: Meta,
+    files: Mapping[str, Path],
+    profile: int,
+) -> tuple[object, ...]:
+    return tuple(
+        _value(normalized, item, meta, files, profile)
+        for item in args
+        if item is not Ellipsis
+    )
+
+
+def _media_optional_type(args: tuple[object, ...]) -> object | None:
+    if type(None) not in args:
+        return None
+    return next((item for item in args if item is not type(None)), str)
+
+
+def _composite_media_value(
+    normalized: str,
     annotation: object,
     meta: Meta,
     files: Mapping[str, Path],
@@ -510,14 +538,40 @@ def _coerce_override(
 ) -> object:
     origin = get_origin(annotation)
     args = get_args(annotation)
-    if annotation is Meta:
-        return meta
-    if annotation is Path:
-        return value if isinstance(value, Path) else files["media"]
-    if annotation is str:
-        return str(value)
-    if annotation is bool:
-        return bool(value)
+    direct = _direct_media_composite(origin)
+    if direct is not _MISSING:
+        return direct
+    if origin is tuple:
+        return _tuple_media_value(normalized, args, meta, files, profile)
+    concrete = _media_optional_type(args)
+    if concrete is None:
+        return _Universal()
+    return _value(normalized, concrete, meta, files, profile)
+
+
+def _value(
+    name: str,
+    annotation: object,
+    meta: Meta,
+    files: Mapping[str, Path],
+    profile: int,
+) -> object:
+    normalized = name.casefold().lstrip("_")
+    values = _named_media_values(meta, files)
+    if normalized in values:
+        return values[normalized]
+    scalar = _scalar_media_value(annotation, files, profile)
+    if scalar is not _MISSING:
+        return scalar
+    return _composite_media_value(normalized, annotation, meta, files, profile)
+
+
+_PROTECTED_ARGUMENTS = frozenset(
+    {"meta", "config", "clip", "frame", "process", "response"}
+)
+
+
+def _coerce_media_number(value: object, annotation: object) -> object:
     if annotation is int:
         try:
             return int(value)
@@ -528,23 +582,208 @@ def _coerce_override(
             return float(value)
         except TypeError, ValueError:
             return 1.0
+    return _MISSING
+
+
+def _coerce_media_meta(
+    _value: object, meta: Meta, _files: Mapping[str, Path]
+) -> object:
+    return meta
+
+
+def _coerce_media_path(
+    value: object, _meta: Meta, files: Mapping[str, Path]
+) -> object:
+    return value if isinstance(value, Path) else files["media"]
+
+
+def _coerce_media_str(
+    value: object, _meta: Meta, _files: Mapping[str, Path]
+) -> object:
+    return str(value)
+
+
+def _coerce_media_bool(
+    value: object, _meta: Meta, _files: Mapping[str, Path]
+) -> object:
+    return bool(value)
+
+
+_MEDIA_SIMPLE_COERCERS: dict[
+    object, Callable[[object, Meta, Mapping[str, Path]], object]
+] = {
+    Meta: _coerce_media_meta,
+    Path: _coerce_media_path,
+    str: _coerce_media_str,
+    bool: _coerce_media_bool,
+}
+
+
+def _coerce_media_simple(
+    value: object,
+    annotation: object,
+    meta: Meta,
+    files: Mapping[str, Path],
+) -> object:
+    coercer = _MEDIA_SIMPLE_COERCERS.get(annotation)
+    if coercer is None:
+        return _MISSING
+    return coercer(value, meta, files)
+
+
+def _coerce_media_list(
+    value: object,
+    args: tuple[object, ...],
+    meta: Meta,
+    files: Mapping[str, Path],
+    profile: int,
+) -> list[object]:
+    if isinstance(value, list):
+        return value
+    element = args[0] if args else object
+    return [_coerce_override(value, element, meta, files, profile)]
+
+
+def _coerce_media_mapping(value: object) -> object:
+    return value if isinstance(value, dict) else {}
+
+
+def _coerce_media_tuple(value: object) -> object:
+    return value if isinstance(value, tuple) else ()
+
+
+def _coerce_media_set(value: object) -> object:
+    return value if isinstance(value, set) else {value}
+
+
+_MEDIA_COLLECTION_COERCERS: dict[object, Callable[[object], object]] = {
+    dict: _coerce_media_mapping,
+    Mapping: _coerce_media_mapping,
+    tuple: _coerce_media_tuple,
+    set: _coerce_media_set,
+}
+
+
+def _coerce_media_direct_collection(value: object, origin: object) -> object:
+    coercer = _MEDIA_COLLECTION_COERCERS.get(origin)
+    if coercer is None:
+        return _MISSING
+    return coercer(value)
+
+
+def _coerce_media_collection(
+    value: object,
+    origin: object,
+    args: tuple[object, ...],
+    meta: Meta,
+    files: Mapping[str, Path],
+    profile: int,
+) -> object:
     if origin in {list, Sequence}:
-        if isinstance(value, list):
-            return value
-        element = args[0] if args else object
-        return [_coerce_override(value, element, meta, files, profile)]
-    if origin in {dict, Mapping}:
-        return value if isinstance(value, dict) else {}
-    if origin is tuple:
-        return value if isinstance(value, tuple) else ()
-    if origin is set:
-        return value if isinstance(value, set) else {value}
-    if origin is not None and type(None) in args and value is not None:
-        concrete = next(
-            (item for item in args if item is not type(None)), object
+        return _coerce_media_list(value, args, meta, files, profile)
+    return _coerce_media_direct_collection(value, origin)
+
+
+def _coerce_media_optional(
+    value: object,
+    args: tuple[object, ...],
+    meta: Meta,
+    files: Mapping[str, Path],
+    profile: int,
+) -> object:
+    if value is None:
+        return value
+    concrete = _media_optional_type(args)
+    if concrete is None:
+        return value
+    return _coerce_override(value, concrete, meta, files, profile)
+
+
+def _coerce_override(
+    value: object,
+    annotation: object,
+    meta: Meta,
+    files: Mapping[str, Path],
+    profile: int,
+) -> object:
+    simple = _coerce_media_simple(value, annotation, meta, files)
+    if simple is not _MISSING:
+        return simple
+    number = _coerce_media_number(value, annotation)
+    if number is not _MISSING:
+        return number
+    origin = get_origin(annotation)
+    args = get_args(annotation)
+    collection = _coerce_media_collection(
+        value, origin, args, meta, files, profile
+    )
+    if collection is not _MISSING:
+        return collection
+    return _coerce_media_optional(value, args, meta, files, profile)
+
+
+def _safe_type_hints(target: object) -> dict[str, Any]:
+    try:
+        return get_type_hints(target)
+    except NameError, TypeError:
+        return {}
+
+
+def _include_parameter(
+    parameter: inspect.Parameter, overrides: Mapping[str, object]
+) -> bool:
+    if parameter.kind in {
+        inspect.Parameter.VAR_POSITIONAL,
+        inspect.Parameter.VAR_KEYWORD,
+    }:
+        return False
+    return (
+        parameter.default is inspect.Parameter.empty
+        or parameter.name in overrides
+    )
+
+
+def _media_parameter_value(
+    parameter: inspect.Parameter,
+    annotation: object,
+    overrides: Mapping[str, object],
+    meta: Meta,
+    files: Mapping[str, Path],
+    profile: int,
+) -> object:
+    value = _value(parameter.name, annotation, meta, files, profile)
+    if parameter.name not in overrides:
+        return value
+    if parameter.name in _PROTECTED_ARGUMENTS:
+        return value
+    return _coerce_override(
+        overrides[parameter.name], annotation, meta, files, profile
+    )
+
+
+def _media_invocation_arguments(
+    function: Callable[..., object],
+    meta: Meta,
+    files: Mapping[str, Path],
+    profile: int,
+    overrides: Mapping[str, object],
+) -> tuple[list[object], dict[str, object]]:
+    hint_target = function.__init__ if inspect.isclass(function) else function
+    hints = _safe_type_hints(hint_target)
+    positional: list[object] = []
+    keywords: dict[str, object] = {}
+    for parameter in inspect.signature(function).parameters.values():
+        if not _include_parameter(parameter, overrides):
+            continue
+        annotation = hints.get(parameter.name, parameter.annotation)
+        value = _media_parameter_value(
+            parameter, annotation, overrides, meta, files, profile
         )
-        return _coerce_override(value, concrete, meta, files, profile)
-    return value
+        if parameter.kind is inspect.Parameter.KEYWORD_ONLY:
+            keywords[parameter.name] = value
+        else:
+            positional.append(value)
+    return positional, keywords
 
 
 async def _invoke(
@@ -554,64 +793,51 @@ async def _invoke(
     profile: int,
     overrides: Mapping[str, object] | None = None,
 ) -> object:
-    positional: list[object] = []
-    keywords: dict[str, object] = {}
-    overrides = overrides or {}
-    hint_target = function.__init__ if inspect.isclass(function) else function
-    try:
-        hints = get_type_hints(hint_target)
-    except NameError, TypeError:
-        hints = {}
-    for parameter in inspect.signature(function).parameters.values():
-        if parameter.kind in {
-            inspect.Parameter.VAR_POSITIONAL,
-            inspect.Parameter.VAR_KEYWORD,
-        }:
-            continue
-        if (
-            parameter.default is not inspect.Parameter.empty
-            and parameter.name not in overrides
-        ):
-            continue
-        annotation = hints.get(parameter.name, parameter.annotation)
-        value = overrides.get(
-            parameter.name,
-            _value(parameter.name, annotation, meta, files, profile),
-        )
-        if (
-            parameter.name in overrides
-            and parameter.name not in _PROTECTED_ARGUMENTS
-        ):
-            value = _coerce_override(value, annotation, meta, files, profile)
-        elif parameter.name in _PROTECTED_ARGUMENTS:
-            value = _value(parameter.name, annotation, meta, files, profile)
-        if parameter.kind is inspect.Parameter.KEYWORD_ONLY:
-            keywords[parameter.name] = value
-        else:
-            positional.append(value)
+    resolved_overrides = overrides or {}
+    positional, keywords = _media_invocation_arguments(
+        function, meta, files, profile, resolved_overrides
+    )
     result = function(*positional, **keywords)
     if inspect.isawaitable(result):
         return await asyncio.wait_for(result, timeout=0.08)
     return result
 
 
-def test_media_catalog_uses_local_fakes_and_domain_releases(
-    tmp_path: Path, monkeypatch: Any
+_BLOCKED_MEDIA_CONTRACT_HELPERS = frozenset(
+    {
+        "_kill_process",
+        "_terminate_posix_group",
+        "_terminate_process",
+        "_terminate_windows_process",
+        "_terminate_process_tree",
+        "_wait_taskkill",
+        "_wait_terminated_process",
+    }
+)
+
+
+async def _media_process_double(*_args: object, **_kwargs: object) -> _Process:
+    return _Process()
+
+
+async def _media_no_sleep(
+    _delay: float = 0, *_args: object, **_kwargs: object
 ) -> None:
-    files = _fixture_tree(tmp_path)
-    modules = _modules(monkeypatch)
+    return None
 
-    async def fake_subprocess(*_args: object, **_kwargs: object) -> _Process:
-        return _Process()
 
-    async def no_sleep(
-        _delay: float = 0, *_args: object, **_kwargs: object
-    ) -> None:
-        return None
+def _download_dvd_mediainfo_double(_base_dir: str) -> None:
+    return None
 
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_subprocess)
-    monkeypatch.setattr(asyncio, "create_subprocess_shell", fake_subprocess)
-    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+
+def _patch_media_boundaries(monkeypatch: Any) -> None:
+    monkeypatch.setattr(
+        asyncio, "create_subprocess_exec", _media_process_double
+    )
+    monkeypatch.setattr(
+        asyncio, "create_subprocess_shell", _media_process_double
+    )
+    monkeypatch.setattr(asyncio, "sleep", _media_no_sleep)
     monkeypatch.setattr(
         subprocess, "run", lambda *_args, **_kwargs: _Completed()
     )
@@ -619,8 +845,17 @@ def test_media_catalog_uses_local_fakes_and_domain_releases(
         subprocess, "check_output", lambda *_args, **_kwargs: b"ok"
     )
     monkeypatch.setattr(httpx, "AsyncClient", _AsyncClient)
+    disc_info_module = importlib.import_module(
+        "src.integrations.media.disc_info"
+    )
+    monkeypatch.setattr(
+        disc_info_module,
+        "download_dvd_mediainfo",
+        _download_dvd_mediainfo_double,
+    )
 
-    # Keep expensive numeric/plot operations deterministic and in-memory.
+
+def _patch_numeric_boundaries(monkeypatch: Any) -> None:
     import librosa
     import matplotlib.pyplot as plt
 
@@ -644,145 +879,293 @@ def test_media_catalog_uses_local_fakes_and_domain_releases(
     )
     monkeypatch.setattr("builtins.input", lambda *_args, **_kwargs: "1")
 
+
+def _media_module_functions(
+    module: ModuleType,
+) -> list[tuple[str, Callable[..., object]]]:
+    return [
+        (name, function)
+        for name, function in inspect.getmembers(module, inspect.isfunction)
+        if function.__module__ == module.__name__
+        and not name.startswith("__")
+        and name not in _BLOCKED_MEDIA_CONTRACT_HELPERS
+    ]
+
+
+def _media_module_classes(module: ModuleType) -> list[tuple[str, type[Any]]]:
+    return [
+        (class_name, class_type)
+        for class_name, class_type in inspect.getmembers(
+            module, inspect.isclass
+        )
+        if class_type.__module__ == module.__name__
+    ]
+
+
+def _filtered_media_overrides(
+    overrides: Mapping[str, object],
+) -> dict[str, object]:
+    return {
+        key: value
+        for key, value in overrides.items()
+        if key not in _PROTECTED_ARGUMENTS
+    }
+
+
+def _apply_media_meta_updates(
+    meta: Meta, updates: Mapping[str, object]
+) -> None:
+    for key, value in updates.items():
+        if key in Meta.__dataclass_fields__:
+            setattr(meta, key, value)
+
+
+def _record_media_error(
+    qualified: str,
+    error: BaseException,
+    terminations: list[str],
+    rejections: list[str],
+) -> None:
+    if isinstance(error, KeyboardInterrupt | SystemExit):
+        terminations.append(f"{qualified}:{type(error).__name__}")
+        return
+    rejections.append(f"{qualified}:{type(error).__name__}")
+
+
+async def _run_media_call(
+    qualified: str,
+    function: Callable[..., object],
+    meta: Meta,
+    files: Mapping[str, Path],
+    profile: int,
+    terminations: list[str],
+    rejections: list[str],
+    overrides: Mapping[str, object] | None = None,
+) -> object | None:
+    try:
+        return await _invoke(function, meta, files, profile, overrides)
+    except BaseException as error:
+        _record_media_error(qualified, error, terminations, rejections)
+        return None
+
+
+async def _run_media_profiles(
+    qualified: str,
+    function: Callable[..., object],
+    tmp_path: Path,
+    files: Mapping[str, Path],
+    profile_count: int,
+    terminations: list[str],
+    rejections: list[str],
+) -> None:
+    for profile in range(profile_count):
+        await _run_media_call(
+            qualified,
+            function,
+            _meta(tmp_path, files, profile),
+            files,
+            profile,
+            terminations,
+            rejections,
+        )
+
+
+async def _run_media_literal_scenarios(
+    qualified: str,
+    function: Callable[..., object],
+    tmp_path: Path,
+    files: Mapping[str, Path],
+    terminations: list[str],
+    rejections: list[str],
+) -> None:
+    for meta_updates, argument_overrides in literal_branch_scenarios(
+        function, Meta.__dataclass_fields__, limit=192
+    ):
+        scenario_meta = _meta(tmp_path, files, 0)
+        _apply_media_meta_updates(scenario_meta, meta_updates)
+        await _run_media_call(
+            qualified,
+            function,
+            scenario_meta,
+            files,
+            0,
+            terminations,
+            rejections,
+            _filtered_media_overrides(argument_overrides),
+        )
+
+
+async def _exercise_media_callable(
+    qualified: str,
+    function: Callable[..., object],
+    tmp_path: Path,
+    files: Mapping[str, Path],
+    profile_count: int,
+    attempted: set[str],
+    terminations: list[str],
+    rejections: list[str],
+) -> None:
+    attempted.add(qualified)
+    await _run_media_profiles(
+        qualified,
+        function,
+        tmp_path,
+        files,
+        profile_count,
+        terminations,
+        rejections,
+    )
+    await _run_media_literal_scenarios(
+        qualified, function, tmp_path, files, terminations, rejections
+    )
+
+
+async def _instantiate_media_class(
+    module: ModuleType,
+    class_name: str,
+    class_type: type[Any],
+    tmp_path: Path,
+    files: Mapping[str, Path],
+    rejections: list[str],
+) -> object | None:
+    try:
+        return await _invoke(class_type, _meta(tmp_path, files, 0), files, 0)
+    except Exception as error:
+        rejections.append(
+            f"{module.__name__}.{class_name}.__init__:{type(error).__name__}"
+        )
+        return None
+
+
+def _media_instance_method(
+    instance: object, method_name: str, member: object
+) -> Callable[..., object] | None:
+    if method_name.startswith("__"):
+        return None
+    if method_name in _BLOCKED_MEDIA_CONTRACT_HELPERS or not callable(member):
+        return None
+    return getattr(instance, method_name)
+
+
+async def _exercise_media_instance(
+    module: ModuleType,
+    class_name: str,
+    instance: object,
+    tmp_path: Path,
+    files: Mapping[str, Path],
+    attempted: set[str],
+    terminations: list[str],
+    rejections: list[str],
+) -> None:
+    for method_name, member in inspect.getmembers_static(instance):
+        method = _media_instance_method(instance, method_name, member)
+        if method is None:
+            continue
+        await _exercise_media_callable(
+            f"{module.__name__}.{class_name}.{method_name}",
+            method,
+            tmp_path,
+            files,
+            3,
+            attempted,
+            terminations,
+            rejections,
+        )
+
+
+async def _exercise_media_class(
+    module: ModuleType,
+    class_name: str,
+    class_type: type[Any],
+    tmp_path: Path,
+    files: Mapping[str, Path],
+    attempted: set[str],
+    terminations: list[str],
+    rejections: list[str],
+) -> None:
+    instance = await _instantiate_media_class(
+        module, class_name, class_type, tmp_path, files, rejections
+    )
+    if instance is None:
+        return
+    await _exercise_media_instance(
+        module,
+        class_name,
+        instance,
+        tmp_path,
+        files,
+        attempted,
+        terminations,
+        rejections,
+    )
+
+
+async def _exercise_media_module(
+    module: ModuleType,
+    tmp_path: Path,
+    files: Mapping[str, Path],
+    attempted: set[str],
+    terminations: list[str],
+    rejections: list[str],
+) -> None:
+    for name, function in _media_module_functions(module):
+        await _exercise_media_callable(
+            f"{module.__name__}.{name}",
+            function,
+            tmp_path,
+            files,
+            5,
+            attempted,
+            terminations,
+            rejections,
+        )
+    for class_name, class_type in _media_module_classes(module):
+        await _exercise_media_class(
+            module,
+            class_name,
+            class_type,
+            tmp_path,
+            files,
+            attempted,
+            terminations,
+            rejections,
+        )
+
+
+async def _exercise_media_modules(
+    modules: list[ModuleType],
+    tmp_path: Path,
+    files: Mapping[str, Path],
+    attempted: set[str],
+    terminations: list[str],
+    rejections: list[str],
+) -> None:
+    for module in modules:
+        await _exercise_media_module(
+            module, tmp_path, files, attempted, terminations, rejections
+        )
+
+
+def test_media_catalog_uses_local_fakes_and_domain_releases(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    files = _fixture_tree(tmp_path)
+    modules = _modules(monkeypatch)
+    _patch_media_boundaries(monkeypatch)
+    _patch_numeric_boundaries(monkeypatch)
     attempted: set[str] = set()
     terminations: list[str] = []
     expected_rejections: list[str] = []
-
-    async def exercise() -> None:
-        for module in modules:
-            functions = [
-                (name, function)
-                for name, function in inspect.getmembers(
-                    module, inspect.isfunction
-                )
-                if function.__module__ == module.__name__
-                and not name.startswith("__")
-            ]
-            for name, function in functions:
-                qualified = f"{module.__name__}.{name}"
-                attempted.add(qualified)
-                for profile in range(5):
-                    try:
-                        await _invoke(
-                            function,
-                            _meta(tmp_path, files, profile),
-                            files,
-                            profile,
-                        )
-                    except (KeyboardInterrupt, SystemExit) as error:
-                        terminations.append(
-                            f"{qualified}:{type(error).__name__}"
-                        )
-                    except Exception as error:
-                        expected_rejections.append(
-                            f"{qualified}:{type(error).__name__}"
-                        )
-                for (
-                    meta_updates,
-                    argument_overrides,
-                ) in literal_branch_scenarios(
-                    function, Meta.__dataclass_fields__, limit=192
-                ):
-                    argument_overrides = {
-                        key: value
-                        for key, value in argument_overrides.items()
-                        if key not in _PROTECTED_ARGUMENTS
-                    }
-                    scenario_meta = _meta(tmp_path, files, 0)
-                    for key, value in meta_updates.items():
-                        if key in Meta.__dataclass_fields__:
-                            setattr(scenario_meta, key, value)
-                    try:
-                        await _invoke(
-                            function,
-                            scenario_meta,
-                            files,
-                            0,
-                            argument_overrides,
-                        )
-                    except (KeyboardInterrupt, SystemExit) as error:
-                        terminations.append(
-                            f"{qualified}:{type(error).__name__}"
-                        )
-                    except Exception as error:
-                        expected_rejections.append(
-                            f"{qualified}:{type(error).__name__}"
-                        )
-
-            classes = [
-                (class_name, class_type)
-                for class_name, class_type in inspect.getmembers(
-                    module, inspect.isclass
-                )
-                if class_type.__module__ == module.__name__
-            ]
-            for class_name, class_type in classes:
-                try:
-                    instance = await _invoke(
-                        class_type, _meta(tmp_path, files, 0), files, 0
-                    )
-                except Exception as error:
-                    expected_rejections.append(
-                        f"{module.__name__}.{class_name}.__init__:{type(error).__name__}"
-                    )
-                    continue
-                for method_name, method in inspect.getmembers(
-                    instance, callable
-                ):
-                    if method_name.startswith("__"):
-                        continue
-                    qualified = f"{module.__name__}.{class_name}.{method_name}"
-                    attempted.add(qualified)
-                    for profile in range(3):
-                        try:
-                            await _invoke(
-                                method,
-                                _meta(tmp_path, files, profile),
-                                files,
-                                profile,
-                            )
-                        except (KeyboardInterrupt, SystemExit) as error:
-                            terminations.append(
-                                f"{qualified}:{type(error).__name__}"
-                            )
-                        except Exception as error:
-                            expected_rejections.append(
-                                f"{qualified}:{type(error).__name__}"
-                            )
-                    for (
-                        meta_updates,
-                        argument_overrides,
-                    ) in literal_branch_scenarios(
-                        method, Meta.__dataclass_fields__, limit=192
-                    ):
-                        argument_overrides = {
-                            key: value
-                            for key, value in argument_overrides.items()
-                            if key not in _PROTECTED_ARGUMENTS
-                        }
-                        scenario_meta = _meta(tmp_path, files, 0)
-                        for key, value in meta_updates.items():
-                            if key in Meta.__dataclass_fields__:
-                                setattr(scenario_meta, key, value)
-                        try:
-                            await _invoke(
-                                method,
-                                scenario_meta,
-                                files,
-                                0,
-                                argument_overrides,
-                            )
-                        except (KeyboardInterrupt, SystemExit) as error:
-                            terminations.append(
-                                f"{qualified}:{type(error).__name__}"
-                            )
-                        except Exception as error:
-                            expected_rejections.append(
-                                f"{qualified}:{type(error).__name__}"
-                            )
-
-    asyncio.run(exercise())
-
+    asyncio.run(
+        _exercise_media_modules(
+            modules,
+            tmp_path,
+            files,
+            attempted,
+            terminations,
+            expected_rejections,
+        )
+    )
     assert len(attempted) >= 180
     assert terminations == []
     assert all(":" in item for item in expected_rejections)
