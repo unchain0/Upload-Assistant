@@ -37,32 +37,183 @@ def custom_frame_info(clip: Any, _text: str) -> Any:
     )
 
 
+def _image_optimization_requested(
+    image_path: Path, config: dict[str, Any]
+) -> bool:
+    return bool(config.get("optimize_images", True) and image_path.exists())
+
+
+def _load_oxipng() -> Any | None:
+    import platform
+
+    pyver = platform.python_version_tuple()
+    if int(pyver[0]) != 3 or int(pyver[1]) < 7:
+        return None
+    import oxipng  # pyright: ignore[reportMissingImports] # pyrefly: ignore [missing-import]
+
+    return oxipng
+
+
+def _optimization_level(image_path: Path) -> int:
+    return 6 if image_path.stat().st_size >= 16_000_000 else 3
+
+
 def optimize_images(image: str | Path, config: dict[str, Any]) -> None:
-    import platform  # Ensure platform is imported here
-
     image_path = Path(image)
+    if not _image_optimization_requested(image_path, config):
+        return
+    try:
+        oxipng = _load_oxipng()
+        if oxipng is None:
+            return
+        oxipng.optimize(image, level=_optimization_level(image_path))
+    except Exception as error:
+        logger.info(
+            f"Image optimization failed: {error}", extra={"markup": False}
+        )
 
-    if config.get("optimize_images", True) and image_path.exists():
-        oxipng: Any | None
-        try:
-            pyver = platform.python_version_tuple()
-            if int(pyver[0]) == 3 and int(pyver[1]) >= 7:
-                import oxipng  # pyright: ignore[reportMissingImports] # pyrefly: ignore [missing-import]
 
-                oxipng = oxipng
-            else:
-                oxipng = None
-            if oxipng is None:
-                return
-            if image_path.stat().st_size >= 16000000:
-                oxipng.optimize(image, level=6)
-            else:
-                oxipng.optimize(image, level=3)
-        except Exception as e:
-            logger.info(
-                f"Image optimization failed: {e}", extra={"markup": False}
-            )
-    return
+def _screen_frames_valid(frames: list[int], num: int) -> bool:
+    return len(frames) == num and all(frame >= 0 for frame in frames)
+
+
+def _existing_screen_frames(screens_file: Path, num: int) -> list[int]:
+    if not screens_file.exists():
+        return []
+    with screens_file.open() as text_file:
+        frames = [int(line.strip()) for line in text_file.readlines()]
+    if not _screen_frames_valid(frames, num):
+        return []
+    logger.info(
+        f"Using existing frame numbers from {screens_file}",
+        extra={"markup": False},
+    )
+    return frames
+
+
+def _ffms_cache_file(directory: str) -> str:
+    return f"{Path(directory).resolve()!s}{os.sep}ffms2.ffms2"
+
+
+def _index_ffms_source(source: str, directory: str) -> Any:
+    cachefile = _ffms_cache_file(directory)
+    if not Path(cachefile).exists():
+        logger.info(
+            f"Indexing {source} with ffms2... This may take a while.",
+            extra={"markup": False},
+        )
+    try:
+        src = core.ffms2.Source(source, cachefile=cachefile)
+    except Exception as error:
+        logger.info(
+            f"Error during indexing: {error!s}", extra={"markup": False}
+        )
+        raise
+    if Path(cachefile).exists():
+        logger.info(
+            f"Indexing completed and cached at: {cachefile}",
+            extra={"markup": False},
+        )
+    else:
+        logger.info(
+            "Indexing did not complete as expected.",
+            extra={"markup": False},
+        )
+    return src
+
+
+def _index_source(source: str, directory: str) -> Any:
+    if not source.endswith(".m2ts"):
+        return _index_ffms_source(source, directory)
+    logger.info(
+        f"Indexing {source} with LSMASHSource... This may take a while.",
+        extra={"markup": False},
+    )
+    return core.lsmas.LWLibavSource(source)
+
+
+def _encode_clip(encode: str | None) -> tuple[str | None, Any | None]:
+    if not encode:
+        return None, None
+    if Path(encode).exists():
+        return encode, core.ffms2.Source(encode)
+    logger.info(
+        f"Encode file {encode} not found. Skipping encode processing.",
+        extra={"markup": False},
+    )
+    return None, None
+
+
+def _write_random_frames(
+    src: Any, num: int, screens_file: Path
+) -> list[int]:
+    start, end = 1000, len(src) - 10000
+    frames = sorted(
+        random.randint(start, end)  # nosec B311  # noqa: S311
+        for _ in range(num)
+    )
+    with screens_file.open("w") as text_file:
+        text_file.writelines(f"{frame}\n" for frame in frames)
+    logger.info(
+        f"Generated and saved new frame numbers to {screens_file}",
+        extra={"markup": False},
+    )
+    return frames
+
+
+def _resize_dimensions(enc: Any) -> tuple[int | None, int | None]:
+    if enc.width / enc.height > 16 / 9:
+        return enc.width, None
+    return None, enc.height
+
+
+def _resize_source_for_encode(src: Any, enc: Any | None) -> Any:
+    if enc is None or (src.width == enc.width and src.height == enc.height):
+        return src
+    ref = zresize(enc, preset=src.height)
+    horizontal_crop = (src.width - ref.width) / 2
+    vertical_crop = (src.height - ref.height) / 2
+    src = src.std.Crop(
+        left=horizontal_crop,
+        right=horizontal_crop,
+        top=vertical_crop,
+        bottom=vertical_crop,
+    )
+    width, height = _resize_dimensions(enc)
+    return zresize(src, width=width, height=height)
+
+
+def _tonemap_clips(
+    src: Any, enc: Any | None
+) -> tuple[Any, Any | None, bool]:
+    frame = src.get_frame(0)
+    if frame.props["_Primaries"] != 9:
+        return src, enc, False
+    src = DynamicTonemap(
+        src, src_fmt=False, libplacebo=True, adjust_gamma=True
+    )
+    if enc is not None:
+        enc = DynamicTonemap(
+            enc, src_fmt=False, libplacebo=True, adjust_gamma=True
+        )
+    return src, enc, True
+
+
+def _render_screens(
+    src: Any, enc: Any | None, encode: str | None, directory: str
+) -> None:
+    ScreenGen(src, directory, "a")
+    if encode and enc is not None:
+        annotated = custom_frame_info(enc, "Encode (Tonemapped)")
+        ScreenGen(annotated, directory, "b")
+
+
+def _optimize_screens(
+    directory: str, num: int, config: dict[str, Any]
+) -> None:
+    for index in range(1, num + 1):
+        image_path = Path(directory) / f"{str(index).zfill(2)}a.png"
+        optimize_images(image_path, config)
 
 
 def vs_screengn(
@@ -72,136 +223,18 @@ def vs_screengn(
     dir: str = ".",
     config: dict[str, Any] | None = None,
 ) -> None:
-    if config is None:
-        config = {"optimize_images": True}  # Default configuration
-
+    selected_config = (
+        {"optimize_images": True} if config is None else config
+    )
     screens_file = Path(dir) / "screens.txt"
-
-    # Check if screens.txt already exists and use it if valid
-    if Path(screens_file).exists():
-        with Path(screens_file).open() as txt:
-            frames: list[int] = [int(line.strip()) for line in txt.readlines()]
-        if len(frames) == num and all(f >= 0 for f in frames):
-            logger.info(
-                f"Using existing frame numbers from {screens_file}",
-                extra={"markup": False},
-            )
-        else:
-            frames = []
-    else:
-        frames = []
-
-    # Indexing the source using ffms2 or lsmash for m2ts files
-    if source.endswith(".m2ts"):
-        logger.info(
-            f"Indexing {source} with LSMASHSource... This may take a while.",
-            extra={"markup": False},
-        )
-        src: Any = core.lsmas.LWLibavSource(source)
-    else:
-        cachefile = f"{Path(dir).resolve()!s}{os.sep}ffms2.ffms2"
-        if not Path(cachefile).exists():
-            logger.info(
-                f"Indexing {source} with ffms2... This may take a while.",
-                extra={"markup": False},
-            )
-        try:
-            src = core.ffms2.Source(source, cachefile=cachefile)
-        except Exception as e:
-            logger.info(
-                f"Error during indexing: {e!s}", extra={"markup": False}
-            )
-            raise
-        if Path(cachefile).exists():
-            logger.info(
-                f"Indexing completed and cached at: {cachefile}",
-                extra={"markup": False},
-            )
-        else:
-            logger.info(
-                "Indexing did not complete as expected.",
-                extra={"markup": False},
-            )
-
-    # Check if encode is provided
-    enc: Any | None = None
-    if encode:
-        if not Path(encode).exists():
-            logger.info(
-                f"Encode file {encode} not found. Skipping encode processing.",
-                extra={"markup": False},
-            )
-            encode = None
-        else:
-            enc = core.ffms2.Source(encode)
-
-    # Use source length if encode is not provided
-    num_frames = len(src)
-    start, end = 1000, num_frames - 10000
-
-    # Generate random frame numbers for screenshots if not using existing ones
-    if not frames:
-        for _ in range(num):
-            frames.append(random.randint(start, end))  # nosec B311  # noqa: S311
-        frames = sorted(frames)
-        frame_lines = [f"{x}\n" for x in frames]
-
-        # Write the frame numbers to a file for reuse
-        with Path(screens_file).open("w") as txt:
-            txt.writelines(frame_lines)
-        logger.info(
-            f"Generated and saved new frame numbers to {screens_file}",
-            extra={"markup": False},
-        )
-
-    # If an encode exists and is provided, crop and resize
-    if (
-        encode
-        and enc is not None
-        and (src.width != enc.width or src.height != enc.height)
-    ):
-        ref: Any = zresize(enc, preset=src.height)
-        crop: list[float] = [
-            (src.width - ref.width) / 2,
-            (src.height - ref.height) / 2,
-        ]
-        src = src.std.Crop(
-            left=crop[0], right=crop[0], top=crop[1], bottom=crop[1]
-        )
-        width: int | None
-        height: int | None
-        if enc.width / enc.height > 16 / 9:
-            width = enc.width
-            height = None
-        else:
-            width = None
-            height = enc.height
-        src = zresize(src, width=width, height=height)
-
-    # Apply tonemapping if the source is HDR
-    tonemapped = False
-    frame: Any = src.get_frame(0)
-    if frame.props["_Primaries"] == 9:
-        tonemapped = True
-        src = DynamicTonemap(
-            src, src_fmt=False, libplacebo=True, adjust_gamma=True
-        )
-        if encode and enc is not None:
-            enc = DynamicTonemap(
-                enc, src_fmt=False, libplacebo=True, adjust_gamma=True
-            )
-
-    # Use the custom FrameInfo function
+    existing_frames = _existing_screen_frames(screens_file, num)
+    src = _index_source(source, dir)
+    encode, enc = _encode_clip(encode)
+    if not existing_frames:
+        _write_random_frames(src, num, screens_file)
+    src = _resize_source_for_encode(src, enc)
+    src, enc, tonemapped = _tonemap_clips(src, enc)
     if tonemapped:
         src = custom_frame_info(src, "Tonemapped")
-
-    # Generate screenshots
-    ScreenGen(src, dir, "a")
-    if encode and enc is not None:
-        enc = custom_frame_info(enc, "Encode (Tonemapped)")
-        ScreenGen(enc, dir, "b")
-
-    # Optimize images
-    for i in range(1, num + 1):
-        image_path = Path(dir) / f"{str(i).zfill(2)}a.png"
-        optimize_images(image_path, config)
+    _render_screens(src, enc, encode, dir)
+    _optimize_screens(dir, num, selected_config)
