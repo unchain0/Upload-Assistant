@@ -766,145 +766,146 @@ class SeasonEpisodeManager:
             await self._review_incomplete_pack(completeness, meta)
         self._log_pack_tags(completeness)
 
-    async def check_season_pack_detail(self, meta: Meta) -> dict[str, Any]:
-        if not meta.tv_pack:
-            return {
-                "complete": True,
-                "missing_episodes": [],
-                "found_episodes": [],
-                "consistent_tags": True,
-                "tags_found": {},
-            }
+    @staticmethod
+    def _empty_pack_detail(
+        tags_found: dict[str, list[str]] | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "complete": True,
+            "missing_episodes": [],
+            "found_episodes": [],
+            "consistent_tags": True,
+            "tags_found": tags_found or {},
+        }
 
-        files = cast(list[str], meta.filelist)
-        if not files:
-            return {
-                "complete": True,
-                "missing_episodes": [],
-                "found_episodes": [],
-                "consistent_tags": True,
-                "tags_found": {},
-            }
-
-        found_episodes: list[tuple[int, int]] = []
-        season_numbers: set[int] = set()
-        tags_found: dict[
-            str, list[str]
-        ] = {}  # tag -> list of files with that tag
-
-        # Pattern for standard TV shows: S01E01, S01E01E02
-        episode_pattern = r"[Ss](\d{1,2})[Ee](\d{1,3})(?:[Ee](\d{1,3}))?"
-
-        # Pattern for episode-only: E01, E01E02 (without season)
-        episode_only_pattern = r"\b[Ee](\d{1,3})(?:[Ee](\d{1,3}))?\b"
-
-        # Pattern for anime: " - 43 (1080p)" or "43 (1080p)" or similar
-        anime_pattern = r"(?:\s-\s)?(\d{1,4})(?:v\d+)?\s*\((?:\d+[pi])\)"
-
-        # Normalize season_int once so all (season, episode) tuples are (int, int)
-        raw_season_int = meta.season_int
+    @staticmethod
+    def _default_pack_season(meta: Meta) -> int:
         try:
-            default_season_num = int(raw_season_int)
+            return int(meta.season_int)
         except TypeError, ValueError:
-            default_season_num = 1
+            return 1
 
+    @staticmethod
+    def _standard_episode_identities(filename: str) -> list[tuple[int, int]]:
+        identities: list[tuple[int, int]] = []
+        matches = re.findall(
+            r"[Ss](\d{1,2})[Ee](\d{1,3})(?:[Ee](\d{1,3}))?", filename
+        )
+        for season_str, first_str, second_str in matches:
+            season_num = int(season_str)
+            identities.append((season_num, int(first_str)))
+            if second_str:
+                identities.append((season_num, int(second_str)))
+        return identities
+
+    @staticmethod
+    def _episode_only_identities(
+        filename: str, default_season: int
+    ) -> list[tuple[int, int]]:
+        identities: list[tuple[int, int]] = []
+        matches = re.findall(r"\b[Ee](\d{1,3})(?:[Ee](\d{1,3}))?\b", filename)
+        for first_str, second_str in matches:
+            identities.append((default_season, int(first_str)))
+            if second_str:
+                identities.append((default_season, int(second_str)))
+        return identities
+
+    @staticmethod
+    def _anime_episode_identities(
+        filename: str, default_season: int
+    ) -> list[tuple[int, int]]:
+        matches = re.findall(
+            r"(?:\s-\s)?(\d{1,4})(?:v\d+)?\s*\((?:\d+[pi])\)", filename
+        )
+        return [(default_season, int(match)) for match in matches]
+
+    @classmethod
+    def _episode_identities(
+        cls, filename: str, default_season: int
+    ) -> list[tuple[int, int]]:
+        identities = cls._standard_episode_identities(filename)
+        if identities:
+            return identities
+        identities = cls._episode_only_identities(filename, default_season)
+        if identities:
+            return identities
+        return cls._anime_episode_identities(filename, default_season)
+
+    @staticmethod
+    async def _record_pack_tag(
+        tags_found: dict[str, list[str]],
+        file_path: str,
+        filename: str,
+        meta: Meta,
+    ) -> None:
+        file_tag = await get_tag(file_path, meta, season_pack_check=True)
+        if not file_tag:
+            return
+        tag_clean = file_tag.lstrip("-")
+        tags_found.setdefault(tag_clean, []).append(filename)
+
+    @classmethod
+    async def _scan_pack_files(
+        cls, files: list[str], meta: Meta, default_season: int
+    ) -> tuple[list[tuple[int, int]], dict[str, list[str]]]:
+        found_episodes: list[tuple[int, int]] = []
+        tags_found: dict[str, list[str]] = {}
         for file_path in files:
             filename = Path(file_path).name
-
-            # Extract group tag from each file
-            file_tag = await get_tag(file_path, meta, season_pack_check=True)
-            if file_tag:
-                tag_clean = file_tag.lstrip("-")
-                if tag_clean not in tags_found:
-                    tags_found[tag_clean] = []
-                tags_found[tag_clean].append(filename)
-
-            matches = re.findall(episode_pattern, filename)
-            episode_only_matches: list[tuple[str, str]] = []
-
-            for match in matches:
-                season_str = match[0]
-                episode1_str = match[1]
-                episode2_str = match[2] if match[2] else None
-
-                season_num = int(season_str)
-                episode1_num = int(episode1_str)
-                found_episodes.append((season_num, episode1_num))
-                season_numbers.add(season_num)
-
-                if episode2_str:
-                    episode2_num = int(episode2_str)
-                    found_episodes.append((season_num, episode2_num))
-
-            if not matches:
-                episode_only_matches = re.findall(
-                    episode_only_pattern, filename
-                )
-                for match in episode_only_matches:
-                    episode1_num = int(match[0])
-                    episode2_optional = int(match[1]) if match[1] else None
-
-                    season_num = default_season_num
-                    found_episodes.append((season_num, episode1_num))
-                    season_numbers.add(season_num)
-
-                    if episode2_optional is not None:
-                        found_episodes.append((season_num, episode2_optional))
-
-            if not matches and not episode_only_matches:
-                anime_matches = re.findall(anime_pattern, filename)
-                for match in anime_matches:
-                    episode_num = int(match)
-                    season_num = default_season_num
-                    found_episodes.append((season_num, episode_num))
-                    season_numbers.add(season_num)
-
-        if not found_episodes:
-            logger.info("[red]No episodes found in the season pack files.")
-            # return true to not annoy the user with bad regex
-            return {
-                "complete": True,
-                "missing_episodes": [],
-                "found_episodes": [],
-                "consistent_tags": True,
-                "tags_found": tags_found,
-            }
-
-        # Remove duplicates and sort
-        found_episodes = sorted(set(found_episodes))
-
-        missing_episodes: list[tuple[int, int]] = []
-
-        # Check each season for completeness
-        for season in season_numbers:
-            # Every season is inserted together with at least one episode.
-            season_episodes = [ep for s, ep in found_episodes if s == season]
-            min_ep = min(season_episodes)
-            max_ep = max(season_episodes)
-
-            # Check for missing episodes in the range
-            missing_episodes.extend(
-                [
-                    (season, ep_num)
-                    for ep_num in range(min_ep, max_ep + 1)
-                    if ep_num not in season_episodes
-                ]
+            await cls._record_pack_tag(tags_found, file_path, filename, meta)
+            found_episodes.extend(
+                cls._episode_identities(filename, default_season)
             )
+        return found_episodes, tags_found
 
-        is_complete = len(missing_episodes) == 0
+    @staticmethod
+    def _missing_for_season(
+        found_episodes: list[tuple[int, int]], season: int
+    ) -> list[tuple[int, int]]:
+        season_episodes = [
+            episode
+            for found_season, episode in found_episodes
+            if found_season == season
+        ]
+        minimum = min(season_episodes)
+        maximum = max(season_episodes)
+        return [
+            (season, episode)
+            for episode in range(minimum, maximum + 1)
+            if episode not in season_episodes
+        ]
 
-        # Check if all files have the same group tag
-        consistent_tags = len(tags_found) <= 1
+    @classmethod
+    def _missing_pack_episodes(
+        cls, found_episodes: list[tuple[int, int]]
+    ) -> tuple[list[tuple[int, int]], set[int]]:
+        seasons = {season for season, _episode in found_episodes}
+        missing: list[tuple[int, int]] = []
+        for season in seasons:
+            missing.extend(cls._missing_for_season(found_episodes, season))
+        return missing, seasons
 
-        result = {
-            "complete": is_complete,
+    @staticmethod
+    def _pack_detail_result(
+        found_episodes: list[tuple[int, int]],
+        missing_episodes: list[tuple[int, int]],
+        seasons: set[int],
+        tags_found: dict[str, list[str]],
+    ) -> dict[str, Any]:
+        return {
+            "complete": not missing_episodes,
             "missing_episodes": missing_episodes,
             "found_episodes": found_episodes,
-            "seasons": list(season_numbers),
-            "consistent_tags": consistent_tags,
+            "seasons": list(seasons),
+            "consistent_tags": len(tags_found) <= 1,
             "tags_found": tags_found,
         }
 
+    @staticmethod
+    def _log_pack_detail(result: Mapping[str, Any]) -> None:
+        found_episodes = result["found_episodes"]
+        missing_episodes = result["missing_episodes"]
+        tags_found = cast(Mapping[str, list[str]], result["tags_found"])
         logger.debug("[cyan]Season pack completeness check:")
         logger.debug(f"[cyan]Found episodes: {found_episodes}")
         if missing_episodes:
@@ -913,9 +914,27 @@ class SeasonEpisodeManager:
             logger.debug("[green]Season pack episode list appears complete")
         if tags_found:
             logger.debug(f"[cyan]Group tags found: {list(tags_found.keys())}")
-            if not consistent_tags:
+            if not result["consistent_tags"]:
                 logger.debug(
                     "[yellow]Warning: Multiple group tags detected in season pack"
                 )
 
+    async def check_season_pack_detail(self, meta: Meta) -> dict[str, Any]:
+        if not meta.tv_pack:
+            return self._empty_pack_detail()
+        files = cast(list[str], meta.filelist)
+        if not files:
+            return self._empty_pack_detail()
+        found_episodes, tags_found = await self._scan_pack_files(
+            files, meta, self._default_pack_season(meta)
+        )
+        if not found_episodes:
+            logger.info("[red]No episodes found in the season pack files.")
+            return self._empty_pack_detail(tags_found)
+        found_episodes = sorted(set(found_episodes))
+        missing_episodes, seasons = self._missing_pack_episodes(found_episodes)
+        result = self._pack_detail_result(
+            found_episodes, missing_episodes, seasons, tags_found
+        )
+        self._log_pack_detail(result)
         return result
