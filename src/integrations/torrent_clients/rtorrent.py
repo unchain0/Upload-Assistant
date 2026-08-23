@@ -494,172 +494,215 @@ class RtorrentClientMixin:
             resume["files"].append(entry)
         return metainfo
 
+    def _default_rtorrent_client(self) -> dict[str, Any] | None:
+        default_cfg = cast(dict[str, Any], self.config.get("DEFAULT", {}))
+        default_client = default_cfg.get("default_torrent_client")
+        if not isinstance(default_client, str) or not default_client:
+            logger.info("[yellow]Missing default torrent client for rTorrent")
+            return None
+        clients_cfg = cast(
+            dict[str, Any], self.config.get("TORRENT_CLIENTS", {})
+        )
+        return cast(dict[str, Any], clients_cfg.get(default_client, {}))
+
+    def _resolved_rtorrent_client(
+        self, client: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        if client is not None:
+            return client
+        return self._default_rtorrent_client()
+
+    @staticmethod
+    def _valid_storage_hash_inputs(
+        storage: str | None, info_hash: str | None, path: str | None
+    ) -> bool:
+        return bool(storage and info_hash and path)
+
+    @classmethod
+    def _storage_and_hash(
+        cls, meta: Meta, client: dict[str, Any]
+    ) -> tuple[str, str] | None:
+        storage_value = client.get("torrent_storage_dir")
+        storage = storage_value if isinstance(storage_value, str) else None
+        hash_value = meta.infohash
+        info_hash = hash_value if isinstance(hash_value, str) else None
+        if not cls._valid_storage_hash_inputs(storage, info_hash, meta.path):
+            logger.info(
+                "[yellow]Missing torrent storage directory, infohash, or meta path"
+            )
+            return None
+        return cast(str, storage), cast(str, info_hash).upper().strip()
+
+    @staticmethod
+    def _extracted_torrent_dir(meta: Meta) -> Path:
+        if not meta.uuid:
+            meta.uuid = Path(str(meta.path)).name
+        extracted_dir = Path(meta.base_dir) / "tmp" / meta.uuid
+        extracted_dir.mkdir(parents=True, exist_ok=True)
+        return extracted_dir
+
+    @staticmethod
+    def _case_insensitive_torrent(
+        storage_dir: Path, info_hash: str
+    ) -> Path | None:
+        if not storage_dir.exists():
+            return None
+        for candidate in storage_dir.iterdir():
+            if not candidate.name.lower().endswith(".torrent"):
+                continue
+            if candidate.stem.upper() == info_hash:
+                logger.info(
+                    f"[green]Found torrent file with matching hash: {candidate.name}"
+                )
+                return candidate
+        return None
+
+    @classmethod
+    def _torrent_path(cls, storage: str, info_hash: str) -> Path | None:
+        storage_dir = Path(storage)
+        direct = storage_dir / f"{info_hash}.torrent"
+        if direct.exists():
+            logger.info(f"[green]Found matching torrent file: {direct}")
+            return direct
+        logger.info(
+            f"[yellow]Searching for torrent file with hash {info_hash} in {storage}"
+        )
+        found = cls._case_insensitive_torrent(storage_dir, info_hash)
+        if found is None:
+            logger.info(
+                f"[bold red]No torrent file found for hash: {info_hash}"
+            )
+        return found
+
+    @staticmethod
+    def _torrent_comments(meta: Meta) -> list[dict[str, Any]]:
+        value = meta.torrent_comments
+        source = value if isinstance(value, list) else []
+        comments = [
+            cast(dict[str, Any], entry)
+            for entry in source
+            if isinstance(entry, dict)
+        ]
+        meta.torrent_comments = comments
+        return comments
+
+    @staticmethod
+    def _comment_data(torrent: Torrent, comment: str) -> dict[str, Any]:
+        return {
+            "hash": getattr(torrent, "infohash_v1", "") or "",
+            "name": getattr(torrent, "name", "") or "",
+            "comment": comment,
+        }
+
+    def _record_torrent_comment(
+        self, meta: Meta, torrent: Torrent, comment: str
+    ) -> None:
+        comments = self._torrent_comments(meta)
+        comments.append(self._comment_data(torrent, comment))
+        logger.debug(f"[cyan]Stored comment for torrent: {comment[:100]}...")
+        tracker_ids = self._extract_tracker_ids_from_comment(comment)
+        meta.set_tracker_ids(tracker_ids)
+        for tracker_name, torrent_id in tracker_ids.items():
+            logger.info(
+                f"[bold cyan]meta updated with {tracker_name.upper()} ID: {torrent_id}"
+            )
+        if comments and meta.debug:
+            logger.info(
+                f"[green]Stored {len(comments)} torrent comments for later use"
+            )
+
+    @staticmethod
+    def _copy_base_torrent(
+        resolved_path: str, base_torrent_path: Path
+    ) -> None:
+        try:
+            shutil.copy2(resolved_path, base_torrent_path)
+            logger.info(
+                f"[yellow]Created simple torrent copy as fallback: {base_torrent_path}"
+            )
+        except Exception as copy_err:
+            logger.info(f"[bold red]Failed to create backup copy: {copy_err}")
+
+    @classmethod
+    async def _create_base_torrent(
+        cls, meta: Meta, resolved_path: str, extracted_dir: Path
+    ) -> None:
+        base_torrent_path = extracted_dir / "BASE.torrent"
+        try:
+            await TorrentCreator.create_base_from_existing_torrent(
+                resolved_path, meta.base_dir, meta.uuid
+            )
+            logger.debug("[green]Created BASE.torrent from existing torrent")
+        except Exception as exc:
+            logger.info(f"[bold red]Error creating BASE.torrent: {exc}")
+            cls._copy_base_torrent(resolved_path, base_torrent_path)
+
+    async def _ensure_base_torrent(
+        self,
+        meta: Meta,
+        torrent_path: Path,
+        info_hash: str,
+        client: dict[str, Any],
+        extracted_dir: Path,
+        pathed: bool,
+    ) -> None:
+        if pathed:
+            return
+        valid, resolved_path = await self.is_valid_torrent(
+            meta, str(torrent_path), info_hash, "rtorrent", client
+        )
+        if valid:
+            await self._create_base_torrent(meta, resolved_path, extracted_dir)
+
+    async def _process_rtorrent_file(
+        self,
+        meta: Meta,
+        torrent_path: Path,
+        info_hash: str,
+        client: dict[str, Any],
+        extracted_dir: Path,
+        pathed: bool,
+    ) -> None:
+        try:
+            torrent = Torrent.read(torrent_path)
+            comment = torrent.comment or ""
+            logger.debug(f"[cyan]Torrent comment: {comment}")
+            self._record_torrent_comment(meta, torrent, comment)
+            await self._ensure_base_torrent(
+                meta,
+                torrent_path,
+                info_hash,
+                client,
+                extracted_dir,
+                pathed,
+            )
+        except Exception as exc:
+            logger.info(f"[bold red]Error reading torrent file: {exc}")
+            logger.info(f"[dim]{traceback.format_exc()}[/dim]")
+
     async def get_ptp_from_hash_rtorrent(
         self,
         meta: Meta,
         pathed: bool = False,
         client: dict[str, Any] | None = None,
     ) -> Meta:
-        default_cfg = cast(dict[str, Any], self.config.get("DEFAULT", {}))
-        default_client_value = default_cfg.get("default_torrent_client")
-        if client is None:
-            if (
-                not isinstance(default_client_value, str)
-                or not default_client_value
-            ):
-                logger.info(
-                    "[yellow]Missing default torrent client for rTorrent"
-                )
-                return meta
-            clients_cfg = cast(
-                dict[str, Any], self.config.get("TORRENT_CLIENTS", {})
-            )
-            client = cast(
-                dict[str, Any], clients_cfg.get(default_client_value, {})
-            )
-        torrent_storage_dir_value = client.get("torrent_storage_dir")
-        torrent_storage_dir = (
-            torrent_storage_dir_value
-            if isinstance(torrent_storage_dir_value, str)
-            else None
-        )
-        info_hash_value = meta.infohash
-        info_hash_v1 = (
-            info_hash_value if isinstance(info_hash_value, str) else None
-        )
-
-        if not torrent_storage_dir or not info_hash_v1 or not meta.path:
-            logger.info(
-                "[yellow]Missing torrent storage directory, infohash, or meta path"
-            )
+        resolved_client = self._resolved_rtorrent_client(client)
+        if resolved_client is None:
             return meta
-
-        # Normalize info hash format for rTorrent (uppercase)
-        info_hash_v1 = info_hash_v1.upper().strip()
-        torrent_path = Path(torrent_storage_dir) / f"{info_hash_v1}.torrent"
-
-        # Extract folder ID for use in temporary file path
-        folder_id = Path(meta.path).name
-        if not meta.uuid:
-            meta.uuid = folder_id
-
-        extracted_torrent_dir = Path(meta.base_dir) / "tmp" / meta.uuid
-        Path(extracted_torrent_dir).mkdir(parents=True, exist_ok=True)
-
-        # Check if the torrent file exists directly
-        if Path(torrent_path).exists():
-            logger.info(f"[green]Found matching torrent file: {torrent_path}")
-        else:
-            # Try to find the torrent file in storage directory (case insensitive)
-            found = False
-            logger.info(
-                f"[yellow]Searching for torrent file with hash {info_hash_v1} in {torrent_storage_dir}"
-            )
-
-            if Path(torrent_storage_dir).exists():
-                for filename in (
-                    p.name for p in Path(torrent_storage_dir).iterdir()
-                ):
-                    filename_str = filename
-                    if filename_str.lower().endswith(".torrent"):
-                        file_hash = Path(
-                            filename_str
-                        ).stem  # Remove .torrent extension
-                        if file_hash.upper() == info_hash_v1:
-                            torrent_path = (
-                                Path(torrent_storage_dir) / filename_str
-                            )
-                            found = True
-                            logger.info(
-                                f"[green]Found torrent file with matching hash: {filename_str}"
-                            )
-                            break
-
-            if not found:
-                logger.info(
-                    f"[bold red]No torrent file found for hash: {info_hash_v1}"
-                )
-                return meta
-
-        # Parse the torrent file to get the comment
-        try:
-            torrent = Torrent.read(torrent_path)
-            comment = torrent.comment or ""
-
-            # Try to find tracker IDs in the comment
-            logger.debug(f"[cyan]Torrent comment: {comment}")
-
-            torrent_comments_value = meta.torrent_comments
-            torrent_comments_list = (
-                torrent_comments_value
-                if isinstance(torrent_comments_value, list)
-                else []
-            )
-            torrent_comments = [
-                cast(dict[str, Any], entry)
-                for entry in torrent_comments_list
-                if isinstance(entry, dict)
-            ]
-            meta.torrent_comments = torrent_comments
-
-            comment_data = {
-                "hash": getattr(torrent, "infohash_v1", "") or "",
-                "name": getattr(torrent, "name", "") or "",
-                "comment": comment,
-            }
-            torrent_comments.append(comment_data)
-
-            logger.debug(
-                f"[cyan]Stored comment for torrent: {comment[:100]}..."
-            )
-
-            # Handle various tracker URL formats in the comment
-            tracker_ids = self._extract_tracker_ids_from_comment(comment)
-            meta.set_tracker_ids(tracker_ids)
-
-            # If we found a tracker ID, log it
-            for tracker_name, torrent_id in tracker_ids.items():
-                logger.info(
-                    f"[bold cyan]meta updated with {tracker_name.upper()} ID: {torrent_id}"
-                )
-
-            if torrent_comments and meta.debug:
-                logger.info(
-                    f"[green]Stored {len(torrent_comments)} torrent comments for later use"
-                )
-
-            if not pathed:
-                valid, resolved_path = await self.is_valid_torrent(
-                    meta, str(torrent_path), info_hash_v1, "rtorrent", client
-                )
-
-                if valid:
-                    base_torrent_path = (
-                        Path(extracted_torrent_dir) / "BASE.torrent"
-                    )
-
-                    try:
-                        await TorrentCreator.create_base_from_existing_torrent(
-                            resolved_path, meta.base_dir, meta.uuid
-                        )
-                        logger.debug(
-                            "[green]Created BASE.torrent from existing torrent"
-                        )
-                    except Exception as e:
-                        logger.info(
-                            f"[bold red]Error creating BASE.torrent: {e}"
-                        )
-                        try:
-                            shutil.copy2(resolved_path, base_torrent_path)
-                            logger.info(
-                                f"[yellow]Created simple torrent copy as fallback: {base_torrent_path}"
-                            )
-                        except Exception as copy_err:
-                            logger.info(
-                                f"[bold red]Failed to create backup copy: {copy_err}"
-                            )
-
-        except Exception as e:
-            logger.info(f"[bold red]Error reading torrent file: {e}")
-            logger.info(f"[dim]{traceback.format_exc()}[/dim]")
+        storage_hash = self._storage_and_hash(meta, resolved_client)
+        if storage_hash is None:
+            return meta
+        storage, info_hash = storage_hash
+        extracted_dir = self._extracted_torrent_dir(meta)
+        torrent_path = self._torrent_path(storage, info_hash)
+        if torrent_path is None:
+            return meta
+        await self._process_rtorrent_file(
+            meta,
+            torrent_path,
+            info_hash,
+            resolved_client,
+            extracted_dir,
+            pathed,
+        )
         return meta
