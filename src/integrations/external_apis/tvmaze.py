@@ -10,6 +10,8 @@ from src.domain_models.release import Meta
 from src.integrations.cache.metadata_cache import cache_for, is_cache_miss
 from src.integrations.observability.runtime_support import logger
 
+_CACHE_MISS = object()
+
 
 class TvmazeManager:
     async def search_tvmaze(
@@ -242,6 +244,63 @@ class TvmazeManager:
             (tvmaze_id, imdb_id, tvdb_id) if return_full_tuple else tvmaze_id
         )
 
+    @staticmethod
+    def _cached_response(cached: Any) -> object:
+        if is_cache_miss(cached):
+            return _CACHE_MISS
+        if isinstance(cached, dict | list):
+            return cast(dict[str, Any] | list[dict[str, Any]], cached)
+        return _CACHE_MISS
+
+    @staticmethod
+    def _dressed_response_list(data: list[Any]) -> list[dict[str, Any]]:
+        return [
+            cast(dict[str, Any], item)
+            for item in data
+            if isinstance(item, dict)
+        ]
+
+    @staticmethod
+    async def _request_json(url: str, params: dict[str, Any]) -> Any:
+        try:
+            async with httpx.AsyncClient(follow_redirects=True) as client:
+                response = await client.get(url, params=params, timeout=10)
+        except httpx.HTTPStatusError as error:
+            logger.info(
+                f"[ERROR] TVmaze API error: {error.response.status_code}",
+                extra={"markup": False},
+            )
+            return None
+        except httpx.RequestError as error:
+            logger.info(
+                f"[ERROR] Network error while accessing TVmaze: {error}",
+                extra={"markup": False},
+            )
+            return None
+        if response.status_code != 200:
+            return None
+        return response.json()
+
+    @classmethod
+    async def _cache_response_data(
+        cls, cache: Any, cache_key: str, data: Any
+    ) -> dict[str, Any] | list[dict[str, Any]] | None:
+        if isinstance(data, dict):
+            result = cast(dict[str, Any], data)
+            await cache.set("tvmaze", "response", cache_key, result)
+            return result
+        if not isinstance(data, list):
+            return None
+        result = cls._dressed_response_list(cast(list[Any], data))
+        await cache.set(
+            "tvmaze",
+            "response",
+            cache_key,
+            result,
+            negative=not bool(result),
+        )
+        return result
+
     async def _make_tvmaze_request(
         self,
         url: str,
@@ -249,49 +308,25 @@ class TvmazeManager:
         base_dir: str = "",
         config: dict[str, Any] | None = None,
     ) -> dict[str, Any] | list[dict[str, Any]] | None:
-        """Sync function to make the request inside ThreadPoolExecutor."""
+        """Fetch one cached TVMaze request and dress its response."""
         cache_key = json.dumps(
             {"url": url, "params": params}, sort_keys=True, default=str
         )
         cache = cache_for(base_dir, config)
-        cached = await cache.get("tvmaze", "response", cache_key)
-        if not is_cache_miss(cached) and isinstance(cached, (dict, list)):
+        cached = self._cached_response(
+            await cache.get("tvmaze", "response", cache_key)
+        )
+        if cached is not _CACHE_MISS:
             return cast(dict[str, Any] | list[dict[str, Any]], cached)
-        try:
-            async with httpx.AsyncClient(follow_redirects=True) as client:
-                resp = await client.get(url, params=params, timeout=10)
-                if resp.status_code == 200:
-                    data: Any = resp.json()
-                    if isinstance(data, dict):
-                        await cache.set("tvmaze", "response", cache_key, data)
-                        return cast(dict[str, Any], data)
-                    if isinstance(data, list):
-                        result = [
-                            cast(dict[str, Any], item)
-                            for item in data
-                            if isinstance(item, dict)
-                        ]
-                        await cache.set(
-                            "tvmaze",
-                            "response",
-                            cache_key,
-                            result,
-                            negative=not bool(result),
-                        )
-                        return result
-                    return None
-                return None
-        except httpx.HTTPStatusError as e:
-            logger.info(
-                f"[ERROR] TVmaze API error: {e.response.status_code}",
-                extra={"markup": False},
-            )
-        except httpx.RequestError as e:
-            logger.info(
-                f"[ERROR] Network error while accessing TVmaze: {e}",
-                extra={"markup": False},
-            )
-        return None
+        data = await self._request_json(url, params)
+        return await self._cache_response_data(cache, cache_key, data)
+
+    @staticmethod
+    def _cached_show(cached: Any) -> object:
+        if is_cache_miss(cached) or not isinstance(cached, dict):
+            return _CACHE_MISS
+        mapping = cast(dict[str, Any], cached)
+        return {} if mapping.get("not_found") else mapping
 
     async def get_show_details(
         self,
@@ -301,12 +336,11 @@ class TvmazeManager:
     ) -> dict[str, Any]:
         cache_key = str(tvmaze_id)
         cache = cache_for(base_dir, config)
-        cached = await cache.get("tvmaze", "show", cache_key)
-        if not is_cache_miss(cached) and isinstance(cached, dict):
-            return (
-                {} if cached.get("not_found") else cast(dict[str, Any], cached)
-            )
-
+        cached = self._cached_show(
+            await cache.get("tvmaze", "show", cache_key)
+        )
+        if cached is not _CACHE_MISS:
+            return cast(dict[str, Any], cached)
         data = await self._make_tvmaze_request(
             f"https://api.tvmaze.com/shows/{tvmaze_id}", {}, base_dir, config
         )
