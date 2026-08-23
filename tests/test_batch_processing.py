@@ -100,14 +100,6 @@ def _configure_do_the_thing_stubs(
         lambda message, *args, **kwargs: info_messages.append(str(message)),
     )
     default_config = dict(upload.config.get("DEFAULT", {}))
-    if "cross_seeding" not in default_config:
-        default_config["cross_seeding"] = False
-    if "sanitize_meta" not in default_config:
-        default_config["sanitize_meta"] = False
-    if "mkbrr" not in default_config:
-        default_config["mkbrr"] = False
-    if "debug" not in default_config:
-        default_config["debug"] = False
     default_config["cross_seeding"] = False
     default_config["sanitize_meta"] = False
     default_config["mkbrr"] = False
