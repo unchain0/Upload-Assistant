@@ -10,6 +10,12 @@ import cli_ui
 from src.domain_models.release import Meta
 from src.integrations.observability.runtime_support import logger
 
+
+def _routing_log(message: str) -> None:
+    """Log Rich markup without applying a second highlighter pass."""
+    logger.info(message, extra={"highlighter": None})
+
+
 # These are the country groups used by the three tracker rule implementations.
 PRIVATEHD_COUNTRIES = frozenset(
     [
@@ -443,7 +449,7 @@ class AvistaZNetworkRouter:
         source_status: dict[str, Any],
     ) -> None:
         source_status["routing_suggested_to"] = decision.destination
-        logger.info(
+        _routing_log(
             f"{source}: [yellow]Routing requires review: "
             f"{decision.reason}[/yellow]"
         )
@@ -463,7 +469,7 @@ class AvistaZNetworkRouter:
         if enabled:
             return True
         source_status["routing_suggested_to"] = destination
-        logger.info(
+        _routing_log(
             f"{source}: [yellow]Suggested redirect to {destination}: "
             f"{decision.reason}. Set avistaz_network_auto_redirect=true "
             "to enable this in unattended mode.[/yellow]"
@@ -522,7 +528,7 @@ class AvistaZNetworkRouter:
             source_status["routing_error"] = (
                 f"Could not validate {destination} credentials: {exc}"
             )
-            logger.info(
+            _routing_log(
                 f"{source}: [yellow]Not redirecting to {destination}: "
                 "credential validation failed.[/yellow]"
             )
@@ -532,7 +538,7 @@ class AvistaZNetworkRouter:
         source_status["routing_error"] = (
             f"Destination {destination} has no valid cookie session."
         )
-        logger.info(
+        _routing_log(
             f"{source}: [yellow]Not redirecting to {destination}: "
             "cookie validation failed.[/yellow]"
         )
@@ -567,7 +573,7 @@ class AvistaZNetworkRouter:
         )
         destination_status = meta.tracker_status.setdefault(destination, {})
         destination_status.setdefault("redirected_from", []).append(source)
-        logger.info(
+        _routing_log(
             f"{source}: [green]Redirected to {destination}: "
             f"{decision.reason}.[/green]"
         )
