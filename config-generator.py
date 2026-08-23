@@ -1372,6 +1372,55 @@ def configure_torrent_clients(
     return config_clients, default_client_name
 
 
+def _use_existing_client_without_example(
+    client_name: str,
+    existing_client_config: ConfigDict,
+    config_clients: ConfigDict,
+) -> ConfigDict:
+    console.print(
+        f"[!] No example config found for client '{client_name}'.",
+        markup=False,
+    )
+    if existing_client_config:
+        console.print(
+            f"[i] Using existing config for '{client_name}'", markup=False
+        )
+        config_clients[client_name] = existing_client_config
+    return config_clients
+
+
+def _client_setting_comments(
+    config_comments: ConfigComments, client_name: str, key: str
+) -> list[str]:
+    comment_key = f"TORRENT_CLIENTS.{client_name}.{key}"
+    return config_comments.get(comment_key, config_comments.get(key, []))
+
+
+def _print_client_setting_comments(
+    config_comments: ConfigComments, client_name: str, key: str
+) -> None:
+    comments = _client_setting_comments(config_comments, client_name, key)
+    if comments:
+        console.print("\n[i] " + "\n[i] ".join(comments), markup=False)
+
+
+def _client_setting_value(
+    key: str, default_value: Any, existing_client_config: ConfigDict
+) -> Any:
+    if isinstance(default_value, bool):
+        return get_user_input(
+            f"Client setting '{key}'? (True/False)",
+            default=str(default_value),
+            existing_value=str(existing_client_config.get(key, default_value)),
+        )
+    return get_user_input(
+        f"Client setting '{key}'",
+        default=str(default_value) if default_value is not None else "",
+        is_password=key.endswith(("pass", "password")),
+        existing_value=existing_client_config.get(key),
+    )
+
+
 def configure_single_client(
     client_name: str,
     existing_clients: ConfigDict,
@@ -1380,68 +1429,26 @@ def configure_single_client(
     config_comments: ConfigComments,
 ) -> ConfigDict:
     """Helper function to configure a single torrent client"""
-    # Use existing config for the selected client if present, else use example config
     existing_client_config = cast(
         ConfigDict, existing_clients.get(client_name, {})
     )
     example_client_config = cast(
         ConfigDict, example_clients.get(client_name, {})
     )
-
     if not example_client_config:
-        console.print(
-            f"[!] No example config found for client '{client_name}'.",
-            markup=False,
+        return _use_existing_client_without_example(
+            client_name, existing_client_config, config_clients
         )
-        if existing_client_config:
-            console.print(
-                f"[i] Using existing config for '{client_name}'", markup=False
-            )
-            config_clients[client_name] = existing_client_config
-        return config_clients
 
-    # Set the client type from the example config
     client_type = example_client_config.get("torrent_client", client_name)
     client_config = {"torrent_client": client_type}
-
-    # Process all other client settings
     for key, default_value in example_client_config.items():
-        # this is never edited
         if key == "torrent_client":
             continue
-
-        comment_key = f"TORRENT_CLIENTS.{client_name}.{key}"
-        if comment_key in config_comments:
-            console.print(
-                "\n[i] " + "\n[i] ".join(config_comments[comment_key]),
-                markup=False,
-            )
-        elif key in config_comments:
-            console.print(
-                "\n[i] " + "\n[i] ".join(config_comments[key]), markup=False
-            )
-
-        if isinstance(default_value, bool):
-            default_str = str(default_value)
-            existing_value = str(
-                existing_client_config.get(key, default_value)
-            )
-            value = get_user_input(
-                f"Client setting '{key}'? (True/False)",
-                default=default_str,
-                existing_value=existing_value,
-            )
-            client_config[key] = value
-        else:
-            is_password = key.endswith("pass") or key.endswith("password")
-            client_config[key] = get_user_input(
-                f"Client setting '{key}'",
-                default=str(default_value)
-                if default_value is not None
-                else "",
-                is_password=is_password,
-                existing_value=existing_client_config.get(key),
-            )
+        _print_client_setting_comments(config_comments, client_name, key)
+        client_config[key] = _client_setting_value(
+            key, default_value, existing_client_config
+        )
 
     config_clients[client_name] = client_config
     return config_clients
