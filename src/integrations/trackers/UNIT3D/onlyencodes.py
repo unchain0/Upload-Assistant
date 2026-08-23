@@ -207,105 +207,165 @@ class OnlyEncodes(UNIT3D):
             )
         )
 
-    async def get_name(self, meta: Meta) -> dict[str, str]:
-        oe_name = meta.name
+    @staticmethod
+    def _imdb_values(meta: Meta) -> tuple[str, str, str]:
+        imdb_info = cast(dict[str, Any], meta.imdb_info)
+        return (
+            str(imdb_info.get("title", "")),
+            str(imdb_info.get("year", "")),
+            str(imdb_info.get("aka", "")),
+        )
+
+    @staticmethod
+    def _valid_imdb_aka(meta: Meta, imdb_name: str, imdb_aka: str) -> bool:
+        return (
+            bool(imdb_aka.strip())
+            and imdb_aka != imdb_name
+            and not meta.no_aka
+        )
+
+    @classmethod
+    def _apply_imdb_title(
+        cls, name: str, meta: Meta, imdb_name: str, imdb_aka: str
+    ) -> str:
+        if not imdb_name.strip():
+            return name
+        if meta.aka:
+            name = name.replace(f"{meta.aka} ", "", 1)
+        name = name.replace(str(meta.title), imdb_name, 1)
+        if cls._valid_imdb_aka(meta, imdb_name, imdb_aka):
+            return name.replace(imdb_name, f"{imdb_name} AKA {imdb_aka}", 1)
+        return name
+
+    @staticmethod
+    def _should_replace_imdb_year(
+        meta: Meta, imdb_year: str, year: str
+    ) -> bool:
+        if meta.category == "TV" or not imdb_year.strip():
+            return False
+        return bool(year.strip()) and imdb_year != year
+
+    @classmethod
+    def _apply_imdb_year(cls, name: str, meta: Meta, imdb_year: str) -> str:
+        year = str(meta.year) if meta.year is not None else ""
+        if not cls._should_replace_imdb_year(meta, imdb_year, year):
+            return name
+        return name.replace(year, imdb_year, 1)
+
+    @staticmethod
+    def _apply_dvdrip_name(name: str, meta: Meta) -> str:
+        if str(meta.type) != "DVDRIP":
+            return name
         resolution = meta.resolution
-        video_encode = meta.video_encode
-        name_type = str(meta.type)
         source = str(meta.source)
         audio = meta.audio
-        video_codec = meta.video_codec
+        if meta.category == "MOVIE":
+            name = name.replace(
+                f"{source}{meta.video_encode}", f"{resolution}", 1
+            )
+            return name.replace(audio, f"{audio}{meta.video_encode}", 1)
+        name = name.replace(source, f"{resolution}", 1)
+        return name.replace(
+            str(meta.video_codec), f"{audio} {meta.video_codec}", 1
+        )
 
-        imdb_info = cast(dict[str, Any], meta.imdb_info)
-        imdb_name = str(imdb_info.get("title", ""))
-        imdb_year = str(imdb_info.get("year", ""))
-        imdb_aka = str(imdb_info.get("aka", ""))
-        year = str(meta.year) if meta.year is not None else ""
-        aka = meta.aka
-        if imdb_name and imdb_name.strip():
-            if aka:
-                oe_name = oe_name.replace(f"{aka} ", "", 1)
-            oe_name = oe_name.replace(f"{meta.title}", imdb_name, 1)
+    @staticmethod
+    def _audio_languages(meta: Meta) -> list[str]:
+        value = meta.audio_languages
+        if isinstance(value, list):
+            return cast(list[str], value)
+        return []
 
-            if (
-                imdb_aka
-                and imdb_aka.strip()
-                and imdb_aka != imdb_name
-                and not meta.no_aka
-            ):
-                oe_name = oe_name.replace(
-                    f"{imdb_name}", f"{imdb_name} AKA {imdb_aka}", 1
-                )
-
-        if (
-            meta.category != "TV"
-            and imdb_year
-            and imdb_year.strip()
-            and year
-            and year.strip()
-            and imdb_year != year
-        ):
-            oe_name = oe_name.replace(f"{year}", imdb_year, 1)
-
-        if name_type == "DVDRIP":
-            if meta.category == "MOVIE":
-                oe_name = oe_name.replace(
-                    f"{source}{video_encode}", f"{resolution}", 1
-                )
-                oe_name = oe_name.replace((audio), f"{audio}{video_encode}", 1)
-            else:
-                oe_name = oe_name.replace(f"{source}", f"{resolution}", 1)
-                oe_name = oe_name.replace(
-                    f"{video_codec}", f"{audio} {video_codec}", 1
-                )
-
+    async def _apply_foreign_language(self, name: str, meta: Meta) -> str:
         if not meta.audio_languages:
             await languages_manager.process_desc_language(
                 meta, tracker=self.tracker
             )
-        elif meta.audio_languages:
-            audio_languages_value = meta.audio_languages
-            audio_languages = (
-                cast(list[str], audio_languages_value)
-                if isinstance(audio_languages_value, list)
-                else []
-            )
-            if (
-                audio_languages
-                and not await languages_manager.has_english_language(
-                    audio_languages
-                )
-                and meta.is_disc != "BDMV"
-            ):
-                foreign_lang = str(audio_languages[0]).upper()
-                oe_name = oe_name.replace(
-                    f"{resolution}", f"{foreign_lang} {resolution}", 1
-                )
-
-        uuid_value = meta.basename_no_ext
-        scale = (
-            "DS4K"
-            if "DS4K" in uuid_value.upper()
-            else "RM4K"
-            if "RM4K" in uuid_value.upper()
-            else ""
+            return name
+        audio_languages = self._audio_languages(meta)
+        if not audio_languages or meta.is_disc == "BDMV":
+            return name
+        if await languages_manager.has_english_language(audio_languages):
+            return name
+        foreign_lang = str(audio_languages[0]).upper()
+        return name.replace(
+            str(meta.resolution), f"{foreign_lang} {meta.resolution}", 1
         )
-        if name_type in ["ENCODE", "WEBDL", "WEBRIP"] and scale != "":
-            oe_name = oe_name.replace(f"{resolution}", f"{scale}", 1)
 
-        tag_value = meta.tag or ""
-        tag_lower = tag_value.lower()
-        invalid_tags = ["nogrp", "nogroup", "unknown", "-unk-"]
-        if tag_value == "" or any(
-            invalid_tag in tag_lower for invalid_tag in invalid_tags
-        ):
-            for invalid_tag in invalid_tags:
-                oe_name = re.sub(
-                    f"-{invalid_tag}", "", oe_name, flags=re.IGNORECASE
-                )
-            oe_name = f"{oe_name}-NOGRP"
+    @staticmethod
+    def _scale_marker(meta: Meta) -> str:
+        basename = meta.basename_no_ext.upper()
+        if "DS4K" in basename:
+            return "DS4K"
+        if "RM4K" in basename:
+            return "RM4K"
+        return ""
 
-        return {"name": oe_name}
+    @classmethod
+    def _apply_scale(cls, name: str, meta: Meta) -> str:
+        scale = cls._scale_marker(meta)
+        if str(meta.type) not in {"ENCODE", "WEBDL", "WEBRIP"} or not scale:
+            return name
+        return name.replace(str(meta.resolution), scale, 1)
+
+    @staticmethod
+    def _needs_nogroup(tag: str) -> bool:
+        if not tag:
+            return True
+        tag_lower = tag.lower()
+        return any(
+            marker in tag_lower
+            for marker in ("nogrp", "nogroup", "unknown", "-unk-")
+        )
+
+    @classmethod
+    def _apply_group_tag(cls, name: str, meta: Meta) -> str:
+        tag = meta.tag or ""
+        if not cls._needs_nogroup(tag):
+            return name
+        for invalid_tag in ("nogrp", "nogroup", "unknown", "-unk-"):
+            name = re.sub(f"-{invalid_tag}", "", name, flags=re.IGNORECASE)
+        return f"{name}-NOGRP"
+
+    async def get_name(self, meta: Meta) -> dict[str, str]:
+        imdb_name, imdb_year, imdb_aka = self._imdb_values(meta)
+        name = self._apply_imdb_title(meta.name, meta, imdb_name, imdb_aka)
+        name = self._apply_imdb_year(name, meta, imdb_year)
+        name = self._apply_dvdrip_name(name, meta)
+        name = await self._apply_foreign_language(name, meta)
+        name = self._apply_scale(name, meta)
+        return {"name": self._apply_group_tag(name, meta)}
+
+    @staticmethod
+    def _type_mapping() -> dict[str, str]:
+        return {
+            "DISC": "19",
+            "REMUX": "20",
+            "WEBDL": "21",
+            "WEBRIP": "16",
+            "ENCODE": "16",
+            "DVDRIP": "16",
+        }
+
+    @staticmethod
+    def _selected_type(meta: Meta, requested_type: str | None) -> str:
+        selected = (
+            requested_type
+            if requested_type is not None and requested_type != ""
+            else meta.type
+        )
+        normalized = str(selected).upper()
+        return "ENCODE" if normalized == "DVDRIP" else normalized
+
+    @staticmethod
+    def _codec_type_id(
+        type_value: str, video_codec: str, default_id: str
+    ) -> str:
+        if type_value not in {"WEBRIP", "ENCODE"}:
+            return default_id
+        return {"HEVC": "10", "AV1": "14", "AVC": "15"}.get(
+            video_codec, default_id
+        )
 
     async def get_type_id(
         self,
@@ -314,34 +374,16 @@ class OnlyEncodes(UNIT3D):
         reverse: bool = False,
         mapping_only: bool = False,
     ) -> dict[str, str]:
+        mapping = self._type_mapping()
+        if mapping_only:
+            return mapping
+        if reverse:
+            return {value: key for key, value in mapping.items()}
+        type_value = self._selected_type(meta, type)
+        default_id = mapping.get(type_value, "16")
         video_codec = (
             meta.video_codec if meta.video_codec is not None else "N/A"
         )
-        type_mapping = {
-            "DISC": "19",
-            "REMUX": "20",
-            "WEBDL": "21",
-            "WEBRIP": "16",
-            "ENCODE": "16",
-            "DVDRIP": "16",
+        return {
+            "type_id": self._codec_type_id(type_value, video_codec, default_id)
         }
-        if mapping_only:
-            return type_mapping
-        if reverse:
-            return {v: k for k, v in type_mapping.items()}
-
-        type_value = str(
-            type if type is not None and type != "" else meta.type
-        ).upper()
-        if type_value == "DVDRIP":
-            type_value = "ENCODE"
-
-        type_id = type_mapping.get(type_value, "16")
-        if type_value in {"WEBRIP", "ENCODE"}:
-            if video_codec == "HEVC":
-                type_id = "10"
-            if video_codec == "AV1":
-                type_id = "14"
-            if video_codec == "AVC":
-                type_id = "15"
-        return {"type_id": type_id}
