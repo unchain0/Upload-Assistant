@@ -131,6 +131,20 @@ def _configure_boundaries(
     )
 
 
+def _text_or(value: str, fallback: str) -> str:
+    return value or fallback
+
+
+def _mapping_or(
+    value: dict[str, Any], fallback: dict[str, Any]
+) -> dict[str, Any]:
+    return value or fallback
+
+
+def _meta_path(meta: Meta) -> str:
+    return str(meta.path or "")
+
+
 @pytest.mark.parametrize(
     ("profile", "category", "disc_type"),
     [
@@ -199,9 +213,8 @@ def test_preparation_helpers_complete_representative_release_paths(
             video_location,
             detected_bdinfo,
         ) = await helpers.detect_disc_and_category(prep, meta)
-        if not video_location:
-            video_location = str(meta.path or "")
-        effective_bdinfo = bdinfo or detected_bdinfo
+        video_location = _text_or(video_location, _meta_path(meta))
+        effective_bdinfo = _mapping_or(bdinfo, detected_bdinfo)
         (
             filename,
             untouched_filename,
@@ -213,36 +226,34 @@ def test_preparation_helpers_complete_representative_release_paths(
         ) = await helpers.process_media_files(
             prep, meta, video_location, effective_bdinfo
         )
-        if not video_path:
-            video_path = str(meta.path or "")
-        if not filename:
-            filename = meta.title or "Example Release"
-        if not untouched_filename:
-            untouched_filename = filename
+        video_path = _text_or(video_path, _meta_path(meta))
+        filename = _text_or(filename, _text_or(meta.title, "Example Release"))
+        untouched_filename = _text_or(untouched_filename, filename)
+        effective_mediainfo = _mapping_or(mediainfo, meta.mediainfo)
         await helpers.search_metadata(
             prep,
             meta,
             filename,
             untouched_filename,
             video_path,
-            search_term or filename,
-            search_file_folder or "file",
+            _text_or(search_term, filename),
+            _text_or(search_file_folder, "file"),
             True,
             True,
             False,
             _ManagerPort(config, tmp_path),
             effective_bdinfo,
-            mediainfo or meta.mediainfo,
+            effective_mediainfo,
         )
         await helpers.finalize_metadata(
             prep,
             meta,
             video_path,
             effective_bdinfo,
-            mediainfo or meta.mediainfo,
+            effective_mediainfo,
             filename,
             untouched_filename,
-            video or video_path,
+            _text_or(video, video_path),
         )
 
     asyncio.run(exercise())
