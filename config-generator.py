@@ -976,36 +976,16 @@ def configure_default_section(
 
 
 # Process image hosts
-def get_img_host(
-    config_defaults: ConfigDict,
-    existing_defaults: ConfigDict,
-    example_defaults: ConfigDict,
-    config_comments: ConfigComments,
-) -> None:
-    img_host_api_map = image_host_config_map()
+def _existing_image_hosts(existing_defaults: ConfigDict) -> list[str]:
+    hosts: list[str] = []
+    for index in range(1, MAX_IMAGE_HOST_SLOTS + 1):
+        value = existing_defaults.get(f"img_host_{index}")
+        if value:
+            hosts.append(str(value).strip().lower())
+    return hosts
 
-    console.print("\n==== IMAGE HOST CONFIGURATION ====", markup=False)
-    console.print(
-        "[i] Available image hosts: " + ", ".join(img_host_api_map.keys()),
-        markup=False,
-    )
-    console.print(
-        "[i] Note: imgbox and pixhost don't require API keys", markup=False
-    )
 
-    # Get existing image hosts if available
-    existing_hosts: list[str] = []
-    for i in range(1, MAX_IMAGE_HOST_SLOTS + 1):
-        key = f"img_host_{i}"
-        if existing_defaults.get(key):
-            existing_hosts.append(str(existing_defaults[key]).strip().lower())
-
-    if existing_hosts:
-        console.print(
-            f"\n[i] Your existing image hosts: {', '.join(existing_hosts)}",
-            markup=False,
-        )
-
+def _image_host_count(existing_hosts: list[str]) -> int:
     default_count = len(existing_hosts) if existing_hosts else 1
     try:
         number_hosts = int(
@@ -1014,95 +994,161 @@ def get_img_host(
             )
             or default_count
         )
-        number_hosts = max(1, min(MAX_IMAGE_HOST_SLOTS, number_hosts))
     except ValueError:
         console.print(
             f"[!] Invalid input. Defaulting to {default_count} image host(s).",
             markup=False,
         )
-        number_hosts = default_count
+        return default_count
+    return max(1, min(MAX_IMAGE_HOST_SLOTS, number_hosts))
 
-    # Ask for each image host in sequence
-    for i in range(1, number_hosts + 1):
-        # Get existing value for this position if available
-        existing_host = (
-            existing_hosts[i - 1] if i <= len(existing_hosts) else None
-        )
-        existing_display = (
-            f" [existing: {existing_host}]" if existing_host else ""
-        )
 
-        valid_host = False
-        while not valid_host:
-            host_input = (
-                input(
-                    f"\n[i] Enter image host #{i}{existing_display} (e.g., imgbb, imgbox, pixhost): "
-                )
-                .strip()
-                .lower()
+def _image_host_api_keys(api_keys: Any) -> list[str]:
+    if api_keys is None:
+        return []
+    if isinstance(api_keys, str):
+        return [api_keys]
+    return [str(api_key) for api_key in api_keys]
+
+
+def _resolved_image_host_input(
+    host_input: str, existing_host: str | None
+) -> str:
+    if host_input:
+        return host_input
+    return existing_host or ""
+
+
+def _prompt_image_host(
+    index: int,
+    existing_host: str | None,
+    img_host_api_map: dict[str, Any],
+) -> str:
+    existing_display = f" [existing: {existing_host}]" if existing_host else ""
+    while True:
+        host_input = (
+            input(
+                f"\n[i] Enter image host #{index}{existing_display} (e.g., imgbb, imgbox, pixhost): "
             )
-
-            if host_input == "" and existing_host:
-                host_input = existing_host
-
-            if host_input in img_host_api_map:
-                valid_host = True
-                host_key = f"img_host_{i}"
-                config_defaults[host_key] = host_input
-
-                # Configure API key(s) for this host, if needed
-                api_keys = img_host_api_map.get(host_input)
-                if api_keys is None:
-                    console.print(
-                        f"[i] {host_input} doesn't require an API key.",
-                        markup=False,
-                    )
-                    continue
-
-                # Convert single string to list for consistent handling
-                if isinstance(api_keys, str):
-                    api_keys = [api_keys]
-
-                # Process each key for this host
-                for api_key in api_keys:
-                    if api_key in example_defaults:
-                        if api_key in config_comments:
-                            console.print(
-                                "\n[i] "
-                                + "\n[i] ".join(config_comments[api_key]),
-                                markup=False,
-                            )
-
-                        is_password = (
-                            api_key.endswith("_url")
-                            or api_key.endswith("_key")
-                            or api_key.endswith("_api")
-                        )
-                        config_defaults[api_key] = get_user_input(
-                            f"Setting '{api_key}' for {host_input}",
-                            default=str(example_defaults.get(api_key, "")),
-                            is_password=is_password,
-                            existing_value=existing_defaults.get(api_key),
-                        )
-            else:
-                console.print(
-                    f"[!] Invalid host: {host_input}. Available hosts: {', '.join(img_host_api_map.keys())}",
-                    markup=False,
-                )
-
-    # Set unused image host API keys to empty string
-    for api_key_item in img_host_api_map.values():
-        if api_key_item is None:
-            # Skip hosts that don't need API keys
-            continue
-
-        api_keys = (
-            [api_key_item] if isinstance(api_key_item, str) else api_key_item
+            .strip()
+            .lower()
+        )
+        host_input = _resolved_image_host_input(host_input, existing_host)
+        if host_input in img_host_api_map:
+            return host_input
+        console.print(
+            f"[!] Invalid host: {host_input}. Available hosts: {', '.join(img_host_api_map.keys())}",
+            markup=False,
         )
 
-        for api_key in api_keys:
+
+def _print_image_host_key_comments(
+    config_comments: ConfigComments, api_key: str
+) -> None:
+    if api_key not in config_comments:
+        return
+    console.print(
+        "\n[i] " + "\n[i] ".join(config_comments[api_key]), markup=False
+    )
+
+
+def _configure_image_host_keys(
+    host_input: str,
+    api_keys: Any,
+    config_defaults: ConfigDict,
+    existing_defaults: ConfigDict,
+    example_defaults: ConfigDict,
+    config_comments: ConfigComments,
+) -> None:
+    normalized_keys = _image_host_api_keys(api_keys)
+    if not normalized_keys:
+        console.print(
+            f"[i] {host_input} doesn't require an API key.", markup=False
+        )
+        return
+    for api_key in normalized_keys:
+        if api_key not in example_defaults:
+            continue
+        _print_image_host_key_comments(config_comments, api_key)
+        config_defaults[api_key] = get_user_input(
+            f"Setting '{api_key}' for {host_input}",
+            default=str(example_defaults.get(api_key, "")),
+            is_password=api_key.endswith(("_url", "_key", "_api")),
+            existing_value=existing_defaults.get(api_key),
+        )
+
+
+def _configure_image_host(
+    index: int,
+    host_input: str,
+    img_host_api_map: dict[str, Any],
+    config_defaults: ConfigDict,
+    existing_defaults: ConfigDict,
+    example_defaults: ConfigDict,
+    config_comments: ConfigComments,
+) -> None:
+    config_defaults[f"img_host_{index}"] = host_input
+    _configure_image_host_keys(
+        host_input,
+        img_host_api_map.get(host_input),
+        config_defaults,
+        existing_defaults,
+        example_defaults,
+        config_comments,
+    )
+
+
+def _fill_unused_image_host_keys(
+    img_host_api_map: dict[str, Any],
+    config_defaults: ConfigDict,
+    example_defaults: ConfigDict,
+) -> None:
+    for api_key_item in img_host_api_map.values():
+        for api_key in _image_host_api_keys(api_key_item):
             if api_key in example_defaults and api_key not in config_defaults:
                 config_defaults[api_key] = ""
+
+
+def get_img_host(
+    config_defaults: ConfigDict,
+    existing_defaults: ConfigDict,
+    example_defaults: ConfigDict,
+    config_comments: ConfigComments,
+) -> None:
+    img_host_api_map = image_host_config_map()
+    console.print("\n==== IMAGE HOST CONFIGURATION ====", markup=False)
+    console.print(
+        "[i] Available image hosts: " + ", ".join(img_host_api_map.keys()),
+        markup=False,
+    )
+    console.print(
+        "[i] Note: imgbox and pixhost don't require API keys", markup=False
+    )
+    existing_hosts = _existing_image_hosts(existing_defaults)
+    if existing_hosts:
+        console.print(
+            f"\n[i] Your existing image hosts: {', '.join(existing_hosts)}",
+            markup=False,
+        )
+
+    number_hosts = _image_host_count(existing_hosts)
+    for index in range(1, number_hosts + 1):
+        existing_host = (
+            existing_hosts[index - 1] if index <= len(existing_hosts) else None
+        )
+        host_input = _prompt_image_host(index, existing_host, img_host_api_map)
+        _configure_image_host(
+            index,
+            host_input,
+            img_host_api_map,
+            config_defaults,
+            existing_defaults,
+            example_defaults,
+            config_comments,
+        )
+    _fill_unused_image_host_keys(
+        img_host_api_map, config_defaults, example_defaults
+    )
 
 
 def configure_trackers(
