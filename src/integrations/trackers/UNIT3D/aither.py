@@ -203,8 +203,7 @@ class Aither(UNIT3D):
     @staticmethod
     def _dvd_disc_applies(meta: Meta, name_type: str, source: str) -> bool:
         return bool(
-            meta.is_disc == "DVD"
-            or (name_type == "DISC" and source == "DVD")
+            meta.is_disc == "DVD" or (name_type == "DISC" and source == "DVD")
         )
 
     @classmethod
