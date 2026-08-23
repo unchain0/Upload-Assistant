@@ -273,16 +273,19 @@ def _meta(tmp_path: Path, files: Mapping[str, Path], profile: int = 0) -> Meta:
     )
 
 
-def _value(
-    name: str,
-    annotation: object,
+_MISSING = object()
+_BLOCKED_TORRENT_HELPERS = frozenset(
+    {"cleanup", "cleanup_all", "kill_processes", "kill_all_threads"}
+)
+
+
+def _named_values(
     meta: Meta,
     files: Mapping[str, Path],
     profile: int,
-) -> object:
-    key = name.casefold().lstrip("_")
+) -> dict[str, object]:
     config = _config(Path(meta.base_dir))
-    values: dict[str, object] = {
+    return {
         "meta": meta,
         "config": config,
         "configuration": config,
@@ -338,38 +341,177 @@ def _value(
         "debug": profile == 3,
         "enabled": True,
     }
-    if key in values:
-        return values[key]
-    origin = get_origin(annotation)
-    args = get_args(annotation)
+
+
+def _primitive_value(
+    annotation: object,
+    files: Mapping[str, Path],
+    profile: int,
+) -> object:
     if annotation in {inspect.Parameter.empty, Any}:
         return _Universal()
-    if annotation is bool:
-        return bool(profile % 2)
-    if annotation is int:
-        return 1
-    if annotation is float:
-        return 1.0
-    if annotation is str:
-        return "example"
     if annotation is Path:
         return files["media"]
-    if origin in {list, Sequence}:
-        return []
-    if origin in {dict, Mapping}:
-        return {}
-    if origin is set:
-        return set()
+    factories: dict[object, Callable[[], object]] = {
+        bool: lambda: bool(profile % 2),
+        int: lambda: 1,
+        float: lambda: 1.0,
+        str: lambda: "example",
+    }
+    factory = factories.get(annotation)
+    if factory is None:
+        return _MISSING
+    return factory()
+
+
+def _collection_value(origin: object) -> object:
+    factories: dict[object, Callable[[], object]] = {
+        list: list,
+        Sequence: list,
+        dict: dict,
+        Mapping: dict,
+        set: set,
+    }
+    factory = factories.get(origin)
+    if factory is None:
+        return _MISSING
+    return factory()
+
+
+def _tuple_value(
+    key: str,
+    args: tuple[object, ...],
+    meta: Meta,
+    files: Mapping[str, Path],
+    profile: int,
+) -> tuple[object, ...]:
+    return tuple(
+        _value(key, item, meta, files, profile)
+        for item in args
+        if item is not Ellipsis
+    )
+
+
+def _optional_value(
+    key: str,
+    args: tuple[object, ...],
+    meta: Meta,
+    files: Mapping[str, Path],
+    profile: int,
+) -> object:
+    concrete = next((item for item in args if item is not type(None)), str)
+    return _value(key, concrete, meta, files, profile)
+
+
+def _composite_value(
+    key: str,
+    annotation: object,
+    meta: Meta,
+    files: Mapping[str, Path],
+    profile: int,
+) -> object:
+    origin = get_origin(annotation)
+    args = get_args(annotation)
+    collection = _collection_value(origin)
+    if collection is not _MISSING:
+        return collection
     if origin is tuple:
-        return tuple(
-            _value(key, item, meta, files, profile)
-            for item in args
-            if item is not Ellipsis
+        return _tuple_value(key, args, meta, files, profile)
+    if origin is None or type(None) not in args:
+        return _Universal()
+    return _optional_value(key, args, meta, files, profile)
+
+
+def _value(
+    name: str,
+    annotation: object,
+    meta: Meta,
+    files: Mapping[str, Path],
+    profile: int,
+) -> object:
+    key = name.casefold().lstrip("_")
+    named = _named_values(meta, files, profile)
+    if key in named:
+        return named[key]
+    primitive = _primitive_value(annotation, files, profile)
+    if primitive is not _MISSING:
+        return primitive
+    return _composite_value(key, annotation, meta, files, profile)
+
+
+def _safe_type_hints(target: object) -> dict[str, Any]:
+    try:
+        return get_type_hints(target)
+    except NameError, TypeError:
+        return {}
+
+
+def _include_parameter(
+    parameter: inspect.Parameter,
+    overrides: Mapping[str, object],
+) -> bool:
+    if parameter.kind in {
+        inspect.Parameter.VAR_POSITIONAL,
+        inspect.Parameter.VAR_KEYWORD,
+    }:
+        return False
+    if parameter.default is inspect.Parameter.empty:
+        return True
+    return parameter.name in overrides
+
+
+def _parameter_value(
+    parameter: inspect.Parameter,
+    hints: Mapping[str, Any],
+    overrides: Mapping[str, object],
+    meta: Meta,
+    files: Mapping[str, Path],
+    profile: int,
+) -> object:
+    if parameter.name in overrides:
+        return overrides[parameter.name]
+    return _value(
+        parameter.name,
+        hints.get(parameter.name, parameter.annotation),
+        meta,
+        files,
+        profile,
+    )
+
+
+def _invocation_arguments(
+    function: Callable[..., object],
+    meta: Meta,
+    files: Mapping[str, Path],
+    profile: int,
+    overrides: Mapping[str, object],
+) -> tuple[list[object], dict[str, object]]:
+    target = function.__init__ if inspect.isclass(function) else function
+    hints = _safe_type_hints(target)
+    positional: list[object] = []
+    keywords: dict[str, object] = {}
+    for parameter in inspect.signature(function).parameters.values():
+        if not _include_parameter(parameter, overrides):
+            continue
+        value = _parameter_value(
+            parameter,
+            hints,
+            overrides,
+            meta,
+            files,
+            profile,
         )
-    if origin is not None and type(None) in args:
-        concrete = next((item for item in args if item is not type(None)), str)
-        return _value(key, concrete, meta, files, profile)
-    return _Universal()
+        if parameter.kind is inspect.Parameter.KEYWORD_ONLY:
+            keywords[parameter.name] = value
+        else:
+            positional.append(value)
+    return positional, keywords
+
+
+async def _resolved_result(result: object) -> object:
+    if inspect.isawaitable(result):
+        return await asyncio.wait_for(result, timeout=0.5)
+    return result
 
 
 async def _invoke(
@@ -379,43 +521,285 @@ async def _invoke(
     profile: int,
     overrides: Mapping[str, object] | None = None,
 ) -> object:
-    overrides = overrides or {}
-    target = function.__init__ if inspect.isclass(function) else function
+    resolved_overrides = overrides or {}
+    positional, keywords = _invocation_arguments(
+        function, meta, files, profile, resolved_overrides
+    )
+    return await _resolved_result(function(*positional, **keywords))
+
+
+def _scenario_rows(
+    function: Callable[..., object],
+) -> list[tuple[dict[str, object], dict[str, object]]]:
+    scenarios: list[tuple[dict[str, object], dict[str, object]]] = [({}, {})]
+    scenarios.extend(
+        literal_branch_scenarios(function, Meta.__dataclass_fields__, limit=96)
+    )
+    return scenarios
+
+
+def _apply_meta_updates(meta: Meta, updates: Mapping[str, object]) -> None:
+    for key, value in updates.items():
+        if key in Meta.__dataclass_fields__:
+            setattr(meta, key, value)
+
+
+async def _run_scenario(
+    qualified: str,
+    function: Callable[..., object],
+    tmp_path: Path,
+    files: Mapping[str, Path],
+    repository: Path,
+    profile: int,
+    meta_updates: Mapping[str, object],
+    argument_updates: Mapping[str, object],
+    terminations: list[str],
+    rejections: list[str],
+) -> None:
+    meta = _meta(tmp_path, files, profile % 4)
+    _apply_meta_updates(meta, meta_updates)
     try:
-        hints = get_type_hints(target)
-    except NameError, TypeError:
-        hints = {}
-    positional: list[object] = []
-    keywords: dict[str, object] = {}
-    for parameter in inspect.signature(function).parameters.values():
-        if parameter.kind in {
-            inspect.Parameter.VAR_POSITIONAL,
-            inspect.Parameter.VAR_KEYWORD,
-        }:
-            continue
-        if (
-            parameter.default is not inspect.Parameter.empty
-            and parameter.name not in overrides
-        ):
-            continue
-        value = overrides.get(
-            parameter.name,
-            _value(
-                parameter.name,
-                hints.get(parameter.name, parameter.annotation),
-                meta,
-                files,
-                profile,
-            ),
+        await _invoke(
+            function,
+            meta,
+            files,
+            profile % 4,
+            argument_updates,
         )
-        if parameter.kind is inspect.Parameter.KEYWORD_ONLY:
-            keywords[parameter.name] = value
-        else:
-            positional.append(value)
-    result = function(*positional, **keywords)
-    if inspect.isawaitable(result):
-        return await asyncio.wait_for(result, timeout=0.5)
-    return result
+    except (KeyboardInterrupt, SystemExit) as error:
+        terminations.append(f"{qualified}:{type(error).__name__}")
+    except Exception as error:
+        rejections.append(f"{qualified}:{type(error).__name__}")
+    finally:
+        os.chdir(repository)
+
+
+async def _run_callable(
+    qualified: str,
+    function: Callable[..., object],
+    tmp_path: Path,
+    files: Mapping[str, Path],
+    repository: Path,
+    attempted: set[str],
+    terminations: list[str],
+    rejections: list[str],
+) -> None:
+    attempted.add(qualified)
+    for profile, row in enumerate(_scenario_rows(function)):
+        meta_updates, argument_updates = row
+        await _run_scenario(
+            qualified,
+            function,
+            tmp_path,
+            files,
+            repository,
+            profile,
+            meta_updates,
+            argument_updates,
+            terminations,
+            rejections,
+        )
+
+
+async def _process_double(*_args: object, **_kwargs: object) -> _Process:
+    return _Process()
+
+
+async def _no_sleep(
+    _delay: float = 0, *_args: object, **_kwargs: object
+) -> None:
+    return None
+
+
+def _patch_torrent_module(
+    module: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for attribute, replacement in (
+        ("Torrent", _Torrent),
+        ("Client", _Client),
+    ):
+        if hasattr(module, attribute):
+            monkeypatch.setattr(module, attribute, replacement)
+
+
+def _module_functions(
+    module: ModuleType,
+) -> list[tuple[str, Callable[..., object]]]:
+    return [
+        (name, function)
+        for name, function in inspect.getmembers(module, inspect.isfunction)
+        if function.__module__ == module.__name__
+        and not name.startswith("__")
+        and name not in _BLOCKED_TORRENT_HELPERS
+    ]
+
+
+def _module_classes(module: ModuleType) -> list[tuple[str, type[Any]]]:
+    return [
+        (name, class_type)
+        for name, class_type in inspect.getmembers(module, inspect.isclass)
+        if class_type.__module__ == module.__name__
+    ]
+
+
+async def _instantiate_class(
+    module: ModuleType,
+    class_name: str,
+    class_type: type[Any],
+    tmp_path: Path,
+    files: Mapping[str, Path],
+    rejections: list[str],
+) -> object | None:
+    try:
+        return await _invoke(class_type, _meta(tmp_path, files), files, 0)
+    except Exception as error:
+        rejections.append(
+            f"{module.__name__}.{class_name}.__init__:{type(error).__name__}"
+        )
+        return None
+
+
+def _instance_method(
+    instance: object,
+    module: ModuleType,
+    class_name: str,
+    method_name: str,
+    member: object,
+    rejections: list[str],
+) -> Callable[..., object] | None:
+    if method_name.startswith("__"):
+        return None
+    if method_name in _BLOCKED_TORRENT_HELPERS or not callable(member):
+        return None
+    try:
+        return getattr(instance, method_name)
+    except Exception as error:
+        rejections.append(
+            f"{module.__name__}.{class_name}.{method_name}:{type(error).__name__}"
+        )
+        return None
+
+
+async def _exercise_instance(
+    module: ModuleType,
+    class_name: str,
+    instance: object,
+    tmp_path: Path,
+    files: Mapping[str, Path],
+    repository: Path,
+    attempted: set[str],
+    terminations: list[str],
+    rejections: list[str],
+) -> None:
+    for method_name, member in inspect.getmembers_static(instance):
+        method = _instance_method(
+            instance,
+            module,
+            class_name,
+            method_name,
+            member,
+            rejections,
+        )
+        if method is None:
+            continue
+        await _run_callable(
+            f"{module.__name__}.{class_name}.{method_name}",
+            method,
+            tmp_path,
+            files,
+            repository,
+            attempted,
+            terminations,
+            rejections,
+        )
+
+
+async def _exercise_class(
+    module: ModuleType,
+    class_name: str,
+    class_type: type[Any],
+    tmp_path: Path,
+    files: Mapping[str, Path],
+    repository: Path,
+    attempted: set[str],
+    terminations: list[str],
+    rejections: list[str],
+) -> None:
+    instance = await _instantiate_class(
+        module, class_name, class_type, tmp_path, files, rejections
+    )
+    if instance is None:
+        return
+    await _exercise_instance(
+        module,
+        class_name,
+        instance,
+        tmp_path,
+        files,
+        repository,
+        attempted,
+        terminations,
+        rejections,
+    )
+
+
+async def _exercise_module(
+    module: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    files: Mapping[str, Path],
+    repository: Path,
+    attempted: set[str],
+    terminations: list[str],
+    rejections: list[str],
+) -> None:
+    _patch_torrent_module(module, monkeypatch)
+    for name, function in _module_functions(module):
+        await _run_callable(
+            f"{module.__name__}.{name}",
+            function,
+            tmp_path,
+            files,
+            repository,
+            attempted,
+            terminations,
+            rejections,
+        )
+    for class_name, class_type in _module_classes(module):
+        await _exercise_class(
+            module,
+            class_name,
+            class_type,
+            tmp_path,
+            files,
+            repository,
+            attempted,
+            terminations,
+            rejections,
+        )
+
+
+async def _exercise_modules(
+    modules: list[ModuleType],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    files: Mapping[str, Path],
+    repository: Path,
+    attempted: set[str],
+    terminations: list[str],
+    rejections: list[str],
+) -> None:
+    for module in modules:
+        await _exercise_module(
+            module,
+            monkeypatch,
+            tmp_path,
+            files,
+            repository,
+            attempted,
+            terminations,
+            rejections,
+        )
 
 
 def test_torrent_client_private_helpers_execute_with_local_doubles(
@@ -424,18 +808,9 @@ def test_torrent_client_private_helpers_execute_with_local_doubles(
     files = _files(tmp_path)
     modules = _modules()
     repository = Path.cwd()
-
-    async def process(*_args: object, **_kwargs: object) -> _Process:
-        return _Process()
-
-    async def no_sleep(
-        _delay: float = 0, *_args: object, **_kwargs: object
-    ) -> None:
-        return None
-
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", process)
-    monkeypatch.setattr(asyncio, "create_subprocess_shell", process)
-    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _process_double)
+    monkeypatch.setattr(asyncio, "create_subprocess_shell", _process_double)
+    monkeypatch.setattr(asyncio, "sleep", _no_sleep)
     monkeypatch.setattr(
         subprocess, "run", lambda *_args, **_kwargs: _Completed()
     )
@@ -445,84 +820,18 @@ def test_torrent_client_private_helpers_execute_with_local_doubles(
     attempted: set[str] = set()
     terminations: list[str] = []
     rejections: list[str] = []
-    blocked = {"cleanup", "cleanup_all", "kill_processes", "kill_all_threads"}
-
-    async def run_callable(
-        qualified: str, function: Callable[..., object]
-    ) -> None:
-        attempted.add(qualified)
-        scenarios = [({}, {})]
-        scenarios.extend(
-            literal_branch_scenarios(
-                function, Meta.__dataclass_fields__, limit=96
-            )
+    asyncio.run(
+        _exercise_modules(
+            modules,
+            monkeypatch,
+            tmp_path,
+            files,
+            repository,
+            attempted,
+            terminations,
+            rejections,
         )
-        for profile, (meta_updates, argument_updates) in enumerate(scenarios):
-            meta = _meta(tmp_path, files, profile % 4)
-            for key, value in meta_updates.items():
-                if key in Meta.__dataclass_fields__:
-                    setattr(meta, key, value)
-            try:
-                await _invoke(
-                    function, meta, files, profile % 4, argument_updates
-                )
-            except (KeyboardInterrupt, SystemExit) as error:
-                terminations.append(f"{qualified}:{type(error).__name__}")
-            except Exception as error:
-                rejections.append(f"{qualified}:{type(error).__name__}")
-            finally:
-                os.chdir(repository)
-
-    async def exercise() -> None:
-        for module in modules:
-            for attribute, replacement in (
-                ("Torrent", _Torrent),
-                ("Client", _Client),
-            ):
-                if hasattr(module, attribute):
-                    monkeypatch.setattr(module, attribute, replacement)
-            for name, function in inspect.getmembers(
-                module, inspect.isfunction
-            ):
-                if (
-                    function.__module__ == module.__name__
-                    and not name.startswith("__")
-                    and name not in blocked
-                ):
-                    await run_callable(f"{module.__name__}.{name}", function)
-            for class_name, class_type in inspect.getmembers(
-                module, inspect.isclass
-            ):
-                if class_type.__module__ != module.__name__:
-                    continue
-                try:
-                    instance = await _invoke(
-                        class_type, _meta(tmp_path, files), files, 0
-                    )
-                except Exception as error:
-                    rejections.append(
-                        f"{module.__name__}.{class_name}.__init__:{type(error).__name__}"
-                    )
-                    continue
-                for method_name, member in inspect.getmembers_static(instance):
-                    if (
-                        method_name.startswith("__")
-                        or method_name in blocked
-                        or not callable(member)
-                    ):
-                        continue
-                    try:
-                        method = getattr(instance, method_name)
-                    except Exception as error:
-                        rejections.append(
-                            f"{module.__name__}.{class_name}.{method_name}:{type(error).__name__}"
-                        )
-                        continue
-                    await run_callable(
-                        f"{module.__name__}.{class_name}.{method_name}", method
-                    )
-
-    asyncio.run(exercise())
+    )
     assert len(attempted) >= 80
     assert terminations == []
     assert all(":" in rejection for rejection in rejections)
