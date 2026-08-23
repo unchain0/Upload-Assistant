@@ -394,70 +394,104 @@ class RtorrentClientMixin:
         logger.debug(f"[cyan]Path: {path}")
         return
 
+    @staticmethod
+    def _piece_length(metainfo: dict[str, Any]) -> int:
+        value = metainfo["info"]["piece length"]
+        piece_length = (
+            int(value) if isinstance(value, (int, float, str)) else 0
+        )
+        if piece_length <= 0:
+            raise ValueError(f"Invalid piece length: {value!r}")
+        return piece_length
+
+    @staticmethod
+    def _resume_files(
+        metainfo: dict[str, Any], datapath: str
+    ) -> tuple[list[dict[str, Any]], bool, str]:
+        files = metainfo["info"].get("files")
+        if files is not None:
+            return cast(list[dict[str, Any]], files), False, datapath
+        resolved_datapath = datapath
+        if Path(resolved_datapath).is_dir():
+            resolved_datapath = str(
+                Path(resolved_datapath) / metainfo["info"]["name"]
+            )
+        single_file: dict[str, Any] = {
+            "path": [str(Path(resolved_datapath).resolve())],
+            "length": metainfo["info"]["length"],
+        }
+        return [single_file], True, resolved_datapath
+
+    @staticmethod
+    def _resume_filepath(
+        fileinfo: dict[str, Any], datapath: str, single: bool
+    ) -> Path:
+        filepath = Path(*fileinfo["path"])
+        if single:
+            return filepath
+        return Path(datapath) / str(filepath).strip(os.sep)
+
+    @staticmethod
+    def _file_length(fileinfo: dict[str, Any]) -> int:
+        value = fileinfo["length"]
+        return int(value) if isinstance(value, (int, float, str)) else 0
+
+    @staticmethod
+    def _validate_file_size(
+        filepath: Path, file_length: int
+    ) -> os.stat_result:
+        file_stat = filepath.stat()
+        if file_stat.st_size != file_length:
+            raise OSError(
+                errno.EINVAL,
+                f"File size mismatch for {str(filepath)!r} [is {file_stat.st_size}, expected {file_length}]",
+            )
+        return file_stat
+
+    @staticmethod
+    def _completed_pieces(
+        offset: int, file_length: int, piece_length: int
+    ) -> int:
+        return (
+            offset + file_length + piece_length - 1
+        ) // piece_length - offset // piece_length
+
+    @classmethod
+    def _resume_file_entry(
+        cls,
+        fileinfo: dict[str, Any],
+        datapath: str,
+        single: bool,
+        offset: int,
+        piece_length: int,
+    ) -> tuple[dict[str, int], int]:
+        filepath = cls._resume_filepath(fileinfo, datapath, single)
+        file_length = cls._file_length(fileinfo)
+        file_stat = cls._validate_file_size(filepath, file_length)
+        entry = {
+            "priority": 1,
+            "mtime": int(file_stat.st_mtime),
+            "completed": cls._completed_pieces(
+                offset, file_length, piece_length
+            ),
+        }
+        return entry, offset + file_length
+
     def add_fast_resume(
         self, metainfo: dict[str, Any], datapath: str, _torrent: Torrent
     ) -> dict[str, Any]:
         """Add fast resume data to a metafile dict."""
-        # Get list of files
-        files = metainfo["info"].get("files", None)
-        single = files is None
-        if single:
-            if Path(datapath).is_dir():
-                datapath = Path(datapath) / metainfo["info"]["name"]
-            files = [
-                {
-                    "path": [str(Path(datapath).resolve())],
-                    "length": metainfo["info"]["length"],
-                }
-            ]
-
-        # Prepare resume data
+        files, single, datapath = self._resume_files(metainfo, datapath)
         resume = metainfo.setdefault("libtorrent_resume", {})
         resume["bitfield"] = len(metainfo["info"]["pieces"]) // 20
         resume["files"] = []
-        piece_length_value = metainfo["info"]["piece length"]
-        piece_length = (
-            int(piece_length_value)
-            if isinstance(piece_length_value, (int, float, str))
-            else 0
-        )
-        if piece_length <= 0:
-            raise ValueError(f"Invalid piece length: {piece_length_value!r}")
+        piece_length = self._piece_length(metainfo)
         offset = 0
-
         for fileinfo in files:
-            # Get the path into the filesystem
-            filepath = str(Path(*fileinfo["path"]))
-            if not single:
-                filepath = Path(datapath) / filepath.strip(os.sep)
-
-            # Check file size
-            file_length_value = fileinfo["length"]
-            file_length = (
-                int(file_length_value)
-                if isinstance(file_length_value, (int, float, str))
-                else 0
+            entry, offset = self._resume_file_entry(
+                fileinfo, datapath, single, offset, piece_length
             )
-            if Path(filepath).stat().st_size != file_length:
-                raise OSError(
-                    errno.EINVAL,
-                    f"File size mismatch for {filepath!r} [is {Path(filepath).stat().st_size}, expected {file_length}]",
-                )
-
-            # Add resume data for this file
-            resume["files"].append(
-                {
-                    "priority": 1,
-                    "mtime": int(Path(filepath).stat().st_mtime),
-                    "completed": (
-                        (offset + file_length + piece_length - 1)
-                        // piece_length
-                        - offset // piece_length
-                    ),
-                }
-            )
-            offset += file_length
-
+            resume["files"].append(entry)
         return metainfo
 
     async def get_ptp_from_hash_rtorrent(
