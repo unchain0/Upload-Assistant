@@ -16,6 +16,7 @@ from aiofiles import os as aio_os
 
 from src.domain_models.release import Meta
 from src.domain_models.tracker_image_policy import (
+    ImageCollection,
     get_tracker_image_collection,
     has_tracker_image_collection,
     set_tracker_image_collection,
@@ -34,6 +35,12 @@ from src.integrations.image_hosts.uploader import UploadScreensManager
 from src.integrations.mapping.value_coercion import to_int
 from src.integrations.media.screenshot_capture import TakeScreensManager
 from src.integrations.observability.runtime_support import logger
+
+_ADDITIONAL_IMAGE_COLLECTIONS: tuple[ImageCollection, ...] = (
+    "menu_images",
+    "spectrograms_images",
+    "dynamic_hdr_plot_images",
+)
 
 
 @dataclass(frozen=True)
@@ -377,6 +384,238 @@ async def _download_image_for_rehost(
         return None
 
 
+def _configured_host_values(default_config: Mapping[str, Any]) -> list[str]:
+    hosts: list[str] = []
+    for key, value in default_config.items():
+        if (
+            re.fullmatch(r"img_host_(\d+)", key)
+            and isinstance(value, str)
+            and value
+        ):
+            hosts.append(value)
+    return hosts
+
+
+def _supplemental_approved_hosts(
+    tracker: str,
+    approved_image_hosts: Iterable[str] | None,
+    default_config: Mapping[str, Any],
+) -> set[str] | None:
+    approved_hosts = set(approved_image_hosts or [])
+    if not approved_hosts:
+        return None
+    configured_hosts = _configured_host_values(default_config)
+    if any(host in approved_hosts for host in configured_hosts):
+        return approved_hosts
+    logger.warning(
+        f"[yellow]No configured image host is approved by {tracker} for supplemental images.[/yellow]"
+    )
+    return None
+
+
+def _normalized_image_collection(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [
+        dict(cast(dict[str, Any], raw_item))
+        for raw_item in cast(list[Any], value)
+        if isinstance(raw_item, dict)
+    ]
+
+
+def _is_approved_collection_image(
+    item: Mapping[str, Any],
+    url_host_mapping: Mapping[str, str],
+    approved_hosts: set[str],
+) -> bool:
+    raw_url = _as_str(item.get("raw_url"))
+    if not raw_url:
+        return False
+    return _image_host(raw_url, url_host_mapping) in approved_hosts
+
+
+async def _pending_collection_item(
+    meta: Meta,
+    tracker: str,
+    collection_name: ImageCollection,
+    index: int,
+    item: dict[str, Any],
+    url_host_mapping: Mapping[str, str],
+    approved_hosts: set[str],
+) -> tuple[int, dict[str, Any], Path] | None:
+    if _is_approved_collection_image(item, url_host_mapping, approved_hosts):
+        return None
+    raw_url = _as_str(item.get("raw_url"))
+    local_path = await _local_image_path(meta, collection_name, item)
+    if local_path is None and raw_url:
+        local_path = await _download_image_for_rehost(
+            meta, collection_name, raw_url
+        )
+    if local_path is not None:
+        return index, item, local_path
+    logger.warning(
+        f"[yellow]{tracker}: cannot rehost {collection_name} image {index + 1}; keeping its original URL.[/yellow]"
+    )
+    return None
+
+
+async def _pending_collection_items(
+    meta: Meta,
+    tracker: str,
+    collection_name: ImageCollection,
+    collection: list[dict[str, Any]],
+    url_host_mapping: Mapping[str, str],
+    approved_hosts: set[str],
+) -> list[tuple[int, dict[str, Any], Path]]:
+    pending: list[tuple[int, dict[str, Any], Path]] = []
+    for index, item in enumerate(collection):
+        candidate = await _pending_collection_item(
+            meta,
+            tracker,
+            collection_name,
+            index,
+            item,
+            url_host_mapping,
+            approved_hosts,
+        )
+        if candidate is not None:
+            pending.append(candidate)
+    return pending
+
+
+async def _upload_collection_items(
+    meta: Meta,
+    tracker: str,
+    collection_name: ImageCollection,
+    pending: list[tuple[int, dict[str, Any], Path]],
+    approved_hosts: set[str],
+    uploadscreens_manager: UploadScreensManager,
+) -> list[dict[str, Any]]:
+    uploaded, _ = await uploadscreens_manager.upload_screens(
+        meta,
+        len(pending),
+        1,
+        0,
+        len(pending),
+        [str(path) for _, _, path in pending],
+        {},
+        allowed_hosts=list(approved_hosts),
+    )
+    typed = [
+        dict(cast(dict[str, Any], image))
+        for image in cast(list[Any], uploaded)
+        if isinstance(image, dict)
+    ]
+    if len(typed) != len(pending):
+        logger.warning(
+            f"[yellow]{tracker}: only rehosted {len(typed)}/{len(pending)} {collection_name} images.[/yellow]"
+        )
+    return typed
+
+
+def _valid_uploaded_collection_image(
+    image: Mapping[str, Any],
+    url_host_mapping: Mapping[str, str],
+    approved_hosts: set[str],
+) -> bool:
+    raw_url = _as_str(image.get("raw_url"))
+    if not raw_url:
+        return False
+    return _image_host(raw_url, url_host_mapping) in approved_hosts
+
+
+def _replacement_collection_image(
+    tracker: str,
+    collection_name: ImageCollection,
+    original: dict[str, Any],
+    local_path: Path,
+    uploaded_image: dict[str, Any],
+    url_host_mapping: Mapping[str, str],
+    approved_hosts: set[str],
+) -> dict[str, Any] | None:
+    if not _valid_uploaded_collection_image(
+        uploaded_image, url_host_mapping, approved_hosts
+    ):
+        logger.warning(
+            f"[yellow]{tracker}: rehosted {collection_name} image is not on an approved host; keeping its original URL.[/yellow]"
+        )
+        return None
+    replacement = dict(original)
+    replacement.update(uploaded_image)
+    replacement["local_file_path"] = str(local_path)
+    return replacement
+
+
+def _apply_uploaded_collection_items(
+    tracker: str,
+    collection_name: ImageCollection,
+    updated_images: list[dict[str, Any]],
+    pending: list[tuple[int, dict[str, Any], Path]],
+    uploaded: list[dict[str, Any]],
+    url_host_mapping: Mapping[str, str],
+    approved_hosts: set[str],
+) -> None:
+    for pending_item, uploaded_image in zip(pending, uploaded, strict=False):
+        index, original, local_path = pending_item
+        replacement = _replacement_collection_image(
+            tracker,
+            collection_name,
+            original,
+            local_path,
+            uploaded_image,
+            url_host_mapping,
+            approved_hosts,
+        )
+        if replacement is not None:
+            updated_images[index] = replacement
+
+
+async def _rehost_additional_collection(
+    meta: Meta,
+    tracker: str,
+    collection_name: ImageCollection,
+    url_host_mapping: Mapping[str, str],
+    approved_hosts: set[str],
+    uploadscreens_manager: UploadScreensManager,
+) -> None:
+    collection = _normalized_image_collection(
+        getattr(meta, collection_name, [])
+    )
+    if not collection:
+        return
+    pending = await _pending_collection_items(
+        meta,
+        tracker,
+        collection_name,
+        collection,
+        url_host_mapping,
+        approved_hosts,
+    )
+    if not pending:
+        return
+    uploaded = await _upload_collection_items(
+        meta,
+        tracker,
+        collection_name,
+        pending,
+        approved_hosts,
+        uploadscreens_manager,
+    )
+    updated_images = list(collection)
+    _apply_uploaded_collection_items(
+        tracker,
+        collection_name,
+        updated_images,
+        pending,
+        uploaded,
+        url_host_mapping,
+        approved_hosts,
+    )
+    set_tracker_image_collection(
+        meta, tracker, collection_name, updated_images
+    )
+
+
 async def _check_additional_image_collections(
     meta: Meta,
     tracker: str,
@@ -386,109 +625,24 @@ async def _check_additional_image_collections(
     default_config: Mapping[str, Any],
     uploadscreens_manager: UploadScreensManager,
 ) -> None:
-    """Rehost uploaded assets kept outside ``meta.image_list``.
-
-    Disc-menu screenshots and audio spectrograms are submitted alongside normal
-    screenshots by several trackers.  They must therefore satisfy the same
-    tracker host policy, while retaining their own metadata collections.
-    """
+    """Rehost uploaded assets kept outside ``meta.image_list``."""
     if meta.skip_imghost_upload:
         return
-
-    approved_hosts = set(approved_image_hosts or [])
-    if not approved_hosts:
+    approved_hosts = _supplemental_approved_hosts(
+        tracker, approved_image_hosts, default_config
+    )
+    if approved_hosts is None:
         return
-    configured_hosts = [
-        value
-        for key, value in default_config.items()
-        if re.fullmatch(r"img_host_(\d+)", key)
-        and isinstance(value, str)
-        and value
-    ]
-    if not any(host in approved_hosts for host in configured_hosts):
-        logger.warning(
-            f"[yellow]No configured image host is approved by {tracker} for supplemental images.[/yellow]"
-        )
-        return
-
     original_imghost = meta.imghost
     try:
-        for collection_name in (
-            "menu_images",
-            "spectrograms_images",
-            "dynamic_hdr_plot_images",
-        ):
-            collection = getattr(meta, collection_name, [])
-            if not isinstance(collection, list) or not collection:
-                continue
-
-            # Collections can originate from cached/external metadata. Dress
-            # them at this integration boundary before persisting a tracker
-            # override so malformed scalar entries cannot leak into the domain.
-            normalized_collection = [
-                dict(item) for item in collection if isinstance(item, dict)
-            ]
-            updated_images = list(normalized_collection)
-            pending: list[tuple[int, dict[str, Any], Path]] = []
-            for index, item in enumerate(normalized_collection):
-                raw_url = _as_str(item.get("raw_url"))
-                if (
-                    raw_url
-                    and _image_host(raw_url, url_host_mapping)
-                    in approved_hosts
-                ):
-                    continue
-                local_path = await _local_image_path(
-                    meta, collection_name, item
-                )
-                if local_path is None and raw_url:
-                    local_path = await _download_image_for_rehost(
-                        meta, collection_name, raw_url
-                    )
-                if local_path is None:
-                    logger.warning(
-                        f"[yellow]{tracker}: cannot rehost {collection_name} image {index + 1}; keeping its original URL.[/yellow]"
-                    )
-                    continue
-                pending.append((index, item, local_path))
-
-            if not pending:
-                continue
-
-            uploaded, _ = await uploadscreens_manager.upload_screens(
+        for collection_name in _ADDITIONAL_IMAGE_COLLECTIONS:
+            await _rehost_additional_collection(
                 meta,
-                len(pending),
-                1,
-                0,
-                len(pending),
-                [str(path) for _, _, path in pending],
-                {},
-                allowed_hosts=list(approved_hosts),
-            )
-            if len(uploaded) != len(pending):
-                logger.warning(
-                    f"[yellow]{tracker}: only rehosted {len(uploaded)}/{len(pending)} {collection_name} images.[/yellow]"
-                )
-
-            for (index, original, local_path), uploaded_image in zip(
-                pending, uploaded, strict=False
-            ):
-                raw_url = _as_str(uploaded_image.get("raw_url"))
-                if (
-                    not raw_url
-                    or _image_host(raw_url, url_host_mapping)
-                    not in approved_hosts
-                ):
-                    logger.warning(
-                        f"[yellow]{tracker}: rehosted {collection_name} image is not on an approved host; keeping its original URL.[/yellow]"
-                    )
-                    continue
-                replacement = dict(original)
-                replacement.update(uploaded_image)
-                replacement["local_file_path"] = str(local_path)
-                updated_images[index] = replacement
-            set_tracker_image_collection(
-                meta, tracker, collection_name, updated_images
+                tracker,
+                collection_name,
+                url_host_mapping,
+                approved_hosts,
+                uploadscreens_manager,
             )
     finally:
         meta.imghost = original_imghost
