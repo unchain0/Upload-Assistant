@@ -48,6 +48,93 @@ from src.services.preparation_service import Prep
 
 type StatusDict = dict[str, Any]
 
+_TRACKER_CAPABILITIES: dict[str, dict[str, bool]] = {
+    "AURA4K": {"mod_q": True, "draft": False},
+    "AITHER": {"mod_q": True, "draft": False},
+    "BEYONDHD": {"draft_live": True},
+    "BLUTOPIA": {"mod_q": True, "draft": False},
+    "LST": {"mod_q": True, "draft": True},
+    "LATTEAM": {"mod_q": True, "draft": False},
+    "LUMINARR": {"mod_q": True, "draft": False},
+}
+
+
+def _tracker_prepared_meta(shared_meta: Meta, tracker: str) -> Meta:
+    prepared_by_tracker = shared_meta.get("tracker_prepared_meta", {})
+    prepared: Any = None
+    if isinstance(prepared_by_tracker, dict):
+        prepared_mapping = cast(dict[str, Any], prepared_by_tracker)
+        prepared = prepared_mapping.get(tracker)
+    if isinstance(prepared, Meta):
+        return prepared.copy()
+    if isinstance(prepared, dict):
+        return Meta(prepared)
+    return shared_meta.copy()
+
+
+def _sync_tracker_context(
+    tracker_meta: Meta, shared_meta: Meta, tracker: str
+) -> Meta:
+    tracker_meta.trackers = [tracker]
+    tracker_meta.tracker_status = shared_meta.tracker_status
+    return tracker_meta
+
+
+def _mark_zenith_skipped(shared_meta: Meta, message: str) -> None:
+    status = shared_meta.tracker_status.setdefault("ZENITH", {})
+    status.update(upload=False, skipped=True, status_message=message)
+
+
+def _zenith_preparation_required(meta: Meta, config: dict[str, Any]) -> bool:
+    audiobook_required = should_prepare_zenith_audiobook(meta, config)
+    ebook_required = should_prepare_zenith_ebook(meta, config)
+    return audiobook_required or ebook_required
+
+
+async def _zenith_prepared_path(
+    meta: Meta, config: dict[str, Any]
+) -> str | None:
+    prepared = await prepare_zenith_audiobook(meta, str(meta.base_dir), config)
+    if prepared is not None:
+        return prepared
+    return await prepare_zenith_ebook(meta, str(meta.base_dir), config)
+
+
+def _required_zenith_preparation_failed(
+    required: bool, prepared_path: str | None
+) -> bool:
+    return required and not bool(prepared_path)
+
+
+def _zenith_isolated_meta(meta: Meta, prepared_path: str) -> Meta:
+    prepared_meta = meta.copy()
+    prepared_meta.path = prepared_path
+    prepared_meta.keep_folder = True
+    prepared_meta.allow_spaces = True
+    prepared_meta.uuid = f"{prepared_meta.uuid}-zenith"
+    prepared_meta.update({"trusted_book_layout": True})
+    return prepared_meta
+
+
+async def _gather_zenith_meta(
+    tracker_meta: Meta,
+    shared_meta: Meta,
+    config: dict[str, Any],
+    prepared_path: str,
+    argument_parser_factory: ArgumentParserFactory | None,
+) -> Meta:
+    prepared_meta = _zenith_isolated_meta(tracker_meta, prepared_path)
+    prep = Prep(
+        screens=prepared_meta.screens,
+        img_host=prepared_meta.imghost,
+        config=config,
+        argument_parser_factory=argument_parser_factory,
+    )
+    gathered = await prep.gather_prep(meta=prepared_meta, mode="cli")
+    _sync_tracker_context(gathered, shared_meta, "ZENITH")
+    gathered.update({"zentag_prepared": True})
+    return gathered
+
 
 async def prepare_tracker_meta(
     shared_meta: Meta,
@@ -55,108 +142,76 @@ async def prepare_tracker_meta(
     config: dict[str, Any],
     argument_parser_factory: ArgumentParserFactory | None = None,
 ) -> Meta:
-    prepared_by_tracker = shared_meta.get("tracker_prepared_meta", {})
-    prepared = (
-        prepared_by_tracker.get(tracker)
-        if isinstance(prepared_by_tracker, dict)
-        else None
+    tracker_meta = _sync_tracker_context(
+        _tracker_prepared_meta(shared_meta, tracker), shared_meta, tracker
     )
-    tracker_meta = (
-        prepared.copy()
-        if isinstance(prepared, Meta)
-        else Meta(prepared)
-        if isinstance(prepared, dict)
-        else shared_meta.copy()
-    )
-    tracker_meta.trackers = [tracker]
-    tracker_meta.tracker_status = shared_meta.tracker_status
-
     if tracker != "ZENITH":
         return tracker_meta
 
-    preparation_required = should_prepare_zenith_audiobook(
-        tracker_meta, config
-    ) or should_prepare_zenith_ebook(tracker_meta, config)
-    prepared_book = await prepare_zenith_audiobook(
-        tracker_meta, str(tracker_meta.base_dir), config
-    )
-    if prepared_book is None:
-        prepared_book = await prepare_zenith_ebook(
-            tracker_meta, str(tracker_meta.base_dir), config
-        )
-    if preparation_required and not prepared_book:
-        status = shared_meta.tracker_status.setdefault(tracker, {})
-        status.update(
-            upload=False,
-            skipped=True,
-            status_message="Automatic zentag preparation failed; the original book will not be uploaded",
+    preparation_required = _zenith_preparation_required(tracker_meta, config)
+    prepared_book = await _zenith_prepared_path(tracker_meta, config)
+    if _required_zenith_preparation_failed(
+        preparation_required, prepared_book
+    ):
+        _mark_zenith_skipped(
+            shared_meta,
+            "Automatic zentag preparation failed; the original book will not be uploaded",
         )
         return tracker_meta
     if prepared_book:
-        prepared_meta = tracker_meta.copy()
-        prepared_meta.path = prepared_book
-        prepared_meta.keep_folder = True
-        prepared_meta.allow_spaces = True
-        prepared_meta.uuid = f"{prepared_meta.uuid}-zenith"
-        prepared_meta.update({"trusted_book_layout": True})
-        prep = Prep(
-            screens=prepared_meta.screens,
-            img_host=prepared_meta.imghost,
-            config=config,
-            argument_parser_factory=argument_parser_factory,
-        )
         try:
-            tracker_meta = await prep.gather_prep(
-                meta=prepared_meta, mode="cli"
+            tracker_meta = await _gather_zenith_meta(
+                tracker_meta,
+                shared_meta,
+                config,
+                prepared_book,
+                argument_parser_factory,
             )
-            tracker_meta.trackers = [tracker]
-            tracker_meta.tracker_status = shared_meta.tracker_status
-            tracker_meta.update({"zentag_prepared": True})
         except Exception as error:
             logger.warning(
                 f"[yellow]ZENITH: failed to prepare isolated zentag metadata; the original release will not be uploaded: {error}[/yellow]"
             )
-            status = shared_meta.tracker_status.setdefault(tracker, {})
-            status.update(
-                upload=False,
-                skipped=True,
-                status_message=f"Prepared zentag metadata failed validation: {error}",
+            _mark_zenith_skipped(
+                shared_meta,
+                f"Prepared zentag metadata failed validation: {error}",
             )
-
     prepare_zenith_music_layout(tracker_meta)
     return tracker_meta
+
+
+def _enabled_flag(value: Any) -> bool:
+    return str(value).lower() in {"1", "true", "yes"}
+
+
+async def _tracker_boolean_flag(
+    tracker_class: Any, meta: Meta, name: str, enabled: bool
+) -> str | None:
+    if not enabled:
+        return None
+    value = await tracker_class.get_flag(meta, name)
+    return "Yes" if _enabled_flag(value) else "No"
+
+
+async def _tracker_draft_value(
+    tracker_class: Any, meta: Meta, capabilities: Mapping[str, Any]
+) -> str | None:
+    if capabilities.get("draft_live"):
+        live = await tracker_class.get_live(meta)
+        return "Draft" if live == 0 else "Live"
+    return await _tracker_boolean_flag(
+        tracker_class, meta, "draft", bool(capabilities.get("draft"))
+    )
 
 
 async def check_mod_q_and_draft(
     tracker_class: Any,
     meta: Meta,
 ) -> tuple[str | None, str | None, dict[str, Any]]:
-    tracker_capabilities = {
-        "AURA4K": {"mod_q": True, "draft": False},
-        "AITHER": {"mod_q": True, "draft": False},
-        "BEYONDHD": {"draft_live": True},
-        "BLUTOPIA": {"mod_q": True, "draft": False},
-        "LST": {"mod_q": True, "draft": True},
-        "LATTEAM": {"mod_q": True, "draft": False},
-        "LUMINARR": {"mod_q": True, "draft": False},
-    }
-
-    modq, draft = None, None
-    tracker_caps = tracker_capabilities.get(tracker_class.tracker, {})
-    if tracker_class.tracker == "BEYONDHD" and tracker_caps.get("draft_live"):
-        draft_int = await tracker_class.get_live(meta)
-        draft = "Draft" if draft_int == 0 else "Live"
-
-    else:
-        if tracker_caps.get("mod_q"):
-            modq_flag = await tracker_class.get_flag(meta, "modq")
-            modq_enabled = str(modq_flag).lower() in ["1", "true", "yes"]
-            modq = "Yes" if modq_enabled else "No"
-        if tracker_caps.get("draft"):
-            draft_flag = await tracker_class.get_flag(meta, "draft")
-            draft_enabled = str(draft_flag).lower() in ["1", "true", "yes"]
-            draft = "Yes" if draft_enabled else "No"
-
+    tracker_caps = _TRACKER_CAPABILITIES.get(tracker_class.tracker, {})
+    modq = await _tracker_boolean_flag(
+        tracker_class, meta, "modq", bool(tracker_caps.get("mod_q"))
+    )
+    draft = await _tracker_draft_value(tracker_class, meta, tracker_caps)
     return modq, draft, tracker_caps
 
 
