@@ -185,29 +185,13 @@ def test_cleanup_gather_runtime_error_is_safe(
     assert task.cancelled
 
 
-class _Child:
-    def __init__(self) -> None:
-        self.terminated = False
-        self.killed = False
-        self.joined = False
-
-    def terminate(self) -> None:
-        self.terminated = True
-
-    def kill(self) -> None:
-        self.killed = True
-
-    def join(self, _timeout: int) -> None:
-        self.joined = True
-
-
 def test_kill_all_threads_only_terminates_tracked_processes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     tracked = _Process()
     completed = _Process(returncode=0)
     denied = _Process(terminate_error=PermissionError("denied"))
-    untracked = _Child()
+    untracked = _Process()
     cleanup.running_subprocesses.update(  # type: ignore[arg-type]
         {tracked, completed, denied}
     )
@@ -268,7 +252,6 @@ def test_reset_terminal_platform_tty_commands_and_errors(
     manager.reset_terminal()
 
     monkeypatch.setattr(cleanup, "IS_ANDROID", False)
-    monkeypatch.setattr(cleanup, "IS_MACOS", False)
     monkeypatch.setattr(cleanup.shutil, "which", lambda _name: "stty")
 
     class Input:
@@ -310,7 +293,6 @@ def test_reset_terminal_platform_tty_commands_and_errors(
     )
     assert "\x1b[0m" in stdout.getvalue() and "\x1b[?25h" in stdout.getvalue()
 
-    monkeypatch.setattr(cleanup, "IS_MACOS", True)
     manager.reset_terminal()
     assert not any("xargs kill" in " ".join(call) for call in calls)
 
@@ -365,7 +347,6 @@ def test_reset_terminal_stdout_write_error_and_outer_error_reporting(
     manager = CleanupManager()
     monkeypatch.setattr(cleanup.os, "name", "posix")
     monkeypatch.setattr(cleanup, "IS_ANDROID", False)
-    monkeypatch.setattr(cleanup, "IS_MACOS", False)
 
     class Input:
         closed = True
