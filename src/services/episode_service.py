@@ -2,6 +2,7 @@
 import asyncio
 import re
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Never, cast
@@ -172,435 +173,574 @@ def sync_single_episode_from_filename(meta: Meta) -> bool:
     return True
 
 
+@dataclass
+class _EpisodeState:
+    season_int: int = 1
+    episode_int: int = 0
+    season: str = "S01"
+    episode: str = ""
+    is_daily: bool = False
+
+
+@dataclass
+class _AnimeContext:
+    romaji: str = ""
+    eng_title: str = ""
+    anilist_episodes: int = 0
+
+
 class SeasonEpisodeManager:
     def __init__(self, config: dict[str, Any]) -> None:
         self.tmdb_manager = TmdbManager(config)
 
+    @staticmethod
+    def _reset_standard_season(state: _EpisodeState) -> None:
+        state.season_int = 1
+        state.season = "S01"
+
+    @staticmethod
+    def _daily_match(video: str) -> re.Match[str] | None:
+        return re.search(r"\d{4}[-\.]\d{2}[-\.]\d{2}", video)
+
+    @staticmethod
+    def _daily_requested(
+        meta: Meta, daily_match: re.Match[str] | None
+    ) -> bool:
+        return bool(meta.manual_date or daily_match) and not bool(
+            meta.manual_season
+        )
+
+    @staticmethod
+    def _apply_daily_match(
+        meta: Meta, daily_match: re.Match[str] | None
+    ) -> None:
+        if meta.manual_date is None and daily_match is not None:
+            meta.manual_date = daily_match.group().replace(".", "-")
+
+    @staticmethod
+    def _daily_guess_date(video: str, meta: Meta) -> str:
+        guess_data = _guessit_data(video)
+        raw = meta.manual_date or guess_data.get("date")
+        return str(raw) if raw else ""
+
+    async def _apply_daily_identity(
+        self,
+        video: str,
+        meta: Meta,
+        state: _EpisodeState,
+    ) -> bool:
+        daily_match = self._daily_match(video)
+        if not self._daily_requested(meta, daily_match):
+            return False
+        self._apply_daily_match(meta, daily_match)
+        state.is_daily = True
+        guess_date = self._daily_guess_date(video, meta)
+        (
+            state.season_int,
+            state.episode_int,
+        ) = await self.tmdb_manager.daily_to_tmdb_season_episode(
+            _safe_int(meta.tmdb_id, 0), guess_date
+        )
+        state.season = f"S{state.season_int:02d}"
+        state.episode = f"E{state.episode_int:02d}"
+        meta.daily_episode_title = meta.manual_date or ""
+        return True
+
+    @staticmethod
+    def _guess_year(video: str) -> str:
+        try:
+            return str(_guessit_data(video).get("year") or "")
+        except Exception:
+            return ""
+
+    @classmethod
+    def _apply_standard_season_guess(
+        cls,
+        video: str,
+        state: _EpisodeState,
+        season_guess: str,
+        guess_year: str,
+    ) -> None:
+        if season_guess != guess_year:
+            state.season_int = int(season_guess or 1)
+            state.season = f"S{state.season_int:02d}"
+            return
+        if f"s{season_guess}" not in video.lower():
+            cls._reset_standard_season(state)
+            return
+        state.season_int = int(season_guess)
+        state.season = f"S{state.season_int:02d}"
+
+    @classmethod
+    def _guess_standard_season(cls, video: str, state: _EpisodeState) -> None:
+        guess_year = cls._guess_year(video)
+        try:
+            guess_data = _guessit_data(video)
+            season_guess = str(guess_data.get("season") or "")
+            cls._apply_standard_season_guess(
+                video, state, season_guess, guess_year
+            )
+        except Exception:
+            logger.info(
+                "[bold yellow]There was an error guessing the season number. Guessing S01. Use [bold green]--season #[/bold green] to correct if needed"
+            )
+            cls._reset_standard_season(state)
+
+    async def _resolve_standard_season(
+        self, video: str, meta: Meta, state: _EpisodeState
+    ) -> None:
+        try:
+            if await self._apply_daily_identity(video, meta, state):
+                return
+            self._guess_standard_season(video, state)
+        except Exception:
+            console.print_exception()
+            self._reset_standard_season(state)
+
+    @staticmethod
+    def _episode_values(value: Any, default: int) -> tuple[int, str]:
+        if isinstance(value, list):
+            values = cast(list[Any], value)
+            episode_int = _safe_int(values[0], default) if values else default
+            episode = "".join(f"E{_safe_int(item, 0):02d}" for item in values)
+            return episode_int, episode
+        episode_int = _safe_int(value, default)
+        episode = f"E{episode_int:02d}" if value is not None else ""
+        return episode_int, episode
+
+    @staticmethod
+    def _mark_episode_pack(meta: Meta, state: _EpisodeState) -> None:
+        state.episode = ""
+        state.episode_int = 0
+        meta.tv_pack = True
+
+    @classmethod
+    def _resolve_standard_episode(
+        cls,
+        video: str,
+        filelist: list[str],
+        meta: Meta,
+        state: _EpisodeState,
+    ) -> None:
+        if state.is_daily:
+            return
+        if len(filelist) != 1:
+            cls._mark_episode_pack(meta, state)
+            return
+        try:
+            episodes = _guessit_data(video).get("episode")
+            state.episode_int, state.episode = cls._episode_values(episodes, 0)
+        except Exception:
+            cls._mark_episode_pack(meta, state)
+
+    async def _standard_identity(
+        self, video: str, meta: Meta, filelist: list[str]
+    ) -> _EpisodeState:
+        state = _EpisodeState()
+        await self._resolve_standard_season(video, meta, state)
+        self._resolve_standard_episode(video, filelist, meta, state)
+        return state
+
+    async def _prepare_anime_context(
+        self, video: str, meta: Meta
+    ) -> _AnimeContext:
+        context = _AnimeContext()
+        if meta.mal_id != 0 or meta.category != "TV":
+            return context
+        parsed = _anitopy_parse(Path(video).name)
+        (
+            context.romaji,
+            mal_id,
+            context.eng_title,
+            season_year,
+            anilist_episodes,
+            meta.demographic,
+        ) = await self.tmdb_manager.get_romaji(
+            str(parsed.get("anime_title", "")),
+            _safe_int(meta.mal_id, 0),
+            meta,
+        )
+        mal_id_value = _safe_int(mal_id, 0)
+        if mal_id_value:
+            meta.mal_id = mal_id_value
+        context.anilist_episodes = _safe_int(anilist_episodes, 0)
+        if meta.tmdb_id == 0:
+            await self._fill_anime_tmdb(meta, parsed, season_year)
+        return context
+
+    async def _fill_anime_tmdb(
+        self, meta: Meta, parsed: Mapping[str, Any], season_year: Any
+    ) -> None:
+        year = str(parsed.get("anime_year") or season_year)
+        guess_title = _guessit_data(
+            str(parsed.get("anime_title", "")),
+            {"excludes": ["country", "language"]},
+        ).get("title", "")
+        tmdb_id_value, category_value = await self.tmdb_manager.get_tmdb_id(
+            str(guess_title), year, meta.category, meta.filename
+        )
+        meta.tmdb_id = tmdb_id_value
+        meta.category = category_value
+
+    @staticmethod
+    def _apply_anime_tag(parsed: Mapping[str, Any], meta: Meta) -> None:
+        tag = str(parsed.get("release_group", ""))
+        if tag and meta.tag is None:
+            meta.tag = f"-{tag}"
+
+    @staticmethod
+    def _anime_episode_value(
+        parsed: Mapping[str, Any], guess_data: Mapping[str, Any]
+    ) -> Any:
+        episodes = parsed.get("episode_number", guess_data.get("episode", "1"))
+        if isinstance(episodes, list) or str(episodes).isnumeric():
+            return cast(Any, episodes)
+        return guess_data.get("episode")
+
+    @classmethod
+    def _guess_anime_episode(
+        cls, video: str, parsed: Mapping[str, Any]
+    ) -> tuple[int, str]:
+        guess_data = _guessit_data(video)
+        episodes = cls._anime_episode_value(parsed, guess_data)
+        return cls._episode_values(episodes, 1)
+
+    @staticmethod
+    def _uuid_episode(meta: Meta) -> int | None:
+        if not meta.uuid:
+            return None
+        patterns = (
+            r"[Ee](\d+)[Ee](\d+)",
+            r"[Ee](\d+)",
+            r"[Ee]pisode[\s_]*(\d+)",
+            r"[\s_\-](\d+)[\s_\-]",
+            r"[\s_\-](\d+)$",
+            r"^(\d+)[\s_\-]",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, meta.uuid, re.IGNORECASE)
+            if match is None:
+                continue
+            try:
+                return int(match.group(1))
+            except ValueError, IndexError:
+                continue
+        return None
+
+    @classmethod
+    async def _fallback_anime_episode(
+        cls, meta: Meta, state: _EpisodeState
+    ) -> None:
+        state.episode_int = cls._uuid_episode(meta) or 1
+        state.episode = f"E{state.episode_int:02d}"
+        if state.episode_int == 1:
+            logger.info(
+                "[bold yellow]There was an error guessing the episode number. Guessing E01. Use [bold green]--episode #[/bold green] to correct if needed"
+            )
+        await asyncio.sleep(1.5)
+
+    @classmethod
+    async def _resolve_anime_episode(
+        cls,
+        video: str,
+        parsed: Mapping[str, Any],
+        filelist: list[str],
+        meta: Meta,
+        state: _EpisodeState,
+    ) -> None:
+        if len(filelist) != 1:
+            cls._mark_episode_pack(meta, state)
+            return
+        try:
+            state.episode_int, state.episode = cls._guess_anime_episode(
+                video, parsed
+            )
+        except Exception:
+            await cls._fallback_anime_episode(meta, state)
+
+    @staticmethod
+    def _guess_initial_anime_season(
+        video: str, parsed: Mapping[str, Any], meta: Meta
+    ) -> int:
+        if meta.season_int:
+            return _safe_int(meta.season_int, 1)
+        guess_data = _guessit_data(video)
+        value = parsed.get("anime_season", guess_data.get("season", "1"))
+        return _safe_int(value, 1)
+
+    @staticmethod
+    async def _xem_single_mapping(
+        meta: Meta, state: _EpisodeState, filelist: list[str]
+    ) -> None:
+        params = {
+            "id": str(meta.tvdb_id),
+            "origin": "tvdb",
+            "absolute": str(state.episode_int),
+        }
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = (
+                await client.post(
+                    "https://thexem.info/map/single", params=params
+                )
+            ).json()
+        if response["result"] == "failure":
+            raise XEMNotFoundError  # noqa: F405
+        logger.debug(f"[cyan]TheXEM Absolute -> Standard[/cyan]\n{response}")
+        scene = response["data"]["scene"]
+        state.season_int = int(scene["season"])
+        state.season = f"S{state.season_int:02d}"
+        if len(filelist) == 1:
+            state.episode_int = int(scene["episode"])
+            state.episode = f"E{state.episode_int:02d}"
+
+    @staticmethod
+    def _xem_key(value: str) -> str:
+        return re.sub(
+            r"[^0-9a-zA-Z\[\\]]+", "", value.lower().replace(" ", "")
+        )
+
+    @classmethod
+    def _xem_name_match(
+        cls, target: str, candidate: str, difference: float
+    ) -> tuple[bool, float]:
+        target_key = cls._xem_key(target)
+        candidate_key = cls._xem_key(candidate)
+        ratio = SequenceMatcher(None, target_key, candidate_key).ratio()
+        return target_key in candidate_key and ratio >= difference, ratio
+
+    @staticmethod
+    def _xem_language_target(
+        context: _AnimeContext, language: str
+    ) -> str | None:
+        if language == "jp":
+            return context.romaji
+        if language == "us":
+            return context.eng_title
+        return None
+
+    @classmethod
+    def _xem_language_candidates(
+        cls,
+        season_num: str,
+        language: str,
+        names_raw: Any,
+        context: _AnimeContext,
+    ) -> list[tuple[str, str, str]]:
+        target = cls._xem_language_target(context, language)
+        if target is None or not isinstance(names_raw, list):
+            return []
+        return [
+            (season_num, target, str(name))
+            for name in cast(list[Any], names_raw)
+        ]
+
+    @classmethod
+    def _xem_candidates(
+        cls, data: Mapping[str, Any], context: _AnimeContext
+    ) -> list[tuple[str, str, str]]:
+        candidates: list[tuple[str, str, str]] = []
+        for season_num, values_raw in data.items():
+            if not isinstance(values_raw, Mapping):
+                continue
+            for language, names_raw in cast(
+                Mapping[str, Any], values_raw
+            ).items():
+                candidates.extend(
+                    cls._xem_language_candidates(
+                        season_num, language, names_raw, context
+                    )
+                )
+        return candidates
+
+    @classmethod
+    def _best_xem_season(
+        cls, data: Mapping[str, Any], context: _AnimeContext
+    ) -> int:
+        selected = 1
+        difference = 0.0
+        for season_num, target, candidate in cls._xem_candidates(
+            data, context
+        ):
+            matched, ratio = cls._xem_name_match(target, candidate, difference)
+            if matched:
+                selected = int(season_num) if season_num != "all" else 1
+                difference = ratio
+        return selected
+
+    @classmethod
+    async def _xem_names_mapping(
+        cls, meta: Meta, state: _EpisodeState, context: _AnimeContext
+    ) -> None:
+        state.season_int = 1
+        state.season = "S01"
+        url = f"https://thexem.info/map/names?origin=tvdb&id={meta.tvdb_id!s}"
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = (await client.get(url)).json()
+        logger.debug(f"[cyan]Matching Season Number from TheXEM\n{response}")
+        if response["result"] != "success":
+            raise XEMNotFoundError  # noqa: F405
+        raw_data = response.get("data", {})
+        data: Mapping[str, Any] = (
+            cast(Mapping[str, Any], raw_data)
+            if isinstance(raw_data, Mapping)
+            else cast(Mapping[str, Any], {})
+        )
+        state.season_int = cls._best_xem_season(data, context)
+        state.season = f"S{state.season_int:02d}"
+
+    @classmethod
+    async def _xem_season(
+        cls,
+        meta: Meta,
+        state: _EpisodeState,
+        context: _AnimeContext,
+        filelist: list[str],
+    ) -> None:
+        if state.episode_int >= context.anilist_episodes:
+            await cls._xem_single_mapping(meta, state, filelist)
+            return
+        await cls._xem_names_mapping(meta, state, context)
+
+    @staticmethod
+    async def _fallback_anime_season(
+        video: str, meta: Meta, state: _EpisodeState
+    ) -> None:
+        if meta.debug:
+            console.print_exception()
+        try:
+            state.season_int = int(_guessit_data(video).get("season", "1"))
+            state.season = f"S{state.season_int:02d}"
+        except Exception:
+            state.season_int = 1
+            state.season = "S01"
+        logger.info(
+            f"[bold yellow]{meta.title} does not exist on thexem, guessing {state.season}"
+        )
+        logger.info(
+            f"[bold yellow]If [green]{state.season}[/green] is incorrect, use --season to correct"
+        )
+        await asyncio.sleep(3)
+
+    @classmethod
+    async def _resolve_anime_season(
+        cls,
+        video: str,
+        parsed: Mapping[str, Any],
+        meta: Meta,
+        state: _EpisodeState,
+        context: _AnimeContext,
+        filelist: list[str],
+    ) -> None:
+        try:
+            state.season_int = cls._guess_initial_anime_season(
+                video, parsed, meta
+            )
+            state.season = f"S{state.season_int:02d}"
+        except Exception:
+            try:
+                await cls._xem_season(meta, state, context, filelist)
+            except Exception:
+                await cls._fallback_anime_season(video, meta, state)
+
+    @classmethod
+    async def _anime_identity(
+        cls,
+        video: str,
+        meta: Meta,
+        filelist: list[str],
+        context: _AnimeContext,
+    ) -> _EpisodeState:
+        state = _EpisodeState(episode_int=1, episode="E01")
+        if meta.mal_id == 0 or meta.category != "TV":
+            logger.info(
+                "[bold red]Error determining if TV show is anime or not[/bold red]"
+            )
+            logger.info(
+                "[bold yellow]Set manual season and episode[/bold yellow]"
+            )
+            return state
+        parsed = _anitopy_parse(Path(video).name)
+        cls._apply_anime_tag(parsed, meta)
+        await cls._resolve_anime_episode(video, parsed, filelist, meta, state)
+        await cls._resolve_anime_season(
+            video, parsed, meta, state, context, filelist
+        )
+        return state
+
+    @staticmethod
+    def _apply_manual_season(meta: Meta, state: _EpisodeState) -> None:
+        if meta.manual_season is None:
+            meta.season = state.season
+            return
+        manual = str(meta.manual_season).lower().replace("s", "")
+        meta.daily_episode_title = ""
+        state.season_int = _safe_int(manual, 1)
+        meta.season = f"S{manual.zfill(2)}"
+
+    @staticmethod
+    def _apply_manual_episode(meta: Meta, state: _EpisodeState) -> None:
+        if meta.manual_episode is None:
+            meta.episode = state.episode
+            return
+        manual = str(meta.manual_episode).lower().replace("e", "")
+        state.episode_int = _safe_int(manual, 0)
+        meta.episode = f"E{manual.zfill(2)}"
+        meta.tv_pack = False
+
+    @classmethod
+    def _apply_manual_identity(cls, meta: Meta, state: _EpisodeState) -> None:
+        cls._apply_manual_season(meta, state)
+        cls._apply_manual_episode(meta, state)
+
+    @staticmethod
+    def _apply_identity_numbers(
+        meta: Meta,
+        state: _EpisodeState,
+        previous_identity: tuple[Any, Any],
+    ) -> None:
+        meta.season_int = state.season_int
+        meta.episode_int = state.episode_int
+        if previous_identity != (state.season_int, state.episode_int):
+            _clear_episode_metadata(meta)
+
+    @staticmethod
+    def _apply_manual_episode_title(meta: Meta) -> None:
+        if "manual_episode_title" in meta and meta.manual_episode_title:
+            meta.episode_title = meta.manual_episode_title
+
+    @staticmethod
+    def _apply_part(video: str, meta: Meta) -> None:
+        meta.part = ""
+        if meta.tv_pack != 1:
+            return
+        part = _guessit_data(str(Path(video).parent)).get("part")
+        meta.part = f"Part {part}" if part else ""  # pyrefly: ignore [bad-assignment]
+
+    @classmethod
+    def _apply_episode_metadata(
+        cls,
+        video: str,
+        meta: Meta,
+        state: _EpisodeState,
+        previous_identity: tuple[Any, Any],
+    ) -> None:
+        cls._apply_identity_numbers(meta, state, previous_identity)
+        cls._apply_manual_episode_title(meta)
+        cls._apply_part(video, meta)
+
     async def get_season_episode(self, video: str, meta: Meta) -> Meta:
-        if meta.category == "TV":
-            previous_identity = (meta.season_int, meta.episode_int)
-            filelist = cast(list[str], meta.filelist)
-            meta.tv_pack = False
-            is_daily = False
-            season_int = 1
-            episode_int = 0
-            season = "S01"
-            episode = ""
-            romaji = ""
-            eng_title = ""
-            anilist_episodes = 0
-            if not meta.anime:
-                try:
-                    daily_match = re.search(
-                        r"\d{4}[-\.]\d{2}[-\.]\d{2}", video
-                    )
-                    if (
-                        meta.manual_date or daily_match
-                    ) and not meta.manual_season:
-                        # Handle daily episodes
-                        # The user either provided the --daily argument or a date was found in the filename
-
-                        if (
-                            meta.manual_date is None
-                            and daily_match is not None
-                        ):
-                            meta.manual_date = daily_match.group().replace(
-                                ".", "-"
-                            )
-                        is_daily = True
-                        guess_data = _guessit_data(video)
-                        guess_date_raw = meta.manual_date or guess_data.get(
-                            "date"
-                        )
-                        guess_date = (
-                            str(guess_date_raw) if guess_date_raw else ""
-                        )
-                        tmdb_id_value = _safe_int(meta.tmdb_id, 0)
-                        (
-                            season_int,
-                            episode_int,
-                        ) = await self.tmdb_manager.daily_to_tmdb_season_episode(
-                            tmdb_id_value, guess_date
-                        )
-
-                        season = f"S{str(season_int).zfill(2)}"
-                        episode = f"E{str(episode_int).zfill(2)}"
-                        # For daily shows, pass the supplied date as the episode title
-                        # Season and episode will be stripped later to conform with standard daily episode naming format
-                        meta.daily_episode_title = meta.manual_date or ""
-
-                    else:
-                        try:
-                            guess_year = str(
-                                _guessit_data(video).get("year") or ""
-                            )
-                        except Exception:
-                            guess_year = ""
-                        try:
-                            guess_data = _guessit_data(video)
-                            season_guess = str(guess_data.get("season") or "")
-                            if season_guess == guess_year:
-                                if f"s{season_guess}" in video.lower():
-                                    season_int = int(season_guess)
-                                    season = "S" + str(season_int).zfill(2)
-                                else:
-                                    season_int = 1
-                                    season = "S01"
-                            else:
-                                season_int = int(guess_data.get("season") or 1)
-                                season = "S" + str(season_int).zfill(2)
-                        except Exception:
-                            logger.info(
-                                "[bold yellow]There was an error guessing the season number. Guessing S01. Use [bold green]--season #[/bold green] to correct if needed"
-                            )
-                            season_int = 1
-                            season = "S01"
-
-                except Exception:
-                    console.print_exception()
-                    season_int = 1
-                    season = "S01"
-
-                try:
-                    if is_daily is not True:
-                        episodes = ""
-                        if len(filelist) == 1:
-                            guess_data = _guessit_data(video)
-                            episodes = guess_data.get("episode")
-                            if isinstance(episodes, list):
-                                episode = ""
-                                episodes_list = episodes
-                                for item in episodes_list:
-                                    ep = str(item).zfill(2)
-                                    episode += f"E{ep}"
-                                episode_int = (
-                                    _safe_int(episodes_list[0], 0)
-                                    if episodes_list
-                                    else 0
-                                )
-                            else:
-                                episode_int = _safe_int(episodes, 0)
-                                episode = (
-                                    "E" + str(episode_int).zfill(2)
-                                    if episodes is not None
-                                    else ""
-                                )
-                        else:
-                            episode = ""
-                            episode_int = 0
-                            meta.tv_pack = True
-                except Exception:
-                    episode = ""
-                    episode_int = 0
-                    meta.tv_pack = True
-
-            else:
-                # If Anime
-                # if the mal id is set, then we've already run get_romaji in tmdb.py
-                if meta.mal_id == 0 and meta.category == "TV":
-                    parsed = _anitopy_parse(Path(video).name)
-                    (
-                        romaji,
-                        mal_id,
-                        eng_title,
-                        season_year,
-                        anilist_episodes,
-                        meta.demographic,
-                    ) = await self.tmdb_manager.get_romaji(
-                        str(parsed.get("anime_title", "")),
-                        _safe_int(meta.mal_id, 0),
-                        meta,
-                    )
-                    mal_id_value = _safe_int(mal_id, 0)
-                    if mal_id_value:
-                        meta.mal_id = mal_id_value
-                    anilist_episodes = _safe_int(anilist_episodes, 0)
-                    if meta.tmdb_id == 0:
-                        year = str(parsed.get("anime_year") or season_year)
-                        guess_title = _guessit_data(
-                            str(parsed.get("anime_title", "")),
-                            {"excludes": ["country", "language"]},
-                        ).get("title", "")
-                        (
-                            tmdb_id_value,
-                            category_value,
-                        ) = await self.tmdb_manager.get_tmdb_id(
-                            str(guess_title),
-                            year,
-                            meta.category,
-                            meta.filename,
-                        )
-                        meta.tmdb_id = tmdb_id_value
-                        meta.category = category_value
-                    # meta = await tmdb_other_meta(meta)
-                if meta.mal_id != 0 and meta.category == "TV":
-                    parsed = _anitopy_parse(Path(video).name)
-                    tag = str(parsed.get("release_group", ""))
-                    if tag != "" and meta.tag is None:
-                        meta.tag = f"-{tag}"
-                    if len(filelist) == 1:
-                        try:
-                            guess_data = _guessit_data(video)
-                            episodes = parsed.get(
-                                "episode_number",
-                                guess_data.get("episode", "1"),
-                            )
-                            if (
-                                not isinstance(episodes, list)
-                                and not str(episodes).isnumeric()
-                            ):
-                                episodes = guess_data.get("episode")
-                            if isinstance(episodes, list):
-                                episodes_list = episodes
-                                episode_int = (
-                                    _safe_int(episodes_list[0], 1)
-                                    if episodes_list
-                                    else 1
-                                )
-                                episode = "".join(
-                                    [
-                                        f"E{str(_safe_int(item, 0)).zfill(2)}"
-                                        for item in episodes_list
-                                    ]
-                                )
-                            else:
-                                episode_int = _safe_int(episodes, 1)
-                                episode = f"E{str(episode_int).zfill(2)}"
-                        except Exception:
-                            episode_int = 1
-                            episode = "E01"
-
-                            if meta.uuid:
-                                # Look for episode patterns in uuid
-                                episode_patterns = [
-                                    r"[Ee](\d+)[Ee](\d+)",
-                                    r"[Ee](\d+)",
-                                    r"[Ee]pisode[\s_]*(\d+)",
-                                    r"[\s_\-](\d+)[\s_\-]",
-                                    r"[\s_\-](\d+)$",
-                                    r"^(\d+)[\s_\-]",
-                                ]
-
-                                for pattern in episode_patterns:
-                                    match = re.search(
-                                        pattern, meta.uuid, re.IGNORECASE
-                                    )
-                                    if match:
-                                        try:
-                                            episode_int = int(match.group(1))
-                                            episode = (
-                                                f"E{str(episode_int).zfill(2)}"
-                                            )
-                                            break
-                                        except ValueError, IndexError:
-                                            continue
-
-                            if episode_int == 1:  # Still using fallback
-                                logger.info(
-                                    "[bold yellow]There was an error guessing the episode number. Guessing E01. Use [bold green]--episode #[/bold green] to correct if needed"
-                                )
-
-                            await asyncio.sleep(1.5)
-                    else:
-                        episode = ""
-                        episode_int = 0  # Ensure it's an integer
-                        meta.tv_pack = True
-
-                    try:
-                        if meta.season_int:
-                            season_int = _safe_int(meta.season_int, 1)
-                        else:
-                            guess_data = _guessit_data(video)
-                            season_value = parsed.get(
-                                "anime_season", guess_data.get("season", "1")
-                            )
-                            season_int = _safe_int(season_value, 1)
-                        season = f"S{season_int:02d}"
-                    except Exception:
-                        try:
-                            if episode_int >= anilist_episodes:
-                                params = {
-                                    "id": str(meta.tvdb_id),
-                                    "origin": "tvdb",
-                                    "absolute": str(episode_int),
-                                }
-                                url = "https://thexem.info/map/single"
-                                async with httpx.AsyncClient(
-                                    timeout=30.0
-                                ) as client:
-                                    response = (
-                                        await client.post(url, params=params)
-                                    ).json()
-                                if response["result"] == "failure":
-                                    raise XEMNotFoundError  # noqa: F405
-                                logger.debug(
-                                    f"[cyan]TheXEM Absolute -> Standard[/cyan]\n{response}"
-                                )
-                                season_int = int(
-                                    response["data"]["scene"]["season"]
-                                )  # Convert to integer
-                                season = f"S{str(season_int).zfill(2)}"
-                                if len(filelist) == 1:
-                                    episode_int = int(
-                                        response["data"]["scene"]["episode"]
-                                    )  # Convert to integer
-                                    episode = f"E{str(episode_int).zfill(2)}"
-                            else:
-                                season_int = 1  # Default to 1 if error occurs
-                                season = "S01"
-                                names_url = f"https://thexem.info/map/names?origin=tvdb&id={meta.tvdb_id!s}"
-                                async with httpx.AsyncClient(
-                                    timeout=30.0
-                                ) as client:
-                                    names_response = (
-                                        await client.get(names_url)
-                                    ).json()
-                                logger.debug(
-                                    f"[cyan]Matching Season Number from TheXEM\n{names_response}"
-                                )
-                                difference: float = 0.0
-                                if names_response["result"] == "success":
-                                    for season_num, values in names_response[
-                                        "data"
-                                    ].items():
-                                        for lang, names in values.items():
-                                            if lang == "jp":
-                                                for name in names:
-                                                    romaji_check = re.sub(
-                                                        r"[^0-9a-zA-Z\[\\]]+",
-                                                        "",
-                                                        romaji.lower().replace(
-                                                            " ", ""
-                                                        ),
-                                                    )
-                                                    name_check = re.sub(
-                                                        r"[^0-9a-zA-Z\[\\]]+",
-                                                        "",
-                                                        name.lower().replace(
-                                                            " ", ""
-                                                        ),
-                                                    )
-                                                    diff = SequenceMatcher(
-                                                        None,
-                                                        romaji_check,
-                                                        name_check,
-                                                    ).ratio()
-                                                    if (
-                                                        romaji_check
-                                                        in name_check
-                                                        and diff >= difference
-                                                    ):
-                                                        season_int = (
-                                                            int(season_num)
-                                                            if season_num
-                                                            != "all"
-                                                            else 1
-                                                        )  # Convert to integer
-                                                        season = f"S{str(season_int).zfill(2)}"
-                                                        difference = diff
-                                            if lang == "us":
-                                                for name in names:
-                                                    eng_check = re.sub(
-                                                        r"[^0-9a-zA-Z\[\\]]+",
-                                                        "",
-                                                        eng_title.lower().replace(
-                                                            " ", ""
-                                                        ),
-                                                    )
-                                                    name_check = re.sub(
-                                                        r"[^0-9a-zA-Z\[\\]]+",
-                                                        "",
-                                                        name.lower().replace(
-                                                            " ", ""
-                                                        ),
-                                                    )
-                                                    diff = SequenceMatcher(
-                                                        None,
-                                                        eng_check,
-                                                        name_check,
-                                                    ).ratio()
-                                                    if (
-                                                        eng_check in name_check
-                                                        and diff >= difference
-                                                    ):
-                                                        season_int = (
-                                                            int(season_num)
-                                                            if season_num
-                                                            != "all"
-                                                            else 1
-                                                        )  # Convert to integer
-                                                        season = f"S{str(season_int).zfill(2)}"
-                                                        difference = diff
-                                else:
-                                    raise XEMNotFoundError  # noqa: F405
-                        except Exception:
-                            if meta.debug:
-                                console.print_exception()
-                            try:
-                                season_int = int(
-                                    _guessit_data(video).get("season", "1")
-                                )
-                                season = f"S{season_int:02d}"
-                            except Exception:
-                                season_int = 1  # Default to 1 if error occurs
-                                season = "S01"
-                            logger.info(
-                                f"[bold yellow]{meta.title} does not exist on thexem, guessing {season}"
-                            )
-                            logger.info(
-                                f"[bold yellow]If [green]{season}[/green] is incorrect, use --season to correct"
-                            )
-                            await asyncio.sleep(3)
-                else:
-                    logger.info(
-                        "[bold red]Error determining if TV show is anime or not[/bold red]"
-                    )
-                    logger.info(
-                        "[bold yellow]Set manual season and episode[/bold yellow]"
-                    )
-                    season_int = 1
-                    season = "S01"
-                    episode_int = 1
-                    episode = "E01"
-
-            if meta.manual_season is None:
-                meta.season = season
-            else:
-                manual_season_str = (
-                    str(meta.manual_season).lower().replace("s", "")
-                )
-                meta.daily_episode_title = (
-                    ""  # Clear daily episode title if manual season is set
-                )
-                season_int = _safe_int(manual_season_str, 1)
-                meta.season = f"S{manual_season_str.zfill(2)}"
-            if meta.manual_episode is None:
-                meta.episode = episode
-            else:
-                manual_episode_str = (
-                    str(meta.manual_episode).lower().replace("e", "")
-                )
-                episode_int = _safe_int(manual_episode_str, 0)
-                meta.episode = f"E{manual_episode_str.zfill(2)}"
-                meta.tv_pack = False
-
-            # if " COMPLETE " in Path(video).name.replace('.', ' '):
-            #     meta.season = "COMPLETE"
-            meta.season_int = season_int
-            meta.episode_int = episode_int
-            if previous_identity != (season_int, episode_int):
-                _clear_episode_metadata(meta)
-
-            # Manual episode title
-            if "manual_episode_title" in meta and meta.manual_episode_title:
-                meta.episode_title = meta.manual_episode_title
-
-            # Guess the part of the episode (if available)
-            meta.part = ""
-            if meta.tv_pack == 1:
-                part = _guessit_data(str(Path(video).parent)).get("part")
-                meta.part = f"Part {part}" if part else ""  # pyrefly: ignore [bad-assignment]
-
+        if meta.category != "TV":
+            return meta
+        previous_identity = (meta.season_int, meta.episode_int)
+        filelist = cast(list[str], meta.filelist)
+        meta.tv_pack = False
+        if meta.anime:
+            context = await self._prepare_anime_context(video, meta)
+            state = await self._anime_identity(video, meta, filelist, context)
+        else:
+            state = await self._standard_identity(video, meta, filelist)
+        self._apply_manual_identity(meta, state)
+        self._apply_episode_metadata(video, meta, state, previous_identity)
         return meta
 
     @staticmethod
