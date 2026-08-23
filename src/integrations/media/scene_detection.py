@@ -33,6 +33,417 @@ class SceneManager:
             return ""
         return str(value)
 
+    @staticmethod
+    def _file_base(video: str, meta: Meta) -> tuple[str, bool]:
+        base = Path(video).name
+        match = re.match(r"^(.+)\.[a-zA-Z0-9]{3,4}$", base)
+        if match is None:
+            return base, False
+        if meta.is_disc and not meta.keep_folder:
+            return base, False
+        base = match.group(1)
+        return base, base.islower()
+
+    @staticmethod
+    def _game_base(meta: Meta, base: str, is_lower: bool) -> tuple[str, bool]:
+        if meta.category != "GAME" or not meta.isdir:
+            return base, is_lower
+        folder_name = Path(str(meta.path)).name
+        if not folder_name:
+            return base, is_lower
+        return folder_name, folder_name.islower()
+
+    @classmethod
+    def _scene_base(cls, video: str, meta: Meta) -> tuple[str, bool]:
+        base, is_lower = cls._file_base(video, meta)
+        return cls._game_base(meta, base, is_lower)
+
+    @staticmethod
+    def _cache_dirs(meta: Meta) -> tuple[Path, Path]:
+        cache_dir = Path(meta.base_dir) / "tmp" / meta.uuid / "srrdb"
+        search_dir = cache_dir / "search"
+        details_dir = cache_dir / "details"
+        search_dir.mkdir(parents=True, exist_ok=True)
+        details_dir.mkdir(parents=True, exist_ok=True)
+        return search_dir, details_dir
+
+    @staticmethod
+    async def _read_json_cache(path: Path) -> dict[str, Any] | None:
+        if not path.exists():
+            return None
+        try:
+            text = await asyncio.to_thread(path.read_text, encoding="utf-8")
+            return cast(dict[str, Any], json.loads(text))
+        except Exception:
+            return None
+
+    @staticmethod
+    async def _write_json_cache(path: Path, value: dict[str, Any]) -> None:
+        text = json.dumps(value)
+        await asyncio.to_thread(path.write_text, text, encoding="utf-8")
+
+    async def _search_srrdb(
+        self,
+        client: httpx.AsyncClient,
+        base: str,
+        search_cache_dir: Path,
+    ) -> dict[str, Any] | None:
+        quoted_base = urllib.parse.quote(base)
+        cache_file = search_cache_dir / f"{quoted_base}.json"
+        cached = await self._read_json_cache(cache_file)
+        if cached is not None:
+            logger.debug(f"[cyan]SRRDB: Using cached search for {base}")
+            return cached
+        url = f"https://api.srrdb.com/v1/search/r:{quoted_base}"
+        logger.debug(f"Using SRRDB url: {url}")
+        try:
+            response = await client.get(url, timeout=30.0)
+            if response.status_code != 200:
+                return None
+            data = cast(dict[str, Any], response.json())
+            await self._write_json_cache(cache_file, data)
+            return data
+        except Exception as exc:
+            logger.info(f"[yellow]SRRDB: Search request failed: {exc}")
+            return None
+
+    @staticmethod
+    def _has_results(data: dict[str, Any] | None) -> bool:
+        if not data:
+            return False
+        return int(data.get("resultsCount", 0)) > 0
+
+    @staticmethod
+    def _first_result(data: dict[str, Any]) -> dict[str, Any]:
+        return cast(dict[str, Any], data["results"][0])
+
+    @staticmethod
+    def _mark_missing_tag(meta: Meta, is_all_lowercase: bool) -> None:
+        if is_all_lowercase and not meta.tag:
+            meta.we_need_tag = True
+
+    @staticmethod
+    def _matched_imdb(
+        first_result: dict[str, Any], meta: Meta, current_imdb: int | None
+    ) -> int | None:
+        imdb_raw = first_result.get("imdbId")
+        if not imdb_raw:
+            return current_imdb
+        imdb_str = str(imdb_raw)
+        if imdb_str.isdigit() and not meta.imdb_manual:
+            return int(imdb_str)
+        return None
+
+    @classmethod
+    def _apply_primary_match(
+        cls,
+        meta: Meta,
+        first_result: dict[str, Any],
+        is_all_lowercase: bool,
+        imdb: int | None,
+    ) -> tuple[str, int | None]:
+        release = str(first_result["release"])
+        meta.scene_name = release
+        cls._mark_missing_tag(meta, is_all_lowercase)
+        return f"{release}.mkv", cls._matched_imdb(first_result, meta, imdb)
+
+    @staticmethod
+    def _safe_release_name(release: str) -> str:
+        sanitized = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(release).name).strip(
+            "._"
+        )
+        return sanitized or "scene_release"
+
+    async def _release_details(
+        self,
+        client: httpx.AsyncClient,
+        release: str,
+        safe_release: str,
+        details_cache_dir: Path,
+    ) -> dict[str, Any] | None:
+        cache_file = details_cache_dir / f"{safe_release}.json"
+        cached = await self._read_json_cache(cache_file)
+        if cached is not None:
+            return cached
+        url = f"https://api.srrdb.com/v1/details/{release}"
+        response = await client.get(url, timeout=30.0)
+        if response.status_code != 200:
+            return None
+        details = cast(dict[str, Any], response.json())
+        await self._write_json_cache(cache_file, details)
+        return details
+
+    @staticmethod
+    def _safe_nfo_stem(name: str, fallback: str) -> str:
+        stem = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(name).stem).strip("._")
+        return stem or fallback
+
+    @classmethod
+    def _details_nfo_name(
+        cls, details: dict[str, Any] | None, fallback: str
+    ) -> str:
+        if not details:
+            return fallback
+        resolved = fallback
+        try:
+            for file_info in details.get("files", []):
+                name = file_info["name"]
+                if name.endswith(".nfo"):
+                    resolved = cls._safe_nfo_stem(name, resolved)
+        except KeyError, ValueError:
+            return resolved
+        return resolved
+
+    @staticmethod
+    async def _nfo_file_result(
+        client: httpx.AsyncClient, url: str, path: Path
+    ) -> tuple[bool, bool]:
+        if path.exists():
+            return True, False
+        response = await client.get(url, timeout=30.0)
+        if response.status_code != 200:
+            return False, False
+        await asyncio.to_thread(path.write_bytes, response.content)
+        return True, True
+
+    @staticmethod
+    def _set_nfo_flags(meta: Meta) -> None:
+        meta.nfo = True
+        meta.auto_nfo = True
+
+    @classmethod
+    def _apply_primary_nfo_result(
+        cls,
+        meta: Meta,
+        path: Path,
+        success: bool,
+        downloaded: bool,
+    ) -> None:
+        meta.scene_nfo_file = str(path)
+        if not success:
+            logger.info("[yellow]NFO file not available for download.")
+            return
+        cls._set_nfo_flags(meta)
+        if downloaded:
+            logger.debug(f"[green]NFO downloaded to {path}")
+
+    async def _download_primary_nfo(
+        self,
+        client: httpx.AsyncClient,
+        meta: Meta,
+        first_result: dict[str, Any],
+        details_cache_dir: Path,
+    ) -> None:
+        if meta.nfo:
+            return
+        if first_result.get("hasNFO") != "yes":
+            return
+        try:
+            release = str(first_result["release"])
+            safe_release = self._safe_release_name(release)
+            details = await self._release_details(
+                client, release, safe_release, details_cache_dir
+            )
+            nfo_name = self._details_nfo_name(details, safe_release.lower())
+            url = (
+                f"https://www.srrdb.com/download/file/{release}/{nfo_name}.nfo"
+            )
+            save_dir = Path(meta.base_dir) / "tmp" / meta.uuid
+            save_dir.mkdir(parents=True, exist_ok=True)
+            path = save_dir / f"{nfo_name}.nfo"
+            success, downloaded = await self._nfo_file_result(
+                client, url, path
+            )
+            self._apply_primary_nfo_result(meta, path, success, downloaded)
+        except Exception as exc:
+            logger.info(f"[yellow]Failed to download NFO file: {exc}")
+
+    @staticmethod
+    def _log_primary_no_match(
+        meta: Meta, response_json: dict[str, Any] | None
+    ) -> None:
+        if meta.debug and response_json:
+            logger.info("[yellow]SRRDB: No match found")
+
+    async def _primary_search(
+        self,
+        client: httpx.AsyncClient,
+        video: str,
+        meta: Meta,
+        imdb: int | None,
+        base: str,
+        is_all_lowercase: bool,
+        search_cache_dir: Path,
+        details_cache_dir: Path,
+    ) -> tuple[str, bool, int | None]:
+        response_json = await self._search_srrdb(
+            client, base, search_cache_dir
+        )
+        if not self._has_results(response_json):
+            self._log_primary_no_match(meta, response_json)
+            return video, False, imdb
+        response_data = cast(dict[str, Any], response_json)
+        first_result = self._first_result(response_data)
+        video, imdb = self._apply_primary_match(
+            meta, first_result, is_all_lowercase, imdb
+        )
+        await self._download_primary_nfo(
+            client, meta, first_result, details_cache_dir
+        )
+        return video, True, imdb
+
+    @staticmethod
+    def _lower_terms(meta: Meta) -> tuple[str, str] | None:
+        filename = meta.filename
+        tag = meta.tag
+        name = (
+            filename.replace(" ", ".") if isinstance(filename, str) else None
+        )
+        group = tag.replace("-", "") if isinstance(tag, str) else None
+        if not name or not group:
+            return None
+        return name, group
+
+    @staticmethod
+    def _lower_result_matches(
+        first_result: dict[str, Any], meta: Meta
+    ) -> bool:
+        imdb_raw = first_result.get("imdbId")
+        if not imdb_raw:
+            return False
+        return (
+            str(imdb_raw) == str(meta.imdb_id).zfill(7) and meta.imdb_id != 0
+        )
+
+    @classmethod
+    def _apply_lower_nfo_result(
+        cls,
+        meta: Meta,
+        path: Path,
+        success: bool,
+        downloaded: bool,
+    ) -> None:
+        if not success:
+            return
+        cls._set_nfo_flags(meta)
+        if downloaded:
+            logger.info(f"[green]NFO downloaded to {path}")
+
+    async def _download_lower_nfo(
+        self,
+        client: httpx.AsyncClient,
+        meta: Meta,
+        first_result: dict[str, Any],
+        quoted_base: str,
+    ) -> None:
+        if meta.nfo:
+            return
+        if first_result.get("hasNFO") != "yes":
+            return
+        try:
+            release = str(first_result["release"])
+            release_lower = release.lower()
+            url = f"https://www.srrdb.com/download/file/{release}/{quoted_base}.nfo"
+            save_dir = Path(meta.base_dir) / "tmp" / meta.uuid
+            save_dir.mkdir(parents=True, exist_ok=True)
+            path = save_dir / f"{release_lower}.nfo"
+            success, downloaded = await self._nfo_file_result(
+                client, url, path
+            )
+            self._apply_lower_nfo_result(meta, path, success, downloaded)
+        except Exception as exc:
+            logger.info(f"[yellow]Failed to download NFO file: {exc}")
+
+    async def _lower_search(
+        self,
+        client: httpx.AsyncClient,
+        video: str,
+        meta: Meta,
+        quoted_base: str,
+        imdb: int | None,
+    ) -> tuple[str, bool, int | None]:
+        terms = self._lower_terms(meta)
+        if terms is None:
+            logger.debug(
+                "[yellow]SRRDB: Missing name or tag for lower/tag search"
+            )
+            return video, False, imdb
+        name, tag = terms
+        url = f"https://api.srrdb.com/v1/search/start:{name}/group:{tag}"
+        logger.debug(f"Using SRRDB url: {url}")
+        try:
+            response = await client.get(url, timeout=10.0)
+            response_json = cast(dict[str, Any], response.json())
+            if not self._has_results(response_json):
+                logger.debug(
+                    "[yellow]SRRDB: No match found with lower/tag search"
+                )
+                return video, False, imdb
+            first_result = self._first_result(response_json)
+            if not self._lower_result_matches(first_result, meta):
+                return video, False, imdb
+            meta.scene = True
+            release_name = str(first_result["release"])
+            await self._download_lower_nfo(
+                client, meta, first_result, quoted_base
+            )
+            return release_name, True, imdb
+        except Exception as exc:
+            logger.info(f"[yellow]SRRDB search failed: {exc}")
+            return video, False, imdb
+
+    async def _search_scene(
+        self,
+        client: httpx.AsyncClient,
+        video: str,
+        meta: Meta,
+        imdb: int | None,
+        lower: bool,
+        base: str,
+        is_all_lowercase: bool,
+        search_cache_dir: Path,
+        details_cache_dir: Path,
+    ) -> tuple[str, bool, int | None]:
+        if not meta.scene and not lower:
+            return await self._primary_search(
+                client,
+                video,
+                meta,
+                imdb,
+                base,
+                is_all_lowercase,
+                search_cache_dir,
+                details_cache_dir,
+            )
+        if lower:
+            return await self._lower_search(
+                client, video, meta, urllib.parse.quote(base), imdb
+            )
+        return video, False, imdb
+
+    async def _predb_fallback(
+        self, meta: Meta, video: str, scene: bool
+    ) -> bool:
+        if scene:
+            return True
+        if not bool(self.default_config.get("check_predb", False)):
+            return False
+        logger.debug("[yellow]SRRDB: No scene match found, checking predb")
+        return await self.predb_check(meta, video)
+
+    @staticmethod
+    def _debug_start(meta: Meta) -> float:
+        if meta.debug:
+            return time.time()
+        return 0.0
+
+    @staticmethod
+    def _log_debug_duration(meta: Meta, started_at: float) -> None:
+        if not meta.debug:
+            return
+        elapsed = time.time() - started_at
+        logger.debug(f"Scene data processed in {elapsed:.2f} seconds")
+
     async def is_scene(
         self,
         video: str,
@@ -40,305 +451,23 @@ class SceneManager:
         imdb: int | None = None,
         lower: bool = False,
     ) -> tuple[str, bool, int | None]:
-        scene_start_time = 0.0
-        if meta.debug:
-            scene_start_time = time.time()
-
-        scene = False
-        is_all_lowercase = False
-        base = Path(video).name
-        match = re.match(r"^(.+)\.[a-zA-Z0-9]{3,4}$", Path(video).name)
-
-        if match and (not meta.is_disc or meta.keep_folder):
-            base = match.group(1)
-            is_all_lowercase = base.islower()
-
-        # For games uploaded from a folder, prefer the release folder name
-        # instead of a split archive part or generic installer name.
-        if meta.category == "GAME" and meta.isdir:
-            folder_name = Path(str(meta.path)).name
-            if folder_name:
-                base = folder_name
-                is_all_lowercase = base.islower()
-
-        quoted_base = urllib.parse.quote(base)
-
-        # Define cache directories
-        cache_dir = Path(meta.base_dir) / "tmp" / meta.uuid / "srrdb"
-        search_cache_dir = Path(cache_dir) / "search"
-        details_cache_dir = Path(cache_dir) / "details"
-        Path(search_cache_dir).mkdir(parents=True, exist_ok=True)
-        Path(details_cache_dir).mkdir(parents=True, exist_ok=True)
-
+        started_at = self._debug_start(meta)
+        base, is_all_lowercase = self._scene_base(video, meta)
+        search_cache_dir, details_cache_dir = self._cache_dirs(meta)
         async with httpx.AsyncClient() as client:
-            if not meta.scene and not lower:
-                # Cache file for search
-                search_cache_file = (
-                    Path(search_cache_dir) / f"{quoted_base}.json"
-                )
-                response_json = None
-
-                # Try to load from cache
-                if Path(search_cache_file).exists():
-                    try:
-                        search_text = await asyncio.to_thread(
-                            Path(search_cache_file).read_text, encoding="utf-8"
-                        )
-                        response_json = json.loads(search_text)
-                        logger.debug(
-                            f"[cyan]SRRDB: Using cached search for {base}"
-                        )
-                    except Exception:
-                        response_json = None
-
-                if response_json is None:
-                    url = f"https://api.srrdb.com/v1/search/r:{quoted_base}"
-                    logger.debug(f"Using SRRDB url: {url}")
-                    try:
-                        response = await client.get(url, timeout=30.0)
-                        if response.status_code == 200:
-                            response_json = response.json()
-                            # Save to cache
-                            search_text = json.dumps(response_json)
-                            await asyncio.to_thread(
-                                Path(search_cache_file).write_text,
-                                search_text,
-                                encoding="utf-8",
-                            )
-                    except Exception as e:
-                        logger.info(
-                            f"[yellow]SRRDB: Search request failed: {e}"
-                        )
-
-                if (
-                    response_json
-                    and int(response_json.get("resultsCount", 0)) > 0
-                ):
-                    first_result = response_json["results"][0]
-                    meta.scene_name = first_result["release"]
-                    video = f"{first_result['release']}.mkv"
-                    scene = True
-                    if is_all_lowercase and not meta.tag:
-                        meta.we_need_tag = True
-                    if first_result.get("imdbId"):
-                        imdb_str = first_result["imdbId"]
-                        imdb_val = (
-                            int(imdb_str)
-                            if (imdb_str.isdigit() and not meta.imdb_manual)
-                            else 0
-                        )
-                        imdb = imdb_val if imdb_val != 0 else None
-
-                    # NFO Download Handling
-                    if not meta.nfo and first_result.get("hasNFO") == "yes":
-                        try:
-                            release = str(first_result["release"])
-                            safe_release = (
-                                re.sub(
-                                    r"[^A-Za-z0-9._-]+",
-                                    "_",
-                                    Path(release).name,
-                                ).strip("._")
-                                or "scene_release"
-                            )
-                            release_lower = safe_release.lower()
-
-                            # Details Cache
-                            details_cache_file = (
-                                Path(details_cache_dir)
-                                / f"{safe_release}.json"
-                            )
-                            release_details_dict = None
-
-                            if Path(details_cache_file).exists():
-                                try:
-                                    details_text = await asyncio.to_thread(
-                                        Path(details_cache_file).read_text,
-                                        encoding="utf-8",
-                                    )
-                                    release_details_dict = json.loads(
-                                        details_text
-                                    )
-                                except Exception:
-                                    release_details_dict = None
-
-                            if release_details_dict is None:
-                                release_details_url = f"https://api.srrdb.com/v1/details/{release}"
-                                release_details_response = await client.get(
-                                    release_details_url, timeout=30.0
-                                )
-                                if release_details_response.status_code == 200:
-                                    release_details_dict = (
-                                        release_details_response.json()
-                                    )
-                                    details_text = json.dumps(
-                                        release_details_dict
-                                    )
-                                    await asyncio.to_thread(
-                                        Path(details_cache_file).write_text,
-                                        details_text,
-                                        encoding="utf-8",
-                                    )
-
-                            if release_details_dict:
-                                try:
-                                    for file in release_details_dict.get(
-                                        "files", []
-                                    ):
-                                        if file["name"].endswith(".nfo"):
-                                            release_lower = (
-                                                re.sub(
-                                                    r"[^A-Za-z0-9._-]+",
-                                                    "_",
-                                                    Path(file["name"]).stem,
-                                                ).strip("._")
-                                                or release_lower
-                                            )
-                                except KeyError, ValueError:
-                                    pass
-
-                            nfo_url = f"https://www.srrdb.com/download/file/{release}/{release_lower}.nfo"
-                            save_path = Path(meta.base_dir) / "tmp" / meta.uuid
-                            Path(save_path).mkdir(parents=True, exist_ok=True)
-                            nfo_file_path = (
-                                Path(save_path) / f"{release_lower}.nfo"
-                            )
-                            meta.scene_nfo_file = str(nfo_file_path)
-
-                            # Check if NFO already exists (Local Cache)
-                            if Path(nfo_file_path).exists():
-                                meta.nfo = True
-                                meta.auto_nfo = True
-                            else:
-                                nfo_response = await client.get(
-                                    nfo_url, timeout=30.0
-                                )
-                                if nfo_response.status_code == 200:
-                                    await asyncio.to_thread(
-                                        Path(nfo_file_path).write_bytes,
-                                        nfo_response.content,
-                                    )
-                                    meta.nfo = True
-                                    meta.auto_nfo = True
-                                    logger.debug(
-                                        f"[green]NFO downloaded to {nfo_file_path}"
-                                    )
-                                else:
-                                    logger.info(
-                                        "[yellow]NFO file not available for download."
-                                    )
-                        except Exception as e:
-                            logger.info(
-                                f"[yellow]Failed to download NFO file: {e}"
-                            )
-                else:
-                    if meta.debug and response_json:
-                        logger.info("[yellow]SRRDB: No match found")
-
-            elif not scene and lower:
-                release_name: str = ""
-                name_value = meta.filename
-                name = (
-                    name_value.replace(" ", ".")
-                    if isinstance(name_value, str)
-                    else None
-                )
-                tag_value = meta.tag
-                tag = (
-                    tag_value.replace("-", "")
-                    if isinstance(tag_value, str)
-                    else None
-                )
-                if name and tag:
-                    url = f"https://api.srrdb.com/v1/search/start:{name}/group:{tag}"
-
-                    logger.debug(f"Using SRRDB url: {url}")
-
-                    try:
-                        response = await client.get(url, timeout=10.0)
-                        response_json = response.json()
-
-                        if int(response_json.get("resultsCount", 0)) > 0:
-                            first_result = response_json["results"][0]
-                            imdb_str = first_result.get("imdbId")
-                            if (
-                                imdb_str
-                                and imdb_str == str(meta.imdb_id).zfill(7)
-                                and meta.imdb_id != 0
-                            ):
-                                meta.scene = True
-                                release_name = first_result["release"]
-
-                                if (
-                                    not meta.nfo
-                                    and first_result.get("hasNFO") == "yes"
-                                ):
-                                    try:
-                                        release = first_result["release"]
-                                        release_lower = release.lower()
-                                        nfo_url = f"https://www.srrdb.com/download/file/{release}/{quoted_base}.nfo"
-                                        save_path = (
-                                            Path(meta.base_dir)
-                                            / "tmp"
-                                            / meta.uuid
-                                        )
-                                        Path(save_path).mkdir(
-                                            parents=True, exist_ok=True
-                                        )
-                                        nfo_file_path = (
-                                            Path(save_path)
-                                            / f"{release_lower}.nfo"
-                                        )
-
-                                        if not Path(nfo_file_path).exists():
-                                            nfo_response = await client.get(
-                                                nfo_url, timeout=30.0
-                                            )
-                                            if nfo_response.status_code == 200:
-                                                await asyncio.to_thread(
-                                                    Path(
-                                                        nfo_file_path
-                                                    ).write_bytes,
-                                                    nfo_response.content,
-                                                )
-                                                meta.nfo = True
-                                                meta.auto_nfo = True
-                                                logger.info(
-                                                    f"[green]NFO downloaded to {nfo_file_path}"
-                                                )
-                                        else:
-                                            meta.nfo = True
-                                            meta.auto_nfo = True
-                                    except Exception as e:
-                                        logger.info(
-                                            f"[yellow]Failed to download NFO file: {e}"
-                                        )
-
-                                video = release_name
-                                scene = True
-                        else:
-                            logger.debug(
-                                "[yellow]SRRDB: No match found with lower/tag search"
-                            )
-
-                    except Exception as e:
-                        logger.info(f"[yellow]SRRDB search failed: {e}")
-                else:
-                    logger.debug(
-                        "[yellow]SRRDB: Missing name or tag for lower/tag search"
-                    )
-
-        check_predb = bool(self.default_config.get("check_predb", False))
-        if not scene and check_predb:
-            logger.debug("[yellow]SRRDB: No scene match found, checking predb")
-            scene = await self.predb_check(meta, video)
-
-        if meta.debug:
-            scene_end_time = time.time()
-            logger.debug(
-                f"Scene data processed in {scene_end_time - scene_start_time:.2f} seconds"
+            video, scene, imdb = await self._search_scene(
+                client,
+                video,
+                meta,
+                imdb,
+                lower,
+                base,
+                is_all_lowercase,
+                search_cache_dir,
+                details_cache_dir,
             )
-
+        scene = await self._predb_fallback(meta, video, scene)
+        self._log_debug_duration(meta, started_at)
         return video, scene, imdb
 
     async def predb_check(self, meta: Meta, video: str) -> bool:
