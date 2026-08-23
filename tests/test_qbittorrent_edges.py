@@ -117,6 +117,12 @@ class _Client:
             raise self.login_error
 
 
+def _call_kwargs(
+    calls: list[tuple[str, dict[str, object]]], name: str
+) -> list[dict[str, object]]:
+    return [kwargs for call_name, kwargs in calls if call_name == name]
+
+
 class _TorrentData:
     def __init__(self, piece_size: int = 1024 * 1024) -> None:
         self.piece_size = piece_size
@@ -1393,9 +1399,12 @@ def test_qbittorrent_direct_add_resume_superseed_debug_and_cross(
         )
     )
     names = [name for name, _kwargs in client.calls]
-    assert "add" in names and "resume" in names and "superseed" in names
-    add = next(kwargs for name, kwargs in client.calls if name == "add")
-    assert add["category"] == "UA" and add["tags"] == "CUSTOM"
+    assert "add" in names
+    assert "resume" in names
+    assert "superseed" in names
+    add = _call_kwargs(client.calls, "add")[0]
+    assert add["category"] == "UA"
+    assert add["tags"] == "CUSTOM"
 
     cross_meta = _meta(tmp_path, keep_folder=True)
     asyncio.run(
@@ -1412,7 +1421,7 @@ def test_qbittorrent_direct_add_resume_superseed_debug_and_cross(
             cross=True,
         )
     )
-    add = [kwargs for name, kwargs in client.calls if name == "add"][-1]
+    add = _call_kwargs(client.calls, "add")[-1]
     assert add["is_paused"] is True
 
     no_source = _meta(tmp_path, path="", filelist=[])
