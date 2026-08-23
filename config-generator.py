@@ -382,6 +382,109 @@ def load_existing_config() -> tuple[ConfigDict | None, Path | None]:
     return None, None
 
 
+def _as_config_dict(value: Any) -> ConfigDict | None:
+    return cast(ConfigDict, value) if isinstance(value, dict) else None
+
+
+def _config_path(path: str, key: str) -> str:
+    return f"{path}.{key}" if path else key
+
+
+def _is_dynamic_config_map(key: str, value: Any) -> bool:
+    return key in DYNAMIC_CONFIG_MAP_KEYS and isinstance(value, dict)
+
+
+def _nested_config_pair(
+    existing_value: Any, example_value: Any
+) -> tuple[ConfigDict, ConfigDict] | None:
+    existing_nested = _as_config_dict(existing_value)
+    if existing_nested is None:
+        return None
+    example_nested = _as_config_dict(example_value)
+    if example_nested is None:
+        return None
+    return existing_nested, example_nested
+
+
+def _collect_nested_unexpected_keys(
+    existing_section: ConfigDict,
+    example_section: ConfigDict,
+    unexpected_keys: list[UnexpectedKey],
+    path: str,
+) -> None:
+    for key, value in existing_section.items():
+        current_path = _config_path(path, key)
+        if _is_dynamic_config_map(key, value):
+            continue
+        if key not in example_section:
+            unexpected_keys.append((current_path, existing_section, key))
+            continue
+        nested_pair = _nested_config_pair(value, example_section.get(key))
+        if nested_pair is None:
+            continue
+        _collect_nested_unexpected_keys(
+            *nested_pair, unexpected_keys, current_path
+        )
+
+
+def _find_unexpected_keys(
+    existing_config: ConfigDict, example_config: ConfigDict
+) -> list[UnexpectedKey]:
+    unexpected_keys: list[UnexpectedKey] = []
+    for section, value in existing_config.items():
+        if section not in example_config:
+            unexpected_keys.append((section, existing_config, section))
+            continue
+        existing_nested = _as_config_dict(value)
+        example_nested = _as_config_dict(example_config.get(section))
+        if existing_nested is None:
+            continue
+        if example_nested is None:
+            continue
+        _collect_nested_unexpected_keys(
+            existing_nested, example_nested, unexpected_keys, section
+        )
+    return unexpected_keys
+
+
+def _display_config_value(value: Any) -> str:
+    if isinstance(value, dict):
+        return "{...}"
+    value_display = str(value)
+    if len(value_display) > 50:
+        return value_display[:47] + "..."
+    return value_display
+
+
+def _print_unexpected_keys(unexpected_keys: list[UnexpectedKey]) -> None:
+    console.print(
+        "\n[!] The following keys in your existing configuration are not in the example config:",
+        markup=False,
+    )
+    for index, (key_path, _parent_dict, _key) in enumerate(unexpected_keys):
+        console.print(f"  {index + 1}. {key_path}", markup=False)
+    console.print(
+        "\n\n[i] The keys have been removed or renamed.", markup=False
+    )
+    console.print("[i] You can choose what to do with each key:", markup=False)
+
+
+def _review_unexpected_key(
+    index: int, total: int, unexpected_key: UnexpectedKey
+) -> None:
+    key_path, parent_dict, key = unexpected_key
+    value_display = _display_config_value(parent_dict[key])
+    console.print(
+        f"\nKey {index}/{total}: {key_path} = {value_display}", markup=False
+    )
+    keep = input("Keep this key? (y/N): ").lower()
+    if keep == "y":
+        console.print(f"[i] Keeping key: {key_path}", markup=False)
+        return
+    console.print(f"[i] Removing key: {key_path}", markup=False)
+    del parent_dict[key]
+
+
 def validate_config(
     existing_config: ConfigDict, example_config: ConfigDict
 ) -> ConfigDict:
@@ -391,94 +494,35 @@ def validate_config(
     """
     if not existing_config or not example_config:
         return existing_config
-
-    unexpected_keys: list[UnexpectedKey] = []
-
-    # Helper function to find unexpected keys at any level
-    def find_unexpected_keys(
-        existing_section: ConfigDict,
-        example_section: ConfigDict,
-        path: str = "",
-    ) -> None:
-
-        for key in existing_section:
-            current_path = f"{path}.{key}" if path else key
-
-            if key in DYNAMIC_CONFIG_MAP_KEYS and isinstance(
-                existing_section[key], dict
-            ):
-                continue
-            if key not in example_section:
-                unexpected_keys.append((current_path, existing_section, key))
-            elif isinstance(existing_section[key], dict) and isinstance(
-                example_section.get(key), dict
-            ):
-                # Recursively check nested dictionaries
-                find_unexpected_keys(
-                    cast(ConfigDict, existing_section[key]),
-                    cast(ConfigDict, example_section[key]),
-                    current_path,
-                )
-
-    # Check main sections first
-    for section in existing_config:
-        if section not in example_config:
-            unexpected_keys.append((section, existing_config, section))
-        elif isinstance(existing_config[section], dict) and isinstance(
-            example_config[section], dict
-        ):
-            # Check keys within valid sections
-            find_unexpected_keys(
-                cast(ConfigDict, existing_config[section]),
-                cast(ConfigDict, example_config[section]),
-                section,
-            )
-
-    # If unexpected keys were found, ask about each one individually
-    if unexpected_keys:
-        console.print(
-            "\n[!] The following keys in your existing configuration are not in the example config:",
-            markup=False,
-        )
-        for i, (key_path, _parent_dict, _key) in enumerate(unexpected_keys):
-            console.print(f"  {i + 1}. {key_path}", markup=False)
-
-        console.print(
-            "\n\n[i] The keys have been removed or renamed.", markup=False
-        )
-        console.print(
-            "[i] You can choose what to do with each key:", markup=False
-        )
-
-        for i, (key_path, parent_dict, key) in enumerate(unexpected_keys):
-            value = parent_dict[key]
-            value_display = str(value)
-            if isinstance(value, dict):
-                value_display = (
-                    "{...}"  # Just show placeholder for dictionaries
-                )
-
-            # Handle nested structures by limiting display length
-            if len(value_display) > 50:
-                value_display = value_display[:47] + "..."
-
-            console.print(
-                f"\nKey {i + 1}/{len(unexpected_keys)}: {key_path} = {value_display}",
-                markup=False,
-            )
-            keep = input("Keep this key? (y/N): ").lower()
-
-            # Remove the key if user chooses not to keep it
-            if keep == "y":
-                console.print(f"[i] Keeping key: {key_path}", markup=False)
-            else:
-                console.print(f"[i] Removing key: {key_path}", markup=False)
-                del parent_dict[key]
-
+    unexpected_keys = _find_unexpected_keys(existing_config, example_config)
+    if not unexpected_keys:
         return existing_config
-
-    # Return original if no unexpected keys
+    _print_unexpected_keys(unexpected_keys)
+    for index, unexpected_key in enumerate(unexpected_keys, start=1):
+        _review_unexpected_key(index, len(unexpected_keys), unexpected_key)
     return existing_config
+
+
+def _collect_missing_keys(
+    example_section: ConfigDict,
+    existing_section: ConfigDict,
+    missing_keys: list[str],
+    path: str = "",
+) -> None:
+    for key, value in example_section.items():
+        current_path = _config_path(path, key)
+        if key not in existing_section:
+            missing_keys.append(current_path)
+            continue
+        example_nested = _as_config_dict(value)
+        existing_nested = _as_config_dict(existing_section.get(key))
+        if example_nested is None:
+            continue
+        if existing_nested is None:
+            continue
+        _collect_missing_keys(
+            example_nested, existing_nested, missing_keys, current_path
+        )
 
 
 def find_missing_keys(
@@ -486,43 +530,7 @@ def find_missing_keys(
 ) -> list[str]:
     """Find keys that exist in example config but are missing in existing config"""
     missing_keys: list[str] = []
-
-    # Helper function to find missing keys at any level
-    def find_missing_recursive(
-        example_section: ConfigDict,
-        existing_section: ConfigDict,
-        path: str = "",
-    ) -> None:
-
-        for key in example_section:
-            current_path = f"{path}.{key}" if path else key
-
-            if key not in existing_section:
-                missing_keys.append(current_path)
-            elif isinstance(example_section[key], dict) and isinstance(
-                existing_section.get(key), dict
-            ):
-                # Recursively check nested dictionaries
-                find_missing_recursive(
-                    cast(ConfigDict, example_section[key]),
-                    cast(ConfigDict, existing_section[key]),
-                    current_path,
-                )
-
-    # Check main sections first
-    for section in example_config:
-        if section not in existing_config:
-            missing_keys.append(section)
-        elif isinstance(example_config[section], dict) and isinstance(
-            existing_config[section], dict
-        ):
-            # Check keys within valid sections
-            find_missing_recursive(
-                cast(ConfigDict, example_config[section]),
-                cast(ConfigDict, existing_config[section]),
-                section,
-            )
-
+    _collect_missing_keys(example_config, existing_config, missing_keys)
     return missing_keys
 
 
