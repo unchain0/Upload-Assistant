@@ -106,14 +106,24 @@ def _png(path: Path, value: int = 255) -> None:
     Image.new("RGB", (4, 4), (value, value, value)).save(path)
 
 
-def test_select_evenly_spaced_and_discard_error_paths(
+@pytest.mark.parametrize(
+    ("items", "count", "expected"),
+    (
+        ([1, 2], 3, [1, 2]),
+        ([1, 2, 3], 0, []),
+        ([1, 2, 3], 1, [1]),
+        (list(range(10)), 4, [0, 3, 6, 9]),
+    ),
+)
+def test_select_evenly_spaced(
+    items: list[int], count: int, expected: list[int]
+) -> None:
+    assert disc_menus.select_evenly_spaced(items, count) == expected
+
+
+def test_discard_previous_menu_capture_files_ignores_unlink_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    assert disc_menus.select_evenly_spaced([1, 2], 3) == [1, 2]
-    assert disc_menus.select_evenly_spaced([1, 2, 3], 0) == []
-    assert disc_menus.select_evenly_spaced([1, 2, 3], 1) == [1]
-    assert disc_menus.select_evenly_spaced(list(range(10)), 4) == [0, 3, 6, 9]
-
     first = tmp_path / "DVD-VTS_01_0-001.png"
     second = tmp_path / "DVD-VTS_01_0-002.png"
     first.write_bytes(b"x")

@@ -232,6 +232,16 @@ def test_aither_dvd_adjustment_and_final_name_edges() -> None:
         "DVD",
     )
 
+    inferred_disc = Meta(is_disc="", region="R2", audio="AAC")
+    assert "480p R2 DVD" in tracker._dvd_adjusted_name(
+        inferred_disc,
+        "Movie R2 DVD AAC",
+        "480p",
+        "MPEG-2",
+        "DISC",
+        "DVD",
+    )
+
     regular = Meta(is_disc="", source="WEB", audio="AAC")
     assert (
         tracker._dvd_adjusted_name(
@@ -245,11 +255,63 @@ def test_aither_dvd_adjustment_and_final_name_edges() -> None:
         == "Movie WEB"
     )
 
+    remux = Meta(source="DVD", audio="AAC")
+    assert tracker._dvd_remux_name(
+        remux,
+        "Movie DVD AAC",
+        "480p",
+        "MPEG-2",
+    ) == "Movie 480p DVD MPEG-2 AAC"
+    assert "480p DVD" in tracker._dvd_adjusted_name(
+        remux,
+        "Movie DVD AAC",
+        "480p",
+        "MPEG-2",
+        "REMUX",
+        "DVD",
+    )
+
     trump = Meta(trump_reason="exact_match", aka="", no_aka=True)
     assert (
         tracker._final_name(trump, "Movie 2025", "2025")
         == "Movie 2025 - TRUMP"
     )
+    aka = Meta(trump_reason="", aka="AKA Title", no_aka=False)
+    assert tracker._final_name(
+        aka,
+        "Movie 2025 AKA Title",
+        "2025",
+    ) == "Movie AKA Title 2025"
+
+
+def test_aither_get_name_end_to_end(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracker = _tracker()
+    monkeypatch.setattr(
+        aither_module.languages_manager,
+        "has_english_language",
+        AsyncMock(return_value=True),
+    )
+    meta = Meta(
+        category="MOVIE",
+        name="Movie 2025 1080p",
+        year=2025,
+        manual_year=0,
+        no_year=False,
+        language_checked=True,
+        audio_languages=["English"],
+        type="WEBDL",
+        source="WEB",
+        resolution="1080p",
+        video_codec="H.264",
+        aka="",
+        no_aka=True,
+    )
+
+    assert asyncio.run(tracker.get_name(meta)) == {
+        "name": "Movie 2025 1080p"
+    }
 
 
 def test_aither_additional_check_failure_and_disc_edges() -> None:
