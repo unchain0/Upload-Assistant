@@ -1,8 +1,19 @@
 import importlib.util
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
+
+
+class _CaptureConsole:
+    def __init__(self) -> None:
+        self.messages: list[Any] = []
+
+    def print(
+        self, message: object = "", *_args: object, **_kwargs: object
+    ) -> None:
+        self.messages.append(message)
 
 
 @pytest.fixture(scope="module")
@@ -14,6 +25,32 @@ def config_generator_module():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def test_styled_console_preserves_text_and_status_styles(
+    config_generator_module,
+) -> None:
+    base = _CaptureConsole()
+    styled = config_generator_module._StyledConsole(base)
+
+    styled.print("[✓] completed")
+    completed = base.messages[-1]
+    assert completed.plain == "OK completed"
+    assert completed.spans[0].style == "bold green"
+
+    styled.print("[!] warning")
+    warning = base.messages[-1]
+    assert warning.plain == "WARN warning"
+    assert warning.spans[0].style == "bold yellow"
+
+    styled.print("==== heading ====")
+    heading = base.messages[-1]
+    assert heading.plain == "==== heading ===="
+    assert heading.spans[0].style == "bold cyan"
+
+    sentinel = object()
+    styled.print(sentinel)
+    assert base.messages[-1] is sentinel
 
 
 def test_validate_config_preserves_tracker_tag_overrides(

@@ -36,6 +36,41 @@ class _StyledConsole:
     def __init__(self, base_console: Console) -> None:
         self._console = base_console
 
+    @staticmethod
+    def _styled_text(message: str) -> tuple[Text, bool]:
+        is_heading = "====" in message
+        text = Text(message.replace("[!]", "WARN").replace("[✓]", "[OK]"))
+        if is_heading:
+            text.stylize("bold cyan")
+        return text, is_heading
+
+    @staticmethod
+    def _replace_status_marker(
+        text: Text, marker: str, label: str, style: str
+    ) -> None:
+        start = 0
+        while True:
+            position = text.plain.find(marker, start)
+            if position < 0:
+                return
+            text.plain = (
+                text.plain[:position]
+                + label
+                + text.plain[position + len(marker) :]
+            )
+            text.stylize(style, position, position + len(label))
+            start = position + len(label)
+
+    def _apply_status_styles(self, text: Text) -> None:
+        for marker, (label, style) in self._STATUS_STYLES.items():
+            self._replace_status_marker(text, marker, label, style)
+
+    @staticmethod
+    def _style_warning(text: Text, is_heading: bool) -> None:
+        warning_position = text.plain.find("WARN")
+        if warning_position >= 0 and not is_heading:
+            text.stylize("bold yellow", warning_position, warning_position + 4)
+
     def print(
         self, message: object = "", *args: object, **kwargs: Any
     ) -> None:
@@ -43,30 +78,9 @@ class _StyledConsole:
             self._console.print(message, *args, **kwargs)
             return
 
-        is_heading = "====" in message and "====" in message[::-1]
-        text = Text(message.replace("[!]", "WARN").replace("[✓]", "[OK]"))
-
-        if is_heading:
-            text.stylize("bold cyan")
-
-        for marker, (label, style) in self._STATUS_STYLES.items():
-            start = 0
-            while True:
-                position = text.plain.find(marker, start)
-                if position < 0:
-                    break
-                text.plain = (
-                    text.plain[:position]
-                    + label
-                    + text.plain[position + len(marker) :]
-                )
-                text.stylize(style, position, position + len(label))
-                start = position + len(label)
-
-        warning_position = text.plain.find("WARN")
-        if warning_position >= 0 and not is_heading:
-            text.stylize("bold yellow", warning_position, warning_position + 4)
-
+        text, is_heading = self._styled_text(message)
+        self._apply_status_styles(text)
+        self._style_warning(text, is_heading)
         self._console.print(text, *args, **kwargs)
 
 
