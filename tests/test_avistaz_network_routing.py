@@ -232,3 +232,15 @@ def test_cinemaz_asian_production_routes_to_avistaz():
         "CINEMAZ", make_meta(origin_country=["JP"], trackers=["CINEMAZ"])
     )
     assert decision is not None and decision.destination == "AVISTAZ"
+
+
+def test_routing_helper_fallback_branches() -> None:
+    current = router()
+    assert not current._recent_privatehd_candidate(
+        make_meta(origin_country=["FR"]), {"FR"}
+    )
+    assert not current._recent_privatehd_candidate(
+        make_meta(year=1970), {"US"}
+    )
+    assert current._avistaz_destinations({"AQ"}) == []
+    assert current._destinations_for_source("OTHER", make_meta(), {"US"}) == []
