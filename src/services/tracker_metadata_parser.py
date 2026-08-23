@@ -571,6 +571,876 @@ async def update_meta_with_unit3d_data(
     return True
 
 
+async def _tracker_description_images(
+    tracker_instance: Any,
+    torrent_id: int,
+    meta: Meta,
+    skip_tracker_descriptions: bool,
+) -> list[ImageDict]:
+    if skip_tracker_descriptions and not meta.keep_images:
+        return []
+    return cast(
+        list[ImageDict],
+        await tracker_instance.get_ptp_description(
+            torrent_id, meta, meta.is_disc
+        ),
+    )
+
+
+async def _apply_ptp_images(
+    meta: Meta,
+    tracker_name: str,
+    images: list[ImageDict],
+    *,
+    review: bool,
+) -> None:
+    if not images:
+        return
+    valid_images = await check_images_concurrently(images, meta)
+    if not valid_images:
+        return
+    meta.image_list = valid_images
+    if review:
+        await handle_image_list(meta, tracker_name, valid_images)
+
+
+def _discard_ptp_match(meta: Meta, tracker_name: str) -> None:
+    meta.imdb_id = meta.imdb_id if meta.imdb_id else 0
+    meta.clear_tracker_id(tracker_name)
+    meta.description = ""
+    meta.image_list = []
+
+
+async def _accept_ptp_discovered(
+    tracker_name: str,
+    tracker_instance: Any,
+    meta: Meta,
+    imdb_id: int,
+    torrent_id: int,
+    skip_tracker_descriptions: bool,
+    *,
+    record_tracker_id: bool,
+    review_images: bool,
+) -> bool:
+    meta.imdb_id = imdb_id
+    if record_tracker_id:
+        meta.set_tracker_ids({tracker_name: torrent_id})
+    images = await _tracker_description_images(
+        tracker_instance, torrent_id, meta, skip_tracker_descriptions
+    )
+    await _apply_ptp_images(meta, tracker_name, images, review=review_images)
+    return True
+
+
+async def _handle_ptp_discovered(
+    tracker_name: str,
+    tracker_instance: Any,
+    meta: Meta,
+    imdb_id: int,
+    torrent_id: int,
+    skip_tracker_descriptions: bool,
+) -> bool:
+    if imdb_id:
+        logger.info(
+            f"[green]{tracker_name} IMDb ID found: tt{str(imdb_id).zfill(7)}[/green]"
+        )
+    if meta.unattended:
+        return await _accept_ptp_discovered(
+            tracker_name,
+            tracker_instance,
+            meta,
+            imdb_id,
+            torrent_id,
+            skip_tracker_descriptions,
+            record_tracker_id=False,
+            review_images=False,
+        )
+    accepted = await prompt_user_for_confirmation(
+        "Do you want to use this ID data from PASSTHEPOPCORN?"
+    )
+    if not accepted:
+        _discard_ptp_match(meta, tracker_name)
+        return False
+    return await _accept_ptp_discovered(
+        tracker_name,
+        tracker_instance,
+        meta,
+        imdb_id,
+        torrent_id,
+        skip_tracker_descriptions,
+        record_tracker_id=True,
+        review_images=True,
+    )
+
+
+async def _ptp_from_existing_id(
+    tracker_name: str,
+    tracker_instance: Any,
+    meta: Meta,
+    torrent_id: str,
+    skip_tracker_descriptions: bool,
+) -> bool:
+    torrent_id_int = int(torrent_id)
+    result = await tracker_instance.get_imdb_from_torrent_id(torrent_id_int)
+    imdb_id, meta.ext_torrenthash = cast(tuple[int, str | None], result)
+    if not imdb_id:
+        logger.info(
+            f"[yellow]Could not find IMDb ID using PASSTHEPOPCORN ID: {torrent_id_int}[/yellow]"
+        )
+        return False
+    meta.imdb_id = imdb_id
+    meta.skipit = True
+    logger.debug(
+        f"[green]IMDb ID found: tt{str(meta.imdb_id).zfill(7)}[/green]"
+    )
+    images = await _tracker_description_images(
+        tracker_instance, torrent_id_int, meta, skip_tracker_descriptions
+    )
+    await _apply_ptp_images(meta, tracker_name, images, review=False)
+    if meta.image_list:
+        logger.info("[green]PASSTHEPOPCORN images added to metadata.[/green]")
+    return True
+
+
+async def _update_from_ptp(
+    tracker_name: str,
+    tracker_instance: Any,
+    meta: Meta,
+    search_term: str,
+    search_file_folder: str,
+    skip_tracker_descriptions: bool,
+) -> bool:
+    existing_id = meta.get_tracker_id(tracker_name)
+    if existing_id is not None:
+        return await _ptp_from_existing_id(
+            tracker_name,
+            tracker_instance,
+            meta,
+            existing_id,
+            skip_tracker_descriptions,
+        )
+    result = await tracker_instance.get_ptp_id_imdb(
+        search_term, search_file_folder, meta
+    )
+    imdb_id, torrent_id, meta.ext_torrenthash = cast(
+        tuple[int, int | None, str | None], result
+    )
+    if not torrent_id:
+        logger.debug(
+            "[yellow]Skipping PASSTHEPOPCORN as no match found[/yellow]"
+        )
+        return False
+    return await _handle_ptp_discovered(
+        tracker_name,
+        tracker_instance,
+        meta,
+        imdb_id,
+        torrent_id,
+        skip_tracker_descriptions,
+    )
+
+
+async def _api_tracker_data(
+    tracker_name: str,
+    tracker_instance: Any,
+    meta: Meta,
+    search_term: str,
+    skip_tracker_descriptions: bool,
+    resolved_torrent_id: str | None,
+) -> Sequence[Any]:
+    common = Common(config)
+    if resolved_torrent_id:
+        logger.debug(
+            f"[cyan]{tracker_name} ID found in meta, reusing existing ID: {resolved_torrent_id}[/cyan]"
+        )
+        return cast(
+            Sequence[Any],
+            await common.unit3d_torrent_info(
+                tracker_name,
+                tracker_instance.id_url,
+                tracker_instance.search_url,
+                meta,
+                id=resolved_torrent_id,
+                skip_tracker_descriptions=skip_tracker_descriptions,
+                public_torrent_url=tracker_instance.torrent_url,
+            ),
+        )
+    logger.debug(
+        f"[yellow]No ID found in meta for {tracker_name}, searching by file name[/yellow]"
+    )
+    return cast(
+        Sequence[Any],
+        await common.unit3d_torrent_info(
+            tracker_name,
+            tracker_instance.id_url,
+            tracker_instance.search_url,
+            meta,
+            file_name=search_term,
+            skip_tracker_descriptions=skip_tracker_descriptions,
+        ),
+    )
+
+
+def _has_api_tracker_ids(tracker_data: Sequence[Any]) -> bool:
+    return any(item not in [None, 0] for item in tracker_data[:3])
+
+
+async def _update_from_api_tracker(
+    tracker_name: str,
+    tracker_instance: Any,
+    meta: Meta,
+    search_term: str,
+    skip_tracker_descriptions: bool,
+    torrent_id: str,
+) -> bool:
+    resolved_torrent_id = torrent_id or meta.get_tracker_id(tracker_name)
+    tracker_data = await _api_tracker_data(
+        tracker_name,
+        tracker_instance,
+        meta,
+        search_term,
+        skip_tracker_descriptions,
+        resolved_torrent_id,
+    )
+    if not _has_api_tracker_ids(tracker_data):
+        logger.debug(f"[yellow]No valid data found on {tracker_name}[/yellow]")
+        return False
+    logger.debug(f"[green]Valid data found on {tracker_name}[/green]")
+    return await update_meta_with_unit3d_data(
+        meta, tracker_data, tracker_name, skip_tracker_descriptions
+    )
+
+
+def _valid_bhd_credential(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    if len(value) < 25:
+        return None
+    return value
+
+
+def _bhd_credentials() -> tuple[str, str] | None:
+    trackers_cfg = cast(Mapping[str, Any], config.get("TRACKERS", {}))
+    tracker_cfg = cast(dict[str, Any], trackers_cfg.get("BEYONDHD", {}))
+    api_key = _valid_bhd_credential(tracker_cfg.get("api_key"))
+    rss_key = _valid_bhd_credential(tracker_cfg.get("bhd_rss_key"))
+    if api_key is None or rss_key is None:
+        return None
+    return api_key, rss_key
+
+
+def _bhd_uses_folder(meta: Meta) -> bool:
+    if bool(meta.is_disc):
+        return True
+    if meta.keep_folder is True:
+        return True
+    return meta.isdir is True
+
+
+def _bhd_foldername(meta: Meta) -> str:
+    if meta.path:
+        return Path(meta.path).name
+    return meta.uuid
+
+
+def _bhd_filename(meta: Meta) -> str | None:
+    filelist = cast(list[str], meta.filelist or [])
+    if not filelist:
+        return None
+    return Path(filelist[0]).name
+
+
+async def _bhd_lookup(
+    api_key: str,
+    rss_key: str,
+    meta: Meta,
+    skip_tracker_descriptions: bool,
+    tracker_name: str,
+) -> tuple[int | None, int | None]:
+    torrent_id = meta.get_tracker_id(tracker_name)
+    kwargs: dict[str, Any] = {
+        "skip_tracker_descriptions": skip_tracker_descriptions
+    }
+    if torrent_id:
+        kwargs["torrent_id"] = int(torrent_id)
+    elif _bhd_uses_folder(meta):
+        kwargs["foldername"] = _bhd_foldername(meta)
+    else:
+        kwargs["filename"] = _bhd_filename(meta)
+    return cast(
+        tuple[int | None, int | None],
+        await BtnIdManager.get_bhd_torrents(api_key, rss_key, meta, **kwargs),
+    )
+
+
+def _bhd_has_ids(imdb: Any, tmdb: Any) -> bool:
+    return to_int(imdb) != 0 or to_int(tmdb) != 0
+
+
+def _apply_bhd_ids(meta: Meta, imdb: Any, tmdb: Any) -> None:
+    meta.imdb_id = to_int(imdb, to_int(meta.imdb_id))
+    meta.tmdb_id = to_int(tmdb, to_int(meta.tmdb_id))
+
+
+def _bhd_description_value(meta: Meta) -> str | None:
+    value = meta.description
+    if not isinstance(value, str):
+        return None
+    if not value:
+        return None
+    return value
+
+
+def _bhd_description_choice() -> str:
+    value = cli_ui.ask_string(
+        "Enter 'e' to edit, 'd' to discard, or press Enter to keep it as is: "
+    )
+    return (value or "").lower()
+
+
+def _apply_bhd_description_edit(meta: Meta, description: str) -> None:
+    edited = str(click.edit(text=description) or "")
+    if edited:
+        meta.description = edited.strip()
+        meta.saved_description = True
+    logger.info(
+        f"[green]Final description after editing:[/green] {meta.description}",
+        extra={"markup": False},
+    )
+
+
+def _discard_bhd_description(meta: Meta) -> None:
+    meta.description = ""
+    meta.image_list = []
+    logger.info("[yellow]Description discarded.[/yellow]")
+
+
+def _keep_bhd_description(meta: Meta, description: str) -> None:
+    logger.info("[green]Keeping the original description.[/green]")
+    meta.description = description
+    meta.saved_description = True
+
+
+def _edit_bhd_description(meta: Meta, description: str) -> None:
+    logger.info(
+        "[cyan]Do you want to edit, discard or keep the description?[/cyan]"
+    )
+    choice = _bhd_description_choice()
+    if choice == "e":
+        _apply_bhd_description_edit(meta, description)
+        return
+    if choice == "d":
+        _discard_bhd_description(meta)
+        return
+    _keep_bhd_description(meta, description)
+
+
+def _accept_bhd_description(meta: Meta, description: str) -> None:
+    logger.info("[bold green]Successfully grabbed description from BEYONDHD")
+    logger.info(
+        f"Description after cleaning:\n{description[:1000]}...",
+        extra={"markup": False},
+    )
+    if meta.skipit:
+        meta.description = description
+        meta.saved_description = True
+        return
+    _edit_bhd_description(meta, description)
+
+
+def _bhd_nfo_path(meta: Meta) -> Path:
+    return Path(meta.base_dir) / "tmp" / meta.uuid / "bhd.nfo"
+
+
+async def _delete_bhd_nfo_with_retries(path: Path) -> None:
+    try:
+        import gc
+
+        gc.collect()
+        for attempt in range(3):
+            try:
+                path.unlink()
+                logger.info("[yellow]NFO file successfully deleted.[/yellow]")
+                return
+            except Exception as error:
+                if attempt < 2:
+                    logger.info(
+                        f"[yellow]Attempt {attempt + 1}: Could not delete file, retrying in 1 second...[/yellow]"
+                    )
+                    await asyncio.sleep(1)
+                else:
+                    logger.error(
+                        f"[red]Failed to delete BEYONDHD NFO file after 3 attempts: {error}[/red]"
+                    )
+    except Exception as error:
+        logger.error(f"[red]Error during file cleanup: {error}[/red]")
+
+
+def _reviewable_bhd_nfo(meta: Meta) -> Path | None:
+    if not meta.bhd_nfo or meta.skipit:
+        return None
+    path = _bhd_nfo_path(meta)
+    return path if path.exists() else None
+
+
+def _bhd_nfo_choice() -> str:
+    value = cli_ui.ask_string(
+        "Enter 'd' to discard, or press Enter to keep it as is: "
+    )
+    return (value or "").lower()
+
+
+async def _review_bhd_nfo(meta: Meta) -> None:
+    path = _reviewable_bhd_nfo(meta)
+    if path is None:
+        return
+    content = await asyncio.to_thread(path.read_text, encoding="utf-8")
+    logger.info("[bold green]Successfully grabbed FraMeSToR description")
+    logger.info(
+        f"Description content:\n{content[:1000]}...", extra={"markup": False}
+    )
+    logger.info("[cyan]Do you want to discard or keep the description?[/cyan]")
+    if _bhd_nfo_choice() != "d":
+        logger.info("[green]Keeping the original description.[/green]")
+        return
+    meta.description = ""
+    meta.image_list = []
+    await _delete_bhd_nfo_with_retries(path)
+    meta.nfo = False
+    meta.bhd_nfo = False
+    logger.info("[yellow]Description discarded.[/yellow]")
+
+
+async def _review_bhd_content(meta: Meta) -> None:
+    description = _bhd_description_value(meta)
+    if description is not None:
+        _accept_bhd_description(meta, description)
+        return
+    await _review_bhd_nfo(meta)
+
+
+async def _validate_bhd_images(
+    meta: Meta, tracker_name: str, *, review: bool
+) -> None:
+    image_list = cast(Sequence[ImageDict] | None, meta.image_list)
+    if not image_list:
+        return
+    valid_images = await check_images_concurrently(image_list, meta)
+    if not valid_images:
+        meta.image_list = []
+        return
+    meta.image_list = valid_images
+    if review:
+        await handle_image_list(meta, tracker_name, valid_images)
+
+
+def _delete_declined_bhd_nfo(meta: Meta) -> None:
+    path = _bhd_nfo_path(meta)
+    if not path.exists():
+        return
+    try:
+        path.unlink()
+    except Exception as error:
+        logger.error(f"[red]Failed to delete BEYONDHD NFO file: {error}[/red]")
+
+
+def _discard_bhd_match(meta: Meta, tracker_name: str) -> None:
+    logger.info(f"[yellow]{tracker_name} data discarded.[/yellow]")
+    meta.clear_tracker_id(tracker_name)
+    meta.imdb_id = meta.imdb_id if meta.imdb_id else 0
+    meta.tmdb_id = meta.tmdb_id if meta.tmdb_id else 0
+    meta.framestor = False
+    meta.flux = False
+    meta.description = ""
+    meta.image_list = []
+    meta.nfo = False
+    meta.bhd_nfo = False
+    _delete_declined_bhd_nfo(meta)
+
+
+async def _accept_bhd_interactive(
+    tracker_name: str, meta: Meta, imdb: Any, tmdb: Any
+) -> bool:
+    _apply_bhd_ids(meta, imdb, tmdb)
+    await _review_bhd_content(meta)
+    await _validate_bhd_images(meta, tracker_name, review=True)
+    return True
+
+
+async def _handle_bhd_interactive(
+    tracker_name: str, meta: Meta, imdb: Any, tmdb: Any
+) -> bool:
+    logger.info(
+        f"[green]{tracker_name} data found: IMDb ID: {imdb}, TMDb ID: {tmdb}[/green]"
+    )
+    accepted = await prompt_user_for_confirmation(
+        f"Do you want to use the ID's found on {tracker_name}?"
+    )
+    if not accepted:
+        _discard_bhd_match(meta, tracker_name)
+        return False
+    return await _accept_bhd_interactive(tracker_name, meta, imdb, tmdb)
+
+
+async def _handle_bhd_unattended(
+    tracker_name: str, meta: Meta, imdb: Any, tmdb: Any
+) -> bool:
+    _apply_bhd_ids(meta, imdb, tmdb)
+    if not _bhd_has_ids(meta.imdb_id, meta.tmdb_id):
+        return False
+    logger.info(
+        f"[green]{tracker_name} data found: IMDb ID: {meta.imdb_id}, TMDb ID: {meta.tmdb_id}[/green]"
+    )
+    await _validate_bhd_images(meta, tracker_name, review=False)
+    return True
+
+
+async def _update_from_bhd(
+    tracker_name: str, meta: Meta, skip_tracker_descriptions: bool
+) -> bool:
+    credentials = _bhd_credentials()
+    if credentials is None:
+        logger.info(
+            "[red]BEYONDHD API or RSS key not found. Please check your configuration.[/red]"
+        )
+        return False
+    imdb, tmdb = await _bhd_lookup(
+        *credentials,
+        meta,
+        skip_tracker_descriptions,
+        tracker_name,
+    )
+    if not _bhd_has_ids(imdb, tmdb):
+        logger.debug(
+            f"[yellow]{tracker_name} returned invalid IDs (both 0)[/yellow]"
+        )
+        return False
+    if meta.unattended:
+        return await _handle_bhd_unattended(tracker_name, meta, imdb, tmdb)
+    return await _handle_bhd_interactive(tracker_name, meta, imdb, tmdb)
+
+
+def _hdb_has_data(imdb: Any, tvdb_id: Any, description: Any) -> bool:
+    if imdb:
+        return True
+    if tvdb_id:
+        return True
+    return bool(description)
+
+
+def _apply_hdb_ids(
+    meta: Meta, imdb: int | None, tvdb_id: int | None, hdb_name: str | None
+) -> None:
+    if imdb:
+        meta.imdb_id = imdb
+    if tvdb_id:
+        meta.tvdb_id = tvdb_id
+    meta.hdb_name = hdb_name
+
+
+def _clean_hdb_payload(meta: Meta) -> tuple[str | None, list[ImageDict]]:
+    description_source = meta.hdb_description or ""
+    return cast(
+        tuple[str | None, list[ImageDict]],
+        BBCODE().clean_hdb_description(description_source),
+    )
+
+
+def _apply_hdb_description_simple(
+    meta: Meta,
+    description: str | None,
+    skip_tracker_descriptions: bool,
+    *,
+    prefix: str = "Description content",
+    empty_log: bool,
+) -> None:
+    if description and not skip_tracker_descriptions:
+        logger.info(
+            f"{prefix}:\n{description[:500]}...", extra={"markup": False}
+        )
+        meta.description = description
+        meta.saved_description = True
+        return
+    if empty_log:
+        logger.info("[yellow]HDBITS description empty[/yellow]")
+
+
+def _hdb_edit_choice() -> str:
+    raw = cli_ui.ask_string(
+        "Enter 'e' to edit, 'd' to discard, or press Enter to keep it as is: "
+    )
+    return (raw or "").strip().lower()
+
+
+def _apply_hdb_edited_description(meta: Meta, description: str) -> None:
+    edited = str(click.edit(text=description) or "")
+    if edited:
+        description = edited.strip()
+        meta.description = description
+        meta.saved_description = True
+    logger.info(
+        f"[green]Final description after editing:[/green] {description}",
+        extra={"markup": False},
+    )
+
+
+def _review_hdb_description(
+    meta: Meta, description: str | None, skip_tracker_descriptions: bool
+) -> None:
+    if not description or skip_tracker_descriptions:
+        logger.info("[yellow]HDBITS description empty[/yellow]")
+        return
+    logger.info("[bold green]Successfully grabbed description from HDBITS")
+    logger.info(
+        f"HDBITS Description content:\n{description[:1000]}.....",
+        extra={"markup": False},
+    )
+    logger.info(
+        "[cyan]Do you want to edit, discard or keep the description?[/cyan]"
+    )
+    choice = _hdb_edit_choice()
+    if choice == "e":
+        _apply_hdb_edited_description(meta, description)
+        return
+    if choice == "d":
+        meta.hdb_description = ""
+        logger.info("[yellow]Description discarded.[/yellow]")
+        return
+    logger.info("[green]Keeping the original description.[/green]")
+    meta.description = description
+    meta.saved_description = True
+
+
+async def _apply_hdb_images(
+    meta: Meta,
+    tracker_name: str,
+    image_list: list[ImageDict],
+    *,
+    clear_when_disabled: bool,
+) -> None:
+    if not image_list or not meta.keep_images:
+        if clear_when_disabled:
+            meta.image_list = []
+        return
+    valid_images = await check_images_concurrently(image_list, meta)
+    if not valid_images:
+        return
+    meta.image_list = valid_images
+    await handle_image_list(meta, tracker_name, valid_images)
+
+
+def _log_hdb_found(
+    tracker_name: str, imdb: Any, meta: Meta, hdb_name: Any
+) -> None:
+    logger.info(
+        f"[green]{tracker_name} data found: IMDb ID: {imdb}, TVDb ID: {meta.tvdb_id}, HDBITS Name: {hdb_name}[/green]"
+    )
+
+
+async def _hdb_existing_result(
+    tracker_name: str,
+    tracker_instance: Any,
+    meta: Meta,
+    torrent_id: str,
+    skip_tracker_descriptions: bool,
+) -> bool:
+    meta["hdb_manual"] = torrent_id
+    logger.info(
+        f"[cyan]{tracker_name} ID found in meta, reusing existing ID: {torrent_id}[/cyan]"
+    )
+    hdb_info = await tracker_instance.get_info_from_torrent_id(torrent_id)
+    (
+        imdb,
+        tvdb_id,
+        hdb_name,
+        meta.ext_torrenthash,
+        meta.hdb_description,
+    ) = cast(
+        tuple[int | None, int | None, str | None, str | None, str | None],
+        hdb_info,
+    )
+    if not _hdb_has_data(imdb, tvdb_id, meta.hdb_description):
+        logger.info(
+            f"[yellow]{tracker_name} data not found for ID: {torrent_id}[/yellow]"
+        )
+        return False
+    _apply_hdb_ids(meta, imdb, tvdb_id, hdb_name)
+    description, image_list = _clean_hdb_payload(meta)
+    _apply_hdb_description_simple(
+        meta,
+        description,
+        skip_tracker_descriptions,
+        empty_log=True,
+    )
+    await _apply_hdb_images(
+        meta, tracker_name, image_list, clear_when_disabled=True
+    )
+    _log_hdb_found(tracker_name, imdb, meta, meta.hdb_name)
+    return True
+
+
+def _discard_hdb_search(meta: Meta, tracker_name: str) -> None:
+    logger.info(f"[yellow]{tracker_name} data discarded.[/yellow]")
+    meta.clear_tracker_id(tracker_name)
+    meta.tvdb_id = meta.tvdb_id if meta.tvdb_id else 0
+    meta.imdb_id = meta.imdb_id if meta.imdb_id else 0
+    meta.hdb_name = None
+    meta.hdb_description = ""
+
+
+async def _accept_hdb_search(
+    tracker_name: str,
+    meta: Meta,
+    imdb: int | None,
+    tvdb_id: int | None,
+    hdb_name: str | None,
+    skip_tracker_descriptions: bool,
+) -> bool:
+    logger.info(f"[green]{tracker_name} data retained.[/green]")
+    _apply_hdb_ids(meta, imdb, tvdb_id, hdb_name)
+    description, image_list = _clean_hdb_payload(meta)
+    _review_hdb_description(meta, description, skip_tracker_descriptions)
+    await _apply_hdb_images(
+        meta, tracker_name, image_list, clear_when_disabled=False
+    )
+    return True
+
+
+async def _interactive_hdb_search(
+    tracker_name: str,
+    meta: Meta,
+    imdb: int | None,
+    tvdb_id: int | None,
+    hdb_name: str | None,
+    skip_tracker_descriptions: bool,
+) -> bool:
+    _log_hdb_found(tracker_name, imdb, meta, hdb_name)
+    accepted = await prompt_user_for_confirmation(
+        f"Do you want to use the ID's found on {tracker_name}?"
+    )
+    if not accepted:
+        _discard_hdb_search(meta, tracker_name)
+        return False
+    return await _accept_hdb_search(
+        tracker_name,
+        meta,
+        imdb,
+        tvdb_id,
+        hdb_name,
+        skip_tracker_descriptions,
+    )
+
+
+async def _unattended_hdb_search(
+    tracker_name: str,
+    meta: Meta,
+    imdb: int | None,
+    tvdb_id: int | None,
+    hdb_name: str | None,
+    skip_tracker_descriptions: bool,
+) -> bool:
+    _apply_hdb_ids(meta, imdb, tvdb_id, hdb_name)
+    description, image_list = _clean_hdb_payload(meta)
+    _apply_hdb_description_simple(
+        meta,
+        description,
+        skip_tracker_descriptions,
+        prefix="HDBITS Description content",
+        empty_log=False,
+    )
+    await _apply_hdb_images(
+        meta, tracker_name, image_list, clear_when_disabled=False
+    )
+    _log_hdb_found(tracker_name, imdb, meta, hdb_name)
+    return True
+
+
+async def _hdb_search_result(
+    tracker_name: str,
+    tracker_instance: Any,
+    meta: Meta,
+    search_term: str,
+    search_file_folder: str,
+    skip_tracker_descriptions: bool,
+) -> bool:
+    logger.debug(
+        "[yellow]No ID found in meta for HDBITS, searching by file name[/yellow]"
+    )
+    result = await tracker_instance.search_filename(
+        search_term, search_file_folder, meta
+    )
+    (
+        imdb,
+        tvdb_id,
+        hdb_name,
+        meta.ext_torrenthash,
+        meta.hdb_description,
+        tracker_id,
+    ) = cast(
+        tuple[
+            int | None,
+            int | None,
+            str | None,
+            str | None,
+            str | None,
+            int | None,
+        ],
+        result,
+    )
+    meta.hdb_name = hdb_name
+    if tracker_id:
+        meta.set_tracker_ids({tracker_name: tracker_id})
+    if not _hdb_has_data(imdb, tvdb_id, meta.hdb_description):
+        meta.hdb_name = None
+        meta.hdb_description = ""
+        meta.clear_tracker_id(tracker_name)
+        return False
+    if meta.unattended:
+        return await _unattended_hdb_search(
+            tracker_name,
+            meta,
+            imdb,
+            tvdb_id,
+            hdb_name,
+            skip_tracker_descriptions,
+        )
+    return await _interactive_hdb_search(
+        tracker_name,
+        meta,
+        imdb,
+        tvdb_id,
+        hdb_name,
+        skip_tracker_descriptions,
+    )
+
+
+async def _update_from_hdbits(
+    tracker_name: str,
+    tracker_instance: Any,
+    meta: Meta,
+    search_term: str,
+    search_file_folder: str,
+    skip_tracker_descriptions: bool,
+) -> bool:
+    existing_id = meta.get_tracker_id(tracker_name)
+    if existing_id is not None:
+        return await _hdb_existing_result(
+            tracker_name,
+            tracker_instance,
+            meta,
+            existing_id,
+            skip_tracker_descriptions,
+        )
+    return await _hdb_search_result(
+        tracker_name,
+        tracker_instance,
+        meta,
+        search_term,
+        search_file_folder,
+        skip_tracker_descriptions,
+    )
+
+
 async def update_metadata_from_tracker(
     tracker_name: str,
     tracker_instance: Any,
@@ -581,654 +1451,43 @@ async def update_metadata_from_tracker(
     *,
     torrent_id: str = "",
 ) -> tuple[Meta, bool]:
-    tracker_key = "hdb" if tracker_name == "HDBITS" else tracker_name.lower()
     meta.tracker_search_term = search_term
-    manual_key = f"{tracker_key}_manual"
     found_match = False
 
     if tracker_name == "PASSTHEPOPCORN":
-        imdb_id: int = 0
-        ptp_imagelist: list[ImageDict] = []
-        ptp_torrent_id = meta.get_tracker_id(tracker_name)
-        if ptp_torrent_id is None:
-            ptp_result = await tracker_instance.get_ptp_id_imdb(
-                search_term, search_file_folder, meta
-            )
-            imdb_id, ptp_torrent_id, meta.ext_torrenthash = cast(
-                tuple[int, int | None, str | None], ptp_result
-            )
-            if ptp_torrent_id:
-                if imdb_id:
-                    logger.info(
-                        f"[green]{tracker_name} IMDb ID found: tt{str(imdb_id).zfill(7)}[/green]"
-                    )
-
-                if not meta.unattended:
-                    if await prompt_user_for_confirmation(
-                        "Do you want to use this ID data from PASSTHEPOPCORN?"
-                    ):
-                        meta.imdb_id = imdb_id
-                        found_match = True
-                        meta.set_tracker_ids({tracker_name: ptp_torrent_id})
-
-                        if not skip_tracker_descriptions or meta.keep_images:
-                            ptp_imagelist = cast(
-                                list[ImageDict],
-                                await tracker_instance.get_ptp_description(
-                                    ptp_torrent_id, meta, meta.is_disc
-                                ),
-                            )
-                        if ptp_imagelist:
-                            valid_images = await check_images_concurrently(
-                                ptp_imagelist, meta
-                            )
-                            if valid_images:
-                                meta.image_list = valid_images
-                                await handle_image_list(
-                                    meta, tracker_name, valid_images
-                                )
-
-                    else:
-                        found_match = False
-                        meta.imdb_id = meta.imdb_id if meta.imdb_id else 0
-                        meta.clear_tracker_id(tracker_name)
-                        meta.description = ""
-                        meta.image_list = []
-
-                else:
-                    found_match = True
-                    meta.imdb_id = imdb_id
-                    if not skip_tracker_descriptions or meta.keep_images:
-                        ptp_imagelist = cast(
-                            list[ImageDict],
-                            await tracker_instance.get_ptp_description(
-                                ptp_torrent_id, meta, meta.is_disc
-                            ),
-                        )
-                    if ptp_imagelist:
-                        valid_images = await check_images_concurrently(
-                            ptp_imagelist, meta
-                        )
-                        if valid_images:
-                            meta.image_list = valid_images
-            else:
-                logger.debug(
-                    "[yellow]Skipping PASSTHEPOPCORN as no match found[/yellow]"
-                )
-                found_match = False
-
-        else:
-            ptp_torrent_id_int = int(ptp_torrent_id)
-            ptp_imdb_result = await tracker_instance.get_imdb_from_torrent_id(
-                ptp_torrent_id_int
-            )
-            imdb_id, meta.ext_torrenthash = cast(
-                tuple[int, str | None], ptp_imdb_result
-            )
-            if imdb_id:
-                meta.imdb_id = imdb_id
-                logger.debug(
-                    f"[green]IMDb ID found: tt{str(meta.imdb_id).zfill(7)}[/green]"
-                )
-                found_match = True
-                meta.skipit = True
-                if not skip_tracker_descriptions or meta.keep_images:
-                    ptp_imagelist = cast(
-                        list[ImageDict],
-                        await tracker_instance.get_ptp_description(
-                            ptp_torrent_id_int, meta, meta.is_disc
-                        ),
-                    )
-                if ptp_imagelist:
-                    valid_images = await check_images_concurrently(
-                        ptp_imagelist, meta
-                    )
-                    if valid_images:
-                        meta.image_list = valid_images
-                        logger.info(
-                            "[green]PASSTHEPOPCORN images added to metadata.[/green]"
-                        )
-            else:
-                logger.info(
-                    f"[yellow]Could not find IMDb ID using PASSTHEPOPCORN ID: {ptp_torrent_id_int}[/yellow]"
-                )
-                found_match = False
-
-    elif tracker_name == "BEYONDHD":
-        trackers_cfg = cast(Mapping[str, Any], config.get("TRACKERS", {}))
-        tracker_cfg = cast(dict[str, Any], trackers_cfg.get("BEYONDHD", {}))
-        bhd_api = tracker_cfg.get("api_key")
-        bhd_api = bhd_api if isinstance(bhd_api, str) else None
-        if bhd_api and len(bhd_api) < 25:
-            bhd_api = None
-
-        bhd_rss_key = tracker_cfg.get("bhd_rss_key")
-        bhd_rss_key = bhd_rss_key if isinstance(bhd_rss_key, str) else None
-        if bhd_rss_key and len(bhd_rss_key) < 25:
-            bhd_rss_key = None
-
-        if not bhd_api or not bhd_rss_key:
-            logger.info(
-                "[red]BEYONDHD API or RSS key not found. Please check your configuration.[/red]"
-            )
-            return meta, False
-        use_foldername = (
-            bool(meta.is_disc)
-            or meta.keep_folder is True
-            or meta.isdir is True
+        found_match = await _update_from_ptp(
+            tracker_name,
+            tracker_instance,
+            meta,
+            search_term,
+            search_file_folder,
+            skip_tracker_descriptions,
         )
 
-        bhd_torrent_id = meta.get_tracker_id(tracker_name)
-        if bhd_torrent_id:
-            imdb, tmdb = cast(
-                tuple[int | None, int | None],
-                await BtnIdManager.get_bhd_torrents(
-                    bhd_api,
-                    bhd_rss_key,
-                    meta,
-                    skip_tracker_descriptions=skip_tracker_descriptions,
-                    torrent_id=int(bhd_torrent_id),
-                ),
-            )
-        elif use_foldername:
-            # Use folder name from path if available, fall back to UUID
-            folder_path = meta.path
-            foldername = Path(folder_path).name if folder_path else meta.uuid
-            imdb, tmdb = cast(
-                tuple[int | None, int | None],
-                await BtnIdManager.get_bhd_torrents(
-                    bhd_api,
-                    bhd_rss_key,
-                    meta,
-                    skip_tracker_descriptions=skip_tracker_descriptions,
-                    foldername=foldername,
-                ),
-            )
-        else:
-            # Only use filename if none of the folder conditions are met
-            filelist = cast(list[str], meta.filelist or [])
-            filename = Path(filelist[0]).name if filelist else None
-            imdb, tmdb = cast(
-                tuple[int | None, int | None],
-                await BtnIdManager.get_bhd_torrents(
-                    bhd_api,
-                    bhd_rss_key,
-                    meta,
-                    skip_tracker_descriptions=skip_tracker_descriptions,
-                    filename=filename,
-                ),
-            )
-
-        if to_int(imdb) != 0 or to_int(tmdb) != 0:
-            if not meta.unattended:
-                logger.info(
-                    f"[green]{tracker_name} data found: IMDb ID: {imdb}, TMDb ID: {tmdb}[/green]"
-                )
-                if await prompt_user_for_confirmation(
-                    f"Do you want to use the ID's found on {tracker_name}?"
-                ):
-                    found_match = True
-                    meta.imdb_id = to_int(imdb, to_int(meta.imdb_id))
-                    meta.tmdb_id = to_int(tmdb, to_int(meta.tmdb_id))
-                    description_value = meta.description
-                    if (
-                        isinstance(description_value, str)
-                        and description_value
-                    ):
-                        description = description_value
-                        logger.info(
-                            "[bold green]Successfully grabbed description from BEYONDHD"
-                        )
-                        logger.info(
-                            f"Description after cleaning:\n{description[:1000]}...",
-                            extra={"markup": False},
-                        )
-
-                        if not meta.skipit:
-                            logger.info(
-                                "[cyan]Do you want to edit, discard or keep the description?[/cyan]"
-                            )
-                            edit_choice = cli_ui.ask_string(
-                                "Enter 'e' to edit, 'd' to discard, or press Enter to keep it as is: "
-                            )
-
-                            if (edit_choice or "").lower() == "e":
-                                # pyrefly: ignore [bad-argument-type]
-                                edited_description = str(
-                                    click.edit(text=description) or ""
-                                )
-                                if edited_description:
-                                    desc = edited_description.strip()
-                                    meta.description = desc
-                                    meta.saved_description = True
-                                logger.info(
-                                    f"[green]Final description after editing:[/green] {meta.description}",
-                                    extra={"markup": False},
-                                )
-                            elif (edit_choice or "").lower() == "d":
-                                meta.description = ""
-                                meta.image_list = []
-                                logger.info(
-                                    "[yellow]Description discarded.[/yellow]"
-                                )
-                            else:
-                                logger.info(
-                                    "[green]Keeping the original description.[/green]"
-                                )
-                                meta.description = description
-                                meta.saved_description = True
-                        else:
-                            meta.description = description
-                            meta.saved_description = True
-                    elif meta.bhd_nfo:
-                        if not meta.skipit:
-                            nfo_file_path = (
-                                Path(meta.base_dir)
-                                / "tmp"
-                                / meta.uuid
-                                / "bhd.nfo"
-                            )
-                            if Path(nfo_file_path).exists():
-                                nfo_content = await asyncio.to_thread(
-                                    Path(nfo_file_path).read_text,
-                                    encoding="utf-8",
-                                )
-                                logger.info(
-                                    "[bold green]Successfully grabbed FraMeSToR description"
-                                )
-                                logger.info(
-                                    f"Description content:\n{nfo_content[:1000]}...",
-                                    extra={"markup": False},
-                                )
-                                logger.info(
-                                    "[cyan]Do you want to discard or keep the description?[/cyan]"
-                                )
-                                edit_choice = cli_ui.ask_string(
-                                    "Enter 'd' to discard, or press Enter to keep it as is: "
-                                )
-
-                                if (edit_choice or "").lower() == "d":
-                                    meta.description = ""
-                                    meta.image_list = []
-                                    nfo_file_path = (
-                                        Path(meta.base_dir)
-                                        / "tmp"
-                                        / meta.uuid
-                                        / "bhd.nfo"
-                                    )
-
-                                    try:
-                                        import gc
-
-                                        gc.collect()  # Force garbage collection to close any lingering handles
-                                        for attempt in range(3):
-                                            try:
-                                                nfo_file_path.unlink()
-                                                logger.info(
-                                                    "[yellow]NFO file successfully deleted.[/yellow]"
-                                                )
-                                                break
-                                            except Exception as e:
-                                                if attempt < 2:
-                                                    logger.info(
-                                                        f"[yellow]Attempt {attempt + 1}: Could not delete file, retrying in 1 second...[/yellow]"
-                                                    )
-                                                    await asyncio.sleep(1)
-                                                else:
-                                                    logger.error(
-                                                        f"[red]Failed to delete BEYONDHD NFO file after 3 attempts: {e}[/red]"
-                                                    )
-                                    except Exception as e:
-                                        logger.error(
-                                            f"[red]Error during file cleanup: {e}[/red]"
-                                        )
-                                    meta.nfo = False
-                                    meta.bhd_nfo = False
-                                    logger.info(
-                                        "[yellow]Description discarded.[/yellow]"
-                                    )
-                                else:
-                                    logger.info(
-                                        "[green]Keeping the original description.[/green]"
-                                    )
-
-                    image_list = cast(
-                        Sequence[ImageDict] | None, meta.image_list
-                    )
-                    if image_list:
-                        valid_images = await check_images_concurrently(
-                            image_list, meta
-                        )
-                        if valid_images:
-                            meta.image_list = valid_images
-                            await handle_image_list(
-                                meta, tracker_name, valid_images
-                            )
-                        else:
-                            meta.image_list = []
-
-                else:
-                    logger.info(
-                        f"[yellow]{tracker_name} data discarded.[/yellow]"
-                    )
-                    meta.clear_tracker_id(tracker_name)
-                    meta.imdb_id = meta.imdb_id if meta.imdb_id else 0
-                    meta.tmdb_id = meta.tmdb_id if meta.tmdb_id else 0
-                    meta.framestor = False
-                    meta.flux = False
-                    meta.description = ""
-                    meta.image_list = []
-                    meta.nfo = False
-                    meta.bhd_nfo = False
-                    save_path = Path(meta.base_dir) / "tmp" / meta.uuid
-                    nfo_file_path = Path(save_path) / "bhd.nfo"
-                    if Path(nfo_file_path).exists():
-                        try:
-                            nfo_file_path.unlink()
-                        except Exception as e:
-                            logger.error(
-                                f"[red]Failed to delete BEYONDHD NFO file: {e}[/red]"
-                            )
-                    found_match = False
-            else:
-                # Only treat as match if we actually got valid IDs
-                meta.imdb_id = to_int(imdb, to_int(meta.imdb_id))
-                meta.tmdb_id = to_int(tmdb, to_int(meta.tmdb_id))
-                if to_int(meta.imdb_id) != 0 or to_int(meta.tmdb_id) != 0:
-                    logger.info(
-                        f"[green]{tracker_name} data found: IMDb ID: {meta.imdb_id}, TMDb ID: {meta.tmdb_id}[/green]"
-                    )
-                    found_match = True
-                    image_list = cast(
-                        Sequence[ImageDict] | None, meta.image_list
-                    )
-                    if image_list:
-                        valid_images = await check_images_concurrently(
-                            image_list, meta
-                        )
-                        if valid_images:
-                            meta.image_list = valid_images
-                        else:
-                            meta.image_list = []
-        else:
-            logger.debug(
-                f"[yellow]{tracker_name} returned invalid IDs (both 0)[/yellow]"
-            )
-            found_match = False
+    elif tracker_name == "BEYONDHD":
+        found_match = await _update_from_bhd(
+            tracker_name, meta, skip_tracker_descriptions
+        )
 
     elif tracker_name in api_trackers:
-        resolved_torrent_id = torrent_id or meta.get_tracker_id(tracker_name)
-        if resolved_torrent_id:
-            logger.debug(
-                f"[cyan]{tracker_name} ID found in meta, reusing existing ID: {resolved_torrent_id}[/cyan]"
-            )
-            tracker_data = cast(
-                Sequence[Any],
-                await Common(config).unit3d_torrent_info(
-                    tracker_name,
-                    tracker_instance.id_url,
-                    tracker_instance.search_url,
-                    meta,
-                    id=resolved_torrent_id,
-                    skip_tracker_descriptions=skip_tracker_descriptions,
-                    public_torrent_url=tracker_instance.torrent_url,
-                ),
-            )
-        else:
-            logger.debug(
-                f"[yellow]No ID found in meta for {tracker_name}, searching by file name[/yellow]"
-            )
-            tracker_data = cast(
-                Sequence[Any],
-                await Common(config).unit3d_torrent_info(
-                    tracker_name,
-                    tracker_instance.id_url,
-                    tracker_instance.search_url,
-                    meta,
-                    file_name=search_term,
-                    skip_tracker_descriptions=skip_tracker_descriptions,
-                ),
-            )
-
-        if any(
-            item not in [None, 0] for item in tracker_data[:3]
-        ):  # Check for valid tmdb, imdb, or tvdb
-            logger.debug(f"[green]Valid data found on {tracker_name}[/green]")
-            selected = await update_meta_with_unit3d_data(
-                meta, tracker_data, tracker_name, skip_tracker_descriptions
-            )
-            found_match = selected
-        else:
-            logger.debug(
-                f"[yellow]No valid data found on {tracker_name}[/yellow]"
-            )
-            found_match = False
+        found_match = await _update_from_api_tracker(
+            tracker_name,
+            tracker_instance,
+            meta,
+            search_term,
+            skip_tracker_descriptions,
+            torrent_id,
+        )
 
     elif tracker_name == "HDBITS":
-        bbcode = BBCODE()
-        hdb_torrent_id = meta.get_tracker_id(tracker_name)
-        if hdb_torrent_id is not None:
-            meta[manual_key] = hdb_torrent_id
-            logger.info(
-                f"[cyan]{tracker_name} ID found in meta, reusing existing ID: {hdb_torrent_id}[/cyan]"
-            )
-
-            # Use get_info_from_torrent_id function if ID is found in meta
-            hdb_info = await tracker_instance.get_info_from_torrent_id(
-                hdb_torrent_id
-            )
-            (
-                imdb,
-                tvdb_id,
-                hdb_name,
-                meta.ext_torrenthash,
-                meta.hdb_description,
-            ) = cast(
-                tuple[
-                    int | None, int | None, str | None, str | None, str | None
-                ],
-                hdb_info,
-            )
-
-            if imdb or tvdb_id or meta.hdb_description:
-                meta.imdb_id = imdb if imdb else meta.imdb_id
-                meta.tvdb_id = tvdb_id if tvdb_id else meta.tvdb_id
-                meta.hdb_name = hdb_name
-                found_match = True
-                description_source = meta.hdb_description or ""
-                description, image_list = cast(
-                    tuple[str | None, list[ImageDict]],
-                    bbcode.clean_hdb_description(description_source),
-                )
-                if (
-                    description
-                    and len(description) > 0
-                    and not skip_tracker_descriptions
-                ):
-                    logger.info(
-                        f"Description content:\n{description[:500]}...",
-                        extra={"markup": False},
-                    )
-                    meta.description = description
-                    meta.saved_description = True
-                else:
-                    logger.info("[yellow]HDBITS description empty[/yellow]")
-                if image_list and meta.keep_images:
-                    valid_images = await check_images_concurrently(
-                        image_list, meta
-                    )
-                    if valid_images:
-                        meta.image_list = valid_images
-                        await handle_image_list(
-                            meta, tracker_name, valid_images
-                        )
-                else:
-                    meta.image_list = []
-
-                logger.info(
-                    f"[green]{tracker_name} data found: IMDb ID: {imdb}, TVDb ID: {meta.tvdb_id}, HDBITS Name: {meta.hdb_name}[/green]"
-                )
-            else:
-                logger.info(
-                    f"[yellow]{tracker_name} data not found for ID: {hdb_torrent_id}[/yellow]"
-                )
-                found_match = False
-        else:
-            logger.debug(
-                "[yellow]No ID found in meta for HDBITS, searching by file name[/yellow]"
-            )
-
-            # Use search_filename function if ID is not found in meta
-            hdb_search = await tracker_instance.search_filename(
-                search_term, search_file_folder, meta
-            )
-            (
-                imdb,
-                tvdb_id,
-                hdb_name,
-                meta.ext_torrenthash,
-                meta.hdb_description,
-                tracker_id,
-            ) = cast(
-                tuple[
-                    int | None,
-                    int | None,
-                    str | None,
-                    str | None,
-                    str | None,
-                    int | None,
-                ],
-                hdb_search,
-            )
-            meta.hdb_name = hdb_name
-            if tracker_id:
-                meta.set_tracker_ids({tracker_name: tracker_id})
-
-            if imdb or tvdb_id or meta.hdb_description:
-                if not meta.unattended:
-                    logger.info(
-                        f"[green]{tracker_name} data found: IMDb ID: {imdb}, TVDb ID: {meta.tvdb_id}, HDBITS Name: {meta.hdb_name}[/green]"
-                    )
-                    if await prompt_user_for_confirmation(
-                        f"Do you want to use the ID's found on {tracker_name}?"
-                    ):
-                        logger.info(
-                            f"[green]{tracker_name} data retained.[/green]"
-                        )
-                        meta.imdb_id = imdb if imdb else meta.imdb_id
-                        meta.tvdb_id = tvdb_id if tvdb_id else meta.tvdb_id
-                        found_match = True
-                        description_source = meta.hdb_description or ""
-                        description, image_list = cast(
-                            tuple[str | None, list[ImageDict]],
-                            bbcode.clean_hdb_description(description_source),
-                        )
-                        if (
-                            description
-                            and len(description) > 0
-                            and not skip_tracker_descriptions
-                        ):
-                            logger.info(
-                                "[bold green]Successfully grabbed description from HDBITS"
-                            )
-                            logger.info(
-                                f"HDBITS Description content:\n{description[:1000]}.....",
-                                extra={"markup": False},
-                            )
-                            logger.info(
-                                "[cyan]Do you want to edit, discard or keep the description?[/cyan]"
-                            )
-                            edit_choice_raw = cli_ui.ask_string(
-                                "Enter 'e' to edit, 'd' to discard, or press Enter to keep it as is: "
-                            )
-                            edit_choice = (
-                                (edit_choice_raw or "").strip().lower()
-                            )
-
-                            if edit_choice.lower() == "e":
-                                # pyrefly: ignore [bad-argument-type]
-                                edited_description = str(
-                                    click.edit(text=description) or ""
-                                )
-                                if edited_description:
-                                    description = edited_description.strip()
-                                    meta.description = description
-                                    meta.saved_description = True
-                                logger.info(
-                                    f"[green]Final description after editing:[/green] {description}",
-                                    extra={"markup": False},
-                                )
-                            elif edit_choice.lower() == "d":
-                                meta.hdb_description = ""
-                                logger.info(
-                                    "[yellow]Description discarded.[/yellow]"
-                                )
-                            else:
-                                logger.info(
-                                    "[green]Keeping the original description.[/green]"
-                                )
-                                meta.description = description
-                                meta.saved_description = True
-                        else:
-                            logger.info(
-                                "[yellow]HDBITS description empty[/yellow]"
-                            )
-                        if image_list and meta.keep_images:
-                            valid_images = await check_images_concurrently(
-                                image_list, meta
-                            )
-                            if valid_images:
-                                meta.image_list = valid_images
-                                await handle_image_list(
-                                    meta, tracker_name, valid_images
-                                )
-                    else:
-                        logger.info(
-                            f"[yellow]{tracker_name} data discarded.[/yellow]"
-                        )
-                        meta.clear_tracker_id(tracker_name)
-                        meta.tvdb_id = meta.tvdb_id if meta.tvdb_id else 0
-                        meta.imdb_id = meta.imdb_id if meta.imdb_id else 0
-                        meta.hdb_name = None
-                        meta.hdb_description = ""
-                        found_match = False
-                else:
-                    meta.imdb_id = imdb if imdb else meta.imdb_id
-                    meta.tvdb_id = tvdb_id if tvdb_id else meta.tvdb_id
-                    description_source = meta.hdb_description or ""
-                    description, image_list = cast(
-                        tuple[str | None, list[ImageDict]],
-                        bbcode.clean_hdb_description(description_source),
-                    )
-                    if (
-                        description
-                        and len(description) > 0
-                        and not skip_tracker_descriptions
-                    ):
-                        logger.info(
-                            f"HDBITS Description content:\n{description[:500]}.....",
-                            extra={"markup": False},
-                        )
-                        meta.description = description
-                        meta.saved_description = True
-                    if image_list and meta.keep_images:
-                        valid_images = await check_images_concurrently(
-                            image_list, meta
-                        )
-                        if valid_images:
-                            meta.image_list = valid_images
-                            await handle_image_list(
-                                meta, tracker_name, valid_images
-                            )
-                    logger.info(
-                        f"[green]{tracker_name} data found: IMDb ID: {imdb}, TVDb ID: {meta.tvdb_id}, HDBITS Name: {hdb_name}[/green]"
-                    )
-                    found_match = True
-            else:
-                meta.hdb_name = None
-                meta.hdb_description = ""
-                meta.clear_tracker_id(tracker_name)
-                found_match = False
+        found_match = await _update_from_hdbits(
+            tracker_name,
+            tracker_instance,
+            meta,
+            search_term,
+            search_file_folder,
+            skip_tracker_descriptions,
+        )
 
     return meta, found_match
 
