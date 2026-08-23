@@ -15,6 +15,8 @@ from src.integrations.observability.runtime_support import logger
 
 ComparisonGroup = dict[str, Any]
 ComparisonData = dict[str, ComparisonGroup]
+SavedComparisonData = ComparisonData | list[ComparisonGroup]
+ComparisonGroups = defaultdict[str, list[tuple[int, str]]]
 
 
 class ComparisonManager:
@@ -28,234 +30,279 @@ class ComparisonManager:
             cast(dict[str, Any], config)
         )
 
-    async def add_comparison(self) -> ComparisonData | list[ComparisonGroup]:
-        comparison_path = self.meta.comparison
-        if (
-            not isinstance(comparison_path, str)
-            or not Path(comparison_path).is_dir()
-        ):
-            return []
+    def _comparison_data_file(self) -> Path:
+        return (
+            Path(self.meta.base_dir)
+            / "tmp"
+            / self.meta.uuid
+            / "comparison_data.json"
+        )
 
-        comparison_data_file = f"{self.meta.base_dir}{'/' + 'tmp' + '/'}{self.meta.uuid}/comparison_data.json"
-        if Path(comparison_data_file).exists():
-            try:
-                raw_text = await asyncio.to_thread(
-                    Path(comparison_data_file).read_text
+    @staticmethod
+    def _saved_dict(raw_data: dict[str, Any]) -> ComparisonData:
+        if not all(isinstance(value, dict) for value in raw_data.values()):
+            raise ValueError(
+                "Invalid comparison data format: must be a dict of dicts"
+            )
+        return cast(ComparisonData, raw_data)
+
+    @staticmethod
+    def _saved_list(raw_data: list[Any]) -> list[ComparisonGroup]:
+        if not all(isinstance(item, dict) for item in raw_data):
+            raise ValueError(
+                "Invalid comparison data format: must be a list of dicts"
+            )
+        return cast(list[ComparisonGroup], raw_data)
+
+    @classmethod
+    def _validated_saved_data(cls, raw_data: Any) -> SavedComparisonData:
+        if isinstance(raw_data, dict):
+            return cls._saved_dict(cast(dict[str, Any], raw_data))
+        if isinstance(raw_data, list):
+            return cls._saved_list(cast(list[Any], raw_data))
+        raise ValueError(
+            "Invalid comparison data format: must be a dict of dicts or a list of dicts"
+        )
+
+    @staticmethod
+    def _group_urls(group: ComparisonGroup) -> list[dict[str, Any]]:
+        return cast(list[dict[str, Any]], group.get("urls", []))
+
+    def _saved_dict_urls(
+        self, saved_data: ComparisonData, comparison_index: str
+    ) -> list[dict[str, Any]] | None:
+        group = saved_data.get(comparison_index)
+        if group is not None:
+            return self._group_urls(group)
+        logger.info(
+            f"[yellow]Comparison index '{comparison_index}' not found in saved data; available keys: {list(saved_data.keys())}[/yellow]"
+        )
+        return None
+
+    def _saved_list_urls(
+        self, saved_data: list[ComparisonGroup], comparison_index: str
+    ) -> list[dict[str, Any]] | None:
+        try:
+            index = int(comparison_index)
+        except ValueError:
+            logger.info(
+                f"[yellow]Comparison index '{comparison_index}' is not a valid integer for list data[/yellow]"
+            )
+            return None
+        if 0 <= index < len(saved_data):
+            return self._group_urls(saved_data[index])
+        logger.info(
+            f"[yellow]Comparison index '{comparison_index}' out of range; valid range: 0-{len(saved_data) - 1}[/yellow]"
+        )
+        return None
+
+    def _append_unique_urls(
+        self, urls: list[dict[str, Any]], comparison_index: str
+    ) -> None:
+        if self.meta.debug:
+            logger.debug(
+                f"[cyan]Adding {len(urls)} images from comparison group {comparison_index} to image_list"
+            )
+        image_list = self.meta.image_list
+        for url_info in urls:
+            if url_info not in image_list:
+                image_list.append(url_info)
+
+    def _apply_saved_selection(self, saved_data: SavedComparisonData) -> None:
+        comparison_index = self.meta.comparison_index
+        if comparison_index is None:
+            return
+        comparison_index_str = str(comparison_index).strip()
+        if isinstance(saved_data, dict):
+            urls = self._saved_dict_urls(saved_data, comparison_index_str)
+        else:
+            urls = self._saved_list_urls(saved_data, comparison_index_str)
+        if urls:
+            self._append_unique_urls(urls, comparison_index_str)
+
+    async def _load_saved_comparison(
+        self, comparison_data_file: Path
+    ) -> SavedComparisonData | None:
+        if not comparison_data_file.exists():
+            return None
+        try:
+            raw_text = await asyncio.to_thread(comparison_data_file.read_text)
+            saved_data = self._validated_saved_data(json.loads(raw_text))
+            if self.meta.debug:
+                logger.debug(
+                    f"[cyan]Loading previously saved comparison data from {comparison_data_file}"
                 )
-                raw_data: Any = json.loads(raw_text)
-                saved_comparison_data: ComparisonData | list[ComparisonGroup]
-                if isinstance(raw_data, dict):
-                    raw_dict = cast(dict[str, Any], raw_data)
-                    if not all(isinstance(v, dict) for v in raw_dict.values()):
-                        raise ValueError(
-                            "Invalid comparison data format: must be a dict of dicts"
-                        )
-                    saved_comparison_data = cast(ComparisonData, raw_dict)
-                elif isinstance(raw_data, list):
-                    raw_list = raw_data
-                    if not all(isinstance(item, dict) for item in raw_list):
-                        raise ValueError(
-                            "Invalid comparison data format: must be a list of dicts"
-                        )
-                    saved_comparison_data = cast(
-                        list[ComparisonGroup], raw_list
-                    )
-                else:
-                    raise ValueError(
-                        "Invalid comparison data format: must be a dict of dicts or a list of dicts"
-                    )
-                if self.meta.debug:
-                    logger.debug(
-                        f"[cyan]Loading previously saved comparison data from {comparison_data_file}"
-                    )
-                self.meta.comparison_groups = saved_comparison_data
+            self.meta.comparison_groups = saved_data
+            self._apply_saved_selection(saved_data)
+            return saved_data
+        except Exception as exc:
+            logger.info(f"[yellow]Error loading saved comparison data: {exc}")
+            return None
 
-                comparison_index = self.meta.comparison_index
-                if comparison_index is not None:
-                    # Normalize comparison_index to string once
-                    comparison_index_str = str(comparison_index).strip()
-
-                    urls_to_add: list[dict[str, Any]] = []
-                    found = False
-
-                    if isinstance(saved_comparison_data, dict):
-                        if comparison_index_str in saved_comparison_data:
-                            group_data = saved_comparison_data[
-                                comparison_index_str
-                            ]
-                            urls_to_add = cast(
-                                list[dict[str, Any]],
-                                group_data.get("urls", []),
-                            )
-                            found = True
-                        else:
-                            logger.info(
-                                f"[yellow]Comparison index '{comparison_index_str}' not found in saved data; available keys: {list(saved_comparison_data.keys())}[/yellow]"
-                            )
-                    else:
-                        try:
-                            idx = int(comparison_index_str)
-                            if 0 <= idx < len(saved_comparison_data):
-                                list_item = saved_comparison_data[idx]
-                                urls_to_add = cast(
-                                    list[dict[str, Any]],
-                                    list_item.get("urls", []),
-                                )
-                                found = True
-                            else:
-                                logger.info(
-                                    f"[yellow]Comparison index '{comparison_index_str}' out of range; valid range: 0-{len(saved_comparison_data) - 1}[/yellow]"
-                                )
-                        except ValueError:
-                            logger.info(
-                                f"[yellow]Comparison index '{comparison_index_str}' is not a valid integer for list data[/yellow]"
-                            )
-
-                    if found and urls_to_add:
-                        if self.meta.debug:
-                            logger.debug(
-                                f"[cyan]Adding {len(urls_to_add)} images from comparison group {comparison_index_str} to image_list"
-                            )
-                        image_list = self.meta.image_list
-                        self.meta.image_list = image_list
-                        for url_info in urls_to_add:
-                            if url_info not in image_list:
-                                image_list.append(url_info)
-
-                return saved_comparison_data
-            except Exception as e:
-                logger.info(
-                    f"[yellow]Error loading saved comparison data: {e}"
-                )
-
-        files: list[str] = [
-            p.name
-            for p in Path(comparison_path).iterdir()
-            if p.name.lower().endswith(".png")
+    @staticmethod
+    def _comparison_files(comparison_path: Path) -> list[str]:
+        return [
+            path.name
+            for path in comparison_path.iterdir()
+            if path.name.lower().endswith(".png")
         ]
+
+    @staticmethod
+    def _group_comparison_files(
+        files: list[str],
+    ) -> tuple[ComparisonGroups, dict[str, str]]:
         pattern = re.compile(r"(\d+)-(\d+)-(.+)\.png", re.IGNORECASE)
-
-        groups: defaultdict[str, list[tuple[int, str]]] = defaultdict(list)
+        groups: ComparisonGroups = defaultdict(list)
         suffixes: dict[str, str] = {}
+        for filename in files:
+            match = pattern.match(filename)
+            if match is None:
+                continue
+            first, second, suffix = match.groups()
+            groups[second].append((int(first), filename))
+            suffixes.setdefault(second, suffix)
+        return groups, suffixes
 
-        for f in files:
-            match = pattern.match(f)
-            if match:
-                first, second, suffix = match.groups()
-                groups[second].append((int(first), f))
-                if second not in suffixes:
-                    suffixes[second] = suffix
-
-        meta_comparisons: ComparisonData = {}
-        img_host_keys = [
-            k for k in self.default_config if k.startswith("img_host_")
+    def _image_host_indices(self) -> list[int]:
+        indices = [
+            int(key.split("_")[-1])
+            for key in self.default_config
+            if key.startswith("img_host_") and key.split("_")[-1].isdigit()
         ]
-        img_host_indices = [
-            int(k.split("_")[-1])
-            for k in img_host_keys
-            if k.split("_")[-1].isdigit()
-        ]
-        img_host_indices.sort()
-
-        if not img_host_indices:
+        indices.sort()
+        if not indices:
             raise ValueError(
                 "No image hosts found in config. Please ensure at least one 'img_host_X' key is present in config."
             )
+        return indices
 
-        for _idx, second in enumerate(sorted(groups, key=lambda x: int(x)), 1):
-            img_host_num = img_host_indices[0]
-            current_img_host_key = f"img_host_{img_host_num}"
-            current_img_host = self.default_config.get(current_img_host_key)
-            if current_img_host is not None and not isinstance(
-                current_img_host, str
-            ):
-                current_img_host = str(current_img_host)
+    def _image_host_name(self, host_number: int) -> str | None:
+        value = self.default_config.get(f"img_host_{host_number}")
+        if value is None or isinstance(value, str):
+            return value
+        return str(value)
 
-            group = sorted(groups[second], key=lambda x: x[0])
-            group_files: list[str] = [f for _, f in group]
-            custom_img_list = [
-                str(Path(comparison_path) / filename)
-                for filename in group_files
-            ]
-            upload_meta = self.meta.copy()
-            logger.info(
-                f"[cyan]Uploading comparison group {second} with files: {group_files}"
+    @staticmethod
+    def _uploaded_infos(
+        upload_result: list[Mapping[str, Any]],
+    ) -> list[dict[str, Any]]:
+        return [
+            {key: item.get(key) for key in ("img_url", "raw_url", "web_url")}
+            for item in upload_result
+        ]
+
+    async def _upload_comparison_group(
+        self,
+        comparison_path: Path,
+        second: str,
+        group: list[tuple[int, str]],
+        suffix: str,
+        host_number: int,
+    ) -> ComparisonGroup:
+        ordered_group = sorted(group, key=lambda item: item[0])
+        group_files = [filename for _, filename in ordered_group]
+        custom_img_list = [
+            str(comparison_path / filename) for filename in group_files
+        ]
+        logger.info(
+            f"[cyan]Uploading comparison group {second} with files: {group_files}"
+        )
+        upload_result, _ = await self.uploadscreens_manager.upload_screens(
+            self.meta.copy(),
+            len(custom_img_list),
+            host_number,
+            0,
+            len(custom_img_list),
+            custom_img_list,
+            {},
+        )
+        uploaded_infos = self._uploaded_infos(
+            cast(list[Mapping[str, Any]], upload_result)
+        )
+        return {
+            "files": group_files,
+            "urls": uploaded_infos,
+            "img_host": self._image_host_name(host_number),
+            "name": suffix,
+        }
+
+    async def _build_comparison_data(
+        self, comparison_path: Path
+    ) -> ComparisonData:
+        files = self._comparison_files(comparison_path)
+        groups, suffixes = self._group_comparison_files(files)
+        host_number = self._image_host_indices()[0]
+        comparisons: ComparisonData = {}
+        for second in sorted(groups, key=int):
+            comparisons[second] = await self._upload_comparison_group(
+                comparison_path,
+                second,
+                groups[second],
+                suffixes.get(second, ""),
+                host_number,
             )
+        return comparisons
 
-            upload_result, _ = await self.uploadscreens_manager.upload_screens(
-                upload_meta,
-                len(custom_img_list),
-                img_host_num,
-                0,
-                len(custom_img_list),
-                custom_img_list,
-                {},
+    @staticmethod
+    def _prompt_comparison_index() -> str:
+        logger.info(
+            "[red]No comparison index provided. Please specify a comparison index matching the input file."
+        )
+        while True:
+            cli_input = (
+                cli_ui.ask_string("Enter comparison index number: ") or ""
             )
+            try:
+                return str(int(cli_input.strip()))
+            except Exception:
+                logger.info(
+                    f"[red]Invalid comparison index: {cli_input.strip()}"
+                )
 
-            upload_result_list = cast(list[Mapping[str, Any]], upload_result)
-            uploaded_infos: list[dict[str, Any]] = [
-                {k: item.get(k) for k in ("img_url", "raw_url", "web_url")}
-                for item in upload_result_list
-            ]
-
-            group_name = suffixes.get(second, "")
-
-            meta_comparisons[second] = {
-                "files": group_files,
-                "urls": uploaded_infos,
-                "img_host": current_img_host,
-                "name": group_name,
-            }
-
+    def _generated_comparison_index(self) -> str:
         comparison_index = self.meta.comparison_index
         if comparison_index is None:
-            logger.info(
-                "[red]No comparison index provided. Please specify a comparison index matching the input file."
-            )
-            while True:
-                cli_input = (
-                    cli_ui.ask_string("Enter comparison index number: ") or ""
-                )
-                try:
-                    comparison_index = str(int(cli_input.strip()))
-                    break
-                except Exception:
-                    logger.info(
-                        f"[red]Invalid comparison index: {cli_input.strip()}"
-                    )
-        comparison_index_str = (
-            str(comparison_index).strip()
-            if comparison_index is not None
-            else ""
-        )
-        if comparison_index_str and comparison_index_str in meta_comparisons:
-            urls_to_add = cast(
-                list[dict[str, Any]],
-                meta_comparisons[comparison_index_str].get("urls", []),
-            )
-            if self.meta.debug:
-                logger.debug(
-                    f"[cyan]Adding {len(urls_to_add)} images from comparison group {comparison_index_str} to image_list"
-                )
+            return self._prompt_comparison_index()
+        return str(comparison_index).strip()
 
-            image_list = self.meta.image_list
-            self.meta.image_list = image_list
-            for url_info in urls_to_add:
-                if url_info not in image_list:
-                    image_list.append(url_info)
+    def _apply_generated_selection(self, comparisons: ComparisonData) -> None:
+        comparison_index = self._generated_comparison_index()
+        if not comparison_index or comparison_index not in comparisons:
+            return
+        urls = self._group_urls(comparisons[comparison_index])
+        if urls:
+            self._append_unique_urls(urls, comparison_index)
 
-        self.meta.comparison_groups = meta_comparisons
-
+    async def _save_comparison_data(
+        self, comparison_data_file: Path, comparisons: ComparisonData
+    ) -> None:
         try:
-            comparison_json = json.dumps(meta_comparisons, indent=4)
+            comparison_json = json.dumps(comparisons, indent=4)
             await asyncio.to_thread(
-                Path(comparison_data_file).write_text, comparison_json
+                comparison_data_file.write_text, comparison_json
             )
             if self.meta.debug:
                 logger.debug(
                     f"[cyan]Saved comparison data to {comparison_data_file}"
                 )
-        except Exception as e:
-            logger.info(f"[yellow]Failed to save comparison data: {e}")
+        except Exception as exc:
+            logger.info(f"[yellow]Failed to save comparison data: {exc}")
 
-        return meta_comparisons
+    async def add_comparison(self) -> ComparisonData | list[ComparisonGroup]:
+        comparison_path = self.meta.comparison
+        if not isinstance(comparison_path, str):
+            return []
+        comparison_dir = Path(comparison_path)
+        if not comparison_dir.is_dir():
+            return []
+
+        comparison_data_file = self._comparison_data_file()
+        saved_data = await self._load_saved_comparison(comparison_data_file)
+        if saved_data is not None:
+            return saved_data
+
+        comparisons = await self._build_comparison_data(comparison_dir)
+        self._apply_generated_selection(comparisons)
+        self.meta.comparison_groups = comparisons
+        await self._save_comparison_data(comparison_data_file, comparisons)
+        return comparisons
