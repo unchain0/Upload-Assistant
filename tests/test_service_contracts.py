@@ -1146,6 +1146,69 @@ _PROTECTED_SCENARIO_ARGUMENTS = frozenset(
 )
 
 
+def _safe_type_hints(function: Callable[..., object]) -> dict[str, Any]:
+    try:
+        return get_type_hints(function)
+    except NameError, TypeError:
+        return {}
+
+
+def _include_contract_parameter(
+    parameter: inspect.Parameter, overrides: Mapping[str, object]
+) -> bool:
+    if parameter.kind in {
+        inspect.Parameter.VAR_POSITIONAL,
+        inspect.Parameter.VAR_KEYWORD,
+    }:
+        return False
+    if parameter.default is inspect.Parameter.empty:
+        return True
+    return parameter.name in overrides
+
+
+def _contract_parameter_value(
+    parameter: inspect.Parameter,
+    annotation: object,
+    meta: Meta,
+    config: dict[str, Any],
+    tmp_path: Path,
+    profile: int,
+    overrides: Mapping[str, object],
+) -> object:
+    generated = _value(
+        parameter.name, annotation, meta, config, tmp_path, profile
+    )
+    value = overrides.get(parameter.name, generated)
+    return _coerce_contract_value(
+        value, annotation, tmp_path / "Example.Release.2024.mkv"
+    )
+
+
+def _invocation_arguments(
+    function: Callable[..., object],
+    meta: Meta,
+    config: dict[str, Any],
+    tmp_path: Path,
+    profile: int,
+    overrides: Mapping[str, object],
+) -> tuple[list[object], dict[str, object]]:
+    hints = _safe_type_hints(function)
+    positional: list[object] = []
+    keywords: dict[str, object] = {}
+    for parameter in inspect.signature(function).parameters.values():
+        if not _include_contract_parameter(parameter, overrides):
+            continue
+        annotation = hints.get(parameter.name, parameter.annotation)
+        value = _contract_parameter_value(
+            parameter, annotation, meta, config, tmp_path, profile, overrides
+        )
+        if parameter.kind is inspect.Parameter.KEYWORD_ONLY:
+            keywords[parameter.name] = value
+        else:
+            positional.append(value)
+    return positional, keywords
+
+
 async def _invoke(
     function: Callable[..., object],
     meta: Meta,
@@ -1154,38 +1217,10 @@ async def _invoke(
     profile: int,
     overrides: Mapping[str, object] | None = None,
 ) -> object:
-    positional: list[object] = []
-    keywords: dict[str, object] = {}
-    overrides = overrides or {}
-    try:
-        hints = get_type_hints(function)
-    except NameError, TypeError:
-        hints = {}
-    for parameter in inspect.signature(function).parameters.values():
-        if parameter.kind in {
-            inspect.Parameter.VAR_POSITIONAL,
-            inspect.Parameter.VAR_KEYWORD,
-        }:
-            continue
-        if (
-            parameter.default is not inspect.Parameter.empty
-            and parameter.name not in overrides
-        ):
-            continue
-        annotation = hints.get(parameter.name, parameter.annotation)
-        value = overrides.get(
-            parameter.name,
-            _value(
-                parameter.name, annotation, meta, config, tmp_path, profile
-            ),
-        )
-        value = _coerce_contract_value(
-            value, annotation, tmp_path / "Example.Release.2024.mkv"
-        )
-        if parameter.kind is inspect.Parameter.KEYWORD_ONLY:
-            keywords[parameter.name] = value
-        else:
-            positional.append(value)
+    resolved_overrides = overrides or {}
+    positional, keywords = _invocation_arguments(
+        function, meta, config, tmp_path, profile, resolved_overrides
+    )
     result = function(*positional, **keywords)
     if inspect.isawaitable(result):
         return await asyncio.wait_for(result, timeout=0.35)
