@@ -125,188 +125,220 @@ async def prompt_user_for_confirmation(
         ) from None
 
 
-async def check_images_concurrently(
+_RESOLUTION_HEIGHTS = {
+    "8640p": 8640,
+    "4320p": 4320,
+    "2160p": 2160,
+    "1440p": 1440,
+    "1080p": 1080,
+    "1080i": 1080,
+    "720p": 720,
+    "576p": 576,
+    "576i": 576,
+    "480p": 480,
+    "480i": 480,
+}
+
+
+def _log_duplicate_summary(
+    meta: Meta, unique_count: int, total_count: int
+) -> None:
+    if not meta.debug:
+        return
+    if unique_count >= total_count:
+        return
+    logger.info(
+        f"[yellow]Removed {total_count - unique_count} duplicate images from the list.[/yellow]"
+    )
+
+
+def _unique_images(
     imagelist: Sequence[ImageDict], meta: Meta
 ) -> list[ImageDict]:
     seen_urls: set[str] = set()
-    unique_images: list[ImageDict] = []
-
-    for img in imagelist:
-        img_url = cast(str | None, img.get("raw_url"))
-        if img_url and img_url not in seen_urls:
-            seen_urls.add(img_url)
-            unique_images.append(img)
-        elif img_url:
+    unique: list[ImageDict] = []
+    for image in imagelist:
+        url = cast(str | None, image.get("raw_url"))
+        if not url:
+            continue
+        if url in seen_urls:
             logger.debug(
-                f"[yellow]Removing duplicate image URL: {img_url}[/yellow]"
+                f"[yellow]Removing duplicate image URL: {url}[/yellow]"
             )
+            continue
+        seen_urls.add(url)
+        unique.append(image)
+    _log_duplicate_summary(meta, len(unique), len(imagelist))
+    return unique
 
-    if len(unique_images) < len(imagelist) and meta.debug:
-        logger.info(
-            f"[yellow]Removed {len(imagelist) - len(unique_images)} duplicate images from the list.[/yellow]"
-        )
 
-    # Map fixed resolution names to vertical resolutions
-    resolution_map = {
-        "8640p": 8640,
-        "4320p": 4320,
-        "2160p": 2160,
-        "1440p": 1440,
-        "1080p": 1080,
-        "1080i": 1080,
-        "720p": 720,
-        "576p": 576,
-        "576i": 576,
-        "480p": 480,
-        "480i": 480,
-    }
-
-    # Get expected vertical resolution
-    expected_resolution_name = cast(str | None, meta.resolution)
-    expected_vertical_resolution = resolution_map.get(
-        expected_resolution_name or ""
-    )
-
-    # If no valid resolution is found, skip processing
-    if expected_vertical_resolution is None:
+def _expected_image_height(meta: Meta) -> int | None:
+    resolution = str(meta.resolution or "")
+    expected = _RESOLUTION_HEIGHTS.get(resolution)
+    if expected is None:
         logger.info(
             "[red]Meta resolution is invalid or missing. Skipping all images.[/red]"
         )
-        return []
+    return expected
 
-    # Function to check each image's URL, host, and log resolution
+
+def _is_tmdb_image(url: str) -> bool:
+    host = (urlparse(url).hostname or "").lower()
+    return host == "tmdb.org" or host.endswith(".tmdb.org")
+
+
+async def _fetch_image_download(
+    session: httpx.AsyncClient, url: str
+) -> httpx.Response | None:
+    try:
+        return await session.get(url)
+    except TimeoutError:
+        logger.info(f"[red]Timeout downloading image: {url}")
+    except httpx.HTTPError as error:
+        logger.info(f"[red]Client error downloading image: {url} - {error}")
+    return None
+
+
+async def _download_image_bytes(
+    url: str, request_timeout: httpx.Timeout
+) -> bytes | None:
+    try:
+        async with httpx.AsyncClient(timeout=request_timeout) as session:
+            response = await _fetch_image_download(session, url)
+    except Exception as error:
+        logger.info(f"[red]Session error for image: {url} - {error}")
+        return None
+    if response is None:
+        return None
+    if response.status_code != 200:
+        logger.error(
+            f"[red]Failed to fetch image {url}. Status: {response.status_code}. Skipping."
+        )
+        return None
+    return response.content
+
+
+def _open_image(content: bytes, url: str) -> Image.Image | None:
+    try:
+        return Image.open(BytesIO(content))
+    except Exception as error:
+        logger.error(f"[red]Failed to process image {url}: {error}")
+        return None
+
+
+def _image_height_bounds(
+    expected_height: int, meta: Meta
+) -> tuple[float, float]:
+    upper_multiplier = 1.30 if meta.is_disc == "DVD" else 1.00
+    return expected_height * 0.70, expected_height * upper_multiplier
+
+
+def _image_resolution_allowed(
+    image: Image.Image, expected_height: int, meta: Meta, url: str
+) -> bool:
+    lower, upper = _image_height_bounds(expected_height, meta)
+    if lower <= image.height <= upper:
+        return True
+    logger.info(
+        f"[red]Image {url} resolution ({image.height}p) "
+        f"is outside the allowed range ({int(lower)}-{int(upper)}p). Skipping.[/red]"
+    )
+    return False
+
+
+async def _save_image_content(
+    content: bytes, url: str, image: Image.Image, meta: Meta
+) -> None:
     save_directory = Path(meta.base_dir) / "tmp" / meta.uuid
+    save_directory.mkdir(parents=True, exist_ok=True)
+    image_filename = save_directory / Path(url).name
+    await asyncio.to_thread(image_filename.write_bytes, content)
+    logger.info(f"Saved {url} as {image_filename}")
+    meta.image_sizes[url] = len(content)
+    logger.debug(
+        f"Valid image {url} with resolution {image.width}x{image.height} "
+        f"and size {len(content) / 1024:.2f} KiB"
+    )
 
-    timeout = httpx.Timeout(15.0, connect=5.0, read=5.0)
 
-    async def check_and_collect(image_dict: ImageDict) -> ImageDict | None:
-        # ``unique_images`` contains only entries with a non-empty raw URL.
-        img_url = cast(str, image_dict["raw_url"])
+async def _process_verified_image(
+    image_dict: ImageDict,
+    meta: Meta,
+    expected_height: int,
+    url: str,
+    content: bytes,
+) -> ImageDict | None:
+    image = _open_image(content, url)
+    if image is None:
+        return None
+    if not _image_resolution_allowed(image, expected_height, meta, url):
+        return None
+    await _save_image_content(content, url, image, meta)
+    return image_dict
 
-        # Handle when pixhost url points to web_url and convert to raw_url
-        if img_url.startswith("https://pixhost.to/show/"):
-            img_url = img_url.replace(
-                "https://pixhost.to/show/",
-                "https://img1.pixhost.to/images/",
-                1,
-            )
 
-        parsed_host = (urlparse(img_url).hostname or "").lower()
-        if parsed_host == "tmdb.org" or parsed_host.endswith(".tmdb.org"):
-            return None
+async def _verified_image_dict(
+    image_dict: ImageDict,
+    meta: Meta,
+    expected_height: int,
+    request_timeout: httpx.Timeout,
+) -> ImageDict | None:
+    url = _normalized_image_url(cast(str, image_dict["raw_url"]))
+    if _is_tmdb_image(url):
+        return None
+    try:
+        link_ok = await check_image_link(url, request_timeout)
+    except Exception as error:
+        logger.error(f"[red]Error checking image: {url} - {error}")
+        return None
+    if not link_ok:
+        return None
+    content = await _download_image_bytes(url, request_timeout)
+    if content is None:
+        return None
+    return await _process_verified_image(
+        image_dict, meta, expected_height, url, content
+    )
 
-        # Verify the image link
-        try:
-            if await check_image_link(img_url, timeout):
-                try:
-                    async with httpx.AsyncClient(timeout=timeout) as session:
-                        try:
-                            response = await session.get(img_url)
-                            if response.status_code == 200:
-                                image_content = response.content
 
-                                try:
-                                    image = Image.open(BytesIO(image_content))
-                                    vertical_resolution = image.height
-                                    lower_bound = (
-                                        expected_vertical_resolution * 0.70
-                                    )
-                                    upper_bound = (
-                                        expected_vertical_resolution
-                                        * (
-                                            1.30
-                                            if meta.is_disc == "DVD"
-                                            else 1.00
-                                        )
-                                    )
+async def _bounded_image_check(
+    semaphore: asyncio.Semaphore,
+    image_dict: ImageDict,
+    meta: Meta,
+    expected_height: int,
+    request_timeout: httpx.Timeout,
+) -> ImageDict | None:
+    async with semaphore:
+        return await _verified_image_dict(
+            image_dict, meta, expected_height, request_timeout
+        )
 
-                                    if not (
-                                        lower_bound
-                                        <= vertical_resolution
-                                        <= upper_bound
-                                    ):
-                                        logger.info(
-                                            f"[red]Image {img_url} resolution ({vertical_resolution}p) "
-                                            f"is outside the allowed range ({int(lower_bound)}-{int(upper_bound)}p). Skipping.[/red]"
-                                        )
-                                        return None
 
-                                    # Save image
-                                    Path(save_directory).mkdir(
-                                        parents=True, exist_ok=True
-                                    )
-                                    image_filename = (
-                                        Path(save_directory)
-                                        / Path(img_url).name
-                                    )
-                                    await asyncio.to_thread(
-                                        Path(image_filename).write_bytes,
-                                        image_content,
-                                    )
-
-                                    logger.info(
-                                        f"Saved {img_url} as {image_filename}"
-                                    )
-
-                                    meta.image_sizes[img_url] = len(
-                                        image_content
-                                    )
-
-                                    logger.debug(
-                                        f"Valid image {img_url} with resolution {image.width}x{image.height} and size {len(image_content) / 1024:.2f} KiB"
-                                    )
-                                    return image_dict
-                                except Exception as e:
-                                    logger.error(
-                                        f"[red]Failed to process image {img_url}: {e}"
-                                    )
-                                    return None
-                            else:
-                                logger.error(
-                                    f"[red]Failed to fetch image {img_url}. Status: {response.status_code}. Skipping."
-                                )
-                                return None
-                        except TimeoutError:
-                            logger.info(
-                                f"[red]Timeout downloading image: {img_url}"
-                            )
-                            return None
-                        except httpx.HTTPError as e:
-                            logger.info(
-                                f"[red]Client error downloading image: {img_url} - {e}"
-                            )
-                            return None
-                except Exception as e:
-                    logger.info(
-                        f"[red]Session error for image: {img_url} - {e}"
-                    )
-                    return None
-            else:
-                return None
-        except Exception as e:
-            logger.error(f"[red]Error checking image: {img_url} - {e}")
-            return None
-
-    # Run image verification concurrently but with a limit to prevent too many simultaneous connections
-    semaphore = asyncio.Semaphore(2)  # Limit concurrent requests to 2
-
-    async def bounded_check(image_dict: ImageDict) -> ImageDict | None:
-        async with semaphore:
-            return await check_and_collect(image_dict)
-
-    tasks = [bounded_check(image_dict) for image_dict in unique_images]
-
+async def _gather_valid_images(tasks: Sequence[Any]) -> list[ImageDict]:
     try:
         results = await asyncio.gather(*tasks, return_exceptions=False)
-    except Exception as e:
-        logger.error(f"[red]Error during image processing: {e}")
-        results = []
+    except Exception as error:
+        logger.error(f"[red]Error during image processing: {error}")
+        return []
+    return [cast(ImageDict, image) for image in results if image is not None]
 
-    # Collect valid images and limit to amount set in config
-    valid_images = [image for image in results if image is not None]
+
+async def check_images_concurrently(
+    imagelist: Sequence[ImageDict], meta: Meta
+) -> list[ImageDict]:
+    unique_images = _unique_images(imagelist, meta)
+    expected_height = _expected_image_height(meta)
+    if expected_height is None:
+        return []
+    timeout = httpx.Timeout(15.0, connect=5.0, read=5.0)
+    semaphore = asyncio.Semaphore(2)
+    tasks = [
+        _bounded_image_check(semaphore, image, meta, expected_height, timeout)
+        for image in unique_images
+    ]
+    valid_images = await _gather_valid_images(tasks)
     if expected_images < len(valid_images):
-        valid_images = valid_images[:expected_images]
-
+        return valid_images[:expected_images]
     return valid_images
 
 
