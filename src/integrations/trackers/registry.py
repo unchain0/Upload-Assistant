@@ -145,7 +145,8 @@ class TrackerSetup:
             return False
         supported = getattr(tracker_class, "supported_categories", None)
         if supported is None:
-            self._mark_tracker_skipped(meta, tracker_name)
+            reason = "Tracker does not define 'supported_categories' and was removed from the queue"
+            self._mark_tracker_skipped(meta, tracker_name, reason)
             logger.info(
                 f"{tracker_name}: [bold red]Error: Tracker does not have 'supported_categories' defined. Removing from queue.[/bold red]",
                 extra={"markup": False},
@@ -153,10 +154,11 @@ class TrackerSetup:
             return False
         if self._category_supported(category, supported):
             return True
+        reason = f"Category '{category}' is not supported by this tracker"
         logger.info(
             f"{tracker_name}: [bold red]category '{category}' is not supported. Removing from queue.[/bold red]"
         )
-        self._mark_tracker_skipped(meta, tracker_name)
+        self._mark_tracker_skipped(meta, tracker_name, reason)
         return False
 
     def _required_tracker_config_present(
@@ -166,11 +168,10 @@ class TrackerSetup:
         if not missing:
             return True
         self._log_missing_tracker_config(tracker_name, missing)
-        self._mark_tracker_skipped(meta, tracker_name)
-        status = meta.tracker_status[tracker_name]
-        status["status_message"] = (
-            "Missing required tracker configuration: " + ", ".join(missing)
+        reason = "Missing required tracker configuration: " + ", ".join(
+            missing
         )
+        self._mark_tracker_skipped(meta, tracker_name, reason)
         return False
 
     def _missing_required_tracker_config(self, tracker_name: str) -> list[str]:
@@ -214,12 +215,17 @@ class TrackerSetup:
         return category.upper() in {str(value).upper() for value in values}
 
     @staticmethod
-    def _mark_tracker_skipped(meta: Meta, tracker_name: str) -> None:
+    def _mark_tracker_skipped(
+        meta: Meta, tracker_name: str, reason: str | None = None
+    ) -> None:
         status = meta.setdefault("tracker_status", {}).setdefault(
             tracker_name, {}
         )
         status["upload"] = False
         status["skipped"] = True
+        if reason:
+            status["skip_reason"] = reason
+            status["status_message"] = reason
 
     def trackers_enabled(self, meta: Meta) -> list[str]:
         trackers = self._normalized_tracker_names(meta)

@@ -25,8 +25,18 @@ def test_music_trackers_are_filtered_before_tracker_specific_work():
     setup.filter_unsupported_trackers(meta)
 
     assert meta.trackers == ["ORPHEUS"]
-    assert meta.tracker_status["HDBITS"] == {"upload": False, "skipped": True}
-    assert meta.tracker_status["AITHER"] == {"upload": False, "skipped": True}
+    assert meta.tracker_status["HDBITS"] == {
+        "upload": False,
+        "skipped": True,
+        "skip_reason": "Category 'MUSIC' is not supported by this tracker",
+        "status_message": "Category 'MUSIC' is not supported by this tracker",
+    }
+    assert meta.tracker_status["AITHER"] == {
+        "upload": False,
+        "skipped": True,
+        "skip_reason": "Category 'MUSIC' is not supported by this tracker",
+        "status_message": "Category 'MUSIC' is not supported by this tracker",
+    }
 
 
 def test_cathoderaytube_is_registered_for_supported_categories():

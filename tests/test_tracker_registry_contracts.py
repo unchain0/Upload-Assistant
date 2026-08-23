@@ -210,7 +210,12 @@ def test_tracker_filtering_enablement_cover_missing_da8707(
     meta = _meta(tmp_path, trackers=["NOAPI", "TEST", "NOCATS", "UNKNOWN"])
     setup.filter_unsupported_trackers(meta)
     assert meta.trackers == ["TEST", "UNKNOWN"]
-    assert meta.tracker_status["NOCATS"] == {"upload": False, "skipped": True}
+    assert meta.tracker_status["NOCATS"] == {
+        "upload": False,
+        "skipped": True,
+        "skip_reason": "Tracker does not define 'supported_categories' and was removed from the queue",
+        "status_message": "Tracker does not define 'supported_categories' and was removed from the queue",
+    }
 
     debug_meta = _meta(tmp_path, trackers=["NOAPI"], debug=True)
     setup.filter_unsupported_trackers(debug_meta)
@@ -221,6 +226,9 @@ def test_tracker_filtering_enablement_cover_missing_da8707(
     setup.filter_unsupported_trackers(unsupported)
     assert unsupported.trackers == []
     assert unsupported.tracker_status["TEST"]["skipped"] is True
+    assert unsupported.tracker_status["TEST"]["skip_reason"] == (
+        "Category 'BOOK' is not supported by this tracker"
+    )
 
     empty_category = _meta(tmp_path, category=None, trackers=["TEST"])
     setup.filter_unsupported_trackers(empty_category)

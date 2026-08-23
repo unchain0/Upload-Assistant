@@ -28,6 +28,8 @@ def test_retromoviesclub_filters_non_movie_categories():
     assert meta.tracker_status["RETROMOVIESCLUB"] == {
         "upload": False,
         "skipped": True,
+        "skip_reason": "Category 'TV' is not supported by this tracker",
+        "status_message": "Category 'TV' is not supported by this tracker",
     }
 
 

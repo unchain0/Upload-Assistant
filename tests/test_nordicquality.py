@@ -25,6 +25,8 @@ def test_nordicquality_filters_unsupported_categories():
     assert meta.tracker_status["NORDICQUALITY"] == {
         "upload": False,
         "skipped": True,
+        "skip_reason": "Category 'XXX' is not supported by this tracker",
+        "status_message": "Category 'XXX' is not supported by this tracker",
     }
 
 
