@@ -103,11 +103,149 @@ def tracker_sort_key(name: str) -> tuple[bool, bool, str]:
     return name != "default_trackers", name == "MANUAL", name
 
 
+def _example_config_key(stripped: str) -> str:
+    return stripped.split(":", 1)[0].strip().strip("\"'")
+
+
+def _example_fq_key(key_stack: list[str], key: str) -> str:
+    if not key_stack:
+        return key
+    return ".".join([*key_stack, key])
+
+
+def _pop_example_nesting(
+    key_stack: list[str], indent_stack: list[int], indent: int
+) -> None:
+    while indent_stack:
+        if indent > indent_stack[-1]:
+            return
+        if key_stack:
+            key_stack.pop()
+        indent_stack.pop()
+
+
+def _store_example_comments(
+    comments: ConfigComments,
+    current_comments: list[str],
+    key: str,
+    fq_key: str,
+) -> list[str]:
+    if not current_comments:
+        return current_comments
+    comments[key] = list(current_comments)
+    comments[fq_key] = list(current_comments)
+    return []
+
+
+def _is_example_mapping_start(stripped: str) -> bool:
+    return (
+        "{" in stripped
+        and ":" in stripped
+        and not stripped.startswith("config")
+    )
+
+
+def _update_example_nesting(
+    stripped: str,
+    indent: int,
+    comments: ConfigComments,
+    current_comments: list[str],
+    key_stack: list[str],
+    indent_stack: list[int],
+) -> list[str]:
+    if _is_example_mapping_start(stripped):
+        key = _example_config_key(stripped)
+        _pop_example_nesting(key_stack, indent_stack, indent)
+        fq_key = _example_fq_key(key_stack, key)
+        current_comments = _store_example_comments(
+            comments, current_comments, key, fq_key
+        )
+        key_stack.append(key)
+        indent_stack.append(indent)
+        return current_comments
+    if "}" in stripped:
+        _pop_example_nesting(key_stack, indent_stack, indent)
+    return current_comments
+
+
+def _is_example_key_line(stripped: str) -> bool:
+    return (
+        ":" in stripped
+        and not stripped.startswith("{")
+        and not stripped.startswith("config")
+    )
+
+
+def _is_example_comment_passthrough(stripped: str) -> bool:
+    return not stripped or stripped in {"},", "}"}
+
+
+def _update_example_comments(
+    stripped: str,
+    comments: ConfigComments,
+    current_comments: list[str],
+    key_stack: list[str],
+) -> list[str]:
+    if stripped.startswith("#"):
+        current_comments.append(stripped)
+        return current_comments
+    if _is_example_key_line(stripped):
+        key = _example_config_key(stripped)
+        fq_key = _example_fq_key(key_stack, key)
+        return _store_example_comments(comments, current_comments, key, fq_key)
+    if _is_example_comment_passthrough(stripped):
+        return current_comments
+    return []
+
+
+def _parse_example_comments(
+    lines: list[str], comments: ConfigComments
+) -> None:
+    current_comments: list[str] = []
+    key_stack: list[str] = []
+    indent_stack = [0]
+    for line in lines:
+        line = line.rstrip("\n")
+        stripped = line.lstrip()
+        indent = len(line) - len(stripped)
+        current_comments = _update_example_nesting(
+            stripped,
+            indent,
+            comments,
+            current_comments,
+            key_stack,
+            indent_stack,
+        )
+        current_comments = _update_example_comments(
+            stripped, comments, current_comments, key_stack
+        )
+
+
+def _parse_example_config_content(content: str) -> ConfigDict | None:
+    match = re.search(
+        r"config(?:\s*:\s*[^{=]+)?\s*=\s*({.*})", content, re.DOTALL
+    )
+    if not match:
+        console.print(
+            "[!] Warning: Could not parse example config", markup=False
+        )
+        return None
+    example_config = ast.literal_eval(match.group(1))
+    if not isinstance(example_config, dict):
+        console.print(
+            "[!] Warning: Example config is not a dict", markup=False
+        )
+        return None
+    console.print(
+        "[OK] Successfully loaded example config template", markup=False
+    )
+    return cast(ConfigDict, example_config)
+
+
 def read_example_config() -> tuple[ConfigDict | None, ConfigComments]:
     """Read the example config file and return its structure and comments"""
     example_path = CODE_DIR / "data" / "example_config.py"
     comments: ConfigComments = {}
-
     if not example_path.exists():
         console.print(
             "[!] Warning: Could not find data/example_config.py", markup=False
@@ -116,89 +254,16 @@ def read_example_config() -> tuple[ConfigDict | None, ConfigComments]:
             "[i] Using built-in default structure instead", markup=False
         )
         return None, comments
-
     try:
         with Path(example_path).open(encoding="utf-8") as file:
             lines = file.readlines()
-
-        current_comments: list[str] = []
-        key_stack: list[str] = []
-        indent_stack = [0]
-
-        for _idx, line in enumerate(lines):
-            line = line.rstrip("\n")
-            stripped = line.lstrip()
-            indent = len(line) - len(stripped)
-
-            # Track nesting for fully qualified keys
-            if (
-                "{" in stripped
-                and ":" in stripped
-                and not stripped.startswith("config")
-            ):
-                key = stripped.split(":", 1)[0].strip().strip("\"'")
-                while indent_stack and indent <= indent_stack[-1]:
-                    if key_stack:
-                        key_stack.pop()
-                    indent_stack.pop()
-                fq_key = ".".join([*key_stack, key]) if key_stack else key
-                if current_comments:
-                    comments[key] = list(current_comments)
-                    comments[fq_key] = list(current_comments)
-                    current_comments = []
-                key_stack.append(key)
-                indent_stack.append(indent)
-            elif "}" in stripped:
-                while indent_stack and indent <= indent_stack[-1]:
-                    if key_stack:  # Avoid popping from empty list
-                        key_stack.pop()
-                    indent_stack.pop()
-
-            if stripped.startswith("#"):
-                current_comments.append(stripped)
-            elif (
-                ":" in stripped
-                and not stripped.startswith("{")
-                and not stripped.startswith("config")
-            ):
-                key = stripped.split(":", 1)[0].strip().strip("\"'")
-                # Build fully qualified key path
-                fq_key = ".".join([*key_stack, key]) if key_stack else key
-
-                if current_comments:
-                    comments[key] = list(current_comments)
-                    comments[fq_key] = list(current_comments)
-                    current_comments = []
-            elif not stripped or stripped in ["},", "}"]:  # Empty line
-                pass  # Keep the comments for the next key
-            else:
-                current_comments = []  # Clear comments on other lines
-
-        # Extract the config dict from the file content
-        content = "".join(lines)
-        match = re.search(
-            r"config(?:\s*:\s*[^{=]+)?\s*=\s*({.*})", content, re.DOTALL
-        )
-        if not match:
-            console.print(
-                "[!] Warning: Could not parse example config", markup=False
-            )
-            return None, comments
-
-        config_dict_str = match.group(1)
-        example_config = ast.literal_eval(config_dict_str)
-        if not isinstance(example_config, dict):
-            console.print(
-                "[!] Warning: Example config is not a dict", markup=False
-            )
-            return None, comments
-
+        _parse_example_comments(lines, comments)
+        example_config = _parse_example_config_content("".join(lines))
+        return example_config, comments
+    except Exception as exc:
         console.print(
-            "[OK] Successfully loaded example config template", markup=False
+            f"[!] Error parsing example config: {exc!s}", markup=False
         )
-        return cast(ConfigDict, example_config), comments
-    except Exception as e:
-        console.print(f"[!] Error parsing example config: {e!s}", markup=False)
         return None, comments
 
 
