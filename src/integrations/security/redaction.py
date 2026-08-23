@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
@@ -28,6 +29,71 @@ SENSITIVE_KEYS: set[str] = {
     "Popcron",
 }
 
+_CLOSING_BRACKETS = {"}": "{", "]": "["}
+
+
+@dataclass
+class _JsonBlockScanner:
+    blocks: list[tuple[int, int]] = field(default_factory=list)
+    stack: list[str] = field(default_factory=list)
+    start: int | None = None
+    in_string: bool = False
+    escape: bool = False
+
+    def _consume_string_char(self, ch: str) -> bool:
+        if self.escape:
+            self.escape = False
+            return True
+        if not self.in_string:
+            return False
+        if ch == "\\":
+            self.escape = True
+        elif ch == '"':
+            self.in_string = False
+        return True
+
+    def _start_string(self, ch: str) -> bool:
+        if ch != '"':
+            return False
+        self.in_string = True
+        return True
+
+    def _push_opening_bracket(self, index: int, ch: str) -> bool:
+        if ch not in {"{", "["}:
+            return False
+        if not self.stack:
+            self.start = index
+        self.stack.append(ch)
+        return True
+
+    def _matches_closing_bracket(self, ch: str) -> bool:
+        expected_opening = _CLOSING_BRACKETS.get(ch)
+        return (
+            expected_opening is not None
+            and bool(self.stack)
+            and self.stack[-1] == expected_opening
+        )
+
+    def _pop_closing_bracket(self, index: int, ch: str) -> None:
+        if not self._matches_closing_bracket(ch):
+            return
+        self.stack.pop()
+        if self.stack:
+            return
+        if self.start is None:
+            return
+        self.blocks.append((self.start, index + 1))
+        self.start = None
+
+    def consume(self, index: int, ch: str) -> None:
+        if self._consume_string_char(ch):
+            return
+        if self._start_string(ch):
+            return
+        if self._push_opening_bracket(index, ch):
+            return
+        self._pop_closing_bracket(index, ch)
+
 
 class PathAwareEncoder(json.JSONEncoder):
     """JSON encoder that converts pathlib.Path objects to strings."""
@@ -41,82 +107,100 @@ class PathAwareEncoder(json.JSONEncoder):
 class Redaction:
     @staticmethod
     def extract_json_blocks(text: str) -> list[tuple[int, int]]:
-        """Extract JSON-like blocks from a string using bracket counting.
+        """Extract balanced JSON-like object/array slices from embedded text."""
+        scanner = _JsonBlockScanner()
+        for index, ch in enumerate(text):
+            scanner.consume(index, ch)
+        return scanner.blocks
 
-        Returns a list of (start, end) slices where `text[start:end]` is a candidate JSON
-        object (`{...}`) or array (`[...]`). This supports *nested* JSON by tracking a
-        bracket stack, and ignores brackets that occur inside quoted strings.
+    @staticmethod
+    def _redacted_json_block(
+        json_str: str, sensitive_keys: set[str]
+    ) -> str | None:
+        try:
+            parsed = json.loads(json_str)
+        except json.JSONDecodeError, TypeError:
+            return None
+        try:
+            redacted = Redaction.redact_private_info(parsed, sensitive_keys)
+            return json.dumps(redacted)
+        except TypeError, ValueError:
+            return None
 
-        Notes / limitations:
-        - This is a best-effort extractor for embedded JSON substrings.
-        - It does not attempt to support non-standard JSON (JSON5, trailing commas, etc.).
-        - Blocks are only redacted if `json.loads` successfully parses them.
-        """
-        blocks: list[tuple[int, int]] = []
-        stack: list[str] = []
-        start: int | None = None
-        in_string = False
-        string_char: str | None = None
-        escape = False
-        for i, ch in enumerate(text):
-            if escape:
-                escape = False
+    @staticmethod
+    def _redact_embedded_json(value: str, sensitive_keys: set[str]) -> str:
+        for start, end in reversed(Redaction.extract_json_blocks(value)):
+            redacted = Redaction._redacted_json_block(
+                value[start:end], sensitive_keys
+            )
+            if redacted is None:
                 continue
-            if in_string:
-                if ch == "\\":
-                    escape = True
-                elif ch == string_char:
-                    in_string = False
-                    string_char = None
-                continue
-            if ch == '"':
-                in_string = True
-                string_char = ch
-                continue
-            if ch in ("{", "["):
-                if not stack:
-                    start = i
-                stack.append(ch)
-                continue
-            if ch in ("}", "]") and stack:
-                top = stack[-1]
-                if (ch == "}" and top == "{") or (ch == "]" and top == "["):
-                    stack.pop()
-                    if not stack and start is not None:
-                        blocks.append((start, i + 1))
-                        start = None
-        return blocks
+            value = value[:start] + redacted + value[end:]
+        return value
+
+    @staticmethod
+    def _redact_string_patterns(value: str) -> str:
+        value = re.sub(
+            "(?<=/)[a-zA-Z0-9]{10,}(?=/announce)", "[REDACTED]", value
+        )
+        value = re.sub("(?<=/proxy/)[^/]+(?=/api)", "[REDACTED]", value)
+        value = re.sub(
+            "([?&](passkey|key|token|api_key|auth|info_hash|torrent_pass)=)[^&]+",
+            "\\1[REDACTED]",
+            value,
+            flags=re.I,
+        )
+        return re.sub("\\b[a-fA-F0-9]{32,}\\b", "[REDACTED]", value)
 
     @staticmethod
     def redact_value(val: Any, sensitive_keys: set[str] | None = None) -> Any:
         """Redact sensitive values, including passkeys in URLs and JSON substrings."""
+        if not isinstance(val, str):
+            return val
         keys = sensitive_keys or SENSITIVE_KEYS
-        if isinstance(val, str):
-            blocks = Redaction.extract_json_blocks(val)
-            for start, end in reversed(blocks):
-                json_str = val[start:end]
-                try:
-                    parsed = json.loads(json_str)
-                except json.JSONDecodeError, TypeError:
-                    continue
-                try:
-                    redacted = Redaction.redact_private_info(parsed, keys)
-                    redacted_str = json.dumps(redacted)
-                except TypeError, ValueError:
-                    continue
-                val = val[:start] + redacted_str + val[end:]
-            val = re.sub(
-                "(?<=/)[a-zA-Z0-9]{10,}(?=/announce)", "[REDACTED]", val
+        value = Redaction._redact_embedded_json(val, keys)
+        return Redaction._redact_string_patterns(value)
+
+    @staticmethod
+    def _is_sensitive_key(key: str, sensitive_keys: set[str]) -> bool:
+        lowered = key.lower()
+        return any(
+            sensitive.lower() in lowered for sensitive in sensitive_keys
+        )
+
+    @staticmethod
+    def _redact_mapping(
+        data: dict[str, Any], sensitive_keys: set[str]
+    ) -> dict[str, Any]:
+        redacted: dict[str, Any] = {}
+        for key, value in data.items():
+            if Redaction._is_sensitive_key(key, sensitive_keys):
+                redacted[key] = "[REDACTED]"
+                continue
+            redacted[key] = Redaction.redact_private_info(
+                value, sensitive_keys
             )
-            val = re.sub("(?<=/proxy/)[^/]+(?=/api)", "[REDACTED]", val)
-            val = re.sub(
-                "([?&](passkey|key|token|api_key|auth|info_hash|torrent_pass)=)[^&]+",
-                "\\1[REDACTED]",
-                val,
-                flags=re.I,
-            )
-            val = re.sub("\\b[a-fA-F0-9]{32,}\\b", "[REDACTED]", val)
-        return val
+        return redacted
+
+    @staticmethod
+    def _redact_sequence(
+        data: list[Any], sensitive_keys: set[str]
+    ) -> list[Any]:
+        return [
+            Redaction.redact_private_info(item, sensitive_keys)
+            for item in data
+        ]
+
+    @staticmethod
+    def _redact_string(value: str, sensitive_keys: set[str]) -> str:
+        try:
+            parsed_json = json.loads(value)
+        except json.JSONDecodeError, TypeError:
+            return cast(str, Redaction.redact_value(value, sensitive_keys))
+        redacted_json = Redaction.redact_private_info(
+            parsed_json, sensitive_keys
+        )
+        return json.dumps(redacted_json)
 
     @staticmethod
     def redact_private_info(
@@ -125,27 +209,11 @@ class Redaction:
         """Recursively redact sensitive info in dicts/lists/strings containing JSON."""
         keys = sensitive_keys or SENSITIVE_KEYS
         if isinstance(data, dict):
-            typed_data = cast(dict[str, Any], data)
-            return {
-                k: "[REDACTED]"
-                if any(s.lower() in k.lower() for s in keys)
-                else Redaction.redact_private_info(v, keys)
-                for k, v in typed_data.items()
-            }
+            return Redaction._redact_mapping(cast(dict[str, Any], data), keys)
         if isinstance(data, list):
-            return [
-                Redaction.redact_private_info(item, keys)
-                for item in cast(list[Any], data)
-            ]
+            return Redaction._redact_sequence(cast(list[Any], data), keys)
         if isinstance(data, str):
-            try:
-                parsed_json = json.loads(data)
-                redacted_json = Redaction.redact_private_info(
-                    parsed_json, keys
-                )
-                return json.dumps(redacted_json)
-            except json.JSONDecodeError, TypeError:
-                return Redaction.redact_value(data, keys)
+            return Redaction._redact_string(data, keys)
         return data
 
     @staticmethod
