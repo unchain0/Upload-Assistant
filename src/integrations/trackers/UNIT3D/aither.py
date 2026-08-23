@@ -200,6 +200,13 @@ class Aither(UNIT3D):
             1,
         )
 
+    @staticmethod
+    def _dvd_disc_applies(meta: Meta, name_type: str, source: str) -> bool:
+        return bool(
+            meta.is_disc == "DVD"
+            or (name_type == "DISC" and source == "DVD")
+        )
+
     @classmethod
     def _dvd_adjusted_name(
         cls,
@@ -212,7 +219,7 @@ class Aither(UNIT3D):
     ) -> str:
         if name_type == "DVDRIP":
             return cls._dvdrip_name(meta, name, resolution)
-        if meta.is_disc == "DVD":
+        if cls._dvd_disc_applies(meta, name_type, source):
             return cls._dvd_disc_name(
                 meta,
                 name,

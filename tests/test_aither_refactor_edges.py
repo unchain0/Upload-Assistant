@@ -23,12 +23,21 @@ def test_aither_positive_checks_and_hdr_flag_edges(
     assert asyncio.run(
         tracker.get_additional_checks(Meta(is_disc="", valid_mi=True))
     )
+    tracker.common.check_language_requirements = AsyncMock(return_value=False)  # type: ignore[method-assign]
+    assert not asyncio.run(
+        tracker.get_additional_checks(Meta(is_disc="", valid_mi=True))
+    )
+    assert not asyncio.run(
+        tracker.get_additional_checks(Meta(is_disc="BDMV", valid_mi=False))
+    )
+
     monkeypatch.setattr(tracker, "get_flag", AsyncMock(return_value=1))
     assert asyncio.run(tracker.get_additional_data(Meta(hdr="DV HDR10+"))) == {
         "mod_queue_opt_in": 1,
         "dv": 1,
         "hdr10p": 1,
     }
+    assert tracker._hdr_flags("DV HDR") == {"dv": 1, "hdr": 1}
 
 
 def test_aither_year_helper_edges() -> None:
@@ -43,6 +52,7 @@ def test_aither_year_helper_edges() -> None:
         == "2025"
     )
     assert tracker._manual_year(Meta(manual_year=2024)) == "2024"
+    assert tracker._manual_year(Meta(manual_year=0)) == ""
     assert (
         tracker._resolved_year(
             Meta(category="MOVIE", year=2025, manual_year=2024)
@@ -82,6 +92,14 @@ def test_aither_foreign_language_helper_edges(
     assert asyncio.run(tracker._foreign_language(meta)) == ""
     english.assert_awaited_once_with(["English"])
 
+    monkeypatch.setattr(
+        aither_module.languages_manager,
+        "has_english_language",
+        AsyncMock(return_value=False),
+    )
+    foreign = Meta(language_checked=True, audio_languages=["French"])
+    assert asyncio.run(tracker._foreign_language(foreign)) == "FRENCH"
+
 
 def test_aither_foreign_language_application_edges() -> None:
     tracker = _tracker()
@@ -90,6 +108,39 @@ def test_aither_foreign_language_application_edges() -> None:
         resolution="480p",
         audio="AAC",
         video_encode="x264",
+    )
+    assert (
+        tracker._apply_foreign_language(
+            remux,
+            "Movie 480p",
+            "2025",
+            "WEBDL",
+            "WEB",
+            "",
+        )
+        == "Movie 480p"
+    )
+    assert (
+        tracker._apply_foreign_language(
+            remux,
+            "Movie 480p",
+            "2025",
+            "WEBDL",
+            "WEB",
+            "FRENCH",
+        )
+        == "Movie FRENCH 480p"
+    )
+    assert (
+        tracker._apply_foreign_language(
+            remux,
+            "Movie 2025 DVD REMUX",
+            "2025",
+            "REMUX",
+            "DVD",
+            "FRENCH",
+        )
+        == "Movie 2025 FRENCH DVD REMUX"
     )
     assert (
         tracker._apply_foreign_language(
@@ -199,3 +250,138 @@ def test_aither_dvd_adjustment_and_final_name_edges() -> None:
         tracker._final_name(trump, "Movie 2025", "2025")
         == "Movie 2025 - TRUMP"
     )
+
+
+def test_aither_additional_check_failure_and_disc_edges() -> None:
+    tracker = _tracker()
+    language_check = AsyncMock(return_value=False)
+    tracker.common.check_language_requirements = language_check  # type: ignore[method-assign]
+    assert not asyncio.run(
+        tracker.get_additional_checks(Meta(is_disc="", valid_mi=True))
+    )
+
+    language_check.reset_mock()
+    assert asyncio.run(
+        tracker.get_additional_checks(Meta(is_disc="BDMV", valid_mi=True))
+    )
+    language_check.assert_not_awaited()
+
+    tracker.common.check_language_requirements = AsyncMock(return_value=True)  # type: ignore[method-assign]
+    assert not asyncio.run(
+        tracker.get_additional_checks(Meta(is_disc="", valid_mi=False))
+    )
+
+
+def test_aither_hdr_and_year_fallback_edges() -> None:
+    assert Aither._hdr_flags("HDR") == {"hdr": 1}
+    assert Aither._hdr_flags("HLG") == {"hdr": 1}
+    assert Aither._hdr_flags("") == {}
+    assert Aither._base_year(Meta(category="MOVIE", year=2025)) == "2025"
+    assert Aither._manual_year(Meta(manual_year=0)) == ""
+    assert (
+        Aither._resolved_year(
+            Meta(category="MOVIE", year=2025, manual_year=0)
+        )
+        == "2025"
+    )
+
+
+def test_aither_non_english_language_edge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracker = _tracker()
+    monkeypatch.setattr(
+        aither_module.languages_manager,
+        "has_english_language",
+        AsyncMock(return_value=False),
+    )
+    meta = Meta(language_checked=True, audio_languages=["French"])
+    assert asyncio.run(tracker._foreign_language(meta)) == "FRENCH"
+
+
+def test_aither_foreign_language_injection_edges() -> None:
+    web = Meta(is_disc="", resolution="1080p")
+    assert (
+        Aither._apply_foreign_language(
+            web,
+            "Movie 1080p",
+            "2025",
+            "WEBDL",
+            "WEB",
+            "",
+        )
+        == "Movie 1080p"
+    )
+    assert (
+        Aither._apply_foreign_language(
+            web,
+            "Movie 1080p",
+            "2025",
+            "WEBDL",
+            "WEB",
+            "FRENCH",
+        )
+        == "Movie FRENCH 1080p"
+    )
+
+    dvd = Meta(is_disc="", resolution="480p")
+    assert (
+        Aither._apply_foreign_language(
+            dvd,
+            "Movie 2025 DVD REMUX",
+            "2025",
+            "REMUX",
+            "DVD",
+            "FRENCH",
+        )
+        == "Movie 2025 FRENCH DVD REMUX"
+    )
+
+
+def test_aither_dvd_remux_and_alt_title_edges() -> None:
+    meta = Meta(source="PAL DVD", audio="AAC")
+    assert (
+        Aither._dvd_adjusted_name(
+            meta,
+            "Movie PAL DVD AAC",
+            "480p",
+            "H.264",
+            "REMUX",
+            "PAL DVD",
+        )
+        == "Movie 480p PAL DVD H.264 AAC"
+    )
+
+    aka = Meta(aka="AKA Title", no_aka=False)
+    assert (
+        Aither._final_name(aka, "Movie 2025 AKA Title", "2025")
+        == "Movie AKA Title 2025"
+    )
+
+
+def test_aither_get_name_orchestration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracker = _tracker()
+    monkeypatch.setattr(
+        aither_module.languages_manager,
+        "has_english_language",
+        AsyncMock(return_value=True),
+    )
+    meta = Meta(
+        category="MOVIE",
+        name="Movie 2025 1080p WEB-DL",
+        year=2025,
+        manual_year=0,
+        type="WEBDL",
+        source="WEB",
+        resolution="1080p",
+        video_codec="H.264",
+        language_checked=True,
+        audio_languages=["English"],
+        aka="",
+        no_aka=True,
+    )
+    assert asyncio.run(tracker.get_name(meta)) == {
+        "name": "Movie 2025 1080p WEB-DL"
+    }
