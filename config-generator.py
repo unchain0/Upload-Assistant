@@ -6,7 +6,7 @@ import re
 from collections.abc import Callable
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, TypedDict, cast
+from typing import Any, TextIO, TypedDict, cast
 
 from rich.console import Console
 from rich.text import Text
@@ -1447,6 +1447,94 @@ def configure_single_client(
     return config_clients
 
 
+def _format_config_dict_value(obj: dict[Any, Any]) -> ConfigDict:
+    return {
+        str(key): _format_config_value(value) for key, value in obj.items()
+    }
+
+
+def _format_config_list_value(obj: list[Any]) -> list[Any]:
+    return [_format_config_value(item) for item in obj]
+
+
+def _format_config_value(obj: Any) -> Any:
+    if isinstance(obj, dict):
+        return _format_config_dict_value(obj)
+    if isinstance(obj, list):
+        return _format_config_list_value(obj)
+    if isinstance(obj, str):
+        return {"true": True, "false": False}.get(obj.lower(), obj)
+    return obj
+
+
+def _config_keys(d: ConfigDict, key_stack: list[str]) -> list[str]:
+    if key_stack == ["TRACKERS"]:
+        return sorted(d, key=tracker_sort_key)
+    return list(d)
+
+
+def _write_config_comments(
+    file: TextIO,
+    comments: ConfigComments | None,
+    fq_key: str,
+    indent: str,
+) -> None:
+    if comments is None or fq_key not in comments:
+        return
+    for comment in comments[fq_key]:
+        file.write(f"{indent}{comment}\n")
+
+
+def _write_config_value(
+    file: TextIO,
+    value: Any,
+    comments: ConfigComments | None,
+    indent_level: int,
+    key_stack: list[str],
+) -> None:
+    indent = "    " * indent_level
+    if isinstance(value, dict):
+        file.write("{\n")
+        _write_config_dict(
+            file,
+            cast(ConfigDict, value),
+            comments,
+            indent_level + 1,
+            key_stack,
+        )
+        file.write(f"{indent}}},\n")
+        return
+    if isinstance(value, bool):
+        file.write(f"{str(value).capitalize()},\n")
+        return
+    if value is None:
+        file.write("None,\n")
+        return
+    file.write(f"{json.dumps(value, ensure_ascii=False)},\n")
+
+
+def _write_config_dict(
+    file: TextIO,
+    d: ConfigDict,
+    comments: ConfigComments | None,
+    indent_level: int = 1,
+    key_stack: list[str] | None = None,
+) -> None:
+    stack = [] if key_stack is None else key_stack
+    indent = "    " * indent_level
+    for key in _config_keys(d, stack):
+        fq_key = ".".join([*stack, key]) if stack else key
+        _write_config_comments(file, comments, fq_key, indent)
+        file.write(f"{indent}{json.dumps(key)}: ")
+        _write_config_value(
+            file,
+            d[key],
+            comments,
+            indent_level,
+            [*stack, key],
+        )
+
+
 def generate_config_file(
     config_data: ConfigDict,
     existing_path: Path | None = None,
@@ -1492,77 +1580,14 @@ def generate_config_file(
             else:
                 return False
 
-    # Convert boolean values in config to proper Python booleans
-    def format_config(obj: Any) -> Any:
-        if isinstance(obj, dict):
-            # Process each key-value pair in dictionaries
-            obj_dict = obj
-            return {str(k): format_config(v) for k, v in obj_dict.items()}
-        if isinstance(obj, list):
-            # Process each item in lists
-            obj_list = obj
-            return [format_config(item) for item in obj_list]
-        if isinstance(obj, str):
-            # Convert string "true"/"false" to Python True/False
-            if obj.lower() == "true":
-                return True
-            if obj.lower() == "false":
-                return False
-        # Return unchanged for other types
-        return obj
+    formatted_config = cast(ConfigDict, _format_config_value(config_data))
 
-    # Format config with proper Python booleans
-    formatted_config = cast(ConfigDict, format_config(config_data))
-
-    # Generate the config file with properly formatted Python syntax
     with Path(config_path).open("w", encoding="utf-8") as file:
         file.write(
             "# Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0\n"
         )
         file.write("from typing import Any\n\n\nconfig: dict[str, Any] = {\n")
-
-        # Custom formatting function to create Python dict with trailing commas
-        def write_dict(
-            d: ConfigDict,
-            indent_level: int = 1,
-            key_stack: list[str] | None = None,
-        ) -> None:
-            if key_stack is None:
-                key_stack = []
-            indent = "    " * indent_level
-            keys = (
-                sorted(d, key=tracker_sort_key)
-                if key_stack == ["TRACKERS"]
-                else d
-            )
-            for key in keys:
-                value = d[key]
-                fq_key = ".".join([*key_stack, key]) if key_stack else key
-                if comments and fq_key in comments:
-                    for comment in comments[fq_key]:
-                        file.write(f"{indent}{comment}\n")
-
-                file.write(f"{indent}{json.dumps(key)}: ")
-
-                if isinstance(value, dict):
-                    file.write("{\n")
-                    write_dict(
-                        cast(ConfigDict, value),
-                        indent_level + 1,
-                        [*key_stack, key],
-                    )
-                    file.write(f"{indent}}},\n")
-                elif isinstance(value, bool):
-                    # Ensure booleans are capitalized
-                    file.write(f"{str(value).capitalize()},\n")
-                elif isinstance(value, type(None)):
-                    # Handle None values
-                    file.write("None,\n")
-                else:
-                    # Other values with trailing comma
-                    file.write(f"{json.dumps(value, ensure_ascii=False)},\n")
-
-        write_dict(formatted_config)
+        _write_config_dict(file, formatted_config, comments)
         file.write("}\n")
 
     console.print(
