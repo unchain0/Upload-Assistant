@@ -72,44 +72,46 @@ def normalize_and_filter(content: str, strict_mode: bool = False) -> list[str]:
     return results
 
 
+def _has_variable_bitrate(line: str) -> bool:
+    markers = ("presentation graphics", "subtitle:")
+    return any(marker in line for marker in markers)
+
+
+def _strip_bitrate_suffixes(line: str) -> str:
+    line = re.sub(BITRATE_VARIATION_PATTERN, "", line).rstrip()
+    for suffix in ("kbps", "/"):
+        if line.endswith(suffix):
+            line = line[: -len(suffix)].rstrip()
+    return line
+
+
+def _normalize_playlist_variation_line(line: str) -> str:
+    if _has_variable_bitrate(line.lower()):
+        line = _strip_bitrate_suffixes(line)
+    if line.startswith("*"):
+        return line[:1].rstrip()
+    return line
+
+
+def _remove_playlist_variations_from_text(text: str) -> str:
+    if not text:
+        return ""
+    text = re.sub(PLAYLIST_VARIATION_PATTERN, "", text)
+    return "\n".join(
+        _normalize_playlist_variation_line(line) for line in text.splitlines()
+    )
+
+
 def remove_playlist_variations(
     summary: str, extended: str, duplicate: str
 ) -> tuple[str, str, str]:
     """
     Removes technical variations that differ between playlists but represent the same media content.
     """
-
-    def process_content(text: str) -> str:
-        if not text:
-            return ""
-
-        text = re.sub(PLAYLIST_VARIATION_PATTERN, "", text)
-        cleaned_lines: list[str] = []
-
-        for line in text.splitlines():
-            line_lower = line.lower()
-
-            if (
-                "presentation graphics" in line_lower
-                or "subtitle:" in line_lower
-            ):
-                line = re.sub(BITRATE_VARIATION_PATTERN, "", line).rstrip()
-                if line.endswith("kbps"):
-                    line = line[:-4].rstrip()
-                if line.endswith("/"):
-                    line = line[:-1].rstrip()
-
-            if line.startswith("*"):
-                line = line[:1].rstrip()
-
-            cleaned_lines.append(line)
-
-        return "\n".join(cleaned_lines)
-
     return (
-        process_content(summary),
-        process_content(extended),
-        process_content(duplicate),
+        _remove_playlist_variations_from_text(summary),
+        _remove_playlist_variations_from_text(extended),
+        _remove_playlist_variations_from_text(duplicate),
     )
 
 
