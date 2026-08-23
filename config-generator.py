@@ -202,6 +202,60 @@ def read_example_config() -> tuple[ConfigDict | None, ConfigComments]:
         return None, comments
 
 
+def _tracker_tokens(value: str) -> list[str]:
+    return [token.strip() for token in value.split(",") if token.strip()]
+
+
+def _mapped_tracker_name(
+    tracker_name: str, manual_mapping: dict[str, str]
+) -> tuple[str, bool]:
+    mapping_key = tracker_name.upper()
+    if mapping_key not in manual_mapping:
+        return tracker_name, False
+    return manual_mapping[mapping_key], True
+
+
+def _migrate_default_trackers(
+    config_dict: ConfigDict, manual_mapping: dict[str, str]
+) -> bool:
+    default_section = config_dict.get("DEFAULT")
+    if not isinstance(default_section, dict):
+        return False
+    value = default_section.get("default_trackers")
+    if not isinstance(value, str):
+        return False
+    migrated = False
+    migrated_trackers: list[str] = []
+    for tracker_name in _tracker_tokens(value):
+        new_name, was_migrated = _mapped_tracker_name(
+            tracker_name, manual_mapping
+        )
+        migrated_trackers.append(new_name)
+        if was_migrated:
+            migrated = True
+    default_section["default_trackers"] = ",".join(migrated_trackers)
+    return migrated
+
+
+def _migrate_tracker_sections(
+    config_dict: ConfigDict, manual_mapping: dict[str, str]
+) -> bool:
+    trackers_section = config_dict.get("TRACKERS")
+    if not isinstance(trackers_section, dict):
+        return False
+    migrated = False
+    new_trackers_section: ConfigDict = {}
+    for tracker_name, settings in trackers_section.items():
+        new_name, was_migrated = _mapped_tracker_name(
+            tracker_name, manual_mapping
+        )
+        new_trackers_section[new_name] = settings
+        if was_migrated:
+            migrated = True
+    config_dict["TRACKERS"] = new_trackers_section
+    return migrated
+
+
 def migrate_old_config(config_dict: ConfigDict) -> ConfigDict:
     """Migrate old tracker names/acronyms to new display names in the config dictionary."""
     if not config_dict:
@@ -289,42 +343,9 @@ def migrate_old_config(config_dict: ConfigDict) -> ConfigDict:
         "UNIT3D_TEMPLATE": "UNIT3DTEMPLATE",
     }
 
-    migrated = False
-
-    # Migrate DEFAULT -> default_trackers
-    if (
-        "DEFAULT" in config_dict
-        and "default_trackers" in config_dict["DEFAULT"]
-    ):
-        val = config_dict["DEFAULT"]["default_trackers"]
-        if isinstance(val, str):
-            trackers_list = [t.strip() for t in val.split(",") if t.strip()]
-            new_list = []
-            for t in trackers_list:
-                t_upper = t.upper()
-                if t_upper in manual_mapping:
-                    new_list.append(manual_mapping[t_upper])
-                    migrated = True
-                else:
-                    new_list.append(t)
-            config_dict["DEFAULT"]["default_trackers"] = ",".join(new_list)
-
-    # Migrate TRACKERS section keys
-    if "TRACKERS" in config_dict:
-        trackers_section = config_dict["TRACKERS"]
-        if isinstance(trackers_section, dict):
-            new_trackers_section = {}
-            for k, v in trackers_section.items():
-                k_upper = k.upper()
-                if k_upper in manual_mapping:
-                    new_key = manual_mapping[k_upper]
-                    new_trackers_section[new_key] = v
-                    migrated = True
-                else:
-                    new_trackers_section[k] = v
-            config_dict["TRACKERS"] = new_trackers_section
-
-    if migrated:
+    default_migrated = _migrate_default_trackers(config_dict, manual_mapping)
+    trackers_migrated = _migrate_tracker_sections(config_dict, manual_mapping)
+    if default_migrated or trackers_migrated:
         console.print(
             "\n[OK] Migrated old tracker names/acronyms to new display names in your configuration.",
             markup=False,
