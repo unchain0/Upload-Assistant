@@ -1305,56 +1305,50 @@ def test_tracker_effect_boundary_is_exercised_with_fakes(
     assert all(":" in failure for failure in validation_failures)
 
 
-@pytest.mark.parametrize("tracker_name", sorted(tracker_class_map))
-def test_tracker_private_helpers_use_domain_fixtures_without_terminating(
-    tracker_name: str,
-    tmp_path: Path,
-    monkeypatch: Any,
-) -> None:
-    """Exercise adapter-owned helper paths with local boundary doubles."""
+def _private_contains_any(text: str, markers: tuple[str, ...]) -> bool:
+    return any(marker in text for marker in markers)
 
-    config = _configured_catalog()
-    repository_cwd = Path.cwd()
 
-    async def no_sleep(
-        _delay: float = 0, *_args: object, **_kwargs: object
-    ) -> None:
-        return None
-
-    def prompt_value(message: object = "", choices: object = None) -> object:
-        text = str(message).casefold()
-        if choices:
-            return next(iter(choices))
-        if "imdb" in text and ("person" in text or "director" in text):
+def _private_prompt_text_value(text: str) -> str:
+    if "imdb" in text:
+        if _private_contains_any(text, ("person", "director")):
             return "nm0000138"
-        if "imdb" in text:
-            return "tt1234567"
-        if "tmdb" in text:
-            return "123"
-        if "tvdb" in text:
-            return "456"
-        if "year" in text:
-            return "2024"
-        if "language" in text:
-            return "English"
-        if "url" in text or "link" in text:
-            return "https://example.invalid/resource"
-        if "name" in text or "title" in text or "director" in text:
-            return "Example Person"
-        return "1"
+        return "tt1234567"
+    for markers, value in (
+        (("tmdb",), "123"),
+        (("tvdb",), "456"),
+        (("year",), "2024"),
+        (("language",), "English"),
+        (("url", "link"), "https://example.invalid/resource"),
+        (("name", "title", "director"), "Example Person"),
+    ):
+        if _private_contains_any(text, markers):
+            return value
+    return "1"
 
-    async def prompt_result(
-        callback: Any, *args: object, **kwargs: object
-    ) -> object:
-        name = getattr(callback, "__name__", "")
-        choices = kwargs.get("choices")
-        message = args[0] if args else kwargs.get("message", "")
-        if "choice" in name:
-            return prompt_value(message, choices or ["example"])
-        if "string" in name:
-            return prompt_value(message)
-        return True
 
+def _private_prompt_value(
+    message: object = "", choices: object = None
+) -> object:
+    if choices:
+        return next(iter(choices))
+    return _private_prompt_text_value(str(message).casefold())
+
+
+async def _private_prompt_result(
+    callback: Any, *args: object, **kwargs: object
+) -> object:
+    name = getattr(callback, "__name__", "")
+    choices = kwargs.get("choices")
+    message = args[0] if args else kwargs.get("message", "")
+    if "choice" in name:
+        return _private_prompt_value(message, choices or ["example"])
+    if "string" in name:
+        return _private_prompt_value(message)
+    return True
+
+
+def _patch_private_boundaries(monkeypatch: Any) -> None:
     monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient)
     monkeypatch.setattr(requests, "Session", _FakeSession)
     monkeypatch.setattr(requests, "get", _FakeSession().get)
@@ -1364,90 +1358,187 @@ def test_tracker_private_helpers_use_domain_fixtures_without_terminating(
         "create_scraper",
         lambda *_args, **_kwargs: _FakeSession(),
     )
-    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+    monkeypatch.setattr(asyncio, "sleep", _effect_no_sleep)
     monkeypatch.setattr("builtins.input", lambda *_args, **_kwargs: "1")
     monkeypatch.setattr(cli_ui, "ask_yes_no", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
         cli_ui,
         "ask_choice",
-        lambda message, choices, **_kwargs: prompt_value(message, choices),
+        lambda message, choices, **_kwargs: _private_prompt_value(
+            message, choices
+        ),
     )
     monkeypatch.setattr(
-        cli_ui, "ask_string", lambda message, **_kwargs: prompt_value(message)
+        cli_ui,
+        "ask_string",
+        lambda message, **_kwargs: _private_prompt_value(message),
     )
 
+
+def _patch_private_tracker_module(
+    tracker_class: Any, monkeypatch: Any
+) -> None:
+    module = sys.modules[tracker_class.__module__]
+    if hasattr(module, "prompt_in_thread"):
+        monkeypatch.setattr(module, "prompt_in_thread", _private_prompt_result)
+    for attribute, replacement in (
+        ("AsyncClient", _FakeAsyncClient),
+        ("Client", _FakeSession),
+        ("Session", _FakeSession),
+    ):
+        if hasattr(module, attribute):
+            monkeypatch.setattr(module, attribute, replacement)
+
+
+def _is_private_helper(method_name: str, static_member: object) -> bool:
+    if not method_name.startswith("_"):
+        return False
+    if method_name.startswith("__"):
+        return False
+    return callable(static_member)
+
+
+def _private_method(
+    tracker: object, method_name: str, rejections: list[str]
+) -> Callable[..., object] | None:
+    try:
+        method = getattr(tracker, method_name)
+    except Exception as error:
+        rejections.append(f"{method_name}:{type(error).__name__}")
+        return None
+    if not callable(method):
+        return None
+    return cast(Callable[..., object], method)
+
+
+def _private_category(tracker: object) -> str:
+    supported = getattr(tracker, "supported_categories", ()) or ()
+    for value in supported:
+        return str(value).upper()
+    return "MOVIE"
+
+
+def _private_release(tmp_path: Path, tracker_name: str, category: str) -> Meta:
+    release = _meta(tmp_path, category)
+    tracker_temp = Path(release.base_dir) / "tmp" / str(release.uuid)
+    (tracker_temp / f"[{tracker_name}]DESCRIPTION.txt").write_text(
+        "[b]Example description[/b]", encoding="utf-8"
+    )
+    (tracker_temp / f"[{tracker_name}]MEDIAINFO.txt").write_text(
+        "General\nFormat : Matroska", encoding="utf-8"
+    )
+    release.type = "DISC" if category == "MOVIE" else "WEBDL"
+    release.resolution = (
+        "2160p" if category in {"MOVIE", "TV", "XXX"} else "OTHER"
+    )
+    release.is_disc = "BDMV" if release.type == "DISC" else ""
+    return release
+
+
+def _private_scenarios(
+    method: Callable[..., object],
+) -> list[tuple[dict[str, object], dict[str, object]]]:
+    return [({}, {}), *_literal_scenarios(method, limit=24)]
+
+
+async def _record_private_invocation(
+    method_name: str,
+    method: Callable[..., object],
+    release: Meta,
+    tmp_path: Path,
+    repository_cwd: Path,
+    terminations: list[str],
+    rejections: list[str],
+    argument_overrides: Mapping[str, object],
+) -> None:
+    try:
+        await _invoke(method, release, tmp_path, argument_overrides)
+    except (KeyboardInterrupt, SystemExit) as error:
+        terminations.append(f"{method_name}:{type(error).__name__}")
+    except Exception as error:
+        rejections.append(f"{method_name}:{type(error).__name__}")
+    finally:
+        os.chdir(repository_cwd)
+
+
+async def _exercise_private_method(
+    method_name: str,
+    method: Callable[..., object],
+    release: Meta,
+    tmp_path: Path,
+    repository_cwd: Path,
+    terminations: list[str],
+    rejections: list[str],
+) -> None:
+    for meta_updates, argument_overrides in _private_scenarios(method):
+        scenario_release = _with_meta_updates(release.copy(), meta_updates)
+        await _record_private_invocation(
+            method_name,
+            method,
+            scenario_release,
+            tmp_path,
+            repository_cwd,
+            terminations,
+            rejections,
+            argument_overrides,
+        )
+
+
+async def _exercise_private_tracker(
+    tracker_name: str,
+    config: dict[str, Any],
+    tmp_path: Path,
+    monkeypatch: Any,
+    attempted: set[str],
+    terminations: list[str],
+    rejections: list[str],
+) -> None:
+    tracker_class = tracker_class_map[tracker_name]
+    _patch_private_tracker_module(tracker_class, monkeypatch)
+    tracker = tracker_class(config)
+    category = _private_category(tracker)
+    repository_cwd = Path.cwd()
+    for method_name, static_member in inspect.getmembers_static(tracker):
+        if not _is_private_helper(method_name, static_member):
+            continue
+        method = _private_method(tracker, method_name, rejections)
+        if method is None:
+            continue
+        attempted.add(method_name)
+        await _exercise_private_method(
+            method_name,
+            method,
+            _private_release(tmp_path, tracker_name, category),
+            tmp_path,
+            repository_cwd,
+            terminations,
+            rejections,
+        )
+
+
+@pytest.mark.parametrize("tracker_name", sorted(tracker_class_map))
+def test_tracker_private_helpers_use_domain_fixtures_without_terminating(
+    tracker_name: str,
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    """Exercise adapter-owned helper paths with local boundary doubles."""
+    _patch_private_boundaries(monkeypatch)
     attempted: set[str] = set()
     terminations: list[str] = []
     rejections: list[str] = []
-
-    async def exercise() -> None:
-        tracker_class = tracker_class_map[tracker_name]
-        module = sys.modules[tracker_class.__module__]
-        if hasattr(module, "prompt_in_thread"):
-            monkeypatch.setattr(module, "prompt_in_thread", prompt_result)
-        for attribute, replacement in (
-            ("AsyncClient", _FakeAsyncClient),
-            ("Client", _FakeSession),
-            ("Session", _FakeSession),
-        ):
-            if hasattr(module, attribute):
-                monkeypatch.setattr(module, attribute, replacement)
-
-        tracker = tracker_class(config)
-        for method_name, static_member in inspect.getmembers_static(tracker):
-            if (
-                not method_name.startswith("_")
-                or method_name.startswith("__")
-                or not callable(static_member)
-            ):
-                continue
-            try:
-                method = getattr(tracker, method_name)
-            except Exception as error:
-                rejections.append(f"{method_name}:{type(error).__name__}")
-                continue
-            attempted.add(method_name)
-            supported = tuple(
-                str(value).upper()
-                for value in getattr(tracker, "supported_categories", ()) or ()
-            )
-            category = supported[0] if supported else "MOVIE"
-            release = _meta(tmp_path, category)
-            tracker_temp = Path(release.base_dir) / "tmp" / str(release.uuid)
-            (tracker_temp / f"[{tracker_name}]DESCRIPTION.txt").write_text(
-                "[b]Example description[/b]", encoding="utf-8"
-            )
-            (tracker_temp / f"[{tracker_name}]MEDIAINFO.txt").write_text(
-                "General\nFormat : Matroska", encoding="utf-8"
-            )
-            release.type = "DISC" if category == "MOVIE" else "WEBDL"
-            release.resolution = (
-                "2160p" if category in {"MOVIE", "TV", "XXX"} else "OTHER"
-            )
-            release.is_disc = "BDMV" if release.type == "DISC" else ""
-            scenarios = [({}, {}), *_literal_scenarios(method, limit=24)]
-            for meta_updates, argument_overrides in scenarios:
-                scenario_release = _with_meta_updates(
-                    release.copy(), meta_updates
-                )
-                try:
-                    await _invoke(
-                        method, scenario_release, tmp_path, argument_overrides
-                    )
-                except (KeyboardInterrupt, SystemExit) as error:
-                    terminations.append(
-                        f"{method_name}:{type(error).__name__}"
-                    )
-                except Exception as error:
-                    rejections.append(f"{method_name}:{type(error).__name__}")
-                finally:
-                    os.chdir(repository_cwd)
-
-    asyncio.run(exercise())
+    asyncio.run(
+        _exercise_private_tracker(
+            tracker_name,
+            _configured_catalog(),
+            tmp_path,
+            monkeypatch,
+            attempted,
+            terminations,
+            rejections,
+        )
+    )
     gc.collect()
-
     assert terminations == []
     assert all(":" in rejection for rejection in rejections)
-    # Trackers with no private helpers are valid; the public contracts still
-    # exercise their complete registered surface.
     assert isinstance(attempted, set)
