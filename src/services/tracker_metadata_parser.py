@@ -414,25 +414,9 @@ async def check_image_link(
         return False
 
 
-async def update_meta_with_unit3d_data(
-    meta: Meta,
-    tracker_data: Sequence[Any],
-    tracker_name: str,
-    _skip_tracker_descriptions: bool = False,
-) -> bool:
-    # Unpack the expected 9 elements, ignoring any additional ones
-    (
-        tmdb,
-        imdb,
-        tvdb,
-        mal,
-        desc,
-        category,
-        _infohash,
-        imagelist,
-        filename,
-        *_rest,
-    ) = tracker_data
+def _apply_unit3d_ids(
+    meta: Meta, tmdb: Any, imdb: Any, tvdb: Any, mal: Any
+) -> None:
     if tmdb:
         meta.tmdb_id = tmdb
         logger.debug(f"set TMDB ID: {meta.tmdb_id}")
@@ -445,54 +429,142 @@ async def update_meta_with_unit3d_data(
     if mal:
         meta.mal_id = mal
         logger.debug(f"set MAL ID: {meta.mal_id}")
-    mode = resolve_description_mode(meta.tracker_description_mode)
-    if desc:
-        tracker_id = meta.get_tracker_id(tracker_name) or ""
-        raw_descriptions = getattr(meta, "tracker_description_raw", {}) or {}
-        raw_description = str(raw_descriptions.get(tracker_name, desc))
-        candidate = DescriptionCandidate(
-            source=tracker_name,
-            release_id=tracker_id,
-            release_name=str(filename or ""),
-            raw_description=raw_description,
-            cleaned_description=str(desc),
-            image_count=len(imagelist or []),
-            score=score_release_name(
-                getattr(meta, "tracker_search_term", ""),
-                filename,
-                explicit_id=bool(tracker_id),
-            ),
-        )
-        add_candidate(meta, candidate, selected=mode.imports_text)
-    if desc and mode.imports_text:
+
+
+def _unit3d_candidate(
+    meta: Meta,
+    tracker_name: str,
+    desc: Any,
+    filename: Any,
+    imagelist: Any,
+) -> DescriptionCandidate:
+    tracker_id = meta.get_tracker_id(tracker_name) or ""
+    raw_descriptions = getattr(meta, "tracker_description_raw", {}) or {}
+    raw_description = str(raw_descriptions.get(tracker_name, desc))
+    return DescriptionCandidate(
+        source=tracker_name,
+        release_id=tracker_id,
+        release_name=str(filename or ""),
+        raw_description=raw_description,
+        cleaned_description=str(desc),
+        image_count=len(imagelist or []),
+        score=score_release_name(
+            getattr(meta, "tracker_search_term", ""),
+            filename,
+            explicit_id=bool(tracker_id),
+        ),
+    )
+
+
+def _apply_unit3d_description(
+    meta: Meta,
+    tracker_name: str,
+    desc: Any,
+    filename: Any,
+    imagelist: Any,
+    imports_text: bool,
+) -> None:
+    if not desc:
+        return
+    add_candidate(
+        meta,
+        _unit3d_candidate(meta, tracker_name, desc, filename, imagelist),
+        selected=imports_text,
+    )
+    if imports_text:
         meta.description = desc
         meta.saved_description = True
-    if category and not meta.manual_category:
-        cat_upper = category.upper()
-        if "MOVIE" in cat_upper:
-            meta.category = "MOVIE"
-        elif "TV" in cat_upper:
-            meta.category = "TV"
+
+
+def _unit3d_category(category: Any) -> str | None:
+    if not category:
+        return None
+    value = str(category).upper()
+    if "MOVIE" in value:
+        return "MOVIE"
+    if "TV" in value:
+        return "TV"
+    return None
+
+
+def _apply_unit3d_category(meta: Meta, category: Any) -> None:
+    if meta.manual_category:
+        return
+    resolved = _unit3d_category(category)
+    if resolved is not None:
+        meta.category = resolved
+    if category:
         logger.debug(f"set Category: {meta.category}")
 
-    imagelist_typed = cast(list[ImageDict] | None, imagelist)
-    if (
-        imagelist_typed and mode.imports_images
-    ):  # Ensure imagelist is not empty before setting
-        valid_images = await check_images_concurrently(imagelist_typed, meta)
-        if valid_images:
-            meta.image_list = valid_images
-            if meta.image_list and (not meta.tracker_ids or meta.unattended):
-                await handle_image_list(meta, tracker_name, valid_images)
 
-    if desc and mode.imports_text:
+def _should_review_unit3d_images(meta: Meta) -> bool:
+    if meta.unattended:
+        return True
+    return not bool(meta.tracker_ids)
+
+
+async def _apply_unit3d_images(
+    meta: Meta,
+    tracker_name: str,
+    imagelist: Any,
+    imports_images: bool,
+) -> None:
+    if not imports_images or not imagelist:
+        return
+    typed = cast(list[ImageDict], imagelist)
+    valid_images = await check_images_concurrently(typed, meta)
+    if not valid_images:
+        return
+    meta.image_list = valid_images
+    if _should_review_unit3d_images(meta):
+        await handle_image_list(meta, tracker_name, valid_images)
+
+
+def _finalize_unit3d_description(
+    meta: Meta,
+    tracker_name: str,
+    desc: Any,
+    filename: Any,
+    imports_text: bool,
+) -> None:
+    if desc and imports_text:
         meta.description_fingerprint = description_fingerprint(
             meta, tracker_name
         )
-
     if filename:
         meta[f"{tracker_name.lower()}_filename"] = filename
 
+
+async def update_meta_with_unit3d_data(
+    meta: Meta,
+    tracker_data: Sequence[Any],
+    tracker_name: str,
+    _skip_tracker_descriptions: bool = False,
+) -> bool:
+    (
+        tmdb,
+        imdb,
+        tvdb,
+        mal,
+        desc,
+        category,
+        _infohash,
+        imagelist,
+        filename,
+        *_rest,
+    ) = tracker_data
+    mode = resolve_description_mode(meta.tracker_description_mode)
+    _apply_unit3d_ids(meta, tmdb, imdb, tvdb, mal)
+    _apply_unit3d_description(
+        meta, tracker_name, desc, filename, imagelist, mode.imports_text
+    )
+    _apply_unit3d_category(meta, category)
+    await _apply_unit3d_images(
+        meta, tracker_name, imagelist, mode.imports_images
+    )
+    _finalize_unit3d_description(
+        meta, tracker_name, desc, filename, mode.imports_text
+    )
     logger.debug(
         f"[green]{tracker_name} data successfully updated in meta[/green]"
     )
@@ -1161,46 +1233,59 @@ async def update_metadata_from_tracker(
     return meta, found_match
 
 
+def _log_selected_images(
+    meta: Meta,
+    tracker_name: str,
+    valid_images: Sequence[ImageDict] | None,
+) -> None:
+    valid_count = len(valid_images) if valid_images is not None else 0
+    logger.info(
+        f"[cyan]Selected the following {valid_count} valid images from {tracker_name}:"
+    )
+    for image in meta.image_list:
+        logger.info(f"Image:[green]'{image.get('img_url')}'[/green]")
+
+
+async def _should_keep_images(meta: Meta, tracker_name: str) -> bool:
+    if meta.unattended:
+        return True
+    return await prompt_user_for_confirmation(
+        f"Do you want to keep the images found on {tracker_name}?"
+    )
+
+
+def _delete_saved_images(meta: Meta) -> None:
+    save_path = screenshots_dir(meta.base_dir, meta.uuid)
+    try:
+        png_files = list(Path(save_path).glob("*.png"))
+        for png_file in png_files:
+            png_file.unlink()
+        if png_files:
+            logger.info(
+                f"[yellow]Successfully deleted {len(png_files)} image files.[/yellow]"
+            )
+        else:
+            logger.info("[yellow]No image files found to delete.[/yellow]")
+    except Exception as error:
+        logger.error(f"[red]Failed to delete image files: {error}[/red]")
+
+
+def _discard_images(meta: Meta, tracker_name: str) -> None:
+    meta.image_list = []
+    meta.image_sizes = {}
+    _delete_saved_images(meta)
+    logger.info(f"[yellow]Images discarded from {tracker_name}.")
+
+
 async def handle_image_list(
     meta: Meta,
     tracker_name: str,
     valid_images: Sequence[ImageDict] | None = None,
 ) -> None:
-    if meta.image_list:
-        valid_count = len(valid_images) if valid_images is not None else 0
-        logger.info(
-            f"[cyan]Selected the following {valid_count} valid images from {tracker_name}:"
-        )
-        for img in meta.image_list:
-            logger.info(f"Image:[green]'{img.get('img_url')}'[/green]")
-
-        if meta.unattended:
-            keep_images = True
-        else:
-            keep_images = await prompt_user_for_confirmation(
-                f"Do you want to keep the images found on {tracker_name}?"
-            )
-            if not keep_images:
-                meta.image_list = []
-                meta.image_sizes = {}
-                save_path = screenshots_dir(meta.base_dir, meta.uuid)
-                try:
-                    png_files = list(Path(save_path).glob("*.png"))
-                    for png_file in png_files:
-                        png_file.unlink()
-
-                    if png_files:
-                        logger.info(
-                            f"[yellow]Successfully deleted {len(png_files)} image files.[/yellow]"
-                        )
-                    else:
-                        logger.info(
-                            "[yellow]No image files found to delete.[/yellow]"
-                        )
-                except Exception as e:
-                    logger.error(
-                        f"[red]Failed to delete image files: {e}[/red]"
-                    )
-                logger.info(f"[yellow]Images discarded from {tracker_name}.")
-            else:
-                logger.info(f"[green]Images retained from {tracker_name}.")
+    if not meta.image_list:
+        return
+    _log_selected_images(meta, tracker_name, valid_images)
+    if await _should_keep_images(meta, tracker_name):
+        logger.info(f"[green]Images retained from {tracker_name}.")
+        return
+    _discard_images(meta, tracker_name)
