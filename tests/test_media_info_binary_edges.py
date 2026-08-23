@@ -340,25 +340,29 @@ def _mac_run_factory(
 ):
     calls: list[list[str]] = []
 
+    def maybe_write_payload(destination: Path) -> None:
+        if create_payload:
+            (destination / "Payload").write_bytes(b"payload")
+
+    def maybe_write_binary(payload_root: Path) -> None:
+        if create_binary:
+            source = payload_root / "usr" / "local" / "bin" / "mediainfo"
+            source.parent.mkdir(parents=True)
+            source.write_bytes(b"mac-binary")
+
     def run(command: list[str], **_kwargs: object):
         calls.append(command)
-        if command[0] == "hdiutil" and command[1] == "attach":
+        if command[:2] == ["hdiutil", "attach"]:
             return SimpleNamespace(
                 stdout=plistlib.dumps(
                     {"system-entities": [{"mount-point": str(mount)}]}
                 )
             )
         if command[0] == "pkgutil":
-            destination = Path(command[-1])
-            if create_payload:
-                (destination / "Payload").write_bytes(b"payload")
+            maybe_write_payload(Path(command[-1]))
             return SimpleNamespace(stdout=b"")
         if command[0] == "bsdtar":
-            payload_root = Path(command[-1])
-            if create_binary:
-                source = payload_root / "usr" / "local" / "bin" / "mediainfo"
-                source.parent.mkdir(parents=True)
-                source.write_bytes(b"mac-binary")
+            maybe_write_binary(Path(command[-1]))
             return SimpleNamespace(stdout=b"")
         return SimpleNamespace(stdout=b"")
 
