@@ -24,7 +24,15 @@ from collections.abc import (
 )
 from pathlib import Path
 from types import ModuleType
-from typing import Any, ClassVar, Self, get_args, get_origin, get_type_hints
+from typing import (
+    Any,
+    ClassVar,
+    Self,
+    cast,
+    get_args,
+    get_origin,
+    get_type_hints,
+)
 
 import httpx
 import pytest
@@ -256,14 +264,14 @@ def _meta(tmp_path: Path, files: Mapping[str, Path], profile: int = 0) -> Meta:
     )
 
 
-def _value(
-    name: str,
-    annotation: object,
-    meta: Meta,
-    files: Mapping[str, Path],
-    profile: int,
-) -> object:
-    key = name.casefold().lstrip("_")
+_MISSING = object()
+_BLOCKED_CALLABLES = frozenset({"cleanup", "cleanup_all", "kill_processes"})
+_RESPONSE_SCENARIOS = ("empty", "unauthorized", "rate_limited", "server_error")
+
+
+def _value_map(
+    meta: Meta, files: Mapping[str, Path], profile: int
+) -> dict[str, object]:
     config = copy.deepcopy(example_config)
     config.setdefault("DEFAULT", {}).update(
         {
@@ -279,7 +287,7 @@ def _value(
             "image_upload_delay": 0,
         }
     )
-    values: dict[str, object] = {
+    return {
         "meta": meta,
         "config": config,
         "configuration": config,
@@ -336,38 +344,161 @@ def _value(
         "data": _Response().json(),
         "payload": _Response().json(),
     }
-    if key in values:
-        return values[key]
-    origin = get_origin(annotation)
-    args = get_args(annotation)
+
+
+def _scalar_annotation_value(
+    annotation: object, files: Mapping[str, Path], profile: int
+) -> object:
     if annotation in {inspect.Parameter.empty, Any}:
         return _Universal()
-    if annotation is bool:
-        return bool(profile % 2)
-    if annotation is int:
-        return 1
-    if annotation is float:
-        return 0.0
-    if annotation is str:
-        return "example"
-    if annotation is Path:
-        return files["image"]
-    if origin in {list, Sequence}:
-        return []
-    if origin in {dict, Mapping}:
-        return {}
-    if origin is set:
-        return set()
-    if origin is tuple:
-        return tuple(
-            _value(key, item, meta, files, profile)
-            for item in args
-            if item is not Ellipsis
-        )
-    if origin is not None and type(None) in args:
-        concrete = next((item for item in args if item is not type(None)), str)
-        return _value(key, concrete, meta, files, profile)
+    values: dict[object, object] = {
+        bool: bool(profile % 2),
+        int: 1,
+        float: 0.0,
+        str: "example",
+        Path: files["image"],
+    }
+    return values.get(annotation, _MISSING)
+
+
+def _collection_annotation_value(origin: object) -> object:
+    values: dict[object, object] = {
+        list: [],
+        Sequence: [],
+        dict: {},
+        Mapping: {},
+        set: set(),
+    }
+    return values.get(origin, _MISSING)
+
+
+def _tuple_annotation_value(
+    key: str,
+    origin: object,
+    args: tuple[object, ...],
+    meta: Meta,
+    files: Mapping[str, Path],
+    profile: int,
+) -> object:
+    if origin is not tuple:
+        return _MISSING
+    return tuple(
+        _value(key, item, meta, files, profile)
+        for item in args
+        if item is not Ellipsis
+    )
+
+
+def _optional_annotation_value(
+    key: str,
+    origin: object,
+    args: tuple[object, ...],
+    meta: Meta,
+    files: Mapping[str, Path],
+    profile: int,
+) -> object:
+    if origin is None or type(None) not in args:
+        return _MISSING
+    concrete = next((item for item in args if item is not type(None)), str)
+    return _value(key, concrete, meta, files, profile)
+
+
+def _annotation_value(
+    key: str,
+    annotation: object,
+    meta: Meta,
+    files: Mapping[str, Path],
+    profile: int,
+) -> object:
+    origin = get_origin(annotation)
+    args = get_args(annotation)
+    for value in (
+        _scalar_annotation_value(annotation, files, profile),
+        _collection_annotation_value(origin),
+        _tuple_annotation_value(key, origin, args, meta, files, profile),
+        _optional_annotation_value(key, origin, args, meta, files, profile),
+    ):
+        if value is not _MISSING:
+            return value
     return _Universal()
+
+
+def _value(
+    name: str,
+    annotation: object,
+    meta: Meta,
+    files: Mapping[str, Path],
+    profile: int,
+) -> object:
+    key = name.casefold().lstrip("_")
+    named = _value_map(meta, files, profile).get(key, _MISSING)
+    if named is not _MISSING:
+        return named
+    return _annotation_value(key, annotation, meta, files, profile)
+
+
+def _type_hints(function: Callable[..., object]) -> dict[str, object]:
+    target = function.__init__ if inspect.isclass(function) else function
+    try:
+        return get_type_hints(target)
+    except NameError, TypeError:
+        return {}
+
+
+def _include_parameter(
+    parameter: inspect.Parameter, overrides: Mapping[str, object]
+) -> bool:
+    if parameter.kind in {
+        inspect.Parameter.VAR_POSITIONAL,
+        inspect.Parameter.VAR_KEYWORD,
+    }:
+        return False
+    return (
+        parameter.default is inspect.Parameter.empty
+        or parameter.name in overrides
+    )
+
+
+def _parameter_value(
+    parameter: inspect.Parameter,
+    hints: Mapping[str, object],
+    overrides: Mapping[str, object],
+    meta: Meta,
+    files: Mapping[str, Path],
+    profile: int,
+) -> object:
+    if parameter.name in overrides:
+        return overrides[parameter.name]
+    return _value(
+        parameter.name,
+        hints.get(parameter.name, parameter.annotation),
+        meta,
+        files,
+        profile,
+    )
+
+
+def _invocation_arguments(
+    function: Callable[..., object],
+    meta: Meta,
+    files: Mapping[str, Path],
+    profile: int,
+    overrides: Mapping[str, object],
+) -> tuple[list[object], dict[str, object]]:
+    hints = _type_hints(function)
+    positional: list[object] = []
+    keywords: dict[str, object] = {}
+    for parameter in inspect.signature(function).parameters.values():
+        if not _include_parameter(parameter, overrides):
+            continue
+        value = _parameter_value(
+            parameter, hints, overrides, meta, files, profile
+        )
+        if parameter.kind is inspect.Parameter.KEYWORD_ONLY:
+            keywords[parameter.name] = value
+        else:
+            positional.append(value)
+    return positional, keywords
 
 
 async def _invoke(
@@ -377,51 +508,255 @@ async def _invoke(
     profile: int,
     overrides: Mapping[str, object] | None = None,
 ) -> object:
-    overrides = overrides or {}
-    target = function.__init__ if inspect.isclass(function) else function
-    try:
-        hints = get_type_hints(target)
-    except NameError, TypeError:
-        hints = {}
-    positional: list[object] = []
-    keywords: dict[str, object] = {}
-    for parameter in inspect.signature(function).parameters.values():
-        if parameter.kind in {
-            inspect.Parameter.VAR_POSITIONAL,
-            inspect.Parameter.VAR_KEYWORD,
-        }:
-            continue
-        if (
-            parameter.default is not inspect.Parameter.empty
-            and parameter.name not in overrides
-        ):
-            continue
-        value = overrides.get(
-            parameter.name,
-            _value(
-                parameter.name,
-                hints.get(parameter.name, parameter.annotation),
-                meta,
-                files,
-                profile,
-            ),
-        )
-        if parameter.kind is inspect.Parameter.KEYWORD_ONLY:
-            keywords[parameter.name] = value
-        else:
-            positional.append(value)
+    actual_overrides = overrides or {}
+    positional, keywords = _invocation_arguments(
+        function, meta, files, profile, actual_overrides
+    )
     result = function(*positional, **keywords)
     if inspect.isawaitable(result):
         return await asyncio.wait_for(result, timeout=0.5)
     return result
 
 
-def test_image_host_catalog_exercises_private_and_public_boundaries(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def _patch_network_boundaries(
+    module: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    files = _files(tmp_path)
-    modules = _modules()
-    repository = Path.cwd()
+    for attribute, replacement in (
+        ("AsyncClient", _AsyncClient),
+        ("Client", _Session),
+        ("Session", _Session),
+    ):
+        if hasattr(module, attribute):
+            monkeypatch.setattr(module, attribute, replacement)
+
+
+def _callable_scenarios(
+    function: Callable[..., object],
+) -> list[tuple[str, dict[str, object], dict[str, object]]]:
+    scenarios: list[tuple[str, dict[str, object], dict[str, object]]] = [
+        ("success", {}, {})
+    ]
+    scenarios.extend(
+        ("success", meta_updates, argument_updates)
+        for meta_updates, argument_updates in literal_branch_scenarios(
+            function, Meta.__dataclass_fields__, limit=96
+        )
+    )
+    scenarios.extend((scenario, {}, {}) for scenario in _RESPONSE_SCENARIOS)
+    return scenarios
+
+
+def _scenario_meta(
+    tmp_path: Path,
+    files: Mapping[str, Path],
+    profile: int,
+    updates: Mapping[str, object],
+) -> Meta:
+    meta = _meta(tmp_path, files, profile % 3)
+    for key, value in updates.items():
+        if key in Meta.__dataclass_fields__:
+            setattr(meta, key, value)
+    return meta
+
+
+async def _run_scenario(
+    function: Callable[..., object],
+    qualified: str,
+    tmp_path: Path,
+    files: Mapping[str, Path],
+    profile: int,
+    scenario: str,
+    meta_updates: Mapping[str, object],
+    argument_updates: Mapping[str, object],
+    process_terminations: list[str],
+    expected_rejections: list[str],
+    repository: Path,
+) -> None:
+    _Response.scenario = scenario
+    meta = _scenario_meta(tmp_path, files, profile, meta_updates)
+    try:
+        await _invoke(function, meta, files, profile % 3, argument_updates)
+    except (KeyboardInterrupt, SystemExit) as error:
+        process_terminations.append(f"{qualified}:{type(error).__name__}")
+    except Exception as error:
+        expected_rejections.append(f"{qualified}:{type(error).__name__}")
+    finally:
+        os.chdir(repository)
+
+
+async def _exercise_callable(
+    function: Callable[..., object],
+    qualified: str,
+    tmp_path: Path,
+    files: Mapping[str, Path],
+    process_terminations: list[str],
+    expected_rejections: list[str],
+    repository: Path,
+) -> None:
+    for profile, (scenario, meta_updates, argument_updates) in enumerate(
+        _callable_scenarios(function)
+    ):
+        await _run_scenario(
+            function,
+            qualified,
+            tmp_path,
+            files,
+            profile,
+            scenario,
+            meta_updates,
+            argument_updates,
+            process_terminations,
+            expected_rejections,
+            repository,
+        )
+
+
+def _is_module_function(
+    module: ModuleType, name: str, function: object
+) -> bool:
+    if not inspect.isfunction(function):
+        return False
+    if function.__module__ != module.__name__:
+        return False
+    return not name.startswith("__") and name not in _BLOCKED_CALLABLES
+
+
+async def _exercise_module_functions(
+    module: ModuleType,
+    tmp_path: Path,
+    files: Mapping[str, Path],
+    attempted: set[str],
+    process_terminations: list[str],
+    expected_rejections: list[str],
+    repository: Path,
+) -> None:
+    for name, function in inspect.getmembers(module, inspect.isfunction):
+        if not _is_module_function(module, name, function):
+            continue
+        qualified = f"{module.__name__}.{name}"
+        attempted.add(qualified)
+        await _exercise_callable(
+            function,
+            qualified,
+            tmp_path,
+            files,
+            process_terminations,
+            expected_rejections,
+            repository,
+        )
+
+
+def _is_module_class(module: ModuleType, class_type: type[Any]) -> bool:
+    return class_type.__module__ == module.__name__
+
+
+async def _construct_instance(
+    module: ModuleType,
+    class_name: str,
+    class_type: type[Any],
+    tmp_path: Path,
+    files: Mapping[str, Path],
+    expected_rejections: list[str],
+) -> object | None:
+    try:
+        return await _invoke(class_type, _meta(tmp_path, files), files, 0)
+    except Exception as error:
+        expected_rejections.append(
+            f"{module.__name__}.{class_name}.__init__:{type(error).__name__}"
+        )
+        return None
+
+
+def _is_exercisable_method(method_name: str, static_member: object) -> bool:
+    if method_name.startswith("__") or method_name in _BLOCKED_CALLABLES:
+        return False
+    return callable(static_member)
+
+
+def _resolved_method(
+    module: ModuleType,
+    class_name: str,
+    instance: object,
+    method_name: str,
+    expected_rejections: list[str],
+) -> Callable[..., object] | None:
+    try:
+        return cast(Callable[..., object], getattr(instance, method_name))
+    except Exception as error:
+        expected_rejections.append(
+            f"{module.__name__}.{class_name}.{method_name}:{type(error).__name__}"
+        )
+        return None
+
+
+async def _exercise_instance_methods(
+    module: ModuleType,
+    class_name: str,
+    instance: object,
+    tmp_path: Path,
+    files: Mapping[str, Path],
+    attempted: set[str],
+    process_terminations: list[str],
+    expected_rejections: list[str],
+    repository: Path,
+) -> None:
+    for method_name, static_member in inspect.getmembers_static(instance):
+        if not _is_exercisable_method(method_name, static_member):
+            continue
+        method = _resolved_method(
+            module, class_name, instance, method_name, expected_rejections
+        )
+        if method is None:
+            continue
+        qualified = f"{module.__name__}.{class_name}.{method_name}"
+        attempted.add(qualified)
+        await _exercise_callable(
+            method,
+            qualified,
+            tmp_path,
+            files,
+            process_terminations,
+            expected_rejections,
+            repository,
+        )
+
+
+async def _exercise_module_classes(
+    module: ModuleType,
+    tmp_path: Path,
+    files: Mapping[str, Path],
+    attempted: set[str],
+    process_terminations: list[str],
+    expected_rejections: list[str],
+    repository: Path,
+) -> None:
+    for class_name, class_type in inspect.getmembers(module, inspect.isclass):
+        if not _is_module_class(module, class_type):
+            continue
+        instance = await _construct_instance(
+            module,
+            class_name,
+            class_type,
+            tmp_path,
+            files,
+            expected_rejections,
+        )
+        if instance is None:
+            continue
+        await _exercise_instance_methods(
+            module,
+            class_name,
+            instance,
+            tmp_path,
+            files,
+            attempted,
+            process_terminations,
+            expected_rejections,
+            repository,
+        )
+
+
+def _patch_global_boundaries(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(httpx, "AsyncClient", _AsyncClient)
     monkeypatch.setattr(requests, "Session", _Session)
     monkeypatch.setattr(requests, "get", _Session().get)
@@ -441,154 +776,62 @@ def test_image_host_catalog_exercises_private_and_public_boundaries(
         ),
     )
 
+
+async def _exercise_modules(
+    modules: list[ModuleType],
+    tmp_path: Path,
+    files: Mapping[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    attempted: set[str],
+    process_terminations: list[str],
+    expected_rejections: list[str],
+    repository: Path,
+) -> None:
+    for module in modules:
+        _patch_network_boundaries(module, monkeypatch)
+        await _exercise_module_functions(
+            module,
+            tmp_path,
+            files,
+            attempted,
+            process_terminations,
+            expected_rejections,
+            repository,
+        )
+        await _exercise_module_classes(
+            module,
+            tmp_path,
+            files,
+            attempted,
+            process_terminations,
+            expected_rejections,
+            repository,
+        )
+
+
+def test_image_host_catalog_exercises_private_and_public_boundaries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    files = _files(tmp_path)
+    modules = _modules()
+    repository = Path.cwd()
+    _patch_global_boundaries(monkeypatch)
     attempted: set[str] = set()
     process_terminations: list[str] = []
     expected_rejections: list[str] = []
-    blocked = {"cleanup", "cleanup_all", "kill_processes"}
 
-    async def exercise() -> None:
-        for module in modules:
-            for attribute, replacement in (
-                ("AsyncClient", _AsyncClient),
-                ("Client", _Session),
-                ("Session", _Session),
-            ):
-                if hasattr(module, attribute):
-                    monkeypatch.setattr(module, attribute, replacement)
-            for name, function in inspect.getmembers(
-                module, inspect.isfunction
-            ):
-                if (
-                    function.__module__ != module.__name__
-                    or name.startswith("__")
-                    or name in blocked
-                ):
-                    continue
-                qualified = f"{module.__name__}.{name}"
-                attempted.add(qualified)
-                scenarios = [("success", {}, {})]
-                scenarios.extend(
-                    ("success", meta_updates, argument_updates)
-                    for meta_updates, argument_updates in literal_branch_scenarios(
-                        function, Meta.__dataclass_fields__, limit=96
-                    )
-                )
-                scenarios.extend(
-                    (scenario, {}, {})
-                    for scenario in (
-                        "empty",
-                        "unauthorized",
-                        "rate_limited",
-                        "server_error",
-                    )
-                )
-                for profile, (
-                    scenario,
-                    meta_updates,
-                    argument_updates,
-                ) in enumerate(scenarios):
-                    _Response.scenario = scenario
-                    meta = _meta(tmp_path, files, profile % 3)
-                    for key, value in meta_updates.items():
-                        if key in Meta.__dataclass_fields__:
-                            setattr(meta, key, value)
-                    try:
-                        await _invoke(
-                            function,
-                            meta,
-                            files,
-                            profile % 3,
-                            argument_updates,
-                        )
-                    except (KeyboardInterrupt, SystemExit) as error:
-                        process_terminations.append(
-                            f"{qualified}:{type(error).__name__}"
-                        )
-                    except Exception as error:
-                        expected_rejections.append(
-                            f"{qualified}:{type(error).__name__}"
-                        )
-                    finally:
-                        os.chdir(repository)
-
-            for class_name, class_type in inspect.getmembers(
-                module, inspect.isclass
-            ):
-                if class_type.__module__ != module.__name__:
-                    continue
-                try:
-                    instance = await _invoke(
-                        class_type, _meta(tmp_path, files), files, 0
-                    )
-                except Exception as error:
-                    expected_rejections.append(
-                        f"{module.__name__}.{class_name}.__init__:{type(error).__name__}"
-                    )
-                    continue
-                for method_name, static_member in inspect.getmembers_static(
-                    instance
-                ):
-                    if (
-                        method_name.startswith("__")
-                        or method_name in blocked
-                        or not callable(static_member)
-                    ):
-                        continue
-                    try:
-                        method = getattr(instance, method_name)
-                    except Exception as error:
-                        expected_rejections.append(
-                            f"{module.__name__}.{class_name}.{method_name}:{type(error).__name__}"
-                        )
-                        continue
-                    qualified = f"{module.__name__}.{class_name}.{method_name}"
-                    attempted.add(qualified)
-                    scenarios = [("success", {}, {})]
-                    scenarios.extend(
-                        ("success", meta_updates, argument_updates)
-                        for meta_updates, argument_updates in literal_branch_scenarios(
-                            method, Meta.__dataclass_fields__, limit=96
-                        )
-                    )
-                    scenarios.extend(
-                        (scenario, {}, {})
-                        for scenario in (
-                            "empty",
-                            "unauthorized",
-                            "rate_limited",
-                            "server_error",
-                        )
-                    )
-                    for profile, (
-                        scenario,
-                        meta_updates,
-                        argument_updates,
-                    ) in enumerate(scenarios):
-                        _Response.scenario = scenario
-                        meta = _meta(tmp_path, files, profile % 3)
-                        for key, value in meta_updates.items():
-                            if key in Meta.__dataclass_fields__:
-                                setattr(meta, key, value)
-                        try:
-                            await _invoke(
-                                method,
-                                meta,
-                                files,
-                                profile % 3,
-                                argument_updates,
-                            )
-                        except (KeyboardInterrupt, SystemExit) as error:
-                            process_terminations.append(
-                                f"{qualified}:{type(error).__name__}"
-                            )
-                        except Exception as error:
-                            expected_rejections.append(
-                                f"{qualified}:{type(error).__name__}"
-                            )
-                        finally:
-                            os.chdir(repository)
-
-    asyncio.run(exercise())
+    asyncio.run(
+        _exercise_modules(
+            modules,
+            tmp_path,
+            files,
+            monkeypatch,
+            attempted,
+            process_terminations,
+            expected_rejections,
+            repository,
+        )
+    )
 
     assert attempted
     assert all(
