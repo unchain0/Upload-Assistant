@@ -1613,8 +1613,86 @@ class DarkPeers(UNIT3D):
                     preserve_if_scene=meta.scene,
                 )
             }
-        name = await self._final_media_name(meta)
-        return {"name": self._ensure_group_tag(name, meta.tag)}
+        naming_meta = await self._canonical_tv_meta(meta)
+        name = await self._final_media_name(naming_meta)
+        return {"name": self._ensure_group_tag(name, naming_meta.tag)}
+
+    @staticmethod
+    def _should_canonicalize_tv(meta: Meta, title: str) -> bool:
+        return bool(
+            meta.category == "TV" and not meta.scene and title and meta.tmdb_id
+        )
+
+    @staticmethod
+    def _replace_title_prefix(
+        name: str, old_title: str, new_title: str
+    ) -> str:
+        if not name or not old_title or old_title == new_title:
+            return name
+        return re.sub(
+            rf"^{re.escape(old_title)}(?=\s|$)",
+            new_title,
+            name,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+
+    @staticmethod
+    def _tv_results(payload: dict[str, Any]) -> list[dict[str, Any]]:
+        raw_results = payload.get("results", [])
+        if not isinstance(raw_results, list):
+            return []
+        return [
+            cast(dict[str, Any], raw)
+            for raw in raw_results
+            if isinstance(raw, dict)
+        ]
+
+    @staticmethod
+    def _tv_result_title(result: dict[str, Any]) -> str:
+        name = result.get("name")
+        if name:
+            return str(name).strip()
+        return str(result.get("original_name") or "").strip()
+
+    @classmethod
+    def _tv_result_title_for_id(
+        cls, payload: dict[str, Any], tmdb_id: int | None
+    ) -> str:
+        target_id = str(tmdb_id or "")
+        for result in cls._tv_results(payload):
+            if str(result.get("id", "")) == target_id:
+                return cls._tv_result_title(result)
+        return ""
+
+    @staticmethod
+    def _canonical_or_current_title(canonical: str, current: str) -> str:
+        return canonical if canonical else current
+
+    async def _canonical_tv_title(self, meta: Meta) -> str:
+        title = str(meta.title or "").strip()
+        if not self._should_canonicalize_tv(meta, title):
+            return title
+        api_key = self._tmdb_api_key()
+        if not api_key:
+            return title
+        payload = await self._tv_search_payload(title, api_key)
+        if payload is None:
+            return title
+        canonical = self._tv_result_title_for_id(payload, meta.tmdb_id)
+        return self._canonical_or_current_title(canonical, title)
+
+    async def _canonical_tv_meta(self, meta: Meta) -> Meta:
+        canonical_title = await self._canonical_tv_title(meta)
+        current_title = str(meta.title or "").strip()
+        if not canonical_title or canonical_title == current_title:
+            return meta
+        naming_meta = meta.copy()
+        naming_meta.title = canonical_title
+        naming_meta.name = self._replace_title_prefix(
+            str(meta.name or ""), current_title, canonical_title
+        )
+        return naming_meta
 
     @staticmethod
     def _normalize_scene_name(scene_name: str) -> str:

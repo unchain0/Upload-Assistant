@@ -925,6 +925,41 @@ def test_darkpeers_tv_name_omits_year_without_an_exact_title_match():
     )
 
 
+def test_darkpeers_tv_name_uses_exact_tmdb_title_and_omits_unneeded_year():
+    meta = Meta(
+        category="TV",
+        title="Margarita",
+        year=2024,
+        tmdb_id=12345,
+        name=(
+            "Margarita 2024 S03E01 1080p HMAX WEB-DL Portuguese MULTI "
+            "DD+ 5.1 H.265-SiGLA"
+        ),
+    )
+    adapter = DarkPeers(
+        {"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}}
+    )
+    adapter._tv_search_payload = AsyncMock(
+        return_value={
+            "results": [
+                {
+                    "id": 12345,
+                    "name": "Margarita: Make Your Story Count",
+                    "original_name": "Margarita",
+                }
+            ]
+        }
+    )
+
+    assert (
+        asyncio.run(adapter.get_name(meta))["name"]
+        == "Margarita: Make Your Story Count S03E01 1080p HMAX WEB-DL "
+        "Portuguese MULTI DD+ 5.1 H.265-SiGLA"
+    )
+    assert meta.title == "Margarita"
+    assert meta.name.startswith("Margarita 2024")
+
+
 def test_darkpeers_tv_name_keeps_year_for_an_exact_title_match():
     meta = Meta(
         category="TV",
