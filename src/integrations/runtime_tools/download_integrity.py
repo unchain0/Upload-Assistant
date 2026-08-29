@@ -374,6 +374,16 @@ async def download_verified_asset(
         raise
 
 
+def _require_sync_download_context() -> None:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    raise RuntimeError(
+        "Synchronous asset download cannot run inside an active event loop"
+    )
+
+
 def download_bounded_asset_sync(
     url: str,
     destination: Path,
@@ -383,6 +393,8 @@ def download_bounded_asset_sync(
 ) -> None:
     """Run the bounded async transfer for synchronous bootstrap entry points."""
     import httpx
+
+    _require_sync_download_context()
 
     async def download() -> None:
         async with httpx.AsyncClient(

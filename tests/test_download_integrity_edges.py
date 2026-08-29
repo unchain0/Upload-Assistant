@@ -362,6 +362,18 @@ def test_bounded_sync_download_delegates_to_async(
     assert calls == [("https://example.invalid/tool", destination, 123, 7.0)]
 
 
+@pytest.mark.asyncio
+async def test_sync_download_rejects_active_event_loop_before_creating_coroutine(
+    tmp_path: Path,
+) -> None:
+    destination = tmp_path / "asset"
+
+    with pytest.raises(RuntimeError, match="active event loop"):
+        integrity.download_bounded_asset_sync(
+            "https://example.invalid/tool", destination
+        )
+
+
 def test_verified_download_success_failure_cleanup_async_and_sync(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
