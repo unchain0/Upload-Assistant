@@ -248,7 +248,13 @@ async def _record_matrix_case(
         process_terminations.append(
             f"{category}/{tracker}:{type(error).__name__}"
         )
-    except (ValueError, TypeError, KeyError, AttributeError, IndexError) as error:
+    except (
+        ValueError,
+        TypeError,
+        KeyError,
+        AttributeError,
+        IndexError,
+    ) as error:
         semantic_rejections.append(
             f"{category}/{tracker}:{type(error).__name__}"
         )

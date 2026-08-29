@@ -409,7 +409,7 @@ def _named_values(
 
 def _primitive_value(
     annotation: object,
-    meta: Meta,
+    _meta: Meta,
     files: Mapping[str, Path],
     profile: int,
 ) -> object:
@@ -507,7 +507,7 @@ def _value(
 def _safe_type_hints(target: object) -> dict[str, Any]:
     try:
         return get_type_hints(target)
-    except (NameError, TypeError):
+    except NameError, TypeError:
         return {}
 
 
@@ -598,9 +598,7 @@ def _scenario_rows(
 ) -> list[tuple[dict[str, object], dict[str, object]]]:
     scenarios: list[tuple[dict[str, object], dict[str, object]]] = [({}, {})]
     scenarios.extend(
-        literal_branch_scenarios(
-            function, Meta.__dataclass_fields__, limit=96
-        )
+        literal_branch_scenarios(function, Meta.__dataclass_fields__, limit=96)
     )
     return scenarios
 
@@ -720,9 +718,7 @@ async def _instantiate_class(
     rejections: list[str],
 ) -> object | None:
     try:
-        return await _invoke(
-            class_type, _meta(tmp_path, files), files, 0
-        )
+        return await _invoke(class_type, _meta(tmp_path, files), files, 0)
     except Exception as error:
         rejections.append(
             f"{module.__name__}.{class_name}.__init__:{type(error).__name__}"
