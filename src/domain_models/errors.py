@@ -66,3 +66,7 @@ class OperationAbortedError(UploadAssistantError):
 
 class NoWorkAvailableError(UploadAssistantError):
     """The requested queue or selection contains no work to process."""
+
+
+class ReleasePathMissingError(UploadAssistantError):
+    """A preparation flow was invoked without a source release path."""

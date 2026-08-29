@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from src.domain_models.errors import MediaInfoError
+from src.domain_models.errors import MediaInfoError, ReleasePathMissingError
 from src.domain_models.music import AudioTrack, MetadataSource, MusicRelease
 from src.domain_models.release import Meta
 from src.services import music_preparation
@@ -353,6 +353,15 @@ def test_find_discogs_release_filtering_no_match_unattended_and_interactive(
         )
         == ""
     )
+
+
+def test_gather_music_prep_rejects_missing_release_path() -> None:
+    meta = Meta(category="MUSIC", path=None)
+
+    with pytest.raises(
+        ReleasePathMissingError, match="requires a release path"
+    ):
+        asyncio.run(music_preparation.gather_music_prep(meta, {"DEFAULT": {}}))
 
 
 def test_gather_music_prep_enrichment_and_media_errors(
