@@ -688,17 +688,17 @@ class Prep:
         return False
 
     async def get_cat(self, _video: str, meta: Meta) -> str | None:
-        has_manual, manual_category = self._manual_category(meta)
+        has_manual, manual_category = Prep._manual_category(meta)
         if has_manual:
             return manual_category
-        if self._music_category(meta):
+        if Prep._music_category(meta):
             return "MUSIC"
-        if await self._xxx_category(meta):
+        if await Prep._xxx_category(meta):
             logger.debug(
                 "[cyan]Matched XXX platform marker in release name[/cyan]"
             )
             return "XXX"
-        return "TV" if self._tv_category(meta) else "MOVIE"
+        return "TV" if Prep._tv_category(meta) else "MOVIE"
 
     async def stream_optimized(self, stream_opt: bool) -> int:
         return 1 if stream_opt is True else 0
