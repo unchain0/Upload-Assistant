@@ -38,6 +38,19 @@ class DigitalCore:
     # PTScreens. External hosts may be accepted syntactically but are often
     # replaced by /img/not-found-image.svg when the site cannot proxy them.
     approved_image_hosts = ("sharex", "ptscreens")
+    # MUSIC artwork is hosted before tracker-specific payload preparation. It may
+    # use the broader set historically accepted by DigitalCore because
+    # get_firstpic() rehosts the final firstpic through image_host_policy when
+    # the renderer cannot safely consume that host directly.
+    music_cover_approved_image_hosts = (
+        "imgbox",
+        "imgbb",
+        "bhd",
+        "imgur",
+        "postimg",
+        "sharex",
+        "ptscreens",
+    )
     image_host_policy = ImageHostPolicy(
         {
             "digitalcore.club": "sharex",

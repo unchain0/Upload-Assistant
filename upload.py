@@ -1107,7 +1107,11 @@ def _music_cover_allowed_hosts(trackers: Iterable[Any]) -> list[str] | None:
         tracker_class = tracker_class_map.get(str(tracker_name).upper())
         if tracker_class is None:
             continue
-        tracker_hosts = getattr(tracker_class, "approved_image_hosts", None)
+        tracker_hosts = getattr(
+            tracker_class,
+            "music_cover_approved_image_hosts",
+            getattr(tracker_class, "approved_image_hosts", None),
+        )
         if tracker_hosts:
             hosts = {str(host) for host in tracker_hosts}
             approved_hosts = (
