@@ -874,8 +874,21 @@ async def _no_sleep(
     return None
 
 
-async def _affirmative_prompt(*_args: object, **_kwargs: object) -> bool:
-    return True
+async def _immediate_prompt(
+    function: Callable[..., object], *args: object, **kwargs: object
+) -> object:
+    """Run the already-faked prompt callable without a worker thread."""
+    result = function(*args, **kwargs)
+    if inspect.isawaitable(result):
+        return await result
+    return result
+
+
+async def _skip_selection_prompt(
+    _function: Callable[..., object], *_args: object, **_kwargs: object
+) -> str:
+    """Return IMDb's universally valid interactive skip selection."""
+    return "0"
 
 
 def _patch_external_clients(monkeypatch: Any) -> None:
@@ -898,8 +911,10 @@ def _patch_external_clients(monkeypatch: Any) -> None:
 
 
 def _patch_external_module(module: ModuleType, monkeypatch: Any) -> None:
-    if hasattr(module, "prompt_in_thread"):
-        monkeypatch.setattr(module, "prompt_in_thread", _affirmative_prompt)
+    if module.__name__.endswith(".imdb"):
+        monkeypatch.setattr(module, "prompt_in_thread", _skip_selection_prompt)
+    elif hasattr(module, "prompt_in_thread"):
+        monkeypatch.setattr(module, "prompt_in_thread", _immediate_prompt)
     if module.__name__.endswith(".tvdb"):
         monkeypatch.setattr(module, "TVDB", _TvdbClient)
         monkeypatch.setattr(module, "tvdb", _TvdbClient())
