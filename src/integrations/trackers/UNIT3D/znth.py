@@ -73,6 +73,7 @@ class Zenith(UNIT3D):
     tracker = "ZENITH"
     display_name = "Zenith"
     allows_bloated_audio = True
+    book_cover_max_size = 3 * 1024 * 1024
     base_url = "https://znth.cx"
     banned_groups: tuple[str, ...] = ()
     id_url = f"{base_url}/api/torrents/"
@@ -2053,10 +2054,10 @@ class Zenith(UNIT3D):
         self, meta: Meta
     ) -> dict[str, tuple[str, bytes, str]]:
         files = await super().get_additional_files(meta)
-        # Zenith only accepts the original audiobook cover when it is at most 5 MiB.
+        # Zenith only accepts the original audiobook cover when it is at most 3 MiB.
         if meta.audiobook and meta.artwork_path:
             cover_file = await self.get_image_file(
-                meta.artwork_path, max_size=5 * 1024 * 1024
+                meta.artwork_path, max_size=self.book_cover_max_size
             )
             if cover_file:
                 files["torrent-cover"] = cover_file

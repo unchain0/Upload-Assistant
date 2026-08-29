@@ -223,6 +223,23 @@ async def test_zenith_additional_files_adds_audiobook_cover(
     meta = _audiobook_meta(artwork_path="cover.jpg")
     files = await tracker.get_additional_files(meta)
     assert files["torrent-cover"] == ("cover.jpg", b"cover", "image/jpeg")
+    tracker.get_image_file.assert_awaited_once_with(
+        "cover.jpg", max_size=3 * 1024 * 1024
+    )
+
+
+@pytest.mark.asyncio
+async def test_zenith_audiobook_cover_above_three_mib_is_not_uploaded(
+    tmp_path: Path,
+) -> None:
+    tracker = _tracker()
+    cover = tmp_path / "cover.jpg"
+    cover.write_bytes(b"\xff\xd8\xff" + b"x" * (3 * 1024 * 1024))
+    meta = _audiobook_meta(artwork_path=str(cover))
+
+    files = await tracker.get_additional_files(meta)
+
+    assert "torrent-cover" not in files
 
 
 def test_zenith_torrent_music_path_preserves_existing_root_component() -> None:

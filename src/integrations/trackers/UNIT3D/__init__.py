@@ -39,6 +39,8 @@ class UNIT3D:
     follow_upload_redirects = True
     follow_search_redirects = True
     expose_remote_error_details = True
+    artwork_cover_max_size = 5 * 1024 * 1024
+    book_cover_max_size = 5 * 1024 * 1024
 
     def __init__(self, config: dict[str, Any], tracker_name: str):
         self.config = config
@@ -771,6 +773,11 @@ class UNIT3D:
         async with aiofiles.open(path, "rb") as handle:
             return path.name, await handle.read(), "text/plain"
 
+    def _cover_max_size(self, meta: Meta) -> int:
+        if meta.category == "BOOK":
+            return self.book_cover_max_size
+        return self.artwork_cover_max_size
+
     async def _append_artwork_files(
         self, meta: Meta, files: dict[str, tuple[str, bytes, str]]
     ) -> None:
@@ -778,7 +785,7 @@ class UNIT3D:
             files,
             "torrent-cover",
             meta.artwork_path,
-            max_size=5 * 1024 * 1024,
+            max_size=self._cover_max_size(meta),
         )
         await self._append_image_file(
             files, "torrent-banner", meta.artwork_banner_path
