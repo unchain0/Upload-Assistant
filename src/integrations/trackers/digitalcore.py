@@ -386,7 +386,7 @@ class DigitalCore:
     def _default_release_name(cls, meta: Meta, scene_name: str) -> str:
         base_name = scene_name or str(meta.basename_no_ext or "")
         sanitized = cls._sanitize_release_name(base_name)
-        return f"{sanitized} [NORAR]" if scene_name else sanitized
+        return f"{sanitized} [UNRAR]" if scene_name else sanitized
 
     def _use_metadata_name(self) -> bool:
         return bool(
@@ -399,7 +399,7 @@ class DigitalCore:
     def _metadata_release_name(cls, meta: Meta, scene_name: str) -> str:
         base_name = scene_name if scene_name else (meta.clean_name or "")
         sanitized = cls._sanitize_release_name(base_name)
-        return f"{sanitized} [NORAR]" if scene_name else sanitized
+        return f"{sanitized} [UNRAR]" if scene_name else sanitized
 
     @staticmethod
     def _sanitize_release_name(name: str) -> str:

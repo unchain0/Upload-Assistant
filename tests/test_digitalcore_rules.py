@@ -83,7 +83,7 @@ def test_digitalcore_allows_jpg_png_and_gif_screenshots() -> None:
     )
 
 
-def test_digitalcore_names_scene_release_with_norar_when_metadata_names_enabled() -> (
+def test_digitalcore_names_scene_release_with_unrar_when_metadata_names_enabled() -> (
     None
 ):
     assert (
@@ -95,7 +95,7 @@ def test_digitalcore_names_scene_release_with_norar_when_metadata_names_enabled(
                 )
             )
         )
-        == "Example.Movie.2024.1080p.WEB-DL.x264-SCENE [NORAR]"
+        == "Example.Movie.2024.1080p.WEB-DL.x264-SCENE [UNRAR]"
     )
 
 
@@ -123,7 +123,7 @@ def test_digitalcore_sanitizes_default_book_names_for_upload() -> None:
         assert asyncio.run(_tracker().get_name(meta)) == expected
 
 
-def test_digitalcore_keeps_scene_name_and_norar_when_not_using_metadata() -> (
+def test_digitalcore_keeps_scene_name_and_unrar_when_not_using_metadata() -> (
     None
 ):
     assert (
@@ -135,5 +135,5 @@ def test_digitalcore_keeps_scene_name_and_norar_when_not_using_metadata() -> (
                 )
             )
         )
-        == "Example.Movie.2024.1080p.WEB-DL.x264-SCENE [NORAR]"
+        == "Example.Movie.2024.1080p.WEB-DL.x264-SCENE [UNRAR]"
     )
