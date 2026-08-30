@@ -19,6 +19,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, ClassVar, get_args, get_origin, get_type_hints
 
+import cli_ui
+import click
 import httpx
 import requests
 
@@ -916,6 +918,8 @@ def _named_contract_values(
         "original_meta": meta,
         "path": str(path),
         "file_path": str(path),
+        "processed_files_log": str(tmp_path / "processed_files.json"),
+        "log_file": str(tmp_path / "queue.log"),
         "files": [path],
         "filename": path.name,
         "current_author": "Example Author",
@@ -1248,6 +1252,20 @@ async def _service_affirmative_prompt(
 def _patch_service_boundaries(
     monkeypatch: Any, config: dict[str, Any], tmp_path: Path
 ) -> None:
+    monkeypatch.setattr(cli_ui, "ask_string", lambda *_args, **_kwargs: "")
+    monkeypatch.setattr(cli_ui, "ask_yes_no", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        cli_ui,
+        "ask_choice",
+        lambda *_args, choices=None, **_kwargs: next(
+            iter(choices or ["example"])
+        ),
+    )
+    monkeypatch.setattr(
+        click,
+        "edit",
+        lambda text=None, *_args, **_kwargs: text,
+    )
     monkeypatch.setattr(httpx, "AsyncClient", _AsyncClient)
     monkeypatch.setattr(requests, "Session", _Session)
     monkeypatch.setattr(requests, "get", _Session().get)
@@ -1268,8 +1286,56 @@ def _patch_service_boundaries(
         "search_tvmaze",
         lambda *_args, **_kwargs: _AwaitableValue(),
     )
+    _patch_metadata_service(monkeypatch, config, tmp_path)
+    _patch_preparation_service(monkeypatch, config, tmp_path)
     _patch_preparation_helpers(monkeypatch, config, tmp_path)
     monkeypatch.setattr(asyncio, "sleep", _service_no_sleep)
+
+
+def _patch_metadata_service(
+    monkeypatch: Any, config: dict[str, Any], tmp_path: Path
+) -> None:
+    import src.services.metadata_service as metadata_service
+
+    manager_double = _ManagerPort(config, tmp_path)
+    monkeypatch.setattr(
+        metadata_service,
+        "TvdbData",
+        lambda *_args, **_kwargs: manager_double,
+    )
+    monkeypatch.setattr(
+        metadata_service,
+        "TmdbManager",
+        lambda *_args, **_kwargs: manager_double,
+    )
+
+
+def _patch_preparation_service(
+    monkeypatch: Any, config: dict[str, Any], tmp_path: Path
+) -> None:
+    import src.services.preparation_service as preparation_service
+
+    manager_double = _ManagerPort(config, tmp_path)
+    for name in (
+        "TvdbData",
+        "TmdbManager",
+        "RadarrManager",
+        "SonarrManager",
+        "RehostImagesManager",
+        "AudioManager",
+        "DiscInfoManager",
+        "SceneManager",
+        "TakeScreensManager",
+        "SeasonEpisodeManager",
+        "NameManager",
+        "TrackerDataManager",
+        "MetadataSearchingManager",
+    ):
+        monkeypatch.setattr(
+            preparation_service,
+            name,
+            lambda *_args, _manager=manager_double, **_kwargs: _manager,
+        )
 
 
 def _patch_preparation_helpers(
@@ -1278,14 +1344,73 @@ def _patch_preparation_helpers(
     import src.services.preparation_helpers as preparation_helpers
 
     manager_double = _ManagerPort(config, tmp_path)
+
+    async def export_info_double(
+        *_args: object, **_kwargs: object
+    ) -> dict[str, Any]:
+        return _meta(tmp_path).mediainfo
+
+    async def conformance_double(*_args: object, **_kwargs: object) -> bool:
+        return False
+
+    async def tag_double(*_args: object, **_kwargs: object) -> str:
+        return ""
+
+    async def tag_override_double(meta: Meta) -> Meta:
+        return meta
+
+    async def source_double(
+        type_name: str, *_args: object, **_kwargs: object
+    ) -> tuple[str, str]:
+        return "WEB", type_name or "WEBDL"
+
+    async def edition_double(
+        meta: Meta, *_args: object, **_kwargs: object
+    ) -> Meta:
+        return meta
+
     monkeypatch.setattr(
         preparation_helpers, "video_manager", _VideoPort(config, tmp_path)
     )
     monkeypatch.setattr(preparation_helpers, "imdb_manager", manager_double)
     monkeypatch.setattr(preparation_helpers, "tvmaze_manager", manager_double)
+    monkeypatch.setattr(
+        preparation_helpers, "languages_manager", manager_double
+    )
+    monkeypatch.setattr(preparation_helpers, "cleanup_manager", manager_double)
+    monkeypatch.setattr(
+        preparation_helpers,
+        "Clients",
+        lambda *_args, **_kwargs: manager_double,
+    )
+    monkeypatch.setattr(preparation_helpers, "export_info", export_info_double)
+    monkeypatch.setattr(
+        preparation_helpers, "get_conformance_error", conformance_double
+    )
+    monkeypatch.setattr(
+        preparation_helpers,
+        "validate_mediainfo",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(preparation_helpers, "get_tag", tag_double)
+    monkeypatch.setattr(
+        preparation_helpers, "tag_override", tag_override_double
+    )
+    monkeypatch.setattr(preparation_helpers, "get_source", source_double)
+    monkeypatch.setattr(preparation_helpers, "get_edition", edition_double)
+    monkeypatch.setattr(
+        preparation_helpers,
+        "get_bluray_releases",
+        lambda *_args, **_kwargs: _AwaitableValue(),
+    )
 
 
 def _patch_service_module_prompt(module: ModuleType, monkeypatch: Any) -> None:
+    monkeypatch.setattr(cli_ui, "ask_string", lambda *_args, **_kwargs: "")
+    if module.__name__.endswith(".comparison_service"):
+        monkeypatch.setattr(
+            cli_ui, "ask_string", lambda *_args, **_kwargs: "1"
+        )
     if hasattr(module, "prompt_in_thread"):
         monkeypatch.setattr(
             module, "prompt_in_thread", _service_affirmative_prompt
@@ -1537,6 +1662,7 @@ async def _exercise_service_catalog(
 def test_service_catalog_accepts_domain_fixtures_and_boundary_doubles(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
+    monkeypatch.chdir(tmp_path)
     config = _config()
     _patch_service_boundaries(monkeypatch, config, tmp_path)
     attempted: set[str] = set()

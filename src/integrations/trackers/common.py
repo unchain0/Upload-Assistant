@@ -801,6 +801,8 @@ class Common:
                 bencode_module = cast(Any, bencodepy)
                 encode = cast(Callable[[Any], bytes], bencode_module.encode)
                 info_bytes = encode(info_data)
+                # BitTorrent v1 mandates SHA-1 for the info-hash; it is not used as a signature.
+                # nosemgrep: insecure-hash-algorithm-sha1
                 torrent_hash = hashlib.sha1(
                     info_bytes, usedforsecurity=False
                 ).hexdigest()  # SHA1 required for torrent info hash
@@ -833,6 +835,8 @@ class Common:
             bencode_module = cast(Any, bencodepy)
             encode = cast(Callable[[Any], bytes], bencode_module.encode)
             info = encode(info_value)
+            # BitTorrent v1 mandates SHA-1 for the info-hash; it is not used as a signature.
+            # nosemgrep: insecure-hash-algorithm-sha1
             return hashlib.sha1(
                 info, usedforsecurity=False
             ).hexdigest()  # SHA1 required for torrent info hash

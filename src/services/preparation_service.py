@@ -750,9 +750,9 @@ class Prep:
 
     async def parse_scene_nfo(self, meta: Meta) -> None:
         nfo_file = meta.scene_nfo_file
-        if not nfo_file:
+        if not isinstance(nfo_file, str) or not nfo_file.strip():
             logger.debug(
-                "[yellow]No NFO file found for scene release[/yellow]"
+                "[yellow]No valid NFO file found for scene release[/yellow]"
             )
             return
         try:

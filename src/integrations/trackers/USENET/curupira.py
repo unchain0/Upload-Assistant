@@ -3,11 +3,11 @@ import contextlib
 import json
 from pathlib import Path
 from typing import Any, cast
-from xml.etree import ElementTree
 
 import aiofiles
 import httpx
 import langcodes
+from defusedxml import ElementTree
 
 from src.domain_models.release import Meta
 from src.domain_models.tracker_image_policy import get_tracker_image_collection

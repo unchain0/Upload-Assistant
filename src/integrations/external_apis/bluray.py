@@ -1575,7 +1575,7 @@ async def process_all_releases(
                         expected_format = "bd-100"
 
                     format_match = False
-                    if expected_format and expected_format in release_format:
+                    if expected_format in release_format:
                         format_match = True
                         log_and_print(
                             f"[green]✓[/green] Disc format match: {specs['discs']['format']} matches size {disc_size_gb:.2f} GB",

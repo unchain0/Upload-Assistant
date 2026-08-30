@@ -14,6 +14,7 @@ import pytest
 
 import src.integrations.external_apis.tmdb as tmdb
 from src.domain_models.errors import (
+    AmbiguousMetadataError,
     OperationAbortedError,
     TmdbCredentialMissingError,
 )
@@ -172,39 +173,36 @@ def tv_payload() -> dict[str, Any]:
     }
 
 
+def _static_endpoint_payload(url: str) -> dict[str, Any] | None:
+    payloads: dict[str, dict[str, Any]] = {
+        "/external_ids": {"imdb_id": "tt7654321", "tvdb_id": "654"},
+        "/videos": {
+            "results": [
+                {"site": "YouTube", "type": "Trailer", "key": "trailer"}
+            ]
+        },
+        "/credits": {
+            "cast": [
+                {"known_for_department": "Acting", "original_name": "Actor"}
+            ],
+            "crew": [{"job": "Director", "name": "Director"}],
+        },
+        "/images": {"logos": [{"iso_639_1": "en", "file_path": "/logo.png"}]},
+    }
+    for suffix, payload in payloads.items():
+        if url.endswith(suffix):
+            return payload
+    return None
+
+
 def endpoint_payload(url: str, *, category: str = "MOVIE") -> Response:
-    if url.endswith("/external_ids"):
-        return Response({"imdb_id": "tt7654321", "tvdb_id": "654"})
-    if url.endswith("/videos"):
-        return Response(
-            {
-                "results": [
-                    {"site": "YouTube", "type": "Trailer", "key": "trailer"}
-                ]
-            }
-        )
+    payload = _static_endpoint_payload(url)
+    if payload is not None:
+        return Response(payload)
     if url.endswith("/keywords"):
         key = "keywords" if category == "MOVIE" else "results"
         return Response({key: [{"name": "action,hero"}]})
-    if url.endswith("/credits"):
-        return Response(
-            {
-                "cast": [
-                    {
-                        "known_for_department": "Acting",
-                        "original_name": "Actor",
-                    }
-                ],
-                "crew": [{"job": "Director", "name": "Director"}],
-            }
-        )
-    if url.endswith("/images"):
-        return Response(
-            {"logos": [{"iso_639_1": "en", "file_path": "/logo.png"}]}
-        )
-    if "/movie/" in url:
-        return Response(movie_payload())
-    return Response(tv_payload())
+    return Response(movie_payload() if "/movie/" in url else tv_payload())
 
 
 def test_client_missing_credential_and_title_helpers(
@@ -386,9 +384,8 @@ def test_get_tmdb_id_single_multiple_manual_unattended_and_empty(
         301,
         "MOVIE",
     )
-    assert asyncio.run(
-        tmdb.get_tmdb_id("multiple", 2026, "MOVIE", unattended=True)
-    ) == (201, "MOVIE")
+    with pytest.raises(AmbiguousMetadataError, match="ambiguous"):
+        asyncio.run(tmdb.get_tmdb_id("multiple", 2026, "MOVIE", unattended=True))
 
     selections = iter(["bad", "99", "movie/444"])
     monkeypatch.setattr(
@@ -931,6 +928,34 @@ def test_manager_wrappers_delegate_all_operations(
     ) == {"title": "localized"}
 
 
+def _single_tmdb_search_result(
+    url: str, title: str, identifier: int, date: str = "2027-01-01"
+) -> Response:
+    is_tv = "/search/tv" in url
+    key = "name" if is_tv else "title"
+    date_key = "first_air_date" if is_tv else "release_date"
+    return Response(
+        {"results": [{"id": identifier, key: title, date_key: date}]}
+    )
+
+
+def _transformed_search_matches(url: str, query: str, year: str) -> bool:
+    return (
+        query
+        in {"Movie 2", "Secondary", "Guessed", "One Two", "One Two Three"}
+        or year == "2027"
+        or "/search/tv" in url
+    )
+
+
+def _fallback_search_matches(url: str, query: str) -> bool:
+    return "/search/tv" in url or query in {
+        "Guessed Fallback",
+        "Secondary Fallback",
+        "Clean Name",
+    }
+
+
 def test_search_transformations_failures_translations_and_tv_boost(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -939,32 +964,14 @@ def test_search_transformations_failures_translations_and_tv_boost(
     )
 
     def transformed(url: str, kwargs: dict[str, Any]) -> Response:
-        query = str(kwargs.get("params", {}).get("query", ""))
+        params = kwargs.get("params", {})
+        query = str(params.get("query", ""))
         year = str(
-            kwargs.get("params", {}).get("year")
-            or kwargs.get("params", {}).get("first_air_date_year")
-            or ""
+            params.get("year") or params.get("first_air_date_year") or ""
         )
-        if (
-            query
-            in {"Movie 2", "Secondary", "Guessed", "One Two", "One Two Three"}
-            or year == "2027"
-            or "/search/tv" in url
-        ):
-            key = "name" if "/search/tv" in url else "title"
-            date_key = "first_air_date" if key == "name" else "release_date"
-            return Response(
-                {
-                    "results": [
-                        {
-                            "id": 900 + len(query),
-                            key: query or "TV",
-                            date_key: "2027-01-01",
-                        }
-                    ]
-                }
-            )
-        return Response({"results": []})
+        if not _transformed_search_matches(url, query, year):
+            return Response({"results": []})
+        return _single_tmdb_search_result(url, query or "TV", 900 + len(query))
 
     install_client(monkeypatch, transformed)
     assert asyncio.run(
@@ -1393,16 +1400,16 @@ def test_tmdb_other_meta_partial_failures_and_alias_cleanup(
     tmdb.default_config = {"add_logo": True, "logo_language": "en"}
 
     def partial(url: str, _kwargs: dict[str, Any]) -> Any:
-        if url.endswith("/external_ids"):
-            return RuntimeError("external IDs")
-        if url.endswith("/videos"):
-            return Response({"results": []})
-        if url.endswith("/keywords"):
-            return RuntimeError("keywords")
-        if url.endswith("/credits"):
-            return Response(ValueError("bad credits"))
-        if url.endswith("/images"):
-            return Response(ValueError("bad logo"))
+        special: dict[str, Any] = {
+            "/external_ids": RuntimeError("external IDs"),
+            "/videos": Response({"results": []}),
+            "/keywords": RuntimeError("keywords"),
+            "/credits": Response(ValueError("bad credits")),
+            "/images": Response(ValueError("bad logo")),
+        }
+        for suffix, response in special.items():
+            if url.endswith(suffix):
+                return response
         payload = movie_payload()
         payload.update(
             {
@@ -1643,9 +1650,10 @@ def test_get_tmdb_id_remaining_selection_and_fallback_branches(
     install_client(
         monkeypatch, lambda _url, _kwargs: Response({"results": identical})
     )
-    assert asyncio.run(
-        tmdb.get_tmdb_id("Exact Name", 2026, "MOVIE", unattended=True)
-    ) == (701, "MOVIE")
+    with pytest.raises(AmbiguousMetadataError, match="ambiguous"):
+        asyncio.run(
+            tmdb.get_tmdb_id("Exact Name", 2026, "MOVIE", unattended=True)
+        )
 
     tv_results = [
         {
@@ -1667,9 +1675,7 @@ def test_get_tmdb_id_remaining_selection_and_fallback_branches(
         monkeypatch, lambda _url, _kwargs: Response({"results": tv_results})
     )
     assert (
-        asyncio.run(tmdb.get_tmdb_id("Example", 2026, "TV", unattended=True))[
-            0
-        ]
+        asyncio.run(tmdb.get_tmdb_id("Example", 2026, "TV", unattended=True))[0]
         == 711
     )
 
@@ -1689,21 +1695,11 @@ def test_get_tmdb_id_remaining_selection_and_fallback_branches(
 
     def fallback_handler(url: str, kwargs: dict[str, Any]) -> Response:
         query = str(kwargs.get("params", {}).get("query", ""))
-        if "/search/tv" in url or query in {
-            "Guessed Fallback",
-            "Secondary Fallback",
-            "Clean Name",
-        }:
-            key = "name" if "/search/tv" in url else "title"
-            date_key = "first_air_date" if key == "name" else "release_date"
-            return Response(
-                {
-                    "results": [
-                        {"id": 799, key: query or "TV", date_key: "2026-01-01"}
-                    ]
-                }
-            )
-        return Response({"results": []})
+        if not _fallback_search_matches(url, query):
+            return Response({"results": []})
+        return _single_tmdb_search_result(
+            url, query or "TV", 799, date="2026-01-01"
+        )
 
     install_client(monkeypatch, fallback_handler)
     monkeypatch.setattr(
@@ -1945,31 +1941,39 @@ def test_guessit_payload_wrapper(monkeypatch: pytest.MonkeyPatch) -> None:
     }
 
 
-def test_get_tmdb_id_parser_type_info_and_result_edge_branches(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def _disable_tmdb_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         tmdb.asyncio, "sleep", lambda *_args, **_kwargs: async_value(None)
     )
+
+
+def test_get_tmdb_id_retries_manual_parser_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _disable_tmdb_sleep(monkeypatch)
     install_client(
         monkeypatch, lambda _url, _kwargs: Response({"results": []})
     )
-
     parsed = iter([("MOVIE", "not-an-int"), ("MOVIE", 901)])
+    prompts = iter(["bad", "movie/901"])
     monkeypatch.setattr(
         tmdb, "parse_tmdb_id", lambda *_args, **_kwargs: next(parsed)
     )
-    prompts = iter(["bad", "movie/901"])
     monkeypatch.setattr(
         tmdb,
         "prompt_in_thread",
         lambda *_args, **_kwargs: async_value(next(prompts)),
     )
+
     assert asyncio.run(tmdb.get_tmdb_id("No Result", None, "MOVIE")) == (
         901,
         "MOVIE",
     )
 
+
+def test_get_tmdb_id_handles_category_preference_and_bad_type_info(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     class BrokenTypeInfo:
         def __bool__(self) -> bool:
             return True
@@ -1977,20 +1981,11 @@ def test_get_tmdb_id_parser_type_info_and_result_edge_branches(
         def get(self, _key: str, _default: object = None) -> object:
             raise TypeError("bad mapping")
 
+    _disable_tmdb_sleep(monkeypatch)
     install_client(
         monkeypatch,
-        lambda url, _kwargs: Response(
-            {
-                "results": [
-                    {
-                        "id": 902,
-                        "name" if "/tv" in url else "title": "Preferred",
-                        "first_air_date"
-                        if "/tv" in url
-                        else "release_date": "2026-01-01",
-                    }
-                ]
-            }
+        lambda url, _kwargs: _single_tmdb_search_result(
+            url, "Preferred", 902, date="2026-01-01"
         ),
     )
     monkeypatch.setattr(
@@ -2002,6 +1997,7 @@ def test_get_tmdb_id_parser_type_info_and_result_edge_branches(
             else (category or "MOVIE", 0)
         ),
     )
+
     assert asyncio.run(
         tmdb.get_tmdb_id("Preferred", 2026, "MOVIE", category_preference="TV")
     ) == (902, "TV")
@@ -2009,7 +2005,11 @@ def test_get_tmdb_id_parser_type_info_and_result_edge_branches(
         tmdb.get_tmdb_id("Preferred", 2026, BrokenTypeInfo())
     ) == (902, "MOVIE")  # type: ignore[arg-type]
 
-    # Multiple sparse provider entries force all title/date normalization paths.
+
+def test_get_tmdb_id_rejects_sparse_ambiguous_results_unattended(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _disable_tmdb_sleep(monkeypatch)
     sparse_results = [
         {"id": 903},
         {"id": 904, "original_title": None, "release_date": None},
@@ -2025,10 +2025,15 @@ def test_get_tmdb_id_parser_type_info_and_result_edge_branches(
             RuntimeError("translation")
         ),
     )
-    assert asyncio.run(
-        tmdb.get_tmdb_id("Sparse", None, "MOVIE", unattended=True)
-    )[0] in {903, 904}
 
+    with pytest.raises(AmbiguousMetadataError, match="ambiguous"):
+        asyncio.run(tmdb.get_tmdb_id("Sparse", None, "MOVIE", unattended=True))
+
+
+def test_get_tmdb_id_rejects_equal_exact_results_unattended(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _disable_tmdb_sleep(monkeypatch)
     exact_without_year = [
         {
             "id": 905,
@@ -2047,10 +2052,18 @@ def test_get_tmdb_id_parser_type_info_and_result_edge_branches(
         monkeypatch,
         lambda _url, _kwargs: Response({"results": exact_without_year}),
     )
-    assert asyncio.run(
-        tmdb.get_tmdb_id("Exact", None, "MOVIE", unattended=True)
-    ) == (905, "MOVIE")
 
+    with pytest.raises(AmbiguousMetadataError, match="ambiguous"):
+        asyncio.run(tmdb.get_tmdb_id("Exact", None, "MOVIE", unattended=True))
+
+
+def test_get_tmdb_id_accepts_manual_custom_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _disable_tmdb_sleep(monkeypatch)
+    install_client(
+        monkeypatch, lambda _url, _kwargs: Response({"results": []})
+    )
     selections = iter(["custom/invalid", "movie/907"])
     monkeypatch.setattr(
         tmdb,
@@ -2065,6 +2078,7 @@ def test_get_tmdb_id_parser_type_info_and_result_edge_branches(
         "prompt_in_thread",
         lambda *_args, **_kwargs: async_value(next(selections)),
     )
+
     assert asyncio.run(tmdb.get_tmdb_id("Unrelated", None, "MOVIE")) == (
         907,
         "MOVIE",
@@ -2142,16 +2156,16 @@ def test_tmdb_other_meta_cache_and_provider_decoding_edges(
     )
 
     def malformed_edges(url: str, _kwargs: dict[str, Any]) -> Any:
-        if url.endswith("/external_ids"):
-            return Response(ValueError("external ids"))
-        if url.endswith("/videos"):
-            return Response({"results": []})
-        if url.endswith("/keywords"):
-            return Response(ValueError("keywords"))
-        if url.endswith("/credits"):
-            return Response(ValueError("credits"))
-        if url.endswith("/images"):
-            return Response(ValueError("images"))
+        special: dict[str, Any] = {
+            "/external_ids": Response(ValueError("external ids")),
+            "/videos": Response({"results": []}),
+            "/keywords": Response(ValueError("keywords")),
+            "/credits": Response(ValueError("credits")),
+            "/images": Response(ValueError("images")),
+        }
+        for suffix, response in special.items():
+            if url.endswith(suffix):
+                return response
         return Response(movie_payload())
 
     install_client(monkeypatch, malformed_edges)
@@ -2558,9 +2572,10 @@ def test_tmdb_similarity_plus_one_year_and_semantic_cancellation_propagation(
     install_client(
         monkeypatch, lambda _url, _kwargs: Response({"results": plus_one})
     )
-    assert asyncio.run(
-        tmdb.get_tmdb_id("Exact Shared", 2026, "MOVIE", unattended=True)
-    )[0] in {1301, 1302}
+    with pytest.raises(AmbiguousMetadataError, match="ambiguous"):
+        asyncio.run(
+            tmdb.get_tmdb_id("Exact Shared", 2026, "MOVIE", unattended=True)
+        )
 
     async def cancelled(*_args: object, **_kwargs: object) -> str:
         raise EOFError
@@ -2636,16 +2651,18 @@ def test_tmdb_other_meta_last_air_mismatch_and_video_parse_failure(
     payload["last_air_date"] = "2026-12-31"
 
     def handler(url: str, _kwargs: dict[str, Any]) -> Response:
-        if url.endswith("/external_ids"):
-            return Response({"imdb_id": "tt7654321", "tvdb_id": "654"})
-        if url.endswith("/videos"):
-            return Response(ValueError("videos parse failed"))
-        if url.endswith("/keywords"):
-            return Response({"results": []})
-        if url.endswith("/credits"):
-            return Response({"cast": [], "crew": []})
-        if url.endswith("/images"):
-            return Response({"logos": []})
+        special: dict[str, Response] = {
+            "/external_ids": Response(
+                {"imdb_id": "tt7654321", "tvdb_id": "654"}
+            ),
+            "/videos": Response(ValueError("videos parse failed")),
+            "/keywords": Response({"results": []}),
+            "/credits": Response({"cast": [], "crew": []}),
+            "/images": Response({"logos": []}),
+        }
+        for suffix, response in special.items():
+            if url.endswith(suffix):
+                return response
         return Response(payload)
 
     install_client(monkeypatch, handler)
@@ -2875,18 +2892,20 @@ def test_tmdb_other_meta_mismatch_video_json_logo_and_tv_last_air_year(
     tmdb.default_config = {"add_logo": True, "logo_language": "en"}
 
     def movie_handler(url: str, _kwargs: dict[str, Any]) -> Response:
-        if url.endswith("/external_ids"):
-            return Response({"imdb_id": "tt7654321", "tvdb_id": "654"})
-        if url.endswith("/videos"):
-            return Response(ValueError("bad videos"))
-        if url.endswith("/keywords"):
-            return Response({"keywords": []})
-        if url.endswith("/credits"):
-            return Response({"cast": [], "crew": []})
-        if url.endswith("/images"):
-            return Response(
+        special: dict[str, Response] = {
+            "/external_ids": Response(
+                {"imdb_id": "tt7654321", "tvdb_id": "654"}
+            ),
+            "/videos": Response(ValueError("bad videos")),
+            "/keywords": Response({"keywords": []}),
+            "/credits": Response({"cast": [], "crew": []}),
+            "/images": Response(
                 {"logos": [{"iso_639_1": "en", "file_path": "/logo.png"}]}
-            )
+            ),
+        }
+        for suffix, response in special.items():
+            if url.endswith(suffix):
+                return response
         return Response(movie_payload())
 
     install_client(monkeypatch, movie_handler)

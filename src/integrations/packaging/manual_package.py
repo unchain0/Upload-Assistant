@@ -189,7 +189,7 @@ class ManualPackageManager:
         filebrowser = self._manual_filebrowser()
         if filebrowser is None:
             return await self._upload_archive(meta, archive)
-        path = f"/tmp/{meta.uuid}"  # noqa: S108 - filebrowser URL path, not local temp storage
+        path = f"/tmp/{meta.uuid}"  # noqa: S108  # nosec B108 -- remote FileBrowser URL path, not local storage
         return filebrowser.rstrip("/") + urllib.parse.quote(path, safe="/")
 
     async def package(self, meta: Meta) -> str | bool:

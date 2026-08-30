@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 import upload
+from src.domain_models.errors import AmbiguousMetadataError
 from src.domain_models.processing import ItemProcessingError
 from src.domain_models.release import Meta
 
@@ -560,6 +561,35 @@ async def test_process_meta_stops_before_trackers_for_invalid_automatic_tv_metad
 
     assert await upload.process_meta(meta, str(tmp_path)) is False
     cancel_tasks.assert_awaited_once_with("invalid-tv")
+
+
+@pytest.mark.asyncio
+async def test_process_meta_marks_ambiguous_tmdb_as_item_skip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class FakePrep:
+        def __init__(self, **_kwargs: Any) -> None:
+            pass
+
+        async def gather_prep(self, meta: Meta, mode: str) -> Meta:
+            del meta, mode
+            raise AmbiguousMetadataError(
+                "TMDb metadata match is ambiguous; automatic mode will skip this release."
+            )
+
+    monkeypatch.setattr("upload.Prep", FakePrep)
+    meta = Meta(
+        base_dir=str(tmp_path),
+        uuid="ambiguous-movie",
+        path=str(tmp_path / "The.Odyssey.2026.mkv"),
+        imghost="imgbb",
+        unattended=True,
+    )
+
+    with pytest.raises(ItemProcessingError, match="ambiguous") as exc_info:
+        await upload.process_meta(meta, str(tmp_path))
+
+    assert exc_info.value.item_path == meta.path
 
 
 @pytest.mark.asyncio

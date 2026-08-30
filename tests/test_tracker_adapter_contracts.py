@@ -21,6 +21,7 @@ from typing import Any, ClassVar, Self, cast, get_args, get_origin
 
 import bencodepy
 import cli_ui
+import click
 import cloudscraper
 import httpx
 import pytest
@@ -1103,6 +1104,9 @@ def _patch_effect_boundaries(monkeypatch: Any) -> None:
         lambda _message, choices, **_kwargs: next(iter(choices)),
     )
     monkeypatch.setattr(cli_ui, "ask_string", lambda *_args, **_kwargs: "1")
+    monkeypatch.setattr(
+        click, "edit", lambda text=None, *_args, **_kwargs: text
+    )
 
 
 def _patch_effect_tracker_module(tracker_class: Any, monkeypatch: Any) -> None:
@@ -1283,6 +1287,7 @@ def test_tracker_effect_boundary_is_exercised_with_fakes(
     tracker_name: str, tmp_path: Path, monkeypatch: Any
 ) -> None:
     """Smoke one tracker's effectful methods without touching a real service."""
+    monkeypatch.chdir(tmp_path)
     _prepare_effect_fixture(tmp_path)
     _patch_effect_boundaries(monkeypatch)
     attempted: set[str] = set()
@@ -1372,6 +1377,9 @@ def _patch_private_boundaries(monkeypatch: Any) -> None:
         cli_ui,
         "ask_string",
         lambda message, **_kwargs: _private_prompt_value(message),
+    )
+    monkeypatch.setattr(
+        click, "edit", lambda text=None, *_args, **_kwargs: text
     )
 
 
@@ -1523,6 +1531,7 @@ def test_tracker_private_helpers_use_domain_fixtures_without_terminating(
     monkeypatch: Any,
 ) -> None:
     """Exercise adapter-owned helper paths with local boundary doubles."""
+    monkeypatch.chdir(tmp_path)
     _patch_private_boundaries(monkeypatch)
     attempted: set[str] = set()
     terminations: list[str] = []

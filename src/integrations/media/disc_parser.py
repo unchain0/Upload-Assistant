@@ -87,7 +87,8 @@ class DiscParse:
     async def _run_specialized_mediainfo(
         self, binary: str, *arguments: str, env: dict[str, str] | None = None
     ) -> tuple[bytes, bytes, int | None]:
-        process = await asyncio.create_subprocess_exec(
+        # binary is resolved from validated local config/bundled MediaInfo; argv is exec-form.
+        process = await asyncio.create_subprocess_exec(  # nosemgrep: dangerous-asyncio-create-exec-audit
             binary,
             *arguments,
             stdout=asyncio.subprocess.PIPE,
@@ -215,7 +216,8 @@ class DiscParse:
             r"(?P<files_done>\d+)/(?P<files_total>\d+),\s*read\s*(?P<speed>[^,]+),\s*ETA\s*(?P<eta>[^)]+)\)"
         )
         command = [*command, "--progress"]
-        process = await asyncio.create_subprocess_exec(
+        # command starts with validated configured/bundled go-bdinfo and never invokes a shell.
+        process = await asyncio.create_subprocess_exec(  # nosemgrep: dangerous-asyncio-create-exec-audit
             *command,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,

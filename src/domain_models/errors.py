@@ -64,6 +64,10 @@ class OperationAbortedError(UploadAssistantError):
     """The user or an explicit policy cancelled the current operation."""
 
 
+class AmbiguousMetadataError(OperationAbortedError):
+    """Automatic metadata matching found multiple plausible candidates."""
+
+
 class NoWorkAvailableError(UploadAssistantError):
     """The requested queue or selection contains no work to process."""
 

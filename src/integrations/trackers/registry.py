@@ -1699,6 +1699,7 @@ class TrackerSetup:
                 f" yellow]{status}[/bold yellow][/bold blue]"
             )
         if match == "hdr_mismatch":
+            # nosemgrep: python.flask.security.audit.directly-returned-format-string.directly-returned-format-string -- log text formatter, not an HTTP response
             return f"[bold blue]Found request match on [bold yellow]{tracker}[/bold yellow] with bounty [bold yellow]{bounty}[/bold yellow] with mismatched HDR or DV[/bold blue]"
         return (
             f"[bold blue]Found request on [bold yellow]{tracker}[/bold yellow]"

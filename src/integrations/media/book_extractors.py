@@ -8,12 +8,13 @@ import html
 import os
 import re
 import shutil
-import xml.etree.ElementTree as ET
 import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
+
+from defusedxml import ElementTree
 
 try:
     import rarfile
@@ -21,6 +22,9 @@ except ImportError:  # Optional CBR support.
     rarfile = None  # type: ignore[assignment]
 
 from src.integrations.observability.runtime_support import logger
+
+XmlElement = Any
+ET = ElementTree
 
 _MAX_EPUB_MEMBER_SIZE = 2 * 1024 * 1024
 _MAX_EPUB_COMPRESSION_RATIO = 100
@@ -86,7 +90,7 @@ class _EpubMetadataState:
 
 
 def _rootfile_path_from_container(container_data: bytes) -> str | None:
-    root = ET.fromstring(container_data)
+    root = ElementTree.fromstring(container_data)
     for element in root.iter():
         if not element.tag.endswith("rootfile"):
             continue
@@ -124,11 +128,11 @@ def _epub_rootfile_path(archive: zipfile.ZipFile) -> str | None:
     )
 
 
-def _epub_element_text(element: ET.Element) -> str:
+def _epub_element_text(element: XmlElement) -> str:
     return (element.text or "").strip()
 
 
-def _epub_inline_role(element: ET.Element) -> str:
+def _epub_inline_role(element: XmlElement) -> str:
     for key, value in element.attrib.items():
         if key.split("}")[-1] == "role":
             return value.strip().lower()
@@ -136,7 +140,7 @@ def _epub_inline_role(element: ET.Element) -> str:
 
 
 def _record_epub_creator(
-    state: _EpubMetadataState, element: ET.Element
+    state: _EpubMetadataState, element: XmlElement
 ) -> None:
     creator = _epub_element_text(element)
     if not creator:
@@ -145,7 +149,7 @@ def _record_epub_creator(
     state.creators.append((creator_id, creator, _epub_inline_role(element)))
 
 
-def _record_epub_date(state: _EpubMetadataState, element: ET.Element) -> None:
+def _record_epub_date(state: _EpubMetadataState, element: XmlElement) -> None:
     event = str(get_attr_ignore_ns(element, "event") or "").strip().casefold()
     if event in {"modification", "modified", "dcterms:modified"}:
         return
@@ -153,19 +157,19 @@ def _record_epub_date(state: _EpubMetadataState, element: ET.Element) -> None:
 
 
 def _record_epub_identifier(
-    state: _EpubMetadataState, element: ET.Element
+    state: _EpubMetadataState, element: XmlElement
 ) -> None:
     state.identifiers.append(
         (element.attrib.get("id", "").strip(), _epub_element_text(element))
     )
 
 
-def _epub_attribute_text(element: ET.Element, key: str) -> str:
+def _epub_attribute_text(element: XmlElement, key: str) -> str:
     value = element.attrib.get(key)
     return "" if value is None else value
 
 
-def _epub_role_meta_value(element: ET.Element) -> tuple[str, str] | None:
+def _epub_role_meta_value(element: XmlElement) -> tuple[str, str] | None:
     property_name = _epub_attribute_text(element, "property").lower()
     if property_name != "role":
         return None
@@ -181,7 +185,7 @@ def _epub_role_meta_value(element: ET.Element) -> tuple[str, str] | None:
 
 
 def _record_epub_role_meta(
-    state: _EpubMetadataState, element: ET.Element
+    state: _EpubMetadataState, element: XmlElement
 ) -> bool:
     role_meta = _epub_role_meta_value(element)
     if role_meta is None:
@@ -192,7 +196,7 @@ def _record_epub_role_meta(
 
 
 def _record_epub_series_meta(
-    state: _EpubMetadataState, element: ET.Element
+    state: _EpubMetadataState, element: XmlElement
 ) -> None:
     meta_name = (element.attrib.get("name") or "").lower()
     content = (element.attrib.get("content") or "").strip()
@@ -202,14 +206,14 @@ def _record_epub_series_meta(
         state.series_index = content
 
 
-def _record_epub_meta(state: _EpubMetadataState, element: ET.Element) -> None:
+def _record_epub_meta(state: _EpubMetadataState, element: XmlElement) -> None:
     if _record_epub_role_meta(state, element):
         return
     _record_epub_series_meta(state, element)
 
 
 def _record_epub_text_field(
-    state: _EpubMetadataState, tag_local: str, element: ET.Element
+    state: _EpubMetadataState, tag_local: str, element: XmlElement
 ) -> bool:
     attribute = _EPUB_TEXT_FIELDS.get(tag_local)
     if attribute is None:
@@ -219,7 +223,7 @@ def _record_epub_text_field(
 
 
 def _record_epub_structured_element(
-    state: _EpubMetadataState, tag_local: str, element: ET.Element
+    state: _EpubMetadataState, tag_local: str, element: XmlElement
 ) -> None:
     if tag_local == "creator":
         _record_epub_creator(state, element)
@@ -232,7 +236,7 @@ def _record_epub_structured_element(
 
 
 def _record_epub_element(
-    state: _EpubMetadataState, element: ET.Element
+    state: _EpubMetadataState, element: XmlElement
 ) -> None:
     tag_local = element.tag.split("}")[-1]
     if _record_epub_text_field(state, tag_local, element):
@@ -240,7 +244,7 @@ def _record_epub_element(
     _record_epub_structured_element(state, tag_local, element)
 
 
-def _parse_epub_state(root: ET.Element) -> _EpubMetadataState:
+def _parse_epub_state(root: XmlElement) -> _EpubMetadataState:
     state = _EpubMetadataState()
     for element in root.iter():
         _record_epub_element(state, element)
@@ -343,7 +347,7 @@ def _extract_epub_archive_metadata(archive: zipfile.ZipFile) -> dict[str, Any]:
     opf_data = _safe_zip_member_bytes(archive, rootfile_path)
     if opf_data is None:
         return {}
-    root = ET.fromstring(opf_data)
+    root = ElementTree.fromstring(opf_data)
     unique_id = get_attr_ignore_ns(root, "unique-identifier") or ""
     return _metadata_from_epub_state(_parse_epub_state(root), unique_id)
 
@@ -404,7 +408,8 @@ def _read_cbz_comic_info(filepath: str) -> bytes | None:
 
 
 def _read_cbr_comic_info(filepath: str) -> bytes | None:
-    if rarfile is None:
+    # Optional dependency sentinel check; this compares the imported module object to None.
+    if rarfile is None:  # nosemgrep: identical-is-comparison
         logger.debug(
             "[yellow]Debug: rarfile library not available for CBR metadata extraction.[/yellow]"
         )
@@ -432,7 +437,7 @@ def _comic_info_bytes(filepath: str) -> bytes | None:
     return None
 
 
-def _comic_info_values(root: ET.Element) -> dict[str, str]:
+def _comic_info_values(root: XmlElement) -> dict[str, str]:
     values = dict.fromkeys(_COMIC_INFO_FIELDS.values(), "")
     for element in root.iter():
         field = _COMIC_INFO_FIELDS.get(element.tag.split("}")[-1])
@@ -473,7 +478,7 @@ def _comic_info_metadata(values: dict[str, str]) -> dict[str, Any]:
 def _parse_comic_info_metadata(xml_data: bytes) -> dict[str, Any]:
     try:
         return _comic_info_metadata(
-            _comic_info_values(ET.fromstring(xml_data))
+            _comic_info_values(ElementTree.fromstring(xml_data))
         )
     except Exception as error:
         logger.debug(
@@ -521,13 +526,13 @@ def _find_mobi_opf(tempdir: str | os.PathLike[str]) -> Path | None:
     return None
 
 
-def _parse_mobi_xml(opf_data: bytes) -> ET.Element | None:
+def _parse_mobi_xml(opf_data: bytes) -> XmlElement | None:
     try:
-        return ET.fromstring(opf_data)
+        return ElementTree.fromstring(opf_data)
     except Exception:
         try:
             decoded = opf_data.decode("utf-8", errors="replace")
-            return ET.fromstring(decoded.encode("utf-8"))
+            return ElementTree.fromstring(decoded.encode("utf-8"))
         except Exception as error:
             logger.debug(
                 f"[yellow]Debug: Error parsing MOBI XML data: {error}[/yellow]"
@@ -545,7 +550,7 @@ def _mobi_identifier_value(value: str) -> str:
 
 
 def _record_mobi_element(
-    state: _MobiMetadataState, element: ET.Element
+    state: _MobiMetadataState, element: XmlElement
 ) -> None:
     tag_local = element.tag.split("}")[-1]
     text = _epub_element_text(element)
@@ -559,7 +564,7 @@ def _record_mobi_element(
         setattr(state, attribute, text)
 
 
-def _parse_mobi_state(root: ET.Element) -> _MobiMetadataState:
+def _parse_mobi_state(root: XmlElement) -> _MobiMetadataState:
     state = _MobiMetadataState()
     for element in root.iter():
         _record_mobi_element(state, element)
@@ -784,7 +789,7 @@ def date_event_from_str(event_str: str | None) -> str | None:
     return _DATE_EVENT_NAMES.get(event_str.strip().lower())
 
 
-def get_attr_ignore_ns(elem: ET.Element, attr_name: str) -> str | None:
+def get_attr_ignore_ns(elem: XmlElement, attr_name: str) -> str | None:
     if attr_name in elem.attrib:
         return elem.attrib[attr_name]
     for k, v in elem.attrib.items():
@@ -907,7 +912,7 @@ def _epubmeta_rootfile_path(archive: zipfile.ZipFile) -> str | None:
     )
 
 
-def _epubmeta_metadata_element(root: ET.Element) -> ET.Element | None:
+def _epubmeta_metadata_element(root: XmlElement) -> XmlElement | None:
     for element in root.iter():
         if element.tag.split("}")[-1] == "metadata":
             return element
@@ -923,7 +928,7 @@ def _epubmeta_valid_rootfile(archive: zipfile.ZipFile) -> str | None:
 
 def _epubmeta_archive_root(
     archive: zipfile.ZipFile,
-) -> tuple[ET.Element, ET.Element] | None:
+) -> tuple[XmlElement, XmlElement] | None:
     if len(archive.infolist()) > 4096:
         return None
     rootfile_path = _epubmeta_valid_rootfile(archive)
@@ -932,14 +937,14 @@ def _epubmeta_archive_root(
     opf_data = _safe_zip_member_bytes(archive, rootfile_path)
     if opf_data is None:
         return None
-    root = ET.fromstring(opf_data)
+    root = ElementTree.fromstring(opf_data)
     metadata_element = _epubmeta_metadata_element(root)
     if metadata_element is None:
         return None
     return root, metadata_element
 
 
-def _epub_refinement(element: ET.Element) -> _EpubRefinement | None:
+def _epub_refinement(element: XmlElement) -> _EpubRefinement | None:
     refines = get_attr_ignore_ns(element, "refines")
     if not refines:
         return None
@@ -952,7 +957,7 @@ def _epub_refinement(element: ET.Element) -> _EpubRefinement | None:
 
 
 def _collect_epub_refinements(
-    metadata_element: ET.Element,
+    metadata_element: XmlElement,
 ) -> list[_EpubRefinement]:
     refinements: list[_EpubRefinement] = []
     for child in metadata_element:
@@ -1012,7 +1017,7 @@ def _identifier_refinement_values(
 
 def _add_output_identifier(
     state: _EpubMetaOutputState,
-    child: ET.Element,
+    child: XmlElement,
     refinements: list[_EpubRefinement],
 ) -> None:
     identifier_id = get_attr_ignore_ns(child, "id")
@@ -1032,7 +1037,7 @@ def _add_output_identifier(
 
 def _add_output_title(
     state: _EpubMetaOutputState,
-    child: ET.Element,
+    child: XmlElement,
     refinements: list[_EpubRefinement],
 ) -> None:
     identifier = get_attr_ignore_ns(child, "id")
@@ -1059,7 +1064,7 @@ def _agent_refinement_values(
 
 
 def _output_agent(
-    child: ET.Element, refinements: list[_EpubRefinement]
+    child: XmlElement, refinements: list[_EpubRefinement]
 ) -> _EpubOutputAgent:
     identifier = get_attr_ignore_ns(child, "id")
     role, file_as, creator_seq = _agent_refinement_values(
@@ -1078,7 +1083,7 @@ def _output_agent(
 
 def _add_output_contributor(
     state: _EpubMetaOutputState,
-    child: ET.Element,
+    child: XmlElement,
     refinements: list[_EpubRefinement],
 ) -> None:
     state.contributors.append(_output_agent(child, refinements))
@@ -1086,14 +1091,14 @@ def _add_output_contributor(
 
 def _add_output_creator(
     state: _EpubMetaOutputState,
-    child: ET.Element,
+    child: XmlElement,
     refinements: list[_EpubRefinement],
 ) -> None:
     state.creators.append(_output_agent(child, refinements))
 
 
 def _record_output_date(
-    state: _EpubMetaOutputState, child: ET.Element
+    state: _EpubMetaOutputState, child: XmlElement
 ) -> None:
     event_name = date_event_from_str(get_attr_ignore_ns(child, "event"))
     if event_name:
@@ -1101,7 +1106,7 @@ def _record_output_date(
 
 
 def _record_output_meta_date(
-    state: _EpubMetaOutputState, child: ET.Element
+    state: _EpubMetaOutputState, child: XmlElement
 ) -> None:
     if get_attr_ignore_ns(child, "refines"):
         return
@@ -1130,7 +1135,7 @@ def _source_refinement_values(
 
 def _add_output_source(
     state: _EpubMetaOutputState,
-    child: ET.Element,
+    child: XmlElement,
     refinements: list[_EpubRefinement],
 ) -> None:
     identifier_type, scheme, source_of = _source_refinement_values(
@@ -1148,7 +1153,7 @@ def _add_output_source(
 
 def _add_output_language(
     state: _EpubMetaOutputState,
-    child: ET.Element,
+    child: XmlElement,
     _refinements: list[_EpubRefinement],
 ) -> None:
     state.languages.append(_epub_element_text(child))
@@ -1156,7 +1161,7 @@ def _add_output_language(
 
 def _add_output_date(
     state: _EpubMetaOutputState,
-    child: ET.Element,
+    child: XmlElement,
     _refinements: list[_EpubRefinement],
 ) -> None:
     _record_output_date(state, child)
@@ -1164,7 +1169,7 @@ def _add_output_date(
 
 def _add_output_meta(
     state: _EpubMetaOutputState,
-    child: ET.Element,
+    child: XmlElement,
     _refinements: list[_EpubRefinement],
 ) -> None:
     _record_output_meta_date(state, child)
@@ -1172,20 +1177,20 @@ def _add_output_meta(
 
 def _add_output_type(
     state: _EpubMetaOutputState,
-    child: ET.Element,
+    child: XmlElement,
     _refinements: list[_EpubRefinement],
 ) -> None:
     if state.media_type is None:
         state.media_type = _epub_element_text(child)
 
 
-def _append_output_text(values: list[str], child: ET.Element) -> None:
+def _append_output_text(values: list[str], child: XmlElement) -> None:
     values.append(_epub_element_text(child))
 
 
 def _add_output_coverage(
     state: _EpubMetaOutputState,
-    child: ET.Element,
+    child: XmlElement,
     _refinements: list[_EpubRefinement],
 ) -> None:
     _append_output_text(state.coverages, child)
@@ -1193,7 +1198,7 @@ def _add_output_coverage(
 
 def _add_output_description(
     state: _EpubMetaOutputState,
-    child: ET.Element,
+    child: XmlElement,
     _refinements: list[_EpubRefinement],
 ) -> None:
     state.descriptions.append(
@@ -1206,7 +1211,7 @@ def _add_output_description(
 
 def _add_output_format(
     state: _EpubMetaOutputState,
-    child: ET.Element,
+    child: XmlElement,
     _refinements: list[_EpubRefinement],
 ) -> None:
     _append_output_text(state.formats, child)
@@ -1214,7 +1219,7 @@ def _add_output_format(
 
 def _add_output_publisher(
     state: _EpubMetaOutputState,
-    child: ET.Element,
+    child: XmlElement,
     _refinements: list[_EpubRefinement],
 ) -> None:
     _append_output_text(state.publishers, child)
@@ -1222,7 +1227,7 @@ def _add_output_publisher(
 
 def _add_output_relation(
     state: _EpubMetaOutputState,
-    child: ET.Element,
+    child: XmlElement,
     _refinements: list[_EpubRefinement],
 ) -> None:
     _append_output_text(state.relations, child)
@@ -1230,7 +1235,7 @@ def _add_output_relation(
 
 def _add_output_rights(
     state: _EpubMetaOutputState,
-    child: ET.Element,
+    child: XmlElement,
     _refinements: list[_EpubRefinement],
 ) -> None:
     _append_output_text(state.rights, child)
@@ -1238,14 +1243,14 @@ def _add_output_rights(
 
 def _add_output_subject(
     state: _EpubMetaOutputState,
-    child: ET.Element,
+    child: XmlElement,
     _refinements: list[_EpubRefinement],
 ) -> None:
     _append_output_text(state.subjects, child)
 
 
 _EpubOutputHandler = Callable[
-    [_EpubMetaOutputState, ET.Element, list[_EpubRefinement]], None
+    [_EpubMetaOutputState, XmlElement, list[_EpubRefinement]], None
 ]
 
 _EPUB_OUTPUT_HANDLERS: dict[str, _EpubOutputHandler] = {
@@ -1269,7 +1274,7 @@ _EPUB_OUTPUT_HANDLERS: dict[str, _EpubOutputHandler] = {
 
 
 def _collect_epubmeta_state(
-    root: ET.Element, metadata_element: ET.Element
+    root: XmlElement, metadata_element: XmlElement
 ) -> _EpubMetaOutputState:
     state = _EpubMetaOutputState(
         version=get_attr_ignore_ns(root, "version") or "",

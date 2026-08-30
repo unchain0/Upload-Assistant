@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import pickle
 from pathlib import Path
 from types import TracebackType
 from typing import Any, ClassVar, Self
@@ -135,12 +134,6 @@ class Client:
         cls.instances = []
 
 
-class PickleCookie:
-    def __init__(self, name: str, value: str) -> None:
-        self.name = name
-        self.value = value
-
-
 class SimpleCookieJar:
     jar: tuple[()] = ()
 
@@ -237,11 +230,16 @@ def test_cookie_loading_all_formats(
     assert tracker._load_cookie_dict(str(netscape)) == {"session": "value"}
 
     pickled = tmp_path / "cookies.pkl"
-    pickled.write_bytes(pickle.dumps([PickleCookie("session", "legacy")]))
-    save = Mock()
-    monkeypatch.setattr(tracker.cookie_validator, "_save_cookies_secure", save)
-    assert tracker._load_cookie_dict(str(pickled)) == {"session": "legacy"}
-    save.assert_called_once()
+    pickled.write_bytes(b"\x80\x04unsafe-pickle-payload")
+    assert tracker._load_cookie_dict(str(pickled)) == {}
+
+    json_with_legacy_suffix = tmp_path / "safe-cookies.pkl"
+    json_with_legacy_suffix.write_text(
+        json.dumps({"session": {"value": "safe"}}), encoding="utf-8"
+    )
+    assert tracker._load_cookie_dict(str(json_with_legacy_suffix)) == {
+        "session": "safe"
+    }
 
     secure = tmp_path / "secure.json"
     secure.write_text("{}", encoding="utf-8")

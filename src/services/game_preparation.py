@@ -34,32 +34,44 @@ def normalize_version(version_str: str) -> str:
     return version_str
 
 
+def _strip_scene_group(title: str) -> str:
+    if "-" not in title:
+        return title
+    prefix, suffix = title.rsplit("-", 1)
+    scene_suffix = (
+        (suffix.isupper() or suffix.isdigit())
+        and len(suffix) < 15
+        and not re.search(r"\s", suffix)
+    )
+    return prefix if scene_suffix else title
+
+
+def _clean_game_title_text(title: str) -> str:
+    substitutions = (
+        (r"(?i)\.(?:dmg|pkg|iso|rar|zip|7z)$", ""),
+        (r"\[[^\]]+\]$", ""),
+        (
+            rf"(?i)(?<![A-Za-z0-9]){_VERSION_PATTERN}\s+(?:(?:incl(?:uded)?|with)\s+)?(?:keygen|crack(?:ed)?|serial)\b.*",
+            "",
+        ),
+        (r"(?<![A-Za-z0-9])\d+(?:\.\d+){1,3}\s*$", ""),
+        (r"[._-]+", " "),
+        (r"(?i)\b(?:update|patch|build|version)\b.*", ""),
+        (rf"(?i)\bv{_VERSION_PATTERN}\b.*", ""),
+        (r"\b(?:19|20)\d{6}\b\s*$", ""),
+        (r"(?i)\b[a-z]{2}(?:US|GB|CA|AU|BR|DE|ES|FR|IT|JP)\b\s*$", ""),
+    )
+    for pattern, replacement in substitutions:
+        title = re.sub(pattern, replacement, title).strip(" ._-")
+    return re.sub(r"\s+", " ", title).strip()
+
+
 def clean_game_title(value: str) -> str:
     title = Path(str(value or "")).name
     title = re.sub(r"(?i)\.(?:dmg|pkg|iso|rar|zip|7z)$", "", title)
     title = re.sub(r"\[[^\]]+\]$", "", title).strip(" ._-")
-    if "-" in title:
-        prefix, suffix = title.rsplit("-", 1)
-        if (
-            (suffix.isupper() or suffix.isdigit())
-            and len(suffix) < 15
-            and not re.search(r"\s", suffix)
-        ):
-            title = prefix
-    title = re.sub(
-        rf"(?i)(?<![A-Za-z0-9]){_VERSION_PATTERN}\s+(?:(?:incl(?:uded)?|with)\s+)?(?:keygen|crack(?:ed)?|serial)\b.*",
-        "",
-        title,
-    )
-    title = re.sub(r"(?<![A-Za-z0-9])\d+(?:\.\d+){1,3}\s*$", "", title)
-    title = re.sub(r"[._-]+", " ", title)
-    title = re.sub(r"(?i)\b(?:update|patch|build|version)\b.*", "", title)
-    title = re.sub(rf"(?i)\bv{_VERSION_PATTERN}\b.*", "", title)
-    title = re.sub(r"\b(?:19|20)\d{6}\b\s*$", "", title)
-    title = re.sub(
-        r"(?i)\b[a-z]{2}(?:US|GB|CA|AU|BR|DE|ES|FR|IT|JP)\b\s*$", "", title
-    )
-    title = re.sub(r"\s+", " ", title).strip()
+    title = _strip_scene_group(title)
+    title = _clean_game_title_text(title)
     return title.title() if title and title == title.lower() else title
 
 
@@ -81,16 +93,16 @@ def required_game_fields(meta: Meta) -> list[str]:
     return fields
 
 
-def missing_game_fields(meta: Meta) -> list[str]:
-    missing = [
+def _missing_required_game_fields(meta: Meta) -> list[str]:
+    return [
         field
         for field in required_game_fields(meta)
         if not str(getattr(meta, field, "") or "").strip()
     ]
-    if not meta.software:
-        return missing
 
-    software_fields = {
+
+def _software_field_values(meta: Meta) -> dict[str, Any]:
+    return {
         "game_version": meta.game_version,
         "developer": meta.developer,
         "publisher": meta.publisher,
@@ -99,62 +111,86 @@ def missing_game_fields(meta: Meta) -> list[str]:
         "overview": meta.overview,
         "installation instructions": meta.software_notes,
     }
+
+
+def missing_game_fields(meta: Meta) -> list[str]:
+    missing = _missing_required_game_fields(meta)
+    if not meta.software:
+        return missing
     missing.extend(
-        label for label, value in software_fields.items() if not value
+        label for label, value in _software_field_values(meta).items() if not value
     )
     return missing
 
 
-def _is_desktop_installer(meta: Meta) -> bool:
-    if meta.console_game or str(meta.platform or "").upper() not in {
-        "PC",
-        "MAC",
-        "LINUX",
-    }:
-        return False
+def _desktop_platform(meta: Meta) -> bool:
+    return str(meta.platform or "").upper() in {"PC", "MAC", "LINUX"}
+
+
+def _installer_paths(meta: Meta) -> list[str]:
     paths = [str(item) for item in meta.filelist]
     if meta.path:
         paths.append(str(meta.path))
+    return paths
+
+
+def _is_desktop_installer(meta: Meta) -> bool:
+    if meta.console_game or not _desktop_platform(meta):
+        return False
     return any(
         Path(path).suffix.lower() in {".dmg", ".exe", ".msi", ".pkg"}
-        for path in paths
+        for path in _installer_paths(meta)
     )
+
+
+def _software_notes_candidate(path: Path) -> bool:
+    return path.suffix.lower() in {".md", ".nfo", ".txt"} and path.is_file()
+
+
+async def _read_small_text_file(path: Path) -> str:
+    try:
+        if path.stat().st_size > 64 * 1024:
+            return ""
+        async with aiofiles.open(
+            path, encoding="utf-8", errors="replace"
+        ) as handle:
+            return (await handle.read()).strip()
+    except OSError:
+        return ""
+
+
+def _nfo_installation_instructions(notes: str) -> str:
+    instructions: list[str] = []
+    action_pattern = re.compile(
+        r"\b(?:extract|burn|mount|run|setup|install|copy|crack|play|usage)\b",
+        re.IGNORECASE,
+    )
+    for line in notes.splitlines():
+        match = re.search(r"(\d+\.\s+.+)", line)
+        if match is None:
+            continue
+        instruction = match.group(1).rstrip(" \t|│║�")
+        if action_pattern.search(instruction):
+            instructions.append(instruction)
+    return "\n".join(instructions)
+
+
+async def _software_notes_for_path(path: Path) -> str:
+    if not _software_notes_candidate(path):
+        return ""
+    notes = await _read_small_text_file(path)
+    if not notes:
+        return ""
+    if path.suffix.lower() != ".nfo":
+        return notes
+    return _nfo_installation_instructions(notes)
 
 
 async def _read_software_notes(meta: Meta) -> str:
     for item in meta.filelist:
-        path = Path(str(item))
-        if (
-            path.suffix.lower() not in {".md", ".nfo", ".txt"}
-            or not path.is_file()
-        ):
-            continue
-        try:
-            if path.stat().st_size > 64 * 1024:
-                continue
-            async with aiofiles.open(
-                path, encoding="utf-8", errors="replace"
-            ) as handle:
-                notes = (await handle.read()).strip()
-            if not notes:
-                continue
-            if path.suffix.lower() != ".nfo":
-                return notes
-            instructions = []
-            for line in notes.splitlines():
-                match = re.search(r"(\d+\.\s+.+)", line)
-                if match:
-                    instruction = match.group(1).rstrip(" \t|│║�")
-                    if re.search(
-                        r"\b(?:extract|burn|mount|run|setup|install|copy|crack|play|usage)\b",
-                        instruction,
-                        re.IGNORECASE,
-                    ):
-                        instructions.append(instruction)
-            if instructions:
-                return "\n".join(instructions)
-        except OSError:
-            continue
+        notes = await _software_notes_for_path(Path(str(item)))
+        if notes:
+            return notes
     return ""
 
 
@@ -186,48 +222,62 @@ def extract_version_from_text(text: str) -> str | None:
     return None
 
 
-def extract_version_from_nfo(nfo_path: str) -> str | None:
-    with contextlib.suppress(Exception):
-        content = ""
+def _read_nfo_text(nfo_path: str) -> str:
+    path = Path(nfo_path)
+    try:
+        return path.read_text(encoding="utf-8")
+    except Exception:
         try:
-            with Path(nfo_path).open(encoding="utf-8") as f:
-                content = f.read()
+            return path.read_text(encoding="latin-1")
         except Exception:
-            with Path(nfo_path).open(encoding="latin-1") as f:
-                content = f.read()
+            return ""
 
-        lines = content.splitlines()
 
-        # First pass: look for strong patterns
-        for line in lines:
-            m = re.search(
-                rf"(?i)(?<![a-zA-Z0-9])(?:update|version|ver|build)[.:=\-_\s]*[vV]?({_VERSION_PATTERN})(?![a-zA-Z0-9])",
-                line,
-            )
-            if m:
-                return normalize_version(m.group(1))
-
-        # Second pass: look for any vX.Y pattern
-        for line in lines:
-            m = re.search(
-                rf"(?i)(?<![a-zA-Z0-9])[vV]({_VERSION_PATTERN})(?![a-zA-Z0-9])",
-                line,
-            )
-            if m:
-                return normalize_version(m.group(0))
-
-        # Third pass: look for isolated version numbers in context
-        for line in lines:
-            for m in re.finditer(
-                r"(?i)(?<![a-zA-Z0-9])(\d+(?:[.\-]\d+)+)(?![a-zA-Z0-9])", line
-            ):
-                candidate = m.group(1)
-                if any(
-                    w in line.lower()
-                    for w in ("version", "ver", "build", "v.", "v ")
-                ):
-                    return normalize_version(candidate)
+def _prefixed_version_from_lines(lines: list[str]) -> str | None:
+    pattern = re.compile(
+        rf"(?i)(?<![a-zA-Z0-9])(?:update|version|ver|build)[.:=\-_\s]*[vV]?({_VERSION_PATTERN})(?![a-zA-Z0-9])"
+    )
+    for line in lines:
+        match = pattern.search(line)
+        if match:
+            return normalize_version(match.group(1))
     return None
+
+
+def _v_version_from_lines(lines: list[str]) -> str | None:
+    pattern = re.compile(
+        rf"(?i)(?<![a-zA-Z0-9])[vV]({_VERSION_PATTERN})(?![a-zA-Z0-9])"
+    )
+    for line in lines:
+        match = pattern.search(line)
+        if match:
+            return normalize_version(match.group(0))
+    return None
+
+
+def _context_version_from_lines(lines: list[str]) -> str | None:
+    pattern = re.compile(
+        r"(?i)(?<![a-zA-Z0-9])(\d+(?:[.\-]\d+)+)(?![a-zA-Z0-9])"
+    )
+    context_words = ("version", "ver", "build", "v.", "v ")
+    for line in lines:
+        if not any(word in line.lower() for word in context_words):
+            continue
+        match = pattern.search(line)
+        if match:
+            return normalize_version(match.group(1))
+    return None
+
+
+def extract_version_from_nfo(nfo_path: str) -> str | None:
+    lines = _read_nfo_text(nfo_path).splitlines()
+    if not lines:
+        return None
+    return (
+        _prefixed_version_from_lines(lines)
+        or _v_version_from_lines(lines)
+        or _context_version_from_lines(lines)
+    )
 
 
 def map_to_clean_code(p_name: str) -> str:
@@ -265,61 +315,80 @@ def map_to_clean_code(p_name: str) -> str:
     return p_name.upper()
 
 
-async def get_7z_path(
-    base_dir: str, config: dict[str, Any] | None = None
-) -> str | None:
-    # 1. Check config for 7z_path
-    if config and "DEFAULT" in config:
-        config_path = config["DEFAULT"].get("7z_path", "").strip()
-        if config_path and Path(config_path).exists():
-            return config_path
+def _configured_7z_path(config: dict[str, Any] | None) -> str | None:
+    if not isinstance(config, dict):
+        return None
+    defaults = config.get("DEFAULT", {})
+    if not isinstance(defaults, dict):
+        return None
+    value = str(defaults.get("7z_path", "")).strip()
+    return value if value and Path(value).exists() else None
 
-    # 2. Check system PATH
-    sys_7z = shutil.which("7z") or shutil.which("7z.exe")
-    if sys_7z:
-        return sys_7z
 
-    # 3. Use manager fallback
-    with contextlib.suppress(Exception):
+def _system_7z_path() -> str | None:
+    return shutil.which("7z") or shutil.which("7z.exe")
+
+
+async def _managed_7z_path(base_dir: str) -> str | None:
+    try:
         from src.integrations.runtime_tools.seven_zip import (
             SevenZipBinaryManager,
         )
 
         binary_path = await SevenZipBinaryManager.ensure_7z_binary(base_dir)
-        if binary_path and Path(binary_path).exists():
-            return binary_path
-
+    except Exception:
+        return None
+    if binary_path and Path(binary_path).exists():
+        return binary_path
     return None
+
+
+async def get_7z_path(
+    base_dir: str, config: dict[str, Any] | None = None
+) -> str | None:
+    configured = _configured_7z_path(config)
+    if configured:
+        return configured
+    system = _system_7z_path()
+    if system:
+        return system
+    return await _managed_7z_path(base_dir)
+
+
+def _archive_listing_paths(stdout: bytes, archive_path: str) -> list[str]:
+    archive_normalized = archive_path.replace("\\", "/").lower()
+    contents: list[str] = []
+    for line in stdout.decode("utf-8", errors="replace").splitlines():
+        if not line.startswith("Path = ") or len(line) <= 7:
+            continue
+        path_value = line[7:].strip()
+        if not path_value:
+            continue
+        if path_value.replace("\\", "/").lower() == archive_normalized:
+            continue
+        contents.append(path_value)
+    return contents
 
 
 async def list_archive_contents_with_7z(
     archive_path: str, binary_path: str
 ) -> list[str]:
-    contents = []
     try:
-        cmd = [binary_path, "l", "-slt", archive_path]
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
+        command = [binary_path, "l", "-slt", archive_path]
+        process = await asyncio.create_subprocess_exec(  # nosemgrep: dangerous-asyncio-create-exec-audit
+            *command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
         stdout, _ = await process.communicate()
-        if process.returncode == 0:
-            for line in stdout.decode("utf-8", errors="replace").splitlines():
-                if line.startswith("Path = ") and len(line) > 7:
-                    path_val = line[7:].strip()
-                    # Skip if it is the archive name itself (7z lists archive header)
-                    if (
-                        path_val
-                        and path_val.replace("\\", "/").lower()
-                        != archive_path.replace("\\", "/").lower()
-                    ):
-                        contents.append(path_val)
-    except Exception as e:
+    except Exception as error:
         logger.debug(
-            f"[yellow]7-Zip: Failed to list archive contents for {archive_path}: {e}[/yellow]"
+            f"[yellow]7-Zip: Failed to list archive contents for {archive_path}: {error}[/yellow]"
         )
-    return contents
+        return []
+    if process.returncode != 0:
+        return []
+    return _archive_listing_paths(stdout, archive_path)
 
 
 async def detect_platform_from_files(
@@ -724,7 +793,7 @@ async def gather_game_prep(
 
     # Check for Twitch/IGDB API credentials
     client_id = ""
-    client_secret = ""
+    client_secret = ""  # nosec B105 -- empty initialization; value is loaded from config/env below
     if config and "DEFAULT" in config:
         client_id = config["DEFAULT"].get("twitch_client_id", "").strip()
         client_secret = (

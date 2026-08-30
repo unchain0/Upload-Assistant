@@ -12,7 +12,7 @@ class TmdbCredentialMode(StrEnum):
     """Authentication modes accepted by TMDb's API."""
 
     V3_API_KEY = "v3_key"
-    V4_READ_ACCESS_TOKEN = "v4_read_token"  # noqa: S105 -- enum label, never a credential value
+    V4_READ_ACCESS_TOKEN = "v4_read_token"  # noqa: S105  # nosec B105 -- enum label, not a credential
 
 
 @dataclass(frozen=True, slots=True)

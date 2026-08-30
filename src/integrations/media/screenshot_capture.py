@@ -11,13 +11,13 @@ import time
 import traceback
 import urllib.parse
 import uuid
-import xml.etree.ElementTree as ET
 import zipfile
 from collections.abc import Awaitable, Mapping
 from pathlib import Path
 from typing import Any, cast
 
 import ffmpeg
+from defusedxml import ElementTree
 
 from src.domain_models.errors import ScreenshotCaptureError
 from src.domain_models.release import Meta
@@ -499,8 +499,8 @@ async def run_ffmpeg(command: Any) -> tuple[int | None, bytes, bytes]:
             if Path(candidate).exists():
                 cmd_list[0] = str(candidate)
 
-    # Spawn the selected bundled binary or the system/default command.
-    process = await asyncio.create_subprocess_exec(
+    # Spawn validated configured/bundled/system ffmpeg with exec-form argv. The env is local process state, not remote input.
+    process = await asyncio.create_subprocess_exec(  # nosemgrep: dangerous-asyncio-create-exec-audit,dangerous-asyncio-create-exec-tainted-env-args
         *cmd_list,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
@@ -1765,7 +1765,7 @@ async def extract_epub_cover(
             rootfile_path = None
             with contextlib.suppress(Exception):
                 container_data = z.read("META-INF/container.xml")
-                root = ET.fromstring(container_data)
+                root = ElementTree.fromstring(container_data)
                 for elem in root.iter():
                     if elem.tag.endswith("rootfile"):
                         rootfile_path = elem.attrib.get("full-path")
@@ -1782,7 +1782,7 @@ async def extract_epub_cover(
                 return False
 
             opf_data = z.read(rootfile_path)
-            root = ET.fromstring(opf_data)
+            root = ElementTree.fromstring(opf_data)
 
             manifest_items = {}
             cover_item_id = None

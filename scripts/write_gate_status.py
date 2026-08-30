@@ -29,7 +29,10 @@ def _git(*args: str) -> str:
     git = shutil.which("git")
     if git is None:
         raise RuntimeError("git executable is required to write gate status")
-    return subprocess.check_output([git, *args], text=True).strip()  # noqa: S603 -- arguments are fixed by internal callers
+    # git is resolved locally and every caller supplies an internal fixed argument list.
+    return subprocess.check_output(  # noqa: S603  # nosemgrep: dangerous-subprocess-use-audit
+        [git, *args], text=True
+    ).strip()
 
 
 def _coverage(path: Path) -> dict[str, Any] | None:

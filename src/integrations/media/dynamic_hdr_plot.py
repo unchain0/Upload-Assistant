@@ -166,7 +166,8 @@ async def _terminate_process(process: asyncio.subprocess.Process) -> None:
 
 
 async def _run(command: list[str], timeout_seconds: int = 3600) -> None:
-    process = await asyncio.create_subprocess_exec(
+    # Tool path is validated local config or a managed downloaded binary; argv is exec-form.
+    process = await asyncio.create_subprocess_exec(  # nosemgrep: dangerous-asyncio-create-exec-audit
         *command,
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL,

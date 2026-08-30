@@ -22,6 +22,10 @@ from typing import Any, get_args, get_origin, get_type_hints
 import src.services as services_package
 from data.example_config import config as example_config
 from src.domain_models.release import Meta
+from tests.test_service_contracts import (
+    _patch_service_boundaries,
+    _patch_service_module_prompt,
+)
 
 _SKIP_FUNCTIONS = {
     "buffer_console_logs",
@@ -541,11 +545,13 @@ async def _exercise_module(
     module: ModuleType,
     variants: list[Meta],
     tmp_path: Path,
+    monkeypatch: Any,
     attempted: set[str],
     process_terminations: list[str],
     successes: set[str],
     validation_failures: list[str],
 ) -> None:
+    _patch_service_module_prompt(module, monkeypatch)
     for name, function in _module_functions(module):
         qualified = f"{module.__name__}.{name}"
         attempted.add(qualified)
@@ -567,6 +573,7 @@ async def _exercise_modules(
     modules: list[ModuleType],
     variants: list[Meta],
     tmp_path: Path,
+    monkeypatch: Any,
     attempted: set[str],
     process_terminations: list[str],
     successes: set[str],
@@ -577,6 +584,7 @@ async def _exercise_modules(
             module,
             variants,
             tmp_path,
+            monkeypatch,
             attempted,
             process_terminations,
             successes,
@@ -585,8 +593,12 @@ async def _exercise_modules(
 
 
 def test_public_service_functions_accept_dressed_domain_values(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: Any
 ) -> None:
+    monkeypatch.chdir(tmp_path)
+    _patch_service_boundaries(
+        monkeypatch, copy.deepcopy(example_config), tmp_path
+    )
     attempted: set[str] = set()
     process_terminations: list[str] = []
     successes: set[str] = set()
@@ -596,6 +608,7 @@ def test_public_service_functions_accept_dressed_domain_values(
             _modules(),
             _variants(tmp_path),
             tmp_path,
+            monkeypatch,
             attempted,
             process_terminations,
             successes,

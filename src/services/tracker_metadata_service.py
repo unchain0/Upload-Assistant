@@ -554,17 +554,23 @@ class TrackerDataManager:
             normalized, candidate, tracker_name
         )
 
+    @staticmethod
+    def _tracker_timestamp_file(base_dir: str | None) -> Path | None:
+        if not base_dir:
+            return None
+        return Path(base_dir) / "data" / "banned" / "tracker_timestamps.json"
+
     async def get_tracker_timestamps(
         self, base_dir: str | None = None
     ) -> dict[str, float]:
-        """Get tracker timestamps from the log file"""
-        timestamp_file = (
-            Path(f"{base_dir}") / "data" / "banned" / "tracker_timestamps.json"
-        )
+        """Get tracker timestamps from the log file."""
+        timestamp_file = self._tracker_timestamp_file(base_dir)
+        if timestamp_file is None:
+            return {}
         try:
-            if Path(timestamp_file).exists():
+            if timestamp_file.exists():
                 timestamps_text = await asyncio.to_thread(
-                    Path(timestamp_file).read_text
+                    timestamp_file.read_text
                 )
                 return cast(dict[str, float], json.loads(timestamps_text))
             return {}
@@ -577,20 +583,21 @@ class TrackerDataManager:
     async def save_tracker_timestamp(
         self, tracker_name: str, base_dir: str | None = None
     ) -> None:
-        """Save timestamp for when tracker was processed"""
-        timestamp_file = (
-            Path(f"{base_dir}") / "data" / "banned" / "tracker_timestamps.json"
-        )
+        """Save timestamp for when tracker was processed."""
+        timestamp_file = self._tracker_timestamp_file(base_dir)
+        if timestamp_file is None:
+            logger.debug(
+                f"[yellow]Skipping tracker timestamp for {tracker_name}: base directory is unavailable[/yellow]"
+            )
+            return
         try:
-            Path(f"{base_dir}/data/banned").mkdir(parents=True, exist_ok=True)
+            timestamp_file.parent.mkdir(parents=True, exist_ok=True)
 
             timestamps = await self.get_tracker_timestamps(base_dir)
             timestamps[tracker_name] = time.time()
 
             timestamps_text = json.dumps(timestamps, indent=2)
-            await asyncio.to_thread(
-                Path(timestamp_file).write_text, timestamps_text
-            )
+            await asyncio.to_thread(timestamp_file.write_text, timestamps_text)
 
             logger.debug(
                 f"[yellow]Saved timestamp for {tracker_name} - will be available again in 60 seconds[/yellow]"

@@ -888,17 +888,32 @@ class BJShare:
         return {"searchstr": title}
 
     @staticmethod
-    def _media_search_terms(meta: Meta) -> list[str]:
+    def _canonical_imdb_search_term(value: object) -> str:
+        match = re.search(r"tt\d+", str(value or ""), re.IGNORECASE)
+        return match.group(0).lower() if match else ""
+
+    @classmethod
+    def _media_search_terms(cls, meta: Meta) -> list[str]:
         if meta.category not in ("TV", "MOVIE"):
             return []
         terms: list[str] = []
-        imdb_id = str(dict(meta.imdb_info).get("imdbID", "")).strip()
+        imdb_id = cls._canonical_imdb_search_term(
+            dict(meta.imdb_info).get("imdbID", "")
+        )
         if imdb_id:
             terms.append(imdb_id)
         tmdb_id = str(meta.tmdb_id or "").strip()
         if tmdb_id:
             terms.append(f"{meta.category.lower()}/{tmdb_id}")
         return list(dict.fromkeys(terms))
+
+    @staticmethod
+    def _media_search_params(term: str) -> dict[str, str]:
+        return {
+            "search": term,
+            "active": "1",
+            "search_type": "1",
+        }
 
     def _search_queries(
         self, meta: Meta, title: str
@@ -908,7 +923,7 @@ class BJShare:
         if meta.category not in ("TV", "MOVIE"):
             return [base], terms, False
         if terms:
-            return [{"searchstr": term} for term in terms], terms, False
+            return [self._media_search_params(term) for term in terms], terms, False
         return [{"searchstr": title}], terms, True
 
     async def _load_search_cookies(self, meta: Meta) -> None:
@@ -1451,7 +1466,16 @@ class BJShare:
 
     async def _local_cover(self, meta: Meta) -> str | None:
         cover_path = meta.artwork_path
-        if not cover_path or not await self.common.path_exists(cover_path):
+        if (
+            not isinstance(cover_path, (str, Path))
+            or not str(cover_path).strip()
+        ):
+            logger.info(
+                "Nenhum cover_path válido encontrado.",
+                extra={"markup": False},
+            )
+            return None
+        if not await self.common.path_exists(cover_path):
             logger.info(
                 "Nenhum cover_path válido encontrado.",
                 extra={"markup": False},

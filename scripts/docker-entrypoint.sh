@@ -3,8 +3,8 @@ set -eu
 
 # Prepare writable runtime state, optionally repair bind-mount ownership, then
 # execute the CLI. The application checkout remains read-only at runtime.
-TARGET_UID="${PUID:-}"
-TARGET_GID="${PGID:-${TARGET_UID:-}}"
+TARGET_UID="${PUID:-1000}"
+TARGET_GID="${PGID:-$TARGET_UID}"
 STATE_DIR="${UA_DATA_DIR:-/state}"
 
 prepare_state() {

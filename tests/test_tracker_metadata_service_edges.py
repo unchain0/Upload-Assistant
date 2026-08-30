@@ -426,8 +426,12 @@ def test_choose_apply_and_review_candidates(
 def test_timestamp_load_save_and_availability(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.chdir(tmp_path)
     manager = TrackerDataManager(_config())
     assert asyncio.run(manager.get_tracker_timestamps(str(tmp_path))) == {}
+    assert asyncio.run(manager.get_tracker_timestamps(None)) == {}
+    asyncio.run(manager.save_tracker_timestamp("AITHER", None))
+    assert not (tmp_path / "None").exists()
 
     target = tmp_path / "data" / "banned" / "tracker_timestamps.json"
     target.parent.mkdir(parents=True)

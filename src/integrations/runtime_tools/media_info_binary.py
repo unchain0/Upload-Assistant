@@ -8,7 +8,7 @@ import platform
 import plistlib
 import shutil
 import stat
-import subprocess
+import subprocess  # nosec B404 -- fixed argv only; shell execution is never enabled
 import sys
 import tempfile
 import zipfile

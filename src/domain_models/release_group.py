@@ -3,7 +3,8 @@
 
 import re
 
-_EPISODE_TOKEN_RE = re.compile(
+# Bounded numeric widths and anchored alternatives make this expression linear-time.
+_EPISODE_TOKEN_RE = re.compile(  # nosemgrep: regex_dos
     r"^(?:s\d{1,3}(?:e\d{1,4})*|e\d{1,4}|\d{1,3}x\d{1,4}|ep\d{1,4}|episode\d{1,4})$",
     re.IGNORECASE,
 )

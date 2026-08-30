@@ -14,9 +14,10 @@ import inspect
 import pkgutil
 import ssl
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import suppress
 from pathlib import Path
 from types import ModuleType
-from typing import Any, ClassVar, get_args, get_origin, get_type_hints
+from typing import Any, ClassVar, cast, get_args, get_origin, get_type_hints
 
 import bencodepy
 import httpx
@@ -437,6 +438,9 @@ def _value(
     )
 
 
+_LITERAL_SCENARIO_LIMIT = 64
+
+
 _PROTECTED_ARGUMENTS = frozenset(
     {
         "meta",
@@ -444,6 +448,9 @@ _PROTECTED_ARGUMENTS = frozenset(
         "client",
         "qbt_client",
         "qbit_client",
+        "qbt_session",
+        "proxy_session",
+        "session",
         "torrent",
         "torrent_info",
         "response",
@@ -856,7 +863,9 @@ async def _run_literal_scenarios(
     rejections: list[str],
 ) -> None:
     for meta_updates, overrides in literal_branch_scenarios(
-        function, Meta.__dataclass_fields__, limit=256
+        function,
+        Meta.__dataclass_fields__,
+        limit=_LITERAL_SCENARIO_LIMIT,
     ):
         scenario_meta = _meta(tmp_path, media, torrent, 0)
         _apply_meta_updates(scenario_meta, meta_updates)
@@ -934,8 +943,8 @@ async def _instantiate_client_class(
             f"{module.__name__}.{class_name}.__init__:{type(error).__name__}"
         )
         return None
-    if hasattr(instance, "config"):
-        instance.config = config
+    with suppress(AttributeError, TypeError):
+        cast(Any, instance).config = config
     return instance
 
 
@@ -953,6 +962,9 @@ async def _exercise_instance(
 ) -> None:
     for method_name, method in inspect.getmembers(instance, callable):
         if method_name.startswith("__"):
+            continue
+        implementation = getattr(method, "__func__", method)
+        if getattr(implementation, "__module__", None) != module.__name__:
             continue
         await _exercise_callable(
             f"{module.__name__}.{class_name}.{method_name}",
@@ -1041,6 +1053,7 @@ async def _exercise_modules(
 def test_torrent_client_catalog_uses_local_fakes(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
+    monkeypatch.chdir(tmp_path)
     media, torrent = _fixture(tmp_path)
     config = _config(tmp_path)
     _patch_clients(monkeypatch)

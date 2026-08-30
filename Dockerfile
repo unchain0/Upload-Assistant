@@ -49,15 +49,11 @@ RUN rm -rf /Upload-Assistant/defaults \
     && find /Upload-Assistant/data -type d -exec chmod 0755 {} + \
     && find /Upload-Assistant/data -type f -exec chmod 0644 {} +
 
-# Download only the required mkbrr binary (requires full repo for src imports)
-RUN python3 -c "from src.integrations.runtime_tools.mkbrr import MkbrrBinaryManager; MkbrrBinaryManager.download_mkbrr_for_docker()"
-
-# Download bdinfo binary for the container architecture using the docker helper
-RUN python3 scripts/install_bdinfo_docker.py
-
-# Ensure downloaded binaries are executable
-RUN find bin/mkbrr -name "mkbrr" -print0 | xargs -0 chmod +x && \
-    find bin/bdinfo -name "bdinfo" -print0 | xargs -0 chmod +x
+# Download the bundled helper binaries and ensure they are executable.
+RUN python3 -c "from src.integrations.runtime_tools.mkbrr import MkbrrBinaryManager; MkbrrBinaryManager.download_mkbrr_for_docker()" \
+    && python3 scripts/install_bdinfo_docker.py \
+    && find bin/mkbrr -name "mkbrr" -exec chmod +x {} + \
+    && find bin/bdinfo -name "bdinfo" -exec chmod +x {} +
 
 # ── Permissions ──────────────────────────────────────────────────────
 # Give UID 1000 ownership for the default runtime while keeping bundled
@@ -102,7 +98,12 @@ STOPSIGNAL SIGTERM
 COPY scripts/docker-entrypoint.sh /usr/local/bin/
 RUN sed -i 's/\r$//' /usr/local/bin/docker-entrypoint.sh \
     && chmod +x /usr/local/bin/docker-entrypoint.sh
+# The entrypoint must start as root only to chown bind mounts, then it execs via gosu
+# as PUID/PGID (default 1000:1000). Running Docker with a non-root USER here would
+# break supported dynamic host UID/GID mapping.
+# nosemgrep: missing-user-entrypoint
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 
-# Default: show help when no arguments are provided
+# Default: show help when no arguments are provided.
+# nosemgrep: missing-user
 CMD ["-h"]

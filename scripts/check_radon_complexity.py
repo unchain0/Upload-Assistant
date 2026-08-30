@@ -93,7 +93,8 @@ def _semantic_changed_lines(
 
 
 def _head_source(git: str, root: Path, path: Path) -> str | None:
-    result = subprocess.run(  # noqa: S603 -- resolved git executable; arguments are fixed apart from the repository path.
+    # Resolved git executable; argv is fixed apart from a repository-relative path.
+    result = subprocess.run(  # noqa: S603  # nosemgrep: dangerous-subprocess-use-audit
         [git, "show", f"HEAD:{path.as_posix()}"],
         cwd=root,
         check=False,
@@ -104,7 +105,8 @@ def _head_source(git: str, root: Path, path: Path) -> str | None:
 
 
 def _staged_diff_text(git: str, root: Path) -> str:
-    result = subprocess.run(  # noqa: S603 -- resolved git executable; arguments are constant.
+    # Resolved git executable with a constant argv.
+    result = subprocess.run(  # noqa: S603  # nosemgrep: dangerous-subprocess-use-audit
         [git, "diff", "--cached", "--unified=0", "--no-color", "--", "*.py"],
         cwd=root,
         check=True,

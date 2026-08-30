@@ -21,6 +21,7 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
+from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType, TracebackType
 from typing import Any, ClassVar, Self, get_args, get_origin, get_type_hints
@@ -328,16 +329,14 @@ def _modules() -> list[ModuleType]:
     return modules
 
 
-def _value(
-    name: str,
-    annotation: object,
-    meta: Meta,
-    files: Mapping[str, Path],
-    profile: int,
-) -> object:
-    normalized = name.casefold().lstrip("_")
+_NO_CONTAINER_VALUE = object()
+
+
+def _named_values(
+    meta: Meta, files: Mapping[str, Path], profile: int
+) -> dict[str, object]:
     config = copy.deepcopy(example_config)
-    values: dict[str, object] = {
+    return {
         "meta": meta,
         "configuration": config,
         "config": config,
@@ -391,22 +390,30 @@ def _value(
         "total": 1,
         "enabled": bool(profile % 2),
     }
-    if normalized in values:
-        return values[normalized]
-    origin = get_origin(annotation)
-    args = get_args(annotation)
-    if annotation is inspect.Parameter.empty or annotation is Any:
-        return _Universal()
-    if annotation is bool:
-        return bool(profile % 2)
-    if annotation is int:
-        return 1
-    if annotation is float:
-        return 1.0
-    if annotation is str:
-        return "example"
-    if annotation is Path:
-        return files["media"]
+
+
+def _tuple_annotation_value(
+    normalized: str,
+    args: tuple[object, ...],
+    meta: Meta,
+    files: Mapping[str, Path],
+    profile: int,
+) -> tuple[object, ...]:
+    return tuple(
+        _value(normalized, item, meta, files, profile)
+        for item in args
+        if item is not Ellipsis
+    )
+
+
+def _container_annotation_value(
+    origin: object,
+    args: tuple[object, ...],
+    normalized: str,
+    meta: Meta,
+    files: Mapping[str, Path],
+    profile: int,
+) -> object:
     if origin in {list, Sequence}:
         return []
     if origin in {dict, Mapping}:
@@ -414,15 +421,136 @@ def _value(
     if origin is set:
         return set()
     if origin is tuple:
-        return tuple(
-            _value(normalized, item, meta, files, profile)
-            for item in args
-            if item is not Ellipsis
-        )
-    if origin is not None and type(None) in args:
-        concrete = next((item for item in args if item is not type(None)), str)
-        return _value(normalized, concrete, meta, files, profile)
+        return _tuple_annotation_value(normalized, args, meta, files, profile)
+    return _NO_CONTAINER_VALUE
+
+
+def _optional_annotation_value(
+    origin: object,
+    args: tuple[object, ...],
+    normalized: str,
+    meta: Meta,
+    files: Mapping[str, Path],
+    profile: int,
+) -> object:
+    if origin is None or type(None) not in args:
+        return _Universal()
+    for item in args:
+        if item is not type(None):
+            return _value(normalized, item, meta, files, profile)
     return _Universal()
+
+
+def _annotation_is_unspecified(annotation: object) -> bool:
+    return annotation is inspect.Parameter.empty or annotation is Any
+
+
+def _annotation_value(
+    annotation: object,
+    normalized: str,
+    meta: Meta,
+    files: Mapping[str, Path],
+    profile: int,
+) -> object:
+    if _annotation_is_unspecified(annotation):
+        return _Universal()
+    if annotation is bool:
+        return bool(profile % 2)
+    scalar_values: dict[object, object] = {
+        int: 1,
+        float: 1.0,
+        str: "example",
+        Path: files["media"],
+    }
+    if annotation in scalar_values:
+        return scalar_values[annotation]
+    origin = get_origin(annotation)
+    args = get_args(annotation)
+    container = _container_annotation_value(
+        origin, args, normalized, meta, files, profile
+    )
+    if container is not _NO_CONTAINER_VALUE:
+        return container
+    return _optional_annotation_value(
+        origin, args, normalized, meta, files, profile
+    )
+
+
+def _value(
+    name: str,
+    annotation: object,
+    meta: Meta,
+    files: Mapping[str, Path],
+    profile: int,
+) -> object:
+    normalized = name.casefold().lstrip("_")
+    values = _named_values(meta, files, profile)
+    if normalized in values:
+        return values[normalized]
+    return _annotation_value(annotation, normalized, meta, files, profile)
+
+
+def _safe_type_hints(function: Callable[..., object]) -> dict[str, Any]:
+    hint_target = function.__init__ if inspect.isclass(function) else function
+    try:
+        return get_type_hints(hint_target)
+    except NameError, TypeError:
+        return {}
+
+
+def _skip_parameter(
+    parameter: inspect.Parameter, overrides: Mapping[str, object]
+) -> bool:
+    if parameter.kind in {
+        inspect.Parameter.VAR_POSITIONAL,
+        inspect.Parameter.VAR_KEYWORD,
+    }:
+        return True
+    if parameter.default is inspect.Parameter.empty:
+        return False
+    return parameter.name not in overrides
+
+
+def _parameter_value(
+    parameter: inspect.Parameter,
+    hints: Mapping[str, Any],
+    overrides: Mapping[str, object],
+    meta: Meta,
+    files: Mapping[str, Path],
+    profile: int,
+) -> object:
+    if parameter.name in overrides:
+        return overrides[parameter.name]
+    return _value(
+        parameter.name,
+        hints.get(parameter.name, parameter.annotation),
+        meta,
+        files,
+        profile,
+    )
+
+
+def _call_arguments(
+    function: Callable[..., object],
+    meta: Meta,
+    files: Mapping[str, Path],
+    profile: int,
+    overrides: Mapping[str, object],
+) -> tuple[list[object], dict[str, object]]:
+    positional: list[object] = []
+    keywords: dict[str, object] = {}
+    hints = _safe_type_hints(function)
+    for parameter in inspect.signature(function).parameters.values():
+        if _skip_parameter(parameter, overrides):
+            continue
+        value = _parameter_value(
+            parameter, hints, overrides, meta, files, profile
+        )
+        if parameter.kind is inspect.Parameter.KEYWORD_ONLY:
+            keywords[parameter.name] = value
+        else:
+            positional.append(value)
+    return positional, keywords
 
 
 async def _invoke(
@@ -432,43 +560,215 @@ async def _invoke(
     profile: int,
     overrides: Mapping[str, object] | None = None,
 ) -> object:
-    positional: list[object] = []
-    keywords: dict[str, object] = {}
-    overrides = overrides or {}
-    hint_target = function.__init__ if inspect.isclass(function) else function
-    try:
-        hints = get_type_hints(hint_target)
-    except NameError, TypeError:
-        hints = {}
-    for parameter in inspect.signature(function).parameters.values():
-        if parameter.kind in {
-            inspect.Parameter.VAR_POSITIONAL,
-            inspect.Parameter.VAR_KEYWORD,
-        }:
-            continue
-        if (
-            parameter.default is not inspect.Parameter.empty
-            and parameter.name not in overrides
-        ):
-            continue
-        value = overrides.get(
-            parameter.name,
-            _value(
-                parameter.name,
-                hints.get(parameter.name, parameter.annotation),
-                meta,
-                files,
-                profile,
-            ),
-        )
-        if parameter.kind is inspect.Parameter.KEYWORD_ONLY:
-            keywords[parameter.name] = value
-        else:
-            positional.append(value)
+    positional, keywords = _call_arguments(
+        function, meta, files, profile, overrides or {}
+    )
     result = function(*positional, **keywords)
     if inspect.isawaitable(result):
         return await asyncio.wait_for(result, timeout=0.08)
     return result
+
+
+@dataclass
+class _ContractState:
+    tmp_path: Path
+    files: Mapping[str, Path]
+    repository_cwd: Path
+    attempted: set[str]
+    terminations: list[str]
+    expected_rejections: list[str]
+    destructive_names: set[str]
+
+
+def _patch_module_boundaries(module: ModuleType, monkeypatch: Any) -> None:
+    for attribute, replacement in (
+        ("AsyncClient", _AsyncClient),
+        ("Session", _Session),
+    ):
+        if hasattr(module, attribute):
+            monkeypatch.setattr(module, attribute, replacement)
+
+
+def _function_is_eligible(
+    module: ModuleType,
+    name: str,
+    function: Callable[..., object],
+    state: _ContractState,
+) -> bool:
+    if function.__module__ != module.__name__:
+        return False
+    if name.startswith("__"):
+        return False
+    return name not in state.destructive_names
+
+
+async def _record_call(
+    qualified: str,
+    function: Callable[..., object],
+    meta: Meta,
+    state: _ContractState,
+    profile: int,
+    overrides: Mapping[str, object] | None = None,
+) -> None:
+    try:
+        await _invoke(function, meta, state.files, profile, overrides)
+    except (KeyboardInterrupt, SystemExit) as error:
+        state.terminations.append(f"{qualified}:{type(error).__name__}")
+    except Exception as error:
+        state.expected_rejections.append(f"{qualified}:{type(error).__name__}")
+    finally:
+        os.chdir(state.repository_cwd)
+
+
+async def _exercise_profiles(
+    qualified: str,
+    function: Callable[..., object],
+    state: _ContractState,
+    profile_count: int,
+) -> None:
+    for profile in range(profile_count):
+        await _record_call(
+            qualified,
+            function,
+            _meta(state.tmp_path, state.files, profile),
+            state,
+            profile,
+        )
+
+
+def _scenario_meta(
+    state: _ContractState, meta_updates: Mapping[str, object]
+) -> Meta:
+    scenario_meta = _meta(state.tmp_path, state.files, 0)
+    for key, value in meta_updates.items():
+        if key in Meta.__dataclass_fields__:
+            setattr(scenario_meta, key, value)
+    return scenario_meta
+
+
+async def _exercise_literals(
+    qualified: str,
+    function: Callable[..., object],
+    state: _ContractState,
+) -> None:
+    for meta_updates, argument_overrides in literal_branch_scenarios(
+        function, Meta.__dataclass_fields__, limit=192
+    ):
+        await _record_call(
+            qualified,
+            function,
+            _scenario_meta(state, meta_updates),
+            state,
+            0,
+            argument_overrides,
+        )
+
+
+async def _exercise_callable(
+    qualified: str,
+    function: Callable[..., object],
+    state: _ContractState,
+    profile_count: int,
+) -> None:
+    state.attempted.add(qualified)
+    await _exercise_profiles(qualified, function, state, profile_count)
+    await _exercise_literals(qualified, function, state)
+
+
+async def _exercise_module_functions(
+    module: ModuleType, state: _ContractState
+) -> None:
+    for name, function in inspect.getmembers(module, inspect.isfunction):
+        if not _function_is_eligible(module, name, function, state):
+            continue
+        await _exercise_callable(
+            f"{module.__name__}.{name}", function, state, 3
+        )
+
+
+async def _construct_instance(
+    module: ModuleType,
+    class_name: str,
+    class_type: type[object],
+    state: _ContractState,
+) -> object | None:
+    try:
+        return await _invoke(
+            class_type,
+            _meta(state.tmp_path, state.files, 0),
+            state.files,
+            0,
+        )
+    except Exception as error:
+        state.expected_rejections.append(
+            f"{module.__name__}.{class_name}.__init__:{type(error).__name__}"
+        )
+        return None
+
+
+def _member_is_eligible(
+    method_name: str, static_member: object, state: _ContractState
+) -> bool:
+    if method_name.startswith("__"):
+        return False
+    if method_name in state.destructive_names:
+        return False
+    return callable(static_member)
+
+
+def _resolve_method(
+    instance: object,
+    qualified: str,
+    method_name: str,
+    state: _ContractState,
+) -> Callable[..., object] | None:
+    try:
+        method = getattr(instance, method_name)
+    except Exception as error:
+        state.expected_rejections.append(f"{qualified}:{type(error).__name__}")
+        return None
+    return method if callable(method) else None
+
+
+async def _exercise_instance_methods(
+    module: ModuleType,
+    class_name: str,
+    instance: object,
+    state: _ContractState,
+) -> None:
+    for method_name, static_member in inspect.getmembers_static(instance):
+        if not _member_is_eligible(method_name, static_member, state):
+            continue
+        qualified = f"{module.__name__}.{class_name}.{method_name}"
+        method = _resolve_method(instance, qualified, method_name, state)
+        if method is None:
+            continue
+        if os.environ.get("UA_CONTRACT_TRACE"):
+            print(qualified, flush=True)
+        await _exercise_callable(qualified, method, state, 2)
+
+
+async def _exercise_module_classes(
+    module: ModuleType, state: _ContractState
+) -> None:
+    for class_name, class_type in inspect.getmembers(module, inspect.isclass):
+        if class_type.__module__ != module.__name__:
+            continue
+        instance = await _construct_instance(
+            module, class_name, class_type, state
+        )
+        if instance is None:
+            continue
+        await _exercise_instance_methods(module, class_name, instance, state)
+
+
+async def _exercise_catalog(
+    modules: Sequence[ModuleType], state: _ContractState, monkeypatch: Any
+) -> None:
+    for module in modules:
+        _patch_module_boundaries(module, monkeypatch)
+        await _exercise_module_functions(module, state)
+        await _exercise_module_classes(module, state)
 
 
 def test_support_integration_catalog_uses_local_boundary_doubles(
@@ -504,168 +804,29 @@ def test_support_integration_catalog_uses_local_boundary_doubles(
     attempted: set[str] = set()
     terminations: list[str] = []
     expected_rejections: list[str] = []
-    destructive_names = {
-        "cleanup",
-        "cleanup_all",
-        "kill_all_threads",
-        "kill_processes",
-        "remove_empty_directories",
-        "reset_terminal",
-        "prepare_and_upload_usenet",
-        "run_7z_with_progress",
-        "run_nyuu_with_progress",
-        "run_par2_with_progress",
-        "run_pesto_with_progress",
-    }
+    state = _ContractState(
+        tmp_path=tmp_path,
+        files=files,
+        repository_cwd=repository_cwd,
+        attempted=attempted,
+        terminations=terminations,
+        expected_rejections=expected_rejections,
+        destructive_names={
+            "cleanup",
+            "cleanup_all",
+            "kill_all_threads",
+            "kill_processes",
+            "remove_empty_directories",
+            "reset_terminal",
+            "prepare_and_upload_usenet",
+            "run_7z_with_progress",
+            "run_nyuu_with_progress",
+            "run_par2_with_progress",
+            "run_pesto_with_progress",
+        },
+    )
 
-    async def exercise() -> None:
-        for module in modules:
-            for attribute, replacement in (
-                ("AsyncClient", _AsyncClient),
-                ("Session", _Session),
-            ):
-                if hasattr(module, attribute):
-                    monkeypatch.setattr(module, attribute, replacement)
-            for name, function in inspect.getmembers(
-                module, inspect.isfunction
-            ):
-                if (
-                    function.__module__ != module.__name__
-                    or name.startswith("__")
-                    or name in destructive_names
-                ):
-                    continue
-                qualified = f"{module.__name__}.{name}"
-                attempted.add(qualified)
-                for profile in range(3):
-                    try:
-                        await _invoke(
-                            function,
-                            _meta(tmp_path, files, profile),
-                            files,
-                            profile,
-                        )
-                    except (KeyboardInterrupt, SystemExit) as error:
-                        terminations.append(
-                            f"{qualified}:{type(error).__name__}"
-                        )
-                    except Exception as error:
-                        expected_rejections.append(
-                            f"{qualified}:{type(error).__name__}"
-                        )
-                    finally:
-                        os.chdir(repository_cwd)
-                for (
-                    meta_updates,
-                    argument_overrides,
-                ) in literal_branch_scenarios(
-                    function, Meta.__dataclass_fields__, limit=192
-                ):
-                    scenario_meta = _meta(tmp_path, files, 0)
-                    for key, value in meta_updates.items():
-                        if key in Meta.__dataclass_fields__:
-                            setattr(scenario_meta, key, value)
-                    try:
-                        await _invoke(
-                            function,
-                            scenario_meta,
-                            files,
-                            0,
-                            argument_overrides,
-                        )
-                    except (KeyboardInterrupt, SystemExit) as error:
-                        terminations.append(
-                            f"{qualified}:{type(error).__name__}"
-                        )
-                    except Exception as error:
-                        expected_rejections.append(
-                            f"{qualified}:{type(error).__name__}"
-                        )
-                    finally:
-                        os.chdir(repository_cwd)
-
-            for class_name, class_type in inspect.getmembers(
-                module, inspect.isclass
-            ):
-                if class_type.__module__ != module.__name__:
-                    continue
-                try:
-                    instance = await _invoke(
-                        class_type, _meta(tmp_path, files, 0), files, 0
-                    )
-                except Exception as error:
-                    expected_rejections.append(
-                        f"{module.__name__}.{class_name}.__init__:{type(error).__name__}"
-                    )
-                    continue
-                for method_name, static_member in inspect.getmembers_static(
-                    instance
-                ):
-                    if (
-                        method_name.startswith("__")
-                        or method_name in destructive_names
-                        or not callable(static_member)
-                    ):
-                        continue
-                    qualified = f"{module.__name__}.{class_name}.{method_name}"
-                    try:
-                        method = getattr(instance, method_name)
-                    except Exception as error:
-                        expected_rejections.append(
-                            f"{qualified}:{type(error).__name__}"
-                        )
-                        continue
-                    attempted.add(qualified)
-                    if os.environ.get("UA_CONTRACT_TRACE"):
-                        print(qualified, flush=True)
-                    for profile in range(2):
-                        try:
-                            await _invoke(
-                                method,
-                                _meta(tmp_path, files, profile),
-                                files,
-                                profile,
-                            )
-                        except (KeyboardInterrupt, SystemExit) as error:
-                            terminations.append(
-                                f"{qualified}:{type(error).__name__}"
-                            )
-                        except Exception as error:
-                            expected_rejections.append(
-                                f"{qualified}:{type(error).__name__}"
-                            )
-                        finally:
-                            os.chdir(repository_cwd)
-                    for (
-                        meta_updates,
-                        argument_overrides,
-                    ) in literal_branch_scenarios(
-                        method, Meta.__dataclass_fields__, limit=192
-                    ):
-                        scenario_meta = _meta(tmp_path, files, 0)
-                        for key, value in meta_updates.items():
-                            if key in Meta.__dataclass_fields__:
-                                setattr(scenario_meta, key, value)
-                        try:
-                            await _invoke(
-                                method,
-                                scenario_meta,
-                                files,
-                                0,
-                                argument_overrides,
-                            )
-                        except (KeyboardInterrupt, SystemExit) as error:
-                            terminations.append(
-                                f"{qualified}:{type(error).__name__}"
-                            )
-                        except Exception as error:
-                            expected_rejections.append(
-                                f"{qualified}:{type(error).__name__}"
-                            )
-                        finally:
-                            os.chdir(repository_cwd)
-
-    asyncio.run(exercise())
+    asyncio.run(_exercise_catalog(modules, state, monkeypatch))
 
     assert len(attempted) >= 100
     assert terminations == []

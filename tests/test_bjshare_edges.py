@@ -1,6 +1,7 @@
 import asyncio
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import AsyncMock, Mock
 
 import httpx
@@ -850,6 +851,16 @@ def test_cover_and_screenshot_paths(tmp_path: Path) -> None:
         )
         is None
     )
+    tracker.common.path_exists = AsyncMock(return_value=True)
+    assert (
+        asyncio.run(
+            tracker.get_cover(
+                _meta(category="BOOK", artwork_path=cast(Any, True))
+            )
+        )
+        is None
+    )
+    tracker.common.path_exists.assert_not_awaited()
     screens = tmp_path / "tmp" / "release" / "screenshots"
     screens.mkdir(parents=True)
     (screens / "1.png").write_bytes(b"image")

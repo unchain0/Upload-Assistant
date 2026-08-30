@@ -84,7 +84,8 @@ def should_prepare_zenith_ebook(meta: Meta, config: dict[str, Any]) -> bool:
 
 
 async def _run_process(command: list[str]) -> tuple[int, str, str]:
-    process = await asyncio.create_subprocess_exec(
+    # zentag is a managed checksum-verified binary; argv is exec-form.
+    process = await asyncio.create_subprocess_exec(  # nosemgrep: dangerous-asyncio-create-exec-audit
         *command,
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
@@ -113,7 +114,8 @@ async def _terminate_process(process: asyncio.subprocess.Process) -> None:
 
 
 async def _run_transform(command: list[str]) -> tuple[int, str, str]:
-    process = await asyncio.create_subprocess_exec(
+    # zentag is a managed checksum-verified binary; argv is exec-form.
+    process = await asyncio.create_subprocess_exec(  # nosemgrep: dangerous-asyncio-create-exec-audit
         *command,
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,

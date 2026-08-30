@@ -327,7 +327,7 @@ class AZTrackerBase:
                 tracker=self.tracker,
                 test_url=f"{self.base_url}/torrents",
                 error_text="Page not found",
-                token_pattern=r'name="_token" content="([^"]+)"',  # noqa: S106
+                token_pattern=r'name="_token" content="([^"]+)"',  # noqa: S106  # nosec B106 -- regex pattern, not a credential
             )
         return False
 

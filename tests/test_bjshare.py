@@ -81,8 +81,28 @@ def test_search_existing_queries_both_media_identifiers_before_title_fallback():
     asyncio.run(tracker.search_existing(meta))
 
     assert tracker.session.calls == [
-        {"searchstr": "tt1234567"},
-        {"searchstr": "tv/76543"},
+        {"search": "tt1234567", "active": "1", "search_type": "1"},
+        {"search": "tv/76543", "active": "1", "search_type": "1"},
+    ]
+
+
+def test_search_existing_normalizes_decorated_imdb_id() -> None:
+    tracker = object.__new__(BJShare)
+    tracker.session = FakeSession()
+    tracker.cookie_validator = FakeCookieValidator()
+    tracker.base_url = "https://bj-share.info"
+    tracker.tracker = "BJSHARE"
+    meta = SimpleNamespace(
+        category="MOVIE",
+        title="Inside Job",
+        imdb_info={"imdbID": "_tt0898266_"},
+        tmdb_id="",
+    )
+
+    asyncio.run(tracker.search_existing(meta))
+
+    assert tracker.session.calls == [
+        {"search": "tt0898266", "active": "1", "search_type": "1"}
     ]
 
 

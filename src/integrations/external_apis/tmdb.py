@@ -15,6 +15,7 @@ import guessit
 import httpx
 
 from src.domain_models.errors import (
+    AmbiguousMetadataError,
     OperationAbortedError,
     TmdbCredentialMissingError,
 )
@@ -815,8 +816,11 @@ async def get_tmdb_id(
 
                             if translated_similarity == 0.0:
                                 if secondary_best == 0.0:
-                                    similarity = (main_similarity * 0.5) + (
-                                        original_similarity * 0.5
+                                    # A strong provider title should not be diluted by an unrelated
+                                    # original title. The later confidence-margin check still prevents
+                                    # tied homonyms from being auto-selected in unattended mode.
+                                    similarity = max(
+                                        main_similarity, original_similarity
                                     )
                                 else:
                                     similarity = (
@@ -1047,10 +1051,18 @@ async def get_tmdb_id(
                                         tmdb_id = int(sorted_results[0]["id"])
                                         return tmdb_id, category
 
-                        # Put unattended handling here, since it will work based on the sorted results
                         if unattended:
-                            tmdb_id = int(sorted_results[0]["id"])
-                            return tmdb_id, category
+                            candidate_ids = [
+                                str(result.get("id", ""))
+                                for result in sorted_results[:3]
+                            ]
+                            logger.warning(
+                                "[yellow]Ambiguous TMDb match in unattended mode; "
+                                f"refusing to guess between candidates {', '.join(candidate_ids)}.[/yellow]"
+                            )
+                            raise AmbiguousMetadataError(
+                                "TMDb metadata match is ambiguous; automatic mode will skip this release."
+                            )
 
                         # Show sorted results to user
                         logger.info("")

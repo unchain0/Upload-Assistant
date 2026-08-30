@@ -1061,32 +1061,32 @@ class UploadHelper:
             if meta.demographic != "":
                 lines.append(("Demographic", meta.demographic))
 
-            if meta.tmdb_id or 0 != 0:
+            if meta.tmdb_id:
                 lines.append(
                     (
                         "TMDB",
                         f"https://www.themoviedb.org/{(meta.category or '').lower()}/{meta.tmdb_id}",
                     )
                 )
-            if meta.imdb_id or 0 != 0:
+            if meta.imdb_id:
                 lines.append(
                     ("IMDB", f"https://www.imdb.com/title/tt{meta.imdb}")
                 )
-            if meta.tvdb_id or 0 != 0:
+            if meta.tvdb_id:
                 lines.append(
                     (
                         "TVDB",
                         f"https://www.thetvdb.com/?id={meta.tvdb_id}&tab=series",
                     )
                 )
-            if meta.tvmaze_id or 0 != 0:
+            if meta.tvmaze_id:
                 lines.append(
                     (
                         "TVMaze",
                         f"https://www.tvmaze.com/shows/{meta.tvmaze_id}",
                     )
                 )
-            if meta.mal_id or 0 != 0:
+            if meta.mal_id:
                 lines.append(
                     ("MAL", f"https://myanimelist.net/anime/{meta.mal_id}")
                 )
@@ -1149,13 +1149,8 @@ class UploadHelper:
                     "[bold yellow]Unattended mode is enabled, skipping confirmation.[/bold yellow]"
                 )
             return True
-        ring_the_bell = (
-            "\a"
-            if bool(self.default_config.get("sfx_on_prompt", True))
-            else ""
-        )
-        if ring_the_bell:
-            logger.info(ring_the_bell)
+        if bool(self.default_config.get("sfx_on_prompt", True)):
+            logger.info("\a")
 
         if meta.is_disc:
             meta.keep_folder = False

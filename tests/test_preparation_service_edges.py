@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import AsyncMock
 
 import pytest
@@ -128,6 +129,10 @@ def test_parse_scene_nfo_missing_match_code_no_match_and_failure(
         missing = Meta(scene_nfo_file="")
         await prep.parse_scene_nfo(missing)
         assert not missing.service
+
+        malformed = Meta(scene_nfo_file=cast(Any, True))
+        await prep.parse_scene_nfo(malformed)
+        assert not malformed.service
 
         named = tmp_path / "named.nfo"
         named.write_text("Source : Amazon Prime\n", encoding="utf-8")

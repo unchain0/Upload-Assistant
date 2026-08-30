@@ -136,7 +136,8 @@ def run_shard(shard: TestShard) -> None:
         f"--basetemp={basetemp}",
         *shard.targets,
     ]
-    completed = subprocess.run(  # noqa: S603 -- fixed uv/coverage argv with discovered pytest node IDs.
+    # uv/coverage argv is fixed; pytest node IDs are discovered from local test files.
+    completed = subprocess.run(  # noqa: S603  # nosemgrep: dangerous-subprocess-use-audit
         command, cwd=ROOT, env=os.environ.copy(), check=False
     )
     if completed.returncode:

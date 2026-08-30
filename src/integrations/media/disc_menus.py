@@ -339,7 +339,8 @@ class DiscMenus:
     async def _run_ffmpeg(
         command: list[str], timeout_seconds: float, timeout_message: str
     ) -> tuple[asyncio.subprocess.Process, _FfmpegResult]:
-        process = await asyncio.create_subprocess_exec(
+        # ffmpeg executable is resolved from validated local config/bundle; argv is exec-form.
+        process = await asyncio.create_subprocess_exec(  # nosemgrep: dangerous-asyncio-create-exec-audit
             *command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

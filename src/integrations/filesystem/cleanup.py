@@ -176,12 +176,16 @@ def _stdin_is_usable_tty() -> bool:
 
 
 def _apply_stty_settings(stty: str) -> None:
-    subprocess.run([stty, "sane"], check=False)  # noqa: S603
+    subprocess.run(  # noqa: S603  # nosemgrep: dangerous-subprocess-use-audit
+        [stty, "sane"], check=False
+    )
     if erase_key is not None:
-        subprocess.run(  # noqa: S603
+        subprocess.run(  # noqa: S603  # nosemgrep: dangerous-subprocess-use-audit
             [stty, "erase", erase_key], check=False
         )
-    subprocess.run([stty, "-ixon"], check=False)  # noqa: S603
+    subprocess.run(  # noqa: S603  # nosemgrep: dangerous-subprocess-use-audit
+        [stty, "-ixon"], check=False
+    )
 
 
 def _flush_terminal_input() -> None:
@@ -232,7 +236,9 @@ def _report_terminal_reset_error(error: Exception) -> None:
 
 def _stty_output(stty: str) -> str | None:
     try:
-        return subprocess.check_output([stty, "-a"]).decode()  # noqa: S603
+        return subprocess.check_output(  # noqa: S603  # nosemgrep: dangerous-subprocess-use-audit
+            [stty, "-a"]
+        ).decode()
     except OSError:
         return None
 

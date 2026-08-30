@@ -208,7 +208,7 @@ class HDTorrents:
 
     @staticmethod
     def _search_identity(meta: Meta) -> dict[str, str | int]:
-        if meta.imdb_id or 0 != 0:
+        if meta.imdb_id:
             return {"search": meta.imdb_tt, "active": "0", "options": "2"}
         return {"search": meta.title, "options": "3"}
 
@@ -297,7 +297,7 @@ class HDTorrents:
 
     @staticmethod
     def _apply_imdb_info(data: dict[str, Any], meta: Meta) -> None:
-        if meta.imdb_id or 0 != 0:
+        if meta.imdb_id:
             data["infosite"] = f"{meta.imdb_info.get('imdb_url', '')}/"
 
     @staticmethod

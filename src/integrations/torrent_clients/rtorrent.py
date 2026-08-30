@@ -6,7 +6,10 @@ import shutil
 import ssl
 import time
 import traceback
-import xmlrpc.client  # nosec B411 - Secured with defusedxml.xmlrpc.monkey_patch() below
+
+# defusedxml.xmlrpc.monkey_patch() below hardens the stdlib transport globally.
+# nosemgrep: use-defused-xmlrpc
+import xmlrpc.client  # nosec B411
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path

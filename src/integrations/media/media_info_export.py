@@ -17,209 +17,590 @@ from src.integrations.runtime_tools.configured_binaries import (
     configured_binary,
 )
 
+_DECLARED_RESOLUTION_DIMENSIONS = {
+    "480p": (854, 480),
+    "480i": (854, 480),
+    "576p": (1024, 576),
+    "576i": (1024, 576),
+    "720p": (1280, 720),
+    "1080p": (1920, 1080),
+    "1080i": (1920, 1080),
+    "1440p": (2560, 1440),
+    "2160p": (3840, 2160),
+    "4320p": (7680, 4320),
+    "8640p": (15360, 8640),
+}
 
-def _declared_resolution_is_compatible(
-    declared: Any, res: str, width: str | int, scan: str
-) -> bool:
-    dimensions = {
-        "480p": (854, 480),
-        "480i": (854, 480),
-        "576p": (1024, 576),
-        "576i": (1024, 576),
-        "720p": (1280, 720),
-        "1080p": (1920, 1080),
-        "1080i": (1920, 1080),
-        "1440p": (2560, 1440),
-        "2160p": (3840, 2160),
-        "4320p": (7680, 4320),
-        "8640p": (15360, 8640),
-    }
-    declared_text = str(declared or "").lower()
-    nominal = dimensions.get(declared_text)
-    if nominal is None or not declared_text.endswith(scan):
-        return False
+
+def _actual_dimensions(res: str, width: str | int) -> tuple[int, int] | None:
     try:
-        actual_width = int(width)
-        actual_height = int(res.rsplit("x", 1)[1][:-1])
+        return int(width), int(res.rsplit("x", 1)[1][:-1])
     except IndexError, TypeError, ValueError:
-        return False
+        return None
+
+
+def _dimensions_fit_nominal(
+    nominal: tuple[int, int], actual: tuple[int, int]
+) -> bool:
     nominal_width, nominal_height = nominal
+    actual_width, actual_height = actual
     return (
         nominal_height * 0.70 <= actual_height <= nominal_height * 1.05
         and actual_width <= nominal_width * 1.25
     )
 
 
+def _declared_resolution_is_compatible(
+    declared: Any, res: str, width: str | int, scan: str
+) -> bool:
+    declared_text = str(declared or "").lower()
+    nominal = _DECLARED_RESOLUTION_DIMENSIONS.get(declared_text)
+    actual = _actual_dimensions(res, width)
+    if nominal is None or actual is None:
+        return False
+    if not declared_text.endswith(scan):
+        return False
+    return _dimensions_fit_nominal(nominal, actual)
+
+
+def _resolved_file_path(file_path: str) -> Path:
+    try:
+        return Path(file_path).resolve()
+    except (OSError, ValueError) as error:
+        raise ValueError(f"Invalid file path: {error}") from error
+
+
+def _validate_resolved_path(path: Path) -> None:
+    if not path.exists():
+        raise ValueError(f"File does not exist: {path}")
+    if path.is_file() or path.is_dir():
+        return
+    raise ValueError(f"Path is neither a file nor directory: {path}")
+
+
 def validate_file_path(file_path: str) -> str:
     if not file_path:
         raise ValueError("File path cannot be empty")
-
-    # Convert to Path object for safer handling
-    try:
-        path = Path(file_path).resolve()
-    except (OSError, ValueError) as e:
-        raise ValueError(f"Invalid file path: {e}") from e
-
-    # Check if path exists
-    if not path.exists():
-        raise ValueError(f"File does not exist: {path}")
-
-    # Ensure it's a file (not a directory, unless specifically allowed)
-    # Allow directories for DVD/Blu-ray structures
-    if not path.is_file() and not path.is_dir():
-        raise ValueError(f"Path is neither a file nor directory: {path}")
-
-    # Convert back to string
+    path = _resolved_file_path(file_path)
+    _validate_resolved_path(path)
     return str(path)
+
+
+def _windows_dvd_mediainfo(binary_root: Path) -> dict[str, Any] | None:
+    cli_path = binary_root / "windows" / "dvd" / "MediaInfo.exe"
+    if cli_path.exists():
+        logger.debug(f"[blue]Windows MediaInfo CLI: {cli_path} (found)[/blue]")
+        return {"cli": cli_path, "lib": None, "lib_dir": None}
+    logger.debug(
+        f"[yellow]Windows MediaInfo CLI: {cli_path} (not found)[/yellow]"
+    )
+    return None
+
+
+def _prepend_ld_library_path(lib_dir: Path) -> None:
+    lib_dir_str = str(lib_dir)
+    current = os.environ.get("LD_LIBRARY_PATH", "")
+    current_paths = current.split(os.pathsep) if current else []
+    if lib_dir_str in current_paths:
+        return
+    os.environ["LD_LIBRARY_PATH"] = (
+        f"{lib_dir_str}{os.pathsep}{current}" if current else lib_dir_str
+    )
+    logger.debug(
+        f"[blue]Updated LD_LIBRARY_PATH to include: {lib_dir_str}[/blue]"
+    )
+
+
+def _availability_label(available: bool) -> str:
+    return "found" if available else "not found"
+
+
+def _linux_dvd_mediainfo(binary_root: Path) -> dict[str, Any]:
+    lib_dir = binary_root / "linux" / "dvd"
+    mediainfo_lib = lib_dir / "libmediainfo.so.0"
+    mediainfo_cli = lib_dir / "mediainfo"
+    cli_available = mediainfo_cli.exists()
+    lib_available = mediainfo_lib.exists()
+    logger.debug(
+        f"[blue]MediaInfo CLI binary: {mediainfo_cli} ({_availability_label(cli_available)})[/blue]"
+    )
+    logger.debug(
+        f"[blue]MediaInfo library: {mediainfo_lib} ({_availability_label(lib_available)})[/blue]"
+    )
+    if lib_available:
+        _prepend_ld_library_path(lib_dir)
+    return {
+        "cli": mediainfo_cli if cli_available else None,
+        "lib": mediainfo_lib if lib_available else None,
+        "lib_dir": lib_dir,
+    }
 
 
 def find_dvd_mediainfo(base_dir: str | Path) -> dict[str, Any] | None:
     """Return the MediaInfo components installed for DVD processing."""
-    if configured := configured_binary("dvd_mediainfo_path"):
+    configured = configured_binary("dvd_mediainfo_path")
+    if configured:
         return {"cli": Path(configured), "lib": None, "lib_dir": None}
     system = platform.system().lower()
     binary_root = Path(base_dir) / "bin" / "MI"
-
     if system == "windows":
-        cli_path = binary_root / "windows" / "dvd" / "MediaInfo.exe"
-        if cli_path.exists():
-            logger.debug(
-                f"[blue]Windows MediaInfo CLI: {cli_path} (found)[/blue]"
-            )
-            return {
-                "cli": cli_path,
-                "lib": None,  # Windows uses CLI only
-                "lib_dir": None,
-            }
-        logger.debug(
-            f"[yellow]Windows MediaInfo CLI: {cli_path} (not found)[/yellow]"
-        )
-        return None
-
+        return _windows_dvd_mediainfo(binary_root)
     if system == "linux":
-        lib_dir = binary_root / "linux" / "dvd"
-
-        mediainfo_lib = Path(lib_dir) / "libmediainfo.so.0"
-        mediainfo_cli = Path(lib_dir) / "mediainfo"
-        cli_available = Path(mediainfo_cli).exists()
-        lib_available = Path(mediainfo_lib).exists()
-
-        logger.debug(
-            f"[blue]MediaInfo CLI binary: {mediainfo_cli} ({'found' if cli_available else 'not found'})[/blue]"
-        )
-        logger.debug(
-            f"[blue]MediaInfo library: {mediainfo_lib} ({'found' if lib_available else 'not found'})[/blue]"
-        )
-
-        if lib_available:
-            # Set library directory for LD_LIBRARY_PATH
-            lib_dir_str = str(lib_dir)
-            current_ld_path = os.environ.get("LD_LIBRARY_PATH", "")
-            current_paths = (
-                current_ld_path.split(os.pathsep) if current_ld_path else []
-            )
-            if lib_dir_str not in current_paths:
-                if current_ld_path:
-                    os.environ["LD_LIBRARY_PATH"] = (
-                        f"{lib_dir_str}{os.pathsep}{current_ld_path}"
-                    )
-                else:
-                    os.environ["LD_LIBRARY_PATH"] = lib_dir_str
-                logger.debug(
-                    f"[blue]Updated LD_LIBRARY_PATH to include: {lib_dir_str}[/blue]"
-                )
-
-        return {
-            "cli": mediainfo_cli if cli_available else None,
-            "lib": mediainfo_lib if lib_available else None,
-            "lib_dir": lib_dir,
-        }
+        return _linux_dvd_mediainfo(binary_root)
     return None
+
+
+_RESOLUTION_MAP = {
+    "3840x2160p": "2160p",
+    "2160p": "2160p",
+    "2560x1440p": "1440p",
+    "1440p": "1440p",
+    "1920x1080p": "1080p",
+    "1080p": "1080p",
+    "1920x1080i": "1080i",
+    "1080i": "1080i",
+    "1280x720p": "720p",
+    "720p": "720p",
+    "1280x540p": "720p",
+    "1280x576p": "720p",
+    "1024x576p": "576p",
+    "576p": "576p",
+    "1024x576i": "576i",
+    "576i": "576i",
+    "960x540p": "540p",
+    "540p": "540p",
+    "960x540i": "540i",
+    "540i": "540i",
+    "854x480p": "480p",
+    "480p": "480p",
+    "854x480i": "480i",
+    "480i": "480i",
+    "720x576p": "576p",
+    "720x576i": "576i",
+    "720x480p": "480p",
+    "720x480i": "480i",
+    "15360x8640p": "8640p",
+    "8640p": "8640p",
+    "7680x4320p": "4320p",
+    "4320p": "4320p",
+    "OTHER": "OTHER",
+}
+_WIDTH_RESOLUTION_MAP = {
+    "3840p": "2160p",
+    "2560p": "1550p",
+    "1920p": "1080p",
+    "1920i": "1080i",
+    "1280p": "720p",
+    "1024p": "576p",
+    "1024i": "576i",
+    "960p": "540p",
+    "960i": "540i",
+    "854p": "480p",
+    "854i": "480i",
+    "720p": "576p",
+    "720i": "576i",
+    "15360p": "4320p",
+    "OTHERp": "OTHER",
+}
+
+
+def _guess_screen_size(guess: Any) -> str:
+    if not isinstance(guess, dict):
+        return ""
+    return str(cast(dict[str, Any], guess).get("screen_size", ""))
+
+
+def _fallback_resolution(guess: Any, width: str | int, scan: str) -> str:
+    declared = _guess_screen_size(guess)
+    if declared in _RESOLUTION_MAP:
+        return declared
+    return _WIDTH_RESOLUTION_MAP.get(f"{width}{scan}", "OTHER")
 
 
 async def mi_resolution(
     res: str,
-    guess: dict[str, Any],
+    guess: dict[str, Any] | None,
     width: str | int,
     scan: str,
 ) -> str:
-    res_map = {
-        "3840x2160p": "2160p",
-        "2160p": "2160p",
-        "2560x1440p": "1440p",
-        "1440p": "1440p",
-        "1920x1080p": "1080p",
-        "1080p": "1080p",
-        "1920x1080i": "1080i",
-        "1080i": "1080i",
-        "1280x720p": "720p",
-        "720p": "720p",
-        "1280x540p": "720p",
-        "1280x576p": "720p",
-        "1024x576p": "576p",
-        "576p": "576p",
-        "1024x576i": "576i",
-        "576i": "576i",
-        "960x540p": "540p",
-        "540p": "540p",
-        "960x540i": "540i",
-        "540i": "540i",
-        "854x480p": "480p",
-        "480p": "480p",
-        "854x480i": "480i",
-        "480i": "480i",
-        "720x576p": "576p",
-        "720x576i": "576i",
-        "720x480p": "480p",
-        "720x480i": "480i",
-        "15360x8640p": "8640p",
-        "8640p": "8640p",
-        "7680x4320p": "4320p",
-        "4320p": "4320p",
-        "OTHER": "OTHER",
-    }
-    declared_resolution = (
-        guess.get("screen_size") if isinstance(guess, dict) else None
-    )
+    declared_resolution = _guess_screen_size(guess)
     if _declared_resolution_is_compatible(
         declared_resolution, res, width, scan
     ):
         return str(declared_resolution).lower()
-
-    resolution = res_map.get(res)
+    resolution = _RESOLUTION_MAP.get(res)
     if resolution is None:
-        width_map = {
-            "3840p": "2160p",
-            "2560p": "1550p",
-            "1920p": "1080p",
-            "1920i": "1080i",
-            "1280p": "720p",
-            "1024p": "576p",
-            "1024i": "576i",
-            "960p": "540p",
-            "960i": "540i",
-            "854p": "480p",
-            "854i": "480i",
-            "720p": "576p",
-            "720i": "576i",
-            "15360p": "4320p",
-            "OTHERp": "OTHER",
+        resolution = _fallback_resolution(guess, width, scan)
+    return resolution if resolution in _RESOLUTION_MAP else "OTHER"
+
+
+_GENERAL_TRACK_KEYS = (
+    "@type",
+    "UniqueID",
+    "VideoCount",
+    "AudioCount",
+    "TextCount",
+    "MenuCount",
+    "FileExtension",
+    "Format",
+    "Format_Version",
+    "FileSize",
+    "Duration",
+    "OverallBitRate",
+    "FrameRate",
+    "FrameCount",
+    "StreamSize",
+    "IsStreamable",
+    "File_Created_Date",
+    "File_Created_Date_Local",
+    "File_Modified_Date",
+    "File_Modified_Date_Local",
+    "Encoded_Application",
+    "Encoded_Library",
+    "extra",
+)
+_GENERAL_OPTIONAL_TAGS = (
+    "Album",
+    "Album_Performer",
+    "Track_name",
+    "Performer",
+    "Composer",
+    "Publisher",
+    "Genre",
+    "Recorded_Date",
+    "ISBN",
+    "Comment",
+    "Description",
+    "album",
+    "album_performer",
+    "track_name",
+    "performer",
+    "composer",
+    "publisher",
+    "genre",
+    "recorded_date",
+    "isbn",
+    "comment",
+    "description",
+)
+_VIDEO_TRACK_KEYS = (
+    "@type",
+    "StreamOrder",
+    "ID",
+    "UniqueID",
+    "Format",
+    "Format_Profile",
+    "Format_Version",
+    "Format_Level",
+    "Format_Tier",
+    "HDR_Format",
+    "HDR_Format_Version",
+    "HDR_Format_String",
+    "HDR_Format_Profile",
+    "HDR_Format_Level",
+    "HDR_Format_Settings",
+    "HDR_Format_Compression",
+    "HDR_Format_Compatibility",
+    "CodecID",
+    "CodecID_Hint",
+    "Duration",
+    "BitRate",
+    "Width",
+    "Height",
+    "Stored_Height",
+    "Sampled_Width",
+    "Sampled_Height",
+    "PixelAspectRatio",
+    "DisplayAspectRatio",
+    "FrameRate_Mode",
+    "FrameRate",
+    "FrameRate_Original",
+    "FrameRate_Num",
+    "FrameRate_Den",
+    "FrameCount",
+    "Standard",
+    "ColorSpace",
+    "ChromaSubsampling",
+    "ChromaSubsampling_Position",
+    "BitDepth",
+    "ScanType",
+    "ScanOrder",
+    "Delay",
+    "Delay_Source",
+    "StreamSize",
+    "Language",
+    "Default",
+    "Forced",
+    "colour_description_present",
+    "colour_description_present_Source",
+    "colour_range",
+    "colour_range_Source",
+    "colour_primaries",
+    "colour_primaries_Source",
+    "transfer_characteristics",
+    "transfer_characteristics_Source",
+    "transfer_characteristics_Original",
+    "matrix_coefficients",
+    "matrix_coefficients_Source",
+    "MasteringDisplay_ColorPrimaries",
+    "MasteringDisplay_ColorPrimaries_Source",
+    "MasteringDisplay_Luminance",
+    "MasteringDisplay_Luminance_Source",
+    "MaxCLL",
+    "MaxCLL_Source",
+    "MaxFALL",
+    "MaxFALL_Source",
+    "Encoded_Library_Settings",
+    "Encoded_Library",
+    "Encoded_Library_Name",
+)
+_AUDIO_TRACK_KEYS = (
+    "@type",
+    "StreamOrder",
+    "ID",
+    "UniqueID",
+    "Format",
+    "Format_Version",
+    "Format_Profile",
+    "Format_Settings",
+    "Format_Commercial_IfAny",
+    "Format_Settings_Endianness",
+    "Format_AdditionalFeatures",
+    "CodecID",
+    "Duration",
+    "BitRate_Mode",
+    "BitRate",
+    "Channels",
+    "ChannelPositions",
+    "ChannelLayout",
+    "Channels_Original",
+    "ChannelLayout_Original",
+    "SamplesPerFrame",
+    "SamplingRate",
+    "SamplingCount",
+    "FrameRate",
+    "FrameCount",
+    "Compression_Mode",
+    "Delay",
+    "Delay_Source",
+    "Video_Delay",
+    "StreamSize",
+    "Title",
+    "Language",
+    "ServiceKind",
+    "Default",
+    "Forced",
+    "extra",
+)
+_TEXT_TRACK_KEYS = (
+    "@type",
+    "@typeorder",
+    "StreamOrder",
+    "ID",
+    "UniqueID",
+    "Format",
+    "CodecID",
+    "Duration",
+    "BitRate",
+    "FrameRate",
+    "FrameCount",
+    "ElementCount",
+    "StreamSize",
+    "Title",
+    "Language",
+    "Default",
+    "Forced",
+)
+_TRACK_KEYS: dict[str, tuple[str, ...]] = {
+    "General": _GENERAL_TRACK_KEYS,
+    "Video": _VIDEO_TRACK_KEYS,
+    "Audio": _AUDIO_TRACK_KEYS,
+    "Text": _TEXT_TRACK_KEYS,
+    "Menu": ("@type", "extra"),
+}
+
+
+def _append_general_tags(
+    track: dict[str, Any], projected: dict[str, Any]
+) -> None:
+    for tag in _GENERAL_OPTIONAL_TAGS:
+        if tag in track:
+            projected[tag] = track[tag]
+
+
+def _project_track(track: dict[str, Any]) -> dict[str, Any] | None:
+    track_type = str(track.get("@type", ""))
+    keys = _TRACK_KEYS.get(track_type)
+    if keys is None:
+        return None
+    projected = {key: track.get(key, {}) for key in keys}
+    if track_type == "General":
+        _append_general_tags(track, projected)
+    return projected
+
+
+def _media_tracks(media: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_tracks = media.get("track", [])
+    if not isinstance(raw_tracks, list):
+        return []
+    return [
+        cast(dict[str, Any], item)
+        for item in cast(list[Any], raw_tracks)
+        if isinstance(item, dict)
+    ]
+
+
+def _filter_mediainfo(data: dict[str, Any]) -> dict[str, Any]:
+    media = data.get("media")
+    if not isinstance(media, dict):
+        return {
+            "creatingLibrary": data.get("creatingLibrary"),
+            "media": {"@ref": "", "track": []},
         }
-        try:
-            resolution = guess["screen_size"]
-            # Check if the resolution from guess exists in our map
-            if resolution not in res_map:
-                # If not in the map, use width-based mapping
-                resolution = width_map.get(f"{width}{scan}", "OTHER")
-        except Exception:
-            # If we can't get from guess, use width-based mapping
-            resolution = width_map.get(f"{width}{scan}", "OTHER")
+    media_dict = cast(dict[str, Any], media)
+    projected_tracks = [
+        projected
+        for track in _media_tracks(media_dict)
+        if (projected := _project_track(track)) is not None
+    ]
+    return {
+        "creatingLibrary": data.get("creatingLibrary"),
+        "media": {
+            "@ref": media_dict.get("@ref", ""),
+            "track": projected_tracks,
+        },
+    }
 
-    # Final check to ensure we have a valid resolution
-    if resolution not in res_map:
-        resolution = "OTHER"
 
-    return resolution
+async def _parse_mediainfo(video: str, **kwargs: Any) -> Any:
+    return await asyncio.to_thread(MediaInfo.parse, video, **kwargs)
+
+
+def _dvd_mediainfo_cli(base_dir: str, is_dvd: bool) -> str | None:
+    if not is_dvd:
+        return None
+    logger.debug("[bold yellow]DVD detected, using specialized MediaInfo...")
+    current_platform = platform.system().lower()
+    if current_platform not in {"linux", "windows"}:
+        logger.debug(
+            f"[yellow]DVD processing on {current_platform} not supported with specialized MediaInfo[/yellow]"
+        )
+        return None
+    config = find_dvd_mediainfo(base_dir)
+    if not config:
+        logger.debug(
+            "[yellow]No specialized MediaInfo components found, using system MediaInfo[/yellow]"
+        )
+        return None
+    cli = config.get("cli")
+    if not cli:
+        logger.debug("[yellow]DVD MediaInfo CLI not available[/yellow]")
+        return None
+    return str(cli)
+
+
+async def _run_specialized_mediainfo(
+    video: str, mediainfo_cmd: str, *arguments: str
+) -> subprocess.CompletedProcess[str]:
+    safe_video_path = validate_file_path(video)
+    safe_mediainfo_cmd = validate_file_path(mediainfo_cmd)
+    command = [safe_mediainfo_cmd, *arguments, safe_video_path]
+    result = cast(
+        subprocess.CompletedProcess[str],
+        await asyncio.to_thread(
+            subprocess.run,
+            command,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        ),
+    )
+    if result.returncode == 0 and result.stdout:
+        return result
+    raise subprocess.CalledProcessError(
+        result.returncode, command, result.stdout, result.stderr
+    )
+
+
+async def _standard_mediainfo_text(video: str) -> str:
+    return str(await _parse_mediainfo(video, output="STRING", full=False))
+
+
+async def _standard_mediainfo_json(video: str) -> dict[str, Any]:
+    payload = await _parse_mediainfo(video, output="JSON")
+    return cast(dict[str, Any], json.loads(str(payload)))
+
+
+async def _mediainfo_text(video: str, mediainfo_cmd: str | None) -> str:
+    if mediainfo_cmd is None:
+        return await _standard_mediainfo_text(video)
+    try:
+        return (await _run_specialized_mediainfo(video, mediainfo_cmd)).stdout
+    except subprocess.TimeoutExpired:
+        logger.info(
+            "[bold red]Specialized MediaInfo timed out (30s) - falling back to standard MediaInfo[/bold red]"
+        )
+    except ValueError as error:
+        logger.info(f"[bold red]Path validation error: {error}[/bold red]")
+    except Exception as error:
+        logger.info(
+            f"[bold red]Error getting text from specialized MediaInfo: {error}"
+        )
+    logger.info("[bold yellow]Falling back to standard MediaInfo for text...")
+    return await _standard_mediainfo_text(video)
+
+
+async def _mediainfo_json(
+    video: str, mediainfo_cmd: str | None
+) -> dict[str, Any]:
+    if mediainfo_cmd is None:
+        return await _standard_mediainfo_json(video)
+    try:
+        result = await _run_specialized_mediainfo(
+            video, mediainfo_cmd, "--Output=JSON"
+        )
+        return cast(dict[str, Any], json.loads(result.stdout))
+    except Exception as error:
+        logger.info(
+            f"[bold red]Error getting JSON from specialized MediaInfo: {error}[/bold red]"
+        )
+        logger.info(
+            "[bold yellow]Falling back to standard MediaInfo for JSON...[/bold yellow]"
+        )
+        return await _standard_mediainfo_json(video)
+
+
+def _media_info_output_dir(base_dir: str, folder_id: str) -> Path:
+    return Path(base_dir) / "tmp" / folder_id
+
+
+async def _write_mediainfo_text_reports(
+    video: str, base_dir: str, folder_id: str, media_info: str
+) -> None:
+    output_dir = _media_info_output_dir(base_dir, folder_id)
+    clean_text = media_info.replace(video, Path(video).name)
+    for filename in ("MEDIAINFO.txt", "MEDIAINFO_CLEANPATH.txt"):
+        async with aiofiles.open(
+            output_dir / filename,
+            "w",
+            newline="",
+            encoding="utf-8",
+        ) as handle:
+            await handle.write(clean_text)
+    logger.debug("[bold green]MediaInfo Exported.")
+
+
+async def _write_mediainfo_json_report(
+    base_dir: str, folder_id: str, filtered_info: dict[str, Any]
+) -> dict[str, Any]:
+    output_path = (
+        _media_info_output_dir(base_dir, folder_id) / "MediaInfo.json"
+    )
+    async with aiofiles.open(output_path, "w", encoding="utf-8") as handle:
+        await handle.write(json.dumps(filtered_info, indent=4))
+    logger.debug(f"[green]JSON file written to: {output_path}[/green]")
+    async with aiofiles.open(output_path, encoding="utf-8") as handle:
+        return cast(dict[str, Any], json.loads(await handle.read()))
 
 
 async def export_info(
@@ -229,593 +610,121 @@ async def export_info(
     base_dir: str,
     is_dvd: bool = False,
 ) -> dict[str, Any]:
-    async def parse_mediainfo(**kwargs: Any) -> Any:
-        return await asyncio.to_thread(MediaInfo.parse, video, **kwargs)
-
-    def filter_mediainfo(data: dict[str, Any]) -> dict[str, Any]:
-        media = data.get("media")
-        if not isinstance(media, dict):
-            return {
-                "creatingLibrary": data.get("creatingLibrary"),
-                "media": {"@ref": "", "track": []},
-            }
-
-        media_dict = cast(dict[str, Any], media)
-        raw_tracks = media_dict.get("track", [])
-        tracks: list[dict[str, Any]] = (
-            cast(list[dict[str, Any]], raw_tracks)
-            if isinstance(raw_tracks, list)
-            else []
-        )
-
-        media_tracks: list[dict[str, Any]] = []
-        media_section: dict[str, Any] = {
-            "@ref": media_dict.get("@ref", ""),
-            "track": media_tracks,
-        }
-        filtered: dict[str, Any] = {
-            "creatingLibrary": data.get("creatingLibrary"),
-            "media": media_section,
-        }
-
-        for track in tracks:
-            track_type = track.get("@type")
-            if track_type == "General":
-                general_track = {
-                    "@type": track_type,
-                    "UniqueID": track.get("UniqueID", {}),
-                    "VideoCount": track.get("VideoCount", {}),
-                    "AudioCount": track.get("AudioCount", {}),
-                    "TextCount": track.get("TextCount", {}),
-                    "MenuCount": track.get("MenuCount", {}),
-                    "FileExtension": track.get("FileExtension", {}),
-                    "Format": track.get("Format", {}),
-                    "Format_Version": track.get("Format_Version", {}),
-                    "FileSize": track.get("FileSize", {}),
-                    "Duration": track.get("Duration", {}),
-                    "OverallBitRate": track.get("OverallBitRate", {}),
-                    "FrameRate": track.get("FrameRate", {}),
-                    "FrameCount": track.get("FrameCount", {}),
-                    "StreamSize": track.get("StreamSize", {}),
-                    "IsStreamable": track.get("IsStreamable", {}),
-                    "File_Created_Date": track.get("File_Created_Date", {}),
-                    "File_Created_Date_Local": track.get(
-                        "File_Created_Date_Local", {}
-                    ),
-                    "File_Modified_Date": track.get("File_Modified_Date", {}),
-                    "File_Modified_Date_Local": track.get(
-                        "File_Modified_Date_Local", {}
-                    ),
-                    "Encoded_Application": track.get(
-                        "Encoded_Application", {}
-                    ),
-                    "Encoded_Library": track.get("Encoded_Library", {}),
-                    "extra": track.get("extra", {}),
-                }
-                # Preserve standard audio / book tags if present
-                for tag in [
-                    "Album",
-                    "Album_Performer",
-                    "Track_name",
-                    "Performer",
-                    "Composer",
-                    "Publisher",
-                    "Genre",
-                    "Recorded_Date",
-                    "ISBN",
-                    "Comment",
-                    "Description",
-                    "album",
-                    "album_performer",
-                    "track_name",
-                    "performer",
-                    "composer",
-                    "publisher",
-                    "genre",
-                    "recorded_date",
-                    "isbn",
-                    "comment",
-                    "description",
-                ]:
-                    if tag in track:
-                        general_track[tag] = track[tag]
-                media_tracks.append(general_track)
-            elif track_type == "Video":
-                media_tracks.append(
-                    {
-                        "@type": track_type,
-                        "StreamOrder": track.get("StreamOrder", {}),
-                        "ID": track.get("ID", {}),
-                        "UniqueID": track.get("UniqueID", {}),
-                        "Format": track.get("Format", {}),
-                        "Format_Profile": track.get("Format_Profile", {}),
-                        "Format_Version": track.get("Format_Version", {}),
-                        "Format_Level": track.get("Format_Level", {}),
-                        "Format_Tier": track.get("Format_Tier", {}),
-                        "HDR_Format": track.get("HDR_Format", {}),
-                        "HDR_Format_Version": track.get(
-                            "HDR_Format_Version", {}
-                        ),
-                        "HDR_Format_String": track.get(
-                            "HDR_Format_String", {}
-                        ),
-                        "HDR_Format_Profile": track.get(
-                            "HDR_Format_Profile", {}
-                        ),
-                        "HDR_Format_Level": track.get("HDR_Format_Level", {}),
-                        "HDR_Format_Settings": track.get(
-                            "HDR_Format_Settings", {}
-                        ),
-                        "HDR_Format_Compression": track.get(
-                            "HDR_Format_Compression", {}
-                        ),
-                        "HDR_Format_Compatibility": track.get(
-                            "HDR_Format_Compatibility", {}
-                        ),
-                        "CodecID": track.get("CodecID", {}),
-                        "CodecID_Hint": track.get("CodecID_Hint", {}),
-                        "Duration": track.get("Duration", {}),
-                        "BitRate": track.get("BitRate", {}),
-                        "Width": track.get("Width", {}),
-                        "Height": track.get("Height", {}),
-                        "Stored_Height": track.get("Stored_Height", {}),
-                        "Sampled_Width": track.get("Sampled_Width", {}),
-                        "Sampled_Height": track.get("Sampled_Height", {}),
-                        "PixelAspectRatio": track.get("PixelAspectRatio", {}),
-                        "DisplayAspectRatio": track.get(
-                            "DisplayAspectRatio", {}
-                        ),
-                        "FrameRate_Mode": track.get("FrameRate_Mode", {}),
-                        "FrameRate": track.get("FrameRate", {}),
-                        "FrameRate_Original": track.get(
-                            "FrameRate_Original", {}
-                        ),
-                        "FrameRate_Num": track.get("FrameRate_Num", {}),
-                        "FrameRate_Den": track.get("FrameRate_Den", {}),
-                        "FrameCount": track.get("FrameCount", {}),
-                        "Standard": track.get("Standard", {}),
-                        "ColorSpace": track.get("ColorSpace", {}),
-                        "ChromaSubsampling": track.get(
-                            "ChromaSubsampling", {}
-                        ),
-                        "ChromaSubsampling_Position": track.get(
-                            "ChromaSubsampling_Position", {}
-                        ),
-                        "BitDepth": track.get("BitDepth", {}),
-                        "ScanType": track.get("ScanType", {}),
-                        "ScanOrder": track.get("ScanOrder", {}),
-                        "Delay": track.get("Delay", {}),
-                        "Delay_Source": track.get("Delay_Source", {}),
-                        "StreamSize": track.get("StreamSize", {}),
-                        "Language": track.get("Language", {}),
-                        "Default": track.get("Default", {}),
-                        "Forced": track.get("Forced", {}),
-                        "colour_description_present": track.get(
-                            "colour_description_present", {}
-                        ),
-                        "colour_description_present_Source": track.get(
-                            "colour_description_present_Source", {}
-                        ),
-                        "colour_range": track.get("colour_range", {}),
-                        "colour_range_Source": track.get(
-                            "colour_range_Source", {}
-                        ),
-                        "colour_primaries": track.get("colour_primaries", {}),
-                        "colour_primaries_Source": track.get(
-                            "colour_primaries_Source", {}
-                        ),
-                        "transfer_characteristics": track.get(
-                            "transfer_characteristics", {}
-                        ),
-                        "transfer_characteristics_Source": track.get(
-                            "transfer_characteristics_Source", {}
-                        ),
-                        "transfer_characteristics_Original": track.get(
-                            "transfer_characteristics_Original", {}
-                        ),
-                        "matrix_coefficients": track.get(
-                            "matrix_coefficients", {}
-                        ),
-                        "matrix_coefficients_Source": track.get(
-                            "matrix_coefficients_Source", {}
-                        ),
-                        "MasteringDisplay_ColorPrimaries": track.get(
-                            "MasteringDisplay_ColorPrimaries", {}
-                        ),
-                        "MasteringDisplay_ColorPrimaries_Source": track.get(
-                            "MasteringDisplay_ColorPrimaries_Source", {}
-                        ),
-                        "MasteringDisplay_Luminance": track.get(
-                            "MasteringDisplay_Luminance", {}
-                        ),
-                        "MasteringDisplay_Luminance_Source": track.get(
-                            "MasteringDisplay_Luminance_Source", {}
-                        ),
-                        "MaxCLL": track.get("MaxCLL", {}),
-                        "MaxCLL_Source": track.get("MaxCLL_Source", {}),
-                        "MaxFALL": track.get("MaxFALL", {}),
-                        "MaxFALL_Source": track.get("MaxFALL_Source", {}),
-                        "Encoded_Library_Settings": track.get(
-                            "Encoded_Library_Settings", {}
-                        ),
-                        "Encoded_Library": track.get("Encoded_Library", {}),
-                        "Encoded_Library_Name": track.get(
-                            "Encoded_Library_Name", {}
-                        ),
-                    }
-                )
-            elif track_type == "Audio":
-                media_tracks.append(
-                    {
-                        "@type": track_type,
-                        "StreamOrder": track.get("StreamOrder", {}),
-                        "ID": track.get("ID", {}),
-                        "UniqueID": track.get("UniqueID", {}),
-                        "Format": track.get("Format", {}),
-                        "Format_Version": track.get("Format_Version", {}),
-                        "Format_Profile": track.get("Format_Profile", {}),
-                        "Format_Settings": track.get("Format_Settings", {}),
-                        "Format_Commercial_IfAny": track.get(
-                            "Format_Commercial_IfAny", {}
-                        ),
-                        "Format_Settings_Endianness": track.get(
-                            "Format_Settings_Endianness", {}
-                        ),
-                        "Format_AdditionalFeatures": track.get(
-                            "Format_AdditionalFeatures", {}
-                        ),
-                        "CodecID": track.get("CodecID", {}),
-                        "Duration": track.get("Duration", {}),
-                        "BitRate_Mode": track.get("BitRate_Mode", {}),
-                        "BitRate": track.get("BitRate", {}),
-                        "Channels": track.get("Channels", {}),
-                        "ChannelPositions": track.get("ChannelPositions", {}),
-                        "ChannelLayout": track.get("ChannelLayout", {}),
-                        "Channels_Original": track.get(
-                            "Channels_Original", {}
-                        ),
-                        "ChannelLayout_Original": track.get(
-                            "ChannelLayout_Original", {}
-                        ),
-                        "SamplesPerFrame": track.get("SamplesPerFrame", {}),
-                        "SamplingRate": track.get("SamplingRate", {}),
-                        "SamplingCount": track.get("SamplingCount", {}),
-                        "FrameRate": track.get("FrameRate", {}),
-                        "FrameCount": track.get("FrameCount", {}),
-                        "Compression_Mode": track.get("Compression_Mode", {}),
-                        "Delay": track.get("Delay", {}),
-                        "Delay_Source": track.get("Delay_Source", {}),
-                        "Video_Delay": track.get("Video_Delay", {}),
-                        "StreamSize": track.get("StreamSize", {}),
-                        "Title": track.get("Title", {}),
-                        "Language": track.get("Language", {}),
-                        "ServiceKind": track.get("ServiceKind", {}),
-                        "Default": track.get("Default", {}),
-                        "Forced": track.get("Forced", {}),
-                        "extra": track.get("extra", {}),
-                    }
-                )
-            elif track_type == "Text":
-                media_tracks.append(
-                    {
-                        "@type": track_type,
-                        "@typeorder": track.get("@typeorder", {}),
-                        "StreamOrder": track.get("StreamOrder", {}),
-                        "ID": track.get("ID", {}),
-                        "UniqueID": track.get("UniqueID", {}),
-                        "Format": track.get("Format", {}),
-                        "CodecID": track.get("CodecID", {}),
-                        "Duration": track.get("Duration", {}),
-                        "BitRate": track.get("BitRate", {}),
-                        "FrameRate": track.get("FrameRate", {}),
-                        "FrameCount": track.get("FrameCount", {}),
-                        "ElementCount": track.get("ElementCount", {}),
-                        "StreamSize": track.get("StreamSize", {}),
-                        "Title": track.get("Title", {}),
-                        "Language": track.get("Language", {}),
-                        "Default": track.get("Default", {}),
-                        "Forced": track.get("Forced", {}),
-                    }
-                )
-            elif track_type == "Menu":
-                media_tracks.append(
-                    {
-                        "@type": track_type,
-                        "extra": track.get("extra", {}),
-                    }
-                )
-        return filtered
-
-    mediainfo_cmd = None
-
-    if is_dvd:
-        logger.debug(
-            "[bold yellow]DVD detected, using specialized MediaInfo..."
-        )
-
-        current_platform = platform.system().lower()
-
-        if current_platform in ["linux", "windows"]:
-            mediainfo_config = find_dvd_mediainfo(base_dir)
-            if mediainfo_config:
-                if mediainfo_config["cli"]:
-                    mediainfo_cmd = mediainfo_config["cli"]
-                else:
-                    logger.debug(
-                        "[yellow]DVD MediaInfo CLI not available[/yellow]"
-                    )
-            else:
-                logger.debug(
-                    "[yellow]No specialized MediaInfo components found, using system MediaInfo[/yellow]"
-                )
-        else:
-            logger.debug(
-                f"[yellow]DVD processing on {current_platform} not supported with specialized MediaInfo[/yellow]"
-            )
-
+    mediainfo_cmd = _dvd_mediainfo_cli(base_dir, is_dvd)
     logger.debug("[bold yellow]Exporting MediaInfo...")
     if not isdir:
         os.chdir(Path(video).parent)
+    media_info = await _mediainfo_text(video, mediainfo_cmd)
+    await _write_mediainfo_text_reports(video, base_dir, folder_id, media_info)
+    media_info_dict = await _mediainfo_json(video, mediainfo_cmd)
+    filtered_info = _filter_mediainfo(media_info_dict)
+    return await _write_mediainfo_json_report(
+        base_dir, folder_id, filtered_info
+    )
 
-    media_info_json = ""
-    if mediainfo_cmd and is_dvd:
-        result = None
-        try:
-            # Validate and sanitize the video path
-            safe_video_path = validate_file_path(video)
-            safe_mediainfo_cmd = validate_file_path(mediainfo_cmd)
-            cmd = [safe_mediainfo_cmd, safe_video_path]
-            result = cast(
-                subprocess.CompletedProcess[str],
-                await asyncio.to_thread(
-                    subprocess.run,
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                ),
-            )
 
-            if result.returncode == 0 and result.stdout:
-                media_info = result.stdout
-            else:
-                raise subprocess.CalledProcessError(
-                    result.returncode, cmd, result.stdout, result.stderr
-                )
+def _meta_mediainfo_tracks(meta: Meta) -> list[dict[str, Any]]:
+    media = meta.mediainfo.get("media", {})
+    if not isinstance(media, dict):
+        return []
+    tracks = cast(dict[str, Any], media).get("track", [])
+    if not isinstance(tracks, list):
+        return []
+    return [
+        cast(dict[str, Any], track)
+        for track in cast(list[Any], tracks)
+        if isinstance(track, dict)
+    ]
 
-        except subprocess.TimeoutExpired:
-            logger.info(
-                "[bold red]Specialized MediaInfo timed out (30s) - falling back to standard MediaInfo[/bold red]"
-            )
-            media_info = await parse_mediainfo(output="STRING", full=False)
-        except ValueError as e:
-            logger.info(f"[bold red]Path validation error: {e}[/bold red]")
-            logger.info(
-                "[bold yellow]Falling back to standard MediaInfo for text..."
-            )
-            media_info = await parse_mediainfo(output="STRING", full=False)
-        except Exception as e:
-            logger.info(
-                f"[bold red]Error getting text from specialized MediaInfo: {e}"
-            )
-            if result is not None:
-                logger.debug(f"[red]Subprocess stderr: {result.stderr}[/red]")
-                logger.debug(
-                    f"[red]Subprocess returncode: {result.returncode}[/red]"
-                )
-            logger.info(
-                "[bold yellow]Falling back to standard MediaInfo for text..."
-            )
-            media_info = await parse_mediainfo(output="STRING", full=False)
-    else:
-        media_info = await parse_mediainfo(output="STRING", full=False)
 
-    # Keep the CLI footer so every exported text report identifies its MediaInfo version.
-    filtered_media_info = media_info
+def _present_field(track: dict[str, Any], field: str) -> str:
+    value = track.get(field)
+    if value in (None, {}, ""):
+        return ""
+    return str(value).strip()
 
-    async with aiofiles.open(
-        f"{base_dir}{'/' + 'tmp' + '/'}{folder_id}/MEDIAINFO.txt",
-        "w",
-        newline="",
-        encoding="utf-8",
-    ) as export:
-        await export.write(
-            filtered_media_info.replace(video, Path(video).name)
+
+def _track_value(
+    tracks: list[dict[str, Any]], track_type: str, field: str
+) -> str:
+    for track in tracks:
+        if track.get("@type") != track_type:
+            continue
+        value = _present_field(track, field)
+        if value:
+            return value
+    return ""
+
+
+def _validate_audio_present(meta: Meta, tracks: list[dict[str, Any]]) -> None:
+    if any(track.get("@type") == "Audio" for track in tracks):
+        return
+    raise NoAudioMediaError(f"{meta.ua_name} does not support no audio media.")
+
+
+def _log_mediainfo_tracks(tracks: list[dict[str, Any]]) -> None:
+    names = [str(track.get("@type", "Unknown")) for track in tracks]
+    logger.debug(f"[cyan]MediaInfo tracks: {', '.join(names)}[/cyan]")
+
+
+def _is_mkv_release(meta: Meta) -> bool:
+    return any(str(path).lower().endswith(".mkv") for path in meta.filelist)
+
+
+def _validation_spec(settings: bool) -> tuple[str, str, str, str]:
+    if settings:
+        return (
+            "Video",
+            "Encoded_Library_Settings",
+            "encoding settings",
+            "no encoding settings",
         )
-    async with aiofiles.open(
-        f"{base_dir}{'/' + 'tmp' + '/'}{folder_id}/MEDIAINFO_CLEANPATH.txt",
-        "w",
-        newline="",
-        encoding="utf-8",
-    ) as export_cleanpath:
-        await export_cleanpath.write(
-            filtered_media_info.replace(video, Path(video).name)
-        )
-    logger.debug("[bold green]MediaInfo Exported.")
-
-    if mediainfo_cmd and is_dvd:
-        result = None
-        result2: subprocess.CompletedProcess[str] | None = None
-        try:
-            # Validate and sanitize the video path
-            safe_video_path = validate_file_path(video)
-            safe_mediainfo_cmd = validate_file_path(mediainfo_cmd)
-            cmd = [safe_mediainfo_cmd, "--Output=JSON", safe_video_path]
-            result2 = cast(
-                subprocess.CompletedProcess[str],
-                await asyncio.to_thread(
-                    subprocess.run,
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                ),
-            )
-
-            if result2.returncode == 0 and result2.stdout:
-                media_info_json = result2.stdout
-                media_info_dict = json.loads(media_info_json)
-            else:
-                raise subprocess.CalledProcessError(
-                    result2.returncode, cmd, result2.stdout, result2.stderr
-                )
-
-        except json.JSONDecodeError as e:
-            logger.info(
-                f"[bold red]Error getting JSON from specialized MediaInfo: {e}"
-            )
-            if result2 is not None:
-                logger.debug(f"[red]Subprocess stderr: {result2.stderr}[/red]")
-                logger.debug(
-                    f"[red]Subprocess returncode: {result2.returncode}[/red]"
-                )
-                if result2.stdout:
-                    logger.debug(
-                        f"[red]Subprocess stdout preview: {result2.stdout[:200]}...[/red]"
-                    )
-            logger.info(
-                "[bold yellow]Falling back to standard MediaInfo for JSON...[/bold yellow]"
-            )
-            media_info_json = await parse_mediainfo(output="JSON")
-            media_info_dict = json.loads(media_info_json)
-        except ValueError as e:
-            logger.info(f"[bold red]Path validation error: {e}[/bold red]")
-            logger.info(
-                "[bold yellow]Falling back to standard MediaInfo for JSON..."
-            )
-            media_info_json = await parse_mediainfo(output="JSON")
-            media_info_dict = json.loads(media_info_json)
-        except subprocess.TimeoutExpired:
-            logger.info(
-                "[bold red]Specialized MediaInfo timed out (30s) - falling back to standard MediaInfo[/bold red]"
-            )
-            media_info_json = await parse_mediainfo(output="JSON")
-            media_info_dict = json.loads(media_info_json)
-        except Exception as e:
-            logger.info(
-                f"[bold red]Error getting JSON from specialized MediaInfo: {e}"
-            )
-            if result2 is not None:
-                logger.debug(f"[red]Subprocess stderr: {result2.stderr}[/red]")
-                logger.debug(
-                    f"[red]Subprocess returncode: {result2.returncode}[/red]"
-                )
-                if result2.stdout:
-                    logger.debug(
-                        f"[red]Subprocess stdout preview: {result2.stdout[:200]}...[/red]"
-                    )
-            logger.info(
-                "[bold yellow]Falling back to standard MediaInfo for JSON...[/bold yellow]"
-            )
-            media_info_json = await parse_mediainfo(output="JSON")
-            media_info_dict = json.loads(media_info_json)
-    else:
-        media_info_json = await parse_mediainfo(output="JSON")
-        media_info_dict = json.loads(media_info_json)
-
-    filtered_info = filter_mediainfo(media_info_dict)
-
-    async with aiofiles.open(
-        f"{base_dir}{'/' + 'tmp' + '/'}{folder_id}/MediaInfo.json",
-        "w",
-        encoding="utf-8",
-    ) as export:
-        await export.write(json.dumps(filtered_info, indent=4))
-        logger.debug(
-            f"[green]JSON file written to: {base_dir}{'/' + 'tmp' + '/'}{folder_id}/MediaInfo.json[/green]"
-        )
-
-    async with aiofiles.open(
-        f"{base_dir}{'/' + 'tmp' + '/'}{folder_id}/MediaInfo.json",
-        encoding="utf-8",
-    ) as f:
-        return cast(dict[str, Any], json.loads(await f.read()))
+    return "General", "UniqueID", "Unique ID", "no unique ID"
 
 
 def validate_mediainfo(meta: Meta, settings: bool = False) -> bool:
-    if not any(str(f).lower().endswith(".mkv") for f in meta.filelist):
+    if not _is_mkv_release(meta):
         logger.debug(
             f"[yellow]Skipping {meta.path} (not an .mkv file)[/yellow]"
         )
         return True
-
-    unique_id = None
-    valid_settings = False
-
     logger.debug("[cyan]Validating MediaInfo")
-
-    mediainfo_data = meta.mediainfo
-
-    if "media" in mediainfo_data and "track" in mediainfo_data["media"]:
-        tracks = mediainfo_data["media"]["track"]
-        track_names = [str(track.get("@type", "Unknown")) for track in tracks]
+    tracks = _meta_mediainfo_tracks(meta)
+    if tracks:
+        _log_mediainfo_tracks(tracks)
+        _validate_audio_present(meta, tracks)
+    track_type, field, success_label, failure_label = _validation_spec(
+        settings
+    )
+    value = _track_value(tracks, track_type, field)
+    if not value:
         logger.debug(
-            f"[cyan]MediaInfo tracks: {', '.join(track_names)}[/cyan]"
+            f"[yellow]Mediainfo failed validation ({failure_label})[/yellow]"
         )
-        has_audio = any(track.get("@type", "") == "Audio" for track in tracks)
+        return False
+    logger.debug(f"[green]Found {success_label}: {value}[/green]")
+    return True
 
-        if not has_audio:
-            raise NoAudioMediaError(
-                f"{meta.ua_name} does not support no audio media."
-            )
 
-        for track in tracks:
-            track_type = track.get("@type", "")
-
-            if settings and track_type == "Video":
-                encoding_settings = track.get("Encoded_Library_Settings")
-                if (
-                    encoding_settings
-                    and encoding_settings != {}
-                    and str(encoding_settings).strip()
-                ):
-                    valid_settings = True
-                    logger.debug(
-                        f"[green]Found encoding settings: {encoding_settings}[/green]"
-                    )
-                    break
-
-            elif not settings and track_type == "General":
-                unique_id_value = track.get("UniqueID")
-                if (
-                    unique_id_value
-                    and unique_id_value != {}
-                    and str(unique_id_value).strip()
-                ):
-                    unique_id = str(unique_id_value)
-                    logger.debug(
-                        f"[green]Found Unique ID: {unique_id}[/green]"
-                    )
-                    break
-
-    if settings and not valid_settings:
-        logger.debug(
-            "[yellow]Mediainfo failed validation (no encoding settings)[/yellow]"
-        )
-    elif not settings and not unique_id:
-        logger.debug(
-            "[yellow]Mediainfo failed validation (no unique ID)[/yellow]"
-        )
-
-    return valid_settings if settings else bool(unique_id)
+def _general_mediainfo_track(meta: Meta) -> dict[str, Any] | None:
+    for track in _meta_mediainfo_tracks(meta):
+        if track.get("@type") == "General":
+            return track
+    return None
 
 
 async def get_conformance_error(meta: Meta) -> bool:
-    if meta.is_disc != "BDMV" and meta.mediainfo.get("media", {}).get("track"):
-        general_track = next(
-            (
-                track
-                for track in meta.mediainfo["media"]["track"]
-                if track.get("@type") == "General"
-            ),
-            None,
-        )
-        if general_track and general_track.get("extra", {}).get(
-            "ConformanceErrors", {}
-        ):
-            return True
+    if meta.is_disc == "BDMV":
+        return False
+    general_track = _general_mediainfo_track(meta)
+    if general_track is None:
+        return False
+    extra = general_track.get("extra", {})
+    has_errors = isinstance(extra, dict) and bool(
+        cast(dict[str, Any], extra).get("ConformanceErrors", {})
+    )
+    if not has_errors:
         logger.debug(
             "[green]No Conformance errors found in MediaInfo General track[/green]"
         )
-        return False
-    return False
+    return has_errors

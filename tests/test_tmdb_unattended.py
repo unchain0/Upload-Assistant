@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 import src.integrations.external_apis.tmdb as tmdb
+from src.domain_models.errors import AmbiguousMetadataError
 from src.domain_models.external_api import TmdbCredential
 from src.services import metadata_service as metadata_searching
 from src.services.preparation_helpers import _distinct_aka
@@ -77,6 +78,44 @@ class _MultipleResultsClient:
         return _MultipleResultsResponse()
 
 
+class _OdysseyAmbiguousResponse:
+    status_code = 200
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> dict[str, list[dict[str, object]]]:
+        return {
+            "results": [
+                {
+                    "id": 1368337,
+                    "title": "The Odyssey",
+                    "original_title": "The Odyssey",
+                    "release_date": "2026-01-01",
+                },
+                {
+                    "id": 1698863,
+                    "title": "The Odyssey",
+                    "original_title": "The Odyssey",
+                    "release_date": "2026-01-01",
+                },
+            ]
+        }
+
+
+class _OdysseyAmbiguousClient:
+    async def __aenter__(self) -> _OdysseyAmbiguousClient:
+        return self
+
+    async def __aexit__(self, *_args: object) -> None:
+        return None
+
+    async def get(
+        self, *_args: object, **_kwargs: object
+    ) -> _OdysseyAmbiguousResponse:
+        return _OdysseyAmbiguousResponse()
+
+
 @pytest.mark.asyncio
 async def test_get_tmdb_from_imdb_never_prompts_when_unattended() -> None:
     prompt = AsyncMock(return_value="movie/123")
@@ -107,20 +146,36 @@ async def test_get_tmdb_from_imdb_never_prompts_when_unattended() -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_tmdb_id_never_prompts_in_unattended_debug_mode() -> None:
+async def test_get_tmdb_id_skips_ambiguous_match_when_unattended() -> None:
     prompt = AsyncMock(return_value="2")
     with (
         patch.object(
             tmdb.httpx, "AsyncClient", return_value=_MultipleResultsClient()
         ),
         patch.object(tmdb, "prompt_in_thread", new=prompt),
+        pytest.raises(AmbiguousMetadataError, match="ambiguous"),
     ):
-        tmdb_id, category = await tmdb.get_tmdb_id(
+        await tmdb.get_tmdb_id(
             "60 Minutes", 2026, "TV", debug=True, unattended=True
         )
 
-    assert tmdb_id == 651
-    assert category == "TV"
+    prompt.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_the_odyssey_homonyms_are_not_guessed_in_unattended_mode() -> None:
+    prompt = AsyncMock(return_value="2")
+    with (
+        patch.object(
+            tmdb.httpx, "AsyncClient", return_value=_OdysseyAmbiguousClient()
+        ),
+        patch.object(tmdb, "prompt_in_thread", new=prompt),
+        pytest.raises(AmbiguousMetadataError, match="ambiguous"),
+    ):
+        await tmdb.get_tmdb_id(
+            "The Odyssey", 2026, "MOVIE", unattended=True
+        )
+
     prompt.assert_not_awaited()
 
 

@@ -89,7 +89,8 @@ def _run_mediainfo_command(
     command: list[str],
 ) -> subprocess.CompletedProcess[str]:
     try:
-        return subprocess.run(  # noqa: S603
+        # MediaInfo executable is validated configured/managed/system-local; argv is exec-form.
+        return subprocess.run(  # noqa: S603  # nosemgrep: dangerous-subprocess-use-audit
             command,
             capture_output=True,
             text=True,

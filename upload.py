@@ -40,6 +40,7 @@ from src.domain_models.book_language import (
     resolve_book_language,
 )
 from src.domain_models.errors import (
+    AmbiguousMetadataError,
     ConfigurationError,
     NoWorkAvailableError,
     OperationAbortedError,
@@ -1667,6 +1668,8 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
         meta = await prep.gather_prep(meta=meta, mode="cli")
     except ItemProcessingError:
         raise
+    except AmbiguousMetadataError as error:
+        raise ItemProcessingError(str(error), item_path=str(meta.path or "")) from error
     except Exception as e:
         logger.info(f"Error in gather_prep: {e}")
         logger.info(traceback.format_exc())

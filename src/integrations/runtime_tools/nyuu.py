@@ -4,7 +4,7 @@ import os
 import platform
 import shutil
 import stat
-import subprocess
+import subprocess  # nosec B404 -- local CLI uses fixed argv with shell disabled
 import tarfile
 from contextlib import suppress
 from pathlib import Path
@@ -202,7 +202,8 @@ class NyuuBinaryManager:
             str(temp_file),
             "nyuu.exe",
         ]
-        process = await asyncio.create_subprocess_exec(
+        # 7z executable is a validated configured/managed local binary; argv is exec-form.
+        process = await asyncio.create_subprocess_exec(  # nosemgrep: dangerous-asyncio-create-exec-audit
             *command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

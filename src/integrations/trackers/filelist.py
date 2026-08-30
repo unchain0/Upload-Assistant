@@ -217,22 +217,23 @@ class FileList:
             )
         return cookies
 
-    def _load_pickle_cookies(self, path: Path) -> dict[str, str]:
+    @staticmethod
+    def _looks_like_json_cookie_file(path: Path) -> bool:
         try:
-            import pickle
+            prefix = path.read_bytes()[:4096].lstrip()
+        except OSError:
+            return False
+        return prefix.startswith(b"{")
 
-            with path.open("rb") as file_handle:
-                session_cookies = pickle.load(file_handle)  # noqa: S301
-            self.cookie_validator._save_cookies_secure(
-                session_cookies, str(path.with_suffix(".json"))
-            )  # pyright: ignore[reportPrivateUsage]
-            return {cookie.name: cookie.value for cookie in session_cookies}
-        except Exception as error:
-            logger.error(
-                f"{self.tracker}: [red]Failed to migrate legacy cookies "
-                f"from pickle: {error}[/red]"
-            )
-            return {}
+    def _load_pickle_cookies(self, path: Path) -> dict[str, str]:
+        if self._looks_like_json_cookie_file(path):
+            return self._load_json_cookies(path)
+        logger.warning(
+            f"{self.tracker}: [yellow]Refusing legacy pickle cookie file "
+            f"{path.name}; pickle deserialization can execute arbitrary code. "
+            "Re-authenticate or export cookies as JSON/Netscape text.[/yellow]"
+        )
+        return {}
 
     def _load_secure_cookies(self, path: Path) -> dict[str, str]:
         raw_cookies = self.cookie_validator._load_cookies_dict_secure(
