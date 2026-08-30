@@ -258,6 +258,7 @@ def _tmdb_metadata_task(
         "tvdb_id": meta.tvdb_id,
         "filename": filename,
         "base_dir": meta.base_dir,
+        "unattended": meta.unattended,
     }
     if include_quickie:
         kwargs["quickie_search"] = meta.quickie_search
@@ -698,6 +699,7 @@ async def imdb_tvdb(
             debug=meta.debug,
             mode=(meta.mode if meta.mode is not None else "non_cli"),
             category_preference=meta.category,
+            unattended=meta.unattended,
         ),
         _tvmaze_search_task(meta, filename, tmdb_manager),
         _imdb_info_task(meta, tmdb_manager),

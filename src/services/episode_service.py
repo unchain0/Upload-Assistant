@@ -377,7 +377,11 @@ class SeasonEpisodeManager:
             {"excludes": ["country", "language"]},
         ).get("title", "")
         tmdb_id_value, category_value = await self.tmdb_manager.get_tmdb_id(
-            str(guess_title), year, meta.category, meta.filename
+            str(guess_title),
+            year,
+            meta.category,
+            meta.filename,
+            unattended=meta.unattended,
         )
         meta.tmdb_id = tmdb_id_value
         meta.category = category_value

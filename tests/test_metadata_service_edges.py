@@ -167,6 +167,39 @@ def _patch_imdb_tvmaze(
     )
 
 
+def test_automatic_metadata_tasks_propagate_unattended(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    meta = _meta(tmp_path, unattended=True, unattended_confirm=True)
+    manager = _Tmdb()
+    tmdb_other = AsyncMock(return_value={})
+    tmdb_from_imdb = AsyncMock(return_value=("TV", 101, "en", False))
+    monkeypatch.setattr(manager, "tmdb_other_meta", tmdb_other)
+    monkeypatch.setattr(manager, "get_tmdb_from_imdb", tmdb_from_imdb)
+    _patch_imdb_tvmaze(
+        monkeypatch,
+        imdb={},
+        tvmaze_search=0,
+    )
+
+    asyncio.run(
+        metadata_service._tmdb_metadata_task(  # pyright: ignore[reportPrivateUsage]
+            meta, manager, meta.filename  # type: ignore[arg-type]
+        )
+    )
+    asyncio.run(
+        metadata_service.imdb_tvdb(
+            meta,
+            meta.filename,
+            _Tvdb(get_tvdb_episodes=None),
+            manager,  # type: ignore[arg-type]
+        )
+    )
+
+    assert tmdb_other.await_args.kwargs["unattended"] is True
+    assert tmdb_from_imdb.await_args.kwargs["unattended"] is True
+
+
 def test_coercion_and_tvdb_series_metadata() -> None:
     assert metadata_service._coerce_int("7") == 7
     assert metadata_service._coerce_int("bad") is None

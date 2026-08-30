@@ -152,6 +152,7 @@ class TmdbManager:
         quickie_search: bool = False,
         filename: str | None = None,
         base_dir: str = "",
+        unattended: bool = False,
     ) -> dict[str, Any]:
         return await tmdb_other_meta(
             tmdb_id=tmdb_id,
@@ -172,6 +173,7 @@ class TmdbManager:
             filename=filename,
             base_dir=base_dir,
             config=self.config,
+            unattended=unattended,
         )
 
     async def get_keywords(self, tmdb_id: int, category: str) -> list[str]:
@@ -316,6 +318,67 @@ def _reconcile_tmdb_imdb_id(
     return external, False, 0
 
 
+def _tmdb_result_dicts(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [
+        typing_cast(dict[str, Any], item)
+        for item in typing_cast(list[Any], value)
+        if isinstance(item, dict)
+    ]
+
+
+def _external_find_candidates(
+    info: dict[str, Any], category_preference: str | None
+) -> list[tuple[str, dict[str, Any]]]:
+    movie_results = _tmdb_result_dicts(info.get("movie_results"))
+    tv_results = _tmdb_result_dicts(info.get("tv_results"))
+    preference = str(category_preference or "").upper()
+    if preference == "MOVIE" and movie_results:
+        return [("MOVIE", result) for result in movie_results]
+    if preference == "TV" and tv_results:
+        return [("TV", result) for result in tv_results]
+    return [
+        *(("MOVIE", result) for result in movie_results),
+        *(("TV", result) for result in tv_results),
+    ]
+
+
+def _reject_ambiguous_external_find(
+    info: dict[str, Any], category_preference: str | None, unattended: bool
+) -> None:
+    if not unattended:
+        return
+    candidates = _external_find_candidates(info, category_preference)
+    if len(candidates) <= 1:
+        return
+    candidate_ids = ", ".join(
+        f"{category.lower()}/{result.get('id', '')}"
+        for category, result in candidates[:3]
+    )
+    logger.warning(
+        "[yellow]Ambiguous TMDb lookup from IMDb ID in unattended mode; "
+        f"refusing to guess between candidates {candidate_ids}.[/yellow]"
+    )
+    raise AmbiguousMetadataError(
+        "IMDb/TMDb identity is ambiguous; automatic mode will skip this release."
+    )
+
+
+def _reject_unattended_imdb_mismatch(
+    unattended: bool, original_imdb_id: Any, mismatched_imdb_id: int
+) -> None:
+    if not unattended or not original_imdb_id or not mismatched_imdb_id:
+        return
+    logger.warning(
+        "[yellow]TMDb returned an IMDb ID that conflicts with the release identity; "
+        "automatic mode will not choose between them.[/yellow]"
+    )
+    raise AmbiguousMetadataError(
+        "IMDb/TMDb identity conflict is ambiguous; automatic mode will skip this release."
+    )
+
+
 async def get_tmdb_from_imdb(
     imdb_id: str | int | None,
     tvdb_id: int | None = None,
@@ -365,6 +428,8 @@ async def get_tmdb_from_imdb(
 
     # Run a search by IMDb ID
     info = await _tmdb_find_by_external_source(imdb_id, "imdb_id")
+
+    _reject_ambiguous_external_find(info, category_preference, unattended)
 
     # Check if both movie and TV results exist
     has_movie_results = bool(info.get("movie_results"))
@@ -1489,6 +1554,7 @@ async def tmdb_other_meta(
     filename: str | None = None,
     base_dir: str = "",
     config: dict[str, Any] | None = None,
+    unattended: bool = False,
 ) -> dict[str, Any]:
     """
     Fetch metadata from TMDB for a movie or TV show.
@@ -1567,6 +1633,7 @@ async def tmdb_other_meta(
                     "mode": mode,
                 },
                 category,
+                unattended=unattended,
             )
 
             if tmdb_id == 0:
@@ -1581,6 +1648,7 @@ async def tmdb_other_meta(
                         "mode": mode,
                     },
                     category,
+                    unattended=unattended,
                 )
 
             if tmdb_id == 0:
@@ -1593,6 +1661,8 @@ async def tmdb_other_meta(
                     ) from None
                 logger.info("[bold red]Unable to find tmdb entry")
                 return {}
+        except AmbiguousMetadataError:
+            raise
         except Exception:
             if mode == "cli":
                 logger.info("[bold red]Unable to find tmdb entry. Exiting.")
@@ -1656,6 +1726,9 @@ async def tmdb_other_meta(
                     if imdb_id and int(imdb_id_str) != imdb_id:
                         imdb_mismatch = True
                         mismatched_imdb_id = int(imdb_id_str)
+                        _reject_unattended_imdb_mismatch(
+                            unattended, original_imdb_id, mismatched_imdb_id
+                        )
                         imdb_id = original_imdb_id
                 else:
                     imdb_id = original_imdb_id
@@ -1758,6 +1831,9 @@ async def tmdb_other_meta(
                         int(original_imdb_id), external_imdb_id, quickie_search
                     )
                 )
+                _reject_unattended_imdb_mismatch(
+                    unattended, original_imdb_id, mismatched_imdb_id
+                )
                 if not quickie_search and mismatched_imdb_id:
                     logger.warning(
                         f"[yellow]Warning: TMDb IMDb ID ({mismatched_imdb_id}) does not match provided IMDb ID ({original_imdb_id}). Using original IMDb ID.[/yellow]"
@@ -1772,6 +1848,8 @@ async def tmdb_other_meta(
                         and tvdb_id_str not in ["", " ", "None", "null"]
                         else 0
                     )
+            except AmbiguousMetadataError:
+                raise
             except Exception:
                 logger.info(
                     "[bold red]Failed to process external IDs[/bold red]"
@@ -2909,6 +2987,7 @@ async def set_tmdb_metadata(meta: Meta, filename: str | None = None) -> None:
                     filename=filename,
                     base_dir=meta.base_dir,
                     config=default_config,
+                    unattended=meta.unattended,
                 )
 
                 if tmdb_metadata and all(
@@ -2927,6 +3006,8 @@ async def set_tmdb_metadata(meta: Meta, filename: str | None = None) -> None:
                     await asyncio.sleep(delay_seconds)
                 else:
                     raise ValueError(error_msg)
+            except AmbiguousMetadataError:
+                raise
             except Exception as e:
                 error_msg = f"TMDB metadata retrieval failed for ID {meta.tmdb_id}: {e!s}"
                 logger.debug(f"[bold red]{error_msg}[/bold red]")

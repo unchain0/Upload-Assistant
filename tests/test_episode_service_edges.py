@@ -505,11 +505,8 @@ def test_anime_tmdb_tag_episode_list_and_regular_season(
         "get_romaji",
         AsyncMock(return_value=("Romaji", 99, "English", 2025, 12, "shounen")),
     )
-    monkeypatch.setattr(
-        manager.tmdb_manager,
-        "get_tmdb_id",
-        AsyncMock(return_value=(456, "TV")),
-    )
+    tmdb_lookup = AsyncMock(return_value=(456, "TV"))
+    monkeypatch.setattr(manager.tmdb_manager, "get_tmdb_id", tmdb_lookup)
     monkeypatch.setattr(
         episode_service,
         "_anitopy_parse",
@@ -537,12 +534,15 @@ def test_anime_tmdb_tag_episode_list_and_regular_season(
         tag=None,
         season_int=0,
         filename="Anime.03-04.mkv",
+        unattended=True,
+        unattended_confirm=True,
     )
     result = asyncio.run(manager.get_season_episode(meta.filelist[0], meta))
     assert result.mal_id == 99 and result.tmdb_id == 456
     assert result.tag == "-GROUP"
     assert result.episode == "E03E04" and result.episode_int == 3
     assert result.season == "S03"
+    assert tmdb_lookup.await_args.kwargs["unattended"] is True
 
 
 def test_anime_uuid_bad_match_xem_failure_jp_and_double_fallback(

@@ -547,6 +547,31 @@ def test_tmdb_other_meta_movie_tv_cache_failure_and_lookup(
         )
 
 
+def test_tmdb_other_meta_skips_conflicting_imdb_in_unattended_mode(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cache = Cache()
+    monkeypatch.setattr(tmdb, "cache_for", lambda *_args, **_kwargs: cache)
+    install_client(monkeypatch, lambda url, _kwargs: endpoint_payload(url))
+    monkeypatch.setattr(
+        tmdb,
+        "get_anime",
+        lambda *_args, **_kwargs: async_value((0, "", False, "")),
+    )
+
+    with pytest.raises(AmbiguousMetadataError, match="conflict"):
+        asyncio.run(
+            tmdb.tmdb_other_meta(
+                123,
+                category="MOVIE",
+                imdb_id=1234567,
+                base_dir=str(tmp_path),
+                config={"DEFAULT": {}},
+                unattended=True,
+            )
+        )
+
+
 def test_tmdb_small_helpers_success_and_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

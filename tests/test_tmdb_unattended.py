@@ -116,6 +116,35 @@ class _OdysseyAmbiguousClient:
         return _OdysseyAmbiguousResponse()
 
 
+class _AmbiguousExternalResponse:
+    status_code = 200
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> dict[str, list[dict[str, object]]]:
+        return {
+            "movie_results": [
+                {"id": 1001, "original_language": "en"},
+                {"id": 1002, "original_language": "en"},
+            ],
+            "tv_results": [],
+        }
+
+
+class _AmbiguousExternalClient:
+    async def __aenter__(self) -> _AmbiguousExternalClient:
+        return self
+
+    async def __aexit__(self, *_args: object) -> None:
+        return None
+
+    async def get(
+        self, *_args: object, **_kwargs: object
+    ) -> _AmbiguousExternalResponse:
+        return _AmbiguousExternalResponse()
+
+
 @pytest.mark.asyncio
 async def test_get_tmdb_from_imdb_never_prompts_when_unattended() -> None:
     prompt = AsyncMock(return_value="movie/123")
@@ -142,6 +171,27 @@ async def test_get_tmdb_from_imdb_never_prompts_when_unattended() -> None:
 
     assert category == "MOVIE"
     assert tmdb_id == 0
+    prompt.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_get_tmdb_from_imdb_skips_multiple_external_matches_unattended() -> None:
+    prompt = AsyncMock(return_value="movie/1001")
+    with (
+        patch.object(
+            tmdb.httpx, "AsyncClient", return_value=_AmbiguousExternalClient()
+        ),
+        patch.object(tmdb, "prompt_in_thread", new=prompt),
+        pytest.raises(AmbiguousMetadataError, match="ambiguous"),
+    ):
+        await tmdb.get_tmdb_from_imdb(
+            1234567,
+            filename="Ambiguous",
+            mode="cli",
+            category_preference="MOVIE",
+            unattended=True,
+        )
+
     prompt.assert_not_awaited()
 
 
@@ -176,6 +226,32 @@ async def test_the_odyssey_homonyms_are_not_guessed_in_unattended_mode() -> None
             "The Odyssey", 2026, "MOVIE", unattended=True
         )
 
+    prompt.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_tmdb_other_meta_preserves_ambiguous_skip_in_automatic_cli() -> None:
+    prompt = AsyncMock(return_value="movie/999")
+    lookup = AsyncMock(
+        side_effect=AmbiguousMetadataError(
+            "TMDb metadata match is ambiguous; automatic mode will skip this release."
+        )
+    )
+    with (
+        patch.object(tmdb, "get_tmdb_id", new=lookup),
+        patch.object(tmdb, "prompt_in_thread", new=prompt),
+        pytest.raises(AmbiguousMetadataError, match="ambiguous"),
+    ):
+        await tmdb.tmdb_other_meta(
+            0,
+            path="The.Odyssey.2026.mkv",
+            search_year=2026,
+            category="MOVIE",
+            mode="cli",
+            unattended=True,
+        )
+
+    assert lookup.await_args.kwargs["unattended"] is True
     prompt.assert_not_awaited()
 
 
