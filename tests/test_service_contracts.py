@@ -1286,6 +1286,11 @@ def _patch_service_boundaries(
         "search_tvmaze",
         lambda *_args, **_kwargs: _AwaitableValue(),
     )
+    monkeypatch.setattr(
+        TvmazeManager,
+        "get_tvmaze_episode_data",
+        lambda *_args, **_kwargs: _AwaitableValue(),
+    )
     _patch_metadata_service(monkeypatch, config, tmp_path)
     _patch_preparation_service(monkeypatch, config, tmp_path)
     _patch_preparation_helpers(monkeypatch, config, tmp_path)

@@ -32,5 +32,10 @@ class FfmpegBinaryManager:
         return ffmpeg
 
 
-if __name__ == "__main__":
+def main() -> None:
+    """CLI entry point for Docker build-time ffmpeg validation."""
     print(FfmpegBinaryManager.download_ffmpeg_for_docker())
+
+
+if __name__ == "__main__":
+    main()

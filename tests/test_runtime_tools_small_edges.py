@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import io
-import runpy
 import stat
 import tarfile
 import zipfile
@@ -52,9 +51,7 @@ def test_ffmpeg_docker_platform_missing_success_and_main(
         == "/usr/bin/ffmpeg"
     )
 
-    runpy.run_module(
-        "src.integrations.runtime_tools.ffmpeg_docker", run_name="__main__"
-    )
+    ffmpeg_docker.main()
     assert "/usr/bin/ffmpeg" in capsys.readouterr().out
 
 

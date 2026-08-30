@@ -8,6 +8,7 @@ import html
 import os
 import re
 import shutil
+import warnings
 import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -636,7 +637,17 @@ def extract_mobi_metadata(mobi_path: str) -> dict[str, Any]:
     if not Path(mobi_path).is_file():
         return {}
     try:
-        import mobi
+        # mobi 0.4.1 is currently the latest release and imports the
+        # standard-imghdr compatibility package, which emits a Python 3.13+
+        # deprecation notice on import. Suppress only that third-party notice;
+        # keep all other deprecations visible.
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message=r"imghdr was removed in Python 3\.13.*",
+                category=DeprecationWarning,
+            )
+            import mobi
     except ImportError:
         logger.debug(
             "[yellow]Debug: mobi library is not installed. Skipping MOBI metadata extraction.[/yellow]"
