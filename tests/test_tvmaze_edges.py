@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any, ClassVar, Self
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import httpx
 import pytest
 
+from src.domain_models.errors import AmbiguousMetadataError
 from src.domain_models.release import Meta
 from src.integrations.external_apis import tvmaze
 from src.integrations.external_apis.tvmaze import TvmazeManager
@@ -248,6 +249,61 @@ def test_search_manual_date_choices_invalid_skip_and_tvdb_update(
             "Show", "2024", 0, 0, manual_date="date", return_full_tuple=True
         )
     ) == (3, 0, 0)
+
+
+def test_search_unattended_multiple_results_skips_without_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = TvmazeManager()
+    candidates = [
+        {"show": _show(index, name="Paradise Hotel")}
+        for index in range(1, 11)
+    ]
+    monkeypatch.setattr(
+        manager, "_make_tvmaze_request", AsyncMock(return_value=candidates)
+    )
+    prompt = Mock()
+    monkeypatch.setattr(tvmaze.cli_ui, "ask_string", prompt)
+
+    with pytest.raises(AmbiguousMetadataError, match="ambiguous"):
+        asyncio.run(
+            manager.search_tvmaze(
+                "Hotel Paradise Extra",
+                "",
+                0,
+                0,
+                unattended=True,
+                return_full_tuple=True,
+            )
+        )
+
+    prompt.assert_not_called()
+
+
+def test_search_unattended_single_result_never_prompts_for_manual_date(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = TvmazeManager()
+    monkeypatch.setattr(
+        manager,
+        "_make_tvmaze_request",
+        AsyncMock(return_value=[{"show": _show(7, name="Hotel Paradise")}]),
+    )
+    prompt = Mock()
+    monkeypatch.setattr(tvmaze.cli_ui, "ask_string", prompt)
+
+    assert asyncio.run(
+        manager.search_tvmaze(
+            "Hotel Paradise",
+            "2020",
+            0,
+            0,
+            manual_date="2020-02-24",
+            unattended=True,
+            return_full_tuple=True,
+        )
+    ) == (7, 0, 107)
+    prompt.assert_not_called()
 
 
 def test_request_cache_dict_list_invalid_status_http_and_network(

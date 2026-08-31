@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from src.domain_models.errors import AmbiguousMetadataError
 from src.domain_models.processing import ItemProcessingError, NoAudioMediaError
 from src.domain_models.release import Meta
 from src.services import preparation_helpers as helpers
@@ -1423,6 +1424,7 @@ def test_search_metadata_imdb_to_tmdb_mismatch_imdb_info_and_search_failure(
         mismatched_imdb_id=999,
         imdb_info={"title": "Old"},
         uuid="regular-release",
+        unattended=False,
     )
     asyncio.run(
         helpers.search_metadata(
@@ -1442,6 +1444,77 @@ def test_search_metadata_imdb_to_tmdb_mismatch_imdb_info_and_search_failure(
         )
     )
     assert meta.imdb_id == 999
+
+    manager = _SearchManager()
+    prep = _search_prep(manager)
+    tmdb_lookup = AsyncMock(return_value=(123, "MOVIE"))
+    prep.tmdb_manager.get_tmdb_id = tmdb_lookup
+    imdb_lookup = AsyncMock(return_value=456)
+    monkeypatch.setattr(helpers.imdb_manager, "search_imdb", imdb_lookup)
+    monkeypatch.setattr(
+        helpers.imdb_manager,
+        "get_imdb_info_api",
+        AsyncMock(return_value={"title": "IMDb Title"}),
+    )
+    automatic = _search_meta(
+        tmp_path,
+        category="MOVIE",
+        imdb_id=0,
+        tmdb_id=0,
+        unattended=True,
+        unattended_confirm=True,
+    )
+    asyncio.run(
+        helpers.search_metadata(
+            prep,
+            automatic,
+            "Movie",
+            "Movie",
+            automatic.path,
+            "Movie",
+            "file",
+            False,
+            False,
+            False,
+            _SearchClient(),
+            {},
+            {},
+        )
+    )
+    assert tmdb_lookup.await_args.kwargs["unattended"] is True
+    assert imdb_lookup.await_args_list[0].kwargs["unattended"] is True
+
+    conflict = _search_meta(
+        tmp_path,
+        category="MOVIE",
+        imdb_id=123,
+        tmdb_id=456,
+        imdb_mismatch=True,
+        mismatched_imdb_id=999,
+        imdb_info={"title": "Old"},
+        uuid="automatic-conflict",
+        unattended=True,
+        unattended_confirm=True,
+    )
+    with pytest.raises(AmbiguousMetadataError, match="ambiguous"):
+        asyncio.run(
+            helpers.search_metadata(
+                _search_prep(_SearchManager()),
+                conflict,
+                "Movie",
+                "Movie",
+                conflict.path,
+                "Movie",
+                "file",
+                False,
+                False,
+                False,
+                _SearchClient(),
+                {},
+                {},
+            )
+        )
+    assert conflict.imdb_id == 123
 
     monkeypatch.setattr(
         helpers.imdb_manager,

@@ -5,6 +5,7 @@ from typing import Any, cast
 import cli_ui
 import httpx
 
+from src.domain_models.errors import AmbiguousMetadataError
 from src.domain_models.release import Meta
 from src.integrations.cache.metadata_cache import cache_for, is_cache_miss
 from src.integrations.observability.runtime_support import logger
@@ -343,6 +344,43 @@ class TvmazeManager:
             f"[cyan]Returning TVmaze ID: {tvmaze_id} (type: {type(tvmaze_id).__name__})[/cyan]"
         )
 
+    @staticmethod
+    def _raise_ambiguous_unattended(results: list[dict[str, Any]]) -> None:
+        candidate_ids = ", ".join(
+            str(show.get("id", "")) for show in results[:5]
+        )
+        logger.warning(
+            "[yellow]Ambiguous TVMaze match in unattended mode; "
+            f"refusing to guess between candidates {candidate_ids}.[/yellow]"
+        )
+        raise AmbiguousMetadataError(
+            "TVMaze metadata match is ambiguous; automatic mode will skip this release."
+        )
+
+    @staticmethod
+    def _requires_manual_search_selection(
+        results: list[dict[str, Any]],
+        manual_date: str | None,
+        unattended: bool,
+    ) -> bool:
+        if unattended:
+            return False
+        return manual_date is not None or len(results) > 1
+
+    @classmethod
+    def _selected_search_result(
+        cls,
+        results: list[dict[str, Any]],
+        normalized_tvdb: int,
+        manual_date: str | None,
+        unattended: bool,
+    ) -> tuple[int, int]:
+        if len(results) > 1 and unattended:
+            cls._raise_ambiguous_unattended(results)
+        if cls._requires_manual_search_selection(results, manual_date, unattended):
+            return cls._manual_show_selection(results, normalized_tvdb)
+        return cls._automatic_show_selection(results[0]), normalized_tvdb
+
     async def search_tvmaze(
         self,
         filename: str,
@@ -354,6 +392,7 @@ class TvmazeManager:
         return_full_tuple: bool = False,
         base_dir: str = "",
         config: dict[str, Any] | None = None,
+        unattended: bool = False,
     ) -> int | tuple[int, int, int]:
         """Search TVMaze using external IDs and title fallbacks."""
         logger.debug(
@@ -384,12 +423,9 @@ class TvmazeManager:
             return self._search_return_value(
                 0, normalized_imdb, normalized_tvdb, return_full_tuple
             )
-        if manual_date is not None or len(results) > 1:
-            tvmaze_id, normalized_tvdb = self._manual_show_selection(
-                results, normalized_tvdb
-            )
-        else:
-            tvmaze_id = self._automatic_show_selection(results[0])
+        tvmaze_id, normalized_tvdb = self._selected_search_result(
+            results, normalized_tvdb, manual_date, unattended
+        )
         selected = self._show_by_id(results, tvmaze_id)
         normalized_imdb, normalized_tvdb = self._adopt_selected_externals(
             selected, normalized_imdb, normalized_tvdb

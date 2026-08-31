@@ -274,10 +274,22 @@ def test_yuscene_normalizes_tracker_name_before_validation():
     meta = _movie_meta(name="Tatami 2024 1080p AMZN WEB-DL DDP 5.1 H.264-FLY")
 
     assert asyncio.run(tracker.get_name(meta)) == {
-        "name": "Tatami 2024 1080p AMZN WEB-DL DDP 5 1 H 264-FLY"
+        "name": "Tatami 2024 1080p AMZN WEB-DL DDP 5.1 H.264-FLY"
     }
     assert asyncio.run(tracker.get_additional_checks(meta)) is True
     assert meta.name == "Tatami 2024 1080p AMZN WEB-DL DDP 5.1 H.264-FLY"
+
+
+def test_yuscene_preserves_technical_dots_in_tracker_name():
+    tracker = _tracker()
+    meta = _movie_meta(
+        name="Hotel Paradise Extra S13E02 1080p MAX WEB-DL DD+ 2.0 H.265-KIFR"
+    )
+
+    assert asyncio.run(tracker.get_name(meta)) == {
+        "name": "Hotel Paradise Extra S13E02 1080p MAX WEB-DL DD+ 2.0 H.265-KIFR"
+    }
+    assert YUSCENE._has_banned_title_chars(meta.name) is False
 
 
 def test_yuscene_allows_movies_without_forbidden_title_chars():

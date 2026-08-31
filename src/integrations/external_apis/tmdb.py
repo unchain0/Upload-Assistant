@@ -2045,153 +2045,219 @@ async def tmdb_other_meta(
     }
 
 
+def _keyword_entries(
+    data: dict[str, Any], category: str
+) -> list[dict[str, Any]]:
+    key = "keywords" if category == "MOVIE" else "results"
+    raw = data.get(key, [])
+    if not isinstance(raw, list):
+        return []
+    return [
+        typing_cast(dict[str, Any], item)
+        for item in typing_cast(list[Any], raw)
+        if isinstance(item, dict)
+    ]
+
+
+def _keyword_names(data: dict[str, Any], category: str) -> list[str]:
+    return [
+        str(entry.get("name", "")).replace(",", " ")
+        for entry in _keyword_entries(data, category)
+        if entry.get("name")
+    ]
+
+
 async def get_keywords(tmdb_id: int, category: str) -> list[str]:
-    """Get keywords for a movie or TV show using httpx"""
+    """Get keywords for a movie or TV show using httpx."""
     endpoint = "movie" if category == "MOVIE" else "tv"
     url = f"{TMDB_BASE_URL}/{endpoint}/{tmdb_id}/keywords"
-
     async with _tmdb_client() as client:
         try:
             response = await client.get(url, params={})
-            try:
-                response.raise_for_status()
-                data = response.json()
-            except Exception:
-                logger.info(
-                    f"[bold red]Failed to fetch keywords: {response.status_code}[/bold red]"
-                )
-                return []
-
-            if category == "MOVIE":
-                keywords = [
-                    keyword["name"].replace(",", " ")
-                    for keyword in data.get("keywords", [])
-                ]
-            else:  # TV
-                keywords = [
-                    keyword["name"].replace(",", " ")
-                    for keyword in data.get("results", [])
-                ]
-
-            return keywords
-        except Exception as e:
-            logger.info(f"[yellow]Failed to get keywords: {e!s}")
+            response.raise_for_status()
+            data = typing_cast(dict[str, Any], response.json())
+            return _keyword_names(data, category)
+        except httpx.HTTPStatusError as error:
+            logger.info(
+                f"[bold red]Failed to fetch keywords: {error.response.status_code}[/bold red]"
+            )
             return []
+        except Exception as error:
+            logger.info(f"[yellow]Failed to get keywords: {error!s}")
+            return []
+
+
+def _named_genre_entry(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    genre = typing_cast(dict[str, Any], value)
+    return genre if genre.get("name") else None
+
+
+def _valid_tmdb_genres(
+    response_data: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    raw = [] if response_data is None else response_data.get("genres", [])
+    if not isinstance(raw, list):
+        return []
+    genres: list[dict[str, Any]] = []
+    for value in typing_cast(list[Any], raw):
+        genre = _named_genre_entry(value)
+        if genre is not None:
+            genres.append(genre)
+    return genres
+
+
+def _genre_ids(genres: list[dict[str, Any]]) -> str:
+    return ", ".join(
+        str(genre["id"]) for genre in genres if genre.get("id") is not None
+    )
 
 
 async def get_genres(response_data: dict[str, Any] | None) -> dict[str, Any]:
-    """Extract genres from TMDB response data"""
-    if response_data is not None:
-        tmdb_genres = response_data.get("genres", [])
+    """Extract genres from TMDB response data."""
+    genres = _valid_tmdb_genres(response_data)
+    return {
+        "genre_names": [
+            str(genre["name"]).replace(",", " ") for genre in genres
+        ],
+        "genre_ids": _genre_ids(genres),
+    }
 
-        if tmdb_genres:
-            # Dress incomplete provider entries at the boundary rather than
-            # leaking KeyError into metadata services.
-            valid_genres = [
-                genre
-                for genre in tmdb_genres
-                if isinstance(genre, dict) and genre.get("name")
-            ]
-            genre_names = [
-                str(genre["name"]).replace(",", " ") for genre in valid_genres
-            ]
-            genre_ids = [
-                str(genre["id"])
-                for genre in valid_genres
-                if genre.get("id") is not None
-            ]
-            return {
-                "genre_names": genre_names,
-                "genre_ids": ", ".join(genre_ids),
-            }
 
-    # Return empty values if no genres found
-    return {"genre_names": [], "genre_ids": ""}
+def _credit_entries(data: dict[str, Any]) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    for key in ("cast", "crew"):
+        raw = data.get(key, [])
+        if isinstance(raw, list):
+            entries.extend(
+                typing_cast(dict[str, Any], item)
+                for item in typing_cast(list[Any], raw)
+                if isinstance(item, dict)
+            )
+    return entries
+
+
+def _is_director_credit(entry: dict[str, Any]) -> bool:
+    return (
+        entry.get("known_for_department") == "Directing"
+        or entry.get("job") == "Director"
+    )
+
+
+def _credit_name(entry: dict[str, Any]) -> str:
+    return str(entry.get("original_name") or entry.get("name") or "")
+
+
+def _director_names(data: dict[str, Any]) -> list[str]:
+    return [
+        _credit_name(entry)
+        for entry in _credit_entries(data)
+        if _is_director_credit(entry)
+    ]
 
 
 async def get_directors(tmdb_id: int, category: str) -> list[str]:
-    """Get directors for a movie or TV show using httpx"""
+    """Get directors for a movie or TV show using httpx."""
     endpoint = "movie" if category == "MOVIE" else "tv"
     url = f"{TMDB_BASE_URL}/{endpoint}/{tmdb_id}/credits"
-
     async with _tmdb_client() as client:
         try:
             response = await client.get(url, params={})
-            try:
-                response.raise_for_status()
-                data = response.json()
-            except Exception:
-                logger.info(
-                    f"[bold red]Failed to fetch credits: {response.status_code}[/bold red]"
-                )
-                return []
-
-            return [
-                each.get("original_name", each.get("name"))
-                for each in data.get("cast", []) + data.get("crew", [])
-                if each.get("known_for_department", "") == "Directing"
-                or each.get("job", "") == "Director"
-            ]
-        except Exception as e:
-            logger.info(f"[yellow]Failed to get directors: {e!s}")
+            response.raise_for_status()
+            return _director_names(
+                typing_cast(dict[str, Any], response.json())
+            )
+        except httpx.HTTPStatusError as error:
+            logger.info(
+                f"[bold red]Failed to fetch credits: {error.response.status_code}[/bold red]"
+            )
             return []
+        except Exception as error:
+            logger.info(f"[yellow]Failed to get directors: {error!s}")
+            return []
+
+
+def _origin_country_codes(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(country).upper() for country in typing_cast(list[Any], value)]
+
+
+def _production_country_code(value: Any) -> str:
+    if not isinstance(value, dict):
+        return ""
+    return str(
+        typing_cast(dict[str, Any], value).get("iso_3166_1", "")
+    ).upper()
+
+
+def _production_country_codes(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [
+        code
+        for code in (
+            _production_country_code(item)
+            for item in typing_cast(list[Any], value)
+        )
+        if code
+    ]
+
+
+def _response_countries(
+    response: dict[str, Any],
+) -> tuple[list[str], list[str]]:
+    return (
+        _origin_country_codes(response.get("origin_country", [])),
+        _production_country_codes(response.get("production_countries", [])),
+    )
+
+
+def _response_has_animation(response: dict[str, Any]) -> bool:
+    raw = response.get("genres", [])
+    if not isinstance(raw, list):
+        return False
+    return any(
+        typing_cast(dict[str, Any], genre).get("id") == 16
+        or str(typing_cast(dict[str, Any], genre).get("name", "")).lower()
+        == "animation"
+        for genre in typing_cast(list[Any], raw)
+        if isinstance(genre, dict)
+    )
+
+
+def _is_japanese_animation(response: dict[str, Any]) -> bool:
+    if not _response_has_animation(response):
+        return False
+    language = str(response.get("original_language", "")).lower()
+    origin, production = _response_countries(response)
+    return language == "ja" or "JP" in origin or "JP" in production
+
+
+async def _anilist_anime_metadata(meta: Meta) -> tuple[int, str, str]:
+    (
+        romaji,
+        mal_id,
+        _eng_title,
+        _season_year,
+        _episodes,
+        demographic,
+    ) = await get_romaji(meta.title, meta.mal_id, meta)
+    alt_name = f"AKA {romaji}" if romaji and romaji != meta.title else meta.aka
+    return mal_id, alt_name, demographic
 
 
 async def get_anime(
     response: dict[str, Any], meta: Meta
 ) -> tuple[int, str, bool, str]:
-    tmdb_name = meta.title
     alt_name = "" if meta.aka == "" else meta.aka
-    anime = False
+    mal_id = 0
     demographic = ""
-    genres = typing_cast(list[dict[str, Any]], response.get("genres", []))
-    original_language = str(response.get("original_language", "")).lower()
-    origin_country = [
-        str(country).upper()
-        for country in typing_cast(
-            list[Any], response.get("origin_country", [])
-        )
-    ]
-    production_countries = [
-        str(country.get("iso_3166_1", "")).upper()
-        for country in typing_cast(
-            list[dict[str, Any]], response.get("production_countries", [])
-        )
-        if isinstance(country, dict)
-    ]
-
-    is_animation = any(
-        each.get("id") == 16
-        or str(each.get("name", "")).lower() == "animation"
-        for each in genres
-    )
-    is_japanese_production = (
-        "JP" in origin_country or "JP" in production_countries
-    )
-    is_japanese_animation = is_animation and (
-        original_language == "ja" or is_japanese_production
-    )
-
-    if is_japanese_animation:
-        (
-            romaji,
-            mal_id,
-            _eng_title,
-            _season_year,
-            _episodes,
-            demographic,
-        ) = await get_romaji(
-            tmdb_name,
-            meta.mal_id,
-            meta,
-        )
-        if romaji and romaji != tmdb_name:
-            alt_name = f"AKA {romaji}"
+    anime = False
+    if _is_japanese_animation(response):
+        mal_id, alt_name, demographic = await _anilist_anime_metadata(meta)
         anime = True
-        # mal = AnimeSearch(romaji)
-        # mal_id = mal.results[0].mal_id
-    else:
-        mal_id = 0
     if meta.mal_id != 0:
         mal_id = meta.mal_id
         anime = True
@@ -2465,6 +2531,64 @@ async def get_romaji(
     return romaji, mal_id, eng_title, season_year, episodes, demographic
 
 
+def _normalized_tmdb_category(category: str) -> str:
+    value = str(category or "MOVIE").upper()
+    return value if value in {"MOVIE", "TV"} else "MOVIE"
+
+
+def _mediainfo_extra(mediainfo: dict[str, Any]) -> dict[str, Any]:
+    media = mediainfo.get("media")
+    if not isinstance(media, dict):
+        return {}
+    tracks = typing_cast(dict[str, Any], media).get("track")
+    if not isinstance(tracks, list) or not tracks:
+        return {}
+    first = typing_cast(list[Any], tracks)[0]
+    if not isinstance(first, dict):
+        return {}
+    extra = typing_cast(dict[str, Any], first).get("extra")
+    return typing_cast(dict[str, Any], extra) if isinstance(extra, dict) else {}
+
+
+def _tmdb_from_extra(value: Any, category: str) -> tuple[str, int] | None:
+    with contextlib.suppress(Exception):
+        resolved_category, resolved_id = parse_tmdb_id(value, category)
+        return resolved_category, int(resolved_id)
+    return None
+
+
+def _imdb_from_extra(value: Any) -> int | None:
+    with contextlib.suppress(Exception):
+        return extract_imdb_id(str(value))
+    return None
+
+
+def _tvdb_from_extra(value: Any) -> int | None:
+    with contextlib.suppress(Exception):
+        resolved = int(value)
+        return resolved if resolved else None
+    return None
+
+
+def _apply_extra_identifier(
+    key: str,
+    value: Any,
+    category: str,
+    tmdbid: int,
+    imdbid: int | None,
+    tvdbid: int | None,
+) -> tuple[str, int, int | None, int | None]:
+    if key.startswith("tmdb") and not tmdbid:
+        result = _tmdb_from_extra(value, category)
+        if result is not None:
+            category, tmdbid = result
+    elif key.startswith("imdb") and not imdbid:
+        imdbid = _imdb_from_extra(value) or imdbid
+    elif key.startswith("tvdb") and not tvdbid:
+        tvdbid = _tvdb_from_extra(value) or tvdbid
+    return category, tmdbid, imdbid, tvdbid
+
+
 async def get_tmdb_imdb_from_mediainfo(
     mediainfo: dict[str, Any],
     category: str,
@@ -2473,34 +2597,13 @@ async def get_tmdb_imdb_from_mediainfo(
     imdbid: int | None,
     tvdbid: int | None,
 ) -> tuple[str, int, int | None, int | None]:
-    category = str(category or "MOVIE").upper()
-    if category not in {"MOVIE", "TV"}:
-        category = "MOVIE"
-    media = mediainfo.get("media")
-    tracks = media.get("track") if isinstance(media, dict) else None
-    first_track = (
-        tracks[0]
-        if isinstance(tracks, list) and tracks and isinstance(tracks[0], dict)
-        else None
-    )
-    extra = first_track.get("extra") if isinstance(first_track, dict) else None
-    if not is_disc and isinstance(extra, dict):
-        for each, value in extra.items():
-            key = str(each).casefold()
-            if key.startswith("tmdb") and not tmdbid:
-                with contextlib.suppress(Exception):
-                    category, tmdbid = parse_tmdb_id(value, category)
-            if key.startswith("imdb") and not imdbid:
-                with contextlib.suppress(Exception):
-                    imdb_id = extract_imdb_id(str(value))
-                    if imdb_id:
-                        imdbid = imdb_id
-            if key.startswith("tvdb") and not tvdbid:
-                with contextlib.suppress(Exception):
-                    tvdb_id = int(value)
-                    if tvdb_id:
-                        tvdbid = tvdb_id
-
+    category = _normalized_tmdb_category(category)
+    if is_disc:
+        return category, tmdbid, imdbid, tvdbid
+    for raw_key, value in _mediainfo_extra(mediainfo).items():
+        category, tmdbid, imdbid, tvdbid = _apply_extra_identifier(
+            str(raw_key).casefold(), value, category, tmdbid, imdbid, tvdbid
+        )
     return category, tmdbid, imdbid, tvdbid
 
 
@@ -2523,78 +2626,142 @@ def extract_imdb_id(value: str) -> int | None:
     return None
 
 
+def _aware_datetime(value: str | datetime) -> datetime:
+    parsed = datetime.fromisoformat(str(value))
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
+async def _fetch_tmdb_json(
+    client: httpx.AsyncClient, url: str, label: str
+) -> dict[str, Any] | None:
+    try:
+        response = await client.get(url, params={})
+    except Exception as error:
+        logger.info(f"[bold red]Failed to fetch {label}: {error}[/bold red]")
+        return None
+    try:
+        response.raise_for_status()
+        return typing_cast(dict[str, Any], response.json())
+    except Exception:
+        logger.info(
+            f"[bold red]Failed to fetch {label}: {response.status_code}[/bold red]"
+        )
+        return None
+
+
+def _season_for_date(seasons: list[dict[str, Any]], date: datetime) -> int:
+    season = 1
+    for entry in seasons:
+        raw_date = entry.get("air_date")
+        if not raw_date:
+            continue
+        air_date = _aware_datetime(str(raw_date))
+        if air_date <= date:
+            season = int(entry.get("season_number", season))
+    return season
+
+
+def _episode_for_date(episodes: list[dict[str, Any]], date: datetime) -> int | None:
+    target = str(date.date())
+    match = next(
+        (entry for entry in episodes if str(entry.get("air_date", "")) == target),
+        None,
+    )
+    return int(match.get("episode_number", 1)) if match else None
+
+
 async def daily_to_tmdb_season_episode(
     tmdbid: int, date: str | datetime
 ) -> tuple[int, int]:
-    date = datetime.fromisoformat(str(date))
-    if date.tzinfo is None:
-        date = date.replace(tzinfo=UTC)
-
+    date = _aware_datetime(date)
     async with _tmdb_client() as client:
-        # Get TV show information to get seasons
-        try:
-            response = await client.get(
-                f"{TMDB_BASE_URL}/tv/{tmdbid}", params={}
-            )
-        except Exception as error:
-            logger.info(
-                f"[bold red]Failed to fetch TV data: {error}[/bold red]"
-            )
+        tv_data = await _fetch_tmdb_json(
+            client, f"{TMDB_BASE_URL}/tv/{tmdbid}", "TV data"
+        )
+        if tv_data is None:
             return 0, 0
-        try:
-            response.raise_for_status()
-            tv_data = response.json()
-            seasons = tv_data.get("seasons", [])
-        except Exception:
-            logger.info(
-                f"[bold red]Failed to fetch TV data: {response.status_code}[/bold red]"
-            )
+        season = _season_for_date(_dict_list(tv_data.get("seasons", [])), date)
+        season_data = await _fetch_tmdb_json(
+            client,
+            f"{TMDB_BASE_URL}/tv/{tmdbid}/season/{season}",
+            "season data",
+        )
+        if season_data is None:
             return 0, 0
-
-        # Find the latest season that aired before or on the target date
-        season = 1
-        for each in seasons:
-            if not each.get("air_date"):
-                continue
-
-            air_date = datetime.fromisoformat(each["air_date"])
-            if air_date.tzinfo is None:
-                air_date = air_date.replace(tzinfo=UTC)
-            if air_date <= date:
-                season = int(each["season_number"])
-
-        # Get the specific season information
-        try:
-            season_response = await client.get(
-                f"{TMDB_BASE_URL}/tv/{tmdbid}/season/{season}", params={}
-            )
-        except Exception as error:
-            logger.info(
-                f"[bold red]Failed to fetch season data: {error}[/bold red]"
-            )
-            return 0, 0
-        try:
-            season_response.raise_for_status()
-            season_data = season_response.json()
-            season_info = season_data.get("episodes", [])
-        except Exception:
-            logger.info(
-                f"[bold red]Failed to fetch season data: {season_response.status_code}[/bold red]"
-            )
-            return 0, 0
-
-        # Find the episode that aired on the target date
-        episode = 1
-        for each in season_info:
-            if str(each.get("air_date", "")) == str(date.date()):
-                episode = int(each["episode_number"])
-                break
-        else:
+        episode = _episode_for_date(_dict_list(season_data.get("episodes", [])), date)
+        if episode is None:
             logger.info(
                 f"[yellow]Unable to map the date ([bold yellow]{date!s}[/bold yellow]) to a Season/Episode number"
             )
-
+            episode = 1
     return season, episode
+
+
+def _dict_list(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [
+        typing_cast(dict[str, Any], item)
+        for item in typing_cast(list[Any], value)
+        if isinstance(item, dict)
+    ]
+
+
+def _episode_crew(data: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {
+            "name": member.get("name", ""),
+            "job": member.get("job", ""),
+            "department": member.get("department", ""),
+        }
+        for member in _dict_list(data.get("crew", []))
+    ]
+
+
+def _episode_role_name(crew: list[dict[str, Any]], job: str) -> str:
+    match = next((member for member in crew if member.get("job") == job), None)
+    return str(match.get("name", "")) if match else ""
+
+
+def _episode_guest_stars(data: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {
+            "name": guest.get("name", ""),
+            "character": guest.get("character", ""),
+            "profile_path": guest.get("profile_path", ""),
+        }
+        for guest in _dict_list(data.get("guest_stars", []))
+    ]
+
+
+def _episode_imdb_id(data: dict[str, Any]) -> str:
+    external_ids = data.get("external_ids", {})
+    if not isinstance(external_ids, dict):
+        return ""
+    return str(typing_cast(dict[str, Any], external_ids).get("imdb_id", ""))
+
+
+def _episode_info(data: dict[str, Any]) -> dict[str, Any]:
+    crew = _episode_crew(data)
+    info: dict[str, Any] = {
+        "name": data.get("name", ""),
+        "overview": data.get("overview", ""),
+        "air_date": data.get("air_date", ""),
+        "still_path": data.get("still_path", ""),
+        "vote_average": data.get("vote_average", 0),
+        "episode_number": data.get("episode_number", 0),
+        "season_number": data.get("season_number", 0),
+        "runtime": data.get("runtime", 0),
+        "crew": crew,
+        "guest_stars": _episode_guest_stars(data),
+        "director": _episode_role_name(crew, "Director"),
+        "writer": _episode_role_name(crew, "Writer"),
+        "imdb_id": _episode_imdb_id(data),
+    }
+    still_path = info.get("still_path")
+    if still_path:
+        info["still_url"] = f"https://image.tmdb.org/t/p/original{still_path}"
+    return info
 
 
 async def get_episode_details(
@@ -2607,81 +2774,21 @@ async def get_episode_details(
     )
     async with _tmdb_client() as client:
         try:
-            # Get episode details
             response = await client.get(
                 f"{TMDB_BASE_URL}/tv/{tmdb_id}/season/{season_number}/episode/{episode_number}",
                 params={"append_to_response": "images,credits,external_ids"},
             )
-            try:
-                response.raise_for_status()
-                episode_data = typing_cast(dict[str, Any], response.json())
-            except Exception:
-                logger.info(
-                    f"[bold red]Failed to fetch episode data: {response.status_code}[/bold red]"
-                )
-                return {}
-
+            response.raise_for_status()
+            data = typing_cast(dict[str, Any], response.json())
             logger.debug(
-                f"[cyan]Episode Data: {json.dumps(episode_data, indent=2)[:600]}..."
+                f"[cyan]Episode Data: {json.dumps(data, indent=2)[:600]}..."
             )
-
-            # Extract relevant information
-            crew_list: list[dict[str, Any]] = []
-            guest_stars_list: list[dict[str, Any]] = []
-            episode_info: dict[str, Any] = {
-                "name": episode_data.get("name", ""),
-                "overview": episode_data.get("overview", ""),
-                "air_date": episode_data.get("air_date", ""),
-                "still_path": episode_data.get("still_path", ""),
-                "vote_average": episode_data.get("vote_average", 0),
-                "episode_number": episode_data.get("episode_number", 0),
-                "season_number": episode_data.get("season_number", 0),
-                "runtime": episode_data.get("runtime", 0),
-                "crew": crew_list,
-                "guest_stars": guest_stars_list,
-                "director": "",
-                "writer": "",
-                "imdb_id": episode_data.get("external_ids", {}).get(
-                    "imdb_id", ""
-                ),
-            }
-
-            # Extract crew information
-            for crew_member in episode_data.get("crew", []):
-                crew_list.append(
-                    {
-                        "name": crew_member.get("name", ""),
-                        "job": crew_member.get("job", ""),
-                        "department": crew_member.get("department", ""),
-                    }
-                )
-
-                # Extract director and writer specifically
-                if crew_member.get("job") == "Director":
-                    episode_info["director"] = crew_member.get("name", "")
-                elif crew_member.get("job") == "Writer":
-                    episode_info["writer"] = crew_member.get("name", "")
-
-            # Extract guest stars
-            guest_stars_list.extend(
-                [
-                    {
-                        "name": guest.get("name", ""),
-                        "character": guest.get("character", ""),
-                        "profile_path": guest.get("profile_path", ""),
-                    }
-                    for guest in episode_data.get("guest_stars", [])
-                ]
+            return _episode_info(data)
+        except httpx.HTTPStatusError as error:
+            logger.info(
+                f"[bold red]Failed to fetch episode data: {error.response.status_code}[/bold red]"
             )
-
-            # Get full image URLs
-            if episode_info["still_path"]:
-                episode_info["still_url"] = (
-                    f"https://image.tmdb.org/t/p/original{episode_info['still_path']}"
-                )
-
-            return episode_info
-
+            return {}
         except Exception:
             logger.error(
                 f"[red]Error fetching episode details for {tmdb_id}[/red]"
@@ -2690,6 +2797,60 @@ async def get_episode_details(
                 f"[red]Season: {season_number}, Episode: {episode_number}[/red]"
             )
             return {}
+
+
+def _season_episode_summary(episode: dict[str, Any]) -> dict[str, Any]:
+    keys = (
+        "air_date",
+        "episode_number",
+        "episode_type",
+        "id",
+        "name",
+        "overview",
+        "runtime",
+        "season_number",
+        "still_path",
+        "vote_average",
+        "vote_count",
+    )
+    return {key: episode.get(key) for key in keys}
+
+
+def _season_optional_section(
+    data: dict[str, Any], parent: str, child: str
+) -> Any:
+    value = data.get(parent, {})
+    if not isinstance(value, dict):
+        return None
+    return typing_cast(dict[str, Any], value).get(child)
+
+
+def _season_info(data: dict[str, Any]) -> dict[str, Any]:
+    info: dict[str, Any] = {
+        key: data.get(key)
+        for key in (
+            "_id",
+            "air_date",
+            "name",
+            "overview",
+            "id",
+            "poster_path",
+            "season_number",
+            "vote_average",
+            "vote_count",
+        )
+    }
+    info["episodes"] = [
+        _season_episode_summary(episode)
+        for episode in _dict_list(data.get("episodes", []))
+    ]
+    posters = _season_optional_section(data, "images", "posters")
+    if posters is not None:
+        info["images"] = {"posters": posters}
+    cast = _season_optional_section(data, "credits", "cast")
+    if cast is not None:
+        info["credits"] = {"cast": cast}
+    return info
 
 
 async def get_season_details(
@@ -2701,79 +2862,23 @@ async def get_season_details(
     )
     async with _tmdb_client() as client:
         try:
-            # Get season details
             response = await client.get(
                 f"{TMDB_BASE_URL}/tv/{tmdb_id}/season/{season_number}",
                 params={"append_to_response": "images,credits"},
             )
-            try:
-                response.raise_for_status()
-                season_data = typing_cast(dict[str, Any], response.json())
-
-                # Extract only relevant information
-                episodes_list: list[dict[str, Any]] = []
-                season_info: dict[str, Any] = {
-                    "_id": season_data.get("_id"),
-                    "air_date": season_data.get("air_date"),
-                    "name": season_data.get("name"),
-                    "overview": season_data.get("overview"),
-                    "id": season_data.get("id"),
-                    "poster_path": season_data.get("poster_path"),
-                    "season_number": season_data.get("season_number"),
-                    "vote_average": season_data.get("vote_average"),
-                    "vote_count": season_data.get("vote_count"),
-                    "episodes": episodes_list,
-                }
-
-                # Extract minimal episode information
-                episodes_list.extend(
-                    [
-                        {
-                            "air_date": episode.get("air_date"),
-                            "episode_number": episode.get("episode_number"),
-                            "episode_type": episode.get("episode_type"),
-                            "id": episode.get("id"),
-                            "name": episode.get("name"),
-                            "overview": episode.get("overview"),
-                            "runtime": episode.get("runtime"),
-                            "season_number": episode.get("season_number"),
-                            "still_path": episode.get("still_path"),
-                            "vote_average": episode.get("vote_average"),
-                            "vote_count": episode.get("vote_count"),
-                        }
-                        for episode in season_data.get("episodes", [])
-                    ]
-                )
-
-                # Include poster images if available
-                if (
-                    "images" in season_data
-                    and "posters" in season_data["images"]
-                ):
-                    season_info["images"] = {
-                        "posters": season_data["images"]["posters"]
-                    }
-
-                # Include main cast/crew if available (top-level only, not per-episode)
-                if (
-                    "credits" in season_data
-                    and "cast" in season_data["credits"]
-                ):
-                    season_info["credits"] = {
-                        "cast": season_data["credits"]["cast"]
-                    }
-
-                logger.debug(
-                    f"[cyan]Extracted season data: {json.dumps(season_info, indent=2)[:600]}...[/cyan]"
-                )
-                return season_info
-
-            except Exception:
-                logger.info(
-                    f"[bold red]Failed to fetch season data: {response.status_code}[/bold red]"
-                )
-                return {}
-
+            response.raise_for_status()
+            season_info = _season_info(
+                typing_cast(dict[str, Any], response.json())
+            )
+            logger.debug(
+                f"[cyan]Extracted season data: {json.dumps(season_info, indent=2)[:600]}...[/cyan]"
+            )
+            return season_info
+        except httpx.HTTPStatusError as error:
+            logger.info(
+                f"[bold red]Failed to fetch season data: {error.response.status_code}[/bold red]"
+            )
+            return {}
         except Exception:
             logger.error(
                 f"[red]Error fetching season details for {tmdb_id}[/red]"
@@ -2901,44 +3006,43 @@ async def get_logo(
     return logo_path
 
 
+def _translation_title(data: dict[str, Any], target_language: str) -> str:
+    for translation in _dict_list(data.get("translations", [])):
+        if translation.get("iso_639_1") != target_language:
+            continue
+        translated = translation.get("data", {})
+        if not isinstance(translated, dict):
+            return ""
+        values = typing_cast(dict[str, Any], translated)
+        return str(values.get("title") or values.get("name") or "")
+    return ""
+
+
 async def get_tmdb_translations(
     tmdb_id: int,
     category: str,
     target_language: str = "en",
 ) -> str:
-    """Get translations from TMDb API"""
+    """Get translations from TMDb API."""
     endpoint = "movie" if category == "MOVIE" else "tv"
     url = f"{TMDB_BASE_URL}/{endpoint}/{tmdb_id}/translations"
-
     async with _tmdb_client() as client:
         try:
             response = await client.get(url, params={})
             response.raise_for_status()
-            data = response.json()
-
-            # Look for target language translation
-            for translation in data.get("translations", []):
-                if translation.get("iso_639_1") == target_language:
-                    translated_data = translation.get("data", {})
-                    translated_title = translated_data.get(
-                        "title"
-                    ) or translated_data.get("name")
-
-                    if translated_title:
-                        logger.debug(
-                            f"[cyan]Found TMDb translation: '{translated_title}'[/cyan]"
-                        )
-
-                    return translated_title or ""
-
+            title = _translation_title(
+                typing_cast(dict[str, Any], response.json()), target_language
+            )
+            if title:
+                logger.debug(f"[cyan]Found TMDb translation: '{title}'[/cyan]")
+                return title
             logger.debug(
                 f"[yellow]No {target_language} translation found in TMDb[/yellow]"
             )
             return ""
-
-        except Exception as e:
+        except Exception as error:
             logger.debug(
-                f"[yellow]TMDb translation fetch failed: {e}[/yellow]"
+                f"[yellow]TMDb translation fetch failed: {error}[/yellow]"
             )
             return ""
 

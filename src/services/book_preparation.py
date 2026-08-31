@@ -13,9 +13,10 @@ import contextlib
 import os
 import re
 import zipfile
+from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlparse
 
 from src.domain_models.book_language import (
@@ -128,102 +129,117 @@ def _normalized_book_stem(path: str) -> str:
     return re.sub(r"[\W_]+", " ", Path(path).stem.casefold()).strip()
 
 
+def _book_files_in_directory(videoloc: str) -> list[str]:
+    allowed = BOOK_EXTENSIONS | AUDIOBOOK_EXTENSIONS
+    return sorted(
+        str((Path(root) / filename).resolve())
+        for root, _dirs, files in os.walk(videoloc)
+        for filename in files
+        if Path(filename).suffix.lower() in allowed
+    )
+
+
+def _is_text_sidecar(file: str, richer_stems: set[str]) -> bool:
+    path = Path(file)
+    if path.suffix.lower() not in {".txt", ".html", ".htm"}:
+        return False
+    stem = _normalized_book_stem(file)
+    return path.stem.casefold() in _TEXT_SIDECAR_STEMS or any(
+        richer == stem or richer.startswith(f"{stem} ")
+        for richer in richer_stems
+    )
+
+
+def _richer_book_files(filelist: list[str]) -> list[str]:
+    richer_extensions = BOOK_EXTENSIONS - {".txt", ".html", ".htm"}
+    return [
+        file
+        for file in filelist
+        if Path(file).suffix.lower() in richer_extensions
+    ]
+
+
+def _without_text_sidecars(filelist: list[str]) -> list[str]:
+    richer = _richer_book_files(filelist)
+    if not richer:
+        return filelist
+    richer_stems = {_normalized_book_stem(file) for file in richer}
+    return [
+        file for file in filelist if not _is_text_sidecar(file, richer_stems)
+    ]
+
+
+def _book_media_partitions(filelist: list[str]) -> tuple[list[str], list[str]]:
+    ebooks = [
+        file
+        for file in filelist
+        if Path(file).suffix.lower() in BOOK_EXTENSIONS
+    ]
+    audiobooks = [
+        file
+        for file in filelist
+        if Path(file).suffix.lower() in AUDIOBOOK_EXTENSIONS
+    ]
+    return ebooks, audiobooks
+
+
+def _validate_book_directory_media(filelist: list[str]) -> None:
+    ebooks, audiobooks = _book_media_partitions(filelist)
+    if ebooks and audiobooks:
+        raise ItemProcessingError(
+            "Ebook and audiobook files were found in the same path. Upload each media type separately."
+        )
+    if len(ebooks) <= 1:
+        return
+    filenames = ", ".join(Path(file).name for file in ebooks)
+    raise ItemProcessingError(
+        f"Multiple ebook files were found in one path ({filenames}). Upload each ebook file and format separately."
+    )
+
+
+def _directory_book_filelist(videoloc: str) -> list[str]:
+    filelist = _book_files_in_directory(videoloc)
+    if not filelist:
+        raise ItemProcessingError(
+            "No book or audiobook files were found in the selected path."
+        )
+    _reject_plain_text_only(filelist)
+    filtered = _without_text_sidecars(filelist)
+    _validate_book_directory_media(filtered)
+    return filtered
+
+
+def _primary_book_file(filelist: list[str]) -> str:
+    return max(filelist, key=os.path.getsize)
+
+
+def _apply_audiobook_flag(
+    meta: Meta, videopath: str, filelist: list[str]
+) -> None:
+    primary_is_audio = Path(videopath).suffix.lower() in AUDIOBOOK_EXTENSIONS
+    contains_audio = any(
+        Path(file).suffix.lower() in AUDIOBOOK_EXTENSIONS for file in filelist
+    )
+    meta.audiobook = bool(meta.audiobook or primary_is_audio or contains_audio)
+
+
 def resolve_book_filelist(
     meta: Meta,
     videoloc: str,
 ) -> tuple[str, list[str], str, str]:
-    """Scan *videoloc* for book/audiobook files and update *meta* in-place.
-
-    Populates ``meta.filelist``, ``meta.scene``, ``meta.imdb_id``,
-    and ``meta.audiobook``.
-
-    Returns:
-        A 4-tuple ``(videopath, filelist, search_term, search_file_folder)``
-        where *videopath* is the primary/largest file used as the "video"
-        reference for downstream processing.
-    """
-    allowed_extensions = BOOK_EXTENSIONS | AUDIOBOOK_EXTENSIONS
-
-    filelist: list[str] = []
+    """Scan *videoloc* for book/audiobook files and update *meta* in-place."""
     if Path(videoloc).is_dir():
-        for root, _, files in os.walk(videoloc):
-            for file in files:
-                ext = Path(file).suffix.lower()
-                if ext in allowed_extensions:
-                    filelist.append(str(Path(Path(root) / file).resolve()))
-        filelist = sorted(filelist)
-        if not filelist:
-            raise ItemProcessingError(
-                "No book or audiobook files were found in the selected path."
-            )
-        _reject_plain_text_only(filelist)
-        richer_book_files = [
-            file
-            for file in filelist
-            if Path(file).suffix.lower()
-            in BOOK_EXTENSIONS - {".txt", ".html", ".htm"}
-        ]
-        if richer_book_files:
-            richer_stems = {
-                _normalized_book_stem(file) for file in richer_book_files
-            }
-            filelist = [
-                file
-                for file in filelist
-                if not (
-                    Path(file).suffix.lower() in {".txt", ".html", ".htm"}
-                    and (
-                        Path(file).stem.casefold() in _TEXT_SIDECAR_STEMS
-                        or any(
-                            richer_stem == _normalized_book_stem(file)
-                            or richer_stem.startswith(
-                                f"{_normalized_book_stem(file)} "
-                            )
-                            for richer_stem in richer_stems
-                        )
-                    )
-                )
-            ]
-        ebook_files = [
-            file
-            for file in filelist
-            if Path(file).suffix.lower() in BOOK_EXTENSIONS
-        ]
-        audiobook_files = [
-            file
-            for file in filelist
-            if Path(file).suffix.lower() in AUDIOBOOK_EXTENSIONS
-        ]
-        if ebook_files and audiobook_files:
-            raise ItemProcessingError(
-                "Ebook and audiobook files were found in the same path. Upload each media type separately."
-            )
-        if len(ebook_files) > 1:
-            filenames = ", ".join(Path(file).name for file in ebook_files)
-            raise ItemProcessingError(
-                f"Multiple ebook files were found in one path ({filenames}). Upload each ebook file and format separately."
-            )
-        videopath = sorted(filelist, key=os.path.getsize, reverse=True)[0]
+        filelist = _directory_book_filelist(videoloc)
+        videopath = _primary_book_file(filelist)
     else:
+        filelist = [videoloc]
         videopath = videoloc
-        filelist.append(videoloc)
         _reject_plain_text_only(filelist)
-
     meta.filelist = filelist
     meta.imdb_id = 0
-
-    primary_ext = Path(videopath).suffix.lower()
-    meta.audiobook = bool(
-        meta.audiobook
-        or (primary_ext in AUDIOBOOK_EXTENSIONS)
-        or any(
-            Path(f).suffix.lower() in AUDIOBOOK_EXTENSIONS for f in filelist
-        )
-    )
-
+    _apply_audiobook_flag(meta, videopath, filelist)
     search_term = Path(filelist[0]).name if filelist else ""
-    search_file_folder = "file"
-    return videopath, filelist, search_term, search_file_folder
+    return videopath, filelist, search_term, "file"
 
 
 # ---------------------------------------------------------------------------
@@ -236,16 +252,22 @@ def resolve_book_filelist(
 # ---------------------------------------------------------------------------
 
 
+def _metadata_scalar_text(value: Any) -> str:
+    if not value or isinstance(value, dict):
+        return ""
+    return str(value).strip()
+
+
 def _mi_extra(general_track: dict[str, Any], name: str) -> str:
-    """Case-insensitive lookup of a freeform tag in a MediaInfo General track's extra dict."""
+    """Case-insensitive lookup of a freeform MediaInfo General extra tag."""
     extra = general_track.get("extra")
     if not isinstance(extra, dict):
         return ""
-    for key, val in extra.items():
-        if key.lower() == name.lower() and val and not isinstance(val, dict):
-            text = str(val).strip()
-            if text:
-                return text
+    values = cast(dict[str, Any], extra)
+    target = name.casefold()
+    for key, value in values.items():
+        if key.casefold() == target:
+            return _metadata_scalar_text(value)
     return ""
 
 
@@ -287,26 +309,54 @@ _ASIN_VALUE = re.compile(
 )
 
 
-def _author_likelihood(value: str) -> int:
-    words = re.findall(r"[^\W\d_]+(?:['-][^\W\d_]+)*", value, flags=re.UNICODE)
-    if not 2 <= len(words) <= 6:
-        return 0
-    if words[0].casefold() in {"a", "an", "the"}:
-        return 0
-    substantive = [
-        word for word in words if word.casefold() not in _AUTHOR_PARTICLES
-    ]
-    if not substantive or any(not word[0].isupper() for word in substantive):
-        return -1
-    comma_groups = [
-        re.findall(r"[^\W\d_]+(?:['-][^\W\d_]+)*", group, flags=re.UNICODE)
-        for group in value.split(",")
-    ]
-    if len(comma_groups) > 1 and all(
-        2 <= len(group) <= 3 for group in comma_groups
-    ):
+def _author_words(value: str) -> list[str]:
+    return re.findall(r"[^\W\d_]+(?:['-][^\W\d_]+)*", value, flags=re.UNICODE)
+
+
+def _substantive_author_words(words: list[str]) -> list[str]:
+    return [word for word in words if word.casefold() not in _AUTHOR_PARTICLES]
+
+
+def _comma_author_groups(value: str) -> list[list[str]]:
+    return [_author_words(group) for group in value.split(",")]
+
+
+def _author_word_shape_valid(words: list[str]) -> bool:
+    return 2 <= len(words) <= 6 and words[0].casefold() not in {
+        "a",
+        "an",
+        "the",
+    }
+
+
+def _capitalized_substantive_words(substantive: list[str]) -> bool:
+    return bool(substantive) and all(word[0].isupper() for word in substantive)
+
+
+def _comma_author_score(value: str) -> int | None:
+    groups = _comma_author_groups(value)
+    if len(groups) > 1 and all(2 <= len(group) <= 3 for group in groups):
         return 4
+    return None
+
+
+def _substantive_author_score(substantive: list[str]) -> int:
     return 3 if len(substantive) <= 3 else 1
+
+
+def _author_likelihood(value: str) -> int:
+    words = _author_words(value)
+    if not _author_word_shape_valid(words):
+        return 0
+    substantive = _substantive_author_words(words)
+    if not _capitalized_substantive_words(substantive):
+        return -1
+    comma_score = _comma_author_score(value)
+    return (
+        comma_score
+        if comma_score is not None
+        else _substantive_author_score(substantive)
+    )
 
 
 def _strip_book_format_suffix(value: str) -> str:
@@ -323,37 +373,65 @@ def _is_capitalized_mononym(value: str) -> bool:
     return len(words) == 1 and words[0][0].isupper()
 
 
-def book_identity_from_path(path: str) -> tuple[str, str]:
+def _book_path_name(path: str) -> str:
     source = Path(path)
     name = source.name if source.is_dir() else source.stem
-    name = re.sub(
+    return re.sub(
         r"\s*\[AUDIOBOOK\]\s*$", "", name, flags=re.IGNORECASE
     ).strip()
+
+
+def _fallback_book_title(name: str) -> tuple[str, str]:
+    return "", re.sub(r"_\s+", ": ", name).strip()
+
+
+def _first_part_is_author(first_score: int, second_score: int) -> bool:
+    return first_score >= 3 and (second_score <= 1 or second_score >= 3)
+
+
+def _second_part_is_author(
+    first: str, second: str, first_score: int, second_score: int
+) -> bool:
+    if second_score >= 3 and first_score <= 0:
+        return True
+    return bool(
+        first_score < 0
+        and not re.search(r"\d", first)
+        and _is_capitalized_mononym(second)
+    )
+
+
+def _book_identity_pair(first: str, second: str) -> tuple[str, str] | None:
+    first_score = _author_likelihood(first)
+    second_score = _author_likelihood(second)
+    if _first_part_is_author(first_score, second_score):
+        return first, second
+    if _second_part_is_author(first, second, first_score, second_score):
+        return second, first
+    return None
+
+
+def _clean_book_identity_title(title: str) -> str:
+    cleaned = _strip_book_format_suffix(re.sub(r"_\s+", ": ", title).strip())
+    parts = re.split(r"\s+-\s+", cleaned)
+    if len(parts) > 1 and validate_isbn_checksum(parts[-1]):
+        return " - ".join(parts[:-1]).strip()
+    return cleaned
+
+
+def book_identity_from_path(path: str) -> tuple[str, str]:
+    name = _book_path_name(path)
     parts = re.split(r"\s+-\s+", name, maxsplit=1)
     if len(parts) != 2:
         return "", ""
     first, second = parts
     if _BOOK_PART_ONLY.fullmatch(second.strip()):
-        return "", re.sub(r"_\s+", ": ", name).strip()
-    first_score = _author_likelihood(first)
-    second_score = _author_likelihood(second)
-    if first_score >= 3 and second_score <= 1:
-        author, title = first, second
-    elif (second_score >= 3 and first_score <= 0) or (
-        first_score < 0
-        and not re.search(r"\d", first)
-        and _is_capitalized_mononym(second)
-    ):
-        author, title = second, first
-    elif first_score >= 3 and second_score >= 3:
-        author, title = first, second
-    else:
-        return "", re.sub(r"_\s+", ": ", name).strip()
-    title = _strip_book_format_suffix(re.sub(r"_\s+", ": ", title).strip())
-    title_parts = re.split(r"\s+-\s+", title)
-    if len(title_parts) > 1 and validate_isbn_checksum(title_parts[-1]):
-        title = " - ".join(title_parts[:-1]).strip()
-    return author.strip(), title
+        return _fallback_book_title(name)
+    pair = _book_identity_pair(first, second)
+    if pair is None:
+        return _fallback_book_title(name)
+    author, title = pair
+    return author.strip(), _clean_book_identity_title(title)
 
 
 _IDENTITY_STOPWORDS = frozenset(
@@ -396,6 +474,21 @@ def _author_identity_tokens(value: str) -> set[str]:
     return set(re.findall(r"[^\W_]+", value.casefold(), flags=re.UNICODE))
 
 
+def _source_title_is_more_descriptive(
+    current_identity: str,
+    author_identity: str,
+    current_tokens: set[str],
+    source_tokens: set[str],
+) -> bool:
+    if current_identity in _GENERIC_PROVIDER_TITLES and source_tokens:
+        return True
+    return bool(
+        current_identity
+        and current_identity == author_identity
+        and current_tokens < source_tokens
+    )
+
+
 def _prefer_descriptive_source_title(
     current_title: str, author: str, source_title: str
 ) -> str:
@@ -403,15 +496,13 @@ def _prefer_descriptive_source_title(
     author_identity = _normalized_book_identity(author)
     source_tokens = _identity_tokens(source_title)
     current_tokens = _identity_tokens(current_title)
-    if current_identity in _GENERIC_PROVIDER_TITLES and source_tokens:
-        return source_title
-    if (
-        current_identity
-        and current_identity == author_identity
-        and current_tokens < source_tokens
-    ):
-        return source_title
-    return current_title
+    return (
+        source_title
+        if _source_title_is_more_descriptive(
+            current_identity, author_identity, current_tokens, source_tokens
+        )
+        else current_title
+    )
 
 
 def _prefer_descriptive_source_author(
@@ -443,6 +534,15 @@ def _publisher_from_overview(value: str) -> str:
     return match.group(1).strip() if match else ""
 
 
+def _provider_matches_isbn(
+    provider: dict[str, Any] | None, current_isbn: str
+) -> bool:
+    if not provider:
+        return False
+    provider_isbn = validate_isbn_checksum(str(provider.get("isbn") or ""))
+    return provider_isbn == current_isbn
+
+
 def _matching_isbn_metadata(
     meta: Meta, *providers: dict[str, Any] | None
 ) -> dict[str, Any] | None:
@@ -453,73 +553,95 @@ def _matching_isbn_metadata(
         (
             provider
             for provider in providers
-            if provider
-            and validate_isbn_checksum(str(provider.get("isbn") or ""))
-            == current_isbn
+            if _provider_matches_isbn(provider, current_isbn)
         ),
         None,
     )
 
 
+def _book_authors_match(path_author: str, metadata_author: str) -> bool:
+    path_tokens = _author_identity_tokens(path_author)
+    metadata_tokens = _author_identity_tokens(metadata_author)
+    if path_tokens == metadata_tokens:
+        return True
+    shorter, longer = sorted((path_tokens, metadata_tokens), key=len)
+    mononym = len(shorter) == 1 and len(next(iter(shorter), "")) >= 5
+    return bool((len(shorter) >= 2 or mononym) and shorter < longer)
+
+
+def _book_titles_conflict(path_title: str, metadata_title: str) -> bool:
+    path_tokens = _identity_tokens(path_title)
+    metadata_tokens = _identity_tokens(metadata_title)
+    if len(path_tokens) < 2 or len(metadata_tokens) < 2:
+        return False
+    return not bool(path_tokens & metadata_tokens)
+
+
+def _book_identity_complete(
+    meta: Meta, path_author: str, path_title: str
+) -> bool:
+    return all(
+        (
+            bool(path_author),
+            bool(path_title),
+            bool(meta.author),
+            bool(meta.title),
+        )
+    )
+
+
 def book_identity_conflict(meta: Meta, path: str) -> str | None:
     path_author, path_title = book_identity_from_path(path)
-    if not path_author or not path_title or not meta.author or not meta.title:
+    if not _book_identity_complete(meta, path_author, path_title):
         return None
-
-    path_author_tokens = _author_identity_tokens(path_author)
-    metadata_author_tokens = _author_identity_tokens(str(meta.author))
-    shorter_author, longer_author = sorted(
-        (path_author_tokens, metadata_author_tokens), key=len
-    )
-    distinctive_mononym = (
-        len(shorter_author) == 1 and len(next(iter(shorter_author), "")) >= 5
-    )
-    authors_match = path_author_tokens == metadata_author_tokens or (
-        (len(shorter_author) >= 2 or distinctive_mononym)
-        and shorter_author < longer_author
-    )
-    if not authors_match:
+    metadata_author = str(meta.author)
+    if not _book_authors_match(path_author, metadata_author):
         return f"Book metadata author '{meta.author}' conflicts with source author '{path_author}'"
-
-    path_tokens = _identity_tokens(path_title)
-    metadata_tokens = _identity_tokens(str(meta.title))
-    if (
-        len(path_tokens) < 2
-        or len(metadata_tokens) < 2
-        or path_tokens & metadata_tokens
-    ):
+    if not _book_titles_conflict(path_title, str(meta.title)):
         return None
     return f"Book metadata title '{meta.title}' conflicts with source title '{path_title}' for author '{meta.author}'"
 
 
-def missing_book_fields(meta: Meta) -> list[str]:
-    missing: list[str] = []
-    for field in ("title", "author", "year", "book_language"):
-        value = getattr(meta, field, None)
-        invalid_value = not value or str(value).strip().lower() in {
-            "",
-            "none",
-            "null",
-        }
-        invalid_language = (
-            field == "book_language"
-            and not is_valid_book_language(
-                str(value), str(meta.book_language_iso or "")
-            )
-        )
-        if invalid_value or invalid_language:
-            missing.append(field)
+def _missing_book_value(value: Any) -> bool:
+    return not value or str(value).strip().lower() in {"", "none", "null"}
 
+
+def _required_book_field_missing(meta: Meta, field: str) -> bool:
+    value = getattr(meta, field, None)
+    if _missing_book_value(value):
+        return True
+    if field != "book_language":
+        return False
+    return not is_valid_book_language(
+        str(value), str(meta.book_language_iso or "")
+    )
+
+
+def _audiobook_identifier_missing(meta: Meta) -> bool:
+    isbn = validate_isbn_checksum(str(meta.isbn or ""))
+    asin = str(meta.asin or "").strip().upper()
+    return not isbn and not re.fullmatch(r"[A-Z0-9]{10}", asin)
+
+
+def _audiobook_missing_fields(meta: Meta) -> list[str]:
+    missing = [
+        field
+        for field in ("narrator", "publisher")
+        if _missing_book_value(getattr(meta, field, None))
+    ]
+    if _audiobook_identifier_missing(meta):
+        missing.append("isbn_or_asin")
+    return missing
+
+
+def missing_book_fields(meta: Meta) -> list[str]:
+    missing = [
+        field
+        for field in ("title", "author", "year", "book_language")
+        if _required_book_field_missing(meta, field)
+    ]
     if meta.audiobook:
-        for field in ("narrator", "publisher"):
-            value = getattr(meta, field, None)
-            if not value or str(value).strip().lower() in {"", "none", "null"}:
-                missing.append(field)
-        asin = str(meta.asin or "").strip().upper()
-        if not validate_isbn_checksum(
-            str(meta.isbn or "")
-        ) and not re.fullmatch(r"[A-Z0-9]{10}", asin):
-            missing.append("isbn_or_asin")
+        missing.extend(_audiobook_missing_fields(meta))
     return missing
 
 
@@ -535,37 +657,87 @@ def _validated_isbns(value: str) -> set[str]:
     }
 
 
+_EPUB_IDENTIFIER_EXTENSIONS = frozenset(
+    {".opf", ".xhtml", ".html", ".htm", ".xml", ".ncx"}
+)
+
+
+def _is_epub_identifier_member(member: zipfile.ZipInfo) -> bool:
+    return Path(member.filename).suffix.lower() in _EPUB_IDENTIFIER_EXTENSIONS
+
+
+def _selected_epub_identifier_members(
+    members: list[zipfile.ZipInfo],
+) -> list[zipfile.ZipInfo]:
+    return [member for member in members if _is_epub_identifier_member(member)]
+
+
+def _epub_identifier_members(
+    members: list[zipfile.ZipInfo],
+) -> list[zipfile.ZipInfo] | None:
+    if len(members) > 4096:
+        return None
+    selected = _selected_epub_identifier_members(members)
+    total_size = sum(member.file_size for member in selected)
+    return selected if total_size <= 16 * 1024 * 1024 else None
+
+
+def _member_identifiers(
+    archive: zipfile.ZipFile, member: zipfile.ZipInfo
+) -> tuple[set[str], set[str]] | None:
+    payload = _safe_zip_member_bytes(archive, member.filename)
+    if payload is None:
+        return None
+    text = payload.decode("utf-8", errors="ignore")
+    return _validated_isbns(text), set(
+        re.findall(r"\bB0[A-Z0-9]{8}\b", text.upper())
+    )
+
+
 def _epub_content_identifiers(path: str) -> tuple[set[str], set[str]]:
     isbns: set[str] = set()
     asins: set[str] = set()
     try:
         with zipfile.ZipFile(path) as archive:
-            members = archive.infolist()
-            if len(members) > 4096:
+            members = _epub_identifier_members(archive.infolist())
+            if members is None:
                 return set(), set()
-            total_size = 0
             for member in members:
-                if Path(member.filename).suffix.lower() not in {
-                    ".opf",
-                    ".xhtml",
-                    ".html",
-                    ".htm",
-                    ".xml",
-                    ".ncx",
-                }:
-                    continue
-                total_size += member.file_size
-                if total_size > 16 * 1024 * 1024:
+                identifiers = _member_identifiers(archive, member)
+                if identifiers is None:
                     return set(), set()
-                payload = _safe_zip_member_bytes(archive, member.filename)
-                if payload is None:
-                    return set(), set()
-                text = payload.decode("utf-8", errors="ignore")
-                isbns.update(_validated_isbns(text))
-                asins.update(re.findall(r"\bB0[A-Z0-9]{8}\b", text.upper()))
+                member_isbns, member_asins = identifiers
+                isbns.update(member_isbns)
+                asins.update(member_asins)
     except OSError, zipfile.BadZipFile:
         return set(), set()
     return isbns, asins
+
+
+def _single_or_conflicting_isbn(values: set[str], path: str) -> str | None:
+    if len(values) == 1:
+        return next(iter(values))
+    if len(values) <= 1:
+        return None
+    rendered = ", ".join(sorted(values))
+    raise ItemProcessingError(
+        f"Conflicting EPUB ISBNs could not be resolved ({rendered}). Re-run with --isbn using the identifier for this exact edition.",
+        path,
+    )
+
+
+def _resolved_epub_isbn(
+    primary_isbn: str | None,
+    filename_isbns: set[str],
+    content_isbns: set[str],
+    path: str,
+) -> str | None:
+    filename_isbn = _single_or_conflicting_isbn(filename_isbns, path)
+    if filename_isbn:
+        return filename_isbn
+    if primary_isbn:
+        return primary_isbn
+    return _single_or_conflicting_isbn(content_isbns, path)
 
 
 def _reconcile_epub_identifiers(
@@ -574,68 +746,30 @@ def _reconcile_epub_identifiers(
     primary_isbn = validate_isbn_checksum(str(epub_meta.get("isbn", "")))
     filename_isbns = _validated_isbns(Path(path).stem)
     content_isbns, content_asins = _epub_content_identifiers(path)
-
-    if len(filename_isbns) == 1:
-        epub_meta["isbn"] = next(iter(filename_isbns))
-    elif len(filename_isbns) > 1:
-        values = ", ".join(sorted(filename_isbns))
-        raise ItemProcessingError(
-            f"Conflicting EPUB ISBNs could not be resolved ({values}). Re-run with --isbn using the identifier for this exact edition.",
-            path,
-        )
-    elif primary_isbn:
-        epub_meta["isbn"] = primary_isbn
-    elif len(content_isbns) == 1:
-        epub_meta["isbn"] = next(iter(content_isbns))
-    elif len(content_isbns) > 1:
-        values = ", ".join(sorted(content_isbns))
-        raise ItemProcessingError(
-            f"Conflicting EPUB ISBNs could not be resolved ({values}). Re-run with --isbn using the identifier for this exact edition.",
-            path,
-        )
-
+    resolved = _resolved_epub_isbn(
+        primary_isbn, filename_isbns, content_isbns, path
+    )
+    if resolved:
+        epub_meta["isbn"] = resolved
     if not meta.book_asin and not meta.asin and len(content_asins) == 1:
         epub_meta["asin"] = next(iter(content_asins))
 
 
-async def gather_book_prep(
-    meta: Meta,
-    videopath: str,
-    base_dir: str,
-    config: dict[str, Any] | None = None,
-) -> None:
-    """Set up BOOK/Audiobook category fields and extract embedded MediaInfo metadata.
+@dataclass
+class _BookPrepContext:
+    meta: Meta
+    videopath: str
+    base_dir: str
+    config: dict[str, Any] | None
+    file_ext: str
+    explicit_comic: bool
+    explicit_manga: bool
+    cli_overrides: dict[str, bool]
+    source_metadata_fields: set[str]
 
-    Sets ``meta.category``, ``meta.resolution``, ``meta.search_year``,
-    ``meta.hfr``, ``meta.sd``, and ``meta.mediainfo``, then attempts
-    to populate title, author, narrator, publisher, ISBN, overview, year,
-    keywords, and language from the file's embedded tags.
-    """
-    meta.category = "BOOK"
-    meta.search_year = ""
-    meta.resolution = "Other"
-    meta.hfr = False
-    meta.sd = 0
-    meta.valid_mi_settings = True
 
-    # Warn if Google Books API key is missing
-    api_key = ""
-    if config and "DEFAULT" in config:
-        api_key = config["DEFAULT"].get("google_books_api_key", "").strip()
-    if not api_key:
-        logger.warning(
-            "[bold red]Warning: Google Books API key is not configured. Book metadata searches will be limited and incomplete.[/bold red]"
-        )
-
-    # Check if the file format is CBR or CBZ and automatically set comic to True
-    file_ext = Path(videopath).suffix.lstrip(".").upper()
-    explicit_comic = bool(meta.comic)
-    explicit_manga = bool(meta.manga)
-    if file_ext in ("CBR", "CBZ"):
-        meta.comic = True
-
-    # Identify CLI overrides at the very start
-    cli_overrides = {
+def _book_cli_overrides(meta: Meta) -> dict[str, bool]:
+    return {
         "title": bool(meta.book_title),
         "author": bool(meta.book_author),
         "narrator": bool(meta.narrator),
@@ -647,893 +781,1269 @@ async def gather_book_prep(
         "keywords": bool(meta.keywords),
         "overview": bool(meta.overview),
     }
-    source_metadata_fields: set[str] = set()
 
-    def apply_source_metadata(extracted: dict[str, Any]) -> None:
-        override_keys = {
-            "title": "title",
-            "author": "author",
-            "narrator": "narrator",
-            "publisher": "publisher",
-            "isbn": "isbn",
-            "asin": "asin",
-            "year": "year",
-            "keywords": "keywords",
-            "overview": "overview",
-        }
-        for key, val in extracted.items():
-            if not val:
-                continue
-            if key == "book_language_raw":
-                if cli_overrides["book_language"]:
-                    continue
-                full, iso3 = resolve_book_language(str(val))
-                if is_valid_book_language(full, iso3):
-                    meta.book_language = full
-                    meta.book_language_iso = iso3
-                    source_metadata_fields.update(
-                        {"book_language", "book_language_iso"}
-                    )
-                continue
-            override_key = override_keys.get(key)
-            if override_key and cli_overrides[override_key]:
-                continue
-            if key == "isbn":
-                val = validate_isbn_checksum(str(val))
-                if not val:
-                    continue
-            if key == "year":
-                meta[key] = int(val)
-                meta.search_year = int(val)
-                source_metadata_fields.add("search_year")
-            else:
-                meta[key] = val
-            source_metadata_fields.add(key)
 
-    def source_has(key: str) -> bool:
-        return (
-            key in source_metadata_fields
-            or (key == "search_year" and "year" in source_metadata_fields)
-            or (
-                key == "book_language_iso"
-                and "book_language" in source_metadata_fields
-            )
+def _book_default_config(config: dict[str, Any] | None) -> dict[str, Any]:
+    if not config:
+        return {}
+    value = config.get("DEFAULT", {})
+    return cast(dict[str, Any], value) if isinstance(value, dict) else {}
+
+
+def _warn_missing_google_books_key(config: dict[str, Any] | None) -> None:
+    api_key = str(
+        _book_default_config(config).get("google_books_api_key", "")
+    ).strip()
+    if api_key:
+        return
+    logger.warning(
+        "[bold red]Warning: Google Books API key is not configured. Book metadata searches will be limited and incomplete.[/bold red]"
+    )
+
+
+def _initialize_book_prep(
+    meta: Meta,
+    videopath: str,
+    base_dir: str,
+    config: dict[str, Any] | None,
+) -> _BookPrepContext:
+    meta.category = "BOOK"
+    meta.search_year = ""
+    meta.resolution = "Other"
+    meta.hfr = False
+    meta.sd = 0
+    meta.valid_mi_settings = True
+    _warn_missing_google_books_key(config)
+    file_ext = Path(videopath).suffix.lstrip(".").upper()
+    explicit_comic = bool(meta.comic)
+    explicit_manga = bool(meta.manga)
+    if file_ext in {"CBR", "CBZ"}:
+        meta.comic = True
+    return _BookPrepContext(
+        meta=meta,
+        videopath=videopath,
+        base_dir=base_dir,
+        config=config,
+        file_ext=file_ext,
+        explicit_comic=explicit_comic,
+        explicit_manga=explicit_manga,
+        cli_overrides=_book_cli_overrides(meta),
+        source_metadata_fields=set(),
+    )
+
+
+_SOURCE_OVERRIDE_KEYS = {
+    "title": "title",
+    "author": "author",
+    "narrator": "narrator",
+    "publisher": "publisher",
+    "isbn": "isbn",
+    "asin": "asin",
+    "year": "year",
+    "keywords": "keywords",
+    "overview": "overview",
+}
+
+
+def _source_field_blocked(ctx: _BookPrepContext, key: str) -> bool:
+    override_key = _SOURCE_OVERRIDE_KEYS.get(key)
+    return bool(override_key and ctx.cli_overrides[override_key])
+
+
+def _apply_source_language(ctx: _BookPrepContext, value: Any) -> None:
+    if ctx.cli_overrides["book_language"]:
+        return
+    full, iso3 = resolve_book_language(str(value))
+    if not is_valid_book_language(full, iso3):
+        return
+    ctx.meta.book_language = full
+    ctx.meta.book_language_iso = iso3
+    ctx.source_metadata_fields.update({"book_language", "book_language_iso"})
+
+
+def _apply_source_scalar(ctx: _BookPrepContext, key: str, value: Any) -> None:
+    if _source_field_blocked(ctx, key):
+        return
+    if key == "isbn":
+        value = validate_isbn_checksum(str(value))
+        if not value:
+            return
+    if key == "year":
+        ctx.meta[key] = int(value)
+        ctx.meta.search_year = int(value)
+        ctx.source_metadata_fields.add("search_year")
+    else:
+        ctx.meta[key] = value
+    ctx.source_metadata_fields.add(key)
+
+
+def _apply_source_metadata(
+    ctx: _BookPrepContext, extracted: dict[str, Any]
+) -> None:
+    for key, value in extracted.items():
+        if not value:
+            continue
+        if key == "book_language_raw":
+            _apply_source_language(ctx, value)
+            continue
+        _apply_source_scalar(ctx, key, value)
+
+
+def _source_has(ctx: _BookPrepContext, key: str) -> bool:
+    if key in ctx.source_metadata_fields:
+        return True
+    if key == "search_year":
+        return "year" in ctx.source_metadata_fields
+    if key == "book_language_iso":
+        return "book_language" in ctx.source_metadata_fields
+    return False
+
+
+def _is_local_book_file(ctx: _BookPrepContext, *suffixes: str) -> bool:
+    return (
+        ctx.videopath.lower().endswith(suffixes)
+        and Path(ctx.videopath).is_file()
+    )
+
+
+def _extract_epub_source(ctx: _BookPrepContext) -> None:
+    if not _is_local_book_file(ctx, ".epub"):
+        return
+    ctx.meta.epubmeta_output = _get_epubmeta_output(ctx.videopath)
+    epub_meta = _extract_epub_metadata(ctx.videopath)
+    if not epub_meta:
+        return
+    if not ctx.cli_overrides["isbn"]:
+        _reconcile_epub_identifiers(ctx.meta, epub_meta, ctx.videopath)
+    logger.debug(f"[cyan]EPUB metadata extracted: {epub_meta}[/cyan]")
+    _apply_source_metadata(ctx, epub_meta)
+
+
+def _extract_comic_source(ctx: _BookPrepContext) -> None:
+    if not _is_local_book_file(ctx, ".cbr", ".cbz"):
+        return
+    metadata = _extract_cbr_cbz_metadata(ctx.videopath)
+    if not metadata:
+        return
+    logger.debug(f"[cyan]CBR/CBZ metadata extracted: {metadata}[/cyan]")
+    _apply_source_metadata(ctx, metadata)
+
+
+def _extract_mobi_source(ctx: _BookPrepContext) -> None:
+    if not _is_local_book_file(ctx, ".mobi", ".azw", ".azw3"):
+        return
+    metadata = _extract_mobi_metadata(ctx.videopath)
+    if not metadata:
+        return
+    logger.debug(f"[cyan]MOBI metadata extracted: {metadata}[/cyan]")
+    _apply_source_metadata(ctx, metadata)
+
+
+def _extract_pdf_source(ctx: _BookPrepContext) -> None:
+    if not _is_local_book_file(ctx, ".pdf"):
+        return
+    page_count = _extract_pdf_page_count(ctx.videopath)
+    if page_count:
+        ctx.meta.page_count = page_count
+    pdf_isbn = _extract_isbn_from_pdf(ctx.videopath)
+    if pdf_isbn and not ctx.meta.isbn:
+        ctx.meta.isbn = pdf_isbn
+        logger.debug(f"[cyan]PDF ISBN extracted: {pdf_isbn}[/cyan]")
+
+
+def _extract_local_book_sources(ctx: _BookPrepContext) -> None:
+    _extract_epub_source(ctx)
+    _extract_comic_source(ctx)
+    _extract_mobi_source(ctx)
+    _extract_pdf_source(ctx)
+
+
+async def _export_book_mediainfo(ctx: _BookPrepContext) -> None:
+    if ctx.meta.edit:
+        return
+    try:
+        ctx.meta.mediainfo = await export_info(
+            ctx.videopath,
+            ctx.meta.isdir,
+            ctx.meta.uuid,
+            ctx.base_dir,
+            is_dvd=(ctx.meta.is_disc == "DVD"),
+        )
+    except MediaInfoError as error:
+        logger.warning(
+            f"[yellow]MediaInfo could not inspect book/audiobook release: {error}[/yellow]"
+        )
+        logger.debug(error.debug_details)
+        ctx.meta.mediainfo = {}
+    except Exception as error:
+        logger.warning(
+            f"[yellow]MediaInfo export failed for book/audiobook: {error}[/yellow]"
+        )
+        ctx.meta.mediainfo = {}
+
+
+def _dict_value(value: Any) -> dict[str, Any]:
+    return cast(dict[str, Any], value) if isinstance(value, dict) else {}
+
+
+def _dict_items(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [
+        cast(dict[str, Any], item)
+        for item in cast(list[Any], value)
+        if isinstance(item, dict)
+    ]
+
+
+def _book_mediainfo_tracks(meta: Meta) -> list[dict[str, Any]]:
+    media = _dict_value(_dict_value(meta.mediainfo).get("media", {}))
+    return _dict_items(media.get("track", []))
+
+
+def _general_book_track(tracks: list[dict[str, Any]]) -> dict[str, Any] | None:
+    return next(
+        (track for track in tracks if track.get("@type") == "General"), None
+    )
+
+
+def _first_track_value(track: dict[str, Any], *keys: str) -> str | None:
+    raw = next(
+        (track.get(key) for key in keys if track.get(key) is not None), None
+    )
+    return _unescape_meta_val(raw)
+
+
+def _detected_audiobook_edition(*values: str | None) -> str | None:
+    for value in values:
+        if not value:
+            continue
+        match = re.search(r"\b(unabridged|abridged)\b", value, re.IGNORECASE)
+        if match:
+            return match.group(1).capitalize()
+    return None
+
+
+def _clean_embedded_book_title(value: str) -> str:
+    cleaned = re.sub(r"\s*\[[^\]]*\]", "", value)
+    cleaned = re.sub(
+        r"\s*[\(\[\{-]?\s*\b(unabridged|abridged)\b\s*[\)\]\}]?\s*",
+        " ",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    return re.sub(r"\s+", " ", cleaned).strip().strip("-").strip()
+
+
+def _apply_detected_edition(meta: Meta, edition: str | None) -> None:
+    if edition and not meta.edition:
+        meta.edition = edition
+
+
+def _apply_embedded_title_value(
+    meta: Meta, album: str | None, track_name: str | None
+) -> None:
+    if not meta.title:
+        meta.title = album or track_name or meta.title
+
+
+def _clean_embedded_title_if_allowed(ctx: _BookPrepContext) -> None:
+    if not ctx.cli_overrides["title"] and ctx.meta.title:
+        ctx.meta.title = _clean_embedded_book_title(str(ctx.meta.title))
+
+
+def _apply_embedded_title(
+    ctx: _BookPrepContext, general: dict[str, Any]
+) -> None:
+    album = _first_track_value(general, "Album", "album")
+    track_name = _first_track_value(general, "Track_name", "track_name")
+    _apply_detected_edition(
+        ctx.meta, _detected_audiobook_edition(album, track_name)
+    )
+    _apply_embedded_title_value(ctx.meta, album, track_name)
+    _clean_embedded_title_if_allowed(ctx)
+
+
+def _set_book_field_if_empty(meta: Meta, field: str, value: Any) -> None:
+    if value and not getattr(meta, field, None):
+        setattr(meta, field, value)
+
+
+def _apply_embedded_people(
+    ctx: _BookPrepContext, general: dict[str, Any]
+) -> None:
+    performer = _first_track_value(general, "Performer", "performer")
+    album_performer = _first_track_value(
+        general, "Album_Performer", "album_performer"
+    )
+    _set_book_field_if_empty(ctx.meta, "author", performer or album_performer)
+    _set_book_field_if_empty(
+        ctx.meta,
+        "narrator",
+        _first_track_value(general, "Composer", "composer"),
+    )
+    _set_book_field_if_empty(
+        ctx.meta,
+        "publisher",
+        _first_track_value(general, "Publisher", "publisher"),
+    )
+
+
+def _extra_track_value(general: dict[str, Any], *keys: str) -> Any:
+    extra = general.get("extra")
+    if not isinstance(extra, dict):
+        return None
+    values = cast(dict[str, Any], extra)
+    return next(
+        (values.get(key) for key in keys if values.get(key) is not None), None
+    )
+
+
+def _identifier_track_value(general: dict[str, Any], *keys: str) -> str | None:
+    value = next(
+        (general.get(key) for key in keys if general.get(key) is not None),
+        None,
+    )
+    if value is None:
+        value = _extra_track_value(general, *keys)
+    return _unescape_meta_val(value)
+
+
+def _apply_embedded_isbn_or_asin(meta: Meta, isbn_value: str | None) -> None:
+    asin = _extract_asin_identifier(isbn_value)
+    if asin and not meta.asin:
+        meta.asin = asin
+        return
+    if isbn_value and not meta.isbn:
+        meta.isbn = isbn_value
+
+
+def _normalized_asin_value(value: str | None) -> str:
+    return _extract_asin_identifier(value) or str(value or "").strip().upper()
+
+
+def _apply_embedded_asin(meta: Meta, asin_value: str | None) -> None:
+    normalized = _normalized_asin_value(asin_value)
+    if (
+        normalized
+        and re.fullmatch(r"[A-Z0-9]{10}", normalized)
+        and not meta.asin
+    ):
+        meta.asin = normalized
+
+
+def _apply_embedded_identifiers(
+    ctx: _BookPrepContext, general: dict[str, Any]
+) -> None:
+    _apply_embedded_isbn_or_asin(
+        ctx.meta, _identifier_track_value(general, "ISBN", "isbn")
+    )
+    _apply_embedded_asin(
+        ctx.meta, _identifier_track_value(general, "ASIN", "asin")
+    )
+
+
+def _apply_embedded_series(
+    ctx: _BookPrepContext, general: dict[str, Any]
+) -> None:
+    if ctx.meta.book_series:
+        return
+    series = _mi_extra(general, "SERIES")
+    if not series:
+        return
+    ctx.meta.book_series = series
+    part = _mi_extra(general, "SERIESPART")
+    if part and not ctx.meta.book_series_index:
+        ctx.meta.book_series_index = _normalize_series_index(part)
+
+
+def _apply_embedded_overview(meta: Meta, general: dict[str, Any]) -> None:
+    if meta.overview:
+        return
+    meta.overview = (
+        _first_track_value(general, "Comment", "comment")
+        or _first_track_value(general, "Description", "description")
+        or meta.overview
+    )
+
+
+def _recorded_year(general: dict[str, Any]) -> int | None:
+    recorded = _first_track_value(general, "Recorded_Date", "recorded_date")
+    if not recorded:
+        return None
+    match = re.search(r"\b\d{4}\b", recorded)
+    return int(match.group(0)) if match else None
+
+
+def _apply_embedded_year(meta: Meta, general: dict[str, Any]) -> None:
+    if meta.year:
+        return
+    year = _recorded_year(general)
+    if year is not None:
+        meta.year = year
+        meta.search_year = year
+
+
+def _apply_embedded_overview_year(
+    ctx: _BookPrepContext, general: dict[str, Any]
+) -> None:
+    _apply_embedded_overview(ctx.meta, general)
+    _apply_embedded_year(ctx.meta, general)
+
+
+def _normalized_keyword_values(existing: Any) -> list[str]:
+    return [
+        str(item).strip().lower()
+        for item in cast(list[Any], existing or [])
+        if str(item).strip()
+    ]
+
+
+def _genre_keyword_values(genre: str) -> list[str]:
+    return [
+        word.strip().lower()
+        for word in re.split(r"[;,]", genre)
+        if word.strip()
+    ]
+
+
+def _merged_keywords(existing: Any, genre: str) -> list[str]:
+    values = _normalized_keyword_values(existing)
+    for cleaned in _genre_keyword_values(genre):
+        if cleaned not in values:
+            values.append(cleaned)
+    return values
+
+
+def _apply_embedded_genre(
+    ctx: _BookPrepContext, general: dict[str, Any]
+) -> None:
+    genre = _first_track_value(general, "Genre", "genre")
+    if genre:
+        ctx.meta.keywords = _merged_keywords(ctx.meta.keywords, genre)
+
+
+def _resolved_track_language(track: dict[str, Any]) -> tuple[str, str] | None:
+    language = _first_track_value(track, "Language", "language")
+    if not language:
+        return None
+    full, iso3 = resolve_book_language(language)
+    return (full, iso3) if is_valid_book_language(full, iso3) else None
+
+
+def _first_valid_track_language(
+    tracks: list[dict[str, Any]], track_type: str
+) -> tuple[str, str] | None:
+    for track in tracks:
+        if track.get("@type") != track_type:
+            continue
+        resolved = _resolved_track_language(track)
+        if resolved is not None:
+            return resolved
+    return None
+
+
+def _apply_embedded_language(
+    ctx: _BookPrepContext,
+    general: dict[str, Any],
+    tracks: list[dict[str, Any]],
+) -> None:
+    if ctx.meta.book_language:
+        return
+    resolved = _resolved_track_language(general)
+    if resolved is None:
+        resolved = _first_valid_track_language(tracks, "Audio")
+    if resolved is None:
+        resolved = _first_valid_track_language(tracks, "Text")
+    if resolved is not None:
+        ctx.meta.book_language, ctx.meta.book_language_iso = resolved
+
+
+def _extract_embedded_book_metadata(ctx: _BookPrepContext) -> None:
+    if not ctx.meta.mediainfo:
+        return
+    try:
+        tracks = _book_mediainfo_tracks(ctx.meta)
+        general = _general_book_track(tracks)
+        if general is None:
+            return
+        _apply_embedded_title(ctx, general)
+        _apply_embedded_people(ctx, general)
+        _apply_embedded_identifiers(ctx, general)
+        _apply_embedded_series(ctx, general)
+        _apply_embedded_overview_year(ctx, general)
+        _apply_embedded_genre(ctx, general)
+        _apply_embedded_language(ctx, general, tracks)
+    except Exception as error:
+        logger.debug(
+            f"[yellow]Warning: Error extracting embedded book metadata: {error}[/yellow]"
         )
 
-    # Extract EPUB metadata directly if the file is an EPUB
-    if videopath.lower().endswith(".epub") and Path(videopath).is_file():
-        meta.epubmeta_output = _get_epubmeta_output(videopath)
-        epub_meta = _extract_epub_metadata(videopath)
-        if epub_meta:
-            if not cli_overrides["isbn"]:
-                _reconcile_epub_identifiers(meta, epub_meta, videopath)
-            logger.debug(f"[cyan]EPUB metadata extracted: {epub_meta}[/cyan]")
-            apply_source_metadata(epub_meta)
 
-    # Extract CBR/CBZ metadata directly if the file is a CBR/CBZ
-    if (
-        videopath.lower().endswith((".cbr", ".cbz"))
-        and Path(videopath).is_file()
-    ):
-        cbr_cbz_meta = _extract_cbr_cbz_metadata(videopath)
-        if cbr_cbz_meta:
-            logger.debug(
-                f"[cyan]CBR/CBZ metadata extracted: {cbr_cbz_meta}[/cyan]"
-            )
-            apply_source_metadata(cbr_cbz_meta)
-
-    # AZW and AZW3 are Kindle variants of the MOBI family.  The extractor may
-    # not support every DRM/KFX variant, but it safely returns no metadata then.
-    if (
-        videopath.lower().endswith((".mobi", ".azw", ".azw3"))
-        and Path(videopath).is_file()
-    ):
-        mobi_meta = _extract_mobi_metadata(videopath)
-        if mobi_meta:
-            logger.debug(f"[cyan]MOBI metadata extracted: {mobi_meta}[/cyan]")
-            apply_source_metadata(mobi_meta)
-
-    # Extract ISBN from PDF directly if the file is a PDF
-    if videopath.lower().endswith(".pdf") and Path(videopath).is_file():
-        page_count = _extract_pdf_page_count(videopath)
-        if page_count:
-            meta.page_count = page_count
-        pdf_isbn = _extract_isbn_from_pdf(videopath)
-        if pdf_isbn and not meta.isbn:
-            meta.isbn = pdf_isbn
-            logger.debug(f"[cyan]PDF ISBN extracted: {pdf_isbn}[/cyan]")
-
-    if not meta.edit:
-        try:
-            mi = await export_info(
-                videopath,
-                meta.isdir,
-                meta.uuid,
-                base_dir,
-                is_dvd=(meta.is_disc == "DVD"),
-            )
-            meta.mediainfo = mi
-        except MediaInfoError as error:
-            logger.warning(
-                f"[yellow]MediaInfo could not inspect book/audiobook release: {error}[/yellow]"
-            )
-            logger.debug(error.debug_details)
-            meta.mediainfo = {}
-        except Exception as error:
-            logger.warning(
-                f"[yellow]MediaInfo export failed for book/audiobook: {error}[/yellow]"
-            )
-            meta.mediainfo = {}
-    else:
-        pass  # meta.mediainfo already populated from a previous run
-
-    if meta.mediainfo:
-        try:
-            tracks = meta.mediainfo.get("media", {}).get("track", [])
-            general_track = next(
-                (t for t in tracks if t.get("@type") == "General"), None
-            )
-            if general_track:
-                # 1. Title/Album
-                album = _unescape_meta_val(
-                    general_track.get("Album") or general_track.get("album")
-                )
-                track_name = _unescape_meta_val(
-                    general_track.get("Track_name")
-                    or general_track.get("track_name")
-                )
-
-                # Detect if the audiobook is Unabridged or Abridged from file metadata
-                detected_edition = None
-                for val in (album, track_name):
-                    if val:
-                        match = re.search(
-                            r"\b(unabridged|abridged)\b", val, re.IGNORECASE
-                        )
-                        if match:
-                            detected_edition = match.group(1).capitalize()
-                            break
-                if detected_edition and not meta.edition:
-                    meta.edition = detected_edition
-
-                if not meta.title:
-                    if album:
-                        meta.title = album
-                    elif track_name:
-                        meta.title = track_name
-
-                # Clean the edition from the title if it's not a CLI override
-                if not cli_overrides["title"] and meta.title:
-                    original_title = meta.title
-                    # Remove brackets like [...] and their content
-                    cleaned_title = re.sub(
-                        r"\s*\[[^\]]*\]", "", original_title
-                    )
-                    cleaned_title = re.sub(
-                        r"\s*[\(\[\{-]?\s*\b(unabridged|abridged)\b\s*[\)\]\}]?\s*",
-                        " ",
-                        cleaned_title,
-                        flags=re.IGNORECASE,
-                    )
-                    cleaned_title = re.sub(r"\s+", " ", cleaned_title).strip()
-                    cleaned_title = cleaned_title.strip("-").strip()
-                    meta.title = cleaned_title
-
-                # 2. Author
-                performer = _unescape_meta_val(
-                    general_track.get("Performer")
-                    or general_track.get("performer")
-                )
-                album_performer = _unescape_meta_val(
-                    general_track.get("Album_Performer")
-                    or general_track.get("album_performer")
-                )
-                if not meta.author:
-                    if performer:
-                        meta.author = performer
-                    elif album_performer:
-                        meta.author = album_performer
-
-                # 3. Narrator
-                composer = _unescape_meta_val(
-                    general_track.get("Composer")
-                    or general_track.get("composer")
-                )
-                if composer and not meta.narrator:
-                    meta.narrator = composer
-
-                # 4. Publisher
-                publisher = _unescape_meta_val(
-                    general_track.get("Publisher")
-                    or general_track.get("publisher")
-                )
-                if publisher and not meta.publisher:
-                    meta.publisher = publisher
-
-                # 5. ISBN
-                isbn_val = general_track.get("ISBN") or general_track.get(
-                    "isbn"
-                )
-                if not isbn_val and isinstance(
-                    general_track.get("extra"), dict
-                ):
-                    isbn_val = general_track["extra"].get(
-                        "ISBN"
-                    ) or general_track["extra"].get("isbn")
-                isbn_val = _unescape_meta_val(isbn_val)
-                asin_from_isbn = _extract_asin_identifier(isbn_val)
-                if asin_from_isbn and not meta.asin:
-                    meta.asin = asin_from_isbn
-                elif isbn_val and not meta.isbn:
-                    meta.isbn = isbn_val
-
-                # 5b. ASIN
-                asin_val = general_track.get("ASIN") or general_track.get(
-                    "asin"
-                )
-                if not asin_val and isinstance(
-                    general_track.get("extra"), dict
-                ):
-                    asin_val = general_track["extra"].get(
-                        "ASIN"
-                    ) or general_track["extra"].get("asin")
-                asin_val = _unescape_meta_val(asin_val)
-                normalized_asin = (
-                    _extract_asin_identifier(asin_val)
-                    or str(asin_val or "").strip().upper()
-                )
-                if (
-                    normalized_asin
-                    and re.fullmatch(r"[A-Z0-9]{10}", normalized_asin)
-                    and not meta.asin
-                ):
-                    meta.asin = normalized_asin
-
-                # Series from extra.SERIES / extra.SERIESPART
-                if not meta.book_series:
-                    series_val = _mi_extra(general_track, "SERIES")
-                    if series_val:
-                        meta.book_series = series_val
-                        part_val = _mi_extra(general_track, "SERIESPART")
-                        if part_val and not meta.book_series_index:
-                            meta.book_series_index = _normalize_series_index(
-                                part_val
-                            )
-
-                # 6. Overview/Comment
-                comment = _unescape_meta_val(
-                    general_track.get("Comment")
-                    or general_track.get("comment")
-                )
-                description = _unescape_meta_val(
-                    general_track.get("Description")
-                    or general_track.get("description")
-                )
-                if not meta.overview:
-                    if comment:
-                        meta.overview = comment
-                    elif description:
-                        meta.overview = description
-
-                # 7. Year (extract 4-digit number)
-                rec_date = _unescape_meta_val(
-                    general_track.get("Recorded_Date")
-                    or general_track.get("recorded_date")
-                )
-                if rec_date and not meta.year:
-                    match = re.search(r"\b\d{4}\b", rec_date)
-                    if match:
-                        meta.year = int(match.group(0))
-                        meta.search_year = int(match.group(0))
-
-                # 8. Genre -> Keywords
-                genre = _unescape_meta_val(
-                    general_track.get("Genre") or general_track.get("genre")
-                )
-                if genre:
-                    words = re.split(r"[;,]", genre)
-                    cleaned_words = [
-                        w.strip().lower() for w in words if w.strip()
-                    ]
-                    if cleaned_words:
-                        existing_keywords = meta.keywords
-                        existing_list: list[str] = []
-                        if existing_keywords:
-                            # existing_keywords is guaranteed to be a list of strings
-                            existing_list.extend(
-                                [
-                                    x.strip().lower()
-                                    for x in existing_keywords
-                                    if x.strip()
-                                ]
-                            )
-                        for cw in cleaned_words:
-                            if cw not in existing_list:
-                                existing_list.append(cw)
-                        meta.keywords = existing_list
-
-                # 9. Language
-                if not meta.book_language:
-                    lang_val = _unescape_meta_val(
-                        general_track.get("Language")
-                        or general_track.get("language")
-                    )
-                    if lang_val:
-                        full, iso3 = resolve_book_language(lang_val)
-                        if is_valid_book_language(full, iso3):
-                            meta.book_language = full
-                            meta.book_language_iso = iso3
-
-                if not meta.book_language:
-                    # Fallback: Audio track language (audiobooks)
-                    for t in tracks:
-                        if t.get("@type") == "Audio":
-                            lang_val = _unescape_meta_val(
-                                t.get("Language") or t.get("language")
-                            )
-                            if lang_val:
-                                full, iso3 = resolve_book_language(lang_val)
-                                if is_valid_book_language(full, iso3):
-                                    meta.book_language = full
-                                    meta.book_language_iso = iso3
-                                    break
-
-                if not meta.book_language:
-                    # Fallback: Text track language (ebooks like PDF/EPUB)
-                    for t in tracks:
-                        if t.get("@type") == "Text":
-                            lang_val = _unescape_meta_val(
-                                t.get("Language") or t.get("language")
-                            )
-                            if lang_val:
-                                full, iso3 = resolve_book_language(lang_val)
-                                if is_valid_book_language(full, iso3):
-                                    meta.book_language = full
-                                    meta.book_language_iso = iso3
-                                    break
-        except Exception as ex:
-            logger.debug(
-                f"[yellow]Warning: Error extracting embedded book metadata: {ex}[/yellow]"
-            )
-
-    fallback_author, fallback_title = book_identity_from_path(
-        str(meta.path or videopath)
-    )
+def _apply_path_author(meta: Meta, fallback_author: str) -> None:
     if fallback_author:
         meta.author = _prefer_descriptive_source_author(
             str(meta.author or ""), fallback_author
         )
+
+
+def _apply_path_title(meta: Meta, fallback_title: str) -> None:
     if fallback_title:
         meta.title = _prefer_descriptive_source_title(
             str(meta.title or ""), str(meta.author or ""), fallback_title
         )
 
-    local_title = str(meta.title or "").strip()
-    local_author = str(meta.author or "").strip()
 
-    # Series fallback from filename (embedded Calibre/MediaInfo tags take precedence)
-    if not meta.book_series:
-        fname_series, fname_index = _extract_series_from_filename(
-            Path(videopath).name
+def _apply_path_identity(ctx: _BookPrepContext) -> tuple[str, str, str, str]:
+    fallback_author, fallback_title = book_identity_from_path(
+        str(ctx.meta.path or ctx.videopath)
+    )
+    _apply_path_author(ctx.meta, fallback_author)
+    _apply_path_title(ctx.meta, fallback_title)
+    return (
+        fallback_author,
+        fallback_title,
+        str(ctx.meta.title or "").strip(),
+        str(ctx.meta.author or "").strip(),
+    )
+
+
+def _apply_filename_series(ctx: _BookPrepContext) -> None:
+    if ctx.meta.book_series:
+        return
+    series, index = _extract_series_from_filename(Path(ctx.videopath).name)
+    if not series:
+        return
+    ctx.meta.book_series = series
+    if index and not ctx.meta.book_series_index:
+        ctx.meta.book_series_index = index
+
+
+def _torrent_comment_lookup_allowed(ctx: _BookPrepContext) -> bool:
+    meta = ctx.meta
+    return all(
+        (
+            not meta.torrent_comments,
+            not meta.skip_auto_torrent,
+            not meta.edit,
+            bool(ctx.config),
         )
-        if fname_series:
-            meta.book_series = fname_series
-            if fname_index and not meta.book_series_index:
-                meta.book_series_index = fname_index
+    )
 
-    # MyAnonamouse API search using torrent client comments (online lookup takes precedence)
-    if (
-        not meta.torrent_comments
-        and not meta.skip_auto_torrent
-        and not meta.edit
-        and config
-    ):
-        from src.integrations.torrent_clients.client_manager import Clients
 
-        try:
-            client = Clients(config=config)
-            await client.get_pathed_torrents(
-                (meta.path if meta.path is not None else videopath), meta
-            )
-        except Exception as e:
+async def _maybe_fetch_torrent_comments(ctx: _BookPrepContext) -> None:
+    if not _torrent_comment_lookup_allowed(ctx):
+        return
+    from src.integrations.torrent_clients.client_manager import Clients
+
+    try:
+        client = Clients(config=cast(dict[str, Any], ctx.config))
+        source = ctx.meta.path if ctx.meta.path is not None else ctx.videopath
+        await client.get_pathed_torrents(source, ctx.meta)
+    except Exception as error:
+        logger.debug(
+            f"[yellow]Warning: Could not search client for book torrent comments: {error}[/yellow]"
+        )
+
+
+def _candidate_hostname(candidate: str) -> str | None:
+    host = urlparse(candidate).hostname
+    if host is not None:
+        return host
+    return (
+        urlparse(f"//{candidate}").hostname if "://" not in candidate else None
+    )
+
+
+def _parsed_hostname(value: str) -> str:
+    candidate = value.strip()
+    if not candidate:
+        return ""
+    return str(_candidate_hostname(candidate) or "").lower().rstrip(".")
+
+
+def _mam_host(value: str) -> bool:
+    host = _parsed_hostname(value)
+    return bool(
+        host
+        and (host == "myanonamouse.net" or host.endswith(".myanonamouse.net"))
+    )
+
+
+def _tracker_url_text(raw: Any) -> str:
+    if isinstance(raw, dict):
+        return str(cast(dict[str, Any], raw).get("url", ""))
+    return raw if isinstance(raw, str) else ""
+
+
+def _comment_tracker_urls(comment_data: dict[str, Any]) -> list[str]:
+    urls = comment_data.get("tracker_urls", [])
+    if not isinstance(urls, list):
+        return []
+    return [_tracker_url_text(raw) for raw in cast(list[Any], urls)]
+
+
+def _comment_has_mam_tracker(comment_data: dict[str, Any]) -> bool:
+    if _mam_host(str(comment_data.get("trackers", ""))):
+        return True
+    return any(
+        _mam_host(value) for value in _comment_tracker_urls(comment_data)
+    )
+
+
+def _mam_id_from_comment(comment_data: dict[str, Any]) -> str | None:
+    if not _comment_has_mam_tracker(comment_data):
+        return None
+    match = re.search(r"\bMID=(\d+)", str(comment_data.get("comment", "")))
+    return match.group(1) if match else None
+
+
+def _mam_id_from_comments(meta: Meta) -> str | None:
+    comments = meta.torrent_comments
+    if not isinstance(comments, list):
+        return None
+    for raw in cast(list[Any], comments):
+        if not isinstance(raw, dict):
+            continue
+        mam_id = _mam_id_from_comment(cast(dict[str, Any], raw))
+        if mam_id:
             logger.debug(
-                f"[yellow]Warning: Could not search client for book torrent comments: {e}[/yellow]"
+                f"[cyan]Found MyAnonamouse ID {mam_id} in torrent comment[/cyan]"
             )
+            return mam_id
+    return None
 
-    mam_id = None
-    if meta.torrent_comments:
-        for comment_data in meta.torrent_comments:
-            trackers = str(comment_data.get("trackers", ""))
-            comment = str(comment_data.get("comment", ""))
 
-            def _is_mam_host(url_or_host: str) -> bool:
-                value = (url_or_host or "").strip()
-                if not value:
-                    return False
-                parsed = urlparse(value)
-                host = parsed.hostname
-                if not host and "://" not in value:
-                    host = urlparse(f"//{value}").hostname
-                if not host:
-                    return False
-                host = host.lower().rstrip(".")
-                return host == "myanonamouse.net" or host.endswith(
-                    ".myanonamouse.net"
-                )
-
-            is_mam = _is_mam_host(trackers)
-            if not is_mam and comment_data.get("tracker_urls"):
-                for tu in comment_data["tracker_urls"]:
-                    if (
-                        isinstance(tu, dict)
-                        and _is_mam_host(str(tu.get("url", "")))
-                    ) or (isinstance(tu, str) and _is_mam_host(tu)):
-                        is_mam = True
-                        break
-
-            if is_mam:
-                match = re.search(r"\bMID=(\d+)", comment)
-                if match:
-                    mam_id = match.group(1)
-                    logger.debug(
-                        f"[cyan]Found MyAnonamouse ID {mam_id} in torrent comment[/cyan]"
-                    )
-                    break
-
-    mam_data = None
-    if mam_id:
-        try:
-            api_key = ""
-            if config and "DEFAULT" in config:
-                api_key = (
-                    config["DEFAULT"].get("mam_api_key", "").strip()
-                    or config["DEFAULT"].get("mam_id", "").strip()
-                )
-            api_key = (
-                api_key
-                or os.environ.get("MAM_API_KEY", "").strip()
-                or os.environ.get("MAM_ID", "").strip()
-            )
-
-            from src.integrations.external_apis.myanonamouse import (
-                myanonamouse_manager,
-            )
-
-            mam_data = await myanonamouse_manager.search_by_id(
-                mam_id, base_dir=base_dir, api_key=api_key
-            )
-            if mam_data:
-                for key, val in mam_data.items():
-                    if val:
-                        # Enforce priority: CLI override > MAM > local metadata
-                        is_override = False
-                        if (
-                            (key == "title" and cli_overrides["title"])
-                            or (key == "author" and cli_overrides["author"])
-                            or (
-                                key == "narrator" and cli_overrides["narrator"]
-                            )
-                            or (
-                                key == "publisher"
-                                and cli_overrides["publisher"]
-                            )
-                            or (key == "isbn" and cli_overrides["isbn"])
-                            or (key == "asin" and cli_overrides["asin"])
-                            or (
-                                key in ("book_language", "book_language_iso")
-                                and cli_overrides["book_language"]
-                            )
-                            or (
-                                key in ("year", "search_year")
-                                and cli_overrides["year"]
-                            )
-                            or (
-                                key == "keywords" and cli_overrides["keywords"]
-                            )
-                            or (
-                                key == "overview" and cli_overrides["overview"]
-                            )
-                        ):
-                            is_override = True
-                        if source_has(key):
-                            is_override = True
-
-                        if not is_override:
-                            if key == "year":
-                                meta[key] = int(val)
-                            else:
-                                meta[key] = val
-                            if key == "year" and "search_year" not in mam_data:
-                                meta.search_year = int(val)
-        except Exception as ex:
-            logger.debug(
-                f"[yellow]Warning: MyAnonamouse API lookup failed: {ex}[/yellow]"
-            )
-
-    if meta.isbn:
-        validated_isbn = validate_isbn_checksum(str(meta.isbn))
-        if validated_isbn:
-            meta.isbn = validated_isbn
-        else:
-            logger.warning(
-                f"[yellow]Ignoring invalid ISBN metadata: {meta.isbn}[/yellow]"
-            )
-            meta.isbn = ""
-            meta.book_isbn = ""
-
-    # Google Books API search using ISBN (online lookup takes precedence)
-    google_books_data = None
-    isbn = meta.isbn
-    if isbn:
-        try:
-            api_key = ""
-            if config and "DEFAULT" in config:
-                api_key = (
-                    config["DEFAULT"].get("google_books_api_key", "").strip()
-                )
-            from src.integrations.external_apis.google_books import (
-                google_books_manager,
-            )
-
-            google_books_data = await google_books_manager.search_by_isbn(
-                isbn, base_dir=base_dir, api_key=api_key
-            )
-            if google_books_data:
-                for key, val in google_books_data.items():
-                    if val:
-                        # Enforce priority: CLI override > MAM > Google Books > local metadata
-                        is_override = False
-                        if (
-                            (key == "title" and cli_overrides["title"])
-                            or (key == "author" and cli_overrides["author"])
-                            or (
-                                key == "publisher"
-                                and cli_overrides["publisher"]
-                            )
-                            or (key == "isbn" and cli_overrides["isbn"])
-                            or (key == "asin" and cli_overrides["asin"])
-                            or (
-                                key in ("book_language", "book_language_iso")
-                                and cli_overrides["book_language"]
-                            )
-                            or (
-                                key in ("year", "search_year")
-                                and cli_overrides["year"]
-                            )
-                            or (
-                                key == "keywords" and cli_overrides["keywords"]
-                            )
-                            or (
-                                key == "overview" and cli_overrides["overview"]
-                            )
-                        ):
-                            is_override = True
-                        if source_has(key):
-                            is_override = True
-
-                        # Do not overwrite fields already populated by MAM, except for artwork (prefer Google Books cover)
-                        if (
-                            key != "artwork_url"
-                            and mam_data
-                            and (
-                                key in mam_data
-                                or (
-                                    key == "book_language_iso"
-                                    and "book_language" in mam_data
-                                )
-                                or (
-                                    key == "search_year" and "year" in mam_data
-                                )
-                            )
-                        ):
-                            is_override = True
-
-                        if not is_override:
-                            if key == "year":
-                                meta[key] = int(val)
-                            else:
-                                meta[key] = val
-                            if (
-                                key == "year"
-                                and "search_year" not in google_books_data
-                            ):
-                                meta.search_year = int(val)
-        except Exception as ex:
-            logger.debug(
-                f"[yellow]Warning: Google Books API lookup failed: {ex}[/yellow]"
-            )
-
-    # OpenLibrary API search (online lookup takes precedence)
-    openlibrary_data = None
-    openlibrary_id = meta.openlibrary
-    if openlibrary_id:
-        from src.integrations.external_apis.openlibrary import (
-            openlibrary_manager,
-        )
-
-        openlibrary_data = await openlibrary_manager.search_by_work_id(
-            openlibrary_id, base_dir=base_dir
-        )
-    elif meta.isbn:
-        from src.integrations.external_apis.openlibrary import (
-            openlibrary_manager,
-        )
-
-        openlibrary_data = await openlibrary_manager.search_by_isbn(
-            meta.isbn, base_dir=base_dir
-        )
-
-    if openlibrary_data:
-        for key, val in openlibrary_data.items():
-            if val:
-                # Enforce priority: CLI override > MAM > Google Books > OpenLibrary > local metadata
-                is_override = False
-                if (
-                    (key == "title" and cli_overrides["title"])
-                    or (key == "author" and cli_overrides["author"])
-                    or (key == "publisher" and cli_overrides["publisher"])
-                    or (key == "isbn" and cli_overrides["isbn"])
-                    or (key == "asin" and cli_overrides["asin"])
-                    or (
-                        key in ("book_language", "book_language_iso")
-                        and cli_overrides["book_language"]
-                    )
-                    or (
-                        key in ("year", "search_year")
-                        and cli_overrides["year"]
-                    )
-                    or (key == "keywords" and cli_overrides["keywords"])
-                    or (key == "overview" and cli_overrides["overview"])
-                ):
-                    is_override = True
-                if source_has(key):
-                    is_override = True
-
-                # Do not overwrite fields already populated by MAM
-                if mam_data and (
-                    key in mam_data
-                    or (
-                        key == "book_language_iso"
-                        and "book_language" in mam_data
-                    )
-                    or (key == "search_year" and "year" in mam_data)
-                ):
-                    is_override = True
-
-                # Do not overwrite fields already populated by Google Books
-                if google_books_data and (
-                    key in google_books_data
-                    or (
-                        key == "book_language_iso"
-                        and "book_language" in google_books_data
-                    )
-                    or (key == "search_year" and "year" in google_books_data)
-                ):
-                    is_override = True
-
-                if not is_override:
-                    if key == "year":
-                        meta[key] = int(val)
-                    else:
-                        meta[key] = val
-                    if key == "year" and "search_year" not in openlibrary_data:
-                        meta.search_year = int(val)
-
-    if not meta.publisher and not cli_overrides["publisher"]:
-        inferred_publisher = _publisher_from_overview(str(meta.overview or ""))
-        if inferred_publisher:
-            meta.publisher = inferred_publisher
-
-    exact_edition = _matching_isbn_metadata(
-        meta, mam_data, google_books_data, openlibrary_data
+def _mam_api_key(config: dict[str, Any] | None) -> str:
+    defaults = _book_default_config(config)
+    configured = (
+        str(defaults.get("mam_api_key", "")).strip()
+        or str(defaults.get("mam_id", "")).strip()
     )
-    exact_title = _matching_isbn_metadata(
-        meta, google_books_data, openlibrary_data, mam_data
+    return (
+        configured
+        or os.environ.get("MAM_API_KEY", "").strip()
+        or os.environ.get("MAM_ID", "").strip()
     )
-    exact_year = _matching_isbn_metadata(
-        meta, google_books_data, openlibrary_data, mam_data
+
+
+def _provider_override_key(key: str) -> str:
+    if key == "book_language_iso":
+        return "book_language"
+    if key == "search_year":
+        return "year"
+    return key
+
+
+def _provider_contains_field(
+    provider: dict[str, Any] | None, key: str
+) -> bool:
+    if not provider:
+        return False
+    if key in provider:
+        return True
+    if key == "book_language_iso":
+        return "book_language" in provider
+    if key == "search_year":
+        return "year" in provider
+    return False
+
+
+def _cli_or_source_blocks_provider(ctx: _BookPrepContext, key: str) -> bool:
+    override_key = _provider_override_key(key)
+    return bool(
+        ctx.cli_overrides.get(override_key, False) or _source_has(ctx, key)
     )
-    exact_publisher = _matching_isbn_metadata(
-        meta, mam_data, openlibrary_data, google_books_data
+
+
+def _prior_provider_has_field(
+    prior: tuple[dict[str, Any] | None, ...], key: str
+) -> bool:
+    return any(_provider_contains_field(provider, key) for provider in prior)
+
+
+def _provider_field_blocked(
+    ctx: _BookPrepContext,
+    key: str,
+    prior: tuple[dict[str, Any] | None, ...],
+    *,
+    artwork_may_override: bool = False,
+) -> bool:
+    if _cli_or_source_blocks_provider(ctx, key):
+        return True
+    if artwork_may_override and key == "artwork_url":
+        return False
+    return _prior_provider_has_field(prior, key)
+
+
+def _apply_provider_value(
+    meta: Meta, key: str, value: Any, data: dict[str, Any]
+) -> None:
+    meta[key] = int(value) if key == "year" else value
+    if key == "year" and "search_year" not in data:
+        meta.search_year = int(value)
+
+
+def _apply_provider_metadata(
+    ctx: _BookPrepContext,
+    data: dict[str, Any] | None,
+    *,
+    prior: tuple[dict[str, Any] | None, ...] = (),
+    artwork_may_override: bool = False,
+) -> None:
+    if not data:
+        return
+    for key, value in data.items():
+        if not value:
+            continue
+        if _provider_field_blocked(
+            ctx, key, prior, artwork_may_override=artwork_may_override
+        ):
+            continue
+        _apply_provider_value(ctx.meta, key, value, data)
+
+
+async def _fetch_mam_metadata(
+    ctx: _BookPrepContext, mam_id: str | None
+) -> dict[str, Any] | None:
+    if not mam_id:
+        return None
+    try:
+        from src.integrations.external_apis.myanonamouse import (
+            myanonamouse_manager,
+        )
+
+        result = await myanonamouse_manager.search_by_id(
+            mam_id, base_dir=ctx.base_dir, api_key=_mam_api_key(ctx.config)
+        )
+        return (
+            cast(dict[str, Any], result) if isinstance(result, dict) else None
+        )
+    except Exception as error:
+        logger.debug(
+            f"[yellow]Warning: MyAnonamouse API lookup failed: {error}[/yellow]"
+        )
+        return None
+
+
+def _validate_meta_isbn(meta: Meta) -> str:
+    if not meta.isbn:
+        return ""
+    validated = validate_isbn_checksum(str(meta.isbn))
+    if validated:
+        meta.isbn = validated
+        return validated
+    logger.warning(
+        f"[yellow]Ignoring invalid ISBN metadata: {meta.isbn}[/yellow]"
     )
-    if exact_edition:
-        if not local_title:
-            filename_title = _strip_book_format_suffix(Path(videopath).stem)
-            overview_tokens = _identity_tokens(
-                str(exact_edition.get("overview") or meta.overview or "")
-            )
-            if len(_identity_tokens(filename_title) & overview_tokens) >= 2:
-                local_title = filename_title
-        edition_fields = (
-            "title",
-            "author",
-            "publisher",
-            "year",
-            "search_year",
-            "book_language",
-            "book_language_iso",
-            "overview",
-            "keywords",
-            "genres",
-        )
-        for key in edition_fields:
-            if key == "publisher" and source_has(key):
-                continue
-            if key == "title" and exact_title:
-                provider = exact_title
-            elif key in {"year", "search_year"} and exact_year:
-                provider = exact_year
-            elif key == "publisher" and exact_publisher:
-                provider = exact_publisher
-            else:
-                provider = exact_edition
-            val = provider.get(key)
-            if key == "title" and local_title and val:
-                local_author_tokens = _author_identity_tokens(local_author)
-                provider_author_tokens = _author_identity_tokens(
-                    str(exact_edition.get("author") or "")
-                )
-                authors_match = bool(
-                    local_author_tokens
-                    and provider_author_tokens
-                    and local_author_tokens == provider_author_tokens
-                )
-                overview_tokens = _identity_tokens(
-                    str(exact_edition.get("overview") or meta.overview or "")
-                )
-                local_title_supported = (
-                    len(_identity_tokens(local_title) & overview_tokens) >= 2
-                )
-                title_similarity = SequenceMatcher(
-                    None,
-                    _normalized_book_identity(local_title),
-                    _normalized_book_identity(str(val)),
-                ).ratio()
-                if title_similarity < 0.72 and (
-                    authors_match or local_title_supported
-                ):
-                    val = local_title
-            override_key = (
-                "book_language" if key == "book_language_iso" else key
-            )
-            if val and not cli_overrides.get(override_key, False):
-                meta[key] = int(val) if key in {"year", "search_year"} else val
+    meta.isbn = ""
+    meta.book_isbn = ""
+    return ""
 
-    repair_title_source = local_title or str(fallback_title or "")
-    if not cli_overrides["title"] and repair_title_source:
-        meta.title = _prefer_descriptive_source_title(
-            str(meta.title or ""), str(meta.author or ""), repair_title_source
+
+async def _fetch_google_metadata(
+    ctx: _BookPrepContext, isbn: str
+) -> dict[str, Any] | None:
+    if not isbn:
+        return None
+    try:
+        from src.integrations.external_apis.google_books import (
+            google_books_manager,
         )
 
-    if file_ext not in {"CBR", "CBZ"}:
-        meta.comic = explicit_comic
-        meta.manga = explicit_manga
-
-    meta.title = _strip_book_format_suffix(str(meta.title or ""))
-    if (
-        fallback_author
-        and fallback_title
-        and not cli_overrides["author"]
-        and not cli_overrides["title"]
-        and _normalized_book_identity(str(meta.author or ""))
-        == _normalized_book_identity(fallback_title)
-        and _normalized_book_identity(meta.title)
-        == _normalized_book_identity(fallback_author)
-    ):
-        meta.author = fallback_author
-        meta.title = fallback_title
-
-    if (
-        meta.unattended
-        and not cli_overrides["title"]
-        and not meta.get("trusted_book_layout", False)
-    ):
-        conflict = book_identity_conflict(meta, str(meta.path or videopath))
-        if conflict:
-            raise ItemProcessingError(conflict, str(meta.path or videopath))
-
-    if meta.audiobook:
-        filelist = meta.filelist
-        total_duration, duration_formatted = await get_audiobook_duration(
-            filelist
+        api_key = str(
+            _book_default_config(ctx.config).get("google_books_api_key", "")
+        ).strip()
+        result = await google_books_manager.search_by_isbn(
+            isbn, base_dir=ctx.base_dir, api_key=api_key
         )
-        meta.audiobook_duration = total_duration
-        meta.audiobook_duration_formatted = duration_formatted
+        return (
+            cast(dict[str, Any], result) if isinstance(result, dict) else None
+        )
+    except Exception as error:
+        logger.debug(
+            f"[yellow]Warning: Google Books API lookup failed: {error}[/yellow]"
+        )
+        return None
 
-        avg_bitrate = await get_audiobook_bitrate(filelist)
-        if avg_bitrate is not None:
-            meta.audiobook_bitrate = avg_bitrate
 
+async def _fetch_openlibrary_metadata(
+    ctx: _BookPrepContext,
+) -> dict[str, Any] | None:
+    from src.integrations.external_apis.openlibrary import openlibrary_manager
+
+    if ctx.meta.openlibrary:
+        result = await openlibrary_manager.search_by_work_id(
+            ctx.meta.openlibrary, base_dir=ctx.base_dir
+        )
+    elif ctx.meta.isbn:
+        result = await openlibrary_manager.search_by_isbn(
+            ctx.meta.isbn, base_dir=ctx.base_dir
+        )
+    else:
+        return None
+    return cast(dict[str, Any], result) if isinstance(result, dict) else None
+
+
+def _infer_publisher_from_overview(ctx: _BookPrepContext) -> None:
+    if ctx.meta.publisher or ctx.cli_overrides["publisher"]:
+        return
+    inferred = _publisher_from_overview(str(ctx.meta.overview or ""))
+    if inferred:
+        ctx.meta.publisher = inferred
+
+
+def _exact_edition_providers(
+    meta: Meta,
+    mam_data: dict[str, Any] | None,
+    google_data: dict[str, Any] | None,
+    open_data: dict[str, Any] | None,
+) -> tuple[
+    dict[str, Any] | None,
+    dict[str, Any] | None,
+    dict[str, Any] | None,
+    dict[str, Any] | None,
+]:
+    return (
+        _matching_isbn_metadata(meta, mam_data, google_data, open_data),
+        _matching_isbn_metadata(meta, google_data, open_data, mam_data),
+        _matching_isbn_metadata(meta, google_data, open_data, mam_data),
+        _matching_isbn_metadata(meta, mam_data, open_data, google_data),
+    )
+
+
+def _local_title_supported(local_title: str, overview: str) -> bool:
+    return len(_identity_tokens(local_title) & _identity_tokens(overview)) >= 2
+
+
+def _maybe_filename_local_title(
+    local_title: str,
+    videopath: str,
+    overview: str,
+) -> str:
+    if local_title:
+        return local_title
+    filename_title = _strip_book_format_suffix(Path(videopath).stem)
+    return (
+        filename_title
+        if _local_title_supported(filename_title, overview)
+        else ""
+    )
+
+
+def _edition_provider_for_field(
+    key: str,
+    exact_edition: dict[str, Any],
+    exact_title: dict[str, Any] | None,
+    exact_year: dict[str, Any] | None,
+    exact_publisher: dict[str, Any] | None,
+) -> dict[str, Any]:
+    preferred = {
+        "title": exact_title,
+        "year": exact_year,
+        "search_year": exact_year,
+        "publisher": exact_publisher,
+    }.get(key)
+    return preferred if preferred else exact_edition
+
+
+def _exact_authors_match(
+    local_author: str, exact_edition: dict[str, Any]
+) -> bool:
+    local_tokens = _author_identity_tokens(local_author)
+    provider_tokens = _author_identity_tokens(
+        str(exact_edition.get("author") or "")
+    )
+    return bool(
+        local_tokens and provider_tokens and local_tokens == provider_tokens
+    )
+
+
+def _provider_title_similarity(local_title: str, value: Any) -> float:
+    return SequenceMatcher(
+        None,
+        _normalized_book_identity(local_title),
+        _normalized_book_identity(str(value)),
+    ).ratio()
+
+
+def _prefer_exact_local_title(
+    local_title: str,
+    local_author: str,
+    exact_edition: dict[str, Any],
+    value: Any,
+    overview: str,
+) -> bool:
+    if not local_title or not value:
+        return False
+    supported = _exact_authors_match(
+        local_author, exact_edition
+    ) or _local_title_supported(local_title, overview)
+    return supported and _provider_title_similarity(local_title, value) < 0.72
+
+
+def _exact_title_value(
+    local_title: str,
+    local_author: str,
+    exact_edition: dict[str, Any],
+    value: Any,
+    overview: str,
+) -> Any:
+    return (
+        local_title
+        if _prefer_exact_local_title(
+            local_title, local_author, exact_edition, value, overview
+        )
+        else value
+    )
+
+
+_EXACT_EDITION_FIELDS = (
+    "title",
+    "author",
+    "publisher",
+    "year",
+    "search_year",
+    "book_language",
+    "book_language_iso",
+    "overview",
+    "keywords",
+    "genres",
+)
+
+
+def _exact_edition_field_blocked(ctx: _BookPrepContext, key: str) -> bool:
+    if key == "publisher" and _source_has(ctx, key):
+        return True
+    override_key = "book_language" if key == "book_language_iso" else key
+    return bool(ctx.cli_overrides.get(override_key, False))
+
+
+def _exact_edition_field_value(
+    key: str,
+    local_title: str,
+    local_author: str,
+    exact_edition: dict[str, Any],
+    exact_title: dict[str, Any] | None,
+    exact_year: dict[str, Any] | None,
+    exact_publisher: dict[str, Any] | None,
+    overview: str,
+) -> Any:
+    provider = _edition_provider_for_field(
+        key, exact_edition, exact_title, exact_year, exact_publisher
+    )
+    value = provider.get(key)
+    if key != "title":
+        return value
+    return _exact_title_value(
+        local_title, local_author, exact_edition, value, overview
+    )
+
+
+def _apply_exact_edition_field(
+    ctx: _BookPrepContext,
+    key: str,
+    value: Any,
+) -> None:
+    if not value or _exact_edition_field_blocked(ctx, key):
+        return
+    ctx.meta[key] = int(value) if key in {"year", "search_year"} else value
+
+
+def _apply_exact_edition(
+    ctx: _BookPrepContext,
+    local_title: str,
+    local_author: str,
+    mam_data: dict[str, Any] | None,
+    google_data: dict[str, Any] | None,
+    open_data: dict[str, Any] | None,
+) -> str:
+    exact_edition, exact_title, exact_year, exact_publisher = (
+        _exact_edition_providers(ctx.meta, mam_data, google_data, open_data)
+    )
+    if not exact_edition:
+        return local_title
+    overview = str(exact_edition.get("overview") or ctx.meta.overview or "")
+    local_title = _maybe_filename_local_title(
+        local_title, ctx.videopath, overview
+    )
+    for key in _EXACT_EDITION_FIELDS:
+        value = _exact_edition_field_value(
+            key,
+            local_title,
+            local_author,
+            exact_edition,
+            exact_title,
+            exact_year,
+            exact_publisher,
+            overview,
+        )
+        _apply_exact_edition_field(ctx, key, value)
+    return local_title
+
+
+def _restore_comic_flags(ctx: _BookPrepContext) -> None:
+    if ctx.file_ext in {"CBR", "CBZ"}:
+        return
+    ctx.meta.comic = ctx.explicit_comic
+    ctx.meta.manga = ctx.explicit_manga
+
+
+def _path_identity_is_swapped(
+    ctx: _BookPrepContext, fallback_author: str, fallback_title: str
+) -> bool:
+    author_matches_title = _normalized_book_identity(
+        str(ctx.meta.author or "")
+    ) == _normalized_book_identity(fallback_title)
+    title_matches_author = _normalized_book_identity(
+        str(ctx.meta.title or "")
+    ) == _normalized_book_identity(fallback_author)
+    return author_matches_title and title_matches_author
+
+
+def _swapped_path_repair_allowed(
+    ctx: _BookPrepContext, fallback_author: str, fallback_title: str
+) -> bool:
+    return all(
+        (
+            bool(fallback_author),
+            bool(fallback_title),
+            not ctx.cli_overrides["author"],
+            not ctx.cli_overrides["title"],
+        )
+    )
+
+
+def _repair_swapped_path_identity(
+    ctx: _BookPrepContext, fallback_author: str, fallback_title: str
+) -> None:
+    if not _swapped_path_repair_allowed(ctx, fallback_author, fallback_title):
+        return
+    if _path_identity_is_swapped(ctx, fallback_author, fallback_title):
+        ctx.meta.author = fallback_author
+        ctx.meta.title = fallback_title
+
+
+def _book_identity_validation_needed(ctx: _BookPrepContext) -> bool:
+    return bool(
+        ctx.meta.unattended
+        and not ctx.cli_overrides["title"]
+        and not ctx.meta.get("trusted_book_layout", False)
+    )
+
+
+def _validate_unattended_book_identity(ctx: _BookPrepContext) -> None:
+    if not _book_identity_validation_needed(ctx):
+        return
+    source = str(ctx.meta.path or ctx.videopath)
+    conflict = book_identity_conflict(ctx.meta, source)
+    if conflict:
+        raise ItemProcessingError(conflict, source)
+
+
+async def _apply_audiobook_stats(meta: Meta) -> None:
+    if not meta.audiobook:
+        return
+    total_duration, formatted = await get_audiobook_duration(meta.filelist)
+    meta.audiobook_duration = total_duration
+    meta.audiobook_duration_formatted = formatted
+    average = await get_audiobook_bitrate(meta.filelist)
+    if average is not None:
+        meta.audiobook_bitrate = average
+
+
+def _finalize_book_prep_sanitization(meta: Meta) -> None:
     detect_newspaper(meta)
     sanitize_book_language(meta)
     sanitize_book_author(meta)
 
 
-async def get_audiobook_duration(filelist: list[str]) -> tuple[float, str]:
-    """Calculate the sum of durations of all audio files in the file list using MediaInfo."""
-    audio_files = [
-        f for f in filelist if Path(f).suffix.lower() in AUDIOBOOK_EXTENSIONS
+async def _safe_openlibrary_metadata(
+    ctx: _BookPrepContext,
+) -> dict[str, Any] | None:
+    try:
+        return await _fetch_openlibrary_metadata(ctx)
+    except Exception as error:
+        logger.debug(
+            f"[yellow]Warning: OpenLibrary API lookup failed: {error}[/yellow]"
+        )
+        return None
+
+
+async def _online_book_metadata(
+    ctx: _BookPrepContext,
+) -> tuple[
+    dict[str, Any] | None, dict[str, Any] | None, dict[str, Any] | None
+]:
+    mam_data = await _fetch_mam_metadata(ctx, _mam_id_from_comments(ctx.meta))
+    _apply_provider_metadata(ctx, mam_data)
+    google_data = await _fetch_google_metadata(
+        ctx, _validate_meta_isbn(ctx.meta)
+    )
+    _apply_provider_metadata(
+        ctx,
+        google_data,
+        prior=(mam_data,),
+        artwork_may_override=True,
+    )
+    open_data = await _safe_openlibrary_metadata(ctx)
+    _apply_provider_metadata(ctx, open_data, prior=(mam_data, google_data))
+    return mam_data, google_data, open_data
+
+
+def _final_book_title_source(local_title: str, fallback_title: str) -> str:
+    return local_title or fallback_title
+
+
+def _should_repair_book_title(ctx: _BookPrepContext, source: str) -> bool:
+    return bool(source and not ctx.cli_overrides["title"])
+
+
+def _repair_final_book_title(
+    ctx: _BookPrepContext, local_title: str, fallback_title: str
+) -> None:
+    source = _final_book_title_source(local_title, fallback_title)
+    if _should_repair_book_title(ctx, source):
+        ctx.meta.title = _prefer_descriptive_source_title(
+            str(ctx.meta.title or ""), str(ctx.meta.author or ""), source
+        )
+    ctx.meta.title = _strip_book_format_suffix(str(ctx.meta.title or ""))
+
+
+async def gather_book_prep(
+    meta: Meta,
+    videopath: str,
+    base_dir: str,
+    config: dict[str, Any] | None = None,
+) -> None:
+    """Prepare BOOK/Audiobook metadata from local and external sources."""
+    ctx = _initialize_book_prep(meta, videopath, base_dir, config)
+    _extract_local_book_sources(ctx)
+    await _export_book_mediainfo(ctx)
+    _extract_embedded_book_metadata(ctx)
+    fallback_author, fallback_title, local_title, local_author = (
+        _apply_path_identity(ctx)
+    )
+    _apply_filename_series(ctx)
+    await _maybe_fetch_torrent_comments(ctx)
+    mam_data, google_data, open_data = await _online_book_metadata(ctx)
+    _infer_publisher_from_overview(ctx)
+    local_title = _apply_exact_edition(
+        ctx, local_title, local_author, mam_data, google_data, open_data
+    )
+    _repair_final_book_title(ctx, local_title, fallback_title)
+    _restore_comic_flags(ctx)
+    _repair_swapped_path_identity(ctx, fallback_author, fallback_title)
+    _validate_unattended_book_identity(ctx)
+    await _apply_audiobook_stats(meta)
+    _finalize_book_prep_sanitization(meta)
+
+
+def _audiobook_files(
+    filelist: list[str], *, limit: int | None = None
+) -> list[str]:
+    files = [
+        file
+        for file in filelist
+        if Path(file).suffix.lower() in AUDIOBOOK_EXTENSIONS
     ]
+    return files[:limit] if limit is not None else files
 
-    if not audio_files:
-        return 0.0, ""
 
-    def _get_file_duration(file_path: str) -> float:
-        with contextlib.suppress(Exception):
-            if not Path(file_path).is_file():
-                return 0.0
-            media_info = MediaInfo.parse(file_path)
-            for track in media_info.tracks:
-                if track.track_type == "General":
-                    duration_ms = track.duration
-                    if duration_ms is not None:
-                        return float(duration_ms) / 1000.0
+def _first_mi_track(media_info: Any, track_type: str) -> Any | None:
+    return next(
+        (
+            track
+            for track in media_info.tracks
+            if track.track_type == track_type
+        ),
+        None,
+    )
+
+
+def _general_duration_seconds(media_info: Any) -> float:
+    general = _first_mi_track(media_info, "General")
+    duration = general.duration if general is not None else None
+    return float(duration) / 1000.0 if duration is not None else 0.0
+
+
+def _file_duration_seconds(file_path: str) -> float:
+    if not Path(file_path).is_file():
         return 0.0
+    with contextlib.suppress(Exception):
+        return _general_duration_seconds(MediaInfo.parse(file_path))
+    return 0.0
 
-    tasks = [asyncio.to_thread(_get_file_duration, f) for f in audio_files]
-    durations = await asyncio.gather(*tasks)
-    total_seconds = float(sum(durations))
 
+def _formatted_audiobook_duration(total_seconds: float) -> str:
     hours = int(total_seconds // 3600)
     minutes = int((total_seconds % 3600) // 60)
     seconds = int(total_seconds % 60)
+    if hours > 0:
+        return f"{hours:02d}h {minutes:02d}m {seconds:02d}s"
+    return f"{minutes:02d}m {seconds:02d}s"
 
-    # Format as HH:MM:SS if hours > 0, otherwise MM:SS
-    duration_formatted = (
-        f"{hours:02d}h {minutes:02d}m {seconds:02d}s"
-        if hours > 0
-        else f"{minutes:02d}m {seconds:02d}s"
+
+async def get_audiobook_duration(filelist: list[str]) -> tuple[float, str]:
+    """Calculate total duration of audiobook files."""
+    audio_files = _audiobook_files(filelist)
+    if not audio_files:
+        return 0.0, ""
+    durations = await asyncio.gather(
+        *(
+            asyncio.to_thread(_file_duration_seconds, file)
+            for file in audio_files
+        )
     )
+    total_seconds = float(sum(durations))
+    return total_seconds, _formatted_audiobook_duration(total_seconds)
 
-    return total_seconds, duration_formatted
+
+def _track_bitrate_value(track: Any, *keys: str) -> int | None:
+    data = cast(dict[str, Any], track.to_data())
+    raw = next(
+        (data.get(key) for key in keys if data.get(key) is not None), None
+    )
+    if raw is None:
+        return None
+    match = re.search(r"\d+", str(raw))
+    return int(match.group(0)) if match else None
+
+
+def _media_audio_bitrate(media_info: Any) -> int | None:
+    audio = _first_mi_track(media_info, "Audio")
+    if audio is not None:
+        bitrate = _track_bitrate_value(audio, "bit_rate", "BitRate")
+        if bitrate is not None:
+            return bitrate
+    general = _first_mi_track(media_info, "General")
+    if general is None:
+        return None
+    return _track_bitrate_value(general, "overall_bit_rate", "OverallBitRate")
+
+
+def _file_audio_bitrate(file_path: str) -> int | None:
+    if not Path(file_path).is_file():
+        return None
+    with contextlib.suppress(Exception):
+        return _media_audio_bitrate(MediaInfo.parse(file_path))
+    return None
+
+
+def _average_kbps(values: list[int]) -> int | None:
+    if not values:
+        return None
+    average = sum(values) / len(values)
+    return round(average / 1000) if average >= 1000 else round(average)
 
 
 async def get_audiobook_bitrate(filelist: list[str]) -> int | None:
-    """Calculate the average bitrate (in kbps) of a sample of audio files (max 5) in the file list using MediaInfo."""
-    audio_files = [
-        f for f in filelist if Path(f).suffix.lower() in AUDIOBOOK_EXTENSIONS
-    ]
-
-    # Limit to a maximum of 5 files to optimize performance
-    audio_files = audio_files[:5]
-
+    """Calculate average bitrate (kbps) from up to five audiobook files."""
+    audio_files = _audiobook_files(filelist, limit=5)
     if not audio_files:
         return None
-
-    def _get_file_bitrate(file_path: str) -> int | None:
-        with contextlib.suppress(Exception):
-            if not Path(file_path).is_file():
-                return None
-            media_info = MediaInfo.parse(file_path)
-            for track in media_info.tracks:
-                if track.track_type == "Audio":
-                    track_data = track.to_data()
-                    br = track_data.get("bit_rate") or track_data.get(
-                        "BitRate"
-                    )
-                    if br is not None:
-                        match = re.search(r"\d+", str(br))
-                        if match:
-                            return int(match.group(0))
-            # Fallback to General track
-            for track in media_info.tracks:
-                if track.track_type == "General":
-                    track_data = track.to_data()
-                    br = track_data.get("overall_bit_rate") or track_data.get(
-                        "OverallBitRate"
-                    )
-                    if br is not None:
-                        match = re.search(r"\d+", str(br))
-                        if match:
-                            return int(match.group(0))
-        return None
-
-    tasks = [asyncio.to_thread(_get_file_bitrate, f) for f in audio_files]
-    bitrates = await asyncio.gather(*tasks)
-
-    valid_bitrates = [br for br in bitrates if br is not None]
-    if not valid_bitrates:
-        return None
-
-    avg_bps = sum(valid_bitrates) / len(valid_bitrates)
-    return round(avg_bps / 1000) if avg_bps >= 1000 else round(avg_bps)
+    bitrates = await asyncio.gather(
+        *(asyncio.to_thread(_file_audio_bitrate, file) for file in audio_files)
+    )
+    valid = [bitrate for bitrate in bitrates if bitrate is not None]
+    return _average_kbps(cast(list[int], valid))

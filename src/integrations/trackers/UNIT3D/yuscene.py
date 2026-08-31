@@ -292,8 +292,6 @@ class YUSCENE(UNIT3D):
     def _has_banned_title_chars(value: str) -> bool:
         if re.search(r"[\[\]()]", value):
             return True
-        if "." in value:
-            return True
         return bool(re.search(r"\s{2,}", value))
 
     @staticmethod
@@ -843,5 +841,5 @@ class YUSCENE(UNIT3D):
 
     @staticmethod
     def _normalize_tracker_name(value: str) -> str:
-        normalized = re.sub(r"[.()\[\]]+", " ", value)
+        normalized = re.sub(r"[()\[\]]+", " ", value)
         return re.sub(r"\s+", " ", normalized).strip()

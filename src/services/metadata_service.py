@@ -7,6 +7,7 @@ from typing import Any, cast
 import httpx
 from bs4 import BeautifulSoup
 
+from src.domain_models.errors import AmbiguousMetadataError
 from src.domain_models.release import Meta
 from src.integrations.cache.metadata_cache import cache_for, is_cache_miss
 from src.integrations.external_apis.imdb import imdb_manager
@@ -389,10 +390,13 @@ def _tvmaze_search_task(
         return_full_tuple=full_tuple,
         base_dir=meta.base_dir,
         config=tmdb_manager.config,
+        unattended=meta.unattended,
     )
 
 
 def _apply_tvmaze_id_result(meta: Meta, result: Any) -> None:
+    if isinstance(result, AmbiguousMetadataError):
+        raise result
     if isinstance(result, int):
         meta.tvmaze_id = result
         return
@@ -432,6 +436,8 @@ def _log_unexpected_tvmaze_result(result: Any) -> None:
 
 
 def _apply_tvmaze_search_result(meta: Meta, result: Any) -> None:
+    if isinstance(result, AmbiguousMetadataError):
+        raise result
     tvmaze_id, tvdb_id = _tvmaze_tuple_ids(result)
     if _apply_tvmaze_tuple_ids(meta, tvmaze_id, tvdb_id):
         return
@@ -613,6 +619,7 @@ class MetadataSearchingManager:
         year: str = "",
         tv_movie: bool = False,
         base_dir: str = "",
+        unattended: bool = False,
     ) -> tuple[int, int, Any | None, str]:
         return await get_tvmaze_tvdb(
             filename,
@@ -626,6 +633,7 @@ class MetadataSearchingManager:
             tv_movie=tv_movie,
             base_dir=base_dir,
             config=self.config,
+            unattended=unattended,
         )
 
     async def get_tv_data(self, meta: Meta) -> Meta:
@@ -751,6 +759,8 @@ def _tmdb_only_identity(
 
 
 def _tvmaze_lookup_id(result: Any) -> int:
+    if isinstance(result, AmbiguousMetadataError):
+        raise result
     if isinstance(result, int):
         return result
     tvmaze_id, _tvdb_id = _tvmaze_tuple_ids(result)
@@ -867,6 +877,7 @@ async def get_tvmaze_tvdb(
     tv_movie: bool = False,
     base_dir: str = "",
     config: dict[str, Any] | None = None,
+    unattended: bool = False,
 ) -> tuple[int, int, Any | None, str]:
     logger.debug("[yellow]Finding both TVMaze and TVDb IDs[/yellow]")
     external_identity = _has_external_identity(imdb, tmdb)
@@ -881,6 +892,7 @@ async def get_tvmaze_tvdb(
             return_full_tuple=True,
             base_dir=base_dir,
             config=config,
+            unattended=unattended,
         )
     ]
     if external_identity:

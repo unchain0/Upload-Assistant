@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 
+from src.domain_models.errors import AmbiguousMetadataError
 from src.domain_models.release import Meta
 from src.services import metadata_service
 
@@ -198,6 +199,28 @@ def test_automatic_metadata_tasks_propagate_unattended(
 
     assert tmdb_other.await_args.kwargs["unattended"] is True
     assert tmdb_from_imdb.await_args.kwargs["unattended"] is True
+
+
+def test_get_tvmaze_tvdb_rethrows_automatic_ambiguity_from_gather(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    error = AmbiguousMetadataError(
+        "TVMaze metadata match is ambiguous; automatic mode will skip this release."
+    )
+    _patch_imdb_tvmaze(monkeypatch, tvmaze_search=error)
+    tvdb = _Tvdb(get_tvdb_by_external_id=(0, ""))
+
+    with pytest.raises(AmbiguousMetadataError, match="ambiguous"):
+        asyncio.run(
+            metadata_service.get_tvmaze_tvdb(
+                "Hotel Paradise Extra",
+                "",
+                202,
+                101,
+                tvdb,
+                unattended=True,
+            )
+        )
 
 
 def test_coercion_and_tvdb_series_metadata() -> None:
