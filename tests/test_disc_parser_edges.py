@@ -166,17 +166,21 @@ def test_terminate_process_tree_every_platform(
         assert tree.killed and process.killed
         monkeypatch.setattr(disc_parser.asyncio, "wait_for", original_wait_for)
 
-        killed: list[tuple[int, int]] = []
-        monkeypatch.setattr(
-            disc_parser,
-            "os",
-            SimpleNamespace(
-                name="posix", killpg=lambda pid, sig: killed.append((pid, sig))
-            ),
-        )
-        process = _Process(returncode=None, pid=46)
-        await DiscParse._terminate_process_tree(process)  # type: ignore[arg-type]
-        assert killed == [(46, disc_parser.signal.SIGKILL)]
+        if hasattr(disc_parser.signal, "SIGKILL"):
+            killed: list[tuple[int, int]] = []
+            monkeypatch.setattr(
+                disc_parser,
+                "os",
+                SimpleNamespace(
+                    name="posix",
+                    killpg=lambda pid, sig: killed.append(
+                        (pid, sig),
+                    ),
+                ),
+            )
+            process = _Process(returncode=None, pid=46)
+            await DiscParse._terminate_process_tree(process)  # type: ignore[arg-type]
+            assert killed == [(46, disc_parser.signal.SIGKILL)]
 
         process = _Process(returncode=None, pid=None)
         await DiscParse._terminate_process_tree(process)  # type: ignore[arg-type]

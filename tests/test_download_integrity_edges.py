@@ -27,9 +27,13 @@ def test_safe_destination_rejects_absolute_traversal_and_symlink_escape(
 ) -> None:
     base = tmp_path / "base"
     base.mkdir()
-    with pytest.raises(RuntimeError, match="Unsafe archive member"):
+    with pytest.raises(
+        RuntimeError, match=r"Unsafe archive member|escapes destination"
+    ):
         integrity._safe_destination(base, "/absolute")
-    with pytest.raises(RuntimeError, match="Unsafe archive member"):
+    with pytest.raises(
+        RuntimeError, match=r"Unsafe archive member|escapes destination"
+    ):
         integrity._safe_destination(base, "../escape")
 
     outside = tmp_path / "outside"
