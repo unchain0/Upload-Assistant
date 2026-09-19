@@ -26,7 +26,7 @@ review_output() {
     local name="$1"
     local format="$2"
     local input_file="$3"
-    local level="${4:-error}"
+    local level="${4:-}"
 
     [[ -s "$input_file" ]] || return 0
 
@@ -35,8 +35,10 @@ review_output() {
         "-reporter=$REVIEWDOG_REPORTER"
         "-filter-mode=$REVIEWDOG_FILTER_MODE"
         "-fail-level=$REVIEWDOG_FAIL_LEVEL"
-        "-level=$level"
     )
+    if [[ -n "$level" ]]; then
+        args+=("-level=$level")
+    fi
     if [[ "$format" == efm:* ]]; then
         args+=("-efm=${format#efm:}")
     else
@@ -104,12 +106,12 @@ if (( ${#python_files[@]} )); then
     ruff_status=0
     ruff check --force-exclude --output-format=concise "${python_files[@]}" > "$tmp_dir/ruff.out" 2>&1 || ruff_status=$?
     check_tool_status "Ruff" "$ruff_status" "$tmp_dir/ruff.out"
-    review_output "ruff" 'efm:%f:%l:%c: %m' "$tmp_dir/ruff.out"
+    review_output "ruff" 'efm:%f:%l:%c: %m' "$tmp_dir/ruff.out" error
 
     radon_status=0
     uv run --frozen --no-sync python scripts/check_radon_complexity.py --concise "${python_files[@]}" > "$tmp_dir/radon.out" 2>&1 || radon_status=$?
     check_tool_status "Radon complexity" "$radon_status" "$tmp_dir/radon.out"
-    review_output "radon-complexity" 'efm:%f:%l:%c: %m' "$tmp_dir/radon.out"
+    review_output "radon-complexity" 'efm:%f:%l:%c: %m' "$tmp_dir/radon.out" error
 fi
 
 if (( ${#pyright_files[@]} )); then
@@ -130,7 +132,7 @@ if (( ${#shell_files[@]} )); then
     shellcheck_status=0
     shellcheck -f gcc "${shell_files[@]}" > "$tmp_dir/shellcheck.out" 2>&1 || shellcheck_status=$?
     check_tool_status "ShellCheck" "$shellcheck_status" "$tmp_dir/shellcheck.out"
-    review_output "shellcheck" 'efm:%f:%l:%c: %m' "$tmp_dir/shellcheck.out"
+    review_output "shellcheck" 'efm:%f:%l:%c: %m' "$tmp_dir/shellcheck.out" error
 fi
 
 if (( ${#docker_files[@]} )); then
@@ -148,7 +150,7 @@ if (( ${#workflow_files[@]} )); then
     actionlint_status=0
     actionlint "${workflow_files[@]}" > "$tmp_dir/actionlint.out" 2>&1 || actionlint_status=$?
     check_tool_status "actionlint" "$actionlint_status" "$tmp_dir/actionlint.out"
-    review_output "actionlint" 'efm:%f:%l:%c: %m' "$tmp_dir/actionlint.out"
+    review_output "actionlint" 'efm:%f:%l:%c: %m' "$tmp_dir/actionlint.out" error
 fi
 
 if (( ${#semgrep_files[@]} )); then
