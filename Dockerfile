@@ -49,7 +49,7 @@ RUN rm -rf /Upload-Assistant/defaults \
 
 # Download the bundled helper binaries and ensure they are executable.
 RUN python3 -c "from src.integrations.runtime_tools.mkbrr import MkbrrBinaryManager; MkbrrBinaryManager.download_mkbrr_for_docker()" \
-    && python3 scripts/install_bdinfo_docker.py \
+    && python3 -m scripts.install_bdinfo_docker \
     && find bin/mkbrr -name "mkbrr" -exec chmod +x {} + \
     && find bin/bdinfo -name "bdinfo" -exec chmod +x {} +
 
