@@ -43,7 +43,7 @@ jobs:
         run: Copy-Item data/example_config.py data/config.py -Force
 
       - name: Run tests
-        run: uv run pytest -q
+        run: uv run python scripts/run_coverage_shards.py --jobs 2 --fail-under 100
 
   docker-build:
     name: Docker build (${{ matrix.arch }})

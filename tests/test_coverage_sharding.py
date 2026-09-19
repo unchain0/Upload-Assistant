@@ -1,4 +1,5 @@
 from pathlib import Path
+from threading import Event, Lock
 
 from scripts import run_coverage_shards as sharding
 from src.domain_models.tracker_catalog import KNOWN_TRACKERS
@@ -68,3 +69,31 @@ def test_chunking_is_ordered_and_does_not_drop_values() -> None:
         ("c", "d"),
         ("e",),
     ]
+
+
+def test_run_all_starts_multiple_shards_with_multiple_workers(
+    monkeypatch,
+) -> None:
+    started = 0
+    lock = Lock()
+    both_started = Event()
+    shards = [
+        sharding.TestShard(index=0, targets=("one",)),
+        sharding.TestShard(index=1, targets=("two",)),
+    ]
+
+    def run_shard(_shard: sharding.TestShard) -> None:
+        nonlocal started
+        with lock:
+            started += 1
+            if started == 2:
+                both_started.set()
+        assert both_started.wait(timeout=1)
+
+    monkeypatch.setattr(sharding, "prepare_parts", lambda: None)
+    monkeypatch.setattr(sharding, "run_shard", run_shard)
+    monkeypatch.setattr(
+        sharding, "combine_and_report", lambda *, fail_under: fail_under
+    )
+
+    assert sharding._run_all(shards, fail_under=100, jobs=2) == 0

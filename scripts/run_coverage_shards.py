@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -193,6 +194,12 @@ def parse_args() -> argparse.Namespace:
         default=100.0,
         help="Required combined line coverage percentage",
     )
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        default=1,
+        help="Maximum concurrent coverage shards",
+    )
     return parser.parse_args()
 
 
@@ -213,10 +220,13 @@ def _run_requested_shard(index: int, shards: list[TestShard]) -> int:
     return 0
 
 
-def _run_all(shards: list[TestShard], fail_under: float) -> int:
+def _run_all(shards: list[TestShard], fail_under: float, jobs: int) -> int:
     prepare_parts()
-    for shard in shards:
-        run_shard(shard)
+    if jobs < 1:
+        raise ValueError("--jobs must be at least 1")
+    with ThreadPoolExecutor(max_workers=jobs) as executor:
+        for _ in executor.map(run_shard, shards):
+            pass
     combine_and_report(fail_under=fail_under)
     return 0
 
@@ -231,7 +241,7 @@ def _dispatch(args: argparse.Namespace, shards: list[TestShard]) -> int:
         return 0
     if args.shard is not None:
         return _run_requested_shard(args.shard, shards)
-    return _run_all(shards, args.fail_under)
+    return _run_all(shards, args.fail_under, args.jobs)
 
 
 def main() -> int:
