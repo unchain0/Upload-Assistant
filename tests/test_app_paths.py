@@ -131,16 +131,17 @@ def test_runtime_path_service_override_windows_and_legacy(
             ).as_posix()
         )
 
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
-    legacy = tmp_path / "xdg" / "upload-assistant"
-    legacy.mkdir(parents=True)
-    with patch.object(runtime_paths_service.os, "name", "posix"):
-        assert runtime_paths_service._state_dir() == legacy
+    if os.name != "nt":
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+        legacy = tmp_path / "xdg" / "upload-assistant"
+        legacy.mkdir(parents=True)
+        with patch.object(runtime_paths_service.os, "name", "posix"):
+            assert runtime_paths_service._state_dir() == legacy
 
-    primary = tmp_path / "xdg" / "Upload-Assistant"
-    primary.mkdir()
-    with patch.object(runtime_paths_service.os, "name", "posix"):
-        assert runtime_paths_service._state_dir() == primary
+        primary = tmp_path / "xdg" / "Upload-Assistant"
+        primary.mkdir()
+        with patch.object(runtime_paths_service.os, "name", "posix"):
+            assert runtime_paths_service._state_dir() == primary
 
 
 def test_runtime_paths_service_resolves_all_runtime_locations(
