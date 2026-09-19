@@ -27,6 +27,7 @@ review_output() {
     local format="$2"
     local input_file="$3"
     local level="${4:-}"
+    local fail_level="${5:-$REVIEWDOG_FAIL_LEVEL}"
 
     [[ -s "$input_file" ]] || return 0
 
@@ -34,7 +35,7 @@ review_output() {
         "-name=$name"
         "-reporter=$REVIEWDOG_REPORTER"
         "-filter-mode=$REVIEWDOG_FILTER_MODE"
-        "-fail-level=$REVIEWDOG_FAIL_LEVEL"
+        "-fail-level=$fail_level"
     )
     if [[ -n "$level" ]]; then
         args+=("-level=$level")
@@ -116,12 +117,12 @@ fi
 
 if (( ${#pyright_files[@]} )); then
     pyright_status=0
-    basedpyright --outputjson "${pyright_files[@]}" > "$tmp_dir/basedpyright.json" 2> "$tmp_dir/basedpyright.err" || pyright_status=$?
+    basedpyright --outputjson > "$tmp_dir/basedpyright.json" 2> "$tmp_dir/basedpyright.err" || pyright_status=$?
     if (( pyright_status > 1 )); then
         cat "$tmp_dir/basedpyright.err" >&2 || true
         internal_failure=1
     elif python scripts/pyright_to_rdjson.py < "$tmp_dir/basedpyright.json" > "$tmp_dir/basedpyright.rdjsonl"; then
-        review_output "basedpyright" rdjsonl "$tmp_dir/basedpyright.rdjsonl" warning
+        review_output "basedpyright" rdjsonl "$tmp_dir/basedpyright.rdjsonl" warning none
     else
         printf 'Failed to convert BasedPyright diagnostics to Reviewdog format.\n' >&2
         internal_failure=1
@@ -173,7 +174,7 @@ if (( ${#semgrep_files[@]} )); then
         internal_failure=1
     else
         python scripts/filter_suppressed_sarif.py < "$tmp_dir/semgrep.sarif" > "$tmp_dir/semgrep.filtered.sarif"
-        review_output "semgrep-ce" sarif "$tmp_dir/semgrep.filtered.sarif" warning
+        review_output "semgrep-ce" sarif "$tmp_dir/semgrep.filtered.sarif" warning none
     fi
 fi
 
