@@ -16,6 +16,7 @@ jobs:
     name: Static review
     runs-on: ubuntu-24.04
     permissions:
+      checks: write
       contents: read
       pull-requests: write
     env:
@@ -109,7 +110,7 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           SEMGREP_RULES_DIR: ${{ runner.temp }}/semgrep-rules
           REVIEWDOG_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REVIEWDOG_REPORTER: ${{ github.event.pull_request.head.repo.full_name == github.repository && 'github-pr-review' || 'local' }}
+          REVIEWDOG_REPORTER: ${{ github.event.pull_request.head.repo.full_name == github.repository && 'github-pr-check' || 'local' }}
           REVIEWDOG_FILTER_MODE: ${{ github.event.pull_request.head.repo.full_name == github.repository && 'added' || 'nofilter' }}
           REVIEWDOG_FAIL_LEVEL: error
         run: scripts/run-static-review.sh
