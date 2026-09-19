@@ -529,6 +529,7 @@ def _decode_spectrogram_audio(
                 timeout=duration + 120,
             )
         except (OSError, subprocess.TimeoutExpired) as error:
+            decoded_file.close()
             decoded_path.unlink(missing_ok=True)
             raise RuntimeError(
                 f"Could not decode audio stream {stream_index}: {error}"

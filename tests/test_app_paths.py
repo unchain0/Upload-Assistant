@@ -99,13 +99,16 @@ def test_runtime_path_service_override_windows_and_legacy(
         patch.object(
             runtime_paths_service,
             "Path",
-            side_effect=lambda value: PurePosixPath(value),
+            side_effect=lambda value: PurePosixPath(
+                str(value).replace("\\", "/")
+            ),
         ) as path_factory,
     ):
-        path_factory.home.return_value = PurePosixPath(str(tmp_path / "home"))
-        assert (
-            runtime_paths_service._state_dir()
-            == tmp_path / "local" / "Upload-Assistant"
+        path_factory.home.return_value = PurePosixPath(
+            (tmp_path / "home").as_posix()
+        )
+        assert runtime_paths_service._state_dir() == PurePosixPath(
+            (tmp_path / "local" / "Upload-Assistant").as_posix()
         )
 
     monkeypatch.delenv("LOCALAPPDATA")
@@ -114,13 +117,18 @@ def test_runtime_path_service_override_windows_and_legacy(
         patch.object(
             runtime_paths_service,
             "Path",
-            side_effect=lambda value: PurePosixPath(value),
+            side_effect=lambda value: PurePosixPath(
+                str(value).replace("\\", "/")
+            ),
         ) as path_factory,
     ):
-        path_factory.home.return_value = PurePosixPath(str(tmp_path / "home"))
-        assert (
-            runtime_paths_service._state_dir()
-            == tmp_path / "home" / "AppData" / "Local" / "Upload-Assistant"
+        path_factory.home.return_value = PurePosixPath(
+            (tmp_path / "home").as_posix()
+        )
+        assert runtime_paths_service._state_dir() == PurePosixPath(
+            (
+                tmp_path / "home" / "AppData" / "Local" / "Upload-Assistant"
+            ).as_posix()
         )
 
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
