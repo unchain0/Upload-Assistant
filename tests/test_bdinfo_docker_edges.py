@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import os
 import tarfile
 from pathlib import Path
 
@@ -101,7 +102,8 @@ def test_docker_install_stale_cleanup_duplicate_and_download_cleanup(
     stale.write_text("stale", encoding="utf-8")
     result = bdinfo_docker.download_bdinfo_for_docker(tmp_path)
     assert Path(result).read_bytes() == b"new"
-    assert Path(result).stat().st_mode & 0o111
+    if os.name != "nt":
+        assert Path(result).stat().st_mode & 0o111
     assert (bin_dir / "v0.3.1").is_file() and not stale.exists()
     assert not (bin_dir / ".bdinfo-staging").exists()
     assert not any(path.name.startswith("temp_") for path in bin_dir.iterdir())

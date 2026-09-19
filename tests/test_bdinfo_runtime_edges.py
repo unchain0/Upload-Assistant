@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import os
 import tarfile
 import zipfile
 from pathlib import Path
@@ -101,7 +102,8 @@ def test_bdinfo_linux_tar_and_windows_zip_install(
     )
     binary = Path(result)
     assert binary.read_bytes() == b"linux-binary"
-    assert binary.stat().st_mode & 0o100
+    if os.name != "nt":
+        assert binary.stat().st_mode & 0o100
     assert (linux / "v0.3.1").is_file()
     assert not (linux / ".bdinfo-staging").exists()
     assert not any(path.name.startswith("temp_") for path in linux.iterdir())
