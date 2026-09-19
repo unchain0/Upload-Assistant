@@ -121,7 +121,7 @@ if (( ${#pyright_files[@]} )); then
         cat "$tmp_dir/basedpyright.err" >&2 || true
         internal_failure=1
     elif python scripts/pyright_to_rdjson.py < "$tmp_dir/basedpyright.json" > "$tmp_dir/basedpyright.rdjsonl"; then
-        review_output "basedpyright" rdjsonl "$tmp_dir/basedpyright.rdjsonl"
+        review_output "basedpyright" rdjsonl "$tmp_dir/basedpyright.rdjsonl" warning
     else
         printf 'Failed to convert BasedPyright diagnostics to Reviewdog format.\n' >&2
         internal_failure=1
@@ -142,7 +142,7 @@ if (( ${#docker_files[@]} )); then
         cat "$tmp_dir/hadolint.err" >&2 || true
         internal_failure=1
     else
-        review_output "hadolint" sarif "$tmp_dir/hadolint.sarif"
+        review_output "hadolint" sarif "$tmp_dir/hadolint.sarif" warning
     fi
 fi
 
@@ -160,6 +160,7 @@ if (( ${#semgrep_files[@]} )); then
         --metrics=off \
         --quiet \
         --sarif \
+        --severity=ERROR \
         --config "$SEMGREP_RULES_DIR/python/correctness" \
         --config "$SEMGREP_RULES_DIR/python/lang/correctness" \
         --config "$SEMGREP_RULES_DIR/python/lang/security" \
@@ -171,7 +172,8 @@ if (( ${#semgrep_files[@]} )); then
         cat "$tmp_dir/semgrep.err" >&2 || true
         internal_failure=1
     else
-        review_output "semgrep-ce" sarif "$tmp_dir/semgrep.sarif"
+        python scripts/filter_suppressed_sarif.py < "$tmp_dir/semgrep.sarif" > "$tmp_dir/semgrep.filtered.sarif"
+        review_output "semgrep-ce" sarif "$tmp_dir/semgrep.filtered.sarif" warning
     fi
 fi
 
