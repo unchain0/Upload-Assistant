@@ -66,7 +66,7 @@ def _tracker_contract_groups() -> list[tuple[str, ...]]:
 
 
 def _relative(path: Path) -> str:
-    return str(path.relative_to(ROOT))
+    return path.relative_to(ROOT).as_posix()
 
 
 def _regular_groups(

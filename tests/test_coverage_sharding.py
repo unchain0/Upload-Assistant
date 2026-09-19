@@ -55,7 +55,7 @@ def test_coverage_shards_represent_every_test_file() -> None:
         target.split("::", maxsplit=1)[0] for target in targets
     }
     expected_files = {
-        str(path.relative_to(sharding.ROOT))
+        path.relative_to(sharding.ROOT).as_posix()
         for path in Path(sharding.TESTS_DIR).glob("test_*.py")
     }
 
