@@ -231,8 +231,7 @@ def _result_has_alias_year(result: dict[str, Any], year: str) -> bool:
     if not isinstance(aliases, list):
         return False
     return any(
-        f"({year})" in _alias_name(alias)
-        for alias in cast(list[Any], aliases)
+        f"({year})" in _alias_name(alias) for alias in cast(list[Any], aliases)
     )
 
 

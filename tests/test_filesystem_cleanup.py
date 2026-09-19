@@ -55,14 +55,6 @@ class _Process:
         self.returncode = -9
 
 
-class _Task:
-    def __init__(self) -> None:
-        self.cancelled = False
-
-    def cancel(self) -> None:
-        self.cancelled = True
-
-
 class _Executor:
     def __init__(self) -> None:
         self.shutdown_called = False
@@ -78,26 +70,17 @@ def _reset_globals() -> None:
     cleanup.thread_executor = None
 
 
-def test_cleanup_executor_process_stream_tasks_and_result_errors(
+def test_cleanup_executor_process_streams_and_threads(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     executor = _Executor()
     cleanup.thread_executor = executor  # type: ignore[assignment]
     process = _Process()
     cleanup.running_subprocesses.add(process)  # type: ignore[arg-type]
-    task = _Task()
-    current = object()
-
-    monkeypatch.setattr(cleanup.asyncio, "all_tasks", lambda: {task, current})
-    monkeypatch.setattr(cleanup.asyncio, "current_task", lambda: current)
-
-    async def gather(*_tasks: object, **_kwargs: object):
-        return [RuntimeError("task failed"), asyncio.CancelledError()]
 
     async def no_sleep(_delay: float) -> None:
         return None
 
-    monkeypatch.setattr(cleanup.asyncio, "gather", gather)
     monkeypatch.setattr(cleanup.asyncio, "sleep", no_sleep)
     killed: list[bool] = []
     monkeypatch.setattr(
@@ -110,7 +93,7 @@ def test_cleanup_executor_process_stream_tasks_and_result_errors(
     assert (
         process.terminated and process.stdout.closed and process.stdin.closed
     )
-    assert task.cancelled and killed == [True]
+    assert killed == [True]
 
 
 def test_cleanup_process_timeout_force_kill_and_android_skip(
@@ -143,46 +126,41 @@ def test_cleanup_process_timeout_force_kill_and_android_skip(
     assert not process.killed
 
 
-def test_cleanup_process_permission_errors_and_task_runtime_errors(
+def test_cleanup_process_permission_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     process = _Process(terminate_error=PermissionError("denied"))
     cleanup.running_subprocesses.add(process)  # type: ignore[arg-type]
     monkeypatch.setattr(cleanup, "IS_ANDROID", False)
-    monkeypatch.setattr(
-        cleanup.asyncio,
-        "all_tasks",
-        lambda: (_ for _ in ()).throw(RuntimeError("closed loop")),
-    )
     monkeypatch.setattr(CleanupManager, "kill_all_threads", lambda _self: None)
     asyncio.run(CleanupManager().cleanup())
 
     process = _Process(terminate_error=OSError("denied"))
     cleanup.running_subprocesses.add(process)  # type: ignore[arg-type]
     monkeypatch.setattr(cleanup, "IS_ANDROID", True)
-    monkeypatch.setattr(cleanup.asyncio, "all_tasks", lambda: set())
     asyncio.run(CleanupManager().cleanup())
 
 
-def test_cleanup_gather_runtime_error_is_safe(
+def test_cleanup_does_not_cancel_unrelated_asyncio_tasks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    task = _Task()
-    current = object()
-    monkeypatch.setattr(cleanup.asyncio, "all_tasks", lambda: {task, current})
-    monkeypatch.setattr(cleanup.asyncio, "current_task", lambda: current)
-
-    async def gather(*_args: object, **_kwargs: object):
-        raise RuntimeError("loop closed")
-
-    async def no_sleep(_delay: float) -> None:
-        return None
-
-    monkeypatch.setattr(cleanup.asyncio, "gather", gather)
-    monkeypatch.setattr(cleanup.asyncio, "sleep", no_sleep)
     monkeypatch.setattr(CleanupManager, "kill_all_threads", lambda _self: None)
-    asyncio.run(CleanupManager().cleanup())
-    assert task.cancelled
+
+    async def scenario() -> None:
+        gate = asyncio.Event()
+
+        async def sibling() -> str:
+            await gate.wait()
+            return "survived"
+
+        task = asyncio.create_task(sibling())
+        await CleanupManager().cleanup()
+        assert not task.cancelled()
+        assert not task.done()
+        gate.set()
+        assert await task == "survived"
+
+    asyncio.run(scenario())
 
 
 def test_kill_all_threads_only_terminates_tracked_processes(

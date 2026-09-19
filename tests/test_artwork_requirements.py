@@ -15,7 +15,12 @@ from src.integrations.media.artwork import (
     prepare_artwork,
 )
 from src.integrations.trackers.UNIT3D import UNIT3D
-from upload import _prepare_book_artwork, _prompt_book_meta, _prompt_music_meta
+from upload import (
+    _prepare_book_artwork,
+    _prompt_book_meta,
+    _prompt_game_meta,
+    _prompt_music_meta,
+)
 
 
 @pytest.mark.asyncio
@@ -121,6 +126,32 @@ async def test_prompt_music_meta_rejects_invalid_file_before_accepting_cover(
         await _prompt_music_meta(meta)
 
     assert meta.artwork_path == str(valid_file.resolve())
+
+
+@pytest.mark.asyncio
+async def test_prompt_bjshare_x360_uses_xbox_unlock_choices(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    meta = Meta(
+        category="GAME",
+        trackers=["BJSHARE"],
+        platform="X360",
+        game_system="PAL",
+        game_region="",
+        container="",
+        unattended=False,
+    )
+    monkeypatch.setattr(
+        "src.services.game_preparation.missing_game_fields",
+        lambda _meta: [],
+    )
+    with patch(
+        "upload.CLI_UI.ask_choice", return_value="JTAG/RGH"
+    ) as ask_choice:
+        await _prompt_game_meta(meta)
+
+    assert meta.container == "JTAG/RGH"
+    assert ask_choice.call_args.kwargs["choices"] == ["LT", "JTAG/RGH", "Skip"]
 
 
 @pytest.mark.asyncio

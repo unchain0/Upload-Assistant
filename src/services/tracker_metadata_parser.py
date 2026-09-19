@@ -1,16 +1,12 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
 import asyncio
-import io
 from collections.abc import Mapping, Sequence
-from io import BytesIO
 from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urlparse
 
 import cli_ui
 import click
-import httpx
-from PIL import Image
 
 from src.domain_models.errors import OperationAbortedError
 from src.domain_models.release import Meta
@@ -24,6 +20,10 @@ from src.engines.tracker_description_policy import (
 from src.integrations.external_apis.btn import BtnIdManager
 from src.integrations.filesystem.temp_paths import screenshots_dir
 from src.integrations.mapping.value_coercion import to_int
+from src.integrations.media.artwork import (
+    download_public_image,
+    image_dimensions,
+)
 from src.integrations.observability.runtime_support import (
     buffer_console_logs,
     logger,
@@ -66,7 +66,7 @@ class TrackerMetaManager:
         return await check_images_concurrently(imagelist, meta)
 
     async def check_image_link(
-        self, url: str, request_timeout: httpx.Timeout | None = None
+        self, url: str, request_timeout: float | None = None
     ) -> bool:
         return await check_image_link(url, request_timeout)
 
@@ -187,45 +187,6 @@ def _is_tmdb_image(url: str) -> bool:
     return host == "tmdb.org" or host.endswith(".tmdb.org")
 
 
-async def _fetch_image_download(
-    session: httpx.AsyncClient, url: str
-) -> httpx.Response | None:
-    try:
-        return await session.get(url)
-    except TimeoutError:
-        logger.info(f"[red]Timeout downloading image: {url}")
-    except httpx.HTTPError as error:
-        logger.info(f"[red]Client error downloading image: {url} - {error}")
-    return None
-
-
-async def _download_image_bytes(
-    url: str, request_timeout: httpx.Timeout
-) -> bytes | None:
-    try:
-        async with httpx.AsyncClient(timeout=request_timeout) as session:
-            response = await _fetch_image_download(session, url)
-    except Exception as error:
-        logger.info(f"[red]Session error for image: {url} - {error}")
-        return None
-    if response is None:
-        return None
-    if response.status_code != 200:
-        logger.error(
-            f"[red]Failed to fetch image {url}. Status: {response.status_code}. Skipping."
-        )
-        return None
-    return response.content
-
-
-def _open_image(content: bytes, url: str) -> Image.Image | None:
-    try:
-        return Image.open(BytesIO(content))
-    except Exception as error:
-        logger.error(f"[red]Failed to process image {url}: {error}")
-        return None
-
-
 def _image_height_bounds(
     expected_height: int, meta: Meta
 ) -> tuple[float, float]:
@@ -234,29 +195,35 @@ def _image_height_bounds(
 
 
 def _image_resolution_allowed(
-    image: Image.Image, expected_height: int, meta: Meta, url: str
+    image_height: int, expected_height: int, meta: Meta, url: str
 ) -> bool:
     lower, upper = _image_height_bounds(expected_height, meta)
-    if lower <= image.height <= upper:
+    if lower <= image_height <= upper:
         return True
     logger.info(
-        f"[red]Image {url} resolution ({image.height}p) "
+        f"[red]Image {url} resolution ({image_height}p) "
         f"is outside the allowed range ({int(lower)}-{int(upper)}p). Skipping.[/red]"
     )
     return False
 
 
+def _image_filename(url: str) -> str:
+    filename = Path(urlparse(url).path).name
+    return filename or "image.bin"
+
+
 async def _save_image_content(
-    content: bytes, url: str, image: Image.Image, meta: Meta
+    content: bytes, url: str, dimensions: tuple[int, int], meta: Meta
 ) -> None:
     save_directory = Path(meta.base_dir) / "tmp" / meta.uuid
     save_directory.mkdir(parents=True, exist_ok=True)
-    image_filename = save_directory / Path(url).name
+    image_filename = save_directory / _image_filename(url)
     await asyncio.to_thread(image_filename.write_bytes, content)
     logger.info(f"Saved {url} as {image_filename}")
     meta.image_sizes[url] = len(content)
+    width, height = dimensions
     logger.debug(
-        f"Valid image {url} with resolution {image.width}x{image.height} "
+        f"Valid image {url} with resolution {width}x{height} "
         f"and size {len(content) / 1024:.2f} KiB"
     )
 
@@ -268,12 +235,15 @@ async def _process_verified_image(
     url: str,
     content: bytes,
 ) -> ImageDict | None:
-    image = _open_image(content, url)
-    if image is None:
+    dimensions = image_dimensions(content)
+    if dimensions is None:
+        logger.info(f"[red]Image verification failed: {url}[/red]")
         return None
-    if not _image_resolution_allowed(image, expected_height, meta, url):
+    if not _image_resolution_allowed(
+        dimensions[1], expected_height, meta, url
+    ):
         return None
-    await _save_image_content(content, url, image, meta)
+    await _save_image_content(content, url, dimensions, meta)
     return image_dict
 
 
@@ -281,19 +251,12 @@ async def _verified_image_dict(
     image_dict: ImageDict,
     meta: Meta,
     expected_height: int,
-    request_timeout: httpx.Timeout,
+    request_timeout: float,
 ) -> ImageDict | None:
     url = _normalized_image_url(cast(str, image_dict["raw_url"]))
     if _is_tmdb_image(url):
         return None
-    try:
-        link_ok = await check_image_link(url, request_timeout)
-    except Exception as error:
-        logger.error(f"[red]Error checking image: {url} - {error}")
-        return None
-    if not link_ok:
-        return None
-    content = await _download_image_bytes(url, request_timeout)
+    content = await download_public_image(url, timeout_seconds=request_timeout)
     if content is None:
         return None
     return await _process_verified_image(
@@ -306,7 +269,7 @@ async def _bounded_image_check(
     image_dict: ImageDict,
     meta: Meta,
     expected_height: int,
-    request_timeout: httpx.Timeout,
+    request_timeout: float,
 ) -> ImageDict | None:
     async with semaphore:
         return await _verified_image_dict(
@@ -315,12 +278,15 @@ async def _bounded_image_check(
 
 
 async def _gather_valid_images(tasks: Sequence[Any]) -> list[ImageDict]:
-    try:
-        results = await asyncio.gather(*tasks, return_exceptions=False)
-    except Exception as error:
-        logger.error(f"[red]Error during image processing: {error}")
-        return []
-    return [cast(ImageDict, image) for image in results if image is not None]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    valid: list[ImageDict] = []
+    for result in results:
+        if isinstance(result, BaseException):
+            logger.error(f"[red]Error during image processing: {result}[/red]")
+            continue
+        if result is not None:
+            valid.append(cast(ImageDict, result))
+    return valid
 
 
 async def check_images_concurrently(
@@ -330,10 +296,12 @@ async def check_images_concurrently(
     expected_height = _expected_image_height(meta)
     if expected_height is None:
         return []
-    timeout = httpx.Timeout(15.0, connect=5.0, read=5.0)
+    timeout_seconds = 15.0
     semaphore = asyncio.Semaphore(2)
     tasks = [
-        _bounded_image_check(semaphore, image, meta, expected_height, timeout)
+        _bounded_image_check(
+            semaphore, image, meta, expected_height, timeout_seconds
+        )
         for image in unique_images
     ]
     valid_images = await _gather_valid_images(tasks)
@@ -352,66 +320,15 @@ def _normalized_image_url(url: str) -> str:
     )
 
 
-def _verified_image_bytes(image_data: bytes, url: str) -> bool:
-    try:
-        image = Image.open(io.BytesIO(image_data))
-        image.verify()
-        return True
-    except (OSError, SyntaxError) as error:
-        logger.info(
-            "[red]Image verification failed (corrupt image): "
-            f"{url} {error}[/red]"
-        )
-        return False
-
-
-def _verified_image_content(response: httpx.Response, url: str) -> bool:
-    if response.status_code != 200:
-        logger.error(
-            f"[red]Failed to retrieve image: {url} "
-            f"(status code: {response.status_code})[/red]"
-        )
-        return False
-    content_type = response.headers.get("Content-Type", "").lower()
-    if "image" not in content_type:
-        logger.info(f"[red]Content type is not an image: {url}[/red]")
-        return False
-    return _verified_image_bytes(response.content, url)
-
-
-async def _fetch_image_response(
-    session: httpx.AsyncClient, url: str
-) -> httpx.Response | None:
-    try:
-        return await session.get(url)
-    except TimeoutError:
-        logger.info(f"[red]Timeout checking image link: {url}[/red]")
-        return None
-    except Exception as error:
-        logger.info(
-            f"[red]Exception occurred while checking image: {url} - "
-            f"{error!s}[/red]"
-        )
-        return None
-
-
 async def check_image_link(
-    url: str, request_timeout: httpx.Timeout | None = None
+    url: str, request_timeout: float | None = None
 ) -> bool:
     url = _normalized_image_url(url)
-    request_timeout = request_timeout or httpx.Timeout(20.0, connect=10.0)
-    try:
-        async with httpx.AsyncClient(
-            timeout=request_timeout,
-            verify=False,  # noqa: S501 -- tracker artwork links may use hosts with invalid TLS.
-        ) as session:
-            response = await _fetch_image_response(session, url)
-            return bool(response and _verified_image_content(response, url))
-    except Exception as error:
-        logger.info(
-            f"[red]Session creation failed for: {url} - {error!s}[/red]"
-        )
-        return False
+    timeout_seconds = 20.0 if request_timeout is None else request_timeout
+    return (
+        await download_public_image(url, timeout_seconds=timeout_seconds)
+        is not None
+    )
 
 
 def _apply_unit3d_ids(

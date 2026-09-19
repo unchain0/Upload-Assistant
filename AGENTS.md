@@ -1,106 +1,95 @@
 # PROJECT KNOWLEDGE BASE
 
-**Generated:** 2026-08-03
-**Analyzed commit:** fee9e80a
-**Analyzed branch:** development
+**Updated:** 2026-09-03
 
 ## OVERVIEW
 
-Upload-Assistant is a Python 3.14 CLI and Flask/Waitress WebUI for preparing media, checking duplicates, creating torrent or Usenet artifacts, and uploading to tracker/indexer adapters. The runtime is a monolith: root `upload.py` orchestrates a flat `src` package and can launch the WebUI in exclusive server mode.
+Upload-Assistant is a Python 3.14+ CLI for preparing media releases, resolving metadata, checking duplicates, creating torrent/Usenet artifacts, and uploading to tracker/indexer integrations. The current codebase uses a MASA-style layered architecture: pure domain models and engines, use-case services, infrastructure integrations, a thin CLI delivery layer, and `src/bootstrap.py` as the composition root for shared application services.
+
+There is no Flask/Waitress WebUI in the current tree. Do not rely on the pre-MASA module layout (`src/meta.py`, `src/prep.py`, `src/trackersetup.py`, `web_ui/`, etc.); those paths are obsolete.
 
 ## STRUCTURE
 
 ```text
 Upload-Assistant/
-├── upload.py              # CLI entrypoint and per-release orchestration
-├── config-generator.py    # Interactive data/config.py generator/migrator
-├── src/                   # Shared preparation, metadata, client, and upload code
-│   └── trackers/          # Tracker adapters and protocol-family bases
-├── web_ui/                # Flask API/auth plus template-loaded React frontend
-├── tests/                 # Pytest regression suites; no shared conftest.py
-├── data/                  # Shipped schema/templates mixed with ignored user state
-├── bin/                   # Runtime binary managers and Docker download helpers
-├── scripts/               # Linux/Windows installers and Inno Setup packaging
-└── docs/                  # Hand-maintained operational and feature guides
+├── upload.py                  # CLI entrypoint and release orchestration
+├── config-generator.py        # Interactive configuration generator/migrator
+├── src/
+│   ├── domain_models/         # Pure release/configuration/domain types and errors
+│   ├── engines/               # Pure deterministic policies/calculations
+│   ├── services/              # Application use cases and consumer-owned ports
+│   ├── integrations/          # External APIs, filesystem, media, trackers, clients, runtime tools
+│   ├── delivery/cli/          # CLI argument/schema boundary
+│   └── bootstrap.py           # Composition root for shared services
+├── tests/                     # Pytest regression and edge-case suites
+├── scripts/                   # Quality gates, packaging and maintenance helpers
+├── docs/                      # User and architecture documentation
+└── data/                      # Shipped defaults plus ignored runtime/user state
 ```
 
 ## WHERE TO LOOK
 
 | Task | Location | Notes |
 | --- | --- | --- |
-| CLI flow or queue execution | `upload.py`, `src/args.py`, `src/queuemanage.py` | `main()` -> `do_the_thing()` -> `process_meta()` |
-| Preparation lifecycle | `src/prep.py`, `src/prep_helpers.py`, `src/meta.py` | `Meta` is the shared cross-domain state contract |
-| Metadata providers | `src/metadata_searching.py`, `src/tmdb.py`, `src/imdb.py`, `src/music/` | Provider caches live behind `src/metadata_cache.py` |
-| Screenshots and artwork | `src/takescreens.py`, `src/uploadscreens.py`, `src/temp_paths.py` | Release images must use typed temp subdirectories |
-| Tracker registration/upload | `src/trackersetup.py`, `src/trackerhandle.py`, `src/trackers/` | Registry and auth-class sets are static |
-| Torrent clients | `src/clients.py`, `src/torrent_clients/` | Path mapping/link safety is centralized in `path_utils.py` |
-| WebUI/API/security | `web_ui/server.py`, `web_ui/auth.py`, `web_ui/static/js/` | Server owns routes, auth, CSRF, browse roots, execution |
-| Config schema and migration | `data/example_config.py`, `config-generator.py`, `src/configvalidator.py` | `data/config.py` is ignored user state, not the schema |
-| CI and releases | `.github/workflows/` | PR compile/test/Docker gates; release workflows package Docker/Windows |
+| CLI execution/orchestration | `upload.py`, `src/delivery/cli/arguments.py` | Keep transport parsing separate from domain/use-case logic |
+| Release state and IDs | `src/domain_models/release.py`, `src/domain_models/ids.py` | Domain types must not import integrations/delivery |
+| Preparation workflow | `src/services/preparation_service.py`, category preparation services | Services coordinate effects; pure rules belong in engines |
+| Pure policies | `src/engines/` | No filesystem/network/framework I/O |
+| Metadata providers | `src/integrations/external_apis/`, `src/services/metadata_service.py` | Provider DTOs/errors must not leak into services |
+| Screenshots/artwork/spectrograms | `src/integrations/media/`, `src/integrations/filesystem/temp_paths.py` | Keep generated artifacts in typed temp locations |
+| Tracker lifecycle | `src/services/tracker_*`, `src/integrations/trackers/` | Registry/adapters are integrations; orchestration is a service concern |
+| Torrent clients | `src/integrations/torrent_clients/` | Path mapping and client-specific TLS/connection behavior stay here |
+| Runtime binary downloads | `src/integrations/runtime_tools/` | Downloads are bounded/checksum-verified; archive extraction must stay confined |
+| Configuration | `src/domain_models/configuration.py`, `src/services/configuration_*`, `src/integrations/configuration/`, `src/bootstrap.py` | `data/config.py` is mutable user state, not source schema |
+| MASA rules | `docs/architecture/masa.md`, `scripts/check_masa_architecture.py` | Preserve the import graph when changing layers |
 
-## CODE MAP
+## ARCHITECTURE RULES
 
-Python LSP was unavailable at generation time; reference counts below come from repository text/import analysis.
+- `domain_models` is pure and imports none of the other application layers.
+- `engines` imports domain types only and must remain deterministic and I/O-free.
+- `services` orchestrates use cases with explicit dependencies/ports and domain contracts.
+- `integrations` owns HTTP/SDK/DB/filesystem/subprocess details, mapping, and infrastructure-error translation.
+- `delivery` validates/parses transport input and delegates to services; it must not call integrations directly.
+- `src/bootstrap.py` may know concrete integrations for dependency wiring but must not contain business rules.
+- External/raw data should be converted to domain types at boundaries; do not introduce new untyped payload contracts in services/engines.
 
-| Symbol | Type | Location | Refs | Role |
-| --- | --- | --- | ---: | --- |
-| `main` | async function | `upload.py:3000` | WebUI + script | Public CLI/in-process entrypoint |
-| `do_the_thing` | async function | `upload.py:2162` | 1 direct | Config, arguments, WebUI mode, queue loop |
-| `process_meta` | async function | `upload.py:1106` | 1 direct | Per-release preparation and upload pipeline |
-| `Meta` | dataclass-like state | `src/meta.py` | ~183 files | Shared metadata and mutable pipeline contract |
-| `Prep` | class | `src/prep.py` | core pipeline | Media/category-specific preparation dispatch |
-| `TrackerSetup` | class | `src/trackersetup.py:107` | 5 Python files | Registry lookup, filtering, claims, requests, auth groups |
-| `tracker_class_map` | mapping | `src/trackersetup.py:1334` | all adapters | Tracker name to concrete class registry |
-| `Common` | class | `src/trackers/common.py:32` | high fan-in | Shared torrent, language, media, and description helpers |
-| `release_temp_dir` | function | `src/temp_paths.py` | 1 internal call | Root used by the typed image-directory helpers |
-| `app` | Flask app | `web_ui/server.py:332` | `upload.py` | Web pages, APIs, auth middleware, execution control |
+## PROJECT CONVENTIONS
 
-## CONVENTIONS
+- Python target: 3.14+.
+- Dependency/environment management is `uv`; do not add a parallel pip/requirements workflow.
+- Use absolute first-party imports (`src...`).
+- Preserve async boundaries. Move blocking filesystem, archive, hashing, subprocess, image/media, or other heavy work off the event loop with the existing `asyncio.to_thread` pattern when appropriate.
+- Network downloads must have bounded size/timeouts; executable/runtime-tool downloads must keep checksum verification and safe archive extraction.
+- Never disable TLS verification except when an explicit user configuration requests it; normalize string configuration before truthiness decisions.
+- Treat `data/config.py`, cookies, auth/session files, caches and `tmp/` as runtime/user state that may contain secrets.
+- Keep tracker-specific policy in tracker integrations or tracker services rather than generic provider/domain modules.
+- Prefer focused regression tests for every bug/edge case. Tests commonly use `tmp_path`, `monkeypatch`, `AsyncMock`, and small fakes.
 
-- Python target is 3.14. Ruff uses line length 176 and absolute first-party imports from `cogs`, `data`, `src`, and `web_ui`; see `pyproject.toml` for enabled rule families and exclusions.
-- `upload.py` intentionally permits late imports (`E402`). `UNIT3D_TEMPLATE.py` intentionally permits its uppercase module name (`N999`).
-- Tests use `test_<subject>.py`, `test_<behavior>`, `tmp_path`, import-qualified monkeypatches, `AsyncMock`, and `pytest.mark.asyncio`; there is no repository pytest configuration.
-- Frontend React is loaded through Flask templates with CDN React/Babel/Tailwind, not bundled. `shared_utils.js` must load before `app.js` or `config_app.js`.
-- `data/example_config.py` is the checked-in schema/default source. The WebUI and generator write ignored `data/config.py`; Docker restores missing built-ins but only force-syncs `data/version.py`.
-- Tracker names are normalized for registry lookup, while individual config keys may retain site-specific casing. Follow the existing adapter and example-config key exactly.
+## VALIDATION
 
-## ANTI-PATTERNS (THIS PROJECT)
-
-- Do not put screenshots, artwork, menu captures, or spectrograms directly in the release temp root; consumers enumerate images by typed subdirectory.
-- Do not send `MUSIC` through video/TMDB/screenshot/episode preparation. It has a dedicated pipeline before the shared tracker/client stage.
-- Do not treat `data/config.py`, cookies, auth files, cache JSON, or `tmp/` contents as source. They are mutable user/runtime state and may contain secrets.
-- Do not weaken WebUI auth, same-origin/CSRF checks, realpath browse-root confinement, or HTML sanitization when changing routes or frontend rendering.
-- Do not add a tracker class without its constructor contract, `tracker`, `supported_categories`, `auth_type`, registry entry, example config, and focused behavior tests.
-- Do not route qBittorrent bandwidth control through the QUI proxy; `src/qbitwait.py` requires the direct qBittorrent endpoint.
-- Do not set Docker `user:` when relying on PUID/PGID ownership repair; the entrypoint must begin as root and then drop privileges.
-
-## UNIQUE STYLES
-
-- The import package is the flat `src/` directory; there is no `src/<project>` package or console-script metadata.
-- `Meta` carries hundreds of fields between preparation stages and adapters; extend it deliberately and preserve dict-like compatibility used throughout the tree.
-- Tracker support combines standalone adapters with `UNIT3D`, `NEXUSPHP`, `AVISTAZ`, and `USENET` families, all eagerly registered in one map.
-- `data/` deliberately mixes immutable shipped defaults with persistent ignored configuration, credentials, cookies, tags, and caches.
-- WebUI execution can call `upload.main()` in-process or spawn `upload.py`; progress crosses the boundary through `src/webui_progress.py`.
-
-## COMMANDS
+Use the project's existing tools rather than adding overlapping linters/typecheckers:
 
 ```bash
-python -m pip install -r requirements.txt
-python upload.py <path> [arguments]
-python -m pip install pytest pytest-asyncio
-PYTHONPATH=. python -m pytest -q
-python -m compileall src web_ui upload.py config-generator.py
-ruff check .
-pyright
-docker build .
-cd web_ui/static/js && npm ci && npm run lint:react && npm run format:check
+uv lock --check
+uv run python scripts/check_repository_policy.py
+uv run python -m compileall -q src upload.py config-generator.py scripts
+uv run ruff format --check .
+uv run ruff check .
+uv run python scripts/check_radon_complexity.py
+uv run basedpyright
+uv run python scripts/check_masa_architecture.py
+uv run pytest -q
 ```
 
-Pytest and pytest-asyncio are installed explicitly by CI, not by `requirements.txt`. CI copies `data/example_config.py` to `data/config.py`; do not overwrite a real local config when reproducing that setup.
+`scripts/run-quality-gates.sh` aggregates the complete gate, including coverage. On memory-constrained systems, run the same checks serially and run pytest in small file batches instead of using parallel workers.
 
-## NOTES
+The repository enforces Radon rank A / cyclomatic complexity <= 5 and MASA import boundaries. `scripts/run_coverage_shards.py` exists for coverage collection; do not increase concurrency merely to make the suite faster on memory-constrained hosts.
 
-- `AGENTS.md` and `CLAUDE.md` are ignored by `.gitignore`; use `git add -f` only if intentionally committing generated guidance.
-- WebUI-only startup requires explicit browse roots from `UA_BROWSE_ROOTS` or CLI paths. Docker values are container-side paths.
-- Normal development auth state defaults under `data/`; Docker commonly persists it under the mounted XDG config directory.
-- `README.md` currently links to missing `docs/web-ui.md`; the live WebUI guides are `docs/web-ui-basic.md` and `docs/web-ui-api.md`.
+## SAFETY / ANTI-PATTERNS
+
+- Do not use unsafe archive member extraction (`extract`/`extractall`) for untrusted archives without confinement and size limits.
+- Do not read large downloaded/extracted binaries wholly into memory when streaming/hash-on-disk is sufficient.
+- Do not use `shell=True`, `os.system`, `eval`, `exec`, unsafe pickle/YAML loading, or unbounded external downloads.
+- Do not swallow infrastructure errors silently; log actionable context or translate them to the appropriate domain/application outcome.
+- Do not add global mutable collaborators/service locators; dependencies should be visible in constructors/factories/composition wiring.
+- Do not revert or normalize unrelated user changes just to reduce a diff.

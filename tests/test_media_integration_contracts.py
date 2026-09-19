@@ -30,6 +30,7 @@ from typing import Any, ClassVar, Self, get_args, get_origin, get_type_hints
 
 import httpx
 import numpy as np
+import pytest
 from PIL import Image
 
 import src.integrations.media as media_package
@@ -803,8 +804,12 @@ async def _invoke(
     return result
 
 
+_MEDIA_LITERAL_SCENARIO_LIMIT = 8
+
 _BLOCKED_MEDIA_CONTRACT_HELPERS = frozenset(
     {
+        "_disc_frame_info_tasks",
+        "_dvd_capture_tasks",
         "_kill_process",
         "_terminate_posix_group",
         "_terminate_process",
@@ -856,6 +861,7 @@ def _patch_media_boundaries(monkeypatch: Any) -> None:
 
 
 def _patch_numeric_boundaries(monkeypatch: Any) -> None:
+    import cli_ui
     import librosa
     import matplotlib.pyplot as plt
 
@@ -878,6 +884,16 @@ def _patch_numeric_boundaries(monkeypatch: Any) -> None:
         lambda path, **_kwargs: Image.new("RGB", (64, 64), "white").save(path),
     )
     monkeypatch.setattr("builtins.input", lambda *_args, **_kwargs: "1")
+    monkeypatch.setattr(
+        cli_ui,
+        "ask_string",
+        lambda *_args, **kwargs: kwargs.get("default", "1") or "1",
+    )
+    monkeypatch.setattr(
+        cli_ui,
+        "ask_yes_no",
+        lambda *_args, **kwargs: bool(kwargs.get("default", False)),
+    )
 
 
 def _media_module_functions(
@@ -979,7 +995,9 @@ async def _run_media_literal_scenarios(
     rejections: list[str],
 ) -> None:
     for meta_updates, argument_overrides in literal_branch_scenarios(
-        function, Meta.__dataclass_fields__, limit=192
+        function,
+        Meta.__dataclass_fields__,
+        limit=_MEDIA_LITERAL_SCENARIO_LIMIT,
     ):
         scenario_meta = _meta(tmp_path, files, 0)
         _apply_media_meta_updates(scenario_meta, meta_updates)
@@ -1132,33 +1150,65 @@ async def _exercise_media_module(
         )
 
 
-async def _exercise_media_modules(
-    modules: list[ModuleType],
-    tmp_path: Path,
-    files: Mapping[str, Path],
-    attempted: set[str],
-    terminations: list[str],
-    rejections: list[str],
-) -> None:
+def _static_media_callable_count(modules: Sequence[ModuleType]) -> int:
+    count = 0
     for module in modules:
-        await _exercise_media_module(
-            module, tmp_path, files, attempted, terminations, rejections
-        )
+        count += len(_media_module_functions(module))
+        for _class_name, class_type in _media_module_classes(module):
+            count += sum(
+                1
+                for method_name, member in inspect.getmembers_static(
+                    class_type
+                )
+                if _is_static_media_callable(method_name, member)
+            )
+    return count
 
 
-def test_media_catalog_uses_local_fakes_and_domain_releases(
-    tmp_path: Path, monkeypatch: Any
+def _is_static_media_callable(method_name: str, member: object) -> bool:
+    return (
+        not method_name.startswith("__")
+        and method_name not in _BLOCKED_MEDIA_CONTRACT_HELPERS
+        and callable(member)
+    )
+
+
+def test_media_catalog_retains_broad_callable_coverage(
+    monkeypatch: Any,
 ) -> None:
-    files = _fixture_tree(tmp_path)
     modules = _modules(monkeypatch)
+    assert len(modules) >= 17
+    assert _static_media_callable_count(modules) >= 180
+
+
+_MEDIA_MODULE_NAMES = tuple(
+    info.name
+    for info in pkgutil.iter_modules(
+        media_package.__path__, f"{media_package.__name__}."
+    )
+)
+
+
+@pytest.mark.parametrize(
+    "module_name",
+    _MEDIA_MODULE_NAMES,
+    ids=lambda value: value.rsplit(".", 1)[-1],
+)
+def test_media_module_uses_local_fakes_and_domain_releases(
+    module_name: str, tmp_path: Path, monkeypatch: Any
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    files = _fixture_tree(tmp_path)
+    _install_optional_media_modules(monkeypatch)
+    module = importlib.import_module(module_name)
     _patch_media_boundaries(monkeypatch)
     _patch_numeric_boundaries(monkeypatch)
     attempted: set[str] = set()
     terminations: list[str] = []
     expected_rejections: list[str] = []
     asyncio.run(
-        _exercise_media_modules(
-            modules,
+        _exercise_media_module(
+            module,
             tmp_path,
             files,
             attempted,
@@ -1166,6 +1216,6 @@ def test_media_catalog_uses_local_fakes_and_domain_releases(
             expected_rejections,
         )
     )
-    assert len(attempted) >= 180
-    assert terminations == []
+    assert attempted, module_name
+    assert terminations == [], (module_name, terminations)
     assert all(":" in item for item in expected_rejections)

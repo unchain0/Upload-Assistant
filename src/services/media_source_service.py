@@ -5,7 +5,7 @@ import json
 import traceback
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from src.domain_models.processing import WeirdSystemError
 from src.domain_models.release import Meta
@@ -13,7 +13,7 @@ from src.services.runtime_support import logger
 
 GuessitFn = Callable[[str, dict[str, Any] | None], dict[str, Any]]
 _guessit_module = importlib.import_module("guessit")
-_guessit_fn: GuessitFn = _guessit_module.guessit
+_guessit_fn = cast(GuessitFn, _guessit_module.guessit)
 
 
 def guessit_fn(
@@ -37,7 +37,7 @@ async def _load_mediainfo(
             encoding="utf-8",
         )
         loaded = json.loads(text)
-        return loaded if isinstance(loaded, dict) else {}
+        return cast(dict[str, Any], loaded) if isinstance(loaded, dict) else {}
     except Exception:
         logger.debug("No mediainfo.json")
         return {}

@@ -124,6 +124,42 @@ def test_capture_size_and_cleanup_policies() -> None:
     assert not capture._should_cleanup_after_capture(Meta(), False)
 
 
+def test_disc_frame_info_plan_validates_timestamps_before_coroutines(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source, _bdinfo = _disc_source(tmp_path)
+    frame_info = AsyncMock()
+    monkeypatch.setattr(capture, "get_frame_info", frame_info)
+    plan = capture._DiscCapturePlan(
+        meta=_disc_meta(tmp_path, frame_overlay=True),
+        img_host="imgbb",
+        base_dir=str(tmp_path),
+        folder_id="disc-release",
+        sanitized_filename="Disc",
+        capture_group="DISC",
+        screenshot_dir=tmp_path / "screenshots",
+        source=capture._DiscSourceInfo(
+            file_path=str(source),
+            length=120.0,
+            frame_rate=24.0,
+            keyframe="",
+        ),
+        num_screens=1,
+        existing_screens=[],
+        hdr_tonemap=False,
+        ss_times=["10"],
+        force_screenshots=False,
+        cleanup_after_capture=False,
+        start_time=0.0,
+        loglevel="quiet",
+    )
+
+    with pytest.raises(ValueError, match="requires 2 screenshot timestamps"):
+        capture._disc_frame_info_tasks(plan)
+
+    frame_info.assert_not_called()
+
+
 def test_disc_screenshots_early_exits_and_invalid_fps(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

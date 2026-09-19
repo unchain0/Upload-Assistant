@@ -32,7 +32,8 @@ class DigitalCore:
     tracker = "DIGITALCORE"
     display_name = "DigitalCore"
     base_url = "https://digitalcore.club"
-    api_base_url = f"{base_url}/api/v1/torrents"
+    site_api_base_url = f"{base_url}/api/v1"
+    api_base_url = f"{site_api_base_url}/torrents"
     banned_groups = ("",)
     # DigitalCore's renderer is reliable with its own ShareX image service and
     # PTScreens. External hosts may be accepted syntactically but are often
@@ -614,6 +615,67 @@ class DigitalCore:
             return True
         return bool(re.search(r"\.r\d{2,}$", lowered))
 
+    def _upload_category(self, meta: Meta) -> int:
+        category = self.get_category_id(meta)
+        if category is None:
+            raise ValueError(
+                f"{self.tracker}: Unsupported category/resolution combination: "
+                f"category={meta.category!r}, resolution={meta.resolution!r}"
+            )
+        return category
+
+    @staticmethod
+    def _normalized_language_tag(raw_value: str) -> str:
+        tag = re.sub(r"\s+", "-", raw_value.strip().lower())
+        return re.sub(r"[^a-z0-9_-]", "", tag)
+
+    @staticmethod
+    def _valid_language_tag(tag: str) -> bool:
+        return bool(tag) and tag != "all"
+
+    @classmethod
+    def _normalized_language(cls, value: str | None) -> str:
+        tags = map(
+            cls._normalized_language_tag,
+            str(value or "").split(","),
+        )
+        filtered = filter(cls._valid_language_tag, tags)
+        return ",".join(dict.fromkeys(filtered))
+
+    async def _imdb_lookup_response(self, value: str) -> httpx.Response | None:
+        try:
+            response = await self.session.get(
+                f"{self.site_api_base_url}/moviedata/imdb/{value}"
+            )
+            response.raise_for_status()
+        except httpx.HTTPError as error:
+            logger.warning(
+                f"[yellow]{self.tracker}: Unable to pre-resolve IMDb {value}: "
+                f"{error}. Falling back to the external IMDb ID.[/yellow]"
+            )
+            return None
+        return response
+
+    @staticmethod
+    def _resolved_imdb_payload_id(
+        payload: Mapping[str, Any], fallback: str
+    ) -> str:
+        resolved = payload.get("id") or payload.get("internalId")
+        return str(resolved) if resolved else fallback
+
+    async def _resolve_imdb_id(self, imdb_id: str | None) -> str:
+        value = str(imdb_id or "").strip()
+        if not value:
+            return "0"
+        if not re.fullmatch(r"tt\d+", value):
+            return value
+        response = await self._imdb_lookup_response(value)
+        if response is None:
+            return value
+        return self._resolved_imdb_payload_id(
+            self._response_data(response), value
+        )
+
     async def fetch_data(self, meta: Meta) -> dict[str, Any]:
         anon = (
             "1"
@@ -623,24 +685,31 @@ class DigitalCore:
         )
 
         return {
-            "category": self.get_category_id(meta),
-            "imdbId": meta.imdb_tt,
+            "category": self._upload_category(meta),
+            "imdbId": await self._resolve_imdb_id(meta.imdb_tt),
             "nfo": await self.generate_description(meta),
             "mediainfo": await self.mediainfo(meta),
             "reqid": "0",
-            "section": "new",
-            "frileech": "1",
             "anonymousUpload": anon,
             "p2p": "0",
             "unrar": "1",
+            "othergenre": "",
             "firstpic": await self.get_firstpic(meta),
-            "language": meta.book_language,
+            "language": self._normalized_language(meta.book_language),
+            "requestModQueue": "0",
+            "modQueueMessage": "",
         }
 
     async def upload(self, meta: Meta) -> bool:
-        data = await self.fetch_data(meta)
-        torrent_title = await self.get_name(meta)
         status = meta.tracker_status.setdefault(self.tracker, {})
+        try:
+            data = await self.fetch_data(meta)
+            torrent_title = await self.get_name(meta)
+        except Exception as error:
+            status["status_message"] = (
+                f"data error: Unable to prepare upload: {error}"
+            )
+            return False
         if meta.debug:
             return await self._debug_upload(meta, data, status)
         return await self._upload_release(meta, data, torrent_title, status)
@@ -657,7 +726,8 @@ class DigitalCore:
             return await self._handle_upload_response(meta, status, response)
         except httpx.HTTPStatusError as error:
             status["status_message"] = (
-                f"data error: HTTP {error.response.status_code} - {error.response.text}"
+                f"data error: HTTP {error.response.status_code} - "
+                f"{self._response_message(error.response)}"
             )
             return False
         except httpx.TimeoutException:
@@ -725,7 +795,7 @@ class DigitalCore:
         response_data = self._response_data(response)
         if response.status_code != 200 or not response_data.get("id"):
             status["status_message"] = (
-                f"data error: {response_data.get('message', 'Unknown API error.')}"
+                f"data error: {self._response_message(response)}"
             )
             return False
         torrent_id = str(response_data["id"])
@@ -736,15 +806,52 @@ class DigitalCore:
             self.tracker,
             headers=dict(self.session.headers),
             downurl=f"{self.api_base_url}/download/{torrent_id}",
+            allowed_hosts=("digitalcore.club",),
+            max_size=8 * 1024 * 1024,
         )
         return True
 
     @staticmethod
     def _response_data(response: httpx.Response) -> dict[str, Any]:
-        payload = response.json()
+        try:
+            payload = response.json()
+        except ValueError:
+            return {}
         return (
             cast(dict[str, Any], payload) if isinstance(payload, dict) else {}
         )
+
+    @staticmethod
+    def _duplicate_response_message(data: Mapping[str, Any]) -> str | None:
+        if data.get("error") != "Duplicate":
+            return None
+        torrent_name = str(data.get("torrent_name") or "").replace("_", " ")
+        torrent_id = data.get("torrent_id")
+        if not torrent_name or not torrent_id:
+            return None
+        return f"Duplicate: {torrent_name} already exists (torrent ID {torrent_id})."
+
+    @staticmethod
+    def _structured_response_message(data: Mapping[str, Any]) -> str | None:
+        message = data.get("message")
+        if message:
+            return str(message)
+        nested = data.get("data")
+        if isinstance(nested, Mapping) and nested.get("message"):
+            return str(nested["message"])
+        return None
+
+    @classmethod
+    def _response_message(cls, response: httpx.Response) -> str:
+        data = cls._response_data(response)
+        duplicate = cls._duplicate_response_message(data)
+        if duplicate:
+            return duplicate
+        structured = cls._structured_response_message(data)
+        if structured:
+            return structured
+        text = response.text.strip()
+        return text if text else "Unknown API error."
 
     @staticmethod
     def _request_error_message(error: httpx.RequestError) -> str:

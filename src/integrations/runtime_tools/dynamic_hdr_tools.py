@@ -236,24 +236,40 @@ async def _install_tool(
     binary: Path,
     version_file: Path,
 ) -> str:
-    staging = _prepare_download_dir(target_dir)
+    staging = await asyncio.to_thread(_prepare_download_dir, target_dir)
     archive = staging / asset
     try:
         await _download_tool_archive(tool, command, asset, archive)
         await asyncio.to_thread(_safe_extract, archive, staging)
-        candidate = _extracted_tool_candidate(
-            staging, command, extension, asset
+        candidate = await asyncio.to_thread(
+            _extracted_tool_candidate,
+            staging,
+            command,
+            extension,
+            asset,
         )
-        staged_binary = _stage_tool_binary(
-            candidate, staging, command, extension, system
+        staged_binary = await asyncio.to_thread(
+            _stage_tool_binary,
+            candidate,
+            staging,
+            command,
+            extension,
+            system,
         )
-        staged_version = _stage_tool_version(staging, tool, command)
-        _promote_tool(
-            target_dir, binary, version_file, staged_binary, staged_version
+        staged_version = await asyncio.to_thread(
+            _stage_tool_version, staging, tool, command
+        )
+        await asyncio.to_thread(
+            _promote_tool,
+            target_dir,
+            binary,
+            version_file,
+            staged_binary,
+            staged_version,
         )
         return str(binary)
     finally:
-        shutil.rmtree(staging, ignore_errors=True)
+        await asyncio.to_thread(shutil.rmtree, staging, ignore_errors=True)
 
 
 async def get_tool(base_dir: str, tool: str) -> str:

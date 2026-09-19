@@ -2,10 +2,10 @@
 import asyncio
 import contextlib
 import hashlib
-import io
 import json
 import os
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -512,35 +512,45 @@ def _decode_spectrogram_audio(
     file_path: str | Path,
     duration: int,
     sample_rate: int,
-) -> bytes:
+) -> Path:
     command = _ffmpeg_spectrogram_command(
         stream_index, file_path, duration, sample_rate
     )
-    try:
-        result = subprocess.run(  # noqa: S603  # nosemgrep: dangerous-subprocess-use-audit
-            command, capture_output=True, check=False, timeout=duration + 120
-        )
-    except (OSError, subprocess.TimeoutExpired) as error:
-        raise RuntimeError(
-            f"Could not decode audio stream {stream_index}: {error}"
-        ) from error
-    if result.returncode or not result.stdout:
+    with tempfile.NamedTemporaryFile(
+        prefix="ua-spectrogram-", suffix=".wav", delete=False
+    ) as decoded_file:
+        decoded_path = Path(decoded_file.name)
+        try:
+            result = subprocess.run(  # noqa: S603  # nosemgrep: dangerous-subprocess-use-audit
+                command,
+                stdout=decoded_file,
+                stderr=subprocess.PIPE,
+                check=False,
+                timeout=duration + 120,
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            decoded_path.unlink(missing_ok=True)
+            raise RuntimeError(
+                f"Could not decode audio stream {stream_index}: {error}"
+            ) from error
+    if result.returncode or not decoded_path.stat().st_size:
         detail = (
             result.stderr.decode(errors="replace").strip()
             or "no audio was produced"
         )
+        decoded_path.unlink(missing_ok=True)
         raise RuntimeError(
             f"FFmpeg could not decode audio stream {stream_index}: {detail}"
         )
-    return result.stdout
+    return decoded_path
 
 
 def _load_spectrogram_samples(
-    decoded_audio: bytes, stream_index: int
+    decoded_audio: Path, stream_index: int
 ) -> tuple[Any, int]:
     try:
         samples, actual_sample_rate = librosa.load(
-            io.BytesIO(decoded_audio), sr=None, mono=True
+            decoded_audio, sr=None, mono=True
         )
     except Exception as error:
         raise RuntimeError(
@@ -658,29 +668,34 @@ def generate_spectrogram(
     decoded_audio = _decode_spectrogram_audio(
         stream_index, file_path, duration, sample_rate
     )
-    samples, actual_sample_rate = _load_spectrogram_samples(
-        decoded_audio, stream_index
-    )
-    n_fft, hop_length = get_stft_parameters(samples.size)
-    stft = np.abs(librosa.stft(samples, n_fft=n_fft, hop_length=hop_length))
-    db_spectrogram = librosa.amplitude_to_db(stft, ref=np.max)  # pyright: ignore[reportUnknownMemberType]
-    font_properties, supports_unicode = _resolved_plot_font_state(
-        font_properties, supports_unicode
-    )
-    return _render_spectrogram(
-        db_spectrogram,
-        actual_sample_rate,
-        hop_length,
-        stream_index,
-        stream_label,
-        stream_lang,
-        duration,
-        source_position,
-        source_name,
-        output_dir,
-        font_properties,
-        supports_unicode,
-    )
+    try:
+        samples, actual_sample_rate = _load_spectrogram_samples(
+            decoded_audio, stream_index
+        )
+        n_fft, hop_length = get_stft_parameters(samples.size)
+        stft = np.abs(
+            librosa.stft(samples, n_fft=n_fft, hop_length=hop_length)
+        )
+        db_spectrogram = librosa.amplitude_to_db(stft, ref=np.max)  # pyright: ignore[reportUnknownMemberType]
+        font_properties, supports_unicode = _resolved_plot_font_state(
+            font_properties, supports_unicode
+        )
+        return _render_spectrogram(
+            db_spectrogram,
+            actual_sample_rate,
+            hop_length,
+            stream_index,
+            stream_label,
+            stream_lang,
+            duration,
+            source_position,
+            source_name,
+            output_dir,
+            font_properties,
+            supports_unicode,
+        )
+    finally:
+        decoded_audio.unlink(missing_ok=True)
 
 
 type SourceStreams = list[tuple[int, Path, list[dict[str, Any]]]]

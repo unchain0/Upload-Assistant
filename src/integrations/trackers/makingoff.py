@@ -2901,7 +2901,7 @@ class MakingOff:
         release_name = meta.basename_no_ext or meta.name or meta.uuid
         release_filename = str(release_name).replace(" ", ".")
         named_torrent = temp_dir / f"{release_filename}.torrent"
-        shutil.copy2(torrent_path, named_torrent)
+        await asyncio.to_thread(shutil.copy2, torrent_path, named_torrent)
         return str(named_torrent), release_filename
 
     def _zip_subtitles(

@@ -256,8 +256,7 @@ def test_search_unattended_multiple_results_skips_without_prompt(
 ) -> None:
     manager = TvmazeManager()
     candidates = [
-        {"show": _show(index, name="Paradise Hotel")}
-        for index in range(1, 11)
+        {"show": _show(index, name="Paradise Hotel")} for index in range(1, 11)
     ]
     monkeypatch.setattr(
         manager, "_make_tvmaze_request", AsyncMock(return_value=candidates)

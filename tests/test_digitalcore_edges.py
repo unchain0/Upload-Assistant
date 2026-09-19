@@ -344,3 +344,128 @@ def test_digitalcore_dupe_filter_keeps_compatible_webdl() -> None:
 
 def test_digitalcore_normalizes_generic_web_source() -> None:
     assert DigitalCore._normalized_source_type("WEB") == "WEBDL"
+
+
+@pytest.mark.asyncio
+async def test_digitalcore_upload_payload_matches_current_public_form(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracker = _tracker()
+    monkeypatch.setattr(
+        tracker, "generate_description", AsyncMock(return_value="description")
+    )
+    monkeypatch.setattr(
+        tracker, "mediainfo", AsyncMock(return_value="mediainfo")
+    )
+    monkeypatch.setattr(tracker, "get_firstpic", AsyncMock(return_value=""))
+    meta = _make_meta(resolution="1080p", imdb_tt="")
+
+    data = await tracker.fetch_data(meta)
+
+    assert data["category"] == 6
+    assert data["imdbId"] == "0"
+    assert data["reqid"] == "0"
+    assert data["anonymousUpload"] == "0"
+    assert data["p2p"] == "0"
+    assert data["unrar"] == "1"
+    assert data["othergenre"] == ""
+    assert data["requestModQueue"] == "0"
+    assert data["modQueueMessage"] == ""
+    assert "section" not in data
+    assert "frileech" not in data
+
+
+def test_digitalcore_normalizes_language_like_current_upload_form() -> None:
+    assert DigitalCore._normalized_language("English") == "english"
+    assert (
+        DigitalCore._normalized_language("English, German, English")
+        == "english,german"
+    )
+    assert (
+        DigitalCore._normalized_language("ALL, Brazilian Portuguese")
+        == "brazilian-portuguese"
+    )
+
+
+@pytest.mark.asyncio
+async def test_digitalcore_resolves_external_imdb_to_internal_id() -> None:
+    tracker = _tracker()
+    tracker.session.get = AsyncMock(  # type: ignore[method-assign]
+        return_value=_response(
+            {"id": 2468, "internalId": 2468, "imdbid": "tt35521200"}
+        )
+    )
+
+    assert await tracker._resolve_imdb_id("tt35521200") == "2468"
+    tracker.session.get.assert_awaited_once_with(
+        "https://digitalcore.club/api/v1/moviedata/imdb/tt35521200"
+    )
+
+
+@pytest.mark.asyncio
+async def test_digitalcore_imdb_resolution_failure_preserves_external_id() -> (
+    None
+):
+    tracker = _tracker()
+    tracker.session.get = AsyncMock(  # type: ignore[method-assign]
+        return_value=_response({"message": "backend unavailable"}, status=500)
+    )
+
+    assert await tracker._resolve_imdb_id("tt35521200") == "tt35521200"
+    assert await tracker._resolve_imdb_id("") == "0"
+    assert await tracker._resolve_imdb_id("1234") == "1234"
+
+
+@pytest.mark.asyncio
+async def test_digitalcore_upload_reports_unsupported_category_before_post() -> (
+    None
+):
+    tracker = _tracker()
+    meta = _make_meta(resolution="480p", tracker_status={})
+
+    assert not await tracker.upload(meta)
+    assert (
+        "Unsupported category/resolution"
+        in meta.tracker_status["DIGITALCORE"]["status_message"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_digitalcore_success_download_is_restricted_to_tracker_host() -> (
+    None
+):
+    tracker = _tracker()
+    response = _response({"id": 654, "message": "ok"})
+    tracker.common.download_tracker_torrent = AsyncMock()  # type: ignore[method-assign]
+    status: dict[str, Any] = {}
+
+    assert await tracker._handle_upload_response(
+        _make_meta(), status, response
+    )
+
+    kwargs = tracker.common.download_tracker_torrent.await_args.kwargs
+    assert kwargs["allowed_hosts"] == ("digitalcore.club",)
+    assert kwargs["max_size"] == 8 * 1024 * 1024
+
+
+def test_digitalcore_response_message_handles_current_error_shapes() -> None:
+    duplicate = _response(
+        {
+            "error": "Duplicate",
+            "torrent_name": "Example_Movie",
+            "torrent_id": 777,
+        }
+    )
+    nested = _response({"data": {"message": "Validation failed"}})
+    plain = _response({}, text="Authentication Required")
+    malformed = _response({}, text="<html>upstream error</html>")
+
+    assert DigitalCore._response_message(duplicate) == (
+        "Duplicate: Example Movie already exists (torrent ID 777)."
+    )
+    assert DigitalCore._response_message(nested) == "Validation failed"
+    assert DigitalCore._response_message(plain) == "Authentication Required"
+    assert (
+        DigitalCore._response_message(malformed)
+        == "<html>upstream error</html>"
+    )

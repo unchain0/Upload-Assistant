@@ -5,6 +5,7 @@ import json
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import AsyncMock
 
 import numpy as np
@@ -18,6 +19,15 @@ def _file(tmp_path: Path, name: str = "audio.flac") -> Path:
     path = tmp_path / name
     path.write_bytes(b"audio")
     return path
+
+
+def _successful_decode_run(
+    _command: list[str], **kwargs: object
+) -> subprocess.CompletedProcess[bytes]:
+    output = cast(Any, kwargs["stdout"])
+    output.write(b"wav")
+    output.flush()
+    return subprocess.CompletedProcess([], 0, stdout=b"", stderr=b"")
 
 
 def _meta(tmp_path: Path, **values: object) -> Meta:
@@ -255,11 +265,7 @@ def test_generate_spectrogram_decode_and_audio_errors(
         )
 
     monkeypatch.setattr(
-        audio_spectrogram.subprocess,
-        "run",
-        lambda *_args, **_kwargs: subprocess.CompletedProcess(
-            [], 0, stdout=b"wav", stderr=b""
-        ),
+        audio_spectrogram.subprocess, "run", _successful_decode_run
     )
     monkeypatch.setattr(
         audio_spectrogram.librosa,
@@ -291,11 +297,7 @@ def test_generate_spectrogram_success_with_plot_doubles(
     output = tmp_path / "out"
     output.mkdir()
     monkeypatch.setattr(
-        audio_spectrogram.subprocess,
-        "run",
-        lambda *_args, **_kwargs: subprocess.CompletedProcess(
-            [], 0, stdout=b"wav", stderr=b""
-        ),
+        audio_spectrogram.subprocess, "run", _successful_decode_run
     )
     monkeypatch.setattr(
         audio_spectrogram.librosa,

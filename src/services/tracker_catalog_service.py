@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlparse
 
 from src.domain_models.tracker_catalog import (
@@ -21,15 +21,18 @@ def _hostname(value: object) -> str | None:
 
 def _tracker_runtime_config(config: Mapping[str, Any]) -> Mapping[str, Any]:
     trackers_value = config.get("TRACKERS", {})
-    return trackers_value if isinstance(trackers_value, Mapping) else {}
+    if not isinstance(trackers_value, Mapping):
+        return {}
+    return cast(Mapping[str, Any], trackers_value)
 
 
 def _configured_comment_hosts(configured: object) -> list[str]:
     if not isinstance(configured, Mapping):
         return []
+    configured_mapping = cast(Mapping[str, Any], configured)
     hosts: list[str] = []
     for key in ("base_url", "announce_url"):
-        hostname = _hostname(configured.get(key))
+        hostname = _hostname(configured_mapping.get(key))
         if hostname:
             hosts.append(hostname)
     return hosts

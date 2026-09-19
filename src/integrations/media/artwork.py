@@ -67,22 +67,23 @@ def _image_metadata_supported(image: Image.Image) -> bool:
     return image.width * image.height <= MAX_ARTWORK_PIXELS
 
 
-def _verify_image_bytes(image_bytes: bytes) -> bool:
+def _verified_image_dimensions(image_bytes: bytes) -> tuple[int, int] | None:
     with warnings.catch_warnings():
         warnings.simplefilter("error", Image.DecompressionBombWarning)
         with Image.open(BytesIO(image_bytes)) as image:
             if not _image_metadata_supported(image):
-                return False
+                return None
+            dimensions = image.width, image.height
             image.verify()
-    return True
+    return dimensions
 
 
-def is_valid_image_bytes(image_bytes: bytes) -> bool:
-    """Return whether bytes contain a decodable, non-empty supported image."""
+def image_dimensions(image_bytes: bytes) -> tuple[int, int] | None:
+    """Return validated image dimensions without leaking PIL objects."""
     if not image_bytes:
-        return False
+        return None
     try:
-        return _verify_image_bytes(image_bytes)
+        return _verified_image_dimensions(image_bytes)
     except (
         OSError,
         SyntaxError,
@@ -90,7 +91,16 @@ def is_valid_image_bytes(image_bytes: bytes) -> bool:
         Image.DecompressionBombError,
         Image.DecompressionBombWarning,
     ):
-        return False
+        return None
+
+
+def _verify_image_bytes(image_bytes: bytes) -> bool:
+    return image_dimensions(image_bytes) is not None
+
+
+def is_valid_image_bytes(image_bytes: bytes) -> bool:
+    """Return whether bytes contain a decodable, non-empty supported image."""
+    return _verify_image_bytes(image_bytes)
 
 
 def _cover_size_allowed(size: int) -> bool:
@@ -277,16 +287,25 @@ async def _download_with_client(
     return None
 
 
-async def _download_public_image(url: str) -> bytes | None:
+async def _download_public_image(
+    url: str, *, timeout_seconds: float = 30.0
+) -> bytes | None:
     """Download an explicit image without following redirects to private hosts."""
     try:
         async with httpx.AsyncClient(
-            timeout=30.0, follow_redirects=False, trust_env=False
+            timeout=timeout_seconds, follow_redirects=False, trust_env=False
         ) as client:
             return await _download_with_client(client, url)
     except httpx.HTTPError as error:
         logger.warning(f"[yellow]Unable to download artwork: {error}[/yellow]")
         return None
+
+
+async def download_public_image(
+    url: str, *, timeout_seconds: float = 30.0
+) -> bytes | None:
+    """Download and validate a public image with bounded redirects and size."""
+    return await _download_public_image(url, timeout_seconds=timeout_seconds)
 
 
 def _png_image_source(source: Path | bytes) -> Path | BytesIO | None:

@@ -8,6 +8,7 @@ import re
 import secrets
 import unicodedata
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urljoin, urlsplit
@@ -32,6 +33,18 @@ from src.integrations.observability.runtime_support import (
 )
 from src.integrations.trackers.bbcode_formatting import BBCODE
 from src.integrations.usenet.creator import verify_nzb_has_password
+
+
+@dataclass(frozen=True)
+class _LanguageRequirementState:
+    required: list[str]
+    audio: list[str]
+    subtitles: list[str]
+    required_expanded: set[str]
+    audio_expanded: set[str]
+    subtitle_expanded: set[str]
+    original_display: str | None
+    original_ok: bool
 
 
 class Common:
@@ -229,8 +242,57 @@ class Common:
         if isinstance(values, str):
             return [values]
         if isinstance(values, list):
-            return [value for value in values if isinstance(value, str)]
+            return [
+                value
+                for value in cast(list[Any], values)
+                if isinstance(value, str)
+            ]
         return []
+
+    def _base_language_candidates(
+        self, language: str, normalized: str
+    ) -> set[str]:
+        candidates = {normalized}
+        first_token = normalized.split(maxsplit=1)[0]
+        if first_token:
+            candidates.add(first_token)
+        first_chunk = language.split(",", 1)[0].strip()
+        if first_chunk and first_chunk != language:
+            chunk = self._normalize_language_token(first_chunk)
+            if chunk:
+                candidates.add(chunk)
+        return candidates
+
+    def _parsed_language_candidates(self, parse_input: str) -> set[str]:
+        try:
+            parsed = langcodes.Language.get(parse_input)
+            values = (
+                parsed.display_name(),
+                parsed.language_name(),
+                parsed.language,
+            )
+        except (
+            tag_parser.LanguageTagError,
+            LookupError,
+            AttributeError,
+            ValueError,
+        ):
+            return set()
+        return {
+            normalized
+            for value in values
+            if value
+            if (normalized := self._normalize_language_token(value))
+        }
+
+    @staticmethod
+    def _with_language_aliases(
+        candidates: set[str], alias_lookup: dict[str, set[str]]
+    ) -> set[str]:
+        expanded = set(candidates)
+        for candidate in candidates:
+            expanded.update(alias_lookup.get(candidate, set()))
+        return expanded
 
     def _expand_language_candidates(
         self, language: str, alias_lookup: dict[str, set[str]]
@@ -238,46 +300,10 @@ class Common:
         normalized = self._normalize_language_token(language)
         if not normalized:
             return set()
-
-        candidates: set[str] = {normalized}
-        tokens = normalized.split()
-        if tokens:
-            candidates.add(tokens[0])
-
-        first_chunk = language.split(",")[0].strip()
-        if first_chunk and first_chunk != language:
-            chunk_normalized = self._normalize_language_token(first_chunk)
-            if chunk_normalized:
-                candidates.add(chunk_normalized)
-
-        parse_inputs = {language.strip(), normalized.replace(" ", "-")}
-        for parse_input in parse_inputs:
-            try:
-                parsed_lang = langcodes.Language.get(parse_input)
-                display_name = parsed_lang.display_name()
-                language_name = parsed_lang.language_name()
-                language_code = parsed_lang.language
-                for value in (display_name, language_name, language_code):
-                    if value:
-                        value_normalized = self._normalize_language_token(
-                            value
-                        )
-                        if value_normalized:
-                            candidates.add(value_normalized)
-            except (
-                tag_parser.LanguageTagError,
-                LookupError,
-                AttributeError,
-                ValueError,
-            ):
-                continue
-
-        expanded = set(candidates)
-        for candidate in candidates:
-            aliases = alias_lookup.get(candidate)
-            if aliases:
-                expanded.update(aliases)
-        return expanded
+        candidates = self._base_language_candidates(language, normalized)
+        for parse_input in {language.strip(), normalized.replace(" ", "-")}:
+            candidates.update(self._parsed_language_candidates(parse_input))
+        return self._with_language_aliases(candidates, alias_lookup)
 
     def _expand_language_list(
         self, values: list[str], alias_lookup: dict[str, set[str]]
@@ -321,22 +347,45 @@ class Common:
         return len(episodes)
 
     @staticmethod
-    def is_tv_series_ended(
-        meta: Meta,
+    def _status_contains_any(
+        status_text: str, values: set[str] | frozenset[str]
+    ) -> bool:
+        return any(value in status_text for value in values)
+
+    @staticmethod
+    def _series_status_value(
+        raw_status: Any,
         ended_values: set[str] | frozenset[str],
         ongoing_values: set[str] | frozenset[str],
     ) -> bool | None:
+        status_text = str(raw_status or "").casefold().strip()
+        if Common._status_contains_any(status_text, ended_values):
+            return True
+        if Common._status_contains_any(status_text, ongoing_values):
+            return False
+        return None
+
+    @staticmethod
+    def _series_statuses(meta: Meta) -> tuple[Any, Any]:
         imdb_status = (
             meta.imdb_info.get("status", "")
             if isinstance(meta.imdb_info, dict)
             else ""
         )
-        for raw_status in (getattr(meta, "series_status", ""), imdb_status):
-            status_text = str(raw_status or "").casefold().strip()
-            if any(value in status_text for value in ended_values):
-                return True
-            if any(value in status_text for value in ongoing_values):
-                return False
+        return getattr(meta, "series_status", ""), imdb_status
+
+    @staticmethod
+    def is_tv_series_ended(
+        meta: Meta,
+        ended_values: set[str] | frozenset[str],
+        ongoing_values: set[str] | frozenset[str],
+    ) -> bool | None:
+        for raw_status in Common._series_statuses(meta):
+            resolved = Common._series_status_value(
+                raw_status, ended_values, ongoing_values
+            )
+            if resolved is not None:
+                return resolved
         return None
 
     @classmethod
@@ -362,8 +411,7 @@ class Common:
                 return ""
         return ""
 
-    async def has_portuguese_external_subtitle(self, meta: Meta) -> bool:
-        """Check external subtitle filenames and textual content for Portuguese."""
+    def _portuguese_subtitle_aliases(self) -> set[str]:
         aliases = {
             "brazilian",
             "brazilian portuguese",
@@ -375,35 +423,50 @@ class Common:
             "ptbr",
             "pt brasil",
         }
-        normalized_aliases = {
-            self._normalize_language_token(alias) for alias in aliases
-        }
-        text_paths: list[Path] = []
+        return {self._normalize_language_token(alias) for alias in aliases}
 
+    def _subtitle_filename_is_portuguese(
+        self, path: Path, aliases: set[str]
+    ) -> bool:
+        tokens = self._normalize_language_token(path.stem).split()
+        while tokens and tokens[-1] in {"forced", "sdh"}:
+            tokens.pop()
+        filename = " ".join(tokens)
+        return any(
+            filename == alias or filename.endswith(f" {alias}")
+            for alias in aliases
+        )
+
+    def _portuguese_subtitle_text_paths(
+        self, meta: Meta, aliases: set[str]
+    ) -> tuple[bool, list[Path]]:
+        text_paths: list[Path] = []
         for subtitle_file in meta.subtitle_files or []:
             path = Path(str(subtitle_file))
-            filename = self._normalize_language_token(path.stem)
-            filename_tokens = filename.split()
-            while filename_tokens and filename_tokens[-1] in {"forced", "sdh"}:
-                filename_tokens.pop()
-            filename_without_flags = " ".join(filename_tokens)
-            if any(
-                filename_without_flags == alias
-                or filename_without_flags.endswith(f" {alias}")
-                for alias in normalized_aliases
-            ):
-                return True
+            if self._subtitle_filename_is_portuguese(path, aliases):
+                return True, []
             if path.suffix.casefold() in self.PORTUGUESE_SUBTITLE_EXTENSIONS:
                 text_paths.append(path)
+        return False, text_paths
 
+    async def _subtitle_text_is_portuguese(self, path: Path) -> bool:
+        text = await asyncio.to_thread(self._read_subtitle_text, path)
+        words = set(
+            re.findall(r"[a-z]+", self._normalize_language_token(text))
+        )
+        return len(words & self.PORTUGUESE_SUBTITLE_WORDS) >= 3
+
+    async def has_portuguese_external_subtitle(self, meta: Meta) -> bool:
+        """Check external subtitle filenames and textual content for Portuguese."""
+        aliases = self._portuguese_subtitle_aliases()
+        filename_match, text_paths = self._portuguese_subtitle_text_paths(
+            meta, aliases
+        )
+        if filename_match:
+            return True
         for path in text_paths:
-            text = await asyncio.to_thread(self._read_subtitle_text, path)
-            words = set(
-                re.findall(r"[a-z]+", self._normalize_language_token(text))
-            )
-            if len(words & self.PORTUGUESE_SUBTITLE_WORDS) >= 3:
+            if await self._subtitle_text_is_portuguese(path):
                 return True
-
         return False
 
     async def check_portuguese_video_requirements(
@@ -540,14 +603,148 @@ class Common:
         torrent_filename = "BASE"
         allow_ext_subtitles = False
         if isinstance(tracker_config, dict):
-            allow_ext_subtitles = tracker_config.get(
-                "allow_ext_subtitles", False
+            config = cast(dict[str, Any], tracker_config)
+            allow_ext_subtitles = bool(
+                config.get("allow_ext_subtitles", False)
             )
         if allow_ext_subtitles:
             subs_path = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/BASE_SUBS.torrent"
             if await self.path_exists(subs_path):
                 torrent_filename = "BASE_SUBS"
         return torrent_filename
+
+    @staticmethod
+    def _allowed_torrent_metainfo_keys() -> frozenset[str]:
+        return frozenset(
+            {
+                "announce",
+                "comment",
+                "creation date",
+                "created by",
+                "encoding",
+                "info",
+                "imdb",
+                "tmdb",
+                "tvdb",
+                "tvmaze",
+                "mal",
+                "douban",
+                "igdb",
+                "asin",
+                "isbn",
+            }
+        )
+
+    @staticmethod
+    def _torrent_metainfo(torrent: Any) -> dict[str, Any]:
+        return cast(dict[str, Any], torrent.metainfo)
+
+    @classmethod
+    def _sanitize_torrent_metainfo(cls, torrent: Any) -> dict[str, Any]:
+        metainfo = cls._torrent_metainfo(torrent)
+        allowed = cls._allowed_torrent_metainfo_keys()
+        for key in list(metainfo):
+            if key not in allowed:
+                metainfo.pop(key, None)
+        return metainfo
+
+    @staticmethod
+    def _torrent_info(metainfo: dict[str, Any]) -> dict[str, Any]:
+        raw = metainfo.get("info")
+        if isinstance(raw, dict):
+            return cast(dict[str, Any], raw)
+        info: dict[str, Any] = {}
+        metainfo["info"] = info
+        return info
+
+    @staticmethod
+    def _apply_public_torrent_policy(
+        metainfo: dict[str, Any], public_trackers: list[str] | None
+    ) -> None:
+        Common._torrent_info(metainfo).pop("private", None)
+        if public_trackers:
+            metainfo["announce"] = public_trackers[0]
+            metainfo["announce-list"] = [
+                [tracker] for tracker in public_trackers
+            ]
+            return
+        metainfo.pop("announce", None)
+        metainfo.pop("announce-list", None)
+
+    def _private_announce_url(self, tracker: str, announce_url: str) -> str:
+        if announce_url:
+            return announce_url
+        trackers = self.config.get("TRACKERS", {})
+        tracker_map = (
+            cast(dict[str, Any], trackers)
+            if isinstance(trackers, dict)
+            else {}
+        )
+        raw_config = tracker_map.get(tracker, {})
+        config = (
+            cast(dict[str, Any], raw_config)
+            if isinstance(raw_config, dict)
+            else {}
+        )
+        raw_announce = config.get("announce_url")
+        return (
+            str(raw_announce).strip()
+            if raw_announce
+            else "https://fake.tracker"
+        )
+
+    def _apply_private_torrent_policy(
+        self, metainfo: dict[str, Any], tracker: str, announce_url: str
+    ) -> None:
+        metainfo["announce"] = self._private_announce_url(
+            tracker, announce_url
+        )
+        self._torrent_info(metainfo)["private"] = True
+
+    @staticmethod
+    def _update_torrent_created_by(
+        metainfo: dict[str, Any], meta: Meta
+    ) -> None:
+        created_by = metainfo.get("created by")
+        if (
+            not isinstance(created_by, str)
+            or "mkbrr" not in created_by.lower()
+        ):
+            return
+        metainfo["created by"] = (
+            f"{created_by} using {meta.ua_name} {meta.current_version}"
+        )
+
+    @staticmethod
+    def _entropy_bits(value: Any) -> int | None:
+        try:
+            parsed = int(value)
+        except TypeError, ValueError:
+            return None
+        return parsed if parsed in {32, 64} else None
+
+    @classmethod
+    def _apply_torrent_entropy(
+        cls, metainfo: dict[str, Any], value: Any
+    ) -> None:
+        bits = cls._entropy_bits(value)
+        if bits is None:
+            return
+        cls._torrent_info(metainfo)["entropy"] = secrets.randbelow(2**bits)
+
+    async def _load_upload_torrent(self, path: str) -> Any:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, lambda: Torrent.read(path))
+
+    async def _write_upload_torrent(
+        self, torrent: Any, meta: Meta, tracker: str
+    ) -> None:
+        out_path = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{tracker}].torrent"
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(
+            None,
+            lambda: Torrent.copy(torrent).write(out_path, overwrite=True),
+        )
 
     async def create_torrent_for_upload(
         self,
@@ -559,91 +756,177 @@ class Common:
         is_public: bool = False,
         public_trackers: list[str] | None = None,
     ) -> None:
-        tracker_cfg = self.config.get("TRACKERS", {}).get(tracker, {})
+        trackers = self.config.get("TRACKERS", {})
+        tracker_map = (
+            cast(dict[str, Any], trackers)
+            if isinstance(trackers, dict)
+            else {}
+        )
+        tracker_cfg = tracker_map.get(tracker, {})
         if torrent_filename == "BASE":
             torrent_filename = await self.get_torrent_filename(
                 meta, tracker_cfg
             )
+        path = (
+            f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/"
+            f"{torrent_filename}.torrent"
+        )
+        if not await self.path_exists(path):
+            return
+        torrent = await self._load_upload_torrent(path)
+        metainfo = self._sanitize_torrent_metainfo(torrent)
+        if is_public:
+            self._apply_public_torrent_policy(metainfo, public_trackers)
+        else:
+            self._apply_private_torrent_policy(metainfo, tracker, announce_url)
+        self._torrent_info(metainfo)["source"] = source_flag
+        self._update_torrent_created_by(metainfo, meta)
+        metainfo["comment"] = ""
+        self._apply_torrent_entropy(metainfo, meta.entropy)
+        await self._write_upload_torrent(torrent, meta, tracker)
 
-        path = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/{torrent_filename}.torrent"
-        if await self.path_exists(path):
-            loop = asyncio.get_running_loop()
-            new_torrent = await loop.run_in_executor(
-                None, lambda: Torrent.read(path)
+    @staticmethod
+    def _tracker_download_path(meta: Meta, tracker: str, cross: bool) -> str:
+        suffix = (
+            f"[{tracker}_cross].torrent" if cross else f"[{tracker}].torrent"
+        )
+        return f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/{suffix}"
+
+    async def _tracker_cookie_jar(
+        self, meta: Meta, tracker: str, use_cookie_auth: bool
+    ) -> Any:
+        if not use_cookie_auth:
+            return None
+        with contextlib.suppress(Exception):
+            from src.integrations.trackers.cookie_auth import CookieValidator
+
+            validator = CookieValidator(self.config)
+            return await validator.load_session_cookies(meta, tracker)
+        return None
+
+    @staticmethod
+    def _normalized_tracker_hosts(allowed_hosts: tuple[str, ...]) -> set[str]:
+        return {host.casefold() for host in allowed_hosts}
+
+    @staticmethod
+    def _validate_tracker_download_url(
+        current_url: str, normalized_hosts: set[str]
+    ) -> None:
+        if not normalized_hosts:
+            return
+        parsed_url = urlsplit(current_url)
+        valid = all(
+            (
+                parsed_url.scheme == "https",
+                (parsed_url.hostname or "").casefold() in normalized_hosts,
+                parsed_url.port in (None, 443),
+                parsed_url.username is None,
+                parsed_url.password is None,
             )
-            for each in list(new_torrent.metainfo):
-                if each not in (
-                    "announce",
-                    "comment",
-                    "creation date",
-                    "created by",
-                    "encoding",
-                    "info",
-                    "imdb",
-                    "tmdb",
-                    "tvdb",
-                    "tvmaze",
-                    "mal",
-                    "douban",
-                    "igdb",
-                    "asin",
-                    "isbn",
-                ):
-                    new_torrent.metainfo.pop(each, None)  # type: ignore
-            if is_public:
-                new_torrent.metainfo.get("info", {}).pop("private", None)
-                if public_trackers:
-                    new_torrent.metainfo["announce"] = public_trackers[0]
-                    new_torrent.metainfo["announce-list"] = [
-                        [t] for t in public_trackers
-                    ]
-                else:
-                    new_torrent.metainfo.pop("announce", None)
-                    new_torrent.metainfo.pop("announce-list", None)
-            else:
-                if announce_url:
-                    new_torrent.metainfo["announce"] = announce_url
-                else:
-                    raw_announce = self.config["TRACKERS"][tracker].get(
-                        "announce_url"
-                    )
-                    new_torrent.metainfo["announce"] = (
-                        str(raw_announce).strip()
-                        if raw_announce
-                        else "https://fake.tracker"
-                    )
-                new_torrent.metainfo["info"]["private"] = True
-            new_torrent.metainfo["info"]["source"] = source_flag
-            if "created by" in new_torrent.metainfo:
-                created_by = new_torrent.metainfo["created by"]
-                if "mkbrr" in created_by.lower():
-                    new_torrent.metainfo["created by"] = (
-                        f"{created_by} using {meta.ua_name} {meta.current_version}"
-                    )
-            # setting comment as blank as if BASE.torrent is manually created then it can result in private info such as download link being exposed.
-            new_torrent.metainfo["comment"] = ""
-            entropy_value = meta.entropy
-            if entropy_value is not None:
-                try:
-                    entropy_int = int(entropy_value)
-                    if entropy_int == 32:
-                        new_torrent.metainfo["info"]["entropy"] = (  # pyright: ignore[reportGeneralTypeIssues]
-                            secrets.randbelow(2**32)
-                        )
-                    elif entropy_int == 64:
-                        new_torrent.metainfo["info"]["entropy"] = (  # pyright: ignore[reportGeneralTypeIssues]
-                            secrets.randbelow(2**64)
-                        )
-                except ValueError, TypeError:
-                    # Skip entropy setting if value is invalid
-                    pass
-            out_path = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{tracker}].torrent"
-            await loop.run_in_executor(
-                None,
-                lambda: Torrent.copy(new_torrent).write(
-                    out_path, overwrite=True
-                ),
+        )
+        if not valid:
+            raise ValueError(
+                "Tracker download URL is outside the allowed HTTPS hosts"
             )
+
+    @staticmethod
+    def _redirect_download_url(current_url: str, response: Any) -> str:
+        location = response.headers.get("location")
+        if not location:
+            raise ValueError("Tracker download redirect is missing a location")
+        return urljoin(current_url, location)
+
+    @staticmethod
+    def _validate_tracker_content_length(
+        response: Any, max_size: int | None
+    ) -> None:
+        if max_size is None:
+            return
+        content_length = str(response.headers.get("content-length", ""))
+        if content_length.isdigit() and int(content_length) > max_size:
+            raise ValueError(
+                "Tracker torrent download exceeds the configured size limit"
+            )
+
+    @staticmethod
+    def _validate_downloaded_size(
+        downloaded: int, max_size: int | None
+    ) -> None:
+        if max_size is not None and downloaded > max_size:
+            raise ValueError(
+                "Tracker torrent download exceeds the configured size limit"
+            )
+
+    async def _write_tracker_download(
+        self, response: Any, path: str, max_size: int | None
+    ) -> None:
+        downloaded = 0
+        async with aiofiles.open(path, "wb") as torrent_file:
+            async for chunk in response.aiter_bytes():
+                downloaded += len(chunk)
+                self._validate_downloaded_size(downloaded, max_size)
+                await torrent_file.write(chunk)
+
+    async def _consume_tracker_response(
+        self,
+        response: Any,
+        current_url: str,
+        path: str,
+        normalized_hosts: set[str],
+        max_size: int | None,
+    ) -> tuple[bool, str]:
+        if normalized_hosts and response.is_redirect:
+            return False, self._redirect_download_url(current_url, response)
+        response.raise_for_status()
+        self._validate_tracker_content_length(response, max_size)
+        await self._write_tracker_download(response, path, max_size)
+        return True, current_url
+
+    async def _stream_tracker_download(
+        self,
+        session: Any,
+        downurl: str,
+        path: str,
+        normalized_hosts: set[str],
+        max_size: int | None,
+    ) -> None:
+        current_url = downurl
+        for _redirect in range(6):
+            self._validate_tracker_download_url(current_url, normalized_hosts)
+            async with session.stream("GET", current_url) as response:
+                complete, current_url = await self._consume_tracker_response(
+                    response,
+                    current_url,
+                    path,
+                    normalized_hosts,
+                    max_size,
+                )
+                if complete:
+                    return
+        raise ValueError(
+            "Tracker torrent download exceeded the redirect limit"
+        )
+
+    async def _tracker_download_result(
+        self,
+        meta: Meta,
+        tracker: str,
+        path: str,
+        hash_is_id: bool,
+        cross: bool,
+    ) -> str | None:
+        if cross:
+            return None
+        if hash_is_id:
+            return await self.get_torrent_hash(meta, tracker)
+        return path
+
+    @staticmethod
+    def _cleanup_failed_tracker_download(
+        path: str, allowed_hosts: tuple[str, ...], max_size: int | None
+    ) -> None:
+        if allowed_hosts or max_size is not None:
+            Path(path).unlink(missing_ok=True)
 
     async def download_tracker_torrent(
         self,
@@ -658,111 +941,36 @@ class Common:
         max_size: int | None = None,
         use_cookie_auth: bool = False,
     ) -> str | None:
-        path = (
-            f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{tracker}_cross].torrent"
-            if cross
-            else f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/[{tracker}].torrent"
-        )
-        if downurl:
-            try:
-                cookie_jar = None
-                if use_cookie_auth:
-                    with contextlib.suppress(Exception):
-                        from src.integrations.trackers.cookie_auth import (
-                            CookieValidator,
-                        )
-
-                        cookie_validator = CookieValidator(self.config)
-                        cookie_jar = (
-                            await cookie_validator.load_session_cookies(
-                                meta, tracker
-                            )
-                        )
-
-                normalized_hosts = {host.casefold() for host in allowed_hosts}
-                current_url = downurl
-                async with httpx.AsyncClient(
-                    headers=headers,
-                    params=params,
-                    cookies=cookie_jar,
-                    follow_redirects=not normalized_hosts,
-                    timeout=30.0,
-                ) as session:
-                    for _redirect in range(6):
-                        parsed_url = urlsplit(current_url)
-                        if normalized_hosts and (
-                            parsed_url.scheme != "https"
-                            or (parsed_url.hostname or "").casefold()
-                            not in normalized_hosts
-                            or parsed_url.port not in (None, 443)
-                            or parsed_url.username is not None
-                            or parsed_url.password is not None
-                        ):
-                            raise ValueError(
-                                "Tracker download URL is outside the allowed HTTPS hosts"
-                            )
-                        async with session.stream(
-                            "GET", current_url
-                        ) as response:
-                            if normalized_hosts and response.is_redirect:
-                                location = response.headers.get("location")
-                                if not location:
-                                    raise ValueError(
-                                        "Tracker download redirect is missing a location"
-                                    )
-                                current_url = urljoin(current_url, location)
-                                continue
-                            response.raise_for_status()
-                            content_length = response.headers.get(
-                                "content-length", ""
-                            )
-                            if (
-                                max_size is not None
-                                and content_length.isdigit()
-                                and int(content_length) > max_size
-                            ):
-                                raise ValueError(
-                                    "Tracker torrent download exceeds the configured size limit"
-                                )
-                            downloaded = 0
-                            async with aiofiles.open(
-                                path, "wb"
-                            ) as torrent_file:
-                                async for chunk in response.aiter_bytes():
-                                    downloaded += len(chunk)
-                                    if (
-                                        max_size is not None
-                                        and downloaded > max_size
-                                    ):
-                                        raise ValueError(
-                                            "Tracker torrent download exceeds the configured size limit"
-                                        )
-                                    await torrent_file.write(chunk)
-                            break
-                    else:
-                        raise ValueError(
-                            "Tracker torrent download exceeded the redirect limit"
-                        )
-
-                if cross:
-                    return None
-
-                if hash_is_id:
-                    return await self.get_torrent_hash(meta, tracker)
-                return path
-
-            except Exception as e:
-                if allowed_hosts or max_size is not None:
-                    Path(path).unlink(missing_ok=True)
-                logger.warning(
-                    f"[yellow]Warning: Could not download torrent file: {e!s}[/yellow]"
+        if not downurl:
+            return None
+        path = self._tracker_download_path(meta, tracker, cross)
+        try:
+            cookie_jar = await self._tracker_cookie_jar(
+                meta, tracker, use_cookie_auth
+            )
+            normalized_hosts = self._normalized_tracker_hosts(allowed_hosts)
+            async with httpx.AsyncClient(
+                headers=headers,
+                params=params,
+                cookies=cookie_jar,
+                follow_redirects=not normalized_hosts,
+                timeout=30.0,
+            ) as session:
+                await self._stream_tracker_download(
+                    session, downurl, path, normalized_hosts, max_size
                 )
-                logger.info(
-                    "[yellow]Download manually from the tracker.[/yellow]"
-                )
-                return None
-
-        return None
+            return await self._tracker_download_result(
+                meta, tracker, path, hash_is_id, cross
+            )
+        except Exception as error:
+            self._cleanup_failed_tracker_download(
+                path, allowed_hosts, max_size
+            )
+            logger.warning(
+                f"[yellow]Warning: Could not download torrent file: {error!s}[/yellow]"
+            )
+            logger.info("[yellow]Download manually from the tracker.[/yellow]")
+            return None
 
     async def create_torrent_ready_to_seed(
         self,
@@ -841,6 +1049,118 @@ class Common:
                 info, usedforsecurity=False
             ).hexdigest()  # SHA1 required for torrent info hash
 
+    @staticmethod
+    def _image_links_path(meta: Meta) -> Path:
+        output_dir = Path(meta.base_dir) / "tmp" / meta.uuid
+        output_dir.mkdir(parents=True, exist_ok=True)
+        return output_dir / "pack_image_links.json"
+
+    @staticmethod
+    def _default_image_links_data() -> dict[str, Any]:
+        return {"keys": {}, "total_count": 0}
+
+    @staticmethod
+    def _valid_image_links_data(value: Any) -> dict[str, Any] | None:
+        if not isinstance(value, dict):
+            return None
+        data = cast(dict[str, Any], value)
+        if not isinstance(data.get("keys"), dict):
+            return None
+        if not isinstance(data.get("total_count"), int):
+            return None
+        return data
+
+    async def _load_image_links_data(
+        self, output_file: Path
+    ) -> dict[str, Any]:
+        if not output_file.exists():
+            return self._default_image_links_data()
+        try:
+            async with aiofiles.open(output_file, encoding="utf-8") as handle:
+                content = await handle.read()
+            if not content.strip():
+                return self._default_image_links_data()
+            parsed = json.loads(content)
+            valid = self._valid_image_links_data(parsed)
+            if valid is not None:
+                return valid
+            logger.warning(
+                "[yellow]Warning: Existing image data has invalid schema, reinitializing.[/yellow]"
+            )
+        except (json.JSONDecodeError, OSError) as error:
+            logger.warning(
+                f"[yellow]Warning: Could not load existing image data: {error!s}[/yellow]"
+            )
+        return self._default_image_links_data()
+
+    @staticmethod
+    def _image_keys(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
+        raw = data.get("keys", {})
+        return cast(dict[str, dict[str, Any]], raw)
+
+    @staticmethod
+    def _image_key_entry(
+        keys_data: dict[str, dict[str, Any]], image_key: str
+    ) -> dict[str, Any]:
+        entry = keys_data.get(image_key)
+        if isinstance(entry, dict):
+            return cast(dict[str, Any], entry)
+        new_entry: dict[str, Any] = {"count": 0, "images": []}
+        keys_data[image_key] = new_entry
+        return new_entry
+
+    @staticmethod
+    def _image_entry_list(key_entry: dict[str, Any]) -> list[dict[str, Any]]:
+        raw = key_entry.get("images")
+        if isinstance(raw, list):
+            return cast(list[dict[str, Any]], raw)
+        images: list[dict[str, Any]] = []
+        key_entry["images"] = images
+        return images
+
+    @staticmethod
+    def _append_image_entries(
+        key_entry: dict[str, Any], image_list: list[dict[str, str]]
+    ) -> None:
+        images = Common._image_entry_list(key_entry)
+        cached_count = key_entry.get("count")
+        base_count = (
+            cached_count if isinstance(cached_count, int) else len(images)
+        )
+        images.extend(
+            {
+                "index": base_count + index,
+                "raw_url": image.get("raw_url", ""),
+                "web_url": image.get("web_url", ""),
+                "img_url": image.get("img_url", ""),
+            }
+            for index, image in enumerate(image_list)
+        )
+        key_entry["count"] = len(images)
+
+    @staticmethod
+    def _image_total_count(keys_data: dict[str, dict[str, Any]]) -> int:
+        return sum(
+            count
+            for entry in keys_data.values()
+            if isinstance((count := entry.get("count")), int)
+        )
+
+    async def _write_image_links_data(
+        self, output_file: Path, data: dict[str, Any]
+    ) -> bool:
+        try:
+            async with aiofiles.open(
+                output_file, "w", encoding="utf-8"
+            ) as handle:
+                await handle.write(json.dumps(data, indent=2))
+            return True
+        except Exception as error:
+            logger.info(
+                f"[bold red]Error saving image links: {error}[/bold red]"
+            )
+            return False
+
     async def save_image_links(
         self,
         meta: Meta,
@@ -850,94 +1170,42 @@ class Common:
         if image_list is None:
             logger.info("[yellow]No image links to save.[/yellow]")
             return None
-
-        output_dir = Path(meta.base_dir) / "tmp" / meta.uuid
-        Path(output_dir).mkdir(parents=True, exist_ok=True)
-        output_file = Path(output_dir) / "pack_image_links.json"
-
-        # Load existing data if the file exists
-        existing_data: dict[str, Any] = {}
-        if Path(output_file).exists():
-            try:
-                async with aiofiles.open(output_file, encoding="utf-8") as f:
-                    content = await f.read()
-                    loaded_data: dict[str, Any] = {}
-                    if content.strip():
-                        parsed = json.loads(content)
-                        if isinstance(parsed, dict):
-                            loaded_data = cast(dict[str, Any], parsed)
-                        else:
-                            logger.warning(
-                                "[yellow]Warning: Existing image data has invalid schema, reinitializing.[/yellow]"
-                            )
-
-                    # Validate schema: must have 'keys' as dict and 'total_count' as int
-                    if isinstance(
-                        loaded_data.get("keys"), dict
-                    ) and isinstance(loaded_data.get("total_count"), int):
-                        existing_data = loaded_data
-            except (json.JSONDecodeError, OSError) as e:
-                logger.warning(
-                    f"[yellow]Warning: Could not load existing image data: {e!s}[/yellow]"
-                )
-
-        # Create data structure if it doesn't exist or was invalid
-        if not existing_data:
-            existing_data = {"keys": {}, "total_count": 0}
-
-        # Schema validation above guarantees a mapping here.
-        keys_raw = existing_data.get("keys", {})
-        keys_data = cast(dict[str, dict[str, Any]], keys_raw)
-
-        if image_key not in keys_data or not isinstance(
-            keys_data.get(image_key), dict
-        ):
-            keys_data[image_key] = {"count": 0, "images": []}
-        key_entry = keys_data[image_key]
-        images_list: list[dict[str, Any]] = []
-        if isinstance(key_entry.get("images"), list):
-            images_list = cast(list[dict[str, Any]], key_entry["images"])
-        else:
-            key_entry["images"] = images_list
-
-        # Add new images to the specific key. Malformed cached counts are
-        # normalized at this filesystem boundary instead of leaking into the
-        # rest of the upload flow.
-        cached_count = key_entry.get("count")
-        base_count = (
-            cached_count if isinstance(cached_count, int) else len(images_list)
-        )
-        for idx, img in enumerate(image_list):
-            image_entry: dict[str, Any] = {
-                "index": base_count + idx,
-                "raw_url": img.get("raw_url", ""),
-                "web_url": img.get("web_url", ""),
-                "img_url": img.get("img_url", ""),
-            }
-            images_list.append(image_entry)
-
-        # Update counts
-        key_entry["count"] = len(images_list)
-        # Safely compute total_count, handling any malformed per-key entries
-        total = 0
-        for key_data in keys_data.values():
-            if isinstance(key_data.get("count"), int):
-                total += key_data["count"]
-        existing_data["total_count"] = total
-
-        try:
-            async with aiofiles.open(output_file, "w", encoding="utf-8") as f:
-                await f.write(json.dumps(existing_data, indent=2))
-
-            logger.debug(
-                f"[green]Saved {len(image_list)} new images for key '{image_key}' (total: {existing_data['total_count']}):[/green]"
-            )
-            logger.debug(f"[blue]  - JSON: {output_file}[/blue]")
-
-            return str(output_file)
-        except Exception as e:
-            logger.info(f"[bold red]Error saving image links: {e}[/bold red]")
+        output_file = self._image_links_path(meta)
+        data = await self._load_image_links_data(output_file)
+        keys_data = self._image_keys(data)
+        key_entry = self._image_key_entry(keys_data, image_key)
+        self._append_image_entries(key_entry, image_list)
+        data["total_count"] = self._image_total_count(keys_data)
+        if not await self._write_image_links_data(output_file, data):
             return None
+        logger.debug(
+            f"[green]Saved {len(image_list)} new images for key '{image_key}' "
+            f"(total: {data['total_count']}):[/green]"
+        )
+        logger.debug(f"[blue]  - JSON: {output_file}[/blue]")
+        return str(output_file)
+
+    @staticmethod
+    def _reverse_mapped_identifier(
+        mapping: dict[str, int], raw_id: Any
+    ) -> str:
+        try:
+            target = int(raw_id)
+        except TypeError, ValueError:
+            return ""
+        return next(
+            (name for name, value in mapping.items() if value == target),
+            "",
+        )
+
+    @staticmethod
+    def _mapped_identifier(
+        mapping: dict[str, int], name: str, reverse: bool, raw_id: Any
+    ) -> str:
+        if reverse:
+            return Common._reverse_mapped_identifier(mapping, raw_id)
+        value = mapping.get(name)
+        return str(value) if value else ""
 
     async def unit3d_region_ids(
         self, region: str = "", reverse: bool = False, region_id: int = 0
@@ -1188,19 +1456,7 @@ class Common:
             "EUR": 243,
         }
 
-        if reverse:
-            # Reverse lookup accepts string IDs returned by some APIs.
-            try:
-                region_id = int(region_id)
-            except ValueError, TypeError:
-                return ""
-            for code, id_value in region_map.items():
-                if id_value == region_id:
-                    return code
-            return ""
-        # Forward lookup: Find region ID by code
-        region_id_value = region_map.get(region)
-        return str(region_id_value) if region_id_value else ""
+        return self._mapped_identifier(region_map, region, reverse, region_id)
 
     async def unit3d_distributor_ids(
         self,
@@ -2929,17 +3185,67 @@ class Common:
             "ZYX": 965,
         }
 
-        if reverse:
-            try:
-                distributor_id = int(distributor_id)
-            except ValueError, TypeError:
-                return ""
-            for name, id_value in distributor_map.items():
-                if id_value == distributor_id:
-                    return name
-            return ""
-        distributor_id_value = distributor_map.get(distributor)
-        return str(distributor_id_value) if distributor_id_value else ""
+        return self._mapped_identifier(
+            distributor_map, distributor, reverse, distributor_id
+        )
+
+    @staticmethod
+    def _display_tracker_name(tracker_name: str | None) -> str:
+        return tracker_name or "Tracker"
+
+    @staticmethod
+    def _normalized_imdb_display(imdb: str | int | None) -> str:
+        return str(imdb).zfill(7) if imdb else ""
+
+    @staticmethod
+    def _tracker_id_message(label: str, value: Any) -> str:
+        return f"{label}: {value}" if value else ""
+
+    @staticmethod
+    def _tracker_id_messages(
+        tmdb: str | int | None,
+        imdb: str,
+        tvdb: str | int | None,
+        mal: str | int | None,
+    ) -> list[str]:
+        entries = (
+            Common._tracker_id_message("TMDb ID", tmdb),
+            Common._tracker_id_message(
+                "IMDb ID",
+                f"https://www.imdb.com/title/tt{imdb}" if imdb else "",
+            ),
+            Common._tracker_id_message("TVDb ID", tvdb),
+            Common._tracker_id_message("MAL ID", mal),
+        )
+        return list(filter(None, entries))
+
+    @staticmethod
+    def _log_tracker_ids(
+        tracker_name: str,
+        tmdb: str | int | None,
+        imdb: str,
+        tvdb: str | int | None,
+        mal: str | int | None,
+    ) -> None:
+        messages = Common._tracker_id_messages(tmdb, imdb, tvdb, mal)
+        if not messages:
+            return
+        logger.info(f"[cyan]Found the following IDs on {tracker_name}:")
+        for message in messages:
+            logger.info(message)
+
+    async def _confirm_tracker_id_selection(self, tracker_name: str) -> bool:
+        try:
+            selection = await prompt_in_thread(
+                cli_ui.ask_string,
+                f"Do you want to use these IDs from {tracker_name}? (Y/n): ",
+                default="",
+            )
+        except KeyboardInterrupt, EOFError:
+            raise OperationAbortedError(
+                "Tracker metadata selection was cancelled by the user."
+            ) from None
+        return str(selection or "").strip().lower() in {"", "y", "yes"}
 
     async def prompt_user_for_id_selection(
         self,
@@ -2951,55 +3257,14 @@ class Common:
         filename: str | list[str] | None = None,
         tracker_name: str | None = None,
     ) -> bool:
-        if not tracker_name:
-            tracker_name = (
-                "Tracker"  # Fallback if tracker_name is not provided
-            )
-
-        if imdb:
-            imdb = str(
-                imdb
-            ).zfill(
-                7
-            )  # Convert to string and ensure IMDb ID is 7 characters long by adding leading zeros
-            # console.print(f"[cyan]Found IMDb ID: https://www.imdb.com/title/tt{imdb}[/cyan]")
-
-        if any([tmdb, imdb, tvdb, mal]):
-            logger.info(f"[cyan]Found the following IDs on {tracker_name}:")
-            if tmdb:
-                logger.info(f"TMDb ID: {tmdb}")
-            if imdb:
-                logger.info(f"IMDb ID: https://www.imdb.com/title/tt{imdb}")
-            if tvdb:
-                logger.info(f"TVDb ID: {tvdb}")
-            if mal:
-                logger.info(f"MAL ID: {mal}")
-
+        display_name = self._display_tracker_name(tracker_name)
+        imdb_display = self._normalized_imdb_display(imdb)
+        self._log_tracker_ids(display_name, tmdb, imdb_display, tvdb, mal)
         if filename:
-            logger.info(
-                f"Filename: {filename}"
-            )  # Ensure filename is printed if available
-
-        if not meta.unattended:
-            try:
-                selection = (
-                    (
-                        await prompt_in_thread(
-                            cli_ui.ask_string,
-                            f"Do you want to use these IDs from {tracker_name}? (Y/n): ",
-                            default="",
-                        )
-                        or ""
-                    )
-                    .strip()
-                    .lower()
-                )
-                return selection in {"", "y", "yes"}
-            except KeyboardInterrupt, EOFError:
-                raise OperationAbortedError(
-                    "Tracker metadata selection was cancelled by the user."
-                ) from None
-        return True
+            logger.info(f"Filename: {filename}")
+        if meta.unattended:
+            return True
+        return await self._confirm_tracker_id_selection(display_name)
 
     async def prompt_user_for_confirmation(
         self, message: str, meta: Meta | None = None
@@ -3018,82 +3283,538 @@ class Common:
         )
         return response == "" or response == "y"
 
+    async def _apply_region_id(self, meta: Meta, region_id: Any) -> None:
+        if meta.region or not region_id:
+            return
+        region_name = await self.unit3d_region_ids(
+            reverse=True, region_id=region_id
+        )
+        if not region_name:
+            return
+        meta.region = region_name
+        logger.debug(
+            f"[green]Mapped region_id {region_id} to '{region_name}'[/green]"
+        )
+
+    async def _apply_distributor_id(
+        self, meta: Meta, distributor_id: Any
+    ) -> None:
+        if meta.distributor or not distributor_id:
+            return
+        distributor_name = await self.unit3d_distributor_ids(
+            reverse=True, distributor_id=distributor_id
+        )
+        if not distributor_name:
+            return
+        meta.distributor = distributor_name
+        logger.debug(
+            f"[green]Mapped distributor_id {distributor_id} to '{distributor_name}'[/green]"
+        )
+
     async def _apply_region_distributor(
         self, meta: Meta, attributes: dict[str, Any]
     ) -> None:
         region_id = attributes.get("region_id", 0)
         distributor_id = attributes.get("distributor_id", 0)
-
         logger.debug(f"[blue]Region ID: {region_id}[/blue]")
         logger.debug(f"[blue]Distributor ID: {distributor_id}[/blue]")
+        await self._apply_region_id(meta, region_id)
+        await self._apply_distributor_id(meta, distributor_id)
 
-        if not meta.region and region_id:
-            region_name = await self.unit3d_region_ids(
-                reverse=True, region_id=region_id
-            )
-            if region_name:
-                meta.region = region_name
-                logger.debug(
-                    f"[green]Mapped region_id {region_id} to '{region_name}'[/green]"
-                )
+    def _tracker_api_key(self, tracker: str) -> str:
+        trackers = self.config.get("TRACKERS", {})
+        tracker_map = (
+            cast(dict[str, Any], trackers)
+            if isinstance(trackers, dict)
+            else {}
+        )
+        raw_config = tracker_map.get(tracker, {})
+        config = (
+            cast(dict[str, Any], raw_config)
+            if isinstance(raw_config, dict)
+            else {}
+        )
+        raw_key = config.get("api_key")
+        return str(raw_key).strip() if raw_key else ""
 
-        if not meta.distributor and distributor_id:
-            distributor_name = await self.unit3d_distributor_ids(
-                reverse=True, distributor_id=distributor_id
-            )
-            if distributor_name:
-                meta.distributor = distributor_name
-                logger.debug(
-                    f"[green]Mapped distributor_id {distributor_id} to '{distributor_name}'[/green]"
+    def _unit3d_auth(
+        self, tracker: str
+    ) -> tuple[dict[str, str], dict[str, str]]:
+        api_key = self._tracker_api_key(tracker)
+        return (
+            {"api_token": api_key},
+            {
+                "Authorization": f"Bearer {api_key}",
+                "Accept": "application/json",
+            },
+        )
+
+    async def _unit3d_json_request(
+        self,
+        url: str,
+        params: dict[str, Any],
+        headers: dict[str, str],
+        request_timeout: float,
+        operation: str,
+    ) -> dict[str, Any] | None:
+        try:
+            async with httpx.AsyncClient(timeout=request_timeout) as client:
+                response = await client.get(
+                    url=url, params=params, headers=headers
                 )
+            payload = response.json()
+        except (httpx.RequestError, httpx.TimeoutException) as error:
+            logger.info(
+                f"[yellow]Request error in {operation}: {error}[/yellow]"
+            )
+            return None
+        except ValueError:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        return cast(dict[str, Any], payload)
+
+    @staticmethod
+    def _unit3d_attributes_from_value(value: Any) -> dict[str, Any] | None:
+        if not isinstance(value, dict):
+            return None
+        attributes = cast(dict[str, Any], value).get("attributes", {})
+        return (
+            cast(dict[str, Any], attributes)
+            if isinstance(attributes, dict)
+            else None
+        )
+
+    @classmethod
+    def _unit3d_list_attributes(cls, data: Any) -> dict[str, Any] | None:
+        if not isinstance(data, list) or not data:
+            return None
+        return cls._unit3d_attributes_from_value(cast(list[Any], data)[0])
+
+    @staticmethod
+    def _unit3d_direct_attributes(
+        payload: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        attributes = payload.get("attributes", {})
+        if not isinstance(attributes, dict) or not attributes:
+            return None
+        return cast(dict[str, Any], attributes)
+
+    @classmethod
+    def _unit3d_attributes(
+        cls, payload: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        data = payload.get("data", [])
+        if data == "404":
+            logger.info(
+                "[yellow]No data found (404). Returning None.[/yellow]"
+            )
+            return None
+        listed = cls._unit3d_list_attributes(data)
+        return (
+            listed
+            if listed is not None
+            else cls._unit3d_direct_attributes(payload)
+        )
 
     async def unit3d_region_distributor(
         self, meta: Meta, tracker: str, torrent_url: str, id: str = ""
     ) -> None:
-        """Get region and distributor information from API response"""
-        raw_api_key = self.config["TRACKERS"][tracker].get("api_key")
-        api_key = str(raw_api_key).strip() if raw_api_key else ""
-        params: dict[str, str] = {"api_token": api_key}
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Accept": "application/json",
-        }
-        url = f"{torrent_url}{id}"
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(
-                    url=url, params=params, headers=headers
-                )
-                json_response = response.json()
-        except (httpx.RequestError, httpx.TimeoutException) as e:
-            logger.info(
-                f"[yellow]Request error in unit3d_region_distributor: {e}[/yellow]"
-            )
-            return
-        except ValueError:
+        """Get region and distributor information from API response."""
+        params, headers = self._unit3d_auth(tracker)
+        payload = await self._unit3d_json_request(
+            f"{torrent_url}{id}",
+            params,
+            headers,
+            30.0,
+            "unit3d_region_distributor",
+        )
+        if payload is None:
             return
         try:
-            data: list[dict[str, Any]] | str = json_response.get("data", [])
-            if data == "404":
-                logger.info(
-                    "[yellow]No data found (404). Returning None.[/yellow]"
-                )
-                return
-
-            if data and isinstance(data, list):
-                attributes = data[0].get("attributes", {})
+            attributes = self._unit3d_attributes(payload)
+            if attributes is not None:
                 await self._apply_region_distributor(meta, attributes)
-                return
-            # Handle direct attributes from JSON response (when not in a list)
-            attributes = json_response.get("attributes", {})
-            if attributes:
-                await self._apply_region_distributor(meta, attributes)
-        except Exception as e:
+        except Exception as error:
             console.print_exception()
             logger.info(
-                f"[yellow]Invalid Response from {tracker} API. Error: {e!s}[/yellow]"
+                f"[yellow]Invalid Response from {tracker} API. Error: {error!s}[/yellow]"
+            )
+
+    @staticmethod
+    def _empty_unit3d_torrent_info() -> tuple[
+        int | None,
+        int | None,
+        int | None,
+        int | None,
+        str | None,
+        str | None,
+        str | None,
+        list[dict[str, str]],
+        str | list[str] | None,
+    ]:
+        return None, None, None, None, None, None, None, [], None
+
+    @staticmethod
+    def _unit3d_search_target(
+        file_name: str | list[str] | None,
+        torrent_id: str | int | None,
+        torrent_url: str,
+        search_url: str,
+    ) -> tuple[str, dict[str, Any]] | None:
+        if file_name:
+            logger.debug(
+                f"[green]Searching by file name: [bold yellow]{file_name}[/bold yellow]"
+            )
+            return search_url, {"file_name": file_name}
+        if torrent_id:
+            url = f"{torrent_url}{torrent_id}"
+            logger.debug(
+                f"[green]Searching by ID: [bold yellow]{torrent_id}[/bold yellow] via {url}"
+            )
+            return url, {}
+        logger.debug("[red]No ID or file name provided for search.[/red]")
+        return None
+
+    @staticmethod
+    def _log_unit3d_lookup(
+        tracker: str,
+        torrent_id: str | int | None,
+        public_torrent_url: str | None,
+    ) -> None:
+        if torrent_id and public_torrent_url:
+            logger.info(
+                f"Searching for information on [bold cyan]{tracker}[/bold cyan] "
+                f"({public_torrent_url.rstrip('/')}/{torrent_id})"
             )
             return
+        logger.info(
+            f"Searching for information on [bold cyan]{tracker}[/bold cyan]"
+        )
+
+    async def _unit3d_torrent_payload(
+        self,
+        tracker: str,
+        url: str,
+        params: dict[str, Any],
+        headers: dict[str, str],
+        torrent_id: str | int | None,
+        public_torrent_url: str | None,
+    ) -> dict[str, Any] | None:
+        self._log_unit3d_lookup(tracker, torrent_id, public_torrent_url)
+        return await self._unit3d_json_request(
+            url,
+            params,
+            headers,
+            5.0,
+            "unit3d_torrent_info",
+        )
+
+    @staticmethod
+    def _unit3d_numeric_attribute(attributes: dict[str, Any], key: str) -> int:
+        raw = attributes.get(key)
+        if raw in (None, "", 0, "0"):
+            return 0
+        return int(raw)
+
+    @staticmethod
+    def _unit3d_core_attributes(
+        attributes: dict[str, Any],
+    ) -> tuple[int, int, int, int, str | None, str | None, str | None]:
+        return (
+            Common._unit3d_numeric_attribute(attributes, "tmdb_id"),
+            Common._unit3d_numeric_attribute(attributes, "imdb_id"),
+            Common._unit3d_numeric_attribute(attributes, "tvdb_id"),
+            Common._unit3d_numeric_attribute(attributes, "mal_id"),
+            str(attributes.get("description"))
+            if attributes.get("description") is not None
+            else None,
+            str(attributes.get("category"))
+            if attributes.get("category") is not None
+            else None,
+            str(attributes.get("info_hash"))
+            if attributes.get("info_hash") is not None
+            else None,
+        )
+
+    @staticmethod
+    def _unit3d_payload_has_list_data(payload: dict[str, Any]) -> bool:
+        data = payload.get("data")
+        return isinstance(data, list) and bool(data)
+
+    @staticmethod
+    def _unit3d_file_name_values(attributes: dict[str, Any]) -> list[str]:
+        files = attributes.get("files", [])
+        if not isinstance(files, list):
+            return []
+        values: list[str] = []
+        for item in cast(list[Any], files)[:5]:
+            if not isinstance(item, dict):
+                continue
+            name = cast(dict[str, Any], item).get("name")
+            if name:
+                values.append(str(name))
+        return values
+
+    @classmethod
+    def _unit3d_direct_file_names(
+        cls,
+        attributes: dict[str, Any],
+        current: str | list[str] | None,
+        direct_payload: bool,
+    ) -> str | list[str] | None:
+        if not direct_payload:
+            return current
+        names = cls._unit3d_file_name_values(attributes)
+        if len(names) == 1:
+            return names[0]
+        return names if names else current
+
+    async def _apply_unit3d_disc_location(
+        self, meta: Meta, attributes: dict[str, Any]
+    ) -> None:
+        if meta.is_disc not in ("BDMV", "DVD"):
+            return
+        await self._apply_region_distributor(meta, attributes)
+
+    async def _unit3d_ids_accepted(
+        self,
+        meta: Meta,
+        tracker: str,
+        torrent_id: str | int | None,
+        tmdb: int,
+        imdb: int,
+        tvdb: int,
+        mal: int,
+        file_name: str | list[str] | None,
+    ) -> bool:
+        if torrent_id or not any((tmdb, imdb, tvdb)):
+            return True
+        accepted = await self.prompt_user_for_id_selection(
+            meta,
+            tmdb,
+            imdb,
+            tvdb,
+            mal,
+            file_name,
+            tracker_name=tracker,
+        )
+        if not accepted:
+            logger.info("[yellow]User chose to skip based on IDs.[/yellow]")
+        return accepted
+
+    @staticmethod
+    def _store_tracker_raw_description(
+        meta: Meta, tracker: str, description: str
+    ) -> None:
+        raw = getattr(meta, "tracker_description_raw", {})
+        descriptions = (
+            cast(dict[str, Any], raw) if isinstance(raw, dict) else {}
+        )
+        descriptions[tracker] = description
+        meta.tracker_description_raw = descriptions
+
+    @staticmethod
+    def _clean_unit3d_description(
+        description: str, torrent_url: str
+    ) -> tuple[str, list[dict[str, str]]]:
+        return BBCODE().clean_unit3d_description(description, torrent_url)
+
+    @staticmethod
+    def _review_unit3d_description(description: str) -> str | None:
+        logger.info(
+            "[cyan]Do you want to edit, discard or keep the description?[/cyan]"
+        )
+        choice = cli_ui.ask_string(
+            "Enter 'e' to edit, 'd' to discard, or press Enter to keep it as is:"
+        )
+        normalized = str(choice or "").lower()
+        if normalized == "d":
+            logger.info("[yellow]Description discarded.[/yellow]")
+            return None
+        if normalized != "e":
+            logger.info("[green]Keeping the original description.[/green]")
+            return description
+        edited = cast(str | None, click.edit(cast(Any, description)))
+        return edited.strip() if edited else description
+
+    @staticmethod
+    def _visible_unit3d_images(
+        meta: Meta, images: list[dict[str, str]]
+    ) -> list[dict[str, str]]:
+        return images if meta.keep_images else []
+
+    @staticmethod
+    def _log_unit3d_description(tracker: str, description: str) -> None:
+        logger.info(f"[green]Successfully grabbed description from {tracker}")
+        logger.info(
+            f"Extracted description: \n\n{description}\n\n",
+            extra={"markup": False, "highlighter": None},
+        )
+
+    def _unit3d_description_result(
+        self,
+        meta: Meta,
+        tracker: str,
+        torrent_url: str,
+        description: str | None,
+        skip_tracker_descriptions: bool,
+    ) -> tuple[str | None, list[dict[str, str]]]:
+        if not description:
+            return description, []
+        self._store_tracker_raw_description(meta, tracker, description)
+        cleaned, images = self._clean_unit3d_description(
+            description, torrent_url
+        )
+        visible_images = self._visible_unit3d_images(meta, images)
+        if skip_tracker_descriptions:
+            return "", visible_images
+        self._log_unit3d_description(tracker, cleaned)
+        if meta.unattended:
+            return cleaned, images
+        return self._review_unit3d_description(cleaned), visible_images
+
+    @staticmethod
+    def _unit3d_direct_payload(
+        payload: dict[str, Any], torrent_id: str | int | None
+    ) -> bool:
+        return bool(torrent_id) and not Common._unit3d_payload_has_list_data(
+            payload
+        )
+
+    def _unit3d_resolved_file_name(
+        self,
+        attributes: dict[str, Any],
+        payload: dict[str, Any],
+        torrent_id: str | int | None,
+        current: str | list[str] | None,
+    ) -> str | list[str] | None:
+        direct_payload = self._unit3d_direct_payload(payload, torrent_id)
+        resolved = self._unit3d_direct_file_names(
+            attributes, current, direct_payload
+        )
+        if direct_payload:
+            logger.debug(f"[blue]Extracted filename(s): {resolved}[/blue]")
+        return resolved
+
+    @staticmethod
+    def _unit3d_info_tuple(
+        core: tuple[int, int, int, int, str | None, str | None, str | None],
+        description: str | None,
+        images: list[dict[str, str]],
+        file_name: str | list[str] | None,
+    ) -> tuple[
+        int | None,
+        int | None,
+        int | None,
+        int | None,
+        str | None,
+        str | None,
+        str | None,
+        list[dict[str, str]],
+        str | list[str] | None,
+    ]:
+        tmdb, imdb, tvdb, mal, _description, category, infohash = core
+        return (
+            tmdb,
+            imdb,
+            tvdb,
+            mal,
+            description,
+            category,
+            infohash,
+            images,
+            file_name,
+        )
+
+    async def _process_unit3d_torrent_payload(
+        self,
+        payload: dict[str, Any],
+        meta: Meta,
+        tracker: str,
+        torrent_url: str,
+        torrent_id: str | int | None,
+        file_name: str | list[str] | None,
+        skip_tracker_descriptions: bool,
+    ) -> tuple[
+        int | None,
+        int | None,
+        int | None,
+        int | None,
+        str | None,
+        str | None,
+        str | None,
+        list[dict[str, str]],
+        str | list[str] | None,
+    ]:
+        attributes = self._unit3d_attributes(payload)
+        if attributes is None:
+            return self._empty_unit3d_torrent_info()
+        core = self._unit3d_core_attributes(attributes)
+        tmdb, imdb, tvdb, mal, description, _category, _infohash = core
+        await self._apply_unit3d_disc_location(meta, attributes)
+        resolved_file_name = self._unit3d_resolved_file_name(
+            attributes, payload, torrent_id, file_name
+        )
+        accepted = await self._unit3d_ids_accepted(
+            meta,
+            tracker,
+            torrent_id,
+            tmdb,
+            imdb,
+            tvdb,
+            mal,
+            resolved_file_name,
+        )
+        if not accepted:
+            return self._empty_unit3d_torrent_info()
+        description, images = self._unit3d_description_result(
+            meta,
+            tracker,
+            torrent_url,
+            description,
+            skip_tracker_descriptions,
+        )
+        return self._unit3d_info_tuple(
+            core, description, images, resolved_file_name
+        )
+
+    async def _safe_process_unit3d_torrent_payload(
+        self,
+        payload: dict[str, Any],
+        meta: Meta,
+        tracker: str,
+        torrent_url: str,
+        torrent_id: str | int | None,
+        file_name: str | list[str] | None,
+        skip_tracker_descriptions: bool,
+    ) -> tuple[
+        int | None,
+        int | None,
+        int | None,
+        int | None,
+        str | None,
+        str | None,
+        str | None,
+        list[dict[str, str]],
+        str | list[str] | None,
+    ]:
+        try:
+            return await self._process_unit3d_torrent_payload(
+                payload,
+                meta,
+                tracker,
+                torrent_url,
+                torrent_id,
+                file_name,
+                skip_tracker_descriptions,
+            )
+        except Exception as error:
+            console.print_exception()
+            logger.info(
+                f"[yellow]Invalid Response from {tracker} API. Error: {error!s}[/yellow]"
+            )
+            return self._empty_unit3d_torrent_info()
 
     async def unit3d_torrent_info(
         self,
@@ -3116,386 +3837,198 @@ class Common:
         list[dict[str, str]],
         str | list[str] | None,
     ]:
-        tmdb = imdb = tvdb = description = category = infohash = mal = (
-            files
-        ) = None
-        imagelist: list[dict[str, str]] = []
+        target = self._unit3d_search_target(
+            file_name, id, torrent_url, search_url
+        )
+        if target is None:
+            return self._empty_unit3d_torrent_info()
+        url, extra_params = target
+        params, headers = self._unit3d_auth(tracker)
+        params.update(extra_params)
+        payload = await self._unit3d_torrent_payload(
+            tracker, url, params, headers, id, public_torrent_url
+        )
+        if payload is None:
+            return self._empty_unit3d_torrent_info()
+        return await self._safe_process_unit3d_torrent_payload(
+            payload,
+            meta,
+            tracker,
+            torrent_url,
+            id,
+            file_name,
+            skip_tracker_descriptions,
+        )
 
-        # Build the params for the API request
-        raw_api_key = self.config["TRACKERS"][tracker].get("api_key")
-        api_key = str(raw_api_key).strip() if raw_api_key else ""
-        params: dict[str, Any] = {"api_token": api_key}
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Accept": "application/json",
-        }
+    @staticmethod
+    def _cookie_fields(line: str) -> list[str]:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            return []
+        return list(filter(None, re.split(r"[ \t]+", stripped)))
 
-        # Determine the search method and add parameters accordingly
-        if file_name:
-            params["file_name"] = file_name  # Add file_name to params
-            logger.debug(
-                f"[green]Searching {tracker} by file name: [bold yellow]{file_name}[/bold yellow]"
-            )
-            url = search_url
-        elif id:
-            url = f"{torrent_url}{id}"
-            logger.debug(
-                f"[green]Searching {tracker} by ID: [bold yellow]{id}[/bold yellow] via {url}"
-            )
-        else:
-            logger.debug("[red]No ID or file name provided for search.[/red]")
-            return None, None, None, None, None, None, None, [], None
-
-        # Make the GET request with proper encoding handled by 'params'
-        try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                if id and public_torrent_url:
-                    logger.info(
-                        f"Searching for information on [bold cyan]{tracker}[/bold cyan] ({public_torrent_url.rstrip('/')}/{id})"
-                    )
-                else:
-                    logger.info(
-                        f"Searching for information on [bold cyan]{tracker}[/bold cyan]"
-                    )
-                response = await client.get(
-                    url=url, params=params, headers=headers
-                )
-                json_response = response.json()
-        except (httpx.RequestError, httpx.TimeoutException) as e:
-            logger.info(
-                f"[yellow]Request error in unit3d_torrent_info: {e}[/yellow]"
-            )
-            return None, None, None, None, None, None, None, [], None
-        except ValueError:
-            return None, None, None, None, None, None, None, [], None
-
-        try:
-            # Handle response when searching by file name (which might return a 'data' array)
-            data: list[dict[str, Any]] | str = json_response.get("data", [])
-            if data == "404":
-                logger.info(
-                    "[yellow]No data found (404). Returning None.[/yellow]"
-                )
-                return None, None, None, None, None, None, None, [], None
-
-            if data and isinstance(
-                data, list
-            ):  # Ensure data is a list before accessing it
-                attributes = data[0].get("attributes", {})
-
-                # Extract data from the attributes
-                category = attributes.get("category")
-                description = attributes.get("description")
-                tmdb = int(attributes.get("tmdb_id") or 0)
-                tvdb = int(attributes.get("tvdb_id") or 0)
-                mal = int(attributes.get("mal_id") or 0)
-                imdb = int(attributes.get("imdb_id") or 0)
-                infohash = attributes.get("info_hash")
-                tmdb = 0 if tmdb == 0 else tmdb
-                tvdb = 0 if tvdb == 0 else tvdb
-                mal = 0 if mal == 0 else mal
-                imdb = 0 if imdb == 0 else imdb
-                if not meta.region and meta.is_disc in ("BDMV", "DVD"):
-                    region_id = attributes.get("region_id")
-                    region_name = await self.unit3d_region_ids(
-                        reverse=True, region_id=region_id
-                    )
-                    if region_name:
-                        meta.region = region_name
-                if not meta.distributor and meta.is_disc in ("BDMV", "DVD"):
-                    distributor_id = attributes.get("distributor_id")
-                    distributor_name = await self.unit3d_distributor_ids(
-                        reverse=True, distributor_id=distributor_id
-                    )
-                    if distributor_name:
-                        meta.distributor = distributor_name
-            else:
-                # Handle response when searching by ID
-                if id and not data:
-                    attributes = json_response.get("attributes", {})
-
-                    # Extract data from the attributes
-                    category = attributes.get("category")
-                    description = attributes.get("description")
-                    tmdb = int(attributes.get("tmdb_id") or 0)
-                    tvdb = int(attributes.get("tvdb_id") or 0)
-                    mal = int(attributes.get("mal_id") or 0)
-                    imdb = int(attributes.get("imdb_id") or 0)
-                    infohash = attributes.get("info_hash")
-                    tmdb = 0 if tmdb == 0 else tmdb
-                    tvdb = 0 if tvdb == 0 else tvdb
-                    mal = 0 if mal == 0 else mal
-                    imdb = 0 if imdb == 0 else imdb
-                    if not meta.region and meta.is_disc in ("BDMV", "DVD"):
-                        region_id = attributes.get("region_id")
-                        region_name = await self.unit3d_region_ids(
-                            reverse=True, region_id=region_id
-                        )
-                        if region_name:
-                            meta.region = region_name
-                    if not meta.distributor and meta.is_disc in (
-                        "BDMV",
-                        "DVD",
-                    ):
-                        distributor_id = attributes.get("distributor_id")
-                        distributor_name = await self.unit3d_distributor_ids(
-                            reverse=True, distributor_id=distributor_id
-                        )
-                        if distributor_name:
-                            meta.distributor = distributor_name
-                    # Handle file name extraction
-                    files = attributes.get("files", [])
-                    if files:
-                        file_name = (
-                            files[0]["name"]
-                            if len(files) == 1
-                            else [file["name"] for file in files[:5]]
-                        )
-
-                    logger.debug(
-                        f"[blue]Extracted filename(s): {file_name}[/blue]"
-                    )  # Print the extracted filename(s)
-
-            # The selection helper owns cancellation translation.
-            if (
-                (tmdb or imdb or tvdb)
-                and not id
-                and not await self.prompt_user_for_id_selection(
-                    meta,
-                    tmdb,
-                    imdb,
-                    tvdb,
-                    mal,
-                    file_name,
-                    tracker_name=tracker,
-                )
-            ):
-                logger.info(
-                    "[yellow]User chose to skip based on IDs.[/yellow]"
-                )
-                return None, None, None, None, None, None, None, [], None
-
-            if description:
-                raw_descriptions = (
-                    getattr(meta, "tracker_description_raw", {}) or {}
-                )
-                raw_descriptions[tracker] = description
-                meta.tracker_description_raw = raw_descriptions
-                bbcode = BBCODE()
-                description, imagelist = bbcode.clean_unit3d_description(
-                    description, torrent_url
-                )
-                if not skip_tracker_descriptions:
-                    logger.info(
-                        f"[green]Successfully grabbed description from {tracker}"
-                    )
-                    logger.info(
-                        f"Extracted description: \n\n{description}\n\n",
-                        extra={"markup": False, "highlighter": None},
-                    )
-
-                    # A tracker ID only identifies the source of this metadata.  It
-                    # must not suppress the interactive review of the description.
-                    # Candidate collection sets ``unattended`` explicitly and is
-                    # therefore still non-interactive.
-                    if meta.unattended:
-                        return (
-                            tmdb,
-                            imdb,
-                            tvdb,
-                            mal,
-                            description,
-                            category,
-                            infohash,
-                            imagelist,
-                            file_name,
-                        )
-                    logger.info(
-                        "[cyan]Do you want to edit, discard or keep the description?[/cyan]"
-                    )
-                    edit_choice = cli_ui.ask_string(
-                        "Enter 'e' to edit, 'd' to discard, or press Enter to keep it as is:"
-                    )
-
-                    if (edit_choice or "").lower() == "e":
-                        edited_description = cast(
-                            str | None, click.edit(cast(Any, description))
-                        )
-                        if edited_description:
-                            description = edited_description.strip()
-                    elif (edit_choice or "").lower() == "d":
-                        description = None
-                        logger.info("[yellow]Description discarded.[/yellow]")
-                    else:
-                        logger.info(
-                            "[green]Keeping the original description.[/green]"
-                        )
-                    if not meta.keep_images:
-                        imagelist = []
-                else:
-                    description = ""
-                    if not meta.keep_images:
-                        imagelist = []
-
-            return (
-                tmdb,
-                imdb,
-                tvdb,
-                mal,
-                description,
-                category,
-                infohash,
-                imagelist,
-                file_name,
-            )
-
-        except Exception as e:
-            console.print_exception()
-            logger.info(
-                f"[yellow]Invalid Response from {tracker} API. Error: {e!s}[/yellow]"
-            )
-            return None, None, None, None, None, None, None, [], None
+    @staticmethod
+    def _parsed_cookie_line(line: str) -> tuple[str, str] | None:
+        fields = Common._cookie_fields(line)
+        if len(fields) < 7:
+            return None
+        return fields[5], fields[6]
 
     async def parse_cookie_file(self, cookiefile: str) -> dict[str, str]:
-        """Parse a cookies.txt file and return a dictionary of key value pairs
-        compatible with requests."""
-
+        """Parse a Netscape cookies.txt file into a requests-compatible mapping."""
+        async with aiofiles.open(cookiefile) as handle:
+            content = await handle.read()
         cookies: dict[str, str] = {}
-        async with aiofiles.open(cookiefile) as fp:
-            content = await fp.read()
-            for line in content.splitlines():
-                if line.strip() and not line.startswith(("# ", "#")):
-                    line_fields = re.split(" |\t", line.strip())
-                    line_fields = [x for x in line_fields if x != ""]
-                    if len(line_fields) >= 7:
-                        cookies[line_fields[5]] = line_fields[6]
+        for line in content.splitlines():
+            parsed = self._parsed_cookie_line(line)
+            if parsed is not None:
+                name, value = parsed
+                cookies[name] = value
         return cookies
+
+    @staticmethod
+    def _ptgen_url(ptgen_site: str) -> str:
+        return ptgen_site or "https://ptgen.zhenzhen.workers.dev"
+
+    @staticmethod
+    async def _fetch_ptgen_once(
+        client: httpx.AsyncClient,
+        url: str,
+        params: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        try:
+            response = await client.get(url, params=params, timeout=30.0)
+            payload = response.json()
+        except httpx.RequestError, httpx.TimeoutException, ValueError:
+            return None
+        return (
+            cast(dict[str, Any], payload)
+            if isinstance(payload, dict)
+            else None
+        )
+
+    @staticmethod
+    def _valid_ptgen_response(payload: dict[str, Any] | None) -> bool:
+        return payload is not None and payload.get("error") is None
+
+    async def _fetch_ptgen_with_retries(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        params: dict[str, Any],
+        retries: int,
+    ) -> dict[str, Any] | None:
+        payload = await self._fetch_ptgen_once(client, url, params)
+        if self._valid_ptgen_response(payload):
+            return payload
+        for _attempt in range(retries):
+            payload = await self._fetch_ptgen_once(client, url, params)
+            if self._valid_ptgen_response(payload):
+                return payload
+        return payload
+
+    @staticmethod
+    def _first_ptgen_data_item(
+        payload: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if not payload:
+            return None
+        data = payload.get("data")
+        if not isinstance(data, list) or not data:
+            return None
+        first = cast(list[Any], data)[0]
+        return cast(dict[str, Any], first) if isinstance(first, dict) else None
+
+    @staticmethod
+    def _douban_link_from_ptgen(payload: dict[str, Any] | None) -> str:
+        first = Common._first_ptgen_data_item(payload)
+        return str(first.get("link") or "") if first is not None else ""
+
+    @staticmethod
+    def _ptgen_prompt_allowed(meta: Meta) -> bool:
+        return not meta.unattended or bool(meta.unattended_confirm)
+
+    async def _prompt_douban_link(self, meta: Meta) -> str:
+        if not self._ptgen_prompt_allowed(meta):
+            return ""
+        value = await prompt_in_thread(
+            cli_ui.ask_string,
+            "Please enter Douban link:",
+            default="",
+        )
+        return str(value or "")
+
+    async def _resolve_douban_link(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        meta: Meta,
+        retries: int,
+    ) -> str:
+        if meta.imdb_id is None or meta.imdb_id == 0:
+            logger.info("[red]No IMDb id was found.")
+            return await self._prompt_douban_link(meta)
+        search = {"search": f"tt{meta.imdb_id}"}
+        payload = await self._fetch_ptgen_with_retries(
+            client, url, search, retries
+        )
+        link = self._douban_link_from_ptgen(payload)
+        if link:
+            return link
+        logger.info("[red]Unable to get data from ptgen using IMDb")
+        return await self._prompt_douban_link(meta)
+
+    @staticmethod
+    def _ptgen_meta_path(meta: Meta) -> Path:
+        return Path(meta.base_dir) / "tmp" / meta.uuid / "meta.json"
+
+    async def _save_ptgen_meta(
+        self, meta: Meta, payload: dict[str, Any]
+    ) -> None:
+        meta.ptgen = payload
+        async with aiofiles.open(
+            self._ptgen_meta_path(meta), "w", encoding="utf-8"
+        ) as handle:
+            await handle.write(json.dumps(meta.to_dict(), indent=4))
+
+    @staticmethod
+    def _ptgen_rendered_text(meta: Meta, payload: dict[str, Any]) -> str:
+        text = str(payload.get("format", ""))
+        if "[/img]" in text:
+            text = text.split("[/img]")[1]
+        cover = meta.imdb_info.get("cover", meta.artwork_url)
+        return f"[img]{cover}[/img]{text}"
+
+    async def _ptgen_flow(self, meta: Meta, url: str, retries: int) -> str:
+        async with httpx.AsyncClient() as client:
+            douban_link = await self._resolve_douban_link(
+                client, url, meta, retries
+            )
+            payload = await self._fetch_ptgen_with_retries(
+                client, url, {"url": douban_link}, retries
+            )
+        if not self._valid_ptgen_response(payload):
+            logger.info(
+                "[bold red]Failed to get valid ptgen response after retries"
+            )
+            return ""
+        resolved_payload = cast(dict[str, Any], payload)
+        await self._save_ptgen_meta(meta, resolved_payload)
+        return self._ptgen_rendered_text(meta, resolved_payload)
 
     async def ptgen(
         self, meta: Meta, ptgen_site: str = "", ptgen_retry: int = 3
     ) -> str:
-        ptgen_text = ""
-        url = "https://ptgen.zhenzhen.workers.dev"
-        if ptgen_site != "":
-            url = ptgen_site
-        params: dict[str, Any] = {}
-        data: dict[str, Any] = {}
-
-        async def fetch_ptgen(
-            client: httpx.AsyncClient,
-            request_url: str,
-            request_params: dict[str, Any],
-        ) -> dict[str, Any] | None:
-            """Helper to fetch and parse ptgen response with error handling."""
-            try:
-                response = await client.get(
-                    request_url, params=request_params, timeout=30.0
-                )
-                json_data: dict[str, Any] = response.json()
-                return json_data
-            except httpx.RequestError, httpx.TimeoutException, ValueError:
-                return None
-
         try:
-            async with httpx.AsyncClient() as client:
-                # get douban url
-                if meta.imdb_id is not None and meta.imdb_id != 0:
-                    data["search"] = f"tt{meta.imdb_id}"
-                    ptgen_json = await fetch_ptgen(client, url, data)
-
-                    # Check for error and retry if needed
-                    if (
-                        ptgen_json is None
-                        or ptgen_json.get("error") is not None
-                    ):
-                        for _retry in range(ptgen_retry):
-                            ptgen_json = await fetch_ptgen(client, url, data)
-                            if (
-                                ptgen_json is not None
-                                and ptgen_json.get("error") is None
-                            ):
-                                break
-
-                    # Try to extract douban link
-                    try:
-                        if (
-                            ptgen_json
-                            and "data" in ptgen_json
-                            and ptgen_json["data"]
-                        ):
-                            params["url"] = ptgen_json["data"][0]["link"]
-                        else:
-                            raise KeyError("No data in response")
-                    except KeyError, IndexError, TypeError:
-                        logger.info(
-                            "[red]Unable to get data from ptgen using IMDb"
-                        )
-                        if not meta.unattended or (
-                            meta.unattended and meta.unattended_confirm
-                        ):
-                            params["url"] = (
-                                await prompt_in_thread(
-                                    cli_ui.ask_string,
-                                    "Please enter Douban link:",
-                                    default="",
-                                )
-                                or ""
-                            )
-                        else:
-                            params["url"] = ""
-                else:
-                    logger.info("[red]No IMDb id was found.")
-                    if not meta.unattended or (
-                        meta.unattended and meta.unattended_confirm
-                    ):
-                        params["url"] = (
-                            await prompt_in_thread(
-                                cli_ui.ask_string,
-                                "Please enter Douban link:",
-                                default="",
-                            )
-                            or ""
-                        )
-                    else:
-                        params["url"] = ""
-
-                # Fetch with douban URL
-                ptgen_json = await fetch_ptgen(client, url, params)
-                if ptgen_json is None or ptgen_json.get("error") is not None:
-                    for _retry in range(ptgen_retry):
-                        ptgen_json = await fetch_ptgen(client, url, params)
-                        if (
-                            ptgen_json is not None
-                            and ptgen_json.get("error") is None
-                        ):
-                            break
-
-                if ptgen_json is None or ptgen_json.get("error") is not None:
-                    logger.info(
-                        "[bold red]Failed to get valid ptgen response after retries"
-                    )
-                    return ""
-
-                meta.ptgen = ptgen_json
-                async with aiofiles.open(
-                    f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/meta.json",
-                    "w",
-                    encoding="utf-8",
-                ) as f:
-                    await f.write(json.dumps(meta.to_dict(), indent=4))
-
-                ptgen_text = ptgen_json.get("format", "")
-                if "[/img]" in ptgen_text:
-                    ptgen_text = ptgen_text.split("[/img]")[1]
-                ptgen_text = f"[img]{meta.imdb_info.get('cover', meta.artwork_url)}[/img]{ptgen_text}"
-
+            return await self._ptgen_flow(
+                meta, self._ptgen_url(ptgen_site), ptgen_retry
+            )
         except Exception:
             console.print_exception()
             logger.info(
                 "[bold red]There was an error getting the ptgen \\nUploading without ptgen"
             )
             return ""
-        return ptgen_text
 
     class MediaInfoParser:
         def parse_mediainfo(self, mediainfo_text: str) -> dict[str, Any]:
@@ -3694,85 +4227,415 @@ class Common:
             bbcode_output += "\n"
             return bbcode_output
 
+    @staticmethod
+    def _bdmv_mediainfo_path(meta: Meta) -> Path:
+        return (
+            Path(meta.base_dir) / "tmp" / meta.uuid / "MEDIAINFO_CLEANPATH.txt"
+        )
+
+    @staticmethod
+    def _bdmv_playlist(meta: Meta) -> dict[str, Any]:
+        return cast(dict[str, Any], meta.discs[0]["playlists"][0])
+
+    @staticmethod
+    def _bdmv_line_allowed(line: str, remove: list[str] | None) -> bool:
+        if not remove:
+            return True
+        stripped = line.strip()
+        return not any(stripped.startswith(prefix) for prefix in remove)
+
+    async def _read_clean_bdmv_mediainfo(
+        self, path: Path, remove: list[str] | None
+    ) -> str:
+        if not path.is_file():
+            return ""
+        async with aiofiles.open(path, encoding="utf-8") as handle:
+            lines = await handle.readlines()
+        return "".join(
+            line for line in lines if self._bdmv_line_allowed(line, remove)
+        )
+
+    @staticmethod
+    def _bdmv_items(value: Any) -> list[dict[str, Any]]:
+        if not isinstance(value, list):
+            return []
+        return [
+            cast(dict[str, Any], item)
+            for item in cast(list[Any], value)
+            if isinstance(item, dict)
+        ]
+
+    @staticmethod
+    def _bdmv_item_size(item: dict[str, Any]) -> int:
+        try:
+            return int(item.get("size", 0) or 0)
+        except TypeError, ValueError:
+            return 0
+
+    @classmethod
+    def _largest_bdmv_item(cls, playlist: dict[str, Any]) -> str:
+        items = cls._bdmv_items(playlist.get("items", []))
+        if not items:
+            return ""
+        largest = max(items, key=cls._bdmv_item_size)
+        return str(largest.get("file") or "")
+
+    async def _export_bdmv_mediainfo(self, meta: Meta, source: str) -> None:
+        await export_info(
+            source, False, meta.uuid, meta.base_dir, is_dvd=False
+        )
+
+    async def _ensure_bdmv_playlist_mediainfo(
+        self, meta: Meta, mi_path: Path, playlist: dict[str, Any]
+    ) -> None:
+        if mi_path.is_file():
+            return
+        logger.debug("[blue]Generating MediaInfo for BDMV...[/blue]")
+        await self._export_bdmv_mediainfo(meta, str(playlist["path"]))
+
+    async def _fallback_bdmv_mediainfo(
+        self,
+        meta: Meta,
+        playlist: dict[str, Any],
+        mi_path: Path,
+        remove: list[str] | None,
+    ) -> str | None:
+        largest_m2ts = self._largest_bdmv_item(playlist)
+        if not largest_m2ts:
+            return None
+        logger.debug(
+            f"[blue]Selected largest M2TS from meta: {Path(largest_m2ts).name}[/blue]"
+        )
+        await self._export_bdmv_mediainfo(meta, largest_m2ts)
+        return await self._read_clean_bdmv_mediainfo(mi_path, remove)
+
     async def get_bdmv_mediainfo(
         self, meta: Meta, remove: list[str] | None = None, char_limit: int = 0
     ) -> str:
-        """
-        Generate and sanitize MediaInfo for BDMV discs.
+        """Generate and sanitize MediaInfo for BDMV discs."""
+        if meta.is_disc != "BDMV":
+            return ""
+        mi_path = self._bdmv_mediainfo_path(meta)
+        playlist = self._bdmv_playlist(meta)
+        await self._ensure_bdmv_playlist_mediainfo(meta, mi_path, playlist)
+        mediainfo = await self._read_clean_bdmv_mediainfo(mi_path, remove)
+        if not char_limit or len(mediainfo) <= char_limit:
+            return mediainfo
+        logger.debug(
+            f"[yellow]MediaInfo length ({len(mediainfo)}) exceeds limit ({char_limit}). Falling back to largest M2TS...[/yellow]"
+        )
+        fallback = await self._fallback_bdmv_mediainfo(
+            meta, playlist, mi_path, remove
+        )
+        return fallback if fallback is not None else mediainfo
 
-        This is required by specific trackers that demand MediaInfo regardless of the media type.
-        Playlists are preferred because raw .m2ts files lack language metadata.
-        However, since playlists can become bloated with hundreds of tracks, the method
-        falls back to the largest .m2ts file if the output exceeds the character limit.
+    @staticmethod
+    def _book_language_matches(
+        book_language: str, languages_to_check: list[str]
+    ) -> bool:
+        required = {language.lower() for language in languages_to_check}
+        return not required or book_language.lower() in required
 
-        :param remove: String or list of strings identifying line prefixes to be filtered out.
-                       Useful for avoiding tracker parser errors (e.g., misinterpreting '2 bytes' as '2TB').
-        :param char_limit: Max character length allowed before falling back to the largest M2TS.
-        :return: A string containing the cleaned MediaInfo content.
-        """
-        mediainfo = ""
-        mi_path = f"{meta.base_dir}{'/' + 'tmp' + '/'}{meta.uuid}/MEDIAINFO_CLEANPATH.txt"
+    async def _book_language_requirement(
+        self,
+        meta: Meta,
+        tracker: str,
+        languages_to_check: list[str],
+        prompt_on_failure: bool,
+    ) -> bool:
+        book_language = meta.book_language
+        if not book_language:
+            return True
+        if self._book_language_matches(book_language, languages_to_check):
+            return True
+        logger.info(
+            f"[red]Language requirement not met for [bold]{tracker}[/bold].[/red]\n"
+            f"[yellow]Required one of:[/yellow] {', '.join(languages_to_check)}\n"
+            f"[cyan]Found book language:[/cyan] {book_language}"
+        )
+        if prompt_on_failure:
+            return await self.prompt_user_for_confirmation(
+                f"{tracker}: Language requirements not met. Do you want to proceed with the upload?",
+                meta,
+            )
+        return False
 
-        if meta.is_disc == "BDMV":
-            # 1. Generate/Load initial MediaInfo (Playlist) if not exists
-            if not Path(mi_path).is_file():
-                logger.debug("[blue]Generating MediaInfo for BDMV...[/blue]")
+    @staticmethod
+    def _first_original_language(meta: Meta) -> str:
+        raw = meta.original_language
+        if isinstance(raw, str):
+            return raw.strip()
+        if not isinstance(raw, list) or not raw:
+            return ""
+        first = raw[0]
+        return first.strip() if isinstance(first, str) else ""
 
-                path = meta.discs[0]["playlists"][0]["path"]
-                await export_info(
-                    path, False, meta.uuid, meta.base_dir, is_dvd=False
-                )
+    def _debug_original_language_candidates(
+        self, meta: Meta, candidates: set[str], original_ok: bool
+    ) -> None:
+        if not meta.debug or original_ok:
+            return
+        rendered = ", ".join(sorted(candidates)) or "None"
+        logger.info(
+            f"[blue]Debug: Original language expanded candidates: {rendered}[/blue]"
+        )
 
-            # Helper to read and filter lines from the export file
-            async def read_and_clean() -> str:
-                if not Path(mi_path).is_file():
-                    return ""
+    def _original_language_state(
+        self,
+        meta: Meta,
+        original_language: bool,
+        alias_lookup: dict[str, set[str]],
+        audio_expanded: set[str],
+    ) -> tuple[str | None, bool]:
+        if not original_language:
+            return None, False
+        first_original = self._first_original_language(meta)
+        if not first_original:
+            return None, False
+        display = self._format_language_for_display(first_original)
+        candidates = self._expand_language_candidates(
+            first_original, alias_lookup
+        )
+        original_ok = bool(candidates.intersection(audio_expanded))
+        self._debug_original_language_candidates(meta, candidates, original_ok)
+        return display, original_ok
 
-                async with aiofiles.open(mi_path, encoding="utf-8") as f:
-                    lines = await f.readlines()
+    def _language_requirement_state(
+        self,
+        meta: Meta,
+        languages_to_check: list[str],
+        original_language: bool,
+    ) -> _LanguageRequirementState:
+        alias_lookup = self._build_language_alias_lookup()
+        raw_audio = self._coerce_language_values(meta.audio_languages)
+        raw_subtitles = self._coerce_language_values(meta.subtitle_languages)
+        required = [language.lower() for language in languages_to_check]
+        audio = [language.lower() for language in raw_audio]
+        subtitles = [language.lower() for language in raw_subtitles]
+        required_expanded = self._expand_language_list(required, alias_lookup)
+        audio_expanded = self._expand_language_list(raw_audio, alias_lookup)
+        subtitle_expanded = self._expand_language_list(
+            raw_subtitles, alias_lookup
+        )
+        original_display, original_ok = self._original_language_state(
+            meta, original_language, alias_lookup, audio_expanded
+        )
+        return _LanguageRequirementState(
+            required=required,
+            audio=audio,
+            subtitles=subtitles,
+            required_expanded=required_expanded,
+            audio_expanded=audio_expanded,
+            subtitle_expanded=subtitle_expanded,
+            original_display=original_display,
+            original_ok=original_ok,
+        )
 
-                if remove:
-                    lines = [
-                        line
-                        for line in lines
-                        if not any(
-                            line.strip().startswith(prefix)
-                            for prefix in remove
-                        )
-                    ]
+    @staticmethod
+    def _language_requirement_match(
+        enabled: bool, required: set[str], available: set[str]
+    ) -> bool:
+        if not enabled:
+            return True
+        return bool(required.intersection(available))
 
-                return "".join(lines)
+    @staticmethod
+    def _audio_subtitle_matches(
+        state: _LanguageRequirementState,
+        check_audio: bool,
+        check_subtitle: bool,
+    ) -> tuple[bool, bool]:
+        return (
+            Common._language_requirement_match(
+                check_audio, state.required_expanded, state.audio_expanded
+            ),
+            Common._language_requirement_match(
+                check_subtitle,
+                state.required_expanded,
+                state.subtitle_expanded,
+            ),
+        )
 
-            mediainfo = await read_and_clean()
+    async def _original_required_gate(
+        self,
+        meta: Meta,
+        tracker: str,
+        state: _LanguageRequirementState,
+        original_required: bool,
+        prompt_on_failure: bool,
+    ) -> bool | None:
+        if not original_required or state.original_ok:
+            return None
+        logger.info(
+            f"[red]Original language requirement not met for [bold]{tracker}[/bold].[/red]\n"
+            f"[yellow]Required original audio language:[/yellow] {state.original_display}\n"
+            f"[cyan]Found Audio Languages:[/cyan] {', '.join(state.audio) or 'None'}"
+        )
+        if prompt_on_failure:
+            return await self.prompt_user_for_confirmation(
+                f"{tracker}: Language requirements not met. Do you want to proceed with the upload?",
+                meta,
+            )
+        return False
 
-            # 2. Check char_limit and fallback to largest M2TS if necessary
-            if char_limit and len(mediainfo) > char_limit:
-                logger.debug(
-                    f"[yellow]MediaInfo length ({len(mediainfo)}) exceeds limit ({char_limit}). Falling back to largest M2TS...[/yellow]"
-                )
+    @staticmethod
+    def _log_language_debug(
+        state: _LanguageRequirementState, audio_ok: bool, subtitle_ok: bool
+    ) -> None:
+        logger.debug(
+            f"[blue]Debug: Audio Languages Found: {state.audio}[/blue]"
+        )
+        logger.debug(
+            f"[blue]Debug: Subtitle Languages Found: {state.subtitles}[/blue]"
+        )
+        logger.debug(
+            f"[blue]Debug: Original Audio Language: {state.original_display}[/blue]"
+        )
+        logger.debug(
+            f"[blue]Debug: Audio OK: {audio_ok}, Subtitle OK: {subtitle_ok}, Original OK: {state.original_ok}[/blue]"
+        )
 
-                items = meta.discs[0]["playlists"][0].get("items", [])
+    @staticmethod
+    def _language_list_display(values: list[str]) -> str:
+        rendered = ", ".join(values)
+        return rendered if rendered else "None"
 
-                if items:
-                    largest_item = max(items, key=lambda x: x.get("size", 0))
-                    largest_m2ts = largest_item.get("file")
+    @staticmethod
+    def _original_audio_subtitle_gate(
+        tracker: str,
+        state: _LanguageRequirementState,
+        audio_ok: bool,
+        subtitle_ok: bool,
+    ) -> bool | None:
+        if audio_ok:
+            return None
+        if not state.original_ok:
+            return None
+        if subtitle_ok:
+            return True
+        logger.info(
+            f"[red]Language requirement not met for [bold]{tracker}[/bold].[/red]\n"
+            f"[yellow]Required subtitles in one of the following with an original audio track:[/yellow] "
+            f"{', '.join(state.required)}\n"
+            f"[cyan]Found Audio:[/cyan] {Common._language_list_display(state.audio)}\n"
+            f"[cyan]Found Subtitles:[/cyan] {Common._language_list_display(state.subtitles)}\n"
+            f"[cyan]Original Audio Language:[/cyan] {state.original_display}"
+        )
+        return False
 
-                    if largest_m2ts:
-                        logger.debug(
-                            f"[blue]Selected largest M2TS from meta: {Path(largest_m2ts).name}[/blue]"
-                        )
+    @staticmethod
+    def _combined_language_requirement(
+        check_audio: bool,
+        check_subtitle: bool,
+        require_both: bool,
+        audio_ok: bool,
+        subtitle_ok: bool,
+    ) -> bool:
+        if require_both:
+            return all((audio_ok, subtitle_ok))
+        return any((check_audio and audio_ok, check_subtitle and subtitle_ok))
 
-                        await export_info(
-                            largest_m2ts,
-                            False,
-                            meta.uuid,
-                            meta.base_dir,
-                            is_dvd=False,
-                        )
+    @staticmethod
+    def _log_combined_language_failure(
+        tracker: str,
+        state: _LanguageRequirementState,
+        require_both: bool,
+    ) -> None:
+        if require_both:
+            requirement = (
+                "Required both audio and subtitles in one of the following:"
+            )
+        else:
+            requirement = "Required at least one of the following:"
+        logger.info(
+            f"[red]Language requirement not met for [bold]{tracker}[/bold].[/red]\n"
+            f"[yellow]{requirement}[/yellow] {', '.join(state.required)}\n"
+            f"[cyan]Found Audio:[/cyan] {', '.join(state.audio) or 'None'}\n"
+            f"[cyan]Found Subtitles:[/cyan] {', '.join(state.subtitles) or 'None'}"
+        )
 
-                        mediainfo = await read_and_clean()
+    async def _confirmed_language_result(
+        self,
+        meta: Meta,
+        tracker: str,
+        meets_requirement: bool,
+        prompt_on_failure: bool,
+    ) -> bool:
+        if meets_requirement or not prompt_on_failure:
+            return meets_requirement
+        return await self.prompt_user_for_confirmation(
+            f"{tracker}: Language requirements not met. Do you want to proceed with the upload?",
+            meta,
+        )
 
-        return mediainfo
+    @staticmethod
+    def _language_checks_disabled(
+        check_audio: bool, check_subtitle: bool
+    ) -> bool:
+        return not any((check_audio, check_subtitle))
+
+    @staticmethod
+    def _log_language_failure_if_needed(
+        tracker: str,
+        state: _LanguageRequirementState,
+        require_both: bool,
+        meets_requirement: bool,
+    ) -> None:
+        if not meets_requirement:
+            Common._log_combined_language_failure(tracker, state, require_both)
+
+    async def _video_language_requirement(
+        self,
+        meta: Meta,
+        tracker: str,
+        languages_to_check: list[str],
+        check_audio: bool,
+        check_subtitle: bool,
+        require_both: bool,
+        original_language: bool,
+        original_required: bool,
+        prompt_on_failure: bool,
+    ) -> bool:
+        if not meta.language_checked:
+            await languages_manager.process_desc_language(
+                meta, tracker=tracker
+            )
+        state = self._language_requirement_state(
+            meta, languages_to_check, original_language
+        )
+        original_gate = await self._original_required_gate(
+            meta,
+            tracker,
+            state,
+            original_required,
+            prompt_on_failure,
+        )
+        if original_gate is not None:
+            return original_gate
+        audio_ok, subtitle_ok = self._audio_subtitle_matches(
+            state, check_audio, check_subtitle
+        )
+        self._log_language_debug(state, audio_ok, subtitle_ok)
+        fallback = self._original_audio_subtitle_gate(
+            tracker, state, audio_ok, subtitle_ok
+        )
+        if fallback is not None:
+            return fallback
+        if self._language_checks_disabled(check_audio, check_subtitle):
+            return True
+        meets_requirement = self._combined_language_requirement(
+            check_audio,
+            check_subtitle,
+            require_both,
+            audio_ok,
+            subtitle_ok,
+        )
+        self._log_language_failure_if_needed(
+            tracker, state, require_both, meets_requirement
+        )
+        return await self._confirmed_language_result(
+            meta, tracker, meets_requirement, prompt_on_failure
+        )
 
     async def check_language_requirements(
         self,
@@ -3786,221 +4649,29 @@ class Common:
         original_required: bool = False,
         prompt_on_failure: bool = True,
     ) -> bool:
-        """
-        Check if the media metadata meets specific language requirements for audio and/or subtitles.
-
-        The function evaluates whether the provided media contains the required languages.
-        It can also handle logic for original language tracks and cross-reference them
-        with subtitles if the primary audio requirement isn't met.
-
-        :param meta: Dictionary containing media metadata (audio_languages, subtitle_languages, etc.).
-        :type meta: Meta
-        :param tracker: Name of the tracker being processed, used for logging/output.
-        :type tracker: str
-        :param languages_to_check: A list of language names or codes to search for.
-        :type languages_to_check: List[str]
-        :param check_audio: If True, validates if required languages are present in audio tracks.
-        :type check_audio: bool
-        :param check_subtitle: If True, validates if required languages are present in subtitle tracks.
-        :type check_subtitle: bool
-        :param require_both: If True, both audio AND subtitle requirements must be satisfied.
-                             If False, satisfying either is enough (OR logic).
-        :type require_both: bool
-        :param original_language: If True, checks if the media's original language matches the audio
-                                  track, allowing a fallback to subtitle-only validation.
-        :type original_language: bool
-        :param original_required: If True, the original language must be present in the audio tracks.
-        :type original_required: bool
-        :param prompt_on_failure: If True, ask whether to continue when the requirement is not met.
-        :type prompt_on_failure: bool
-        :return: True if the media meets the specified language requirements, False otherwise.
-        :rtype: bool
-        """
-        category = meta.category
-        if category not in ("TV", "MOVIE", "BOOK"):
+        """Check tracker language requirements for books and video media."""
+        if meta.category not in ("TV", "MOVIE", "BOOK"):
             return True
-
-        if category == "BOOK":
-            book_language = meta.book_language
-            if book_language:
-                book_language_lower = book_language.lower()
-                languages_lower = [lang.lower() for lang in languages_to_check]
-                meets_requirement = not (
-                    languages_lower
-                    and book_language_lower not in languages_lower
-                )
-                if not meets_requirement:
-                    logger.info(
-                        f"[red]Language requirement not met for [bold]{tracker}[/bold].[/red]\n"
-                        f"[yellow]Required one of:[/yellow] {', '.join(languages_to_check)}\n"
-                        f"[cyan]Found book language:[/cyan] {book_language}"
-                    )
-                    if prompt_on_failure:
-                        return await self.prompt_user_for_confirmation(
-                            f"{tracker}: Language requirements not met. Do you want to proceed with the upload?",
-                            meta,
-                        )
-                return meets_requirement
-            return True
-
+        if meta.category == "BOOK":
+            return await self._book_language_requirement(
+                meta, tracker, languages_to_check, prompt_on_failure
+            )
         try:
-            if not meta.language_checked:
-                await languages_manager.process_desc_language(
-                    meta, tracker=tracker
-                )
-
-            alias_lookup = self._build_language_alias_lookup()
-
-            meta_audio_languages = self._coerce_language_values(
-                meta.audio_languages
+            return await self._video_language_requirement(
+                meta,
+                tracker,
+                languages_to_check,
+                check_audio,
+                check_subtitle,
+                require_both,
+                original_language,
+                original_required,
+                prompt_on_failure,
             )
-            meta_subtitle_languages = self._coerce_language_values(
-                meta.subtitle_languages
-            )
-
-            languages_to_check = [lang.lower() for lang in languages_to_check]
-            audio_languages = [lang.lower() for lang in meta_audio_languages]
-            subtitle_languages = [
-                lang.lower() for lang in meta_subtitle_languages
-            ]
-            required_languages_expanded = self._expand_language_list(
-                languages_to_check, alias_lookup
-            )
-            audio_languages_expanded = self._expand_language_list(
-                meta_audio_languages, alias_lookup
-            )
-            subtitle_languages_expanded = self._expand_language_list(
-                meta_subtitle_languages, alias_lookup
-            )
-            language_display = None
-            original_ok = False
-            if original_language:
-                original_language_raw = meta.original_language
-                first_lang = ""
-                if original_language_raw:
-                    if isinstance(original_language_raw, str):
-                        first_lang = original_language_raw
-                    elif (
-                        isinstance(original_language_raw, list)
-                        and original_language_raw
-                    ):
-                        first_lang = (
-                            original_language_raw[0]
-                            if isinstance(original_language_raw[0], str)
-                            else ""
-                        )
-
-                if first_lang:
-                    first_lang = first_lang.strip()
-                    language_display = self._format_language_for_display(
-                        first_lang
-                    )
-                    original_language_expanded = (
-                        self._expand_language_candidates(
-                            first_lang, alias_lookup
-                        )
-                    )
-                    original_ok = bool(
-                        original_language_expanded.intersection(
-                            audio_languages_expanded
-                        )
-                    )
-
-                    if meta.debug and not original_ok:
-                        logger.info(
-                            f"[blue]Debug: Original language expanded candidates: {', '.join(sorted(original_language_expanded)) or 'None'}[/blue]"
-                        )
-
-            if original_required and not original_ok:
-                logger.info(
-                    f"[red]Original language requirement not met for [bold]{tracker}[/bold].[/red]\n"
-                    f"[yellow]Required original audio language:[/yellow] {language_display}\n"
-                    f"[cyan]Found Audio Languages:[/cyan] {', '.join(audio_languages) or 'None'}"
-                )
-                if prompt_on_failure:
-                    return await self.prompt_user_for_confirmation(
-                        f"{tracker}: Language requirements not met. Do you want to proceed with the upload?",
-                        meta,
-                    )
-                return False
-
-            audio_ok = not check_audio or bool(
-                required_languages_expanded.intersection(
-                    audio_languages_expanded
-                )
-            )
-            subtitle_ok = not check_subtitle or bool(
-                required_languages_expanded.intersection(
-                    subtitle_languages_expanded
-                )
-            )
-
-            logger.debug(
-                f"[blue]Debug: Audio Languages Found: {audio_languages}[/blue]"
-            )
-            logger.debug(
-                f"[blue]Debug: Subtitle Languages Found: {subtitle_languages}[/blue]"
-            )
-            logger.debug(
-                f"[blue]Debug: Original Audio Language: {language_display}[/blue]"
-            )
-            logger.debug(
-                f"[blue]Debug: Audio OK: {audio_ok}, Subtitle OK: {subtitle_ok}, Original OK: {original_ok}[/blue]"
-            )
-
-            if not audio_ok and original_ok:
-                if subtitle_ok:
-                    return subtitle_ok
-                logger.info(
-                    f"[red]Language requirement not met for [bold]{tracker}[/bold].[/red]\n"
-                    f"[yellow]Required subtitles in one of the following with an original audio track:[/yellow] "
-                    f"{', '.join(languages_to_check)}\n"
-                    f"[cyan]Found Audio:[/cyan] {', '.join(audio_languages) or 'None'}\n"
-                    f"[cyan]Found Subtitles:[/cyan] {', '.join(subtitle_languages) or 'None'}\n"
-                    f"[cyan]Original Audio Language:[/cyan] {language_display}"
-                )
-                return False
-
-            if not check_audio and not check_subtitle:
-                return True
-
-            meets_requirement = (
-                audio_ok and subtitle_ok
-                if require_both
-                else (check_audio and audio_ok)
-                or (check_subtitle and subtitle_ok)
-            )
-
-            if require_both:
-                if not meets_requirement:
-                    logger.info(
-                        f"[red]Language requirement not met for [bold]{tracker}[/bold].[/red]\n"
-                        f"[yellow]Required both audio and subtitles in one of the following:[/yellow] "
-                        f"{', '.join(languages_to_check)}\n"
-                        f"[cyan]Found Audio:[/cyan] {', '.join(audio_languages) or 'None'}\n"
-                        f"[cyan]Found Subtitles:[/cyan] {', '.join(subtitle_languages) or 'None'}"
-                    )
-            else:
-                if not meets_requirement:
-                    logger.info(
-                        f"[red]Language requirement not met for [bold]{tracker}[/bold].[/red]\n"
-                        f"[yellow]Required at least one of the following:[/yellow] "
-                        f"{', '.join(languages_to_check)}\n"
-                        f"[cyan]Found Audio:[/cyan] {', '.join(audio_languages) or 'None'}\n"
-                        f"[cyan]Found Subtitles:[/cyan] {', '.join(subtitle_languages) or 'None'}"
-                    )
-
-            if not meets_requirement and prompt_on_failure:
-                return await self.prompt_user_for_confirmation(
-                    f"{tracker}: Language requirements not met. Do you want to proceed with the upload?",
-                    meta,
-                )
-            return meets_requirement
-
-        except Exception as e:
+        except Exception as error:
             console.print_exception()
             logger.error(
-                f"[red]Error checking language requirements: {e}[/red]"
+                f"[red]Error checking language requirements: {error}[/red]"
             )
             return False
 
@@ -4060,131 +4731,136 @@ class Common:
 
         return True
 
+    @staticmethod
+    def _portuguese_lowercase_words() -> frozenset[str]:
+        return frozenset(
+            {
+                "a",
+                "o",
+                "as",
+                "os",
+                "um",
+                "uma",
+                "uns",
+                "umas",
+                "de",
+                "do",
+                "da",
+                "dos",
+                "das",
+                "em",
+                "no",
+                "na",
+                "nos",
+                "nas",
+                "por",
+                "pelo",
+                "pela",
+                "pelos",
+                "pelas",
+                "para",
+                "com",
+                "sob",
+                "sobre",
+                "sem",
+                "e",
+                "ou",
+                "mas",
+                "nem",
+                "que",
+                "se",
+            }
+        )
+
+    @staticmethod
+    def _portuguese_title_separator(value: str) -> bool:
+        return re.fullmatch(r"[:\-\(\)\[\]]", value) is not None
+
+    @staticmethod
+    def _title_token_affixes(token: str) -> tuple[str, str, str]:
+        prefix_match = re.match(r"^[^\w]+", token)
+        prefix = prefix_match.group(0) if prefix_match else ""
+        suffix_match = re.search(r"[^\w]+$", token)
+        suffix = suffix_match.group(0) if suffix_match else ""
+        end = len(token) - len(suffix) if suffix else len(token)
+        return prefix, token[len(prefix) : end], suffix
+
+    @staticmethod
+    def _capitalized_title_core(
+        core: str, word_index: int, lowercase_words: frozenset[str]
+    ) -> str:
+        lowered = core.lower()
+        if word_index > 0 and lowered in lowercase_words:
+            return lowered
+        return core[0].upper() + core[1:]
+
+    @classmethod
+    def _format_portuguese_title_token(
+        cls,
+        token: str,
+        word_index: int,
+        lowercase_words: frozenset[str],
+    ) -> tuple[str, int]:
+        if not token or token.isspace():
+            return token, word_index
+        prefix, core, suffix = cls._title_token_affixes(token)
+        if not core:
+            return token, word_index + 1
+        formatted = cls._capitalized_title_core(
+            core, word_index, lowercase_words
+        )
+        return f"{prefix}{formatted}{suffix}", word_index + 1
+
+    @classmethod
+    def _format_portuguese_title_segment(
+        cls, segment: str, lowercase_words: frozenset[str]
+    ) -> str:
+        formatted_tokens: list[str] = []
+        word_index = 0
+        for token in re.split(r"(\s+)", segment):
+            formatted, word_index = cls._format_portuguese_title_token(
+                token, word_index, lowercase_words
+            )
+            formatted_tokens.append(formatted)
+        return "".join(formatted_tokens)
+
     def portuguese_title_capitalization(self, title: str) -> str:
-        """Capitalizes a Portuguese title."""
-        lowercase_words = {
-            # Articles
-            "a",
-            "o",
-            "as",
-            "os",
-            "um",
-            "uma",
-            "uns",
-            "umas",
-            # Prepositions
-            "de",
-            "do",
-            "da",
-            "dos",
-            "das",
-            "em",
-            "no",
-            "na",
-            "nos",
-            "nas",
-            "por",
-            "pelo",
-            "pela",
-            "pelos",
-            "pelas",
-            "para",
-            "com",
-            "sob",
-            "sobre",
-            "sem",
-            # Conjunctions
-            "e",
-            "ou",
-            "mas",
-            "nem",
-            "que",
-            "se",
-        }
-
-        # Split by separators (like :, -, (, ), [, ]) so each segment is capitalized independently
-        parts = re.split(r"([:\-\(\)\[\]])", title)
-
-        formatted_parts = []
-        for part in parts:
-            if not part:
-                formatted_parts.append("")
-                continue
-            if re.match(r"^[:\-\(\)\[\]]$", part):
+        """Capitalize a Portuguese title while preserving minor words."""
+        lowercase_words = self._portuguese_lowercase_words()
+        formatted_parts: list[str] = []
+        for part in re.split(r"([:\-\(\)\[\]])", title):
+            if not part or self._portuguese_title_separator(part):
                 formatted_parts.append(part)
                 continue
-
-            # For this text segment, split into words and spaces
-            tokens = re.split(r"(\s+)", part)
-            formatted_tokens = []
-            word_count = 0
-
-            for token in tokens:
-                if not token:
-                    formatted_tokens.append("")
-                    continue
-                if token.isspace():
-                    formatted_tokens.append(token)
-                    continue
-
-                # This is a word token
-                # Extract core word (ignoring punctuation at start/end)
-                prefix_match = re.match(r"^[^\w]+", token)
-                prefix = prefix_match.group(0) if prefix_match else ""
-
-                suffix_match = re.search(r"[^\w]+$", token)
-                suffix = suffix_match.group(0) if suffix_match else ""
-
-                core = (
-                    token[len(prefix) : len(token) - len(suffix)]
-                    if suffix
-                    else token[len(prefix) :]
-                )
-
-                if not core:
-                    # No alphanumeric chars, keep as is
-                    formatted_tokens.append(token)
-                    word_count += 1
-                    continue
-
-                clean_core = core.lower()
-
-                if word_count == 0:
-                    # First word in the segment
-                    capitalized_core = (
-                        core[0].upper() + core[1:] if len(core) > 0 else core
-                    )
-                elif clean_core in lowercase_words:
-                    capitalized_core = clean_core
-                else:
-                    capitalized_core = (
-                        core[0].upper() + core[1:] if len(core) > 0 else core
-                    )
-
-                formatted_tokens.append(prefix + capitalized_core + suffix)
-                word_count += 1
-
-            formatted_parts.append("".join(formatted_tokens))
-
+            formatted_parts.append(
+                self._format_portuguese_title_segment(part, lowercase_words)
+            )
         return "".join(formatted_parts)
 
+    def _usenet_config(self) -> dict[str, Any]:
+        raw = self.config.get("USENET", {})
+        return cast(dict[str, Any], raw) if isinstance(raw, dict) else {}
+
+    def _nzb_password_applies(self, meta: Meta) -> bool:
+        config = self._usenet_config()
+        configured_password = config.get("archive_password")
+        has_password = bool(meta.archive_password or configured_password)
+        return has_password and not bool(config.get("skip_archive", False))
+
+    @staticmethod
+    def _nzb_file_exists(meta: Meta) -> bool:
+        return bool(meta.nzb_path and Path(meta.nzb_path).exists())
+
     async def check_nzb_file(self, tracker: str, meta: Meta) -> bool:
-        nzb_path = meta.nzb_path
-        if not nzb_path or not Path(nzb_path).exists():
+        if not self._nzb_file_exists(meta):
             logger.error(
                 f"{tracker}: [red]Error: The NZB file is missing. Aborting upload...[/red]"
             )
             return False
-
-        usenet_cfg = self.config.get("USENET", {})
-        # skip_archive means no 7z/rar was created (for either uploader — pesto's
-        # --nzb-password only tags NZB metadata, it doesn't encrypt), so a
-        # configured password was never applied and won't be in the NZB.
-        # That's expected, not an error.
-        password_applies = bool(
-            meta.archive_password or usenet_cfg.get("archive_password")
-        ) and not usenet_cfg.get("skip_archive", False)
-        if password_applies and not await verify_nzb_has_password(nzb_path):
+        nzb_path = str(meta.nzb_path)
+        if self._nzb_password_applies(
+            meta
+        ) and not await verify_nzb_has_password(nzb_path):
             logger.error(
                 f"{tracker}: [red]Error: The NZB file does not contain the password in its metadata header. Aborting upload...[/red]"
             )

@@ -175,7 +175,9 @@ async def test_get_tmdb_from_imdb_never_prompts_when_unattended() -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_tmdb_from_imdb_skips_multiple_external_matches_unattended() -> None:
+async def test_get_tmdb_from_imdb_skips_multiple_external_matches_unattended() -> (
+    None
+):
     prompt = AsyncMock(return_value="movie/1001")
     with (
         patch.object(
@@ -213,7 +215,9 @@ async def test_get_tmdb_id_skips_ambiguous_match_when_unattended() -> None:
 
 
 @pytest.mark.asyncio
-async def test_the_odyssey_homonyms_are_not_guessed_in_unattended_mode() -> None:
+async def test_the_odyssey_homonyms_are_not_guessed_in_unattended_mode() -> (
+    None
+):
     prompt = AsyncMock(return_value="2")
     with (
         patch.object(
@@ -222,15 +226,15 @@ async def test_the_odyssey_homonyms_are_not_guessed_in_unattended_mode() -> None
         patch.object(tmdb, "prompt_in_thread", new=prompt),
         pytest.raises(AmbiguousMetadataError, match="ambiguous"),
     ):
-        await tmdb.get_tmdb_id(
-            "The Odyssey", 2026, "MOVIE", unattended=True
-        )
+        await tmdb.get_tmdb_id("The Odyssey", 2026, "MOVIE", unattended=True)
 
     prompt.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_tmdb_other_meta_preserves_ambiguous_skip_in_automatic_cli() -> None:
+async def test_tmdb_other_meta_preserves_ambiguous_skip_in_automatic_cli() -> (
+    None
+):
     prompt = AsyncMock(return_value="movie/999")
     lookup = AsyncMock(
         side_effect=AmbiguousMetadataError(

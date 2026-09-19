@@ -459,6 +459,7 @@ def _external_values(
         "meta": meta,
         "filename": meta.filename or "Example.Release.2024.mkv",
         "path": str(tmp_path / "Example.Release.2024.mkv"),
+        "token_file": str(tmp_path / "igdb-token.json"),
         "base_dir": str(tmp_path),
         "title": meta.title or "Example Release",
         "tmdb_name": meta.title or "Example Release",
@@ -839,6 +840,28 @@ def _external_invocation_arguments(
     return args, kwargs
 
 
+def _close_coroutine_mapping(value: Mapping[object, object]) -> None:
+    for nested in value.values():
+        _close_nested_coroutines(nested)
+
+
+def _close_coroutine_sequence(value: object) -> None:
+    if not isinstance(value, (list, tuple, set, frozenset)):
+        return
+    for nested in value:
+        _close_nested_coroutines(nested)
+
+
+def _close_nested_coroutines(value: object) -> None:
+    if inspect.iscoroutine(value):
+        value.close()
+        return
+    if isinstance(value, Mapping):
+        _close_coroutine_mapping(value)
+        return
+    _close_coroutine_sequence(value)
+
+
 async def _invoke(
     function: Callable[..., object],
     meta: Meta,
@@ -853,7 +876,8 @@ async def _invoke(
     )
     result = function(*args, **kwargs)
     if inspect.isawaitable(result):
-        return await asyncio.wait_for(result, timeout=0.1)
+        result = await asyncio.wait_for(result, timeout=0.1)
+    _close_nested_coroutines(result)
     return result
 
 
@@ -1253,6 +1277,7 @@ async def _exercise_external_modules(
 def test_external_api_catalog_uses_deterministic_boundary_fakes(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
+    monkeypatch.chdir(tmp_path)
     config = _config()
     meta = _meta(tmp_path)
     _patch_external_clients(monkeypatch)

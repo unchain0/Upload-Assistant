@@ -385,7 +385,9 @@ def test_get_tmdb_id_single_multiple_manual_unattended_and_empty(
         "MOVIE",
     )
     with pytest.raises(AmbiguousMetadataError, match="ambiguous"):
-        asyncio.run(tmdb.get_tmdb_id("multiple", 2026, "MOVIE", unattended=True))
+        asyncio.run(
+            tmdb.get_tmdb_id("multiple", 2026, "MOVIE", unattended=True)
+        )
 
     selections = iter(["bad", "99", "movie/444"])
     monkeypatch.setattr(
@@ -1700,7 +1702,9 @@ def test_get_tmdb_id_remaining_selection_and_fallback_branches(
         monkeypatch, lambda _url, _kwargs: Response({"results": tv_results})
     )
     assert (
-        asyncio.run(tmdb.get_tmdb_id("Example", 2026, "TV", unattended=True))[0]
+        asyncio.run(tmdb.get_tmdb_id("Example", 2026, "TV", unattended=True))[
+            0
+        ]
         == 711
     )
 
@@ -2678,7 +2682,7 @@ def test_tmdb_other_meta_last_air_mismatch_and_video_parse_failure(
     def handler(url: str, _kwargs: dict[str, Any]) -> Response:
         special: dict[str, Response] = {
             "/external_ids": Response(
-                {"imdb_id": "tt7654321", "tvdb_id": "654"}
+                {"imdb_id": "tt7654321", "tvdb_id": 654}
             ),
             "/videos": Response(ValueError("videos parse failed")),
             "/keywords": Response({"results": []}),
@@ -2703,6 +2707,7 @@ def test_tmdb_other_meta_last_air_mismatch_and_video_parse_failure(
     )
     assert result["year"] == 2026
     assert result["mismatched_imdb_id"] == 7654321
+    assert result["tvdb_id"] == 654
     assert result["youtube"] == ""
 
 

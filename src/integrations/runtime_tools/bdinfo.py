@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
+import asyncio
 import os
 import platform
 import shutil
@@ -323,11 +324,16 @@ async def _install_downloaded_archive(
     staging: Path,
 ) -> str:
     try:
-        _extract_archive(temp_archive, staging, file_pattern)
-        staged_binary = _unique_staged_binary(staging, binary_name)
-        _make_executable(staged_binary, system)
+        await asyncio.to_thread(
+            _extract_archive, temp_archive, staging, file_pattern
+        )
+        staged_binary = await asyncio.to_thread(
+            _unique_staged_binary, staging, binary_name
+        )
+        await asyncio.to_thread(_make_executable, staged_binary, system)
         staged_version = await _write_version_marker(staging, version)
-        _promote_install(
+        await asyncio.to_thread(
+            _promote_install,
             bin_dir,
             staged_binary,
             binary_path,
@@ -336,8 +342,8 @@ async def _install_downloaded_archive(
         )
         return str(binary_path)
     finally:
-        shutil.rmtree(staging, ignore_errors=True)
-        _cleanup_temp_archive(temp_archive)
+        await asyncio.to_thread(shutil.rmtree, staging, ignore_errors=True)
+        await asyncio.to_thread(_cleanup_temp_archive, temp_archive)
 
 
 async def _download_and_install(
@@ -353,7 +359,7 @@ async def _download_and_install(
     download_url = _download_url(version, file_pattern)
     logger.debug(f"[blue]Download URL: {download_url}[/blue]")
     temp_archive, staging = _staging_layout(bin_dir, file_pattern)
-    _prepare_staging(staging)
+    await asyncio.to_thread(_prepare_staging, staging)
     await _download_archive(download_url, temp_archive, file_pattern)
     return await _install_downloaded_archive(
         bin_dir=bin_dir,

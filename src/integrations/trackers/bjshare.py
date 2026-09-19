@@ -923,7 +923,11 @@ class BJShare:
         if meta.category not in ("TV", "MOVIE"):
             return [base], terms, False
         if terms:
-            return [self._media_search_params(term) for term in terms], terms, False
+            return (
+                [self._media_search_params(term) for term in terms],
+                terms,
+                False,
+            )
         return [{"searchstr": title}], terms, True
 
     async def _load_search_cookies(self, meta: Meta) -> None:

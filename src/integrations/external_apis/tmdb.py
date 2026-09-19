@@ -3,10 +3,12 @@ import asyncio
 import contextlib
 import json
 import re
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from difflib import SequenceMatcher
-from typing import Any
+from functools import partial
+from typing import Any, NoReturn
 from typing import cast as typing_cast
 
 import anitopy
@@ -58,7 +60,9 @@ def _tmdb_client(**kwargs: Any) -> httpx.AsyncClient:
     supplied_headers = typing_cast(dict[str, str], kwargs.pop("headers", {}))
     supplied_params = typing_cast(dict[str, Any], kwargs.pop("params", {}))
     headers = {**authentication.headers, **supplied_headers}
-    params = {**supplied_params, **authentication.query}
+    params: dict[str, Any] = dict(supplied_params)
+    for key, value in authentication.query.items():
+        params[str(key)] = str(value)
     return httpx.AsyncClient(headers=headers, params=params, **kwargs)
 
 
@@ -306,14 +310,20 @@ async def normalize_title(title: str) -> str:
     return title.lower().replace("&", "and").replace("  ", " ").strip()
 
 
+def _external_imdb_id(value: Any) -> int:
+    text = str(value or "").removeprefix("tt")
+    return int(text) if text.isdigit() else 0
+
+
 def _reconcile_tmdb_imdb_id(
     original_id: int, external_id: Any, quickie_search: bool
 ) -> tuple[int, bool, int]:
-    external_text = str(external_id or "").removeprefix("tt")
-    external = int(external_text) if external_text.isdigit() else 0
+    external = _external_imdb_id(external_id)
     if not external:
-        return (0 if quickie_search else original_id), False, 0
-    if original_id and external != original_id:
+        resolved = 0 if quickie_search else original_id
+        return resolved, False, 0
+    mismatch = bool(original_id and external != original_id)
+    if mismatch:
         return original_id, quickie_search, external
     return external, False, 0
 
@@ -328,19 +338,38 @@ def _tmdb_result_dicts(value: Any) -> list[dict[str, Any]]:
     ]
 
 
+def _typed_external_results(
+    category: str, results: list[dict[str, Any]]
+) -> list[tuple[str, dict[str, Any]]]:
+    return [(category, result) for result in results]
+
+
+def _preferred_external_results(
+    preference: str,
+    movie_results: list[dict[str, Any]],
+    tv_results: list[dict[str, Any]],
+) -> list[tuple[str, dict[str, Any]]] | None:
+    if preference == "MOVIE" and movie_results:
+        return _typed_external_results("MOVIE", movie_results)
+    if preference == "TV" and tv_results:
+        return _typed_external_results("TV", tv_results)
+    return None
+
+
 def _external_find_candidates(
     info: dict[str, Any], category_preference: str | None
 ) -> list[tuple[str, dict[str, Any]]]:
     movie_results = _tmdb_result_dicts(info.get("movie_results"))
     tv_results = _tmdb_result_dicts(info.get("tv_results"))
     preference = str(category_preference or "").upper()
-    if preference == "MOVIE" and movie_results:
-        return [("MOVIE", result) for result in movie_results]
-    if preference == "TV" and tv_results:
-        return [("TV", result) for result in tv_results]
+    preferred = _preferred_external_results(
+        preference, movie_results, tv_results
+    )
+    if preferred is not None:
+        return preferred
     return [
-        *(("MOVIE", result) for result in movie_results),
-        *(("TV", result) for result in tv_results),
+        *_typed_external_results("MOVIE", movie_results),
+        *_typed_external_results("TV", tv_results),
     ]
 
 
@@ -379,6 +408,229 @@ def _reject_unattended_imdb_mismatch(
     )
 
 
+def _formatted_imdb_external_id(text: str) -> str:
+    if text.startswith("tt"):
+        return text
+    return f"tt{int(text):07d}" if text.isdigit() else text
+
+
+def _normalized_imdb_external_id(imdb_id: str | int | None) -> str | None:
+    if imdb_id is None or imdb_id == 0:
+        return None
+    text = str(imdb_id).strip()
+    return _formatted_imdb_external_id(text) if text else None
+
+
+async def _tmdb_find_by_external_source(
+    external_id: str | int, source: str
+) -> dict[str, Any]:
+    url = f"{TMDB_BASE_URL}/find/{external_id}"
+    async with _tmdb_client() as client:
+        response: httpx.Response | None = None
+        try:
+            response = await client.get(
+                url, params={"external_source": source}, timeout=10
+            )
+            response.raise_for_status()
+            return typing_cast(dict[str, Any], response.json())
+        except Exception:
+            status = (
+                response.status_code if response is not None else "unknown"
+            )
+            logger.info(
+                f"[bold red]Failed to fetch TMDb data: {status}[/bold red]"
+            )
+            return {}
+
+
+def _first_external_match(
+    info: dict[str, Any], category: str
+) -> tuple[str, int | str, str] | None:
+    key = "movie_results" if category == "MOVIE" else "tv_results"
+    results = _tmdb_result_dicts(info.get(key))
+    if not results:
+        return None
+    first = results[0]
+    return (
+        category,
+        first.get("id", 0),
+        str(first.get("original_language") or ""),
+    )
+
+
+def _external_preference_available(info: dict[str, Any]) -> bool:
+    return bool(
+        _tmdb_result_dicts(info.get("movie_results"))
+        and _tmdb_result_dicts(info.get("tv_results"))
+    )
+
+
+def _preferred_external_match(
+    info: dict[str, Any], category_preference: str | None
+) -> tuple[str, int | str, str] | None:
+    if not category_preference or not _external_preference_available(info):
+        return None
+    preference = str(category_preference).upper()
+    if preference not in {"MOVIE", "TV"}:
+        return None
+    logger.debug(
+        f"[green]Found both movie and TV results, using {preference.lower()} based on preference"
+    )
+    return _first_external_match(info, preference)
+
+
+def _default_external_match(
+    info: dict[str, Any],
+) -> tuple[str, int | str, str] | None:
+    movie = _first_external_match(info, "MOVIE")
+    if movie is not None:
+        logger.debug(f"Movie INFO: {info}")
+        return movie
+    tv = _first_external_match(info, "TV")
+    if tv is not None:
+        logger.debug(f"TV INFO: {info}")
+    return tv
+
+
+async def _tvdb_external_match(
+    tvdb_id: int | None,
+) -> tuple[str, int | str, str] | None:
+    if not tvdb_id:
+        return None
+    info = await _tmdb_find_by_external_source(str(tvdb_id), "tvdb_id")
+    logger.debug(f"TVDB INFO: {info}")
+    return _first_external_match(info, "TV")
+
+
+async def _imdb_fallback_info(
+    imdb_external_id: str,
+    imdb_info: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if imdb_info is not None:
+        return imdb_info
+    clean = imdb_external_id.replace("tt", "")
+    numeric = int(clean) if clean.isdigit() else 0
+    return await imdb_manager.get_imdb_info_api(numeric, {})
+
+
+async def _fallback_tmdb_title_search(
+    title: str,
+    year: Any,
+    secondary_title: str,
+    debug: bool,
+    unattended: bool,
+) -> tuple[int, str]:
+    tmdb_id, category = await get_tmdb_id(
+        title,
+        year,
+        "MOVIE",
+        secondary_title=secondary_title,
+        debug=debug,
+        unattended=unattended,
+    )
+    if tmdb_id:
+        return tmdb_id, category
+    return await get_tmdb_id(
+        title,
+        year,
+        "TV",
+        secondary_title=secondary_title,
+        debug=debug,
+        unattended=unattended,
+    )
+
+
+async def _manual_tmdb_id_if_needed(
+    tmdb_id: int | str,
+    category: str,
+    mode: str,
+    unattended: bool,
+) -> tuple[str, int | str]:
+    missing = tmdb_id in ("None", "", None, 0, "0")
+    if not missing or mode != "cli" or unattended:
+        return category, tmdb_id
+    logger.info("[yellow]Unable to find a matching TMDb entry[/yellow]")
+    raw = await prompt_in_thread(
+        cli_ui.ask_string,
+        "Please enter TMDb ID (format: tv/12345 or movie/12345): ",
+        default="",
+    )
+    return parse_tmdb_id(raw or "", category)
+
+
+async def _external_tmdb_match(
+    imdb_external_id: str,
+    tvdb_id: int | None,
+    category_preference: str | None,
+    unattended: bool,
+) -> tuple[str, int | str, str] | None:
+    info = await _tmdb_find_by_external_source(imdb_external_id, "imdb_id")
+    _reject_ambiguous_external_find(info, category_preference, unattended)
+    direct = _preferred_external_match(
+        info, category_preference
+    ) or _default_external_match(info)
+    if direct is not None:
+        return direct
+    logger.debug(
+        "[yellow]TMDb was unable to find anything with that IMDb ID, checking TVDb..."
+    )
+    return await _tvdb_external_match(tvdb_id)
+
+
+def _first_nonempty(*values: Any, default: Any = "") -> Any:
+    for value in values:
+        if value not in (None, ""):
+            return value
+    return default
+
+
+def _imdb_fallback_fields(
+    info: dict[str, Any], filename: str | None, search_year: str | int | None
+) -> tuple[str, Any, str, str]:
+    title = str(_first_nonempty(info.get("title"), filename))
+    year = _first_nonempty(info.get("year"), search_year, default=None)
+    language = str(
+        _first_nonempty(
+            info.get("original_language"),
+            info.get("original language"),
+            default="en",
+        )
+    )
+    secondary = str(
+        _first_nonempty(
+            info.get("original title"), info.get("localized title"), default=""
+        )
+    )
+    return title, year, language, secondary
+
+
+async def _title_fallback_from_imdb(
+    imdb_external_id: str,
+    imdb_info: dict[str, Any] | None,
+    filename: str | None,
+    search_year: str | int | None,
+    debug: bool,
+    mode: str,
+    unattended: bool,
+) -> tuple[str, int | str, str, bool]:
+    info = await _imdb_fallback_info(imdb_external_id, imdb_info)
+    title, year, language, secondary = _imdb_fallback_fields(
+        info, filename, search_year
+    )
+    logger.info(
+        f"[yellow]TMDb was unable to find anything from external IDs, searching TMDb for {title} ({year})[/yellow]"
+    )
+    tmdb_id, category = await _fallback_tmdb_title_search(
+        title, year, secondary, debug, unattended
+    )
+    resolved_category = category if category else "MOVIE"
+    resolved_id: int | str = tmdb_id if tmdb_id else 0
+    resolved_category, resolved_id = await _manual_tmdb_id_if_needed(
+        resolved_id, resolved_category, mode, unattended
+    )
+    return resolved_category, resolved_id, language, True
+
+
 async def get_tmdb_from_imdb(
     imdb_id: str | int | None,
     tvdb_id: int | None = None,
@@ -390,178 +642,1058 @@ async def get_tmdb_from_imdb(
     imdb_info: dict[str, Any] | None = None,
     unattended: bool = False,
 ) -> tuple[str, int | str, str, bool]:
-    """Fetches TMDb ID using IMDb or TVDb ID.
-
-    - Returns `(category, tmdb_id, original_language)`
-    - If TMDb fails, prompts the user (if in CLI mode).
-    """
-    if imdb_id is None or imdb_id == 0 or str(imdb_id).strip() == "":
+    """Fetch TMDb identity from IMDb/TVDb, then title fallback."""
+    imdb_external_id = _normalized_imdb_external_id(imdb_id)
+    if imdb_external_id is None:
         return "", 0, "", False
-    if not str(imdb_id).startswith("tt"):
-        if isinstance(imdb_id, str) and imdb_id.isdigit():
-            imdb_id = f"tt{int(imdb_id):07d}"
-        elif isinstance(imdb_id, int):
-            imdb_id = f"tt{imdb_id:07d}"
-    filename_search = False
+    match = await _external_tmdb_match(
+        imdb_external_id, tvdb_id, category_preference, unattended
+    )
+    if match is not None:
+        category, tmdb_id, language = match
+        return category, tmdb_id, language, False
+    return await _title_fallback_from_imdb(
+        imdb_external_id,
+        imdb_info,
+        filename,
+        search_year,
+        debug,
+        mode,
+        unattended,
+    )
 
-    async def _tmdb_find_by_external_source(
-        external_id: str | int, source: str
-    ) -> dict[str, Any]:
-        """Helper function to find a movie or TV show on TMDb by external ID."""
-        url = f"{TMDB_BASE_URL}/find/{external_id}"
-        params = {"external_source": source}
 
-        async with _tmdb_client() as client:
-            response: httpx.Response | None = None
-            try:
-                response = await client.get(url, params=params, timeout=10)
-                response.raise_for_status()
-                return typing_cast(dict[str, Any], response.json())
-            except Exception:
-                status_code = (
-                    response.status_code if response is not None else "unknown"
-                )
-                logger.info(
-                    f"[bold red]Failed to fetch TMDb data: {status_code}[/bold red]"
-                )
-                return {}
+def _tmdb_category_value(category: Any) -> str:
+    if isinstance(category, dict):
+        values = typing_cast(dict[str, Any], category)
+        return str(values.get("category", "MOVIE"))
+    if isinstance(category, str):
+        return category
+    getter = getattr(category, "get", None)
+    if not callable(getter):
+        return "MOVIE"
+    get_value = typing_cast(Callable[[str, str], Any], getter)
+    try:
+        return str(get_value("category", "MOVIE"))
+    except Exception:
+        return "MOVIE"
 
-    # Run a search by IMDb ID
-    info = await _tmdb_find_by_external_source(imdb_id, "imdb_id")
 
-    _reject_ambiguous_external_find(info, category_preference, unattended)
+def _normalized_search_category(
+    category: Any, category_preference: str | None, new_category: str | None
+) -> str:
+    value = str(
+        category_preference
+        or new_category
+        or _tmdb_category_value(category)
+        or "MOVIE"
+    ).upper()
+    return value if value in {"MOVIE", "TV"} else "MOVIE"
 
-    # Check if both movie and TV results exist
-    has_movie_results = bool(info.get("movie_results"))
-    has_tv_results = bool(info.get("tv_results"))
 
-    # If we have results in multiple categories but a category preference is set, respect that preference
-    if category_preference and has_movie_results and has_tv_results:
-        if category_preference == "MOVIE" and has_movie_results:
-            logger.debug(
-                "[green]Found both movie and TV results, using movie based on preference"
-            )
-            return (
-                "MOVIE",
-                info["movie_results"][0]["id"],
-                info["movie_results"][0].get("original_language"),
-                filename_search,
-            )
-        if category_preference == "TV" and has_tv_results:
-            logger.debug(
-                "[green]Found both movie and TV results, using TV based on preference"
-            )
-            return (
-                "TV",
-                info["tv_results"][0]["id"],
-                info["tv_results"][0].get("original_language"),
-                filename_search,
-            )
+def _tmdb_search_params(
+    filename: str, search_year: str | int | None, category: str
+) -> dict[str, str]:
+    params = {
+        "query": filename,
+        "language": "en-US",
+        "include_adult": "true",
+    }
+    if search_year:
+        key = "year" if category == "MOVIE" else "first_air_date_year"
+        params[key] = str(search_year)
+    return params
 
-    # If no preference or preference doesn't match available results, proceed with normal logic
-    if has_movie_results:
-        logger.debug(f"Movie INFO: {info}")
-        return (
-            "MOVIE",
-            info["movie_results"][0]["id"],
-            info["movie_results"][0].get("original_language"),
-            filename_search,
-        )
 
-    if has_tv_results:
-        logger.debug(f"TV INFO: {info}")
-        return (
-            "TV",
-            info["tv_results"][0]["id"],
-            info["tv_results"][0].get("original_language"),
-            filename_search,
-        )
-
+async def _tmdb_search_results(
+    filename: str, search_year: str | int | None, category: str
+) -> list[dict[str, Any]]:
+    endpoint = "movie" if category == "MOVIE" else "tv"
+    label = "movie" if category == "MOVIE" else "TV show"
     logger.debug(
-        "[yellow]TMDb was unable to find anything with that IMDb ID, checking TVDb..."
+        f"[green]Searching TMDb for {label}:[/] [cyan]{filename}[/cyan] (Year: {search_year})"
     )
-
-    # Check TVDb for an ID if TVDb and still no results
-    if tvdb_id:
-        info_tvdb = await _tmdb_find_by_external_source(
-            str(tvdb_id), "tvdb_id"
+    async with _tmdb_client() as client:
+        response = await client.get(
+            f"{TMDB_BASE_URL}/search/{endpoint}",
+            params=_tmdb_search_params(filename, search_year, category),
         )
-        logger.debug(f"TVDB INFO: {info_tvdb}")
-        if info_tvdb.get("tv_results"):
-            return (
-                "TV",
-                info_tvdb["tv_results"][0]["id"],
-                info_tvdb["tv_results"][0].get("original_language"),
-                filename_search,
+        try:
+            response.raise_for_status()
+            data = typing_cast(dict[str, Any], response.json())
+        except Exception:
+            logger.info(
+                f"[bold red]Failure with primary {label} search: {response.status_code}[/bold red]"
             )
+            return []
+    results = _dict_list(data.get("results", []))
+    logger.debug(
+        f"[yellow]TMDB search results (primary): {json.dumps(results[:4], indent=2)}[/yellow]"
+    )
+    return results
 
-    filename_search = True
 
-    # If both TMDb and TVDb fail, fetch IMDb info and attempt a title search
-    imdb_id_str = str(imdb_id)
-    imdb_id_clean = imdb_id_str.replace("tt", "")
-    imdb_id = int(imdb_id_clean) if imdb_id_clean.isdigit() else 0
-    imdb_info = imdb_info or await imdb_manager.get_imdb_info_api(imdb_id, {})
-    title = str(imdb_info.get("title") or filename or "")
-    year = imdb_info.get("year") or search_year
-    original_language = (
-        imdb_info.get("original_language")
-        or imdb_info.get("original language")
-        or "en"
+def _tmdb_result_year(result: dict[str, Any]) -> int:
+    value = result.get("release_date") or result.get("first_air_date") or "0"
+    with contextlib.suppress(Exception):
+        return int(str(value)[:4] or 0)
+    return 0
+
+
+def _parsed_search_year(search_year: str | int | None) -> int:
+    if search_year in (None, ""):
+        return 0
+    try:
+        return int(search_year)
+    except TypeError, ValueError:
+        return 0
+
+
+def _year_near_result(result: dict[str, Any], year: int) -> bool:
+    return abs(_tmdb_result_year(result) - year) <= 2
+
+
+def _limited_tmdb_results(
+    results: list[dict[str, Any]], search_year: str | int | None
+) -> list[dict[str, Any]]:
+    year = _parsed_search_year(search_year)
+    if year <= 0:
+        return results[:8]
+    filtered = [
+        result for result in results if _year_near_result(result, year)
+    ]
+    selected = filtered if filtered else results
+    return selected[:8]
+
+
+async def _normalized_result_titles(result: dict[str, Any]) -> tuple[str, str]:
+    primary = result.get("title") or result.get("name") or ""
+    original = (
+        result.get("original_title") or result.get("original_name") or ""
+    )
+    return await normalize_title(str(primary)), await normalize_title(
+        str(original)
     )
 
-    logger.info(
-        f"[yellow]TMDb was unable to find anything from external IDs, searching TMDb for {title} ({year})[/yellow]"
-    )
 
-    # Try as movie first
-    fallback_movie_title = str(
-        imdb_info.get("original title")
-        or imdb_info.get("localized title")
-        or ""
-    )
-    tmdb_id, category = await get_tmdb_id(
-        title,
-        year,
-        "MOVIE",
-        secondary_title=fallback_movie_title,
-        debug=debug,
-        unattended=unattended,
-    )
+def _year_exact_match(search_year: int, result_year: int) -> bool:
+    if search_year <= 0 or result_year <= 0:
+        return False
+    return result_year in {search_year, search_year + 1}
 
-    # If no results, try as TV
-    if tmdb_id == 0:
-        tmdb_id, category = await get_tmdb_id(
-            title,
-            year,
-            "TV",
-            secondary_title=fallback_movie_title,
-            debug=debug,
-            unattended=unattended,
-        )
 
-    # Extract necessary values from the result
-    tmdb_id = tmdb_id or 0
-    category = category or "MOVIE"
+async def _optional_normalized_title(value: str | None) -> str | None:
+    return await normalize_title(value) if value else None
 
-    # **User Prompt for Manual TMDb ID Entry**
-    if (
-        tmdb_id in ("None", "", None, 0, "0")
-        and mode == "cli"
-        and not unattended
+
+def _exact_title_matches(
+    filename_norm: str,
+    secondary_norm: str | None,
+    title: str,
+    original: str,
+) -> bool:
+    if filename_norm == title:
+        return True
+    if secondary_norm is None:
+        return False
+    return secondary_norm in {title, original}
+
+
+async def _exact_tmdb_result_id(
+    result: dict[str, Any],
+    filename_norm: str,
+    secondary_norm: str | None,
+    year: int,
+) -> int | None:
+    if not _year_exact_match(year, _tmdb_result_year(result)):
+        return None
+    title, original = await _normalized_result_titles(result)
+    if not _exact_title_matches(
+        filename_norm, secondary_norm, title, original
     ):
-        logger.info("[yellow]Unable to find a matching TMDb entry[/yellow]")
-        tmdb_input = (
-            await prompt_in_thread(
-                cli_ui.ask_string,
-                "Please enter TMDb ID (format: tv/12345 or movie/12345): ",
-                default="",
-            )
-            or ""
-        )
-        category, tmdb_id = parse_tmdb_id(tmdb_input, category)
+        return None
+    raw_id = result.get("id")
+    return int(raw_id) if raw_id is not None else None
 
-    return category, tmdb_id, original_language, filename_search
+
+async def _exact_tmdb_match_ids(
+    results: list[dict[str, Any]],
+    filename: str,
+    secondary_title: str | None,
+    search_year: str | int | None,
+) -> set[int]:
+    filename_norm = await normalize_title(filename)
+    secondary_norm = await _optional_normalized_title(secondary_title)
+    year = _parsed_search_year(search_year)
+    matches: set[int] = set()
+    for result in results:
+        match_id = await _exact_tmdb_result_id(
+            result, filename_norm, secondary_norm, year
+        )
+        if match_id is not None:
+            matches.add(match_id)
+    return matches
+
+
+async def _translated_similarity(
+    result: dict[str, Any],
+    category: str,
+    filename_norm: str,
+    title: str,
+    original: str,
+) -> tuple[str, float]:
+    if not original or original == title:
+        return "", 0.0
+    translated = await get_tmdb_translations(int(result["id"]), category, "en")
+    if not translated:
+        return "", 0.0
+    normalized = await normalize_title(translated)
+    similarity = SequenceMatcher(None, filename_norm, normalized).ratio()
+    logger.debug(
+        f"[cyan]  TMDb translation: '{translated}' (similarity: {similarity:.3f})[/cyan]"
+    )
+    return translated, similarity
+
+
+async def _secondary_similarity(
+    secondary_norm: str | None,
+    title: str,
+    original: str,
+    translated: str,
+) -> float:
+    if secondary_norm is None:
+        return 0.0
+    values = [
+        SequenceMatcher(None, secondary_norm, title).ratio(),
+        SequenceMatcher(None, secondary_norm, original).ratio(),
+    ]
+    if translated:
+        values.append(
+            SequenceMatcher(
+                None, secondary_norm, await normalize_title(translated)
+            ).ratio()
+        )
+    return max(values)
+
+
+def _combined_tmdb_similarity(
+    main: float, original: float, translated: float, secondary: float
+) -> float:
+    if translated == 0.0:
+        if secondary == 0.0:
+            return max(main, original)
+        return main * 0.3 + original * 0.3 + secondary * 0.4
+    return main * 0.5 + (translated if secondary == 0.0 else secondary) * 0.5
+
+
+def _year_boost(
+    similarity: float, search_year: int, result_year: int
+) -> float:
+    if similarity < 0.9 or not _year_exact_match(search_year, result_year):
+        return similarity
+    return similarity + 0.1
+
+
+async def _score_tmdb_result(
+    result: dict[str, Any],
+    filename_norm: str,
+    secondary_norm: str | None,
+    search_year: int,
+    category: str,
+) -> float:
+    title, original = await _normalized_result_titles(result)
+    main = SequenceMatcher(None, filename_norm, title).ratio()
+    original_similarity = SequenceMatcher(
+        None, filename_norm, original
+    ).ratio()
+    translated, translated_similarity = await _translated_similarity(
+        result, category, filename_norm, title, original
+    )
+    secondary = await _secondary_similarity(
+        secondary_norm, title, original, translated
+    )
+    similarity = _combined_tmdb_similarity(
+        main, original_similarity, translated_similarity, secondary
+    )
+    logger.debug(
+        f"[cyan]ID {result.get('id')}: '{title}' vs '{filename_norm}'[/cyan]"
+    )
+    logger.debug(f"[cyan]  Main similarity: {main:.3f}[/cyan]")
+    logger.debug(
+        f"[cyan]  Original similarity: {original_similarity:.3f}[/cyan]"
+    )
+    if translated_similarity > 0:
+        logger.debug(
+            f"[cyan]  Translated similarity: {translated_similarity:.3f}[/cyan]"
+        )
+    if secondary > 0:
+        logger.debug(f"[cyan]  Secondary similarity: {secondary:.3f}[/cyan]")
+    logger.debug(f"[cyan]  Final similarity: {similarity:.3f}[/cyan]")
+    return _year_boost(similarity, search_year, _tmdb_result_year(result))
+
+
+async def _scored_tmdb_results(
+    results: list[dict[str, Any]],
+    filename_norm: str,
+    secondary_norm: str | None,
+    year: int,
+    category: str,
+) -> list[tuple[dict[str, Any], float]]:
+    return [
+        (
+            result,
+            await _score_tmdb_result(
+                result, filename_norm, secondary_norm, year, category
+            ),
+        )
+        for result in results
+    ]
+
+
+def _boost_first_tv_result(
+    ranked: list[tuple[dict[str, Any], float]], category: str
+) -> None:
+    if category != "TV" or not ranked:
+        return
+    result, score = ranked[0]
+    boosted = score + 0.05
+    ranked[0] = (result, boosted)
+    logger.debug(
+        f"[cyan]Boosted first TV result similarity from {score:.3f} to {boosted:.3f}[/cyan]"
+    )
+
+
+def _filter_low_similarity_ranked(
+    ranked: list[tuple[dict[str, Any], float]],
+) -> list[tuple[dict[str, Any], float]]:
+    if not ranked or ranked[0][1] < 0.90:
+        return ranked
+    filtered = [item for item in ranked if item[1] >= 0.75]
+    logger.debug(
+        f"[yellow]Filtered out low similarity results (< 0.70) since best match has {filtered[0][1]:.2f} similarity[/yellow]"
+    )
+    return filtered
+
+
+async def _rank_tmdb_results(
+    results: list[dict[str, Any]],
+    filename: str,
+    secondary_title: str | None,
+    search_year: str | int | None,
+    category: str,
+) -> list[tuple[dict[str, Any], float]]:
+    filename_norm = await normalize_title(filename)
+    secondary_norm = await _optional_normalized_title(secondary_title)
+    ranked = await _scored_tmdb_results(
+        results,
+        filename_norm,
+        secondary_norm,
+        _parsed_search_year(search_year),
+        category,
+    )
+    _boost_first_tv_result(ranked, category)
+    ranked.sort(key=lambda item: item[1], reverse=True)
+    return _filter_low_similarity_ranked(ranked)
+
+
+def _confident_ranked_id(
+    ranked: list[tuple[dict[str, Any], float]],
+) -> int | None:
+    if not ranked:
+        return None
+    best = ranked[0][1]
+    second = ranked[1][1] if len(ranked) > 1 else 0.0
+    if best >= 0.75 and best - second >= 0.10:
+        return int(ranked[0][0]["id"])
+    return None
+
+
+async def _ranked_titles(
+    ranked: list[tuple[dict[str, Any], float]],
+) -> list[tuple[dict[str, Any], float, str]]:
+    titled: list[tuple[dict[str, Any], float, str]] = []
+    for result, score in ranked:
+        title, _original = await _normalized_result_titles(result)
+        titled.append((result, score, title))
+    return titled
+
+
+def _single_the_candidate(
+    titled: list[tuple[dict[str, Any], float, str]],
+) -> tuple[dict[str, Any], float, str] | None:
+    the_items = [item for item in titled if item[2].startswith("the ")]
+    if len(the_items) != 1:
+        return None
+    if len(titled) == 1:
+        return None
+    return the_items[0]
+
+
+def _updated_ranked_score(
+    ranked: list[tuple[dict[str, Any], float]],
+    target_id: Any,
+    new_score: float,
+) -> list[tuple[dict[str, Any], float]]:
+    updated = [
+        (
+            candidate,
+            new_score if candidate.get("id") == target_id else similarity,
+        )
+        for candidate, similarity in ranked
+    ]
+    updated.sort(key=lambda item: item[1], reverse=True)
+    return updated
+
+
+async def _the_prefix_rank_adjustment(
+    ranked: list[tuple[dict[str, Any], float]], filename: str
+) -> list[tuple[dict[str, Any], float]]:
+    if len(ranked) <= 1:
+        return ranked
+    candidate = _single_the_candidate(await _ranked_titles(ranked))
+    if candidate is None:
+        return ranked
+    result, score, title = candidate
+    without_the = title[4:]
+    filename_norm = await normalize_title(filename)
+    new_score = SequenceMatcher(None, filename_norm, without_the).ratio()
+    logger.debug(
+        f"[cyan]Checking 'The' prefix: '{title}' -> '{without_the}'[/cyan]"
+    )
+    logger.debug(
+        f"[cyan]Original similarity: {score:.3f}, New similarity: {new_score:.3f}[/cyan]"
+    )
+    if new_score <= score + 0.05:
+        return ranked
+    return _updated_ranked_score(ranked, result.get("id"), new_score)
+
+
+def _reject_ambiguous_ranked(
+    ranked: list[tuple[dict[str, Any], float]],
+) -> None:
+    candidate_ids = [
+        str(result.get("id", "")) for result, _score in ranked[:3]
+    ]
+    logger.warning(
+        "[yellow]Ambiguous TMDb match in unattended mode; "
+        f"refusing to guess between candidates {', '.join(candidate_ids)}.[/yellow]"
+    )
+    raise AmbiguousMetadataError(
+        "TMDb metadata match is ambiguous; automatic mode will skip this release."
+    )
+
+
+def _tmdb_result_title(result: dict[str, Any]) -> str:
+    return str(result.get("title") or result.get("name") or "")
+
+
+def _tmdb_web_base_url(category: str) -> str:
+    return (
+        "https://www.themoviedb.org/movie/"
+        if category == "MOVIE"
+        else "https://www.themoviedb.org/tv/"
+    )
+
+
+def _ranked_tmdb_year(result: dict[str, Any]) -> str:
+    value = _first_nonempty(
+        result.get("release_date"), result.get("first_air_date"), default=""
+    )
+    return str(value)[:4]
+
+
+def _log_ranked_tmdb_entry(
+    index: int,
+    result: dict[str, Any],
+    score: float,
+    base_url: str,
+) -> None:
+    logger.info(
+        f"[cyan]{index}.[/cyan] [bold]{_tmdb_result_title(result)}[/bold] "
+        f"({_ranked_tmdb_year(result)}) [yellow]ID:[/yellow] {base_url}{result['id']} "
+        f"[dim](similarity: {score:.2f})[/dim]"
+    )
+    overview = str(result.get("overview", ""))
+    if overview:
+        suffix = "..." if len(overview) > 200 else ""
+        logger.info(f"[green]Overview:[/green] {overview[:200]}{suffix}")
+    logger.info("")
+
+
+def _log_ranked_tmdb_results(
+    ranked: list[tuple[dict[str, Any], float]], category: str
+) -> None:
+    logger.info("")
+    logger.info(
+        "[bold yellow]Multiple TMDb results found. Please select the correct entry:[/bold yellow]"
+    )
+    base_url = _tmdb_web_base_url(category)
+    for index, (result, score) in enumerate(ranked, start=1):
+        _log_ranked_tmdb_entry(index, result, score, base_url)
+
+
+async def _cancel_tmdb_selection() -> NoReturn:
+    logger.info("\n[red]Exiting on user request (Ctrl+C)[/red]")
+    await cleanup_manager.cleanup()
+    cleanup_manager.reset_terminal()
+    raise OperationAbortedError("TMDb selection was cancelled by the user.")
+
+
+async def _read_ranked_tmdb_selection() -> Any:
+    try:
+        value = await prompt_in_thread(
+            cli_ui.ask_string,
+            "Or push enter to try a different search: ",
+        )
+    except EOFError, KeyboardInterrupt:
+        await _cancel_tmdb_selection()
+    return value if value is not None else ""
+
+
+def _is_manual_tmdb_selection(selection: Any) -> bool:
+    if not isinstance(selection, str):
+        return False
+    return "/" in selection and selection.lower().startswith(("tv/", "movie/"))
+
+
+async def _parsed_manual_tmdb_selection(
+    selection: str, category: str
+) -> tuple[int, str] | None:
+    try:
+        parsed_category, parsed_id = parse_tmdb_id(selection, category)
+    except KeyboardInterrupt:
+        await _cancel_tmdb_selection()
+    except Exception as error:
+        logger.info(
+            f"[bold red]Error parsing TMDb ID: {error}. Please try again.[/bold red]"
+        )
+        return None
+    if not parsed_id:
+        logger.info(
+            "[bold red]Invalid TMDb ID format. Please try again.[/bold red]"
+        )
+        return None
+    logger.info(
+        f"[green]Using manual TMDb ID: {parsed_id} and category: {parsed_category}[/green]"
+    )
+    return int(parsed_id), str(parsed_category)
+
+
+async def _ranked_numeric_selection(
+    selection: Any,
+    ranked: list[tuple[dict[str, Any], float]],
+    category: str,
+) -> tuple[int, str] | None:
+    try:
+        selection_int = int(selection)
+    except KeyboardInterrupt:
+        await _cancel_tmdb_selection()
+    except TypeError, ValueError:
+        logger.info(
+            "[bold red]Invalid input. Please enter a number or TMDb ID (tv/12345 or movie/12345).[/bold red]"
+        )
+        return None
+    if not 1 <= selection_int <= len(ranked):
+        logger.info(
+            "[bold red]Selection out of range. Please try again.[/bold red]"
+        )
+        return None
+    return int(ranked[selection_int - 1][0]["id"]), category
+
+
+async def _prompt_ranked_tmdb_selection(
+    ranked: list[tuple[dict[str, Any], float]], category: str
+) -> tuple[int, str] | None:
+    _log_ranked_tmdb_results(ranked, category)
+    while True:
+        logger.info(
+            "Enter the number of the correct entry, or manual TMDb ID (tv/12345 or movie/12345):"
+        )
+        selection = await _read_ranked_tmdb_selection()
+        if not selection.strip():
+            return None
+        if _is_manual_tmdb_selection(selection):
+            selected = await _parsed_manual_tmdb_selection(selection, category)
+        else:
+            selected = await _ranked_numeric_selection(
+                selection, ranked, category
+            )
+        if selected is not None:
+            return selected
+
+
+async def _direct_tmdb_search_match(
+    limited: list[dict[str, Any]],
+    filename: str,
+    secondary_title: str | None,
+    search_year: str | int | None,
+    category: str,
+) -> tuple[int, str] | None:
+    if len(limited) == 1:
+        return int(limited[0]["id"]), category
+    exact_ids = await _exact_tmdb_match_ids(
+        limited, filename, secondary_title, search_year
+    )
+    if len(exact_ids) == 1:
+        return exact_ids.pop(), category
+    return None
+
+
+def _log_confident_ranked(
+    ranked: list[tuple[dict[str, Any], float]], label: str
+) -> None:
+    logger.debug(
+        f"[green]Auto-selecting {label}: {_tmdb_result_title(ranked[0][0])} "
+        f"(similarity: {ranked[0][1]:.2f})[/green]"
+    )
+
+
+async def _ranked_tmdb_search_match(
+    limited: list[dict[str, Any]],
+    filename: str,
+    secondary_title: str | None,
+    search_year: str | int | None,
+    category: str,
+    unattended: bool,
+) -> tuple[int, str]:
+    ranked = await _rank_tmdb_results(
+        limited, filename, secondary_title, search_year, category
+    )
+    confident = _confident_ranked_id(ranked)
+    if confident is not None:
+        _log_confident_ranked(ranked, "best match")
+        return confident, category
+    adjusted = await _the_prefix_rank_adjustment(ranked, filename)
+    confident = _confident_ranked_id(adjusted)
+    if confident is not None:
+        _log_confident_ranked(adjusted, "'The' prefixed match")
+        return confident, category
+    if unattended:
+        _reject_ambiguous_ranked(adjusted)
+    selected = await _prompt_ranked_tmdb_selection(adjusted, category)
+    return selected if selected is not None else (0, category)
+
+
+async def _search_tmdb_id_once(
+    filename: str,
+    search_year: str | int | None,
+    category: str,
+    secondary_title: str | None,
+    unattended: bool,
+) -> tuple[int, str]:
+    try:
+        limited = _limited_tmdb_results(
+            await _tmdb_search_results(filename, search_year, category),
+            search_year,
+        )
+        if not limited:
+            return 0, category
+        direct = await _direct_tmdb_search_match(
+            limited, filename, secondary_title, search_year, category
+        )
+        if direct is not None:
+            return direct
+        return await _ranked_tmdb_search_match(
+            limited,
+            filename,
+            secondary_title,
+            search_year,
+            category,
+            unattended,
+        )
+    except OperationAbortedError:
+        raise
+    except Exception:
+        return 0, category
+
+
+_ROMAN_NUMERALS = {
+    "II": "2",
+    "III": "3",
+    "IV": "4",
+    "V": "5",
+    "VI": "6",
+    "VII": "7",
+    "VIII": "8",
+    "IX": "9",
+    "X": "10",
+}
+
+
+def _roman_converted_title(filename: str) -> str | None:
+    words = filename.split()
+    converted = False
+    for index, word in enumerate(words):
+        replacement = _ROMAN_NUMERALS.get(word.upper())
+        if replacement is not None:
+            words[index] = replacement
+            converted = True
+    return " ".join(words) if converted else None
+
+
+def _safe_year_plus_one(search_year: str | int | None) -> int | None:
+    try:
+        year = int(search_year) if search_year is not None else 0
+    except Exception:
+        return None
+    return year + 1 if year > 0 else None
+
+
+def _anime_search_title(untouched_filename: str | None) -> str:
+    try:
+        guessed = guessit_fn(
+            untouched_filename or "", {"excludes": ["country", "language"]}
+        )
+        parsed = typing_cast(
+            dict[str, Any], anitopy_parse_fn(guessed.get("title", "")) or {}
+        )
+        return str(parsed.get("anime_title", ""))
+    except KeyError:
+        logger.info(
+            "[bold red]Failed to parse title for TMDb search.[/bold red]"
+        )
+        return ""
+
+
+def _without_media_extension_word(filename: str) -> list[str]:
+    words = filename.split()
+    extensions = {"mp4", "mkv", "avi", "webm", "mov", "wmv"}
+    return [word for word in words if word.lower() not in extensions]
+
+
+def _reduced_search_title(filename: str, drop_count: int) -> str:
+    words = _without_media_extension_word(filename)
+    if len(words) <= drop_count:
+        return ""
+    return " ".join(words[:-drop_count])
+
+
+async def _search_candidate(
+    title: str,
+    search_year: str | int | None,
+    category: str,
+    secondary_title: str | None,
+    unattended: bool,
+    attempted: int = 0,
+) -> tuple[int, str]:
+    if not title:
+        return 0, category
+    if attempted:
+        await asyncio.sleep(1)
+    return await _search_tmdb_id_once(
+        title, search_year, category, secondary_title, unattended
+    )
+
+
+async def _roman_search_fallback(
+    filename: str,
+    search_year: str | int | None,
+    original_category: str,
+    secondary_title: str | None,
+    unattended: bool,
+    attempted: int,
+) -> tuple[int, str]:
+    try:
+        roman = _roman_converted_title(filename)
+        if not roman:
+            return 0, original_category
+        logger.debug(
+            f"[bold yellow]Trying with roman numerals converted: {roman}[/bold yellow]"
+        )
+        return await _search_candidate(
+            roman,
+            search_year,
+            original_category,
+            secondary_title,
+            unattended,
+            attempted + 1,
+        )
+    except OperationAbortedError:
+        raise
+    except Exception as error:
+        logger.info(
+            f"[bold red]Roman numeral conversion error:[/bold red] {error}"
+        )
+        return 0, original_category
+
+
+async def _secondary_search_fallback(
+    secondary_title: str | None,
+    search_year: str | int | None,
+    category: str,
+    unattended: bool,
+) -> tuple[int, str]:
+    if not secondary_title:
+        return 0, category
+    logger.debug(f"[yellow]Trying secondary title: {secondary_title}[/yellow]")
+    return await _search_candidate(
+        secondary_title, search_year, category, secondary_title, unattended
+    )
+
+
+async def _primary_search_fallback(
+    filename: str,
+    search_year: str | int | None,
+    category: str,
+    secondary_title: str | None,
+    unattended: bool,
+) -> tuple[int, str]:
+    logger.debug(f"[yellow]Trying primary filename: {filename}[/yellow]")
+    return await _search_candidate(
+        filename, search_year, category, secondary_title, unattended
+    )
+
+
+async def _next_year_search_fallback(
+    filename: str,
+    search_year: str | int | None,
+    category: str,
+    secondary_title: str | None,
+    unattended: bool,
+    attempted: int,
+) -> tuple[int, str]:
+    next_year = _safe_year_plus_one(search_year)
+    if next_year is None:
+        return 0, category
+    logger.debug("[yellow]Retrying with year +1...[/yellow]")
+    return await _search_candidate(
+        filename,
+        next_year,
+        category,
+        secondary_title,
+        unattended,
+        attempted + 1,
+    )
+
+
+async def _switched_category_search_fallback(
+    filename: str,
+    search_year: str | int | None,
+    category: str,
+    secondary_title: str | None,
+    unattended: bool,
+    attempted: int,
+) -> tuple[int, str]:
+    switched = "TV" if category == "MOVIE" else "MOVIE"
+    logger.debug(
+        f"[bold yellow]Switching category to {switched} and retrying...[/bold yellow]"
+    )
+    return await _search_candidate(
+        filename,
+        search_year,
+        switched,
+        secondary_title,
+        unattended,
+        attempted + 1,
+    )
+
+
+async def _anime_search_fallback(
+    untouched_filename: str | None,
+    search_year: str | int | None,
+    original_category: str,
+    secondary_title: str | None,
+    unattended: bool,
+    attempted: int,
+) -> tuple[int, str]:
+    anime_title = _anime_search_title(untouched_filename)
+    if not anime_title:
+        return 0, original_category
+    logger.debug(
+        f"[bold yellow]Trying parsed anime title: {anime_title}[/bold yellow]"
+    )
+    return await _search_candidate(
+        anime_title,
+        search_year,
+        original_category,
+        secondary_title,
+        unattended,
+        attempted + 1,
+    )
+
+
+async def _reduced_search_fallback(
+    filename: str,
+    search_year: str | int | None,
+    original_category: str,
+    secondary_title: str | None,
+    unattended: bool,
+    attempted: int,
+    drop_count: int,
+    label: str,
+) -> tuple[int, str]:
+    try:
+        reduced = _reduced_search_title(filename, drop_count)
+        if not reduced:
+            return 0, original_category
+        logger.debug(
+            f"[bold yellow]Trying {label} name: {reduced}[/bold yellow]"
+        )
+        return await _search_candidate(
+            reduced,
+            search_year,
+            original_category,
+            secondary_title,
+            unattended,
+            attempted + 1,
+        )
+    except OperationAbortedError:
+        raise
+    except Exception as error:
+        logger.info(f"[bold red]Reduced name search error:[/bold red] {error}")
+        return 0, original_category
+
+
+async def _first_successful_fallback(
+    steps: list[Callable[[], Awaitable[tuple[int, str]]]], category: str
+) -> tuple[int, str]:
+    for step in steps:
+        result = await step()
+        if result[0]:
+            return result
+    return 0, category
+
+
+async def _fallback_tmdb_searches(
+    filename: str,
+    search_year: str | int | None,
+    category: str,
+    original_category: str,
+    untouched_filename: str | None,
+    secondary_title: str | None,
+    unattended: bool,
+    attempted: int,
+) -> tuple[int, str]:
+    steps: list[Callable[[], Awaitable[tuple[int, str]]]] = [
+        partial(
+            _roman_search_fallback,
+            filename,
+            search_year,
+            original_category,
+            secondary_title,
+            unattended,
+            attempted,
+        ),
+        partial(
+            _secondary_search_fallback,
+            secondary_title,
+            search_year,
+            category,
+            unattended,
+        ),
+        partial(
+            _primary_search_fallback,
+            filename,
+            search_year,
+            category,
+            secondary_title,
+            unattended,
+        ),
+        partial(
+            _next_year_search_fallback,
+            filename,
+            search_year,
+            category,
+            secondary_title,
+            unattended,
+            attempted,
+        ),
+        partial(
+            _switched_category_search_fallback,
+            filename,
+            search_year,
+            category,
+            secondary_title,
+            unattended,
+            attempted,
+        ),
+        partial(
+            _anime_search_fallback,
+            untouched_filename,
+            search_year,
+            original_category,
+            secondary_title,
+            unattended,
+            attempted,
+        ),
+        partial(
+            _reduced_search_fallback,
+            filename,
+            search_year,
+            original_category,
+            secondary_title,
+            unattended,
+            attempted,
+            1,
+            "reduced",
+        ),
+        partial(
+            _reduced_search_fallback,
+            filename,
+            search_year,
+            original_category,
+            secondary_title,
+            unattended,
+            attempted,
+            2,
+            "further reduced",
+        ),
+    ]
+    return await _first_successful_fallback(steps, category)
+
+
+async def _cancel_final_tmdb_lookup() -> NoReturn:
+    logger.info("\n[red]Exiting on user request (Ctrl+C)[/red]")
+    await cleanup_manager.cleanup()
+    cleanup_manager.reset_terminal()
+    raise OperationAbortedError(
+        "TMDb lookup was cancelled because no metadata selection was accepted."
+    )
+
+
+async def _read_final_tmdb_input() -> str:
+    try:
+        value = await prompt_in_thread(
+            cli_ui.ask_string,
+            "Please enter TMDb ID in this format: tv/12345 or movie/12345",
+        )
+    except EOFError, KeyboardInterrupt:
+        await _cancel_final_tmdb_lookup()
+    return str(value or "")
+
+
+async def _parse_final_tmdb_input(
+    raw: str, category: str
+) -> tuple[int, str] | None:
+    try:
+        parsed_category, parsed_id = parse_tmdb_id(raw, category)
+        tmdb_id = int(parsed_id)
+    except KeyboardInterrupt:
+        await _cancel_final_tmdb_lookup()
+    except TypeError, ValueError:
+        logger.info(
+            "[bold red]Invalid TMDb ID. Use tv/12345 or movie/12345.[/bold red]"
+        )
+        return None
+    if tmdb_id <= 0:
+        logger.info(
+            "[bold red]Invalid TMDb ID. Use tv/12345 or movie/12345.[/bold red]"
+        )
+        return None
+    resolved_category = str(parsed_category) if parsed_category else category
+    return tmdb_id, resolved_category.upper()
+
+
+async def _final_manual_tmdb_prompt(category: str) -> tuple[int, str]:
+    logger.info(
+        "[bold red]Unable to find TMDb match using any search[/bold red]"
+    )
+    while True:
+        parsed = await _parse_final_tmdb_input(
+            await _read_final_tmdb_input(), category
+        )
+        if parsed is not None:
+            return parsed
 
 
 async def get_tmdb_id(
@@ -578,961 +1710,909 @@ async def get_tmdb_id(
     unattended: bool = False,
     category_preference: str | None = None,
 ) -> tuple[int, str]:
-    search_results: dict[str, Any] = {"results": []}
-    if isinstance(category, dict):
-        category_value = category.get("category", "MOVIE")
-    elif isinstance(category, str):
-        category_value = category
-    else:
-        try:
-            category_value = category.get("category", "MOVIE")  # type: ignore[union-attr]
-        except AttributeError, TypeError:
-            category_value = "MOVIE"
-    category_str = str(
-        category_preference or new_category or category_value or "MOVIE"
-    ).upper()
-    if category_str not in {"MOVIE", "TV"}:
-        category_str = "MOVIE"
-    original_category: str = category_str
-    category = category_str
-    if final_attempt is None:
-        final_attempt = False
-    if attempted:
-        await asyncio.sleep(1)  # Whoa baby, slow down
-
-    async def search_tmdb_id(
-        filename: str,
-        search_year: str | int | None,
-        category: str,
-        untouched_filename: str | None = "",
-        attempted: int = 0,
-        debug: bool = False,
-        secondary_title: str | None = None,
-        path: str | None = None,
-        final_attempt: bool | None = None,
-        new_category: str | None = None,
-        unattended: bool = False,
-    ) -> tuple[int, str]:
-        _ = untouched_filename
-        _ = path
-        _ = debug
-        search_results: dict[str, Any] = {"results": []}
-        original_category = category
-        category = new_category or original_category
-        if final_attempt is None:
-            final_attempt = False
-        if attempted:
-            await asyncio.sleep(1)  # Whoa baby, slow down
-        async with _tmdb_client() as client:
-            try:
-                # Primary search attempt with year
-                if category == "MOVIE":
-                    logger.debug(
-                        f"[green]Searching TMDb for movie:[/] [cyan]{filename}[/cyan] (Year: {search_year})"
-                    )
-
-                    params = {
-                        "query": filename,
-                        "language": "en-US",
-                        "include_adult": "true",
-                    }
-
-                    if search_year:
-                        params["year"] = str(search_year)
-
-                    response = await client.get(
-                        f"{TMDB_BASE_URL}/search/movie", params=params
-                    )
-                    try:
-                        response.raise_for_status()
-                        search_results = typing_cast(
-                            dict[str, Any], response.json()
-                        )
-                    except Exception:
-                        logger.info(
-                            f"[bold red]Failure with primary movie search: {response.status_code}[/bold red]"
-                        )
-
-                elif category == "TV":
-                    logger.debug(
-                        f"[green]Searching TMDb for TV show:[/] [cyan]{filename}[/cyan] (Year: {search_year})"
-                    )
-
-                    params = {
-                        "query": filename,
-                        "language": "en-US",
-                        "include_adult": "true",
-                    }
-
-                    if search_year:
-                        params["first_air_date_year"] = str(search_year)
-
-                    response = await client.get(
-                        f"{TMDB_BASE_URL}/search/tv", params=params
-                    )
-                    try:
-                        response.raise_for_status()
-                        search_results = typing_cast(
-                            dict[str, Any], response.json()
-                        )
-                    except Exception:
-                        logger.info(
-                            f"[bold red]Failed with primary TV search: {response.status_code}[/bold red]"
-                        )
-
-                logger.debug(
-                    f"[yellow]TMDB search results (primary): {json.dumps(search_results.get('results', [])[:4], indent=2)}[/yellow]"
-                )
-
-                # Check if results were found
-                results = typing_cast(
-                    list[dict[str, Any]], search_results.get("results", [])
-                )
-                if results:
-                    # Filter results by year if search_year is provided
-                    if search_year:
-
-                        def get_result_year(result: dict[str, Any]) -> int:
-                            return int(
-                                (
-                                    result.get("release_date")
-                                    or result.get("first_air_date")
-                                    or "0000"
-                                )[:4]
-                                or 0
-                            )
-
-                        filtered_results: list[dict[str, Any]] = [
-                            r
-                            for r in results
-                            if abs(get_result_year(r) - int(search_year)) <= 2
-                        ]
-                        limited_results: list[dict[str, Any]] = (
-                            filtered_results if filtered_results else results
-                        )[:8]
-                    else:
-                        limited_results = results[:8]
-
-                    if len(limited_results) == 1:
-                        tmdb_id = int(limited_results[0]["id"])
-                        return tmdb_id, category
-                    if len(limited_results) > 1:
-                        filename_norm = await normalize_title(filename)
-                        secondary_norm = (
-                            await normalize_title(secondary_title)
-                            if secondary_title
-                            else None
-                        )
-                        search_year_int = (
-                            int(search_year) if search_year else 0
-                        )
-
-                        # Find all exact matches (title and year)
-                        exact_matches: list[dict[str, Any]] = []
-                        for r in limited_results:
-                            if r.get("title"):
-                                result_title = await normalize_title(
-                                    str(r.get("title", ""))
-                                )
-                            else:
-                                result_title = await normalize_title(
-                                    str(r.get("name", ""))
-                                )
-                            if r.get("original_title"):
-                                original_title = await normalize_title(
-                                    str(r.get("original_title", ""))
-                                )
-                            else:
-                                original_title = await normalize_title(
-                                    str(r.get("original_name", ""))
-                                )
-                            result_year = int(
-                                (
-                                    r.get("release_date")
-                                    or r.get("first_air_date")
-                                    or "0"
-                                )[:4]
-                                or 0
-                            )
-                            # Only count as exact match if both years are present and non-zero
-                            if secondary_norm and (
-                                secondary_norm == original_title
-                                and search_year_int > 0
-                                and result_year > 0
-                                and (
-                                    result_year == search_year_int
-                                    or result_year == search_year_int + 1
-                                )
-                            ):
-                                exact_matches.append(r)
-
-                            if (
-                                filename_norm == result_title
-                                and search_year_int > 0
-                                and result_year > 0
-                                and (
-                                    result_year == search_year_int
-                                    or result_year == search_year_int + 1
-                                )
-                            ):
-                                exact_matches.append(r)
-
-                            if secondary_norm and (
-                                secondary_norm == result_title
-                                and search_year_int > 0
-                                and result_year > 0
-                                and (
-                                    result_year == search_year_int
-                                    or result_year == search_year_int + 1
-                                )
-                            ):
-                                exact_matches.append(r)
-
-                        summary_exact_matches: set[int] = {
-                            int(r["id"]) for r in exact_matches if "id" in r
-                        }
-
-                        if len(summary_exact_matches) == 1:
-                            tmdb_id = summary_exact_matches.pop()
-                            return tmdb_id, category
-
-                        # If no exact matches, calculate similarity for all results and sort them
-                        results_with_similarity: list[
-                            tuple[dict[str, Any], float]
-                        ] = []
-                        for r in limited_results:
-                            if r.get("title"):
-                                result_title = await normalize_title(
-                                    str(r.get("title", ""))
-                                )
-                            else:
-                                result_title = await normalize_title(
-                                    str(r.get("name", ""))
-                                )
-
-                            if r.get("original_title"):
-                                original_title = await normalize_title(
-                                    str(r.get("original_title", ""))
-                                )
-                            else:
-                                original_title = await normalize_title(
-                                    str(r.get("original_name", ""))
-                                )
-
-                            # Calculate similarity for both main title and original title
-                            main_similarity = SequenceMatcher(
-                                None, filename_norm, result_title
-                            ).ratio()
-                            original_similarity = SequenceMatcher(
-                                None, filename_norm, original_title
-                            ).ratio()
-
-                            # Try getting TMDb translation for original title if it's different
-                            translated_title = ""
-                            translated_similarity = 0.0
-                            secondary_best = 0.0
-
-                            if (
-                                original_title
-                                and original_title != result_title
-                            ):
-                                translated_title = await get_tmdb_translations(
-                                    r["id"], category, "en"
-                                )
-                                if translated_title:
-                                    translated_title_norm = (
-                                        await normalize_title(translated_title)
-                                    )
-                                    translated_similarity = SequenceMatcher(
-                                        None,
-                                        filename_norm,
-                                        translated_title_norm,
-                                    ).ratio()
-
-                                    logger.debug(
-                                        f"[cyan]  TMDb translation: '{translated_title}' (similarity: {translated_similarity:.3f})[/cyan]"
-                                    )
-
-                            # Also calculate secondary title similarity if available
-                            if secondary_norm is not None:
-                                secondary_main_sim = SequenceMatcher(
-                                    None, secondary_norm, result_title
-                                ).ratio()
-                                secondary_orig_sim = SequenceMatcher(
-                                    None, secondary_norm, original_title
-                                ).ratio()
-                                secondary_trans_sim = 0.0
-
-                                if translated_title:
-                                    translated_title_norm = (
-                                        await normalize_title(translated_title)
-                                    )
-                                    secondary_trans_sim = SequenceMatcher(
-                                        None,
-                                        secondary_norm,
-                                        translated_title_norm,
-                                    ).ratio()
-
-                                secondary_best = max(
-                                    secondary_main_sim,
-                                    secondary_orig_sim,
-                                    secondary_trans_sim,
-                                )
-
-                            if translated_similarity == 0.0:
-                                if secondary_best == 0.0:
-                                    # A strong provider title should not be diluted by an unrelated
-                                    # original title. The later confidence-margin check still prevents
-                                    # tied homonyms from being auto-selected in unattended mode.
-                                    similarity = max(
-                                        main_similarity, original_similarity
-                                    )
-                                else:
-                                    similarity = (
-                                        (main_similarity * 0.3)
-                                        + (original_similarity * 0.3)
-                                        + (secondary_best * 0.4)
-                                    )
-                            else:
-                                similarity = (
-                                    main_similarity * 0.5
-                                    + translated_similarity * 0.5
-                                    if secondary_best == 0.0
-                                    else main_similarity * 0.5
-                                    + secondary_best * 0.5
-                                )
-
-                            result_year = int(
-                                (
-                                    r.get("release_date")
-                                    or r.get("first_air_date")
-                                    or "0"
-                                )[:4]
-                                or 0
-                            )
-
-                            logger.debug(
-                                f"[cyan]ID {r['id']}: '{result_title}' vs '{filename_norm}'[/cyan]"
-                            )
-                            logger.debug(
-                                f"[cyan]  Main similarity: {main_similarity:.3f}[/cyan]"
-                            )
-                            logger.debug(
-                                f"[cyan]  Original similarity: {original_similarity:.3f}[/cyan]"
-                            )
-                            if translated_similarity > 0:
-                                logger.debug(
-                                    f"[cyan]  Translated similarity: {translated_similarity:.3f}[/cyan]"
-                                )
-                            if secondary_best > 0:
-                                logger.debug(
-                                    f"[cyan]  Secondary similarity: {secondary_best:.3f}[/cyan]"
-                                )
-                            logger.debug(
-                                f"[cyan]  Final similarity: {similarity:.3f}[/cyan]"
-                            )
-
-                            # Boost similarity if we have exact matches with year validation
-                            if (
-                                similarity >= 0.9
-                                and search_year_int > 0
-                                and result_year > 0
-                            ):
-                                if result_year == search_year_int:
-                                    similarity += (
-                                        0.1  # Full boost for exact year match
-                                    )
-                                elif result_year == search_year_int + 1:
-                                    similarity += 0.1  # Boost for +1 year (handles TMDB/IMDb differences)
-
-                            results_with_similarity.append((r, similarity))
-
-                        # Give a slight boost to the first result for TV shows (often the main series)
-                        if category == "TV" and results_with_similarity:
-                            first_result = results_with_similarity[0]
-                            # Boost the first result's similarity by 0.05 (5%)
-                            boosted_similarity = first_result[1] + 0.05
-                            results_with_similarity[0] = (
-                                first_result[0],
-                                boosted_similarity,
-                            )
-
-                            logger.debug(
-                                f"[cyan]Boosted first TV result similarity from {first_result[1]:.3f} to {boosted_similarity:.3f}[/cyan]"
-                            )
-
-                        # Sort by similarity (highest first)
-                        results_with_similarity.sort(
-                            key=lambda x: x[1], reverse=True
-                        )
-                        sorted_results: list[dict[str, Any]] = [
-                            r[0] for r in results_with_similarity
-                        ]
-
-                        # Filter results: if we have high similarity matches (>= 0.90), hide low similarity ones (< 0.75)
-                        best_similarity = results_with_similarity[0][1]
-                        if best_similarity >= 0.90:
-                            # Filter out results with similarity < 0.75
-                            filtered_results_with_similarity: list[
-                                tuple[dict[str, Any], float]
-                            ] = [
-                                (result, sim)
-                                for result, sim in results_with_similarity
-                                if sim >= 0.75
-                            ]
-                            results_with_similarity = (
-                                filtered_results_with_similarity
-                            )
-                            sorted_results = [
-                                r[0] for r in results_with_similarity
-                            ]
-
-                            logger.debug(
-                                f"[yellow]Filtered out low similarity results (< 0.70) since best match has {best_similarity:.2f} similarity[/yellow]"
-                            )
-                        else:
-                            sorted_results = [
-                                r[0] for r in results_with_similarity
-                            ]
-
-                        # Check if the best match is significantly better than others
-                        best_similarity = results_with_similarity[0][1]
-                        similarity_threshold = 0.70
-
-                        if best_similarity >= similarity_threshold:
-                            # Check that no other result is close to the best match
-                            second_best = (
-                                results_with_similarity[1][1]
-                                if len(results_with_similarity) > 1
-                                else 0.0
-                            )
-                            if (
-                                best_similarity >= 0.75
-                                and best_similarity - second_best >= 0.10
-                            ):
-                                logger.debug(
-                                    f"[green]Auto-selecting best match: {sorted_results[0].get('title') or sorted_results[0].get('name')} (similarity: {best_similarity:.2f}[/green]"
-                                )
-                                tmdb_id = int(sorted_results[0]["id"])
-                                return tmdb_id, category
-
-                        # Check for "The" prefix handling
-                        if len(results_with_similarity) > 1:
-                            the_results: list[
-                                tuple[dict[str, Any], float]
-                            ] = []
-                            non_the_results: list[
-                                tuple[dict[str, Any], float]
-                            ] = []
-
-                            for result_tuple in results_with_similarity:
-                                result, similarity = result_tuple
-                                if result.get("title"):
-                                    title = await normalize_title(
-                                        str(result.get("title", ""))
-                                    )
-                                else:
-                                    title = await normalize_title(
-                                        str(result.get("name", ""))
-                                    )
-                                if title.startswith("the "):
-                                    the_results.append(result_tuple)
-                                else:
-                                    non_the_results.append(result_tuple)
-
-                            # If exactly one result starts with "The", check if similarity improves
-                            if (
-                                len(the_results) == 1
-                                and len(non_the_results) > 0
-                            ):
-                                the_result, the_similarity = the_results[0]
-                                if the_result.get("title"):
-                                    the_title = await normalize_title(
-                                        str(the_result.get("title", ""))
-                                    )
-                                else:
-                                    the_title = await normalize_title(
-                                        str(the_result.get("name", ""))
-                                    )
-                                the_title_without_the = the_title[4:]
-                                new_similarity = SequenceMatcher(
-                                    None, filename_norm, the_title_without_the
-                                ).ratio()
-
-                                logger.debug(
-                                    f"[cyan]Checking 'The' prefix: '{the_title}' -> '{the_title_without_the}'[/cyan]"
-                                )
-                                logger.debug(
-                                    f"[cyan]Original similarity: {the_similarity:.3f}, New similarity: {new_similarity:.3f}[/cyan]"
-                                )
-
-                                # If similarity improves significantly, update and resort
-                                if new_similarity > the_similarity + 0.05:
-                                    logger.debug(
-                                        "[green]'The' prefix removal improved similarity, updating results[/green]"
-                                    )
-
-                                    updated_results: list[
-                                        tuple[dict[str, Any], float]
-                                    ] = []
-                                    for (
-                                        result_tuple
-                                    ) in results_with_similarity:
-                                        result, similarity = result_tuple
-                                        if result["id"] == the_result["id"]:
-                                            updated_results.append(
-                                                (result, new_similarity)
-                                            )
-                                        else:
-                                            updated_results.append(
-                                                result_tuple
-                                            )
-
-                                    # Resort by similarity
-                                    updated_results.sort(
-                                        key=lambda x: x[1], reverse=True
-                                    )
-                                    results_with_similarity = updated_results
-                                    sorted_results = [
-                                        r[0] for r in results_with_similarity
-                                    ]
-                                    best_similarity = results_with_similarity[
-                                        0
-                                    ][1]
-                                    second_best = (
-                                        results_with_similarity[1][1]
-                                        if len(results_with_similarity) > 1
-                                        else 0.0
-                                    )
-
-                                    if (
-                                        best_similarity >= 0.75
-                                        and best_similarity - second_best
-                                        >= 0.10
-                                    ):
-                                        logger.debug(
-                                            f"[green]Auto-selecting 'The' prefixed match: {sorted_results[0].get('title') or sorted_results[0].get('name')} (similarity: {best_similarity:.2f})[/green]"
-                                        )
-                                        tmdb_id = int(sorted_results[0]["id"])
-                                        return tmdb_id, category
-
-                        if unattended:
-                            candidate_ids = [
-                                str(result.get("id", ""))
-                                for result in sorted_results[:3]
-                            ]
-                            logger.warning(
-                                "[yellow]Ambiguous TMDb match in unattended mode; "
-                                f"refusing to guess between candidates {', '.join(candidate_ids)}.[/yellow]"
-                            )
-                            raise AmbiguousMetadataError(
-                                "TMDb metadata match is ambiguous; automatic mode will skip this release."
-                            )
-
-                        # Show sorted results to user
-                        logger.info("")
-                        logger.info(
-                            "[bold yellow]Multiple TMDb results found. Please select the correct entry:[/bold yellow]"
-                        )
-                        tmdb_url = (
-                            "https://www.themoviedb.org/movie/"
-                            if category == "MOVIE"
-                            else "https://www.themoviedb.org/tv/"
-                        )
-
-                        for idx, result in enumerate(sorted_results):
-                            title = result.get("title") or result.get(
-                                "name", ""
-                            )
-                            year = (
-                                result.get("release_date")
-                                or result.get("first_air_date")
-                                or ""
-                            )[:4]
-                            overview = result.get("overview", "")
-                            similarity_score = results_with_similarity[idx][1]
-
-                            logger.info(
-                                f"[cyan]{idx + 1}.[/cyan] [bold]{title}[/bold] ({year}) [yellow]ID:[/yellow] {tmdb_url}{result['id']} [dim](similarity: {similarity_score:.2f})[/dim]"
-                            )
-                            if overview:
-                                logger.info(
-                                    f"[green]Overview:[/green] {overview[:200]}{'...' if len(overview) > 200 else ''}"
-                                )
-                            logger.info("")
-
-                        selection: str = ""
-                        while True:
-                            logger.info(
-                                "Enter the number of the correct entry, or manual TMDb ID (tv/12345 or movie/12345):"
-                            )
-                            try:
-                                selection = (
-                                    await prompt_in_thread(
-                                        cli_ui.ask_string,
-                                        "Or push enter to try a different search: ",
-                                    )
-                                    or ""
-                                )
-                            except EOFError:
-                                logger.info(
-                                    "\n[red]Exiting on user request (Ctrl+C)[/red]"
-                                )
-                                await cleanup_manager.cleanup()
-                                cleanup_manager.reset_terminal()
-                                raise OperationAbortedError(
-                                    "TMDb selection was cancelled by the user."
-                                ) from None
-                            if not selection.strip():
-                                break
-                            try:
-                                # Check if it's a manual TMDb ID entry
-                                if "/" in selection and (
-                                    selection.lower().startswith("tv/")
-                                    or selection.lower().startswith("movie/")
-                                ):
-                                    try:
-                                        parsed_category, parsed_tmdb_id = (
-                                            parse_tmdb_id(selection, category)
-                                        )
-                                        if (
-                                            parsed_tmdb_id
-                                            and parsed_tmdb_id != 0
-                                        ):
-                                            logger.info(
-                                                f"[green]Using manual TMDb ID: {parsed_tmdb_id} and category: {parsed_category}[/green]"
-                                            )
-                                            return (
-                                                parsed_tmdb_id,
-                                                parsed_category,
-                                            )
-                                        logger.info(
-                                            "[bold red]Invalid TMDb ID format. Please try again.[/bold red]"
-                                        )
-                                        continue
-                                    except Exception as e:
-                                        logger.info(
-                                            f"[bold red]Error parsing TMDb ID: {e}. Please try again.[/bold red]"
-                                        )
-                                        continue
-                                    except KeyboardInterrupt:
-                                        logger.info(
-                                            "\n[bold red]Search cancelled by user.[/bold red]"
-                                        )
-                                        raise OperationAbortedError(
-                                            "TMDb selection was cancelled by the user."
-                                        ) from None
-
-                                # Handle numeric selection
-                                selection_int = int(selection)
-                                if 1 <= selection_int <= len(sorted_results):
-                                    tmdb_id = int(
-                                        sorted_results[selection_int - 1]["id"]
-                                    )
-                                    return tmdb_id, category
-                                logger.info(
-                                    "[bold red]Selection out of range. Please try again.[/bold red]"
-                                )
-                            except ValueError:
-                                logger.info(
-                                    "[bold red]Invalid input. Please enter a number or TMDb ID (tv/12345 or movie/12345).[/bold red]"
-                                )
-                            except KeyboardInterrupt:
-                                logger.info(
-                                    "\n[bold red]Search cancelled by user.[/bold red]"
-                                )
-                                raise OperationAbortedError(
-                                    "TMDb selection was cancelled by the user."
-                                ) from None
-
-            except OperationAbortedError:
-                raise
-            except Exception:
-                search_results = {
-                    "results": []
-                }  # Reset search_results on exception
-
-        return 0, category
-
-    # TMDb doesn't do roman
-    if not search_results.get("results"):
-        try:
-            words = filename.split()
-            roman_numerals = {
-                "II": "2",
-                "III": "3",
-                "IV": "4",
-                "V": "5",
-                "VI": "6",
-                "VII": "7",
-                "VIII": "8",
-                "IX": "9",
-                "X": "10",
-            }
-
-            converted = False
-            for i, word in enumerate(words):
-                if word.upper() in roman_numerals:
-                    words[i] = roman_numerals[word.upper()]
-                    converted = True
-
-            if converted:
-                converted_title = " ".join(words)
-                logger.debug(
-                    f"[bold yellow]Trying with roman numerals converted: {converted_title}[/bold yellow]"
-                )
-                result = await search_tmdb_id(
-                    converted_title,
-                    search_year,
-                    original_category,
-                    untouched_filename,
-                    attempted + 1,
-                    debug=debug,
-                    secondary_title=secondary_title,
-                    path=path,
-                    unattended=unattended,
-                )
-                if result and result[0]:
-                    return result
-        except OperationAbortedError:
-            raise
-        except Exception as e:
-            logger.info(
-                f"[bold red]Roman numeral conversion error:[/bold red] {e}"
-            )
-            search_results = {"results": []}
-
-    # If we have a secondary title, try searching with that
-    if secondary_title:
-        logger.debug(
-            f"[yellow]Trying secondary title: {secondary_title}[/yellow]"
-        )
-        result = await search_tmdb_id(
-            secondary_title,
-            search_year,
-            category,
-            untouched_filename,
-            debug=debug,
-            secondary_title=secondary_title,
-            path=path,
-            unattended=unattended,
-        )
-        if result and result[0]:
-            return result
-
-    # Try searching with the primary filename
-    logger.debug(f"[yellow]Trying primary filename: {filename}[/yellow]")
-    if not search_results.get("results"):
-        result = await search_tmdb_id(
-            filename,
-            search_year,
-            category,
-            untouched_filename,
-            debug=debug,
-            secondary_title=secondary_title,
-            path=path,
-            unattended=unattended,
-        )
-        if result and result[0]:
-            return result
-
-    # Try searching with year + 1 if search_year is provided
-    if not search_results.get("results"):
-        try:
-            year_int = int(search_year) if search_year is not None else 0
-        except Exception:
-            year_int = 0
-
-        if year_int > 0:
-            imdb_year = year_int + 1
-            logger.debug("[yellow]Retrying with year +1...[/yellow]")
-            result = await search_tmdb_id(
-                filename,
-                imdb_year,
-                category,
-                untouched_filename,
-                attempted + 1,
-                debug=debug,
-                secondary_title=secondary_title,
-                path=path,
-                unattended=unattended,
-            )
-            if result and result[0]:
-                return result
-
-    # Try switching category
-    if not search_results.get("results"):
-        new_category = "TV" if category == "MOVIE" else "MOVIE"
-        logger.debug(
-            f"[bold yellow]Switching category to {new_category} and retrying...[/bold yellow]"
-        )
-        result = await search_tmdb_id(
-            filename,
-            search_year,
-            category,
-            untouched_filename,
-            attempted + 1,
-            debug=debug,
-            secondary_title=secondary_title,
-            path=path,
-            new_category=new_category,
-            unattended=unattended,
-        )
-        if result and result[0]:
-            return result
-
-    # try anime name parsing
-    if not search_results.get("results"):
-        try:
-            parsed_guess = guessit_fn(
-                untouched_filename or "", {"excludes": ["country", "language"]}
-            )
-            parsed_title_data = typing_cast(
-                dict[str, Any],
-                anitopy_parse_fn(parsed_guess.get("title", "")) or {},
-            )
-            parsed_title = str(parsed_title_data.get("anime_title", ""))
-            logger.debug(
-                f"[bold yellow]Trying parsed anime title: {parsed_title}[/bold yellow]"
-            )
-            result = await search_tmdb_id(
-                parsed_title,
-                search_year,
-                original_category,
-                untouched_filename,
-                attempted + 1,
-                debug=debug,
-                secondary_title=secondary_title,
-                path=path,
-                unattended=unattended,
-            )
-            if result and result[0]:
-                return result
-        except KeyError:
-            logger.info(
-                "[bold red]Failed to parse title for TMDb search.[/bold red]"
-            )
-            search_results = {"results": []}
-
-    # Try with less words in the title
-    if not search_results.get("results"):
-        try:
-            words = filename.split()
-            extensions = ["mp4", "mkv", "avi", "webm", "mov", "wmv"]
-            words_lower = [word.lower() for word in words]
-
-            for ext in extensions:
-                if ext in words_lower:
-                    ext_index = words_lower.index(ext)
-                    words.pop(ext_index)
-                    words_lower.pop(ext_index)
-                    break
-
-            if len(words) >= 2:
-                title = " ".join(words[:-1])
-                logger.debug(
-                    f"[bold yellow]Trying reduced name: {title}[/bold yellow]"
-                )
-                result = await search_tmdb_id(
-                    title,
-                    search_year,
-                    original_category,
-                    untouched_filename,
-                    attempted + 1,
-                    debug=debug,
-                    secondary_title=secondary_title,
-                    path=path,
-                    unattended=unattended,
-                )
-                if result and result[0]:
-                    return result
-        except OperationAbortedError:
-            raise
-        except Exception as e:
-            logger.info(f"[bold red]Reduced name search error:[/bold red] {e}")
-            search_results = {"results": []}
-
-    # Try with even less words
-    if not search_results.get("results"):
-        try:
-            words = filename.split()
-            extensions = ["mp4", "mkv", "avi", "webm", "mov", "wmv"]
-            words_lower = [word.lower() for word in words]
-
-            for ext in extensions:
-                if ext in words_lower:
-                    ext_index = words_lower.index(ext)
-                    words.pop(ext_index)
-                    words_lower.pop(ext_index)
-                    break
-
-            if len(words) >= 3:
-                title = " ".join(words[:-2])
-                logger.debug(
-                    f"[bold yellow]Trying further reduced name: {title}[/bold yellow]"
-                )
-                result = await search_tmdb_id(
-                    title,
-                    search_year,
-                    original_category,
-                    untouched_filename,
-                    attempted + 1,
-                    debug=debug,
-                    secondary_title=secondary_title,
-                    path=path,
-                    unattended=unattended,
-                )
-                if result and result[0]:
-                    return result
-        except OperationAbortedError:
-            raise
-        except Exception as e:
-            logger.info(f"[bold red]Reduced name search error:[/bold red] {e}")
-            search_results = {"results": []}
-
-    # No match found, prompt user if in CLI mode.
-    logger.info(
-        "[bold red]Unable to find TMDb match using any search[/bold red]"
+    _ = debug
+    _ = path
+    _ = final_attempt
+    category_str = _normalized_search_category(
+        category, category_preference, new_category
     )
-    if unattended:
-        return 0, category
-    while True:
-        try:
-            tmdb_input = await prompt_in_thread(
-                cli_ui.ask_string,
-                "Please enter TMDb ID in this format: tv/12345 or movie/12345",
+    original_category = category_str
+    result = await _fallback_tmdb_searches(
+        filename,
+        search_year,
+        category_str,
+        original_category,
+        untouched_filename,
+        secondary_title,
+        unattended,
+        attempted,
+    )
+    if result[0] or unattended:
+        if not result[0]:
+            logger.info(
+                "[bold red]Unable to find TMDb match using any search[/bold red]"
             )
-        except EOFError, KeyboardInterrupt:
-            logger.info("\n[red]Exiting on user request (Ctrl+C)[/red]")
-            await cleanup_manager.cleanup()
-            cleanup_manager.reset_terminal()
-            raise OperationAbortedError(
-                "TMDb lookup was cancelled because no metadata selection was accepted."
-            ) from None
+        return result
+    return await _final_manual_tmdb_prompt(category_str)
 
-        try:
-            parsed_category, parsed_id = parse_tmdb_id(
-                tmdb_input or "", category
-            )
-            tmdb_id = int(parsed_id)
-        except KeyboardInterrupt:
-            logger.info("\n[red]Exiting on user request (Ctrl+C)[/red]")
-            await cleanup_manager.cleanup()
-            cleanup_manager.reset_terminal()
-            raise OperationAbortedError(
-                "TMDb lookup was cancelled because no metadata selection was accepted."
-            ) from None
-        except TypeError, ValueError:
-            logger.info(
-                "[bold red]Invalid TMDb ID. Use tv/12345 or movie/12345.[/bold red]"
-            )
-            continue
-        if tmdb_id <= 0:
-            logger.info(
-                "[bold red]Invalid TMDb ID. Use tv/12345 or movie/12345.[/bold red]"
-            )
-            continue
-        return tmdb_id, str(parsed_category or category).upper()
+
+def _configured_tmdb_defaults(
+    config: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not isinstance(config, dict):
+        return None
+    configured = config.get("DEFAULT")
+    return (
+        typing_cast(dict[str, Any], configured)
+        if isinstance(configured, dict)
+        else None
+    )
+
+
+def _refresh_tmdb_call_authentication(
+    config: dict[str, Any] | None, defaults: dict[str, Any]
+) -> None:
+    raw = _first_nonempty(
+        defaults.get("tmdb_access_token"),
+        defaults.get("tmdb_api"),
+        default=None,
+    )
+    if isinstance(raw, str) and raw.strip() and isinstance(config, dict):
+        _apply_config(config)
+
+
+def _runtime_tmdb_defaults(config: dict[str, Any] | None) -> dict[str, Any]:
+    configured = _configured_tmdb_defaults(config)
+    if configured is None:
+        return default_config
+    _refresh_tmdb_call_authentication(config, configured)
+    return configured
+
+
+def _tmdb_lookup_context(
+    search_year: str | int | None,
+    debug: bool,
+    category: str | None,
+    mode: str,
+) -> dict[str, Any]:
+    return {
+        "tmdb_id": 0,
+        "search_year": search_year,
+        "debug": debug,
+        "category": category,
+        "mode": mode,
+    }
+
+
+def _tmdb_lookup_titles(path: str | None) -> tuple[str, str]:
+    guessed = guessit_fn(path or "", {"excludes": ["country", "language"]})
+    raw_title = str(guessed.get("title", "")).lower().split("aka")[0]
+    normalized = str(
+        guessit_fn(raw_title, {"excludes": ["country", "language"]}).get(
+            "title", ""
+        )
+    )
+    return raw_title, normalized
+
+
+async def _search_missing_tmdb_id(
+    path: str | None,
+    search_year: str | int | None,
+    category: str | None,
+    debug: bool,
+    mode: str,
+    unattended: bool,
+) -> int:
+    raw_title, normalized_title = _tmdb_lookup_titles(path)
+    tmdb_id, _category = await get_tmdb_id(
+        normalized_title,
+        search_year,
+        _tmdb_lookup_context(search_year, debug, category, mode),
+        category,
+        unattended=unattended,
+    )
+    if tmdb_id:
+        return int(tmdb_id)
+    tmdb_id, _category = await get_tmdb_id(
+        raw_title,
+        "",
+        _tmdb_lookup_context("", debug, category, mode),
+        category,
+        unattended=unattended,
+    )
+    return int(tmdb_id or 0)
+
+
+def _missing_tmdb_lookup_result(mode: str) -> None:
+    if mode == "cli":
+        logger.info("[bold red]Unable to find tmdb entry. Exiting.")
+        raise OperationAbortedError(
+            "TMDb metadata selection was cancelled by the user."
+        )
+    logger.info("[bold red]Unable to find tmdb entry")
+
+
+async def _looked_up_tmdb_other_id(
+    path: str | None,
+    search_year: str | int | None,
+    category: str | None,
+    debug: bool,
+    mode: str,
+    unattended: bool,
+) -> int | None:
+    resolved = await _search_missing_tmdb_id(
+        path, search_year, category, debug, mode, unattended
+    )
+    if resolved:
+        return resolved
+    _missing_tmdb_lookup_result(mode)
+    return None
+
+
+async def _resolved_tmdb_other_id(
+    tmdb_id: int,
+    path: str | None,
+    search_year: str | int | None,
+    category: str | None,
+    debug: bool,
+    mode: str,
+    unattended: bool,
+) -> int | None:
+    if tmdb_id:
+        return tmdb_id
+    try:
+        return await _looked_up_tmdb_other_id(
+            path, search_year, category, debug, mode, unattended
+        )
+    except AmbiguousMetadataError, OperationAbortedError:
+        raise
+    except Exception:
+        _missing_tmdb_lookup_result(mode)
+        return None
+
+
+def _tmdb_main_url(category: str | None, tmdb_id: int) -> str:
+    endpoint = "movie" if category == "MOVIE" else "tv"
+    return f"{TMDB_BASE_URL}/{endpoint}/{tmdb_id}"
+
+
+async def _main_tmdb_media_data(
+    client: httpx.AsyncClient,
+    cache: Any,
+    category: str | None,
+    tmdb_id: int,
+) -> dict[str, Any] | None:
+    cache_key = json.dumps(
+        {"category": category, "id": tmdb_id}, sort_keys=True
+    )
+    cached = await cache.get("tmdb", "main", cache_key)
+    if not is_cache_miss(cached) and isinstance(cached, dict):
+        return typing_cast(dict[str, Any], cached)
+    response = await client.get(_tmdb_main_url(category, tmdb_id), params={})
+    try:
+        response.raise_for_status()
+        media_data = typing_cast(dict[str, Any], response.json())
+    except Exception:
+        logger.info(
+            f"[bold red]Failed to fetch media data: {response.status_code}[/bold red]"
+        )
+        return None
+    await cache.set("tmdb", "main", cache_key, media_data)
+    return media_data
+
+
+def _date_year(raw_date: Any, fallback: Any) -> Any:
+    if not raw_date:
+        return fallback
+    return (
+        datetime.strptime(str(raw_date), "%Y-%m-%d").replace(tzinfo=UTC).year
+    )
+
+
+def _movie_imdb_mismatch(original_imdb_id: int, external_id: int) -> bool:
+    return bool(original_imdb_id and external_id != original_imdb_id)
+
+
+def _movie_main_imdb(
+    media_data: dict[str, Any],
+    original_imdb_id: int,
+    quickie_search: bool,
+    unattended: bool,
+) -> tuple[int, bool, int]:
+    if not quickie_search and original_imdb_id:
+        return original_imdb_id, False, 0
+    external_id = _external_imdb_id(media_data.get("imdb_id"))
+    if not external_id:
+        return original_imdb_id, False, 0
+    if not _movie_imdb_mismatch(original_imdb_id, external_id):
+        return external_id, False, 0
+    _reject_unattended_imdb_mismatch(unattended, original_imdb_id, external_id)
+    return original_imdb_id, True, external_id
+
+
+def _movie_core_fields(
+    media_data: dict[str, Any],
+    search_year: str | int | None,
+    original_imdb_id: int,
+    quickie_search: bool,
+    unattended: bool,
+) -> dict[str, Any]:
+    title = str(media_data["title"])
+    release_date = media_data.get("release_date") or None
+    imdb_id, mismatch, mismatched_id = _movie_main_imdb(
+        media_data, original_imdb_id, quickie_search, unattended
+    )
+    return {
+        "title": title,
+        "original_title": str(media_data.get("original_title") or title),
+        "year": _date_year(release_date, search_year or 0),
+        "runtime": media_data.get("runtime") or 0,
+        "release_date": release_date,
+        "first_air_date": None,
+        "last_air_date": None,
+        "series_status": "",
+        "tmdb_type": "Movie",
+        "networks": [],
+        "imdb_id": imdb_id,
+        "imdb_mismatch": mismatch,
+        "mismatched_imdb_id": mismatched_id,
+    }
+
+
+def _year_from_title(title: str) -> int | None:
+    match = re.search(r"(18|19|20)\d{2}", title)
+    return int(match.group(0)) if match else None
+
+
+def _tv_year(
+    media_data: dict[str, Any], search_year: str | int | None, title: str
+) -> Any:
+    first_air_date = media_data.get("first_air_date")
+    year = _date_year(first_air_date, search_year)
+    if year:
+        return year
+    title_year = _year_from_title(title)
+    if title_year is not None:
+        return title_year
+    return _date_year(media_data.get("last_air_date"), 0)
+
+
+def _tv_runtime(media_data: dict[str, Any]) -> Any:
+    raw = media_data.get("episode_run_time", [60])
+    if isinstance(raw, list) and raw:
+        return typing_cast(list[Any], raw)[0]
+    return 60
+
+
+def _tv_networks(media_data: dict[str, Any]) -> list[Any]:
+    raw = media_data.get("networks", [])
+    return typing_cast(list[Any], raw) if isinstance(raw, list) else []
+
+
+def _tv_core_fields(
+    media_data: dict[str, Any],
+    search_year: str | int | None,
+    original_imdb_id: int,
+) -> dict[str, Any]:
+    title = str(media_data["name"])
+    return {
+        "title": title,
+        "original_title": str(media_data.get("original_name") or title),
+        "year": _tv_year(media_data, search_year, title),
+        "runtime": _tv_runtime(media_data),
+        "release_date": None,
+        "first_air_date": media_data.get("first_air_date"),
+        "last_air_date": media_data.get("last_air_date"),
+        "series_status": str(media_data.get("status") or ""),
+        "tmdb_type": media_data.get("type", "Scripted"),
+        "networks": _tv_networks(media_data),
+        "imdb_id": original_imdb_id,
+        "imdb_mismatch": False,
+        "mismatched_imdb_id": 0,
+    }
+
+
+def _tmdb_core_fields(
+    category: str | None,
+    media_data: dict[str, Any],
+    search_year: str | int | None,
+    original_imdb_id: int,
+    quickie_search: bool,
+    unattended: bool,
+) -> dict[str, Any]:
+    if category == "MOVIE":
+        return _movie_core_fields(
+            media_data,
+            search_year,
+            original_imdb_id,
+            quickie_search,
+            unattended,
+        )
+    return _tv_core_fields(media_data, search_year, original_imdb_id)
+
+
+def _tmdb_visual_fields(
+    media_data: dict[str, Any], poster: str | None
+) -> dict[str, Any]:
+    poster_path = media_data.get("poster_path", "")
+    artwork_url = poster
+    if artwork_url is None and poster_path:
+        artwork_url = f"https://image.tmdb.org/t/p/original{poster_path}"
+    backdrop_path = media_data.get("backdrop_path", "")
+    backdrop = (
+        f"https://image.tmdb.org/t/p/original{backdrop_path}"
+        if backdrop_path
+        else ""
+    )
+    return {
+        "artwork_url": artwork_url,
+        "tmdb_poster_path": poster_path,
+        "backdrop": backdrop,
+    }
+
+
+def _supplemental_tmdb_urls(
+    main_url: str,
+    category: str | None,
+    tmdb_id: int,
+    add_logo: bool,
+) -> dict[str, str]:
+    urls = {
+        "external": f"{main_url}/external_ids",
+        "videos": f"{main_url}/videos",
+        "keywords": f"{main_url}/keywords",
+        "credits": f"{main_url}/credits",
+    }
+    if add_logo:
+        endpoint = "movie" if category == "MOVIE" else "tv"
+        urls["logo"] = f"{TMDB_BASE_URL}/{endpoint}/{tmdb_id}/images"
+    return urls
+
+
+async def _supplemental_tmdb_results(
+    client: httpx.AsyncClient,
+    main_url: str,
+    category: str | None,
+    tmdb_id: int,
+    add_logo: bool,
+) -> dict[str, Any]:
+    urls = _supplemental_tmdb_urls(main_url, category, tmdb_id, add_logo)
+    keys = list(urls)
+    results = await asyncio.gather(
+        *(client.get(url, params={}) for url in urls.values()),
+        return_exceptions=True,
+    )
+    return dict(zip(keys, results, strict=True))
+
+
+def _json_from_supplement(
+    value: Any, fetch_message: str, process_message: str
+) -> dict[str, Any] | None:
+    if isinstance(value, BaseException):
+        logger.info(fetch_message)
+        return None
+    try:
+        data = value.json()
+        return (
+            typing_cast(dict[str, Any], data)
+            if isinstance(data, dict)
+            else None
+        )
+    except Exception:
+        logger.info(process_message)
+        return None
+
+
+def _positive_numeric_text(value: str) -> int:
+    text = value.strip()
+    if not text.isdigit():
+        return 0
+    parsed = int(text)
+    return parsed if parsed > 0 else 0
+
+
+def _positive_tvdb_id(value: Any) -> int:
+    if isinstance(value, int):
+        return value if value > 0 else 0
+    return _positive_numeric_text(value) if isinstance(value, str) else 0
+
+
+def _processed_external_ids(
+    value: Any,
+    original_imdb_id: int,
+    current_imdb_id: int,
+    current_tvdb_id: int,
+    quickie_search: bool,
+    unattended: bool,
+) -> tuple[int, int, bool, int]:
+    data = _json_from_supplement(
+        value,
+        "[bold red]Failed to fetch external IDs[/bold red]",
+        "[bold red]Failed to process external IDs[/bold red]",
+    )
+    if data is None:
+        return current_imdb_id, current_tvdb_id, False, 0
+    imdb_id, mismatch, mismatched_id = _reconcile_tmdb_imdb_id(
+        original_imdb_id, data.get("imdb_id"), quickie_search
+    )
+    _reject_unattended_imdb_mismatch(
+        unattended, original_imdb_id, mismatched_id
+    )
+    if not quickie_search and mismatched_id:
+        logger.warning(
+            f"[yellow]Warning: TMDb IMDb ID ({mismatched_id}) does not match provided IMDb ID ({original_imdb_id}). Using original IMDb ID.[/yellow]"
+        )
+    tvdb_id = current_tvdb_id or _positive_tvdb_id(data.get("tvdb_id"))
+    return imdb_id, tvdb_id, mismatch, mismatched_id
+
+
+def _youtube_from_supplement(value: Any) -> str:
+    data = _json_from_supplement(
+        value,
+        "[yellow]Unable to grab videos from TMDb.[/yellow]",
+        "[yellow]Unable to process videos from TMDb.[/yellow]",
+    )
+    if data is None:
+        return ""
+    for entry in _dict_list(data.get("results", [])):
+        if entry.get("site") == "YouTube" and entry.get("type") == "Trailer":
+            return f"https://www.youtube.com/watch?v={entry.get('key')}"
+    return ""
+
+
+def _keywords_from_supplement(value: Any, category: str | None) -> list[str]:
+    data = _json_from_supplement(
+        value,
+        "[bold red]Failed to fetch keywords[/bold red]",
+        "[bold red]Failed to process keywords[/bold red]",
+    )
+    return _keyword_names(data, category or "TV") if data is not None else []
+
+
+def _unique_first_five(values: list[str]) -> list[str]:
+    return list(dict.fromkeys(value for value in values if value))[:5]
+
+
+def _creator_names(media_data: dict[str, Any]) -> list[str]:
+    names = [
+        str(entry.get("original_name") or entry.get("name") or "")
+        for entry in _dict_list(media_data.get("created_by", []))
+    ]
+    return _unique_first_five(names)
+
+
+def _is_actor_credit(entry: dict[str, Any]) -> bool:
+    if entry.get("known_for_department") == "Acting":
+        return True
+    return entry.get("job") in {"Actor", "Actress"}
+
+
+def _director_credit_names(entries: list[dict[str, Any]]) -> list[str]:
+    return [
+        _credit_name(entry) for entry in entries if _is_director_credit(entry)
+    ]
+
+
+def _actor_credit_names(entries: list[dict[str, Any]]) -> list[str]:
+    return [
+        _credit_name(entry) for entry in entries if _is_actor_credit(entry)
+    ]
+
+
+def _credits_people(value: Any) -> tuple[list[str], list[str]]:
+    data = _json_from_supplement(
+        value,
+        "[bold red]Failed to fetch credits[/bold red]",
+        "[bold red]Failed to process credits[/bold red]",
+    )
+    if data is None:
+        return [], []
+    entries = _credit_entries(data)
+    return (
+        _unique_first_five(_director_credit_names(entries)),
+        _unique_first_five(_actor_credit_names(entries)),
+    )
+
+
+def _logo_supplement_available(value: Any, add_logo: bool) -> bool:
+    return bool(
+        add_logo and value is not None and not isinstance(value, BaseException)
+    )
+
+
+def _logo_supplement_json(value: Any, add_logo: bool) -> dict[str, Any] | None:
+    if not _logo_supplement_available(value, add_logo):
+        return None
+    try:
+        raw = value.json()
+    except Exception:
+        logger.info("[yellow]Failed to process logo[/yellow]")
+        return None
+    return typing_cast(dict[str, Any], raw) if isinstance(raw, dict) else None
+
+
+async def _logo_from_json(
+    raw: dict[str, Any],
+    tmdb_id: int,
+    category: str | None,
+    runtime_default_config: dict[str, Any],
+) -> tuple[str, str]:
+    logo_path = await get_logo(
+        tmdb_id,
+        category or "MOVIE",
+        logo_languages=runtime_default_config.get("logo_language"),
+        tmdb_base_url=TMDB_BASE_URL,
+        logo_json=raw,
+    )
+    return logo_path, logo_path.split("/")[-1] if logo_path else ""
+
+
+async def _logo_from_supplement(
+    value: Any,
+    add_logo: bool,
+    tmdb_id: int,
+    category: str | None,
+    runtime_default_config: dict[str, Any],
+) -> tuple[str, str]:
+    raw = _logo_supplement_json(value, add_logo)
+    if raw is None:
+        return "", ""
+    try:
+        return await _logo_from_json(
+            raw, tmdb_id, category, runtime_default_config
+        )
+    except Exception:
+        logger.info("[yellow]Failed to process logo[/yellow]")
+        return "", ""
+
+
+def _resolved_original_language(
+    manual_language: str | None,
+    tmdb_language: str,
+    requested_language: str | None,
+) -> str | None:
+    value = _first_nonempty(
+        manual_language, tmdb_language, requested_language, default=None
+    )
+    return str(value) if value is not None else None
+
+
+async def _tmdb_anime_fields(
+    media_data: dict[str, Any],
+    title: str,
+    category: str | None,
+    filename: str | None,
+    path: str | None,
+    mal_manual: int | None,
+) -> tuple[int, str, bool, str]:
+    anime_filename = filename if category == "MOVIE" else path
+    mal_id, retrieved_aka, anime, demographic = await get_anime(
+        media_data,
+        Meta(
+            {
+                "title": title,
+                "aka": "",
+                "mal_id": 0,
+                "filename": anime_filename,
+            }
+        ),
+    )
+    if mal_manual is not None and mal_manual != 0:
+        mal_id = mal_manual
+    return mal_id, retrieved_aka, anime, demographic
+
+
+def _aka_too_similar(title: str, retrieved_aka: str) -> bool:
+    candidate = retrieved_aka[5:].strip()
+    if not candidate:
+        return True
+    difference = SequenceMatcher(
+        None, title.lower(), candidate.lower()
+    ).ratio()
+    if difference >= 0.7:
+        return True
+    return candidate.lower() in title.lower()
+
+
+def _clean_retrieved_aka(title: str, retrieved_aka: str, year: Any) -> str:
+    if not retrieved_aka:
+        return ""
+    if _aka_too_similar(title, retrieved_aka):
+        return ""
+    year_text = f"({year})" if year else ""
+    return (
+        retrieved_aka.replace(year_text, "").strip()
+        if year_text
+        else retrieved_aka
+    )
+
+
+def _tmdb_other_result(
+    core: dict[str, Any],
+    common: dict[str, Any],
+    *,
+    imdb_id: int,
+    tvdb_id: int,
+    origin_country: list[Any],
+    original_language: str | None,
+    keywords: list[str],
+    genres: list[str],
+    genre_ids: str,
+    creators: list[str],
+    directors: list[str],
+    cast: list[str],
+    mal_id: int,
+    anime: bool,
+    demographic: str,
+    retrieved_aka: str,
+    logo_path: str,
+    tmdb_logo: str,
+    youtube: str,
+    production_companies: Any,
+    production_countries: Any,
+    imdb_mismatch: bool,
+    mismatched_imdb_id: int,
+) -> dict[str, Any]:
+    return {
+        "tmdb_adult_media": common["adult_media"],
+        "title": core["title"],
+        "year": core["year"],
+        "release_date": core["release_date"],
+        "first_air_date": core["first_air_date"],
+        "last_air_date": core["last_air_date"],
+        "series_status": core["series_status"],
+        "imdb_id": imdb_id,
+        "tvdb_id": tvdb_id,
+        "origin_country": origin_country,
+        "original_language": original_language,
+        "original_title": core["original_title"],
+        "keywords": keywords,
+        "genres": genres,
+        "genre_ids": genre_ids,
+        "tmdb_creators": creators,
+        "tmdb_directors": directors,
+        "tmdb_cast": cast,
+        "mal_id": mal_id,
+        "anime": anime,
+        "demographic": demographic,
+        "retrieved_aka": retrieved_aka,
+        "artwork_url": common["artwork_url"],
+        "tmdb_poster_path": common["poster_path"],
+        "logo": logo_path,
+        "tmdb_logo": tmdb_logo,
+        "backdrop": common["backdrop"],
+        "overview": common["overview"],
+        "tmdb_type": core["tmdb_type"],
+        "runtime": core["runtime"],
+        "youtube": youtube,
+        "certification": "",
+        "production_companies": production_companies,
+        "production_countries": production_countries,
+        "networks": core["networks"],
+        "imdb_mismatch": imdb_mismatch,
+        "mismatched_imdb_id": mismatched_imdb_id,
+    }
+
+
+@dataclass(frozen=True)
+class _TmdbOtherPrimary:
+    media_data: dict[str, Any]
+    core: dict[str, Any]
+    common: dict[str, Any]
+    tmdb_language: str
+    add_logo: bool
+    supplemental: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class _TmdbOtherSupplemental:
+    imdb_id: int
+    tvdb_id: int
+    imdb_mismatch: bool
+    mismatched_imdb_id: int
+    youtube: str
+    keywords: list[str]
+    directors: list[str]
+    cast: list[str]
+    logo_path: str
+    tmdb_logo: str
+
+
+def _tmdb_other_common_fields(
+    media_data: dict[str, Any], poster: str | None
+) -> dict[str, Any]:
+    visual = _tmdb_visual_fields(media_data, poster)
+    return {
+        "adult_media": media_data.get("adult", False),
+        "artwork_url": visual["artwork_url"],
+        "poster_path": visual["tmdb_poster_path"],
+        "backdrop": visual["backdrop"],
+        "overview": media_data.get("overview", ""),
+    }
+
+
+async def _tmdb_other_primary(
+    client: httpx.AsyncClient,
+    cache: Any,
+    category: str | None,
+    tmdb_id: int,
+    search_year: str | int | None,
+    original_imdb_id: int,
+    quickie_search: bool,
+    unattended: bool,
+    poster: str | None,
+    runtime_defaults: dict[str, Any],
+) -> _TmdbOtherPrimary | None:
+    media_data = await _main_tmdb_media_data(client, cache, category, tmdb_id)
+    if media_data is None:
+        return None
+    logger.debug(
+        f"[cyan]TMDB Response: {json.dumps(media_data, indent=2)[:1200]}..."
+    )
+    core = _tmdb_core_fields(
+        category,
+        media_data,
+        search_year,
+        original_imdb_id,
+        quickie_search,
+        unattended,
+    )
+    add_logo = bool(runtime_defaults.get("add_logo", False))
+    supplemental = await _supplemental_tmdb_results(
+        client,
+        _tmdb_main_url(category, tmdb_id),
+        category,
+        tmdb_id,
+        add_logo,
+    )
+    return _TmdbOtherPrimary(
+        media_data=media_data,
+        core=core,
+        common=_tmdb_other_common_fields(media_data, poster),
+        tmdb_language=str(media_data.get("original_language", "")),
+        add_logo=add_logo,
+        supplemental=supplemental,
+    )
+
+
+async def _tmdb_other_supplemental(
+    primary: _TmdbOtherPrimary,
+    category: str | None,
+    tmdb_id: int,
+    original_imdb_id: int,
+    current_tvdb_id: int,
+    quickie_search: bool,
+    unattended: bool,
+    runtime_defaults: dict[str, Any],
+) -> _TmdbOtherSupplemental:
+    imdb_result, tvdb_result, mismatch, mismatched_id = (
+        _processed_external_ids(
+            primary.supplemental.get("external"),
+            original_imdb_id,
+            int(primary.core["imdb_id"]),
+            current_tvdb_id,
+            quickie_search,
+            unattended,
+        )
+    )
+    directors, cast = _credits_people(primary.supplemental.get("credits"))
+    logo_path, tmdb_logo = await _logo_from_supplement(
+        primary.supplemental.get("logo"),
+        primary.add_logo,
+        tmdb_id,
+        category,
+        runtime_defaults,
+    )
+    return _TmdbOtherSupplemental(
+        imdb_id=imdb_result,
+        tvdb_id=tvdb_result,
+        imdb_mismatch=mismatch,
+        mismatched_imdb_id=mismatched_id,
+        youtube=_youtube_from_supplement(primary.supplemental.get("videos")),
+        keywords=_keywords_from_supplement(
+            primary.supplemental.get("keywords"), category
+        ),
+        directors=directors,
+        cast=cast,
+        logo_path=logo_path,
+        tmdb_logo=tmdb_logo,
+    )
+
+
+def _origin_country_values(media_data: dict[str, Any]) -> list[Any]:
+    value = media_data.get("origin_country")
+    return (
+        list(typing_cast(list[Any], value)) if isinstance(value, list) else []
+    )
+
+
+async def _tmdb_genre_values(
+    media_data: dict[str, Any],
+) -> tuple[list[str], str]:
+    data = await get_genres(media_data)
+    raw_names = data.get("genre_names", [])
+    names = (
+        [str(name) for name in typing_cast(list[Any], raw_names)]
+        if isinstance(raw_names, list)
+        else []
+    )
+    return names, str(data.get("genre_ids", ""))
+
+
+async def _tmdb_other_anime_values(
+    primary: _TmdbOtherPrimary,
+    category: str | None,
+    filename: str | None,
+    path: str | None,
+    mal_manual: int | None,
+) -> tuple[int, str, bool, str]:
+    mal_id, retrieved_aka, anime, demographic = await _tmdb_anime_fields(
+        primary.media_data,
+        str(primary.core["title"]),
+        category,
+        filename,
+        path,
+        mal_manual,
+    )
+    cleaned_aka = _clean_retrieved_aka(
+        str(primary.core["title"]), retrieved_aka, primary.core["year"]
+    )
+    return mal_id, cleaned_aka, anime, demographic
+
+
+async def _assemble_tmdb_other_result(
+    primary: _TmdbOtherPrimary,
+    supplemental: _TmdbOtherSupplemental,
+    category: str | None,
+    filename: str | None,
+    path: str | None,
+    mal_manual: int | None,
+    manual_language: str | None,
+    requested_language: str | None,
+) -> dict[str, Any]:
+    genres, genre_ids = await _tmdb_genre_values(primary.media_data)
+    mal_id, retrieved_aka, anime, demographic = await _tmdb_other_anime_values(
+        primary, category, filename, path, mal_manual
+    )
+    mismatch = bool(
+        primary.core["imdb_mismatch"] or supplemental.imdb_mismatch
+    )
+    mismatched_id = int(
+        supplemental.mismatched_imdb_id
+        or primary.core["mismatched_imdb_id"]
+        or 0
+    )
+    return _tmdb_other_result(
+        primary.core,
+        primary.common,
+        imdb_id=supplemental.imdb_id,
+        tvdb_id=supplemental.tvdb_id,
+        origin_country=_origin_country_values(primary.media_data),
+        original_language=_resolved_original_language(
+            manual_language, primary.tmdb_language, requested_language
+        ),
+        keywords=supplemental.keywords,
+        genres=genres,
+        genre_ids=genre_ids,
+        creators=_creator_names(primary.media_data),
+        directors=supplemental.directors,
+        cast=supplemental.cast,
+        mal_id=mal_id,
+        anime=anime,
+        demographic=demographic,
+        retrieved_aka=retrieved_aka,
+        logo_path=supplemental.logo_path,
+        tmdb_logo=supplemental.tmdb_logo,
+        youtube=supplemental.youtube,
+        production_companies=primary.media_data.get(
+            "production_companies", []
+        ),
+        production_countries=primary.media_data.get(
+            "production_countries", []
+        ),
+        imdb_mismatch=mismatch,
+        mismatched_imdb_id=mismatched_id,
+    )
 
 
 async def tmdb_other_meta(
@@ -1556,493 +2636,58 @@ async def tmdb_other_meta(
     config: dict[str, Any] | None = None,
     unattended: bool = False,
 ) -> dict[str, Any]:
-    """
-    Fetch metadata from TMDB for a movie or TV show.
-    Returns a dictionary containing metadata that can be used to update the meta object.
-    """
-    runtime_default_config = default_config
-    if isinstance(config, dict):
-        configured_default = config.get("DEFAULT")
-        if isinstance(configured_default, dict):
-            runtime_default_config = configured_default
-            raw_credential = configured_default.get(
-                "tmdb_access_token"
-            ) or configured_default.get("tmdb_api")
-            if isinstance(raw_credential, str) and raw_credential.strip():
-                # Refresh authentication from the active call configuration so
-                # an earlier manager instance cannot leave a stale TMDb key.
-                _apply_config(config)
-
-    tmdb_id = tmdb_id or 0
-    imdb_id = imdb_id or 0
-    tvdb_id = tvdb_id or 0
-    requested_original_language = original_language
+    """Fetch metadata from TMDb for a movie or TV show."""
+    _ = anime
     _ = aka
-
-    # Initialize variables that might not be set in all code paths
-    adult_media = False
-    backdrop = ""
-    cast: list[str] = []
-    certification = ""
-    creators: list[str] = []
-    demographic = ""
-    directors: list[str] = []
-    genre_ids = ""
-    genres = ""
-    imdb_mismatch = False
-    keywords = ""
-    logo_path = ""
-    tmdb_logo = ""
-    mal_id = 0
-    mismatched_imdb_id = 0
-    origin_country = []
-    original_title = ""
-    overview = ""
-    poster_path = ""
-    retrieved_aka = ""
-    runtime = 60
-    title = None
-    tmdb_type = ""
-    year = None
-    release_date = None
-    first_air_date = None
-    last_air_date = None
-    series_status = ""
-    youtube = ""
-    networks = []
-
-    if tmdb_id == 0:
-        try:
-            guessed = guessit_fn(
-                path or "", {"excludes": ["country", "language"]}
-            )
-            title = str(guessed.get("title", "")).lower()
-            title = title.split("aka")[0]
-            tmdb_id, _ = await get_tmdb_id(
-                str(
-                    guessit_fn(
-                        title, {"excludes": ["country", "language"]}
-                    ).get("title", "")
-                ),
-                search_year,
-                {
-                    "tmdb_id": 0,
-                    "search_year": search_year,
-                    "debug": debug,
-                    "category": category,
-                    "mode": mode,
-                },
-                category,
-                unattended=unattended,
-            )
-
-            if tmdb_id == 0:
-                tmdb_id, _ = await get_tmdb_id(
-                    title,
-                    "",
-                    {
-                        "tmdb_id": 0,
-                        "search_year": "",
-                        "debug": debug,
-                        "category": category,
-                        "mode": mode,
-                    },
-                    category,
-                    unattended=unattended,
-                )
-
-            if tmdb_id == 0:
-                if mode == "cli":
-                    logger.info(
-                        "[bold red]Unable to find tmdb entry. Exiting."
-                    )
-                    raise OperationAbortedError(
-                        "TMDb metadata selection was cancelled by the user."
-                    ) from None
-                logger.info("[bold red]Unable to find tmdb entry")
-                return {}
-        except AmbiguousMetadataError:
-            raise
-        except Exception:
-            if mode == "cli":
-                logger.info("[bold red]Unable to find tmdb entry. Exiting.")
-                raise OperationAbortedError(
-                    "TMDb metadata selection was cancelled by the user."
-                ) from None
-            logger.info("[bold red]Unable to find tmdb entry")
-            return {}
-
-    youtube = ""
-    title = None
-    year = None
-    original_imdb_id = imdb_id
-
+    runtime_defaults = _runtime_tmdb_defaults(config)
+    resolved_tmdb_id = await _resolved_tmdb_other_id(
+        int(tmdb_id or 0),
+        path,
+        search_year,
+        category,
+        debug,
+        mode,
+        unattended,
+    )
+    if resolved_tmdb_id is None:
+        return {}
+    original_imdb_id = _external_imdb_id(imdb_id)
     cache = cache_for(base_dir, config)
     async with _tmdb_client() as client:
-        # Get main media details first (movie or TV show)
-        main_url = f"{TMDB_BASE_URL}/{('movie' if category == 'MOVIE' else 'tv')}/{tmdb_id}"
-
-        cache_key = json.dumps(
-            {"category": category, "id": tmdb_id}, sort_keys=True
+        primary = await _tmdb_other_primary(
+            client,
+            cache,
+            category,
+            resolved_tmdb_id,
+            search_year,
+            original_imdb_id,
+            quickie_search,
+            unattended,
+            poster,
+            runtime_defaults,
         )
-        cached_media = await cache.get("tmdb", "main", cache_key)
-        if not is_cache_miss(cached_media) and isinstance(cached_media, dict):
-            media_data = cached_media
-        else:
-            response = await client.get(main_url, params={})
-            try:
-                response.raise_for_status()
-                media_data = typing_cast(dict[str, Any], response.json())
-            except Exception:
-                logger.info(
-                    f"[bold red]Failed to fetch media data: {response.status_code}[/bold red]"
-                )
-                return {}
-            await cache.set("tmdb", "main", cache_key, media_data)
-
-        logger.debug(
-            f"[cyan]TMDB Response: {json.dumps(media_data, indent=2)[:1200]}..."
+        if primary is None:
+            return {}
+        supplemental = await _tmdb_other_supplemental(
+            primary,
+            category,
+            resolved_tmdb_id,
+            original_imdb_id,
+            int(tvdb_id or 0),
+            quickie_search,
+            unattended,
+            runtime_defaults,
         )
-
-        # Extract basic info from media_data
-        if category == "MOVIE":
-            title = media_data["title"]
-            original_title = media_data.get("original_title", title)
-            year = (
-                datetime.strptime(media_data["release_date"], "%Y-%m-%d")
-                .replace(tzinfo=UTC)
-                .year
-                if media_data["release_date"]
-                else (search_year or 0)
-            )
-            runtime = media_data.get("runtime") or 0
-            if media_data.get("release_date"):
-                release_date = media_data["release_date"]
-            if quickie_search or not imdb_id:
-                imdb_id_str = str(media_data.get("imdb_id", "")).replace(
-                    "tt", ""
-                )
-                if imdb_id_str and imdb_id_str.isdigit():
-                    if imdb_id and int(imdb_id_str) != imdb_id:
-                        imdb_mismatch = True
-                        mismatched_imdb_id = int(imdb_id_str)
-                        _reject_unattended_imdb_mismatch(
-                            unattended, original_imdb_id, mismatched_imdb_id
-                        )
-                        imdb_id = original_imdb_id
-                else:
-                    imdb_id = original_imdb_id
-
-            tmdb_type = "Movie"
-        else:  # TV show
-            title = media_data["name"]
-            original_title = media_data.get("original_name", title)
-            year = (
-                datetime.strptime(media_data["first_air_date"], "%Y-%m-%d")
-                .replace(tzinfo=UTC)
-                .year
-                if media_data["first_air_date"]
-                else search_year
-            )
-            if not year:
-                year_pattern = r"(18|19|20)\d{2}"
-                year_match = re.search(year_pattern, title)
-                if year_match:
-                    year = int(year_match.group(0))
-            if not year:
-                year = (
-                    datetime.strptime(media_data["last_air_date"], "%Y-%m-%d")
-                    .replace(tzinfo=UTC)
-                    .year
-                    if media_data["last_air_date"]
-                    else 0
-                )
-            first_air_date = media_data.get("first_air_date", None)
-            last_air_date = media_data.get("last_air_date", None)
-            series_status = str(media_data.get("status") or "")
-            runtime_list = media_data.get("episode_run_time", [60])
-            runtime = runtime_list[0] if runtime_list else 60
-            tmdb_type = media_data.get("type", "Scripted")
-            networks = media_data.get("networks", [])
-
-        adult_media = media_data.get("adult", False)
-
-        production_companies = media_data.get("production_companies", [])
-        production_countries = media_data.get("production_countries", [])
-
-        overview = media_data["overview"]
-        original_language_from_tmdb = str(
-            media_data.get("original_language", "")
-        )
-
-        poster_path = media_data.get("poster_path", "")
-        if poster is None and poster_path:
-            poster = f"https://image.tmdb.org/t/p/original{poster_path}"
-
-        backdrop = media_data.get("backdrop_path", "")
-        if backdrop:
-            backdrop = f"https://image.tmdb.org/t/p/original{backdrop}"
-
-        # Prepare all API endpoints for concurrent requests
-        endpoints = [
-            # External IDs
-            client.get(f"{main_url}/external_ids", params={}),
-            # Videos
-            client.get(f"{main_url}/videos", params={}),
-            # Keywords
-            client.get(f"{main_url}/keywords", params={}),
-            # Credits
-            client.get(f"{main_url}/credits", params={}),
-        ]
-
-        # Add logo request if needed
-        if runtime_default_config.get("add_logo", False):
-            endpoints.append(
-                client.get(
-                    f"{TMDB_BASE_URL}/{('movie' if category == 'MOVIE' else 'tv')}/{tmdb_id}/images",
-                    params={},
-                )
-            )
-
-        # Make all requests concurrently
-        results = await asyncio.gather(*endpoints, return_exceptions=True)
-
-        # Process results with the correct indexing
-        external_data, videos_data, keywords_data, credits_data, *rest = (
-            results
-        )
-        idx = 0
-        logo_data = None
-
-        # Get logo data if it was requested
-        if runtime_default_config.get("add_logo", False):
-            logo_data = rest[idx]
-            idx += 1
-
-        # Process external IDs
-        if isinstance(external_data, Exception):
-            logger.info("[bold red]Failed to fetch external IDs[/bold red]")
-        else:
-            try:
-                external = typing_cast(dict[str, Any], external_data.json())  # type: ignore
-                external_imdb_id = external.get("imdb_id")
-                imdb_id, imdb_mismatch, mismatched_imdb_id = (
-                    _reconcile_tmdb_imdb_id(
-                        int(original_imdb_id), external_imdb_id, quickie_search
-                    )
-                )
-                _reject_unattended_imdb_mismatch(
-                    unattended, original_imdb_id, mismatched_imdb_id
-                )
-                if not quickie_search and mismatched_imdb_id:
-                    logger.warning(
-                        f"[yellow]Warning: TMDb IMDb ID ({mismatched_imdb_id}) does not match provided IMDb ID ({original_imdb_id}). Using original IMDb ID.[/yellow]"
-                    )
-
-                # Process TVDB ID
-                if tvdb_id == 0:
-                    tvdb_id_str = external.get("tvdb_id", None)
-                    tvdb_id = (
-                        (int(tvdb_id_str) if tvdb_id_str.isdigit() else 0)
-                        if isinstance(tvdb_id_str, str)
-                        and tvdb_id_str not in ["", " ", "None", "null"]
-                        else 0
-                    )
-            except AmbiguousMetadataError:
-                raise
-            except Exception:
-                logger.info(
-                    "[bold red]Failed to process external IDs[/bold red]"
-                )
-
-        # Process videos
-        if isinstance(videos_data, Exception):
-            logger.info("[yellow]Unable to grab videos from TMDb.[/yellow]")
-        else:
-            try:
-                videos = typing_cast(dict[str, Any], videos_data.json())  # type: ignore
-                for each in videos.get("results", []):
-                    if (
-                        each.get("site", "") == "YouTube"
-                        and each.get("type", "") == "Trailer"
-                    ):
-                        youtube = f"https://www.youtube.com/watch?v={each.get('key')}"
-                        break
-            except Exception:
-                logger.info(
-                    "[yellow]Unable to process videos from TMDb.[/yellow]"
-                )
-
-        # Process keywords
-        if isinstance(keywords_data, Exception):
-            logger.info("[bold red]Failed to fetch keywords[/bold red]")
-            keywords = []
-        else:
-            try:
-                kw_json = typing_cast(dict[str, Any], keywords_data.json())  # type: ignore
-                if category == "MOVIE":
-                    keywords = [
-                        keyword["name"].replace(",", " ")
-                        for keyword in kw_json.get("keywords", [])
-                    ]
-                else:  # TV
-                    keywords = [
-                        keyword["name"].replace(",", " ")
-                        for keyword in kw_json.get("results", [])
-                    ]
-            except Exception:
-                logger.info("[bold red]Failed to process keywords[/bold red]")
-                keywords = []
-
-        origin_country = list(media_data.get("origin_country") or [])
-
-        # Process credits
-        creators = []
-        for each in media_data.get("created_by", []):
-            name = each.get("original_name") or each.get("name")
-            if name:
-                creators.append(name)
-        # Limit to the first 5 unique names
-        creators = list(dict.fromkeys(creators))[:5]
-
-        if isinstance(credits_data, Exception):
-            logger.info("[bold red]Failed to fetch credits[/bold red]")
-            directors = []
-            cast = []
-        else:
-            try:
-                credits = typing_cast(dict[str, Any], credits_data.json())  # type: ignore
-                directors = []
-                cast = []
-                for each in credits.get("cast", []) + credits.get("crew", []):
-                    if (
-                        each.get("known_for_department", "") == "Directing"
-                        or each.get("job", "") == "Director"
-                    ):
-                        directors.append(
-                            each.get("original_name", each.get("name"))
-                        )
-                    elif each.get(
-                        "known_for_department", ""
-                    ) == "Acting" or each.get("job", "") in {
-                        "Actor",
-                        "Actress",
-                    }:
-                        cast.append(
-                            each.get("original_name", each.get("name"))
-                        )
-                # Limit to the first 5 unique names
-                directors = list(dict.fromkeys(directors))[:5]
-                cast = list(dict.fromkeys(cast))[:5]
-            except Exception:
-                logger.info("[bold red]Failed to process credits[/bold red]")
-                directors = []
-                cast = []
-
-        # Process genres
-        genres_data = await get_genres(media_data)
-        genres = genres_data["genre_names"]
-        genre_ids = genres_data["genre_ids"]
-
-        # Process logo if needed
-        if (
-            runtime_default_config.get("add_logo", False)
-            and logo_data
-            and not isinstance(logo_data, Exception)
-        ):
-            try:
-                logo_json = typing_cast(dict[str, Any], logo_data.json())  # type: ignore
-                logo_path = await get_logo(
-                    tmdb_id,
-                    category or "MOVIE",
-                    logo_languages=runtime_default_config.get("logo_language"),
-                    tmdb_base_url=TMDB_BASE_URL,
-                    logo_json=logo_json,
-                )
-                tmdb_logo = logo_path.split("/")[-1]
-            except Exception:
-                logger.info("[yellow]Failed to process logo[/yellow]")
-                logo_path = ""
-                tmdb_logo = ""
-
-    # Use retrieved original language or fallback to TMDB's value
-    original_language = (
-        manual_language
-        or original_language_from_tmdb
-        or requested_original_language
+    return await _assemble_tmdb_other_result(
+        primary,
+        supplemental,
+        category,
+        filename,
+        path,
+        mal_manual,
+        manual_language,
+        original_language,
     )
-
-    # Get anime information if applicable
-    filename = filename if category == "MOVIE" else path
-    mal_id, retrieved_aka, anime, demographic = await get_anime(
-        media_data,
-        Meta(
-            {
-                "title": title,
-                "aka": retrieved_aka,
-                "mal_id": 0,
-                "filename": filename,
-            }
-        ),
-    )
-
-    if mal_manual is not None and mal_manual != 0:
-        mal_id = mal_manual
-
-    # Check if AKA is too similar to title and clear it if needed
-    if retrieved_aka:
-        difference = SequenceMatcher(
-            None, title.lower(), retrieved_aka[5:].lower()
-        ).ratio()
-        if (
-            difference >= 0.7
-            or retrieved_aka[5:].strip() == ""
-            or retrieved_aka[5:].strip().lower() in title.lower()
-        ):
-            retrieved_aka = ""
-        if year and f"({year})" in retrieved_aka:
-            retrieved_aka = retrieved_aka.replace(f"({year})", "").strip()
-
-    # Build the metadata dictionary
-    return {
-        "tmdb_adult_media": adult_media,
-        "title": title,
-        "year": year,
-        "release_date": release_date,
-        "first_air_date": first_air_date,
-        "last_air_date": last_air_date,
-        "series_status": series_status,
-        "imdb_id": imdb_id,
-        "tvdb_id": tvdb_id,
-        "origin_country": origin_country,
-        "original_language": original_language,
-        "original_title": original_title,
-        "keywords": keywords,
-        "genres": genres,
-        "genre_ids": genre_ids,
-        "tmdb_creators": creators,
-        "tmdb_directors": directors,
-        "tmdb_cast": cast,
-        "mal_id": mal_id,
-        "anime": anime,
-        "demographic": demographic,
-        "retrieved_aka": retrieved_aka,
-        "artwork_url": poster,
-        "tmdb_poster_path": poster_path,
-        "logo": logo_path,
-        "tmdb_logo": tmdb_logo,
-        "backdrop": backdrop,
-        "overview": overview,
-        "tmdb_type": tmdb_type,
-        "runtime": runtime,
-        "youtube": youtube,
-        "certification": certification,
-        "production_companies": production_companies,
-        "production_countries": production_countries,
-        "networks": networks,
-        "imdb_mismatch": imdb_mismatch,
-        "mismatched_imdb_id": mismatched_imdb_id,
-    }
 
 
 def _keyword_entries(
@@ -2097,7 +2742,7 @@ def _named_genre_entry(value: Any) -> dict[str, Any] | None:
 def _valid_tmdb_genres(
     response_data: dict[str, Any] | None,
 ) -> list[dict[str, Any]]:
-    raw = [] if response_data is None else response_data.get("genres", [])
+    raw: Any = None if response_data is None else response_data.get("genres")
     if not isinstance(raw, list):
         return []
     genres: list[dict[str, Any]] = []
@@ -2264,271 +2909,374 @@ async def get_anime(
     return mal_id, alt_name, anime, demographic
 
 
+_ANILIST_TITLE_QUERY = """
+    query ($search: String) {
+        Page (page: 1) {
+            pageInfo { total }
+            media (search: $search, type: ANIME, sort: SEARCH_MATCH) {
+                id
+                idMal
+                title { romaji english native }
+                seasonYear
+                episodes
+                tags { name }
+                externalLinks { id url site siteId }
+            }
+        }
+    }
+"""
+
+_ANILIST_MAL_QUERY = """
+    query ($search: Int) {
+        Page (page: 1) {
+            pageInfo { total }
+            media (idMal: $search, type: ANIME, sort: SEARCH_MATCH) {
+                id
+                idMal
+                title { romaji english native }
+                seasonYear
+                episodes
+                tags { name }
+            }
+        }
+    }
+"""
+
+_ANILIST_DEMOGRAPHICS = (
+    "Shounen",
+    "Seinen",
+    "Shoujo",
+    "Josei",
+    "Kodomo",
+    "Mina",
+)
+
+
+@dataclass(frozen=True)
+class _AniListCacheResult:
+    found: bool
+    media: list[dict[str, Any]]
+    demographic: str
+
+
+def _clean_anilist_title(value: str) -> str:
+    cleaned = value.replace("-", "").replace("The Movie", "")
+    return " ".join(cleaned.split())
+
+
+def _anilist_request(
+    search_term: str, mal: int | None
+) -> tuple[str, dict[str, str | int], str]:
+    if mal in (None, 0):
+        return (
+            _ANILIST_TITLE_QUERY,
+            {"search": _clean_anilist_title(search_term)},
+            "title",
+        )
+    return _ANILIST_MAL_QUERY, {"search": int(mal)}, "mal"
+
+
+def _anilist_cache_key(variables: dict[str, str | int], mode: str) -> str:
+    return json.dumps(
+        {"search": variables["search"], "mode": mode}, sort_keys=True
+    )
+
+
+def _cached_anilist_result(
+    value: Any, default_demographic: str
+) -> _AniListCacheResult:
+    if is_cache_miss(value) or not isinstance(value, dict):
+        return _AniListCacheResult(False, [], default_demographic)
+    cached = typing_cast(dict[str, Any], value)
+    raw_media = cached.get("media")
+    if not isinstance(raw_media, list):
+        return _AniListCacheResult(False, [], default_demographic)
+    media = _dict_list(raw_media)
+    demographic = str(cached.get("demographic", default_demographic))
+    return _AniListCacheResult(True, media, demographic)
+
+
+def _anilist_demographic(text: str, default: str) -> str:
+    return next((tag for tag in _ANILIST_DEMOGRAPHICS if tag in text), default)
+
+
+def _anilist_page_media(data: dict[str, Any]) -> list[dict[str, Any]]:
+    payload = data.get("data", {})
+    if not isinstance(payload, dict):
+        return []
+    page = typing_cast(dict[str, Any], payload).get("Page", {})
+    if not isinstance(page, dict):
+        return []
+    return _dict_list(typing_cast(dict[str, Any], page).get("media", []))
+
+
+async def _cache_anilist_result(
+    cache: Any,
+    cache_key: str,
+    media: list[dict[str, Any]],
+    demographic: str,
+) -> None:
+    try:
+        await cache.set(
+            "anilist",
+            "media",
+            cache_key,
+            {"media": media, "demographic": demographic},
+            negative=not bool(media),
+        )
+    except Exception as error:
+        logger.debug(f"[yellow]AniList cache write failed: {error}[/yellow]")
+
+
+async def _request_anilist_once(
+    query: str,
+    variables: dict[str, str | int],
+    demographic: str,
+) -> tuple[list[dict[str, Any]], str]:
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(
+            "https://graphql.anilist.co",
+            json={"query": query, "variables": variables},
+        )
+    data = typing_cast(dict[str, Any], response.json())
+    return _anilist_page_media(data), _anilist_demographic(
+        response.text, demographic
+    )
+
+
+async def _fetch_anilist_with_retry(
+    cache: Any,
+    cache_key: str,
+    query: str,
+    variables: dict[str, str | int],
+    demographic: str,
+) -> tuple[list[dict[str, Any]], str]:
+    for attempt in range(3):
+        try:
+            media, resolved_demographic = await _request_anilist_once(
+                query, variables, demographic
+            )
+        except httpx.ReadTimeout, httpx.TimeoutException:
+            if attempt < 2:
+                logger.info(
+                    f"[yellow]AniList request timed out, retrying ({attempt + 2}/3)...[/yellow]"
+                )
+                continue
+            logger.error(
+                "[red]Failed to get anime specific info from anilist. Continuing without it..."
+            )
+            return [], demographic
+        except Exception:
+            logger.error(
+                "[red]Failed to get anime specific info from anilist. Continuing without it..."
+            )
+            return [], demographic
+        await _cache_anilist_result(
+            cache, cache_key, media, resolved_demographic
+        )
+        return media, resolved_demographic
+    return [], demographic
+
+
+async def _anilist_lookup_for_term(
+    search_term: str,
+    mal: int | None,
+    meta: Meta,
+    demographic: str,
+) -> tuple[list[dict[str, Any]], str]:
+    query, variables, mode = _anilist_request(search_term, mal)
+    cache = cache_for(meta.base_dir, {"DEFAULT": default_config})
+    cache_key = _anilist_cache_key(variables, mode)
+    cached = _cached_anilist_result(
+        await cache.get("anilist", "media", cache_key), demographic
+    )
+    if cached.found:
+        return cached.media, cached.demographic
+    return await _fetch_anilist_with_retry(
+        cache, cache_key, query, variables, demographic
+    )
+
+
+async def _anilist_media(
+    tmdb_name: str, mal: int | None, meta: Meta
+) -> tuple[list[dict[str, Any]], str]:
+    demographic = "Mina"
+    for raw_term in (tmdb_name, meta.filename):
+        if not raw_term:
+            continue
+        media, demographic = await _anilist_lookup_for_term(
+            str(raw_term), mal, meta, demographic
+        )
+        if media:
+            return media, demographic
+    return [], demographic
+
+
+def _season_number(value: Any) -> int | None:
+    if not value:
+        return None
+    match = re.search(r"S?(\d+)", str(value), re.IGNORECASE)
+    return int(match.group(1)) if match else None
+
+
+def _filename_anime_season(filename: str) -> int | None:
+    if not filename:
+        return None
+    with contextlib.suppress(Exception):
+        parsed = typing_cast(dict[str, Any], anitopy_parse_fn(filename) or {})
+        value = parsed.get("anime_season")
+        if value:
+            return int(value)
+    return None
+
+
+def _expected_anime_season(meta: Meta) -> int | None:
+    manual = _season_number(meta.manual_season)
+    if manual is not None:
+        return manual
+    parsed = _filename_anime_season(meta.filename)
+    return parsed if parsed is not None else _season_number(meta.season)
+
+
+def _anilist_search_name(tmdb_name: str, meta: Meta) -> str:
+    filename = meta.filename.lower()
+    if "subsplease" in filename:
+        return filename
+    return re.sub(
+        r"[^0-9a-zA-Z\[\\\]]+", "", tmdb_name.lower().replace(" ", "")
+    )
+
+
+def _anime_title_map(anime: dict[str, Any]) -> dict[str, Any]:
+    raw = anime.get("title", {})
+    return typing_cast(dict[str, Any], raw) if isinstance(raw, dict) else {}
+
+
+def _anilist_title_season(title_map: dict[str, Any]) -> int | None:
+    for value in title_map.values():
+        if not value:
+            continue
+        match = re.search(r"Season (\d+)", str(value), re.IGNORECASE)
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def _clean_anilist_candidate_title(value: Any) -> str:
+    return re.sub(
+        "[\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\uff00-\uff9f\u4e00-\u9faf\u3400-\u4dbf]+ (?=[A-Za-z ]+–)",  # noqa: RUF001
+        "",
+        str(value).lower().replace(" ", ""),
+        flags=re.U,
+    )
+
+
+def _anime_best_similarity(anime: dict[str, Any], search_name: str) -> float:
+    values = [
+        SequenceMatcher(
+            None, _clean_anilist_candidate_title(value), search_name
+        ).ratio()
+        for value in _anime_title_map(anime).values()
+        if value is not None
+    ]
+    return max(values, default=0.0)
+
+
+def _season_candidate_preferred(
+    anime_season: int | None,
+    expected_season: int | None,
+    similarity: float,
+    best_overall: float,
+    best_season: float,
+) -> bool:
+    return bool(
+        expected_season is not None
+        and anime_season == expected_season
+        and similarity > best_overall * 0.8
+        and similarity > best_season
+    )
+
+
+def _select_anilist_media(
+    media: list[dict[str, Any]], expected_season: int | None, search_name: str
+) -> dict[str, Any]:
+    best = media[0]
+    best_similarity = -1.0
+    season_best: dict[str, Any] | None = None
+    season_similarity = 0.0
+    for anime in media:
+        similarity = _anime_best_similarity(anime, search_name)
+        anime_season = _anilist_title_season(_anime_title_map(anime))
+        if _season_candidate_preferred(
+            anime_season,
+            expected_season,
+            similarity,
+            best_similarity,
+            season_similarity,
+        ):
+            season_best = anime
+            season_similarity = similarity
+        if similarity > best_similarity:
+            best = anime
+            best_similarity = similarity
+    return season_best if season_best is not None else best
+
+
+def _preferred_anilist_title(
+    titles: dict[str, Any], primary: str, fallback: str
+) -> str:
+    value = titles.get(primary)
+    if value:
+        return str(value)
+    fallback_value = titles.get(fallback)
+    return str(fallback_value) if fallback_value else ""
+
+
+def _optional_string(value: Any) -> str:
+    return "" if value is None else str(value)
+
+
+def _positive_int(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except TypeError, ValueError:
+        return 0
+
+
+def _resolved_anilist_mal_id(result: dict[str, Any], mal: int | None) -> int:
+    return (
+        int(mal)
+        if mal not in (None, 0)
+        else _positive_int(result.get("idMal"))
+    )
+
+
+def _anilist_result_tuple(
+    result: dict[str, Any], mal: int | None, demographic: str
+) -> tuple[str, int, str, str, int, str]:
+    titles = _anime_title_map(result)
+    return (
+        _preferred_anilist_title(titles, "romaji", "english"),
+        _resolved_anilist_mal_id(result, mal),
+        _preferred_anilist_title(titles, "english", "romaji"),
+        _optional_string(result.get("seasonYear", "")),
+        _positive_int(result.get("episodes")),
+        demographic,
+    )
+
+
 async def get_romaji(
     tmdb_name: str, mal: int | None, meta: Meta
 ) -> tuple[str, int, str, str, int, str]:
-    media: list[dict[str, Any]] = []
-    demographic = "Mina"  # Default to Mina if no tags are found
-
-    # Try AniList query with tmdb_name first, then fallback to meta.filename if no results
-    for search_term in [tmdb_name, meta.filename]:
-        if not search_term:
-            continue
-        if mal is None or mal == 0:
-            cleaned_name = search_term.replace("-", "").replace(
-                "The Movie", ""
-            )
-            cleaned_name = " ".join(cleaned_name.split())
-            query = """
-                query ($search: String) {
-                    Page (page: 1) {
-                        pageInfo {
-                            total
-                        }
-                    media (search: $search, type: ANIME, sort: SEARCH_MATCH) {
-                        id
-                        idMal
-                        title {
-                            romaji
-                            english
-                            native
-                        }
-                        seasonYear
-                        episodes
-                        tags {
-                            name
-                        }
-                        externalLinks {
-                            id
-                            url
-                            site
-                            siteId
-                        }
-                    }
-                }
-            }
-            """
-            variables: dict[str, str | int] = {"search": cleaned_name}
-        else:
-            query = """
-                query ($search: Int) {
-                    Page (page: 1) {
-                        pageInfo {
-                            total
-                        }
-                    media (idMal: $search, type: ANIME, sort: SEARCH_MATCH) {
-                        id
-                        idMal
-                        title {
-                            romaji
-                            english
-                            native
-                        }
-                        seasonYear
-                        episodes
-                        tags {
-                            name
-                        }
-                    }
-                }
-            }
-            """
-            variables = {"search": mal}
-
-        url = "https://graphql.anilist.co"
-        anilist_cache = cache_for(meta.base_dir, {"DEFAULT": default_config})
-        anilist_key = json.dumps(
-            {
-                "search": variables["search"],
-                "mode": "mal" if mal not in (None, 0) else "title",
-            },
-            sort_keys=True,
-        )
-        cached_anilist = await anilist_cache.get(
-            "anilist", "media", anilist_key
-        )
-        if not is_cache_miss(cached_anilist) and isinstance(
-            cached_anilist, dict
-        ):
-            cached_media = cached_anilist.get("media")
-            if isinstance(cached_media, list):
-                media = typing_cast(list[dict[str, Any]], cached_media)
-                demographic = str(
-                    cached_anilist.get("demographic", demographic)
-                )
-                if media:
-                    break
-                continue
-        for attempt in range(3):
-            try:
-                async with httpx.AsyncClient(timeout=30.0) as client:
-                    response = await client.post(
-                        url, json={"query": query, "variables": variables}
-                    )
-                json_data = typing_cast(dict[str, Any], response.json())
-
-                demographics = [
-                    "Shounen",
-                    "Seinen",
-                    "Shoujo",
-                    "Josei",
-                    "Kodomo",
-                    "Mina",
-                ]
-                for tag in demographics:
-                    if tag in response.text:
-                        demographic = tag
-                        break
-
-                page_data = typing_cast(
-                    dict[str, Any], json_data.get("data", {}).get("Page", {})
-                )
-                media = typing_cast(
-                    list[dict[str, Any]], page_data.get("media", [])
-                )
-                try:
-                    await anilist_cache.set(
-                        "anilist",
-                        "media",
-                        anilist_key,
-                        {"media": media, "demographic": demographic},
-                        negative=not bool(media),
-                    )
-                except Exception as error:
-                    logger.debug(
-                        f"[yellow]AniList cache write failed: {error}[/yellow]"
-                    )
-                break  # Success - exit retry loop
-            except httpx.ReadTimeout, httpx.TimeoutException:
-                if attempt < 2:
-                    logger.info(
-                        f"[yellow]AniList request timed out, retrying ({attempt + 2}/3)...[/yellow]"
-                    )
-                else:
-                    logger.error(
-                        "[red]Failed to get anime specific info from anilist. Continuing without it..."
-                    )
-                    media = []
-            except Exception:
-                logger.error(
-                    "[red]Failed to get anime specific info from anilist. Continuing without it..."
-                )
-                media = []
-                break
-        if media not in (None, []):
-            break  # Found results, stop search_term loop
-    search_name = (
-        meta.filename.lower()
-        if "subsplease" in meta.filename.lower()
-        else re.sub(
-            r"[^0-9a-zA-Z\[\\]]+", "", tmdb_name.lower().replace(" ", "")
-        )
+    media, demographic = await _anilist_media(tmdb_name, mal, meta)
+    if not media:
+        return "", int(mal or 0), "", "", 0, demographic
+    result = _select_anilist_media(
+        media,
+        _expected_anime_season(meta),
+        _anilist_search_name(tmdb_name, meta),
     )
-
-    # Extract expected season number from various sources
-    expected_season = None
-
-    # Try manual_season first
-    if meta.manual_season:
-        season_match = re.search(
-            r"S?(\d+)", str(meta.manual_season), re.IGNORECASE
-        )
-        if season_match:
-            expected_season = int(season_match.group(1))
-
-    # Try parsing the filename with anitopy
-    if expected_season is None and meta.filename:
-        with contextlib.suppress(Exception):
-            parsed = typing_cast(
-                dict[str, Any], anitopy_parse_fn(meta.filename) or {}
-            )
-            if parsed.get("anime_season"):
-                expected_season = int(parsed["anime_season"])
-
-    # Fall back to meta.season if available
-    if expected_season is None and meta.season:
-        season_match = re.search(r"S?(\d+)", str(meta.season), re.IGNORECASE)
-        if season_match:
-            expected_season = int(season_match.group(1))
-
-    if media not in (None, []):
-        result: dict[str, Any] = {"title": {}}
-        difference: float = 0.0
-        best_match_with_season: dict[str, Any] | None = None
-        best_season_similarity = 0.0
-
-        for anime in media:
-            anime_title = typing_cast(dict[str, Any], anime.get("title", {}))
-            # Extract season number from AniList title if present
-            anime_season = None
-            for title_value in anime_title.values():
-                title_value_str = str(title_value) if title_value else ""
-                if title_value_str:
-                    season_match = re.search(
-                        r"Season (\d+)", title_value_str, re.IGNORECASE
-                    )
-                    if season_match:
-                        anime_season = int(season_match.group(1))
-                        break
-
-            # Calculate title similarity
-            for title in anime_title.values():
-                if title is not None:
-                    title_clean = re.sub(
-                        "[\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\uff00-\uff9f\u4e00-\u9faf\u3400-\u4dbf]+ (?=[A-Za-z ]+–)",  # noqa: RUF001
-                        "",
-                        str(title).lower().replace(" ", ""),
-                        flags=re.U,
-                    )
-                    diff = SequenceMatcher(
-                        None, title_clean, search_name
-                    ).ratio()
-
-                    # Prioritize season match if expected_season is set
-                    if (
-                        expected_season is not None
-                        and anime_season is not None
-                        and anime_season == expected_season
-                        and diff > difference * 0.8
-                        and (
-                            best_match_with_season is None
-                            or diff > best_season_similarity
-                        )
-                    ):
-                        # If season matches and title similarity is reasonable, prefer this
-                        best_match_with_season = anime
-                        best_season_similarity = diff
-
-                    # Keep track of best overall match
-                    if diff > difference:
-                        result = anime
-                        difference = diff
-
-        # Use season-matched result if found, otherwise use best title match
-        if best_match_with_season is not None:
-            result = best_match_with_season
-
-        result_title = typing_cast(dict[str, Any], result.get("title", {}))
-        romaji = str(
-            result_title.get("romaji") or result_title.get("english") or ""
-        )
-        mal_id = int(result.get("idMal", 0) or 0)
-        eng_title = str(
-            result_title.get("english") or result_title.get("romaji") or ""
-        )
-        season_year_value = result.get("seasonYear", "")
-        season_year = (
-            str(season_year_value) if season_year_value is not None else ""
-        )
-        episodes = int(result.get("episodes", 0) or 0)
-    else:
-        romaji = eng_title = season_year = ""
-        episodes = mal_id = 0
-    if mal not in (None, 0):
-        mal_id = mal
-    if not episodes:
-        episodes = 0
-    return romaji, mal_id, eng_title, season_year, episodes, demographic
+    return _anilist_result_tuple(result, mal, demographic)
 
 
 def _normalized_tmdb_category(category: str) -> str:
@@ -2536,18 +3284,27 @@ def _normalized_tmdb_category(category: str) -> str:
     return value if value in {"MOVIE", "TV"} else "MOVIE"
 
 
-def _mediainfo_extra(mediainfo: dict[str, Any]) -> dict[str, Any]:
+def _first_mediainfo_track(mediainfo: dict[str, Any]) -> dict[str, Any] | None:
     media = mediainfo.get("media")
     if not isinstance(media, dict):
-        return {}
+        return None
     tracks = typing_cast(dict[str, Any], media).get("track")
     if not isinstance(tracks, list) or not tracks:
-        return {}
+        return None
     first = typing_cast(list[Any], tracks)[0]
-    if not isinstance(first, dict):
+    return (
+        typing_cast(dict[str, Any], first) if isinstance(first, dict) else None
+    )
+
+
+def _mediainfo_extra(mediainfo: dict[str, Any]) -> dict[str, Any]:
+    first = _first_mediainfo_track(mediainfo)
+    if first is None:
         return {}
-    extra = typing_cast(dict[str, Any], first).get("extra")
-    return typing_cast(dict[str, Any], extra) if isinstance(extra, dict) else {}
+    extra = first.get("extra")
+    return (
+        typing_cast(dict[str, Any], extra) if isinstance(extra, dict) else {}
+    )
 
 
 def _tmdb_from_extra(value: Any, category: str) -> tuple[str, int] | None:
@@ -2570,6 +3327,23 @@ def _tvdb_from_extra(value: Any) -> int | None:
     return None
 
 
+def _apply_tmdb_extra(
+    value: Any, category: str, tmdbid: int
+) -> tuple[str, int]:
+    if tmdbid:
+        return category, tmdbid
+    result = _tmdb_from_extra(value, category)
+    return result if result is not None else (category, tmdbid)
+
+
+def _apply_imdb_extra(value: Any, imdbid: int | None) -> int | None:
+    return imdbid if imdbid else (_imdb_from_extra(value) or imdbid)
+
+
+def _apply_tvdb_extra(value: Any, tvdbid: int | None) -> int | None:
+    return tvdbid if tvdbid else (_tvdb_from_extra(value) or tvdbid)
+
+
 def _apply_extra_identifier(
     key: str,
     value: Any,
@@ -2578,14 +3352,12 @@ def _apply_extra_identifier(
     imdbid: int | None,
     tvdbid: int | None,
 ) -> tuple[str, int, int | None, int | None]:
-    if key.startswith("tmdb") and not tmdbid:
-        result = _tmdb_from_extra(value, category)
-        if result is not None:
-            category, tmdbid = result
-    elif key.startswith("imdb") and not imdbid:
-        imdbid = _imdb_from_extra(value) or imdbid
-    elif key.startswith("tvdb") and not tvdbid:
-        tvdbid = _tvdb_from_extra(value) or tvdbid
+    if key.startswith("tmdb"):
+        category, tmdbid = _apply_tmdb_extra(value, category, tmdbid)
+    elif key.startswith("imdb"):
+        imdbid = _apply_imdb_extra(value, imdbid)
+    elif key.startswith("tvdb"):
+        tvdbid = _apply_tvdb_extra(value, tvdbid)
     return category, tmdbid, imdbid, tvdbid
 
 
@@ -2661,10 +3433,16 @@ def _season_for_date(seasons: list[dict[str, Any]], date: datetime) -> int:
     return season
 
 
-def _episode_for_date(episodes: list[dict[str, Any]], date: datetime) -> int | None:
+def _episode_for_date(
+    episodes: list[dict[str, Any]], date: datetime
+) -> int | None:
     target = str(date.date())
     match = next(
-        (entry for entry in episodes if str(entry.get("air_date", "")) == target),
+        (
+            entry
+            for entry in episodes
+            if str(entry.get("air_date", "")) == target
+        ),
         None,
     )
     return int(match.get("episode_number", 1)) if match else None
@@ -2688,7 +3466,9 @@ async def daily_to_tmdb_season_episode(
         )
         if season_data is None:
             return 0, 0
-        episode = _episode_for_date(_dict_list(season_data.get("episodes", [])), date)
+        episode = _episode_for_date(
+            _dict_list(season_data.get("episodes", [])), date
+        )
         if episode is None:
             logger.info(
                 f"[yellow]Unable to map the date ([bold yellow]{date!s}[/bold yellow]) to a Season/Episode number"
@@ -2887,6 +3667,118 @@ async def get_season_details(
             return {}
 
 
+def _string_logo_languages(value: str) -> list[str]:
+    if "," in value:
+        return [item.strip() for item in value.split(",")]
+    return [value, "en"]
+
+
+def _raw_logo_languages(value: list[str] | str | None) -> list[str]:
+    if value is None:
+        return [str(default_config.get("logo_language", "en")), "en"]
+    if isinstance(value, str):
+        return _string_logo_languages(value)
+    return [str(item) for item in value]
+
+
+def _normalized_logo_languages(value: list[str] | str | None) -> list[str]:
+    raw = _raw_logo_languages(value)
+    return list(dict.fromkeys(item for item in raw if item))
+
+
+def _logo_entries(image_data: dict[str, Any]) -> list[dict[str, Any]]:
+    return _dict_list(image_data.get("logos", []))
+
+
+def _logo_url(entry: dict[str, Any] | None) -> str:
+    if not entry or not entry.get("file_path"):
+        return ""
+    return f"https://image.tmdb.org/t/p/original{entry['file_path']}"
+
+
+def _logo_for_language(
+    logos: list[dict[str, Any]], language: str
+) -> dict[str, Any] | None:
+    return next(
+        (
+            logo
+            for logo in logos
+            if logo.get("iso_639_1") == language and logo.get("file_path")
+        ),
+        None,
+    )
+
+
+def _null_language_logo(logos: list[dict[str, Any]]) -> dict[str, Any] | None:
+    return next(
+        (
+            logo
+            for logo in logos
+            if logo.get("iso_639_1") in (None, "") and logo.get("file_path")
+        ),
+        None,
+    )
+
+
+async def _fetch_logo_image_data(
+    tmdb_id: int,
+    category: str,
+    tmdb_api_key: str | None,
+    tmdb_base_url: str | None,
+) -> dict[str, Any]:
+    explicit_params = {"api_key": tmdb_api_key} if tmdb_api_key else {}
+    endpoint = "tv" if category == "TV" else "movie"
+    base_url = tmdb_base_url or TMDB_BASE_URL
+    async with _tmdb_client(params=explicit_params) as client:
+        response = await client.get(f"{base_url}/{endpoint}/{tmdb_id}/images")
+        try:
+            response.raise_for_status()
+            return typing_cast(dict[str, Any], response.json())
+        except Exception:
+            logger.info(
+                f"[bold red]Failed to fetch image data: {response.status_code}[/bold red]"
+            )
+            return {}
+
+
+async def _logo_image_data(
+    tmdb_id: int,
+    category: str,
+    tmdb_api_key: str | None,
+    tmdb_base_url: str | None,
+    logo_json: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if logo_json:
+        logger.debug(
+            "[cyan]Using provided logo_json data instead of making an HTTP request[/cyan]"
+        )
+        return logo_json
+    return await _fetch_logo_image_data(
+        tmdb_id, category, tmdb_api_key, tmdb_base_url
+    )
+
+
+def _select_logo_url(logos: list[dict[str, Any]], languages: list[str]) -> str:
+    for language in languages:
+        entry = _logo_for_language(logos, language)
+        if entry is None:
+            continue
+        url = _logo_url(entry)
+        logger.debug(
+            f"[cyan]Found logo in language '{language}': {url}[/cyan]"
+        )
+        return url
+    entry = _null_language_logo(logos)
+    if entry is not None:
+        url = _logo_url(entry)
+        logger.debug(f"[cyan]Found logo with null language: {url}[/cyan]")
+        return url
+    logger.debug(
+        "[yellow]No suitable logo found in preferred languages or null language[/yellow]"
+    )
+    return ""
+
+
 async def get_logo(
     tmdb_id: int,
     category: str,
@@ -2895,127 +3787,46 @@ async def get_logo(
     tmdb_base_url: str | None = None,
     logo_json: dict[str, Any] | None = None,
 ) -> str:
-    logo_path = ""
-    if (
-        logo_languages
-        and isinstance(logo_languages, str)
-        and "," in logo_languages
-    ):
-        logo_languages = [lang.strip() for lang in logo_languages.split(",")]
-        logger.debug(
-            f"[cyan]Parsed logo languages from comma-separated string: {logo_languages}[/cyan]"
-        )
-
-    elif logo_languages is None:
-        # Get preferred languages in order (from config, then 'en' as fallback)
-        logo_languages = [default_config.get("logo_language", "en"), "en"]
-    elif isinstance(logo_languages, str):
-        logo_languages = [logo_languages, "en"]
-
-    # Remove duplicates while preserving order
-    logo_languages = list(dict.fromkeys(logo_languages))
-
+    languages = _normalized_logo_languages(logo_languages)
     logger.debug(
-        f"[cyan]Looking for logos in languages (in order): {logo_languages}[/cyan]"
+        f"[cyan]Looking for logos in languages (in order): {languages}[/cyan]"
     )
-
     try:
-        # Use provided logo_json if available, otherwise fetch it
-        image_data = None
-        if logo_json:
-            image_data = logo_json
-            logger.debug(
-                "[cyan]Using provided logo_json data instead of making an HTTP request[/cyan]"
-            )
-        else:
-            # Make HTTP request only if logo_json is not provided
-            explicit_params = {"api_key": tmdb_api_key} if tmdb_api_key else {}
-            async with _tmdb_client(params=explicit_params) as client:
-                endpoint = "tv" if category == "TV" else "movie"
-                resolved_base_url = (
-                    tmdb_base_url
-                    if tmdb_base_url is not None
-                    else TMDB_BASE_URL
-                )
-                image_response = await client.get(
-                    f"{resolved_base_url}/{endpoint}/{tmdb_id}/images"
-                )
-                try:
-                    image_response.raise_for_status()
-                    image_data = image_response.json()
-                except Exception:
-                    logger.info(
-                        f"[bold red]Failed to fetch image data: {image_response.status_code}[/bold red]"
-                    )
-                    return ""
-
+        image_data = await _logo_image_data(
+            tmdb_id, category, tmdb_api_key, tmdb_base_url, logo_json
+        )
         if image_data:
             logger.debug(
                 f"[cyan]Image Data: {json.dumps(image_data, indent=2)[:500]}..."
             )
+        return _select_logo_url(_logo_entries(image_data), languages)
+    except Exception as error:
+        logger.error(f"[red]Error fetching logo: {error}[/red]")
+        return ""
 
-        image_data = typing_cast(dict[str, Any], image_data)
-        logos = image_data.get("logos", [])
 
-        # Only look for logos that match our specified languages
-        for language in logo_languages:
-            matching_logo = next(
-                (
-                    logo
-                    for logo in logos
-                    if logo.get("iso_639_1") == language
-                    and logo.get("file_path")
-                ),
-                None,
-            )
-            if matching_logo is not None:
-                logo_path = f"https://image.tmdb.org/t/p/original{matching_logo['file_path']}"
-                logger.debug(
-                    f"[cyan]Found logo in language '{language}': {logo_path}[/cyan]"
-                )
-                break
-
-        # fallback to getting logo with null language if no match found, especially useful for movies it seems
-        if not logo_path:
-            null_language_logo = next(
-                (
-                    logo
-                    for logo in logos
-                    if (
-                        logo.get("iso_639_1") is None
-                        or logo.get("iso_639_1") == ""
-                    )
-                    and logo.get("file_path")
-                ),
-                None,
-            )
-            if null_language_logo:
-                logo_path = f"https://image.tmdb.org/t/p/original{null_language_logo['file_path']}"
-                logger.debug(
-                    f"[cyan]Found logo with null language: {logo_path}[/cyan]"
-                )
-
-        if not logo_path:
-            logger.debug(
-                "[yellow]No suitable logo found in preferred languages or null language[/yellow]"
-            )
-
-    except Exception as e:
-        logger.error(f"[red]Error fetching logo: {e}[/red]")
-
-    return logo_path
+def _matching_translation(
+    data: dict[str, Any], target_language: str
+) -> dict[str, Any] | None:
+    return next(
+        (
+            translation
+            for translation in _dict_list(data.get("translations", []))
+            if translation.get("iso_639_1") == target_language
+        ),
+        None,
+    )
 
 
 def _translation_title(data: dict[str, Any], target_language: str) -> str:
-    for translation in _dict_list(data.get("translations", [])):
-        if translation.get("iso_639_1") != target_language:
-            continue
-        translated = translation.get("data", {})
-        if not isinstance(translated, dict):
-            return ""
-        values = typing_cast(dict[str, Any], translated)
-        return str(values.get("title") or values.get("name") or "")
-    return ""
+    translation = _matching_translation(data, target_language)
+    if translation is None:
+        return ""
+    translated = translation.get("data", {})
+    if not isinstance(translated, dict):
+        return ""
+    values = typing_cast(dict[str, Any], translated)
+    return str(values.get("title") or values.get("name") or "")
 
 
 async def get_tmdb_translations(
@@ -3047,127 +3858,170 @@ async def get_tmdb_translations(
             return ""
 
 
-async def set_tmdb_metadata(meta: Meta, filename: str | None = None) -> None:
-    if not meta.edit:
-        # if we have these fields already, we probably got them from a multi id searching
-        # and don't need to fetch them again
-        essential_fields = ["title", "year", "genres", "overview"]
-        tmdb_metadata_populated = all(
-            meta.get(field) is not None for field in essential_fields
-        ) and bool(meta.get("title"))
-    else:
-        # if we're in that blasted edit mode, ignore any previous set data and get fresh
-        tmdb_metadata_populated = False
-
-    if not tmdb_metadata_populated:
-        max_attempts = 2
-        delay_seconds = 5
-        for attempt in range(1, max_attempts + 1):
-            try:
-                tmdb_metadata = await tmdb_other_meta(
-                    tmdb_id=meta.tmdb_id,
-                    path=meta.path,
-                    search_year=meta.search_year,
-                    category=meta.category,
-                    imdb_id=meta.imdb_id,
-                    manual_language=meta.manual_language
-                    if isinstance(meta.manual_language, str)
-                    else None,
-                    anime=meta.anime,
-                    mal_manual=int(meta.mal_manual)
-                    if isinstance(meta.mal_manual, int)
-                    or (
-                        isinstance(meta.mal_manual, str)
-                        and meta.mal_manual.isdigit()
-                    )
-                    else None,
-                    aka=meta.aka,
-                    original_language=meta.original_language,
-                    poster=meta.artwork_url,
-                    debug=meta.debug,
-                    mode=(meta.mode if meta.mode is not None else "cli"),
-                    tvdb_id=meta.tvdb_id,
-                    quickie_search=meta.quickie_search,
-                    filename=filename,
-                    base_dir=meta.base_dir,
-                    config=default_config,
-                    unattended=meta.unattended,
-                )
-
-                if tmdb_metadata and all(
-                    tmdb_metadata.get(field) for field in ["title", "year"]
-                ):
-                    meta.update(tmdb_metadata)
-                    if meta.retrieved_aka is not None:
-                        meta.aka = meta.retrieved_aka
-                    break
-                error_msg = f"Failed to retrieve essential metadata from TMDB ID: {meta.tmdb_id}"
-                logger.debug(f"[bold red]{error_msg}[/bold red]")
-                if attempt < max_attempts:
-                    logger.info(
-                        f"[yellow]Retrying TMDB metadata fetch in {delay_seconds} seconds... (Attempt {attempt + 1}/{max_attempts})[/yellow]"
-                    )
-                    await asyncio.sleep(delay_seconds)
-                else:
-                    raise ValueError(error_msg)
-            except AmbiguousMetadataError:
-                raise
-            except Exception as e:
-                error_msg = f"TMDB metadata retrieval failed for ID {meta.tmdb_id}: {e!s}"
-                logger.debug(f"[bold red]{error_msg}[/bold red]")
-                if attempt < max_attempts:
-                    logger.info(
-                        f"[yellow]Retrying TMDB metadata fetch in {delay_seconds} seconds... (Attempt {attempt + 1}/{max_attempts})[/yellow]"
-                    )
-                    await asyncio.sleep(delay_seconds)
-                else:
-                    logger.info(
-                        f"[red]Catastrophic error getting TMDB data using ID {meta.tmdb_id}[/red]"
-                    )
-                    logger.info(
-                        f"[red]Check category is set correctly, UA was using {meta.category}[/red]"
-                    )
-                    raise RuntimeError(
-                        f"Unable to resolve TMDb metadata for ID {meta.tmdb_id}: {e!s}"
-                    ) from e
+def _tmdb_metadata_populated(meta: Meta) -> bool:
+    if meta.edit:
+        return False
+    essential_fields = ("title", "year", "genres", "overview")
+    return all(
+        meta.get(field) is not None for field in essential_fields
+    ) and bool(meta.get("title"))
 
 
-async def get_tmdb_localized_data(
-    meta: Meta, data_type: str, language: str, append_to_response: str
+def _manual_mal_id(meta: Meta) -> int | None:
+    value = meta.mal_manual
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None
+
+
+async def _fetch_tmdb_metadata(
+    meta: Meta, filename: str | None
 ) -> dict[str, Any]:
-    tmdb_data: dict[str, Any] = {}
-    if meta.tmdb is None:
-        return tmdb_data
-    endpoint = None
-    if data_type == "main":
-        endpoint = f"/{meta.category.lower()}/{meta.tmdb}"
-    elif data_type == "season":
-        season = meta.season_int
-        if season is None:
-            return tmdb_data
-        endpoint = f"/tv/{meta.tmdb}/season/{season}"
-    elif data_type == "episode":
-        season = meta.season_int
-        episode = meta.episode_int
-        if season is None or episode is None:
-            return tmdb_data
-        endpoint = f"/tv/{meta.tmdb}/season/{season}/episode/{episode}"
-
-    url = f"{TMDB_BASE_URL}{endpoint}"
-    params = {"language": language}
-    if append_to_response:
-        params.update({"append_to_response": append_to_response})
-
-    logger.debug(
-        "[green]Requesting localized data from TMDB.\n"
-        f"Type: '{data_type}'.\n"
-        f"Language: '{language}'\n"
-        f"Append to response: '{append_to_response}'\n"
-        f"Endpoint: '{endpoint}'[/green]\n"
+    return await tmdb_other_meta(
+        tmdb_id=meta.tmdb_id,
+        path=meta.path,
+        search_year=meta.search_year,
+        category=meta.category,
+        imdb_id=meta.imdb_id,
+        manual_language=meta.manual_language
+        if isinstance(meta.manual_language, str)
+        else None,
+        anime=meta.anime,
+        mal_manual=_manual_mal_id(meta),
+        aka=meta.aka,
+        original_language=meta.original_language,
+        poster=meta.artwork_url,
+        debug=meta.debug,
+        mode=(meta.mode if meta.mode is not None else "cli"),
+        tvdb_id=meta.tvdb_id,
+        quickie_search=meta.quickie_search,
+        filename=filename,
+        base_dir=meta.base_dir,
+        config=default_config,
+        unattended=meta.unattended,
     )
 
-    cache = cache_for(meta.base_dir, {"DEFAULT": default_config})
-    cache_key = json.dumps(
+
+def _valid_tmdb_metadata(metadata: dict[str, Any]) -> bool:
+    return all(metadata.get(field) for field in ("title", "year"))
+
+
+def _apply_tmdb_metadata(meta: Meta, metadata: dict[str, Any]) -> None:
+    meta.update(metadata)
+    if meta.retrieved_aka is not None:
+        meta.aka = meta.retrieved_aka
+
+
+async def _retry_delay(
+    attempt: int, max_attempts: int, delay_seconds: int
+) -> bool:
+    if attempt >= max_attempts:
+        return False
+    logger.info(
+        f"[yellow]Retrying TMDB metadata fetch in {delay_seconds} seconds... (Attempt {attempt + 1}/{max_attempts})[/yellow]"
+    )
+    await asyncio.sleep(delay_seconds)
+    return True
+
+
+async def _tmdb_metadata_attempt(
+    meta: Meta, filename: str | None
+) -> tuple[dict[str, Any] | None, Exception | None]:
+    try:
+        metadata = await _fetch_tmdb_metadata(meta, filename)
+    except AmbiguousMetadataError:
+        raise
+    except Exception as error:
+        return None, error
+    if _valid_tmdb_metadata(metadata):
+        return metadata, None
+    return None, ValueError(
+        f"Failed to retrieve essential metadata from TMDB ID: {meta.tmdb_id}"
+    )
+
+
+def _raise_tmdb_metadata_failure(meta: Meta, error: Exception) -> None:
+    logger.info(
+        f"[red]Catastrophic error getting TMDB data using ID {meta.tmdb_id}[/red]"
+    )
+    logger.info(
+        f"[red]Check category is set correctly, UA was using {meta.category}[/red]"
+    )
+    raise RuntimeError(
+        f"Unable to resolve TMDb metadata for ID {meta.tmdb_id}: {error!s}"
+    ) from error
+
+
+async def _resolve_tmdb_metadata(meta: Meta, filename: str | None) -> None:
+    max_attempts = 2
+    delay_seconds = 5
+    for attempt in range(1, max_attempts + 1):
+        metadata, error = await _tmdb_metadata_attempt(meta, filename)
+        if metadata is not None:
+            _apply_tmdb_metadata(meta, metadata)
+            return
+        if error is None:
+            error = RuntimeError(
+                f"TMDB metadata retrieval failed for ID {meta.tmdb_id}"
+            )
+        logger.debug(
+            f"[bold red]TMDB metadata retrieval failed for ID {meta.tmdb_id}: {error!s}[/bold red]"
+        )
+        if await _retry_delay(attempt, max_attempts, delay_seconds):
+            continue
+        _raise_tmdb_metadata_failure(meta, error)
+
+
+async def set_tmdb_metadata(meta: Meta, filename: str | None = None) -> None:
+    if not _tmdb_metadata_populated(meta):
+        await _resolve_tmdb_metadata(meta, filename)
+
+
+def _localized_main_endpoint(meta: Meta) -> str:
+    return f"/{meta.category.lower()}/{meta.tmdb}"
+
+
+def _localized_season_endpoint(meta: Meta) -> str | None:
+    if meta.season_int is None:
+        return None
+    return f"/tv/{meta.tmdb}/season/{meta.season_int}"
+
+
+def _localized_episode_endpoint(meta: Meta) -> str | None:
+    if meta.season_int is None or meta.episode_int is None:
+        return None
+    return (
+        f"/tv/{meta.tmdb}/season/{meta.season_int}/episode/{meta.episode_int}"
+    )
+
+
+def _localized_endpoint(meta: Meta, data_type: str) -> str | None:
+    if meta.tmdb is None:
+        return None
+    resolvers: dict[str, Callable[[Meta], str | None]] = {
+        "main": _localized_main_endpoint,
+        "season": _localized_season_endpoint,
+        "episode": _localized_episode_endpoint,
+    }
+    resolver = resolvers.get(data_type)
+    return resolver(meta) if resolver is not None else None
+
+
+def _localized_params(
+    language: str, append_to_response: str
+) -> dict[str, str]:
+    params = {"language": language}
+    if append_to_response:
+        params["append_to_response"] = append_to_response
+    return params
+
+
+def _localized_cache_key(
+    meta: Meta, data_type: str, language: str, append_to_response: str
+) -> str:
+    return json.dumps(
         {
             "id": meta.tmdb,
             "category": meta.category,
@@ -3177,21 +4031,51 @@ async def get_tmdb_localized_data(
         },
         sort_keys=True,
     )
-    cached_result = await cache.get("tmdb", "localized", cache_key)
-    if not is_cache_miss(cached_result) and isinstance(cached_result, dict):
-        return cached_result
 
+
+async def _fetch_localized_tmdb_data(
+    url: str, params: dict[str, str]
+) -> dict[str, Any]:
     try:
         async with _tmdb_client(timeout=10.0) as client:
             response = await client.get(url, params=params)
             if response.status_code == 200:
-                tmdb_data = response.json()
-                if isinstance(tmdb_data, dict):
-                    await cache.set("tmdb", "localized", cache_key, tmdb_data)
-                    return tmdb_data
+                data = response.json()
+                return (
+                    typing_cast(dict[str, Any], data)
+                    if isinstance(data, dict)
+                    else {}
+                )
             logger.info(
                 f"[red]Request failed for {url}: Status code {response.status_code}[/red]"
             )
-    except httpx.RequestError as e:
-        logger.info(f"[red]Request failed for {url}: {e}[/red]")
-    return tmdb_data
+    except httpx.RequestError as error:
+        logger.info(f"[red]Request failed for {url}: {error}[/red]")
+    return {}
+
+
+async def get_tmdb_localized_data(
+    meta: Meta, data_type: str, language: str, append_to_response: str
+) -> dict[str, Any]:
+    endpoint = _localized_endpoint(meta, data_type)
+    if endpoint is None:
+        return {}
+    logger.debug(
+        "[green]Requesting localized data from TMDB.\n"
+        f"Type: '{data_type}'.\nLanguage: '{language}'\n"
+        f"Append to response: '{append_to_response}'\nEndpoint: '{endpoint}'[/green]\n"
+    )
+    cache = cache_for(meta.base_dir, {"DEFAULT": default_config})
+    cache_key = _localized_cache_key(
+        meta, data_type, language, append_to_response
+    )
+    cached_result = await cache.get("tmdb", "localized", cache_key)
+    if not is_cache_miss(cached_result) and isinstance(cached_result, dict):
+        return typing_cast(dict[str, Any], cached_result)
+    url = f"{TMDB_BASE_URL}{endpoint}"
+    data = await _fetch_localized_tmdb_data(
+        url, _localized_params(language, append_to_response)
+    )
+    if data:
+        await cache.set("tmdb", "localized", cache_key, data)
+    return data

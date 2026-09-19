@@ -185,7 +185,9 @@ def test_automatic_metadata_tasks_propagate_unattended(
 
     asyncio.run(
         metadata_service._tmdb_metadata_task(  # pyright: ignore[reportPrivateUsage]
-            meta, manager, meta.filename  # type: ignore[arg-type]
+            meta,
+            manager,
+            meta.filename,  # type: ignore[arg-type]
         )
     )
     asyncio.run(

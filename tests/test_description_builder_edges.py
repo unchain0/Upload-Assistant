@@ -1409,6 +1409,45 @@ def test_handle_multiple_discs_saved_and_uploaded(
     assert "Main Disc" in result
 
 
+def test_handle_multiple_discs_respects_process_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    builder = _handle_builder(tmp_path, monkeypatch)
+    builder.tracker_config["processLimit"] = 2
+    discs = [
+        {"type": "BDMV", "name": "Main Disc", "summary": "Main Summary"},
+        {"type": "BDMV", "name": "Second Disc", "summary": "Second Summary"},
+        {"type": "BDMV", "name": "Third Disc", "summary": "Third Summary"},
+    ]
+    meta = _general_meta(
+        tmp_path, uuid="multi-discs-limit", discs=discs, screens=1
+    )
+    (tmp_path / "tmp" / meta.uuid).mkdir(parents=True)
+    builder._check_saved_pack_image_links = AsyncMock(  # type: ignore[method-assign]
+        return_value={
+            "keys": {
+                "new_images_disc_1": {
+                    "images": [_image("second")],
+                    "count": 1,
+                },
+                "new_images_disc_2": {
+                    "images": [_image("third")],
+                    "count": 1,
+                },
+            },
+            "total_count": 2,
+        }
+    )
+
+    result = asyncio.run(
+        builder._handle_discs_and_screenshots(meta, [], [_image("main")], 2)
+    )
+
+    assert "Second Summary" in result
+    assert "Third Summary" not in result
+    assert "new_images_disc_2" not in meta
+
+
 def test_handle_multiple_files_generation_saved_upload_limits_and_errors(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -6,9 +6,8 @@ import asyncio
 import io
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, ClassVar
+from typing import Any
 
-import httpx
 import pytest
 from PIL import Image
 
@@ -62,32 +61,6 @@ def _png(width: int, height: int) -> bytes:
     return stream.getvalue()
 
 
-class _Response:
-    status_code = 200
-    content = _png(1920, 1080)
-    headers: ClassVar[dict[str, str]] = {"Content-Type": "image/png"}
-
-
-class _AsyncClient:
-    response: ClassVar[object] = _Response()
-    creation_error: ClassVar[BaseException | None] = None
-
-    def __init__(self, *_args: object, **_kwargs: object) -> None:
-        if self.creation_error is not None:
-            raise self.creation_error
-
-    async def __aenter__(self) -> _AsyncClient:
-        return self
-
-    async def __aexit__(self, *_args: object) -> None:
-        return None
-
-    async def get(self, _url: str) -> Any:
-        if isinstance(self.response, BaseException):
-            raise self.response
-        return self.response
-
-
 def test_manager_configuration_and_confirmation_paths(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -124,79 +97,52 @@ def test_manager_configuration_and_confirmation_paths(
         asyncio.run(parser.prompt_user_for_confirmation("continue?"))
 
 
-def test_check_image_link_success_and_all_failures(
+def test_check_image_link_uses_secure_downloader_and_normalizes_pixhost(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(parser.httpx, "AsyncClient", _AsyncClient)
-    _AsyncClient.creation_error = None
-    _AsyncClient.response = _Response()
-    assert (
-        asyncio.run(
-            parser.check_image_link("https://pixhost.to/show/1/image.png")
-        )
-        is True
+    requests: list[tuple[str, float]] = []
+
+    async def download(url: str, *, timeout_seconds: float) -> bytes | None:
+        requests.append((url, timeout_seconds))
+        return _png(1920, 1080) if "pixhost" in url else None
+
+    monkeypatch.setattr(parser, "download_public_image", download)
+    assert asyncio.run(
+        parser.check_image_link("https://pixhost.to/show/1/image.png")
+    )
+    assert requests[-1] == (
+        "https://img1.pixhost.to/images/1/image.png",
+        20.0,
     )
 
-    non_image = _Response()
-    non_image.headers = {"Content-Type": "text/html"}
-    _AsyncClient.response = non_image
-    assert (
-        asyncio.run(parser.check_image_link("https://img.invalid/not-image"))
-        is False
+    assert not asyncio.run(
+        parser.check_image_link("https://img.invalid/rejected", 3.5)
     )
-
-    corrupt = _Response()
-    corrupt.content = b"broken"
-    _AsyncClient.response = corrupt
-    assert (
-        asyncio.run(parser.check_image_link("https://img.invalid/corrupt"))
-        is False
-    )
-
-    failed = _Response()
-    failed.status_code = 503
-    _AsyncClient.response = failed
-    assert (
-        asyncio.run(parser.check_image_link("https://img.invalid/failure"))
-        is False
-    )
-
-    for error in (
-        TimeoutError("timeout"),
-        httpx.ReadError("read error"),
-        RuntimeError("other"),
-    ):
-        _AsyncClient.response = error
-        assert (
-            asyncio.run(parser.check_image_link("https://img.invalid/error"))
-            is False
-        )
-
-    _AsyncClient.creation_error = RuntimeError("session")
-    assert (
-        asyncio.run(parser.check_image_link("https://img.invalid/session"))
-        is False
-    )
-    _AsyncClient.creation_error = None
+    assert requests[-1] == ("https://img.invalid/rejected", 3.5)
 
 
 def test_check_images_concurrently_filters_saves_limits_and_handles_errors(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     parser._apply_config(_config(screens=1))
-    monkeypatch.setattr(
-        parser,
-        "check_image_link",
-        lambda *_args, **_kwargs: _async_value(True),
-    )
-    monkeypatch.setattr(parser.httpx, "AsyncClient", _AsyncClient)
-    _AsyncClient.creation_error = None
-    _AsyncClient.response = _Response()
+    downloaded = _png(1920, 1080)
+
+    async def download(_url: str, *, timeout_seconds: float) -> bytes | None:
+        assert timeout_seconds == 15.0
+        return downloaded
+
+    monkeypatch.setattr(parser, "download_public_image", download)
 
     meta = _meta(tmp_path)
     images = [
-        {"raw_url": "https://img.invalid/one.png", "img_url": "one"},
-        {"raw_url": "https://img.invalid/one.png", "img_url": "duplicate"},
+        {
+            "raw_url": "https://img.invalid/one.png?token=secret",
+            "img_url": "one",
+        },
+        {
+            "raw_url": "https://img.invalid/one.png?token=secret",
+            "img_url": "duplicate",
+        },
         {"raw_url": "https://pixhost.to/show/2/two.png", "img_url": "two"},
         {"raw_url": "https://image.tmdb.org/poster.png", "img_url": "tmdb"},
         {"img_url": "missing"},
@@ -204,7 +150,7 @@ def test_check_images_concurrently_filters_saves_limits_and_handles_errors(
     valid = asyncio.run(parser.check_images_concurrently(images, meta))
     assert len(valid) == 1
     assert (tmp_path / "tmp" / "metadata" / "one.png").is_file()
-    assert meta.image_sizes["https://img.invalid/one.png"] > 0
+    assert meta.image_sizes["https://img.invalid/one.png?token=secret"] > 0
 
     assert (
         asyncio.run(
@@ -215,9 +161,7 @@ def test_check_images_concurrently_filters_saves_limits_and_handles_errors(
         == []
     )
 
-    out_of_range = _Response()
-    out_of_range.content = _png(720, 400)
-    _AsyncClient.response = out_of_range
+    downloaded = _png(720, 400)
     assert (
         asyncio.run(
             parser.check_images_concurrently([images[0]], _meta(tmp_path))
@@ -225,53 +169,26 @@ def test_check_images_concurrently_filters_saves_limits_and_handles_errors(
         == []
     )
 
-    dvd = _Response()
-    dvd.content = _png(720, 600)
-    _AsyncClient.response = dvd
+    downloaded = _png(720, 600)
     assert asyncio.run(
         parser.check_images_concurrently(
             [images[0]], _meta(tmp_path, resolution="576p", is_disc="DVD")
         )
     )
 
-    for response in (
-        SimpleNamespace(status_code=500, content=b"", headers={}),
-        TimeoutError("timeout"),
-        httpx.ReadError("read"),
-    ):
-        _AsyncClient.response = response
-        assert (
-            asyncio.run(
-                parser.check_images_concurrently([images[0]], _meta(tmp_path))
-            )
-            == []
-        )
-
-    _AsyncClient.creation_error = RuntimeError("session")
+    downloaded = b"broken"
     assert (
         asyncio.run(
             parser.check_images_concurrently([images[0]], _meta(tmp_path))
         )
         == []
     )
-    _AsyncClient.creation_error = None
 
-    monkeypatch.setattr(
-        parser,
-        "check_image_link",
-        lambda *_args, **_kwargs: _async_value(False),
-    )
-    assert (
-        asyncio.run(
-            parser.check_images_concurrently([images[0]], _meta(tmp_path))
-        )
-        == []
-    )
-    monkeypatch.setattr(
-        parser,
-        "check_image_link",
-        lambda *_args, **_kwargs: _async_error(RuntimeError("check")),
-    )
+    async def rejected(_url: str, *, timeout_seconds: float) -> bytes | None:
+        assert timeout_seconds == 15.0
+        return None
+
+    monkeypatch.setattr(parser, "download_public_image", rejected)
     assert (
         asyncio.run(
             parser.check_images_concurrently([images[0]], _meta(tmp_path))
@@ -285,13 +202,6 @@ def _async_value(value: Any):
         return value
 
     return resolve()
-
-
-def _async_error(error: BaseException):
-    async def fail() -> Any:
-        raise error
-
-    return fail()
 
 
 @pytest.mark.parametrize(
@@ -1077,48 +987,24 @@ def test_manager_update_wrappers(
 
 
 @pytest.mark.asyncio
-async def test_image_processing_and_gather_failures(
+async def test_image_processing_isolates_per_image_failures(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     parser._apply_config(_config())
-    monkeypatch.setattr(
-        parser,
-        "check_image_link",
-        lambda *_args, **_kwargs: _async_value(True),
+    broken = {"raw_url": "https://img.invalid/broken.png", "img_url": "broken"}
+    valid = {"raw_url": "https://img.invalid/valid.png", "img_url": "valid"}
+
+    async def download(url: str, *, timeout_seconds: float) -> bytes | None:
+        assert timeout_seconds == 15.0
+        if "broken" in url:
+            raise RuntimeError("download failed")
+        return _png(1920, 1080)
+
+    monkeypatch.setattr(parser, "download_public_image", download)
+    result = await parser.check_images_concurrently(
+        [broken, valid], _meta(tmp_path)
     )
-    monkeypatch.setattr(parser.httpx, "AsyncClient", _AsyncClient)
-    _AsyncClient.creation_error = None
-    _AsyncClient.response = _Response()
-    image = {"raw_url": "https://img.invalid/broken.png", "img_url": "broken"}
-
-    with monkeypatch.context() as context:
-        context.setattr(
-            parser.Image,
-            "open",
-            lambda *_args, **_kwargs: (_ for _ in ()).throw(
-                OSError("broken image")
-            ),
-        )
-        assert (
-            await parser.check_images_concurrently([image], _meta(tmp_path))
-            == []
-        )
-
-    with monkeypatch.context() as context:
-
-        async def failed_gather(
-            *_args: object, **_kwargs: object
-        ) -> list[object]:
-            for coroutine in _args:
-                if asyncio.iscoroutine(coroutine):
-                    coroutine.close()
-            raise RuntimeError("gather failed")
-
-        context.setattr(parser.asyncio, "gather", failed_gather)
-        assert (
-            await parser.check_images_concurrently([image], _meta(tmp_path))
-            == []
-        )
+    assert result == [valid]
 
 
 @pytest.mark.asyncio

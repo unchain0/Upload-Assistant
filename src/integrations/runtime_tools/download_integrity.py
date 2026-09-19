@@ -368,7 +368,7 @@ async def download_verified_asset(
     """Download a bounded asset and fail closed unless its pinned digest matches."""
     try:
         await download_bounded_asset(client, url, destination)
-        verify_downloaded_asset(destination, asset)
+        await asyncio.to_thread(verify_downloaded_asset, destination, asset)
     except BaseException:
         destination.unlink(missing_ok=True)
         raise

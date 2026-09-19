@@ -78,38 +78,6 @@ async def _safe_cleanup_sleep() -> None:
         await asyncio.sleep(0.1)
 
 
-def _remaining_asyncio_tasks() -> list[Any]:
-    current = asyncio.current_task()
-    return [task for task in asyncio.all_tasks() if task is not current]
-
-
-async def _gather_cancelled_tasks(tasks: list[Any]) -> list[Any]:
-    for task in tasks:
-        task.cancel()
-    await _safe_cleanup_sleep()
-    if not tasks:
-        return []
-    try:
-        return await asyncio.gather(*tasks, return_exceptions=True)
-    except RuntimeError:
-        return []
-
-
-async def _cancel_remaining_tasks() -> list[Any]:
-    try:
-        return await _gather_cancelled_tasks(_remaining_asyncio_tasks())
-    except RuntimeError:
-        return []
-
-
-def _log_cleanup_results(results: list[Any]) -> None:
-    for result in results:
-        if isinstance(result, Exception) and not isinstance(
-            result, asyncio.CancelledError
-        ):
-            logger.error(f"[red]Error during cleanup: {result}[/red]")
-
-
 def _terminate_remaining_tracked_subprocesses() -> None:
     for proc in list(running_subprocesses):
         if proc.returncode is not None:
@@ -142,11 +110,10 @@ def _delete_completed_thread_references() -> None:
 
 class CleanupManager:
     async def cleanup(self) -> None:
-        """Clean tracked task resources before application exit."""
+        """Clean only resources explicitly tracked by the application."""
         _shutdown_thread_executor()
         await _cleanup_tracked_subprocesses()
         await _safe_cleanup_sleep()
-        _log_cleanup_results(await _cancel_remaining_tasks())
         self.kill_all_threads()
 
     def kill_all_threads(self) -> None:

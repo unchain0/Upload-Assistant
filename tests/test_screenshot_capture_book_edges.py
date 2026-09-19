@@ -539,6 +539,37 @@ def test_document_cover_pdf_cbz_cbr_and_failures(
     )
 
 
+def test_comic_member_materialization_confines_path_and_limits_size(
+    tmp_path: Path,
+) -> None:
+    archive_path = tmp_path / "malicious.cbz"
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr("../../escape.png", b"12345")
+
+    temp_extract = tmp_path / "extract"
+    temp_extract.mkdir()
+    with zipfile.ZipFile(archive_path) as archive:
+        materialized = capture._materialize_comic_image_member(
+            archive,
+            "../../escape.png",
+            temp_extract,
+            max_bytes=5,
+        )
+        assert materialized == temp_extract / "comic-member.png"
+        assert materialized.read_bytes() == b"12345"
+
+        with pytest.raises(ValueError, match="exceeds 4 bytes"):
+            capture._materialize_comic_image_member(
+                archive,
+                "../../escape.png",
+                temp_extract,
+                max_bytes=4,
+            )
+
+    assert not materialized.exists()
+    assert not (tmp_path.parent / "escape.png").exists()
+
+
 def test_prepare_book_cover_all_priorities(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1038,9 +1069,8 @@ def test_cbz_falls_back_to_rar_reader(
         def namelist(self) -> list[str]:
             return ["page1.jpg"]
 
-        def extract(self, _name: str, target: Path) -> None:
-            target.mkdir(parents=True, exist_ok=True)
-            (target / "page1.jpg").write_bytes(source_image.read_bytes())
+        def open(self, _name: str):
+            return source_image.open("rb")
 
         def close(self) -> None:
             return None

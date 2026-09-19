@@ -1,5 +1,5 @@
 # Upload Assistant © 2026 Audionut & wastaken7 — Licensed under UAPL v1.0
-import hashlib
+import asyncio
 import platform
 import stat
 import tarfile
@@ -100,10 +100,31 @@ class ZentagBinaryManager:
                 return item
         return None
 
+    @staticmethod
+    def _copy_bounded_member(source: Any, destination: Path) -> None:
+        total = 0
+        try:
+            with destination.open("wb") as output:
+                while chunk := source.read(1024 * 1024):
+                    total += len(chunk)
+                    if total > MAX_ASSET_BYTES:
+                        raise RuntimeError(
+                            "zentag binary exceeds the "
+                            f"{MAX_ASSET_BYTES}-byte limit"
+                        )
+                    output.write(chunk)
+        except BaseException:
+            destination.unlink(missing_ok=True)
+            raise
+
     @classmethod
-    def _zip_payload(
-        cls, archive_path: Path, binary: Path, asset: str
-    ) -> bytes:
+    def _extract_zip_binary(
+        cls,
+        archive_path: Path,
+        binary: Path,
+        asset: str,
+        destination: Path,
+    ) -> None:
         with zipfile.ZipFile(archive_path) as archive:
             member = cls._zip_member(archive, binary.name)
             if member is None:
@@ -112,7 +133,8 @@ class ZentagBinaryManager:
                 raise RuntimeError(
                     f"zentag binary exceeds the {MAX_ASSET_BYTES}-byte limit"
                 )
-            return archive.read(member)
+            with archive.open(member) as source:
+                cls._copy_bounded_member(source, destination)
 
     @staticmethod
     def _tar_member(
@@ -126,9 +148,13 @@ class ZentagBinaryManager:
         return None
 
     @classmethod
-    def _tar_payload(
-        cls, archive_path: Path, binary: Path, asset: str
-    ) -> bytes:
+    def _extract_tar_binary(
+        cls,
+        archive_path: Path,
+        binary: Path,
+        asset: str,
+        destination: Path,
+    ) -> None:
         with tarfile.open(archive_path, mode="r:gz") as archive:
             member = cls._tar_member(archive, binary.name)
             if member is None:
@@ -140,56 +166,43 @@ class ZentagBinaryManager:
             extracted = archive.extractfile(member)
             if extracted is None:
                 raise RuntimeError(f"zentag binary not found in {asset}")
-            payload = extracted.read(MAX_ASSET_BYTES + 1)
-            if len(payload) > MAX_ASSET_BYTES:
-                raise RuntimeError(
-                    f"zentag binary exceeds the {MAX_ASSET_BYTES}-byte limit"
-                )
-            return payload
+            with extracted:
+                cls._copy_bounded_member(extracted, destination)
 
     @classmethod
-    def _archive_payload(
+    def _extract_archive_binary(
         cls,
         extension: str,
         archive_path: Path,
         binary: Path,
         asset: str,
-    ) -> bytes:
+        destination: Path,
+    ) -> None:
         if extension == "zip":
-            return cls._zip_payload(archive_path, binary, asset)
-        return cls._tar_payload(archive_path, binary, asset)
+            cls._extract_zip_binary(archive_path, binary, asset, destination)
+            return
+        cls._extract_tar_binary(archive_path, binary, asset, destination)
 
     @classmethod
-    async def _download_payload(
+    async def _download_archive(
         cls,
         target_dir: Path,
-        binary: Path,
-        extension: str,
         asset: str,
-    ) -> bytes:
+    ) -> Path:
         release_url = f"https://github.com/znth-cx/zentag/releases/download/{cls.VERSION}"
         downloaded_archive = target_dir / f".{asset}.download"
-        try:
-            async with HTTPX.AsyncClient(
-                timeout=120.0, follow_redirects=True
-            ) as client:
-                await download_bounded_asset(
-                    client, f"{release_url}/{asset}", downloaded_archive
-                )
-            cls._verify_archive_checksum(downloaded_archive, asset)
-            return cls._archive_payload(
-                extension, downloaded_archive, binary, asset
+        async with HTTPX.AsyncClient(
+            timeout=120.0, follow_redirects=True
+        ) as client:
+            await download_bounded_asset(
+                client, f"{release_url}/{asset}", downloaded_archive
             )
-        finally:
-            downloaded_archive.unlink(missing_ok=True)
+        return downloaded_archive
 
     @classmethod
-    def _verify_binary_payload(cls, payload: bytes, asset: str) -> None:
+    def _verify_binary_file(cls, binary: Path, asset: str) -> None:
         expected_binary = cls.BINARY_CHECKSUMS.get(asset, "")
-        if (
-            not expected_binary
-            or hashlib.sha256(payload).hexdigest() != expected_binary
-        ):
+        if not expected_binary or sha256_file(binary) != expected_binary:
             raise RuntimeError(
                 f"zentag binary checksum verification failed for {asset}"
             )
@@ -208,25 +221,42 @@ class ZentagBinaryManager:
         return stale
 
     @classmethod
-    def _stage_payload(
+    def _install_archive(
         cls,
         target_dir: Path,
         binary: Path,
         marker: Path,
         os_name: str,
-        payload: bytes,
+        extension: str,
+        asset: str,
+        archive_path: Path,
     ) -> None:
         staged_binary = target_dir / f".{binary.name}.staged"
         staged_marker = target_dir / f".{cls.VERSION}.staged"
-        staged_binary.write_bytes(payload)
-        if os_name != "windows":
-            staged_binary.chmod(staged_binary.stat().st_mode | stat.S_IEXEC)
-        staged_marker.write_text(cls.VERSION, encoding="utf-8")
-        promote_files_with_rollback(
-            [(staged_binary, binary), (staged_marker, marker)],
-            target_dir / ".zentag-backup",
-            remove_targets=cls._stale_markers(target_dir, marker),
-        )
+        staged_binary.unlink(missing_ok=True)
+        staged_marker.unlink(missing_ok=True)
+        try:
+            cls._extract_archive_binary(
+                extension,
+                archive_path,
+                binary,
+                asset,
+                staged_binary,
+            )
+            cls._verify_binary_file(staged_binary, asset)
+            if os_name != "windows":
+                staged_binary.chmod(
+                    staged_binary.stat().st_mode | stat.S_IEXEC
+                )
+            staged_marker.write_text(cls.VERSION, encoding="utf-8")
+            promote_files_with_rollback(
+                [(staged_binary, binary), (staged_marker, marker)],
+                target_dir / ".zentag-backup",
+                remove_targets=cls._stale_markers(target_dir, marker),
+            )
+        finally:
+            staged_binary.unlink(missing_ok=True)
+            staged_marker.unlink(missing_ok=True)
 
     @classmethod
     async def ensure_binary(cls, base_dir: str | Path) -> str:
@@ -234,11 +264,25 @@ class ZentagBinaryManager:
         target_dir, binary, marker = cls._install_paths(
             base_dir, os_name, arch
         )
-        if cls._is_cached_binary(binary, marker, asset):
+        if await asyncio.to_thread(
+            cls._is_cached_binary, binary, marker, asset
+        ):
             return str(binary)
-        payload = await cls._download_payload(
-            target_dir, binary, extension, asset
-        )
-        cls._verify_binary_payload(payload, asset)
-        cls._stage_payload(target_dir, binary, marker, os_name, payload)
+        downloaded_archive = await cls._download_archive(target_dir, asset)
+        try:
+            await asyncio.to_thread(
+                cls._verify_archive_checksum, downloaded_archive, asset
+            )
+            await asyncio.to_thread(
+                cls._install_archive,
+                target_dir,
+                binary,
+                marker,
+                os_name,
+                extension,
+                asset,
+                downloaded_archive,
+            )
+        finally:
+            await asyncio.to_thread(downloaded_archive.unlink, missing_ok=True)
         return str(binary)

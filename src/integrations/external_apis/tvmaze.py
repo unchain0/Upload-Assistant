@@ -377,7 +377,9 @@ class TvmazeManager:
     ) -> tuple[int, int]:
         if len(results) > 1 and unattended:
             cls._raise_ambiguous_unattended(results)
-        if cls._requires_manual_search_selection(results, manual_date, unattended):
+        if cls._requires_manual_search_selection(
+            results, manual_date, unattended
+        ):
             return cls._manual_show_selection(results, normalized_tvdb)
         return cls._automatic_show_selection(results[0]), normalized_tvdb
 

@@ -252,10 +252,29 @@ def test_ssl_retry_proxy_response_and_url_helpers(tmp_path: Path) -> None:
     insecure = qbit.create_ssl_context_for_client(
         {"VERIFY_WEBUI_CERTIFICATE": False}
     )
+    insecure_string = qbit.create_ssl_context_for_client(
+        {"VERIFY_WEBUI_CERTIFICATE": "false"}
+    )
+    secure_string = qbit.create_ssl_context_for_client(
+        {"VERIFY_WEBUI_CERTIFICATE": "true"}
+    )
     assert secure.verify_mode != ssl.CERT_NONE
+    assert secure_string.verify_mode != ssl.CERT_NONE
     assert (
         insecure.verify_mode == ssl.CERT_NONE
         and insecure.check_hostname is False
+    )
+    assert (
+        insecure_string.verify_mode == ssl.CERT_NONE
+        and insecure_string.check_hostname is False
+    )
+    assert (
+        qbit._verify_webui_certificate({"VERIFY_WEBUI_CERTIFICATE": "0"})
+        is False
+    )
+    assert (
+        qbit._verify_webui_certificate({"VERIFY_WEBUI_CERTIFICATE": "1"})
+        is True
     )
 
     attempts = 0
