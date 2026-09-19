@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import os
 import tarfile
 import zipfile
 from pathlib import Path
@@ -230,7 +231,8 @@ def test_docker_platform_cache_success_duplicate_and_failure(
     monkeypatch.setattr(mkbrr, "download_verified_asset_sync", download)
     result = mkbrr.MkbrrBinaryManager.download_mkbrr_for_docker(tmp_path)
     assert Path(result).read_bytes() == b"docker"
-    assert Path(result).stat().st_mode & 0o777 == 0o700
+    if os.name != "nt":
+        assert Path(result).stat().st_mode & 0o777 == 0o700
     assert not stale.exists()
 
     duplicate = tmp_path / "duplicate"

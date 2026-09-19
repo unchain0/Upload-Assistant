@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import io
+import os
 import tarfile
 import zipfile
 from pathlib import Path
@@ -129,10 +130,9 @@ def test_windows_zip_and_linux_tar_install_with_stale_marker(
 
     monkeypatch.setattr(zentag, "download_bounded_asset", linux_download)
     result = asyncio.run(zentag.ZentagBinaryManager.ensure_binary(tmp_path))
-    assert (
-        Path(result).read_bytes() == payload
-        and Path(result).stat().st_mode & 0o100
-    )
+    assert Path(result).read_bytes() == payload
+    if os.name != "nt":
+        assert Path(result).stat().st_mode & 0o100
     assert not stale.exists()
 
 

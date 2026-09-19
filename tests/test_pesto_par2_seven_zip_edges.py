@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import os
 import tarfile
 import zipfile
 from pathlib import Path
@@ -83,9 +84,9 @@ def test_pesto_unsupported_cache_linux_windows_success_and_failure(
         pesto.PestoBinaryManager.ensure_pesto_binary(tmp_path)
     )
     assert result == str(binary)
-    assert (
-        binary.read_bytes() == b"new-pesto" and binary.stat().st_mode & 0o100
-    )
+    assert binary.read_bytes() == b"new-pesto"
+    if os.name != "nt":
+        assert binary.stat().st_mode & 0o100
     assert marker.is_file() and not stale.exists()
     assert not any(
         path.name.startswith("temp_") or path.name.startswith(".pesto")
@@ -147,11 +148,9 @@ def test_par2_unsupported_cache_zip_success_duplicate_and_failure(
     monkeypatch.setattr(par2, "download_verified_asset", download)
     result = asyncio.run(par2.Par2BinaryManager.ensure_par2_binary(tmp_path))
     assert result == str(binary) and binary.read_bytes() == b"new-par2"
-    assert (
-        binary.stat().st_mode & 0o100
-        and marker.is_file()
-        and not stale.exists()
-    )
+    if os.name != "nt":
+        assert binary.stat().st_mode & 0o100
+    assert marker.is_file() and not stale.exists()
     assert not (target / ".par2-staging").exists()
 
     duplicate = tmp_path / "par2-duplicate"

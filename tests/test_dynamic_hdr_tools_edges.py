@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import io
+import os
 import tarfile
 import zipfile
 from pathlib import Path
@@ -137,7 +138,8 @@ def test_get_tool_installed_cached_download_success_and_cleanup(
     result = asyncio.run(tools.get_tool(str(tmp_path), "dovi"))
     assert result == str(binary)
     assert binary.read_bytes() == b"new-binary"
-    assert binary.stat().st_mode & 0o111
+    if os.name != "nt":
+        assert binary.stat().st_mode & 0o111
     assert marker.is_file()
     assert not stale.exists()
     assert not (target / ".download").exists()

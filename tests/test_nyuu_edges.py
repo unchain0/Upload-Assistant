@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import os
 import tarfile
 from pathlib import Path
 from unittest.mock import AsyncMock
@@ -73,11 +74,9 @@ def test_unsupported_cache_and_linux_install(
     monkeypatch.setattr(nyuu, "download_verified_asset", download)
     result = asyncio.run(nyuu.NyuuBinaryManager.ensure_nyuu_binary(tmp_path))
     assert result == str(binary) and binary.read_bytes() == b"linux-nyuu"
-    assert (
-        binary.stat().st_mode & 0o100
-        and marker.is_file()
-        and not stale.exists()
-    )
+    if os.name != "nt":
+        assert binary.stat().st_mode & 0o100
+    assert marker.is_file() and not stale.exists()
     assert not (target / ".nyuu-staging").exists()
 
 
