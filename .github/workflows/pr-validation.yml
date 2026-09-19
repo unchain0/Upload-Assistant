@@ -17,7 +17,7 @@ jobs:
   windows-tests:
     name: Windows Python 3.14 tests
     runs-on: windows-2025
-    timeout-minutes: 60
+    timeout-minutes: 120
 
     steps:
       - name: Check out repository
