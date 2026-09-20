@@ -148,10 +148,20 @@ class _Session:
 
 
 class _Stream:
+    def __init__(self) -> None:
+        self._read = False
+        self._line = False
+
     async def read(self, _size: int = -1) -> bytes:
+        if self._read:
+            return b""
+        self._read = True
         return b"ok"
 
     async def readline(self) -> bytes:
+        if self._line:
+            return b""
+        self._line = True
         return b"ok\n"
 
     def at_eof(self) -> bool:
@@ -776,7 +786,7 @@ def test_support_integration_catalog_uses_local_boundary_doubles(
 ) -> None:
     files = _fixture_tree(tmp_path)
     modules = _modules()
-    repository_cwd = Path.cwd()
+    repository_cwd = tmp_path
 
     async def fake_process(*_args: object, **_kwargs: object) -> _Process:
         return _Process()
