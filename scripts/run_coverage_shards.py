@@ -179,6 +179,16 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--shard", type=int, help="Run only one shard index")
     parser.add_argument(
+        "--partition",
+        type=int,
+        help="Run one zero-based partition of all deterministic shards",
+    )
+    parser.add_argument(
+        "--partitions",
+        type=int,
+        help="Total deterministic partitions (required with --partition)",
+    )
+    parser.add_argument(
         "--combine-only",
         action="store_true",
         help="Combine existing shard data without running tests",
@@ -220,6 +230,46 @@ def _run_requested_shard(index: int, shards: list[TestShard]) -> int:
     return 0
 
 
+def _run_partition(
+    partition: int, partitions: int, shards: list[TestShard]
+) -> int:
+    if partitions < 1 or partition < 0 or partition >= partitions:
+        print(
+            f"Unknown partition {partition}; valid range is 0..{partitions - 1}",
+            file=sys.stderr,
+        )
+        return 2
+    prepare_parts()
+    for shard in shards[partition::partitions]:
+        run_shard(shard)
+    return 0
+
+
+def _run_partition_request(
+    args: argparse.Namespace, shards: list[TestShard]
+) -> int | None:
+    if (args.partition is None) != (args.partitions is None):
+        print(
+            "--partition and --partitions must be used together",
+            file=sys.stderr,
+        )
+        return 2
+    if args.partition is not None:
+        return _run_partition(args.partition, args.partitions, shards)
+    return None
+
+
+def _run_meta_mode(
+    args: argparse.Namespace, shards: list[TestShard]
+) -> int | None:
+    if args.list:
+        return _list_shards(shards)
+    if args.combine_only:
+        combine_and_report(fail_under=args.fail_under)
+        return 0
+    return None
+
+
 def _run_all(shards: list[TestShard], fail_under: float, jobs: int) -> int:
     prepare_parts()
     if jobs < 1:
@@ -232,13 +282,14 @@ def _run_all(shards: list[TestShard], fail_under: float, jobs: int) -> int:
 
 
 def _dispatch(args: argparse.Namespace, shards: list[TestShard]) -> int:
-    if args.list:
-        return _list_shards(shards)
     if args.prepare:
         prepare_parts()
-    if args.combine_only:
-        combine_and_report(fail_under=args.fail_under)
-        return 0
+    meta_result = _run_meta_mode(args, shards)
+    if meta_result is not None:
+        return meta_result
+    partition_result = _run_partition_request(args, shards)
+    if partition_result is not None:
+        return partition_result
     if args.shard is not None:
         return _run_requested_shard(args.shard, shards)
     return _run_all(shards, args.fail_under, args.jobs)

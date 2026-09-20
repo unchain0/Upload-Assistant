@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
+skip_coverage=false
+if [[ "${1:-}" == "--skip-coverage" ]]; then
+  skip_coverage=true
+fi
+
 mkdir -p artifacts
 rm -f \
   artifacts/coverage.json \
@@ -31,12 +36,14 @@ run_gate "Radon complexity (rank A only)" uv run python scripts/check_radon_comp
 run_gate "BasedPyright" uv run basedpyright
 run_gate "MASA boundaries" uv run python scripts/check_masa_architecture.py --json artifacts/masa-architecture.json
 
-printf '\n== Python tests and 100%% line coverage ==\n'
-if uv run python scripts/run_coverage_shards.py --jobs 2 --fail-under 100; then
-  printf 'Python tests and coverage: PASS\n'
-else
-  printf 'Python tests and coverage: FAIL\n' >&2
-  failures=$((failures + 1))
+if [[ "$skip_coverage" == false ]]; then
+  printf '\n== Python tests and 100%% line coverage ==\n'
+  if uv run python scripts/run_coverage_shards.py --jobs 2 --fail-under 100; then
+    printf 'Python tests and coverage: PASS\n'
+  else
+    printf 'Python tests and coverage: FAIL\n' >&2
+    failures=$((failures + 1))
+  fi
 fi
 
 coverage_args=()

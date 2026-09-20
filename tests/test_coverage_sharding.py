@@ -97,3 +97,19 @@ def test_run_all_starts_multiple_shards_with_multiple_workers(
     )
 
     assert sharding._run_all(shards, fail_under=100, jobs=2) == 0
+
+
+def test_run_partition_selects_deterministic_shards(monkeypatch) -> None:
+    shards = [
+        sharding.TestShard(index=index, targets=(str(index),))
+        for index in range(5)
+    ]
+    selected: list[int] = []
+
+    monkeypatch.setattr(sharding, "prepare_parts", lambda: None)
+    monkeypatch.setattr(
+        sharding, "run_shard", lambda shard: selected.append(shard.index)
+    )
+
+    assert sharding._run_partition(1, 3, shards) == 0
+    assert selected == [1, 4]
