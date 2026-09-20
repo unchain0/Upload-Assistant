@@ -76,7 +76,7 @@ def test_prefixed_group_flows_through_episode_parser_naming_and_yuscene() -> (
 
     tracker = YUSCENE({"DEFAULT": {}, "TRACKERS": {"YUSCENE": {}}})
     assert asyncio.run(tracker.get_name(meta)) == {
-        "name": "False Memory AKA Jiyi Guanli Ju 2026 S01E05 1080p WEB-DL AAC 2 0 H 265-Gecko"
+        "name": "False Memory AKA Jiyi Guanli Ju 2026 S01E05 1080p WEB-DL AAC 2.0 H.265-Gecko"
     }
 
 
