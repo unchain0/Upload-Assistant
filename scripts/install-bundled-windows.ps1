@@ -4,7 +4,8 @@ param(
     [string]$InstallDir,
 
     [string]$PythonVersion = "3.14",
-    [string]$PythonDownloadBaseUrl = "https://www.python.org/ftp/python"
+    [string]$PythonDownloadBaseUrl = "https://www.python.org/ftp/python",
+    [string]$UvVersion = "0.11.32"
 )
 
 Set-StrictMode -Version Latest
@@ -139,6 +140,61 @@ function Get-OsArchitectureName {
         ([System.Runtime.InteropServices.Architecture]::Arm64) { return "arm64" }
         default { return "amd64" }
     }
+}
+
+function Ensure-Uv {
+    param([Parameter(Mandatory)][string]$DestinationDir)
+
+    $architecture = Get-OsArchitectureName
+    switch ($architecture) {
+        "amd64" {
+            $assetName = "uv-x86_64-pc-windows-msvc.zip"
+            $expectedSha256 = "acfde570451cfdb8689fa159a138ee805ba4e241c466432750302c86254b0984"
+        }
+        "arm64" {
+            $assetName = "uv-aarch64-pc-windows-msvc.zip"
+            $expectedSha256 = "a7427ea0440bb826b6716d1837ff3d173b8e7d496cb09ee8f456b4e023a2fdcd"
+        }
+        default { throw "Unsupported Windows architecture for uv: $architecture" }
+    }
+
+    $uvInstallDir = Join-Path $DestinationDir "uv"
+    $uvExe = Join-Path $uvInstallDir "uv.exe"
+    if (Test-Path -LiteralPath $uvExe) {
+        $installed = (& $uvExe --version).Trim()
+        if ($installed -eq "uv $UvVersion") {
+            return $uvExe
+        }
+    }
+
+    $archivePath = Join-Path ([System.IO.Path]::GetTempPath()) ("UploadAssistantUv-" + [guid]::NewGuid().ToString("N") + ".zip")
+    $extractPath = Join-Path ([System.IO.Path]::GetTempPath()) ("UploadAssistantUv-" + [guid]::NewGuid().ToString("N"))
+    try {
+        Invoke-DownloadFile `
+            -Url "https://github.com/astral-sh/uv/releases/download/$UvVersion/$assetName" `
+            -DestinationPath $archivePath `
+            -Label "uv $UvVersion"
+        $actualSha256 = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actualSha256 -ne $expectedSha256) {
+            throw "uv archive checksum mismatch: expected $expectedSha256, got $actualSha256"
+        }
+        Expand-Archive -LiteralPath $archivePath -DestinationPath $extractPath -Force
+        $downloadedUv = Get-ChildItem -LiteralPath $extractPath -Filter "uv.exe" -Recurse | Select-Object -First 1 -ExpandProperty FullName
+        $downloadedUvx = Get-ChildItem -LiteralPath $extractPath -Filter "uvx.exe" -Recurse | Select-Object -First 1 -ExpandProperty FullName
+        if (-not $downloadedUv) {
+            throw "The verified uv archive did not contain uv.exe"
+        }
+        New-Item -ItemType Directory -Path $uvInstallDir -Force | Out-Null
+        Copy-Item -LiteralPath $downloadedUv -Destination $uvExe -Force
+        if ($downloadedUvx) {
+            Copy-Item -LiteralPath $downloadedUvx -Destination (Join-Path $uvInstallDir "uvx.exe") -Force
+        }
+    }
+    finally {
+        Remove-Item -LiteralPath $archivePath -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $extractPath -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    return $uvExe
 }
 
 function Resolve-LatestPythonPatchVersion {
@@ -427,7 +483,6 @@ function Write-Launchers {
         "ua.cmd" = "@echo off`r`npowershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$escapedAppDirectory\run-ua.ps1`" %*`r`nexit /b %errorlevel%`r`n"
         "ua-update.cmd" = "@echo off`r`npowershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$escapedAppDirectory\scripts\update-windows.ps1`" -UaDir `"$escapedAppDirectory`" -PythonInstallDir `"$escapedAppDirectory\python`" -LauncherDir `"$escapedAppDirectory\bin`" %*`r`nexit /b %errorlevel%`r`n"
         "ua-config.cmd" = "@echo off`r`npushd `"$escapedAppDirectory`"`r`n`"$escapedAppDirectory\.venv\Scripts\python.exe`" `"$escapedAppDirectory\config-generator.py`" %*`r`nset `"exit_code=%errorlevel%`"`r`npopd`r`nexit /b %exit_code%`r`n"
-        "ua-webui.cmd" = "@echo off`r`nstart `"`" `"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe`" -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$escapedAppDirectory\scripts\run-webui-tray.ps1`" -AppDir `"$escapedAppDirectory`" %*`r`nexit /b 0`r`n"
     }
 
     foreach ($launcher in $launchers.GetEnumerator()) {
@@ -446,18 +501,35 @@ if (-not (Test-Path -LiteralPath (Join-Path $resolvedInstallDir "upload.py"))) {
 
 $pythonExe = Ensure-DestinationPython -DestinationDir $resolvedInstallDir -ExpectedMinorVersion $PythonVersion -DownloadBaseUrl $PythonDownloadBaseUrl
 
+$uvExe = Ensure-Uv -DestinationDir $resolvedInstallDir
+Write-Step "Synchronizing Upload Assistant from uv.lock"
+$previousEnvironment = $env:UV_PROJECT_ENVIRONMENT
+try {
+    $env:UV_PROJECT_ENVIRONMENT = $venvDir
+    Invoke-Process `
+        -FilePath $uvExe `
+        -Description "uv sync" `
+        -ProgressMessage "Downloading and synchronizing Upload Assistant dependencies. This may take several minutes..." `
+        -ArgumentList @(
+            "sync",
+            "--frozen",
+            "--no-dev",
+            "--no-install-project",
+            "--python", $pythonExe,
+            "--project", $resolvedInstallDir
+        )
+}
+finally {
+    $env:UV_PROJECT_ENVIRONMENT = $previousEnvironment
+}
+
 if (-not (Test-Path -LiteralPath $venvPython)) {
-    Write-Step "Creating virtual environment"
-    Invoke-Process -FilePath $pythonExe -Description "Virtual environment creation" -ArgumentList @("-m", "venv", $venvDir)
+    throw "uv sync completed without creating $venvPython"
 }
 
 Write-Runner -AppDirectory $resolvedInstallDir
 Write-Launchers -AppDirectory $resolvedInstallDir -LauncherDirectory $launcherDir
 Add-DirectoryToUserPath -DirectoryPath $launcherDir
-
-Write-Step "Installing Upload Assistant dependencies"
-Invoke-Process -FilePath $venvPython -Description "Pip upgrade" -ProgressMessage "Updating pip..." -ArgumentList @("-m", "pip", "install", "--upgrade", "pip")
-Invoke-Process -FilePath $venvPython -Description "Base dependency installation" -ProgressMessage "Downloading and installing Upload Assistant dependencies. This may take several minutes..." -ArgumentList @("-m", "pip", "install", "-r", (Join-Path $resolvedInstallDir "requirements.txt"))
 
 Write-Step "Installation complete."
 Write-Host ""
@@ -465,5 +537,4 @@ Write-Host "Available commands (open a new terminal window):"
 Write-Host "  ua"
 Write-Host "  ua-config"
 Write-Host "  ua-update"
-Write-Host "  ua-webui"
 Write-Host ""

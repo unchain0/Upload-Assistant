@@ -21,9 +21,24 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Check out the selected branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.11.32"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Synchronize locked environment
+        run: uv sync --frozen --all-groups --no-install-project
 
       - name: Validate version
         env:
@@ -55,32 +70,35 @@ jobs:
             -f target_commitish="$GITHUB_SHA" \
             --jq .body > "$RUNNER_TEMP/release-notes.md"
 
-      - name: Update src/version.py
+      - name: Update application version
         env:
           NEW_VERSION: ${{ inputs.version }}
         run: |
-          python - <<'PY'
+          uv run python - <<'PY'
           import json
           import os
           import re
           from pathlib import Path
 
-          path = Path("src/version.py")
+          path = Path("src/domain_models/application_version.py")
           content = path.read_text(encoding="utf-8")
           notes = Path(os.environ["RUNNER_TEMP"], "release-notes.md").read_text(encoding="utf-8").strip()
           serialized_notes = json.dumps(notes, ensure_ascii=False)
-          replacement = f'__version__ = "{os.environ["NEW_VERSION"]}"\n\n{serialized_notes}'
+          replacement = f'__version__ = \"{os.environ[\"NEW_VERSION\"]}\"\n\nCHANGELOG = {serialized_notes}'
           updated, count = re.subn(
-              r'__version__\s*=\s*"[^"]+"\s*\n\s*(?:""".*?"""|"(?:\\.|[^"\\])*")',
+              r'__version__\s*=\s*"[^"]+"\s*\n\s*CHANGELOG\s*=\s*"(?:\\.|[^"\\])*"',
               lambda _match: replacement,
               content,
               count=1,
               flags=re.DOTALL,
           )
           if count != 1:
-              raise SystemExit("Could not find the version and release-notes block in src/version.py")
+              raise SystemExit("Could not find the version and changelog block in application_version.py")
           path.write_text(updated, encoding="utf-8")
           PY
+
+      - name: Validate release candidate
+        run: scripts/run-quality-gates.sh
 
       - name: Commit the version bump
         env:
@@ -89,7 +107,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/version.py
+          git add src/domain_models/application_version.py
           git diff --cached --check
           git commit -m "bump: version to ${NEW_VERSION#v}"
           git push origin "HEAD:$TARGET_BRANCH"

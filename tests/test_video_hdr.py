@@ -1,8 +1,6 @@
-# ruff: noqa: S101
-
 import asyncio
 
-from src.video import VideoManager
+from src.integrations.media.video import VideoManager
 
 
 def test_empty_bdinfo_uses_mediainfo_hdr_metadata() -> None:

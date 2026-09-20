@@ -1,14 +1,12 @@
 """Regression tests for PeerGarden tracker mappings."""
 
-# ruff: noqa: S101
-
 from __future__ import annotations
 
 import asyncio
 
-from src.meta import Meta
-from src.trackers.UNIT3D.peergarden import PeerGarden
-from src.trackerstatus import missing_book_fields_for_tracker
+from src.domain_models.release import Meta
+from src.integrations.trackers.UNIT3D.peergarden import PeerGarden
+from src.services.tracker_status_service import missing_book_fields_for_tracker
 
 
 def test_peergarden_reverse_book_category_mapping():
@@ -22,7 +20,9 @@ def test_peergarden_reverse_book_category_mapping():
 def test_peergarden_unknown_resolution_uses_other_id():
     tracker = PeerGarden({"DEFAULT": {}, "TRACKERS": {"PEERGARDEN": {}}})
 
-    resolution = asyncio.run(tracker.get_resolution_id(Meta(), resolution="unknown"))
+    resolution = asyncio.run(
+        tracker.get_resolution_id(Meta(), resolution="unknown")
+    )
 
     assert resolution == {"resolution_id": "10"}
 
@@ -75,7 +75,10 @@ def test_peergarden_get_data_pops_prohibited_fields():
         "other_field": "val",
     }
 
-    with patch("src.trackers.UNIT3D.UNIT3D.get_data", new_callable=AsyncMock) as mock_get_data:
+    with patch(
+        "src.integrations.trackers.UNIT3D.UNIT3D.get_data",
+        new_callable=AsyncMock,
+    ) as mock_get_data:
         mock_get_data.return_value = mock_data
 
         result = asyncio.run(tracker.get_data(Meta()))
@@ -131,7 +134,9 @@ def test_peergarden_has_exact_match_only_attr():
 
 def test_peergarden_book_policy_only_requires_truthful_title():
     tracker = PeerGarden({"DEFAULT": {}, "TRACKERS": {"PEERGARDEN": {}}})
-    meta = Meta(category="BOOK", title="The C Programming Language", unattended=True)
+    meta = Meta(
+        category="BOOK", title="The C Programming Language", unattended=True
+    )
 
     assert missing_book_fields_for_tracker(meta, tracker) == []
     assert tracker.requires_book_cover is False
@@ -140,23 +145,36 @@ def test_peergarden_book_policy_only_requires_truthful_title():
 def test_peergarden_book_policy_still_requires_title():
     tracker = PeerGarden({"DEFAULT": {}, "TRACKERS": {"PEERGARDEN": {}}})
 
-    assert missing_book_fields_for_tracker(Meta(category="BOOK", unattended=True), tracker) == ["title"]
+    assert missing_book_fields_for_tracker(
+        Meta(category="BOOK", unattended=True), tracker
+    ) == ["title"]
 
 
 def test_default_book_policy_keeps_global_required_fields():
-    meta = Meta(category="BOOK", title="The C Programming Language", unattended=True)
+    meta = Meta(
+        category="BOOK", title="The C Programming Language", unattended=True
+    )
 
-    assert missing_book_fields_for_tracker(meta, object()) == ["author", "year", "book_language"]
+    assert missing_book_fields_for_tracker(meta, object()) == [
+        "author",
+        "year",
+        "book_language",
+    ]
 
 
 def test_peergarden_rejects_software_without_dedicated_category():
     tracker = PeerGarden({"DEFAULT": {}, "TRACKERS": {"PEERGARDEN": {}}})
 
-    assert asyncio.run(tracker.get_additional_checks(Meta(category="GAME", software=True))) is False
+    assert (
+        asyncio.run(
+            tracker.get_additional_checks(Meta(category="GAME", software=True))
+        )
+        is False
+    )
 
 
 def test_peergarden_filter_dupes_allows_different_release_group_or_encode():
-    from src.dupe_checking import DupeChecker
+    from src.services.duplicate_check_service import DupeChecker
 
     meta = Meta()
     meta.name = "Movie.2024.1080p.WEB-DL.GroupB"
@@ -172,13 +190,15 @@ def test_peergarden_filter_dupes_allows_different_release_group_or_encode():
     }
 
     dupe_checker = DupeChecker({"DEFAULT": {}})
-    result = asyncio.run(dupe_checker.filter_dupes([candidate], meta, "PEERGARDEN"))
+    result = asyncio.run(
+        dupe_checker.filter_dupes([candidate], meta, "PEERGARDEN")
+    )
 
     assert result == []
 
 
 def test_peergarden_filter_dupes_blocks_exact_renamed_release():
-    from src.dupe_checking import DupeChecker
+    from src.services.duplicate_check_service import DupeChecker
 
     meta = Meta()
     meta.name = "Awesome.Movie.2024.1080p"
@@ -194,14 +214,16 @@ def test_peergarden_filter_dupes_blocks_exact_renamed_release():
     }
 
     dupe_checker = DupeChecker({"DEFAULT": {}})
-    result = asyncio.run(dupe_checker.filter_dupes([candidate], meta, "PEERGARDEN"))
+    result = asyncio.run(
+        dupe_checker.filter_dupes([candidate], meta, "PEERGARDEN")
+    )
 
     assert len(result) == 1
     assert result[0]["id"] == 202
 
 
 def test_peergarden_filter_dupes_allows_same_filename_with_different_size():
-    from src.dupe_checking import DupeChecker
+    from src.services.duplicate_check_service import DupeChecker
 
     meta = Meta()
     meta.name = "Awesome.Movie.2024.1080p"
@@ -217,13 +239,15 @@ def test_peergarden_filter_dupes_allows_same_filename_with_different_size():
     }
 
     dupe_checker = DupeChecker({"DEFAULT": {}})
-    result = asyncio.run(dupe_checker.filter_dupes([candidate], meta, "PEERGARDEN"))
+    result = asyncio.run(
+        dupe_checker.filter_dupes([candidate], meta, "PEERGARDEN")
+    )
 
     assert result == []
 
 
 def test_peergarden_filter_dupes_blocks_exact_disc_release():
-    from src.dupe_checking import DupeChecker
+    from src.services.duplicate_check_service import DupeChecker
 
     meta = Meta()
     meta.is_disc = "BDMV"
@@ -239,14 +263,16 @@ def test_peergarden_filter_dupes_blocks_exact_disc_release():
     }
 
     dupe_checker = DupeChecker({"DEFAULT": {}})
-    result = asyncio.run(dupe_checker.filter_dupes([candidate], meta, "PEERGARDEN"))
+    result = asyncio.run(
+        dupe_checker.filter_dupes([candidate], meta, "PEERGARDEN")
+    )
 
     assert len(result) == 1
     assert result[0]["id"] == 303
 
 
 def test_peergarden_filter_dupes_blocks_exact_renamed_disc_release():
-    from src.dupe_checking import DupeChecker
+    from src.services.duplicate_check_service import DupeChecker
 
     meta = Meta()
     meta.is_disc = "BDMV"
@@ -262,14 +288,16 @@ def test_peergarden_filter_dupes_blocks_exact_renamed_disc_release():
     }
 
     dupe_checker = DupeChecker({"DEFAULT": {}})
-    result = asyncio.run(dupe_checker.filter_dupes([candidate], meta, "PEERGARDEN"))
+    result = asyncio.run(
+        dupe_checker.filter_dupes([candidate], meta, "PEERGARDEN")
+    )
 
     assert len(result) == 1
     assert result[0]["id"] == 305
 
 
 def test_peergarden_filter_dupes_allows_different_size_disc_release():
-    from src.dupe_checking import DupeChecker
+    from src.services.duplicate_check_service import DupeChecker
 
     meta = Meta()
     meta.is_disc = "BDMV"
@@ -285,6 +313,8 @@ def test_peergarden_filter_dupes_allows_different_size_disc_release():
     }
 
     dupe_checker = DupeChecker({"DEFAULT": {}})
-    result = asyncio.run(dupe_checker.filter_dupes([candidate], meta, "PEERGARDEN"))
+    result = asyncio.run(
+        dupe_checker.filter_dupes([candidate], meta, "PEERGARDEN")
+    )
 
     assert result == []

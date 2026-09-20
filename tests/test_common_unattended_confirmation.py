@@ -1,10 +1,8 @@
-# ruff: noqa: S101
-
 import asyncio
 from unittest.mock import AsyncMock, patch
 
-from src.meta import Meta
-from src.trackers.common import Common
+from src.domain_models.release import Meta
+from src.integrations.trackers.common import Common
 
 
 def test_common_confirmation_does_not_prompt_when_unattended():
@@ -13,8 +11,18 @@ def test_common_confirmation_does_not_prompt_when_unattended():
     async def run_checks():
         for confirmed in (False, True):
             meta = Meta(unattended=True, unattended_confirm=confirmed)
-            with patch("src.trackers.common.prompt_in_thread", new=AsyncMock(side_effect=AssertionError("interactive prompt called"))):
-                assert await common.prompt_user_for_confirmation("Continue?", meta) is confirmed
+            with patch(
+                "src.integrations.trackers.common.prompt_in_thread",
+                new=AsyncMock(
+                    side_effect=AssertionError("interactive prompt called")
+                ),
+            ):
+                assert (
+                    await common.prompt_user_for_confirmation(
+                        "Continue?", meta
+                    )
+                    is confirmed
+                )
 
     asyncio.run(run_checks())
 
@@ -23,14 +31,37 @@ def test_common_adult_confirmation_uses_async_prompt_only_when_attended():
     common = Common({"TRACKERS": {}})
 
     async def run_checks():
-        with patch.object(common, "prompt_user_for_confirmation", new=AsyncMock(return_value=True)) as prompt:
-            assert await common.check_and_confirm_adult_media_upload(Meta(adult_media=True), "TEST") is True
+        with patch.object(
+            common,
+            "prompt_user_for_confirmation",
+            new=AsyncMock(return_value=True),
+        ) as prompt:
+            assert (
+                await common.check_and_confirm_adult_media_upload(
+                    Meta(adult_media=True), "TEST"
+                )
+                is True
+            )
             prompt.assert_awaited_once()
 
-        with patch.object(common, "prompt_user_for_confirmation", new=AsyncMock(side_effect=AssertionError("interactive prompt called"))):
-            assert await common.check_and_confirm_adult_media_upload(
-                Meta(adult_media=True, unattended=True, unattended_confirm=True), "TEST"
-            ) is True
+        with patch.object(
+            common,
+            "prompt_user_for_confirmation",
+            new=AsyncMock(
+                side_effect=AssertionError("interactive prompt called")
+            ),
+        ):
+            assert (
+                await common.check_and_confirm_adult_media_upload(
+                    Meta(
+                        adult_media=True,
+                        unattended=True,
+                        unattended_confirm=True,
+                    ),
+                    "TEST",
+                )
+                is True
+            )
 
     asyncio.run(run_checks())
 
@@ -49,6 +80,21 @@ def test_common_tv_patterns_ignore_markers_embedded_in_codec_tokens():
 def test_common_portuguese_description_rejects_ambiguous_english_and_spanish_words():
     common = Common({"TRACKERS": {}})
 
-    assert common.is_portuguese_description("For us, as requested, this is ready for release.") is False
-    assert common.is_portuguese_description("Por que se publica por separado y se comparte.") is False
-    assert common.is_portuguese_description("Esta descrição contém informações válidas para o lançamento.") is True
+    assert (
+        common.is_portuguese_description(
+            "For us, as requested, this is ready for release."
+        )
+        is False
+    )
+    assert (
+        common.is_portuguese_description(
+            "Por que se publica por separado y se comparte."
+        )
+        is False
+    )
+    assert (
+        common.is_portuguese_description(
+            "Esta descrição contém informações válidas para o lançamento."
+        )
+        is True
+    )

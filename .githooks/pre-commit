@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+root="$(git rev-parse --show-toplevel)"
+cd "$root"
+printf 'Running mandatory Radon rank-A complexity gate...\n'
+uv run --frozen --no-sync python scripts/check_radon_complexity.py --staged

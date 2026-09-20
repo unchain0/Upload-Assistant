@@ -6,6 +6,7 @@ param(
     [string]$LauncherDir = (Join-Path $env:LOCALAPPDATA "UploadAssistant\bin"),
     [string]$PythonDownloadBaseUrl = "https://www.python.org/ftp/python",
     [string]$RepositoryZipUrl = "https://github.com/wastaken7/Upload-Assistant/archive/refs/heads/development.zip",
+    [string]$UvVersion = "0.11.32",
     [switch]$ForceUpdate
 )
 
@@ -273,6 +274,59 @@ function Resolve-CommandPath {
     return $null
 }
 
+function Ensure-Uv {
+    $architecture = Get-OsArchitectureName
+    switch ($architecture) {
+        "amd64" {
+            $assetName = "uv-x86_64-pc-windows-msvc.zip"
+            $expectedSha256 = "acfde570451cfdb8689fa159a138ee805ba4e241c466432750302c86254b0984"
+        }
+        "arm64" {
+            $assetName = "uv-aarch64-pc-windows-msvc.zip"
+            $expectedSha256 = "a7427ea0440bb826b6716d1837ff3d173b8e7d496cb09ee8f456b4e023a2fdcd"
+        }
+        default { Fail "Unsupported Windows architecture for uv: $architecture" }
+    }
+
+    $uvInstallDir = Join-Path $env:LOCALAPPDATA "UploadAssistant\uv\$UvVersion"
+    $uvExe = Join-Path $uvInstallDir "uv.exe"
+    if (Test-Path -LiteralPath $uvExe) {
+        $installed = (& $uvExe --version).Trim()
+        if ($installed -eq "uv $UvVersion") {
+            return $uvExe
+        }
+    }
+
+    $archivePath = New-TemporaryDownloadPath -FileName $assetName
+    $extractPath = Join-Path ([System.IO.Path]::GetTempPath()) ("UploadAssistantUv-" + [guid]::NewGuid().ToString("N"))
+    try {
+        Invoke-DownloadFile `
+            -Url "https://github.com/astral-sh/uv/releases/download/$UvVersion/$assetName" `
+            -DestinationPath $archivePath `
+            -Label "uv $UvVersion"
+        $actualSha256 = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actualSha256 -ne $expectedSha256) {
+            Fail "uv archive checksum mismatch: expected $expectedSha256, got $actualSha256"
+        }
+        Expand-Archive -LiteralPath $archivePath -DestinationPath $extractPath -Force
+        $downloadedUv = Get-ChildItem -LiteralPath $extractPath -Filter "uv.exe" -Recurse | Select-Object -First 1 -ExpandProperty FullName
+        $downloadedUvx = Get-ChildItem -LiteralPath $extractPath -Filter "uvx.exe" -Recurse | Select-Object -First 1 -ExpandProperty FullName
+        if (-not $downloadedUv) {
+            Fail "The verified uv archive did not contain uv.exe"
+        }
+        New-Item -ItemType Directory -Path $uvInstallDir -Force | Out-Null
+        Copy-Item -LiteralPath $downloadedUv -Destination $uvExe -Force
+        if ($downloadedUvx) {
+            Copy-Item -LiteralPath $downloadedUvx -Destination (Join-Path $uvInstallDir "uvx.exe") -Force
+        }
+    }
+    finally {
+        Remove-Item -LiteralPath $archivePath -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $extractPath -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    return $uvExe
+}
+
 function Ensure-IsolatedPython {
     $pythonExe = Join-Path $PythonInstallDir "python.exe"
     if (Test-Path -LiteralPath $pythonExe) {
@@ -406,48 +460,31 @@ function Install-Dependencies {
     param([Parameter(Mandatory)][string]$PythonExe)
 
     $venvDir = Join-Path $UaDir ".venv"
-    $venvPython = Join-Path $venvDir "Scripts\python.exe"
-
     if ($ForceUpdate -and (Test-Path -LiteralPath $venvDir)) {
         Write-Step "Removing existing virtual environment"
         Remove-Item -LiteralPath $venvDir -Recurse -Force
     }
 
-    if (-not (Test-Path -LiteralPath $venvPython)) {
-        Write-Step "Creating virtual environment"
-        & $PythonExe -m venv $venvDir
-        if ($LASTEXITCODE -ne 0) {
-            Fail "Failed to create virtual environment"
-        }
+    $uvExe = Ensure-Uv
+    Write-Step "Synchronizing Upload Assistant from uv.lock"
+    $previousEnvironment = $env:UV_PROJECT_ENVIRONMENT
+    try {
+        $env:UV_PROJECT_ENVIRONMENT = $venvDir
+        Invoke-ExternalProcess `
+            -FilePath $uvExe `
+            -Label "uv sync" `
+            -Arguments @(
+                "sync",
+                "--frozen",
+                "--no-dev",
+                "--no-install-project",
+                "--python", $PythonExe,
+                "--project", $UaDir
+            )
     }
-    else {
-        $venvVersion = (& $venvPython -c "import platform; print(platform.python_version())").Trim()
-        if (-not (Test-PythonVersionMatch -InstalledVersion $venvVersion -RequestedVersion $PythonVersion)) {
-            if (-not $ForceUpdate) {
-                Fail "Existing .venv uses Python $venvVersion; rerun with -ForceUpdate to recreate it for Python $PythonVersion."
-            }
-
-            Write-Step "Recreating virtual environment for Python $PythonVersion"
-            Remove-Item -LiteralPath $venvDir -Recurse -Force
-            & $PythonExe -m venv $venvDir
-            if ($LASTEXITCODE -ne 0) {
-                Fail "Failed to recreate virtual environment"
-            }
-        }
+    finally {
+        $env:UV_PROJECT_ENVIRONMENT = $previousEnvironment
     }
-
-    Write-Step "Upgrading pip"
-    & $venvPython -m pip install -U pip
-    if ($LASTEXITCODE -ne 0) {
-        Fail "pip upgrade failed"
-    }
-
-    Write-Step "Installing Upload Assistant dependencies"
-    & $venvPython -m pip install -r (Join-Path $UaDir "requirements.txt")
-    if ($LASTEXITCODE -ne 0) {
-        Fail "Base dependency installation failed"
-    }
-
 }
 
 function Add-DirectoryToUserPath {
@@ -536,7 +573,6 @@ function Write-GlobalLauncher {
     $launcherCmdPath = Join-Path $LauncherDir "ua.cmd"
     $updateCmdPath = Join-Path $LauncherDir "ua-update.cmd"
     $configCmdPath = Join-Path $LauncherDir "ua-config.cmd"
-    $webuiCmdPath = Join-Path $LauncherDir "ua-webui.cmd"
     $launcherCmdContents = @"
 @echo off
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$UaDir\run-ua.ps1" %*
@@ -555,20 +591,13 @@ set "exit_code=%errorlevel%"
 popd
 exit /b %exit_code%
 "@
-    $webuiCmdContents = @"
-@echo off
-start "" "%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "$UaDir\scripts\run-webui-tray.ps1" -AppDir "$UaDir" %*
-exit /b 0
-"@
 
     Remove-Item -LiteralPath (Join-Path $LauncherDir "ua.ps1") -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath (Join-Path $LauncherDir "ua-update.ps1") -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath (Join-Path $LauncherDir "ua-config.ps1") -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath (Join-Path $LauncherDir "ua-webui.ps1") -Force -ErrorAction SilentlyContinue
     Set-Content -LiteralPath $launcherCmdPath -Value $launcherCmdContents -Encoding ASCII
     Set-Content -LiteralPath $updateCmdPath -Value $updateCmdContents -Encoding ASCII
     Set-Content -LiteralPath $configCmdPath -Value $configCmdContents -Encoding ASCII
-    Set-Content -LiteralPath $webuiCmdPath -Value $webuiCmdContents -Encoding ASCII
     Add-DirectoryToUserPath -DirectoryPath $LauncherDir
 }
 
@@ -582,7 +611,6 @@ $venvPythonPath = Join-Path $UaDir ".venv\Scripts\python.exe"
 $launcherCmdPath = Join-Path $LauncherDir "ua.cmd"
 $updateCmdPath = Join-Path $LauncherDir "ua-update.cmd"
 $configCmdPath = Join-Path $LauncherDir "ua-config.cmd"
-$webuiCmdPath = Join-Path $LauncherDir "ua-webui.cmd"
 
 Write-Host ""
 Write-Host "Installation complete."
@@ -600,16 +628,14 @@ Write-Host ""
 Write-Host "Run:"
 Write-Host "  ua `"/path/to/content`" --trackers yourtracker"
 Write-Host "  ua-update"
-Write-Host "  ua-webui"
 Write-Host ""
 Write-Host "Global launcher:"
 Write-Host "  $launcherCmdPath"
 Write-Host "  $updateCmdPath"
 Write-Host "  $configCmdPath"
-Write-Host "  $webuiCmdPath"
 Write-Host ""
 Write-Host "PATH note:"
-Write-Host "  A new PowerShell or Command Prompt window may be required before 'ua', 'ua-update', 'ua-config', and 'ua-webui' are available everywhere."
+Write-Host "  A new PowerShell or Command Prompt window may be required before 'ua', 'ua-update', and 'ua-config' are available everywhere."
 Write-Host ""
 Write-Host "Configuration command (equivalent):"
 Write-Host "  & `"$venvPythonPath`" `"$UaDir\config-generator.py`""

@@ -1,13 +1,11 @@
-# ruff: noqa: S101
-
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-import src.trackerhandle as trackerhandle
-from src.meta import Meta
-from src.upload_safety import book_metadata_cjk_fields
+import src.services.tracker_upload_service as trackerhandle
+from src.domain_models.release import Meta
+from src.engines.upload_safety_policy import book_metadata_cjk_fields
 
 
 @pytest.mark.asyncio
@@ -50,12 +48,20 @@ async def test_zentag_preparation_is_isolated_from_other_trackers(
             meta.filelist = [str(prepared_file)]
             return meta
 
-    monkeypatch.setattr(trackerhandle, "prepare_zenith_audiobook", prepare_audio_stub)
-    monkeypatch.setattr(trackerhandle, "prepare_zenith_ebook", prepare_ebook_stub)
+    monkeypatch.setattr(
+        trackerhandle, "prepare_zenith_audiobook", prepare_audio_stub
+    )
+    monkeypatch.setattr(
+        trackerhandle, "prepare_zenith_ebook", prepare_ebook_stub
+    )
     monkeypatch.setattr(trackerhandle, "Prep", PrepStub)
 
-    peergarden_meta = await trackerhandle.prepare_tracker_meta(meta, "PEERGARDEN", {"DEFAULT": {}})
-    zenith_meta = await trackerhandle.prepare_tracker_meta(meta, "ZENITH", {"DEFAULT": {}})
+    peergarden_meta = await trackerhandle.prepare_tracker_meta(
+        meta, "PEERGARDEN", {"DEFAULT": {}}
+    )
+    zenith_meta = await trackerhandle.prepare_tracker_meta(
+        meta, "ZENITH", {"DEFAULT": {}}
+    )
 
     assert peergarden_meta.path == str(original)
     assert peergarden_meta.filelist == [str(original)]
@@ -78,11 +84,16 @@ async def test_tracker_prepared_metadata_is_reused_for_upload() -> None:
         trackers=["YUSCENE"],
         tracker_status={},
         tracker_prepared_meta={
-            "YUSCENE": Meta(author="Kenji Miyazawa", title="Complete Collection of Children's Stories")
+            "YUSCENE": Meta(
+                author="Kenji Miyazawa",
+                title="Complete Collection of Children's Stories",
+            )
         },
     )
 
-    prepared = await trackerhandle.prepare_tracker_meta(original, "YUSCENE", {"DEFAULT": {}})
+    prepared = await trackerhandle.prepare_tracker_meta(
+        original, "YUSCENE", {"DEFAULT": {}}
+    )
 
     assert prepared.author == "Kenji Miyazawa"
     assert prepared.title == "Complete Collection of Children's Stories"
@@ -98,7 +109,11 @@ def test_cjk_book_metadata_is_detected_before_upload() -> None:
         book_overview="Japanese fairy tales.",
     )
 
-    assert book_metadata_cjk_fields(meta) == ["release name", "author", "title"]
+    assert book_metadata_cjk_fields(meta) == [
+        "release name",
+        "author",
+        "title",
+    ]
 
 
 @pytest.mark.asyncio
@@ -122,10 +137,14 @@ async def test_failed_required_zentag_preparation_disables_zenith(
     async def failed_prepare(*_args: Any, **_kwargs: Any) -> None:
         return None
 
-    monkeypatch.setattr(trackerhandle, "prepare_zenith_audiobook", failed_prepare)
+    monkeypatch.setattr(
+        trackerhandle, "prepare_zenith_audiobook", failed_prepare
+    )
     monkeypatch.setattr(trackerhandle, "prepare_zenith_ebook", failed_prepare)
 
-    prepared = await trackerhandle.prepare_tracker_meta(meta, "ZENITH", {"DEFAULT": {"auto_zentag": True}})
+    prepared = await trackerhandle.prepare_tracker_meta(
+        meta, "ZENITH", {"DEFAULT": {"auto_zentag": True}}
+    )
 
     assert prepared.path == str(source)
     assert status["ZENITH"]["upload"] is False

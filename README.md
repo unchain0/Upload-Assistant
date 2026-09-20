@@ -3,7 +3,7 @@
   <h1>Upload-Assistant</h1>
   <p>Streamline media preparation and uploads across private trackers & usenet indexers.</p>
 
-[![Python Version](https://img.shields.io/badge/Python-3.14%2B-blue?logo=python&logoColor=white)](https://www.python.org/) [![License](https://img.shields.io/badge/License-UAPL%20v1.0-orange)](LICENSE) [![Ruff](https://img.shields.io/badge/Ruff-000000?logo=ruff&logoColor=white)](https://github.com/astral-sh/ruff) [![Pyright](https://img.shields.io/badge/Pyright-strict-brightgreen)](https://github.com/microsoft/pyright) [![code style: prettier](https://img.shields.io/badge/code%20style-prettier-ff69b4.svg)](https://prettier.io) [![Docker Image CI](https://github.com/wastaken7/Upload-Assistant/actions/workflows/docker-image.yml/badge.svg)](https://github.com/wastaken7/Upload-Assistant/actions/workflows/docker-image.yml)
+[![Python Version](https://img.shields.io/badge/Python-3.14%2B-blue?logo=python&logoColor=white)](https://www.python.org/) [![License](https://img.shields.io/badge/License-UAPL%20v1.0-orange)](LICENSE) [![Ruff](https://img.shields.io/badge/Ruff-000000?logo=ruff&logoColor=white)](https://github.com/astral-sh/ruff) [![BasedPyright](https://img.shields.io/badge/BasedPyright-checked-brightgreen)](https://docs.basedpyright.com/) [![Docker Image CI](https://github.com/wastaken7/Upload-Assistant/actions/workflows/docker-image.yml/badge.svg)](https://github.com/wastaken7/Upload-Assistant/actions/workflows/docker-image.yml)
 
 </div>
 
@@ -20,7 +20,6 @@
   - [5. Usenet & Indexer Posting](#5-usenet--indexer-posting)
   - [6. Interactive Screenshot Review Workflow](#6-interactive-screenshot-review-workflow)
   - [7. Persistent TTL-Based Metadata Cache](#7-persistent-ttl-based-metadata-cache)
-  - [8. Modern Web UI & Real-Time Engine](#8-modern-web-ui--real-time-engine)
 - [Supported Sites](#supported-sites)
 - [Setup Guide](#setup-guide)
   - [Step 1: Install Required Tools](#step-1-install-required-tools)
@@ -83,17 +82,12 @@ This branch introduces new media categories and automation features not present 
 
 ### 6. Interactive Screenshot Review Workflow
 
-- **Manual Screenshot Review**: Inspect, add, delete, or replace/recapture individual frames before uploading through the interactive Web UI.
+- **Manual Screenshot Review**: Inspect, add, delete, or replace/recapture individual frames from the interactive CLI workflow before uploading.
 
 ### 7. Persistent TTL-Based Metadata Cache
 
 - **Provider-Scoped API Caching**: Disk-cached metadata for TMDb, IMDb, TVDB, TVmaze, OpenLibrary, IGDB, Discogs, and MusicBrainz.
 - **Performance & Rate Limit Protection**: Configurable TTL and negative caching reuse fetched metadata across runs, avoiding redundant API calls and preventing rate-limiting bans.
-
-### 8. Modern Web UI & Real-Time Engine
-
-- **Full Parity Web UI**: Modern interface providing full feature parity with CLI options (`--webui`).
-- **Real-Time Execution & Presets**: Live log streams, real-time preparation preview, preset saving, and interactive screenshot management.
 
 ## Supported Sites
 
@@ -102,92 +96,92 @@ This branch introduces new media categories and automation features not present 
 
 |                                                                                            | Site                   | Usage                  | Supported Categories         |
 | ------------------------------------------------------------------------------------------ | ---------------------- | ---------------------- | ---------------------------- |
-| <img src="web_ui/static/img/trackers/1ptba.png" width="16" height="16" />                  | 1PTBA                  | 1PTBA                  | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/aither.png" width="16" height="16" />                 | Aither                 | AITHER                 | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/alpharatio.png" width="16" height="16" />             | Alpharatio             | ALPHARATIO             | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/amigosshare.png" width="16" height="16" />            | Amigos-Share           | AMIGOSSHARE            | MOVIE, TV, BOOK, GAME        |
-| <img src="web_ui/static/img/trackers/anthelion.png" width="16" height="16" />              | Anthelion              | ANTHELION              | MOVIE                        |
-| <img src="web_ui/static/img/trackers/asiancinema.png" width="16" height="16" />            | AsianCinema            | ASIANCINEMA            | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/aura4k.png" width="16" height="16" />                 | Aura4K                 | AURA4K                 | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/avistaz.png" width="16" height="16" />                | AvistaZ                | AVISTAZ                | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/beyondhd.png" width="16" height="16" />               | Beyond-HD              | BEYONDHD               | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/bithdtv.png" width="16" height="16" />                | BitHDTV                | BITHDTV                | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/bitporn.png" width="16" height="16" />                | BitPorn                | BITPORN                | XXX                          |
-| <img src="web_ui/static/img/trackers/blutopia.png" width="16" height="16" />               | Blutopia               | BLUTOPIA               | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/bjshare.png" width="16" height="16" />                | BrasilJapão-Share      | BJSHARE                | MOVIE, TV, BOOK, GAME        |
-| <img src="web_ui/static/img/trackers/brasiltracker.png" width="16" height="16" />          | BrasilTracker          | BRASILTRACKER          | MOVIE, TV, BOOK, GAME        |
-| <img src="web_ui/static/img/trackers/capybarabr.png" width="16" height="16" />             | CapybaraBR             | CAPYBARABR             | MOVIE, TV, BOOK, GAME        |
-| <img src="web_ui/static/img/trackers/cathoderaytube.png" width="16" height="16" />         | Cathode-Ray.Tube       | CATHODERAYTUBE         | MOVIE, TV, GAME              |
-| <img src="web_ui/static/img/trackers/cinematik.png" width="16" height="16" />              | Cinematik              | CINEMATIK              | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/cinemaz.png" width="16" height="16" />                | CinemaZ                | CINEMAZ                | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/darkpeers.png" width="16" height="16" />              | DarkPeers              | DARKPEERS              | MOVIE, TV, BOOK, GAME, MUSIC |
-| <img src="web_ui/static/img/trackers/desitorrents.png" width="16" height="16" />           | DesiTorrents           | DESITORRENTS           | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/digitalcore.png" width="16" height="16" />            | DigitalCore            | DIGITALCORE            | MOVIE, TV, BOOK, GAME, MUSIC |
-| <img src="web_ui/static/img/trackers/emuwarez.png" width="16" height="16" />               | Emuwarez               | EMUWAREZ               | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/filelist.png" width="16" height="16" />               | FileList               | FILELIST               | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/funfile.png" width="16" height="16" />                | FunFile                | FUNFILE                | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/greatposterwall.png" width="16" height="16" />        | GreatPosterWall        | GREATPOSTERWALL        | MOVIE                        |
-| <img src="web_ui/static/img/trackers/hawkeuno.png" width="16" height="16" />               | hawke-uno              | HAWKEUNO               | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/hdbits.png" width="16" height="16" />                 | HDBits                 | HDBITS                 | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/hdspace.png" width="16" height="16" />                | HD-Space               | HDSPACE                | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/hdtorrents.png" width="16" height="16" />             | HD-Torrents            | HDTORRENTS             | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/homiehelpdesk.png" width="16" height="16" />          | HomieHelpDesk          | HOMIEHELPDESK          | MOVIE, TV, BOOK, GAME, MUSIC |
-| <img src="web_ui/static/img/trackers/immortalseed.png" width="16" height="16" />           | ImmortalSeed           | IMMORTALSEED           | MOVIE, TV, BOOK, MUSIC, GAME |
-| <img src="web_ui/static/img/trackers/infinityhd.png" width="16" height="16" />             | InfinityHD             | INFINITYHD             | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/iptorrents.png" width="16" height="16" />             | IPTorrents             | IPTORRENTS             | MOVIE, TV, BOOK, GAME, MUSIC |
-| <img src="web_ui/static/img/trackers/itatorrents.png" width="16" height="16" />            | ItaTorrents            | ITATORRENTS            | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/lajidui.png" width="16" height="16" />                | lajidui                | LAJIDUI                | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/lemonhd.png" width="16" height="16" />                | LemonHD                | LEMONHD                | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/lastdigitalunderground.png" width="16" height="16" /> | LastDigitalUnderground | LASTDIGITALUNDERGROUND | MOVIE, TV, BOOK              |
-| <img src="web_ui/static/img/trackers/latteam.png" width="16" height="16" />                | Lat-Team               | LATTEAM                | MOVIE, TV, BOOK              |
-| <img src="web_ui/static/img/trackers/locadora.png" width="16" height="16" />               | Locadora               | LOCADORA               | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/longpt.png" width="16" height="16" />                 | LongPT                 | LONGPT                 | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/lst.png" width="16" height="16" />                    | LST                    | LST                    | MOVIE, TV, BOOK, MUSIC, XXX  |
-| <img src="web_ui/static/img/trackers/luminarr.png" width="16" height="16" />               | Luminarr               | LUMINARR               | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/makingoff.png" width="16" height="16" />              | MakingOff              | MAKINGOFF              | MOVIE                        |
-| <img src="web_ui/static/img/trackers/midnightscene.png" width="16" height="16" />          | MidnightScene          | MIDNIGHTSCENE          | MOVIE, TV, GAME, MUSIC       |
-| <img src="web_ui/static/img/trackers/mteam.png" width="16" height="16" />                  | M-Team                 | MTEAM                  | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/nebulance.png" width="16" height="16" />              | Nebulance              | NEBULANCE              | TV                           |
-| <img src="web_ui/static/img/trackers/nordicquality.png" width="16" height="16" />          | NordicQuality          | NORDICQUALITY          | MOVIE, TV, MUSIC, BOOK, GAME |
-| <img src="web_ui/static/img/trackers/oldtoonsworld.png" width="16" height="16" />          | OldToonsWorld          | OLDTOONSWORLD          | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/onlyencodes.png" width="16" height="16" />            | OnlyEncodes+           | ONLYENCODES            | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/orpheus.png" width="16" height="16" />                | Orpheus                | ORPHEUS                | MUSIC                        |
-| <img src="web_ui/static/img/trackers/passthepopcorn.png" width="16" height="16" />         | PassThePopcorn         | PASSTHEPOPCORN         | MOVIE                        |
-| <img src="web_ui/static/img/trackers/peergarden.png" width="16" height="16" />             | PeerGarden             | PEERGARDEN             | MOVIE, TV, GAME, BOOK, MUSIC |
-| <img src="web_ui/static/img/trackers/polishtorrent.png" width="16" height="16" />          | PolishTorrent          | POLISHTORRENT          | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/portugas.png" width="16" height="16" />               | Portugas               | PORTUGAS               | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/privatehd.png" width="16" height="16" />              | PrivateHD              | PRIVATEHD              | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/ptgtk.png" width="16" height="16" />                  | PT GTK                 | PTGTK                  | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/ptzone.png" width="16" height="16" />                 | PTZone                 | PTZONE                 | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/ptcafe.png" width="16" height="16" />                 | ptcafe                 | PTCAFE                 | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/pterclub.png" width="16" height="16" />               | PTerClub               | PTERCLUB               | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/ptfans.png" width="16" height="16" />                 | PTFans                 | PTFANS                 | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/ptskit.png" width="16" height="16" />                 | PTSKIT                 | PTSKIT                 | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/racing4everyone.png" width="16" height="16" />        | Racing4Everyone        | RACING4EVERYONE        | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/railgunpt.png" width="16" height="16" />              | RailgunPT              | RAILGUNPT              | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/rastastugan.png" width="16" height="16" />            | Rastastugan            | RASTASTUGAN            | MOVIE, TV, BOOK, GAME, MUSIC |
-| <img src="web_ui/static/img/trackers/reelflix.png" width="16" height="16" />               | ReelFLiX               | REELFLIX               | MOVIE                        |
-| <img src="web_ui/static/img/trackers/retroflix.png" width="16" height="16" />              | RetroFlix              | RETROFLIX              | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/retromoviesclub.png" width="16" height="16" />        | RetroMoviesClub        | RETROMOVIESCLUB        | MOVIE                        |
-| <img src="web_ui/static/img/trackers/samaritano.png" width="16" height="16" />             | Samaritano             | SAMARITANO             | MOVIE, TV, BOOK, GAME        |
-| <img src="web_ui/static/img/trackers/seedpool.png" width="16" height="16" />               | seedpool               | SEEDPOOL               | MOVIE, TV, BOOK, GAME, MUSIC |
-| <img src="web_ui/static/img/trackers/shareisland.png" width="16" height="16" />            | ShareIsland            | SHAREISLAND            | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/skipthecommercials.png" width="16" height="16" />     | SkipTheCommerials      | SKIPTHECOMMERCIALS     | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/speedapp.png" width="16" height="16" />               | SpeedApp               | SPEEDAPP               | MOVIE, TV, BOOK, GAME, MUSIC |
-| <img src="web_ui/static/img/trackers/swarmazon.png" width="16" height="16" />              | Swarmazon              | SWARMAZON              | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/theleachzone.png" width="16" height="16" />           | The Leach Zone         | THELEACHZONE           | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/theoldschool.png" width="16" height="16" />           | TheOldSchool           | THEOLDSCHOOL           | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/torrenteros.png" width="16" height="16" />            | Torrenteros            | TORRENTEROS            | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/torrenthr.png" width="16" height="16" />              | TorrentHR              | TORRENTHR              | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/torrentleech.png" width="16" height="16" />           | TorrentLeech           | TORRENTLEECH           | MOVIE, TV, BOOK, GAME, MUSIC |
-| <img src="web_ui/static/img/trackers/totheglory.png" width="16" height="16" />             | ToTheGlory             | TOTHEGLORY             | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/tvchaosuk.png" width="16" height="16" />              | TVChaosUK              | TVCHAOSUK              | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/xingyungept.png" width="16" height="16" />            | XingyungePT            | XINGYUNGEPT            | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/ulcx.png" width="16" height="16" />                   | ULCX                   | ULCX                   | MOVIE, TV                    |
+| <img src="docs/assets/trackers/1ptba.png" width="16" height="16" />                  | 1PTBA                  | 1PTBA                  | MOVIE, TV                    |
+| <img src="docs/assets/trackers/aither.png" width="16" height="16" />                 | Aither                 | AITHER                 | MOVIE, TV                    |
+| <img src="docs/assets/trackers/alpharatio.png" width="16" height="16" />             | Alpharatio             | ALPHARATIO             | MOVIE, TV                    |
+| <img src="docs/assets/trackers/amigosshare.png" width="16" height="16" />            | Amigos-Share           | AMIGOSSHARE            | MOVIE, TV, BOOK, GAME        |
+| <img src="docs/assets/trackers/anthelion.png" width="16" height="16" />              | Anthelion              | ANTHELION              | MOVIE                        |
+| <img src="docs/assets/trackers/asiancinema.png" width="16" height="16" />            | AsianCinema            | ASIANCINEMA            | MOVIE, TV                    |
+| <img src="docs/assets/trackers/aura4k.png" width="16" height="16" />                 | Aura4K                 | AURA4K                 | MOVIE, TV                    |
+| <img src="docs/assets/trackers/avistaz.png" width="16" height="16" />                | AvistaZ                | AVISTAZ                | MOVIE, TV                    |
+| <img src="docs/assets/trackers/beyondhd.png" width="16" height="16" />               | Beyond-HD              | BEYONDHD               | MOVIE, TV                    |
+| <img src="docs/assets/trackers/bithdtv.png" width="16" height="16" />                | BitHDTV                | BITHDTV                | MOVIE, TV                    |
+| <img src="docs/assets/trackers/bitporn.png" width="16" height="16" />                | BitPorn                | BITPORN                | XXX                          |
+| <img src="docs/assets/trackers/blutopia.png" width="16" height="16" />               | Blutopia               | BLUTOPIA               | MOVIE, TV                    |
+| <img src="docs/assets/trackers/bjshare.png" width="16" height="16" />                | BrasilJapão-Share      | BJSHARE                | MOVIE, TV, BOOK, GAME        |
+| <img src="docs/assets/trackers/brasiltracker.png" width="16" height="16" />          | BrasilTracker          | BRASILTRACKER          | MOVIE, TV, BOOK, GAME        |
+| <img src="docs/assets/trackers/capybarabr.png" width="16" height="16" />             | CapybaraBR             | CAPYBARABR             | MOVIE, TV, BOOK, GAME        |
+| <img src="docs/assets/trackers/cathoderaytube.png" width="16" height="16" />         | Cathode-Ray.Tube       | CATHODERAYTUBE         | MOVIE, TV, GAME              |
+| <img src="docs/assets/trackers/cinematik.png" width="16" height="16" />              | Cinematik              | CINEMATIK              | MOVIE, TV                    |
+| <img src="docs/assets/trackers/cinemaz.png" width="16" height="16" />                | CinemaZ                | CINEMAZ                | MOVIE, TV                    |
+| <img src="docs/assets/trackers/darkpeers.png" width="16" height="16" />              | DarkPeers              | DARKPEERS              | MOVIE, TV, BOOK, GAME, MUSIC |
+| <img src="docs/assets/trackers/desitorrents.png" width="16" height="16" />           | DesiTorrents           | DESITORRENTS           | MOVIE, TV                    |
+| <img src="docs/assets/trackers/digitalcore.png" width="16" height="16" />            | DigitalCore            | DIGITALCORE            | MOVIE, TV, BOOK, GAME, MUSIC |
+| <img src="docs/assets/trackers/emuwarez.png" width="16" height="16" />               | Emuwarez               | EMUWAREZ               | MOVIE, TV                    |
+| <img src="docs/assets/trackers/filelist.png" width="16" height="16" />               | FileList               | FILELIST               | MOVIE, TV                    |
+| <img src="docs/assets/trackers/funfile.png" width="16" height="16" />                | FunFile                | FUNFILE                | MOVIE, TV                    |
+| <img src="docs/assets/trackers/greatposterwall.png" width="16" height="16" />        | GreatPosterWall        | GREATPOSTERWALL        | MOVIE                        |
+| <img src="docs/assets/trackers/hawkeuno.png" width="16" height="16" />               | hawke-uno              | HAWKEUNO               | MOVIE, TV                    |
+| <img src="docs/assets/trackers/hdbits.png" width="16" height="16" />                 | HDBits                 | HDBITS                 | MOVIE, TV                    |
+| <img src="docs/assets/trackers/hdspace.png" width="16" height="16" />                | HD-Space               | HDSPACE                | MOVIE, TV                    |
+| <img src="docs/assets/trackers/hdtorrents.png" width="16" height="16" />             | HD-Torrents            | HDTORRENTS             | MOVIE, TV                    |
+| <img src="docs/assets/trackers/homiehelpdesk.png" width="16" height="16" />          | HomieHelpDesk          | HOMIEHELPDESK          | MOVIE, TV, BOOK, GAME, MUSIC |
+| <img src="docs/assets/trackers/immortalseed.png" width="16" height="16" />           | ImmortalSeed           | IMMORTALSEED           | MOVIE, TV, BOOK, MUSIC, GAME |
+| <img src="docs/assets/trackers/infinityhd.png" width="16" height="16" />             | InfinityHD             | INFINITYHD             | MOVIE, TV                    |
+| <img src="docs/assets/trackers/iptorrents.png" width="16" height="16" />             | IPTorrents             | IPTORRENTS             | MOVIE, TV, BOOK, GAME, MUSIC |
+| <img src="docs/assets/trackers/itatorrents.png" width="16" height="16" />            | ItaTorrents            | ITATORRENTS            | MOVIE, TV                    |
+| <img src="docs/assets/trackers/lajidui.png" width="16" height="16" />                | lajidui                | LAJIDUI                | MOVIE, TV                    |
+| <img src="docs/assets/trackers/lemonhd.png" width="16" height="16" />                | LemonHD                | LEMONHD                | MOVIE, TV                    |
+| <img src="docs/assets/trackers/lastdigitalunderground.png" width="16" height="16" /> | LastDigitalUnderground | LASTDIGITALUNDERGROUND | MOVIE, TV, BOOK              |
+| <img src="docs/assets/trackers/latteam.png" width="16" height="16" />                | Lat-Team               | LATTEAM                | MOVIE, TV, BOOK              |
+| <img src="docs/assets/trackers/locadora.png" width="16" height="16" />               | Locadora               | LOCADORA               | MOVIE, TV                    |
+| <img src="docs/assets/trackers/longpt.png" width="16" height="16" />                 | LongPT                 | LONGPT                 | MOVIE, TV                    |
+| <img src="docs/assets/trackers/lst.png" width="16" height="16" />                    | LST                    | LST                    | MOVIE, TV, BOOK, MUSIC, XXX  |
+| <img src="docs/assets/trackers/luminarr.png" width="16" height="16" />               | Luminarr               | LUMINARR               | MOVIE, TV                    |
+| <img src="docs/assets/trackers/makingoff.png" width="16" height="16" />              | MakingOff              | MAKINGOFF              | MOVIE                        |
+| <img src="docs/assets/trackers/midnightscene.png" width="16" height="16" />          | MidnightScene          | MIDNIGHTSCENE          | MOVIE, TV, GAME, MUSIC       |
+| <img src="docs/assets/trackers/mteam.png" width="16" height="16" />                  | M-Team                 | MTEAM                  | MOVIE, TV                    |
+| <img src="docs/assets/trackers/nebulance.png" width="16" height="16" />              | Nebulance              | NEBULANCE              | TV                           |
+| <img src="docs/assets/trackers/nordicquality.png" width="16" height="16" />          | NordicQuality          | NORDICQUALITY          | MOVIE, TV, MUSIC, BOOK, GAME |
+| <img src="docs/assets/trackers/oldtoonsworld.png" width="16" height="16" />          | OldToonsWorld          | OLDTOONSWORLD          | MOVIE, TV                    |
+| <img src="docs/assets/trackers/onlyencodes.png" width="16" height="16" />            | OnlyEncodes+           | ONLYENCODES            | MOVIE, TV                    |
+| <img src="docs/assets/trackers/orpheus.png" width="16" height="16" />                | Orpheus                | ORPHEUS                | MUSIC                        |
+| <img src="docs/assets/trackers/passthepopcorn.png" width="16" height="16" />         | PassThePopcorn         | PASSTHEPOPCORN         | MOVIE                        |
+| <img src="docs/assets/trackers/peergarden.png" width="16" height="16" />             | PeerGarden             | PEERGARDEN             | MOVIE, TV, GAME, BOOK, MUSIC |
+| <img src="docs/assets/trackers/polishtorrent.png" width="16" height="16" />          | PolishTorrent          | POLISHTORRENT          | MOVIE, TV                    |
+| <img src="docs/assets/trackers/portugas.png" width="16" height="16" />               | Portugas               | PORTUGAS               | MOVIE, TV                    |
+| <img src="docs/assets/trackers/privatehd.png" width="16" height="16" />              | PrivateHD              | PRIVATEHD              | MOVIE, TV                    |
+| <img src="docs/assets/trackers/ptgtk.png" width="16" height="16" />                  | PT GTK                 | PTGTK                  | MOVIE, TV                    |
+| <img src="docs/assets/trackers/ptzone.png" width="16" height="16" />                 | PTZone                 | PTZONE                 | MOVIE, TV                    |
+| <img src="docs/assets/trackers/ptcafe.png" width="16" height="16" />                 | ptcafe                 | PTCAFE                 | MOVIE, TV                    |
+| <img src="docs/assets/trackers/pterclub.png" width="16" height="16" />               | PTerClub               | PTERCLUB               | MOVIE, TV                    |
+| <img src="docs/assets/trackers/ptfans.png" width="16" height="16" />                 | PTFans                 | PTFANS                 | MOVIE, TV                    |
+| <img src="docs/assets/trackers/ptskit.png" width="16" height="16" />                 | PTSKIT                 | PTSKIT                 | MOVIE, TV                    |
+| <img src="docs/assets/trackers/racing4everyone.png" width="16" height="16" />        | Racing4Everyone        | RACING4EVERYONE        | MOVIE, TV                    |
+| <img src="docs/assets/trackers/railgunpt.png" width="16" height="16" />              | RailgunPT              | RAILGUNPT              | MOVIE, TV                    |
+| <img src="docs/assets/trackers/rastastugan.png" width="16" height="16" />            | Rastastugan            | RASTASTUGAN            | MOVIE, TV, BOOK, GAME, MUSIC |
+| <img src="docs/assets/trackers/reelflix.png" width="16" height="16" />               | ReelFLiX               | REELFLIX               | MOVIE                        |
+| <img src="docs/assets/trackers/retroflix.png" width="16" height="16" />              | RetroFlix              | RETROFLIX              | MOVIE, TV                    |
+| <img src="docs/assets/trackers/retromoviesclub.png" width="16" height="16" />        | RetroMoviesClub        | RETROMOVIESCLUB        | MOVIE                        |
+| <img src="docs/assets/trackers/samaritano.png" width="16" height="16" />             | Samaritano             | SAMARITANO             | MOVIE, TV, BOOK, GAME        |
+| <img src="docs/assets/trackers/seedpool.png" width="16" height="16" />               | seedpool               | SEEDPOOL               | MOVIE, TV, BOOK, GAME, MUSIC |
+| <img src="docs/assets/trackers/shareisland.png" width="16" height="16" />            | ShareIsland            | SHAREISLAND            | MOVIE, TV                    |
+| <img src="docs/assets/trackers/skipthecommercials.png" width="16" height="16" />     | SkipTheCommerials      | SKIPTHECOMMERCIALS     | MOVIE, TV                    |
+| <img src="docs/assets/trackers/speedapp.png" width="16" height="16" />               | SpeedApp               | SPEEDAPP               | MOVIE, TV, BOOK, GAME, MUSIC |
+| <img src="docs/assets/trackers/swarmazon.png" width="16" height="16" />              | Swarmazon              | SWARMAZON              | MOVIE, TV                    |
+| <img src="docs/assets/trackers/theleachzone.png" width="16" height="16" />           | The Leach Zone         | THELEACHZONE           | MOVIE, TV                    |
+| <img src="docs/assets/trackers/theoldschool.png" width="16" height="16" />           | TheOldSchool           | THEOLDSCHOOL           | MOVIE, TV                    |
+| <img src="docs/assets/trackers/torrenteros.png" width="16" height="16" />            | Torrenteros            | TORRENTEROS            | MOVIE, TV                    |
+| <img src="docs/assets/trackers/torrenthr.png" width="16" height="16" />              | TorrentHR              | TORRENTHR              | MOVIE, TV                    |
+| <img src="docs/assets/trackers/torrentleech.png" width="16" height="16" />           | TorrentLeech           | TORRENTLEECH           | MOVIE, TV, BOOK, GAME, MUSIC |
+| <img src="docs/assets/trackers/totheglory.png" width="16" height="16" />             | ToTheGlory             | TOTHEGLORY             | MOVIE, TV                    |
+| <img src="docs/assets/trackers/tvchaosuk.png" width="16" height="16" />              | TVChaosUK              | TVCHAOSUK              | MOVIE, TV                    |
+| <img src="docs/assets/trackers/xingyungept.png" width="16" height="16" />            | XingyungePT            | XINGYUNGEPT            | MOVIE, TV                    |
+| <img src="docs/assets/trackers/ulcx.png" width="16" height="16" />                   | ULCX                   | ULCX                   | MOVIE, TV                    |
 |                                                                                            | Unwalled               | UNWALLED               | PODCAST                      |
-| <img src="web_ui/static/img/trackers/utopia.png" width="16" height="16" />                 | UTOPIA                 | UTOPIA                 | MOVIE, TV                    |
-| <img src="web_ui/static/img/trackers/yuscene.png" width="16" height="16" />                | YUSCENE                | YUSCENE                | MOVIE, TV, BOOK, GAME, MUSIC |
-| <img src="web_ui/static/img/trackers/zenith.png" width="16" height="16" />                 | Zenith                 | ZENITH                 | MOVIE, TV, BOOK, GAME, MUSIC |
+| <img src="docs/assets/trackers/utopia.png" width="16" height="16" />                 | UTOPIA                 | UTOPIA                 | MOVIE, TV                    |
+| <img src="docs/assets/trackers/yuscene.png" width="16" height="16" />                | YUSCENE                | YUSCENE                | MOVIE, TV, BOOK, GAME, MUSIC |
+| <img src="docs/assets/trackers/zenith.png" width="16" height="16" />                 | Zenith                 | ZENITH                 | MOVIE, TV, BOOK, GAME, MUSIC |
 
 </details>
 
@@ -196,9 +190,9 @@ This branch introduces new media categories and automation features not present 
 
 |                                                                                 | Site        | Usage       | Supported Categories         |
 | ------------------------------------------------------------------------------- | ----------- | ----------- | ---------------------------- |
-| <img src="web_ui/static/img/trackers/curupira.png" width="16" height="16" />    | Curupira    | CURUPIRA    | MOVIE, TV, BOOK, GAME        |
-| <img src="web_ui/static/img/trackers/drunkenslug.png" width="16" height="16" /> | DrunkenSlug | DRUNKENSLUG | MOVIE, TV, BOOK, GAME        |
-| <img src="web_ui/static/img/trackers/nzbgeek.png" width="16" height="16" />     | NZBGeek     | NZBGEEK     | MOVIE, TV, BOOK, GAME, MUSIC |
+| <img src="docs/assets/trackers/curupira.png" width="16" height="16" />    | Curupira    | CURUPIRA    | MOVIE, TV, BOOK, GAME        |
+| <img src="docs/assets/trackers/drunkenslug.png" width="16" height="16" /> | DrunkenSlug | DRUNKENSLUG | MOVIE, TV, BOOK, GAME        |
+| <img src="docs/assets/trackers/nzbgeek.png" width="16" height="16" />     | NZBGeek     | NZBGEEK     | MOVIE, TV, BOOK, GAME, MUSIC |
 
 </details>
 
@@ -254,37 +248,23 @@ If you do not want to install Git, you can download a copy of the files directly
 
 ---
 
-### Step 3: Install Python Packages (Linux/macOS)
+### Step 3: Synchronize Python Packages (Linux/macOS)
 
-On Linux/macOS, open a terminal, navigate to the folder where you downloaded Upload Assistant, and run:
+Upload Assistant uses [uv](https://docs.astral.sh/uv/) exclusively. Install uv, open a terminal in the checkout, and synchronize the committed lockfile:
 
 ```bash
-pip3 install --user -U -r requirements.txt
+uv sync --frozen --no-dev --no-install-project
 ```
 
-> [!TIP]
-> **Getting an "externally managed environment" error?**
-> This means your system prefers keeping Python packages separated. You can set up a "Virtual Environment" (a private workspace for this tool) by running:
->
-> - **Linux / macOS:**
->
->   ```bash
->   python3 -m venv venv
->   source venv/bin/activate
->   pip install -r requirements.txt
->   ```
+The command creates and maintains `.venv` automatically. Do not install dependencies with pip or maintain a separate requirements file. Contributors can include the development tools with `uv sync --frozen --all-groups --no-install-project`. Contributors should then run `scripts/install-git-hooks.sh`; the committed pre-commit hook rejects any Python block above Radon rank A (cyclomatic complexity greater than 5), matching the CI/release quality gate.
 
 ---
 
 ### Step 4: Configure the Assistant
 
-You need to add your API keys (like TMDb) and tracker credentials so the tool knows where to upload.
+You need to add your API keys (like TMDb) and tracker credentials so the CLI knows where to upload.
 
-#### Method A: Use the Web UI (Easiest)
-
-If you plan to use the Web UI, **your configuration file will be generated automatically** when you launch and configure it for the first time.
-
-#### Method B: Use the Interactive Generator
+#### Method A: Use the Interactive Generator
 
 In your terminal, run the command for your operating system and follow the on-screen prompts:
 
@@ -292,10 +272,10 @@ In your terminal, run the command for your operating system and follow the on-sc
 - **Linux / macOS:**
 
   ```bash
-  python3 config-generator.py
+  uv run python config-generator.py
   ```
 
-#### Method C: Manual Configuration
+#### Method B: Manual Configuration
 
 1. Go to the `data/` folder inside the project.
 2. Copy `example_config.py` and rename the copy to `config.py` (leave the original `example_config.py` file as-is).
@@ -323,11 +303,11 @@ In your terminal, run the command for your operating system and follow the on-sc
 
 - Or, if you downloaded the ZIP file, download a fresh ZIP from GitHub and overwrite your existing files.
 - For the Windows installation, run `ua-update`.
-- Run the command to update dependencies:
-  - **Linux / macOS:** `python3 -m pip install --user -U -r requirements.txt`
+- Synchronize the locked environment:
+  - **Linux / macOS:** `uv sync --frozen --no-dev --no-install-project`
 - Run the configuration generator to fetch any new settings:
   - **Windows:** run `ua-config` from any folder.
-  - **Linux / macOS:** `python3 config-generator.py`
+  - **Linux / macOS:** `uv run python config-generator.py`
 
 ## **CLI Usage:**
 
@@ -342,7 +322,7 @@ To run the assistant, use the command for your system:
 - **Linux / macOS:**
 
   ```bash
-  python3 upload.py "/path/to/content" --args
+  uv run python upload.py "/path/to/content" --args
   ```
 
 Arguments are optional and normally follow the path. Input modes such as `--paths-from-stdin` may omit the positional path. For a list of all available arguments, pass `--help`.
@@ -357,8 +337,6 @@ Visit our wonderful [docker usage](docs/docker.md)
 
 Also see this excellent video put together by a community member <https://videos.badkitty.zone/ua>
 
-Web UI setup (Docker GUI / Unraid): [docs/docker-gui.md](docs/docker-gui.md)
-Web UI docs: [docs/web-ui.md](docs/web-ui.md)
 
 ## **Attributions:**
 

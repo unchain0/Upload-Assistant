@@ -1,17 +1,21 @@
 """Compatibility package for user-owned runtime configuration."""
 
-import shutil
+from __future__ import annotations
+
 import warnings
 
-from src.app_paths import CODE_DIR, CONFIG_PATH, DATA_DIR, LEGACY_CONFIG_PATH, ensure_data_dir
+from src.bootstrap import prepare_runtime_configuration
+from src.integrations.filesystem.paths import DATA_DIR
 
-ensure_data_dir()
-if not CONFIG_PATH.exists():
-    if LEGACY_CONFIG_PATH.is_file():
-        shutil.copyfile(LEGACY_CONFIG_PATH, CONFIG_PATH)
-        warnings.warn(f"Copied legacy configuration to {CONFIG_PATH}. The checkout copy is kept read-only.", stacklevel=2)
-    else:
-        shutil.copy2(CODE_DIR / "data" / "example_config.py", CONFIG_PATH)
+_migration = prepare_runtime_configuration()
+if _migration.changed:
+    warnings.warn(
+        "Reconciled the runtime configuration using configured legacy values "
+        f"({len(_migration.migrated_paths)} recovered, "
+        f"{len(_migration.added_default_paths)} schema defaults added). "
+        "The previous runtime file was preserved as config.py.pre-masa.bak.",
+        stacklevel=2,
+    )
 
 # Resolve the user-owned config first; bundled static resources remain available
 # from this package directory.

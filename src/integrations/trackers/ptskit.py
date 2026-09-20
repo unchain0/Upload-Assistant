@@ -1,0 +1,158 @@
+# Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
+import platform
+from typing import Any, cast
+
+import httpx
+from bs4 import BeautifulSoup
+
+from src.domain_models.release import Meta
+from src.integrations.trackers.common import Common
+from src.integrations.trackers.cookie_auth import (
+    CookieAuthUploader,
+    CookieValidator,
+)
+from src.integrations.trackers.description_builder import DescriptionBuilder
+
+Config = dict[str, Any]
+
+
+class Ptskit:
+    """
+    PTSKIT is a CHINESE Private Torrent Tracker for MOVIES / TV / GENERAL
+    """
+
+    auth_type = "cookies"
+    tracker = "PTSKIT"
+    display_name = "Ptskit"
+    allows_bloated_audio = True
+    banned_groups = ()
+    source_flag = "[www.ptskit.org] PTSKIT"
+    base_url = "https://www.ptskit.org"
+    auth_token: str | None = None
+    torrent_url = "https://www.ptskit.org/details.php?id="
+    supported_categories = ("TV", "MOVIE")
+    tracker_urls = ("tracker.ptskit.com",)
+
+    def __init__(self, config: Config) -> None:
+        self.config: Config = config
+        self.common = Common(config)
+        self.cookie_validator = CookieValidator(config)
+        self.cookie_auth_uploader = CookieAuthUploader(config)
+        self.announce = str(
+            self.config["TRACKERS"][self.tracker]["announce_url"]
+        )
+        self.session = httpx.AsyncClient(
+            headers={
+                "User-Agent": f"Upload-Assistant/2.3 ({platform.system()} {platform.release()})"
+            },
+            timeout=60.0,
+        )
+
+    async def validate_credentials(self, meta: Meta) -> bool:
+        cookies = await self.cookie_validator.load_session_cookies(
+            meta, self.tracker
+        )
+        self.session.cookies = cast(Any, cookies)
+        return cookies is not None
+
+    async def get_type(self, meta: Meta) -> str | None:
+        if meta.anime:
+            return "407"
+
+        category_map = {"TV": "405", "MOVIE": "404"}
+
+        return category_map.get(meta.category)
+
+    async def generate_description(self, meta: Meta) -> str:
+        builder = DescriptionBuilder(self.tracker, self.config)
+        return await builder.general_description_generator(
+            meta,
+            book=False,
+            game=False,
+            nfo=False,
+            signature=f"[right][url=https://github.com/wastaken7/Upload-Assistant][size=1]{meta.ua_signature}[/size][/url][/right]",
+        )
+
+    async def get_additional_checks(self, meta: Meta) -> bool:
+        return await self.common.check_language_requirements(
+            meta,
+            self.tracker,
+            languages_to_check=["mandarin", "chinese"],
+            check_audio=True,
+            check_subtitle=True,
+        )
+
+    @staticmethod
+    def _search_params(meta: Meta) -> dict[str, Any]:
+        return {
+            "incldead": 1,
+            "search": str(meta.imdb_info.get("imdbID", "")),
+            "search_area": 4,
+        }
+
+    @staticmethod
+    def _login_required(response: httpx.Response) -> bool:
+        return "login.php" in str(response.url) or "login.php" in response.text
+
+    @staticmethod
+    def _torrent_names(html_text: str) -> list[str]:
+        soup = BeautifulSoup(html_text, "html.parser")
+        torrents_table = soup.find("table", class_="torrents")
+        if torrents_table is None:
+            return []
+        names: list[str] = []
+        for torrent_table in torrents_table.find_all(
+            "table", class_="torrentname"
+        ):
+            name_tag = torrent_table.find("b")
+            if name_tag is not None:
+                names.append(name_tag.get_text(strip=True))
+        return names
+
+    async def search_existing(self, meta: Meta) -> list[str] | None:
+        response = await self.session.get(
+            f"{self.base_url}/torrents.php",
+            params=self._search_params(meta),
+            cookies=self.session.cookies,
+        )
+        if self._login_required(response):
+            await self.cookie_validator.handle_validation_failure(
+                meta, self.tracker, response.text
+            )
+            meta.skipping = self.tracker
+            return []
+        response.raise_for_status()
+        return self._torrent_names(response.text)
+
+    async def get_data(self, meta: Meta) -> dict[str, Any]:
+        data: dict[str, Any] = {
+            "name": await self.get_name(meta),
+            "url": str(meta.imdb_info.get("imdb_url", "")),
+            "descr": await self.generate_description(meta),
+            "type": await self.get_type(meta),
+        }
+
+        return data
+
+    async def upload(self, meta: Meta) -> bool:
+        cookies = await self.cookie_validator.load_session_cookies(
+            meta, self.tracker
+        )
+        self.session.cookies = cast(Any, cookies)
+        data = await self.get_data(meta)
+
+        return await self.cookie_auth_uploader.handle_upload(
+            meta=meta,
+            tracker=self.tracker,
+            source_flag=self.source_flag,
+            torrent_url=self.torrent_url,
+            data=data,
+            torrent_field_name="file",
+            upload_cookies=self.session.cookies,
+            upload_url=f"{self.base_url}/takeupload.php",
+            id_pattern=r"download\.php\?id=([^&]+)",
+            success_status_code="302, 303",
+        )
+
+    async def get_name(self, meta: Meta) -> str:
+        return meta.name

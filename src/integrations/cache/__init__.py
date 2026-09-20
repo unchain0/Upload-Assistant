@@ -1,0 +1,1 @@
+"""MASA integration adapters."""

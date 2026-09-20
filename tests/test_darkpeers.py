@@ -1,28 +1,42 @@
-# ruff: noqa: S101
 """Regression tests for DarkPeers-specific BOOK and MUSIC title rules."""
 
 import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
-from src.meta import Meta
-from src.trackers.UNIT3D.darkpeers import DarkPeers
+from src.domain_models.release import Meta
+from src.integrations.trackers.UNIT3D.darkpeers import DarkPeers
 
 
 def test_darkpeers_rejects_malformed_filelists_for_all_categories():
-    tracker = DarkPeers({"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}})
+    tracker = DarkPeers(
+        {"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}}
+    )
 
     for category in ("MOVIE", "TV", "BOOK", "GAME"):
-        assert asyncio.run(tracker.get_additional_checks(Meta(category=category, filelist=1))) is False
+        assert (
+            asyncio.run(
+                tracker.get_additional_checks(
+                    Meta(category=category, filelist=1)
+                )
+            )
+            is False
+        )
 
 
 def _name(meta: Meta) -> str:
-    config = {"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}}
+    config = {
+        "DEFAULT": {"tmdb_api": "test-key"},
+        "TRACKERS": {"DARKPEERS": {}},
+    }
     return asyncio.run(DarkPeers(config).get_name(meta))["name"]
 
 
 def _audio(meta: Meta) -> str:
-    config = {"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}}
+    config = {
+        "DEFAULT": {"tmdb_api": "test-key"},
+        "TRACKERS": {"DARKPEERS": {}},
+    }
     return asyncio.run(DarkPeers(config).get_audio(meta))
 
 
@@ -36,7 +50,9 @@ def test_darkpeers_music_name_uses_required_folder_style():
                 "release_year": {"value": "2012"},
                 "media": {"value": "WEB"},
             },
-            "tracks": [{"codec": "FLAC", "bit_depth": 16, "sample_rate": 44100}],
+            "tracks": [
+                {"codec": "FLAC", "bit_depth": 16, "sample_rate": 44100}
+            ],
         },
     )
 
@@ -54,7 +70,9 @@ def test_darkpeers_music_single_name_is_disambiguated():
                 "media": {"value": "WEB"},
                 "release_type": {"value": "Single"},
             },
-            "tracks": [{"codec": "MP3", "bitrate": 320000, "bitrate_mode": "CBR"}],
+            "tracks": [
+                {"codec": "MP3", "bitrate": 320000, "bitrate_mode": "CBR"}
+            ],
         },
     )
 
@@ -64,7 +82,9 @@ def test_darkpeers_music_single_name_is_disambiguated():
 def test_darkpeers_accepts_numbered_scene_music_filenames():
     pattern = DarkPeers._AUDIO_TRACK_PATTERN
 
-    assert pattern.match("01-simon_and_garfunkel-the_sound_of_silence-repack-remastered")
+    assert pattern.match(
+        "01-simon_and_garfunkel-the_sound_of_silence-repack-remastered"
+    )
     assert pattern.match("01 - The Sound of Silence")
     assert pattern.match("01. After Hours & Josh Heuston - Into You")
     assert pattern.match("Ye-The Life of Pablo-01-Ultralight Beam")
@@ -82,16 +102,29 @@ def test_darkpeers_only_includes_audio_spectrograms_for_music():
         },
     }
     adapter = DarkPeers(config)
-    spectrogram = {"web_url": "https://example.com/page", "raw_url": "https://example.com/spectrogram.png"}
+    spectrogram = {
+        "web_url": "https://example.com/page",
+        "raw_url": "https://example.com/spectrogram.png",
+    }
 
     for category in ("MOVIE", "TV", "BOOK", "GAME"):
-        meta = Meta(category=category, audio_spectrogram=True, spectrograms_images=[spectrogram])
+        meta = Meta(
+            category=category,
+            audio_spectrogram=True,
+            spectrograms_images=[spectrogram],
+        )
         description = asyncio.run(adapter.get_description(meta))["description"]
         assert "Audio Spectrogram" not in description
         assert "spectrogram.png" not in description
 
-    music = Meta(category="MUSIC", audio_spectrogram=True, spectrograms_images=[spectrogram])
-    music_description = asyncio.run(adapter.get_description(music))["description"]
+    music = Meta(
+        category="MUSIC",
+        audio_spectrogram=True,
+        spectrograms_images=[spectrogram],
+    )
+    music_description = asyncio.run(adapter.get_description(music))[
+        "description"
+    ]
     assert "[h2]Audio Spectrogram[/h2]" in music_description
     assert "spectrogram.png" in music_description
 
@@ -108,7 +141,10 @@ def test_darkpeers_ebook_name_includes_book_elements():
         source="RETAIL",
     )
 
-    assert _name(meta) == "Liu Cixin - The Three-Body Problem 2008 Revised Edition EPUB 9780765377067 Retail"
+    assert (
+        _name(meta)
+        == "Liu Cixin - The Three-Body Problem 2008 Revised Edition EPUB 9780765377067 Retail"
+    )
 
 
 def test_darkpeers_ebook_name_does_not_repeat_author_from_extracted_title():
@@ -122,7 +158,10 @@ def test_darkpeers_ebook_name_does_not_repeat_author_from_extracted_title():
         source="OTHER",
     )
 
-    assert _name(meta) == "Eric Evans - Domain-Driven Design Reference 2014 PDF 9781457501197"
+    assert (
+        _name(meta)
+        == "Eric Evans - Domain-Driven Design Reference 2014 PDF 9781457501197"
+    )
 
 
 def test_darkpeers_audiobook_name_includes_format_bitrate_isbn_and_tag():
@@ -138,7 +177,10 @@ def test_darkpeers_audiobook_name_includes_format_bitrate_isbn_and_tag():
         tag="GROUP",
     )
 
-    assert _name(meta) == "Ernest Cline - Ready Player One 2011 MP3 64 9780307887436-GROUP"
+    assert (
+        _name(meta)
+        == "Ernest Cline - Ready Player One 2011 MP3 64 9780307887436-GROUP"
+    )
 
 
 def test_darkpeers_audiobook_name_includes_explicit_source_or_retail_marker():
@@ -153,8 +195,14 @@ def test_darkpeers_audiobook_name_includes_explicit_source_or_retail_marker():
         "isbn": "978-0-123456-47-2",
     }
 
-    assert _name(Meta(**base, manual_source="OVERDRIVE")) == "Author - Recording 2026 Overdrive MP3 64 9780123456472"
-    assert _name(Meta(**base, manual_source="RETAIL")) == "Author - Recording 2026 MP3 64 9780123456472 Retail"
+    assert (
+        _name(Meta(**base, manual_source="OVERDRIVE"))
+        == "Author - Recording 2026 Overdrive MP3 64 9780123456472"
+    )
+    assert (
+        _name(Meta(**base, manual_source="RETAIL"))
+        == "Author - Recording 2026 MP3 64 9780123456472 Retail"
+    )
 
 
 def test_darkpeers_video_web_name_follows_documented_order():
@@ -177,7 +225,10 @@ def test_darkpeers_video_web_name_follows_documented_order():
         tag="-GROUP",
     )
 
-    assert _name(meta) == "Example AKA Original 2026 Director's Cut IMAX Hybrid PROPER 1080p Criterion Collection AMZN WEB-DL DD+ 5.1 Atmos HDR10+ H.264-GROUP"
+    assert (
+        _name(meta)
+        == "Example AKA Original 2026 Director's Cut IMAX Hybrid PROPER 1080p Criterion Collection AMZN WEB-DL DD+ 5.1 Atmos HDR10+ H.264-GROUP"
+    )
 
 
 def test_darkpeers_full_disc_name_follows_documented_order():
@@ -202,7 +253,10 @@ def test_darkpeers_full_disc_name_follows_documented_order():
         tag="-GROUP",
     )
 
-    assert _name(meta) == "Example 2026 Extended Hybrid REPACK 2160p Criterion Collection USA UHD Blu-ray DV HDR10+ HEVC TrueHD 7.1 Atmos-GROUP"
+    assert (
+        _name(meta)
+        == "Example 2026 Extended Hybrid REPACK 2160p Criterion Collection USA UHD Blu-ray DV HDR10+ HEVC TrueHD 7.1 Atmos-GROUP"
+    )
 
 
 def test_darkpeers_daily_tv_name_uses_iso_date_without_year_or_season():
@@ -224,11 +278,22 @@ def test_darkpeers_daily_tv_name_uses_iso_date_without_year_or_season():
         tag="-GROUP",
     )
 
-    assert _name(meta) == "Daily Show 2026-08-11 1080p AMZN WEB-DL DD+ 2.0 H.264-GROUP"
+    assert (
+        _name(meta)
+        == "Daily Show 2026-08-11 1080p AMZN WEB-DL DD+ 2.0 H.264-GROUP"
+    )
 
 
 def test_darkpeers_normalizes_htm_ebook_format_to_html():
-    meta = Meta(category="BOOK", author="Author", title="Book", year=2026, type="HTM", isbn="978-0-123456-47-2", source="RETAIL")
+    meta = Meta(
+        category="BOOK",
+        author="Author",
+        title="Book",
+        year=2026,
+        type="HTM",
+        isbn="978-0-123456-47-2",
+        source="RETAIL",
+    )
 
     assert _name(meta) == "Author - Book 2026 HTML 9780123456472 Retail"
 
@@ -255,7 +320,10 @@ def test_darkpeers_preserves_scene_name_dots_when_scene_mode_is_enabled():
         original_language="English",
     )
 
-    assert _name(meta) == "Dr.Seuss's.Red.Fish.Blue.Fish.S03E04.1080p.WEB.h264-DOLORES"
+    assert (
+        _name(meta)
+        == "Dr.Seuss's.Red.Fish.Blue.Fish.S03E04.1080p.WEB.h264-DOLORES"
+    )
 
 
 def test_darkpeers_uses_metadata_name_when_scene_name_is_set_but_scene_mode_disabled():
@@ -279,7 +347,10 @@ def test_darkpeers_uses_metadata_name_when_scene_name_is_set_but_scene_mode_disa
         language_checked=True,
     )
 
-    assert _name(meta) == "Dr. Seuss's Red Fish, Blue Fish S03E04 1080p AMZN WEB-DL DD+ 5.1 H.264-DOLORES"
+    assert (
+        _name(meta)
+        == "Dr. Seuss's Red Fish, Blue Fish S03E04 1080p AMZN WEB-DL DD+ 5.1 H.264-DOLORES"
+    )
 
 
 def test_darkpeers_prefers_normalized_scene_name_when_scene_name_set_and_name_is_whitespace():
@@ -337,13 +408,22 @@ def test_darkpeers_requires_attended_audiobook_edition_verification():
         "audiobook_duration_formatted": "11h 04m 35s",
         "audiobook_bitrate": 64,
     }
-    adapter = DarkPeers({"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}})
+    adapter = DarkPeers(
+        {"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}}
+    )
 
-    assert asyncio.run(adapter.get_additional_checks(Meta(**values, unattended=True))) is False
+    assert (
+        asyncio.run(
+            adapter.get_additional_checks(Meta(**values, unattended=True))
+        )
+        is False
+    )
 
     adapter.common.prompt_user_for_confirmation = AsyncMock(return_value=True)
     assert asyncio.run(adapter.get_additional_checks(Meta(**values))) is True
-    adapter.common.prompt_user_for_confirmation.assert_awaited_once_with("Do these audiobook edition details match the files?", Meta(**values))
+    adapter.common.prompt_user_for_confirmation.assert_awaited_once_with(
+        "Do these audiobook edition details match the files?", Meta(**values)
+    )
 
 
 def test_darkpeers_requires_audiobook_year_and_runtime_before_verification():
@@ -374,11 +454,18 @@ def test_darkpeers_rejects_audiobook_without_valid_isbn_even_with_asin():
         "audiobook_duration": 59365,
         "asin": "B0012JQ8JO",
     }
-    adapter = DarkPeers({"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}})
+    adapter = DarkPeers(
+        {"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}}
+    )
     adapter.common.prompt_user_for_confirmation = AsyncMock(return_value=True)
 
     assert asyncio.run(adapter.get_additional_checks(Meta(**base))) is False
-    assert asyncio.run(adapter.get_additional_checks(Meta(**base, isbn="9780061452988"))) is False
+    assert (
+        asyncio.run(
+            adapter.get_additional_checks(Meta(**base, isbn="9780061452988"))
+        )
+        is False
+    )
     adapter.common.prompt_user_for_confirmation.assert_not_awaited()
 
 
@@ -397,7 +484,9 @@ def test_darkpeers_validated_audiobook_isbn_is_rendered_in_description():
         audiobook_bitrate=64,
         isbn="978-0-06-145298-7",
     )
-    adapter = DarkPeers({"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}})
+    adapter = DarkPeers(
+        {"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}}
+    )
     adapter.common.prompt_user_for_confirmation = AsyncMock(return_value=True)
 
     assert asyncio.run(adapter.get_additional_checks(meta)) is True
@@ -407,19 +496,43 @@ def test_darkpeers_validated_audiobook_isbn_is_rendered_in_description():
 
 
 def test_darkpeers_book_name_never_uses_publisher_as_author():
-    meta = Meta(category="BOOK", publisher="Publisher Name", title="Book Title", year=2026, type="EPUB", isbn="978-0-123456-47-2")
+    meta = Meta(
+        category="BOOK",
+        publisher="Publisher Name",
+        title="Book Title",
+        year=2026,
+        type="EPUB",
+        isbn="978-0-123456-47-2",
+    )
 
     assert _name(meta) == "Book Title 2026 EPUB 9780123456472"
 
 
 def test_darkpeers_book_name_preserves_alphanumeric_asin():
-    meta = Meta(category="BOOK", author="Author", title="Book Title", year=2026, type="EPUB", asin="B01N5AX3TQ")
+    meta = Meta(
+        category="BOOK",
+        author="Author",
+        title="Book Title",
+        year=2026,
+        type="EPUB",
+        asin="B01N5AX3TQ",
+    )
 
     assert _name(meta) == "Author - Book Title 2026 EPUB B01N5AX3TQ"
 
 
 def test_darkpeers_rejects_asin_as_individual_ebook_identifier():
-    meta = Meta(category="BOOK", unattended=True, author="Author", publisher="Publisher", title="Book Title", year=2026, type="EPUB", asin="B01N5AX3TQ", source="WEB")
+    meta = Meta(
+        category="BOOK",
+        unattended=True,
+        author="Author",
+        publisher="Publisher",
+        title="Book Title",
+        year=2026,
+        type="EPUB",
+        asin="B01N5AX3TQ",
+        source="WEB",
+    )
 
     assert _additional_checks(meta) is False
 
@@ -469,7 +582,10 @@ def test_darkpeers_normalizes_valid_ebook_isbn_before_building_title():
     )
 
     assert _additional_checks(meta) is True
-    assert _name(meta) == "David Bohm - Wholeness and the Implicate Order 1980 AZW3 9780415289795 Retail"
+    assert (
+        _name(meta)
+        == "David Bohm - Wholeness and the Implicate Order 1980 AZW3 9780415289795 Retail"
+    )
 
 
 def test_darkpeers_rejects_generic_web_as_ebook_provenance():
@@ -503,7 +619,10 @@ def test_darkpeers_accepts_explicit_non_retail_born_digital_ebook():
     )
 
     assert _additional_checks(meta) is True
-    assert _name(meta) == "Eric Evans - Domain-Driven Design Reference 2015 PDF 9781457501197"
+    assert (
+        _name(meta)
+        == "Eric Evans - Domain-Driven Design Reference 2015 PDF 9781457501197"
+    )
 
 
 def test_darkpeers_rejects_retail_ocr_contradiction():
@@ -524,7 +643,16 @@ def test_darkpeers_rejects_retail_ocr_contradiction():
 
 
 def test_darkpeers_scan_ocr_name_is_explicit():
-    meta = Meta(category="BOOK", author="Author", title="Book", year=2026, type="PDF", isbn="978-0-123456-47-2", source="SCAN", ocr=True)
+    meta = Meta(
+        category="BOOK",
+        author="Author",
+        title="Book",
+        year=2026,
+        type="PDF",
+        isbn="978-0-123456-47-2",
+        source="SCAN",
+        ocr=True,
+    )
 
     assert _name(meta) == "Author - Book 2026 PDF 9780123456472 Scan OCR"
 
@@ -579,12 +707,24 @@ def test_darkpeers_lossy_audiobook_requires_bitrate_and_minimum():
         "isbn": "9780061452987",
         "audiobook_duration": 3600,
     }
-    adapter = DarkPeers({"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}})
+    adapter = DarkPeers(
+        {"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}}
+    )
     adapter.common.prompt_user_for_confirmation = AsyncMock(return_value=True)
 
     assert asyncio.run(adapter.get_additional_checks(Meta(**base))) is False
-    assert asyncio.run(adapter.get_additional_checks(Meta(**base, audiobook_bitrate=63))) is False
-    assert asyncio.run(adapter.get_additional_checks(Meta(**base, audiobook_bitrate=64))) is True
+    assert (
+        asyncio.run(
+            adapter.get_additional_checks(Meta(**base, audiobook_bitrate=63))
+        )
+        is False
+    )
+    assert (
+        asyncio.run(
+            adapter.get_additional_checks(Meta(**base, audiobook_bitrate=64))
+        )
+        is True
+    )
 
 
 def test_darkpeers_book_description_includes_required_technical_fields():
@@ -602,7 +742,14 @@ def test_darkpeers_book_description_includes_required_technical_fields():
         book_series_index="2",
         page_count=320,
     )
-    description = asyncio.run(DarkPeers({"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}}).get_description(meta))["description"]
+    description = asyncio.run(
+        DarkPeers(
+            {
+                "DEFAULT": {"tmdb_api": "test-key"},
+                "TRACKERS": {"DARKPEERS": {}},
+            }
+        ).get_description(meta)
+    )["description"]
 
     for expected in ("French", "Series #2", "SCAN", "320"):
         assert expected in description
@@ -638,7 +785,15 @@ def test_darkpeers_allows_unnumbered_official_single_filename(tmp_path):
         },
     )
 
-    assert DarkPeers({"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}}).validate_music(meta) is True
+    assert (
+        DarkPeers(
+            {
+                "DEFAULT": {"tmdb_api": "test-key"},
+                "TRACKERS": {"DARKPEERS": {}},
+            }
+        ).validate_music(meta)
+        is True
+    )
 
 
 def test_darkpeers_rejects_small_collection_without_isbn():
@@ -651,14 +806,19 @@ def test_darkpeers_rejects_small_collection_without_isbn():
         year=2026,
         type="EPUB",
         source="WEB",
-        filelist=["Author - Author Collection - One.epub", "Author - Author Collection - Two.epub"],
+        filelist=[
+            "Author - Author Collection - One.epub",
+            "Author - Author Collection - Two.epub",
+        ],
     )
 
     assert _additional_checks(meta) is False
 
 
 def test_darkpeers_requires_exact_single_file_m4b_name():
-    adapter = DarkPeers({"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}})
+    adapter = DarkPeers(
+        {"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}}
+    )
     values = {
         "category": "BOOK",
         "audiobook": True,
@@ -668,22 +828,54 @@ def test_darkpeers_requires_exact_single_file_m4b_name():
         "type": "M4B",
     }
 
-    assert adapter._validate_book_file_layout(Meta(**values, filelist=["Author - Book - 2026.m4b"]), "M4B") is True
-    assert adapter._validate_book_file_layout(Meta(**values, filelist=["Book.m4b"]), "M4B") is False
+    assert (
+        adapter._validate_book_file_layout(
+            Meta(**values, filelist=["Author - Book - 2026.m4b"]), "M4B"
+        )
+        is True
+    )
+    assert (
+        adapter._validate_book_file_layout(
+            Meta(**values, filelist=["Book.m4b"]), "M4B"
+        )
+        is False
+    )
 
 
 def test_darkpeers_replaces_generic_dual_audio_with_rule_matrix_label():
-    meta = Meta(category="MOVIE", name="Anime 2026 1080p WEB-DL Dual-Audio-TEAM", language_checked=True, original_language="Japanese", audio_languages=["Japanese", "French"])
+    meta = Meta(
+        category="MOVIE",
+        name="Anime 2026 1080p WEB-DL Dual-Audio-TEAM",
+        language_checked=True,
+        original_language="Japanese",
+        audio_languages=["Japanese", "French"],
+    )
 
     assert _name(meta) == "Anime 2026 1080p WEB-DL French MULTi-TEAM"
 
 
 def test_darkpeers_keeps_dual_audio_for_original_non_english_with_english_only_pair():
-    assert _audio(Meta(category="MOVIE", language_checked=True, original_language="Japanese", audio_languages=["Japanese", "en-US"])) == "Dual-Audio"
+    assert (
+        _audio(
+            Meta(
+                category="MOVIE",
+                language_checked=True,
+                original_language="Japanese",
+                audio_languages=["Japanese", "en-US"],
+            )
+        )
+        == "Dual-Audio"
+    )
 
 
 def test_darkpeers_preserves_detected_original_scene_name():
-    meta = Meta(category="MOVIE", name="Generated Name", scene=True, scene_name="Original.Release.2026-GRP", language_checked=True)
+    meta = Meta(
+        category="MOVIE",
+        name="Generated Name",
+        scene=True,
+        scene_name="Original.Release.2026-GRP",
+        language_checked=True,
+    )
 
     assert _name(meta) == "Original.Release.2026-GRP"
 
@@ -697,7 +889,10 @@ def test_darkpeers_ignores_absolute_scene_name_when_building_upload_title():
         language_checked=True,
     )
 
-    assert _name(meta) == "Full Contact AKA Hap do Ko Fei 1992 480p BluRay Dual-Audio AAC 1.0 x264-gazer"
+    assert (
+        _name(meta)
+        == "Full Contact AKA Hap do Ko Fei 1992 480p BluRay Dual-Audio AAC 1.0 x264-gazer"
+    )
 
 
 def test_darkpeers_rejects_local_path_as_generated_video_title():
@@ -713,32 +908,100 @@ def test_darkpeers_rejects_local_path_as_generated_video_title():
 
 
 def test_darkpeers_tv_name_omits_year_without_an_exact_title_match():
-    meta = Meta(category="TV", title="BLACK TORCH", year=2026, name="BLACK TORCH 2026 S01E05 1080p CR WEB-DL DD+ 2.0 H.264-AnoZu")
-    adapter = DarkPeers({"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}})
+    meta = Meta(
+        category="TV",
+        title="BLACK TORCH",
+        year=2026,
+        name="BLACK TORCH 2026 S01E05 1080p CR WEB-DL DD+ 2.0 H.264-AnoZu",
+    )
+    adapter = DarkPeers(
+        {"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}}
+    )
     adapter._tv_title_needs_year = AsyncMock(return_value=False)
 
-    assert asyncio.run(adapter.get_name(meta))["name"] == "BLACK TORCH S01E05 1080p CR WEB-DL DD+ 2.0 H.264-AnoZu"
+    assert (
+        asyncio.run(adapter.get_name(meta))["name"]
+        == "BLACK TORCH S01E05 1080p CR WEB-DL DD+ 2.0 H.264-AnoZu"
+    )
+
+
+def test_darkpeers_tv_name_uses_exact_tmdb_title_and_omits_unneeded_year():
+    meta = Meta(
+        category="TV",
+        title="Margarita",
+        year=2024,
+        tmdb_id=12345,
+        name=(
+            "Margarita 2024 S03E01 1080p HMAX WEB-DL Portuguese MULTI "
+            "DD+ 5.1 H.265-SiGLA"
+        ),
+    )
+    adapter = DarkPeers(
+        {"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}}
+    )
+    adapter._tv_search_payload = AsyncMock(
+        return_value={
+            "results": [
+                {
+                    "id": 12345,
+                    "name": "Margarita: Make Your Story Count",
+                    "original_name": "Margarita",
+                }
+            ]
+        }
+    )
+
+    assert (
+        asyncio.run(adapter.get_name(meta))["name"]
+        == "Margarita: Make Your Story Count S03E01 1080p HMAX WEB-DL "
+        "Portuguese MULTI DD+ 5.1 H.265-SiGLA"
+    )
+    assert meta.title == "Margarita"
+    assert meta.name.startswith("Margarita 2024")
 
 
 def test_darkpeers_tv_name_keeps_year_for_an_exact_title_match():
-    meta = Meta(category="TV", title="The Flash", year=2014, name="The Flash 2014 S01E01 1080p WEB-DL")
-    adapter = DarkPeers({"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}})
+    meta = Meta(
+        category="TV",
+        title="The Flash",
+        year=2014,
+        name="The Flash 2014 S01E01 1080p WEB-DL",
+    )
+    adapter = DarkPeers(
+        {"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}}
+    )
     adapter._tv_title_needs_year = AsyncMock(return_value=True)
 
-    assert asyncio.run(adapter.get_name(meta))["name"] == "The Flash 2014 S01E01 1080p WEB-DL"
+    assert (
+        asyncio.run(adapter.get_name(meta))["name"]
+        == "The Flash 2014 S01E01 1080p WEB-DL"
+    )
 
 
 def test_darkpeers_tv_year_rule_preserves_aka():
-    meta = Meta(category="TV", title="Localized Title", year=2020, aka="AKA Original Title", name="Localized Title 2020 AKA Original Title S01E01 1080p WEB-DL")
-    adapter = DarkPeers({"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}})
+    meta = Meta(
+        category="TV",
+        title="Localized Title",
+        year=2020,
+        aka="AKA Original Title",
+        name="Localized Title 2020 AKA Original Title S01E01 1080p WEB-DL",
+    )
+    adapter = DarkPeers(
+        {"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}}
+    )
     adapter._tv_title_needs_year = AsyncMock(return_value=False)
 
-    assert asyncio.run(adapter.get_name(meta))["name"] == "Localized Title AKA Original Title S01E01 1080p WEB-DL"
+    assert (
+        asyncio.run(adapter.get_name(meta))["name"]
+        == "Localized Title AKA Original Title S01E01 1080p WEB-DL"
+    )
 
 
 def test_darkpeers_tv_year_rule_detects_a_distinct_exact_tmdb_title():
     meta = Meta(category="TV", title="The Flash", tmdb_id=60735)
-    adapter = DarkPeers({"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}})
+    adapter = DarkPeers(
+        {"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}}
+    )
     response = Mock()
     response.json.return_value = {
         "results": [
@@ -747,7 +1010,10 @@ def test_darkpeers_tv_year_rule_detects_a_distinct_exact_tmdb_title():
         ]
     }
 
-    with patch("src.trackers.UNIT3D.darkpeers.httpx.AsyncClient.get", new=AsyncMock(return_value=response)):
+    with patch(
+        "src.integrations.trackers.UNIT3D.darkpeers.httpx.AsyncClient.get",
+        new=AsyncMock(return_value=response),
+    ):
         assert asyncio.run(adapter._tv_title_needs_year(meta)) is True
 
 
@@ -800,7 +1066,17 @@ def test_darkpeers_does_not_reorder_aka_year_without_both_tokens():
 
 
 def test_darkpeers_treats_english_plus_one_other_as_language_multi():
-    assert _audio(Meta(category="MOVIE", language_checked=True, original_language="English", audio_languages=["en-US", "Portuguese"])) == "Portuguese MULTi"
+    assert (
+        _audio(
+            Meta(
+                category="MOVIE",
+                language_checked=True,
+                original_language="English",
+                audio_languages=["en-US", "Portuguese"],
+            )
+        )
+        == "Portuguese MULTi"
+    )
 
 
 def test_darkpeers_keeps_existing_multi_label_if_audio_stays_multi():
@@ -811,26 +1087,50 @@ def test_darkpeers_keeps_existing_multi_label_if_audio_stays_multi():
         name="Closer to God 2014 1080p WEB-DL Portuguese MULTi AAC 2.0 H.265-nitrato",
     )
 
-    assert _name(meta) == "Closer to God 2014 1080p WEB-DL Portuguese MULTi AAC 2.0 H.265-nitrato"
+    assert (
+        _name(meta)
+        == "Closer to God 2014 1080p WEB-DL Portuguese MULTi AAC 2.0 H.265-nitrato"
+    )
 
 
 def test_darkpeers_tv_year_rule_does_not_count_the_only_tmdb_result_as_a_duplicate():
     meta = Meta(category="TV", title="BLACK TORCH")
-    adapter = DarkPeers({"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}})
+    adapter = DarkPeers(
+        {"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}}
+    )
     response = Mock()
-    response.json.return_value = {"results": [{"id": 279807, "name": "BLACK TORCH", "original_name": "BLACK TORCH"}]}
+    response.json.return_value = {
+        "results": [
+            {
+                "id": 279807,
+                "name": "BLACK TORCH",
+                "original_name": "BLACK TORCH",
+            }
+        ]
+    }
 
-    with patch("src.trackers.UNIT3D.darkpeers.httpx.AsyncClient.get", new=AsyncMock(return_value=response)):
+    with patch(
+        "src.integrations.trackers.UNIT3D.darkpeers.httpx.AsyncClient.get",
+        new=AsyncMock(return_value=response),
+    ):
         assert asyncio.run(adapter._tv_title_needs_year(meta)) is False
 
 
 def _additional_checks(meta: Meta) -> bool:
-    config = {"DEFAULT": {"tmdb_api": "test-key", "thumbnail_size": "350"}, "TRACKERS": {"DARKPEERS": {}}}
+    config = {
+        "DEFAULT": {"tmdb_api": "test-key", "thumbnail_size": "350"},
+        "TRACKERS": {"DARKPEERS": {}},
+    }
     return asyncio.run(DarkPeers(config).get_additional_checks(meta))
 
 
-def _additional_checks_with_config(meta: Meta, tracker_config: dict[str, Any]) -> bool:
-    config = {"DEFAULT": {"tmdb_api": "test-key", "thumbnail_size": "350"}, "TRACKERS": {"DARKPEERS": tracker_config}}
+def _additional_checks_with_config(
+    meta: Meta, tracker_config: dict[str, Any]
+) -> bool:
+    config = {
+        "DEFAULT": {"tmdb_api": "test-key", "thumbnail_size": "350"},
+        "TRACKERS": {"DARKPEERS": tracker_config},
+    }
     return asyncio.run(DarkPeers(config).get_additional_checks(meta))
 
 
@@ -919,14 +1219,67 @@ def test_darkpeers_hdt_remux_allowed_and_non_remux_blocked():
 
 
 def test_darkpeers_movie_tv_require_between_three_and_five_screens():
-    assert _additional_checks(Meta(category="MOVIE", audio_languages=["English"], resolution="1080p", screens=2)) is False
-    assert _additional_checks(Meta(category="TV", type="WEBDL", audio_languages=["English"], resolution="1080p", screens=3)) is True
-    assert _additional_checks(Meta(category="TV", type="WEBDL", audio_languages=["English"], resolution="1080p", screens=5)) is True
-    assert _additional_checks(Meta(category="MOVIE", type="WEBDL", audio_languages=["English"], resolution="1080p", screens=6)) is False
+    assert (
+        _additional_checks(
+            Meta(
+                category="MOVIE",
+                audio_languages=["English"],
+                resolution="1080p",
+                screens=2,
+            )
+        )
+        is False
+    )
+    assert (
+        _additional_checks(
+            Meta(
+                category="TV",
+                type="WEBDL",
+                audio_languages=["English"],
+                resolution="1080p",
+                screens=3,
+            )
+        )
+        is True
+    )
+    assert (
+        _additional_checks(
+            Meta(
+                category="TV",
+                type="WEBDL",
+                audio_languages=["English"],
+                resolution="1080p",
+                screens=5,
+            )
+        )
+        is True
+    )
+    assert (
+        _additional_checks(
+            Meta(
+                category="MOVIE",
+                type="WEBDL",
+                audio_languages=["English"],
+                resolution="1080p",
+                screens=6,
+            )
+        )
+        is False
+    )
 
 
 def test_darkpeers_movie_tv_invalid_screens_value_is_treated_as_missing():
-    assert _additional_checks(Meta(category="MOVIE", audio_languages=["English"], resolution="1080p", screens="many")) is False
+    assert (
+        _additional_checks(
+            Meta(
+                category="MOVIE",
+                audio_languages=["English"],
+                resolution="1080p",
+                screens="many",
+            )
+        )
+        is False
+    )
 
 
 def test_darkpeers_hardcoded_subs_blocked_in_interactive_and_unattended():
@@ -1054,14 +1407,17 @@ def test_darkpeers_accepts_webdl_bitrate_when_configured_higher_quality_is_not_r
         audio_bitrate=160,
     )
 
-    assert _additional_checks_with_config(
-        meta,
-        {
-            "webl_min_video_kbps": {
-                "1080p": 1000,
-            }
-        },
-    ) is True
+    assert (
+        _additional_checks_with_config(
+            meta,
+            {
+                "webl_min_video_kbps": {
+                    "1080p": 1000,
+                }
+            },
+        )
+        is True
+    )
 
 
 def test_darkpeers_allows_480p_webdl_when_video_bitrate_threshold_is_unset():
@@ -1081,7 +1437,19 @@ def test_darkpeers_allows_480p_webdl_when_video_bitrate_threshold_is_unset():
 
 
 def test_darkpeers_requires_movie_tv_payload_for_content_checks():
-    assert _additional_checks(Meta(category="MOVIE", unattended=True, language_checked=True, audio_languages=["English"], resolution="1080p", screens=3)) is False
+    assert (
+        _additional_checks(
+            Meta(
+                category="MOVIE",
+                unattended=True,
+                language_checked=True,
+                audio_languages=["English"],
+                resolution="1080p",
+                screens=3,
+            )
+        )
+        is False
+    )
 
 
 def test_darkpeers_rejects_movie_tv_payload_with_unsupported_file_types():
@@ -1113,14 +1481,14 @@ def test_darkpeers_rejects_movie_tv_payload_with_non_video_only_files():
 
 
 def test_darkpeers_enforces_screenshot_count_rules_movie_tv():
-    base = dict(
-        category="MOVIE",
-        unattended=True,
-        language_checked=True,
-        audio_languages=["English"],
-        filelist=["Movie.mkv"],
-        resolution="1080p",
-    )
+    base = {
+        "category": "MOVIE",
+        "unattended": True,
+        "language_checked": True,
+        "audio_languages": ["English"],
+        "filelist": ["Movie.mkv"],
+        "resolution": "1080p",
+    }
 
     assert _additional_checks(Meta(**base, screens=2)) is False
     assert _additional_checks(Meta(**base, screens=3)) is True
@@ -1143,30 +1511,67 @@ def test_darkpeers_rejects_invalid_screenshot_count_value():
 
 
 def test_darkpeers_rejects_unsupported_resolution():
-    unsupported = Meta(category="MOVIE", unattended=True, audio_languages=["English"], resolution="1440p", screens=3)
+    unsupported = Meta(
+        category="MOVIE",
+        unattended=True,
+        audio_languages=["English"],
+        resolution="1440p",
+        screens=3,
+    )
 
     assert _additional_checks(unsupported) is False
 
 
 def test_darkpeers_rejects_multi_season_and_video_archives():
-    seasons = Meta(category="TV", unattended=True, audio_languages=["English"], resolution="1080p", screens=3, filelist=["Show.S01E01.mkv", "Show.S02E01.mkv"])
-    archive = Meta(category="MOVIE", unattended=True, audio_languages=["English"], resolution="1080p", screens=3, filelist=["Movie.part01.rar"])
+    seasons = Meta(
+        category="TV",
+        unattended=True,
+        audio_languages=["English"],
+        resolution="1080p",
+        screens=3,
+        filelist=["Show.S01E01.mkv", "Show.S02E01.mkv"],
+    )
+    archive = Meta(
+        category="MOVIE",
+        unattended=True,
+        audio_languages=["English"],
+        resolution="1080p",
+        screens=3,
+        filelist=["Movie.part01.rar"],
+    )
 
     assert _additional_checks(seasons) is False
     assert _additional_checks(archive) is False
 
 
 def test_darkpeers_tv_scope_ignores_parent_directory_and_detects_episode_season():
-    meta = Meta(category="TV", name="Show S01", path="C:/media/Complete Series/Show S01", filelist=["Show.S01E01.mkv"])
-    adapter = DarkPeers({"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}})
+    meta = Meta(
+        category="TV",
+        name="Show S01",
+        path="C:/media/Complete Series/Show S01",
+        filelist=["Show.S01E01.mkv"],
+    )
+    adapter = DarkPeers(
+        {"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}}
+    )
 
     assert adapter.validate_tv_scope(meta) is True
     assert adapter._is_single_tv_season(meta) is True
 
 
 def test_darkpeers_confirmed_folder_check_continues_to_evo_validation():
-    meta = Meta(category="MOVIE", type="ENCODE", tag="-EVO", keep_folder=True, audio_languages=["English"], resolution="1080p", screens=3)
-    adapter = DarkPeers({"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}})
+    meta = Meta(
+        category="MOVIE",
+        type="ENCODE",
+        tag="-EVO",
+        keep_folder=True,
+        audio_languages=["English"],
+        resolution="1080p",
+        screens=3,
+    )
+    adapter = DarkPeers(
+        {"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}}
+    )
     adapter._confirm_or_skip = AsyncMock(return_value=True)
 
     assert asyncio.run(adapter.get_additional_checks(meta)) is False
@@ -1185,7 +1590,13 @@ def test_darkpeers_book_language_is_unrestricted_but_author_is_required_unattend
         book_language="Portuguese",
         source="RETAIL",
     )
-    no_author = Meta(category="BOOK", unattended=True, publisher="Editora", type="EPUB", isbn="978-0-123456-47-2")
+    no_author = Meta(
+        category="BOOK",
+        unattended=True,
+        publisher="Editora",
+        type="EPUB",
+        isbn="978-0-123456-47-2",
+    )
 
     assert _additional_checks(portuguese) is True
     assert _additional_checks(no_author) is False
@@ -1200,7 +1611,14 @@ def test_darkpeers_game_requires_scene_rars_nfo_and_instructions():
         filelist=["release.r00", "release.rar"],
         description="Installation instructions: mount and install.",
     )
-    iso = Meta(category="GAME", unattended=True, scene=True, scene_nfo_file="release.nfo", filelist=["release.iso"], description="Installation instructions")
+    iso = Meta(
+        category="GAME",
+        unattended=True,
+        scene=True,
+        scene_nfo_file="release.nfo",
+        filelist=["release.iso"],
+        description="Installation instructions",
+    )
 
     assert _additional_checks(valid_game) is True
     assert _additional_checks(iso) is False

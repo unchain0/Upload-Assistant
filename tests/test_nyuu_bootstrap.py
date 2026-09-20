@@ -5,11 +5,13 @@ from pathlib import Path
 
 import pytest
 
-from bin import get_nyuu
-from bin.get_nyuu import NyuuBinaryManager
+from src.integrations.runtime_tools import nyuu as get_nyuu
+from src.integrations.runtime_tools.nyuu import NyuuBinaryManager
 
 
-def test_nyuu_archive_without_binary_does_not_write_version_marker(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_nyuu_archive_without_binary_does_not_write_version_marker(
+    tmp_path: Path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
     async def write_invalid_archive(_client, _url, destination, _asset_name):  # type: ignore[no-untyped-def]
         payload = b"not nyuu"
         with tarfile.open(destination, "w:xz") as archive:
@@ -17,19 +19,25 @@ def test_nyuu_archive_without_binary_does_not_write_version_marker(tmp_path: Pat
             member.size = len(payload)
             archive.addfile(member, io.BytesIO(payload))
 
-    monkeypatch.setattr(get_nyuu, "download_verified_asset", write_invalid_archive)
+    monkeypatch.setattr(
+        get_nyuu, "download_verified_asset", write_invalid_archive
+    )
     monkeypatch.setattr(get_nyuu.platform, "system", lambda: "Linux")
     monkeypatch.setattr(get_nyuu.platform, "machine", lambda: "x86_64")
 
-    with pytest.raises(Exception, match="does not contain the expected nyuu executable"):
+    with pytest.raises(
+        Exception, match="does not contain the expected nyuu executable"
+    ):
         asyncio.run(NyuuBinaryManager.ensure_nyuu_binary(tmp_path))
 
     output = tmp_path / "bin" / "nyuu" / "linux" / "amd64"
-    assert not (output / "v0.4.2").exists()  # noqa: S101
-    assert not (output / "nyuu").exists()  # noqa: S101
+    assert not (output / "v0.4.2").exists()
+    assert not (output / "nyuu").exists()
 
 
-def test_nyuu_failed_update_preserves_existing_installation(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_nyuu_failed_update_preserves_existing_installation(
+    tmp_path: Path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
     async def fail_download(*_args, **_kwargs) -> None:  # type: ignore[no-untyped-def]
         raise RuntimeError("download failed")
 
@@ -45,13 +53,17 @@ def test_nyuu_failed_update_preserves_existing_installation(tmp_path: Path, monk
     monkeypatch.setattr(get_nyuu.platform, "machine", lambda: "x86_64")
 
     with pytest.raises(Exception, match="download failed"):
-        asyncio.run(NyuuBinaryManager.ensure_nyuu_binary(tmp_path, version="v0.4.3"))
+        asyncio.run(
+            NyuuBinaryManager.ensure_nyuu_binary(tmp_path, version="v0.4.3")
+        )
 
-    assert binary.read_bytes() == b"working binary"  # noqa: S101
-    assert marker.read_text() == "stale marker"  # noqa: S101
+    assert binary.read_bytes() == b"working binary"
+    assert marker.read_text() == "stale marker"
 
 
-def test_windows_nyuu_extracts_only_expected_executable(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_windows_nyuu_extracts_only_expected_executable(
+    tmp_path: Path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
     async def write_archive(_client, _url, destination, _asset_name):  # type: ignore[no-untyped-def]
         destination.write_bytes(b"verified archive")
 
@@ -75,14 +87,18 @@ def test_windows_nyuu_extracts_only_expected_executable(tmp_path: Path, monkeypa
     stale_marker.parent.mkdir(parents=True)
     stale_marker.write_text("stale")
 
-    binary = asyncio.run(NyuuBinaryManager.ensure_nyuu_binary(tmp_path, path_7z="7zr.exe"))
+    binary = asyncio.run(
+        NyuuBinaryManager.ensure_nyuu_binary(tmp_path, path_7z="7zr.exe")
+    )
 
-    assert Path(binary).read_bytes() == b"executable"  # noqa: S101
-    assert Path(binary).name == "nyuu.exe"  # noqa: S101
-    assert not stale_marker.exists()  # noqa: S101
+    assert Path(binary).read_bytes() == b"executable"
+    assert Path(binary).name == "nyuu.exe"
+    assert not stale_marker.exists()
 
 
-def test_windows_nyuu_cancellation_kills_and_reaps_7z(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_windows_nyuu_cancellation_kills_and_reaps_7z(
+    tmp_path: Path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
     async def write_archive(_client, _url, destination, _asset_name):  # type: ignore[no-untyped-def]
         destination.write_bytes(b"verified archive")
 
@@ -120,7 +136,9 @@ def test_windows_nyuu_cancellation_kills_and_reaps_7z(tmp_path: Path, monkeypatc
         return process
 
     async def exercise() -> None:
-        task = asyncio.create_task(NyuuBinaryManager.ensure_nyuu_binary(tmp_path, path_7z="7zr.exe"))
+        task = asyncio.create_task(
+            NyuuBinaryManager.ensure_nyuu_binary(tmp_path, path_7z="7zr.exe")
+        )
         await asyncio.sleep(0)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -133,6 +151,6 @@ def test_windows_nyuu_cancellation_kills_and_reaps_7z(tmp_path: Path, monkeypatc
 
     asyncio.run(exercise())
 
-    assert process.killed is True  # noqa: S101
-    assert process.calls == 2  # noqa: S101
-    assert taskkill_command == ("taskkill", "/F", "/T", "/PID", "123")  # noqa: S101
+    assert process.killed is True
+    assert process.calls == 2
+    assert taskkill_command == ("taskkill", "/F", "/T", "/PID", "123")

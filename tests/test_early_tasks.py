@@ -1,8 +1,6 @@
-# ruff: noqa: S101
-
 import asyncio
 
-from src import early_tasks
+from src.services import early_artifact_service as early_tasks
 
 
 async def _wait_for_cancellation(cancelled: asyncio.Event) -> None:
