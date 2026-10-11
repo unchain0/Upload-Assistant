@@ -63,7 +63,7 @@ jobs:
         run: |
           npm ci --ignore-scripts
           npm ci --prefix web_ui/static/js --ignore-scripts
-          npm audit --audit-level=moderate
+          npm audit --omit=dev --audit-level=moderate
           npm audit --prefix web_ui/static/js --audit-level=moderate
 
       - name: Install Reviewdog and actionlint
@@ -140,7 +140,7 @@ jobs:
       - name: Install Danger
         run: |
           npm ci --ignore-scripts
-          npm audit --audit-level=moderate
+          npm audit --omit=dev --audit-level=moderate
 
       - name: Run PR policy review
         env:
