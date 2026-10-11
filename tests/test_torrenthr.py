@@ -1,13 +1,12 @@
-# ruff: noqa: S101
 """Regression tests for TorrentHR's UNIT3D mappings."""
 
 import asyncio
 
 import pytest
 
-from src.meta import Meta
-from src.trackers.UNIT3D.torrenthr import TorrentHR
-from src.trackersetup import tracker_class_map
+from src.domain_models.release import Meta
+from src.integrations.trackers.registry import tracker_class_map
+from src.integrations.trackers.UNIT3D.torrenthr import TorrentHR
 
 
 def _tracker() -> TorrentHR:
@@ -28,7 +27,29 @@ def _tracker() -> TorrentHR:
     ],
 )
 def test_torrenthr_category_mappings(meta: Meta, expected: str) -> None:
-    assert asyncio.run(_tracker().get_category_id(meta)) == {"category_id": expected}
+    assert asyncio.run(_tracker().get_category_id(meta)) == {
+        "category_id": expected
+    }
+
+
+def test_torrenthr_mapping_modes_and_category_edges() -> None:
+    tracker = _tracker()
+    mapping = asyncio.run(
+        tracker.get_category_id(Meta(category="MOVIE"), mapping_only=True)
+    )
+    assert mapping["MOVIE_SD"] == "4"
+
+    reverse = asyncio.run(
+        tracker.get_category_id(Meta(category="MOVIE"), reverse=True)
+    )
+    assert reverse["4"] == "MOVIE_SD"
+
+    assert asyncio.run(
+        tracker.get_category_id(Meta(category="OTHER"), category="TV")
+    ) == {"category_id": "34"}
+    assert asyncio.run(tracker.get_category_id(Meta(category="OTHER"))) == {
+        "category_id": "0"
+    }
 
 
 def test_torrenthr_is_registered() -> None:

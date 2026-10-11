@@ -1,3 +1,5 @@
+FROM ghcr.io/astral-sh/uv:0.11.32 AS uv
+
 FROM python:3.14@sha256:3a9d2dd3f18e5c7a9d8de7b3659418a4ab848ccd409fb9e91ef9d7a6a3520ba7
 
 # ── System dependencies ──────────────────────────────────────────────
@@ -5,9 +7,7 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     git=1:2.47.3-0+deb13u1 \
     g++=4:14.2.0-1 \
-    cargo=1.85.0+dfsg3-1 \
     ffmpeg=7:7.1.5-0+deb13u1 \
-    rustc=1.85.0+dfsg3-1 \
     nano=8.4-1+deb13u1 \
     ca-certificates=20250419 \
     curl=8.14.1-2+deb13u4 \
@@ -17,24 +17,23 @@ RUN apt-get update && \
     update-ca-certificates
 
 # ── Python environment ──────────────────────────────────────────────
-# Ensure Python output is sent straight to the container logs (no buffering)
+COPY --from=uv /uv /uvx /usr/local/bin/
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
-
-RUN python -m venv /venv
+ENV UV_PROJECT_ENVIRONMENT=/venv
+ENV UV_LINK_MODE=copy
 ENV PATH="/venv/bin:$PATH"
-
-COPY requirements.lock .
-RUN pip install --no-cache-dir --require-hashes -r requirements.lock
 
 # ── Application setup ────────────────────────────────────────────────
 WORKDIR /Upload-Assistant
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project
 
-# Copy the rest of the application
+# Copy the CLI application after dependency resolution for effective layer caching.
 COPY . .
 
 # Download the pinned official MediaInfo CLI used by the application.
-RUN python3 -c "import asyncio; from bin.get_mediainfo import MediaInfoBinaryManager; asyncio.run(MediaInfoBinaryManager.ensure_mediainfo_binary('/Upload-Assistant'))"
+RUN python3 -c "import asyncio; from src.integrations.runtime_tools.media_info_binary import MediaInfoBinaryManager; asyncio.run(MediaInfoBinaryManager.ensure_mediainfo_binary('/Upload-Assistant'))"
 
 # Preserve the built-in data/ directory outside the mount-point so that
 # volume mounts over /Upload-Assistant/data/ don't hide critical files
@@ -48,15 +47,11 @@ RUN rm -rf /Upload-Assistant/defaults \
     && find /Upload-Assistant/data -type d -exec chmod 0755 {} + \
     && find /Upload-Assistant/data -type f -exec chmod 0644 {} +
 
-# Download only the required mkbrr binary (requires full repo for src imports)
-RUN python3 -c "from bin.get_mkbrr import MkbrrBinaryManager; MkbrrBinaryManager.download_mkbrr_for_docker()"
-
-# Download bdinfo binary for the container architecture using the docker helper
-RUN python3 bin/get_bdinfo_docker.py
-
-# Ensure downloaded binaries are executable
-RUN find bin/mkbrr -name "mkbrr" -print0 | xargs -0 chmod +x && \
-    find bin/bdinfo -name "bdinfo" -print0 | xargs -0 chmod +x
+# Download the bundled helper binaries and ensure they are executable.
+RUN python3 -c "from src.integrations.runtime_tools.mkbrr import MkbrrBinaryManager; MkbrrBinaryManager.download_mkbrr_for_docker()" \
+    && python3 -m scripts.install_bdinfo_docker \
+    && find bin/mkbrr -name "mkbrr" -exec chmod +x {} + \
+    && find bin/bdinfo -name "bdinfo" -exec chmod +x {} +
 
 # ── Permissions ──────────────────────────────────────────────────────
 # Give UID 1000 ownership for the default runtime while keeping bundled
@@ -90,26 +85,23 @@ ENV MPLCONFIGDIR=/state/matplotlib
 ENV XDG_CACHE_HOME=/state/cache
 
 # ── Runtime metadata ─────────────────────────────────────────────────
-# Document the WebUI port (informational only; does not publish the port)
-EXPOSE 5000
-
-# Let Docker send SIGTERM for graceful shutdown (Python handles it in upload.py)
+# Let Docker send SIGTERM for graceful CLI shutdown.
 STOPSIGNAL SIGTERM
-
-# Health check for WebUI mode — ignored when running CLI
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -sf http://localhost:5000/api/health || exit 1
 
 # ── Entrypoint ───────────────────────────────────────────────────────
 # The entrypoint script handles directory permissions and optional
 # privilege-drop via PUID/PGID environment variables.
 # Pass arguments via CMD or `docker run ... <args>`.
-#   WebUI : docker run ... image --webui 0.0.0.0:5000
-#   CLI   : docker run ... image /data/content --trackers BHD
+#   docker run ... image /data/content --trackers BHD
 COPY scripts/docker-entrypoint.sh /usr/local/bin/
 RUN sed -i 's/\r$//' /usr/local/bin/docker-entrypoint.sh \
     && chmod +x /usr/local/bin/docker-entrypoint.sh
+# The entrypoint must start as root only to chown bind mounts, then it execs via gosu
+# as PUID/PGID (default 1000:1000). Running Docker with a non-root USER here would
+# break supported dynamic host UID/GID mapping.
+# nosemgrep: missing-user-entrypoint
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 
-# Default: show help when no arguments are provided
+# Default: show help when no arguments are provided.
+# nosemgrep: missing-user
 CMD ["-h"]

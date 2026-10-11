@@ -1,35 +1,68 @@
-# ruff: noqa: S101
-
 import asyncio
 import json
-from pathlib import Path
 
-import data.config as config_module
-from src.metadata_cache import cache_for, is_cache_miss, set_run_disabled
+from src.integrations.cache.metadata_cache import (
+    _cache_defaults,
+    _cache_entry_value,
+    _cache_root,
+    _cache_services,
+    _safe_cache_component,
+    _ttl_seconds,
+    cache_for,
+    is_cache_miss,
+    set_run_disabled,
+    tracker_metadata_cache_for,
+)
+from src.integrations.filesystem.paths import CODE_DIR
 
 
 def test_default_cache_root_is_the_configured_checkout():
-    assert cache_for("").root == Path(config_module.__file__).resolve().parent.parent / "data" / "cache" / "metadata"
+    assert cache_for("").root == CODE_DIR / "data" / "cache" / "metadata"
 
 
 def test_metadata_cache_uses_provider_subdirectories_and_ttl(tmp_path):
     async def run():
-        cache = cache_for(tmp_path, {"DEFAULT": {"metadata_cache_dir": "cache", "metadata_cache_default_ttl_hours": 1}})
-        await cache.set("TMDB", "localized", "movie:1:pt-BR", {"title": "Teste"})
-        assert await cache.get("tmdb", "localized", "movie:1:pt-BR") == {"title": "Teste"}
-        assert len(list((tmp_path / "cache" / "tmdb" / "localized").glob("*.json"))) == 1
-        cache_file = next((tmp_path / "cache" / "tmdb" / "localized").glob("*.json"))
+        cache = cache_for(
+            tmp_path,
+            {
+                "DEFAULT": {
+                    "metadata_cache_dir": "cache",
+                    "metadata_cache_default_ttl_hours": 1,
+                }
+            },
+        )
+        await cache.set(
+            "TMDB", "localized", "movie:1:pt-BR", {"title": "Teste"}
+        )
+        assert await cache.get("tmdb", "localized", "movie:1:pt-BR") == {
+            "title": "Teste"
+        }
+        assert (
+            len(
+                list(
+                    (tmp_path / "cache" / "tmdb" / "localized").glob("*.json")
+                )
+            )
+            == 1
+        )
+        cache_file = next(
+            (tmp_path / "cache" / "tmdb" / "localized").glob("*.json")
+        )
         entry = json.loads(cache_file.read_text(encoding="utf-8"))
         entry["expires_at"] = 0
         cache_file.write_text(json.dumps(entry), encoding="utf-8")
-        assert is_cache_miss(await cache.get("tmdb", "localized", "movie:1:pt-BR"))
+        assert is_cache_miss(
+            await cache.get("tmdb", "localized", "movie:1:pt-BR")
+        )
 
     asyncio.run(run())
 
 
 def test_metadata_cache_can_be_disabled_for_one_run(tmp_path):
     async def run():
-        cache = cache_for(tmp_path, {"DEFAULT": {"metadata_cache_dir": "cache"}})
+        cache = cache_for(
+            tmp_path, {"DEFAULT": {"metadata_cache_dir": "cache"}}
+        )
         set_run_disabled(True)
         try:
             await cache.set("imdb", "title", "tt1", {"title": "Ignored"})
@@ -38,6 +71,27 @@ def test_metadata_cache_can_be_disabled_for_one_run(tmp_path):
             set_run_disabled(False)
 
     asyncio.run(run())
+
+
+def test_cache_entry_validation_rejects_invalid_shapes():
+    assert is_cache_miss(_cache_entry_value([]))
+    assert is_cache_miss(
+        _cache_entry_value({"version": 999, "expires_at": 9999999999})
+    )
+    assert is_cache_miss(
+        _cache_entry_value({"version": 1, "expires_at": "invalid"})
+    )
+
+
+def test_tracker_metadata_cache_uses_separate_defaults(tmp_path):
+    cache = tracker_metadata_cache_for(
+        tmp_path,
+        {"DEFAULT": {"tracker_metadata_cache_dir": "tracker-cache"}},
+    )
+
+    assert cache.root == tmp_path / "tracker-cache"
+    assert cache.default_ttl == 24 * 3600
+    assert cache.negative_ttl == 15 * 60
 
 
 def test_metadata_cache_uses_defaults_for_invalid_ttls(tmp_path):
@@ -53,3 +107,24 @@ def test_metadata_cache_uses_defaults_for_invalid_ttls(tmp_path):
 
     assert cache.default_ttl == 168 * 3600
     assert cache.negative_ttl == 60 * 60
+
+
+def test_metadata_cache_refactor_helper_edges(tmp_path):
+    absolute = tmp_path / "absolute-cache"
+
+    assert _cache_defaults({"DEFAULT": "invalid"}) == {}
+    assert _cache_root(tmp_path, absolute) == absolute
+    assert _ttl_seconds(-2, 10, 60) == 0
+    assert _cache_services({"metadata_cache_services": "invalid"}) == {}
+    assert _safe_cache_component(" TMDB! PT-BR ") == "tmdbpt-br"
+    assert is_cache_miss(
+        _cache_entry_value({"version": 1, "expires_at": 9999999999})
+    )
+
+    tracker_cache = tracker_metadata_cache_for(
+        tmp_path,
+        {"DEFAULT": "invalid"},
+    )
+    assert (
+        tracker_cache.root == tmp_path / "data" / "cache" / "tracker_metadata"
+    )
