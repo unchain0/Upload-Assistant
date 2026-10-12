@@ -11,7 +11,7 @@ Start the CLI with `python3 -m upload --help` or `python3 upload.py --help` from
 
 **Exact command:**
 ```bash
-cd /home/avell/.local/share/agents/eng-runs/pr-queue/work/Upload-Assistant-32 && python3 -m upload --help
+cd /home/avell/.local/share/agents/eng-runs/jobs/maintain-verification/work/Upload-Assistant && python3 -m upload --help
 ```
 
 **Readiness signal:** The output contains `usage: upload.py [path...] [options]` and the options list.
@@ -38,7 +38,7 @@ The harness exercises the CLI the way a user would, using stable handle strings 
 
 **How to drive it (user POV):**
 ```bash
-cd /home/avell/.local/share/agents/eng-runs/pr-queue/work/Upload-Assistant-32
+cd /home/avell/.local/share/agents/eng-runs/jobs/maintain-verification/work/Upload-Assistant
 python3 -m upload --help > /dev/null 2>&1
 echo "exit code: $?"
 ```
@@ -54,7 +54,7 @@ def test_help_drive():
     import subprocess
     result = subprocess.run(
         ["python3", "-m", "upload", "--help"],
-        cwd="/home/avell/.local/share/agents/eng-runs/pr-queue/work/Upload-Assistant-32",
+        cwd="/home/avell/.local/share/agents/eng-runs/jobs/maintain-verification/work/Upload-Assistant",
         capture_output=True, text=True,
     )
     assert result.returncode == 0, f"CLI failed: {result.stderr}"
@@ -88,8 +88,8 @@ def test_name_manager_drive():
 No persistent state is created by the `--help` flag, so no cleanup is needed beyond ensuring no stray files were created. If a full pipeline run created temp files or cache entries, remove them thus:
 
 ```bash
-rm -rf /home/avell/.local/share/agents/eng-runs/pr-queue/work/Upload-Assistant-32/tmp
-rm -rf /home/avell/.local/share/agents/eng-runs/pr-queue/work/Upload-Assistant-32/data/config.py
+rm -rf /home/avell/.local/share/agents/eng-runs/jobs/maintain-verification/work/Upload-Assistant/tmp
+rm -rf /home/avell/.local/share/agents/eng-runs/jobs/maintain-verification/work/Upload-Assistant/data/config.py
 ```
 
 Never kill by process name; never remove the evidence directory or the skill file itself.
@@ -99,7 +99,7 @@ Never kill by process name; never remove the evidence directory or the skill fil
 ```bash
 # Quick sanity: verify the CLI starts and exits cleanly
 verify-cli() {
-    cd /home/avell/.local/share/agents/eng-runs/pr-queue/work/Upload-Assistant-32
+    cd /home/avell/.local/share/agents/eng-runs/jobs/maintain-verification/work/Upload-Assistant
     python3 -m upload --help > /dev/null 2>&1
     return $?
 }
