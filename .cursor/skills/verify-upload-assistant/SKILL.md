@@ -11,7 +11,8 @@ Start the CLI with `python3 -m upload --help` or `python3 upload.py --help` from
 
 **Exact command:**
 ```bash
-python3 -m upload --help  # run from current checkout root (repo root)
+# Derive repo root at runtime, then run CLI from that directory:
+cd "$(git rev-parse --show-toplevel)" && python3 -m upload --help
 ```
 
 **Readiness signal:** The output contains `usage: upload.py [path...] [options]` and the options list.
@@ -38,7 +39,8 @@ The harness exercises the CLI the way a user would, using stable handle strings 
 
 **How to drive it (user POV):**
 ```bash
-python3 -m upload --help > /dev/null 2>&1  # run from repo root (current checkout)
+# Derive repo root at runtime, then run CLI from that directory:
+cd "$(git rev-parse --show-toplevel)" && python3 -m upload --help > /dev/null 2>&1
 echo "exit code: $?"
 ```
 
@@ -53,7 +55,7 @@ def test_help_drive():
     import subprocess
     result = subprocess.run(
         ["python3", "-m", "upload", "--help"],
-        cwd="."  # repo root resolved from current checkout at runtime,
+        cwd="$PWD"  # derived at runtime; run from repo root checkout
         capture_output=True, text=True,
     )
     assert result.returncode == 0, f"CLI failed: {result.stderr}"
@@ -98,6 +100,7 @@ Never kill by process name; never remove the evidence directory or the skill fil
 ```bash
 # Quick sanity: verify the CLI starts and exits cleanly
 verify-cli() {
-    python3 -m upload --help > /dev/null 2>&1  # assumes run from repo root (current checkout)
+    # Derive repo root at runtime, then run CLI from that directory:
+    cd "$(git rev-parse --show-toplevel)" && python3 -m upload --help > /dev/null 2>&1
     return $?
 }
