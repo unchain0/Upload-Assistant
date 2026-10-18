@@ -115,3 +115,40 @@ jobs:
           REVIEWDOG_FAIL_LEVEL: error
         run: scripts/run-static-review.sh
 
+
+  danger:
+    name: PR policy review
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Checkout pull request head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install Danger
+        run: |
+          npm ci --ignore-scripts
+          npm audit --omit=dev --audit-level=moderate
+
+      - name: Run PR policy review
+        env:
+          DANGER_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          SAME_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+        run: |
+          if [[ "$SAME_REPOSITORY" == "true" ]]; then
+            npm run danger
+          else
+            node_modules/.bin/danger pr "$PR_URL" --text-only --failOnErrors
+          fi

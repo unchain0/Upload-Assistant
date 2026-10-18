@@ -1,0 +1,17 @@
+{
+  "name": "upload-assistant-review-tooling",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Deterministic pull request review tooling for Upload-Assistant",
+  "scripts": {
+    "danger": "danger ci --failOnErrors",
+    "typecheck": "pyright"
+  },
+  "devDependencies": {
+    "danger": "13.0.10",
+    "pyright": "1.1.413"
+  },
+  "overrides": {
+    "undici": "6.28.0"
+  }
+}
