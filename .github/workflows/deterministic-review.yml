@@ -114,3 +114,4 @@ jobs:
           REVIEWDOG_FILTER_MODE: ${{ github.event.pull_request.head.repo.full_name == github.repository && 'added' || 'nofilter' }}
           REVIEWDOG_FAIL_LEVEL: error
         run: scripts/run-static-review.sh
+
