@@ -730,6 +730,7 @@ async def run_ffmpeg(command: Any) -> tuple[int | None, bytes, bytes]:
     # Spawn validated configured/bundled/system ffmpeg with exec-form argv. The env is local process state, not remote input.
     process = await asyncio.create_subprocess_exec(  # nosemgrep: dangerous-asyncio-create-exec-audit,dangerous-asyncio-create-exec-tainted-env-args
         *cmd_list,
+        stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         env=process_env,
@@ -3737,6 +3738,7 @@ class _VideoCapturePlan:
     ss_times: list[str]
     num_capture: int
     existing_images_count: int
+    capture_indices: list[int]
 
 
 async def _book_screenshot_result(
@@ -3967,7 +3969,27 @@ def _remaining_capture_count(
     return count
 
 
-def _existing_local_capture_paths(
+def _screenshot_slot(
+    screenshot_dir: Path, sanitized_filename: str, index: int
+) -> Path:
+    return screenshot_dir / f"{sanitized_filename}-{index}.png"
+
+
+def _png_is_complete(path: Path) -> bool:
+    """A recovered screenshot must be a real PNG, not a partial write or a symlink."""
+    if path.is_symlink() or not path.is_file():
+        return False
+    try:
+        from PIL import Image
+
+        with Image.open(path) as image:
+            image.verify()
+    except OSError, SyntaxError, ValueError:
+        return False
+    return True
+
+
+def _reusable_screenshot_paths(
     screenshot_dir: Path,
     sanitized_filename: str,
     num_screens: int,
@@ -3975,11 +3997,50 @@ def _existing_local_capture_paths(
 ) -> list[str]:
     if retake:
         return []
-    paths = [
-        str((screenshot_dir / f"{sanitized_filename}-{index}.png").resolve())
+    return [
+        str(_screenshot_slot(screenshot_dir, sanitized_filename, index).absolute())
         for index in range(num_screens)
+        if _png_is_complete(
+            _screenshot_slot(screenshot_dir, sanitized_filename, index)
+        )
     ]
-    return [path for path in paths if Path(path).exists()]
+
+
+def _missing_screenshot_indices(
+    screenshot_dir: Path,
+    sanitized_filename: str,
+    num_screens: int,
+    retake: bool,
+) -> list[int]:
+    """Recapture gaps and incomplete files instead of assuming a filled prefix."""
+    if retake:
+        return list(range(num_screens))
+    return [
+        index
+        for index in range(num_screens)
+        if not _png_is_complete(
+            _screenshot_slot(screenshot_dir, sanitized_filename, index)
+        )
+    ]
+
+
+def _existing_local_capture_paths(
+    screenshot_dir: Path,
+    sanitized_filename: str,
+    num_screens: int,
+    retake: bool,
+) -> list[str]:
+    return _reusable_screenshot_paths(
+        screenshot_dir, sanitized_filename, num_screens, retake
+    )
+
+
+def _finished_local_capture(
+    complete: list[str] | None, capture_indices: list[int]
+) -> list[str] | None:
+    if complete is None or capture_indices:
+        return None
+    return complete
 
 
 def _complete_local_capture(
@@ -4069,14 +4130,17 @@ async def _prepare_video_capture_plan(
     existing_paths = _existing_local_capture_paths(
         screenshot_dir, sanitized_filename, requested, bool(meta.retake)
     )
+    capture_indices = _missing_screenshot_indices(
+        screenshot_dir, sanitized_filename, requested, bool(meta.retake)
+    )
     complete = _complete_local_capture(
         existing_paths, requested, bool(meta.retake)
     )
-    if complete is not None:
-        return None, complete
-    num_capture = requested - len(existing_paths)
+    finished = _finished_local_capture(complete, capture_indices)
+    if finished is not None:
+        return None, finished
     ss_times = await _capture_times(
-        ss_times, num_capture, media, meta, force_screenshots
+        ss_times, requested, media, meta, force_screenshots
     )
     return (
         _VideoCapturePlan(
@@ -4102,23 +4166,20 @@ async def _prepare_video_capture_plan(
             screenshot_dir=screenshot_dir,
             sanitized_filename=sanitized_filename,
             ss_times=ss_times,
-            num_capture=num_capture,
+            num_capture=len(capture_indices),
             existing_images_count=len(existing_paths),
+            capture_indices=capture_indices,
         ),
         None,
     )
 
 
 def _frame_info_image_path(plan: _VideoCapturePlan, index: int) -> Path:
-    return plan.screenshot_dir / (
-        f"{plan.sanitized_filename}-{plan.existing_images_count + index}.png"
-    )
+    return _screenshot_slot(plan.screenshot_dir, plan.sanitized_filename, index)
 
 
 def _frame_info_required(plan: _VideoCapturePlan, index: int) -> bool:
-    if plan.meta.retake:
-        return True
-    return not _frame_info_image_path(plan, index).exists()
+    return index in plan.capture_indices
 
 
 def _frame_info_mapping(
@@ -4138,7 +4199,7 @@ async def _collect_video_frame_info(plan: _VideoCapturePlan) -> None:
     logger.debug("[yellow]Getting frame information for overlays...")
     tasks_with_index = [
         (index, get_frame_info(plan.path, plan.ss_times[index], plan.meta))
-        for index in range(plan.num_capture)
+        for index in plan.capture_indices
         if _frame_info_required(plan, index)
     ]
     results = await asyncio.gather(*[task for _, task in tasks_with_index])
@@ -4160,38 +4221,45 @@ async def _capture_with_semaphore(
         return await capture_screenshot(args)
 
 
+def _should_capture_slot(plan: _VideoCapturePlan, index: int) -> bool:
+    if index >= len(plan.ss_times):
+        return False
+    image_path = _frame_info_image_path(plan, index)
+    if image_path.is_symlink():
+        return False
+    if plan.meta.retake:
+        return True
+    return not _png_is_complete(image_path)
+
+
+def _capture_argument(
+    plan: _VideoCapturePlan, index: int, hdr_tonemap: bool
+) -> tuple[int, str, float, str, float, float, float, float, str, bool, Meta]:
+    return (
+        index,
+        plan.path,
+        float(plan.ss_times[index]),
+        str(_frame_info_image_path(plan, index).absolute()),
+        plan.width,
+        plan.height,
+        plan.w_sar,
+        plan.h_sar,
+        plan.loglevel,
+        hdr_tonemap,
+        plan.meta,
+    )
+
+
 def _capture_task_arguments(
     plan: _VideoCapturePlan, hdr_tonemap: bool
 ) -> list[
     tuple[int, str, float, str, float, float, float, float, str, bool, Meta]
 ]:
-    arguments = []
-    for index in range(plan.num_capture):
-        image_index = plan.existing_images_count + index
-        image_path = str(
-            (
-                plan.screenshot_dir
-                / f"{plan.sanitized_filename}-{image_index}.png"
-            ).resolve()
-        )
-        if Path(image_path).exists() and not plan.meta.retake:
-            continue
-        arguments.append(
-            (
-                index,
-                plan.path,
-                float(plan.ss_times[index]),
-                image_path,
-                plan.width,
-                plan.height,
-                plan.w_sar,
-                plan.h_sar,
-                plan.loglevel,
-                hdr_tonemap,
-                plan.meta,
-            )
-        )
-    return arguments
+    return [
+        _capture_argument(plan, index, hdr_tonemap)
+        for index in plan.capture_indices
+        if _should_capture_slot(plan, index)
+    ]
 
 
 def _log_capture_batch_exceptions(results: list[object]) -> None:

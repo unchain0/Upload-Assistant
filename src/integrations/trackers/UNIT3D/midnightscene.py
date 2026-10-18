@@ -3,12 +3,30 @@ import re
 from typing import Any, cast
 
 from src.domain_models.release import Meta
+from src.domain_models.release_identity import has_english_language
 from src.integrations.media.language_adapter import languages_manager
 from src.integrations.observability.runtime_support import logger
 from src.integrations.trackers.common import Common
 from src.integrations.trackers.UNIT3D import UNIT3D
 
 Config = dict[str, Any]
+
+
+def _category_text(meta: Meta) -> str:
+    return str(meta.category or "")
+
+
+def _disc_text(meta: Meta) -> str:
+    return str(meta.is_disc or "")
+
+
+def _requires_english_track(meta: Meta) -> bool:
+    return _category_text(meta) in {"TV", "MOVIE"}
+
+
+def _disc_skips_english_rule(meta: Meta) -> bool:
+    return _disc_text(meta) in {"BDMV", "DVD"}
+
 
 _CATEGORY_IDS = {"MOVIE": "1", "TV": "2", "MUSIC": "3", "GAME": "4"}
 _NIN_TERM = bytes([110, 105, 110, 116, 101, 110, 100, 111]).decode().upper()
@@ -457,7 +475,23 @@ class MidnightScene(UNIT3D):
             return False
         if not await self._run_policy_checks(meta):
             return False
+        if not self._english_track_present(meta):
+            return False
         return await self._check_game(meta, files)
+
+    def _english_track_present(self, meta: Meta) -> bool:
+        if not _requires_english_track(meta):
+            return True
+        if _disc_skips_english_rule(meta):
+            return True
+        if has_english_language(meta.audio_languages):
+            return True
+        if has_english_language(meta.subtitle_languages):
+            return True
+        logger.info(
+            f"{self.tracker}: [yellow]English audio or English subtitles are required.[/yellow]"
+        )
+        return False
 
     @staticmethod
     def _music_fields(meta: Meta) -> dict[str, Any]:

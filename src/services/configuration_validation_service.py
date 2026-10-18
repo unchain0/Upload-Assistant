@@ -42,6 +42,8 @@ DEFAULT_KEY_TYPES: dict[str, tuple[type, ...]] = {
     "image_upload_delay": (str, float, int),
     "imgbb_api": (str,),
     "lostimg_api": (str,),
+    "catbox_userhash": (str,),
+    "thrimg_api": (str,),
     "lensdump_api": (str,),
     "ptscreens_api": (str,),
     "onlyimage_api": (str,),

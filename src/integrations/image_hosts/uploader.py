@@ -19,6 +19,11 @@ from src.integrations.filesystem.screenshot_manifest import (
     files as manifest_files,
 )
 from src.integrations.filesystem.temp_paths import screenshots_dir
+from src.integrations.image_hosts.catbox import (
+    CATBOX_UPLOAD_URL,
+    catbox_accepted_url,
+    catbox_form_data,
+)
 from src.integrations.image_hosts.contracts import (
     IMAGE_HOST_SPECS,
     MAX_IMAGE_HOST_SLOTS,
@@ -676,6 +681,9 @@ def _image_upload_handler(host: str) -> ImageUploadHandler | None:
         "seedpool_cdn": _upload_seedpool_host,
         "sharex": _upload_sharex_host,
         "lostimg": _upload_lostimg_host,
+        "catbox": _upload_catbox_host,
+        "thrimg": _upload_thrimg_host,
+        "samaritano": _upload_samaritano_host,
     }
     return handlers.get(host)
 
@@ -1195,6 +1203,146 @@ def _sharex_link(payload: dict[str, Any]) -> str:
     data = _mapping_payload(payload.get("data"))
     value = data.get("link") or payload.get("link")
     return value if isinstance(value, str) else ""
+
+
+SAMARITANO_SHAREX_URL = "https://img.samaritano.cc/api/v1/sharex/upload"
+THRIMG_UPLOAD_URL = "https://slike.torrenthr.org/api/1/upload"
+
+
+def _samaritano_api_key(config: dict[str, Any]) -> str:
+    trackers = config.get("TRACKERS", {})
+    if not isinstance(trackers, dict):
+        return ""
+    block = trackers.get("SAMARITANO", {})
+    if not isinstance(block, dict):
+        return ""
+    return str(block.get("image_host_api_key") or "").strip()
+
+
+def _thrimg_url(payload: dict[str, Any]) -> str:
+    image = payload.get("image")
+    if not isinstance(image, dict):
+        return ""
+    url = image.get("url")
+    return url.strip() if isinstance(url, str) else ""
+
+
+async def _upload_samaritano_host(
+    image: str, config: dict[str, Any], _meta: Meta, request_timeout: float
+) -> dict[str, Any]:
+    api_key = _samaritano_api_key(config)
+    if not api_key:
+        return {
+            "status": "failed",
+            "reason": "Missing Samaritano ShareX token",
+            "retryable": False,
+        }
+    try:
+        response = await _sharex_request(
+            image, SAMARITANO_SHAREX_URL, api_key, request_timeout
+        )
+        return _sharex_response_result(image, response)
+    except (httpx.TimeoutException, httpx.RequestError, OSError) as error:
+        return _named_host_exception_result(
+            "samaritano", error, file_retryable=False
+        )
+
+
+async def _thrimg_request(
+    image: str, api_key: str, request_timeout: float
+) -> httpx.Response:
+    file_bytes = await _read_image_bytes(image)
+    files = {"source": (Path(image).name, file_bytes)}
+    async with httpx.AsyncClient() as client:
+        return await client.post(
+            THRIMG_UPLOAD_URL,
+            data={"key": api_key},
+            files=files,
+            timeout=request_timeout,
+        )
+
+
+def _thrimg_response_result(
+    image: str, response: httpx.Response
+) -> dict[str, Any]:
+    payload = _safe_json_mapping(response)
+    if payload is None:
+        return _non_json_host_failure("thrimg", response)
+    url = _thrimg_url(payload)
+    if not url:
+        return {
+            "status": "failed",
+            "reason": "THR img response was missing a valid image URL",
+            "retryable": False,
+        }
+    return _successful_image_result(image, url, url, url)
+
+
+async def _upload_thrimg_host(
+    image: str, config: dict[str, Any], _meta: Meta, request_timeout: float
+) -> dict[str, Any]:
+    api_key = str(_default_image_config(config).get("thrimg_api") or "").strip()
+    if not api_key:
+        return {
+            "status": "failed",
+            "reason": "Missing THR img API key",
+            "retryable": False,
+        }
+    try:
+        response = await _thrimg_request(image, api_key, request_timeout)
+        return _thrimg_response_result(image, response)
+    except (httpx.TimeoutException, httpx.RequestError, OSError) as error:
+        return _named_host_exception_result(
+            "thrimg", error, file_retryable=False
+        )
+
+
+async def _upload_catbox_host(
+    image: str, config: dict[str, Any], _meta: Meta, request_timeout: float
+) -> dict[str, Any]:
+    try:
+        response = await _catbox_request(image, config, request_timeout)
+        return _catbox_response_result(image, response)
+    except (httpx.TimeoutException, httpx.RequestError, OSError) as error:
+        return _named_host_exception_result(
+            "catbox", error, file_retryable=False
+        )
+
+
+async def _catbox_request(
+    image: str, config: dict[str, Any], request_timeout: float
+) -> httpx.Response:
+    file_bytes = await _read_image_bytes(image)
+    userhash = _default_image_config(config).get("catbox_userhash")
+    files = {"fileToUpload": (Path(image).name, file_bytes)}
+    async with httpx.AsyncClient() as client:
+        return await client.post(
+            CATBOX_UPLOAD_URL,
+            data=catbox_form_data(userhash),
+            files=files,
+            timeout=request_timeout,
+        )
+
+
+def _catbox_failure(response: httpx.Response) -> dict[str, Any]:
+    retryable = response.status_code == 429 or response.status_code >= 500
+    return {
+        "status": "failed",
+        "reason": (
+            f"catbox upload failed (HTTP {response.status_code}): "
+            f"{_summarize_host_error(response.text)}"
+        ),
+        "retryable": retryable,
+    }
+
+
+def _catbox_response_result(
+    image: str, response: httpx.Response
+) -> dict[str, Any]:
+    url = catbox_accepted_url(response.text, response.status_code)
+    if not url:
+        return _catbox_failure(response)
+    return _successful_image_result(image, url, url, url)
 
 
 async def _upload_lostimg_host(

@@ -142,6 +142,7 @@ class Wait:
             port=port,
             api_key=api_key,
             VERIFY_WEBUI_CERTIFICATE=verify_cert,
+            FORCE_SCHEME_FROM_HOST=True,
         )
         return cls._verify_api_key(qbt_client)
 
@@ -163,6 +164,7 @@ class Wait:
             username=username,
             password=password,
             VERIFY_WEBUI_CERTIFICATE=verify_cert,
+            FORCE_SCHEME_FROM_HOST=True,
         )
         return cls._verify_login(qbt_client)
 

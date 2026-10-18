@@ -12,6 +12,7 @@ import cli_ui
 
 from src.domain_models.errors import OperationAbortedError
 from src.domain_models.release import Meta
+from src.domain_models.release_identity import unattended_identity_skip_reason
 from src.domain_models.tracker_upload_state import TrackerUploadState
 from src.engines.tracker_upload_eligibility import (
     evaluate_tracker_upload_eligibility,
@@ -129,6 +130,9 @@ class TrackerStatusManager:
         invalid_group = invalid_release_group_tag(meta)
         if invalid_group:
             return f"Release group {invalid_group!r} matches season/episode syntax. Correct or clear the release group before uploading."
+        identity = unattended_identity_skip_reason(meta)
+        if identity:
+            return identity
         if audiobook_cover_missing_or_invalid(meta):
             return "Audiobook cover is missing or invalid. Prepare a valid cover before uploading."
         return (

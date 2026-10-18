@@ -47,4 +47,4 @@ async def test_scene_lookup_runs_when_meta_scene_defaults_to_false(
     assert meta.scene_name == "Cellar.Keeper-TENOKE"
     assert video == "Cellar.Keeper-TENOKE.mkv"
     assert imdb is None
-    client.get.assert_awaited_once()
+    assert client.get.await_count == 2

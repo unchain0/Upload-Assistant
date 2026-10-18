@@ -10,6 +10,10 @@ import aiofiles
 import httpx
 
 from src.domain_models.release import Meta
+from src.domain_models.release_identity import (
+    digitalcore_staff_skip_reason,
+    normalize_dc_episode_numbering,
+)
 from src.integrations.filesystem.temp_paths import release_temp_dir
 from src.integrations.image_hosts.rehosting import (
     ImageHostPolicy,
@@ -422,6 +426,7 @@ class DigitalCore:
             .replace("DTS:", "DTS-")
             .replace("HDR10+", "HDR10P")
         )
+        normalized = normalize_dc_episode_numbering(normalized)
         normalized = unicodedata.normalize("NFD", normalized)
         normalized = "".join(
             char
@@ -435,11 +440,26 @@ class DigitalCore:
             return False
         if not self._source_policy_passes(meta):
             return False
+        return self._category_policy_passes(meta)
+
+    def _category_policy_passes(self, meta: Meta) -> bool:
         if str(meta.category).upper() not in {"MOVIE", "TV"}:
             return True
+        return self._movie_tv_policy_passes(meta)
+
+    def _movie_tv_policy_passes(self, meta: Meta) -> bool:
         if not self._file_policy_passes(meta):
             return False
+        if not self._staff_policy_passes(meta):
+            return False
         return self._screenshot_policy_passes(meta)
+
+    def _staff_policy_passes(self, meta: Meta) -> bool:
+        reason = digitalcore_staff_skip_reason(meta)
+        if not reason:
+            return True
+        logger.info(f"{self.tracker}: {reason}")
+        return False
 
     def _codec_policy_passes(self, meta: Meta) -> bool:
         values = (

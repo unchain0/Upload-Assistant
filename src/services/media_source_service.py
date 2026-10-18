@@ -53,12 +53,19 @@ def _guess_source(video: str, path: str) -> Any:
             return "BluRay"
 
 
+def _last_listed_source(source: Any) -> Any:
+    """GuessIt can return every source token. The release source is the last one."""
+    if not isinstance(source, list):
+        return source
+    if not source:
+        return "BluRay"
+    return source[-1]
+
+
 def _initial_source(meta: Meta, video: str, path: str) -> Any:
-    return (
-        meta.manual_source
-        if meta.manual_source
-        else _guess_source(video, path)
-    )
+    if meta.manual_source:
+        return meta.manual_source
+    return _last_listed_source(_guess_source(video, path))
 
 
 def _normalize_bluray_source(source: Any, type_name: str, is_disc: str) -> Any:

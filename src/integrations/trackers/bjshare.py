@@ -33,6 +33,94 @@ from src.integrations.trackers.cookie_auth import (
 from src.integrations.trackers.description_builder import DescriptionBuilder
 
 Config = dict[str, Any]
+_TV_AUDIO_LABELS = {
+    "dual áudio": "Dual Áudio",
+    "legendado": "Legendado",
+    "dublado": "Dublado",
+}
+_MOVIE_AUDIO_LABELS = {
+    "torrents dual áudios": "Dual Áudio",
+    "torrents legendados": "Legendado",
+    "torrents dublados": "Dublado",
+}
+_INCOMPATIBLE_BJSHARE_AUDIO = {
+    "Legendado": ("Dual Áudio", "Dublado"),
+    "Dublado": ("Dual Áudio", "Legendado"),
+}
+
+
+def _audio_label_map(category: str) -> dict[str, str]:
+    if category == "TV":
+        return _TV_AUDIO_LABELS
+    return _MOVIE_AUDIO_LABELS
+
+
+def _response_text(response: Any) -> str:
+    text = getattr(response, "text", "")
+    return text if isinstance(text, str) else ""
+
+
+def _audio_headers(html: str) -> list[Tag]:
+    soup = BeautifulSoup(html, "html.parser")
+    table = soup.select_one("table.torrent_table")
+    if table is None:
+        return []
+    return [
+        tag for tag in table.select("td.audio_header") if isinstance(tag, Tag)
+    ]
+
+
+def _header_matches_season(header: Tag, meta: Meta) -> bool:
+    if str(meta.category or "") != "TV":
+        return True
+    season = getattr(meta, "season_int", None)
+    if not isinstance(season, int) or season < 0:
+        return False
+    return _season_class_matches(header, season)
+
+
+def _season_class_matches(header: Tag, season: int) -> bool:
+    classes = header.get("class", [])
+    if not isinstance(classes, list):
+        return False
+    for css_class in classes:
+        if _season_class_is(str(css_class), season):
+            return True
+    return False
+
+
+def _season_class_is(css_class: str, season: int) -> bool:
+    match = re.fullmatch(r"season_(\d+)", css_class)
+    return bool(match and int(match.group(1)) == season)
+
+
+def _normalized_header_label(header: Tag) -> str:
+    return " ".join(header.get_text(" ", strip=True).split()).casefold()
+
+
+def _record_audio_header(
+    found: set[str], header: Tag, labels: dict[str, str], meta: Meta
+) -> None:
+    if not _header_matches_season(header, meta):
+        return
+    label = _normalized_header_label(header)
+    if label in labels:
+        found.add(labels[label])
+
+
+def _existing_audio_labels(html: str, meta: Meta) -> set[str]:
+    labels = _audio_label_map(str(meta.category or ""))
+    found: set[str] = set()
+    for header in _audio_headers(html):
+        _record_audio_header(found, header, labels, meta)
+    return found
+
+
+def _incompatible_bjshare_audio(upload: str, existing: set[str]) -> str | None:
+    for label in _INCOMPATIBLE_BJSHARE_AUDIO.get(upload, ()):
+        if label in existing:
+            return label
+    return None
 
 _VIDEO_CONTAINERS = frozenset({"mkv", "mp4", "avi", "vob", "m2ts", "ts"})
 _AUDIOBOOK_CONTAINERS = frozenset(
@@ -1290,7 +1378,27 @@ class BJShare:
             media_terms,
         )
         response = details or fallback
-        return self._parse_search_response(meta, response) if response else []
+        if not response:
+            return []
+        if await self._incompatible_audio_blocks(meta, response):
+            return []
+        return self._parse_search_response(meta, response)
+
+    async def _incompatible_audio_blocks(self, meta: Meta, response: Any) -> bool:
+        if str(meta.category or "") not in {"TV", "MOVIE"}:
+            return False
+        existing = _existing_audio_labels(_response_text(response), meta)
+        if not existing:
+            return False
+        upload_audio = await self.get_audio(meta)
+        conflict = _incompatible_bjshare_audio(upload_audio, existing)
+        if not conflict:
+            return False
+        logger.info(
+            f"{self.tracker}: Skipping {upload_audio} upload because a {conflict} version already exists."
+        )
+        meta.skipping = self.tracker
+        return True
 
     def get_edition(self, meta: Meta) -> str:
         edition_str = meta.edition.lower()

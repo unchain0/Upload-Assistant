@@ -96,6 +96,9 @@ def test_image_host_registry_covers_every_configurable_host() -> None:
         "sharex",
         "utppm",
         "lostimg",
+        "catbox",
+        "thrimg",
+        "samaritano",
     }
 
     assert set(IMAGE_HOST_SPECS) == expected

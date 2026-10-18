@@ -45,7 +45,7 @@ def test_onlyencodes_uses_imdb_title_aka_and_year() -> None:
 
     name = asyncio.run(tracker.get_name(meta))["name"]
 
-    assert name == "Canonical AKA Alternate 2021 1080p WEB-DL H264-GROUP"
+    assert name == "Canonical AKA Alternate 2021 1080p WEB-DL AAC 2.0-GROUP"
 
 
 def test_onlyencodes_tv_dvdrip_rewrites_source_and_audio() -> None:
@@ -68,8 +68,8 @@ def test_onlyencodes_tv_dvdrip_rewrites_source_and_audio() -> None:
 
     name = asyncio.run(tracker.get_name(meta))["name"]
 
-    assert "480p" in name
-    assert "AAC 2.0 H264" in name
+    assert "DVDRip" in name
+    assert "AAC 2.0 x264" in name
 
 
 def test_onlyencodes_marks_foreign_language(

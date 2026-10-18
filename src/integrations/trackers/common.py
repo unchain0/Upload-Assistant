@@ -3652,6 +3652,17 @@ class Common:
             extra={"markup": False, "highlighter": None},
         )
 
+    @staticmethod
+    def _ignored_empty_description(
+        meta: Meta, tracker: str, images: list[dict[str, str]]
+    ) -> tuple[str, list[dict[str, str]]]:
+        logger.info(
+            f"[yellow]Description from {tracker} has no text content after cleanup; ignoring it.[/yellow]"
+        )
+        if meta.unattended or meta.keep_images:
+            return "", images
+        return "", []
+
     def _unit3d_description_result(
         self,
         meta: Meta,
@@ -3669,6 +3680,8 @@ class Common:
         visible_images = self._visible_unit3d_images(meta, images)
         if skip_tracker_descriptions:
             return "", visible_images
+        if not cleaned:
+            return self._ignored_empty_description(meta, tracker, images)
         self._log_unit3d_description(tracker, cleaned)
         if meta.unattended:
             return cleaned, images

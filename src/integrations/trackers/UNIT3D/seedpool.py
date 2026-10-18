@@ -12,6 +12,19 @@ from src.integrations.trackers.UNIT3D import UNIT3D
 
 Config = dict[str, Any]
 
+
+def _scene_or_source_name(meta: Meta, source_name: str) -> str:
+    return str(meta.scene_name or source_name)
+
+
+def _uses_dotted_release_name(meta: Meta) -> bool:
+    return bool(meta.is_disc or meta.mal_id)
+
+
+def _dotted_release_name(meta: Meta) -> str:
+    return str(meta.name or "").replace(" ", ".")
+
+
 CATEGORY_IDS = {
     "MOVIE": "1",
     "TV": "2",
@@ -236,31 +249,46 @@ class Seedpool(UNIT3D):
         }
 
     @staticmethod
-    def _scene_generated_name(meta: Meta) -> str:
-        if meta.scene_name:
-            return meta.scene_name
-        return meta.basename_no_ext.replace(" ", ".")
+    def _single_media_path(meta: Meta) -> str | None:
+        files = list(meta.filelist or [])
+        if len(files) != 1:
+            return None
+        media_path = files[0]
+        if not isinstance(media_path, str) or not media_path.strip():
+            return None
+        return media_path
 
-    @staticmethod
-    def _regular_generated_name(meta: Meta) -> str:
-        if (meta.mal_id or 0) != 0:
-            return meta.name.replace(" ", ".")
-        return meta.basename_no_ext.replace(" ", ".")
+    @classmethod
+    def _filename_source_name(cls, meta: Meta) -> str | None:
+        if meta.category not in {"MOVIE", "TV"} or meta.is_disc:
+            return None
+        media_path = cls._single_media_path(meta)
+        if media_path is None:
+            return None
+        return Path(media_path).name
+
+    @classmethod
+    def _source_name(cls, meta: Meta) -> str:
+        filename = cls._filename_source_name(meta)
+        if filename:
+            return filename
+        return str(meta.basename_no_ext or meta.uuid or meta.name or "")
 
     @classmethod
     def _generated_name(cls, meta: Meta) -> str:
+        source_name = cls._source_name(meta)
         if meta.scene:
-            return cls._scene_generated_name(meta)
-        if bool(meta.is_disc):
-            return meta.name.replace(" ", ".")
-        return cls._regular_generated_name(meta)
+            return _scene_or_source_name(meta, source_name)
+        if _uses_dotted_release_name(meta):
+            return _dotted_release_name(meta)
+        return source_name
 
     @staticmethod
     def _strip_video_extension(name: str) -> str:
         path = Path(name)
         if path.suffix.lower() not in VIDEO_EXTENSIONS:
             return name
-        return path.stem.replace(" ", ".")
+        return path.stem
 
     async def get_name(self, meta: Meta) -> dict[str, str]:
         return {

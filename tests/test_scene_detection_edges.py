@@ -125,6 +125,9 @@ def test_scene_search_cached_match_lowercase_and_imdb(tmp_path: Path) -> None:
     (cache / "movie.release-group.json").write_text(
         json.dumps(_scene_result()), encoding="utf-8"
     )
+    details = cache.parent / "details"
+    details.mkdir()
+    (details / "Movie.Release-GROUP.json").write_text("{}", encoding="utf-8")
 
     video, scene, imdb = asyncio.run(
         SceneManager({"DEFAULT": {}}).is_scene(meta.filename, meta)
@@ -273,7 +276,7 @@ def test_lower_search_match_download_and_existing_nfo(tmp_path: Path) -> None:
         tmp_path, filename="Movie Release.mkv", tag="-GROUP", imdb_id=1234567
     )
     result = _scene_result(hasNFO="yes", imdbId="1234567")
-    Client.reset(Response(result), Response(content=b"NFO"))
+    Client.reset(Response(result), Response({}), Response(content=b"NFO"))
     video, scene, _ = asyncio.run(
         SceneManager({"DEFAULT": {}}).is_scene(meta.filename, meta, lower=True)
     )

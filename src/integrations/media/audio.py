@@ -1059,6 +1059,23 @@ def _dts_pair_orientation(
     return None
 
 
+def _commentary_text(track: TrackDict) -> bool:
+    return any(
+        "commentary" in str(track.get(field) or "").lower()
+        for field in ("Title", "title", "TrackTitle", "ServiceKind")
+    )
+
+
+def _commentary_service_kind(track: TrackDict) -> bool:
+    raw = str(track.get("ServiceKind") or "")
+    kinds = {kind.strip().upper() for kind in raw.split("/") if kind.strip()}
+    return "C" in kinds
+
+
+def _lossy_dts_is_commentary(track: TrackDict) -> bool:
+    return _commentary_text(track) or _commentary_service_kind(track)
+
+
 def _dts_duplicate_pair(
     first: TrackDict, second: TrackDict
 ) -> tuple[TrackDict, TrackDict] | None:
@@ -1068,7 +1085,12 @@ def _dts_duplicate_pair(
         return None
     if not _has_meaningful_dts_properties(first_properties):
         return None
-    return _dts_pair_orientation(first, second)
+    pair = _dts_pair_orientation(first, second)
+    if pair is None:
+        return None
+    if _lossy_dts_is_commentary(pair[1]):
+        return None
+    return pair
 
 
 def _audio_tracks_from_meta(meta: Meta) -> list[TrackDict]:

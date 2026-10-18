@@ -311,6 +311,13 @@ _DEFINITIONS = {
         ("api.nzbgeek.info",),
         True,
     ),
+    "NZBNEST": TrackerDefinition(
+        "NZBNEST",
+        "other_api",
+        ("TV", "MOVIE", "GAME", "BOOK", "MUSIC"),
+        ("nzbnest.com",),
+        True,
+    ),
     "OLDTOONSWORLD": TrackerDefinition(
         "OLDTOONSWORLD",
         "unit3d_api",
@@ -388,6 +395,13 @@ _DEFINITIONS = {
     ),
     "PTZONE": TrackerDefinition(
         "PTZONE", "cookies", ("TV", "MOVIE"), ("ptzone.xyz",), False
+    ),
+    "QINGWA": TrackerDefinition(
+        "QINGWA",
+        "cookies",
+        ("TV", "MOVIE"),
+        ("www.qingwapt.com",),
+        False,
     ),
     "RACING4EVERYONE": TrackerDefinition(
         "RACING4EVERYONE",

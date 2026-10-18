@@ -15,17 +15,26 @@ from src.integrations.media.media_info_export import mi_resolution
 from src.integrations.observability.runtime_support import logger
 
 
+_UHD_TOKEN_RE = re.compile(r"(?:^|[\W_])UHD(?:$|[\W_])")
+
+
+def _path_marks_uhd(path: str) -> bool:
+    return _UHD_TOKEN_RE.search(path) is not None
+
+
+def _uhd_source(source: str, other: str) -> bool:
+    if source == "Ultra HD Blu-ray":
+        return True
+    return source == "Blu-ray" and other == "Ultra HD"
+
+
 class VideoManager:
     @staticmethod
     def _guess_is_uhd(guess: Any, path: str) -> bool:
         guess_dict = cast(dict[str, Any], guess)
         source = str(guess_dict.get("Source", ""))
         other = str(guess_dict.get("Other", ""))
-        return (
-            source == "Ultra HD Blu-ray"
-            or (source == "Blu-ray" and other == "Ultra HD")
-            or "UHD" in path
-        )
+        return _uhd_source(source, other) or _path_marks_uhd(path)
 
     async def get_uhd(
         self, type: str, guess: Any, resolution: str, path: str

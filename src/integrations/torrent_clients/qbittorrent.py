@@ -754,6 +754,7 @@ class QbittorrentClientMixin:
             "VERIFY_WEBUI_CERTIFICATE": QbittorrentClientMixin._verify_webui_certificate(
                 client
             ),
+            "FORCE_SCHEME_FROM_HOST": True,
         }
         if client.get("qbit_api_key"):
             return qbittorrentapi.Client(

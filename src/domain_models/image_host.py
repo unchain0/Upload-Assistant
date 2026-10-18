@@ -23,6 +23,9 @@ IMAGE_HOST_CONFIG_KEYS = MappingProxyType(
         "seedpool_cdn": ("seedpool_cdn_api",),
         "sharex": ("sharex_url", "sharex_api_key"),
         "lostimg": ("lostimg_api",),
+        "catbox": ("catbox_userhash",),
+        "thrimg": ("thrimg_api",),
+        "samaritano": (),
     }
 )
 

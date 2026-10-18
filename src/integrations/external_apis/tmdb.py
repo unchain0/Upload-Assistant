@@ -3112,30 +3112,52 @@ async def _anilist_media(
     return [], demographic
 
 
-def _season_number(value: Any) -> int | None:
-    if not value:
+def _explicit_season_number(value: Any) -> int | None:
+    if value is None or value == "":
         return None
-    match = re.search(r"S?(\d+)", str(value), re.IGNORECASE)
+    match = re.fullmatch(r"S?(\d+)", str(value), re.IGNORECASE)
     return int(match.group(1)) if match else None
 
 
-def _filename_anime_season(filename: str) -> int | None:
+def _anitopy_season(filename: str) -> int | None:
     if not filename:
         return None
     with contextlib.suppress(Exception):
         parsed = typing_cast(dict[str, Any], anitopy_parse_fn(filename) or {})
         value = parsed.get("anime_season")
-        if value:
+        if value is not None:
             return int(value)
     return None
 
 
+def _guessit_season(filename: str) -> int | None:
+    if not filename:
+        return None
+    with contextlib.suppress(Exception):
+        value = guessit_fn(filename, None).get("season")
+        if isinstance(value, int):
+            return value
+    return None
+
+
+def _filename_anime_season(filename: str) -> int | None:
+    parsed = _anitopy_season(filename)
+    return parsed if parsed is not None else _guessit_season(filename)
+
+
+def _stored_season_number(value: object) -> int | None:
+    if not value:
+        return None
+    return _explicit_season_number(value)
+
+
 def _expected_anime_season(meta: Meta) -> int | None:
-    manual = _season_number(meta.manual_season)
-    if manual is not None:
-        return manual
+    if meta.manual_season is not None:
+        return _explicit_season_number(meta.manual_season)
     parsed = _filename_anime_season(meta.filename)
-    return parsed if parsed is not None else _season_number(meta.season)
+    if parsed is not None:
+        return parsed
+    return _stored_season_number(meta.season)
 
 
 def _anilist_search_name(tmdb_name: str, meta: Meta) -> str:
@@ -3265,9 +3287,157 @@ def _anilist_result_tuple(
     )
 
 
+def _arm_context_applies(meta: Meta, season: int | None) -> bool:
+    return (
+        meta.category == "TV" and bool(meta.tmdb_id) and season is not None
+    )
+
+
+def _arm_season_candidates(
+    mappings: list[Any], season: int
+) -> list[dict[str, Any]]:
+    return [
+        item
+        for item in mappings
+        if isinstance(item, dict)
+        and type(item.get("themoviedb-season")) is int
+        and item["themoviedb-season"] == season
+    ]
+
+
+def _single_arm_candidate(
+    mappings: object, season: int
+) -> dict[str, Any] | None:
+    if not isinstance(mappings, list):
+        return None
+    candidates = _arm_season_candidates(mappings, season)
+    if len(candidates) == 1:
+        return candidates[0]
+    return None
+
+
+def _numeric_imdb(value: object) -> int | None:
+    text = str(value or "").removeprefix("tt")
+    if text.isdigit():
+        return int(text)
+    return None
+
+
+def _arm_imdb_conflicts(meta: Meta, candidate: dict[str, Any]) -> bool:
+    if not meta.imdb_id:
+        return False
+    left = _numeric_imdb(meta.imdb_id)
+    right = _numeric_imdb(candidate.get("imdb"))
+    if left is None or right is None:
+        return True
+    return left != right
+
+
+def _arm_ids_conflict(meta: Meta, candidate: dict[str, Any]) -> bool:
+    if meta.tvdb_id and candidate.get("thetvdb") != int(meta.tvdb_id):
+        return True
+    return _arm_imdb_conflicts(meta, candidate)
+
+
+def _arm_mal_value(candidate: dict[str, Any]) -> int:
+    mal_id = candidate.get("myanimelist")
+    if type(mal_id) is int and mal_id > 0:
+        return mal_id
+    return 0
+
+
+def arm_mal_from_mappings(
+    mappings: object, meta: Meta, season: int | None
+) -> int:
+    """Return a MAL id only when ARM has one TV season mapping and the ids agree."""
+    if not _arm_context_applies(meta, season) or not isinstance(season, int):
+        return 0
+    candidate = _single_arm_candidate(mappings, season)
+    if candidate is None:
+        return 0
+    if _arm_ids_conflict(meta, candidate):
+        return 0
+    return _arm_mal_value(candidate)
+
+
+async def _download_arm_mappings(tmdb_id: object) -> list[Any] | None:
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        response = await client.get(
+            "https://arm.haglund.dev/api/v2/themoviedb",
+            params={
+                "id": tmdb_id,
+                "include": "myanimelist,themoviedb-season,thetvdb,imdb",
+            },
+        )
+    response.raise_for_status()
+    payload = response.json()
+    if payload is None:
+        return []
+    return payload if isinstance(payload, list) else None
+
+
+async def _store_arm_mappings(
+    meta: Meta, downloaded: list[Any] | None
+) -> list[Any] | None:
+    if downloaded is None:
+        return None
+    cache = cache_for(meta.base_dir, {"DEFAULT": default_config})
+    await cache.set(
+        "arm",
+        "tv_mappings",
+        str(meta.tmdb_id),
+        downloaded,
+        negative=not downloaded,
+    )
+    return downloaded
+
+
+async def _cached_arm_mappings(meta: Meta) -> list[Any] | None:
+    cache = cache_for(meta.base_dir, {"DEFAULT": default_config})
+    key = str(meta.tmdb_id)
+    cached = await cache.get("arm", "tv_mappings", key)
+    if not is_cache_miss(cached):
+        return cached if isinstance(cached, list) else None
+    return await _store_arm_mappings(
+        meta, await _download_arm_mappings(meta.tmdb_id)
+    )
+
+
+async def _get_arm_mal_id(meta: Meta, season: int | None) -> int:
+    if not _arm_context_applies(meta, season):
+        return 0
+    try:
+        mappings = await _cached_arm_mappings(meta)
+    except Exception as exc:
+        logger.debug(
+            f"ARM anime mapping unavailable; using AniList title search: {exc}"
+        )
+        return 0
+    if mappings is None:
+        return 0
+    return arm_mal_from_mappings(mappings, meta, season)
+
+
+async def _romaji_from_arm(
+    tmdb_name: str, mal: int | None, meta: Meta
+) -> tuple[str, int, str, str, int, str] | None:
+    if mal not in (None, 0):
+        return None
+    arm_mal = await _get_arm_mal_id(meta, _expected_anime_season(meta))
+    if not arm_mal:
+        return None
+    mapped = await get_romaji(tmdb_name, arm_mal, meta)
+    if mapped[0]:
+        return mapped
+    return None
+
+
 async def get_romaji(
     tmdb_name: str, mal: int | None, meta: Meta
 ) -> tuple[str, int, str, str, int, str]:
+    mapped = await _romaji_from_arm(tmdb_name, mal, meta)
+    if mapped is not None:
+        return mapped
     media, demographic = await _anilist_media(tmdb_name, mal, meta)
     if not media:
         return "", int(mal or 0), "", "", 0, demographic

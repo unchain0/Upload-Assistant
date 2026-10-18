@@ -19,8 +19,18 @@ from src.domain_models.adult_platforms import XXX_PLATFORM_KEYWORDS
 from src.domain_models.errors import AmbiguousMetadataError, MediaInfoError
 from src.domain_models.processing import ItemProcessingError, NoAudioMediaError
 from src.domain_models.release import Meta
+from src.domain_models.release_identity import (
+    client_export_infohash,
+    order_release_videos,
+    lookup_category,
+)
 from src.engines.adult_content_detection import extract_xxx_keywords
-from src.engines.region_mapping import get_distributor, get_region, get_service
+from src.engines.region_mapping import (
+    get_distributor,
+    get_mediainfo_service,
+    get_region,
+    get_service,
+)
 from src.integrations.external_apis.bluray import get_bluray_releases
 from src.integrations.external_apis.imdb import imdb_manager
 from src.integrations.external_apis.tvmaze import tvmaze_manager
@@ -964,7 +974,14 @@ async def _resolve_general_video(
         (meta.mode if meta.mode is not None else "non_cli"),
         meta.sorted_filelist,
     )
+    filelist = order_release_videos(
+        filelist,
+        prefer_largest=bool(meta.sorted_filelist),
+        size_of=os.path.getsize,
+    )
     meta.filelist = filelist
+    if filelist:
+        videopath = filelist[0]
     search_term = Path(filelist[0]).name if filelist else ""
     _scan_external_subtitles(meta, str(meta.path or ""))
     return videopath, videopath, search_term, "file"
@@ -1457,7 +1474,9 @@ def _apply_reuse_torrent_path(client: Clients, meta: Meta, path: str) -> None:
 
 def _cache_reuse_infohash(meta: Meta, path: str) -> None:
     try:
-        meta.infohash = Torrent.read(path).infohash
+        parsed = str(Torrent.read(path).infohash)
+        meta.infohash = client_export_infohash(path, parsed)
+        meta.reuse_torrent_infohash = meta.infohash
     except Exception as error:
         logger.debug(
             f"[yellow]Unable to read infohash from cached torrent: {error}"
@@ -1690,15 +1709,24 @@ async def _initial_automation_ids(
     return None
 
 
-async def _maybe_hash_metadata(
-    client: Clients, meta: Meta, ids: dict[str, Any] | None
-) -> Meta:
-    if (
+def should_lookup_torrent_properties(
+    meta: Meta, ids: dict[str, Any] | None
+) -> bool:
+    """Avoid repeating a client lookup after a reusable torrent was resolved."""
+    if meta.reuse_torrent_path:
+        return False
+    return bool(
         meta.infohash is not None
         and not meta.base_torrent_created
         and not meta.we_checked_them_all
         and not ids
-    ):
+    )
+
+
+async def _maybe_hash_metadata(
+    client: Clients, meta: Meta, ids: dict[str, Any] | None
+) -> Meta:
+    if should_lookup_torrent_properties(meta, ids):
         return await client.get_ptp_from_hash(meta)
     return meta
 
@@ -1898,6 +1926,14 @@ def _external_metadata_category(meta: Meta) -> bool:
     return meta.category not in _SPECIAL_METADATA_CATEGORIES
 
 
+def _missing_either_primary_id(meta: Meta) -> bool:
+    return _id_is_zero(meta.tmdb_id) or _id_is_zero(meta.imdb_id)
+
+
+def _mediainfo_payload(mi: dict[str, Any] | None) -> dict[str, Any]:
+    return mi or {}
+
+
 async def _maybe_mediainfo_ids(
     prep_instance: Any,
     meta: Meta,
@@ -1905,7 +1941,7 @@ async def _maybe_mediainfo_ids(
 ) -> None:
     if not _external_metadata_category(meta):
         return
-    if not (_id_is_zero(meta.tmdb_id) or _id_is_zero(meta.imdb_id)):
+    if not _missing_either_primary_id(meta):
         return
     (
         category,
@@ -1913,9 +1949,9 @@ async def _maybe_mediainfo_ids(
         imdb_id,
         tvdb_id,
     ) = await prep_instance.tmdb_manager.get_tmdb_imdb_from_mediainfo(
-        mi or {}, meta
+        _mediainfo_payload(mi), meta
     )
-    meta.category = category
+    meta.category = lookup_category(meta.category, category, tmdb_id)
     meta.tmdb_id = tmdb_id
     meta.imdb_id = imdb_id
     meta.tvdb_id = tvdb_id
@@ -1938,6 +1974,14 @@ def _identity_unattended(meta: Meta) -> bool:
     return bool(meta.unattended)
 
 
+def _missing_both_primary_ids(meta: Meta) -> bool:
+    return _id_is_zero(meta.tmdb_id) and _id_is_zero(meta.imdb_id)
+
+
+def _category_text(meta: Meta) -> str:
+    return str(meta.category or "")
+
+
 async def _search_missing_primary_ids(
     prep_instance: Any,
     meta: Meta,
@@ -1947,10 +1991,10 @@ async def _search_missing_primary_ids(
 ) -> None:
     if not _external_metadata_category(meta):
         return
-    if not (_id_is_zero(meta.tmdb_id) and _id_is_zero(meta.imdb_id)):
+    if not _missing_both_primary_ids(meta):
         return
     year = _identity_search_year(meta)
-    category = meta.category or ""
+    category = _category_text(meta)
     unattended = _identity_unattended(meta)
     tmdb_task = asyncio.create_task(
         prep_instance.tmdb_manager.get_tmdb_id(
@@ -1979,7 +2023,7 @@ async def _search_missing_primary_ids(
     (tmdb_id, resolved_category), imdb_id = await asyncio.gather(
         tmdb_task, imdb_task
     )
-    meta.category = resolved_category
+    meta.category = lookup_category(meta.category, resolved_category, tmdb_id)
     meta.tmdb_id = _to_int(tmdb_id)
     meta.imdb_id = _to_int(imdb_id)
     meta.quickie_search = True
@@ -1999,6 +2043,16 @@ def _log_tmdb_from_imdb_attempt(announce: bool) -> None:
         )
 
 
+def _metadata_mode(meta: Meta) -> str:
+    if meta.mode is not None:
+        return str(meta.mode)
+    return "non_cli"
+
+
+def _optional_tvdb_id(meta: Meta) -> int | None:
+    return _to_int(meta.tvdb_id) or None
+
+
 async def _tmdb_from_imdb(
     prep_instance: Any,
     meta: Meta,
@@ -2016,16 +2070,16 @@ async def _tmdb_from_imdb(
         filename_search,
     ) = await prep_instance.tmdb_manager.get_tmdb_from_imdb(
         _to_int(meta.imdb_id),
-        (_to_int(meta.tvdb_id) or None),
+        _optional_tvdb_id(meta),
         _normalize_search_year(meta.search_year),
         filename,
         debug=meta.debug,
-        mode=(meta.mode if meta.mode is not None else "non_cli"),
+        mode=_metadata_mode(meta),
         category_preference=meta.category,
         imdb_info=meta.imdb_info,
         unattended=meta.unattended,
     )
-    meta.category = category
+    meta.category = lookup_category(meta.category, category, tmdb_id)
     meta.tmdb_id = _to_int(tmdb_id)
     meta.original_language = original_language
     meta.no_ids = filename_search
@@ -2577,12 +2631,21 @@ def _apply_bluray_config(prep_instance: Any, meta: Meta) -> bool:
     return bool(defaults.get("get_bluray_info", False))
 
 
+def _bluray_field_missing(value: object) -> bool:
+    return not str(value or "").strip()
+
+
+def _bluray_fields_incomplete(meta: Meta) -> bool:
+    missing_distributor = _bluray_field_missing(meta.distributor)
+    return missing_distributor or _bluray_field_missing(meta.region)
+
+
 def _bluray_lookup_allowed(meta: Meta, enabled: bool) -> bool:
     return all(
         (
             meta.is_disc in ("BDMV", "DVD"),
             enabled,
-            meta.distributor is None or meta.region is None,
+            _bluray_fields_incomplete(meta),
             not _id_is_zero(meta.imdb_id),
             not meta.edit,
             not meta.site_check,
@@ -2929,11 +2992,22 @@ async def _service_longname_for_code(code: str) -> str:
     return max(matches, key=len, default=code)
 
 
+async def _apply_mediainfo_service(meta: Meta) -> None:
+    if meta.service:
+        return
+    code, longname = await get_mediainfo_service(meta)
+    if not code:
+        return
+    meta.service = code
+    meta.service_longname = longname
+
+
 async def _resolve_service_metadata(meta: Meta, video: str) -> None:
     if meta.service in (None, ""):
         meta.service, meta.service_longname = await get_service(
             video, meta.tag, meta.audio, meta.filename
         )
+        await _apply_mediainfo_service(meta)
         return
     code = str(meta.service or "")
     meta.service_longname = await _service_longname_for_code(code)

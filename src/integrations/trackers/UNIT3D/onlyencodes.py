@@ -1,8 +1,16 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
 import re
+from dataclasses import replace
 from typing import Any, cast
 
 from src.domain_models.release import Meta
+from src.domain_models.video_title_builder import (
+    BLU_NAME_RULES,
+    NameComponents,
+    build_name_components,
+    build_video_name,
+    with_imdb_title,
+)
 from src.integrations.image_hosts.rehosting import (
     ImageHostPolicy,
     RehostImagesManager,
@@ -12,6 +20,39 @@ from src.integrations.trackers.common import Common
 from src.integrations.trackers.UNIT3D import UNIT3D
 
 Config = dict[str, Any]
+ONLYENCODES_NAME_RULES = replace(BLU_NAME_RULES, language_slot="before_cut")
+_INVALID_GROUP_TAGS = ("nogrp", "nogroup", "unknown", "-unk-")
+
+
+def _scale_marker(meta: Meta) -> str:
+    source = str(meta.basename_no_ext or "").upper()
+    if "DS4K" in source:
+        return "DS4K"
+    if "RM4K" in source:
+        return "RM4K"
+    return ""
+
+
+def _scaled_components(components: NameComponents, meta: Meta) -> NameComponents:
+    scale = _scale_marker(meta)
+    if not scale or components.type not in {"ENCODE", "WEBDL", "WEBRIP"}:
+        return components
+    if not components.resolution or scale in components.resolution:
+        return components
+    return replace(components, resolution=f"{components.resolution} {scale}")
+
+
+def _group_tag(tag: str) -> str:
+    folded = tag.lower()
+    if not tag or any(marker in folded for marker in _INVALID_GROUP_TAGS):
+        return "-NOGRP"
+    return tag
+
+
+def _onlyencodes_components(meta: Meta) -> NameComponents:
+    components = with_imdb_title(meta, build_name_components(meta))
+    components = _scaled_components(components, meta)
+    return replace(components, tag=_group_tag(components.tag))
 
 
 class OnlyEncodes(UNIT3D):
@@ -29,6 +70,7 @@ class OnlyEncodes(UNIT3D):
         "onlyimage",
         "ptscreens",
         "passtheimage",
+        "lostimg",
     )
     image_host_policy = ImageHostPolicy(
         {
@@ -38,6 +80,7 @@ class OnlyEncodes(UNIT3D):
             "imagebam.com": "bam",
             "ptscreens.com": "ptscreens",
             "img.passtheima.ge": "passtheimage",
+            "lostimg.cc": "lostimg",
         },
         approved_image_hosts,
     )
@@ -328,13 +371,9 @@ class OnlyEncodes(UNIT3D):
         return f"{name}-NOGRP"
 
     async def get_name(self, meta: Meta) -> dict[str, str]:
-        imdb_name, imdb_year, imdb_aka = self._imdb_values(meta)
-        name = self._apply_imdb_title(meta.name, meta, imdb_name, imdb_aka)
-        name = self._apply_imdb_year(name, meta, imdb_year)
-        name = self._apply_dvdrip_name(name, meta)
-        name = await self._apply_foreign_language(name, meta)
-        name = self._apply_scale(name, meta)
-        return {"name": self._apply_group_tag(name, meta)}
+        components = _onlyencodes_components(meta)
+        name = build_video_name(meta, ONLYENCODES_NAME_RULES, components)
+        return {"name": name or str(meta.name or "")}
 
     @staticmethod
     def _type_mapping() -> dict[str, str]:

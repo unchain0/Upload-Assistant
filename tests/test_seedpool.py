@@ -85,7 +85,7 @@ def test_seedpool_removes_known_video_extension_from_generated_name():
         basename_no_ext="Scene File.mkv",
         mal_id=0,
     )
-    assert asyncio.run(_tracker().get_name(meta)) == {"name": "Scene.File"}
+    assert asyncio.run(_tracker().get_name(meta)) == {"name": "Scene File"}
 
 
 def test_seedpool_low_resolution_prompt_paths(monkeypatch):

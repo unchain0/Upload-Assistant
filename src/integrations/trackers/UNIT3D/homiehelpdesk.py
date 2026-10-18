@@ -1,6 +1,7 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
 import re
-from typing import Any
+from typing import Any, ClassVar
+from urllib.parse import urlsplit
 
 from src.domain_models.release import Meta
 from src.integrations.external_apis.music_sources import DiscogsEnricher
@@ -78,6 +79,18 @@ class HomieHelpDesk(UNIT3D):
     torrent_url = f"{base_url}/torrents/"
     supported_categories = ("TV", "MOVIE", "BOOK", "GAME", "MUSIC")
     tracker_urls = ("https://homiehelpdesk.net",)
+    _AUDIBLE_REGIONS: ClassVar[dict[str, str]] = {
+        "audible.com.au": "au",
+        "audible.ca": "ca",
+        "audible.de": "de",
+        "audible.es": "es",
+        "audible.fr": "fr",
+        "audible.in": "in",
+        "audible.it": "it",
+        "audible.co.jp": "jp",
+        "audible.co.uk": "uk",
+        "audible.com": "us",
+    }
 
     def __init__(self, config: Config) -> None:
         super().__init__(config, tracker_name="HOMIEHELPDESK")
@@ -174,9 +187,89 @@ class HomieHelpDesk(UNIT3D):
             }
         return {}
 
+    @staticmethod
+    def _audiobook_asin(meta: Meta) -> str:
+        asin = str(meta.asin or meta.book_asin or "").strip().upper()
+        if re.fullmatch(r"[A-Z0-9]{10}", asin):
+            return asin
+        return ""
+
+    @classmethod
+    def _audible_region(cls, meta: Meta) -> str:
+        url = str(getattr(meta, "audible_url", "") or "")
+        host = (urlsplit(url).hostname or "").removeprefix("www.")
+        return cls._AUDIBLE_REGIONS.get(host, "")
+
+    @staticmethod
+    def _named_audible_authors(meta: Meta) -> list[str]:
+        raw = getattr(meta, "audible_authors", [])
+        if not isinstance(raw, list):
+            return []
+        return [
+            str(item.get("name") or "").strip()
+            for item in raw
+            if isinstance(item, dict)
+        ]
+
+    @staticmethod
+    def _fallback_authors(meta: Meta) -> str:
+        return str(meta.author or meta.book_author or "").strip()
+
+    @classmethod
+    def _audiobook_authors(cls, meta: Meta) -> str:
+        names = [name for name in cls._named_audible_authors(meta) if name]
+        if names:
+            return ", ".join(names)
+        return cls._fallback_authors(meta)
+
+    @classmethod
+    def _put_audiobook_asin(cls, data: dict[str, str], meta: Meta) -> None:
+        asin = cls._audiobook_asin(meta)
+        if not asin:
+            return
+        data["audiobook_asin"] = asin
+        region = cls._audible_region(meta)
+        if region:
+            data["audiobook_region"] = region
+
+    @staticmethod
+    def _put_text(data: dict[str, str], key: str, value: object) -> None:
+        text = str(value or "").strip()
+        if text:
+            data[key] = text
+
+    @classmethod
+    def _audiobook_upload_data(cls, meta: Meta) -> dict[str, str]:
+        data: dict[str, str] = {}
+        cls._put_audiobook_asin(data, meta)
+        cls._put_text(data, "audiobook_title", meta.title or meta.book_title)
+        cls._put_text(data, "audiobook_authors", cls._audiobook_authors(meta))
+        narrator = getattr(meta, "book_narrator", "") or meta.narrator
+        cls._put_text(data, "audiobook_narrators", narrator)
+        return data
+
+    @staticmethod
+    def _ebook_upload_data(meta: Meta) -> dict[str, str]:
+        isbn = re.sub(
+            r"[^0-9Xx]", "", str(meta.isbn or meta.book_isbn or "")
+        ).upper()
+        if len(isbn) in {10, 13}:
+            return {"isbn": isbn}
+        return {}
+
+    @classmethod
+    def _book_upload_data(cls, meta: Meta) -> dict[str, str]:
+        if meta.audiobook:
+            return cls._audiobook_upload_data(meta)
+        if meta.comic or meta.manga or meta.magazine:
+            return {}
+        return cls._ebook_upload_data(meta)
+
     async def get_additional_data(self, meta: Meta) -> dict[str, str]:
         if meta.category == "MUSIC":
             return self._music_upload_data(meta)
+        if meta.category == "BOOK":
+            return self._book_upload_data(meta)
         return {}
 
     @staticmethod

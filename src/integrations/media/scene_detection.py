@@ -15,6 +15,139 @@ from bs4.element import AttributeValueList
 from src.domain_models.release import Meta
 from src.integrations.observability.runtime_support import logger
 
+_UNATTENDED_SCENE_MISMATCH = (
+    "Upload cancelled: srrDB filename or file size differences were not approved."
+    " Run with interactive confirmation to review them."
+)
+
+
+class SceneFileMismatchError(ValueError):
+    """Unattended scene upload disagreed with archived srrDB metadata."""
+
+
+def _named_archive_entry(item: object) -> bool:
+    return isinstance(item, dict) and isinstance(item.get("name"), str)
+
+
+def _basename_matches(filename: str, item: dict[str, Any], basename) -> bool:
+    return basename(item).casefold() == filename.casefold()
+
+
+def _name_matches(
+    archived: list[dict[str, Any]], filename: str, basename
+) -> list[dict[str, Any]]:
+    return [
+        item
+        for item in archived
+        if _basename_matches(filename, item, basename)
+    ]
+
+
+def _sole_release_match(
+    archived: list[dict[str, Any]], filename: str, release: str
+) -> list[dict[str, Any]]:
+    if len(archived) != 1:
+        return []
+    if Path(filename).stem.casefold() != release.casefold():
+        return []
+    return archived
+
+
+def _unattended_scene_block(meta: Meta) -> bool:
+    return bool(meta.unattended) and not bool(meta.unattended_confirm)
+
+
+def _archive_volume(path: Path) -> bool:
+    extension = path.suffix.lower()
+    if extension in {".rar", ".zip", ".7z", ".tar", ".gz"}:
+        return True
+    return re.fullmatch(r"\.r\d{2,3}", extension) is not None
+
+
+def _stored_name_list(
+    details: dict[str, Any], key: str
+) -> list[dict[str, Any]]:
+    stored = details.get(key, [])
+    if not isinstance(stored, list):
+        return []
+    return [item for item in stored if _named_archive_entry(item)]
+
+
+def _comparison_entries(
+    path: Path, details: dict[str, Any] | None
+) -> list[dict[str, Any]] | None:
+    if not isinstance(details, dict) or not path.is_file():
+        return None
+    if _archive_volume(path):
+        return _stored_name_list(details, "files")
+    return _stored_name_list(details, "archived-files")
+
+
+def _entry_basename(file_info: dict[str, Any]) -> str:
+    return Path(str(file_info.get("name", "")).replace("\\", "/")).name
+
+
+def _selected_matches(
+    path: Path, release: str, archived: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    matches = _name_matches(archived, path.name, _entry_basename)
+    if matches:
+        return matches
+    return _sole_release_match(archived, path.name, release)
+
+
+def _absent_archive_name(
+    path: Path,
+    release: str,
+    archived: list[dict[str, Any]],
+    matches: list[dict[str, Any]],
+) -> str:
+    if archived and not matches:
+        return f"{path.name} is not listed in {release}"
+    return ""
+
+
+def _text_archive_size(expected: object) -> int | None:
+    if isinstance(expected, str) and expected.isdigit():
+        return int(expected)
+    return None
+
+
+def _int_archive_size(expected: object) -> int | None:
+    if isinstance(expected, bool) or not isinstance(expected, int):
+        return None
+    if expected < 0:
+        return None
+    return expected
+
+
+def _entry_size(file_info: dict[str, Any]) -> int | None:
+    expected = file_info.get("size")
+    parsed = _text_archive_size(expected)
+    if parsed is not None:
+        return parsed
+    return _int_archive_size(expected)
+
+
+def _renamed_archive_name(path: Path, original: str) -> str:
+    if path.name != original:
+        return f"{path.name} was archived as {original}"
+    return ""
+
+
+def _sized_archive_name(path: Path, file_info: dict[str, Any]) -> str:
+    expected = _entry_size(file_info)
+    if expected is None or path.stat().st_size == expected:
+        return ""
+    return f"{path.name} size differs from archived {expected} bytes"
+
+
+def _one_archive_difference(path: Path, file_info: dict[str, Any]) -> str:
+    renamed = _renamed_archive_name(path, _entry_basename(file_info))
+    if renamed:
+        return renamed
+    return _sized_archive_name(path, file_info)
+
 
 class SceneManager:
     def __init__(self, config: Mapping[str, Any]) -> None:
@@ -194,6 +327,19 @@ class SceneManager:
             return resolved
         return resolved
 
+    @classmethod
+    def archived_file_difference(
+        cls, path: Path, release: str, details: dict[str, Any] | None
+    ) -> str:
+        """Describe a rename or size mismatch against srrDB archived metadata."""
+        archived = _comparison_entries(path, details)
+        if archived is None:
+            return ""
+        matches = _selected_matches(path, release, archived)
+        if len(matches) != 1:
+            return _absent_archive_name(path, release, archived, matches)
+        return _one_archive_difference(path, matches[0])
+
     @staticmethod
     async def _nfo_file_result(
         client: httpx.AsyncClient, url: str, path: Path
@@ -210,6 +356,50 @@ class SceneManager:
     def _set_nfo_flags(meta: Meta) -> None:
         meta.nfo = True
         meta.auto_nfo = True
+
+    def _reject_archived_difference(
+        self,
+        video: str,
+        release: str,
+        details: dict[str, Any] | None,
+        meta: Meta,
+    ) -> None:
+        difference = self.archived_file_difference(Path(video), release, details)
+        if not difference:
+            return
+        logger.warning(f"[yellow]SRRDB: {difference}[/yellow]")
+        if _unattended_scene_block(meta):
+            raise SceneFileMismatchError(
+                f"{_UNATTENDED_SCENE_MISMATCH} {difference}"
+            )
+
+    async def _scene_release_details(
+        self,
+        client: httpx.AsyncClient,
+        release: str,
+        details_cache_dir: Path,
+    ) -> dict[str, Any] | None:
+        safe_release = self._safe_release_name(release)
+        try:
+            return await self._release_details(
+                client, release, safe_release, details_cache_dir
+            )
+        except Exception as exc:
+            logger.info(f"[yellow]SRRDB: Details request failed: {exc}")
+            return None
+
+    async def _confirm_scene_file(
+        self,
+        client: httpx.AsyncClient,
+        video: str,
+        release: str,
+        meta: Meta,
+        details_cache_dir: Path,
+    ) -> None:
+        details = await self._scene_release_details(
+            client, release, details_cache_dir
+        )
+        self._reject_archived_difference(video, release, details, meta)
 
     @classmethod
     def _apply_primary_nfo_result(
@@ -284,6 +474,13 @@ class SceneManager:
             return video, False, imdb
         response_data = cast(dict[str, Any], response_json)
         first_result = self._first_result(response_data)
+        await self._confirm_scene_file(
+            client,
+            video,
+            str(first_result["release"]),
+            meta,
+            details_cache_dir,
+        )
         video, imdb = self._apply_primary_match(
             meta, first_result, is_all_lowercase, imdb
         )
@@ -354,6 +551,49 @@ class SceneManager:
         except Exception as exc:
             logger.info(f"[yellow]Failed to download NFO file: {exc}")
 
+    async def _lower_search_hit(
+        self,
+        client: httpx.AsyncClient,
+        meta: Meta,
+        terms: tuple[str, str],
+    ) -> dict[str, Any] | None:
+        name, tag = terms
+        url = f"https://api.srrdb.com/v1/search/start:{name}/group:{tag}"
+        logger.debug(f"Using SRRDB url: {url}")
+        try:
+            response = await client.get(url, timeout=10.0)
+            response_json = cast(dict[str, Any], response.json())
+        except Exception as exc:
+            logger.info(f"[yellow]SRRDB search failed: {exc}")
+            return None
+        if not self._has_results(response_json):
+            logger.debug("[yellow]SRRDB: No match found with lower/tag search")
+            return None
+        first_result = self._first_result(response_json)
+        if not self._lower_result_matches(first_result, meta):
+            return None
+        return first_result
+
+    async def _accept_lower_match(
+        self,
+        client: httpx.AsyncClient,
+        video: str,
+        meta: Meta,
+        first_result: dict[str, Any],
+        quoted_base: str,
+        imdb: int | None,
+        details_cache_dir: Path,
+    ) -> tuple[str, bool, int | None]:
+        meta.scene = True
+        release_name = str(first_result["release"])
+        await self._confirm_scene_file(
+            client, video, release_name, meta, details_cache_dir
+        )
+        await self._download_lower_nfo(
+            client, meta, first_result, quoted_base
+        )
+        return release_name, True, imdb
+
     async def _lower_search(
         self,
         client: httpx.AsyncClient,
@@ -361,6 +601,7 @@ class SceneManager:
         meta: Meta,
         quoted_base: str,
         imdb: int | None,
+        details_cache_dir: Path,
     ) -> tuple[str, bool, int | None]:
         terms = self._lower_terms(meta)
         if terms is None:
@@ -368,29 +609,18 @@ class SceneManager:
                 "[yellow]SRRDB: Missing name or tag for lower/tag search"
             )
             return video, False, imdb
-        name, tag = terms
-        url = f"https://api.srrdb.com/v1/search/start:{name}/group:{tag}"
-        logger.debug(f"Using SRRDB url: {url}")
-        try:
-            response = await client.get(url, timeout=10.0)
-            response_json = cast(dict[str, Any], response.json())
-            if not self._has_results(response_json):
-                logger.debug(
-                    "[yellow]SRRDB: No match found with lower/tag search"
-                )
-                return video, False, imdb
-            first_result = self._first_result(response_json)
-            if not self._lower_result_matches(first_result, meta):
-                return video, False, imdb
-            meta.scene = True
-            release_name = str(first_result["release"])
-            await self._download_lower_nfo(
-                client, meta, first_result, quoted_base
-            )
-            return release_name, True, imdb
-        except Exception as exc:
-            logger.info(f"[yellow]SRRDB search failed: {exc}")
+        found = await self._lower_search_hit(client, meta, terms)
+        if found is None:
             return video, False, imdb
+        return await self._accept_lower_match(
+            client,
+            video,
+            meta,
+            found,
+            quoted_base,
+            imdb,
+            details_cache_dir,
+        )
 
     async def _search_scene(
         self,
@@ -417,7 +647,12 @@ class SceneManager:
             )
         if lower:
             return await self._lower_search(
-                client, video, meta, urllib.parse.quote(base), imdb
+                client,
+                video,
+                meta,
+                urllib.parse.quote(base),
+                imdb,
+                details_cache_dir,
             )
         return video, False, imdb
 

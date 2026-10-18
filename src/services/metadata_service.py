@@ -9,6 +9,7 @@ from bs4 import BeautifulSoup
 
 from src.domain_models.errors import AmbiguousMetadataError
 from src.domain_models.release import Meta
+from src.domain_models.release_identity import lookup_category
 from src.integrations.cache.metadata_cache import cache_for, is_cache_miss
 from src.integrations.external_apis.imdb import imdb_manager
 from src.integrations.external_apis.tmdb import TmdbManager
@@ -455,11 +456,15 @@ def _apply_tmdb_from_imdb_result(meta: Meta, result: Any) -> None:
     if len(values) != 4:
         return
     category, tmdb_id, original_language, filename_search = values
-    meta.category = category
+    meta.category = lookup_category(meta.category, category, tmdb_id)
     meta.tmdb_id = tmdb_id
+    _assign_original_language(meta, original_language)
+    meta.no_ids = filename_search
+
+
+def _assign_original_language(meta: Meta, original_language: object) -> None:
     if original_language is not None:
         meta.original_language = original_language
-    meta.no_ids = filename_search
 
 
 def _apply_all_id_tv_results(

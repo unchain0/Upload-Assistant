@@ -5,6 +5,7 @@ import contextlib
 import json
 import os
 import re
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -253,7 +254,78 @@ def _first_alias_year_result(
     return None
 
 
-def _best_series_result(
+def _normalized_series_title(value: str) -> str:
+    """Compare TVDB titles after dropping apostrophes and punctuation."""
+    untitled = re.sub(r"\s*\((?:19|20)\d{2}\)\s*$", "", value)
+    folded = unicodedata.normalize("NFKD", untitled).casefold()
+    stripped = "".join(
+        char for char in folded if not unicodedata.combining(char)
+    )
+    cleaned = re.sub(r"['\u2019]", "", stripped)
+    return " ".join(re.findall(r"[^\W_]+", cleaned))
+
+
+def _alias_title(alias: object) -> object:
+    if isinstance(alias, dict):
+        return alias.get("name")
+    return alias
+
+
+def _extend_alias_titles(titles: list[object], aliases: object) -> None:
+    if not isinstance(aliases, list):
+        return
+    titles.extend(_alias_title(alias) for alias in cast(list[Any], aliases))
+
+
+def _string_titles(titles: list[object]) -> list[str]:
+    return [title for title in titles if isinstance(title, str)]
+
+
+def _result_title_values(result: dict[str, Any]) -> list[str]:
+    titles: list[object] = [result.get("name"), result.get("name_translated")]
+    _extend_alias_titles(titles, result.get("aliases"))
+    return _string_titles(titles)
+
+
+def _result_matches_title(result: dict[str, Any], search_title: str) -> bool:
+    if not search_title:
+        return False
+    return any(
+        _normalized_series_title(title) == search_title
+        for title in _result_title_values(result)
+    )
+
+
+def _matching_title_results(
+    results: list[dict[str, Any]], search_title: str
+) -> list[dict[str, Any]]:
+    return [
+        result
+        for result in results
+        if _result_matches_title(result, search_title)
+    ]
+
+
+def _preferred_title_match(
+    matches: list[dict[str, Any]], year: str | None
+) -> dict[str, Any]:
+    if not year:
+        return matches[0]
+    exact = _first_exact_year_result(matches, year)
+    return exact if exact is not None else matches[0]
+
+
+def _title_matches(
+    results: list[dict[str, Any]], filename: str, year: str | None
+) -> dict[str, Any] | None:
+    search_title = _normalized_series_title(filename) if filename else ""
+    matches = _matching_title_results(results, search_title)
+    if not matches:
+        return None
+    return _preferred_title_match(matches, year)
+
+
+def _year_fallback(
     results: list[dict[str, Any]], year: str | None
 ) -> dict[str, Any]:
     if not year:
@@ -263,6 +335,17 @@ def _best_series_result(
         return exact
     alias_match = _first_alias_year_result(results, year)
     return alias_match if alias_match is not None else results[0]
+
+
+def _best_series_result(
+    results: list[dict[str, Any]],
+    year: str | None,
+    filename: str = "",
+) -> dict[str, Any]:
+    titled = _title_matches(results, filename, year)
+    if titled is not None:
+        return titled
+    return _year_fallback(results, year)
 
 
 @dataclass(frozen=True)
@@ -381,7 +464,7 @@ class TvdbData:
             logger.info("[yellow]No TVDB results found[/yellow]")
             return None, None
         try:
-            series_id = _best_series_result(results, year)["tvdb_id"]
+            series_id = _best_series_result(results, year, filename)["tvdb_id"]
         except Exception as error:
             logger.error(f"[red]Error: {error}[/red]")
             return None, None

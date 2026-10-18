@@ -129,6 +129,29 @@ IMAGE_HOST_SPECS: dict[str, ImageHostSpec] = {
         documentation_url="https://lostimg.cc/docs/api",
         public_api=False,
     ),
+    "catbox": ImageHostSpec(
+        key="catbox",
+        protocol="catbox-api",
+        config_keys=("catbox_userhash",),
+        upload_url="https://catbox.moe/user/api.php",
+        documentation_url="https://catbox.moe/tools.php",
+        public_api=True,
+    ),
+    "thrimg": ImageHostSpec(
+        key="thrimg",
+        protocol="chevereto",
+        config_keys=("thrimg_api",),
+        upload_url="https://slike.torrenthr.org/api/1/upload",
+        documentation_url="https://slike.torrenthr.org/",
+        public_api=False,
+    ),
+    "samaritano": ImageHostSpec(
+        key="samaritano",
+        protocol="sharex-custom",
+        upload_url="https://img.samaritano.cc/api/v1/sharex/upload",
+        documentation_url="https://samaritano.cc/",
+        public_api=False,
+    ),
 }
 
 

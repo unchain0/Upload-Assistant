@@ -36,14 +36,15 @@ def _has_release_token(value: str, token: str) -> bool:
     )
 
 
+_RELEASE_TOKEN_RE = re.compile(
+    r"(?<![A-Z0-9])(?:(?:REPACK|PROPER)[2-9]?|RERIP)(?![A-Z0-9])",
+    re.IGNORECASE,
+)
+
+
 def _strip_release_tokens(value: str) -> str:
     """Remove standalone release markers while preserving adjacent text."""
-    return re.sub(
-        r"(?<![A-Z0-9])(?:REPACK\d?|RERIP|PROPER\d?)(?![A-Z0-9])",
-        "",
-        value,
-        flags=re.IGNORECASE,
-    ).strip()
+    return _RELEASE_TOKEN_RE.sub("", value).strip()
 
 
 def _edition_context(meta: Meta) -> tuple[EditionDetails, int]:
@@ -609,41 +610,46 @@ def _manual_edition(manual_edition: str | list[str]) -> str:
     return manual_edition
 
 
-_REPACK_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("REPACK", ("REPACK", "V2")),
-    ("REPACK2", ("REPACK2", "V3")),
-    ("REPACK3", ("REPACK3", "V4")),
-    ("PROPER", ("PROPER",)),
-    ("PROPER2", ("PROPER2",)),
-    ("PROPER3", ("PROPER3",)),
-    ("RERIP", ("RERIP",)),
-)
-_RELEASE_MARKERS = {
-    "repack",
-    "repack2",
-    "repack3",
-    "proper",
-    "proper2",
-    "proper3",
-    "rerip",
-}
+def _version_repack(version: int) -> str:
+    if version == 2:
+        return "REPACK"
+    return f"REPACK{version - 1}"
+
+
+def _version_repacks(release_text: str) -> list[str]:
+    return [
+        _version_repack(version)
+        for version in range(2, 11)
+        if _has_release_token(release_text, f"V{version}")
+    ]
+
+
+def _highest_marker(tokens: list[str], prefix: str) -> str:
+    matches = [token for token in tokens if token.startswith(prefix)]
+    return max(matches) if matches else ""
+
+
+def _preferred_release_marker(tokens: list[str]) -> str:
+    chosen = ""
+    for prefix in ("REPACK", "PROPER", "RERIP"):
+        found = _highest_marker(tokens, prefix)
+        if found:
+            chosen = found
+    return chosen
 
 
 def _detect_repack(release_text: str) -> str:
-    repack = ""
-    for value, tokens in _REPACK_RULES:
-        if any(_has_release_token(release_text, token) for token in tokens):
-            repack = value
-    return repack
+    tokens = [
+        token.upper() for token in _RELEASE_TOKEN_RE.findall(release_text)
+    ]
+    tokens.extend(_version_repacks(release_text))
+    return _preferred_release_marker(tokens)
 
 
 def _should_strip_markers(manual_edition: str) -> bool:
     if not manual_edition:
         return True
-    return all(
-        token not in _RELEASE_MARKERS
-        for token in manual_edition.strip().lower().split()
-    )
+    return _RELEASE_TOKEN_RE.search(manual_edition) is None
 
 
 def _hybrid(meta: Meta, video: str, edition: str) -> bool:

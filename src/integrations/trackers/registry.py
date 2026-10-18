@@ -46,6 +46,7 @@ from src.integrations.trackers.NEXUSPHP.ptcafe import PTCafe
 from src.integrations.trackers.NEXUSPHP.ptfans import PTFans
 from src.integrations.trackers.NEXUSPHP.ptgtk import PTGTK
 from src.integrations.trackers.NEXUSPHP.ptzone import PTZone
+from src.integrations.trackers.NEXUSPHP.qingwa import QingWa
 from src.integrations.trackers.NEXUSPHP.railgunpt import RailgunPT
 from src.integrations.trackers.NEXUSPHP.xingyungept import XingyungePT
 from src.integrations.trackers.orpheus import Orpheus
@@ -108,6 +109,7 @@ from src.integrations.trackers.UNIT3D.znth import Zenith
 from src.integrations.trackers.USENET.curupira import Curupira
 from src.integrations.trackers.USENET.drunkenslug import DrunkenSlug
 from src.integrations.trackers.USENET.nzbgeek import NZBGeek
+from src.integrations.trackers.USENET.nzbnest import NzbNest
 from src.integrations.trackers.USENET.suio import Suio
 
 JsonDict = dict[str, Any]
@@ -2375,6 +2377,7 @@ tracker_class_map: dict[str, Any] = {
     "DARKPEERS": DarkPeers,
     "DRUNKENSLUG": DrunkenSlug,
     "NZBGEEK": NZBGeek,
+    "NZBNEST": NzbNest,
     "DESITORRENTS": DesiTorrents,
     "EMUWAREZ": Emuwarez,
     "FUNFILE": FunFile,
@@ -2412,6 +2415,7 @@ tracker_class_map: dict[str, Any] = {
     "PTFANS": PTFans,
     "PTGTK": PTGTK,
     "PTZONE": PTZone,
+    "QINGWA": QingWa,
     "PASSTHEPOPCORN": PassThePopcorn,
     "PTSKIT": Ptskit,
     "PEERGARDEN": PeerGarden,

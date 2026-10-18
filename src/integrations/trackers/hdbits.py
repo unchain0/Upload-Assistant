@@ -27,6 +27,39 @@ from src.integrations.trackers.common import Common
 Config = dict[str, Any]
 
 
+def _imdb_mapping(meta: Meta) -> dict[str, Any]:
+    imdb = meta.imdb_info
+    return imdb if isinstance(imdb, dict) else {}
+
+
+def _imdb_display_title(meta: Meta, imdb: dict[str, Any]) -> str:
+    return str(imdb.get("aka") or imdb.get("title") or meta.title or "")
+
+
+def _replace_display_title(name: str, meta: Meta, imdb: dict[str, Any]) -> str:
+    title = str(meta.title or "")
+    if not title:
+        return name
+    return name.replace(title, _imdb_display_title(meta, imdb))
+
+
+def _is_hdb_miniseries(meta: Meta) -> bool:
+    if meta.category != "TV" or not meta.tv_pack:
+        return False
+    kind = str(_imdb_mapping(meta).get("type") or "")
+    return kind in {"tvMiniSeries", "tv mini series"}
+
+
+def _replace_miniseries_season(name: str, meta: Meta, year: str) -> str:
+    body = name
+    meta_year = "" if meta.year is None else str(meta.year)
+    if meta_year and body.startswith(f"{meta_year} "):
+        body = body.replace(meta_year, year, 1)
+    without_year = body.removeprefix(f"{year} ").lstrip()
+    without_season = re.sub(r"^S01(?=\s|$)", "", without_year).lstrip()
+    return f"{year} {without_season}".strip()
+
+
 class HDBits:
     """
     HDB Private Torrent Tracker
@@ -222,7 +255,7 @@ class HDBits:
         name = self._normalize_hdr_name(name, meta)
         name = self._normalize_audio_name(name, meta)
         name = self._apply_imdb_name(name, meta)
-        return self._finalize_hdb_name(name)
+        return self._miniseries_year_name(self._finalize_hdb_name(name), meta)
 
     @staticmethod
     def _strip_service(name: str, meta: Meta) -> str:
@@ -255,10 +288,17 @@ class HDBits:
         imdb = meta.imdb_info if isinstance(meta.imdb_info, dict) else {}
         if not imdb:
             return result
-        result = result.replace(
-            str(meta.title), str(imdb.get("aka", meta.title))
-        )
+        result = _replace_display_title(result, meta, imdb)
         return cls._replace_imdb_year(result, meta, imdb)
+
+    @staticmethod
+    def _miniseries_year_name(name: str, meta: Meta) -> str:
+        if not _is_hdb_miniseries(meta):
+            return name
+        year = str(_imdb_mapping(meta).get("year") or meta.year or "")
+        if not year:
+            return name
+        return _replace_miniseries_season(name, meta, year)
 
     @staticmethod
     def _replace_imdb_year(name: str, meta: Meta, imdb: dict[str, Any]) -> str:
@@ -282,7 +322,6 @@ class HDBits:
         )
         result = result.replace("DTS-HD HRA", "DTS-HD HR")
         result = " ".join(result.split())
-        result = re.sub(r"[^0-9a-zA-ZÀ-ÿ. :&+'\-\[\]]+", "", result)
         return result.replace(" .", ".").replace("..", ".")
 
     async def upload(self, meta: Meta) -> bool | None:

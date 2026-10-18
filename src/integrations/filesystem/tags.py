@@ -69,6 +69,41 @@ _GENERIC_RELEASE_GROUPS = frozenset({"hd.ma.5.1", "untouched"})
 _NON_ANIME_GROUP_RE = re.compile(
     r"(?<=-)((?!\s*(?:WEB-DL|Blu-ray|H-264|H-265))(?:\W|\b)(?!(?:\d{3,4}[ip]))(?!\d+\b)(?:\W|\b)([\w.]+?))(?:\[.+\])?(?:\))?(?:\s\[.+\])?$"
 )
+_GROUP_PREFIX_RE = re.compile(r"[A-Z0-9]{2,5}")
+_TECHNICAL_GROUP_TOKENS = frozenset(
+    {
+        "WEB",
+        "DL",
+        "HDR",
+        "DV",
+        "AAC",
+        "AC3",
+        "DDP",
+        "DTS",
+        "FLAC",
+        "OPUS",
+        "X264",
+        "X265",
+        "HEVC",
+        "AVC",
+        "H264",
+        "H265",
+        "SDR",
+        "ATMOS",
+        "TRUEHD",
+        "LPCM",
+        "PCM",
+        "MP3",
+        "MA",
+        "HDTV",
+        "PDTV",
+        "UHD",
+        "BD",
+        "BR",
+        "DVD",
+        "HDDVD",
+    }
+)
 
 
 def _anime_release_group(video: str, meta: Meta) -> tuple[str | None, bool]:
@@ -197,6 +232,32 @@ def _space_separated_release_group(basename: str, meta: Meta) -> str | None:
     return release_group
 
 
+def _previous_hyphen_token(basename: str, group_start: int) -> str | None:
+    if group_start <= 0 or basename[group_start - 1] != "-":
+        return None
+    return basename[: group_start - 1].rsplit("-", 1)[-1]
+
+
+def _is_group_prefix(token: str | None) -> bool:
+    if not token:
+        return False
+    if not token.isascii():
+        return False
+    upper = token.upper()
+    if _GROUP_PREFIX_RE.fullmatch(upper) is None:
+        return False
+    return not upper.isdigit() and upper not in _TECHNICAL_GROUP_TOKENS
+
+
+def _compound_hyphen_group(
+    basename: str, match: re.Match[str], group: str
+) -> str:
+    token = _previous_hyphen_token(basename, match.start())
+    if not _is_group_prefix(token):
+        return group
+    return f"{token}-{group}"
+
+
 def _non_anime_release_group(
     video: str, meta: Meta, season_pack_check: bool
 ) -> str | None:
@@ -204,8 +265,11 @@ def _non_anime_release_group(
     match = _NON_ANIME_GROUP_RE.search(basename)
     release_group: str | None = None
     if match is not None:
+        candidate = _compound_hyphen_group(
+            basename, match, match.group(1).strip()
+        )
         candidate = _book_or_game_release_group(
-            basename, match, match.group(1).strip(), meta
+            basename, match, candidate, meta
         )
         release_group = _normalize_release_group(candidate, meta)
         logger.debug(f"Non-anime regex match: {release_group}")

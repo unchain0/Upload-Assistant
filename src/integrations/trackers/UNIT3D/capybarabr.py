@@ -278,7 +278,7 @@ class CapybaraBR(UNIT3D):
     @classmethod
     def _game_language_tag(cls, meta: Meta) -> str:
         languages = cls._game_languages(meta)
-        if cls._is_multilingual_portuguese(languages):
+        if meta.manual_multi or cls._is_multilingual_portuguese(languages):
             return "[MULTI]"
         if cls._contains_language(languages, "ENGLISH"):
             return "[INGLÊS]"

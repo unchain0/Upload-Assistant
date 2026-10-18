@@ -6138,10 +6138,22 @@ def _handle_main_exception(error: BaseException) -> None:
         logger.error(message)
 
 
+def _process_exit_code(exc: BaseException) -> int:
+    """Preserve argparse and signal exits instead of reporting them as crashes."""
+    if isinstance(exc, KeyboardInterrupt):
+        return 130
+    code = exc.code if isinstance(exc, SystemExit) else 1
+    if isinstance(code, int):
+        return code
+    return 1
+
+
 async def main() -> None:
     _reset_shutdown_state()
     try:
         await do_the_thing(base_dir)
+    except SystemExit:
+        raise
     except BaseException as error:
         _handle_main_exception(error)
 
@@ -6158,13 +6170,9 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit) as exc:
-        if not _shutdown_requested:
+        exit_code = _process_exit_code(exc)
+        if exit_code != 0 and not _shutdown_requested:
             logger.info("\n[yellow]Shutting down...[/yellow]")
-        exit_code = (
-            (exc.code if isinstance(exc.code, int) else 1)
-            if isinstance(exc, SystemExit)
-            else 130
-        )
     except BaseException as e:
         if not _shutdown_requested:
             logger.info(f"[bold red]Critical error: {e}[/bold red]")

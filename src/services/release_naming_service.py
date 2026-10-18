@@ -500,7 +500,7 @@ class NameManager:
 
     @classmethod
     def _book_source(cls, meta: Meta) -> str:
-        source = meta.source or ""
+        source = str(meta.source or "").strip()
         manual_source = str(meta.manual_source or "").strip().upper()
         if manual_source in ("RETAIL", "SCAN", "HYBRID"):
             source = manual_source

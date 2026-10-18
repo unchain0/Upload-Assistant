@@ -4,6 +4,8 @@ import re
 from collections.abc import Callable
 from typing import Any
 
+from src.domain_models.release import Meta
+
 GuessitFn = Callable[[str, dict[str, Any] | None], dict[str, Any]]
 _guessit_module = importlib.import_module("guessit")
 _guessit_fn: GuessitFn = _guessit_module.guessit
@@ -30,6 +32,7 @@ async def get_region(bdinfo: dict[str, Any], region: str | None = None) -> str:
         "AFG": "AFG",
         "AIA": "AIA",
         "ALA": "ALA",
+        "ALB": "ALB",
         "ALG": "ALG",
         "AND": "AND",
         "ANG": "ANG",
@@ -51,6 +54,7 @@ async def get_region(bdinfo: dict[str, Any], region: str | None = None) -> str:
         "BER": "BER",
         "BES": "BES",
         "BFA": "BFA",
+        "BGR": "BGR",
         "BHR": "BHR",
         "BHU": "BHU",
         "BIH": "BIH",
@@ -86,8 +90,10 @@ async def get_region(bdinfo: dict[str, Any], region: str | None = None) -> str:
         "CUW": "CUW",
         "CXR": "CXR",
         "CYP": "CYP",
+        "CZE": "CZE",
         "DJI": "DJI",
         "DMA": "DMA",
+        "DNK": "DNK",
         "DOM": "DOM",
         "ECU": "ECU",
         "EGY": "EGY",
@@ -96,9 +102,11 @@ async def get_region(bdinfo: dict[str, Any], region: str | None = None) -> str:
         "ERI": "ERI",
         "ESH": "ESH",
         "ESP": "ESP",
+        "EST": "EST",
         "ETH": "ETH",
         "EUR": "EUR",
         "FIJ": "FIJ",
+        "FIN": "FIN",
         "FLK": "FLK",
         "FRA": "FRA",
         "FRO": "FRO",
@@ -157,7 +165,9 @@ async def get_region(bdinfo: dict[str, Any], region: str | None = None) -> str:
         "LES": "LES",
         "LIE": "LIE",
         "LKA": "LKA",
+        "LTU": "LTU",
         "LUX": "LUX",
+        "LVA": "LVA",
         "MAC": "MAC",
         "MAD": "MAD",
         "MAF": "MAF",
@@ -210,6 +220,7 @@ async def get_region(bdinfo: dict[str, Any], region: str | None = None) -> str:
         "QAT": "QAT",
         "REU": "REU",
         "ROU": "ROU",
+        "RPA": "RPA",
         "RSA": "RSA",
         "RUS": "RUS",
         "RWA": "RWA",
@@ -220,6 +231,7 @@ async def get_region(bdinfo: dict[str, Any], region: str | None = None) -> str:
         "SEY": "SEY",
         "SGS": "SGS",
         "SHN": "SHN",
+        "SGP": "SGP",
         "SIN": "SIN",
         "SJM": "SJM",
         "SLE": "SLE",
@@ -233,6 +245,8 @@ async def get_region(bdinfo: dict[str, Any], region: str | None = None) -> str:
         "STP": "STP",
         "SUI": "SUI",
         "SUR": "SUR",
+        "SVK": "SVK",
+        "SWE": "SWE",
         "SWZ": "SWZ",
         "SXM": "SXM",
         "SYR": "SYR",
@@ -2435,3 +2449,102 @@ async def get_service(
         services,
     )
     return service, _service_longname(service, services)
+
+
+def _mediainfo_number(value: Any) -> float | None:
+    """Read numeric MediaInfo fields. Bitrates are already in bits/s."""
+    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+        return None
+    try:
+        return float(value)
+    except ValueError, OverflowError:
+        return None
+
+
+def _service_preconditions(meta: Meta) -> bool:
+    if meta.service or meta.is_disc:
+        return False
+    if meta.resolution != "1080p":
+        return False
+    return meta.type in ("WEBDL", "WEBRIP")
+
+
+def _media_tracks(meta: Meta) -> list[Any] | None:
+    if not isinstance(meta.mediainfo, dict):
+        return None
+    media = meta.mediainfo.get("media", {})
+    if not isinstance(media, dict):
+        return None
+    tracks = media.get("track", [])
+    if not isinstance(tracks, list):
+        return None
+    return tracks
+
+
+def _dict_tracks(tracks: list[Any] | None) -> list[dict[str, Any]]:
+    return [track for track in tracks or [] if isinstance(track, dict)]
+
+
+def _video_has_encode_settings(tracks: list[dict[str, Any]]) -> bool:
+    return any(_encode_settings_present(track) for track in tracks)
+
+
+def _encode_settings_present(track: dict[str, Any]) -> bool:
+    if track.get("@type") != "Video":
+        return False
+    return bool(track.get("Encoded_Library_Settings"))
+
+
+def _nominal_bitrate(track: dict[str, Any]) -> float | None:
+    nominal = track.get("BitRate_Nominal") or track.get("NominalBitRate")
+    return _mediainfo_number(nominal)
+
+
+def _is_amazon_video(track: dict[str, Any]) -> bool:
+    if track.get("@type") != "Video":
+        return False
+    if track.get("BitRate_Mode") != "CBR":
+        return False
+    return _nominal_bitrate(track) == 10000000
+
+
+_AMAZON_AUDIO = ((2.0, 224000.0), (6.0, 640000.0))
+
+
+def _audio_pair(track: dict[str, Any]) -> tuple[float, float] | None:
+    channels = _mediainfo_number(track.get("Channels"))
+    bitrate = _mediainfo_number(track.get("BitRate"))
+    if channels is None or bitrate is None:
+        return None
+    return channels, bitrate
+
+
+def _is_amazon_audio(track: dict[str, Any]) -> bool:
+    if track.get("@type") != "Audio" or track.get("Format") != "E-AC-3":
+        return False
+    return _audio_pair(track) in _AMAZON_AUDIO
+
+
+def _amazon_signature(tracks: list[Any] | None) -> bool:
+    usable = _dict_tracks(tracks)
+    if _video_has_encode_settings(usable):
+        return False
+    if not any(_is_amazon_video(track) for track in usable):
+        return False
+    return any(_is_amazon_audio(track) for track in usable)
+
+
+async def _resolved_amazon_service() -> tuple[str, str]:
+    service = await get_service("Example.1080p.AMZN.WEB-DL")
+    if isinstance(service, tuple):
+        return service
+    return "", ""
+
+
+async def get_mediainfo_service(meta: Meta) -> tuple[str, str]:
+    """Conservative fallback for the known Amazon 1080p WEB signature."""
+    if not _service_preconditions(meta):
+        return "", ""
+    if not _amazon_signature(_media_tracks(meta)):
+        return "", ""
+    return await _resolved_amazon_service()
