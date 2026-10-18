@@ -3,6 +3,12 @@ name: Deterministic PR review
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review, edited]
+  workflow_dispatch:
+    inputs:
+      pr_url:
+        description: Pull request URL for the policy review
+        required: false
+        default: https://github.com/unchain0/Upload-Assistant/pull/31
 
 concurrency:
   group: deterministic-review-${{ github.event.pull_request.number }}
@@ -34,7 +40,7 @@ jobs:
       - name: Checkout pull request head
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
 
       - name: Set up Python 3.14
@@ -107,13 +113,19 @@ jobs:
       - name: Run deterministic inline review
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           SEMGREP_RULES_DIR: ${{ runner.temp }}/semgrep-rules
           REVIEWDOG_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REVIEWDOG_REPORTER: ${{ github.event.pull_request.head.repo.full_name == github.repository && 'github-pr-check' || 'local' }}
           REVIEWDOG_FILTER_MODE: ${{ github.event.pull_request.head.repo.full_name == github.repository && 'added' || 'nofilter' }}
           REVIEWDOG_FAIL_LEVEL: error
-        run: scripts/run-static-review.sh
+        run: |
+          if [[ -z "${BASE_SHA:-}" ]]; then
+            git fetch origin development
+            BASE_SHA="$(git rev-parse origin/development)"
+            export BASE_SHA
+          fi
+          scripts/run-static-review.sh
 
 
   danger:
@@ -127,7 +139,7 @@ jobs:
       - name: Checkout pull request head
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
 
       - name: Set up Node.js 24
@@ -144,8 +156,8 @@ jobs:
       - name: Run PR policy review
         env:
           DANGER_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_URL: ${{ github.event.pull_request.html_url }}
-          SAME_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+          PR_URL: ${{ github.event.pull_request.html_url || inputs.pr_url }}
+          SAME_REPOSITORY: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
         run: |
           if [[ "$SAME_REPOSITORY" == "true" ]]; then
             npm run danger
