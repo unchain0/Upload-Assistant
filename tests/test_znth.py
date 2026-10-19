@@ -116,8 +116,7 @@ def _kitsune_meta(**kwargs: Any) -> Meta:
 
 def test_zenith_rejects_a_group_file_with_portuguese_default_subtitles():
     assert (
-        asyncio.run(_tracker().get_additional_checks(_kitsune_meta()))
-        is False
+        asyncio.run(_tracker().get_additional_checks(_kitsune_meta())) is False
     )
 
 

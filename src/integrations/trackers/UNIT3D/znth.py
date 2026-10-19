@@ -15,6 +15,7 @@ from src.integrations.trackers.common import Common
 from src.integrations.trackers.UNIT3D import UNIT3D, ParamsList
 
 Config = dict[str, Any]
+_ADDED_SUBS_RE = re.compile(r"(?i)(?:^|[._-])(?:dual|multi|subs?)(?:$|[._-])")
 
 
 def prepare_zenith_music_layout(meta: Meta) -> None:
@@ -973,6 +974,8 @@ class Zenith(UNIT3D):
     ) -> bool:
         if not self._renamed_video_policy(meta, video_paths):
             return False
+        if not self._unmodified_group_policy(meta, video_paths):
+            return False
         if not self._screenshot_policy(meta):
             return False
         return self._video_storage_policy(meta, filelist, video_paths)
@@ -989,6 +992,111 @@ class Zenith(UNIT3D):
             f"{self.tracker}: [bold red]Tagged release file appears to have been renamed with spaces: {renamed}. Restore the original filename before uploading.[/bold red]"
         )
         return False
+
+    def _unmodified_group_policy(
+        self, meta: Meta, video_paths: list[Path]
+    ) -> bool:
+        modified = self._modified_group_video(meta, video_paths)
+        if not modified:
+            return True
+        logger.info(
+            f"{self.tracker}: [bold red]Tagged release {modified} has a Portuguese default subtitle on English audio and no longer matches the original group file. Restore the original before uploading.[/bold red]"
+        )
+        return False
+
+    @classmethod
+    def _modified_group_video(cls, meta: Meta, video_paths: list[Path]) -> str:
+        filename = cls._dotted_group_filename(video_paths, meta.tag)
+        if not filename or cls._name_declares_added_subs(filename):
+            return ""
+        if not cls._portuguese_default_on_english_audio(meta):
+            return ""
+        return filename
+
+    @classmethod
+    def _dotted_group_filename(
+        cls, video_paths: list[Path], tag: str | None
+    ) -> str:
+        group = cls._normalized_group(tag)
+        if not group:
+            return ""
+        return next(
+            (
+                path.name
+                for path in video_paths
+                if cls._untouched_group_file(path, group)
+            ),
+            "",
+        )
+
+    @staticmethod
+    def _untouched_group_file(path: Path, group: str) -> bool:
+        stem = path.stem.casefold()
+        if any(character.isspace() for character in stem):
+            return False
+        return stem.endswith(f"-{group}")
+
+    @staticmethod
+    def _name_declares_added_subs(filename: str) -> bool:
+        return _ADDED_SUBS_RE.search(filename) is not None
+
+    @classmethod
+    def _portuguese_default_on_english_audio(cls, meta: Meta) -> bool:
+        if not cls._english_only_audio(meta):
+            return False
+        return cls._has_portuguese_default_text(meta)
+
+    @classmethod
+    def _english_only_audio(cls, meta: Meta) -> bool:
+        languages = cls._listed_audio_languages(meta)
+        if not languages:
+            return False
+        return all(
+            cls._is_english_language(language) for language in languages
+        )
+
+    @staticmethod
+    def _listed_audio_languages(meta: Meta) -> list[str]:
+        values = meta.audio_languages
+        if not isinstance(values, list):
+            return []
+        return [str(value) for value in values if str(value).strip()]
+
+    @staticmethod
+    def _is_english_language(language: str) -> bool:
+        return language.casefold().startswith("en")
+
+    @classmethod
+    def _has_portuguese_default_text(cls, meta: Meta) -> bool:
+        return any(
+            cls._is_portuguese_default_text(track)
+            for track in cls._mediainfo_track_values(meta)
+        )
+
+    @staticmethod
+    def _is_portuguese_default_text(track: dict[str, Any]) -> bool:
+        if not Zenith._is_text_track(track):
+            return False
+        if not Zenith._is_default_track(track):
+            return False
+        return Zenith._is_portuguese_language(Zenith._track_language(track))
+
+    @staticmethod
+    def _is_text_track(track: dict[str, Any]) -> bool:
+        return str(track.get("@type") or "") == "Text"
+
+    @staticmethod
+    def _is_default_track(track: dict[str, Any]) -> bool:
+        default = track.get("Default", track.get("default"))
+        return str(default or "").casefold() == "yes"
+
+    @staticmethod
+    def _track_language(track: dict[str, Any]) -> str:
+        return str(track.get("Language") or track.get("language") or "")
+
+    @staticmethod
+    def _is_portuguese_language(language: str) -> bool:
+        return "portugu" in language.casefold()
 
     def _screenshot_policy(self, meta: Meta) -> bool:
         if self._screen_count(meta.screens) >= 3:
