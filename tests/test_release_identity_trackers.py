@@ -32,6 +32,50 @@ def _midnight() -> MidnightScene:
     )
 
 
+_CYBERSIX = [
+    "[Malkav Animes] Cybersix - TV 09v2 [DVD 1080p] [6D10D910].mkv",
+    "[Malkav Animes] Cybersix - Extra - Original Pitch Pilot [45F13116].mp4",
+    "[Malkav Animes] Cybersix - TV 01v2 [DVD 1080p] [87F70AF1].mkv",
+    "[Malkav Animes] Cybersix - Extra - Production Artwork [6D61BE85].mp4",
+]
+
+
+def test_cybersix_pitch_pilot_cannot_auto_upload() -> None:
+    ordered = order_release_videos(_CYBERSIX)
+
+    assert "TV 01v2" in ordered[0]
+    assert "Pitch Pilot" not in ordered[0]
+    alphabetical = sorted(_CYBERSIX)
+    no_ids = Meta(category="MOVIE", unattended=True, filelist=alphabetical)
+    assert unattended_identity_skip_reason(no_ids) is not None
+    identified = Meta(
+        category="MOVIE",
+        unattended=True,
+        tmdb_id=99,
+        filelist=ordered,
+        name="480p NTSC Dubbed DD 2.0 x264-Original Pitch Pilot",
+    )
+    reason = unattended_identity_skip_reason(identified)
+    assert reason is not None
+    titled = Meta(
+        category="TV",
+        unattended=True,
+        tmdb_id=99,
+        imdb_id=1,
+        filelist=ordered,
+        name="480p NTSC Dubbed DD 2.0 x264-Original Pitch Pilot",
+    )
+    assert unattended_identity_skip_reason(titled) is not None
+    fine = Meta(
+        category="TV",
+        unattended=True,
+        tmdb_id=99,
+        filelist=ordered,
+        name="Cybersix S01 1080p DVD H.264-Malkav",
+    )
+    assert unattended_identity_skip_reason(fine) is None
+
+
 def test_main_episode_stays_ahead_of_alphabetically_first_extra() -> None:
     ordered = order_release_videos(
         [
