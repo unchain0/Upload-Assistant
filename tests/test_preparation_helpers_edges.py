@@ -66,6 +66,26 @@ def test_xxx_store_urls_and_search_year_helpers(
     assert helpers._normalize_search_year("year 1799") is None
 
 
+def test_tvdb_case_only_difference_keeps_the_release_title() -> None:
+    meta = Meta(
+        category="TV",
+        title="Nukitashi the Animation",
+        tvdb_series_name="Nukitashi THE ANIMATION",
+    )
+    helpers._apply_tvdb_series_title(meta)
+    assert meta.title == "Nukitashi the Animation"
+
+
+def test_tvdb_different_words_still_replace_the_release_title() -> None:
+    meta = Meta(
+        category="TV",
+        title="Shingeki no Kyojin",
+        tvdb_series_name="Attack on Titan",
+    )
+    helpers._apply_tvdb_series_title(meta)
+    assert meta.title == "Attack on Titan"
+
+
 def test_pre_release_and_title_article_helpers() -> None:
     assert helpers.check_pre_release(Meta(type="CAM"))
     assert helpers.check_pre_release(Meta(source="TELESYNC"))
