@@ -8,9 +8,9 @@ The bundled installer script:
 
 1. Installs `pyenv` if needed.
 2. Installs Python `3.14.0` by default.
-3. Uses the current checkout if you pass `--ua-dir`, or clones/updates Upload Assistant in `~/tools/ua` by default.
-4. Creates `.venv`.
-5. Installs the base dependencies from `requirements.txt`.
+3. Downloads and checksum-verifies the pinned `uv` release.
+4. Uses the current checkout if you pass `--ua-dir`, or clones/updates Upload Assistant in `~/tools/ua` by default.
+5. Synchronizes `.venv` from `pyproject.toml` and the frozen `uv.lock`.
 6. Creates `run-ua.sh` for easier execution.
 
 ## Quick start
@@ -32,7 +32,7 @@ If you just want the installer to create or update a separate checkout in `~/too
 --ua-dir PATH           Installation directory (default: ~/tools/ua)
 --python VERSION        Python version for pyenv (default: 3.14.0)
 --skip-pyenv-install    Fail instead of installing pyenv automatically
---force-update          Recreate .venv and reinstall packages
+--force-update          Recreate .venv and synchronize the lockfile again
 -h, --help              Show this help
 ```
 
@@ -43,6 +43,9 @@ These commands should already exist on the seedbox:
 ```bash
 bash --version
 git --version
+curl --version
+tar --version
+sha256sum --version
 ```
 
 To build Python with `pyenv`, many providers also need common build tooling already installed, such as:
@@ -84,13 +87,11 @@ Or update manually:
 ```bash
 cd /path/to/your/ua/checkout
 git pull --ff-only
-source .venv/bin/activate
-pip install -U pip
-pip install -r requirements.txt
+uv sync --frozen --no-dev --no-install-project
 ```
 
 ## Notes about `local_path` / `remote_path`
 
 `local_path` and `remote_path` are only path-mapping settings for torrent client integration.
 
-They do not install UA remotely and they do not move Upload Assistant execution to another machine. If you want the heavy work to run on a remote file-hosting box, run UA on that machine directly or use the Web UI there and control it remotely.
+They do not install UA remotely and they do not move Upload Assistant execution to another machine. To run the heavy work on a remote file-hosting box, install and invoke the CLI on that machine directly.

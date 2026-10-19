@@ -1,5 +1,4 @@
 # Assertions are the idiomatic pytest checks for this focused subprocess test.
-# ruff: noqa: S101
 
 import asyncio
 import sys
@@ -10,8 +9,8 @@ from types import SimpleNamespace
 import ffmpeg
 import pytest
 
-from src import takescreens
-from src.meta import Meta
+from src.domain_models.release import Meta
+from src.integrations.media import screenshot_capture as takescreens
 
 
 @pytest.fixture(autouse=True)
@@ -31,6 +30,26 @@ async def _stop_process(process: asyncio.subprocess.Process) -> None:
         await process.wait()
 
 
+async def _wait_for_process_exit(process: asyncio.subprocess.Process) -> None:
+    for _ in range(100):
+        if process.returncode is not None:
+            return
+        await asyncio.sleep(0.01)
+    pytest.fail("cancelled run_ffmpeg left its owned subprocess running")
+
+
+async def _cleanup_process_test(
+    task: asyncio.Task[object],
+    owned_processes: list[asyncio.subprocess.Process],
+    unrelated: asyncio.subprocess.Process,
+) -> None:
+    if not task.done():
+        task.cancel()
+    for process in owned_processes:
+        await _stop_process(process)
+    await _stop_process(unrelated)
+
+
 @pytest.mark.asyncio
 async def test_run_ffmpeg_writes_report_next_to_output(tmp_path, monkeypatch):
     output = tmp_path / "release" / "screenshots" / "frame.png"
@@ -44,10 +63,20 @@ async def test_run_ffmpeg_writes_report_next_to_output(tmp_path, monkeypatch):
 
         return SimpleNamespace(returncode=0, communicate=fake_communicate)
 
-    monkeypatch.setattr("src.takescreens.platform.system", lambda: "Windows")
-    monkeypatch.setattr("src.takescreens.asyncio.create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr(
+        "src.integrations.media.screenshot_capture.platform.system",
+        lambda: "Windows",
+    )
+    monkeypatch.setattr(
+        "src.integrations.media.screenshot_capture.asyncio.create_subprocess_exec",
+        fake_create_subprocess_exec,
+    )
 
-    command = ffmpeg.input(str(output.with_name("source.mkv"))).output(str(output), vframes=1).global_args("-y", "-loglevel", "quiet")
+    command = (
+        ffmpeg.input(str(output.with_name("source.mkv")))
+        .output(str(output), vframes=1)
+        .global_args("-y", "-loglevel", "quiet")
+    )
 
     process = await takescreens.run_ffmpeg(command)
     second_process = await takescreens.run_ffmpeg(command)
@@ -83,18 +112,29 @@ async def test_run_ffmpeg_prefers_configured_binary(tmp_path, monkeypatch):
 
         return SimpleNamespace(returncode=0, communicate=fake_communicate)
 
-    monkeypatch.setattr("src.takescreens.asyncio.create_subprocess_exec", fake_create_subprocess_exec)
-    manager = takescreens.TakeScreensManager({"DEFAULT": {"ffmpeg_path": str(executable)}})
+    monkeypatch.setattr(
+        "src.integrations.media.screenshot_capture.asyncio.create_subprocess_exec",
+        fake_create_subprocess_exec,
+    )
+    manager = takescreens.TakeScreensManager(
+        {"DEFAULT": {"ffmpeg_path": str(executable)}}
+    )
 
-    command = ffmpeg.input(str(tmp_path / "source.mkv")).output(str(tmp_path / "frame.png"), vframes=1)
+    command = ffmpeg.input(str(tmp_path / "source.mkv")).output(
+        str(tmp_path / "frame.png"), vframes=1
+    )
     await manager.run_ffmpeg(command)
 
     assert captured[0][0] == str(executable)
 
 
 @pytest.mark.asyncio
-async def test_cancelling_run_ffmpeg_terminates_only_its_owned_process(tmp_path, monkeypatch):
-    unrelated = await asyncio.create_subprocess_exec(sys.executable, "-c", "import time; time.sleep(60)")
+async def test_cancelling_run_ffmpeg_terminates_only_its_owned_process(
+    tmp_path, monkeypatch
+):
+    unrelated = await asyncio.create_subprocess_exec(
+        sys.executable, "-c", "import time; time.sleep(60)"
+    )
     original_create_subprocess_exec = asyncio.create_subprocess_exec
     owned_processes: list[asyncio.subprocess.Process] = []
     owned_started = asyncio.Event()
@@ -105,12 +145,23 @@ async def test_cancelling_run_ffmpeg_terminates_only_its_owned_process(tmp_path,
         owned_started.set()
         return process
 
-    monkeypatch.setattr("src.takescreens.platform.system", lambda: "Windows")
-    monkeypatch.setattr("src.takescreens.asyncio.create_subprocess_exec", capture_create_subprocess_exec)
+    monkeypatch.setattr(
+        "src.integrations.media.screenshot_capture.platform.system",
+        lambda: "Windows",
+    )
+    monkeypatch.setattr(
+        "src.integrations.media.screenshot_capture.asyncio.create_subprocess_exec",
+        capture_create_subprocess_exec,
+    )
 
     class Command:
         def compile(self):
-            return [sys.executable, "-c", "import time; time.sleep(60)", tmp_path / "owned.out"]
+            return [
+                sys.executable,
+                "-c",
+                "import time; time.sleep(60)",
+                tmp_path / "owned.out",
+            ]
 
     task = asyncio.create_task(takescreens.run_ffmpeg(Command()))
     try:
@@ -120,24 +171,18 @@ async def test_cancelling_run_ffmpeg_terminates_only_its_owned_process(tmp_path,
             await task
 
         owned = owned_processes[0]
-        for _ in range(100):
-            if owned.returncode is not None:
-                break
-            await asyncio.sleep(0.01)
-        if owned.returncode is None:
-            pytest.fail("cancelled run_ffmpeg left its owned subprocess running")
-
-        assert unrelated.returncode is None, "cancelling run_ffmpeg terminated an unrelated sibling process"
+        await _wait_for_process_exit(owned)
+        assert unrelated.returncode is None, (
+            "cancelling run_ffmpeg terminated an unrelated sibling process"
+        )
     finally:
-        if not task.done():
-            task.cancel()
-        for process in owned_processes:
-            await _stop_process(process)
-        await _stop_process(unrelated)
+        await _cleanup_process_test(task, owned_processes, unrelated)
 
 
 @pytest.mark.asyncio
-async def test_debug_capture_disables_stdin_and_preserves_ffmpeg_errors(tmp_path, monkeypatch):
+async def test_debug_capture_disables_stdin_and_preserves_ffmpeg_errors(
+    tmp_path, monkeypatch
+):
     source = tmp_path / "source.mp4"
     output = tmp_path / "frame.png"
     source.write_bytes(b"video")
@@ -148,11 +193,27 @@ async def test_debug_capture_disables_stdin_and_preserves_ffmpeg_errors(tmp_path
         output.write_bytes(b"png")
         return 0, b"", b""
 
-    monkeypatch.setattr("src.takescreens.run_ffmpeg", fake_run)
-    manager = takescreens.TakeScreensManager({"DEFAULT": {"use_libplacebo": False, "ffmpeg_limit": False}})
+    monkeypatch.setattr(
+        "src.integrations.media.screenshot_capture.run_ffmpeg", fake_run
+    )
+    manager = takescreens.TakeScreensManager(
+        {"DEFAULT": {"use_libplacebo": False, "ffmpeg_limit": False}}
+    )
 
     result = await manager.capture_screenshot(
-        (0, str(source), 1.0, str(output), 1920, 1080, 1.0, 1.0, "quiet", False, Meta(debug=True))
+        (
+            0,
+            str(source),
+            1.0,
+            str(output),
+            1920,
+            1080,
+            1.0,
+            1.0,
+            "quiet",
+            False,
+            Meta(debug=True),
+        )
     )
 
     assert result == (0, str(output))
@@ -161,7 +222,9 @@ async def test_debug_capture_disables_stdin_and_preserves_ffmpeg_errors(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_determine_tonemapping_uses_verified_libplacebo(monkeypatch, tmp_path):
+async def test_determine_tonemapping_uses_verified_libplacebo(
+    monkeypatch, tmp_path
+):
     meta = Meta(hdr="HDR")
     compatibility_calls = []
 
@@ -169,10 +232,31 @@ async def test_determine_tonemapping_uses_verified_libplacebo(monkeypatch, tmp_p
         compatibility_calls.append(args)
         return True, True
 
-    monkeypatch.setattr("src.takescreens.check_libplacebo_compatibility", compatible)
-    manager = takescreens.TakeScreensManager({"DEFAULT": {"tone_map": True, "use_libplacebo": True, "ffmpeg_is_good": False}})
+    monkeypatch.setattr(
+        "src.integrations.media.screenshot_capture.check_libplacebo_compatibility",
+        compatible,
+    )
+    manager = takescreens.TakeScreensManager(
+        {
+            "DEFAULT": {
+                "tone_map": True,
+                "use_libplacebo": True,
+                "ffmpeg_is_good": False,
+            }
+        }
+    )
 
-    enabled = await manager.determine_tonemapping(1, 1, 1920, 1080, "source.mkv", "10", str(tmp_path / "frame.png"), "quiet", meta)
+    enabled = await manager.determine_tonemapping(
+        1,
+        1,
+        1920,
+        1080,
+        "source.mkv",
+        "10",
+        str(tmp_path / "frame.png"),
+        "quiet",
+        meta,
+    )
 
     assert enabled is True
     assert meta.tonemapped is True
@@ -182,11 +266,25 @@ async def test_determine_tonemapping_uses_verified_libplacebo(monkeypatch, tmp_p
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("hdr", ["DV", "HLG"])
-async def test_determine_tonemapping_uses_zscale_fallback_for_dv_and_hlg(tmp_path, hdr):
-    manager = takescreens.TakeScreensManager({"DEFAULT": {"tone_map": True, "use_libplacebo": False}})
+async def test_determine_tonemapping_uses_zscale_fallback_for_dv_and_hlg(
+    tmp_path, hdr
+):
+    manager = takescreens.TakeScreensManager(
+        {"DEFAULT": {"tone_map": True, "use_libplacebo": False}}
+    )
     meta = Meta(hdr=hdr)
 
-    enabled = await manager.determine_tonemapping(1, 1, 1920, 1080, "source.mkv", "10", str(tmp_path / "frame.png"), "quiet", meta)
+    enabled = await manager.determine_tonemapping(
+        1,
+        1,
+        1920,
+        1080,
+        "source.mkv",
+        "10",
+        str(tmp_path / "frame.png"),
+        "quiet",
+        meta,
+    )
 
     assert enabled is True
     assert meta.tonemapped is True
@@ -194,7 +292,9 @@ async def test_determine_tonemapping_uses_zscale_fallback_for_dv_and_hlg(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_capture_screenshot_applies_selected_libplacebo_tonemapping(monkeypatch, tmp_path):
+async def test_capture_screenshot_applies_selected_libplacebo_tonemapping(
+    monkeypatch, tmp_path
+):
     source = tmp_path / "source.mkv"
     output = tmp_path / "frame.png"
     source.write_bytes(b"video")
@@ -203,12 +303,32 @@ async def test_capture_screenshot_applies_selected_libplacebo_tonemapping(monkey
     async def run_stub(command):
         compiled = takescreens.compile_ffmpeg_command(command)
         commands.append(compiled)
-        Path(takescreens.get_ffmpeg_output_path(command, compiled)).write_bytes(b"png")
+        Path(
+            takescreens.get_ffmpeg_output_path(command, compiled)
+        ).write_bytes(b"png")
         return 0, b"", b""
 
-    monkeypatch.setattr("src.takescreens.run_ffmpeg", run_stub)
+    monkeypatch.setattr(
+        "src.integrations.media.screenshot_capture.run_ffmpeg", run_stub
+    )
 
-    result = await takescreens.capture_screenshot((0, str(source), 10, str(output), 1920, 1080, 1, 1, "quiet", True, Meta(libplacebo=True)))
+    result = await takescreens.capture_screenshot(
+        (
+            0,
+            str(source),
+            10,
+            str(output),
+            1920,
+            1080,
+            1,
+            1,
+            "quiet",
+            True,
+            Meta(libplacebo=True),
+        )
+    )
 
     assert result == (0, str(output))
-    assert any("libplacebo=tonemapping=hable" in argument for argument in commands[0])
+    assert any(
+        "libplacebo=tonemapping=hable" in argument for argument in commands[0]
+    )

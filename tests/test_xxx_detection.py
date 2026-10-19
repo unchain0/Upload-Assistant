@@ -1,5 +1,4 @@
 """Regression tests for automatic XXX video category detection."""
-# ruff: noqa: S101
 
 from __future__ import annotations
 
@@ -9,12 +8,15 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from src.meta import Meta
-from src.prep import Prep
-from src.prep_helpers import detect_disc_and_category, is_xxx_video_release
-from src.trackers.USENET.suio import Suio
-from src.xxx_keywords import extract_xxx_keywords
-from src.xxx_platforms import XXX_PLATFORM_KEYWORDS
+from src.domain_models.adult_platforms import XXX_PLATFORM_KEYWORDS
+from src.domain_models.release import Meta
+from src.engines.adult_content_detection import extract_xxx_keywords
+from src.integrations.trackers.USENET.suio import Suio
+from src.services.preparation_helpers import (
+    detect_disc_and_category,
+    is_xxx_video_release,
+)
+from src.services.preparation_service import Prep
 
 
 @pytest.mark.parametrize(
@@ -59,7 +61,11 @@ def test_platform_marked_video_is_detected_as_xxx(marker, tmp_path):
     video = tmp_path / f"Studio.{marker}.2026.1080p.WEB-DL.mkv"
     video.write_bytes(b"video")
     meta = Meta(path=str(video))
-    prep = SimpleNamespace(disc_info_manager=SimpleNamespace(get_disc=AsyncMock(return_value=("", str(video), {}, []))))
+    prep = SimpleNamespace(
+        disc_info_manager=SimpleNamespace(
+            get_disc=AsyncMock(return_value=("", str(video), {}, []))
+        )
+    )
 
     asyncio.run(detect_disc_and_category(prep, meta))
 
@@ -81,7 +87,12 @@ def test_xxx_detection_does_not_match_generic_fans(tmp_path):
 
 
 def test_xxx_platform_markers_are_owned_by_the_dedicated_module():
-    assert {"onlyfans", "manyvids", "submissed", "goodmorningsex"} <= XXX_PLATFORM_KEYWORDS
+    assert {
+        "onlyfans",
+        "manyvids",
+        "submissed",
+        "goodmorningsex",
+    } <= XXX_PLATFORM_KEYWORDS
 
 
 def test_get_cat_checks_xxx_before_tv_patterns(tmp_path):
@@ -99,13 +110,17 @@ def test_xxx_category_is_always_marked_as_adult_media():
 
 
 def test_xxx_keywords_extract_platform_and_descriptive_tags_from_release_name():
-    keywords = extract_xxx_keywords("Studio.Brazzers.Amateur.Vintage.1080p.WEB-DL", ["custom tag"])
+    keywords = extract_xxx_keywords(
+        "Studio.Brazzers.Amateur.Vintage.1080p.WEB-DL", ["custom tag"]
+    )
 
     assert keywords == ["custom tag", "brazzers", "amateur", "vintage"]
 
 
 def test_xxx_keywords_prefer_specific_phrases_and_normalize_manual_keywords():
-    keywords = extract_xxx_keywords("Creator.Double.Penetration.OnlyFans.mp4", "custom tag, OnlyFans")
+    keywords = extract_xxx_keywords(
+        "Creator.Double.Penetration.OnlyFans.mp4", "custom tag, OnlyFans"
+    )
 
     assert keywords == ["custom tag", "OnlyFans", "double-penetration"]
 

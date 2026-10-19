@@ -1,13 +1,12 @@
 # Assertions are the idiomatic pytest checks for this focused payload test.
-# ruff: noqa: S101
 
 from unittest.mock import AsyncMock
 
 import pytest
 
-from src.meta import Meta
-from src.rehostimages import check_tracker_image_hosts
-from src.trackers.UNIT3D.hawkeuno import HawkeUno
+from src.domain_models.release import Meta
+from src.integrations.image_hosts.rehosting import check_tracker_image_hosts
+from src.integrations.trackers.UNIT3D.hawkeuno import HawkeUno
 
 
 @pytest.mark.asyncio
@@ -30,7 +29,9 @@ async def test_hawkeuno_image_host_policy_does_not_require_legacy_method():
 
     await check_tracker_image_hosts(meta, tracker)
 
-    tracker.rehost_images_manager.check_policy.assert_awaited_once_with(meta, "HAWKEUNO", tracker.image_host_policy)
+    tracker.rehost_images_manager.check_policy.assert_awaited_once_with(
+        meta, "HAWKEUNO", tracker.image_host_policy
+    )
 
 
 async def _noop():

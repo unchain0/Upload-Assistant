@@ -1,8 +1,6 @@
 There is a docker image available for Upload-Assistant that is automatically built within a few minutes of each release.
 
-> **Looking for the WebUI?** See [docker-gui.md](docker-gui.md) for the WebUI Docker setup (environment variables, persistent sessions, Compose examples, and Unraid notes).
-
-See this video which covers many aspects of docker itself, and setting up for UA. Note that the video will be slightly out of date in a few minor aspects, particularly the webui if using that.
+See this video which covers many aspects of Docker itself and setting up Upload Assistant. Some paths and commands may have changed since it was recorded.
 The video should be viewed in conjunction with the documentation here.
 
 https://videos.badkitty.zone/ua

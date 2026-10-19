@@ -1,5 +1,3 @@
-# ruff: noqa: S101
-
 from pathlib import Path
 
 from scripts.pyright_to_rdjson import convert
