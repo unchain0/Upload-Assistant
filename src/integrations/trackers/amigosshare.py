@@ -3,9 +3,12 @@ import asyncio
 import json
 import platform
 import re
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from html import unescape
 from pathlib import Path
 from typing import Any, ClassVar, cast
+from urllib.parse import quote_plus, unquote
 
 import aiofiles
 import cli_ui
@@ -27,6 +30,136 @@ from src.integrations.trackers.cookie_auth import (
 )
 from src.integrations.trackers.description_builder import DescriptionBuilder
 
+_ASC_SOURCES = {
+    "BLURAY": "bluray",
+    "BLU-RAY": "bluray",
+    "WEBDL": "web-dl",
+    "WEB-DL": "web-dl",
+    "WEBRIP": "webrip",
+    "HDTV": "hdtv",
+    "DVD": "dvd",
+}
+
+
+@dataclass(frozen=True)
+class AscVideoUpload:
+    name: str
+    year: str
+    imdb_id: str
+    category_id: str
+    description: str
+    mediainfo: str
+    anonymous: bool
+    trailer_url: str = ""
+    subtitle: str = ""
+    platform: str = ""
+    version: str = ""
+    store_url: str = ""
+    width: str = ""
+    height: str = ""
+    cover_path: str = ""
+
+
+def _anonymous_field(anonymous: bool) -> str:
+    if anonymous:
+        return "1"
+    return "0"
+
+
+def asc_upload_fields(upload: AscVideoUpload) -> dict[str, str]:
+    return {
+        "name": upload.name,
+        "year": upload.year,
+        "imdb_id": upload.imdb_id,
+        "category_id": upload.category_id,
+        "description": upload.description,
+        "mediainfo": upload.mediainfo,
+        "anonymous": _anonymous_field(upload.anonymous),
+        "trailer_url": upload.trailer_url,
+        "subtitle": upload.subtitle,
+        "platform": upload.platform,
+        "version": upload.version,
+        "store_url": upload.store_url,
+        "width": upload.width,
+        "height": upload.height,
+        "cover_path": upload.cover_path,
+    }
+
+
+def _page_payload(html: str) -> dict[str, Any] | None:
+    match = re.search(
+        r'<script[^>]*data-page="app"[^>]*>(.*?)</script>',
+        html,
+        re.DOTALL,
+    )
+    if match is None:
+        return None
+    try:
+        payload = json.loads(unescape(match.group(1)))
+    except json.JSONDecodeError:
+        return None
+    if isinstance(payload, dict):
+        return payload
+    return None
+
+
+def _torrent_rows(payload: dict[str, Any] | None) -> list[Any]:
+    if not isinstance(payload, dict):
+        return []
+    props = payload.get("props")
+    if not isinstance(props, dict):
+        return []
+    torrents = props.get("torrents")
+    if not isinstance(torrents, dict):
+        return []
+    data = torrents.get("data")
+    if isinstance(data, list):
+        return data
+    return []
+
+
+def _row_size(item: dict[str, Any]) -> str:
+    size = item.get("size")
+    if isinstance(size, int) and not isinstance(size, bool):
+        return str(size)
+    return "0"
+
+
+def _search_row(item: object) -> dict[str, str] | None:
+    if not isinstance(item, dict):
+        return None
+    torrent_id = item.get("id")
+    name = item.get("name")
+    if not isinstance(torrent_id, int) or not isinstance(name, str):
+        return None
+    return {
+        "name": name,
+        "size": _row_size(item),
+        "link": f"https://amigos-share.club/torrents/{torrent_id}",
+    }
+
+
+def parse_asc_search_page(html: str) -> list[dict[str, str]]:
+    found: list[dict[str, str]] = []
+    for item in _torrent_rows(_page_payload(html)):
+        row = _search_row(item)
+        if row is not None:
+            found.append(row)
+    return found
+
+
+def _xsrf_headers(cookies: Any) -> dict[str, str]:
+    if cookies is None or not hasattr(cookies, "get"):
+        return {}
+    raw = str(cookies.get("XSRF-TOKEN", "") or "")
+    if not raw:
+        return {}
+    return {
+        "X-XSRF-TOKEN": unquote(raw),
+        "X-Requested-With": "XMLHttpRequest",
+        "Accept": "application/json",
+    }
+
 
 class AmigosShare:
     """
@@ -38,8 +171,8 @@ class AmigosShare:
     display_name = "AmigosShare"
     source_flag = "ASC"
     banned_groups: tuple[str, ...] = ()
-    base_url = "https://cliente.amigos-share.club"
-    torrent_url = "https://cliente.amigos-share.club/torrents-details.php?id="
+    base_url = "https://amigos-share.club"
+    torrent_url = "https://amigos-share.club/torrents/"
     requests_url = f"{base_url}/pedidos.php"
     language_map: ClassVar[dict[str, str]] = {
         "bg": "15",
@@ -1778,22 +1911,28 @@ class AmigosShare:
         if cookie_jar is not None:
             self.session.cookies = cast(Any, cookie_jar)
 
+    def _torrent_search_url(self, query: str) -> str:
+        return f"{self.base_url}/torrents?q={quote_plus(query)}&per_page=96"
+
+    def _search_query(self, meta: Meta) -> str:
+        if meta.category == "BOOK":
+            return f"{meta.author} {meta.title}".strip()
+        if meta.category == "GAME":
+            return str(meta.title or "")
+        imdb = self._search_imdb(meta)
+        if meta.category == "TV":
+            return f"{imdb} {meta.season}{meta.episode}".strip()
+        return imdb
+
     def _book_search_url(self, meta: Meta) -> str:
-        search_name = f"{meta.author} {meta.title}".strip()
-        query = search_name.replace(" ", "+")
-        return f"{self.base_url}/torrents-search.php?search={query}"
+        return self._torrent_search_url(self._search_query(meta))
 
     def _game_search_url(self, meta: Meta) -> str:
-        query = meta.title.replace(" ", "+")
-        return (
-            f"{self.base_url}/torrents-search.php?search={query}"
-            f"&cat={self.get_game_type(meta)}"
-        )
+        return self._torrent_search_url(self._search_query(meta))
 
     async def _anime_search_url(self, meta: Meta) -> str:
         await self.load_localized_data(meta)
-        query = (await self.get_name(meta)).replace(" ", "+")
-        return f"{self.base_url}/torrents-search.php?search={query}"
+        return self._torrent_search_url(await self.get_name(meta))
 
     @staticmethod
     def _search_imdb(meta: Meta) -> str:
@@ -1801,13 +1940,7 @@ class AmigosShare:
         return str(configured or f"tt{str(meta.imdb_id).zfill(7)}")
 
     def _media_search_url(self, meta: Meta) -> str:
-        imdb = self._search_imdb(meta)
-        if meta.category == "MOVIE":
-            return f"{self.base_url}/busca-filmes.php?search=&imdb={imdb}"
-        return (
-            f"{self.base_url}/busca-series.php?search="
-            f"{meta.season}{meta.episode}&imdb={imdb}"
-        )
+        return self._torrent_search_url(self._search_query(meta))
 
     async def _search_url(self, meta: Meta) -> str | None:
         if meta.anime:
@@ -1824,13 +1957,26 @@ class AmigosShare:
         return None
 
     @staticmethod
-    def _search_session_invalid(response: httpx.Response) -> bool:
-        text = response.text
-        return bool(
-            "Esqueceu sua senha" in text
-            or "login.php" in str(response.url)
-            or "login.php" in text
-        )
+    def _legacy_login_wall(text: str, url: str) -> bool:
+        if "Esqueceu sua senha" in text or "login.php" in text:
+            return True
+        return "login.php" in url
+
+    @staticmethod
+    def _inertia_login_wall(text: str, url: str) -> bool:
+        if "/login" in url:
+            return True
+        return "auth/login" in text or "auth\\/login" in text
+
+    @classmethod
+    def _login_wall(cls, text: str, url: str) -> bool:
+        if cls._legacy_login_wall(text, url):
+            return True
+        return cls._inertia_login_wall(text, url)
+
+    @classmethod
+    def _search_session_invalid(cls, response: httpx.Response) -> bool:
+        return cls._login_wall(response.text, str(response.url))
 
     async def _search_response(
         self, meta: Meta, search_url: str
@@ -2024,22 +2170,11 @@ class AmigosShare:
         response = await self._search_response(meta, search_url)
         if response is None:
             return []
-        soup = BeautifulSoup(response.text, "html.parser")
-        releases = list(
-            soup.find_all("li", class_="list-group-item dark-gray")
-        )
-        return await self._parse_search_releases(meta, releases)
+        return parse_asc_search_page(response.text)
 
     async def get_upload_url(self, meta: Meta) -> str:
-        if meta.category == "BOOK":
-            return f"{self.base_url}/enviar-ebook.php"
-        if meta.category == "GAME":
-            return f"{self.base_url}/enviar-jogos.php"
-        if meta.anime:
-            return f"{self.base_url}/enviar-anime.php"
-        if meta.category == "MOVIE":
-            return f"{self.base_url}/enviar-filme.php"
-        return f"{self.base_url}/enviar-series.php"
+        del meta
+        return f"{self.base_url}/torrents/upload"
 
     async def format_image(self, url: str | None) -> str:
         return f"[img]{url}[/img]" if isinstance(url, str) and url else ""
@@ -2509,15 +2644,24 @@ class AmigosShare:
             return await self._game_upload_data(meta, upload_type)
         return await self._media_upload_data(meta, upload_type)
 
-    async def get_data(self, meta: Meta) -> dict[str, Any]:
-        await self.load_localized_data(meta)
-        description = await self.build_description(meta)
-        upload_type = await self.get_type(meta)
-        data = self._base_upload_data(
-            meta, await self.get_name(meta), description
+    def _upload_record(self, meta: Meta, name: str) -> AscVideoUpload:
+        mediainfo = meta.mediainfo if isinstance(meta.mediainfo, str) else ""
+        description = meta.description if isinstance(meta.description, str) else ""
+        imdb_id = self._search_imdb(meta) if meta.imdb_id else ""
+        return AscVideoUpload(
+            name=name,
+            year=str(meta.year or ""),
+            imdb_id=imdb_id,
+            category_id="",
+            description=description,
+            mediainfo=mediainfo,
+            anonymous=bool(meta.anon),
         )
-        data.update(await self._category_upload_data(meta, upload_type))
-        return data
+
+    async def get_data(self, meta: Meta) -> dict[str, Any]:
+        return asc_upload_fields(
+            self._upload_record(meta, await self.get_name(meta))
+        )
 
     def _upload_preconditions_allowed(self, meta: Meta) -> bool:
         if getattr(meta, "skipping", None) == self.tracker:
@@ -2548,8 +2692,9 @@ class AmigosShare:
             torrent_field_name="torrent",
             upload_cookies=self.session.cookies,
             upload_url=upload_url,
-            id_pattern=r"torrents-details\.php\?id=(\d+)",
-            success_text="torrents-details.php?id=",
+            id_pattern=r"/torrents/(\d+)",
+            success_text="/torrents/",
+            extra_headers=_xsrf_headers(self.session.cookies),
         )
 
     def _internal_upload(self, meta: Meta) -> bool:

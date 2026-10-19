@@ -568,14 +568,14 @@ def test_file_info_and_search_helpers() -> None:
     tracker.session.get = AsyncMock(return_value=_response(status=500))
     failed = asyncio.run(tracker._fetch_file_info("1", "link", "1 GB"))
     assert failed["name"] == "N/A"
-    assert tracker._book_search_url(
+    assert "q=Author+Book" in tracker._book_search_url(
         _meta(category="BOOK", title="Book", author="Author")
-    ).endswith("Author+Book")
-    assert "cat=79" in tracker._game_search_url(
+    )
+    assert "q=Example" in tracker._game_search_url(
         _meta(category="GAME", platform="PS4")
     )
-    assert tracker._media_search_url(_meta(category="MOVIE")).endswith(
-        "imdb=tt1234567"
+    assert "q=tt1234567" in tracker._media_search_url(
+        _meta(category="MOVIE")
     )
     assert "S01E01" in tracker._media_search_url(_meta(category="TV"))
     assert asyncio.run(tracker._search_url(_meta(category="OTHER"))) is None
@@ -588,26 +588,44 @@ def test_file_info_and_search_helpers() -> None:
     assert fields["disk_type"] == "BD50" and fields["resolution"] == "2160p"
 
 
+def _inertia_results(name: str, torrent_id: int, size: int) -> str:
+    payload = {
+        "component": "torrents/index",
+        "props": {
+            "torrents": {
+                "data": [{"id": torrent_id, "name": name, "size": size}]
+            }
+        },
+    }
+    return (
+        '<script data-page="app" type="application/json">'
+        f"{json.dumps(payload)}</script>"
+    )
+
+
+def test_empty_asc_page_has_no_dupes() -> None:
+    assert amigos.parse_asc_search_page("<html></html>") == []
+
+
+def test_asc_name_selects_amigosshare() -> None:
+    from src.integrations.trackers.registry import TrackerSetup
+
+    setup = TrackerSetup({"TRACKERS": {"default_trackers": []}})
+    assert setup._normalized_tracker_names(_meta(trackers=["asc"])) == [
+        "AMIGOSSHARE"
+    ]
+
+
 def test_search_existing_disc_game_and_session_failure() -> None:
     tracker = _tracker()
-    disc_html = """
-    <li class='list-group-item dark-gray'>
-      <a href='torrents-details.php?id=1'>Details</a>
-      <span class='badge-info'>10 GB</span>
-      <span class='badge'>2024</span><span class='badge'>4K</span>
-      <span class='badge'>BD50</span><span class='badge'>HEVC</span><span class='badge'>DTS</span>
-    </li>
-    """
-    tracker.session.get = AsyncMock(return_value=_response(text=disc_html))
+    tracker.session.get = AsyncMock(
+        return_value=_response(text=_inertia_results("Filme BD50", 1, 1000))
+    )
     results = asyncio.run(tracker.search_existing(_meta()))
-    assert results and "BD50" in results[0]["name"]
-    game_html = """
-    <li class='list-group-item dark-gray'>
-      <a href='torrents-details.php?id=2'>Details</a>
-      <div class='tooltips'><p><a>Game Name</a></p></div>
-      <span class='badge-info'>1 GB</span>
-    </li>
-    """
+    assert results[0]["name"] == "Filme BD50"
+    assert results[0]["link"].endswith("/torrents/1")
+    assert results[0]["size"] == "1000"
+    game_html = _inertia_results("Game Name", 2, 2000)
     tracker.session.get = AsyncMock(return_value=_response(text=game_html))
     game = asyncio.run(
         tracker.search_existing(_meta(category="GAME", platform="PC"))
@@ -625,20 +643,12 @@ def test_search_existing_disc_game_and_session_failure() -> None:
 
 def test_upload_url_date_media_info(tmp_path: Path) -> None:
     tracker = _tracker()
-    assert asyncio.run(
-        tracker.get_upload_url(_meta(category="BOOK"))
-    ).endswith("enviar-ebook.php")
-    assert asyncio.run(
-        tracker.get_upload_url(_meta(category="GAME"))
-    ).endswith("enviar-jogos.php")
+    for category in ("BOOK", "GAME", "MOVIE", "TV"):
+        assert asyncio.run(
+            tracker.get_upload_url(_meta(category=category))
+        ).endswith("/torrents/upload")
     assert asyncio.run(tracker.get_upload_url(_meta(anime=True))).endswith(
-        "enviar-anime.php"
-    )
-    assert asyncio.run(
-        tracker.get_upload_url(_meta(category="MOVIE"))
-    ).endswith("enviar-filme.php")
-    assert asyncio.run(tracker.get_upload_url(_meta(category="TV"))).endswith(
-        "enviar-series.php"
+        "/torrents/upload"
     )
     assert (
         asyncio.run(tracker.format_image("https://x"))
@@ -772,9 +782,10 @@ def test_get_data_and_upload_paths() -> None:
     tracker.build_description = AsyncMock(return_value="DESC")  # type: ignore[method-assign]
     tracker.get_type = AsyncMock(return_value="23")  # type: ignore[method-assign]
     tracker.get_name = AsyncMock(return_value="NAME")  # type: ignore[method-assign]
-    tracker._category_upload_data = AsyncMock(return_value={"x": "y"})  # type: ignore[method-assign]
     data = asyncio.run(tracker.get_data(_meta()))
-    assert data["name"] == "NAME" and data["x"] == "y"
+    assert data["name"] == "NAME"
+    assert data["imdb_id"] == "tt1234567"
+    assert data["anonymous"] == "0"
     assert not tracker._upload_preconditions_allowed(
         _meta(skipping="AMIGOSSHARE")
     )

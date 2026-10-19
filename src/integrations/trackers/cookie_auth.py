@@ -975,9 +975,13 @@ class CookieAuthUploader:
         upload_url: str,
         data: dict[str, Any],
         files: dict[str, Any],
+        extra_headers: dict[str, str] | None = None,
     ) -> httpx.Response:
+        headers = dict(CookieValidator._user_agent_headers(meta))
+        if extra_headers:
+            headers.update(extra_headers)
         async with httpx.AsyncClient(
-            headers=CookieValidator._user_agent_headers(meta),
+            headers=headers,
             timeout=30.0,
             cookies=upload_cookies,
             follow_redirects=True,
@@ -1082,10 +1086,16 @@ class CookieAuthUploader:
         source_flag: str,
         user_announce_url: str,
         torrent_url: str,
+        extra_headers: dict[str, str] | None = None,
     ) -> bool:
         try:
             response = await self._post_upload_request(
-                meta, upload_cookies, upload_url, data, files
+                meta,
+                upload_cookies,
+                upload_url,
+                data,
+                files,
+                extra_headers,
             )
         except Exception as error:
             meta.tracker_status[tracker]["status_message"] = (
@@ -1129,6 +1139,7 @@ class CookieAuthUploader:
         success_list: list[str] | None = None,
         additional_files: dict[str, Any] | None = None,
         hash_is_id: bool = False,
+        extra_headers: dict[str, str] | None = None,
     ) -> bool:
         """
         Upload a torrent to a tracker using cookies for authentication.
@@ -1186,6 +1197,7 @@ class CookieAuthUploader:
             source_flag,
             user_announce_url,
             torrent_url,
+            extra_headers,
         )
 
     @staticmethod
