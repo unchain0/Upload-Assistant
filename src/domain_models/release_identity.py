@@ -74,10 +74,13 @@ _ANCILLARY_VIDEO_RE = re.compile(
 _EPISODE_VIDEO_RE = re.compile(
     r"""(?ix)
     (?:
-        S\d{1,2}E\d{1,3}
-        | (?:^|[\s._\-\[])TV[\s._\-]?\d{1,3}(?:$|[\s._\-\]])
+        S\d{1,2}E\d{1,3}(?:v\d+)?
+        | (?:^|[\s._\-\[])TV[\s._\-]?\d{1,3}(?:v\d+)?(?:$|[\s._\-\]])
     )
     """
+)
+_RESOLUTION_TITLE_RE = re.compile(
+    r"(?i)^\s*(?:480|576|720|1080|1440|2160)p\b"
 )
 _CLIENT_HASH_RE = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})")
 
@@ -173,6 +176,13 @@ def _identity_video_names(meta: Meta) -> list[str]:
     return names
 
 
+def _resolution_title_reason(meta: Meta) -> str | None:
+    name = str(meta.name or "").strip()
+    if _RESOLUTION_TITLE_RE.match(name):
+        return "the release name starts with a resolution and has no title"
+    return None
+
+
 def _identity_skip_reason(meta: Meta, names: list[str]) -> str | None:
     ancillary = _ancillary_representative_reason(names)
     if ancillary:
@@ -180,18 +190,19 @@ def _identity_skip_reason(meta: Meta, names: list[str]) -> str | None:
     packed = _movie_episode_pack_reason(meta, names)
     if packed:
         return packed
+    titled = _resolution_title_reason(meta)
+    if titled:
+        return titled
     return _missing_database_id_reason(meta)
 
 
 def _ancillary_representative_reason(names: list[str]) -> str | None:
     if not names or not is_ancillary_video(names[0]):
         return None
-    if any(not is_ancillary_video(name) for name in names):
-        return (
-            "the representative file is an extra, trailer, or OVA "
-            "while episode videos exist"
-        )
-    return None
+    return (
+        "the representative file is an extra, trailer, or OVA "
+        "and cannot identify an automatic upload"
+    )
 
 
 def _category_is_movie(meta: Meta) -> bool:
