@@ -50,6 +50,122 @@ def test_capybarabr_preserves_source_group_when_adding_audio_tag() -> None:
     )
 
 
+_NUREMBERG = "Nuremberg.2025.BluRay.1080p.x264-CYBER.Dual.Tontom.mkv"
+_NUREMBERG_NAMED = (
+    "Nuremberg.2025.1080p.BluRay.DD5.1.x264-CYBER.DUAL-Tontom.mkv"
+)
+
+
+def _allow_portuguese(
+    tracker: CapybaraBR, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        tracker.common,
+        "check_portuguese_video_requirements",
+        AsyncMock(return_value=True),
+    )
+
+
+@pytest.mark.asyncio
+async def test_capybarabr_rejects_a_filename_without_audio_channels(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracker = _tracker()
+    _allow_portuguese(tracker, monkeypatch)
+    meta = Meta(
+        category="MOVIE",
+        unattended=True,
+        filelist=[_NUREMBERG],
+        tag="-CYBER.Dual.Tontom",
+    )
+    assert not await tracker.get_additional_checks(meta)
+
+
+@pytest.mark.asyncio
+async def test_capybarabr_rejects_sidecar_subs_when_they_are_already_embedded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracker = _tracker()
+    _allow_portuguese(tracker, monkeypatch)
+    subtitle = _NUREMBERG_NAMED.replace(".mkv", ".srt")
+    meta = Meta(
+        category="MOVIE",
+        unattended=True,
+        filelist=[_NUREMBERG_NAMED, subtitle],
+        subtitle_files=[subtitle],
+        mediainfo={
+            "media": {
+                "track": [
+                    {
+                        "@type": "Text",
+                        "Language": "Portuguese",
+                        "Format": "PGS",
+                    }
+                ]
+            }
+        },
+        tag="-CYBER.DUAL-Tontom",
+    )
+    assert not await tracker.get_additional_checks(meta)
+
+
+@pytest.mark.asyncio
+async def test_capybarabr_allows_a_named_mkv_without_sidecar_subs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracker = _tracker()
+    _allow_portuguese(tracker, monkeypatch)
+    meta = Meta(
+        category="MOVIE",
+        unattended=True,
+        filelist=[_NUREMBERG_NAMED],
+        tag="-CYBER.DUAL-Tontom",
+    )
+    assert await tracker.get_additional_checks(meta)
+
+
+@pytest.mark.asyncio
+async def test_capybarabr_still_marks_a_plain_group_as_dual() -> None:
+    meta = Meta(
+        category="MOVIE",
+        name="Movie 2025 1080p BluRay DD5.1 x264-GROUP",
+        title="Movie",
+        aka="",
+        original_language="en",
+        audio_languages=["Portuguese", "English"],
+        tag="-GROUP",
+    )
+    result = await _tracker().get_name(meta)
+    assert result["name"] == "Movie 2025 1080p BluRay DD5.1 x264 DUAL-GROUP"
+
+
+@pytest.mark.asyncio
+async def test_capybarabr_keeps_dual_inside_the_existing_group_name() -> None:
+    expected = "Nuremberg 2025 1080p BluRay DD5.1 x264-CYBER.Dual.Tontom"
+    shared = {
+        "category": "MOVIE",
+        "name": expected,
+        "title": "Nuremberg",
+        "aka": "",
+        "original_language": "en",
+        "audio_languages": ["Portuguese", "English"],
+        "tag": "-CYBER.Dual.Tontom",
+    }
+    folder = Meta(
+        path="Nuremberg.2025.BluRay.1080p.x264.Dual - By Tontom",
+        uuid="",
+        **shared,
+    )
+    filed = Meta(
+        path="Nuremberg.2025.BluRay.1080p.x264.Dual - By Tontom",
+        uuid="Nuremberg.2025.BluRay.1080p.x264-CYBER.Dual.Tontom.mkv",
+        **shared,
+    )
+    tracker = _tracker()
+    assert (await tracker.get_name(folder))["name"] == expected
+    assert (await tracker.get_name(filed))["name"] == expected
+
+
 def test_capybarabr_missing_group_tag_adds_nogroup() -> None:
     assert not CapybaraBR._valid_group_tag(None)
     assert CapybaraBR._ensure_nogroup("Movie-UNKNOWN", None) == "Movie-NoGroup"

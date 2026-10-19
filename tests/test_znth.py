@@ -82,6 +82,98 @@ def test_zenith_rejects_software_without_dedicated_category():
     )
 
 
+_KITSUNE = "Radius.2017.1080p.AMZN.WEB-DL.DDP5.1.H.264-Kitsune.mkv"
+_RAWR = (
+    "Saturday Night Live UK S02E05 James Norton October 17 2026 "
+    "1080p AMZN WEB-DL DDP2 0 H 264-RAWR.mkv"
+)
+
+
+def _text_track(language: str, default: str) -> dict[str, str]:
+    return {"@type": "Text", "Language": language, "Default": default}
+
+
+def _kitsune_meta(**kwargs: Any) -> Meta:
+    tracks = kwargs.pop(
+        "tracks",
+        [
+            {"@type": "Audio", "Language": "English"},
+            _text_track("Portuguese", "Yes"),
+            _text_track("English", "No"),
+        ],
+    )
+    filename = kwargs.pop("filename", _KITSUNE)
+    audio_languages = kwargs.pop("audio_languages", ["English"])
+    return _movie_meta(
+        filelist=[filename],
+        tag="-Kitsune",
+        name="Radius 2017 1080p AMZN WEB-DL DD+ 5.1 H.264-Kitsune",
+        audio_languages=audio_languages,
+        mediainfo={"media": {"track": tracks}},
+        **kwargs,
+    )
+
+
+def test_zenith_rejects_a_group_file_with_portuguese_default_subtitles():
+    assert (
+        asyncio.run(_tracker().get_additional_checks(_kitsune_meta()))
+        is False
+    )
+
+
+def test_zenith_allows_the_group_file_when_english_subtitles_stay_default():
+    tracks = [
+        {"@type": "Audio", "Language": "English"},
+        _text_track("English", "Yes"),
+    ]
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(_kitsune_meta(tracks=tracks))
+        )
+        is True
+    )
+
+
+def test_zenith_allows_portuguese_subs_on_non_english_audio():
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(
+                _kitsune_meta(audio_languages=["Japanese"])
+            )
+        )
+        is True
+    )
+
+
+def test_zenith_allows_a_group_file_that_declares_dual_audio():
+    dual = "Radius.2017.1080p.AMZN.WEB-DL.DDP5.1.H.264.DUAL-Kitsune.mkv"
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(_kitsune_meta(filename=dual))
+        )
+        is True
+    )
+
+
+def test_zenith_rejects_the_spaced_rawr_filename():
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(
+                _tv_meta(
+                    filelist=[_RAWR],
+                    tag="-RAWR",
+                    name=(
+                        "Saturday Night Live UK S02E05 1080p AMZN "
+                        "WEB-DL DD+ 2.0 H.264-RAWR"
+                    ),
+                    imdb_info={"status": "Continuing"},
+                )
+            )
+        )
+        is False
+    )
+
+
 def _book_meta(**kwargs: Any) -> Meta:
     base: dict[str, Any] = {
         "category": "BOOK",
