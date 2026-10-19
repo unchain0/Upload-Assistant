@@ -8,6 +8,17 @@ from src.integrations.trackers.common import Common
 from src.integrations.trackers.description_builder import DescriptionBuilder
 from src.integrations.trackers.UNIT3D import UNIT3D
 
+_AUDIO_IN_FILENAME_RE = re.compile(
+    r"(?ix)(?:ddp|dd\+|dd|dts|aac|flac|truehd|opus|eac3|ac3)"
+    r"(?:[.\s_-]|hd|ma|atmos)*"
+    r"\d\.\d"
+)
+_GROUP_ALREADY_MARKED_RE = re.compile(
+    r"(?i)(?:^|[.\s])(?:dual|multi)(?:$|[.\s-])"
+)
+_VIDEO_SUFFIXES = (".mkv", ".mp4", ".avi", ".m2ts", ".ts")
+_SIDECAR_SUFFIXES = (".srt", ".ass", ".ssa", ".sub", ".idx", ".vtt", ".sup")
+
 
 class CapybaraBR(UNIT3D):
     """
@@ -428,14 +439,29 @@ class CapybaraBR(UNIT3D):
         if "-" not in name:
             return f"{name}{audio_tag}"
         prefix, suffix = name.rsplit("-", 1)
+        if cls._group_already_marked(suffix):
+            return name
+        return cls._insert_marked_group(prefix, suffix, audio_tag, meta)
+
+    @staticmethod
+    def _group_already_marked(suffix: str) -> bool:
+        return _GROUP_ALREADY_MARKED_RE.search(suffix) is not None
+
+    @classmethod
+    def _insert_marked_group(
+        cls, prefix: str, suffix: str, audio_tag: str, meta: Meta
+    ) -> str:
         original_group = cls._source_group(meta)
         configured_group = str(meta.tag or "").lstrip("-")
-        if (
-            original_group
-            and original_group.casefold() != configured_group.casefold()
-        ):
+        if cls._use_source_group(original_group, configured_group):
             return f"{prefix}-{original_group}{audio_tag}-{suffix}"
         return f"{prefix}{audio_tag}-{suffix}"
+
+    @staticmethod
+    def _use_source_group(original_group: str, configured_group: str) -> bool:
+        if not original_group:
+            return False
+        return original_group.casefold() != configured_group.casefold()
 
     @staticmethod
     def _source_group(meta: Meta) -> str:
@@ -496,21 +522,102 @@ class CapybaraBR(UNIT3D):
         )
 
     async def _video_additional_checks(self, meta: Meta) -> bool:
-        release_type = str(meta.type or "").casefold()
-        if release_type == "encode" and not meta.has_encode_settings:
+        reason = self._video_release_skip_reason(meta)
+        if reason:
             logger.info(
-                f"{self.tracker}: [bold red]'Encode settings' field in the MediaInfo is required for encodes. Skipping upload...[/bold red]"
-            )
-            return False
-        if self._remux_requires_bdinfo(meta, release_type):
-            logger.info(
-                f"{self.tracker}: [bold red]BDInfo is required for Blu-ray remuxes that include 'Encode settings' field in the MediaInfo. "
-                "You can add BDInfo to the description using -df (path/to/file.txt) or -pb (Pastebin link). Skipping upload...[/bold red]"
+                f"{self.tracker}: [bold red]{reason} Skipping upload...[/bold red]"
             )
             return False
         return await self.common.check_portuguese_video_requirements(
             meta, self.tracker
         )
+
+    def _video_release_skip_reason(self, meta: Meta) -> str:
+        release_type = str(meta.type or "").casefold()
+        if release_type == "encode" and not meta.has_encode_settings:
+            return "'Encode settings' field in the MediaInfo is required for encodes."
+        if self._remux_requires_bdinfo(meta, release_type):
+            return (
+                "BDInfo is required for Blu-ray remuxes that include 'Encode settings' field in the MediaInfo. "
+                "You can add BDInfo to the description using -df (path/to/file.txt) or -pb (Pastebin link)."
+            )
+        return self._filename_skip_reason(meta)
+
+    @staticmethod
+    def _filename_skip_reason(meta: Meta) -> str:
+        if CapybaraBR._video_missing_audio_name(meta):
+            return "the video filename is missing the audio codec and channels"
+        if CapybaraBR._sidecar_duplicates_embedded_subs(meta):
+            return "the video already has embedded subtitles, so sidecar subtitle files cannot be included"
+        return ""
+
+    @staticmethod
+    def _video_missing_audio_name(meta: Meta) -> bool:
+        names = CapybaraBR._video_filenames(meta)
+        if not names:
+            return False
+        return any(not CapybaraBR._filename_has_audio(name) for name in names)
+
+    @staticmethod
+    def _video_filenames(meta: Meta) -> list[str]:
+        return [
+            name
+            for name in CapybaraBR._content_names(meta.filelist)
+            if CapybaraBR._has_suffix(name, _VIDEO_SUFFIXES)
+        ]
+
+    @staticmethod
+    def _sidecar_duplicates_embedded_subs(meta: Meta) -> bool:
+        if not CapybaraBR._sidecar_names(meta):
+            return False
+        return CapybaraBR._has_embedded_text(meta)
+
+    @staticmethod
+    def _sidecar_names(meta: Meta) -> list[str]:
+        names = CapybaraBR._content_names(meta.subtitle_files)
+        names.extend(CapybaraBR._content_names(meta.filelist))
+        return [
+            name
+            for name in names
+            if CapybaraBR._has_suffix(name, _SIDECAR_SUFFIXES)
+        ]
+
+    @staticmethod
+    def _content_names(value: Any) -> list[str]:
+        if not isinstance(value, (list, tuple, set)):
+            return []
+        return [str(item) for item in value if str(item).strip()]
+
+    @staticmethod
+    def _has_suffix(name: str, suffixes: tuple[str, ...]) -> bool:
+        base = name.replace("\\", "/").rsplit("/", 1)[-1].casefold()
+        return base.endswith(suffixes)
+
+    @staticmethod
+    def _filename_has_audio(name: str) -> bool:
+        base = name.replace("\\", "/").rsplit("/", 1)[-1]
+        stem = base.rsplit(".", 1)[0]
+        return _AUDIO_IN_FILENAME_RE.search(stem) is not None
+
+    @staticmethod
+    def _has_embedded_text(meta: Meta) -> bool:
+        return any(
+            track.get("@type") == "Text"
+            for track in CapybaraBR._mediainfo_tracks(meta)
+        )
+
+    @staticmethod
+    def _mediainfo_tracks(meta: Meta) -> list[dict[str, Any]]:
+        tracks = CapybaraBR._mediainfo_media(meta).get("track", [])
+        if not isinstance(tracks, list):
+            return []
+        return [track for track in tracks if isinstance(track, dict)]
+
+    @staticmethod
+    def _mediainfo_media(meta: Meta) -> dict[str, Any]:
+        mediainfo = meta.mediainfo if isinstance(meta.mediainfo, dict) else {}
+        media = mediainfo.get("media", {})
+        return media if isinstance(media, dict) else {}
 
     def _remux_requires_bdinfo(self, meta: Meta, release_type: str) -> bool:
         if release_type != "remux" or str(
