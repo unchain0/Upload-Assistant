@@ -2582,15 +2582,32 @@ def _normalized_tvdb_series_name(series_name: str) -> str:
     return value.replace("(", "").replace(")", "").strip()
 
 
+def _same_title_spelling(current: Any, candidate: str) -> bool:
+    if not isinstance(current, str):
+        return False
+    release_title = current.strip().casefold()
+    tvdb_title = candidate.strip().casefold()
+    return bool(release_title) and release_title == tvdb_title
+
+
+def _release_title_already_matches(
+    current: Any, raw_name: str, series_name: str
+) -> bool:
+    return _same_title_spelling(current, series_name) or _same_title_spelling(
+        current, raw_name
+    )
+
+
 def _tvdb_series_title_candidate(meta: Meta) -> str:
     if not meta.tvdb_series_name or meta.category != "TV":
         return ""
-    if meta.title == meta.tvdb_series_name:
+    raw_name = str(meta.tvdb_series_name)
+    series_name = _normalized_tvdb_series_name(raw_name)
+    if _release_title_already_matches(meta.title, raw_name, series_name):
         return ""
-    logger.debug(f"[yellow]tvdb series name: {meta.tvdb_series_name}")
-    series_name = _normalized_tvdb_series_name(str(meta.tvdb_series_name))
     if _tvdb_title_drops_existing_leading_article(meta.title, series_name):
         return ""
+    logger.debug(f"[yellow]tvdb series name: {raw_name}")
     return series_name
 
 
