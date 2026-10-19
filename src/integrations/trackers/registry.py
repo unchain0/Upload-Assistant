@@ -249,7 +249,16 @@ class TrackerSetup:
             else self.config["TRACKERS"]["default_trackers"]
         )
         values = self._tracker_name_values(value)
-        return [str(item).strip().upper() for item in values]
+        return [
+            self._canonical_tracker_name(str(item).strip().upper())
+            for item in values
+        ]
+
+    @staticmethod
+    def _canonical_tracker_name(name: str) -> str:
+        if name == "ASC":
+            return "AMIGOSSHARE"
+        return name
 
     @staticmethod
     def _tracker_name_values(value: Any) -> list[Any]:
