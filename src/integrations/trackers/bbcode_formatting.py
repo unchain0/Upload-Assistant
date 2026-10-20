@@ -2,11 +2,26 @@
 import html
 import re
 import urllib.parse
+from functools import cache
 from pathlib import Path
 from typing import Any
 
 from src.domain_models.release import Meta
 from src.integrations.observability.runtime_support import logger
+
+
+@cache
+def _css4_colors() -> dict[str, str]:
+    # Imported lazily: matplotlib is slow to import and only a few trackers need color conversion.
+    from matplotlib.colors import CSS4_COLORS
+
+    return dict(CSS4_COLORS)
+
+
+@cache
+def _css4_colors_by_hex() -> dict[str, str]:
+    return {color_hex.lower(): color_name for color_name, color_hex in _css4_colors().items()}
+
 
 # Bold - KEEP
 # Italic - KEEP
@@ -743,6 +758,28 @@ class BBCODE:
         pattern = r"\[/?color(?:=[^\]]*)?\]"
         return re.sub(pattern, "", desc, flags=re.IGNORECASE)
 
+    def convert_named_colors(self, desc: str) -> str:
+        """Convert CSS named colors in BBCode color tags to hexadecimal values."""
+
+        def convert(match: re.Match[str]) -> str:
+            color_name = match.group(1).strip().lower()
+            color_hex = _css4_colors().get(color_name)
+            return f"[color={color_hex.lower()}]" if color_hex else match.group(0)
+
+        return re.sub(r"\[color=([^\]]+)\]", convert, desc, flags=re.IGNORECASE)
+
+    def convert_hex_colors_to_named(self, desc: str) -> str:
+        """Convert exact CSS4 hexadecimal colors in BBCode tags to named colors."""
+
+        def convert(match: re.Match[str]) -> str:
+            color_hex = match.group(1).lower()
+            if len(color_hex) == 4:
+                color_hex = "#" + "".join(character * 2 for character in color_hex[1:])
+            color_name = _css4_colors_by_hex().get(color_hex)
+            return f"[color={color_name}]" if color_name else match.group(0)
+
+        return re.sub(r"\[color=(#[0-9a-fA-F]{3}|#[0-9a-fA-F]{6})\]", convert, desc, flags=re.IGNORECASE)
+
     def convert_named_spoiler_to_normal_spoiler(self, desc: str) -> str:
         return re.sub(
             r"(\[spoiler=[^]]+])", "[spoiler]", desc, flags=re.IGNORECASE
@@ -761,6 +798,34 @@ class BBCODE:
         Converts [img=number] or any other parameters to just [img]
         """
         return re.sub(r"\[img(?:[^\]]*)\]", "[img]", desc, flags=re.IGNORECASE)
+
+    def clamp_size_tags(self, desc: str, max_size: int = 10) -> str:
+        """Clamp integer BBCode size tags without changing other markup."""
+
+        def clamp(match: re.Match[str]) -> str:
+            return match.group(0) if int(match.group(1)) <= max_size else f"[size={max_size}]"
+
+        return re.sub(r"\[size=(\d+)\]", clamp, desc, flags=re.IGNORECASE)
+
+    def convert_headings_to_sizes(self, desc: str) -> str:
+        """Convert BBCode h1-h6 tags to tracker-compatible size markup."""
+        heading_sizes = {
+            "1": 6,
+            "2": 5,
+            "3": 4,
+            "4": 3,
+            "5": 2,
+            "6": 1,
+        }
+
+        def convert(match: re.Match[str]) -> str:
+            level = match.group(1)
+            content = match.group(2)
+            if level == "6":
+                return f"[size=1][b][color=grey]{content}[/color][/b][/size]"
+            return f"[size={heading_sizes[level]}][b]{content}[/b][/size]"
+
+        return re.sub(r"\[h([1-6])\](.*?)\[/h\1\]", convert, desc, flags=re.IGNORECASE | re.DOTALL)
 
     def remove_extra_lines(self, desc: str) -> str:
         """

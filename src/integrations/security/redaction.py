@@ -21,6 +21,7 @@ SENSITIVE_KEYS: set[str] = {
     "csrf",
     "email",
     "username",
+    "catbox_userhash",
     "user",
     "key",
     "info_hash",
