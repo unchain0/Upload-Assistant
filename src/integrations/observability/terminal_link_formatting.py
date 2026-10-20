@@ -6,14 +6,29 @@ from urllib.parse import quote, urlsplit, urlunsplit
 from rich.markup import escape
 
 
+def parse_bool(value: Any, default: bool = False) -> bool:
+    """Parse common Boolean config values without treating non-empty strings as true."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "off"}:
+            return False
+    return default
+
+
 def should_embed_links(default_config: Mapping[str, Any]) -> bool:
     """Return whether terminal URLs should use Rich OSC 8 hyperlinks.
 
     ``embed_dupe_links`` is retained as a fallback for existing user configs.
     """
     if "embed_links" in default_config:
-        return bool(default_config["embed_links"])
-    return bool(default_config.get("embed_dupe_links", True))
+        return parse_bool(default_config["embed_links"])
+    return parse_bool(
+        default_config.get("embed_dupe_links", True), default=True
+    )
 
 
 def format_terminal_link(

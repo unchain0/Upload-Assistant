@@ -31,6 +31,7 @@ class NEXUSPHP:
     search_url: str = ""
     torrent_url: str = ""
     upload_url: str = ""
+    search_type_parameter: str = "medium"
     tmdb_localization_requirements: ClassVar = {
         "zh-cn": {
             "main": "credits",
@@ -107,7 +108,7 @@ class NEXUSPHP:
     def _search_params(self, meta: Meta) -> dict[str, str]:
         return {
             f"cat{self.get_category(meta)}": "1",
-            f"medium{self.get_type(meta)}": "1",
+            f"{self.search_type_parameter}{self.get_type(meta)}": "1",
             f"standard{self.get_resolution(meta)}": "1",
             "incldead": "0",
             "search": self._search_name(meta),

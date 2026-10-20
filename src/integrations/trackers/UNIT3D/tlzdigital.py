@@ -14,7 +14,7 @@ class TheLeachZone(UNIT3D):
     """
 
     tracker = "THELEACHZONE"
-    display_name = "TheLeachZone"
+    display_name = "The Leach Zone"
     allows_bloated_audio = True
     base_url = "https://tlzdigital.com"
     banned_groups = ("",)
@@ -24,6 +24,34 @@ class TheLeachZone(UNIT3D):
     torrent_url = f"{base_url}/torrents/"
     supported_categories = ("TV", "MOVIE")
     tracker_urls = ("https://tlzdigital.com/",)
+
+    # TLZ type IDs: 1 = Film, 2 = CAM / pre-release, 3 = Episode, 4 = Pack.
+    _pre_release_types = frozenset(
+        {
+            "CAM",
+            "CAMRIP",
+            "DCP",
+            "DVDSCR",
+            "HDCAM",
+            "HD CAM",
+            "HD-CAM",
+            "HD_CAM",
+            "HDTS",
+            "PDVD",
+            "R5",
+            "SCR",
+            "SCREENER",
+            "TC",
+            "TELECINE",
+            "TELESYNC",
+            "TELE SYNC",
+            "TELE-SYNC",
+            "TELE_SYNC",
+            "TS",
+            "WORKPRINT",
+            "WP",
+        }
+    )
 
     def __init__(self, config: Config) -> None:
         super().__init__(config, tracker_name="THELEACHZONE")
@@ -38,7 +66,7 @@ class TheLeachZone(UNIT3D):
         mapping_only: bool = False,
     ) -> dict[str, str]:
         _ = (category, reverse, mapping_only)
-        category_value = str(meta.category)
+        category_value = str(meta.category or "").strip().upper()
         category_id = {
             "MOVIE": "1",
             "TV": "2",
@@ -53,7 +81,9 @@ class TheLeachZone(UNIT3D):
         mapping_only: bool = False,
     ) -> dict[str, str]:
         _ = (type, reverse, mapping_only)
-        type_value = str(meta.type)
+        type_value = _upper_text(meta.type)
+        source_value = _upper_text(meta.source)
+        category_value = _upper_text(meta.category)
         type_id = {
             "FILM": "1",
             "EPISODE": "3",
@@ -62,10 +92,24 @@ class TheLeachZone(UNIT3D):
 
         if meta.tv_pack:
             type_id = "4"
+        elif self._pre_release_type(meta, type_value, source_value):
+            type_id = "2"
+        elif category_value == "MOVIE":
+            type_id = "1"
         elif type_id != "4":
             type_id = "3"
 
-        if str(meta.category) == "MOVIE":
-            type_id = "1"
-
         return {"type_id": type_id}
+
+    def _pre_release_type(
+        self, meta: Meta, type_value: str, source_value: str
+    ) -> bool:
+        if meta.pre_release:
+            return True
+        if type_value in self._pre_release_types:
+            return True
+        return source_value in self._pre_release_types
+
+
+def _upper_text(value: object) -> str:
+    return str(value or "").strip().upper()
