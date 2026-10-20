@@ -1281,7 +1281,9 @@ def _thrimg_response_result(
 async def _upload_thrimg_host(
     image: str, config: dict[str, Any], _meta: Meta, request_timeout: float
 ) -> dict[str, Any]:
-    api_key = str(_default_image_config(config).get("thrimg_api") or "").strip()
+    api_key = str(
+        _default_image_config(config).get("thrimg_api") or ""
+    ).strip()
     if not api_key:
         return {
             "status": "failed",
@@ -1719,10 +1721,17 @@ async def _upload_source_files(
     return files, _existing_hosted_image_count(meta.image_list), False
 
 
+def _cwd_relative(path: Path) -> str:
+    try:
+        return str(path.relative_to(Path.cwd()))
+    except ValueError:
+        return str(path.resolve().relative_to(Path.cwd().resolve()))
+
+
 async def _main_screenshot_files(meta: Meta) -> list[str]:
     registered = manifest_files(meta.base_dir, meta.uuid, "main")
     if registered:
-        return [str(path.relative_to(Path.cwd())) for path in registered]
+        return [_cwd_relative(path) for path in registered]
     discovered = await _glob_relative_paths(("*.png", ".[!.]*.png"))
     unwanted = await _unwanted_screenshot_files()
     return list(set(discovered) - unwanted)
@@ -1733,8 +1742,7 @@ async def _glob_relative_paths(patterns: Sequence[str]) -> list[str]:
     for pattern in patterns:
         matches = await asyncio.to_thread(
             lambda p=pattern: [
-                str(path.relative_to(Path.cwd()))
-                for path in Path.cwd().glob(p)
+                _cwd_relative(path) for path in Path.cwd().glob(p)
             ]
         )
         results.extend(matches)
