@@ -24,7 +24,9 @@ def test_registered_screenshot_through_a_runtime_symlink_stays_usable(
     monkeypatch.setattr(uploader, "manifest_files", lambda *_args: [logical])
 
     files = asyncio.run(
-        uploader._main_screenshot_files(Meta(base_dir="runtime", uuid="release"))
+        uploader._main_screenshot_files(
+            Meta(base_dir="runtime", uuid="release")
+        )
     )
 
     assert files == ["shot.png"]
