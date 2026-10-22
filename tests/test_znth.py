@@ -120,6 +120,20 @@ def test_zenith_rejects_a_group_file_with_portuguese_default_subtitles():
     )
 
 
+def test_zenith_rejects_a_pt_br_default_subtitle_on_the_group_file():
+    tracks = [
+        {"@type": "Audio", "Language": "en-US", "Default": "Yes"},
+        {"@type": "Text", "Language": "pt-BR", "Default": "Yes"},
+        {"@type": "Text", "Language": "en-US", "Default": "No"},
+    ]
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(_kitsune_meta(tracks=tracks))
+        )
+        is False
+    )
+
+
 def test_zenith_allows_the_group_file_when_english_subtitles_stay_default():
     tracks = [
         {"@type": "Audio", "Language": "English"},

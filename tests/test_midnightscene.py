@@ -249,6 +249,85 @@ def test_midnightscene_rejects_non_scene_game_and_missing_scene_payload():
     assert asyncio.run(_tracker().get_additional_checks(incomplete)) is False
 
 
+_KITSUNE = "Radius.2017.1080p.AMZN.WEB-DL.DDP5.1.H.264-Kitsune.mkv"
+_NTB = (
+    "Law.and.Order.Special.Victims.Unit.S28E01.Volition."
+    "1080p.AMZN.WEB-DL.DDP5.1.H.264-NTb.mkv"
+)
+
+
+def _group_meta(**kwargs):
+    tracks = kwargs.pop(
+        "tracks",
+        [
+            {"@type": "Audio", "Language": "en-US", "Default": "Yes"},
+            {"@type": "Text", "Language": "pt-BR", "Default": "Yes"},
+            {"@type": "Text", "Language": "en-US", "Default": "No"},
+        ],
+    )
+    filename = kwargs.pop("filename", _KITSUNE)
+    base = {
+        "category": "MOVIE",
+        "filelist": [filename],
+        "tag": "-Kitsune",
+        "name": "Radius 2017 1080p AMZN WEB-DL DD+ 5.1 H.264-Kitsune",
+        "audio_languages": ["English"],
+        "mediainfo": {"media": {"track": tracks}},
+        "screens": 3,
+        "resolution": "1080p",
+        "unattended": True,
+        "unattended_confirm": False,
+        "imdb_info": {"status": ""},
+    }
+    base.update(kwargs)
+    return Meta(**base)
+
+
+def test_midnightscene_rejects_a_pt_br_default_subtitle_on_the_group_file():
+    assert (
+        asyncio.run(_tracker().get_additional_checks(_group_meta())) is False
+    )
+
+
+def test_midnightscene_allows_the_group_file_when_english_subtitles_stay_default():
+    tracks = [
+        {"@type": "Audio", "Language": "en-US", "Default": "Yes"},
+        {"@type": "Text", "Language": "en-US", "Default": "Yes"},
+    ]
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(_group_meta(tracks=tracks))
+        )
+        is True
+    )
+
+
+def test_midnightscene_allows_an_ntb_episode_without_portuguese_subtitles():
+    tracks = [
+        {"@type": "Audio", "Language": "en-US", "Default": "Yes"},
+        {"@type": "Text", "Language": "en-US", "Default": "No"},
+        {"@type": "Text", "Language": "es-419", "Default": "No"},
+    ]
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(
+                _group_meta(
+                    category="TV",
+                    filelist=[_NTB],
+                    tag="-NTb",
+                    name=(
+                        "Law & Order: Special Victims Unit S28E01 "
+                        "1080p AMZN WEB-DL DD+ 5.1 H.264-NTb"
+                    ),
+                    tracks=tracks,
+                    imdb_info={"status": "Continuing"},
+                )
+            )
+        )
+        is True
+    )
+
+
 def test_midnightscene_dvd_remux_foreign_language_is_added_after_year():
     meta = Meta(
         category="MOVIE",
