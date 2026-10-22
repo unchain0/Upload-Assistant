@@ -8,6 +8,7 @@ from src.integrations.media.language_adapter import languages_manager
 from src.integrations.observability.runtime_support import logger
 from src.integrations.trackers.common import Common
 from src.integrations.trackers.UNIT3D import UNIT3D
+from src.integrations.trackers.UNIT3D.znth import Zenith
 
 Config = dict[str, Any]
 
@@ -459,7 +460,19 @@ class MidnightScene(UNIT3D):
         ):
             if not await check(meta):
                 return False
-        return True
+        return self._original_group_file(meta)
+
+    def _original_group_file(self, meta: Meta) -> bool:
+        files = self._validated_filelist(meta) or []
+        modified = Zenith._modified_group_video(
+            meta, Zenith._collect_video_paths(files)
+        )
+        if not modified:
+            return True
+        logger.info(
+            f"{self.tracker}: [bold red]Tagged release {modified} has a Portuguese default subtitle on English audio and no longer matches the original group file.[/bold red]"
+        )
+        return False
 
     async def get_additional_checks(self, meta: Meta) -> bool:
         files = self._validated_filelist(meta)
