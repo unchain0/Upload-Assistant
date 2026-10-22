@@ -18,6 +18,11 @@ Config = dict[str, Any]
 _ADDED_SUBS_RE = re.compile(r"(?i)(?:^|[._-])(?:dual|multi|subs?)(?:$|[._-])")
 
 
+def _portuguese_language_code(text: str) -> bool:
+    code = text.replace("_", "-").split("-", 1)[0]
+    return code in {"pt", "por"}
+
+
 def prepare_zenith_music_layout(meta: Meta) -> None:
     if not _uses_zenith_music_layout(meta):
         return
@@ -1096,7 +1101,8 @@ class Zenith(UNIT3D):
 
     @staticmethod
     def _is_portuguese_language(language: str) -> bool:
-        return "portugu" in language.casefold()
+        text = language.casefold().strip()
+        return "portugu" in text or _portuguese_language_code(text)
 
     def _screenshot_policy(self, meta: Meta) -> bool:
         if self._screen_count(meta.screens) >= 3:
