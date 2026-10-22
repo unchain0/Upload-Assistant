@@ -1,5 +1,6 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
 import platform
+import re
 from typing import Any
 
 import aiofiles
@@ -8,6 +9,7 @@ from bs4 import BeautifulSoup
 
 from src.domain_models.release import Meta
 from src.integrations.filesystem.temp_paths import release_temp_dir
+from src.integrations.observability.runtime_support import logger
 from src.integrations.trackers.cookie_auth import (
     CookieAuthUploader,
     CookieValidator,
@@ -15,6 +17,114 @@ from src.integrations.trackers.cookie_auth import (
 from src.integrations.trackers.description_builder import DescriptionBuilder
 
 Config = dict[str, Any]
+_YEAR_SUFFIX = re.compile(r"\s*\((?:19|20)\d{2}\)\s*$")
+_EPISODE_SUFFIX = re.compile(r"\s*\(\d{1,2}x\d{1,3}\)\s*$")
+_KEY_CHARS = re.compile(r"[^a-z0-9]+")
+_UFC_NAME = re.compile(r"(?i)(?:^|[^a-z0-9])ufc(?:[^a-z0-9]|$)")
+
+
+def _plain(value: object) -> str:
+    if value is None:
+        return ""
+    return str(value)
+
+
+def _schedule_key(name: str) -> str:
+    text = _YEAR_SUFFIX.sub("", name.strip())
+    text = _EPISODE_SUFFIX.sub("", text)
+    return _KEY_CHARS.sub("", text.casefold())
+
+
+def _airs_exception(meta: Meta) -> bool:
+    if _plain(meta.resolution).casefold() == "2160p":
+        return True
+    if "xvid" in _plain(meta.video_codec).casefold():
+        return True
+    return _UFC_NAME.search(_plain(meta.title)) is not None
+
+
+def _schedule_applies(meta: Meta) -> bool:
+    if str(meta.category) != "TV":
+        return False
+    if _airs_exception(meta):
+        return False
+    return bool(_schedule_key(_plain(meta.title)))
+
+
+def _protected_day(label: str) -> bool:
+    text = label.casefold()
+    if text.startswith("2 day"):
+        return False
+    return text.startswith(("yesterday", "today", "tomorrow"))
+
+
+def _cell_text(cell: Any) -> str:
+    return " ".join(cell.get_text(" ", strip=True).split())
+
+
+def _show_names(column: Any) -> set[str]:
+    names: set[str] = set()
+    for link in column.find_all("a"):
+        href = _plain(link.get("href"))
+        if "tvshows.php" not in href:
+            continue
+        key = _schedule_key(link.get_text(" ", strip=True))
+        if key:
+            names.add(key)
+    return names
+
+
+def _schedule_header(table: Any) -> Any:
+    for row in table.find_all("tr", recursive=False):
+        labels = [
+            _cell_text(cell).casefold()
+            for cell in row.find_all("td", recursive=False)
+        ]
+        if any(label.startswith("today") for label in labels):
+            return row
+    return None
+
+
+def _names_from_schedule_table(table: Any) -> set[str]:
+    header = _schedule_header(table)
+    if header is None:
+        return set()
+    data = header.find_next_sibling("tr")
+    if data is None:
+        return set()
+    labels = [
+        _cell_text(cell) for cell in header.find_all("td", recursive=False)
+    ]
+    columns = data.find_all("td", recursive=False)
+    return _names_from_day_columns(labels, columns)
+
+
+def _names_from_day_columns(labels: list[str], columns: list[Any]) -> set[str]:
+    names: set[str] = set()
+    for label, column in zip(labels, columns, strict=False):
+        names.update(_names_for_day(label, column))
+    return names
+
+
+def _names_for_day(label: str, column: Any) -> set[str]:
+    if not _protected_day(label):
+        return set()
+    return _show_names(column)
+
+
+def _protected_show_names(html: str) -> set[str]:
+    soup = BeautifulSoup(html, "html.parser")
+    names: set[str] = set()
+    for table in soup.find_all("table"):
+        names.update(_names_from_schedule_table(table))
+    return names
+
+
+def _blocked_airing_title(meta: Meta, html: str) -> str:
+    key = _schedule_key(_plain(meta.title))
+    if key not in _protected_show_names(html):
+        return ""
+    return _plain(meta.title)
 
 
 class ImmortalSeed:
@@ -364,6 +474,28 @@ class ImmortalSeed:
             if isinstance(meta.imdb_info, dict)
             else ""
         )
+
+    async def get_additional_checks(self, meta: Meta) -> bool:
+        if not _schedule_applies(meta):
+            return True
+        title = _blocked_airing_title(meta, await self._schedule_html(meta))
+        if not title:
+            return True
+        logger.info(
+            f"{self.tracker}: {title} is on the air schedule. "
+            "Skipping upload during the first day."
+        )
+        return False
+
+    async def _schedule_html(self, meta: Meta) -> str:
+        if not await self._load_cookies(meta):
+            return ""
+        response = await self.session.get(f"{self.base_url}/schedule.php")
+        if self._is_login_response(response):
+            return ""
+        if response.status_code >= 400:
+            return ""
+        return response.text
 
     async def upload(self, meta: Meta) -> bool:
         await self._load_cookies(meta)
