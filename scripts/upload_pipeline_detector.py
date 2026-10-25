@@ -41,7 +41,14 @@ def main() -> int:
             qbit = load_qbittorrent_summary(args.qbit_base_url, _fetch_qbit_torrents)
         except (OSError, ValueError, json.JSONDecodeError):
             qbit = {"status": "unknown"}
-    print(json.dumps({"classification": "TECHNICAL_UPLOAD_PIPELINE", "events": len(events), "qbit": qbit}))
+    classification = (
+        "unknown"
+        if qbit.get("status") == "unknown"
+        else "TECHNICAL_UPLOAD_PIPELINE"
+        if events
+        else "NO_CORRELATED_TECHNICAL_FAILURE"
+    )
+    print(json.dumps({"classification": classification, "events": len(events), "qbit": qbit}))
     return 0
 
 

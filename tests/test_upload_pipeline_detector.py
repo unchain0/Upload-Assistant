@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import fcntl
+import json
 import os
 import subprocess
 import sys
@@ -227,3 +228,60 @@ def test_qbittorrent_loader_rejects_nonlocal_base_url() -> None:
 def test_dry_run_rejects_negative_limits(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="limits"):
         run_dry_run(tmp_path, dry_run=True, max_logs=-1, max_items=5)
+
+
+@pytest.mark.parametrize("base_url", ["http://10.0.0.1/api/v2", "http://192.168.1.1/api/v2"])
+def test_qbittorrent_loader_rejects_private_network_base_urls(base_url: str) -> None:
+    with pytest.raises(ValueError, match="local qBittorrent"):
+        load_qbittorrent_summary(base_url, lambda _url: [])
+
+
+def test_cli_reports_neutral_classification_when_no_signals(tmp_path: Path) -> None:
+    script = Path(__file__).parents[1] / "scripts" / "upload_pipeline_detector.py"
+
+    result = subprocess.run(  # noqa: S603
+        [
+            sys.executable,
+            str(script),
+            "--dry-run",
+            "--log-root",
+            str(tmp_path),
+            "--state-dir",
+            str(tmp_path / "audit"),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert json.loads(result.stdout)["classification"] == "NO_CORRELATED_TECHNICAL_FAILURE"
+
+
+def test_cli_reports_unknown_when_requested_qb_observation_is_unknown(tmp_path: Path) -> None:
+    script = Path(__file__).parents[1] / "scripts" / "upload_pipeline_detector.py"
+    (tmp_path / "upload-signal.log").write_text(
+        "DIGITALCORE: Could not download torrent file: 404\n"
+    )
+
+    result = subprocess.run(  # noqa: S603
+        [
+            sys.executable,
+            str(script),
+            "--dry-run",
+            "--log-root",
+            str(tmp_path),
+            "--state-dir",
+            str(tmp_path / "audit"),
+            "--qbit-base-url",
+            "https://example.invalid/api/v2",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    payload = json.loads(result.stdout)
+    assert result.returncode == 0
+    assert payload["qbit"] == {"status": "unknown"}
+    assert payload["classification"] == "unknown"
