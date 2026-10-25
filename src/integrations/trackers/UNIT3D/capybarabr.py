@@ -439,9 +439,15 @@ class CapybaraBR(UNIT3D):
         if "-" not in name:
             return f"{name}{audio_tag}"
         prefix, suffix = name.rsplit("-", 1)
+        suffix = cls._strip_leading_audio_mark(suffix)
         if cls._group_already_marked(suffix):
             return name
         return cls._insert_marked_group(prefix, suffix, audio_tag, meta)
+
+    @staticmethod
+    def _strip_leading_audio_mark(suffix: str) -> str:
+        stripped = re.sub(r"(?i)^(dual|multi)[.\s-]*", "", suffix, count=1)
+        return stripped or suffix
 
     @staticmethod
     def _group_already_marked(suffix: str) -> bool:
