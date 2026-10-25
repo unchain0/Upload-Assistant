@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import fcntl
+import ipaddress
 import json
 import os
 import re
@@ -9,6 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import urlparse
 from uuid import uuid4
 
 _SIGNALS = (
@@ -138,6 +140,8 @@ class AuditLog:
 def run_dry_run(
     log_root: Path, *, dry_run: bool, max_logs: int, max_items: int
 ) -> list[Detection]:
+    if max_logs < 0 or max_items < 0:
+        raise ValueError("limits must be non-negative")
     detector = UploadPipelineDetector(dry_run=dry_run, max_items=max_items)
     detections: list[Detection] = []
     for path in sorted(log_root.rglob("upload*.log"))[:max_logs]:
@@ -171,4 +175,18 @@ def summarize_qbittorrent(torrents: list[dict[str, object]]) -> dict[str, object
 def load_qbittorrent_summary(
     base_url: str, fetch: Callable[[str], list[dict[str, object]]]
 ) -> dict[str, object]:
+    parsed = urlparse(base_url)
+    host = parsed.hostname
+    if parsed.scheme not in {"http", "https"} or not host or not _is_local_host(host):
+        raise ValueError("local qBittorrent base URL is required")
     return summarize_qbittorrent(fetch(f"{base_url.rstrip('/')}/torrents/info"))
+
+
+def _is_local_host(host: str) -> bool:
+    if host.lower() == "localhost":
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return address.is_loopback or address.is_private

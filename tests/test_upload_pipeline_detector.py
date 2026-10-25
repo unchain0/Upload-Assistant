@@ -217,3 +217,13 @@ def test_dry_run_correlates_error_with_following_tracker_result(tmp_path: Path) 
     events = run_dry_run(logs, dry_run=True, max_logs=5, max_items=5)
 
     assert [event.to_record()["tracker"] for event in events] == ["DIGITALCORE", "DIGITALCORE"]
+
+
+def test_qbittorrent_loader_rejects_nonlocal_base_url() -> None:
+    with pytest.raises(ValueError, match="local qBittorrent"):
+        load_qbittorrent_summary("https://example.com/api/v2", lambda _url: [])
+
+
+def test_dry_run_rejects_negative_limits(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="limits"):
+        run_dry_run(tmp_path, dry_run=True, max_logs=-1, max_items=5)
