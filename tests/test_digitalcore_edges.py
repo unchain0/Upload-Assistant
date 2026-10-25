@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, call
 
 import httpx
 import pytest
+from torf import MetainfoError, Torrent
 
 from src.domain_models.release import Meta
+from src.integrations.trackers import digitalcore
 from src.integrations.trackers.digitalcore import DigitalCore
 from tests.test_digitalcore_rules import _make_meta, _tracker
 
@@ -20,6 +23,16 @@ def _response(
     if text is not None:
         return httpx.Response(status, request=request, text=text)
     return httpx.Response(status, request=request, json=payload)
+
+
+def _valid_torrent(tmp_path: Path) -> str:
+    payload = tmp_path / "payload.bin"
+    payload.write_bytes(b"payload")
+    torrent_path = tmp_path / "registered.torrent"
+    torrent = Torrent(path=payload, piece_size=32768)
+    torrent.generate(threads=1)
+    torrent.write(torrent_path)
+    return str(torrent_path)
 
 
 def test_digitalcore_search_payload_empty_and_matching_entry() -> None:
@@ -148,20 +161,93 @@ async def test_digitalcore_description_normalizes_ptscreens_csp_urls(
 
 @pytest.mark.asyncio
 async def test_digitalcore_upload_release_success(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     tracker = _tracker()
     response = _response({"id": 321, "message": "ok"})
     monkeypatch.setattr(
         tracker, "_submit_upload", AsyncMock(return_value=response)
     )
-    tracker.common.download_tracker_torrent = AsyncMock()  # type: ignore[method-assign]
+    tracker.common.download_tracker_torrent = AsyncMock(  # type: ignore[method-assign]
+        return_value=_valid_torrent(tmp_path)
+    )
     meta = _make_meta(tracker_status={})
     status: dict[str, Any] = {}
 
     assert await tracker._upload_release(meta, {}, "Release", status)
     assert status["torrent_id"] == "321/"
     tracker.common.download_tracker_torrent.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_digitalcore_retries_until_registered_torrent_is_valid(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    tracker = _tracker()
+    tracker.common.download_tracker_torrent = AsyncMock(  # type: ignore[method-assign]
+        side_effect=[None, _valid_torrent(tmp_path)]
+    )
+    sleep = AsyncMock()
+    monkeypatch.setattr(
+        digitalcore, "asyncio", SimpleNamespace(sleep=sleep), raising=False
+    )
+    status: dict[str, Any] = {}
+
+    assert await tracker._handle_upload_response(
+        _make_meta(), status, _response({"id": 321, "message": "ok"})
+    )
+
+    assert tracker.common.download_tracker_torrent.await_count == 2
+    sleep.assert_awaited_once_with(10)
+
+
+@pytest.mark.asyncio
+async def test_digitalcore_blocks_client_progress_when_torrent_never_arrives(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracker = _tracker()
+    tracker.common.download_tracker_torrent = AsyncMock(  # type: ignore[method-assign]
+        return_value=None
+    )
+    sleep = AsyncMock()
+    monkeypatch.setattr(
+        digitalcore, "asyncio", SimpleNamespace(sleep=sleep), raising=False
+    )
+    status: dict[str, Any] = {}
+
+    assert not await tracker._handle_upload_response(
+        _make_meta(), status, _response({"id": 321, "message": "ok"})
+    )
+
+    assert tracker.common.download_tracker_torrent.await_count == 4
+    assert status["status_message"] == (
+        "data error: registered torrent unavailable for client injection"
+    )
+    assert sleep.await_args_list == [call(10), call(20), call(30)]
+
+
+@pytest.mark.asyncio
+async def test_digitalcore_rejects_invalid_registered_torrent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    tracker = _tracker()
+    invalid = tmp_path / "invalid.torrent"
+    invalid.write_text("not a torrent", encoding="utf-8")
+    tracker.common.download_tracker_torrent = AsyncMock(  # type: ignore[method-assign]
+        return_value=str(invalid)
+    )
+    sleep = AsyncMock()
+    monkeypatch.setattr(
+        digitalcore, "asyncio", SimpleNamespace(sleep=sleep), raising=False
+    )
+    status: dict[str, Any] = {}
+
+    assert not await tracker._handle_upload_response(
+        _make_meta(), status, _response({"id": 321, "message": "ok"})
+    )
+
+    assert tracker.common.download_tracker_torrent.await_count == 4
+    assert sleep.await_args_list == [call(10), call(20), call(30)]
 
 
 @pytest.mark.asyncio
@@ -431,12 +517,14 @@ async def test_digitalcore_upload_reports_unsupported_category_before_post() -> 
 
 
 @pytest.mark.asyncio
-async def test_digitalcore_success_download_is_restricted_to_tracker_host() -> (
-    None
-):
+async def test_digitalcore_success_download_is_restricted_to_tracker_host(
+    tmp_path: Path,
+) -> None:
     tracker = _tracker()
     response = _response({"id": 654, "message": "ok"})
-    tracker.common.download_tracker_torrent = AsyncMock()  # type: ignore[method-assign]
+    tracker.common.download_tracker_torrent = AsyncMock(  # type: ignore[method-assign]
+        return_value=_valid_torrent(tmp_path)
+    )
     status: dict[str, Any] = {}
 
     assert await tracker._handle_upload_response(
@@ -469,3 +557,30 @@ def test_digitalcore_response_message_handles_current_error_shapes() -> None:
         DigitalCore._response_message(malformed)
         == "<html>upstream error</html>"
     )
+
+
+@pytest.mark.asyncio
+async def test_digitalcore_retries_invalid_metainfo_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    tracker = _tracker()
+    candidate = tmp_path / "candidate.torrent"
+    candidate.write_bytes(b"d4:infodee")
+    tracker.common.download_tracker_torrent = AsyncMock(  # type: ignore[method-assign]
+        return_value=str(candidate)
+    )
+    sleep = AsyncMock()
+    monkeypatch.setattr(
+        digitalcore.Torrent,
+        "read",
+        lambda _path: (_ for _ in ()).throw(MetainfoError("invalid metainfo")),
+    )
+    monkeypatch.setattr(
+        digitalcore, "asyncio", SimpleNamespace(sleep=sleep), raising=False
+    )
+
+    assert not await tracker._handle_upload_response(
+        _make_meta(), {}, _response({"id": 321, "message": "ok"})
+    )
+    assert tracker.common.download_tracker_torrent.await_count == 4
+    assert sleep.await_args_list == [call(10), call(20), call(30)]
