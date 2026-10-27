@@ -20,7 +20,123 @@ def _css4_colors() -> dict[str, str]:
 
 @cache
 def _css4_colors_by_hex() -> dict[str, str]:
-    return {color_hex.lower(): color_name for color_name, color_hex in _css4_colors().items()}
+    return {
+        color_hex.lower(): color_name
+        for color_name, color_hex in _css4_colors().items()
+    }
+
+
+_INLINE_OPEN = r"(?:\[(?:b|i|u|small|size=\d+|color=[^\]]*|font=[^\]]*)\]\s*)*"
+_INLINE_CLOSE = r"(?:\s*\[/(?:b|i|u|small|size|color|font)\])*"
+# A link's text up to its own [/url], never running into the next link.
+_URL_BODY = r"(?:(?!\[/?url\b)[\s\S])*?\[/url\]"
+
+
+def _block(core: str) -> str:
+    """Match a center/right block holding only core and its inline formatting."""
+    return rf"\[(center|right)\]\s*{_INLINE_OPEN}(?:{core}){_INLINE_CLOSE}\s*\[/\1\]"
+
+
+def _signature(core: str) -> str:
+    """Match a signature plus its own center/right block when it fills one."""
+    return rf"{_block(core)}|{_INLINE_OPEN}(?:{core}){_INLINE_CLOSE}"
+
+
+def _image(url: str) -> str:
+    """Match an image with that URL, and its own center block."""
+    return rf"(?:\[center\]\s*)?\[img[^\]]*\]{url}\[/img\](?:\s*\[/center\])?"
+
+
+# Boilerplate that release groups add to their descriptions, removed before
+# images are extracted so a group banner is not taken as a screenshot.
+# Prefer _block or _image so a common word is never removed from running text.
+RELEASE_GROUP_BOILERPLATE: dict[str, tuple[str, ...]] = {
+    "Kitsune": (
+        r"\[img[^\]]*\][^\[]*\[/img\]\s*(?=•❅─+✧❅✦)",
+        r"•❅─+✧❅✦\s*(?:\[color=[^\]]*\])?\s*Screenshots\s*(?:\[/color\])?\s*✦❅✧─+❅•",
+        r"Find\s+our\s+uploads\s*\[url=[^\]]*name=Kitsune[^\]]*\]" + _URL_BODY,
+    ),
+    "AXON": (_image(r"https?://file\.aither\.cc/u/y6nfEPrCxpW57juD\.png"),),
+    "Jeditwo": (
+        _image(
+            r"https?://file\.aither\.cc/u/(?:pwkbrhyrBNiIIdeY|l7zi3mymrA1L2Xd1)\.png"
+        ),
+    ),
+    "BiOMA": (_image(r"https?://i\.ibb\.co/N61fR8h3/bioma-v3\.png"),),
+    "GRiMM": (
+        _block(r"A\s+GRiMM\b[^\[]*?PRESENTS"),
+        _image(r"https?://img1\.imgoe\.download/kOv5q\.png"),
+        _block(r"Web\s+Source\s*~[^\[]*"),
+        _block(r"\[font=Comic\s+Sans\s+MS\]\s*SCREENSHOTS\s*\[/font\]"),
+        _block(r"~\s*A\s+GRiMM\b[^\[~]*?RELEASE\s*~"),
+        _block(r"GRiMM\s*\|\s*OnlyWeb"),
+        _block(
+            r"~\s*An\s+Elegance\s+of\s+Simplicity,\s*Socializing\s*&\s*Sharing\s*~"
+        ),
+    ),
+    "Maghuro": (
+        r"\[b\]\s*🖼️\s*Screenshots\s*\[/b\]",
+        r"\[note\]\s*\[i\][^\[]*screenshots\s+have\s+been\s+tonemapped\s+to\s+SDR\s+for\s+web\s+preview\.?\s*\[/i\]\s*\[/note\]",
+        r"(?:\[hr\]\s*)?"
+        + _image(r"https?://img\.ptscreens\.com/1000203577\.png"),
+    ),
+}
+
+
+# Signatures that other upload tools add.
+UPLOAD_TOOL_SIGNATURES: dict[str, tuple[str, ...]] = {
+    "Uploadrr": (
+        _signature(
+            r"\[url=https?://codeberg\.org/CvT/Uploadrr/?\]" + _URL_BODY
+        ),
+    ),
+    "upbrr": (
+        _signature(
+            r"\[url=https?://github\.com/autobrr/upbrr/?\]" + _URL_BODY
+        ),
+    ),
+    "NfoForge": (
+        _signature(
+            r"Shared\s+with\s+\[url=https?://github\.com/jesterr0/NfoForge/?\]"
+            + _URL_BODY
+        ),
+    ),
+    "EASY UPLOAD3R": (
+        _signature(r"⚡?\s*Uploaded\s+using\s+EASY\s+UPLOAD3R\s*⚡?"),
+    ),
+    "upsies": (
+        _signature(
+            r"Shared\s+with\s+\[url=https?://upsies\.readthedocs\.io/?\]"
+            + _URL_BODY
+        ),
+    ),
+    "AK Automated Uploader": (
+        _signature(
+            r"Uploaded\s+with\s+\[url=https?://github\.com/AQTKU/ak-automated-uploader/?\]"
+            + _URL_BODY
+        ),
+    ),
+    "Only-Uploader": (
+        _signature(
+            r"\[url=https?://github\.com/edge20200/Only-Uploader/?\]"
+            + _URL_BODY
+        ),
+    ),
+    "MAGUS": (
+        _signature(r"\[url=https?://dailyusetools\.com/MAGUS/?\]" + _URL_BODY),
+    ),
+}
+
+
+def remove_known_boilerplate(desc: str) -> str:
+    """Remove release group boilerplate and upload tool signatures."""
+    for patterns in (
+        *RELEASE_GROUP_BOILERPLATE.values(),
+        *UPLOAD_TOOL_SIGNATURES.values(),
+    ):
+        for pattern in patterns:
+            desc = re.sub(pattern, "", desc, flags=re.IGNORECASE)
+    return desc
 
 
 # Bold - KEEP
@@ -136,7 +252,9 @@ class BBCODE:
     def clean_hdb_description(
         self, description: str
     ) -> tuple[str, list[dict[str, Any]]]:
-        desc = self._normalized_description(description)
+        desc = remove_known_boilerplate(
+            self._normalized_description(description)
+        )
         desc = self._remove_hdb_comparison_sections(desc)
         desc = self._remove_hdb_private_content(desc)
         desc, imagelist = self._extract_hdb_images(desc)
@@ -224,7 +342,9 @@ class BBCODE:
     def clean_bhd_description(
         self, description: str, meta: Meta
     ) -> tuple[str, list[dict[str, Any]]]:
-        desc = self._normalized_description(description)
+        desc = remove_known_boilerplate(
+            self._normalized_description(description)
+        )
         self._save_bhd_framestor_nfo(meta, desc)
         desc = self._clean_bhd_image_tags(desc)
         desc, imagelist = self._extract_bhd_loose_images(desc)
@@ -461,7 +581,9 @@ class BBCODE:
     def clean_ptp_description(
         self, desc: str, is_disc: str
     ) -> tuple[str, list[dict[str, Any]]]:
-        desc = self._normalized_description(desc.replace("&bull;", "-"))
+        desc = remove_known_boilerplate(
+            self._normalized_description(desc.replace("&bull;", "-"))
+        )
         desc = self._clean_ptp_private_links(desc)
         desc, excluded_urls = self._remove_ptp_specific_comparisons(desc)
         desc, nocomp, hides, placeholders = self._ptp_comparison_placeholders(
@@ -504,7 +626,10 @@ class BBCODE:
                 "[/url]", ""
             )
             desc = desc.replace(site_url_tag, cleaned)
-        return desc.replace(site_netloc, site_domain)
+        # Subdomains such as an image host on the site must keep their full host
+        return re.sub(
+            rf"(?<![\w.-]){re.escape(site_netloc)}", site_domain, desc
+        )
 
     @staticmethod
     def _protect_unit3d_spoilers(desc: str) -> tuple[str, list[str]]:
@@ -585,7 +710,12 @@ class BBCODE:
         img_url = image["img_url"]
         if img_url in cls._unit3d_bot_image_urls():
             return False
-        return re.search(r"thumbs", img_url, re.IGNORECASE) is None
+        if re.search(r"thumbs", img_url, re.IGNORECASE):
+            return False
+        return (
+            re.match(r"https?://image\.tmdb\.org(?:/|$)", img_url, re.I)
+            is None
+        )
 
     @classmethod
     def _filter_unit3d_images(
@@ -629,7 +759,7 @@ class BBCODE:
         return r"""
             ^[ \t]*
             \[(?:right|center|align=(?:right|center))\][ \t]*(?:\n[ \t]*)?
-            \[url=https:\/\/github\.com\/[^\]]*\/Upload-Assistant\][ \t]*(?:\n[ \t]*)?
+            \[url=https:\/\/github\.com\/[^\]\/]+\/[^\]\/]*Upload-Assistant\][ \t]*(?:\n[ \t]*)?
             (?:\[size=\d+\][ \t]*(?:\n[ \t]*)?)?
             (?:Shared\s+with|Compartilhado\s+com)\s+Upload[-\s]+Assistant
             (?:[ \t]+v?\d+(?:[.+-]\d+)*)?
@@ -691,7 +821,7 @@ class BBCODE:
     def clean_unit3d_description(
         self, desc: str, site: str
     ) -> tuple[str, list[dict[str, Any]]]:
-        desc = self._normalized_description(desc)
+        desc = remove_known_boilerplate(self._normalized_description(desc))
         site_netloc, site_domain = self._unit3d_site_parts(site)
         desc = self._remove_unit3d_site_links(desc, site_netloc, site_domain)
         desc, spoilers = self._protect_unit3d_spoilers(desc)
@@ -764,9 +894,13 @@ class BBCODE:
         def convert(match: re.Match[str]) -> str:
             color_name = match.group(1).strip().lower()
             color_hex = _css4_colors().get(color_name)
-            return f"[color={color_hex.lower()}]" if color_hex else match.group(0)
+            return (
+                f"[color={color_hex.lower()}]" if color_hex else match.group(0)
+            )
 
-        return re.sub(r"\[color=([^\]]+)\]", convert, desc, flags=re.IGNORECASE)
+        return re.sub(
+            r"\[color=([^\]]+)\]", convert, desc, flags=re.IGNORECASE
+        )
 
     def convert_hex_colors_to_named(self, desc: str) -> str:
         """Convert exact CSS4 hexadecimal colors in BBCode tags to named colors."""
@@ -774,11 +908,18 @@ class BBCODE:
         def convert(match: re.Match[str]) -> str:
             color_hex = match.group(1).lower()
             if len(color_hex) == 4:
-                color_hex = "#" + "".join(character * 2 for character in color_hex[1:])
+                color_hex = "#" + "".join(
+                    character * 2 for character in color_hex[1:]
+                )
             color_name = _css4_colors_by_hex().get(color_hex)
             return f"[color={color_name}]" if color_name else match.group(0)
 
-        return re.sub(r"\[color=(#[0-9a-fA-F]{3}|#[0-9a-fA-F]{6})\]", convert, desc, flags=re.IGNORECASE)
+        return re.sub(
+            r"\[color=(#[0-9a-fA-F]{3}|#[0-9a-fA-F]{6})\]",
+            convert,
+            desc,
+            flags=re.IGNORECASE,
+        )
 
     def convert_named_spoiler_to_normal_spoiler(self, desc: str) -> str:
         return re.sub(
@@ -803,7 +944,11 @@ class BBCODE:
         """Clamp integer BBCode size tags without changing other markup."""
 
         def clamp(match: re.Match[str]) -> str:
-            return match.group(0) if int(match.group(1)) <= max_size else f"[size={max_size}]"
+            return (
+                match.group(0)
+                if int(match.group(1)) <= max_size
+                else f"[size={max_size}]"
+            )
 
         return re.sub(r"\[size=(\d+)\]", clamp, desc, flags=re.IGNORECASE)
 
@@ -825,7 +970,12 @@ class BBCODE:
                 return f"[size=1][b][color=grey]{content}[/color][/b][/size]"
             return f"[size={heading_sizes[level]}][b]{content}[/b][/size]"
 
-        return re.sub(r"\[h([1-6])\](.*?)\[/h\1\]", convert, desc, flags=re.IGNORECASE | re.DOTALL)
+        return re.sub(
+            r"\[h([1-6])\](.*?)\[/h\1\]",
+            convert,
+            desc,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
 
     def remove_extra_lines(self, desc: str) -> str:
         """
