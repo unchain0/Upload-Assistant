@@ -984,6 +984,89 @@ def test_generate_ebook_screenshots_cbz_cbr_pdf_epub_and_errors(
     monkeypatch.setattr(fitz, "open", original_open)
 
 
+def test_small_lone_cover_image_fills_the_screenshot(tmp_path: Path) -> None:
+    fitz = pytest.importorskip("fitz")
+    cover = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 1200, 1800), False)
+    cover.set_rect(cover.irect, (200, 30, 30))
+    pdf = tmp_path / "Invented Book.pdf"
+    doc = fitz.open()
+    doc.new_page(width=400, height=600).insert_image(
+        fitz.Rect(170, 0, 230, 90), pixmap=cover
+    )
+    captioned = doc.new_page(width=400, height=600)
+    captioned.insert_image(fitz.Rect(170, 0, 230, 90), pixmap=cover)
+    captioned.insert_text((72, 300), "Caption")
+    illustrated = doc.new_page(width=400, height=600)
+    illustrated.draw_rect(fitz.Rect(20, 120, 380, 580), fill=(0, 0.6, 0))
+    illustrated.insert_image(fitz.Rect(170, 0, 230, 90), pixmap=cover)
+    rotated = doc.new_page(width=400, height=600)
+    rotated.insert_image(fitz.Rect(300, 10, 360, 100), pixmap=cover)
+    rotated.set_rotation(90)
+    doc.new_page(width=400, height=600)
+    large = doc.new_page(width=400, height=600)
+    large.insert_image(fitz.Rect(0, 0, 400, 400), pixmap=cover)
+    annotated = doc.new_page(width=400, height=600)
+    annotated.insert_image(fitz.Rect(170, 0, 230, 90), pixmap=cover)
+    annotated.add_text_annot((10, 10), "note")
+    doc.save(pdf)
+    doc.close()
+
+    with fitz.open(pdf) as opened:
+        lone = fitz.Pixmap(
+            capture._render_document_page_sync(
+                opened, fitz, 0, tmp_path / "lone.png"
+            )
+        )
+        text = fitz.Pixmap(
+            capture._render_document_page_sync(
+                opened, fitz, 1, tmp_path / "text.png"
+            )
+        )
+        vector = fitz.Pixmap(
+            capture._render_document_page_sync(
+                opened, fitz, 2, tmp_path / "vector.png"
+            )
+        )
+        turned = fitz.Pixmap(
+            capture._render_document_page_sync(
+                opened, fitz, 3, tmp_path / "turned.png"
+            )
+        )
+        capture._render_document_page_sync(
+            opened, fitz, 4, tmp_path / "blank.png"
+        )
+        capture._render_document_page_sync(
+            opened, fitz, 5, tmp_path / "large.png"
+        )
+        capture._render_document_page_sync(
+            opened, fitz, 6, tmp_path / "annot.png"
+        )
+
+    assert abs(lone.width - 800) <= 1 and abs(lone.height - 1200) <= 1
+    assert (
+        lone.pixel(5, 5)
+        == lone.pixel(lone.width - 5, lone.height - 5)
+        == (
+            200,
+            30,
+            30,
+        )
+    )
+    assert (
+        (text.width, text.height)
+        == (800, 1200)
+        == (
+            vector.width,
+            vector.height,
+        )
+    )
+    assert (
+        turned.pixel(5, 5)
+        == turned.pixel(turned.width - 5, turned.height - 5)
+        == (200, 30, 30)
+    )
+
+
 def test_unrar_configuration_branches(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
