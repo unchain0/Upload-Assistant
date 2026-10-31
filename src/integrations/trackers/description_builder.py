@@ -1025,7 +1025,8 @@ class DescriptionBuilder:
             return False
         configured = self._get_bool_config("add_audio_spectrogram", False)
         return bool(
-            meta.audio_spectrogram
+            meta.audiobook
+            or meta.audio_spectrogram
             or meta.audio_spectrogram_tracks
             or configured
         )
