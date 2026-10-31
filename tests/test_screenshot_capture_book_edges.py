@@ -1202,3 +1202,59 @@ def test_epub_absolute_style_href_is_safely_resolved_inside_archive(
     )
     assert asyncio.run(capture.extract_epub_cover(str(epub), str(output)))
     assert output.read_bytes() == b"absolute-cover"
+
+
+def test_book_screenshots_render_azw3_pages(monkeypatch) -> None:
+    import asyncio
+
+    from src.domain_models.release import Meta
+    from src.integrations.media import screenshot_capture as capture
+
+    calls: dict[str, str] = {}
+
+    async def fake_document(path, extension, *args, **kwargs):
+        calls["extension"] = extension
+        return ["page1.png"]
+
+    async def fake_cover(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(
+        capture, "_generate_document_screenshots", fake_document
+    )
+    monkeypatch.setattr(capture, "prepare_book_cover", fake_cover)
+    monkeypatch.setattr(capture, "_book_banner_cached", lambda *a, **k: False)
+
+    meta = Meta(category="BOOK", base_dir="/tmp/book", uuid="u1", screens=3)
+    images = asyncio.run(
+        capture._book_screenshot_result(
+            "/tmp/book.azw3", "book.azw3", "u1", "/tmp/book", meta, 3
+        )
+    )
+
+    assert images == ["page1.png"]
+    assert calls["extension"] == "azw3"
+
+
+def test_book_screenshots_fail_when_no_page_can_be_rendered(
+    monkeypatch,
+) -> None:
+    import asyncio
+
+    import pytest
+
+    from src.domain_models.release import Meta
+    from src.integrations.media import screenshot_capture as capture
+
+    async def empty(*_args, **_kwargs):
+        return []
+
+    monkeypatch.setattr(capture, "generate_ebook_screenshots", empty)
+
+    meta = Meta(category="BOOK", base_dir="/tmp/book", uuid="u1", screens=3)
+    with pytest.raises(capture.BookScreenshotsMissingError):
+        asyncio.run(
+            capture._book_screenshot_result(
+                "/tmp/book.azw3", "book.azw3", "u1", "/tmp/book", meta, 3
+            )
+        )
