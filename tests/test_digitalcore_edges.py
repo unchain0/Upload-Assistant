@@ -196,7 +196,7 @@ async def test_digitalcore_retries_until_registered_torrent_is_valid(
     )
 
     assert tracker.common.download_tracker_torrent.await_count == 2
-    sleep.assert_awaited_once_with(10)
+    sleep.assert_awaited_once_with(5)
 
 
 @pytest.mark.asyncio
@@ -219,7 +219,7 @@ async def test_digitalcore_blocks_client_progress_when_torrent_never_arrives(
     assert status["status_message"] == (
         "data error: registered torrent unavailable for client injection"
     )
-    assert sleep.await_args_list == [call(10), call(20), call(30)]
+    assert sleep.await_args_list == [call(5), call(10), call(15)]
 
 
 @pytest.mark.asyncio
@@ -241,7 +241,7 @@ async def test_digitalcore_rejects_invalid_registered_torrent(
     )
 
     assert tracker.common.download_tracker_torrent.await_count == 4
-    assert sleep.await_args_list == [call(10), call(20), call(30)]
+    assert sleep.await_args_list == [call(5), call(10), call(15)]
 
 
 @pytest.mark.asyncio
@@ -575,11 +575,11 @@ async def test_digitalcore_retries_invalid_metainfo_error(
         _make_meta(), {}, _response({"id": 321, "message": "ok"})
     )
     assert tracker.common.download_tracker_torrent.await_count == 4
-    assert sleep.await_args_list == [call(10), call(20), call(30)]
+    assert sleep.await_args_list == [call(5), call(10), call(15)]
 
 
 @pytest.mark.asyncio
-async def test_digitalcore_retry_deadline_skips_fourth_request(
+async def test_digitalcore_retry_uses_all_four_attempts_within_deadline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     tracker = _tracker()
@@ -587,17 +587,19 @@ async def test_digitalcore_retry_deadline_skips_fourth_request(
         return_value=None
     )
     sleep = AsyncMock()
-    clock = Mock(side_effect=[0.0, 0.0, 0.0, 10.0, 10.0, 30.0, 30.0])
     monkeypatch.setattr(
-        digitalcore, "time", SimpleNamespace(monotonic=clock), raising=False
+        digitalcore,
+        "time",
+        SimpleNamespace(monotonic=Mock(return_value=0.0)),
+        raising=False,
     )
     monkeypatch.setattr(digitalcore.asyncio, "sleep", sleep)
 
     assert not await tracker._handle_upload_response(
         _make_meta(), {}, _response({"id": 654, "message": "ok"})
     )
-    assert tracker.common.download_tracker_torrent.await_count == 3
-    assert sleep.await_args_list == [call(10), call(20)]
+    assert tracker.common.download_tracker_torrent.await_count == 4
+    assert sleep.await_args_list == [call(5), call(10), call(15)]
 
 
 @pytest.mark.asyncio
@@ -619,7 +621,10 @@ async def test_digitalcore_retry_timeout_returns_false_without_client_injection(
     monkeypatch.setattr(digitalcore.asyncio, "wait_for", wait_for)
     monkeypatch.setattr(digitalcore.asyncio, "sleep", AsyncMock())
     monkeypatch.setattr(
-        digitalcore, "time", SimpleNamespace(monotonic=Mock(return_value=0.0)), raising=False
+        digitalcore,
+        "time",
+        SimpleNamespace(monotonic=Mock(return_value=0.0)),
+        raising=False,
     )
 
     assert not await tracker._handle_upload_response(

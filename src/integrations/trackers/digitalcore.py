@@ -825,7 +825,7 @@ class DigitalCore:
         status["torrent_id"] = f"{torrent_id}/"
         status["status_message"] = response_data.get("message")
         deadline = time.monotonic() + 60
-        retry_delays = (10, 20, 30)
+        retry_delays = (5, 10, 15)
         for attempt in range(4):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -844,7 +844,9 @@ class DigitalCore:
                 )
             except TimeoutError:
                 break
-            if self._is_valid_registered_torrent(torrent_path):
+            if await asyncio.to_thread(
+                self._is_valid_registered_torrent, torrent_path
+            ):
                 return True
             if attempt < len(retry_delays):
                 delay = retry_delays[attempt]
@@ -863,7 +865,7 @@ class DigitalCore:
             return False
         try:
             Torrent.read(path)
-        except (BdecodeError, MetainfoError, OSError, ReadError, ValueError):
+        except BdecodeError, MetainfoError, OSError, ReadError, ValueError:
             return False
         return True
 
