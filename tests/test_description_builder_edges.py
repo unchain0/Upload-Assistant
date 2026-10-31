@@ -510,6 +510,7 @@ def test_bdinfo_headers_user_signature_bluray_and_plot_sections(
     }
     meta = _meta(
         tmp_path,
+        category="MUSIC",
         is_disc="BDMV",
         discs=[{"summary": "Disc 1"}, {"summary": ""}],
         menu_images=[image],

@@ -67,7 +67,10 @@ from src.integrations.media.artwork import (
     is_public_http_url,
     is_valid_cover_image,
 )
-from src.integrations.media.audio_spectrogram import process_audio_spectrograms
+from src.integrations.media.audio_spectrogram import (
+    process_audio_spectrograms,
+    supports_audio_spectrogram,
+)
 from src.integrations.media.disc_menus import process_disc_menus
 from src.integrations.media.dynamic_hdr_plot import (
     dynamic_hdr_plot_enabled,
@@ -1803,9 +1806,7 @@ async def _process_optional_disc_menus(
 
 
 def _spectrogram_artifact_needed(meta: Meta, defaults: dict[str, Any]) -> bool:
-    supported_category = meta.category not in {"BOOK", "GAME"} or bool(
-        meta.audiobook
-    )
+    supported_category = supports_audio_spectrogram(meta)
     requested = bool(
         meta.audio_spectrogram
         or meta.audio_spectrogram_tracks
