@@ -707,7 +707,7 @@ class DigitalCore:
             else "0"
         )
 
-        return {
+        data = {
             "category": self._upload_category(meta),
             "imdbId": await self._resolve_imdb_id(meta.imdb_tt),
             "nfo": await self.generate_description(meta),
@@ -722,6 +722,24 @@ class DigitalCore:
             "requestModQueue": "0",
             "modQueueMessage": "",
         }
+        self._require_book_cover(meta, str(data["firstpic"] or ""))
+        return data
+
+    @staticmethod
+    def _require_book_cover(meta: Meta, firstpic: str) -> None:
+        """Refuse to publish a book whose first picture would be a screenshot.
+
+        DigitalCore fills an empty firstpic with the first description image,
+        which is the spectrogram on audiobooks. A book upload without a real
+        cover must fail instead of publishing the wrong artwork.
+        """
+        if meta.category != "BOOK" or firstpic:
+            return
+        raise ValueError(
+            "firstpic is empty for a book: the embedded cover could not be "
+            "prepared, and DigitalCore would publish the first description "
+            "image (screenshot/spectrogram) as the cover."
+        )
 
     async def upload(self, meta: Meta) -> bool:
         status = meta.tracker_status.setdefault(self.tracker, {})

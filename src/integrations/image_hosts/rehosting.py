@@ -33,6 +33,7 @@ from src.integrations.filesystem.temp_paths import (
 )
 from src.integrations.image_hosts.uploader import UploadScreensManager
 from src.integrations.mapping.value_coercion import to_int
+from src.integrations.media.artwork import is_valid_cover_image
 from src.integrations.media.screenshot_capture import TakeScreensManager
 from src.integrations.observability.runtime_support import logger
 
@@ -1272,15 +1273,29 @@ async def _indexed_fallback_screens(screenshot_path: Path) -> list[str]:
     return [value for value in filtered if pattern.match(Path(value).name)]
 
 
+def _prepared_book_covers(meta: Meta) -> list[str]:
+    """Return prepared book covers that must win over screenshot files."""
+    if meta.category != "BOOK":
+        return []
+    candidates = (
+        str(meta.artwork_path or ""),
+        str(artwork_dir(meta.base_dir, meta.uuid) / "POSTER.png"),
+    )
+    return [path for path in candidates if path and is_valid_cover_image(path)]
+
+
 async def _cover_screens(meta: Meta) -> list[str]:
-    return await asyncio.to_thread(
-        lambda: [
+    def _collect() -> list[str]:
+        covers = _prepared_book_covers(meta)
+        covers.extend(
             str(path)
             for path in artwork_dir(meta.base_dir, meta.uuid).glob(
                 "cover_*.jpg"
             )
-        ]
-    )
+        )
+        return list(dict.fromkeys(covers))
+
+    return await asyncio.to_thread(_collect)
 
 
 async def _collect_existing_screens(
