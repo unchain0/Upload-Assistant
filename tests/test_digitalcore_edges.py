@@ -49,7 +49,7 @@ def test_digitalcore_search_payload_empty_and_matching_entry() -> None:
     )
     assert entry is not None
     assert entry["id"] == 123
-    assert entry["link"] == "https://digitalcore.club/torrent/123/"
+    assert entry["link"] == "https://digitalcore.club/torrent/123"
 
 
 def test_digitalcore_rejects_divx_and_rar() -> None:
@@ -175,7 +175,7 @@ async def test_digitalcore_upload_release_success(
     status: dict[str, Any] = {}
 
     assert await tracker._upload_release(meta, {}, "Release", status)
-    assert status["torrent_id"] == "321/"
+    assert status["torrent_id"] == "321"
     tracker.common.download_tracker_torrent.assert_awaited_once()
 
 
