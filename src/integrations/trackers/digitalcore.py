@@ -1,5 +1,7 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
+import asyncio
 import re
+import time
 import unicodedata
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -8,6 +10,7 @@ from urllib.parse import urlparse
 
 import aiofiles
 import httpx
+from torf import BdecodeError, MetainfoError, ReadError, Torrent
 
 from src.domain_models.release import Meta
 from src.domain_models.release_identity import (
@@ -821,14 +824,49 @@ class DigitalCore:
         torrent_id = str(response_data["id"])
         status["torrent_id"] = f"{torrent_id}/"
         status["status_message"] = response_data.get("message")
-        await self.common.download_tracker_torrent(
-            meta,
-            self.tracker,
-            headers=dict(self.session.headers),
-            downurl=f"{self.api_base_url}/download/{torrent_id}",
-            allowed_hosts=("digitalcore.club",),
-            max_size=8 * 1024 * 1024,
+        deadline = time.monotonic() + 60
+        retry_delays = (5, 10, 15)
+        for attempt in range(4):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                torrent_path = await asyncio.wait_for(
+                    self.common.download_tracker_torrent(
+                        meta,
+                        self.tracker,
+                        headers=dict(self.session.headers),
+                        downurl=f"{self.api_base_url}/download/{torrent_id}",
+                        allowed_hosts=("digitalcore.club",),
+                        max_size=8 * 1024 * 1024,
+                    ),
+                    timeout=remaining,
+                )
+            except TimeoutError:
+                break
+            if await asyncio.to_thread(
+                self._is_valid_registered_torrent, torrent_path
+            ):
+                return True
+            if attempt < len(retry_delays):
+                delay = retry_delays[attempt]
+                if deadline - time.monotonic() <= delay:
+                    break
+                await asyncio.sleep(delay)
+
+        status["status_message"] = (
+            "data error: registered torrent unavailable for client injection"
         )
+        return False
+
+    @staticmethod
+    def _is_valid_registered_torrent(path: str | Path | None) -> bool:
+        if not path:
+            return False
+        try:
+            Torrent.read(path)
+        except BdecodeError, MetainfoError, OSError, ReadError, ValueError:
+            return False
         return True
 
     @staticmethod

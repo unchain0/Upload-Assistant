@@ -446,6 +446,32 @@ def test_api_success_prints_link_message_duration_colors_and_client(
     assert any("6.00s" in message for message in logged), logged
 
 
+def test_failed_digitalcore_upload_never_adds_a_torrent_client(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_basics(monkeypatch, ["DIGITALCORE"])
+
+    class FailedDigitalCore(_Tracker):
+        tracker = "DIGITALCORE"
+
+        async def upload(self, meta: Meta) -> bool:
+            meta.tracker_status[self.tracker]["status_message"] = (
+                "data error: registered torrent unavailable for client injection"
+            )
+            return False
+
+    meta = _meta(tmp_path, ["DIGITALCORE"])
+    client = _run(
+        meta,
+        _config(),
+        {"DIGITALCORE": FailedDigitalCore},
+        api=("DIGITALCORE",),
+    )
+
+    assert meta.tracker_status["DIGITALCORE"]["upload_success"] is False
+    assert client.added == []
+
+
 def test_print_result_none_data_error_and_print_exception(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
