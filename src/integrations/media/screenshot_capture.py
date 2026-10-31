@@ -3178,6 +3178,85 @@ async def _prepare_epub_cover(
     return None
 
 
+_MOBI_IMAGE_MAGIC = (
+    b"\xff\xd8\xff",
+    b"\x89PNG\r\n\x1a\n",
+    b"GIF8",
+)
+
+
+def _mobi_u16(data: bytes, offset: int) -> int:
+    return int.from_bytes(data[offset : offset + 2], "big")
+
+
+def _mobi_u32(data: bytes, offset: int) -> int:
+    return int.from_bytes(data[offset : offset + 4], "big")
+
+
+def _mobi_cover_offset(record_zero: bytes) -> int | None:
+    exth = 16 + _mobi_u32(record_zero, 20)
+    if record_zero[exth : exth + 4] != b"EXTH":
+        return None
+    count = _mobi_u32(record_zero, exth + 8)
+    position = exth + 12
+    for _ in range(count):
+        if position + 8 > len(record_zero):
+            return None
+        record_type = _mobi_u32(record_zero, position)
+        length = _mobi_u32(record_zero, position + 4)
+        if length < 8:
+            return None
+        if record_type == 201:
+            return _mobi_u32(record_zero, position + 8)
+        position += length
+    return None
+
+
+def _mobi_cover_bytes(data: bytes) -> bytes | None:
+    """Return the embedded cover of a MOBI/AZW3 file, if it has one."""
+    if len(data) < 86 or data[60:68] != b"BOOKMOBI":
+        return None
+    records = _mobi_u16(data, 76)
+    if records < 2:
+        return None
+    offsets = [_mobi_u32(data, 78 + 8 * index) for index in range(records)]
+    if len(offsets) < 2:
+        return None
+    record_zero = data[offsets[0] : offsets[1]]
+    if record_zero[16:20] != b"MOBI":
+        return None
+    first_image = _mobi_u32(record_zero, 0x6C)
+    cover_offset = _mobi_cover_offset(record_zero)
+    if cover_offset is None:
+        return None
+    cover_record = first_image + cover_offset
+    if cover_record < 1 or cover_record >= records:
+        return None
+    end = (
+        offsets[cover_record + 1] if cover_record + 1 < records else len(data)
+    )
+    payload = data[offsets[cover_record] : end]
+    if not payload.startswith(_MOBI_IMAGE_MAGIC):
+        return None
+    return payload
+
+
+def _extract_mobi_cover_sync(mobi_path: str, dest_path: str) -> bool:
+    try:
+        payload = _mobi_cover_bytes(Path(mobi_path).read_bytes())
+    except OSError:
+        return False
+    if payload is None:
+        return False
+    return _write_epub_cover(dest_path, payload)
+
+
+async def extract_mobi_cover(mobi_path: str, dest_path: str) -> bool:
+    return await asyncio.to_thread(
+        _extract_mobi_cover_sync, mobi_path, dest_path
+    )
+
+
 async def _prepare_document_cover(
     path: str, meta: Meta, artwork_path: Path
 ) -> str | None:
@@ -3202,6 +3281,10 @@ async def prepare_book_cover(
     extension = Path(path).suffix.lower().lstrip(".")
     if extension == "epub":
         return await _prepare_epub_cover(path, meta, artwork_path)
+    if extension in {"mobi", "azw", "azw3"}:
+        if await extract_mobi_cover(path, str(artwork_path)):
+            return _set_prepared_book_cover(meta, artwork_path)
+        return None
     if extension in {"pdf", "cbr", "cbz"}:
         return await _prepare_document_cover(path, meta, artwork_path)
     return None

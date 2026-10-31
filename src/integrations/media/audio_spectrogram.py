@@ -254,6 +254,12 @@ def _category_spectrogram_sources(
     return sources[:1]
 
 
+def supports_audio_spectrogram(meta: Meta) -> bool:
+    """Spectrograms are policy-limited to music and audiobooks."""
+    category = str(meta.category or "").strip().upper()
+    return category == "MUSIC" or bool(meta.audiobook)
+
+
 def get_spectrogram_sources(
     category: str,
     filelist: list[Any],

@@ -25,6 +25,9 @@ from src.integrations.filesystem.screenshot_manifest import (
     files as manifest_files,
 )
 from src.integrations.image_hosts.uploader import UploadScreensManager
+from src.integrations.media.audio_spectrogram import (
+    supports_audio_spectrogram,
+)
 from src.integrations.media.language_adapter import languages_manager
 from src.integrations.media.media_info import MediaInfo
 from src.integrations.media.screenshot_capture import TakeScreensManager
@@ -1018,6 +1021,8 @@ class DescriptionBuilder:
             return "", ""
 
     def _spectrogram_enabled(self, meta: Meta) -> bool:
+        if not supports_audio_spectrogram(meta):
+            return False
         configured = self._get_bool_config("add_audio_spectrogram", False)
         return bool(
             meta.audio_spectrogram
