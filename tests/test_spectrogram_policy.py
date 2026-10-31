@@ -77,3 +77,9 @@ def test_description_spectrogram_section_skips_other_categories(
     assert builder._spectrogram_enabled(meta) is expected
     if not expected:
         assert asyncio.run(builder.get_audio_spectrogram_section(meta)) == ""
+
+
+def test_audiobook_requests_a_spectrogram_without_the_flag() -> None:
+    meta = _meta(category="BOOK", audiobook=True)
+    assert _spectrogram_artifact_needed(meta, {"add_audio_spectrogram": False}) is True
+    assert supports_audio_spectrogram(meta) is True

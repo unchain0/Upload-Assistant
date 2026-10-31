@@ -210,3 +210,23 @@ def test_capybarabr_keeps_groups_that_only_start_with_an_audio_marker() -> (
     assert CapybaraBR._insert_audio_tag("Movie-DUALITY", " DUAL", meta) == (
         "Movie DUAL-DUALITY"
     )
+
+
+def test_capybarabr_book_name_keeps_title_before_author() -> None:
+    meta = Meta(
+        title="O Estrangeiro",
+        author="Albert Camus",
+        year=2019,
+        category="BOOK",
+    )
+    assert _tracker()._book_name(meta) == "O Estrangeiro - Albert Camus [2019]"
+
+
+def test_capybarabr_book_name_drops_a_duplicated_author_prefix() -> None:
+    meta = Meta(
+        title="Albert Camus - O Estrangeiro",
+        author="Albert Camus",
+        year=2019,
+        category="BOOK",
+    )
+    assert _tracker()._book_name(meta) == "O Estrangeiro - Albert Camus [2019]"

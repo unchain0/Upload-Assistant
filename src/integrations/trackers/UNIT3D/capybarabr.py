@@ -257,9 +257,28 @@ class CapybaraBR(UNIT3D):
         return str(meta.name or "")
 
     def _book_name(self, meta: Meta) -> str:
-        title = self.common.portuguese_title_capitalization(meta.title)
+        title = self.common.portuguese_title_capitalization(
+            self._book_title(meta)
+        )
         name = f"{title} - {meta.author} [{self._year_text(meta)}]{self._audiobook_suffix(meta)}"
         return f"{name}{self._book_language_suffix(meta)}"
+
+    @staticmethod
+    def _book_title(meta: Meta) -> str:
+        """Drop a leading author prefix so the title is never inverted.
+
+        Metadata sources often hand back "Autor - Título"; CapybaraBR wants
+        "Título - Autor [ano]", so the duplicated author has to go.
+        """
+        title = str(meta.title or "").strip()
+        author = str(meta.author or "").strip()
+        if not author:
+            return title
+        for separator in (" - ", " \u2013 ", ": "):
+            prefix = f"{author}{separator}"
+            if title.casefold().startswith(prefix.casefold()):
+                return title[len(prefix) :].strip()
+        return title
 
     @staticmethod
     def _year_text(meta: Meta) -> str:

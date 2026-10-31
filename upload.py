@@ -1807,8 +1807,11 @@ async def _process_optional_disc_menus(
 
 def _spectrogram_artifact_needed(meta: Meta, defaults: dict[str, Any]) -> bool:
     supported_category = supports_audio_spectrogram(meta)
+    # Audiobooks always need an image in the description; the spectrogram is
+    # the only one available, so it is requested even without the flag.
     requested = bool(
-        meta.audio_spectrogram
+        meta.audiobook
+        or meta.audio_spectrogram
         or meta.audio_spectrogram_tracks
         or defaults.get("add_audio_spectrogram", False)
     )
