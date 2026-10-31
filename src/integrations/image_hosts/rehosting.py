@@ -33,6 +33,7 @@ from src.integrations.filesystem.temp_paths import (
 )
 from src.integrations.image_hosts.uploader import UploadScreensManager
 from src.integrations.mapping.value_coercion import to_int
+from src.integrations.media.artwork import is_valid_cover_image
 from src.integrations.media.screenshot_capture import TakeScreensManager
 from src.integrations.observability.runtime_support import logger
 
@@ -1272,15 +1273,37 @@ async def _indexed_fallback_screens(screenshot_path: Path) -> list[str]:
     return [value for value in filtered if pattern.match(Path(value).name)]
 
 
+def _book_cover_candidates(meta: Meta) -> tuple[str, ...]:
+    """Return the prepared book artwork paths, without touching the disk."""
+    if meta.category != "BOOK":
+        return ()
+    return (
+        str(meta.artwork_path or ""),
+        str(artwork_dir(meta.base_dir, meta.uuid) / "POSTER.png"),
+    )
+
+
+def _prepared_book_covers(meta: Meta) -> list[str]:
+    """Return prepared book covers that must win over screenshot files."""
+    return [
+        path
+        for path in _book_cover_candidates(meta)
+        if path and is_valid_cover_image(path)
+    ]
+
+
 async def _cover_screens(meta: Meta) -> list[str]:
-    return await asyncio.to_thread(
-        lambda: [
+    def _collect() -> list[str]:
+        covers = _prepared_book_covers(meta)
+        covers.extend(
             str(path)
             for path in artwork_dir(meta.base_dir, meta.uuid).glob(
                 "cover_*.jpg"
             )
-        ]
-    )
+        )
+        return list(dict.fromkeys(covers))
+
+    return await asyncio.to_thread(_collect)
 
 
 async def _collect_existing_screens(
@@ -1614,9 +1637,21 @@ def _add_cover_release_url(meta: Meta, data: list[dict[str, str]]) -> None:
             image["release_url"] = meta.release_url
 
 
+def _protected_cover_paths(meta: Meta) -> set[str]:
+    """Return prepared artwork that rehosting must not delete afterwards."""
+    return {
+        str(Path(path).resolve())
+        for path in _book_cover_candidates(meta)
+        if path
+    }
+
+
 def _cleanup_cover_files(meta: Meta, screens: Sequence[str]) -> None:
+    protected = _protected_cover_paths(meta)
     deleted = 0
     for screen in screens:
+        if str(Path(screen).resolve()) in protected:
+            continue
         if _safe_remove(screen):
             deleted += 1
             logger.debug(f"[dim]Deleted cover image file: {screen}[/dim]")
