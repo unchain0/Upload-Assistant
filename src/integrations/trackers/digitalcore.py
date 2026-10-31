@@ -300,7 +300,7 @@ class DigitalCore:
             "size": entry.get("size"),
             "type": semantics["type"],
             "res": semantics["resolution"],
-            "link": f"{cls.torrent_url}{torrent_id}/" if torrent_id else None,
+            "link": f"{cls.torrent_url}{torrent_id}" if torrent_id else None,
         }
 
     @classmethod
@@ -840,7 +840,7 @@ class DigitalCore:
             )
             return False
         torrent_id = str(response_data["id"])
-        status["torrent_id"] = f"{torrent_id}/"
+        status["torrent_id"] = torrent_id
         status["status_message"] = response_data.get("message")
         deadline = time.monotonic() + 60
         retry_delays = (5, 10, 15)
