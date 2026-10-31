@@ -17,6 +17,9 @@ from src.integrations.runtime_tools.configured_binaries import (
     configured_binary,
 )
 
+# Seconds before telling the user that MediaInfo is still reading the file.
+MEDIAINFO_SLOW_NOTICE_SECONDS = 5.0
+
 _DECLARED_RESOLUTION_DIMENSIONS = {
     "480p": (854, 480),
     "480i": (854, 480),
@@ -531,6 +534,47 @@ async def _standard_mediainfo_json(video: str) -> dict[str, Any]:
     return cast(dict[str, Any], json.loads(str(payload)))
 
 
+def _raise_if_mediainfo_failed(result: object) -> None:
+    if isinstance(result, BaseException):
+        raise result
+
+
+async def _warn_if_mediainfo_slow(reports: asyncio.Future[Any]) -> None:
+    done, _pending = await asyncio.wait(
+        {reports}, timeout=MEDIAINFO_SLOW_NOTICE_SECONDS
+    )
+    if not done:
+        logger.warning(
+            "[yellow]MediaInfo is still reading the file. Files with many tracks can take a few minutes.[/yellow]"
+        )
+
+
+async def _standard_mediainfo_reports(
+    video: str,
+) -> tuple[str, dict[str, Any]]:
+    reports = asyncio.gather(
+        _standard_mediainfo_text(video),
+        _standard_mediainfo_json(video),
+        return_exceptions=True,
+    )
+    await _warn_if_mediainfo_slow(reports)
+    text_result, json_result = await reports
+    _raise_if_mediainfo_failed(text_result)
+    _raise_if_mediainfo_failed(json_result)
+    return cast(str, text_result), cast(dict[str, Any], json_result)
+
+
+async def _mediainfo_export_reports(
+    video: str, mediainfo_cmd: str | None
+) -> tuple[str, dict[str, Any]]:
+    if mediainfo_cmd is None:
+        return await _standard_mediainfo_reports(video)
+    return (
+        await _mediainfo_text(video, mediainfo_cmd),
+        await _mediainfo_json(video, mediainfo_cmd),
+    )
+
+
 async def _mediainfo_text(video: str, mediainfo_cmd: str | None) -> str:
     if mediainfo_cmd is None:
         return await _standard_mediainfo_text(video)
@@ -614,9 +658,10 @@ async def export_info(
     logger.debug("[bold yellow]Exporting MediaInfo...")
     if not isdir:
         os.chdir(Path(video).parent)
-    media_info = await _mediainfo_text(video, mediainfo_cmd)
+    media_info, media_info_dict = await _mediainfo_export_reports(
+        video, mediainfo_cmd
+    )
     await _write_mediainfo_text_reports(video, base_dir, folder_id, media_info)
-    media_info_dict = await _mediainfo_json(video, mediainfo_cmd)
     filtered_info = _filter_mediainfo(media_info_dict)
     return await _write_mediainfo_json_report(
         base_dir, folder_id, filtered_info
