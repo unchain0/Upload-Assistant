@@ -25,7 +25,9 @@ def test_detector_rejects_execution_without_dry_run() -> None:
         detector.detect([])
 
 
-def test_detector_classifies_download_404_without_retaining_sensitive_log_content() -> None:
+def test_detector_classifies_download_404_without_retaining_sensitive_log_content() -> (
+    None
+):
     detector = UploadPipelineDetector(dry_run=True, max_items=5)
 
     events = detector.detect(
@@ -46,23 +48,39 @@ def test_detector_classifies_download_404_without_retaining_sensitive_log_conten
 def test_detector_classifies_missing_client_torrent_without_path() -> None:
     detector = UploadPipelineDetector(dry_run=True, max_items=5)
 
-    events = detector.detect(["ULCX: Torrent file /private/release.torrent does not exist, cannot add to client"])
+    events = detector.detect(
+        [
+            "ULCX: Torrent file /private/release.torrent does not exist, cannot add to client"
+        ]
+    )
 
-    assert [event.to_record()["reason"] for event in events] == ["client_injection_blocked"]
+    assert [event.to_record()["reason"] for event in events] == [
+        "client_injection_blocked"
+    ]
     assert "/private" not in repr(events[0].to_record())
 
 
 def test_detector_classifies_tracker_announce_failure() -> None:
     detector = UploadPipelineDetector(dry_run=True, max_items=5)
 
-    events = detector.detect(["SEEDPOOL: Tracker announce failed after transport timeout"])
+    events = detector.detect(
+        ["SEEDPOOL: Tracker announce failed after transport timeout"]
+    )
 
-    assert [event.to_record()["reason"] for event in events] == ["tracker_announce_failed"]
+    assert [event.to_record()["reason"] for event in events] == [
+        "tracker_announce_failed"
+    ]
 
 
-def test_audit_log_uses_private_permissions_and_appends_sanitized_records(tmp_path: Path) -> None:
+def test_audit_log_uses_private_permissions_and_appends_sanitized_records(
+    tmp_path: Path,
+) -> None:
     detector = UploadPipelineDetector(dry_run=True, max_items=5)
-    event = detector.detect(["DIGITALCORE: Could not download torrent file: 404 https://private.invalid/token"])[0]
+    event = detector.detect(
+        [
+            "DIGITALCORE: Could not download torrent file: 404 https://private.invalid/token"
+        ]
+    )[0]
     audit = AuditLog(tmp_path / "audit", max_bytes=1024)
 
     path = audit.append([event])
@@ -73,11 +91,17 @@ def test_audit_log_uses_private_permissions_and_appends_sanitized_records(tmp_pa
     assert len(path.read_text().splitlines()) == 1
 
 
-def test_dry_run_scans_at_most_the_requested_number_of_log_files(tmp_path: Path) -> None:
+def test_dry_run_scans_at_most_the_requested_number_of_log_files(
+    tmp_path: Path,
+) -> None:
     logs = tmp_path / "logs"
     logs.mkdir()
-    (logs / "upload-first.log").write_text("DARKPEERS: Could not download torrent file: 404\n")
-    (logs / "upload-second.log").write_text("ULCX: Torrent file missing does not exist, cannot add to client\n")
+    (logs / "upload-first.log").write_text(
+        "DARKPEERS: Could not download torrent file: 404\n"
+    )
+    (logs / "upload-second.log").write_text(
+        "ULCX: Torrent file missing does not exist, cannot add to client\n"
+    )
 
     events = run_dry_run(logs, dry_run=True, max_logs=1, max_items=5)
 
@@ -85,10 +109,19 @@ def test_dry_run_scans_at_most_the_requested_number_of_log_files(tmp_path: Path)
 
 
 def test_cli_refuses_to_run_without_dry_run_flag(tmp_path: Path) -> None:
-    script = Path(__file__).parents[1] / "scripts" / "upload_pipeline_detector.py"
+    script = (
+        Path(__file__).parents[1] / "scripts" / "upload_pipeline_detector.py"
+    )
 
     result = subprocess.run(  # noqa: S603
-        [sys.executable, str(script), "--log-root", str(tmp_path), "--state-dir", str(tmp_path / "audit")],
+        [
+            sys.executable,
+            str(script),
+            "--log-root",
+            str(tmp_path),
+            "--state-dir",
+            str(tmp_path / "audit"),
+        ],
         capture_output=True,
         text=True,
         check=False,
@@ -101,13 +134,19 @@ def test_cli_refuses_to_run_without_dry_run_flag(tmp_path: Path) -> None:
 def test_detector_ignores_unrelated_404_false_positive() -> None:
     detector = UploadPipelineDetector(dry_run=True, max_items=5)
 
-    assert detector.detect(["DIGITALCORE: duplicate lookup received 404"]) == []
+    assert (
+        detector.detect(["DIGITALCORE: duplicate lookup received 404"]) == []
+    )
 
 
 def test_qbittorrent_summary_redacts_individual_torrents() -> None:
     summary = summarize_qbittorrent(
         [
-            {"state": "stalledUP", "progress": 1.0, "content_path": "/private/a"},
+            {
+                "state": "stalledUP",
+                "progress": 1.0,
+                "content_path": "/private/a",
+            },
             {"state": "downloading", "progress": 0.5, "content_path": ""},
         ]
     )
@@ -125,7 +164,9 @@ def test_qbittorrent_loader_uses_only_torrents_info_endpoint() -> None:
 
     def fetch(url: str) -> list[dict[str, object]]:
         requested.append(url)
-        return [{"state": "stalledUP", "progress": 1.0, "content_path": "/private"}]
+        return [
+            {"state": "stalledUP", "progress": 1.0, "content_path": "/private"}
+        ]
 
     summary = load_qbittorrent_summary("http://localhost:8080/api/v2", fetch)
 
@@ -133,14 +174,21 @@ def test_qbittorrent_loader_uses_only_torrents_info_endpoint() -> None:
     assert summary["total"] == 1
 
 
-def test_audit_log_rotates_without_deleting_prior_records(tmp_path: Path) -> None:
-    event = UploadPipelineDetector(dry_run=True, max_items=5).detect(
-        ["DIGITALCORE: Could not download torrent file: 404"]
-    )[0]
+def test_audit_log_rotates_without_deleting_prior_records(
+    tmp_path: Path,
+) -> None:
+    detector = UploadPipelineDetector(dry_run=True, max_items=5)
+    events = detector.detect(
+        [
+            "DIGITALCORE: Could not download torrent file: 404",
+            "OTHER: Tracker announce failed",
+        ]
+    )
+    first, second = events[0], events[1]
     audit = AuditLog(tmp_path / "audit", max_bytes=1)
 
-    audit.append([event])
-    current = audit.append([event])
+    audit.append([first])
+    current = audit.append([second])
 
     assert current.name == "events.jsonl"
     assert len(list(current.parent.glob("events*.jsonl"))) == 2
@@ -151,8 +199,9 @@ def test_audit_log_refuses_to_wait_for_existing_writer(tmp_path: Path) -> None:
         ["DIGITALCORE: Could not download torrent file: 404"]
     )[0]
     audit = AuditLog(tmp_path / "audit", max_bytes=1024)
-    path = audit.append([])
-    descriptor = os.open(path, os.O_WRONLY)
+    audit.append([event])
+    lock_path = audit.directory / "events.lock"
+    descriptor = os.open(lock_path, os.O_WRONLY | os.O_CREAT)
     try:
         fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         with pytest.raises(BlockingIOError, match="locked"):
@@ -163,17 +212,25 @@ def test_audit_log_refuses_to_wait_for_existing_writer(tmp_path: Path) -> None:
 
 
 def test_qbittorrent_summary_marks_malformed_payload_unknown() -> None:
-    summary = summarize_qbittorrent([{"state": "stalledUP", "progress": "bad", "content_path": "/private"}])
+    summary = summarize_qbittorrent(
+        [{"state": "stalledUP", "progress": "bad", "content_path": "/private"}]
+    )
 
     assert summary == {"status": "unknown"}
 
 
-def test_dry_run_recurses_into_upload_runtime_directories(tmp_path: Path) -> None:
+def test_dry_run_recurses_into_upload_runtime_directories(
+    tmp_path: Path,
+) -> None:
     logs = tmp_path / "logs" / "nested"
     logs.mkdir(parents=True)
-    (logs / "upload-nested.log").write_text("ZENITH: Could not download torrent file: 404\n")
+    (logs / "upload-nested.log").write_text(
+        "ZENITH: Could not download torrent file: 404\n"
+    )
 
-    events = run_dry_run(tmp_path / "logs", dry_run=True, max_logs=5, max_items=5)
+    events = run_dry_run(
+        tmp_path / "logs", dry_run=True, max_logs=5, max_items=5
+    )
 
     assert len(events) == 1
 
@@ -181,7 +238,9 @@ def test_dry_run_recurses_into_upload_runtime_directories(tmp_path: Path) -> Non
 def test_detector_accepts_tracker_labels_padded_before_colon() -> None:
     detector = UploadPipelineDetector(dry_run=True, max_items=5)
 
-    events = detector.detect(["DIGITALCORE  : Could not download torrent file: 404"])
+    events = detector.detect(
+        ["DIGITALCORE  : Could not download torrent file: 404"]
+    )
 
     assert len(events) == 1
     assert events[0].to_record()["tracker"] == "DIGITALCORE"
@@ -190,23 +249,33 @@ def test_detector_accepts_tracker_labels_padded_before_colon() -> None:
 def test_dry_run_reads_runtime_upload_underscore_logs(tmp_path: Path) -> None:
     logs = tmp_path / "logs"
     logs.mkdir()
-    (logs / "upload_123.log").write_text("YUSCENE: Could not download torrent file: 404\n")
+    (logs / "upload_123.log").write_text(
+        "YUSCENE: Could not download torrent file: 404\n"
+    )
 
     events = run_dry_run(logs, dry_run=True, max_logs=5, max_items=5)
 
     assert len(events) == 1
 
 
-def test_detector_reads_tracker_label_from_upload_assistant_info_line() -> None:
+def test_detector_reads_tracker_label_from_upload_assistant_info_line() -> (
+    None
+):
     detector = UploadPipelineDetector(dry_run=True, max_items=5)
 
-    events = detector.detect(["[2026-10-25 10:00:00] INFO: DIGITALCORE  : Could not download torrent file: 404"])
+    events = detector.detect(
+        [
+            "[2026-10-25 10:00:00] INFO: DIGITALCORE  : Could not download torrent file: 404"
+        ]
+    )
 
     assert len(events) == 1
     assert events[0].to_record()["tracker"] == "DIGITALCORE"
 
 
-def test_dry_run_correlates_error_with_following_tracker_result(tmp_path: Path) -> None:
+def test_dry_run_correlates_error_with_following_tracker_result(
+    tmp_path: Path,
+) -> None:
     logs = tmp_path / "logs"
     logs.mkdir()
     (logs / "upload_123.log").write_text(
@@ -217,7 +286,10 @@ def test_dry_run_correlates_error_with_following_tracker_result(tmp_path: Path) 
 
     events = run_dry_run(logs, dry_run=True, max_logs=5, max_items=5)
 
-    assert [event.to_record()["tracker"] for event in events] == ["DIGITALCORE", "DIGITALCORE"]
+    assert [event.to_record()["tracker"] for event in events] == [
+        "DIGITALCORE",
+        "DIGITALCORE",
+    ]
 
 
 def test_qbittorrent_loader_rejects_nonlocal_base_url() -> None:
@@ -230,14 +302,22 @@ def test_dry_run_rejects_negative_limits(tmp_path: Path) -> None:
         run_dry_run(tmp_path, dry_run=True, max_logs=-1, max_items=5)
 
 
-@pytest.mark.parametrize("base_url", ["http://10.0.0.1/api/v2", "http://192.168.1.1/api/v2"])
-def test_qbittorrent_loader_rejects_private_network_base_urls(base_url: str) -> None:
+@pytest.mark.parametrize(
+    "base_url", ["http://10.0.0.1/api/v2", "http://192.168.1.1/api/v2"]
+)
+def test_qbittorrent_loader_rejects_private_network_base_urls(
+    base_url: str,
+) -> None:
     with pytest.raises(ValueError, match="local qBittorrent"):
         load_qbittorrent_summary(base_url, lambda _url: [])
 
 
-def test_cli_reports_neutral_classification_when_no_signals(tmp_path: Path) -> None:
-    script = Path(__file__).parents[1] / "scripts" / "upload_pipeline_detector.py"
+def test_cli_reports_neutral_classification_when_no_signals(
+    tmp_path: Path,
+) -> None:
+    script = (
+        Path(__file__).parents[1] / "scripts" / "upload_pipeline_detector.py"
+    )
 
     result = subprocess.run(  # noqa: S603
         [
@@ -255,11 +335,18 @@ def test_cli_reports_neutral_classification_when_no_signals(tmp_path: Path) -> N
     )
 
     assert result.returncode == 0
-    assert json.loads(result.stdout)["classification"] == "NO_CORRELATED_TECHNICAL_FAILURE"
+    assert (
+        json.loads(result.stdout)["classification"]
+        == "NO_CORRELATED_TECHNICAL_FAILURE"
+    )
 
 
-def test_cli_reports_unknown_when_requested_qb_observation_is_unknown(tmp_path: Path) -> None:
-    script = Path(__file__).parents[1] / "scripts" / "upload_pipeline_detector.py"
+def test_cli_reports_unknown_when_requested_qb_observation_is_unknown(
+    tmp_path: Path,
+) -> None:
+    script = (
+        Path(__file__).parents[1] / "scripts" / "upload_pipeline_detector.py"
+    )
     (tmp_path / "upload-signal.log").write_text(
         "DIGITALCORE: Could not download torrent file: 404\n"
     )

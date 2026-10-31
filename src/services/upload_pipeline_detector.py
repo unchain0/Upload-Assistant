@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-import fcntl
+import hashlib
 import ipaddress
 import json
 import os
 import re
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -14,11 +15,16 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 _SIGNALS = (
-    ("could not download torrent file", "registered_torrent_download_unavailable"),
+    (
+        "could not download torrent file",
+        "registered_torrent_download_unavailable",
+    ),
     ("does not exist, cannot add to client", "client_injection_blocked"),
     ("tracker announce failed", "tracker_announce_failed"),
 )
-_TRACKER = re.compile(r"(?:INFO:\s+|^\s*)(?P<tracker>[A-Z0-9]+)\s*:", re.IGNORECASE)
+_TRACKER = re.compile(
+    r"(?:INFO:\s+|^\s*)(?P<tracker>[A-Z0-9]+)\s*:", re.IGNORECASE
+)
 _NON_TRACKERS = frozenset({"INFO", "WARNING", "ERROR"})
 
 
@@ -57,10 +63,12 @@ class UploadPipelineDetector:
             tracker = self._tracker(line)
             if reason is None or tracker is None:
                 continue
-            detections.append(self._event(tracker, reason))
+            detections.append(self._event(tracker, reason, line=line))
         return detections
 
-    def detect_log(self, log_lines: list[str]) -> list[Detection]:
+    def detect_log(
+        self, log_lines: list[str], *, source: str = ""
+    ) -> list[Detection]:
         if not self.dry_run:
             raise PermissionError("--dry-run is required")
 
@@ -71,16 +79,25 @@ class UploadPipelineDetector:
             reason = self._reason(line)
             if reason is None:
                 continue
-            tracker = self._tracker(line) or self._following_tracker(log_lines, index)
+            tracker = self._tracker(line) or self._following_tracker(
+                log_lines, index
+            )
             if tracker is not None:
-                detections.append(self._event(tracker, reason))
+                detections.append(
+                    self._event(tracker, reason, source=source, line=line)
+                )
         return detections
 
     @staticmethod
     def _reason(line: str) -> str | None:
         lower = line.lower()
-        reason = next((reason for marker, reason in _SIGNALS if marker in lower), None)
-        if reason == "registered_torrent_download_unavailable" and "404" not in lower:
+        reason = next(
+            (reason for marker, reason in _SIGNALS if marker in lower), None
+        )
+        if (
+            reason == "registered_torrent_download_unavailable"
+            and "404" not in lower
+        ):
             return None
         return reason
 
@@ -92,7 +109,9 @@ class UploadPipelineDetector:
         tracker = match.group("tracker").upper()
         return None if tracker in _NON_TRACKERS else tracker
 
-    def _following_tracker(self, log_lines: list[str], index: int) -> str | None:
+    def _following_tracker(
+        self, log_lines: list[str], index: int
+    ) -> str | None:
         for line in log_lines[index + 1 : index + 4]:
             tracker = self._tracker(line)
             if tracker is not None:
@@ -100,9 +119,15 @@ class UploadPipelineDetector:
         return None
 
     @staticmethod
-    def _event(tracker: str, reason: str) -> Detection:
+    def _event(
+        tracker: str, reason: str, *, source: str = "", line: str = ""
+    ) -> Detection:
+        # Deterministic id: rescanning retained logs must not create a new event.
+        fingerprint = f"{source}|{line}|{tracker}|{reason}"
         return Detection(
-            event_id=uuid4().hex,
+            event_id=hashlib.sha256(fingerprint.encode("utf-8")).hexdigest()[
+                :32
+            ],
             observed_at=datetime.now(UTC).isoformat(),
             tracker=tracker,
             classification="TECHNICAL_UPLOAD_PIPELINE",
@@ -119,22 +144,80 @@ class AuditLog:
         self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.directory.chmod(0o700)
         path = self.directory / "events.jsonl"
-        encoded = [json.dumps(event.to_record(), sort_keys=True) + "\n" for event in events]
-        if path.exists() and path.stat().st_size + sum(map(len, encoded)) > self.max_bytes:
-            path.replace(self.directory / f"events-{uuid4().hex}.jsonl")
-        descriptor = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        with _audit_lock(self.directory / "events.lock"):
+            known = _existing_event_ids(path)
+            fresh = [event for event in events if event.event_id not in known]
+            if not fresh:
+                return path
+            encoded = [
+                json.dumps(event.to_record(), sort_keys=True) + "\n"
+                for event in fresh
+            ]
+            size = path.stat().st_size if path.exists() else 0
+            if size and size + sum(map(len, encoded)) > self.max_bytes:
+                path.replace(self.directory / f"events-{uuid4().hex}.jsonl")
+            descriptor = os.open(
+                path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600
+            )
+            try:
+                path.chmod(0o600)
+                with os.fdopen(
+                    descriptor, "a", encoding="utf-8", closefd=False
+                ) as handle:
+                    handle.writelines(encoded)
+            finally:
+                os.close(descriptor)
+        return path
+
+
+def _existing_event_ids(path: Path) -> set[str]:
+    try:
+        lines = path.read_text(errors="replace").splitlines()
+    except OSError:
+        return set()
+    known: set[str] = set()
+    for line in lines:
         try:
-            path.chmod(0o600)
+            record = json.loads(line)
+        except ValueError:
+            continue
+        event_id = record.get("event_id") if isinstance(record, dict) else None
+        if isinstance(event_id, str):
+            known.add(event_id)
+    return known
+
+
+@contextmanager
+def _audit_lock(lock_path: Path) -> Iterator[None]:
+    descriptor = os.open(lock_path, os.O_WRONLY | os.O_CREAT, 0o600)
+    try:
+        if os.name == "nt":  # pragma: no cover - exercised on Windows
+            import msvcrt
+
+            try:
+                msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
+            except OSError:
+                raise BlockingIOError("audit log is locked") from None
+        else:
+            import fcntl
+
             try:
                 fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 raise BlockingIOError("audit log is locked") from None
-            with os.fdopen(descriptor, "a", encoding="utf-8", closefd=False) as handle:
-                handle.writelines(encoded)
-            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        try:
+            yield
         finally:
-            os.close(descriptor)
-        return path
+            if os.name == "nt":  # pragma: no cover - exercised on Windows
+                import msvcrt
+
+                msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+    finally:
+        os.close(descriptor)
 
 
 def run_dry_run(
@@ -149,26 +232,31 @@ def run_dry_run(
             lines = path.read_text(errors="replace").splitlines()
         except OSError:
             continue
-        detections.extend(detector.detect_log(lines))
+        detections.extend(detector.detect_log(lines, source=str(path)))
         if len(detections) >= max_items:
             return detections[:max_items]
     return detections
 
 
-def summarize_qbittorrent(torrents: list[dict[str, object]]) -> dict[str, object]:
+def summarize_qbittorrent(
+    torrents: list[dict[str, object]],
+) -> dict[str, object]:
     try:
-        states = Counter(str(torrent.get("state", "unknown")) for torrent in torrents)
+        states = Counter(
+            str(torrent.get("state", "unknown")) for torrent in torrents
+        )
         return {
             "total": len(torrents),
             "states": dict(sorted(states.items())),
             "incomplete": sum(
-                float(torrent.get("progress", 0.0)) < 1.0 for torrent in torrents
+                float(torrent.get("progress", 0.0)) < 1.0
+                for torrent in torrents
             ),
             "payload_missing": sum(
                 not bool(torrent.get("content_path")) for torrent in torrents
             ),
         }
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return {"status": "unknown"}
 
 
@@ -177,9 +265,15 @@ def load_qbittorrent_summary(
 ) -> dict[str, object]:
     parsed = urlparse(base_url)
     host = parsed.hostname
-    if parsed.scheme not in {"http", "https"} or not host or not _is_local_host(host):
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not host
+        or not _is_local_host(host)
+    ):
         raise ValueError("local qBittorrent base URL is required")
-    return summarize_qbittorrent(fetch(f"{base_url.rstrip('/')}/torrents/info"))
+    return summarize_qbittorrent(
+        fetch(f"{base_url.rstrip('/')}/torrents/info")
+    )
 
 
 def _is_local_host(host: str) -> bool:
