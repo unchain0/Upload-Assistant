@@ -3414,6 +3414,63 @@ async def _generate_comic_screenshots(
         )
 
 
+def _mupdf_page_probes(page: Any) -> tuple[Any, Any] | None:
+    get_text = getattr(page, "get_text", None)
+    get_image_info = getattr(page, "get_image_info", None)
+    if get_text is None or get_image_info is None:
+        return None
+    return get_text, get_image_info
+
+
+def _lone_image_info(page: Any) -> dict[str, Any] | None:
+    probes = _mupdf_page_probes(page)
+    if probes is None:
+        return None
+    get_text, get_image_info = probes
+    if get_text().strip() or getattr(page, "first_annot", None):
+        return None
+    images = get_image_info()
+    if len(images) != 1:
+        return None
+    return images[0]
+
+
+def _drawing_outside_bbox(page: Any, bbox: Any) -> bool:
+    get_drawings = getattr(page, "get_drawings", None)
+    if get_drawings is None:
+        return False
+    return any(
+        not bbox.contains(drawing["rect"]) for drawing in get_drawings()
+    )
+
+
+def _small_cover_clip(page: Any, bbox: Any) -> Any | None:
+    clip = bbox * page.rotation_matrix & page.rect
+    if clip.is_empty or clip.get_area() >= page.rect.get_area() / 2:
+        return None
+    return clip
+
+
+def _lone_image_clip(page: Any, fitz_module: Any) -> tuple[Any, float] | None:
+    """Return clip and native zoom of a lone small cover image on a blank page.
+
+    MuPDF often lays out EPUB cover pages as a small image at the top of a
+    blank page.
+    """
+    image = _lone_image_info(page)
+    if image is None:
+        return None
+    bbox = fitz_module.Rect(image["bbox"])
+    if _drawing_outside_bbox(page, bbox):
+        return None
+    clip = _small_cover_clip(page, bbox)
+    if clip is None:
+        return None
+    return clip, min(
+        image["width"] / bbox.width, image["height"] / bbox.height
+    )
+
+
 def _render_document_page_sync(
     document: Any,
     fitz_module: Any,
@@ -3421,7 +3478,22 @@ def _render_document_page_sync(
     destination: Path,
 ) -> str:
     page = document[page_number]
-    pixmap = page.get_pixmap(matrix=fitz_module.Matrix(2.0, 2.0))
+    zoom, clip = 2.0, None
+    lone_image = _lone_image_clip(page, fitz_module)
+    if lone_image:
+        clip, native_zoom = lone_image
+        zoom = max(
+            zoom,
+            min(
+                zoom * page.rect.width / clip.width,
+                zoom * page.rect.height / clip.height,
+                native_zoom,
+            ),
+        )
+    pixmap_args: dict[str, Any] = {"matrix": fitz_module.Matrix(zoom, zoom)}
+    if clip is not None:
+        pixmap_args["clip"] = clip
+    pixmap = page.get_pixmap(**pixmap_args)
     pixmap.save(destination)
     return str(destination)
 
@@ -3998,7 +4070,11 @@ def _reusable_screenshot_paths(
     if retake:
         return []
     return [
-        str(_screenshot_slot(screenshot_dir, sanitized_filename, index).absolute())
+        str(
+            _screenshot_slot(
+                screenshot_dir, sanitized_filename, index
+            ).absolute()
+        )
         for index in range(num_screens)
         if _png_is_complete(
             _screenshot_slot(screenshot_dir, sanitized_filename, index)
@@ -4175,7 +4251,9 @@ async def _prepare_video_capture_plan(
 
 
 def _frame_info_image_path(plan: _VideoCapturePlan, index: int) -> Path:
-    return _screenshot_slot(plan.screenshot_dir, plan.sanitized_filename, index)
+    return _screenshot_slot(
+        plan.screenshot_dir, plan.sanitized_filename, index
+    )
 
 
 def _frame_info_required(plan: _VideoCapturePlan, index: int) -> bool:
