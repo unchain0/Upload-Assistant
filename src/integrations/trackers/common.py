@@ -4047,7 +4047,8 @@ class Common:
         def parse_mediainfo(self, mediainfo_text: str) -> dict[str, Any]:
             # Patterns for matching sections and fields
             section_pattern = re.compile(
-                r"^(General|Video|Audio|Text|Menu)(?:\s#\d+)?", re.IGNORECASE
+                r"^(General|Video|Audio|Text|Other|Image|Menu)(?:\s#\d+)?$",
+                re.IGNORECASE,
             )
             parsed_data: dict[str, Any] = {
                 "general": {},

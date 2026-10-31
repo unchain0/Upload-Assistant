@@ -1728,6 +1728,10 @@ def test_mediainfo_parser_final_section_and_bdmv_missing_export(
     assert parser.parse_mediainfo("General\nFormat : Matroska")["general"] == {
         "format": "Matroska"
     }
+    assert parser.parse_mediainfo(
+        "Audio\nFormat : AAC\nTitle : Stereo\n\n"
+        "Image\nType : Cover\nTitle : cover.jpg\nFormat : JPEG\n"
+    )["audio"] == [{"format": "AAC", "title": "Stereo"}]
 
     manager = Common(_config())
     playlist = tmp_path / "playlist.mpls"

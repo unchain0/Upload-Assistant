@@ -32,7 +32,8 @@ _MEDIAINFO_FIELDS = {
     "text": {"format", "duration", "bit rate", "language", "title"},
 }
 _MEDIAINFO_SECTION_RE = re.compile(
-    r"^(General|Video|Audio|Text|Menu)(?:\s*#\d+)?$", re.IGNORECASE
+    r"^(General|Video|Audio|Text|Other|Image|Menu)(?:\s*#\d+)?$",
+    re.IGNORECASE,
 )
 
 
@@ -63,11 +64,8 @@ class LanguagesManager:
 
     @staticmethod
     def _section_end(lines: list[str], start: int) -> int:
-        section_header = re.compile(
-            r"^(General|Video|Audio|Text|Menu)(?:\s*#\d+)?$", re.IGNORECASE
-        )
         for index in range(start + 1, len(lines)):
-            if section_header.fullmatch(lines[index].strip()):
+            if _MEDIAINFO_SECTION_RE.fullmatch(lines[index].strip()):
                 return index
         return len(lines)
 

@@ -235,6 +235,18 @@ def test_parsed_mediainfo_sections_missing_and_error(
     assert parsed["audio"][0]["commercial_name"] == "AAC"
     assert parsed["text"][0]["language"] == "French"
 
+    (directory / "MEDIAINFO.txt").write_text(
+        "General\nFormat : Matroska\n\n"
+        "Audio\nFormat : AAC\nTitle : Stereo\n\n"
+        "Image\nType : Cover\nTitle : cover.jpg\nFormat : JPEG\n"
+        "Muxing mode : Attachment\n",
+        encoding="utf-8",
+    )
+    parsed = asyncio.run(manager.parsed_mediainfo(meta))
+    assert parsed["audio"] == [
+        {"format": "AAC", "title": "Stereo"},
+    ]
+
     original_open = language_adapter.aiofiles.open
     monkeypatch.setattr(
         language_adapter.aiofiles,
