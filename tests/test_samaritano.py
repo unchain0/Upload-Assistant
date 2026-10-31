@@ -67,6 +67,30 @@ def test_brazilian_trackers_audio_tags_require_portuguese(
     assert (" MULTI-" in name) == (expected_tag == "MULTI")
 
 
+@pytest.mark.parametrize("tracker_class", [CapybaraBR, Samaritano])
+def test_brazilian_trackers_move_dual_before_the_group_dash(
+    tracker_class: type[CapybaraBR] | type[Samaritano],
+) -> None:
+    meta = Meta(
+        category="MOVIE",
+        name="The Princess Bride 1987 1080p AMZN WEB-DL DDP5.1 H.264-DUAL.BAD",
+        title="The Princess Bride",
+        year=1987,
+        tag="-DUAL.BAD",
+        aka="",
+        original_language="en",
+        audio_languages=["Portuguese", "English"],
+        path="A.Princesa.Prometida.1987.1080p.AMZN.WEB-DL.DDP5.1.H.264-DUAL.BAD.mkv",
+    )
+
+    name = asyncio.run(tracker_class({"TRACKERS": {}}).get_name(meta))["name"]
+
+    assert (
+        name
+        == "The Princess Bride 1987 1080p AMZN WEB-DL DDP5.1 H.264 DUAL-BAD"
+    )
+
+
 def test_capybarabr_formats_dvdrips_with_resolution_before_audio_and_codec() -> (
     None
 ):
