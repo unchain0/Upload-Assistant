@@ -110,3 +110,19 @@ async def test_upload_reports_the_missing_book_cover() -> None:
 def test_music_without_a_cover_still_uploads() -> None:
     tracker = _tracker()
     tracker._require_book_cover(Meta(category="MUSIC"), "")
+
+
+def test_cover_cleanup_keeps_the_prepared_book_artwork(
+    tmp_path: Path,
+) -> None:
+    prepared = _write_cover(
+        tmp_path / "tmp" / "release" / "artwork" / "POSTER.png"
+    )
+    disposable = tmp_path / "tmp" / "release" / "artwork" / "cover_1.jpg"
+    _write_cover(disposable)
+    meta = _meta(tmp_path, artwork_path=str(prepared))
+
+    rehosting._cleanup_cover_files(meta, [str(prepared), str(disposable)])
+
+    assert prepared.exists()
+    assert not disposable.exists()
