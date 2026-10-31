@@ -3754,7 +3754,7 @@ async def generate_ebook_screenshots(
                 prepared_cover,
                 banner_cached,
             )
-        if extension in {"pdf", "mobi", "epub"}:
+        if extension in {"pdf", "mobi", "epub", "azw", "azw3"}:
             return await _generate_document_screenshots(
                 path,
                 extension,
@@ -3896,6 +3896,10 @@ class _VideoCapturePlan:
     capture_indices: list[int]
 
 
+class BookScreenshotsMissingError(RuntimeError):
+    """A BOOK upload would otherwise reach the tracker without any image."""
+
+
 async def _book_screenshot_result(
     path: str,
     filename: str,
@@ -3908,9 +3912,17 @@ async def _book_screenshot_result(
         await prepare_book_cover(path, folder_id, base_dir, meta)
         return []
     requested = num_screens if num_screens > 0 else meta.screens
-    return await generate_ebook_screenshots(
+    images = await generate_ebook_screenshots(
         path, filename, folder_id, base_dir, meta, requested
     )
+    if not images:
+        # The trackers reject a book description without a picture, so stop
+        # here instead of publishing an upload that will be deferred.
+        raise BookScreenshotsMissingError(
+            "BOOK upload needs at least one page screenshot in the description; "
+            f"none could be rendered from {Path(path).suffix.lstrip('.') or 'the file'}"
+        )
+    return images
 
 
 def _remote_image_count(meta: Meta) -> int:
