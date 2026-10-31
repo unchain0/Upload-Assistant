@@ -3232,7 +3232,9 @@ def _mobi_cover_bytes(data: bytes) -> bytes | None:
     cover_record = first_image + cover_offset
     if cover_record < 1 or cover_record >= records:
         return None
-    end = offsets[cover_record + 1] if cover_record + 1 < records else len(data)
+    end = (
+        offsets[cover_record + 1] if cover_record + 1 < records else len(data)
+    )
     payload = data[offsets[cover_record] : end]
     if not payload.startswith(_MOBI_IMAGE_MAGIC):
         return None

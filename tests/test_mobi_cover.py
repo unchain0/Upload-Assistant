@@ -65,14 +65,20 @@ def test_extract_mobi_cover_writes_the_cover(tmp_path: Path) -> None:
     source.write_bytes(_book([_record_zero(2, 0), b"text record", _JPEG]))
     destination = tmp_path / "cover.jpg"
 
-    assert asyncio.run(extract_mobi_cover(str(source), str(destination))) is True
+    assert (
+        asyncio.run(extract_mobi_cover(str(source), str(destination))) is True
+    )
     assert destination.read_bytes() == _JPEG
 
 
-def test_extract_mobi_cover_reports_failure_without_a_cover(tmp_path: Path) -> None:
+def test_extract_mobi_cover_reports_failure_without_a_cover(
+    tmp_path: Path,
+) -> None:
     source = tmp_path / "book.azw3"
     source.write_bytes(b"nope" * 40)
     destination = tmp_path / "cover.jpg"
 
-    assert asyncio.run(extract_mobi_cover(str(source), str(destination))) is False
+    assert (
+        asyncio.run(extract_mobi_cover(str(source), str(destination))) is False
+    )
     assert not destination.exists()
