@@ -446,7 +446,9 @@ class CapybaraBR(UNIT3D):
 
     @staticmethod
     def _strip_leading_audio_mark(suffix: str) -> str:
-        stripped = re.sub(r"(?i)^(dual|multi)[.\s-]*", "", suffix, count=1)
+        stripped = re.sub(
+            r"(?i)^(?:dual|multi)(?:[.\s-]+|$)", "", suffix, count=1
+        )
         return stripped or suffix
 
     @staticmethod

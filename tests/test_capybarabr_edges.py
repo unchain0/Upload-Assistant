@@ -197,3 +197,16 @@ async def test_capybarabr_bluray_remux_encode_settings_require_bdinfo(
     )
     assert not await tracker.get_additional_checks(meta)
     tracker.common.check_portuguese_video_requirements.assert_not_awaited()
+
+
+def test_capybarabr_keeps_groups_that_only_start_with_an_audio_marker() -> (
+    None
+):
+    meta = Meta(path="Movie-2025.mkv", uuid="", tag="-DUALITY")
+    assert CapybaraBR._strip_leading_audio_mark("DUALITY") == "DUALITY"
+    assert CapybaraBR._strip_leading_audio_mark("MULTIVERSE") == "MULTIVERSE"
+    assert CapybaraBR._strip_leading_audio_mark("DUAL-GROUP") == "GROUP"
+    assert CapybaraBR._strip_leading_audio_mark("MULTI.ENG") == "ENG"
+    assert CapybaraBR._insert_audio_tag("Movie-DUALITY", " DUAL", meta) == (
+        "Movie DUAL-DUALITY"
+    )
