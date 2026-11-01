@@ -265,20 +265,53 @@ class CapybaraBR(UNIT3D):
 
     @staticmethod
     def _book_title(meta: Meta) -> str:
-        """Drop a leading author prefix so the title is never inverted.
+        """Normalize the title so the name is always "<titulo> - <autor>".
 
-        Metadata sources often hand back "Autor - Título"; CapybaraBR wants
-        "Título - Autor [ano]", so the duplicated author has to go.
+        Sources hand back "Autor - Título", "Título - Autor" or a truncated
+        author fragment; leaving any of those in place duplicates the author
+        or inverts the order once the builder appends meta.author.
         """
         title = str(meta.title or "").strip()
         author = str(meta.author or "").strip()
         if not author:
             return title
+        while True:
+            stripped = CapybaraBR._strip_author_segment(title, author)
+            if stripped == title:
+                return title
+            title = stripped
+
+    @staticmethod
+    def _strip_author_segment(title: str, author: str) -> str:
+        parts = re.split(r"\s[-\u2013]\s", title)
+        if len(parts) > 1:
+            if CapybaraBR._same_author(parts[0], author):
+                return " - ".join(parts[1:]).strip()
+            if CapybaraBR._looks_like_author(parts[-1], author):
+                return " - ".join(parts[:-1]).strip()
         for separator in (" - ", " \u2013 ", ": "):
             prefix = f"{author}{separator}"
             if title.casefold().startswith(prefix.casefold()):
                 return title[len(prefix) :].strip()
         return title
+
+    @staticmethod
+    def _normalized_author(value: str) -> str:
+        return re.sub(r"[.\s]+", " ", value.casefold()).strip(" ,")
+
+    @staticmethod
+    def _same_author(candidate: str, author: str) -> bool:
+        return CapybaraBR._normalized_author(
+            candidate
+        ) == CapybaraBR._normalized_author(author)
+
+    @staticmethod
+    def _looks_like_author(candidate: str, author: str) -> bool:
+        fragment = CapybaraBR._normalized_author(candidate)
+        full = CapybaraBR._normalized_author(author)
+        if not fragment or not full:
+            return False
+        return fragment == full or full.startswith(f"{fragment} ")
 
     @staticmethod
     def _year_text(meta: Meta) -> str:

@@ -230,3 +230,61 @@ def test_capybarabr_book_name_drops_a_duplicated_author_prefix() -> None:
         category="BOOK",
     )
     assert _tracker()._book_name(meta) == "O Estrangeiro - Albert Camus [2019]"
+
+
+def test_capybarabr_book_name_drops_a_trailing_author() -> None:
+    meta = Meta(
+        title="Diário Estoico: 366 Lições Sobre Sabedoria - Ryan Holiday",
+        author="Ryan Holiday",
+        year=2021,
+        category="BOOK",
+    )
+    assert _tracker()._book_name(meta) == (
+        "Diário Estoico: 366 Lições sobre Sabedoria - Ryan Holiday [2021]"
+    )
+
+
+def test_capybarabr_book_name_strips_a_truncated_author_fragment() -> None:
+    meta = Meta(
+        title="Grokking Algorithms, Second Edition - Aditya",
+        author="Aditya Y. Bhargava",
+        year=2024,
+        category="BOOK",
+    )
+    assert _tracker()._book_name(meta) == (
+        "Grokking Algorithms, Second Edition - Aditya Y. Bhargava [2024]"
+    )
+
+
+def test_capybarabr_book_name_uses_the_full_author_name() -> None:
+    meta = Meta(
+        title="Aditya Y Bhargava - Grokking Algorithms",
+        author="Aditya Y. Bhargava",
+        year=2024,
+        category="BOOK",
+    )
+    assert _tracker()._book_name(meta) == (
+        "Grokking Algorithms - Aditya Y. Bhargava [2024]"
+    )
+
+
+def test_capybarabr_book_name_keeps_a_single_word_author_once() -> None:
+    meta = Meta(
+        title="Meditações - Marco Aurélio",
+        author="Marco Aurélio",
+        year=2020,
+        category="BOOK",
+    )
+    assert _tracker()._book_name(meta) == "Meditações - Marco Aurélio [2020]"
+
+
+def test_capybarabr_book_name_strips_every_repeated_author_segment() -> None:
+    meta = Meta(
+        title="Ryan Holiday - Ryan Holiday - Ryan Holiday - Ryan Holiday - O Obstáculo é o Caminho",
+        author="Ryan Holiday",
+        year=2014,
+        category="BOOK",
+    )
+    assert _tracker()._book_name(meta) == (
+        "O Obstáculo É o Caminho - Ryan Holiday [2014]"
+    )
