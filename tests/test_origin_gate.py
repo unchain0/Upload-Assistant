@@ -25,11 +25,12 @@ CONFIG = {
 
 
 def test_configured_hosts_are_derived_from_the_tracker_config() -> None:
-    assert configured_origin_hosts(CONFIG) == {
+    hosts = configured_origin_hosts(CONFIG)
+    assert {
         "capybarabr.com",
         "t.myanonamouse.net",
         "digitalcore.club",
-    }
+    } <= hosts
 
 
 def test_announce_host_normalizes_urls() -> None:
@@ -192,3 +193,47 @@ def test_runtime_torrent_hash_reads_the_cli_flag() -> None:
     )
     assert upload._runtime_torrent_hash(["-th", "abc"]) == "abc"
     assert upload._runtime_torrent_hash(["--unattended", "path"]) is None
+
+
+REAL_ORIGINS = [
+    "https://capybarabr.com/announce/abc",
+    "https://tracker.digitalcore.club/announce/abc",
+    "https://trackerprxy.digitalcore.club/announce/abc",
+    "https://t.peergarden.org/announce/abc",
+    "https://yu-scene.net/announce/abc",
+    "https://samaritano.cc/announce/abc",
+    "https://znth.cx/announce/abc",
+]
+
+
+def test_real_private_origins_are_allowed_from_the_tracker_registry() -> None:
+    allowed = configured_origin_hosts({"TRACKERS": {}})
+    for url in REAL_ORIGINS:
+        result = evaluate_origin(
+            unattended=True, tracker_urls=[url], allowed_hosts=allowed
+        )
+        assert result.allowed is True, (url, result.reason)
+
+
+def test_subdomains_of_a_configured_tracker_are_allowed() -> None:
+    result = evaluate_origin(
+        unattended=True,
+        tracker_urls=["https://t.peergarden.org/announce/abc"],
+        allowed_hosts={"peergarden.org"},
+    )
+    assert result.allowed is True
+
+
+def test_public_and_unknown_origins_are_still_skipped_with_the_registry() -> (
+    None
+):
+    allowed = configured_origin_hosts({"TRACKERS": {}})
+    for url in (
+        "udp://tracker.opentrackr.org:1337/announce",
+        "https://nyaa.si/announce",
+        "https://unknown.example/announce",
+    ):
+        result = evaluate_origin(
+            unattended=True, tracker_urls=[url], allowed_hosts=allowed
+        )
+        assert result.allowed is False, url

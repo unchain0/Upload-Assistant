@@ -46,9 +46,42 @@ def announce_host(url: str) -> str | None:
     return host.lower() if host else None
 
 
-def configured_origin_hosts(config: Mapping[str, Any]) -> set[str]:
-    """Hosts this instance accepts as torrent origins, taken from config."""
+_REGISTRY_HOSTS: set[str] | None = None
+
+
+def _tracker_class_hosts() -> set[str]:
+    """Hosts declared by the tracker classes themselves.
+
+    Most API-key trackers never put an announce URL in config; their hosts
+    live on the class as ``base_url``, ``tracker_url`` and ``tracker_urls``.
+    """
+    global _REGISTRY_HOSTS
+    if _REGISTRY_HOSTS is not None:
+        return _REGISTRY_HOSTS
     hosts: set[str] = set()
+    try:
+        from src.integrations.trackers.registry import tracker_class_map
+    except Exception:
+        _REGISTRY_HOSTS = hosts
+        return hosts
+    for tracker_class in tracker_class_map.values():
+        for attribute in ("base_url", "tracker_url", "site_api_base_url"):
+            host = announce_host(
+                str(getattr(tracker_class, attribute, "") or "")
+            )
+            if host:
+                hosts.add(host)
+        for url in _string_urls(getattr(tracker_class, "tracker_urls", ())):
+            host = announce_host(url)
+            if host:
+                hosts.add(host)
+    _REGISTRY_HOSTS = hosts
+    return hosts
+
+
+def configured_origin_hosts(config: Mapping[str, Any]) -> set[str]:
+    """Hosts this instance accepts as torrent origins."""
+    hosts = set(_tracker_class_hosts())
     trackers = config.get("TRACKERS")
     if not isinstance(trackers, Mapping):
         return hosts
@@ -61,6 +94,12 @@ def configured_origin_hosts(config: Mapping[str, Any]) -> set[str]:
                 if host:
                     hosts.add(host)
     return hosts
+
+
+def _host_allowed(host: str, allowed_hosts: set[str]) -> bool:
+    if host in allowed_hosts:
+        return True
+    return any(host.endswith(f".{allowed}") for allowed in allowed_hosts)
 
 
 def evaluate_origin(
@@ -91,7 +130,9 @@ def evaluate_origin(
         return OriginGateResult(
             False, "SKIP: torrent has no usable announce URL"
         )
-    unknown = sorted(host for host in hosts if host not in allowed_hosts)
+    unknown = sorted(
+        host for host in hosts if not _host_allowed(host, allowed_hosts)
+    )
     if unknown:
         return OriginGateResult(
             False,
