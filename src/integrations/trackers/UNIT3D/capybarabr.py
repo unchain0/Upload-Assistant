@@ -275,12 +275,11 @@ class CapybaraBR(UNIT3D):
         author = str(meta.author or "").strip()
         if not author:
             return title
-        for _ in range(3):
+        while True:
             stripped = CapybaraBR._strip_author_segment(title, author)
             if stripped == title:
-                break
+                return title
             title = stripped
-        return title
 
     @staticmethod
     def _strip_author_segment(title: str, author: str) -> str:

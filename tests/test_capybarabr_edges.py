@@ -276,3 +276,15 @@ def test_capybarabr_book_name_keeps_a_single_word_author_once() -> None:
         category="BOOK",
     )
     assert _tracker()._book_name(meta) == "Meditações - Marco Aurélio [2020]"
+
+
+def test_capybarabr_book_name_strips_every_repeated_author_segment() -> None:
+    meta = Meta(
+        title="Ryan Holiday - Ryan Holiday - Ryan Holiday - Ryan Holiday - O Obstáculo é o Caminho",
+        author="Ryan Holiday",
+        year=2014,
+        category="BOOK",
+    )
+    assert _tracker()._book_name(meta) == (
+        "O Obstáculo É o Caminho - Ryan Holiday [2014]"
+    )
