@@ -1980,3 +1980,15 @@ def test_final_disc_and_capture_description_branches(
     )
     assert isinstance(result, str)
     builder.takescreens_manager.screenshots.assert_awaited()
+
+
+def test_ua_signature_part_is_empty_when_the_fork_signature_is_off() -> None:
+    builder = _builder()
+    meta = Meta(ua_signature="")
+    assert builder._ua_signature_part(meta, True, "") == ""
+
+
+def test_ua_signature_part_keeps_an_explicit_signature_when_configured() -> None:
+    builder = _builder()
+    meta = Meta(ua_signature="Shared with Upload-Assistant v3.6 (fork)")
+    assert builder._ua_signature_part(meta, True, "custom") == "custom"

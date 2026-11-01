@@ -119,8 +119,12 @@ class DigitalCore:
             custom_signature=False,
             logo=False,
             signature=(
-                "[center][url=https://github.com/wastaken7/Upload-Assistant]"
-                f"{meta.ua_signature}[/url][/center]"
+                (
+                    "[center][url=https://github.com/wastaken7/Upload-Assistant]"
+                    f"{meta.ua_signature}[/url][/center]"
+                )
+                if meta.ua_signature
+                else ""
             ),
         )
         return self._normalize_renderer_image_urls(description)

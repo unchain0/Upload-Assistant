@@ -2380,6 +2380,8 @@ class DescriptionBuilder:
 
     @staticmethod
     def _ua_signature_part(meta: Meta, enabled: bool, signature: str) -> str:
+        if not meta.ua_signature:
+            return ""
         if not enabled:
             return ""
         if signature:

@@ -140,7 +140,11 @@ class IPTorrents:
             meta,
             logo=False,
             nfo=False,
-            signature=f"[center][url=https://github.com/wastaken7/Upload-Assistant]{meta.ua_signature}[/center][/url][/right]",
+            signature=(
+                f"[center][url=https://github.com/wastaken7/Upload-Assistant]{meta.ua_signature}[/center][/url][/right]"
+                if meta.ua_signature
+                else ""
+            ),
         )
 
     async def search_existing(self, meta: Meta) -> list[dict[str, str]]:

@@ -334,7 +334,11 @@ class SpeedApp:
             menu_screenshots=False,
             nfo=False,
             screenshots=False,
-            signature=f"\n[url=https://github.com/wastaken7/Upload-Assistant]{meta.ua_signature}[/url]",
+            signature=(
+                f"\n[url=https://github.com/wastaken7/Upload-Assistant]{meta.ua_signature}[/url]"
+                if meta.ua_signature
+                else ""
+            ),
         )
 
     async def get_name(self, meta: Meta) -> str:

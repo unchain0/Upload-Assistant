@@ -97,7 +97,10 @@ class NzbNest:
     async def _cached_upload_match(self, meta: Meta) -> list[str]:
         release_name = await self.get_name(meta)
         cache_file = (
-            Path(meta.base_dir) / "tmp" / meta.uuid / f"{self.tracker}_upload_ok"
+            Path(meta.base_dir)
+            / "tmp"
+            / meta.uuid
+            / f"{self.tracker}_upload_ok"
         )
         if not release_name or not cache_file.exists():
             return []
@@ -224,9 +227,7 @@ class NzbNest:
         nzb_path = Path(str(meta.nzb_path))
         async with aiofiles.open(nzb_path, "rb") as handle:
             nzb_content = await handle.read()
-        files = {
-            "file": (nzb_path.name, nzb_content, "application/x-nzb")
-        }
+        files = {"file": (nzb_path.name, nzb_content, "application/x-nzb")}
         nfo_file = await self._get_nfo_file(meta, nzb_path)
         if nfo_file is not None:
             files["nfo"] = nfo_file

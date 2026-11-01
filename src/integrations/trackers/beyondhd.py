@@ -736,6 +736,8 @@ class BEYONDHD:
 
     @staticmethod
     def _signature_block(meta: Meta) -> str:
+        if not meta.ua_signature:
+            return ""
         return f"\n[align=right][url=https://github.com/wastaken7/Upload-Assistant][size=10]{meta.ua_signature}[/size][/url][/align]"
 
     async def get_additional_checks(self, meta: Meta) -> bool:

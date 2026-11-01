@@ -33,7 +33,9 @@ def _scale_marker(meta: Meta) -> str:
     return ""
 
 
-def _scaled_components(components: NameComponents, meta: Meta) -> NameComponents:
+def _scaled_components(
+    components: NameComponents, meta: Meta
+) -> NameComponents:
     scale = _scale_marker(meta)
     if not scale or components.type not in {"ENCODE", "WEBDL", "WEBRIP"}:
         return components
