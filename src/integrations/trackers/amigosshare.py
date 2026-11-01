@@ -2646,7 +2646,9 @@ class AmigosShare:
 
     def _upload_record(self, meta: Meta, name: str) -> AscVideoUpload:
         mediainfo = meta.mediainfo if isinstance(meta.mediainfo, str) else ""
-        description = meta.description if isinstance(meta.description, str) else ""
+        description = (
+            meta.description if isinstance(meta.description, str) else ""
+        )
         imdb_id = self._search_imdb(meta) if meta.imdb_id else ""
         return AscVideoUpload(
             name=name,

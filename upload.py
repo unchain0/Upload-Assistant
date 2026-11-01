@@ -4368,10 +4368,8 @@ async def _runtime_meta(base_dir: str) -> Meta:
     meta = Meta()
     meta.ua_name = "Upload-Assistant"
     meta.current_version = await update_notification()
-    signature = f"Shared with {meta.ua_name}"
-    if meta.current_version:
-        signature += f" {meta.current_version}"
-    meta.ua_signature = signature + " (fork)"
+    # The fork signature is no longer written into descriptions.
+    meta.ua_signature = ""
     meta.base_dir = base_dir
     return meta
 

@@ -639,9 +639,10 @@ class CathodeRayTube:
             )
             if media_section:
                 sections.append(media_section)
-        sections.append(
-            f"\n[align=right][url=https://github.com/wastaken7/Upload-Assistant][size=1]{meta.ua_signature}[/size][/url][/align]"
-        )
+        if meta.ua_signature:
+            sections.append(
+                f"\n[align=right][url=https://github.com/wastaken7/Upload-Assistant][size=1]{meta.ua_signature}[/size][/url][/align]"
+            )
         return sections
 
     def _text_description_sections(

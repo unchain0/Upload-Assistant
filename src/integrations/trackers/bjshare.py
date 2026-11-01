@@ -122,6 +122,7 @@ def _incompatible_bjshare_audio(upload: str, existing: set[str]) -> str | None:
             return label
     return None
 
+
 _VIDEO_CONTAINERS = frozenset({"mkv", "mp4", "avi", "vob", "m2ts", "ts"})
 _AUDIOBOOK_CONTAINERS = frozenset(
     {
@@ -1384,7 +1385,9 @@ class BJShare:
             return []
         return self._parse_search_response(meta, response)
 
-    async def _incompatible_audio_blocks(self, meta: Meta, response: Any) -> bool:
+    async def _incompatible_audio_blocks(
+        self, meta: Meta, response: Any
+    ) -> bool:
         if str(meta.category or "") not in {"TV", "MOVIE"}:
             return False
         existing = _existing_audio_labels(_response_text(response), meta)
