@@ -99,6 +99,7 @@ from src.integrations.security.redaction import PathAwareEncoder, Redaction
 from src.integrations.torrent.torrent_creator import TorrentCreator
 from src.integrations.torrent_clients.bandwidth import Wait
 from src.integrations.torrent_clients.client_manager import Clients
+from src.integrations.torrent_clients.origin_gate import check_origin
 from src.integrations.trackers.alpharatio import AlphaRatio
 from src.integrations.trackers.common import Common
 from src.integrations.trackers.description_builder import gen_desc
@@ -4836,6 +4837,65 @@ async def _record_metadata_failure(
     await _cleanup_item_state()
 
 
+async def _qbittorrent_tracker_urls(torrent_hash: str) -> list[str]:
+    """Return the announce URLs qBittorrent has for one torrent."""
+    clients = config.get("TORRENT_CLIENTS", {})
+    client = (
+        clients.get("qbittorrent", {}) if isinstance(clients, dict) else {}
+    )
+    if not isinstance(client, dict):
+        raise RuntimeError("qBittorrent client is not configured")
+    host = str(client.get("qbit_url", "")).strip()
+    if not host:
+        raise RuntimeError("qbit_url is not configured")
+    verify = client.get("VERIFY_WEBUI_CERTIFICATE", True)
+    if isinstance(verify, str):
+        verify = verify.strip().lower() in {"1", "true", "yes"}
+
+    def fetch() -> list[str]:
+        import qbittorrentapi
+
+        kwargs: dict[str, Any] = {
+            "host": host,
+            "port": client.get("qbit_port"),
+            "VERIFY_WEBUI_CERTIFICATE": bool(verify),
+            "FORCE_SCHEME_FROM_HOST": True,
+        }
+        api_key = str(client.get("qbit_api_key") or "").strip()
+        if api_key:
+            qbt = qbittorrentapi.Client(api_key=api_key, **kwargs)
+        else:
+            qbt = qbittorrentapi.Client(
+                username=str(client.get("qbit_user", "")),
+                password=str(client.get("qbit_pass", "")),
+                **kwargs,
+            )
+            qbt.auth_log_in()
+        trackers = qbt.torrents_trackers(torrent_hash=torrent_hash)
+        return [
+            str(tracker.get("url", ""))
+            for tracker in trackers
+            if isinstance(tracker, dict)
+        ]
+
+    return await asyncio.to_thread(fetch)
+
+
+async def _enforce_origin_gate(meta: Meta) -> None:
+    """Skip unattended uploads whose origin is not a configured private tracker."""
+    if not meta.unattended:
+        return
+    result = await check_origin(
+        unattended=True,
+        tracker_hash=getattr(meta, "ext_torrenthash", None),
+        config=config,
+        fetch_tracker_urls=_qbittorrent_tracker_urls,
+    )
+    if not result.allowed:
+        logger.info(f"[bold yellow]{result.reason}[/bold yellow]")
+        raise SystemExit(0)
+
+
 async def _runtime_batch_setup(
     base_dir: str,
 ) -> tuple[Meta, list[Any], str | None, bool, bool]:
@@ -4847,6 +4907,7 @@ async def _runtime_batch_setup(
     cleanup_only = _cleanup_only_requested()
     sanitize_meta = bool(_process_default_config().get("sanitize_meta", True))
     meta = _parse_runtime_meta(meta, cleanup_only)
+    await _enforce_origin_gate(meta)
     meta.paths_from_stdin = used_pasted_paths
     _enable_runtime_debug(meta)
     _validate_runtime_configuration(meta)
