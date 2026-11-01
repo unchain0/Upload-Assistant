@@ -4382,6 +4382,14 @@ def _cleanup_only_requested() -> bool:
     )
 
 
+def _runtime_torrent_hash(args: list[str]) -> str | None:
+    for index, arg in enumerate(args):
+        if arg in {"--torrenthash", "-th"} and index + 1 < len(args):
+            value = args[index + 1].strip()
+            return value or None
+    return None
+
+
 def _parse_runtime_meta(meta: Meta, cleanup_only: bool) -> Meta:
     args_list = (
         [*sys.argv[1:], "dummy_path"] if cleanup_only else list(sys.argv[1:])
@@ -4389,6 +4397,8 @@ def _parse_runtime_meta(meta: Meta, cleanup_only: bool) -> Meta:
     parsed = cast(tuple[Meta, Any, Any], parser.parse(args_list, meta))[0]
     if cleanup_only:
         parsed.path = None
+    if not parsed.ext_torrenthash:
+        parsed.ext_torrenthash = _runtime_torrent_hash(args_list)
     return parsed
 
 
@@ -4872,11 +4882,15 @@ async def _qbittorrent_tracker_urls(torrent_hash: str) -> list[str]:
             )
             qbt.auth_log_in()
         trackers = qbt.torrents_trackers(torrent_hash=torrent_hash)
-        return [
-            str(tracker.get("url", ""))
-            for tracker in trackers
-            if isinstance(tracker, dict)
-        ]
+        urls: list[str] = []
+        for tracker in trackers:
+            if not isinstance(tracker, dict):
+                continue
+            url = str(tracker.get("url", "")).strip()
+            # qBittorrent reports DHT, PeX and LSD as pseudo-tracker entries.
+            if url.startswith(("http://", "https://", "udp://")):
+                urls.append(url)
+        return urls
 
     return await asyncio.to_thread(fetch)
 

@@ -140,3 +140,55 @@ def test_check_origin_allows_a_private_origin() -> None:
         )
     )
     assert result.allowed is True
+
+
+def test_dht_pex_lsd_sentinels_are_ignored() -> None:
+    result = evaluate_origin(
+        unattended=True,
+        tracker_urls=[
+            "** [DHT] **",
+            "** [PeX] **",
+            "** [LSD] **",
+            "https://immortalseed.me/announce.php?passkey=abc",
+        ],
+        allowed_hosts={"immortalseed.me"},
+    )
+    assert result.allowed is True
+
+
+def test_only_sentinels_is_skipped() -> None:
+    result = evaluate_origin(
+        unattended=True,
+        tracker_urls=["** [DHT] **", "** [PeX] **", "** [LSD] **"],
+        allowed_hosts={"immortalseed.me"},
+    )
+    assert result.allowed is False
+    assert "no usable announce URL" in result.reason
+
+
+def test_ipv6_announce_host_is_parsed() -> None:
+    assert announce_host("udp://[2001:db8::1]:1337/announce") == "2001:db8::1"
+
+    result = evaluate_origin(
+        unattended=True,
+        tracker_urls=["udp://[2001:db8::1]:1337/announce"],
+        allowed_hosts={"2001:db8::1"},
+    )
+    assert result.allowed is True
+
+
+def test_runtime_torrent_hash_reads_the_cli_flag() -> None:
+    import upload
+
+    assert (
+        upload._runtime_torrent_hash(
+            [
+                "--torrenthash",
+                "8305575ce0fd222c97a1b26de39e3b227f1a923d",
+                "--unattended",
+            ]
+        )
+        == "8305575ce0fd222c97a1b26de39e3b227f1a923d"
+    )
+    assert upload._runtime_torrent_hash(["-th", "abc"]) == "abc"
+    assert upload._runtime_torrent_hash(["--unattended", "path"]) is None
