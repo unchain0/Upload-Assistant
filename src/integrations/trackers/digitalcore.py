@@ -42,10 +42,11 @@ class DigitalCore:
     site_api_base_url = f"{base_url}/api/v1"
     api_base_url = f"{site_api_base_url}/torrents"
     banned_groups = ("",)
-    # DigitalCore's renderer is reliable with its own ShareX image service and
-    # PTScreens. External hosts may be accepted syntactically but are often
-    # replaced by /img/not-found-image.svg when the site cannot proxy them.
-    approved_image_hosts = ("sharex", "ptscreens")
+    # DigitalCore staff require images on the site's own ShareX service:
+    # https://digitalcore.club/forum/17/topic/1051/uploading-for-beginners
+    # Upload reviews reject PTScreens and other external hosts even when the
+    # renderer can display them.
+    approved_image_hosts = ("sharex",)
     # MUSIC artwork is hosted before tracker-specific payload preparation. It may
     # use the broader set historically accepted by DigitalCore because
     # get_firstpic() rehosts the final firstpic through image_host_policy when
@@ -57,13 +58,11 @@ class DigitalCore:
         "imgur",
         "postimg",
         "sharex",
-        "ptscreens",
     )
     image_host_policy = ImageHostPolicy(
         {
             "digitalcore.club": "sharex",
             "img.digitalcore.club": "sharex",
-            "ptscreens.com": "ptscreens",
         },
         approved_image_hosts,
         preferred_image_host="sharex",

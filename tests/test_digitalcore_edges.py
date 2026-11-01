@@ -123,16 +123,17 @@ def test_digitalcore_firstpic_drops_unrehosted_unsafe_artwork() -> None:
     assert asyncio.run(tracker.get_firstpic(meta)) == ""
 
 
-def test_digitalcore_firstpic_normalizes_ptscreens_cdn() -> None:
+def test_digitalcore_firstpic_does_not_reuse_ptscreens_covers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracker = _tracker()
+    monkeypatch.setattr(tracker, "_rehost_cover", AsyncMock(return_value=""))
     meta = Meta(
         category="BOOK",
         hosted_artwork=[{"raw_url": "https://img.ptscreens.com/cover.png"}],
     )
 
-    assert (
-        asyncio.run(_tracker().get_firstpic(meta))
-        == "https://img2.ptscreens.com/cover.png"
-    )
+    assert asyncio.run(tracker.get_firstpic(meta)) == ""
 
 
 @pytest.mark.asyncio

@@ -55,6 +55,8 @@ tone_map = False
 ffmpeg_compression = "6"
 LOSTIMG_MIN_SIZE = 75_000
 LOSTIMG_MAX_SIZE = 20_000_000
+# Mean luminance (0-255) below which a captured frame counts as a black screen.
+BLACK_FRAME_MEAN_LUMA = 18.0
 COMIC_IMAGE_MAX_BYTES = 64 * 1024 * 1024
 COMIC_IMAGE_COPY_CHUNK_BYTES = 1024 * 1024
 
@@ -101,6 +103,26 @@ def _capture_size_is_valid(
     if policy == "lostimg":
         return is_valid_lostimg_image_size(image_size)
     return policy in _UNRESTRICTED_CAPTURE_HOSTS
+
+
+def _mean_luma(image_path: str | Path) -> float:
+    """Return the mean luminance (0-255) of a captured frame."""
+    from PIL import Image
+
+    with Image.open(image_path) as image:
+        gray = image.convert("L")
+        gray.thumbnail((160, 160))
+        values = gray.tobytes()
+    return sum(values) / max(len(values), 1)
+
+
+async def _is_black_frame(image_path: str | Path) -> bool:
+    """Return whether a captured frame is an unusable near-black screen."""
+    try:
+        mean_luma = await asyncio.to_thread(_mean_luma, image_path)
+    except (OSError, ValueError):
+        return False
+    return mean_luma < BLACK_FRAME_MEAN_LUMA
 
 
 def _should_cleanup_after_capture(
@@ -4589,9 +4611,14 @@ async def _retake_capture_attempt(
     screenshot_path = _retake_response_path(response)
     if screenshot_path is None:
         return None
-    return (
-        screenshot_path if _retake_size_valid(plan, screenshot_path) else None
-    )
+    if not _retake_size_valid(plan, screenshot_path):
+        return None
+    if await _is_black_frame(screenshot_path):
+        logger.info(
+            f"[yellow]Retaken image {screenshot_path} is still near-black, trying another time.[/yellow]"
+        )
+        return None
+    return screenshot_path
 
 
 async def _retake_capture(
@@ -4632,9 +4659,16 @@ async def _validated_capture_path(
             f"[red]Image {image_path} with size {image_size} bytes: does not meet size requirements for {plan.img_host}, skipping.[/red]"
         )
         return None
-    if plan.manual_frames or _capture_size_is_valid(plan.img_host, image_size):
+    if plan.manual_frames:
         return image_path
-    return await _retake_capture(plan, image_path, hdr_tonemap)
+    if not _capture_size_is_valid(plan.img_host, image_size):
+        return await _retake_capture(plan, image_path, hdr_tonemap)
+    if await _is_black_frame(image_path):
+        logger.info(
+            f"[yellow]Image {image_path} is a near-black frame, retaking.[/yellow]"
+        )
+        return await _retake_capture(plan, image_path, hdr_tonemap)
+    return image_path
 
 
 async def _validated_capture_paths(
