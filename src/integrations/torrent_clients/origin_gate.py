@@ -38,8 +38,11 @@ def announce_host(url: str) -> str | None:
     raw = url.strip()
     if not raw:
         return None
-    parsed = urlsplit(raw if "://" in raw else f"http://{raw}")
-    host = parsed.hostname
+    try:
+        parsed = urlsplit(raw if "://" in raw else f"http://{raw}")
+        host = parsed.hostname
+    except ValueError:
+        return None
     return host.lower() if host else None
 
 
@@ -79,10 +82,14 @@ def evaluate_origin(
         return OriginGateResult(
             False, "SKIP: torrent has no trackers (DHT only)"
         )
-    hosts = {announce_host(str(url)) for url in urls}
-    if not hosts or None in hosts:
+    hosts = {
+        host
+        for host in (announce_host(str(url)) for url in urls)
+        if host is not None
+    }
+    if not hosts:
         return OriginGateResult(
-            False, "SKIP: torrent has an unusable announce URL"
+            False, "SKIP: torrent has no usable announce URL"
         )
     unknown = sorted(host for host in hosts if host not in allowed_hosts)
     if unknown:
