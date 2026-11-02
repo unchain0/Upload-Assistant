@@ -1257,10 +1257,18 @@ class Zenith(UNIT3D):
         self, meta: Meta, filelist: list[Any], defer: bool
     ) -> bool:
         if not meta.isbn and not meta.asin:
-            logger.info(
-                f"{self.tracker}: [bold red]ISBN or ASIN is required for ebooks and audiobooks. Skipping upload...[/bold red]"
-            )
-            return False
+            if meta.audiobook:
+                logger.info(
+                    f"{self.tracker}: [yellow]Audiobook without an ISBN or ASIN needs "
+                    "staff approval; sending it to the moderation queue.[/yellow]"
+                )
+                meta.modq = True
+            else:
+                logger.info(
+                    f"{self.tracker}: [bold red]ISBN or ASIN is required for ebooks. "
+                    "Skipping upload...[/bold red]"
+                )
+                return False
         if meta.audiobook:
             return await self._audiobook_policy(meta, filelist, defer)
         return self._ebook_format_policy(meta)
@@ -1548,7 +1556,25 @@ class Zenith(UNIT3D):
         )
         return False
 
+    @staticmethod
+    def _derived_language_code(meta: Meta) -> str:
+        for value in (
+            meta.book_language_iso,
+            meta.book_language,
+            meta.language,
+            meta.original_language,
+        ):
+            text = str(value or "").strip()
+            if not text:
+                continue
+            _name, code = resolve_book_language(text)
+            if code:
+                return code
+        return ""
+
     def _book_language_policy(self, meta: Meta) -> bool:
+        if not self._is_valid_language3(meta):
+            meta.book_language_iso = self._derived_language_code(meta)
         if self._is_valid_language3(meta):
             return True
         logger.info(
@@ -2267,6 +2293,9 @@ class Zenith(UNIT3D):
 
     async def get_additional_data(self, meta: Meta) -> dict[str, str]:
         data: dict[str, str] = {}
+        modq = await self.get_flag(meta, "modq")
+        if modq == "1":
+            data["mod_queue_opt_in"] = modq
         if meta.category == "MUSIC":
             data.update(self._music_external_data(meta))
         if meta.category == "BOOK" and not _is_misc(meta):
