@@ -1,6 +1,7 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
 from __future__ import annotations
 
+import re
 from typing import Any, ClassVar
 
 from src.domain_models.release import Meta
@@ -162,7 +163,57 @@ class CZTeam(NEXUSPHP):
     def get_resolution(self, meta: Meta) -> int:
         return self._mapped_id("resolution", meta.resolution)
 
+    _VIDEO_CATEGORIES: ClassVar[tuple[str, ...]] = ("MOVIE", "TV", "ANIME")
+    _RESOLUTION_TOKENS: ClassVar[tuple[str, ...]] = (
+        "2160p",
+        "1080p",
+        "1080i",
+        "720p",
+        "576p",
+        "480p",
+    )
+    _SCENE_NAME_RE: ClassVar[re.Pattern[str]] = re.compile(
+        r"^[^\s]+\.(?:19|20)\d{2}\..+-[A-Za-z0-9]+$"
+    )
+
+    def _video_skip_reason(self, meta: Meta) -> str:
+        if str(meta.category or "").upper() not in self._VIDEO_CATEGORIES:
+            return ""
+        name = str(meta.name or "").strip()
+        if name:
+            if re.search(r"(?i)(?:^|[.\s_-])(?:nuked|scene[.\s_-]?rejected)(?:$|[.\s_-])", name):
+                return "nuked or scene-rejected releases are not allowed"
+            if not self._SCENE_NAME_RE.search(name) or not any(
+                token in name for token in self._RESOLUTION_TOKENS
+            ):
+                return (
+                    "the release title must follow the scene naming "
+                    "Title.Year[.Episode].Resolution.Source.Codec.Audio-GROUP"
+                )
+        missing = [
+            label
+            for label, present in (
+                ("IMDb id", bool(meta.imdb_id or meta.imdb_tt)),
+                ("MediaInfo", bool(meta.mediainfo or meta.bdinfo)),
+                ("video codec", bool(meta.video_codec)),
+                ("source", bool(meta.source)),
+                ("resolution", bool(meta.resolution)),
+                ("container", bool(meta.container)),
+            )
+            if not present
+        ]
+        if missing:
+            return "required video metadata is missing: " + ", ".join(missing)
+        return ""
+
     async def upload(self, meta: Meta) -> bool:
+        reason = self._video_skip_reason(meta)
+        if reason:
+            logger.info(
+                f"{self.tracker}: [bold red]{reason}. Skipping upload.[/bold red]"
+            )
+            meta.skipping = self.tracker
+            return False
         if self.get_category(meta) <= 0:
             logger.info(
                 f"{self.tracker}: [bold red]The category '{meta.category}' has no "
