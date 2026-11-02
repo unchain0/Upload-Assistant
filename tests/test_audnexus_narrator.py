@@ -71,6 +71,7 @@ def test_book_prep_applies_the_narrator(monkeypatch) -> None:  # type: ignore[no
     asyncio.run(book_preparation._apply_audnexus_narrator(meta))
     assert meta.narrator == "Jane Doe"
     assert meta.book_language_iso == "eng"
+    assert meta.book_language == "English"
     assert meta.publisher == "Penguin"
     assert meta.year == 2018
 

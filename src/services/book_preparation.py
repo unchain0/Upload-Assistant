@@ -2011,10 +2011,12 @@ async def _apply_audnexus_narrator(meta: Meta) -> None:
         logger.info(
             f"ASIN {meta.asin} found but Audnexus returned no narrator"
         )
-    if not meta.book_language_iso:
-        _name, code = resolve_book_language(str(metadata.get("language") or ""))
-        if code:
+    if not meta.book_language_iso or not meta.book_language:
+        name, code = resolve_book_language(str(metadata.get("language") or ""))
+        if code and not meta.book_language_iso:
             meta.book_language_iso = code
+        if name and not meta.book_language:
+            meta.book_language = name
     if not meta.publisher:
         meta.publisher = str(metadata.get("publisher") or "")
     if meta.year is None and str(metadata.get("year") or "").isdigit():
