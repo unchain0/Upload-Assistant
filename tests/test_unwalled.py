@@ -1470,3 +1470,16 @@ def test_unwalled_podcast_without_a_title_blocks_with_a_reason(
     meta = Meta(category="PODCAST", type="AUDIO", name="")
     assert tracker._podcast_identity_checks(meta) is False
     assert "podcast torrent title is required" in caplog.text.lower()
+
+
+def test_unwalled_rejects_compressed_podcast_media() -> None:
+    tracker = _tracker()
+    for name in ("episode.rar", "episode.zip", "episode.7z", "episode.r00", "episode.001"):
+        meta = Meta(category="PODCAST", filelist=[name])
+        assert tracker._compressed_file_name(meta) == name
+        assert tracker._podcast_file_checks(meta) is False
+
+
+def test_unwalled_allows_plain_podcast_audio() -> None:
+    meta = Meta(category="PODCAST", filelist=["Episode 1.m4b", "cover.jpg"])
+    assert _tracker()._compressed_file_name(meta) == ""

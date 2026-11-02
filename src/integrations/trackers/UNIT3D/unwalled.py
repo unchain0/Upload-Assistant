@@ -319,6 +319,12 @@ class Unwalled(UnwalledValidationMixin, UNIT3D):
         return self._podcast_announce_check(meta)
 
     def _podcast_file_checks(self, meta: Meta) -> bool:
+        archive = self._compressed_file_name(meta)
+        if archive:
+            logger.info(
+                f"{self.tracker}: [bold red]Compressed media is not allowed: {archive}. Skipping upload...[/bold red]"
+            )
+            return False
         if not meta.filelist or not self._valid_torrent_paths(meta):
             logger.info(
                 f"{self.tracker}: [bold red]The torrent contains a filename rejected by Unwalled.[/bold red]"
@@ -334,6 +340,19 @@ class Unwalled(UnwalledValidationMixin, UNIT3D):
             logger.info(f"{self.tracker}: [bold red]{error}[/bold red]")
             return False
         return True
+
+    @staticmethod
+    def _compressed_file_name(meta: Meta) -> str:
+        for value in meta.filelist:
+            name = str(value).replace("\\", "/").rsplit("/", 1)[-1]
+            lower = name.lower()
+            if lower.endswith((".rar", ".zip", ".7z")):
+                return name
+            if len(lower) >= 4 and lower[-4] == "." and lower[-3] == "r" and lower[-2:].isdigit():
+                return name
+            if lower.rsplit(".", 1)[-1].isdigit() and len(lower.rsplit(".", 1)[-1]) == 3:
+                return name
+        return ""
 
     @staticmethod
     def _artwork_size(meta: Meta) -> int:
