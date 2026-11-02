@@ -1273,11 +1273,27 @@ class Zenith(UNIT3D):
             )
             return False
         if _book_format(meta) in {"MP3", "FLAC", "M4B"}:
-            return True
+            return self._audiobook_source_policy(meta)
         logger.info(
             f"{self.tracker}: [bold red]Audiobooks must be MP3, FLAC, or M4B. Skipping upload...[/bold red]"
         )
         return False
+
+    def _audiobook_source_policy(self, meta: Meta) -> bool:
+        if str(meta.category or "").upper() == "PODCAST":
+            logger.info(
+                f"{self.tracker}: [bold red]Podcast recordings are not accepted as "
+                "audiobooks. Skipping upload...[/bold red]"
+            )
+            return False
+        evidence = f"{meta.source or ''} {meta.description or ''}".casefold()
+        if "librivox" in evidence:
+            logger.info(
+                f"{self.tracker}: [bold red]LibriVox recordings are not accepted. "
+                "Skipping upload...[/bold red]"
+            )
+            return False
+        return True
 
     def _audiobook_prepared_policy(
         self, meta: Meta, filelist: list[Any], expected_name: str
