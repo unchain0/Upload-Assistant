@@ -231,6 +231,7 @@ class CZTeam(NEXUSPHP):
         genre = ", ".join(str(value) for value in genres) if isinstance(genres, list) else str(genres or "")
         return {
             "csrf_token": csrf,
+            "MAX_FILE_SIZE": "3145728",
             "name": str(meta.name or ""),
             "url": imdb,
             "poster": str(meta.artwork_path or ""),
