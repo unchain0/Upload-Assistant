@@ -425,3 +425,82 @@ def test_capybarabr_screenshot_minimum_for_movies_and_shows() -> None:
     assert tracker._screenshot_allowed(_video_meta(screens=2)) is False
     assert tracker._screenshot_allowed(_video_meta(category="BOOK", screens=0)) is True
     assert tracker._screenshot_allowed(_video_meta(screens=None)) is True
+
+
+def test_capybarabr_compressed_media_is_allowed_only_for_games_and_programs() -> None:
+    tracker = _tracker()
+    assert tracker._payload_skip_reason(
+        _video_meta(category="PROGRAMS", filelist=["crack.rar"])
+    ) == ""
+    assert tracker._payload_skip_reason(
+        _video_meta(category="GAME", filelist=["crack.zip"])
+    ) == ""
+    assert "compressed archives" in tracker._payload_skip_reason(
+        _video_meta(category="BOOK", filelist=["book.rar"])
+    )
+
+
+def test_capybarabr_blocks_nfo_sample_txt_and_executables() -> None:
+    tracker = _tracker()
+    for name in ("release.nfo", "sample.mkv", "notes.txt", "setup.exe", "run.sh"):
+        assert "not allowed" in tracker._payload_skip_reason(
+            _video_meta(filelist=["Movie.mkv", name])
+        )
+
+
+def test_capybarabr_blocks_multipart_releases_but_allows_full_disc() -> None:
+    tracker = _tracker()
+    for name in ("Movie.part1.mkv", "Show.CD2.mkv", "Movie.Disc1.mkv"):
+        assert "split into parts" in tracker._payload_skip_reason(
+            _video_meta(filelist=[name])
+        )
+    assert "authored Blu-ray" in tracker._payload_skip_reason(
+        _video_meta(is_disc="BDMV", filelist=["Movie.Disc1.m2ts"])
+    )
+
+
+def test_capybarabr_blocks_extras_outside_a_full_disc() -> None:
+    tracker = _tracker()
+    assert "bonus discs" in tracker._payload_skip_reason(
+        _video_meta(filelist=["Movie.mkv", "Extras/featurette.mkv"])
+    )
+    assert tracker._payload_skip_reason(
+        _video_meta(filelist=["Movie.mkv", "Extras/deleted.scenes.mkv"])
+    ) != ""
+
+
+def test_capybarabr_blocks_forbidden_sources_and_gpu_encodes() -> None:
+    tracker = _tracker()
+    for name in ("Movie.2024.HDTS.mkv", "Movie.2024.CAM.mkv", "Movie.2024.DCP.mkv"):
+        assert "CAM, TS, HDTS and DCP" in tracker._payload_skip_reason(
+            _video_meta(filelist=[name])
+        )
+    assert "GPU encodes" in tracker._payload_skip_reason(
+        _video_meta(video_encode="NVENC")
+    )
+    assert "AV1" in tracker._payload_skip_reason(_video_meta(video_codec="AV1"))
+
+
+def test_capybarabr_blocks_authored_discs_and_low_bitrate() -> None:
+    tracker = _tracker()
+    assert "authored Blu-ray" in tracker._payload_skip_reason(
+        _video_meta(is_disc="BDMV", filelist=["BDMV/index.bdmv"])
+    )
+    assert "BRRip" in tracker._payload_skip_reason(
+        _video_meta(resolution="1080p", video_bitrate=4000)
+    )
+    assert "BRRip" in tracker._payload_skip_reason(
+        _video_meta(resolution="720p", video_bitrate=4000)
+    )
+    assert tracker._payload_skip_reason(
+        _video_meta(resolution="1080p", video_bitrate=9000)
+    ) == ""
+    assert tracker._payload_skip_reason(
+        _video_meta(resolution="1080p", video_bitrate=7000, anime=True)
+    ) == ""
+    assert tracker._payload_skip_reason(
+        _video_meta(resolution="720p", video_bitrate=4000, anime=True)
+    ) == ""
+    assert "BRRip" in tracker._payload_skip_reason(
+        _video_meta(resolution="1080p", video_bitrate=5000, anime=True)
+    )
