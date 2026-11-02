@@ -377,7 +377,7 @@ async def test_failed_zentag_validation_keeps_original_for_other_trackers(
         return 0, f"Wrote {zentag.json.dumps(str(output))}\n", ""
 
     async def fake_process(_command: list[str]) -> tuple[int, str, str]:
-        return 1, '[{"rule":"naming"}]', "violations found"
+        return 1, '[{"rule":"naming","Severity":"error"}]', "violations found"
 
     monkeypatch.setattr(
         zentag.ZentagBinaryManager, "ensure_binary", staticmethod(fake_binary)

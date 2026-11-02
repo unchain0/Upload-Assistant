@@ -430,14 +430,38 @@ async def _validate_audiobook_output(
     code, stdout, stderr = await _run_process(
         [binary, "--config", str(config_path), "check", str(output), "--json"]
     )
-    error = _run_error(code, stdout, stderr, "zentag compliance check failed")
-    if error is not None:
-        raise error
-    violations = json.loads(stdout or "[]")
-    if violations:
-        raise RuntimeError(
-            f"zentag compliance check returned {len(violations)} violation(s)"
+    try:
+        violations = json.loads(stdout or "[]")
+    except json.JSONDecodeError:
+        violations = None
+    if not isinstance(violations, list):
+        error = _run_error(
+            code, stdout, stderr, "zentag compliance check failed"
         )
+        if error is not None:
+            raise error
+        return
+    blocking = [
+        item
+        for item in violations
+        if isinstance(item, dict)
+        and str(item.get("Severity", "")).casefold() in {"error", "fatal"}
+    ]
+    if blocking:
+        raise RuntimeError(
+            f"zentag compliance check returned {len(blocking)} blocking violation(s)"
+        )
+    if violations:
+        logger.warning(
+            f"[yellow]ZENITH: zentag reported {len(violations)} non-blocking "
+            "finding(s); continuing[/yellow]"
+        )
+    if code != 0 and not violations:
+        error = _run_error(
+            code, stdout, stderr, "zentag compliance check failed"
+        )
+        if error is not None:
+            raise error
 
 
 async def _prepare_audiobook_copy(
