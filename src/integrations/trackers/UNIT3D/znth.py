@@ -1723,8 +1723,11 @@ class Zenith(UNIT3D):
 
     @staticmethod
     def _book_title(meta: Meta) -> str:
-        value = meta.title if meta.title else meta.name
-        return str(value or "").strip()
+        value = str(meta.title if meta.title else meta.name or "").strip()
+        match = re.match(r"^(?P<body>.+),\s*(?P<article>The|A|An)$", value, re.IGNORECASE)
+        if match:
+            return f"{match.group('article').capitalize()} {match.group('body').strip()}"
+        return value
 
     @staticmethod
     def _book_year(meta: Meta) -> str:
@@ -1809,7 +1812,6 @@ class Zenith(UNIT3D):
         language = _iso_639_2_code(meta.book_language_iso)
         series = cls._ebook_series(meta)
         edition = cls._ebook_edition(meta)
-        source = cls._ebook_source(meta, format_value)
         parts = cls._ebook_identity_parts(author, series, title)
         parts.extend(
             cls._nonempty_parts(
@@ -1819,8 +1821,10 @@ class Zenith(UNIT3D):
                     edition,
                     format_value,
                     "Retail"
-                    if source == "RETAIL"
-                    or "retail" in meta.basename_no_ext.lower()
+                    if "retail"
+                    in " ".join(
+                        [meta.basename_no_ext, *[str(item) for item in meta.filelist]]
+                    ).lower()
                     else "",
                 )
             )
