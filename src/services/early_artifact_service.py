@@ -199,16 +199,34 @@ async def _create_early_subtitle_torrent(
     )
 
 
+def _base_layout_matches(meta: Meta, torrent_path: Path) -> bool:
+    """True when the existing BASE has the layout this meta needs."""
+    try:
+        from torf import Torrent
+
+        info = Torrent.read(str(torrent_path)).metainfo.get("info", {})
+    except Exception:
+        return False
+    wants_single_file = (not meta.isdir) or _single_file_book(meta)
+    return ("files" not in info) if wants_single_file else ("files" in info)
+
+
 async def _run_early_torrent_creation(
     meta: Meta, client: Clients, task_started: float
 ) -> None:
     release_id, torrent_path, subs_torrent_path = _early_torrent_paths(meta)
     if torrent_path.exists():
+        if _base_layout_matches(meta, torrent_path):
+            logger.debug(
+                "[cyan]Skipping early torrent creation; BASE already exists at "
+                f"{torrent_path}[/cyan]"
+            )
+            return
         logger.debug(
-            "[cyan]Skipping early torrent creation; BASE already exists at "
+            "[cyan]Discarding a stale BASE with the wrong layout at "
             f"{torrent_path}[/cyan]"
         )
-        return
+        torrent_path.unlink(missing_ok=True)
     reuse_torrent = await _find_reusable_torrent(meta, client)
     await _create_early_base(meta, release_id, reuse_torrent)
     await _create_early_subtitle_torrent(meta, subs_torrent_path)
