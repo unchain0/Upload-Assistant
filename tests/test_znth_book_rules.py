@@ -98,3 +98,69 @@ def test_zenith_ebook_without_isbn_stops_on_the_identifier_rule() -> None:
     tracker = _tracker()
     meta = Meta(category="BOOK", type="EPUB", isbn="", asin="")
     assert asyncio.run(tracker._book_format_policy(meta, [], False)) is False
+
+
+def _book(**values: object) -> Meta:
+    defaults: dict[str, object] = {
+        "category": "BOOK",
+        "type": "EPUB",
+        "isbn": "9780000000000",
+        "author": "Henry Hazlitt",
+        "title": "Economics in One Lesson",
+        "filelist": ["Henry Hazlitt - Economics in One Lesson.epub"],
+    }
+    defaults.update(values)
+    return Meta(**defaults)
+
+
+def test_zenith_blocks_site_names_in_the_payload() -> None:
+    tracker = _tracker()
+    meta = _book(filelist=["Henry Hazlitt - Economics (z-lib.org).epub"])
+    assert tracker._book_hygiene_policy(meta, list(meta.filelist)) is False
+    meta = _book(description="Baixado de lelivros.love")
+    assert tracker._book_hygiene_policy(meta, list(meta.filelist)) is False
+    assert tracker._book_hygiene_policy(_book(), list(_book().filelist)) is True
+
+
+def test_zenith_blocks_a_duplicated_series_in_the_title() -> None:
+    tracker = _tracker()
+    meta = _book(title="Untamed (Untamed #1)", author="Untamed #1")
+    assert tracker._book_hygiene_policy(meta, list(meta.filelist)) is False
+
+
+def test_zenith_blocks_an_incomplete_author() -> None:
+    tracker = _tracker()
+    meta = _book(filelist=["Hazlitt - Economics in One Lesson.epub"])
+    assert tracker._book_hygiene_policy(meta, list(meta.filelist)) is False
+    meta = _book(filelist=["Henry Hazlitt - Economics in One Lesson.epub"])
+    assert tracker._book_hygiene_policy(meta, list(meta.filelist)) is True
+
+
+def test_zenith_blocks_a_pack_with_different_authors() -> None:
+    tracker = _tracker()
+    meta = _book(
+        author="",
+        filelist=[
+            "Henry Hazlitt - Economics in One Lesson.epub",
+            "Ludwig von Mises - Human Action.epub",
+        ],
+    )
+    assert tracker._book_hygiene_policy(meta, list(meta.filelist)) is False
+
+
+def test_zenith_blocks_a_language_conflict() -> None:
+    tracker = _tracker()
+    meta = _book(
+        name="The Power of Now [RUS].epub",
+        title="The Power of Now",
+        book_language_iso="ENG",
+        filelist=["The Power of Now [RUS].epub"],
+    )
+    assert tracker._book_hygiene_policy(meta, list(meta.filelist)) is False
+    meta = _book(
+        name="The Power of Now [ENG].epub",
+        title="The Power of Now",
+        book_language_iso="ENG",
+        filelist=["The Power of Now [ENG].epub"],
+    )
+    assert tracker._book_hygiene_policy(meta, list(meta.filelist)) is True

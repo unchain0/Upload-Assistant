@@ -2,7 +2,7 @@ import re
 import unicodedata
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 from src.domain_models.book_language import (
     extract_first_author as _primary_name,
@@ -1219,7 +1219,9 @@ class Zenith(UNIT3D):
             return False
         if not await self._book_format_policy(meta, filelist, defer):
             return False
-        return self._book_identity_policy(meta)
+        if not self._book_identity_policy(meta):
+            return False
+        return self._book_hygiene_policy(meta, filelist)
 
     @staticmethod
     def _defer_zentag_validation(meta: Meta) -> bool:
@@ -1348,6 +1350,142 @@ class Zenith(UNIT3D):
         if not self._book_work_policy(meta):
             return False
         return self._book_language_policy(meta)
+
+    _SITE_MARKERS: ClassVar[tuple[str, ...]] = (
+        "z-lib",
+        "zlibrary",
+        "z-lib.org",
+        "1lib",
+        "b-ok",
+        "lelivros",
+        "annas-archive",
+        "epub.pub",
+        "scribd",
+        "pdfdrive",
+    )
+
+    def _book_hygiene_policy(
+        self, meta: Meta, filelist: list[Any]
+    ) -> bool:
+        marker = self._site_marker(meta, filelist)
+        if marker:
+            logger.info(
+                f"{self.tracker}: [bold red]The upload mentions the site '{marker}', "
+                "which is not allowed. Skipping upload...[/bold red]"
+            )
+            return False
+        if self._duplicated_series_in_title(meta):
+            logger.info(
+                f"{self.tracker}: [bold red]The title repeats the series or author in "
+                "parentheses. Skipping upload...[/bold red]"
+            )
+            return False
+        authors = self._file_authors(filelist)
+        if len(authors) > 1:
+            logger.info(
+                f"{self.tracker}: [bold red]The pack mixes different authors: "
+                f"{', '.join(sorted(authors))}. Skipping upload...[/bold red]"
+            )
+            return False
+        if authors and meta.author:
+            author = authors.pop()
+            if not self._author_matches(author, str(meta.author)):
+                logger.info(
+                    f"{self.tracker}: [bold red]The author '{meta.author}' does not match "
+                    f"the file author '{author}'. Skipping upload...[/bold red]"
+                )
+                return False
+        if self._language_conflict(meta):
+            logger.info(
+                f"{self.tracker}: [bold red]The language in the name conflicts with the "
+                "metadata language. Skipping upload...[/bold red]"
+            )
+            return False
+        return True
+
+    @classmethod
+    def _site_marker(
+        cls, meta: Meta, filelist: list[Any]
+    ) -> str:
+        values = [
+            str(meta.name or ""),
+            str(meta.title or ""),
+            str(meta.description or ""),
+            str(meta.basename_no_ext or ""),
+            *[str(item) for item in filelist],
+        ]
+        haystack = " ".join(values).casefold()
+        return next(
+            (marker for marker in cls._SITE_MARKERS if marker in haystack), ""
+        )
+
+    @classmethod
+    def _duplicated_series_in_title(cls, meta: Meta) -> bool:
+        title = str(meta.title or meta.name or "").strip()
+        match = re.search(r"\(([^)]+)\)", title)
+        if not match:
+            return False
+        inside = cls._normalized_words(match.group(1))
+        if not inside:
+            return False
+        root = cls._normalized_words(re.sub(r"\s*\([^)]*\)", "", title))
+        author = cls._normalized_words(str(meta.author or ""))
+        return inside == root or (author and inside == author)
+
+    @staticmethod
+    def _normalized_words(value: str) -> str:
+        text = unicodedata.normalize("NFKD", value)
+        text = "".join(char for char in text if not unicodedata.combining(char))
+        return " ".join(re.findall(r"[a-z0-9]+", text.casefold()))
+
+    @classmethod
+    def _file_authors(cls, filelist: list[Any]) -> set[str]:
+        authors: set[str] = set()
+        for item in filelist:
+            path = Path(str(item))
+            for candidate in (path.parent.name, path.stem):
+                parts = candidate.split(" - ")
+                if len(parts) < 2:
+                    continue
+                author = parts[0].strip()
+                if (
+                    not author
+                    or "(" in author
+                    or any(char.isdigit() for char in author)
+                    or len(author.split()) > 5
+                ):
+                    continue
+                authors.add(author)
+        return authors
+
+    @classmethod
+    def _author_matches(cls, file_author: str, meta_author: str) -> bool:
+        file_words = cls._normalized_words(file_author).split()
+        meta_words = cls._normalized_words(meta_author).split()
+        if not file_words or not meta_words:
+            return True
+        if len(file_words) == 1:
+            return meta_words[0] == file_words[0] and len(meta_words) == 1
+        file_set, meta_set = set(file_words), set(meta_words)
+        return bool(file_set & meta_set)
+
+    @classmethod
+    def _language_conflict(cls, meta: Meta) -> bool:
+        declared = cls._declared_language(meta)
+        metadata = str(meta.book_language_iso or "").strip().upper()
+        if not declared or not metadata:
+            return False
+        return declared[:3] != metadata[:3]
+
+    @staticmethod
+    def _declared_language(meta: Meta) -> str:
+        text = f"{meta.name or ''} {meta.title or ''}"
+        match = re.search(
+            r"[\[(](ENG|POR|SPA|FRE|GER|ITA|JPN|RUS|CHI|KOR|DUT|POL|ROM)[\])]",
+            text,
+            re.IGNORECASE,
+        )
+        return match.group(1).upper() if match else ""
 
     def _book_author_policy(self, meta: Meta) -> bool:
         if not meta.author or not self._is_banned_author(meta.author):
