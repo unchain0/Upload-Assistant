@@ -38,6 +38,7 @@ from src.integrations.trackers.iptorrents import IPTorrents
 from src.integrations.trackers.makingoff import MakingOff
 from src.integrations.trackers.mteam import MTeam
 from src.integrations.trackers.nebulance import Nebulance
+from src.integrations.trackers.NEXUSPHP.czteam import CZTeam
 from src.integrations.trackers.NEXUSPHP.lajidui import Lajidui
 from src.integrations.trackers.NEXUSPHP.lemonhd import LemonHD
 from src.integrations.trackers.NEXUSPHP.longpt import LongPT
@@ -2382,6 +2383,7 @@ tracker_class_map: dict[str, Any] = {
     "CATHODERAYTUBE": CathodeRayTube,
     "CURUPIRA": Curupira,
     "CINEMAZ": CinemaZ,
+    "CZTEAM": CZTeam,
     "DIGITALCORE": DigitalCore,
     "DARKPEERS": DarkPeers,
     "DRUNKENSLUG": DrunkenSlug,
