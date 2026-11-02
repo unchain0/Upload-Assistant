@@ -71,6 +71,13 @@ def _book_format(meta: Meta) -> str:
     return (meta.type or meta.container or "").strip().upper().lstrip(".")
 
 
+_FORBIDDEN_FILENAME_CHARS = re.compile(r'[/:?<>|*"]')
+_FILENAME_ISBN_RE = re.compile(r"(?:97[89]\d{10}|\d{9}[\dXx])")
+_FILENAME_LANGUAGE_RE = re.compile(
+    r"(?<![A-Z])(ENG|POR|SPA|FRE|GER|ITA|JPN|RUS|CHI|KOR|DUT|POL|ROM)(?![A-Z])"
+)
+
+
 class Zenith(UNIT3D):
     """
     Zenith is an Private Torrent Tracker for MOVIES / TV / GENERAL
@@ -1304,22 +1311,44 @@ class Zenith(UNIT3D):
                 f"{self.tracker}: [bold red]Ebooks must be EPUB, PDF, MOBI, AZW3, or DJVU. Skipping upload...[/bold red]"
             )
             return False
-        return self._ebook_isbn_name_policy(meta)
+        return self._ebook_filename_policy(meta)
 
-    def _ebook_isbn_name_policy(self, meta: Meta) -> bool:
-        isbn = str(meta.isbn or "").strip()
-        if not isbn:
+    def _ebook_filename_policy(self, meta: Meta) -> bool:
+        if meta.audiobook or _is_misc(meta):
             return True
-        names = Zenith._ebook_file_stems(meta)
-        if not names:
+        stems = self._ebook_file_stems(meta)
+        if not stems:
             return True
-        if any(isbn in name for name in names):
-            return True
-        logger.info(
-            f"{self.tracker}: [bold red]The ebook filename must include the edition ISBN "
-            f"({isbn}). Skipping upload...[/bold red]"
+        for stem in stems:
+            if _FORBIDDEN_FILENAME_CHARS.search(stem):
+                logger.info(
+                    f"{self.tracker}: [bold red]The ebook filename has a character that "
+                    "must be replaced: / to -, : to -, ? removed, <> removed, | to -, "
+                    "* removed and double quotes to a single quote. "
+                    f"Filename: {stem}[/bold red]"
+                )
+                return False
+            if not self._ebook_filename_matches(stem):
+                logger.info(
+                    f"{self.tracker}: [bold red]The ebook filename does not follow "
+                    "'Author - Series # - Title (Year) [Language Edition ISBN Retail].Format'. "
+                    f"Filename: {stem}[/bold red]"
+                )
+                return False
+        return True
+
+    @staticmethod
+    def _ebook_filename_matches(stem: str) -> bool:
+        if " - " not in stem or not re.search(r"\(\d{4}\)", stem):
+            return False
+        bracket = re.search(r"\[([^\]]+)\]\s*$", stem)
+        if not bracket:
+            return False
+        content = bracket.group(1)
+        return bool(
+            _FILENAME_ISBN_RE.search(content)
+            and _FILENAME_LANGUAGE_RE.search(content)
         )
-        return False
 
     @staticmethod
     def _ebook_file_stems(meta: Meta) -> list[str]:
