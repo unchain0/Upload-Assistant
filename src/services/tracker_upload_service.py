@@ -4,6 +4,7 @@ import time
 import traceback
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, cast
 
 import cli_ui
@@ -111,10 +112,28 @@ def _required_zenith_preparation_failed(
     return required and not bool(prepared_path)
 
 
+_EBOOK_SUFFIXES = frozenset(
+    {".epub", ".pdf", ".mobi", ".azw", ".azw3", ".djvu", ".fb2"}
+)
+
+
 def _zenith_isolated_meta(meta: Meta, prepared_path: str) -> Meta:
     prepared_meta = meta.copy()
     prepared_meta.path = prepared_path
     prepared_meta.keep_folder = True
+    if not prepared_meta.audiobook:
+        release = Path(prepared_path)
+        if release.is_dir():
+            ebook_files = [
+                candidate
+                for candidate in sorted(release.rglob("*"))
+                if candidate.is_file() and candidate.suffix.lower() in _EBOOK_SUFFIXES
+            ]
+            if len(ebook_files) == 1:
+                prepared_meta.path = str(ebook_files[0])
+                prepared_meta.filelist = [str(ebook_files[0])]
+                prepared_meta.isdir = False
+                prepared_meta.keep_folder = False
     prepared_meta.allow_spaces = True
     prepared_meta.uuid = f"{prepared_meta.uuid}-zenith"
     prepared_meta.update({"trusted_book_layout": True})

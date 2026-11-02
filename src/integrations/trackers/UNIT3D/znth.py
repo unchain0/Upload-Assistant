@@ -1238,10 +1238,25 @@ class Zenith(UNIT3D):
             meta.get("zentag_prepared", False)
         )
 
+    @staticmethod
+    def _prepared_ebook_single_file(meta: Meta, filelist: list[Any]) -> bool:
+        """eBooks are uploaded as one file; the tracker wraps them."""
+        prepared = bool(
+            meta.zentag_prepared or meta.get("trusted_book_layout")
+        )
+        return bool(
+            prepared
+            and str(meta.category or "").upper() == "BOOK"
+            and not meta.audiobook
+            and len(filelist) == 1
+        )
+
     def _book_folder_policy(
         self, meta: Meta, filelist: list[Any], defer: bool
     ) -> bool:
         if defer:
+            return True
+        if self._prepared_ebook_single_file(meta, filelist):
             return True
         if not meta.isdir:
             logger.info(
