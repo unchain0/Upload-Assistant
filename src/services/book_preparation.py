@@ -1911,15 +1911,25 @@ def _repair_final_book_title(
 
 
 async def _apply_audnexus_narrator(meta: Meta) -> None:
-    if not meta.audiobook or meta.narrator:
+    if not meta.audiobook:
+        logger.info("Narrator lookup skipped: the upload is not an audiobook")
+        return
+    if meta.narrator:
+        logger.info(f"Narrator lookup skipped: already set to {meta.narrator!r}")
         return
     from src.integrations.external_apis.audible import AudibleManager
     from src.integrations.external_apis.audnexus import AudnexusManager
 
     if not meta.asin:
-        asin = await AudibleManager().asin_by_title_author(
-            str(meta.title or ""), str(meta.author or "")
-        )
+        title = str(meta.title or "").strip()
+        author = str(meta.author or "").strip()
+        if not title or not author:
+            logger.info(
+                "Audible lookup skipped: missing title or author "
+                f"(title={title!r}, author={author!r})"
+            )
+            return
+        asin = await AudibleManager().asin_by_title_author(title, author)
         if not asin:
             logger.info(
                 "ASIN not found on Audible; keeping the narrator requirement"
