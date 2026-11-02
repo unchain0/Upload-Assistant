@@ -1,5 +1,6 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
 import re
+from pathlib import Path
 from typing import Any
 
 from src.domain_models.release import Meta
@@ -575,9 +576,37 @@ class CapybaraBR(UNIT3D):
                 f"{self.tracker}: [bold red]Narrator is required for audiobooks. Skipping upload...[/bold red]"
             )
             return False
+        reason = self._payload_skip_reason(meta)
+        if reason:
+            logger.info(
+                f"{self.tracker}: [bold red]{reason} Skipping upload...[/bold red]"
+            )
+            return False
         if meta.category not in {"MOVIE", "TV"}:
             return True
         return await self._video_additional_checks(meta)
+
+    def _payload_skip_reason(self, meta: Meta) -> str:
+        category = str(meta.category or "").upper()
+        if CapybaraBR._compressed_media(meta) and category not in {
+            "PROGRAMS",
+            "PROGRAM",
+            "GAME",
+        }:
+            return "compressed archives are only allowed as cracks for programs and games"
+        extra = CapybaraBR._forbidden_extra_file(meta)
+        if extra:
+            return f"the torrent contains a file that is not allowed: {extra}"
+        if category not in {"MOVIE", "TV"}:
+            return ""
+        if not meta.is_disc:
+            reason = CapybaraBR._multipart_skip_reason(meta)
+            if reason:
+                return reason
+            reason = CapybaraBR._extras_skip_reason(meta)
+            if reason:
+                return reason
+        return CapybaraBR._technical_skip_reason(meta)
 
     @staticmethod
     def _missing_audiobook_narrator(meta: Meta) -> bool:
@@ -729,6 +758,82 @@ class CapybaraBR(UNIT3D):
         base = name.replace("\\", "/").rsplit("/", 1)[-1]
         stem = base.rsplit(".", 1)[0]
         return _AUDIO_IN_FILENAME_RE.search(stem) is not None
+
+    @staticmethod
+    def _forbidden_extra_file(meta: Meta) -> str:
+        suffixes = (".nfo", ".sample", ".txt", ".exe", ".msi", ".bat", ".cmd", ".sh", ".dmg")
+        for name in CapybaraBR._content_names(meta.filelist):
+            lower = name.replace("\\", "/").rsplit("/", 1)[-1].casefold()
+            if lower.endswith(suffixes) or ".sample." in lower or lower.startswith("sample."):
+                return name
+        return ""
+
+    @staticmethod
+    def _multipart_skip_reason(meta: Meta) -> str:
+        pattern = re.compile(
+            r"(?i)(?:^|[.\s_-])(?:part\s*\d{1,2}|cd\s*\d{1,2}|disc\s*\d{1,2}|disk\s*\d{1,2})(?:$|[.\s_-])"
+        )
+        for name in CapybaraBR._content_names(meta.filelist):
+            base = name.replace("\\", "/").rsplit("/", 1)[-1]
+            if pattern.search(Path(base).stem):
+                return "releases cannot be split into parts; upload a single torrent"
+        return ""
+
+    @staticmethod
+    def _extras_skip_reason(meta: Meta) -> str:
+        pattern = re.compile(
+            r"(?i)(?:^|[.\s_-])(?:extras?|bonus|featurettes?|behind[.\s_-]*the[.\s_-]*scenes|deleted[.\s_-]*scenes)(?:$|[.\s_-])"
+        )
+        for name in CapybaraBR._content_names(meta.filelist):
+            base = name.replace("\\", "/").rsplit("/", 1)[-1]
+            if "sample" in base.casefold():
+                continue
+            if pattern.search(Path(base).stem):
+                return "bonus discs and extras must be uploaded separately from the main movie or show"
+        return ""
+
+    @staticmethod
+    def _technical_skip_reason(meta: Meta) -> str:
+        first_file = next(iter(CapybaraBR._content_names(meta.filelist)), "")
+        values = " ".join(
+            str(value or "")
+            for value in (
+                meta.name,
+                meta.type,
+                meta.source,
+                meta.video_encode,
+                first_file,
+            )
+        )
+        if re.search(r"(?i)(?:^|[.\s_-])(?:cam|hdcam|hdts|dcp)(?:$|[.\s_-])", values):
+            return "CAM, TS, HDTS and DCP sources are not allowed"
+        if re.search(r"(?i)(?:nvenc|quicksync|qsv|amf|videotoolbox)", values):
+            return "GPU encodes are not allowed; use a CPU encode"
+        codec = str(meta.video_codec or meta.video_encode or "").casefold()
+        if "av1" in codec:
+            return "AV1 is not accepted"
+        disc = str(meta.is_disc or "").upper()
+        if disc in {"BDMV", "VIDEO_TS"}:
+            return "authored Blu-ray and DVD structures are not allowed"
+        bitrate = meta.video_bitrate
+        if isinstance(bitrate, int) and bitrate > 0:
+            minimum = CapybaraBR._minimum_video_bitrate(meta)
+            if minimum and bitrate < minimum:
+                return (
+                    f"video bitrate {bitrate} kbps is below the {minimum} kbps minimum; "
+                    "release it as a BRRip"
+                )
+        return ""
+
+    @staticmethod
+    def _minimum_video_bitrate(meta: Meta) -> int:
+        animation = bool(meta.anime)
+        resolution = str(meta.resolution or "").casefold()
+        if resolution == "720p":
+            return 3500 if animation else 5000
+        if resolution == "1080p":
+            return 6000 if animation else 8000
+        return 0
 
     @staticmethod
     def _compressed_media(meta: Meta) -> bool:
